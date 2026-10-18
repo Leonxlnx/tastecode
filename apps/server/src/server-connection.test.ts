@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import { once } from 'node:events'
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { connect } from 'node:net'
@@ -11,7 +12,7 @@ import { startServer } from './server.js'
 const state = vi.hoisted(() => ({
   servers: [] as WebSocketServer[],
   projects: [] as Array<{ path: string }>,
-  threads: new Map<string, { projectPath: string; worktreePath?: string }>(),
+  threads: new Map<string, { projectPath: string; worktreePath?: string; provider?: string }>(),
   historyPage: vi.fn(),
   read: [] as string[],
   reservedPreviewPorts: [] as Array<ReadonlySet<number> | undefined>,
@@ -26,6 +27,10 @@ const state = vi.hoisted(() => ({
   historyReads: [] as number[],
   historyRefresh: Promise.resolve() as Promise<void>,
   historyChanged: new Set<string>(),
+  prewarmed: 0,
+  recovered: 0,
+  historyScans: new Map<string, Promise<void>>(),
+  idleCheckouts: [] as string[],
 }))
 const temporary: string[] = []
 
@@ -67,7 +72,9 @@ vi.mock('./orchestrator.js', () => ({
     }
     async protectStoredCheckpoints() {}
     refreshLifecycle() {}
-    async recoverWorktrees() {}
+    async recoverWorktrees() {
+      state.recovered += 1
+    }
     async closeAllTerminals() {
       state.shutdown.push('terminals')
     }
@@ -81,6 +88,10 @@ vi.mock('./orchestrator.js', () => ({
     }
     async restoreCheckpoint() {
       return { undo: 'undo-token' }
+    }
+    async whileCheckoutIdle(checkout: string, operation: () => Promise<unknown>) {
+      state.idleCheckouts.push(checkout)
+      return operation()
     }
     async undoRestore() {}
     isTurnRunning() {
@@ -97,7 +108,16 @@ vi.mock('./orchestrator.js', () => ({
     }
   },
 }))
-vi.mock('./providers.js', () => ({ prewarmProviders: () => undefined }))
+vi.mock('./providers.js', () => ({
+  prewarmProviders: () => {
+    state.prewarmed += 1
+  },
+}))
+vi.mock('./runtime-loader.js', () => ({
+  stopModelListings: async () => {
+    state.shutdown.push('listings')
+  },
+}))
 vi.mock('./provider-history.js', () => ({
   ProviderHistory: class {
     constructor(_store: unknown, sources: Array<{ provider: string }>) {
@@ -106,6 +126,9 @@ vi.mock('./provider-history.js', () => ({
     }
     refresh() {
       return state.historyRefresh
+    }
+    scanned(provider: string) {
+      return state.historyScans.get(provider) ?? state.historyRefresh
     }
     async load(threadId: string) {
       state.historyLoads.push(threadId)
@@ -125,6 +148,15 @@ vi.mock('@harness/adapter-grok', () => ({
     return {}
   },
 }))
+// One declared method that no route handles, the state a contract is in when
+// it lands before its server handler.
+vi.mock('@harness/contracts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@harness/contracts')>()
+  return {
+    ...actual,
+    methods: { ...actual.methods, 'test.unrouted': actual.methods['system.info'] },
+  }
+})
 vi.mock('ws', async (importOriginal) => {
   const actual = await importOriginal<typeof import('ws')>()
   return {
@@ -160,8 +192,14 @@ afterEach(async () => {
   state.historyReads.length = 0
   state.historyRefresh = Promise.resolve()
   state.historyChanged.clear()
+  state.prewarmed = 0
+  state.recovered = 0
+  state.historyScans.clear()
+  state.idleCheckouts.length = 0
   vi.unstubAllEnvs()
-  await Promise.all(temporary.splice(0).map((directory) => rm(directory, { recursive: true })))
+  await Promise.all(
+    temporary.splice(0).map((directory) => rm(directory, { recursive: true, maxRetries: 5 })),
+  )
 })
 
 async function listen(accessToken?: string) {
@@ -171,6 +209,20 @@ async function listen(accessToken?: string) {
   const address = listener.address()
   if (!address || typeof address === 'string') throw new Error('Missing listener address')
   return { listener, port: address.port }
+}
+
+/** The renderer's first request; background startup work waits for its answer. */
+async function askForProjects(port: number) {
+  const client = new WebSocket(`ws://127.0.0.1:${port}`)
+  try {
+    await once(client, 'message')
+    const reply = once(client, 'message')
+    client.send(JSON.stringify({ id: 'projects', method: 'projects.list', params: {} }))
+    await reply
+  } finally {
+    client.terminate()
+  }
+  await new Promise((resolve) => setImmediate(resolve))
 }
 
 describe('rejected websocket connections', () => {
@@ -424,13 +476,167 @@ describe('workspace search requests', () => {
   })
 })
 
+describe('methods without a route', () => {
+  async function ask(port: number, method: string) {
+    const client = new WebSocket(`ws://127.0.0.1:${port}`)
+    try {
+      await once(client, 'message')
+      const reply = once(client, 'message')
+      client.send(JSON.stringify({ id: 'ask', method, params: {} }))
+      const [message] = await reply
+      return JSON.parse(String(message)) as unknown
+    } finally {
+      client.terminate()
+    }
+  }
+
+  it('answers a declared but unrouted method as unknown instead of an empty result', async () => {
+    const { port } = await listen()
+    expect(await ask(port, 'test.unrouted')).toEqual({
+      id: 'ask',
+      error: { code: 'bad_request', message: 'unknown method: test.unrouted' },
+    })
+  })
+
+  it('still answers an undeclared method the same way', async () => {
+    const { port } = await listen()
+    expect(await ask(port, 'no.such.method')).toEqual({
+      id: 'ask',
+      error: { code: 'bad_request', message: 'unknown method: no.such.method' },
+    })
+  })
+})
+
+describe('the pull request for a chat checkout', () => {
+  function git(cwd: string, ...args: string[]): void {
+    execFileSync('git', args, { cwd, windowsHide: true, stdio: 'ignore' })
+  }
+
+  async function forCheckout(port: number, params: unknown) {
+    const client = new WebSocket(`ws://127.0.0.1:${port}`)
+    try {
+      await once(client, 'message')
+      const reply = once(client, 'message')
+      client.send(JSON.stringify({ id: 'pr', method: 'pullRequests.forCheckout', params }))
+      const [message] = await reply
+      return JSON.parse(String(message)) as unknown
+    } finally {
+      client.terminate()
+    }
+  }
+
+  it('reads the chat worktree, not the project folder, without asking GitHub', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'harness-checkout-pr-rpc-'))
+    temporary.push(root)
+    // Never discover a repository above the temporary folder.
+    vi.stubEnv('GIT_CEILING_DIRECTORIES', root)
+    const projectPath = path.join(root, 'project')
+    const worktreePath = path.join(root, 'isolated')
+    await mkdir(projectPath)
+    await mkdir(worktreePath)
+    git(worktreePath, 'init', '-q', '-b', 'chat/one')
+    git(
+      worktreePath,
+      '-c',
+      'user.email=test@example.com',
+      '-c',
+      'user.name=Test',
+      'commit',
+      '-q',
+      '--allow-empty',
+      '-m',
+      'first',
+    )
+    state.projects.push({ path: projectPath })
+    state.threads.set('isolated-thread', { projectPath, worktreePath })
+    const { port } = await listen()
+
+    expect(await forCheckout(port, { projectPath })).toMatchObject({
+      result: { available: false, reason: 'not_git' },
+    })
+    expect(
+      await forCheckout(port, { projectPath, threadId: 'isolated-thread', refresh: true }),
+    ).toMatchObject({
+      result: { available: false, reason: 'no_remote', branch: 'chat/one' },
+    })
+  })
+  // Every step spawns git, which takes a while on a busy Windows machine.
+}, 30_000)
+
+describe('git writes in a chat checkout', () => {
+  function git(cwd: string, ...args: string[]): string {
+    return execFileSync('git', args, { cwd, windowsHide: true, encoding: 'utf8' }).trim()
+  }
+
+  async function call(port: number, method: string, params: unknown) {
+    const client = new WebSocket(`ws://127.0.0.1:${port}`)
+    try {
+      await once(client, 'message')
+      const reply = once(client, 'message')
+      client.send(JSON.stringify({ id: 'git', method, params }))
+      const [message] = await reply
+      return JSON.parse(String(message)) as unknown
+    } finally {
+      client.terminate()
+    }
+  }
+
+  it('commits in the chat worktree while no turn runs there, then pushes it', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'harness-workspace-git-rpc-'))
+    temporary.push(root)
+    // Never discover a repository above the temporary folder.
+    vi.stubEnv('GIT_CEILING_DIRECTORIES', root)
+    const projectPath = path.join(root, 'project')
+    const worktreePath = path.join(root, 'isolated')
+    const remote = path.join(root, 'remote.git')
+    await mkdir(projectPath)
+    git(root, 'init', '-q', '--bare', remote)
+    git(root, 'init', '-q', '-b', 'chat/one', worktreePath)
+    git(worktreePath, 'config', 'user.email', 'test@example.com')
+    git(worktreePath, 'config', 'user.name', 'Test')
+    git(worktreePath, 'config', 'commit.gpgsign', 'false')
+    git(worktreePath, 'remote', 'add', 'origin', remote)
+    await writeFile(path.join(worktreePath, 'change.txt'), 'changed\n')
+    state.projects.push({ path: projectPath })
+    state.threads.set('isolated-thread', { projectPath, worktreePath })
+    const { port } = await listen()
+    const checkout = { projectPath, threadId: 'isolated-thread' }
+
+    const committed = await call(port, 'workspace.commit', {
+      ...checkout,
+      message: 'feat: from review',
+      includeUntracked: true,
+    })
+    expect(committed).toEqual({
+      id: 'git',
+      result: { commit: git(worktreePath, 'rev-parse', 'HEAD'), branch: 'chat/one' },
+    })
+    expect(state.idleCheckouts).toEqual([worktreePath])
+
+    expect(await call(port, 'workspace.push', checkout)).toEqual({
+      id: 'git',
+      result: { branch: 'chat/one', remote: 'origin' },
+    })
+    expect(git(remote, 'rev-parse', 'refs/heads/chat/one')).toBe(
+      git(worktreePath, 'rev-parse', 'HEAD'),
+    )
+
+    expect(
+      await call(port, 'pullRequests.create', { ...checkout, title: 'x', body: '', draft: false }),
+    ).toMatchObject({
+      error: { code: 'internal', message: 'This checkout has no GitHub remote named origin.' },
+    })
+  })
+  // Every step spawns git, which takes a while on a busy Windows machine.
+}, 60_000)
+
 describe('server shutdown', () => {
   it('starts closing terminals before it waits on provider history', async () => {
     let finishHistory: () => void = () => {}
     state.historyClosed = new Promise<void>((resolve) => {
       finishHistory = resolve
     })
-    await listen()
+    await askForProjects((await listen()).port)
     const closed = running!.close()
     running = undefined
     await new Promise((resolve) => setImmediate(resolve))
@@ -438,6 +644,13 @@ describe('server shutdown', () => {
 
     finishHistory()
     await closed
+  })
+
+  it('stops model listings that are still running', async () => {
+    await listen()
+    await running!.close()
+    running = undefined
+    expect(state.shutdown).toContain('listings')
   })
 })
 
@@ -659,9 +872,42 @@ describe('chat history during the first provider scan', () => {
     }
   })
 
+  it("starts a turn after its own provider's scan, not every provider's", async () => {
+    let finishClaude!: () => void
+    state.historyScans.set('claude-code', new Promise<void>((resolve) => (finishClaude = resolve)))
+    state.historyScans.set('codex', Promise.resolve())
+    state.historyRefresh = new Promise<void>(() => undefined)
+    state.threads.set('codex-chat', { projectPath: '/work', provider: 'codex' })
+    state.threads.set('claude-chat', { projectPath: '/work', provider: 'claude-code' })
+    const { port } = await listen()
+    const viewer = await connect(port)
+    const send = (id: string) =>
+      viewer.client.send(
+        JSON.stringify({ id, method: 'thread.sendTurn', params: { threadId: id, text: 'hi' } }),
+      )
+    try {
+      send('codex-chat')
+      send('claude-chat')
+      await vi.waitFor(() =>
+        expect(viewer.messages).toContainEqual(expect.objectContaining({ id: 'codex-chat' })),
+      )
+      expect(state.historyLoads).toEqual(['codex-chat'])
+      expect(viewer.messages.some((message) => message.id === 'claude-chat')).toBe(false)
+
+      finishClaude()
+      await vi.waitFor(() =>
+        expect(viewer.messages).toContainEqual(expect.objectContaining({ id: 'claude-chat' })),
+      )
+      expect(state.historyLoads).toEqual(['codex-chat', 'claude-chat'])
+    } finally {
+      viewer.client.terminate()
+    }
+  })
+
   it('imports before reading once the scan is done, as before', async () => {
     state.historyPage.mockResolvedValue(opened)
     const { port } = await listen()
+    await askForProjects(port)
     const reader = await connect(port)
     try {
       // Let the already-resolved scan settle.
@@ -680,6 +926,63 @@ describe('chat history during the first provider scan', () => {
     } finally {
       reader.client.terminate()
     }
+  })
+})
+
+describe('background startup work', () => {
+  it('waits until the first client has its project list', async () => {
+    const { port } = await listen()
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(state.historySources).toEqual([])
+    expect([state.prewarmed, state.recovered]).toEqual([0, 0])
+
+    await askForProjects(port)
+    await vi.waitFor(() => expect(state.historySources).toHaveLength(1))
+    expect([state.prewarmed, state.recovered]).toEqual([1, 1])
+
+    // Later clients do not start it again.
+    await askForProjects(port)
+    expect(state.historySources).toHaveLength(1)
+    expect([state.prewarmed, state.recovered]).toEqual([1, 1])
+  })
+
+  it('starts shortly after listening when no client asks', async () => {
+    await listen()
+    await new Promise((resolve) => setTimeout(resolve, 1_000))
+    expect(state.historySources).toEqual([])
+    await vi.waitFor(() => expect(state.historySources).toHaveLength(1), { timeout: 2_000 })
+    expect([state.prewarmed, state.recovered]).toEqual([1, 1])
+  })
+
+  it('starts at once for an imported chat, which needs the scan', async () => {
+    state.historyPage.mockResolvedValue({ events: [], page: { olderCursor: null, snapshotSeq: 0 } })
+    const { port } = await listen()
+    const client = new WebSocket(`ws://127.0.0.1:${port}`)
+    try {
+      await once(client, 'message')
+      const reply = once(client, 'message')
+      client.send(
+        JSON.stringify({
+          id: 'imported',
+          method: 'thread.history',
+          params: { threadId: 'external:codex:s', page: {} },
+        }),
+      )
+      await reply
+    } finally {
+      client.terminate()
+    }
+    expect(state.historySources).toHaveLength(1)
+    expect(state.historyLoads).toEqual(['external:codex:s'])
+  })
+
+  it('never starts once the server closed', async () => {
+    await listen()
+    await running!.close()
+    running = undefined
+    await new Promise((resolve) => setTimeout(resolve, 1_700))
+    expect(state.historySources).toEqual([])
+    expect([state.prewarmed, state.recovered]).toEqual([0, 0])
   })
 })
 

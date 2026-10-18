@@ -5,6 +5,7 @@ import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -65,10 +66,19 @@ import {
   IconNetwork as Network,
   IconPalette as Palette,
   IconLayoutSidebar as PanelLeft,
+  IconRefresh as Refresh,
   IconRotate as RotateCcw,
   IconUser as UserRound,
 } from '@tabler/icons-react'
-import { connectionMark, isCustomModelChoice, type ModelChoice } from '../model-catalog.js'
+import {
+  connectionMark,
+  isCustomModelChoice,
+  providerMark,
+  sourceKey,
+  type ModelChoice,
+} from '../model-catalog.js'
+import { agentPresentation, type ProviderPresentation } from '../provider-presentation.js'
+import type { ComposerError } from './ComposerErrors.js'
 import {
   pinnableModels,
   pinnedModelChoice,
@@ -147,8 +157,18 @@ import { ProfileSettings } from './ProfileSettings.js'
 import { GeneratedAvatarLab } from './GeneratedAvatarLab.js'
 import type { ProfileIdentityPreferences } from '../profile-preferences.js'
 import { SourceIdentity } from './SourceIdentity.js'
+import { ModelBulkActions, ModelVisibilityRow } from './ModelVisibilityControls.js'
+import { LARGE_MODEL_SOURCE_ROWS, ModelLabSection } from './ModelLabSection.js'
 import { SettingsMeta, StateLabel } from './SettingsStatus.js'
 import { UsageSettings } from './UsageSettings.js'
+import type { PlanLimitsSource } from './usage/UsageLimits.js'
+import {
+  SettingsEmpty,
+  SettingsNotice,
+  SettingsPage,
+  SettingsSection,
+  SettingsRow,
+} from './settings/SettingsLayout.js'
 import {
   DEFAULT_KEYBINDINGS,
   isComposingKey,
@@ -160,6 +180,7 @@ import { KeybindSettings } from './KeybindSettings.js'
 import { GeneralSettings } from './GeneralSettings.js'
 import { ProviderUpdateCheck } from './ProviderUpdates.js'
 import { useProviderUpdates, type ProviderUpdateSimulation } from '../provider-updates.js'
+import { useInstallCheck } from '../provider-recheck.js'
 
 const InstallTerminal = lazy(() =>
   import('./InstallTerminal.js')
@@ -269,6 +290,8 @@ function SettingsComponent(props: {
   projectName: string | undefined
   account: Account | undefined
   accountLoading?: boolean | undefined
+  /** Plan limits for every provider, shown on the Usage tab. */
+  usageLimits?: PlanLimitsSource | undefined
   profileIdentity?: ProfileIdentityPreferences | undefined
   onProfileIdentityChange?: ((updates: Partial<ProfileIdentityPreferences>) => void) | undefined
   providerStatuses: ProviderStatus[]
@@ -278,8 +301,14 @@ function SettingsComponent(props: {
   providersLoading?: boolean | undefined
   models: ModelChoice[]
   modelsLoading?: boolean | undefined
+  /** Why a source's models could not be listed, by source key. */
+  modelErrors?: Readonly<Record<string, ComposerError>> | undefined
+  /** Sources whose models are being listed right now. */
+  pendingModelSources?: ReadonlySet<string> | undefined
   hiddenModels: Set<string>
   onModelVisibilityChange: (key: string, visible: boolean) => void
+  /** Several rows at once, as one change. */
+  onModelsVisibilityChange: (keys: readonly string[], visible: boolean) => void
   providerDefaults?: ProviderDefaultsControls | undefined
   onConnectionsChanged: () => void
   projectCount: number
@@ -321,6 +350,13 @@ function SettingsComponent(props: {
   useEffect(() => {
     setSection(props.initialSection ?? 'workflows')
   }, [props.initialSection, props.sectionRequest])
+
+  // Every tab shares one scroller; a tab opens at its top, not at the offset
+  // the previous tab was left at.
+  const main = useRef<HTMLElement>(null)
+  useLayoutEffect(() => {
+    if (main.current) main.current.scrollTop = 0
+  }, [section])
 
   const panel = useRef<HTMLDivElement>(null)
   const onClose = useRef(props.onClose)
@@ -420,7 +456,7 @@ function SettingsComponent(props: {
           <SettingsNavItem
             active={section === 'mcp'}
             icon={<Network size={15} aria-hidden />}
-            label="MCP"
+            label="MCP servers"
             onClick={() => setSection('mcp')}
           />
           <SettingsNavItem
@@ -458,18 +494,20 @@ function SettingsComponent(props: {
         </nav>
       </aside>
 
-      <main className="settings__main">
-        <div
-          className={`settings__content${section === 'usage' ? ' settings__content--usage' : ''}`}
-        >
+      <main className="settings__main" ref={main}>
+        <div className="settings__content">
           {section === 'profile' ? (
             <ProfileSettings
               transport={props.transport}
+              provider={props.provider}
               account={props.account}
               accountLoading={props.accountLoading}
               providerName={props.providerName}
+              providers={props.providersLoading ? undefined : props.providerStatuses}
               identity={props.profileIdentity}
               onIdentityChange={props.onProfileIdentityChange}
+              onManageAccounts={() => setSection('providers')}
+              onOpenUsage={() => setSection('usage')}
             />
           ) : null}
           {section === 'providers' ? <ProviderSettings {...props} /> : null}
@@ -485,7 +523,9 @@ function SettingsComponent(props: {
           ) : null}
           {section === 'skills' ? <SkillsSettings {...props} /> : null}
           {section === 'workflows' ? <GeneralSettings {...props} /> : null}
-          {section === 'usage' ? <UsageSettings transport={props.transport} /> : null}
+          {section === 'usage' ? (
+            <UsageSettings transport={props.transport} limits={props.usageLimits} />
+          ) : null}
           {section === 'appearance' ? <AppearanceSettings {...props} /> : null}
           {section === 'keybinds' ? (
             <KeybindSettings
@@ -497,10 +537,11 @@ function SettingsComponent(props: {
           ) : null}
           {section === 'data' ? <DataSettings {...props} /> : null}
           {section === 'debug' ? (
-            <SettingsPanel title="Debug">
-              <SettingsRow title="Onboarding">
+            <SettingsPage title="Debug">
+              <SettingsRow name="Onboarding">
                 <button
-                  className="btn"
+                  className="set-button"
+                  type="button"
                   onClick={props.onForceOnboarding}
                   disabled={!props.onForceOnboarding}
                 >
@@ -510,13 +551,13 @@ function SettingsComponent(props: {
               <UsageHistoryReset transport={props.transport} />
               <AppUpdateSimulationRow />
               <ProviderUpdateSimulationRow transport={props.transport} />
-              <SettingsRow
+              <SettingsSection
                 title="Avatar generator"
                 note="The picture a profile gets from its name when no photo is uploaded. Same name, same picture, on every provider."
-                className="settings__row--roomy"
-              />
-              <GeneratedAvatarLab initialName={props.profileIdentity?.displayName} />
-            </SettingsPanel>
+              >
+                <GeneratedAvatarLab initialName={props.profileIdentity?.displayName} />
+              </SettingsSection>
+            </SettingsPage>
           ) : null}
           {section === 'about' ? <AboutSettings transport={props.transport} /> : null}
         </div>
@@ -537,14 +578,13 @@ function AppUpdateSimulationRow() {
 
   return (
     <SettingsRow
-      title="Simulate app update"
+      name="Simulate app update"
       note="Plays a fake release through the sidebar button and About. Nothing is downloaded; restarting reloads the window."
-      className="settings__row--roomy"
     >
       {UPDATE_SIMULATIONS.map(({ scenario, label }) => (
         <button
           key={scenario}
-          className="settings__action"
+          className="set-button"
           type="button"
           onClick={() => void simulateAppUpdate(scenario)}
         >
@@ -552,7 +592,7 @@ function AppUpdateSimulationRow() {
         </button>
       ))}
       <button
-        className="settings__action"
+        className="set-button"
         type="button"
         disabled={!running}
         onClick={stopAppUpdateSimulation}
@@ -573,14 +613,13 @@ function ProviderUpdateSimulationRow(props: { transport: Transport }) {
   const { store, state } = useProviderUpdates(props.transport)
   return (
     <SettingsRow
-      title="Simulate provider updates"
+      name="Simulate provider updates"
       note="Pops the update notice with made-up releases one step past what is installed. Update plays the whole run without touching a CLI; dismissing the notice ends it."
-      className="settings__row--roomy"
     >
       {PROVIDER_UPDATE_SIMULATIONS.map(({ scenario, label }) => (
         <button
           key={scenario}
-          className="settings__action"
+          className="set-button"
           type="button"
           onClick={() => store.simulate(scenario)}
         >
@@ -588,7 +627,7 @@ function ProviderUpdateSimulationRow(props: { transport: Transport }) {
         </button>
       ))}
       <button
-        className="settings__action"
+        className="set-button"
         type="button"
         aria-label="Stop provider update simulation"
         disabled={!state.simulation}
@@ -701,7 +740,8 @@ export function ProviderSettings(props: {
 }) {
   type AuthReadState =
     | { phase: 'loading' }
-    | { phase: 'ready'; account: Account }
+    // refreshError: a background re-check failed; the account shown is the last one read.
+    | { phase: 'ready'; account: Account; refreshError?: string }
     | { phase: 'error'; message: string }
   type AuthOperation = {
     id: number
@@ -795,13 +835,19 @@ export function ProviderSettings(props: {
           currentTransport.current !== request.transport
         )
           return
-        setAuthStates((current) => ({
-          ...current,
-          [provider]: {
-            phase: 'error',
-            message: cause instanceof Error ? cause.message : String(cause),
-          },
-        }))
+        const message = cause instanceof Error ? cause.message : String(cause)
+        // A slow CLI must not turn a known sign-in into "Account unavailable":
+        // a background re-check keeps the account and only marks the row.
+        setAuthStates((current) => {
+          const known = current[provider]
+          return {
+            ...current,
+            [provider]:
+              !forceLoading && known?.phase === 'ready'
+                ? { phase: 'ready', account: known.account, refreshError: message }
+                : { phase: 'error', message },
+          }
+        })
       }
     },
     [props.transport, props.onAccountChange],
@@ -1051,6 +1097,7 @@ export function ProviderSettings(props: {
     )
     const operation = authOperations[status.id]
     const authError = authErrors[status.id]
+    const refreshError = authState.refreshError
     const operationStatus =
       operation?.kind === 'sign-in'
         ? 'Signing in…'
@@ -1072,7 +1119,9 @@ export function ProviderSettings(props: {
               }
             : status.problem
               ? { message: status.problem }
-              : undefined
+              : refreshError
+                ? { message: `Could not refresh this account. ${refreshError}` }
+                : undefined
         }
         primary={
           account?.signedIn
@@ -1146,7 +1195,7 @@ export function ProviderSettings(props: {
         provider={provider}
         status="Signed in"
         issue={accountError ? { message: accountError, announce: true } : undefined}
-        secondary={{
+        primary={{
           label: agentBusy === agent.id ? 'Signing out…' : 'Sign out',
           disabled: agentBusy === agent.id,
           danger: true,
@@ -1201,10 +1250,7 @@ export function ProviderSettings(props: {
   )
 
   return (
-    <SettingsPanel
-      title="Providers"
-      groupClassName="settings__group--plain settings__group--providers"
-    >
+    <SettingsPage title="Providers">
       {props.providersLoading && props.providerStatuses.length === 0 ? (
         <SkeletonStatus label="Loading providers…">
           {PROVIDER_ROSTER.map((id, index) => (
@@ -1217,160 +1263,237 @@ export function ProviderSettings(props: {
       ) : (
         PROVIDER_ROSTER.flatMap(byId).map(renderProviderRow)
       )}
-      {agents.map(renderAgentRow)}
-      <h2 className="settings__group-title settings__group-title--inside">API connections</h2>
-      {(props.modelConnections ?? []).map((connection) => (
-        <SettingsRow key={connection.id} title={connection.displayName}>
-          <div className="provider-settings__actions">
-            <StateLabel
-              state={connection.credentialConfigured ? 'ready' : 'setup-needed'}
-              detail={
-                connection.credentialConfigured
-                  ? CONNECTION_PRESETS[connection.preset].label
-                  : 'Key missing'
-              }
-            />
-            <ProviderIcon mark={connectionMark(connection.preset)} size={17} />
-            <button
-              className="settings__action is-danger"
-              type="button"
-              onClick={() => {
-                void props.transport
-                  .request('connections.remove', { connectionId: connection.id })
-                  .then(props.onConnectionsChanged)
-              }}
-            >
-              Remove
-            </button>
-          </div>
-        </SettingsRow>
-      ))}
-      {addingConnection ? (
-        <div className="provider-form">
-          <div className="provider-form__field">
-            <span>Provider</span>
-            <Menu
-              align="left"
-              drop="down"
-              label={`Provider, ${CONNECTION_PRESETS[connectionPreset].label}`}
-              panelLabel="API provider"
-              panelClassName="provider-form__menu"
-              triggerClassName="provider-form__select"
-              trigger={(open) => (
-                <>
-                  <span className="provider-form__select-value">
-                    <ProviderIcon mark={connectionMark(connectionPreset)} size={16} />
-                    {CONNECTION_PRESETS[connectionPreset].label}
-                  </span>
-                  <ChevronDown className={open ? 'is-open' : undefined} size={14} aria-hidden />
-                </>
-              )}
-            >
-              {(close) =>
-                Object.entries(CONNECTION_PRESETS).map(([value, config]) => (
-                  <MenuItem
-                    key={value}
-                    title={config.label}
-                    icon={
-                      <ProviderIcon
-                        mark={connectionMark(value as ModelConnectionPreset)}
-                        size={16}
-                      />
-                    }
-                    active={value === connectionPreset}
-                    onClick={() => {
-                      chooseConnectionPreset(value as ModelConnectionPreset)
-                      close()
-                    }}
-                  />
-                ))
-              }
-            </Menu>
-          </div>
-          <label>
-            <span>Name</span>
-            <input
-              value={connectionName}
-              onChange={(event) => setConnectionName(event.target.value)}
-            />
-          </label>
-          <label className="provider-form__wide">
-            <span>Base URL</span>
-            <input
-              value={connectionBaseUrl}
-              onChange={(event) => setConnectionBaseUrl(event.target.value)}
-              spellCheck={false}
-            />
-          </label>
-          <label>
-            <span>Default model</span>
-            <input
-              value={connectionDefaultModel}
-              onChange={(event) => setConnectionDefaultModel(event.target.value)}
-              placeholder={CONNECTION_PRESETS[connectionPreset].placeholder}
-              spellCheck={false}
-            />
-          </label>
-          <label className="provider-form__wide">
-            <span>API key</span>
-            <input
-              type="password"
-              value={connectionApiKey}
-              onChange={(event) => setConnectionApiKey(event.target.value)}
-              autoComplete="off"
-            />
-          </label>
-          {connectionError ? <p className="provider-form__error">{connectionError}</p> : null}
-          <div className="provider-form__actions">
-            <button className="ghost" type="button" onClick={() => setAddingConnection(false)}>
-              Cancel
-            </button>
-            <button
-              className="btn"
-              type="button"
-              disabled={
-                connectionSaving ||
-                !connectionName.trim() ||
-                !connectionBaseUrl.trim() ||
-                !connectionApiKey.trim()
-              }
-              onClick={() => void addConnection()}
-            >
-              {connectionSaving ? 'Connecting…' : 'Connect'}
-            </button>
-          </div>
+      {agents.map((agent) => (
+        <div className="provider-settings__entry" key={agent.id}>
+          {renderAgentRow(agent)}
         </div>
-      ) : (
-        <button
-          className="settings__action"
-          type="button"
-          onClick={() => setAddingConnection(true)}
-        >
-          <KeyRound size={15} aria-hidden />
-          Connect another plan or API
-        </button>
-      )}
+      ))}
+      <SettingsSection title="API connections">
+        {(props.modelConnections ?? []).map((connection) => (
+          <ConnectionRow
+            key={connection.id}
+            connection={connection}
+            onRemove={() => {
+              void props.transport
+                .request('connections.remove', { connectionId: connection.id })
+                .then(props.onConnectionsChanged)
+            }}
+          />
+        ))}
+        {addingConnection ? (
+          <div className="set-form">
+            <div className="set-form__field">
+              <span>Provider</span>
+              <Menu
+                align="left"
+                drop="down"
+                label={`Provider, ${CONNECTION_PRESETS[connectionPreset].label}`}
+                panelLabel="API provider"
+                panelClassName="provider-form__menu"
+                triggerClassName="provider-form__select set-select"
+                trigger={(open) => (
+                  <>
+                    <span className="provider-form__select-value">
+                      <ProviderIcon mark={connectionMark(connectionPreset)} size={16} />
+                      {CONNECTION_PRESETS[connectionPreset].label}
+                    </span>
+                    <ChevronDown className={open ? 'is-open' : undefined} size={14} aria-hidden />
+                  </>
+                )}
+              >
+                {(close) =>
+                  Object.entries(CONNECTION_PRESETS).map(([value, config]) => (
+                    <MenuItem
+                      key={value}
+                      title={config.label}
+                      icon={
+                        <ProviderIcon
+                          mark={connectionMark(value as ModelConnectionPreset)}
+                          size={16}
+                        />
+                      }
+                      active={value === connectionPreset}
+                      onClick={() => {
+                        chooseConnectionPreset(value as ModelConnectionPreset)
+                        close()
+                      }}
+                    />
+                  ))
+                }
+              </Menu>
+            </div>
+            <label>
+              <span>Name</span>
+              <input
+                className="set-input"
+                value={connectionName}
+                onChange={(event) => setConnectionName(event.target.value)}
+              />
+            </label>
+            <label className="set-form__wide">
+              <span>Base URL</span>
+              <input
+                className="set-input"
+                value={connectionBaseUrl}
+                onChange={(event) => setConnectionBaseUrl(event.target.value)}
+                spellCheck={false}
+              />
+            </label>
+            <label>
+              <span>Default model</span>
+              <input
+                className="set-input"
+                value={connectionDefaultModel}
+                onChange={(event) => setConnectionDefaultModel(event.target.value)}
+                placeholder={CONNECTION_PRESETS[connectionPreset].placeholder}
+                spellCheck={false}
+              />
+            </label>
+            <label className="set-form__wide">
+              <span>API key</span>
+              <input
+                className="set-input"
+                type="password"
+                value={connectionApiKey}
+                onChange={(event) => setConnectionApiKey(event.target.value)}
+                autoComplete="off"
+              />
+            </label>
+            {connectionError ? <p className="set-form__error">{connectionError}</p> : null}
+            <div className="set-form__actions">
+              <button
+                className="set-button set-button--quiet"
+                type="button"
+                onClick={() => setAddingConnection(false)}
+              >
+                Cancel
+              </button>
+              <button
+                className="set-button set-button--primary"
+                type="button"
+                disabled={
+                  connectionSaving ||
+                  !connectionName.trim() ||
+                  !connectionBaseUrl.trim() ||
+                  !connectionApiKey.trim()
+                }
+                onClick={() => void addConnection()}
+              >
+                {connectionSaving ? 'Connecting…' : 'Connect'}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <button
+            className="set-button provider-connections__add"
+            type="button"
+            onClick={() => setAddingConnection(true)}
+          >
+            <KeyRound size={15} aria-hidden />
+            Connect another plan or API
+          </button>
+        )}
+      </SettingsSection>
       <ProviderUpdateCheck transport={props.transport} />
-    </SettingsPanel>
+    </SettingsPage>
   )
 }
 
+/**
+ * An API connection on the roster's own row: its mark and name, the solid
+ * wire once a key is stored (the open leader while one is missing), and
+ * Remove where a provider has Sign out.
+ */
+function ConnectionRow(props: { connection: ModelConnection; onRemove: () => void }) {
+  const configured = props.connection.credentialConfigured
+  return (
+    <div className="provider-row" data-link={configured ? 'connected' : 'open'}>
+      <div className="provider-row__mark">
+        <ProviderIcon mark={connectionMark(props.connection.preset)} size={18} />
+      </div>
+      <div className="provider-row__identity">
+        <p className="set-entity__name">{props.connection.displayName}</p>
+      </div>
+      <span className="set-leader" aria-hidden />
+      <div className="provider-row__status set-entity__status">
+        <span className="provider-row__status-text">
+          {configured ? CONNECTION_PRESETS[props.connection.preset].label : 'Key missing'}
+        </span>
+      </div>
+      <div className="provider-row__secondary" />
+      <div className="provider-row__primary">
+        <button
+          className="set-button set-button--danger"
+          type="button"
+          aria-label={`Remove ${props.connection.displayName}`}
+          onClick={props.onRemove}
+        >
+          Remove
+        </button>
+      </div>
+    </div>
+  )
+}
 function ModelSettings(props: {
   transport: Transport
   models: ModelChoice[]
   modelsLoading?: boolean | undefined
+  /** Why a source's models could not be listed, by source key. */
+  modelErrors?: Readonly<Record<string, ComposerError>> | undefined
+  /** Sources whose models are being listed right now. */
+  pendingModelSources?: ReadonlySet<string> | undefined
+  providerStatuses: ProviderStatus[]
+  acpAgents?: ResultOf<'acp.agents'>['agents'] | undefined
+  modelConnections?: ModelConnection[] | undefined
   hiddenModels: Set<string>
   onModelVisibilityChange: (key: string, visible: boolean) => void
+  onModelsVisibilityChange: (keys: readonly string[], visible: boolean) => void
+  onConnectionsChanged: () => void
 }) {
   // Existing stored custom choices remain usable in the composer, but raw
   // provider-id editing is intentionally absent from beta settings.
-  const catalogModels = props.models.filter((choice) => !isCustomModelChoice(choice))
-  const sources = groupModelsBySource(catalogModels)
+  const sources = useMemo(
+    () => groupModelsBySource(props.models.filter((choice) => !isCustomModelChoice(choice))),
+    [props.models],
+  )
+
+  // A source whose models failed to load would otherwise vanish from the
+  // page. It keeps a section with the reason and a Retry; while it is asked
+  // again (or once Retry is pressed, until the next answer) the section
+  // shows that instead, so a retry never makes it blink out and back.
+  const errors = props.modelErrors
+  const [seenFailures, setSeenFailures] = useState<ReadonlySet<string>>(() => new Set())
+  const [retryFrom, setRetryFrom] = useState<typeof errors>()
+  const loaded = new Set(sources.map((group) => group.key))
+  const failing = Object.keys(errors ?? {}).filter((key) => !loaded.has(key))
+  if (failing.some((key) => !seenFailures.has(key))) {
+    setSeenFailures(new Set([...seenFailures, ...failing]))
+  }
+  const retrying = retryFrom !== undefined && retryFrom === errors
+  const failed = [...new Set([...seenFailures, ...failing])].flatMap((key) => {
+    if (loaded.has(key)) return []
+    const loading = retrying || props.pendingModelSources?.has(key) === true
+    const error = errors?.[key]
+    if (!loading && !error) return []
+    const presentation = modelSourcePresentation(key, props)
+    return [{ key, presentation, loading, error }]
+  })
+  // A refresh that never answers (the server itself went away) must not
+  // leave the sources loading for good.
+  useEffect(() => {
+    if (retryFrom === undefined) return
+    const timer = window.setTimeout(() => setRetryFrom(undefined), 30_000)
+    return () => window.clearTimeout(timer)
+  }, [retryFrom])
+  const retry = () => {
+    setRetryFrom(errors)
+    props.onConnectionsChanged()
+  }
 
   return (
-    <SettingsPanel title="Models" groupClassName="settings__group--plain model-settings">
+    <SettingsPage title="Models" className="model-settings">
       <BackgroundModelSettings transport={props.transport} />
-      {sources.length > 0 ? (
+      {sources.length > 0 || failed.length > 0 ? (
         <div className="model-settings__sources">
           {sources.map((group) => (
             <ModelVisibilityGroup
@@ -1379,19 +1502,72 @@ function ModelSettings(props: {
               choices={group.entries}
               hiddenModels={props.hiddenModels}
               onModelVisibilityChange={props.onModelVisibilityChange}
+              onModelsVisibilityChange={props.onModelsVisibilityChange}
             />
+          ))}
+          {failed.map((source) => (
+            <SettingsSection
+              key={source.key}
+              title={
+                source.presentation ? (
+                  <SourceIdentity presentation={source.presentation} />
+                ) : undefined
+              }
+              label={source.presentation ? undefined : 'Model source'}
+            >
+              {source.loading ? (
+                <SettingsNotice tone="progress">
+                  {source.presentation
+                    ? `Loading ${source.presentation.label} models…`
+                    : 'Loading models…'}
+                </SettingsNotice>
+              ) : (
+                <SettingsNotice
+                  tone="error"
+                  action={
+                    <button className="set-button" type="button" onClick={retry}>
+                      Retry
+                    </button>
+                  }
+                >
+                  {source.error?.message}
+                </SettingsNotice>
+              )}
+            </SettingsSection>
           ))}
         </div>
       ) : props.modelsLoading ? (
         <ModelSourcesSkeleton />
       ) : (
-        <div className="model-settings__empty">
-          <Boxes size={18} aria-hidden />
-          <p>No models are available from your connected providers yet.</p>
-        </div>
+        <SettingsEmpty
+          icon={<Boxes aria-hidden />}
+          title="No models are available from your connected providers yet."
+        />
       )}
-    </SettingsPanel>
+    </SettingsPage>
   )
+}
+
+/** The name and mark of a model source, from the roster it was listed from. */
+function modelSourcePresentation(
+  key: string,
+  roster: {
+    providerStatuses: ProviderStatus[]
+    acpAgents?: ResultOf<'acp.agents'>['agents'] | undefined
+    modelConnections?: ModelConnection[] | undefined
+  },
+): ProviderPresentation | undefined {
+  const status = roster.providerStatuses.find((entry) => sourceKey({ provider: entry.id }) === key)
+  if (status) return { label: status.displayName, mark: providerMark(status.id) }
+  const agent = roster.acpAgents?.find(
+    (entry) => sourceKey({ provider: 'acp', agentId: entry.id }) === key,
+  )
+  if (agent) return agentPresentation(agent.id, agent.name)
+  const connection = roster.modelConnections?.find(
+    (entry) => sourceKey({ provider: 'api', connectionId: entry.id }) === key,
+  )
+  if (connection) return { label: connection.displayName, mark: connectionMark(connection.preset) }
+  return undefined
 }
 
 const MODEL_SKELETON_WIDTHS = [132, 176, 108, 152] as const
@@ -1400,45 +1576,43 @@ function ModelSourcesSkeleton() {
   return (
     <SkeletonStatus label="Loading models…" className="model-settings__sources">
       {[4, 3].map((rows, index) => (
-        <section className="model-visibility" key={index} aria-hidden>
-          <header className="model-visibility__source">
-            <h3>
+        <div className="set-section" key={index} aria-hidden>
+          <div className="set-section__head">
+            <span className="set-section__title">
               <span className="source-identity source-identity--regular">
                 <span className="source-identity__mark">
                   <Skeleton className="skeleton--icon" width={15} height={15} />
                 </span>
                 <Skeleton width={index === 0 ? 64 : 92} height={9} />
               </span>
-            </h3>
-            <div className="model-visibility__bulk-actions">
-              <button type="button" disabled>
-                All
-              </button>
-              <button type="button" disabled>
-                None
-              </button>
-            </div>
-          </header>
-          <div className="model-visibility__models">
-            <div>
-              {MODEL_SKELETON_WIDTHS.slice(0, rows).map((width, row) => (
-                <SettingsRow
-                  key={row}
-                  className="model-visibility__model"
-                  title={
-                    <span className="settings-value-skeleton">
-                      <Skeleton width={width} height={9} />
-                    </span>
-                  }
-                >
-                  <span className="settings__switch-skeleton">
-                    <Skeleton width={36} height={22} />
-                  </span>
-                </SettingsRow>
-              ))}
+            </span>
+            <div className="set-section__action">
+              <div className="model-visibility__bulk-actions">
+                <button type="button" disabled>
+                  All
+                </button>
+                <button type="button" disabled>
+                  None
+                </button>
+              </div>
             </div>
           </div>
-        </section>
+          {MODEL_SKELETON_WIDTHS.slice(0, rows).map((width, row) => (
+            <SettingsRow
+              key={row}
+              className="model-visibility__model"
+              name={
+                <span className="settings-value-skeleton">
+                  <Skeleton width={width} height={9} />
+                </span>
+              }
+            >
+              <span className="settings__switch-skeleton">
+                <Skeleton width={30} height={18} />
+              </span>
+            </SettingsRow>
+          ))}
+        </div>
       ))}
     </SkeletonStatus>
   )
@@ -1522,128 +1696,111 @@ function BackgroundModelSettings(props: { transport: Transport }) {
   const loading = state === undefined && !error
 
   return (
-    <section className="background-model-settings" aria-label="Background work">
-      <header>
-        <h2>Background work</h2>
-        <p>
-          Used for session titles, commit-message drafts, and other short writing. Automatic uses
-          Luna at low on a Codex subscription, Grok 4.6 at low when Grok is connected, or the newest
-          cost-oriented model at its lowest effort elsewhere.
-        </p>
-      </header>
-      <div className="settings__group">
-        <SettingsRow
-          title="Model"
-          note={
-            loading ? (
-              <SettingsValueSkeleton label="Loading background model details…" width={240} />
-            ) : state ? (
-              automaticNote
-            ) : undefined
-          }
-        >
-          {loading ? (
-            <SkeletonStatus
-              label="Loading background model…"
-              className="settings__select settings__select--model"
-            >
-              <Skeleton className="skeleton--block" width="100%" height={28} />
-            </SkeletonStatus>
-          ) : !state ? (
-            <SettingsMeta>Unavailable</SettingsMeta>
-          ) : (
-            <AppSelect
-              className="settings__select settings__select--model"
-              ariaLabel="Background model"
-              align="right"
-              value={selectedValue}
-              options={modelOptions}
-              disabled={!state || busy}
-              onChange={(value) => {
-                if (value === 'automatic') {
-                  void update({ mode: 'automatic' })
-                  return
-                }
-                const choice = backgroundModelFromValue(state?.sources ?? [], value)
-                if (!choice) return
-                const serviceTier = getNextServiceTierForModel({
-                  nextModel: choice.model,
-                  currentModel: selected?.model,
-                  currentServiceTier: manual?.serviceTier,
-                })
-                void update({
-                  mode: 'manual',
-                  target: {
-                    provider: choice.source.provider,
-                    ...(choice.source.connectionId
-                      ? { connectionId: choice.source.connectionId }
-                      : {}),
-                    ...(choice.source.agent
-                      ? {
-                          agent: choice.source.agent,
-                        }
-                      : {}),
-                    model: choice.model.id,
-                    ...(serviceTier ? { serviceTier } : {}),
-                    ...(choice.model.reasoningEfforts[0]
-                      ? {
-                          effort: choice.model.reasoningEfforts[0],
-                        }
-                      : {}),
-                  },
-                })
-              }}
-            />
-          )}
-        </SettingsRow>
-        {manual && selected && effortOptions.length > 0 ? (
-          <SettingsRow
-            title="Reasoning effort"
-            note="Choose the effort used for background writing."
-          >
-            <AppSelect
-              className="settings__select settings__select--effort"
-              ariaLabel="Background reasoning effort"
-              align="right"
-              value={selectedEffort}
-              options={effortOptions}
-              disabled={busy}
-              onChange={(effort) =>
-                void update({
-                  mode: 'manual',
-                  target: { ...manual, effort },
-                })
+    <SettingsSection
+      title="Background work"
+      note="Used for session titles, commit-message drafts, and other short writing."
+    >
+      {error ? <SettingsNotice tone="error">{error}</SettingsNotice> : null}
+      <SettingsRow
+        name="Model"
+        note={
+          loading ? (
+            <SettingsValueSkeleton label="Loading background model details…" width={240} />
+          ) : state ? (
+            automaticNote
+          ) : undefined
+        }
+      >
+        {loading ? (
+          <SkeletonStatus label="Loading background model…" className="settings-value-skeleton">
+            <Skeleton width={152} height={9} />
+          </SkeletonStatus>
+        ) : !state ? (
+          <SettingsMeta>Unavailable</SettingsMeta>
+        ) : (
+          <AppSelect
+            className="set-select--inline"
+            ariaLabel="Background model"
+            align="right"
+            value={selectedValue}
+            options={modelOptions}
+            disabled={!state || busy}
+            onChange={(value) => {
+              if (value === 'automatic') {
+                void update({ mode: 'automatic' })
+                return
               }
-            />
-          </SettingsRow>
-        ) : null}
-        {manual && selected && fastTier ? (
-          <SettingsRow title="Speed" note="Choose the speed used for background writing.">
-            <AppSelect
-              className="settings__select settings__select--effort"
-              ariaLabel="Background speed"
-              align="right"
-              value={selectedSpeed}
-              options={[
-                { value: 'standard', label: 'Standard' },
-                { value: 'fast', label: 'Fast' },
-              ]}
-              disabled={busy}
-              onChange={(speed) => {
-                const serviceTier =
-                  speed === 'fast' ? fastTier.id : getFastModeOffValue(selected.model)
-                void update({ mode: 'manual', target: { ...manual, serviceTier } })
-              }}
-            />
-          </SettingsRow>
-        ) : null}
-      </div>
-      {error ? (
-        <p className="background-model-settings__error" role="alert">
-          {error}
-        </p>
+              const choice = backgroundModelFromValue(state?.sources ?? [], value)
+              if (!choice) return
+              const serviceTier = getNextServiceTierForModel({
+                nextModel: choice.model,
+                currentModel: selected?.model,
+                currentServiceTier: manual?.serviceTier,
+              })
+              void update({
+                mode: 'manual',
+                target: {
+                  provider: choice.source.provider,
+                  ...(choice.source.connectionId
+                    ? { connectionId: choice.source.connectionId }
+                    : {}),
+                  ...(choice.source.agent
+                    ? {
+                        agent: choice.source.agent,
+                      }
+                    : {}),
+                  model: choice.model.id,
+                  ...(serviceTier ? { serviceTier } : {}),
+                  ...(choice.model.reasoningEfforts[0]
+                    ? {
+                        effort: choice.model.reasoningEfforts[0],
+                      }
+                    : {}),
+                },
+              })
+            }}
+          />
+        )}
+      </SettingsRow>
+      {manual && selected && effortOptions.length > 0 ? (
+        <SettingsRow name="Reasoning effort" note="Choose the effort used for background writing.">
+          <AppSelect
+            className="set-select--inline"
+            ariaLabel="Background reasoning effort"
+            align="right"
+            value={selectedEffort}
+            options={effortOptions}
+            disabled={busy}
+            onChange={(effort) =>
+              void update({
+                mode: 'manual',
+                target: { ...manual, effort },
+              })
+            }
+          />
+        </SettingsRow>
       ) : null}
-    </section>
+      {manual && selected && fastTier ? (
+        <SettingsRow name="Speed" note="Choose the speed used for background writing.">
+          <AppSelect
+            className="set-select--inline"
+            ariaLabel="Background speed"
+            align="right"
+            value={selectedSpeed}
+            options={[
+              { value: 'standard', label: 'Standard' },
+              { value: 'fast', label: 'Fast' },
+            ]}
+            disabled={busy}
+            onChange={(speed) => {
+              const serviceTier =
+                speed === 'fast' ? fastTier.id : getFastModeOffValue(selected.model)
+              void update({ mode: 'manual', target: { ...manual, serviceTier } })
+            }}
+          />
+        </SettingsRow>
+      ) : null}
+    </SettingsSection>
   )
 }
 
@@ -1684,78 +1841,41 @@ function ModelVisibilityGroup(props: {
   choices: ModelChoice[]
   hiddenModels: Set<string>
   onModelVisibilityChange: (key: string, visible: boolean) => void
+  onModelsVisibilityChange: (keys: readonly string[], visible: boolean) => void
 }) {
-  const visibleCount = props.choices.filter((choice) => !props.hiddenModels.has(choice.key)).length
-  const allVisible = visibleCount === props.choices.length
-  const noneVisible = visibleCount === 0
-
-  const setAllVisible = (visible: boolean) => {
-    for (const choice of props.choices) {
-      const currentlyVisible = !props.hiddenModels.has(choice.key)
-      if (currentlyVisible !== visible) {
-        props.onModelVisibilityChange(choice.key, visible)
-      }
-    }
+  const title = props.choices[0] ? (
+    <SourceIdentity presentation={{ label: props.source, mark: props.choices[0].mark }} />
+  ) : (
+    props.source
+  )
+  if (props.choices.length > LARGE_MODEL_SOURCE_ROWS) {
+    return <ModelLabSection title={title} {...props} />
   }
 
+  // A source is one section: its identity is the heading, All and None its
+  // action, and every model a leader row whose value is the switch.
   return (
-    <section className="model-visibility" aria-label={props.source}>
-      <header className="model-visibility__source">
-        {props.choices[0] ? (
-          <h3>
-            <SourceIdentity presentation={{ label: props.source, mark: props.choices[0].mark }} />
-          </h3>
-        ) : null}
-        <div
-          className="model-visibility__bulk-actions"
-          role="group"
-          aria-label={`${props.source} model visibility`}
-        >
-          <button
-            type="button"
-            aria-label={`Show all ${props.source} models in model picker`}
-            disabled={allVisible}
-            onClick={() => setAllVisible(true)}
-          >
-            All
-          </button>
-          <button
-            type="button"
-            aria-label={`Hide all ${props.source} models from model picker`}
-            disabled={noneVisible}
-            onClick={() => setAllVisible(false)}
-          >
-            None
-          </button>
-        </div>
-      </header>
-
-      <div className="model-visibility__models">
-        <div>
-          {props.choices.map((choice) => {
-            const visible = !props.hiddenModels.has(choice.key)
-            return (
-              <SettingsRow
-                className={`model-visibility__model${visible ? '' : ' is-hidden'}`}
-                key={choice.key}
-                title={choice.model.displayName}
-              >
-                <button
-                  className={`switch${visible ? ' is-on' : ''}`}
-                  type="button"
-                  role="switch"
-                  aria-label={`Include ${choice.model.displayName} in model picker`}
-                  aria-checked={visible}
-                  onClick={() => props.onModelVisibilityChange(choice.key, !visible)}
-                >
-                  <span className="switch__thumb" />
-                </button>
-              </SettingsRow>
-            )
-          })}
-        </div>
-      </div>
-    </section>
+    <SettingsSection
+      title={title}
+      action={
+        <ModelBulkActions
+          name={`${props.source} models`}
+          groupLabel={`${props.source} model visibility`}
+          choices={props.choices}
+          hiddenModels={props.hiddenModels}
+          onModelsVisibilityChange={props.onModelsVisibilityChange}
+        />
+      }
+    >
+      {props.choices.map((choice) => (
+        <ModelVisibilityRow
+          key={choice.key}
+          choice={choice}
+          visible={!props.hiddenModels.has(choice.key)}
+          onModelVisibilityChange={props.onModelVisibilityChange}
+        />
+      ))}
+    </SettingsSection>
   )
 }
 
@@ -1774,17 +1894,14 @@ function AppearanceSettings(props: {
   showMacOSHaptics?: boolean | undefined
 }) {
   return (
-    <SettingsPanel title="Appearance" groupClassName="settings__group--plain appearance">
-      <section className="appearance-section" aria-labelledby="appearance-theme-heading">
-        <h2 className="appearance-section__heading" id="appearance-theme-heading">
-          Theme
-        </h2>
+    <SettingsPage title="Appearance">
+      <SettingsSection title="Theme">
         <ThemePicker
           value={props.themePreference}
           preferences={props.appearancePreferences}
           onChange={props.onThemePreferenceChange}
         />
-      </section>
+      </SettingsSection>
       {(['light', 'dark'] as const).map((mode) => (
         <AppearanceEditor
           key={mode}
@@ -1794,10 +1911,10 @@ function AppearanceSettings(props: {
         />
       ))}
       {props.showMacOSHaptics || props.showMacOSFontSmoothing ? (
-        <section className="appearance-section" aria-label="Shared appearance controls">
+        <SettingsSection label="Shared appearance controls">
           {props.showMacOSHaptics ? <SidebarHapticsSetting /> : null}
           {props.showMacOSFontSmoothing ? (
-            <AppearanceRow name="Font smoothing">
+            <SettingsRow name="Font smoothing">
               <button
                 className={`switch${props.macOSFontSmoothing ? ' is-on' : ''}`}
                 type="button"
@@ -1808,27 +1925,11 @@ function AppearanceSettings(props: {
               >
                 <span className="switch__thumb" />
               </button>
-            </AppearanceRow>
+            </SettingsRow>
           ) : null}
-        </section>
+        </SettingsSection>
       ) : null}
-    </SettingsPanel>
-  )
-}
-
-/**
- * One appearance setting, laid out like a provider in the roster: the name,
- * a dotted leader that lights while the row is hovered, and the value at the
- * far edge. Nothing behind it is painted.
- */
-function AppearanceRow(props: { name: string; note?: string; children: ReactNode }) {
-  return (
-    <div className="appearance-row">
-      <p className="appearance-row__name">{props.name}</p>
-      <span className="appearance-row__leader" aria-hidden />
-      <div className="appearance-row__value">{props.children}</div>
-      {props.note ? <p className="appearance-row__note">{props.note}</p> : null}
-    </div>
+    </SettingsPage>
   )
 }
 
@@ -1886,20 +1987,21 @@ function AppearanceEditor(props: {
     props.preference.accent === 'neutral' && props.preference.backdrop === 'default'
 
   return (
-    <section className="appearance-section" aria-label={title}>
-      <div className="appearance-section__head">
-        <h2 className="appearance-section__heading">{title}</h2>
-        {defaultColors ? null : (
+    <SettingsSection
+      title={title}
+      action={
+        defaultColors ? undefined : (
           <button
-            className="appearance-section__reset"
+            className="set-button set-button--quiet"
             type="button"
             onClick={() => props.onChange({ accent: 'neutral', backdrop: 'default' })}
           >
             Reset colors
           </button>
-        )}
-      </div>
-      <AppearanceRow name="Accent">
+        )
+      }
+    >
+      <SettingsRow name="Accent">
         <AppearanceColorPicker
           label="Accent palette"
           value={props.preference.accent}
@@ -1907,8 +2009,8 @@ function AppearanceEditor(props: {
           options={ACCENT_OPTIONS}
           onChange={(accent) => props.onChange({ accent })}
         />
-      </AppearanceRow>
-      <AppearanceRow name="Background">
+      </SettingsRow>
+      <SettingsRow name="Background">
         <AppearanceColorPicker
           label="Background"
           value={props.preference.backdrop}
@@ -1916,10 +2018,10 @@ function AppearanceEditor(props: {
           options={BACKDROP_OPTIONS}
           onChange={(backdrop) => props.onChange({ backdrop })}
         />
-      </AppearanceRow>
-      <AppearanceRow name="Interface font">
+      </SettingsRow>
+      <SettingsRow name="Interface font">
         <AppSelect
-          className="appearance-select"
+          className="set-select--inline"
           ariaLabel="Interface font"
           align="right"
           value={props.preference.font}
@@ -1929,25 +2031,25 @@ function AppearanceEditor(props: {
           search={FONT_SEARCH}
           onChange={(font) => props.onChange({ font })}
         />
-      </AppearanceRow>
-      <AppearanceRow name="Sidebar translucency">
+      </SettingsRow>
+      <SettingsRow name="Sidebar translucency">
         <AppSelect
-          className="appearance-select"
+          className="set-select--inline"
           ariaLabel="Sidebar translucency"
           align="right"
           value={String(selectedGlass.value)}
           options={GLASS_SELECT_OPTIONS}
           onChange={(value) => props.onChange({ glass: Number(value) })}
         />
-      </AppearanceRow>
-    </section>
+      </SettingsRow>
+    </SettingsSection>
   )
 }
 
 function SidebarHapticsSetting() {
   const enabled = useSyncExternalStore(subscribeAppHaptics, readAppHaptics, readAppHaptics)
   return (
-    <AppearanceRow
+    <SettingsRow
       name="Trackpad haptics"
       note="Feel responsive detents while resizing, choosing effort, and placing dragged chats."
     >
@@ -1968,7 +2070,7 @@ function SidebarHapticsSetting() {
       >
         <span className="switch__thumb" />
       </button>
-    </AppearanceRow>
+    </SettingsRow>
   )
 }
 
@@ -2056,7 +2158,11 @@ function DataSettings(props: {
   const [confirming, setConfirming] = useState(false)
   const [diagnosticsEnabled, setDiagnosticsEnabled] = useState<boolean>()
   const [diagnosticsError, setDiagnosticsError] = useState<string>()
-  const projectLabel = `${props.projectCount} ${props.projectCount === 1 ? 'project' : 'projects'} on this machine`
+  // The row names what the reset clears; the note names what it leaves alone.
+  const kept =
+    props.projectCount === 0
+      ? 'Projects, workspaces, files, chat history and credentials stay.'
+      : `${props.projectCount} ${props.projectCount === 1 ? 'project' : 'projects'}, workspaces, files, chat history and credentials stay.`
 
   useEffect(() => {
     let cancelled = false
@@ -2084,17 +2190,16 @@ function DataSettings(props: {
   }
 
   return (
-    <SettingsPanel title="Data & privacy">
+    <SettingsPage title="Data & privacy">
       {isDesktop ? (
         <SettingsRow
-          title="Local diagnostics"
+          name="Local diagnostics"
           note="Off by default. Stores redacted app error text only on this device. Nothing is uploaded. New entries stop immediately when turned off."
-          className="settings__row--roomy"
         >
           {diagnosticsError ? <RowIssue message={diagnosticsError} /> : null}
           {diagnosticsEnabled ? (
             <button
-              className="settings__action"
+              className="set-button"
               type="button"
               onClick={() => void openLocalDiagnostics()}
             >
@@ -2107,7 +2212,7 @@ function DataSettings(props: {
                 label="Loading local diagnostics…"
                 className="settings__switch-skeleton"
               >
-                <Skeleton width={36} height={22} />
+                <Skeleton width={30} height={18} />
               </SkeletonStatus>
             )
           ) : (
@@ -2125,23 +2230,26 @@ function DataSettings(props: {
         </SettingsRow>
       ) : null}
       <SettingsRow
-        title={
-          props.projectsLoading ? (
-            <SettingsValueSkeleton label="Loading project count…" width={176} />
-          ) : (
-            projectLabel
-          )
+        name="Reset app preferences"
+        note={
+          <>
+            Clears appearance, layout and model choices.{' '}
+            {props.projectsLoading ? (
+              <SettingsValueSkeleton label="Loading project count…" width={176} />
+            ) : (
+              kept
+            )}
+          </>
         }
-        note="Reset only clears this renderer’s preferences. It does not delete projects, workspaces, files, chat history, or provider credentials."
-        className="settings__row--roomy"
       >
         <button
-          className="settings__action is-danger"
+          className="set-button set-button--danger"
           type="button"
+          aria-label="Reset app preferences"
           onClick={() => setConfirming(true)}
         >
           <RotateCcw size={13} aria-hidden />
-          <span>Reset app preferences</span>
+          <span>Reset…</span>
         </button>
       </SettingsRow>
       {confirming ? (
@@ -2153,7 +2261,7 @@ function DataSettings(props: {
           }}
         />
       ) : null}
-    </SettingsPanel>
+    </SettingsPage>
   )
 }
 
@@ -2244,9 +2352,9 @@ function ResetConfirmation(props: { onCancel: () => void; onConfirm: () => void 
 
 export function DebugSettings(props: { transport: Transport }) {
   return (
-    <SettingsPanel title="Debug">
+    <SettingsPage title="Debug">
       <UsageHistoryReset transport={props.transport} />
-    </SettingsPanel>
+    </SettingsPage>
   )
 }
 
@@ -2268,16 +2376,15 @@ function UsageHistoryReset(props: { transport: Transport }) {
 
   return (
     <SettingsRow
-      title="Usage history index"
+      name="Usage history index"
       note="Clears the generated cache and reparses every local provider history. Sessions and Harness data are not deleted."
-      className="settings__row--roomy"
     >
       {state === 'started' ? <StateLabel state="checking" detail="Scan started" live /> : null}
       {state === 'error' && error ? (
         <RowIssue message={error} tip="Restart the app, then try the reset again." />
       ) : null}
       <button
-        className="settings__action"
+        className="set-button"
         type="button"
         disabled={state === 'resetting'}
         onClick={() => void resetUsage()}
@@ -2363,8 +2470,8 @@ function AboutSettings(props: { transport: Transport }) {
             : undefined
 
   return (
-    <SettingsPanel title="About">
-      <SettingsRow title="TasteCode">
+    <SettingsPage title="About">
+      <SettingsRow name="TasteCode">
         <SettingsMeta>
           {nativeUpdate === undefined ? (
             <SettingsValueSkeleton label="Loading app version…" width={132} />
@@ -2373,7 +2480,7 @@ function AboutSettings(props: { transport: Transport }) {
           )}
         </SettingsMeta>
       </SettingsRow>
-      <SettingsRow title="Updates">
+      <SettingsRow name="Updates">
         {nativeUpdate?.status === 'error' ? (
           <RowIssue
             message={nativeUpdate.error ?? 'Update check failed'}
@@ -2395,12 +2502,12 @@ function AboutSettings(props: { transport: Transport }) {
           <StateLabel {...updateStatus} live />
         ) : null}
         <button
-          className="settings__action"
+          className="set-button"
           type="button"
           disabled={checking || nativeChecking || nativeDownloading || nativePreparing}
           onClick={() => void (nativeReady ? installAppUpdate() : check())}
         >
-          <RotateCcw size={13} aria-hidden />
+          <Refresh size={13} aria-hidden />
           {nativeReady
             ? 'Restart to update'
             : nativeDownloading
@@ -2412,9 +2519,9 @@ function AboutSettings(props: { transport: Transport }) {
                   : 'Check for updates'}
         </button>
       </SettingsRow>
-      <SettingsRow title="Source">
+      <SettingsRow name="Source">
         <button
-          className="settings__action"
+          className="set-button"
           type="button"
           onClick={() =>
             window.open('https://github.com/Leonxlnx/tastecode', '_blank', 'noopener,noreferrer')
@@ -2423,22 +2530,7 @@ function AboutSettings(props: { transport: Transport }) {
           GitHub
         </button>
       </SettingsRow>
-    </SettingsPanel>
-  )
-}
-
-// No group subtitle between the title and the card: one heading carries a
-// panel, and the removed line was repeating it in smaller type.
-function SettingsPanel(props: { title: string; groupClassName?: string; children: ReactNode }) {
-  return (
-    <section className="settings__panel" aria-labelledby={`settings-${props.title.toLowerCase()}`}>
-      <h1 className="settings__title" id={`settings-${props.title.toLowerCase()}`}>
-        {props.title}
-      </h1>
-      <div className={`settings__group${props.groupClassName ? ` ${props.groupClassName}` : ''}`}>
-        {props.children}
-      </div>
-    </section>
+    </SettingsPage>
   )
 }
 
@@ -2446,8 +2538,8 @@ function SettingsPanel(props: { title: string; groupClassName?: string; children
  * A provider that is not on this machine yet. When the server knows a real
  * install command the button runs it in the background — no docs page — and
  * the row narrates progress from the live output. App-level callers hand the
- * live terminal to the expanded workspace card; isolated callers keep the
- * attachable details fallback in this row.
+ * live terminal to the expanded workspace card, and Show terminal brings that
+ * one view back; isolated callers keep the attachable details fallback here.
  */
 function InstallableRow(props: {
   provider: ProviderStatus
@@ -2462,6 +2554,8 @@ function InstallableRow(props: {
   const [showTerminal, setShowTerminal] = useState(false)
   const [startError, setStartError] = useState<string>()
   const { onInstalled } = props
+  // Someone may install it outside the app; this looks again on request.
+  const recheck = useInstallCheck(props.transport, props.target, onInstalled)
 
   // Latched: the succeeded state persists across renders (see the unmount
   // cleanup below), and onInstalled may get a new identity from any parent
@@ -2491,18 +2585,19 @@ function InstallableRow(props: {
     [key],
   )
 
+  const openExpandedTerminal = () =>
+    props.onOpenExpandedTerminal?.({
+      provider: props.provider.id,
+      displayName: props.provider.displayName,
+      installKey: key,
+      operation: 'install',
+    })
+
   const start = () => {
     setStartError(undefined)
     setShowTerminal(false)
     void beginInstall(props.transport, props.target)
-      .then(() => {
-        props.onOpenExpandedTerminal?.({
-          provider: props.provider.id,
-          displayName: props.provider.displayName,
-          installKey: key,
-          operation: 'install',
-        })
-      })
+      .then(openExpandedTerminal)
       .catch((cause: unknown) =>
         setStartError(cause instanceof Error ? cause.message : String(cause)),
       )
@@ -2515,7 +2610,9 @@ function InstallableRow(props: {
         ? 'Installed · refreshing…'
         : install?.phase === 'failed' || startError
           ? 'Install failed'
-          : 'Not installed'
+          : recheck.checking
+            ? 'Checking…'
+            : 'Not installed'
   const issue =
     install?.phase === 'failed'
       ? {
@@ -2529,15 +2626,22 @@ function InstallableRow(props: {
           }
         : undefined
   const setup = props.provider.setup
-  const details: ProviderAction | undefined =
+  // The workspace keeps an install's terminal, failed ones included, until it
+  // is closed; the row reopens that view rather than drawing a second one.
+  const inline = !props.onOpenExpandedTerminal
+  const secondary: ProviderAction | undefined =
     install?.phase === 'running' || install?.phase === 'failed' || install?.phase === 'succeeded'
-      ? {
-          label: showTerminal ? 'Hide details' : 'Details',
-          expanded: showTerminal,
-          controls: detailsId,
-          onClick: () => setShowTerminal((visible) => !visible),
-        }
-      : undefined
+      ? !inline
+        ? install.phase === 'succeeded'
+          ? undefined
+          : { label: 'Show terminal', onClick: openExpandedTerminal }
+        : {
+            label: showTerminal ? 'Hide details' : 'Details',
+            expanded: showTerminal,
+            controls: detailsId,
+            onClick: () => setShowTerminal((visible) => !visible),
+          }
+      : { label: 'Check again', disabled: recheck.checking, onClick: recheck.check }
   const primary: ProviderAction | undefined = !setup?.installCommand
     ? setup
       ? { label: 'Open setup guide', href: setup.installUrl }
@@ -2557,12 +2661,12 @@ function InstallableRow(props: {
         provider={props.provider}
         status={status}
         link="none"
-        live={install?.phase === 'running' || install?.phase === 'succeeded'}
+        live={install?.phase === 'running' || install?.phase === 'succeeded' || recheck.checking}
         issue={issue}
         primary={primary}
-        secondary={details}
+        secondary={secondary}
       />
-      {install ? (
+      {install && inline ? (
         <div id={detailsId} className="provider-terminal" hidden={!showTerminal}>
           {showTerminal ? <ProviderTerminal transport={props.transport} installKey={key} /> : null}
         </div>
@@ -2574,9 +2678,10 @@ function InstallableRow(props: {
 /**
  * Sign-in for a provider whose login lives inside its own CLI. The button
  * launches that CLI in a server-side pty. App-level callers hand the attached
- * terminal to the expanded workspace pane for every provider; isolated callers
- * keep the guided card and attachable details here. A clean exit refreshes the
- * account, while a dirty exit keeps the log available for a retry.
+ * terminal to the expanded workspace pane for every provider, and Show terminal
+ * brings that one view back while the sign-in runs; isolated callers keep the
+ * guided card and attachable details here. A clean exit refreshes the account,
+ * while a dirty exit keeps the log behind Details for a retry.
  */
 function CliSignInRow(props: {
   provider: ProviderStatus
@@ -2626,6 +2731,13 @@ function CliSignInRow(props: {
     if (login?.phase && login.phase !== 'running') setShowTerminal(false)
   }, [login?.phase])
 
+  const openExpandedTerminal = () =>
+    props.onOpenExpandedTerminal?.({
+      provider: props.provider.id,
+      displayName: props.provider.displayName,
+      installKey: key,
+    })
+
   const start = () => {
     setStarting(true)
     setStartError(undefined)
@@ -2642,11 +2754,7 @@ function CliSignInRow(props: {
     )
       .then(() => {
         if (installState(key)?.phase !== 'running' || installState(key)?.canceling) return
-        props.onOpenExpandedTerminal?.({
-          provider: props.provider.id,
-          displayName: props.provider.displayName,
-          installKey: key,
-        })
+        openExpandedTerminal()
       })
       .catch((cause: unknown) =>
         setStartError(cause instanceof Error ? cause.message : String(cause)),
@@ -2691,8 +2799,13 @@ function CliSignInRow(props: {
         : login?.phase === 'canceled'
           ? 'Sign-in canceled'
           : 'Not signed in'
-  const details: ProviderAction | undefined =
-    login && (running || login.phase === 'failed')
+  // While the sign-in runs, the workspace terminal is its one view: the row
+  // brings it back instead of attaching a second one. App closes that view when
+  // a sign-in ends, so a failed one keeps its log behind Details here.
+  const inline = !props.onOpenExpandedTerminal || !running
+  const details: ProviderAction | undefined = !inline
+    ? { label: 'Show terminal', disabled: stopping, onClick: openExpandedTerminal }
+    : login && (running || login.phase === 'failed')
       ? {
           label: showTerminal ? 'Hide details' : 'Details',
           expanded: showTerminal,
@@ -2728,7 +2841,7 @@ function CliSignInRow(props: {
               <span className="signin-card__hint">Confirm this code in your browser</span>
               <code className="signin-card__code">{code}</code>
               <button
-                className="settings__action"
+                className="set-button"
                 type="button"
                 onClick={() => {
                   void writeClipboardText(code).then(
@@ -2749,7 +2862,7 @@ function CliSignInRow(props: {
           )}
           {login.openedAuthUrl ? (
             <button
-              className="settings__action"
+              className="set-button"
               type="button"
               onClick={() => window.open(login.openedAuthUrl, '_blank', 'noopener,noreferrer')}
             >
@@ -2761,7 +2874,7 @@ function CliSignInRow(props: {
           ) : null}
         </div>
       ) : null}
-      {login ? (
+      {login && inline ? (
         <div id={detailsId} className="provider-terminal" hidden={!showTerminal}>
           {showTerminal ? <ProviderTerminal transport={props.transport} installKey={key} /> : null}
         </div>
@@ -2770,6 +2883,7 @@ function CliSignInRow(props: {
   )
 }
 
+/** An install or sign-in log on the workspace terminal's look, like the expanded terminal. */
 function ProviderTerminal(props: { transport: Transport; installKey: string }) {
   return (
     <Suspense
@@ -2779,7 +2893,11 @@ function ProviderTerminal(props: { transport: Transport; installKey: string }) {
         </SkeletonStatus>
       }
     >
-      <InstallTerminal transport={props.transport} installKey={props.installKey} />
+      <InstallTerminal
+        transport={props.transport}
+        installKey={props.installKey}
+        profile="workspace"
+      />
     </Suspense>
   )
 }
@@ -2858,23 +2976,6 @@ function SettingsValueSkeleton(props: { label: string; width: number }) {
       <span className="visually-hidden">{props.label}</span>
       <Skeleton width={props.width} height={9} />
     </span>
-  )
-}
-
-function SettingsRow(props: {
-  title: ReactNode
-  note?: ReactNode
-  className?: string
-  children?: ReactNode
-}) {
-  return (
-    <div className={`settings__row${props.className ? ` ${props.className}` : ''}`}>
-      <div className="settings__row-copy">
-        <p className="settings__row-title">{props.title}</p>
-        {props.note ? <p className="settings__row-note">{props.note}</p> : null}
-      </div>
-      {props.children ? <div className="settings__row-control">{props.children}</div> : null}
-    </div>
   )
 }
 

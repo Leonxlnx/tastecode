@@ -9,13 +9,10 @@ import {
   type ReactNode,
   type KeyboardEvent as ReactKeyboardEvent,
 } from 'react'
-import type { Account, ResultOf, UsageHistoryDay } from '@harness/contracts'
-import {
-  IconDice5 as Dice,
-  IconAlertCircle as CircleAlert,
-  IconRefresh as RefreshCw,
-} from '@tabler/icons-react'
+import type { Account, ProviderId, ProviderStatus, UsageHistoryDay } from '@harness/contracts'
+import { IconDice5 as Dice, IconRefresh as RefreshCw } from '@tabler/icons-react'
 import type { Transport } from '../transport.js'
+import { useUsageHistory } from '../usage-history-state.js'
 import { providerPresentation } from '../provider-presentation.js'
 import { SourceIdentity } from './SourceIdentity.js'
 import {
@@ -24,9 +21,12 @@ import {
   readProfileImage,
   type ProfileIdentityPreferences,
 } from '../profile-preferences.js'
+import { ProfileAccounts } from './ProfileAccounts.js'
 import { ProfileCoin, useStruckName, type CoinSide } from './ProfileCoin.js'
 import { SealGuideToggle, SealNotes } from './SealGuide.js'
 import { Skeleton, SkeletonStatus } from './Skeleton.js'
+import { SettingsNotice, SettingsPage } from './settings/SettingsLayout.js'
+import { useIndexingNotice } from './usage/useIndexingNotice.js'
 import { isComposingKey, isConfirmEnter } from '../shortcuts.js'
 import '../styles/profile-settings.css'
 
@@ -120,11 +120,19 @@ function hasFiles(event: DragEvent): boolean {
  */
 export function ProfileSettings(props: {
   transport: Transport
+  /** The provider in use, whose account the app already reads. */
+  provider?: ProviderId | undefined
   account: Account | undefined
   accountLoading?: boolean | undefined
   providerName: string
+  /** Every provider the server reported; undefined until the list arrives. */
+  providers?: ProviderStatus[] | undefined
+  /** Shows the Providers tab, where sign-ins are managed. */
+  onManageAccounts?: (() => void) | undefined
   identity?: ProfileIdentityPreferences | undefined
   onIdentityChange?: ((updates: Partial<ProfileIdentityPreferences>) => void) | undefined
+  /** Shows the Usage tab, where the numbers behind the activity heatmap live. */
+  onOpenUsage?: (() => void) | undefined
 }) {
   const [imageError, setImageError] = useState<string>()
   // The photo last turned away from, so turning over brings it back this
@@ -219,18 +227,10 @@ export function ProfileSettings(props: {
       : photo
         ? `Your photo · ${photoFacts(photo)}`
         : 'PNG, JPEG or WebP up to 1 MB'
-  const plan = props.account?.plan ? (
-    <span className="profile__plan">{props.account.plan} plan</span>
-  ) : props.accountLoading && !props.account ? (
-    <SkeletonStatus label="Loading account plan…" className="profile__plan">
-      <Skeleton width={52} height={9} />
-    </SkeletonStatus>
-  ) : null
 
   return (
-    <section
-      className="settings__panel profile"
-      aria-labelledby="settings-profile"
+    <div
+      className="profile"
       onDragEnter={(event) => {
         if (!hasFiles(event)) return
         event.preventDefault()
@@ -257,363 +257,259 @@ export function ProfileSettings(props: {
         void chooseImage(event.dataTransfer.files[0])
       }}
     >
-      <h1 className="settings__title" id="settings-profile">
-        Profile
-      </h1>
-      {trying ? (
-        <SealGuideToggle
-          open={guideOpen}
-          pinned={guidePinned}
-          notesId={notesId}
-          onHover={setGuideHovered}
-          onPin={setGuidePinned}
-        />
-      ) : null}
-      <div className="profile__stage">
-        <div className="profile__coin">
-          <ProfileCoin
-            name={struck}
-            // A photo turned away from stays on its face, so it is still there
-            // while the coin turns back and when it turns over again.
-            photo={photo ?? setAside}
-            side={side}
-            dropping={dropping}
-            explain={guideOpen}
-            label={side === 'seal' ? 'Turn over for a photo' : 'Turn back to the seal'}
-            onTurn={side === 'seal' ? turnOver : turnBack}
-          />
-          {guideOpen ? <SealNotes id={notesId} word={struck} /> : null}
-        </div>
-        <input
-          className="profile__name"
-          type="text"
-          maxLength={64}
-          spellCheck={false}
-          autoComplete="off"
-          aria-label="Display name"
-          value={props.identity?.displayName ?? ''}
-          placeholder={FALLBACK_PROFILE_NAME}
-          onChange={(event) => props.onIdentityChange?.({ displayName: event.target.value })}
-        />
-        {trying ? (
-          <p className="profile__facts profile__facts--trying">
-            <label htmlFor={trialId}>Struck from</label>
+      <SettingsPage
+        title="Profile"
+        actions={
+          trying ? (
+            <SealGuideToggle
+              open={guideOpen}
+              pinned={guidePinned}
+              notesId={notesId}
+              onHover={setGuideHovered}
+              onPin={setGuidePinned}
+            />
+          ) : undefined
+        }
+      >
+        <div className="profile__stage" data-trying={trying || undefined}>
+          <div className="profile__coin">
+            <ProfileCoin
+              name={struck}
+              // A photo turned away from stays on its face, so it is still there
+              // while the coin turns back and when it turns over again.
+              photo={photo ?? setAside}
+              side={side}
+              dropping={dropping}
+              explain={guideOpen}
+              label={side === 'seal' ? 'Turn over for a photo' : 'Turn back to the seal'}
+              onTurn={side === 'seal' ? turnOver : turnBack}
+            />
+          </div>
+          <div className="profile__identity">
             <input
-              id={trialId}
-              className="profile__word"
+              className="profile__name"
               type="text"
               maxLength={64}
               spellCheck={false}
               autoComplete="off"
-              autoFocus
-              value={trial}
-              placeholder={name}
-              onChange={(event) => setTrial(event.target.value)}
-              onKeyDown={onTrialKey}
+              aria-label="Display name"
+              value={props.identity?.displayName ?? ''}
+              placeholder={FALLBACK_PROFILE_NAME}
+              onChange={(event) => props.onIdentityChange?.({ displayName: event.target.value })}
             />
-            <button
-              className="profile__roll"
-              type="button"
-              aria-label="Another word"
-              title="Another word"
-              onClick={(event) => {
-                setTrial(rollWord(trial))
-                // The die tumbles a half turn with each roll.
-                event.currentTarget
-                  .querySelector('svg')
-                  ?.animate?.([{ rotate: '0deg' }, { rotate: '180deg' }], {
-                    duration: 360,
-                    easing: 'cubic-bezier(0.3, 0, 0.2, 1)',
-                  })
-              }}
-            >
-              <Dice size={15} stroke={1.6} aria-hidden />
-            </button>
-          </p>
-        ) : (
-          <p className="profile__facts">
-            {imageError ? (
-              <span className="profile__error" role="alert">
-                {imageError}
-              </span>
-            ) : (
-              <span>{dropping ? 'Drop to use this photo' : facts}</span>
-            )}
-            {plan ? <span aria-hidden>·</span> : null}
-            {plan}
-          </p>
-        )}
-        <p className="profile__actions">
-          {trying ? (
-            <>
-              <button className="profile__keep" type="button" onClick={keepTrial}>
-                Keep this seal
-              </button>
-              <button type="button" onClick={() => setTrial(undefined)}>
-                Cancel
-              </button>
-            </>
-          ) : side === 'seal' ? (
-            <>
-              <button type="button" onClick={turnOver}>
-                {setAside ? 'Turn over to your photo' : 'Turn over for a photo'}
-              </button>
-              <button type="button" onClick={() => setTrial(seed ?? '')}>
-                Strike from a word
-              </button>
-              {seed ? (
+            {trying ? (
+              <p className="profile__facts profile__facts--trying">
+                <label htmlFor={trialId}>Struck from</label>
+                <input
+                  id={trialId}
+                  className="profile__word"
+                  type="text"
+                  maxLength={64}
+                  spellCheck={false}
+                  autoComplete="off"
+                  autoFocus
+                  value={trial}
+                  placeholder={name}
+                  onChange={(event) => setTrial(event.target.value)}
+                  onKeyDown={onTrialKey}
+                />
                 <button
+                  className="profile__roll"
                   type="button"
-                  onClick={() => props.onIdentityChange?.({ avatarSeed: undefined })}
+                  aria-label="Another word"
+                  title="Another word"
+                  onClick={(event) => {
+                    setTrial(rollWord(trial))
+                    // The die tumbles a half turn with each roll.
+                    event.currentTarget
+                      .querySelector('svg')
+                      ?.animate?.([{ rotate: '0deg' }, { rotate: '180deg' }], {
+                        duration: 360,
+                        easing: 'cubic-bezier(0.3, 0, 0.2, 1)',
+                      })
+                  }}
                 >
-                  Back to your name
+                  <Dice size={15} stroke={1.6} aria-hidden />
                 </button>
-              ) : null}
-            </>
-          ) : (
-            <>
-              <button type="button" onClick={() => fileInput.current?.click()}>
-                {photo ? 'Replace' : 'Choose a photo'}
-              </button>
-              <button type="button" onClick={turnBack}>
-                Turn back
-              </button>
-            </>
-          )}
-        </p>
-      </div>
-      <input
-        ref={fileInput}
-        className="visually-hidden"
-        type="file"
-        tabIndex={-1}
-        aria-hidden
-        accept={PROFILE_IMAGE_ACCEPT}
-        onChange={(event) => {
-          void chooseImage(event.target.files?.[0])
-          event.target.value = ''
-        }}
-      />
-      <ProfileHistory transport={props.transport} />
-    </section>
+              </p>
+            ) : (
+              <p className="profile__facts">
+                {imageError ? (
+                  <span className="profile__error" role="alert">
+                    {imageError}
+                  </span>
+                ) : (
+                  <span>{dropping ? 'Drop to use this photo' : facts}</span>
+                )}
+              </p>
+            )}
+            <p className="profile__actions">
+              {trying ? (
+                <>
+                  <button className="set-button" type="button" onClick={keepTrial}>
+                    Keep this seal
+                  </button>
+                  <QuietAction onClick={() => setTrial(undefined)}>Cancel</QuietAction>
+                </>
+              ) : side === 'seal' ? (
+                <>
+                  <QuietAction onClick={turnOver}>
+                    {setAside ? 'Turn over to your photo' : 'Turn over for a photo'}
+                  </QuietAction>
+                  <QuietAction onClick={() => setTrial(seed ?? '')}>Strike from a word</QuietAction>
+                  {seed ? (
+                    <QuietAction
+                      onClick={() => props.onIdentityChange?.({ avatarSeed: undefined })}
+                    >
+                      Back to your name
+                    </QuietAction>
+                  ) : null}
+                </>
+              ) : (
+                <>
+                  <QuietAction onClick={() => fileInput.current?.click()}>
+                    {photo ? 'Replace' : 'Choose a photo'}
+                  </QuietAction>
+                  <QuietAction onClick={turnBack}>Turn back</QuietAction>
+                </>
+              )}
+            </p>
+          </div>
+        </div>
+        {guideOpen ? <SealNotes id={notesId} word={struck} /> : null}
+        <input
+          ref={fileInput}
+          className="visually-hidden"
+          type="file"
+          tabIndex={-1}
+          aria-hidden
+          accept={PROFILE_IMAGE_ACCEPT}
+          onChange={(event) => {
+            void chooseImage(event.target.files?.[0])
+            event.target.value = ''
+          }}
+        />
+        <ProfileAccounts
+          transport={props.transport}
+          providers={props.providers}
+          current={
+            props.provider
+              ? {
+                  provider: props.provider,
+                  account: props.account,
+                  loading: props.accountLoading ?? false,
+                }
+              : undefined
+          }
+          onManage={props.onManageAccounts}
+        />
+        <ProfileActivity transport={props.transport} onOpenUsage={props.onOpenUsage} />
+      </SettingsPage>
+    </div>
   )
 }
 
-function ProfileHistory(props: { transport: Transport }) {
-  const [data, setData] = useState<ResultOf<'usage.history'>>()
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string>()
-  const [requestVersion, setRequestVersion] = useState(0)
-  const forceRefresh = useRef(false)
+function QuietAction(props: { onClick: () => void; children: ReactNode }) {
+  return (
+    <button className="set-button set-button--quiet" type="button" onClick={props.onClick}>
+      {props.children}
+    </button>
+  )
+}
 
-  useEffect(() => {
-    let active = true
-    let pollTimer: ReturnType<typeof setTimeout> | undefined
-    const schedulePoll = () => {
-      pollTimer = setTimeout(() => {
-        if (active) setRequestVersion((version) => version + 1)
-      }, 500)
-    }
-    const refresh = forceRefresh.current
-    forceRefresh.current = false
-    setLoading(true)
-    setError(undefined)
-    void props.transport
-      .request('usage.history', { range: 'all', ...(refresh ? { refresh: true } : {}) })
-      .then((result) => {
-        if (!active) return
-        setData(result)
-        if (result.scan.status === 'scanning') {
-          schedulePoll()
-        }
-      })
-      .catch((requestError: unknown) => {
-        if (!active) return
-        setError(requestError instanceof Error ? requestError.message : String(requestError))
-        if (data?.scan.status === 'scanning') schedulePoll()
-      })
-      .finally(() => {
-        if (active) setLoading(false)
-      })
-    return () => {
-      active = false
-      clearTimeout(pollTimer)
-    }
-  }, [props.transport, requestVersion])
-
-  const refresh = useCallback(() => {
-    forceRefresh.current = true
-    setRequestVersion((version) => version + 1)
-  }, [])
-
-  if (!data) {
-    return (
-      <section className="profile-history" aria-label="Local activity">
-        <div
-          className={`profile-page__notice${loading ? ' profile-page__notice--scan' : ''}`}
-          role={loading ? 'status' : 'alert'}
-        >
-          {loading ? <RefreshCw size={14} aria-hidden /> : <CircleAlert size={14} aria-hidden />}
-          <span>{loading ? 'Reading the local activity index.' : error}</span>
-          {!loading ? (
-            <button className="settings__action" type="button" onClick={refresh}>
-              Try again
-            </button>
-          ) : null}
-        </div>
-      </section>
-    )
-  }
-
-  const scanning = data.scan.status === 'scanning'
-  const streaks = streakSummary(data.daily)
-  const peakTokens = data.daily.reduce((peak, day) => Math.max(peak, day.totals.processedTokens), 0)
-  const topProvider = data.providers.toSorted(
-    (left, right) => right.totals.processedTokens - left.totals.processedTokens,
-  )[0]
-  const topModels = data.models
-    .toSorted((left, right) => right.totals.processedTokens - left.totals.processedTokens)
-    .slice(0, 5)
-  const cacheRate = cacheHitRate(data)
-  const perActiveDay =
-    data.activeDays > 0 ? data.totals.processedTokens / data.activeDays : undefined
+/**
+ * The year of local activity as a heatmap, from the store the Usage page
+ * shares. The numbers behind it live on Usage, which this links to.
+ */
+function ProfileActivity(props: { transport: Transport; onOpenUsage?: (() => void) | undefined }) {
+  const { data, loading, error, refresh } = useUsageHistory(props.transport, 'all')
+  const titleId = useId()
+  const scanning = data?.scan.status === 'scanning'
+  const indexingNotice = useIndexingNotice(data)
+  const busy = loading || scanning
+  const activity = useMemo(
+    () => (data ? buildActivityGrid(data.daily, data.endDate) : undefined),
+    [data],
+  )
+  const activeDays = activity?.days.filter((day) => day.tokens > 0).length
 
   return (
     <section
-      className={`profile-history${loading || scanning ? ' is-refreshing' : ''}`}
-      aria-label="Local activity"
+      className={`profile-section profile-activity${busy ? ' is-refreshing' : ''}`}
+      aria-labelledby={titleId}
     >
-      <header className="profile-history__header">
-        <h2>Local activity</h2>
-        <div className="profile-page__actions">
+      <div className="profile-section__head">
+        <div className="profile-section__heading">
+          <h2 className="profile-section__title" id={titleId}>
+            Local activity
+          </h2>
+          {activeDays !== undefined ? (
+            <p className="profile-section__note">
+              {integer.format(activeDays)} {activeDays === 1 ? 'active day' : 'active days'} in the
+              last 12 months
+            </p>
+          ) : null}
+        </div>
+        <div className="profile-section__actions">
+          {props.onOpenUsage ? (
+            <button
+              className="set-button set-button--quiet"
+              type="button"
+              onClick={props.onOpenUsage}
+            >
+              Open Usage
+            </button>
+          ) : null}
           <button
-            className="profile-page__refresh"
+            className="set-button set-button--quiet set-button--icon profile-activity__refresh"
             type="button"
             aria-label="Refresh profile activity"
             title="Refresh profile activity"
-            disabled={loading || scanning}
+            disabled={busy}
             onClick={refresh}
           >
             <RefreshCw size={14} aria-hidden />
           </button>
         </div>
-      </header>
-
-      {scanning ? (
-        <div className="profile-page__notice profile-page__notice--scan" role="status">
-          <RefreshCw size={14} aria-hidden />
-          <span>
-            Indexing local activity
-            {data.scan.filesTotal > 0
-              ? ` · ${integer.format(data.scan.filesProcessed)} of ${integer.format(data.scan.filesTotal)} files`
-              : ' · discovering sessions'}
-          </span>
-        </div>
-      ) : null}
-
-      {error ? (
-        <div className="profile-page__notice" role="status">
-          <CircleAlert size={14} aria-hidden />
-          The refresh failed, so the last completed profile is still shown. {error}
-        </div>
-      ) : null}
-
-      <dl className="profile-stats" aria-label="Lifetime activity">
-        <ProfileStat value={formatTokens(data.totals.processedTokens)} label="Lifetime tokens" />
-        <ProfileStat value={formatTokens(peakTokens)} label="Peak day" />
-        <ProfileStat value={integer.format(data.sessionCount)} label="Total chats" />
-        <ProfileStat value={formatDays(streaks.current)} label="Current streak" />
-        <ProfileStat value={formatDays(streaks.longest)} label="Longest streak" />
-      </dl>
-
-      <ActivityHeatmap daily={data.daily} endDate={data.endDate} />
-
-      <div className="profile-details">
-        <section className="profile-insights" aria-labelledby="profile-insights-title">
-          <h2 id="profile-insights-title">Activity insights</h2>
-          <dl>
-            <ProfileInsight
-              label="Most used model"
-              value={topModels[0]?.model ?? 'No model activity'}
-            />
-            <ProfileInsight
-              label="Top provider"
-              value={
-                topProvider ? (
-                  <SourceIdentity presentation={providerPresentation(topProvider.provider)} />
-                ) : (
-                  'No provider activity'
-                )
-              }
-            />
-            <ProfileInsight
-              label="Cache hit rate"
-              value={cacheRate === undefined ? 'No cached input' : percent.format(cacheRate)}
-            />
-            <ProfileInsight
-              label="Average per active day"
-              value={perActiveDay === undefined ? 'No active days' : formatTokens(perActiveDay)}
-            />
-            <ProfileInsight label="Active days" value={integer.format(data.activeDays)} />
-          </dl>
-        </section>
-
-        <section className="profile-models" aria-labelledby="profile-models-title">
-          <h2 id="profile-models-title">Most used models</h2>
-          {topModels.length > 0 ? (
-            <ol>
-              {topModels.map((model) => (
-                <li data-provider={model.provider} key={`${model.provider}:${model.model}`}>
-                  <span className="profile-models__name">
-                    <SourceIdentity
-                      presentation={providerPresentation(model.provider)}
-                      qualifier={model.model}
-                    />
-                  </span>
-                  <span>{formatTokens(model.totals.processedTokens)}</span>
-                </li>
-              ))}
-            </ol>
-          ) : (
-            <p>No model activity has been indexed yet.</p>
-          )}
-        </section>
       </div>
 
-      {data.warnings.length > 0 ? (
-        <div className="profile-page__warnings">
-          {data.warnings.map((warning) => (
-            <p key={warning}>
-              <CircleAlert size={13} aria-hidden />
-              {warning}
-            </p>
-          ))}
-        </div>
+      {indexingNotice && data ? (
+        <SettingsNotice tone="progress">
+          Indexing local activity
+          {data.scan.filesTotal > 0
+            ? ` · ${integer.format(data.scan.filesProcessed)} of ${integer.format(data.scan.filesTotal)} files`
+            : ' · discovering sessions'}
+        </SettingsNotice>
+      ) : null}
+      {error && data ? (
+        <SettingsNotice tone="error">
+          The refresh failed, so the last completed activity is still shown. {error}
+        </SettingsNotice>
+      ) : null}
+      {!data && !loading ? (
+        <SettingsNotice
+          tone="error"
+          action={
+            <button className="set-button" type="button" onClick={refresh}>
+              Try again
+            </button>
+          }
+        >
+          Local activity could not be loaded. {error}
+        </SettingsNotice>
       ) : null}
 
-      <p className="profile-page__source-note">
-        Generated from local provider histories and Harness usage records. This data stays on this
-        device.
-      </p>
+      {activity && activeDays !== undefined ? (
+        <ActivityHeatmap activity={activity} activeDays={activeDays} />
+      ) : loading ? (
+        <SkeletonStatus
+          label="Reading the local activity index…"
+          className="profile-activity__skeleton"
+        >
+          <Skeleton className="profile-activity__skeleton-grid" />
+        </SkeletonStatus>
+      ) : null}
     </section>
-  )
-}
-
-function ProfileStat(props: { value: string; label: string }) {
-  return (
-    <div>
-      <dt>{props.label}</dt>
-      <dd>{props.value}</dd>
-    </div>
-  )
-}
-
-function ProfileInsight(props: { label: string; value: ReactNode }) {
-  return (
-    <div>
-      <dt>{props.label}</dt>
-      <dd>{props.value}</dd>
-    </div>
   )
 }
 
@@ -629,13 +525,12 @@ type ActivityTooltip = {
   y: number
 }
 
-function ActivityHeatmap(props: { daily: UsageHistoryDay[]; endDate: string }) {
+function ActivityHeatmap(props: {
+  activity: ReturnType<typeof buildActivityGrid>
+  activeDays: number
+}) {
+  const { activity } = props
   const [tooltip, setTooltip] = useState<ActivityTooltip>()
-  const activity = useMemo(
-    () => buildActivityGrid(props.daily, props.endDate),
-    [props.daily, props.endDate],
-  )
-  const activeDays = activity.days.filter((day) => day.tokens > 0).length
 
   const showTooltip = useCallback((element: HTMLElement, cell: ActivityCell) => {
     const bounds = element.getBoundingClientRect()
@@ -649,21 +544,13 @@ function ActivityHeatmap(props: { daily: UsageHistoryDay[]; endDate: string }) {
   }, [])
 
   return (
-    <section className="profile-activity" aria-labelledby="profile-activity-title">
-      <header>
-        <h2 id="profile-activity-title">Activity</h2>
-        <p>
-          {integer.format(activeDays)} {activeDays === 1 ? 'active day' : 'active days'} · Last 12
-          months
-        </p>
-      </header>
-
+    <>
       <div className="profile-activity__plot">
         <div className="profile-activity__canvas">
           <div
             className="profile-activity__heatmap"
             role="img"
-            aria-label={`${integer.format(activeDays)} active days in the last 12 months`}
+            aria-label={`${integer.format(props.activeDays)} active days in the last 12 months`}
           >
             {activity.cells.map((cell, index) =>
               cell ? (
@@ -738,7 +625,7 @@ function ActivityHeatmap(props: { daily: UsageHistoryDay[]; endDate: string }) {
           )}
         </div>
       ) : null}
-    </section>
+    </>
   )
 }
 
@@ -760,6 +647,8 @@ function buildActivityGrid(daily: UsageHistoryDay[], endDate: string) {
   while (cells.length % 7 !== 0) cells.push(undefined)
 
   const months: Array<{ column: number; text: string }> = []
+  // The grid starts a year back from the last day, usually mid-month.
+  const partialStart = days[0]?.date.slice(8) !== '01'
   let previousMonth = ''
   let previousColumn = -10
   cells.forEach((cell, index) => {
@@ -768,7 +657,12 @@ function buildActivityGrid(daily: UsageHistoryDay[], endDate: string) {
     if (monthKey === previousMonth) return
     previousMonth = monthKey
     const column = Math.floor(index / 7) + 1
-    if (column - previousColumn < 3) return
+    if (column - previousColumn < 3) {
+      // Two labels would collide: a few days of the first month give way to
+      // the first full one, which the grid shows in its entirety.
+      if (months.length !== 1 || !partialStart) return
+      months.pop()
+    }
     months.push({ column, text: month.format(dateFromKey(cell.date)) })
     previousColumn = column
   })
@@ -782,33 +676,6 @@ function buildActivityGrid(daily: UsageHistoryDay[], endDate: string) {
   }
 }
 
-function streakSummary(daily: UsageHistoryDay[]) {
-  let longest = 0
-  let running = 0
-  for (const day of daily) {
-    if (day.totals.processedTokens > 0) {
-      running += 1
-      longest = Math.max(longest, running)
-    } else {
-      running = 0
-    }
-  }
-
-  let index = daily.length - 1
-  if (index >= 0 && daily[index]?.totals.processedTokens === 0) index -= 1
-  let current = 0
-  while (index >= 0 && (daily[index]?.totals.processedTokens ?? 0) > 0) {
-    current += 1
-    index -= 1
-  }
-  return { current, longest }
-}
-
-function cacheHitRate(data: ResultOf<'usage.history'>): number | undefined {
-  const observed = data.totals.cachedInputTokens + data.totals.uncachedInputTokens
-  return observed > 0 ? data.totals.cachedInputTokens / observed : undefined
-}
-
 function activityLevel(tokens: number, maximum: number): number {
   if (tokens <= 0 || maximum <= 0) return 0
   return Math.max(1, Math.min(4, Math.ceil((Math.log1p(tokens) / Math.log1p(maximum)) * 4)))
@@ -816,10 +683,6 @@ function activityLevel(tokens: number, maximum: number): number {
 
 function formatTokens(value: number): string {
   return value < 1_000 ? integer.format(Math.round(value)) : compact.format(value)
-}
-
-function formatDays(value: number): string {
-  return `${integer.format(value)} ${value === 1 ? 'day' : 'days'}`
 }
 
 function weekday(value: string): number {

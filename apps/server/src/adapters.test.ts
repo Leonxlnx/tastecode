@@ -156,8 +156,44 @@ class FakeAntigravityAdapter extends FakeTurnAdapter {
 }
 
 class FakeClaudeCodeAdapter extends FakeResumableAdapter {
+  readonly inventoryListeners = new Map<string, Set<() => void>>()
+  readonly inventoryReads: Array<[string, string | undefined]> = []
+
   constructor(options?: Record<string, unknown>) {
     super('claude-code', options)
+  }
+
+  override on(event?: string, listener?: (value: string) => void): this {
+    if ((event === 'mcpChanged' || event === 'commandsChanged') && listener) {
+      const listeners = this.inventoryListeners.get(event) ?? new Set()
+      listeners.add(listener as () => void)
+      this.inventoryListeners.set(event, listeners)
+      return this
+    }
+    return super.on(event, listener)
+  }
+
+  off(event: string, listener: () => void): this {
+    this.inventoryListeners.get(event)?.delete(listener)
+    return this
+  }
+
+  emitInventory(event: 'mcpChanged' | 'commandsChanged'): void {
+    for (const listener of this.inventoryListeners.get(event) ?? []) listener()
+  }
+
+  async listMcpServers(threadId?: string) {
+    this.inventoryReads.push(['mcp', threadId])
+    return []
+  }
+
+  isMcpLoading(): boolean {
+    return true
+  }
+
+  async listCommands(threadId?: string) {
+    this.inventoryReads.push(['commands', threadId])
+    return [{ name: 'context', description: 'Show current context usage' }]
   }
 }
 
@@ -228,7 +264,7 @@ vi.mock('@harness/proc/cli', async (importOriginal) => ({
   },
 }))
 
-const { providerRuntime } = await import('./adapters.js')
+const { providerRuntime, stopModelListings } = await import('./adapters.js')
 
 afterEach(() => {
   constructed.length = 0
@@ -259,6 +295,55 @@ describe('resumable provider setup', () => {
       }
     },
   )
+
+  it('reports live limit windows only from a Claude session on the default account', async () => {
+    const harness: CustomHarness = {
+      id: 'claude-wrapper',
+      displayName: 'Claude wrapper',
+      provider: 'claude-code',
+      command: process.execPath,
+      args: [],
+    }
+    const runtime = providerRuntime(
+      'claude-code',
+      () => {},
+      () => harness,
+    )
+    // A wrapper runs from a real project folder.
+    const workspace = realpathSync(os.tmpdir())
+    const own = await runtime.start(workspace, {})
+    expect(own.session.onLimitsUpdated).toBeTypeOf('function')
+    expect(own.session.onUsageChanged).toBeUndefined()
+    // A wrapper may run another account, whose windows are not the default account's.
+    const wrapped = await runtime.start(workspace, { agent: harness.id })
+    expect(wrapped.session.onLimitsUpdated).toBeUndefined()
+  })
+
+  it("forwards the live Claude session's MCP servers and commands", async () => {
+    const { thread, session } = await providerRuntime('claude-code', () => {}).start('/repo', {})
+    const adapter = turnAdapters.at(-1) as FakeClaudeCodeAdapter
+    await expect(session.listMcpServers!(thread.id)).resolves.toEqual([])
+    expect(session.isMcpLoading!(thread.id)).toBe(true)
+    await expect(session.listCommands!(thread.id)).resolves.toEqual([
+      { name: 'context', description: 'Show current context usage' },
+    ])
+    expect(adapter.inventoryReads).toEqual([
+      ['mcp', thread.id],
+      ['commands', thread.id],
+    ])
+
+    const mcp = vi.fn()
+    const commands = vi.fn()
+    const offMcp = session.onMcpChanged!(mcp)
+    const offCommands = session.onCommandsChanged!(commands)
+    adapter.emitInventory('mcpChanged')
+    adapter.emitInventory('commandsChanged')
+    offMcp?.()
+    offCommands?.()
+    adapter.emitInventory('mcpChanged')
+    adapter.emitInventory('commandsChanged')
+    expect([mcp.mock.calls.length, commands.mock.calls.length]).toEqual([1, 1])
+  })
 
   it.each([false, true])(
     'passes Claude MCP options and cleans up a failed open (resume: %s)',
@@ -339,6 +424,8 @@ describe('resumable provider setup', () => {
             ...(provider === 'codex' || provider === 'opencode'
               ? { mcpServers: [], mcpCredentials: {} }
               : {}),
+            // A wrapper may run another account, so its limit windows stay out of the default's.
+            ...(provider === 'codex' ? { liveLimits: false } : {}),
           })
           if (adapter instanceof FakeAcpAdapter) expect(adapter.agentId).toBe(source.id)
         }
@@ -763,5 +850,21 @@ describe('openCodeRuntime', () => {
     release?.()
     await second
     expect(constructed[1]?.disposed).toBe(true)
+  })
+
+  it('stops a listing that is still running when the server closes', async () => {
+    const listing = providerRuntime('opencode', () => {}).listModels()
+    await vi.waitFor(() => expect(constructed).toHaveLength(1))
+    expect(constructed[0]?.disposed).toBe(false)
+
+    await stopModelListings()
+    expect(constructed[0]?.disposed).toBe(true)
+
+    release?.()
+    await listing
+    // A finished listing is not stopped again.
+    constructed[0]!.disposed = false
+    await stopModelListings()
+    expect(constructed[0]?.disposed).toBe(false)
   })
 })

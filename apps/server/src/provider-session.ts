@@ -20,7 +20,9 @@ export function mapProviderSession(
     'steer',
     'interrupt',
     'listMcpServers',
+    'isMcpLoading',
     'reloadMcpServers',
+    'listCommands',
   ])
   const session = new Proxy(result.session, {
     get(target, key) {

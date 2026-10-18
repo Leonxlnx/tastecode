@@ -164,6 +164,19 @@
   box-shadow: none;
 }
 
+/* xterm fits its rows to the frame and subtracts only its own padding. */
+.workspace-provider-login > .install-terminal:has(> .xterm) {
+  padding: 0;
+}
+
+.workspace-provider-login > .install-terminal > .xterm {
+  padding: 12px;
+}
+
+.workspace-provider-login > .install-terminal > .xterm > .xterm-viewport {
+  background-color: transparent;
+}
+
 .workspace-provider-login__actions {
   display: flex;
   align-items: center;
@@ -285,7 +298,8 @@
   white-space: nowrap;
 }
 
-.workspace-review__generate-commit {
+/* Commit, Push and Create PR: the toolbar's raised chrome buttons. */
+.workspace-review__action {
   display: inline-flex;
   flex: none;
   min-height: 30px;
@@ -302,59 +316,186 @@
   font-size: var(--t-xs);
 }
 
-.workspace-review__generate-commit:hover:not(:disabled) {
+.workspace-review__action:hover:not(:disabled),
+.workspace-review__action.is-open {
   background: var(--control-hover);
   color: var(--text);
 }
 
-.workspace-review__generate-commit:disabled {
+.workspace-review__action:disabled {
   color: var(--text-3);
   cursor: default;
   opacity: 0.58;
+}
+
+.workspace-review__count {
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
 }
 
 .workspace-review__notices {
   display: grid;
 }
 
-.workspace-review__commit-draft {
+/* The commit message or pull request being written, under the toolbar. */
+.workspace-review__composer {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 12px 10px 16px;
+  gap: 8px;
+  padding: 10px 12px;
   background: color-mix(in srgb, var(--surface-2) 76%, transparent);
   border-bottom: 1px solid var(--line);
 }
 
-.workspace-review__commit-draft pre {
+.workspace-review__composer-head {
+  display: flex;
   min-width: 0;
-  margin: 0;
-  overflow: auto;
-  color: var(--text-2);
-  font-family: var(--font-mono);
+  align-items: center;
+  gap: 6px;
+  color: var(--text-3);
   font-size: var(--t-xs);
-  line-height: 1.45;
-  white-space: pre-wrap;
 }
 
-.workspace-review__commit-draft button {
-  display: grid;
-  width: 28px;
-  height: 28px;
-  place-items: center;
-  padding: 0;
+.workspace-review__composer-head strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-2);
+  font-weight: 520;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-review__composer-head svg {
+  flex: none;
+}
+
+.workspace-review__field {
+  width: 100%;
+  min-width: 0;
+  padding: 7px 10px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  outline: 0;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--t-sm);
+  line-height: 1.45;
+  transition: border-color var(--dur-fast) var(--ease-out);
+}
+
+.workspace-review__field:focus {
+  border-color: var(--line-strong);
+}
+
+.workspace-review__field::placeholder {
+  color: var(--text-3);
+}
+
+textarea.workspace-review__field {
+  min-height: 74px;
+  max-height: 220px;
+  resize: none;
+  field-sizing: content;
+}
+
+.workspace-review__field.is-mono {
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+}
+
+.workspace-review__field.is-body {
+  min-height: 92px;
+}
+
+.workspace-review__composer-actions {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+}
+
+.workspace-review__composer-spacer {
+  flex: 1;
+}
+
+.workspace-review__quiet {
+  display: inline-flex;
+  min-height: 28px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
   background: transparent;
   border: 0;
   border-radius: var(--r-md);
   color: var(--text-3);
   cursor: pointer;
+  font: inherit;
+  font-size: var(--t-xs);
 }
 
-.workspace-review__commit-draft button:hover,
-.workspace-review__commit-draft button:focus-visible {
+.workspace-review__quiet.is-icon {
+  width: 28px;
+  justify-content: center;
+  padding: 0;
+}
+
+.workspace-review__quiet:hover:not(:disabled),
+.workspace-review__quiet:focus-visible {
   background: var(--control-hover);
   color: var(--text);
+}
+
+.workspace-review__quiet:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.workspace-review__submit {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.workspace-review__check {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 4px;
+  color: var(--text-2);
+  cursor: pointer;
+  font-size: var(--t-xs);
+}
+
+.workspace-review__check input {
+  margin: 0;
+  accent-color: var(--text);
+}
+
+.workspace-review__done {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--line);
+  color: var(--text-3);
+  font-size: var(--t-xs);
+}
+
+.workspace-review__done svg {
+  flex: none;
+  color: var(--success);
+}
+
+.workspace-review__message.is-action {
+  justify-content: flex-start;
+  min-height: 0;
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--line);
+  color: var(--error);
+  font-size: var(--t-xs);
+  white-space: pre-line;
 }
 
 .workspace-review__split {
@@ -636,9 +777,9 @@
   overflow: hidden;
 }
 
-/* Keep room for the branch name before the commit button's label. */
+/* Keep room for the branch name before the git buttons' labels. */
 @container workspace-panel (max-width: 460px) {
-  .workspace-review__generate-label {
+  .workspace-review__action-label {
     display: none;
   }
 }
@@ -1265,6 +1406,9 @@
   height: 100%;
   min-width: 0;
   min-height: 0;
+  /* The side chat is its own chat pane: the transcript column and the prompt
+     bar both size from it, the way the main chat sizes from .stage. */
+  container: side-chat / inline-size;
 }
 
 .workspace-side-chat__conversation {
@@ -1282,12 +1426,6 @@
 .workspace-side-chat__skeleton .thread-skeleton {
   padding-top: 12px;
   font-size: var(--t-md);
-}
-
-.workspace-side-chat__conversation .thread__col,
-.workspace-side-chat__skeleton .thread-skeleton__col {
-  max-width: 720px;
-  padding-inline: 24px;
 }
 
 .workspace-side-chat__skeleton,
@@ -1327,7 +1465,7 @@
 
 .workspace-side-chat__composer {
   position: relative;
-  width: calc(100% - 48px);
+  width: calc(100% - 2 * var(--chat-gutter));
   max-width: var(--chat-w);
   margin: 4px auto 12px;
   background: var(--bg-prompt);
@@ -1345,7 +1483,7 @@
   width: 100%;
   min-height: 68px;
   resize: none;
-  padding: 16px 48px 12px 18px;
+  padding: 16px 48px 12px calc(var(--chat-text-inset) - 1px);
   background: transparent;
   border: 0;
   border-radius: inherit;
@@ -1377,16 +1515,12 @@
   opacity: 0.28;
 }
 
-/* The main chat's narrow gutters (chat-stage at 480px), which do not reach
-   this panel: it is not inside the stage. */
+/* A narrower gutter in a narrow panel, read by the composer and the column
+   alike. The main chat's own (chat-stage at 480px) does not reach this panel:
+   it is not inside the stage. */
 @container workspace-panel (max-width: 480px) {
-  .workspace-side-chat__conversation .thread__col,
-  .workspace-side-chat__skeleton .thread-skeleton__col {
-    padding-inline: 14px;
-  }
-
-  .workspace-side-chat__composer {
-    width: calc(100% - 28px);
+  .workspace-side-chat {
+    --chat-gutter: 14px;
   }
 }
 

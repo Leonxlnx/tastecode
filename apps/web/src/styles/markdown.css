@@ -227,31 +227,27 @@
   contain-intrinsic-size: none !important;
 }
 
+/* The block's actions are ghost icon buttons, the same as the reply's own row
+   below it: 28px, borderless, a 15px glyph at stroke 1.7, and a quiet fill on
+   hover. The button-feedback layer fades their colour and fill. */
 .md [data-streamdown='code-block'] button {
-  position: relative;
   display: grid;
   place-items: center;
-  width: 24px;
-  height: 24px;
+  width: 28px;
+  height: 28px;
   flex: none;
-  background: var(--surface-2);
-  border: 1px solid var(--line);
+  padding: 0;
+  background: transparent;
+  border: 0;
   border-radius: var(--r-md);
   color: var(--text-3);
   cursor: pointer;
-  opacity: 0;
-  transition:
-    opacity var(--dur-fast) var(--ease-out),
-    color var(--dur-fast) var(--ease-out);
 }
 
-.md [data-streamdown='code-block']:hover button,
+.md [data-streamdown='code-block'] button:hover,
 .md [data-streamdown='code-block'] button:focus-visible {
-  opacity: 1;
-}
-
-.md [data-streamdown='code-block'] button:hover {
-  color: var(--text);
+  background: var(--surface);
+  color: var(--text-2);
 }
 
 .md [data-streamdown='code-block'] button[aria-pressed='true'] {
@@ -260,99 +256,162 @@
 }
 
 .md [data-streamdown='code-block'] button svg {
-  width: 13px;
-  height: 13px;
+  width: 15px;
+  height: 15px;
+  stroke-width: 1.7;
 }
 
-/* Block controls stay 24px to sit on the label row; the hit area reaches 2px
-   further on every side so each target is 28px. */
-.md [data-streamdown='code-block'] button::before {
-  content: '';
-  position: absolute;
-  inset: -2px;
-}
-
-/* Language label and controls share one row directly above the block. The
-   label starts on the block's left edge, the prose edge above it, and the
-   controls end on its right edge. */
+/* Language label and actions share one 32px row directly above the block. The
+   label starts on the block's left edge, the prose edge above it, and a long
+   one ends in an ellipsis before it reaches the actions. Block layout rather
+   than flex, so the live header's bare text gets the ellipsis too. */
 .md [data-streamdown='code-block-header'] {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  height: 30px;
-  padding: 0;
+  display: block;
+  height: 32px;
+  padding: 0 96px 0 0;
+  overflow: hidden;
   color: var(--text-3);
   font-family: var(--font-mono);
   font-size: var(--t-xs);
+  line-height: 32px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A fence without a language is plain text, and says so: an unlabelled row
+   read as an empty band above the block. Streamdown leaves its label span
+   empty; the live header (Markdown.tsx) is empty itself. CSS only, so neither
+   highlighting nor the download name changes. */
+.md [data-streamdown='code-block-header'] > span:empty::before,
+.md [data-streamdown='code-block-header']:empty::before {
+  content: 'text';
 }
 
 /* Streamdown renders the controls in their own wrapper between the header and
    the body. Left in flow, that wrapper keeps the height of the hidden buttons
    and opens a hole under the language label, so it is lifted onto the header
-   row instead. 30px row, 24px buttons: 3px from the top centres them on the
-   label and leaves the same 3px above the block, so they no longer sit on
-   its border. */
+   row instead: 2px from the top centres the 28px buttons on the 32px row.
+   It hangs 6.5px past the block, so the last glyph ends on the block's right
+   border, the mirror of the reply's action row on the left.
+
+   The wrapper, not each button, fades: the button-feedback layer owns every
+   button's transition, which left a per-button fade dead. Hover or keyboard
+   focus anywhere in the block shows all of them; a device without hover
+   always shows them. */
 .md [data-streamdown='code-block'] > div:has(> [data-streamdown='code-block-actions']) {
   position: absolute;
-  top: 3px;
-  right: 0;
+  top: 2px;
+  right: -6.5px;
   z-index: 1;
+  opacity: 0;
+  transition: opacity var(--dur-hover) var(--ease-out);
+}
+
+.md
+  [data-streamdown='code-block']:is(:hover, :focus-within)
+  > div:has(> [data-streamdown='code-block-actions']) {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .md [data-streamdown='code-block'] > div:has(> [data-streamdown='code-block-actions']) {
+    opacity: 1;
+  }
 }
 
 .md [data-streamdown='code-block-actions'] {
   display: flex;
   align-items: center;
-  gap: 3px;
+  gap: 2px;
+}
+
+/* In a narrow block Wrap and Copy stay and Download goes, so the row never
+   wraps or runs into the label. The selector outranks the button rule's grid. */
+.md [data-streamdown='code-block'] {
+  container: code-block / inline-size;
+}
+
+@container code-block (max-width: 360px) {
+  .md [data-streamdown='code-block'] button[data-streamdown='code-block-download-button'] {
+    display: none;
+  }
+}
+
+/* A failed copy turns its glyph red and its title offers a retry. The row has
+   no room for the inline "Copy failed" text that reply copy shows, so here it
+   is announced but not drawn, and cannot widen the row. */
+.md [data-streamdown='code-block-actions'] .copy-action.is-failed button {
+  color: var(--error);
+}
+
+.md [data-streamdown='code-block-actions'] .copy-action__error {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* A table reads like a code block: a 32px row with a quiet "table" label on
+   the prose edge and the actions on the right, above a rounded card. The
+   label is the wrapper's own first line, so the live table (Markdown.tsx),
+   whose controls row stays empty while it streams, shows the same row and
+   nothing moves when it completes. */
+.md [data-streamdown='table-wrapper']::before {
+  content: 'table';
+  display: block;
+  height: 32px;
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  line-height: 32px;
 }
 
 /* Streamdown's table toolbar and menus rely on Tailwind utilities, which this
-   app does not load. Keep controls in one row and menus out of document flow. */
+   app does not load. The toolbar is lifted onto the label row like a code
+   block's actions: the same ghost buttons, centred, hanging 6.5px so the last
+   glyph ends on the card border, and fading in as a whole on hover or focus.
+   Menus stay out of document flow. */
 .md [data-streamdown='table-wrapper'] > div:first-child:not(:last-child) {
+  position: absolute;
+  top: 2px;
+  right: -6.5px;
+  z-index: 1;
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  gap: 3px;
-  min-height: 26px;
-  padding: 0 0 2px;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity var(--dur-hover) var(--ease-out);
 
   > div {
     position: relative;
   }
 
-  button {
-    position: relative;
+  > button,
+  > div > button {
     display: grid;
     place-items: center;
-    width: 24px;
-    height: 24px;
+    width: 28px;
+    height: 28px;
     flex: none;
-    background: var(--surface-2);
-    border: 1px solid var(--line);
+    padding: 0;
+    background: transparent;
+    border: 0;
     border-radius: var(--r-md);
     color: var(--text-3);
     cursor: pointer;
 
     &:hover,
     &:focus-visible {
-      color: var(--text);
+      background: var(--surface);
+      color: var(--text-2);
     }
 
     svg {
-      width: 13px;
-      height: 13px;
-    }
-  }
-
-  > button,
-  > div > button {
-    opacity: 0;
-    transition: opacity var(--dur-fast) var(--ease-out);
-
-    &::before {
-      content: '';
-      position: absolute;
-      inset: -2px;
+      width: 15px;
+      height: 15px;
+      stroke-width: 1.7;
     }
   }
 
@@ -371,12 +430,15 @@
     button {
       display: block;
       width: 100%;
-      height: auto;
       padding: 5px 8px;
       border: 0;
+      border-radius: var(--r-md);
       background: transparent;
       color: var(--text-2);
+      cursor: pointer;
+      font: inherit;
       font-size: var(--t-sm);
+      line-height: 1.35;
       text-align: left;
 
       &:hover,
@@ -388,16 +450,23 @@
   }
 }
 
-.md [data-streamdown='table-wrapper']:is(:hover, :focus-within) > div:first-child {
-  > button,
-  > div > button {
+.md [data-streamdown='table-wrapper']:is(:hover, :focus-within) > div:first-child:not(:last-child) {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .md [data-streamdown='table-wrapper'] > div:first-child:not(:last-child) {
     opacity: 1;
   }
 }
 
+/* The card: the code block's border and radius. Overflow stays on this
+   scroller only, so a wide table scrolls inside the rounded edge. */
 .md [data-streamdown='table-wrapper'] > div:last-child {
   overflow-x: auto;
   margin-bottom: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
 
   > table {
     display: table;
@@ -480,6 +549,20 @@
   text-align: left;
 }
 
+/* Inside the card only the inner lines are drawn; the card is the outer edge. */
+.md [data-streamdown='table-wrapper'] :is(th, td) {
+  border: 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.md [data-streamdown='table-wrapper'] :is(th, td):not(:first-child) {
+  border-left: 1px solid var(--line);
+}
+
+.md [data-streamdown='table-wrapper'] table > :last-child > tr:last-child > :is(th, td) {
+  border-bottom: 0;
+}
+
 .md th {
   background: var(--surface);
   font-weight: 540;
@@ -530,4 +613,102 @@
   cursor: pointer;
   font: inherit;
   text-decoration: underline;
+}
+
+/* ---------- streaming reveal (reveal-clock.ts) ---------- */
+
+/* A streaming reply's finished renderer, rendered ahead while the live one
+   still shows it (Markdown.tsx). Completion only has to show it. */
+.md.md-ahead {
+  display: none;
+}
+
+/* The finished renderer puts each code line in its own block, so its lines
+   take their height from the code font alone. Live code is one run of text
+   in an inline <code> whose lines also hold the <pre>'s strut in another
+   font: about a pixel taller each, 35 px over a 35-line block, lost at
+   completion. A block <code> lays its lines out the same way. */
+.md[data-streaming-markdown] pre > code {
+  display: block;
+}
+
+/* Streamed text is laid out as it arrives; the part not shown yet is painted
+   in transparent ink, so its line breaks are already final when it appears. */
+::highlight(md-veil) {
+  color: transparent;
+  text-decoration-color: transparent;
+}
+
+/* A code chip whose text is still veiled would show as an empty box; it
+   fades in once the reveal reaches its first character, slowly at first,
+   so its text leads. */
+.md[data-streaming-markdown] :not(pre) > code {
+  transition: background-color var(--dur-fast) var(--ease-in-out);
+}
+
+.md [data-reveal-pending] {
+  background-color: transparent;
+}
+
+/* A file reference's icon waits for its name the same way. */
+.md[data-streaming-markdown] .md-file-ref__icon {
+  transition: opacity var(--dur-fast) var(--ease-in-out);
+}
+
+.md .md-file-ref[data-reveal-pending] > .md-file-ref__icon {
+  opacity: 0;
+}
+
+/* A list item's bullet, or a task's checkbox, waits for its first word. */
+.md li[data-reveal-pending]::marker {
+  color: transparent;
+}
+
+.md li[data-reveal-pending] > input[type='checkbox'] {
+  opacity: 0;
+}
+
+/* The soft leading edge: the characters shown last fade in through three
+   steps. A highlight's currentColor is not the colour of the text it covers,
+   so every element that sets its own text colour names it here as well. */
+.reply {
+  --reveal-ink: var(--response-text);
+}
+
+.reply--notice,
+.reasoning-summary,
+.md [data-streamdown='code-block-header'] {
+  --reveal-ink: var(--text-3);
+}
+
+.md a {
+  --reveal-ink: var(--response-text);
+  --reveal-decoration: var(--text-3);
+}
+
+.md blockquote {
+  --reveal-ink: var(--text-2);
+}
+
+.md .md-file-ref {
+  --reveal-ink: var(--file-reference);
+}
+
+.md pre {
+  --reveal-ink: var(--sdm-fg, var(--text));
+}
+
+::highlight(md-fresh-1) {
+  color: color-mix(in srgb, var(--reveal-ink, var(--text)) 30%, transparent);
+  text-decoration-color: color-mix(in srgb, var(--reveal-decoration, transparent) 30%, transparent);
+}
+
+::highlight(md-fresh-2) {
+  color: color-mix(in srgb, var(--reveal-ink, var(--text)) 55%, transparent);
+  text-decoration-color: color-mix(in srgb, var(--reveal-decoration, transparent) 55%, transparent);
+}
+
+::highlight(md-fresh-3) {
+  color: color-mix(in srgb, var(--reveal-ink, var(--text)) 80%, transparent);
+  text-decoration-color: color-mix(in srgb, var(--reveal-decoration, transparent) 80%, transparent);
 }

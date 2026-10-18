@@ -1,8 +1,10 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
+import { parseAntigravityModels } from './adapter.js'
 import {
   antigravityDisplayName,
   collapseAntigravityModels,
+  getAntigravityIndex,
   resolveAntigravityModel,
 } from './models.js'
 
@@ -67,6 +69,57 @@ describe('collapseAntigravityModels', () => {
     )
     expect(resolveAntigravityModel(index, 'claude-sonnet-4-6', 'high')).toBe('claude-sonnet-4-6')
     expect(resolveAntigravityModel(index, 'not-in-the-listing', 'high')).toBe('not-in-the-listing')
+  })
+})
+
+/** `agy models` with agy's names: 1.3.4 on 2026-10-16, 1.4.0 on 2026-10-17 (an alias listed first). */
+const NAMED = {
+  '1.3.4': readFileSync(new URL('./fixtures/agy-models-1.3.4.txt', import.meta.url), 'utf8'),
+  '1.4.0': readFileSync(new URL('./fixtures/agy-models-1.4.0.txt', import.meta.url), 'utf8'),
+}
+
+describe('agy listings with names', () => {
+  it.each(Object.entries(NAMED))('names each model as agy %s does, once', (_version, output) => {
+    const models = parseAntigravityModels(output)
+    expect(models.map((model) => [model.id, model.displayName])).toEqual([
+      ['gemini-4-argon-medium', 'Gemini 4 Argon'],
+      ['gemini-3.8-flash-high', 'Gemini 3.8 Flash'],
+      ['gemini-flash-demo', 'Gemini 3.7 Flash'],
+      ['claude-sonnet-4-6', 'Claude Sonnet 4.6 (Thinking)'],
+      ['claude-opus-4-6-thinking', 'Claude Opus 4.6 (Thinking)'],
+      ['gpt-oss-120b-medium', 'GPT-OSS 120B'],
+    ])
+    expect(models[0]).toMatchObject({
+      isDefault: true,
+      reasoningEfforts: ['low', 'medium', 'high'],
+      defaultReasoningEffort: 'medium',
+    })
+    expect(models[1]).toMatchObject({
+      reasoningEfforts: ['low', 'medium', 'high'],
+      defaultReasoningEffort: 'high',
+    })
+    expect(models[5]).toMatchObject({ description: 'Fixed at medium effort', reasoningEfforts: [] })
+  })
+
+  it('runs an effort on the slug that spells the name, not on its alias', () => {
+    parseAntigravityModels(NAMED['1.4.0'])
+    const index = getAntigravityIndex()
+    expect(resolveAntigravityModel(index, 'gemini-4-argon-medium', undefined)).toBe(
+      'gemini-4-argon-medium',
+    )
+    expect(resolveAntigravityModel(index, 'gemini-4-argon-medium', 'high')).toBe(
+      'gemini-4-argon-high',
+    )
+    expect(resolveAntigravityModel(index, 'gemini-4-argon-medium', 'low')).toBe(
+      'gemini-4-argon-low',
+    )
+    expect(resolveAntigravityModel(index, 'gemini-3.8-flash-high', 'low')).toBe(
+      'gemini-3.8-flash-low',
+    )
+    expect(resolveAntigravityModel(index, 'gemini-flash-demo', 'high')).toBe('gemini-flash-demo')
+    expect(resolveAntigravityModel(index, 'gpt-oss-120b-medium', 'high')).toBe(
+      'gpt-oss-120b-medium',
+    )
   })
 })
 

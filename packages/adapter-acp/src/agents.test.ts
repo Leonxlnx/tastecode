@@ -86,7 +86,33 @@ describe('ACP model discovery', () => {
         reasoningEfforts: ['low', 'high'],
         defaultReasoningEffort: 'high',
         serviceTiers: [],
+        lab: 'Moonshot',
+        family: 'kimi-k',
+        generation: '3',
       },
+    ])
+  })
+
+  it('declares one Kimi K line, so the newest K supersedes older variants', () => {
+    // The catalog the Kimi CLI listed on 2026-10-18, in its own order.
+    const models = parseKimiModels(
+      JSON.stringify({
+        models: {
+          'kimi-code/kimi-for-coding': { displayName: 'K2.8 Preview' },
+          'kimi-code/kimi-for-coding-highspeed': { displayName: 'K2.7 Code Highspeed' },
+          'kimi-code/k3': { displayName: 'K3' },
+          'kimi-code/k3-256k': { displayName: 'K3-256k' },
+          'kimi-code/custom': {},
+        },
+      }),
+    )
+    expect(models.map(({ id, family, generation }) => ({ id, family, generation }))).toEqual([
+      { id: 'kimi-code/kimi-for-coding', family: 'kimi-k', generation: '2.8' },
+      { id: 'kimi-code/kimi-for-coding-highspeed', family: 'kimi-k', generation: '2.7' },
+      { id: 'kimi-code/k3', family: 'kimi-k', generation: '3' },
+      { id: 'kimi-code/k3-256k', family: 'kimi-k', generation: '3' },
+      // A name without a K version declares no lineage.
+      { id: 'kimi-code/custom', family: undefined, generation: undefined },
     ])
   })
 })

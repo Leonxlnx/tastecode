@@ -6,15 +6,25 @@ import type {
   McpServerConfig,
   Model,
   ParamsOf,
+  ProviderCommand,
   ProviderId,
   ProviderLimit,
   ProviderLimitSource,
+  ResultOf,
   Skill,
   SkillCapabilities,
   SkillDiscoveryError,
+  UsageReadIntent,
 } from '@harness/contracts'
 import { validateAcpMcpServer } from '@harness/adapter-acp/mcp'
-import { validateClaudeMcpServer } from '@harness/adapter-claude-code/capabilities'
+import {
+  CLAUDE_MCP_CAPABILITIES,
+  validateClaudeMcpServer,
+} from '@harness/adapter-claude-code/capabilities'
+import { GROK_MCP_CAPABILITIES } from '@harness/adapter-grok/mcp'
+import { OPENCODE_MCP_CAPABILITIES } from '@harness/adapter-opencode/inventory'
+import type { ModelListRead } from './model-list-cache.js'
+import { ProjectInventoryCache, type ProjectInventoryService } from './project-inventory-cache.js'
 import { PROVIDER_CAPABILITIES, type ProviderControlCapabilities } from './provider-capabilities.js'
 import { retryableLazy } from './retryable-lazy.js'
 import { WatchLeases } from './watch-leases.js'
@@ -24,6 +34,8 @@ const loadClaude = retryableLazy(() => import('@harness/adapter-claude-code'))
 const loadCursor = retryableLazy(() => import('@harness/adapter-cursor'))
 const loadGrok = retryableLazy(() => import('@harness/adapter-grok'))
 const loadAcp = retryableLazy(() => import('@harness/adapter-acp'))
+const loadAntigravity = retryableLazy(() => import('@harness/adapter-antigravity'))
+const loadOpenCode = retryableLazy(() => import('@harness/adapter-opencode'))
 
 export type ProviderLoginResult = {
   loginId: string | null
@@ -33,8 +45,35 @@ export type ProviderLoginResult = {
 type LoginResponse = { loginId: string; authUrl?: string }
 type LoginHandle = LoginResponse & { cancel: () => Promise<void> }
 type LimitSource = { status: 'ready'; limits: ProviderLimit[] } | { status: 'unavailable' }
-/** Targets without a lease here yet (`commands`) are accepted and ignored. */
+/**
+ * The Codex control process serves no commands, so a `commands` watch holds no
+ * process lease. It does watch a project inventory's configuration folders,
+ * and services report command changes through `InventoryRead.changed`.
+ */
 type WatchTarget = ParamsOf<'providers.watch'>['targets'][number]
+
+/** A provider's own MCP servers, before the project's TasteCode overrides. */
+export type McpInventory = {
+  capabilities: McpCapabilities
+  servers: McpServer[]
+  /** Still collecting; a change notification follows when it settles. */
+  loading?: boolean
+}
+/** A live chat's answer; the provider's capabilities do not depend on it. */
+export type ActiveMcpInventory = Omit<McpInventory, 'capabilities'>
+export type CommandInventory = ResultOf<'commands.list'>
+export type SkillInventory = {
+  capabilities: SkillCapabilities
+  skills: Skill[]
+  errors: SkillDiscoveryError[]
+}
+/** What a service gets with each inventory read of one project. */
+export type InventoryRead<Active> = {
+  /** Reads a chat already running in the project, which costs no new process. */
+  readActive?: (() => Promise<Active>) | undefined
+  /** Reports that this project's answer changed after the read returned. */
+  changed: () => void
+}
 
 /** Only this settings surface is required of an injected control process. */
 export type CodexControlAdapter = Pick<
@@ -45,6 +84,8 @@ export type CodexControlAdapter = Pick<
   | 'account'
   | 'listModels'
   | 'listMcpServers'
+  | 'isMcpLoading'
+  | 'whenMcpServersListed'
   | 'listSkills'
   | 'setSkillEnabled'
   | 'rateLimitSource'
@@ -68,24 +109,39 @@ export type ProviderServices = {
     onComplete: (result: ProviderLoginResult) => void,
   ) => LoginHandle | Promise<LoginHandle>
   signOut?: (agent?: string) => Promise<void>
+  listMcpServers?: (
+    projectPath: string,
+    read: InventoryRead<ActiveMcpInventory>,
+  ) => Promise<McpInventory>
+  listCommands?: (
+    projectPath: string,
+    read: InventoryRead<ProviderCommand[]>,
+  ) => Promise<CommandInventory>
+  listSkills?: (projectPath: string, read: InventoryRead<never>) => Promise<SkillInventory>
+  /** Commands and MCP servers of a project without a chat, cached; explicit readers above win. */
+  projectInventory?: ProjectInventoryService
 }
 
 export type ProviderControl = {
   capabilities: ProviderControlCapabilities
   validateMcpServer?: (server: McpServerConfig) => void
   account(agent?: string): Promise<Account>
-  usageLimitSource(): Promise<ProviderLimitSource>
+  /** Absent intent is treated as `visible`, as the contract asks of servers. */
+  usageLimitSource(intent?: UsageReadIntent): Promise<ProviderLimitSource>
+  /** The held snapshot without reading; undefined until a read or live window arrives. */
+  heldLimitSource(): ProviderLimitSource | undefined
   signOut(agent?: string): Promise<void>
   watch(projectPath: string, targets: WatchTarget[]): { expiresInMs: number }
-  listModels?: (agent?: string) => Promise<Model[]>
+  listModels?: (agent?: string, read?: ModelListRead) => Promise<Model[]>
   listMcpServers?: (
-    readActive?: () => Promise<McpServer[]>,
-  ) => Promise<{ capabilities: McpCapabilities; servers: McpServer[] }>
-  listSkills?: (projectPath: string) => Promise<{
-    capabilities: SkillCapabilities
-    skills: Skill[]
-    errors: SkillDiscoveryError[]
-  }>
+    projectPath: string,
+    readActive?: () => Promise<ActiveMcpInventory>,
+  ) => Promise<McpInventory>
+  listCommands?: (
+    projectPath: string,
+    readActive?: () => Promise<ProviderCommand[]>,
+  ) => Promise<CommandInventory>
+  listSkills?: (projectPath: string) => Promise<SkillInventory>
   setSkillEnabled?: (projectPath: string, skillId: string, enabled: boolean) => Promise<boolean>
   startLogin?: () => Promise<LoginResponse>
   cancelLogin?: (loginId: string) => Promise<void>
@@ -98,14 +154,19 @@ export type ProviderControl = {
 
 export type ProviderControlsOptions = {
   /** Runtime injection also handles custom harness model discovery. */
-  listModels: (provider: ProviderId, agent?: string) => Promise<Model[]>
+  listModels: (provider: ProviderId, agent?: string, read?: ModelListRead) => Promise<Model[]>
   onLog?: (provider: ProviderId, line: string) => void
   onLogin?: (provider: ProviderId, result: ProviderLoginResult) => void
   onUsageChanged?: (provider: ProviderId) => void
+  /** A provider's held limits changed; `source` is the newest snapshot. */
+  onLimitsChanged?: (provider: ProviderId, source: ProviderLimitSource) => void
   onMcpChanged?: (provider: ProviderId, projectPath: string) => void
   onSkillsChanged?: (provider: ProviderId, projectPath: string) => void
+  onCommandsChanged?: (provider: ProviderId, projectPath: string) => void
   onAuthChanged?: (provider: ProviderId) => void
   controlIdleMs?: number
+  /** How long an unanswered Codex MCP status load may keep the shared process. */
+  mcpLoadHoldMs?: number
   watchTtlMs?: number
   loginTtlMs?: number
   /** How long a sign-in may take to return its URL before later auth work proceeds. */
@@ -114,8 +175,21 @@ export type ProviderControlsOptions = {
   limitCacheMs?: number
   /** How long an account without plan limits keeps that answer through usage changes. */
   unavailableLimitCacheMs?: number
+  /** Replaces every provider's declared `limitReadIntervalMs`. */
+  limitReadIntervalMs?: number
+  /** Minimum spacing of published limit snapshots per provider. */
+  limitPublishIntervalMs?: number
   /** Minimum spacing of forwarded usage-change signals per provider. */
   limitChangeIntervalMs?: number
+  /**
+   * Waited on before a limit read that is not cached. Such a read can start a
+   * vendor process, and the server holds it while a turn streams.
+   */
+  beforeLimitRead?: () => Promise<void>
+  /** How long a signed-in account read answers later reads without starting the CLI again. */
+  accountCacheMs?: number
+  /** How long the last confirmed sign-in answers when a later account read fails. */
+  accountFallbackMs?: number
   createCodex?: () => CodexControlAdapter | Promise<CodexControlAdapter>
   services?: Partial<Record<ProviderId, ProviderServices>>
 }
@@ -137,29 +211,187 @@ type LoginEntry = {
   earlyResults: ProviderLoginResult[]
 }
 type LimitEntry = {
-  /** Bumped by every change so a read that started earlier cannot refresh the cache. */
+  /** Bumped by every change so a read that started earlier cannot stay fresh. */
   version: number
+  /** Bumped by a change that must reach the next read, such as a redeemed reset. */
+  forcedVersion: number
   /** Bumped only when the account may have changed; usage changes leave it alone. */
   accountVersion: number
-  /** Counts cached answers, so an older read never replaces a newer one. */
+  /** Numbers reads in start order, so an older read never replaces a newer answer. */
+  reads: number
+  /** The number of the read behind `value`. */
   stored: number
   /** The last account read, which shows a sign-in or switch made outside the app. */
   account?: string | undefined
   value?: ProviderLimitSource | undefined
+  /** When the read behind `value` started. */
+  readAt: number
   freshUntil: number
   reading?: Promise<ProviderLimitSource> | undefined
+  /** The last failed read; later reads reject with it until `retryAt`. */
+  failure?: LimitFailure | undefined
   notifiedAt: number
   notifyTimer?: ReturnType<typeof setTimeout> | undefined
+  /** Windows a live session reported, by id, so a read that started earlier cannot revert them. */
+  live?: Map<string, { limit: ProviderLimit; at: number }> | undefined
+  /** When a live session last reported windows, changed or not. */
+  liveAt: number
+  publishedAt: number
+  publishTimer?: ReturnType<typeof setTimeout> | undefined
+  /** The held read was a background one that left out details a shown view lists. */
+  detailsOmitted?: boolean | undefined
+}
+type LimitFailure = { error: unknown; count: number; timeouts: number; retryAt: number }
+type ReadyLimitSource = Extract<ProviderLimitSource, { status: 'ready' }>
+
+const REFRESH_ERROR_LIMIT = 300
+const REFRESH_ERROR_FALLBACK = 'Plan limits could not be refreshed.'
+const NOT_READ_YET = 'Plan limits are read when you open them.'
+
+/** A held source without the marks of an earlier failed refresh. */
+function heldValues(source: ReadyLimitSource): ReadyLimitSource {
+  const { stale: _stale, refreshError: _error, retryAt: _retryAt, ...values } = source
+  return values
+}
+
+/** Live rows carry only the fields they know; the held row keeps the rest, such as a reset time. */
+function mergeLimit(held: ProviderLimit, update: ProviderLimit): ProviderLimit {
+  return { ...held, ...update }
+}
+
+/** A merged row keeps the held row's key order, so equal values serialize alike. */
+function sameLimit(left: ProviderLimit, right: ProviderLimit): boolean {
+  return JSON.stringify(left) === JSON.stringify(right)
+}
+
+/** What a client shows of a source; when it was checked is not part of it. */
+function shownLimits(source: ProviderLimitSource | undefined): string {
+  return JSON.stringify(
+    source?.status === 'ready' ? [source.limits, source.stale ?? false] : (source?.status ?? null),
+  )
+}
+
+/** Overlays live windows newer than a read onto that read's rows. */
+function withLiveWindows(
+  limits: ProviderLimit[],
+  live: Map<string, { limit: ProviderLimit; at: number }> | undefined,
+  readStartedAt: number,
+): ProviderLimit[] {
+  if (!live?.size) return limits
+  let merged = limits
+  for (const [id, window] of live) {
+    // The read already saw this window or something newer.
+    if (window.at < readStartedAt) {
+      live.delete(id)
+      continue
+    }
+    const index = merged.findIndex((limit) => limit.id === id)
+    if (index === -1) continue
+    if (merged === limits) merged = [...limits]
+    merged[index] = mergeLimit(merged[index]!, window.limit)
+  }
+  return merged
+}
+
+/**
+ * The held values of a source whose newest refresh failed. They keep the
+ * time they were read, so clients can say how old they are.
+ */
+function lastKnownLimits(held: ReadyLimitSource, failure: LimitFailure): ReadyLimitSource {
+  return {
+    ...heldValues(held),
+    stale: true,
+    refreshError: refreshErrorOf(failure),
+    // A source that ran out of timeouts waits for an account change, not a time.
+    ...(Number.isFinite(failure.retryAt) ? { retryAt: failure.retryAt } : {}),
+  }
+}
+
+/** The stable, bounded text a client may show for a failed read. */
+function refreshErrorOf(failure: LimitFailure): string {
+  const message = failure.error instanceof Error ? failure.error.message.trim() : ''
+  return message ? message.slice(0, REFRESH_ERROR_LIMIT) : REFRESH_ERROR_FALLBACK
+}
+
+/** Failed reads wait 5, 10 and 20 minutes, then every 30 minutes. */
+const LIMIT_RETRY_MIN_MS = 5 * 60_000
+const LIMIT_RETRY_MAX_MS = 30 * 60_000
+
+function limitRetryDelay(failures: number): number {
+  return Math.min(LIMIT_RETRY_MIN_MS * 2 ** (failures - 1), LIMIT_RETRY_MAX_MS)
+}
+
+/** Adapters mark a missed deadline with the platform's own error name. */
+function isTimeout(error: unknown): boolean {
+  return error instanceof Error && error.name === 'TimeoutError'
+}
+
+/** Each failure doubles the wait; reaching the timeout limit ends retries for this account. */
+function limitFailure(
+  previous: LimitFailure | undefined,
+  error: unknown,
+  timeoutLimit: number | undefined,
+): LimitFailure {
+  const count = (previous?.count ?? 0) + 1
+  const timeouts = (previous?.timeouts ?? 0) + (isTimeout(error) ? 1 : 0)
+  return {
+    error,
+    count,
+    timeouts,
+    retryAt:
+      timeoutLimit !== undefined && timeouts >= timeoutLimit
+        ? Number.POSITIVE_INFINITY
+        : Date.now() + limitRetryDelay(count),
+  }
+}
+type AccountEntry = {
+  /** The last read that answered; a failed read never replaces it. */
+  value?: Account | undefined
+  at: number
+  reading?: Promise<Account> | undefined
 }
 
 const defaultServices = {
-  antigravity: {},
+  antigravity: {
+    account: async () => (await loadAntigravity()).antigravityAccount(),
+    // agy keeps its Google sign-in in the OS keyring and drops it only from
+    // its own TUI; doing nothing here would show a sign-out that never happened.
+    signOut: async () => {
+      throw new Error('Sign out of Antigravity in agy itself: run agy and enter /logout.')
+    },
+  },
   api: {},
   codex: {},
-  opencode: {},
+  opencode: {
+    // OpenCode reports these from a running server. A project without a chat
+    // starts one without a session (4-12 s), cached.
+    projectInventory: {
+      mcpCapabilities: OPENCODE_MCP_CAPABILITIES,
+      skillCapabilities: { inventory: true, configure: false, install: false },
+      discover: async (projectPath, options) =>
+        (await loadOpenCode()).discoverOpenCodeProject(projectPath, options),
+      watchPaths: async (projectPath) =>
+        (await loadOpenCode()).openCodeInventoryWatchPaths(projectPath),
+    },
+    account: async () => (await loadOpenCode()).openCodeAccount(),
+    // Being signed in means one or more connected model providers, each
+    // removed on its own; signing out of all of them is not one action.
+    signOut: async () => {
+      throw new Error('To remove an OpenCode sign-in, run "opencode auth logout" in a terminal.')
+    },
+  },
   pi: {},
   'claude-code': {
     validateMcpServer: validateClaudeMcpServer,
+    // Claude reports its commands and servers only from a running agent. A
+    // project without a chat starts one without a prompt (10-15 s), cached.
+    projectInventory: {
+      mcpCapabilities: CLAUDE_MCP_CAPABILITIES,
+      discover: async (projectPath, options) =>
+        (await loadClaude()).discoverClaudeProject(projectPath, options),
+      watchPaths: async (projectPath) =>
+        (await loadClaude()).claudeInventoryWatchPaths(projectPath),
+    },
     account: async () => (await loadClaude()).claudeAccount(),
     usageLimitSource: async () => (await loadClaude()).claudeLimitSource(),
     startLogin: async (complete) => (await loadClaude()).startClaudeLogin(complete),
@@ -173,6 +405,16 @@ const defaultServices = {
   grok: {
     // Grok's MCP sessions run through ACP.
     validateMcpServer: validateAcpMcpServer,
+    // Grok reports commands, skills and MCP status only from a session, and
+    // its print-mode chats report none. A project without an ACP chat starts
+    // one without a prompt (about 3 s), cached.
+    projectInventory: {
+      mcpCapabilities: GROK_MCP_CAPABILITIES,
+      skillCapabilities: { inventory: true, configure: false, install: false },
+      discover: async (projectPath, options) =>
+        (await loadGrok()).discoverGrokProject(projectPath, options),
+      watchPaths: async (projectPath) => (await loadGrok()).grokInventoryWatchPaths(projectPath),
+    },
     account: async () => (await loadGrok()).grokAccount(),
     usageLimitSource: async () => (await loadGrok()).grokLimitSource(),
     signOut: async () => (await loadGrok()).signOutGrok(),
@@ -197,12 +439,21 @@ export class ProviderControls {
   readonly #skills: WatchLeases
   readonly #mcp: WatchLeases
   readonly #idleMs: number
+  readonly #mcpLoadHoldMs: number
+  readonly #mcpHolds = new Set<ReturnType<typeof setTimeout>>()
   readonly #loginTtlMs: number
   readonly #loginStartTimeoutMs: number
   readonly #limitCacheMs: number
   readonly #unavailableLimitCacheMs: number
+  readonly #limitReadIntervalMs: number | undefined
   readonly #limitChangeIntervalMs: number
+  readonly #limitPublishIntervalMs: number
   readonly #limits = new Map<ProviderId, LimitEntry>()
+  readonly #accountCacheMs: number
+  readonly #accountFallbackMs: number
+  /** Keyed by provider and agent; an auth change deletes the provider's entries. */
+  readonly #accounts = new Map<string, AccountEntry>()
+  readonly #projectInventories = new Map<ProviderId, ProjectInventoryCache>()
   #shared: ProcessEntry | undefined
   #users = 0
   #idleTimer: ReturnType<typeof setTimeout> | undefined
@@ -214,17 +465,30 @@ export class ProviderControls {
   constructor(options: ProviderControlsOptions) {
     this.#options = options
     this.#idleMs = duration(options.controlIdleMs, 5_000, 0)
+    this.#mcpLoadHoldMs = duration(options.mcpLoadHoldMs, 3 * 60_000, 1)
     this.#loginTtlMs = duration(options.loginTtlMs, 10 * 60_000, 1)
     this.#loginStartTimeoutMs = duration(options.loginStartTimeoutMs, 60_000, 1)
-    // Codex reports a limit change after nearly every model request, and each
-    // read starts a vendor process, so reads are cached and signals spaced.
-    this.#limitCacheMs = duration(options.limitCacheMs, 60_000, 0)
+    // Each read starts a vendor process, and live windows from running
+    // sessions keep held values current, so a full read answers 5 minutes.
+    this.#limitCacheMs = duration(options.limitCacheMs, 5 * 60_000, 0)
     // An account without plan limits answers the same until it changes, and
     // Claude scans its local transcripts for up to a minute to say so. Every
     // turn reports a usage change, so only a longer, bounded cache stops each
     // turn from repeating that scan.
     this.#unavailableLimitCacheMs = duration(options.unavailableLimitCacheMs, 30 * 60_000, 0)
+    this.#limitReadIntervalMs =
+      options.limitReadIntervalMs === undefined
+        ? undefined
+        : duration(options.limitReadIntervalMs, 0, 0)
+    // Codex reports its windows beside nearly every token update.
+    this.#limitPublishIntervalMs = duration(options.limitPublishIntervalMs, 1_000, 0)
     this.#limitChangeIntervalMs = duration(options.limitChangeIntervalMs, 30_000, 0)
+    // An account read starts the vendor CLI, which takes seconds on a busy
+    // machine. App and Settings ask at once and again on every switch, so one
+    // read serves them all, and a slow or failed read keeps the last sign-in
+    // instead of reporting a signed-in account as unavailable.
+    this.#accountCacheMs = duration(options.accountCacheMs, 60_000, 0)
+    this.#accountFallbackMs = duration(options.accountFallbackMs, 30 * 60_000, 0)
     const watchTtlMs = duration(options.watchTtlMs, 60_000, 1)
     this.#skills = new WatchLeases(watchTtlMs)
     this.#mcp = new WatchLeases(watchTtlMs)
@@ -240,19 +504,31 @@ export class ProviderControls {
   }
 
   forgetProject(projectPath: string): void {
+    for (const inventory of this.#projectInventories.values()) inventory.forget(projectPath)
     this.#skills.delete(projectPath)
     this.#mcp.delete(projectPath)
     this.#scheduleIdle()
   }
 
+  /** A chat's last server list includes the project servers TasteCode gave it. */
+  projectMcpConfigChanged(provider: ProviderId, projectPath: string): void {
+    this.#projectInventories.get(provider)?.forgetLiveServers(projectPath)
+  }
+
   /**
    * Marks cached limits stale and forwards the signal at a bounded rate: the
    * first change notifies at once, a burst after it collapses into one
-   * trailing notification per interval.
+   * trailing notification per interval. An `immediate` change, such as a
+   * redeemed reset, also reaches the next limit read.
    */
   usageChanged(provider: ProviderId, immediate = false): void {
     if (this.#closed) return
-    const entry = this.#invalidateLimits(provider, false)
+    const entry = this.#invalidateLimits(provider, false, immediate)
+    this.#notifyUsageChanged(provider, entry, immediate)
+  }
+
+  /** Forwards a usage-change signal: the first at once, a burst as one trailing signal. */
+  #notifyUsageChanged(provider: ProviderId, entry: LimitEntry, immediate: boolean): void {
     const wait = immediate ? 0 : entry.notifiedAt + this.#limitChangeIntervalMs - Date.now()
     if (wait <= 0) {
       clearTimeout(entry.notifyTimer)
@@ -271,6 +547,47 @@ export class ProviderControls {
     entry.notifyTimer.unref?.()
   }
 
+  /**
+   * Folds plan-limit windows a live session reported into the held snapshot
+   * by id. A known window takes the reported fields, other windows stay, and
+   * rows without an id are left to full reads. When every row matches, the
+   * snapshot stays the same object and nothing is published.
+   */
+  applyLimitRows(provider: ProviderId, rows: readonly ProviderLimit[]): void {
+    if (this.#closed) return
+    const entry = this.#limitEntry(provider)
+    const held = entry.value
+    // An account without plan limits keeps that answer until it changes.
+    if (held?.status === 'unavailable') return
+    const limits = held?.limits ?? []
+    const now = Date.now()
+    let next: ProviderLimit[] | undefined
+    for (const row of rows) {
+      if (row.id === undefined) continue
+      // An unchanged window still confirms the held values are current.
+      entry.liveAt = now
+      const current = next ?? limits
+      const index = current.findIndex((limit) => limit.id === row.id)
+      const merged = index === -1 ? row : mergeLimit(current[index]!, row)
+      if (index !== -1 && sameLimit(current[index]!, merged)) continue
+      next ??= [...limits]
+      if (index === -1) next.push(merged)
+      else next[index] = merged
+      entry.live ??= new Map()
+      const seen = entry.live.get(row.id)
+      entry.live.set(row.id, { limit: seen ? mergeLimit(seen.limit, row) : row, at: now })
+    }
+    if (!next) return
+    // Live values are current, so they are no longer the last known ones.
+    entry.value = held
+      ? { ...heldValues(held), limits: next, checkedAt: now, origin: 'live' }
+      : { provider, status: 'ready', limits: next, checkedAt: now, origin: 'live' }
+    this.#publishLimits(provider, entry)
+    // Clients that re-pull after a usage change see the merge without a new
+    // read: the held value stays fresh, and the signal keeps its spacing.
+    this.#notifyUsageChanged(provider, entry, false)
+  }
+
   /** Failed cleanup retains ownership, so a subsequent call can retry it. */
   disposeAll(): Promise<void> {
     if (this.#disposing) return this.#disposing
@@ -279,10 +596,15 @@ export class ProviderControls {
     this.#users = 0
     clearTimeout(this.#idleTimer)
     clearTimeout(this.#watchTimer)
+    for (const timer of this.#mcpHolds) clearTimeout(timer)
+    this.#mcpHolds.clear()
     this.#skills.clear()
     this.#mcp.clear()
+    for (const inventory of this.#projectInventories.values()) inventory.clear()
+    for (const entry of this.#limits.values()) clearTimeout(entry.publishTimer)
     for (const entry of this.#limits.values()) clearTimeout(entry.notifyTimer)
     this.#limits.clear()
+    this.#accounts.clear()
     for (const login of this.#logins.values()) clearTimeout(login.timer)
     // Stopping the control process also cancels its browser login. Sending a
     // cancellation RPC while stopping that same process would race its exit.
@@ -337,25 +659,30 @@ export class ProviderControls {
       ...defaultServices[provider],
       ...this.#options.services?.[provider],
     }
+    const inventory = this.#projectInventory(provider, services)
     const control: ProviderControl = {
       capabilities,
       account: async (agent) => {
-        const account = await this.#read(
-          async () => (await services.account?.(agent)) ?? { signedIn: false },
+        const account = await this.#cachedAccount(provider, agent, () =>
+          this.#read(async () => (await services.account?.(agent)) ?? { signedIn: false }),
         )
         return agent === undefined ? this.#accountRead(provider, account) : account
       },
-      usageLimitSource: () =>
+      usageLimitSource: (intent) =>
         services.usageLimitSource
-          ? this.#cachedLimits(provider, () =>
-              this.#read(async () => {
-                const source = await services.usageLimitSource?.()
-                return source?.status === 'ready'
-                  ? { provider, status: 'ready', limits: source.limits }
-                  : { provider, status: 'unavailable' }
-              }),
+          ? this.#cachedLimits(
+              provider,
+              () =>
+                this.#read(async () => {
+                  const source = await services.usageLimitSource?.()
+                  return source?.status === 'ready'
+                    ? { provider, status: 'ready', limits: source.limits }
+                    : { provider, status: 'unavailable' }
+                }),
+              intent,
             )
           : this.#read(async () => ({ provider, status: 'unavailable' })),
+      heldLimitSource: () => this.#limits.get(provider)?.value,
       signOut: (agent) =>
         this.#auth(provider, async (generation) => {
           const login = this.#logins.get(provider)
@@ -368,7 +695,10 @@ export class ProviderControls {
       watch: (projectPath, targets) => this.#watch(provider, projectPath, targets),
       ...(services.validateMcpServer ? { validateMcpServer: services.validateMcpServer } : {}),
       ...(capabilities.nativeModels
-        ? { listModels: (agent?: string) => this.#readModels(provider, agent) }
+        ? {
+            listModels: (agent?: string, read?: ModelListRead) =>
+              this.#readModels(provider, agent, read),
+          }
         : {}),
       ...(capabilities.login && services.startLogin
         ? {
@@ -379,23 +709,86 @@ export class ProviderControls {
             cancelLogin: (loginId: string) => this.#cancelLogin(provider, loginId),
           }
         : {}),
+      ...(services.listMcpServers
+        ? {
+            listMcpServers: (projectPath: string, readActive?: () => Promise<ActiveMcpInventory>) =>
+              this.#read(() =>
+                services.listMcpServers!(
+                  projectPath,
+                  this.#inventoryRead(provider, 'mcp', projectPath, readActive),
+                ),
+              ),
+          }
+        : {}),
+      ...(services.listCommands
+        ? {
+            listCommands: (projectPath: string, readActive?: () => Promise<ProviderCommand[]>) =>
+              this.#read(() =>
+                services.listCommands!(
+                  projectPath,
+                  this.#inventoryRead(provider, 'commands', projectPath, readActive),
+                ),
+              ),
+          }
+        : {}),
+      ...(services.listSkills
+        ? {
+            listSkills: (projectPath: string) =>
+              this.#read(() =>
+                services.listSkills!(
+                  projectPath,
+                  this.#inventoryRead<never>(provider, 'skills', projectPath),
+                ),
+              ),
+          }
+        : {}),
+      ...(inventory && !services.listMcpServers
+        ? {
+            listMcpServers: (projectPath: string, readActive?: () => Promise<ActiveMcpInventory>) =>
+              this.#read(() => inventory.listMcpServers(projectPath, readActive)),
+          }
+        : {}),
+      ...(inventory && !services.listCommands
+        ? {
+            listCommands: (projectPath: string, readActive?: () => Promise<ProviderCommand[]>) =>
+              this.#read(() => inventory.listCommands(projectPath, readActive)),
+          }
+        : {}),
+      ...(inventory && services.projectInventory?.skillCapabilities && !services.listSkills
+        ? {
+            listSkills: (projectPath: string) =>
+              this.#read(async () => inventory.listSkills(projectPath)),
+          }
+        : {}),
     }
     if (provider !== 'codex') return control
     return {
       ...control,
       account: async () =>
-        this.#accountRead(provider, await this.#withShared((adapter) => adapter.account())),
-      listModels: (agent) =>
+        this.#accountRead(
+          provider,
+          await this.#cachedAccount(provider, undefined, () =>
+            this.#withShared((adapter) => adapter.account()),
+          ),
+        ),
+      listModels: (agent, read) =>
         agent
-          ? this.#readModels(provider, agent)
+          ? this.#readModels(provider, agent, read)
           : this.#withShared((adapter) => adapter.listModels()),
-      listMcpServers: (readActive) =>
+      listMcpServers: (projectPath, readActive) =>
         this.#read(async () => {
-          const [servers, { CODEX_MCP_CAPABILITIES }] = await Promise.all([
-            readActive ? readActive() : this.#withShared((adapter) => adapter.listMcpServers()),
+          const [inventory, { CODEX_MCP_CAPABILITIES }] = await Promise.all([
+            readActive
+              ? readActive()
+              : this.#withShared(async (adapter) => {
+                  const servers = await adapter.listMcpServers()
+                  if (!adapter.isMcpLoading()) return { servers }
+                  this.#holdForMcpLoad(adapter, projectPath)
+                  return { servers, loading: true }
+                }),
             loadCodex(),
           ])
-          return { capabilities: CODEX_MCP_CAPABILITIES, servers }
+          return { capabilities: CODEX_MCP_CAPABILITIES, ...inventory }
         }),
       listSkills: (projectPath) =>
         this.#read(async () => {
@@ -409,14 +802,18 @@ export class ProviderControls {
         this.#withShared((adapter) => adapter.setSkillEnabled(skillId, enabled)),
       // A fresh process reads the account's current limits rather than the
       // snapshot a long-lived process captured at startup.
-      usageLimitSource: () =>
-        this.#cachedLimits(provider, () =>
-          this.#withFresh(async (adapter) => {
-            const source = await adapter.rateLimitSource()
-            return source.status === 'ready'
-              ? { provider, status: 'ready', limits: source.limits }
-              : { provider, status: 'unavailable' }
-          }),
+      usageLimitSource: (intent) =>
+        this.#cachedLimits(
+          provider,
+          (background, omittedDetails) =>
+            this.#withFresh(async (adapter) => {
+              const source = await adapter.rateLimitSource({ background })
+              if (source.status === 'ready' && source.detailsOmitted) omittedDetails()
+              return source.status === 'ready'
+                ? { provider, status: 'ready', limits: source.limits }
+                : { provider, status: 'unavailable' }
+            }),
+          intent,
         ),
       consumeRateLimitReset: async (idempotencyKey, creditId) => {
         const generation = this.#generation
@@ -467,55 +864,175 @@ export class ProviderControls {
     if (!entry) {
       entry = {
         version: 0,
+        forcedVersion: 0,
         accountVersion: 0,
+        reads: 0,
         stored: 0,
+        readAt: Number.NEGATIVE_INFINITY,
         freshUntil: 0,
+        liveAt: Number.NEGATIVE_INFINITY,
         notifiedAt: Number.NEGATIVE_INFINITY,
+        publishedAt: Number.NEGATIVE_INFINITY,
       }
       this.#limits.set(provider, entry)
     }
     return entry
   }
 
-  #invalidateLimits(provider: ProviderId, accountChanged: boolean): LimitEntry {
+  #limitReadInterval(provider: ProviderId): number {
+    const capabilities: ProviderControlCapabilities = PROVIDER_CAPABILITIES[provider]
+    return this.#limitReadIntervalMs ?? capabilities.limitReadIntervalMs
+  }
+
+  #invalidateLimits(provider: ProviderId, accountChanged: boolean, forced = false): LimitEntry {
     const entry = this.#limitEntry(provider)
-    if (accountChanged) entry.accountVersion += 1
+    if (accountChanged) {
+      entry.accountVersion += 1
+      // Another account starts without this one's values, failures or read times.
+      entry.value = undefined
+      entry.live = undefined
+      entry.failure = undefined
+      entry.detailsOmitted = undefined
+      entry.readAt = Number.NEGATIVE_INFINITY
+    }
     // Spending usage cannot give an account the plan limits it lacks, so only
     // an account change discards that answer.
     else if (entry.value?.status === 'unavailable' && Date.now() < entry.freshUntil) return entry
     entry.version += 1
-    entry.freshUntil = 0
-    // A read already in flight may predate the change; the next caller starts its own.
-    entry.reading = undefined
+    if (accountChanged || forced) {
+      if (forced) entry.forcedVersion += 1
+      entry.freshUntil = 0
+      // Live windows do not report what such a change did, so the next request reads.
+      entry.liveAt = Number.NEGATIVE_INFINITY
+      // A read in flight answers for the old account or predates the forced
+      // change, so the next caller starts its own.
+      entry.reading = undefined
+    } else {
+      // Usage moves during every turn. A read in flight still answers its
+      // callers instead of a second process starting beside it, and a stored
+      // answer stays until the provider's read interval has passed. A failing
+      // source keeps its retry time: spending usage does not repair it.
+      entry.freshUntil = Math.min(
+        entry.freshUntil,
+        entry.readAt + this.#limitReadInterval(provider),
+      )
+    }
     return entry
   }
 
-  /** One read serves concurrent callers, and a fresh result serves later ones. */
+  /**
+   * One read serves concurrent callers, a fresh result serves later ones, and
+   * a failed read answers them until its retry time: with the account's last
+   * known values when there are any, otherwise with its error. A passive
+   * figure is answered without a read while live windows keep arriving, and a
+   * provider that reads only while its limits are shown answers it from what
+   * it holds.
+   */
   #cachedLimits(
     provider: ProviderId,
-    read: () => Promise<ProviderLimitSource>,
+    /** `background` reads may leave out details, which they report through `omittedDetails`. */
+    read: (background: boolean, omittedDetails: () => void) => Promise<ProviderLimitSource>,
+    intent: UsageReadIntent = 'visible',
   ): Promise<ProviderLimitSource> {
     this.#assertOpen()
     const entry = this.#limitEntry(provider)
     if (entry.reading) return entry.reading
-    if (entry.value && Date.now() < entry.freshUntil) return Promise.resolve(entry.value)
-    const { version, accountVersion, stored } = entry
-    const reading = read()
-      .then((value) => {
-        const unavailable = value.status === 'unavailable'
-        if (
-          this.#limits.get(provider) === entry &&
-          entry.accountVersion === accountVersion &&
-          // A usage change during the read leaves an unavailable answer true.
-          (entry.version === version || (unavailable && entry.stored === stored))
-        ) {
-          entry.stored += 1
-          entry.value = value
-          entry.freshUntil =
-            Date.now() + (unavailable ? this.#unavailableLimitCacheMs : this.#limitCacheMs)
-        }
-        return value
+    const startedAt = Date.now()
+    // A shown view needs the details a background read left out.
+    const missingDetails = entry.detailsOmitted === true && intent !== 'background'
+    if (entry.value && startedAt < entry.freshUntil && !missingDetails) {
+      return Promise.resolve(entry.value)
+    }
+    const capabilities: ProviderControlCapabilities = PROVIDER_CAPABILITIES[provider]
+    // A running session that keeps reporting its windows keeps a passive figure
+    // current; only a shown view needs what else a full read lists.
+    if (
+      intent === 'background' &&
+      entry.value?.status === 'ready' &&
+      startedAt < entry.liveAt + this.#limitReadInterval(provider)
+    ) {
+      return Promise.resolve(entry.value)
+    }
+    if (intent === 'background' && capabilities.limitReadsWhenShown) {
+      // Nothing known is not "no plan limits": the source has simply not been read yet.
+      return Promise.resolve(
+        entry.value ?? {
+          provider,
+          status: 'unavailable',
+          reason: 'failed',
+          error: entry.failure ? refreshErrorOf(entry.failure) : NOT_READ_YET,
+        },
+      )
+    }
+    // Someone asked again: that request reads even inside the backoff or after
+    // the timeout limit; the next automatic one waits as before.
+    if (entry.failure && startedAt < entry.failure.retryAt && intent !== 'retry') {
+      return entry.value?.status === 'ready'
+        ? Promise.resolve(entry.value)
+        : Promise.reject(entry.failure.error)
+    }
+    const { version, forcedVersion, accountVersion } = entry
+    const sequence = ++entry.reads
+    // An answer for another account, or one older than the stored answer, changes nothing.
+    const current = () =>
+      this.#limits.get(provider) === entry &&
+      entry.accountVersion === accountVersion &&
+      sequence > entry.stored
+    let detailsOmitted = false
+    // The read may wait while a turn streams, so it is dated when it starts.
+    let readStartedAt = startedAt
+    const start = () => {
+      readStartedAt = Date.now()
+      return read(intent === 'background', () => {
+        detailsOmitted = true
       })
+    }
+    const wait = this.#options.beforeLimitRead
+    const reading = (wait ? wait().then(start) : start())
+      .then(
+        (answer) => {
+          const now = Date.now()
+          // Clients label values by when they were read, not when they were asked for.
+          let value: ProviderLimitSource =
+            answer.status === 'ready' ? { ...answer, checkedAt: now, origin: 'read' } : answer
+          if (!current()) return value
+          if (value.status === 'ready' && entry.live) {
+            const limits = withLiveWindows(value.limits, entry.live, readStartedAt)
+            if (limits !== value.limits) value = { ...value, limits }
+          }
+          const interval = this.#limitReadInterval(provider)
+          const unavailable = value.status === 'unavailable'
+          const previous = entry.value
+          entry.stored = sequence
+          entry.value = value
+          entry.readAt = readStartedAt
+          entry.failure = undefined
+          entry.detailsOmitted = detailsOmitted
+          entry.freshUntil =
+            entry.forcedVersion !== forcedVersion
+              ? 0
+              : // A usage change during the read leaves an unavailable answer true.
+                unavailable
+                ? now + this.#unavailableLimitCacheMs
+                : entry.version === version
+                  ? now + Math.max(this.#limitCacheMs, interval)
+                  : readStartedAt + interval
+          this.#heldReplaced(provider, entry, previous)
+          return value
+        },
+        (error: unknown) => {
+          if (!current()) throw error
+          const failure = limitFailure(entry.failure, error, capabilities.limitReadTimeoutLimit)
+          entry.failure = failure
+          // One failed refresh does not make the account's known limits unknown.
+          const previous = entry.value
+          if (previous?.status !== 'ready') throw error
+          const lastKnown = lastKnownLimits(previous, failure)
+          entry.value = lastKnown
+          this.#heldReplaced(provider, entry, previous)
+          return lastKnown
+        },
+      )
       .finally(() => {
         if (entry.reading === reading) entry.reading = undefined
       })
@@ -523,10 +1040,109 @@ export class ProviderControls {
     return reading
   }
 
+  /**
+   * A read or a failed refresh replaced the held snapshot. Clients that apply
+   * pushed snapshots get it; clients that only re-pull after a usage change
+   * are told when what they show changed, which a background refresh needs.
+   */
+  #heldReplaced(provider: ProviderId, entry: LimitEntry, previous?: ProviderLimitSource): void {
+    this.#publishLimits(provider, entry)
+    if (previous && shownLimits(previous) !== shownLimits(entry.value)) {
+      this.#options.onUsageChanged?.(provider)
+    }
+  }
+
+  /**
+   * Sends the held snapshot at a bounded rate: the first change at once, a
+   * burst after it as one trailing snapshot with the newest values.
+   */
+  #publishLimits(provider: ProviderId, entry: LimitEntry): void {
+    if (!this.#options.onLimitsChanged || entry.publishTimer) return
+    const send = () => {
+      if (this.#limits.get(provider) !== entry || this.#closed || !entry.value) return
+      entry.publishedAt = Date.now()
+      this.#options.onLimitsChanged?.(provider, entry.value)
+    }
+    const wait = entry.publishedAt + this.#limitPublishIntervalMs - Date.now()
+    if (wait <= 0) {
+      send()
+      return
+    }
+    entry.publishTimer = setTimeout(() => {
+      entry.publishTimer = undefined
+      send()
+    }, wait)
+    entry.publishTimer.unref?.()
+  }
+
   #authChanged(provider: ProviderId): void {
     // The next account read describes the new account; it is no further change.
     this.#invalidateLimits(provider, true).account = undefined
+    this.#forgetAccounts(provider)
     this.#options.onAuthChanged?.(provider)
+  }
+
+  /**
+   * Concurrent callers share one read, a signed-in answer serves later callers
+   * for a short while, and a failed read falls back to the last sign-in it
+   * confirmed. A signed-out answer is never reused, so a sign-in finished in
+   * the provider's own terminal shows at the next read.
+   */
+  #cachedAccount(
+    provider: ProviderId,
+    agent: string | undefined,
+    read: () => Promise<Account>,
+  ): Promise<Account> {
+    this.#assertOpen()
+    const key = accountKey(provider, agent)
+    let entry = this.#accounts.get(key)
+    if (!entry) {
+      entry = { at: 0 }
+      this.#accounts.set(key, entry)
+    }
+    if (entry.reading) return entry.reading
+    if (entry.value?.signedIn && Date.now() - entry.at < this.#accountCacheMs) {
+      return Promise.resolve(entry.value)
+    }
+    const current = entry
+    // An auth change or reset deletes the entry; a read that began before it
+    // still answers its own caller but cannot answer anyone after the change.
+    const owned = () => this.#accounts.get(key) === current
+    const reading = read()
+      .then(
+        (account) => {
+          if (owned()) {
+            current.value = account
+            current.at = Date.now()
+          }
+          return account
+        },
+        (error: unknown) => {
+          const known = current.value
+          if (!owned() || !known?.signedIn || Date.now() - current.at >= this.#accountFallbackMs) {
+            throw error
+          }
+          const reason = error instanceof Error ? error.message : String(error)
+          this.#options.onLog?.(
+            provider,
+            `Account check failed (${reason}); using the last known sign-in.`,
+          )
+          return known
+        },
+      )
+      .finally(() => {
+        if (current.reading === reading) current.reading = undefined
+      })
+    current.reading = reading
+    return reading
+  }
+
+  #forgetAccounts(provider: ProviderId): void {
+    const prefix = accountKey(provider, undefined)
+    // Deleting the entry being visited is safe while iterating a Map.
+    for (const key of this.#accounts.keys()) {
+      if (key === prefix || key.startsWith(`${prefix}\u0000`)) this.#accounts.delete(key)
+    }
   }
 
   /** A sign-in or account switch in the provider's own CLI reaches the app only here. */
@@ -540,8 +1156,51 @@ export class ProviderControls {
     return account
   }
 
-  async #readModels(provider: ProviderId, agent?: string): Promise<Model[]> {
-    return this.#read(() => this.#options.listModels(provider, agent))
+  #projectInventory(
+    provider: ProviderId,
+    services: ProviderServices,
+  ): ProjectInventoryCache | undefined {
+    if (!services.projectInventory) return undefined
+    const inventory = new ProjectInventoryCache({
+      service: services.projectInventory,
+      watchTtlMs: this.#skills.ttlMs,
+      onChanged: (projectPath, parts) => {
+        if (this.#closed) return
+        if (parts.includes('mcp')) this.#options.onMcpChanged?.(provider, projectPath)
+        if (parts.includes('commands')) this.#options.onCommandsChanged?.(provider, projectPath)
+        if (parts.includes('skills')) this.#options.onSkillsChanged?.(provider, projectPath)
+      },
+      onError: (_projectPath, error) =>
+        this.#options.onLog?.(
+          provider,
+          `${provider} could not read a project's commands, skills and MCP servers: ${error instanceof Error ? error.message : String(error)}`,
+        ),
+    })
+    this.#projectInventories.set(provider, inventory)
+    return inventory
+  }
+
+  #inventoryRead<Active>(
+    provider: ProviderId,
+    target: WatchTarget,
+    projectPath: string,
+    readActive?: () => Promise<Active>,
+  ): InventoryRead<Active> {
+    const generation = this.#generation
+    return {
+      readActive,
+      changed: () => {
+        // A probe that outlives a reset describes processes that are gone.
+        if (this.#closed || generation !== this.#generation) return
+        if (target === 'mcp') this.#options.onMcpChanged?.(provider, projectPath)
+        else if (target === 'skills') this.#options.onSkillsChanged?.(provider, projectPath)
+        else this.#options.onCommandsChanged?.(provider, projectPath)
+      },
+    }
+  }
+
+  async #readModels(provider: ProviderId, agent?: string, read?: ModelListRead): Promise<Model[]> {
+    return this.#read(() => this.#options.listModels(provider, agent, read))
   }
 
   async #read<T>(operation: () => Promise<T>): Promise<T> {
@@ -657,6 +1316,35 @@ export class ProviderControls {
     }
   }
 
+  /**
+   * Codex answers its MCP status list only after every server started, which
+   * can outlast the idle stop and the 60 s watch lease. The shared process
+   * stays up until the list lands (bounded), and a requester whose lease
+   * lapsed still hears that it changed.
+   */
+  #holdForMcpLoad(adapter: CodexControlAdapter, projectPath: string): void {
+    const generation = this.#generation
+    this.#users += 1
+    let released = false
+    const release = (listed: boolean) => {
+      if (released) return
+      released = true
+      clearTimeout(timer)
+      this.#mcpHolds.delete(timer)
+      if (this.#closed || generation !== this.#generation) return
+      this.#users -= 1
+      this.#scheduleIdle()
+      // A leased project already heard the adapter's own change event.
+      if (listed && ![...this.#mcp].includes(projectPath)) {
+        this.#options.onMcpChanged?.('codex', projectPath)
+      }
+    }
+    const timer = setTimeout(() => release(false), this.#mcpLoadHoldMs)
+    timer.unref?.()
+    this.#mcpHolds.add(timer)
+    void adapter.whenMcpServersListed().then(release, () => release(false))
+  }
+
   async #withFresh<T>(operation: (adapter: CodexControlAdapter) => Promise<T>): Promise<T> {
     const generation = this.#generation
     // Do not accumulate another process after an earlier one failed to stop.
@@ -702,6 +1390,7 @@ export class ProviderControls {
 
   #watch(provider: ProviderId, projectPath: string, targets: WatchTarget[]) {
     this.#assertOpen()
+    this.#projectInventories.get(provider)?.watch(projectPath, targets)
     if (PROVIDER_CAPABILITIES[provider].notifications) {
       if (targets.includes('skills')) this.#skills.add(projectPath)
       if (targets.includes('mcp')) this.#mcp.add(projectPath)
@@ -921,6 +1610,10 @@ export class ProviderControls {
     )
     return canceling
   }
+}
+
+function accountKey(provider: ProviderId, agent: string | undefined): string {
+  return agent === undefined ? provider : `${provider}\u0000${agent}`
 }
 
 function duration(value: number | undefined, fallback: number, minimum: number): number {

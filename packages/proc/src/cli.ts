@@ -1,5 +1,6 @@
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { accessSync, constants, realpathSync, statSync } from 'node:fs'
+import { readdir, readFile, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { applyDesktopPath, desktopPath } from './desktop-path.js'
 import { killTree, spawnOwned } from './kill.js'
@@ -80,64 +81,236 @@ export function quoteCmdArgument(value: string, batch = false): string {
   return batch ? escapeCmdToken(escaped) : escaped
 }
 
+// The same few CLIs start dozens of times a session, and one PATH × PATHEXT walk
+// is hundreds of synchronous stats (35-77 ms measured) on the server's only
+// thread. A found command costs one stat to reuse. A missing one is looked up
+// again after a few seconds, so a CLI installed meanwhile shows up.
+const FOUND_COMMAND_TTL_MS = 5 * 60_000
+const MISSING_COMMAND_TTL_MS = 5_000
+const COMMAND_CACHE_LIMIT = 256
+const commandCache = new Map<string, { path: string | undefined; expiresAt: number }>()
+
+/** Forget every command lookup, for example after an install or update finished. */
+export function invalidateCommandCache(): void {
+  commandCache.clear()
+  folderListings.clear()
+}
+
+type WindowsLookup = { key: string; candidates: () => Generator<string> }
+
+function windowsLookup(
+  command: string,
+  environment: NodeJS.ProcessEnv,
+  cwd: string,
+): WindowsLookup {
+  const envValue = (name: string) =>
+    Object.entries(environment).find(([key]) => key.toUpperCase() === name)?.[1]
+  const searchPath = envValue('PATH') ?? ''
+  const pathExt = envValue('PATHEXT') ?? '.COM;.EXE;.BAT;.CMD'
+  const relative = /[\\/]/.test(command)
+  return {
+    // cwd only matters to a command that names a directory.
+    key: [command, searchPath, pathExt, relative ? cwd : ''].join('\0'),
+    candidates: () => windowsCandidates(command, searchPath, pathExt, relative, cwd),
+  }
+}
+
+function cachedLookup(key: string): { path: string | undefined } | undefined {
+  const cached = commandCache.get(key)
+  return cached && cached.expiresAt > Date.now() ? cached : undefined
+}
+
+function rememberLookup(key: string, found: string | undefined): string | undefined {
+  // Re-inserting keeps the oldest lookup first for the size limit below.
+  commandCache.delete(key)
+  commandCache.set(key, {
+    path: found,
+    expiresAt: Date.now() + (found ? FOUND_COMMAND_TTL_MS : MISSING_COMMAND_TTL_MS),
+  })
+  if (commandCache.size > COMMAND_CACHE_LIMIT) {
+    const oldest = commandCache.keys().next().value
+    if (oldest !== undefined) commandCache.delete(oldest)
+  }
+  return found
+}
+
 function resolveWindowsExecutable(
   command: string,
   environment: NodeJS.ProcessEnv = process.env,
   cwd = process.cwd(),
 ): string | undefined {
-  const envValue = (name: string) =>
-    Object.entries(environment).find(([key]) => key.toUpperCase() === name)?.[1]
-  const extensions = path.win32.extname(command)
-    ? ['']
-    : (envValue('PATHEXT') ?? '.COM;.EXE;.BAT;.CMD').split(';')
+  const lookup = windowsLookup(command, environment, cwd)
+  const cached = cachedLookup(lookup.key)
+  if (cached && (cached.path === undefined || isFile(cached.path))) return cached.path
+  for (const candidate of lookup.candidates()) {
+    // Match Windows PATH/PATHEXT order without launching the candidate.
+    if (isFile(candidate)) return rememberLookup(lookup.key, candidate)
+  }
+  return rememberLookup(lookup.key, undefined)
+}
+
+/**
+ * The same lookup without blocking the event loop. One directory listing per
+ * PATH entry replaces hundreds of stats, and a burst of lookups shares them.
+ */
+async function resolveWindowsExecutableAsync(
+  command: string,
+  environment: NodeJS.ProcessEnv,
+  cwd = process.cwd(),
+): Promise<string | undefined> {
+  const lookup = windowsLookup(command, environment, cwd)
+  const cached = cachedLookup(lookup.key)
+  if (cached && (cached.path === undefined || (await isFileAsync(cached.path)))) {
+    return cached.path
+  }
+  const candidates = [...lookup.candidates()]
+  const folder = (candidate: string) => path.win32.dirname(candidate).toLowerCase()
+  const folders = [...new Set(candidates.map(folder))]
+  const listings = new Map(
+    await Promise.all(folders.map(async (name) => [name, await folderNames(name)] as const)),
+  )
+  for (const candidate of candidates) {
+    const names = listings.get(folder(candidate))
+    if (!names?.has(path.win32.basename(candidate).toLowerCase())) continue
+    if (await isFileAsync(candidate)) return rememberLookup(lookup.key, candidate)
+  }
+  return rememberLookup(lookup.key, undefined)
+}
+
+/** Every path Windows would try for `command`, in PATH, then PATHEXT, order. */
+function* windowsCandidates(
+  command: string,
+  searchPath: string,
+  pathExt: string,
+  relative: boolean,
+  cwd: string,
+): Generator<string> {
+  const extensions = path.win32.extname(command) ? [''] : pathExt.split(';')
   // A bare command is searched on PATH only, never in cwd: cwd is usually the
   // user's workspace, and a checked-in `git.cmd` must not shadow the real tool.
   // Empty PATH entries are skipped because they would resolve to cwd as well.
-  const directories = /[\\/]/.test(command)
+  const directories = relative
     ? [cwd]
-    : (envValue('PATH') ?? '')
+    : searchPath
         .split(';')
         .map((directory) => directory.replace(/^"|"$/g, ''))
         .filter(Boolean)
   for (const directory of directories) {
     for (const extension of extensions) {
-      const candidate = path.win32.resolve(cwd, directory, command + extension)
-      try {
-        if (statSync(candidate).isFile()) return candidate
-      } catch {
-        // Match Windows PATH/PATHEXT order without launching the candidate.
-      }
+      yield path.win32.resolve(cwd, directory, command + extension)
     }
   }
-  return undefined
+}
+
+// Detection asks for a dozen commands at once; they share one listing per folder.
+const FOLDER_LISTING_TTL_MS = 2_000
+const folderListings = new Map<string, { names: Promise<Set<string> | undefined>; at: number }>()
+
+function folderNames(folder: string): Promise<Set<string> | undefined> {
+  const cached = folderListings.get(folder)
+  if (cached && Date.now() - cached.at < FOLDER_LISTING_TTL_MS) return cached.names
+  if (folderListings.size > COMMAND_CACHE_LIMIT) folderListings.clear()
+  const names = readdir(folder).then(
+    (entries) => new Set(entries.map((entry) => entry.toLowerCase())),
+    () => undefined,
+  )
+  folderListings.set(folder, { names, at: Date.now() })
+  return names
+}
+
+function isFile(candidate: string): boolean {
+  try {
+    return statSync(candidate).isFile()
+  } catch {
+    return false
+  }
+}
+
+function isFileAsync(candidate: string): Promise<boolean> {
+  return stat(candidate).then(
+    (entry) => entry.isFile(),
+    () => false,
+  )
+}
+
+/**
+ * Where a command would be found on the desktop-safe PATH, without running it.
+ *
+ * On Windows this is the same PATH × PATHEXT lookup spawnCli launches from, and
+ * it fills the same cache, so detection and launching agree, the working
+ * directory is never searched, and the first launch after detection is cheap.
+ */
+export function locateCommand(
+  command: string,
+  environment: NodeJS.ProcessEnv = process.env,
+): Promise<string | undefined> {
+  if (process.platform !== 'win32') return Promise.resolve(resolveExecutable(command, environment))
+  const env = { ...environment }
+  applyDesktopPath(env)
+  return resolveWindowsExecutableAsync(command, env)
+}
+
+/**
+ * locateCommand for a caller that must name the file it spawns right now,
+ * such as an adapter that starts a native executable with spawnOwned. Same
+ * desktop PATH, same order and the same cache; a repeated lookup costs one stat.
+ */
+export function locateCommandSync(
+  command: string,
+  environment: NodeJS.ProcessEnv = process.env,
+): string | undefined {
+  if (process.platform !== 'win32') return resolveExecutable(command, environment)
+  const env = { ...environment }
+  applyDesktopPath(env)
+  return resolveWindowsExecutable(command, env)
+}
+
+/** npm's forwarding shim for a package whose bin is a native executable, LF line ends. */
+const NPM_NATIVE_SHIM =
+  /^@ECHO off\nGOTO start\n:find_dp0\nSET dp0=%~dp0\nEXIT \/b\n:start\nSETLOCAL\nCALL :find_dp0\n"%dp0%\\([^"%\n]+\.exe)"[ \t]+%\*$/i
+
+/**
+ * The native executable an npm shim forwards to, on Windows.
+ *
+ * npm installs a CLI that ships a Windows binary (opencode-ai, for one) as a
+ * `.cmd` file whose only work is to start `node_modules\...\<name>.exe`.
+ * Launched through it, the real program is cmd.exe's child: the pid a caller
+ * holds is the shim's, and a long-lived server can outlive a cleanup that only
+ * reached cmd.exe. Starting the executable directly avoids both. Any other
+ * shim, a node script among them, gives undefined, and the caller keeps
+ * launching the command as before.
+ */
+export async function nativeShimTarget(
+  command: string,
+  environment: NodeJS.ProcessEnv = process.env,
+): Promise<string | undefined> {
+  if (process.platform !== 'win32') return undefined
+  const shim = await locateCommand(command, environment)
+  if (!shim || !/\.cmd$/i.test(shim)) return undefined
+  let text: string
+  try {
+    text = await readFile(shim, 'utf8')
+  } catch {
+    return undefined
+  }
+  const target = NPM_NATIVE_SHIM.exec(text.replace(/\r\n/g, '\n').trim())?.[1]
+  if (!target) return undefined
+  const executable = path.win32.join(path.win32.dirname(shim), target)
+  return (await isFileAsync(executable)) ? executable : undefined
 }
 
 /**
  * Whether a command exists on PATH.
  *
- * Asked with the platform's own lookup rather than by running the thing: agent
- * CLIs open browsers, start sessions, and print banners on first launch, none
- * of which is an acceptable side effect of drawing a list.
+ * Asked with a PATH lookup rather than by running the thing: agent CLIs open
+ * browsers, start sessions, and print banners on first launch, none of which
+ * is an acceptable side effect of drawing a list.
  */
-export function isInstalled(
+export async function isInstalled(
   command: string,
   environment: NodeJS.ProcessEnv = process.env,
 ): Promise<boolean> {
-  if (process.platform !== 'win32') {
-    return Promise.resolve(resolveExecutable(command, environment) !== undefined)
-  }
-
-  return new Promise((resolve) => {
-    const env = { ...environment }
-    applyDesktopPath(env)
-    const child = spawn('where.exe', [command], {
-      stdio: 'ignore',
-      windowsHide: true,
-      env,
-    })
-    child.on('error', () => resolve(false))
-    child.on('exit', (code) => resolve(code === 0))
-  })
+  return (await locateCommand(command, environment)) !== undefined
 }
 
 function childEnvironment(options: {
@@ -185,7 +358,7 @@ async function spawnCommandVersion(
 ): Promise<string | undefined> {
   try {
     const child = spawnCli(command, ['--version'])
-    const captured = captureCli(child, timeoutMs, 64 * 1024)
+    const captured = captureCli(child, timeoutMs, 64 * 1024, commandLabel(command))
     endStdin(child)
     const { stdout } = await captured
     return (
@@ -228,7 +401,7 @@ export function runCli(
   timeoutMs = 5000,
 ): Promise<{ code: number | null; stdout: string; stderr?: string | undefined }> {
   const child = spawnCli(command, args)
-  const captured = captureCli(child, timeoutMs)
+  const captured = captureCli(child, timeoutMs, undefined, commandLabel(command))
   endStdin(child)
   return captured
 }
@@ -252,6 +425,8 @@ export function captureCli(
   child: ChildProcessWithoutNullStreams,
   timeoutMs = 5000,
   maxBytes = 1024 * 1024,
+  /** The command's name for the timeout message, such as `cursor-agent`. */
+  label?: string,
 ): Promise<CapturedCli> {
   return new Promise((resolve, reject) => {
     let stdout = ''
@@ -271,7 +446,7 @@ export function captureCli(
       }, reject)
     }
     const timer = setTimeout(() => {
-      finish(new Error('CLI did not respond within the time limit'))
+      finish(new Error(`${label ?? 'The CLI'} did not answer within ${timeLimit(timeoutMs)}.`))
     }, timeoutMs)
     const append = (chunk: string, stream: 'stdout' | 'stderr') => {
       if (settled) return
@@ -294,6 +469,17 @@ export function captureCli(
     // Exit can precede the final bytes in inherited pipes.
     child.on('close', (code, signal) => finish({ code, signal, stdout, stderr }))
   })
+}
+
+/** `cursor-agent` for `C:\...\cursor-agent.cmd`: the name a user would type. */
+function commandLabel(command: string): string {
+  return path.basename(command).replace(/\.(?:cmd|bat|exe|com)$/i, '')
+}
+
+function timeLimit(ms: number): string {
+  if (ms < 1000) return `${ms} ms`
+  const seconds = Math.round(ms / 1000)
+  return `${seconds} ${seconds === 1 ? 'second' : 'seconds'}`
 }
 
 export type CapturedCli = {

@@ -10,9 +10,13 @@ import { ProviderUpdateCheck, ProviderUpdateNotice } from './ProviderUpdates.js'
 const terminalLoading = vi.hoisted(() => ({ pending: undefined as Promise<void> | undefined }))
 
 vi.mock('./InstallTerminal.js', () => ({
-  InstallTerminal: () => {
+  InstallTerminal: (props: { profile?: string; appearance?: string }) => {
     if (terminalLoading.pending) throw terminalLoading.pending
-    return <div>Update output</div>
+    return (
+      <div data-profile={props.profile} data-appearance={props.appearance}>
+        Update output
+      </div>
+    )
   },
 }))
 
@@ -63,7 +67,10 @@ describe('provider update toast', () => {
       terminalLoading.pending = undefined
       finish()
     })
-    expect(await screen.findByText('Update output')).toBeTruthy()
+    const output = await screen.findByText('Update output')
+    // The workspace terminal's look on the notice's own background.
+    expect(output.dataset['profile']).toBe('workspace')
+    expect(output.dataset['appearance']).toBe('notice')
     expect(screen.queryByText('Opening details…')).toBeNull()
   })
 

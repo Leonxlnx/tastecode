@@ -6,18 +6,23 @@ import type {
   ApprovalRequest,
   Capabilities,
   DomainEvent,
+  McpServer,
   McpServerConfig,
   Model,
+  ProviderCommand,
+  Skill,
   Thread,
 } from '@harness/contracts'
 import { createOpencodeClient, type Event, type OpencodeClient } from '@opencode-ai/sdk'
 import {
   JsonRpcValueSchema,
   killTree,
+  nativeShimTarget,
   readSseData,
   spawnCli,
   type JsonRpcValue,
 } from '@harness/proc'
+import { mapOpenCodeCommands, mapOpenCodeMcpServers, mapOpenCodeSkills } from './inventory.js'
 import { z } from 'zod'
 import {
   OpenCodeEventMapper,
@@ -25,6 +30,7 @@ import {
   type OpenCodeV2Event,
   type OpenCodeWireEvent,
 } from './events.js'
+import { openCodeModels, type OpenCodeCatalogEntry } from './models.js'
 
 export const OPENCODE_CAPABILITIES: Capabilities = {
   steer: false,
@@ -36,6 +42,8 @@ export const OPENCODE_CAPABILITIES: Capabilities = {
 }
 
 type Events = { event: [DomainEvent]; log: [string]; disconnected: [] }
+/** `/mcp` waits for the directory's servers to connect; a stuck one must not hold a read. */
+const INVENTORY_TIMEOUT_MS = 20_000
 type OpenCodeProtocol = 'v1' | 'v2'
 type Spawn = typeof spawnCli
 
@@ -49,6 +57,11 @@ export type OpenCodeStartOptions = {
 export type OpenCodeTurnOptions = Pick<OpenCodeStartOptions, 'model' | 'effort'>
 
 const OPENCODE_DEFAULT_VARIANT = 'default'
+/**
+ * `opencode serve` took 9-36 s to print its URL on a loaded PC. The old 7 s limit
+ * failed three of four such starts, each of which then had to be killed.
+ */
+export const OPENCODE_SERVER_START_TIMEOUT_MS = 30_000
 
 function applyOpenCodeTurnOptions(
   current: OpenCodeTurnOptions,
@@ -151,16 +164,44 @@ const OpenCodeV2SessionSchema = z.object({
   time: z.object({ created: z.number().optional() }).optional(),
 })
 const SessionEnvelopeSchema = z.object({ data: OpenCodeV2SessionSchema })
-const OpenCodeV2ProviderSchema = z.object({ id: z.string(), name: z.string() })
-const ProviderEnvelopeSchema = z.object({ data: z.array(OpenCodeV2ProviderSchema) })
 const OpenCodeV2CatalogModelSchema = z.object({
   id: z.string(),
   providerID: z.string(),
-  name: z.string(),
-  enabled: z.boolean().optional(),
   variants: JsonRpcValueSchema.optional(),
 })
 const ModelEnvelopeSchema = z.object({ data: z.array(OpenCodeV2CatalogModelSchema) })
+/**
+ * `GET /config/providers`, captured from 1.18.13: only the providers OpenCode
+ * can reach (a stored credential, a provider key in the environment, a config
+ * entry, or OpenCode's own free tier), each with the models it can run, which
+ * leaves out deprecated ones. It is the set `opencode models` prints. Both
+ * protocols serve it; v2's `/api/provider` and `/api/model` instead return
+ * the whole models.dev catalog while they warm up.
+ */
+const ConnectedModelSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  family: z.string().optional(),
+  capabilities: z
+    .object({
+      toolcall: z.boolean().optional(),
+      output: z.object({ text: z.boolean().optional() }).optional(),
+    })
+    .optional(),
+  status: z.string().optional(),
+  release_date: z.string().optional(),
+  variants: JsonRpcValueSchema.optional(),
+})
+const ConnectedProvidersSchema = z.object({
+  providers: z.array(
+    z.object({
+      id: z.string(),
+      name: z.string(),
+      models: z.record(z.string(), ConnectedModelSchema),
+    }),
+  ),
+  default: z.record(z.string(), z.string()).optional(),
+})
 const OpenCodeV2AgentSchema = z.object({
   id: z.string(),
   mode: z.string().optional(),
@@ -184,18 +225,22 @@ const LegacySessionPropertiesSchema = z.object({
 })
 
 type OpenCodeV2Session = z.infer<typeof OpenCodeV2SessionSchema>
-type OpenCodeV2Provider = z.infer<typeof OpenCodeV2ProviderSchema>
 type OpenCodeV2CatalogModel = z.infer<typeof OpenCodeV2CatalogModelSchema>
+type ConnectedProviders = z.infer<typeof ConnectedProvidersSchema>
 
 export class OpenCodeAdapter extends EventEmitter<Events> {
   #processStop: Promise<void> = Promise.resolve()
   readonly #spawn: Spawn
+  /** Only the default launch looks for the executable behind npm's shim. */
+  readonly #customSpawn: boolean
   readonly #configuredBaseUrl: string | undefined
   readonly #mcpServers: McpServerConfig[]
   readonly #mcpCredentials: Record<string, string>
   #baseUrl: string | undefined
   #server: { close(): Promise<void> } | undefined
   #starting: Promise<void> | undefined
+  /** Stops a serve that has not printed its URL yet; #server cannot reach it. */
+  #launchAbort: AbortController | undefined
   #generation = 0
   #protocol: OpenCodeProtocol | undefined
   #authorization: string | undefined
@@ -228,6 +273,7 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
   ) {
     super()
     this.#spawn = options.spawn ?? spawnCli
+    this.#customSpawn = options.spawn !== undefined
     this.#configuredBaseUrl = options.baseUrl
     this.#mcpServers = options.mcpServers ?? []
     this.#mcpCredentials = options.mcpCredentials ?? {}
@@ -259,15 +305,26 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
       return
     }
     const generation = this.#generation
+    const abort = new AbortController()
+    this.#launchAbort = abort
     let server: Awaited<ReturnType<typeof launchOpenCodeServer>>
     try {
       const config =
         this.#mcpServers.length > 0
           ? { mcp: openCodeMcpConfig(this.#mcpServers, this.#mcpCredentials) }
           : {}
-      server = await launchOpenCodeServer(config, this.#spawn)
+      server = await launchOpenCodeServer(
+        config,
+        this.#spawn,
+        this.#customSpawn ? 'opencode' : ((await nativeShimTarget('opencode')) ?? 'opencode'),
+        abort.signal,
+      )
     } catch {
+      if (generation !== this.#generation)
+        throw new Error('OpenCode stopped while it was starting.')
       throw new Error('OpenCode is unavailable. Install it and run `opencode` once to sign in.')
+    } finally {
+      if (this.#launchAbort === abort) this.#launchAbort = undefined
     }
     // dispose() cannot reach a server that was still launching.
     if (generation !== this.#generation) {
@@ -510,36 +567,61 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
     return () => this.off('disconnected', listener)
   }
 
+  /**
+   * The models of the providers OpenCode reports as connected, newest first.
+   * A model of a provider without a credential cannot run, so it is never
+   * offered, however large the models.dev catalog behind it is.
+   */
   async listModels(): Promise<Model[]> {
     await this.start()
-    if (this.#protocol === 'v2') return this.#listV2Models()
-    const { data: result } = await this.#newClient().provider.list({
-      throwOnError: true,
-    })
-    return result.all
-      .filter((provider) => result.connected.includes(provider.id))
-      .flatMap((provider) =>
-        Object.values(provider.models).map((model) => {
-          const reasoningEfforts = openCodeReasoningEfforts(model)
-          return {
-            id: `${provider.id}/${model.id}`,
-            displayName: `${provider.name} · ${model.name}`,
-            isDefault: result.default[provider.id] === model.id,
-            reasoningEfforts,
-            ...(reasoningEfforts.length > 0
-              ? {
-                  defaultReasoningEffort: OPENCODE_DEFAULT_VARIANT,
-                }
-              : {}),
-            serviceTiers: [],
-          }
-        }),
-      )
+    const directory = this.#workspacePath || process.cwd()
+    const [connected, v2] = await Promise.all([
+      this.#readConnectedProviders(directory),
+      this.#protocol === 'v2' ? this.#readV2ModelDetails(directory) : undefined,
+    ])
+    return openCodeModels(
+      connected.providers.flatMap((provider) =>
+        Object.values(provider.models)
+          .filter((model) => model.status !== 'deprecated')
+          .map((model): OpenCodeCatalogEntry => {
+            const id = `${provider.id}/${model.id}`
+            // A v2 session takes a variant from v2's own catalog row, so v2 offers
+            // only those; 1.18.13 lists none there and the effort stays OpenCode's.
+            const reasoningEfforts = openCodeReasoningEfforts(v2 ? v2.catalog.get(id) : model)
+            return {
+              providerID: provider.id,
+              providerName: provider.name,
+              modelID: model.id,
+              name: model.name,
+              family: model.family,
+              status: model.status,
+              releaseDate: model.release_date,
+              toolCall: model.capabilities?.toolcall,
+              textOutput: model.capabilities?.output?.text,
+              isDefault: v2
+                ? v2.defaultModel === id
+                : connected.default?.[provider.id] === model.id,
+              reasoningEfforts,
+              ...(reasoningEfforts.length > 0
+                ? { defaultReasoningEffort: OPENCODE_DEFAULT_VARIANT }
+                : {}),
+            }
+          }),
+      ),
+    )
   }
 
   dispose(): Promise<void> {
     this.#eventController?.abort()
-    const stopped = this.#server?.close() ?? this.#processStop
+    // A serve still starting can take 30 s to print its URL. Stop it now and wait
+    // for it: a host that exits after dispose would otherwise orphan it.
+    this.#launchAbort?.abort()
+    const launching = this.#starting?.then(
+      () => undefined,
+      () => undefined,
+    )
+    const closing = this.#server?.close() ?? this.#processStop
+    const stopped = launching ? Promise.all([closing, launching]).then(() => undefined) : closing
     this.#generation += 1
     this.#starting = undefined
     this.#eventController = undefined
@@ -561,6 +643,36 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
     this.#replyingApprovals.clear()
     this.#processStop = stopped
     return stopped
+  }
+
+  /** Commands and skills OpenCode runs itself when a message starts with `/name`. */
+  async listCommands(_threadId?: string): Promise<ProviderCommand[]> {
+    return this.commands(this.#workspacePath)
+  }
+
+  /** The MCP servers this chat's server loaded, with their state. */
+  async listMcpServers(_threadId?: string): Promise<McpServer[]> {
+    return this.mcpServers(this.#workspacePath)
+  }
+
+  async commands(directory: string): Promise<ProviderCommand[]> {
+    return mapOpenCodeCommands(await this.#inventory('/command', directory))
+  }
+
+  async skills(directory: string): Promise<Skill[]> {
+    return mapOpenCodeSkills(await this.#inventory('/skill', directory), directory)
+  }
+
+  /** OpenCode connects a directory's servers on the first read, which can take seconds. */
+  async mcpServers(directory: string): Promise<McpServer[]> {
+    return mapOpenCodeMcpServers(await this.#inventory('/mcp', directory))
+  }
+
+  #inventory(route: '/command' | '/skill' | '/mcp', directory: string): Promise<unknown> {
+    if (!this.#baseUrl || !directory) return Promise.reject(new Error('OpenCode is not running'))
+    return this.#v2Request(`${route}?directory=${encodeURIComponent(directory)}`, {
+      signal: AbortSignal.timeout(INVENTORY_TIMEOUT_MS),
+    })
   }
 
   #newClient(directory?: string): OpencodeClient {
@@ -659,58 +771,45 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
     this.#instructionsPending = false
   }
 
-  async #listV2Models(): Promise<Model[]> {
-    const location = `?location%5Bdirectory%5D=${encodeURIComponent(this.#workspacePath || process.cwd())}`
-    let providers: OpenCodeV2Provider[] = []
-    let models: OpenCodeV2CatalogModel[] = []
-    // The v2 service starts accepting HTTP before its location-scoped catalog
-    // has loaded. Retry that empty-but-successful state briefly; otherwise the
-    // first picker open would incorrectly fall back to "Provider default".
-    for (let attempt = 0; attempt < 5; attempt += 1) {
-      providers = (
-        await this.#v2RequestParsed(`/api/provider${location}`, {}, ProviderEnvelopeSchema)
-      ).data
-      models = (await this.#v2RequestParsed(`/api/model${location}`, {}, ModelEnvelopeSchema)).data
-      if (models.length > 0) break
-      if (attempt < 4) await new Promise((resolve) => setTimeout(resolve, 250))
-    }
-    // A cold v2 service can publish connected providers one tick before its
-    // model catalog. Resolving those providers once triggers catalog loading;
-    // this stays data-driven and avoids any provider-name special case.
-    if (models.length === 0 && providers.length > 0) {
-      await Promise.all(
-        providers.map((provider) =>
-          this.#v2Request(`/api/provider/${encodeURIComponent(provider.id)}${location}`),
-        ),
+  async #readConnectedProviders(directory: string): Promise<ConnectedProviders> {
+    if (this.#protocol === 'v2') {
+      // The route predates v2 and answers on the same server; it waits for the
+      // catalog to load, so a cold start needs no retry.
+      return this.#v2RequestParsed(
+        `/config/providers?directory=${encodeURIComponent(directory)}`,
+        {},
+        ConnectedProvidersSchema,
       )
-      models = (await this.#v2RequestParsed(`/api/model${location}`, {}, ModelEnvelopeSchema)).data
     }
-    const agents = await this.#v2RequestParsed(
-      `/api/agent${location}`,
-      {},
-      AgentEnvelopeSchema,
-    ).catch(() => ({ data: [] }))
-    const defaultModel =
+    const { data } = await this.#newClient(directory).config.providers({ throwOnError: true })
+    return ConnectedProvidersSchema.parse(data)
+  }
+
+  /**
+   * The build agent's model and v2's catalog rows, which carry the variants a
+   * v2 session accepts. Either may be missing on a cold start; neither decides
+   * which models are offered.
+   */
+  async #readV2ModelDetails(directory: string): Promise<{
+    defaultModel: string | undefined
+    catalog: Map<string, OpenCodeV2CatalogModel>
+  }> {
+    const location = `?location%5Bdirectory%5D=${encodeURIComponent(directory)}`
+    const [agents, catalog] = await Promise.all([
+      this.#v2RequestParsed(`/api/agent${location}`, {}, AgentEnvelopeSchema).catch(() => ({
+        data: [],
+      })),
+      this.#v2RequestParsed(`/api/model${location}`, {}, ModelEnvelopeSchema).catch(() => ({
+        data: [],
+      })),
+    ])
+    const agentModel =
       agents.data.find((agent) => agent.id === 'build')?.model ??
       agents.data.find((agent) => agent.mode === 'primary')?.model
-    const providerNames = new Map(providers.map((provider) => [provider.id, provider.name]))
-    return models
-      .filter((model) => model.enabled !== false && providerNames.has(model.providerID))
-      .map((model) => {
-        const reasoningEfforts = openCodeReasoningEfforts(model)
-        return {
-          id: `${model.providerID}/${model.id}`,
-          displayName: `${providerNames.get(model.providerID)} · ${model.name}`,
-          isDefault: defaultModel?.providerID === model.providerID && defaultModel.id === model.id,
-          reasoningEfforts,
-          ...(reasoningEfforts.length > 0
-            ? {
-                defaultReasoningEffort: OPENCODE_DEFAULT_VARIANT,
-              }
-            : {}),
-          serviceTiers: [],
-        }
-      })
+    return {
+      defaultModel: agentModel ? `${agentModel.providerID}/${agentModel.id}` : undefined,
+      catalog: new Map(catalog.data.map((model) => [`${model.providerID}/${model.id}`, model])),
+    }
   }
 
   #onV2Event(event: OpenCodeV2Event): void {
@@ -898,6 +997,10 @@ function openCodeV2Model(
 async function launchOpenCodeServer(
   config: Record<string, JsonRpcValue>,
   spawn: Spawn = spawnCli,
+  /** opencode.exe itself where npm installed it, so its pid is the server's and cleanup reaches it. */
+  command = 'opencode',
+  /** Aborted when the adapter is disposed: the serve is stopped before it prints its URL. */
+  signal?: AbortSignal,
 ): Promise<{
   url: string
   authorization: string
@@ -908,8 +1011,9 @@ async function launchOpenCodeServer(
   const username = 'opencode'
   const password = randomUUID()
   const authorization = `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`
+  if (signal?.aborted) throw new Error('OpenCode stopped while it was starting.')
   return new Promise((resolve, reject) => {
-    const child = spawn('opencode', ['serve', '--hostname=127.0.0.1', '--port=0'], {
+    const child = spawn(command, ['serve', '--hostname=127.0.0.1', '--port=0'], {
       env: {
         OPENCODE_SERVER_USERNAME: username,
         OPENCODE_SERVER_PASSWORD: password,
@@ -922,10 +1026,12 @@ async function launchOpenCodeServer(
     })
     let output = ''
     let settled = false
+    const stop = () => finish(new Error('OpenCode stopped while it was starting.'))
     const finish = (error?: Error, url?: string) => {
       if (settled) return
       settled = true
       clearTimeout(timer)
+      signal?.removeEventListener('abort', stop)
       if (error || !url) {
         void killTree(child).then(
           () => reject(error ?? new Error('OpenCode server did not publish a URL')),
@@ -935,7 +1041,11 @@ async function launchOpenCodeServer(
       }
       resolve({ url, authorization, close: () => killTree(child) })
     }
-    const timer = setTimeout(() => finish(new Error('OpenCode server did not start')), 7000)
+    const timer = setTimeout(
+      () => finish(new Error('OpenCode server did not start')),
+      OPENCODE_SERVER_START_TIMEOUT_MS,
+    )
+    signal?.addEventListener('abort', stop, { once: true })
     child.stdout.setEncoding('utf8')
     child.stdout.on('data', (chunk: string) => {
       output = `${output}${chunk}`.slice(-4096)

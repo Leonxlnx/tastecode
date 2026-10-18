@@ -215,12 +215,21 @@ function model(id: string, displayName: string, description: string, isDefault =
   return { id, displayName, description, isDefault, reasoningEfforts: [], serviceTiers: [] }
 }
 
+/** The K version in a Kimi model name: `K2.8 Preview`, `K2.7 Code Highspeed`, `K3-256k`. */
+const KIMI_GENERATION = /(?:^|[\s\-_/])k(\d+(?:\.\d+)*)(?=$|[\s\-_/])/i
+
 export function parseKimiModels(output: string): Model[] {
   const parsed = KimiModelsSchema.parse(JSON.parse(output))
   return Object.entries(parsed.models).map(([id, details], index) => {
+    const displayName = details.displayName ?? id
+    // Kimi names its variants with words after the version (Preview, Code
+    // Highspeed), which read as separate families, so K3 replaced nothing.
+    // Every K version is one line of models: a newer K supersedes the older
+    // ones, and the variants of the newest stay side by side.
+    const generation = KIMI_GENERATION.exec(displayName)?.[1]
     return {
       id,
-      displayName: details.displayName ?? id,
+      displayName,
       isDefault: index === 0,
       reasoningEfforts: details.supportEfforts ?? [],
       ...(details.defaultEffort
@@ -229,6 +238,8 @@ export function parseKimiModels(output: string): Model[] {
           }
         : {}),
       serviceTiers: [],
+      lab: 'Moonshot',
+      ...(generation ? { family: 'kimi-k', generation } : {}),
     }
   })
 }

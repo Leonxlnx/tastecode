@@ -1,9 +1,13 @@
-import { type ReactNode, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
+import { type ReactNode, useId, useLayoutEffect, useRef, useState } from 'react'
 import type { ProviderId, ProviderLimitSource, ResultOf } from '@harness/contracts'
 import { providerDisplayName, providerMark } from '../provider-presentation.js'
 import type { UsageSummaryState } from '../usage-summary-state.js'
 import '../styles/account-limits.css'
 import { ProviderIcon } from './ProviderIcon.js'
+import { compactRelativeTime } from './session-clock.js'
+
+/** Values older than this say how old they are; younger ones read as current. */
+const AGE_SHOWN_AFTER_MS = 10 * 60_000
 
 type Limit = ResultOf<'usage.summary'>['limits'][number]
 type ConsumeReset = (
@@ -21,14 +25,28 @@ export type AccountLimitsState = UsageSummaryState
  */
 export function AccountLimits(props: {
   states: AccountLimitsState[]
+  /** Called once while the limits are on screen; returns the release for when they leave. */
+  onShow?: (() => () => void) | undefined
   onRetry: (provider: ProviderId) => void
   onConsumeReset?: ConsumeReset | undefined
 }) {
   const panel = useRef<HTMLElement>(null)
-  const visibleStates = props.states.filter((state) => limitSource(state)?.status !== 'unavailable')
+  const onShow = useRef(props.onShow)
+  // A source without plan limits is left out; one that could not be read yet is not.
+  const visibleStates = props.states.filter((state) => {
+    const source = limitSource(state)
+    return source?.status !== 'unavailable' || source.reason === 'failed'
+  })
 
   // The popup lands on the list itself rather than on its first Retry or Use.
   useLayoutEffect(() => panel.current?.focus(), [])
+  useLayoutEffect(() => {
+    onShow.current = props.onShow
+  })
+  // Showing the limits is what lets the server read the sources it reads only
+  // on view. Once per mount, so a new callback identity does not ask again,
+  // and before paint, so a source not read yet already reads as checking.
+  useLayoutEffect(() => onShow.current?.(), [])
 
   const retry = (provider: ProviderId) => {
     // The Retry button unmounts while the source reloads; keep focus in the popup.
@@ -37,6 +55,9 @@ export function AccountLimits(props: {
   }
 
   if (visibleStates.length === 0) return null
+  // Ages are read when the popup opens and when the values change; nothing
+  // ticks while it stays open.
+  const now = Date.now()
 
   return (
     <section
@@ -51,6 +72,7 @@ export function AccountLimits(props: {
         <LimitSource
           key={state.provider}
           state={state}
+          now={now}
           onRetry={() => retry(state.provider)}
           onConsumeReset={props.onConsumeReset}
         />
@@ -61,6 +83,7 @@ export function AccountLimits(props: {
 
 function LimitSource(props: {
   state: AccountLimitsState
+  now: number
   onRetry: () => void
   onConsumeReset?: ConsumeReset | undefined
 }) {
@@ -69,7 +92,10 @@ function LimitSource(props: {
   const source = limitSource(props.state)
   const limits = source?.status === 'ready' ? source.limits : []
   const name = providerDisplayName(props.state.provider)
-  const status = sourceStatus(props.state, source, limits.length > 0)
+  const status = sourceStatus(props.state, source, limits.length > 0, props.now)
+  const retryable =
+    props.state.status === 'error' ||
+    (props.state.status === 'ready' && source?.status === 'unavailable')
   return (
     <section
       className="account-menu__source"
@@ -87,7 +113,7 @@ function LimitSource(props: {
             {status.detail ? <span className="visually-hidden">. {status.detail}</span> : null}
           </span>
         ) : null}
-        {props.state.status === 'error' ? (
+        {retryable ? (
           <button
             className="account-menu__retry"
             type="button"
@@ -104,6 +130,7 @@ function LimitSource(props: {
           name={name}
           provider={props.state.provider}
           limit={limit}
+          now={props.now}
           onConsumeReset={props.onConsumeReset}
         />
       ))}
@@ -111,32 +138,68 @@ function LimitSource(props: {
   )
 }
 
-/** The one muted word beside a provider's name, with any detail kept for hover. */
-function sourceStatus(
+/**
+ * The one muted phrase beside a provider's name, with any detail kept for
+ * hover. Values that could not be refreshed say how old they are rather than
+ * raising an error; values that are merely old say when they were updated.
+ */
+export function sourceStatus(
   state: AccountLimitsState,
   source: ProviderLimitSource | undefined,
   hasValues: boolean,
+  now: number,
 ): { label: string; detail?: string | undefined } | undefined {
+  const checkedAt = source?.status === 'ready' ? source.checkedAt : undefined
   if (state.status === 'error') {
     return hasValues
-      ? { label: 'Last known', detail: `Couldn’t refresh plan limits. ${state.message}` }
+      ? {
+          label: lastKnownLabel(checkedAt, now),
+          detail: `Couldn’t refresh plan limits. ${state.message}`,
+        }
       : { label: 'Unavailable', detail: `Plan limits couldn’t be loaded. ${state.message}` }
   }
   if (!source) return { label: 'Checking…' }
+  // Only shown sources reach here unavailable: ones that could not be read yet.
+  if (source.status === 'unavailable') {
+    return state.status === 'loading'
+      ? { label: 'Checking…' }
+      : {
+          label: 'Unavailable',
+          detail: ['Plan limits couldn’t be loaded.', source.error].filter(Boolean).join(' '),
+        }
+  }
+  // The server kept these values through a failed refresh and retries on its own.
+  if (source.status === 'ready' && source.stale && hasValues) {
+    return {
+      label: lastKnownLabel(checkedAt, now),
+      detail: ['Couldn’t refresh plan limits.', source.refreshError].filter(Boolean).join(' '),
+    }
+  }
   if (!hasValues) return { label: 'None reported', detail: 'No plan limits reported.' }
+  if (checkedAt !== undefined && now - checkedAt >= AGE_SHOWN_AFTER_MS) {
+    return { label: `Updated ${compactRelativeTime(checkedAt, now)} ago` }
+  }
   return undefined
+}
+
+/** "Last known · 2h ago"; under a minute, or without a read time, just "Last known". */
+function lastKnownLabel(checkedAt: number | undefined, now: number): string {
+  if (checkedAt === undefined || now - checkedAt < 60_000) return 'Last known'
+  return `Last known · ${compactRelativeTime(checkedAt, now)} ago`
 }
 
 function LimitRow(props: {
   name: string
   provider: ProviderId
   limit: Limit
+  now: number
   onConsumeReset?: ConsumeReset | undefined
 }) {
   const consumable = props.limit.action === 'consume-reset' && props.onConsumeReset !== undefined
   const credits = props.limit.resetCredits
   const hasSelectableCredits = credits?.some((credit) => credit.id !== undefined)
   const value = props.limit.valueLabel ?? `${remaining(props.limit)}% left`
+  const pace = evenPace(props.limit, props.now)
 
   return (
     <div className="account-menu__limit">
@@ -152,20 +215,31 @@ function LimitRow(props: {
           aria-valuenow={remaining(props.limit)}
           aria-valuemin={0}
           aria-valuemax={100}
+          title={
+            pace === undefined
+              ? undefined
+              : `At an even pace, ${Math.round(pace)}% would be left now.`
+          }
         >
           <span
             data-low={remaining(props.limit) <= 15 ? '' : undefined}
             style={{ width: `${remaining(props.limit)}%` }}
           />
+          {pace === undefined ? null : (
+            <span className="account-menu__limit-pace" style={{ left: `${pace}%` }} />
+          )}
         </div>
       ) : null}
       {props.limit.resetsAt !== undefined ? (
-        <span className="account-menu__limit-reset">{resetLabel(props.limit.resetsAt)}</span>
+        <span className="account-menu__limit-reset">
+          {resetLabel(props.limit.resetsAt, props.now)}
+        </span>
       ) : null}
       {credits?.length ? (
         <ResetCreditExpiries
           credits={credits}
           provider={props.provider}
+          now={props.now}
           onConsumeReset={consumable ? props.onConsumeReset : undefined}
         />
       ) : null}
@@ -280,14 +354,10 @@ function ResetCreditRow(props: {
 function ResetCreditExpiries(props: {
   credits: NonNullable<Limit['resetCredits']>
   provider: ProviderId
+  now: number
   onConsumeReset?: ConsumeReset | undefined
 }) {
-  const [now, setNow] = useState(Date.now)
-  useEffect(() => {
-    const timer = window.setInterval(() => setNow(Date.now()), 60_000)
-    return () => window.clearInterval(timer)
-  }, [])
-
+  const now = props.now
   const ordered = [...props.credits].sort(
     (a, b) => (a.expiresAt ?? Infinity) - (b.expiresAt ?? Infinity),
   )
@@ -336,7 +406,7 @@ function ResetCreditExpiries(props: {
   )
 }
 
-function limitSource(state: AccountLimitsState): ProviderLimitSource | undefined {
+export function limitSource(state: AccountLimitsState): ProviderLimitSource | undefined {
   const summary = state.summary
   if (!summary) return undefined
   if (summary.limitSource) return summary.limitSource
@@ -345,15 +415,26 @@ function limitSource(state: AccountLimitsState): ProviderLimitSource | undefined
     : { provider: state.provider, status: 'unavailable' }
 }
 
-function remaining(limit: Limit): number {
+export function remaining(limit: Limit): number {
   return Math.min(100, Math.max(0, Math.round(100 - limit.usedPercent)))
 }
 
+/**
+ * Where the bar would end if the window were spent evenly: the share of the
+ * window still ahead, in percent. Absent without a window length and reset
+ * time, or when the mark would sit on the bar's rounded ends.
+ */
+export function evenPace(limit: Limit, now: number): number | undefined {
+  if (limit.windowMinutes === undefined || limit.resetsAt === undefined) return undefined
+  const ahead = ((limit.resetsAt - now) / (limit.windowMinutes * 60_000)) * 100
+  return ahead >= 2 && ahead <= 98 ? ahead : undefined
+}
+
 /** A reset within the week reads as weekday and time; further out, as a date. */
-function resetLabel(at: number): string {
+function resetLabel(at: number, now: number): string {
   const date = new Date(at)
   if (Number.isNaN(date.getTime())) return 'Reset time unavailable.'
-  const untilReset = at - Date.now()
+  const untilReset = at - now
   const withinWeek = untilReset >= 0 && untilReset < 6 * 86_400_000
   const formatted = date.toLocaleString(
     undefined,

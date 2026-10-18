@@ -7,16 +7,18 @@ import type {
   ResultOf,
 } from '@harness/contracts'
 import { McpServerConfigSchema, McpTransportSchema } from '@harness/contracts'
-import {
-  IconAlertTriangle as AlertTriangle,
-  IconPlus as Plus,
-  IconTrash as Trash2,
-} from '@tabler/icons-react'
+import { IconAlertTriangle as AlertTriangle, IconPlus as Plus } from '@tabler/icons-react'
 import type { Transport } from '../transport.js'
 import { useProviderWatch } from '../provider-watch.js'
 import { isComposingKey } from '../shortcuts.js'
 import { AppSelect } from './AppSelect.js'
-import { SkeletonRows, SkeletonStatus } from './Skeleton.js'
+import {
+  SettingsEmpty,
+  SettingsEntitySkeleton,
+  SettingsNotice,
+  SettingsPage,
+  SettingsSection,
+} from './settings/SettingsLayout.js'
 
 type Inventory = ResultOf<'mcp.list'>
 type Editor = {
@@ -396,44 +398,52 @@ function ProviderMcpSettings(props: {
   // hiding them made a fully configured provider read as having no MCP servers.
   const inheritedServers =
     currentInventory?.servers.filter((server) => server.scope === 'global') ?? []
-  const providerStatus = !props.projectPath
-    ? 'Select a project to check MCP support.'
-    : currentError && !currentInventory
-      ? `${props.providerName} · MCP inventory status unavailable`
-      : !currentInventory
-        ? `Checking ${props.providerName} MCP support…`
-        : `${props.providerName} · MCP inventory ${currentInventory.capabilities.inventory ? 'available' : 'unavailable'}`
-  const loadingInventory = Boolean(props.projectPath) && loading && !inventory
-  const status = !props.projectPath
-    ? 'Select a project in the sidebar first.'
-    : loadingInventory
-      ? undefined
-      : !currentInventory
-        ? undefined
-        : projectServers.length === 0
-          ? !currentInventory.capabilities.inventory
-            ? `No MCP servers have been added to this project. ${props.providerName} chats still load the servers and plugins from ${props.providerName}'s own settings, which TasteCode cannot list here.`
-            : 'No MCP servers have been added to this project.'
-          : undefined
+  // The provider is still collecting its servers, so an empty list is not final.
+  const checking = Boolean(currentInventory?.loading)
+  const canHide = currentInventory ? canHideInherited(currentInventory.capabilities) : false
+  const loadingInventory =
+    Boolean(props.projectPath) &&
+    ((loading && !inventory) ||
+      (checking && projectServers.length === 0 && inheritedServers.length === 0))
+  const projectList = !props.projectPath ? (
+    <SettingsEmpty title="Select a project in the sidebar first." />
+  ) : loadingInventory ? (
+    <SettingsEntitySkeleton label="Loading MCP servers…" />
+  ) : !currentInventory ? null : projectServers.length === 0 ? (
+    <SettingsEmpty title="No MCP servers have been added to this project." />
+  ) : (
+    projectServers.map((server) => (
+      <ServerRow
+        key={server.id}
+        server={server}
+        capabilities={currentInventory.capabilities}
+        busy={busy.has(server.id)}
+        onSignIn={() => void signIn(server)}
+        onToggle={() => toggle(server)}
+        onEdit={(opener) =>
+          setEditor({
+            mode: 'edit',
+            opener,
+            id: server.id,
+            displayName: server.displayName ?? '',
+            transport: JSON.stringify(server.transport, null, 2),
+          })
+        }
+        onRemove={() => remove(server)}
+      />
+    ))
+  )
 
   return (
-    <section className="settings__panel mcp-settings" aria-labelledby="settings-mcp">
-      <header className="mcp-settings__header">
-        <div>
-          <h1 className="settings__title" id="settings-mcp">
-            MCP servers
-          </h1>
-          <p role="status" aria-live="polite" aria-atomic="true">
-            {providerStatus}
-          </p>
-        </div>
-        <div className="mcp-settings__actions">
+    <SettingsPage
+      title="MCP servers"
+      description={pageDescription(props.providerName, props.projectPath, props.projectName)}
+      actions={
+        <>
           {props.providerPicker}
-          {props.projectPath &&
-          currentInventory?.capabilities.add &&
-          currentInventory.capabilities.inventory ? (
+          {props.projectPath && canHide ? (
             <button
-              className="settings__action is-secondary"
+              className="set-button set-button--quiet"
               type="button"
               disabled={busy.size > 0}
               onClick={(event) =>
@@ -451,7 +461,7 @@ function ProviderMcpSettings(props: {
           ) : null}
           {props.projectPath && currentInventory?.capabilities.add ? (
             <button
-              className="settings__action"
+              className="set-button"
               type="button"
               disabled={busy.size > 0}
               onClick={(event) =>
@@ -468,29 +478,31 @@ function ProviderMcpSettings(props: {
               Add server
             </button>
           ) : null}
-        </div>
-      </header>
-
+        </>
+      }
+    >
       {currentError ? (
-        <p className="mcp-settings__message is-error" role="alert">
-          {currentError}{' '}
-          <button className="settings__action" type="button" onClick={() => void refresh()}>
-            Retry
-          </button>
-        </p>
+        <SettingsNotice
+          tone="error"
+          action={
+            <button className="set-button" type="button" onClick={() => void refresh()}>
+              Retry
+            </button>
+          }
+        >
+          {currentError}
+        </SettingsNotice>
       ) : null}
-      {notice ? <p className="mcp-settings__message">{notice}</p> : null}
-      {currentInventory?.capabilities.add && !currentInventory.capabilities.reload ? (
-        <p className="mcp-settings__scope-note">
-          Changes apply when you start or resume a session.
-        </p>
+      {currentInventory && !currentInventory.capabilities.inventory ? (
+        <SettingsNotice tone="info">
+          Servers from {props.providerName}’s own settings are loaded in chats but can’t be listed
+          here.
+        </SettingsNotice>
       ) : null}
-      {loadingInventory ? (
-        <SkeletonStatus label="Loading MCP servers…" className="settings__group">
-          <SkeletonRows rows={3} detail control density="roomy" />
-        </SkeletonStatus>
+      {checking && !loadingInventory ? (
+        <SettingsNotice tone="progress">Checking {props.providerName} MCP servers…</SettingsNotice>
       ) : null}
-      {status ? <p className="mcp-settings__empty">{status}</p> : null}
+      {notice ? <SettingsNotice tone="info">{notice}</SettingsNotice> : null}
       {editor ? (
         <ServerEditor
           key={editor.mode === 'edit' ? `edit:${editor.id}` : editor.mode}
@@ -501,9 +513,33 @@ function ProviderMcpSettings(props: {
           onSubmit={(event) => void save(event)}
         />
       ) : null}
-      {currentInventory && projectServers.length > 0 ? (
-        <div className="settings__group">
-          {projectServers.map((server) => (
+      {projectList ? (
+        <SettingsSection
+          label="Project servers"
+          note={
+            // Once there is a change to apply: above the empty line it read as its lead-in.
+            currentInventory?.capabilities.add &&
+            !currentInventory.capabilities.reload &&
+            (projectServers.length > 0 || notice)
+              ? 'Changes apply when you start or resume a session.'
+              : undefined
+          }
+        >
+          {projectList}
+        </SettingsSection>
+      ) : null}
+      {currentInventory && inheritedServers.length > 0 ? (
+        <SettingsSection
+          title={`From ${props.providerName} settings`}
+          note={
+            <>
+              Every {props.providerName} chat in this project loads these. Change them in{' '}
+              {props.providerName}
+              {canHide ? ', or turn one off for this project only.' : '.'}
+            </>
+          }
+        >
+          {inheritedServers.map((server) => (
             <ServerRow
               key={server.id}
               server={server}
@@ -511,50 +547,35 @@ function ProviderMcpSettings(props: {
               busy={busy.has(server.id)}
               onSignIn={() => void signIn(server)}
               onToggle={() => toggle(server)}
-              onEdit={(opener) =>
-                setEditor({
-                  mode: 'edit',
-                  opener,
-                  id: server.id,
-                  displayName: server.displayName ?? '',
-                  transport: JSON.stringify(server.transport, null, 2),
-                })
-              }
-              onRemove={() => remove(server)}
+              onEdit={() => undefined}
+              onRemove={() => undefined}
             />
           ))}
-        </div>
+        </SettingsSection>
       ) : null}
-      {currentInventory && inheritedServers.length > 0 ? (
-        <section className="mcp-inherited" aria-labelledby="mcp-inherited-title">
-          <header className="mcp-inherited__header">
-            <h2 id="mcp-inherited-title">From {props.providerName} settings</h2>
-            <p>
-              Every {props.providerName} chat in this project loads these. Change them in{' '}
-              {props.providerName}
-              {currentInventory.capabilities.add && currentInventory.capabilities.inventory
-                ? ', or turn one off for this project only.'
-                : '.'}
-            </p>
-          </header>
-          <div className="settings__group">
-            {inheritedServers.map((server) => (
-              <ServerRow
-                key={server.id}
-                server={server}
-                capabilities={currentInventory.capabilities}
-                busy={busy.has(server.id)}
-                onSignIn={() => void signIn(server)}
-                onToggle={() => toggle(server)}
-                onEdit={() => undefined}
-                onRemove={() => undefined}
-              />
-            ))}
-          </div>
-        </section>
-      ) : null}
-    </section>
+    </SettingsPage>
   )
+}
+
+/** The provider and, once a project is open, the project the list belongs to. */
+function pageDescription(
+  providerName: string,
+  projectPath: string | undefined,
+  projectName: string | undefined,
+): string {
+  return projectPath && projectName ? `${providerName} · ${projectName}` : providerName
+}
+
+const STARTUP_LABELS = {
+  stopped: 'Stopped',
+  starting: 'Starting…',
+  ready: 'Ready',
+  failed: 'Failed',
+} satisfies Record<NonNullable<McpServer['startup']>['state'], string>
+
+function serverStatus(server: McpServer): string {
+  if (!server.enabled) return 'Disabled'
+  return server.startup ? STARTUP_LABELS[server.startup.state] : 'Status unavailable'
 }
 
 function ServerRow(props: {
@@ -574,41 +595,52 @@ function ServerRow(props: {
   const canToggle =
     props.capabilities.remove &&
     ((!props.server.enabled && props.server.scope === 'project') ||
-      (props.capabilities.add && props.capabilities.inventory && props.server.scope === 'global'))
+      (canHideInherited(props.capabilities) && props.server.scope === 'global'))
+  // A server can report hundreds of tools; render them only once someone looks.
+  const [toolsOpen, setToolsOpen] = useState(false)
   const canEdit =
     props.capabilities.update && props.server.scope === 'project' && props.server.transport
   const canRemove =
     props.capabilities.remove && props.server.scope === 'project' && props.server.enabled
+  // Project servers are the page's own list; inherited ones sit under their section.
+  const Name = inherited ? 'h3' : 'h2'
   return (
-    <article className={`settings__row mcp-row${props.server.enabled ? '' : ' is-disabled'}`}>
-      <div className="settings__row-copy">
-        <div className="mcp-row__heading">
-          <h2>{props.server.displayName ?? props.server.id}</h2>
-          {/* Inherited rows sit under their own heading, which already names the source. */}
-          {inherited ? null : <span>{props.server.scope}</span>}
-          <span>
-            {props.server.enabled ? (startup?.state ?? 'status unavailable') : 'disabled'}
-          </span>
+    <article
+      className="set-entity mcp-row"
+      data-tone={
+        !props.server.enabled ? 'muted' : startup?.state === 'failed' ? 'error' : undefined
+      }
+    >
+      <div className="set-entity__main">
+        <div className="set-entity__head">
+          <Name className="set-entity__name">{props.server.displayName ?? props.server.id}</Name>
+          <span className="set-leader" aria-hidden />
+          <span className="set-entity__status">{serverStatus(props.server)}</span>
         </div>
         {inherited && !props.server.transport ? (
           props.server.description ? (
-            <p className="mcp-row__transport">{props.server.description}</p>
+            <p className="set-entity__detail">{props.server.description}</p>
           ) : null
         ) : (
-          <p className="mcp-row__transport">{transportLabel(props.server.transport)}</p>
+          <p className="set-entity__detail set-entity__detail--code">
+            {transportLabel(props.server.transport)}
+          </p>
         )}
         {startup?.state === 'failed' ? (
-          <p className="mcp-row__failure" role="alert">
+          <p className="set-entity__detail set-entity__detail--error" role="alert">
             <AlertTriangle size={13} aria-hidden />
             {startup.message}
           </p>
         ) : null}
-        <details className="mcp-row__details">
+        <details
+          className="mcp-row__details"
+          onToggle={(event) => setToolsOpen(event.currentTarget.open)}
+        >
           <summary>
             {props.server.tools.length} tools · {props.server.resources.length} resources ·{' '}
             {props.server.resourceTemplates.length} templates
           </summary>
-          {props.server.tools.length ? (
+          {!toolsOpen ? null : props.server.tools.length ? (
             <ul>
               {props.server.tools.map((tool) => (
                 <li key={tool.name}>
@@ -622,10 +654,10 @@ function ServerRow(props: {
           )}
         </details>
       </div>
-      <div className="mcp-row__actions">
+      <div className="set-entity__actions">
         {needsOAuth ? (
           <button
-            className="settings__action"
+            className="set-button"
             type="button"
             disabled={props.busy}
             onClick={props.onSignIn}
@@ -648,7 +680,7 @@ function ServerRow(props: {
         ) : null}
         {canEdit ? (
           <button
-            className="settings__action"
+            className="set-button set-button--quiet"
             type="button"
             disabled={props.busy}
             onClick={(event) => props.onEdit(event.currentTarget)}
@@ -658,12 +690,11 @@ function ServerRow(props: {
         ) : null}
         {canRemove ? (
           <button
-            className="settings__action is-danger"
+            className="set-button set-button--danger"
             type="button"
             disabled={props.busy}
             onClick={props.onRemove}
           >
-            <Trash2 size={13} aria-hidden />
             Remove
           </button>
         ) : null}
@@ -691,7 +722,7 @@ function ServerEditor(props: {
   }, [opener])
   return (
     <form
-      className="mcp-editor"
+      className="set-form mcp-editor"
       aria-label={`${hiding ? 'Hide inherited' : props.editor.mode === 'add' ? 'Add' : 'Edit'} MCP server`}
       onSubmit={props.onSubmit}
       onKeyDown={(event) => {
@@ -703,15 +734,16 @@ function ServerEditor(props: {
       }}
     >
       {hiding ? (
-        <p className="mcp-editor__wide mcp-settings__scope-note">
+        <p className="set-form__wide set-form__note">
           Enter the ID from your provider's MCP settings. This hides the server in this project and
           keeps the provider's own settings unchanged.
         </p>
       ) : null}
-      <label className={hiding ? 'mcp-editor__wide' : undefined}>
+      <label className={hiding ? 'set-form__wide' : undefined}>
         Server ID
         <input
           ref={field}
+          className="set-input"
           required
           disabled={props.editor.mode === 'edit'}
           value={props.editor.id}
@@ -722,41 +754,48 @@ function ServerEditor(props: {
         <label>
           Display name
           <input
+            className="set-input"
             value={props.editor.displayName}
             onChange={(event) => update({ displayName: event.target.value })}
           />
         </label>
       ) : null}
       {!hiding ? (
-        <label className="mcp-editor__wide">
+        <label className="set-form__wide">
           Transport JSON
           <textarea
+            className="set-input mcp-editor__transport"
             required
             spellCheck={false}
             value={props.editor.transport}
             onChange={(event) => update({ transport: event.target.value })}
           />
-          <small>
+          <small className="set-form__hint">
             Use stdio or HTTP transport fields. Reference secrets as
             {' { "source": "credential", "credentialRef": "…" }'}.
           </small>
         </label>
       ) : null}
-      <footer>
+      <footer className="set-form__actions">
         <button
-          className="settings__action"
+          className="set-button set-button--quiet"
           type="button"
           disabled={props.busy}
           onClick={props.onCancel}
         >
           Cancel
         </button>
-        <button className="settings__action" type="submit" disabled={props.busy}>
+        <button className="set-button set-button--primary" type="submit" disabled={props.busy}>
           {props.busy ? 'Saving…' : hiding ? 'Hide server' : 'Save server'}
         </button>
       </footer>
     </form>
   )
+}
+
+/** Absent means the rule from before the capability was declared. */
+function canHideInherited(capabilities: Inventory['capabilities']): boolean {
+  return capabilities.hideInherited ?? (capabilities.add && capabilities.inventory)
 }
 
 function name(server: McpServer): string {

@@ -1,24 +1,24 @@
 import { parentPort, workerData } from 'node:worker_threads'
-import type { UsageScanProgress, UsageScanRequest, UsageScanResult } from './usage-history.js'
+import type { UsageWorkerJob, UsageWorkerMessage } from './usage-history.js'
 
 type UsageHistoryModule = typeof import('./usage-history.js')
+type UsageWorkerResult = Extract<UsageWorkerMessage, { type: 'complete' }>['result']
 
-type WorkerMessage =
-  | { type: 'progress'; progress: UsageScanProgress }
-  | { type: 'complete'; result: UsageScanResult }
-  | { type: 'error'; message: string }
-
-function send(message: WorkerMessage): void {
+function send(message: UsageWorkerMessage): void {
   parentPort?.postMessage(message)
 }
 
 const sourceExtension = import.meta.url.endsWith('.ts') ? 'ts' : 'js'
+const job = workerData as UsageWorkerJob
 
 void import(`./usage-history.${sourceExtension}`)
-  .then(({ runUsageHistoryScan }: UsageHistoryModule) =>
-    runUsageHistoryScan(workerData as UsageScanRequest, (progress) => {
-      send({ type: 'progress', progress })
-    }),
+  .then(
+    ({ loadUsageCache, runUsageHistoryScan }: UsageHistoryModule): Promise<UsageWorkerResult> =>
+      job.kind === 'load'
+        ? loadUsageCache(job.cacheFile)
+        : runUsageHistoryScan(job.request, (progress) => {
+            send({ type: 'progress', progress })
+          }),
   )
   .then((result) => send({ type: 'complete', result }))
   .catch((error: unknown) => {

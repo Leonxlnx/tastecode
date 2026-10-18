@@ -1445,6 +1445,82 @@
   color: var(--text);
 }
 
+/* The chat checkout's pull request. Quiet like the header's other controls;
+   only the state glyph and the checks glyph carry colour. */
+.stagehead__pr {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  flex: none;
+  height: 24px;
+  align-items: center;
+  gap: 5px;
+  padding: 0 9px 0 7px;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--t-xs);
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease;
+}
+
+.stagehead__pr:is(:hover, :focus-visible) {
+  background: var(--surface-2);
+  border-color: var(--line-strong);
+  color: var(--text);
+}
+
+.stagehead__pr-state {
+  flex: none;
+  color: var(--text-2);
+}
+
+.stagehead__pr.is-open .stagehead__pr-state {
+  color: var(--success);
+}
+
+.stagehead__pr.is-draft .stagehead__pr-state {
+  color: var(--text-3);
+}
+
+.stagehead__pr.is-closed .stagehead__pr-state {
+  color: var(--error);
+}
+
+.stagehead__pr-number {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  font-weight: 520;
+}
+
+.stagehead__pr-label {
+  color: var(--text-3);
+}
+
+.stagehead__pr-checks {
+  flex: none;
+  margin-left: 1px;
+}
+
+.stagehead__pr-checks.is-passing {
+  color: var(--success);
+}
+
+.stagehead__pr-checks.is-failing {
+  color: var(--error);
+}
+
+.stagehead__pr-checks.is-pending {
+  color: var(--attention);
+}
+
 .menu.stagehead__options-menu {
   min-width: 0;
   width: min(216px, calc(100vw - 16px));
@@ -1643,7 +1719,7 @@
 
 .composer {
   min-width: 0;
-  padding: 4px 24px 8px;
+  padding: 4px var(--chat-gutter) 8px;
 }
 
 .composer:not(.is-new-session) {
@@ -2090,7 +2166,9 @@
   font-size: var(--t-lg);
   line-height: 1.45;
   min-height: 48px;
-  padding: 12px 16px 6px;
+  /* The 1px is .composer__prompt's border; the transcript column reads the
+     same inset, so its text starts where the prompt text starts. */
+  padding: 12px calc(var(--chat-text-inset) - 1px) 6px;
   resize: none;
   outline: none;
   max-height: 242px;
@@ -3312,13 +3390,11 @@
   }
 }
 
+/* Narrow panes only tighten the gutter; the composer and the transcript
+   column both read it, so they stay aligned. */
 @container chat-stage (max-width: 480px) {
-  .thread__col {
-    padding-inline: 14px;
-  }
-
-  .composer {
-    padding-inline: 10px;
+  .stage__body {
+    --chat-gutter: 10px;
   }
 }
 
@@ -3527,12 +3603,12 @@
     padding-inline: 12px 8px;
   }
 
-  .thread__col {
-    padding: 0 14px;
+  .stage__body {
+    --chat-gutter: 10px;
   }
 
   .composer {
-    padding: 4px 10px max(8px, env(safe-area-inset-bottom));
+    padding-bottom: max(8px, env(safe-area-inset-bottom));
   }
 
   .composer:not(.is-new-session) {

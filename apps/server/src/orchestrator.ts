@@ -38,7 +38,13 @@ import {
   RestoreSnapshotError,
 } from './checkpoint.js'
 import { canonicalCheckoutRoot, CheckoutAccess } from './checkout-access.js'
-import { ProviderControls } from './provider-controls.js'
+import {
+  ProviderControls,
+  type CommandInventory,
+  type McpInventory,
+  type ProviderControlsOptions,
+} from './provider-controls.js'
+import { ModelListCache } from './model-list-cache.js'
 import { PROVIDER_CAPABILITIES } from './provider-capabilities.js'
 import {
   contextForLaunch,
@@ -94,6 +100,7 @@ import type {
   Thread,
   ThreadInboxStatus,
   ThreadLifecycle,
+  UsageReadIntent,
 } from '@harness/contracts'
 import {
   readSessionDiff,
@@ -329,6 +336,19 @@ type DesignFlow = {
   buildSummary?: string
 }
 
+/**
+ * The source an install, update or sign-in terminal works on, from its target:
+ * `provider`, `provider:agent` or `update:provider`.
+ */
+export function providerTerminalSource(
+  target: string,
+): { provider: ProviderId; agent?: string | undefined } | undefined {
+  const [first, ...rest] = target.split(':')
+  const [provider, agent] = first === 'update' ? [rest.join(':'), ''] : [first, rest.join(':')]
+  if (!provider || !Object.hasOwn(PROVIDER_CAPABILITIES, provider)) return undefined
+  return agent ? { provider: provider as ProviderId, agent } : { provider: provider as ProviderId }
+}
+
 export function resolveWorkspacePath(workspacePath: string): string {
   if (workspacePath === '~') return os.homedir()
   if (workspacePath.startsWith('~/') || workspacePath.startsWith('~\\')) {
@@ -540,6 +560,12 @@ const UNSUPPORTED_MCP_CAPABILITIES: McpCapabilities = {
   startOAuth: false,
   cancelOAuth: false,
 }
+/** A provider without a skill inventory of its own lists none. */
+const NO_SKILL_CAPABILITIES: SkillCapabilities = {
+  inventory: false,
+  configure: false,
+  install: false,
+}
 /** TasteCode-managed project servers only: no vendor inventory, no OAuth. */
 const PROJECT_MCP_MANAGEMENT_CAPABILITIES: McpCapabilities = {
   inventory: false,
@@ -659,7 +685,9 @@ export class Orchestrator {
   ) => void
   #onMcpChanged: (provider: ProviderId, projectPath: string) => void
   #onSkillsChanged: (provider: ProviderId, projectPath: string) => void
+  #onCommandsChanged: (provider: ProviderId, projectPath: string) => void
   #onUsageChanged: (provider: ProviderId) => void
+  #onModelsChanged: (provider: ProviderId, agent: string | undefined) => void
   #onLifecycle: (threadId: string, lifecycle: ThreadLifecycle) => void
   #onLifecycleScheduleChanged: (hint?: LifecycleScheduleHint) => void
   #capturePreview:
@@ -695,6 +723,11 @@ export class Orchestrator {
   #maxIdleThreadRuntimes: number
   #idleThreadRuntimeMs: number
   #controls: ProviderControls
+  #modelLists: ModelListCache
+  /** The account each provider's model lists were read for, to notice a switch made outside the app. */
+  #modelListAccounts = new Map<ProviderId, string>()
+  /** Install, update and sign-in terminals, by terminal id, and the source they change. */
+  #providerTerminals = new Map<string, { provider: ProviderId; agent?: string | undefined }>()
 
   constructor(
     store: Store,
@@ -714,7 +747,12 @@ export class Orchestrator {
       ) => void
       onMcpChanged?: (provider: ProviderId, projectPath: string) => void
       onSkillsChanged?: (provider: ProviderId, projectPath: string) => void
+      onCommandsChanged?: (provider: ProviderId, projectPath: string) => void
       onUsageChanged?: (provider: ProviderId) => void
+      /** A provider's held plan limits changed, for example from a live session. */
+      onLimitsChanged?: (source: ProviderLimitSource) => void
+      /** A source's model list changed after `models.list` answered. */
+      onModelsChanged?: (provider: ProviderId, agent: string | undefined) => void
       onLifecycle?: (threadId: string, lifecycle: ThreadLifecycle) => void
       onLifecycleScheduleChanged?: (hint?: LifecycleScheduleHint) => void
       capturePreview?: (
@@ -738,6 +776,10 @@ export class Orchestrator {
       idleThreadRuntimeMs?: number
       /** Test override for releasing one-shot Codex control processes. */
       controlIdleMs?: number
+      /** Waited on before an uncached limit read; the server holds it while a turn streams. */
+      beforeLimitRead?: () => Promise<void>
+      /** Test override for the provider services behind settings and inventories. */
+      providerServices?: ProviderControlsOptions['services']
       /** Where isolated checkouts live. Outside any repository, on purpose. */
       worktreeRoot?: string
     },
@@ -758,7 +800,9 @@ export class Orchestrator {
     this.#onMcpOAuth = handlers.onMcpOAuth ?? (() => {})
     this.#onMcpChanged = handlers.onMcpChanged ?? (() => {})
     this.#onSkillsChanged = handlers.onSkillsChanged ?? (() => {})
+    this.#onCommandsChanged = handlers.onCommandsChanged ?? (() => {})
     this.#onUsageChanged = handlers.onUsageChanged ?? (() => {})
+    this.#onModelsChanged = handlers.onModelsChanged ?? (() => {})
     this.#onLifecycle = handlers.onLifecycle ?? (() => {})
     this.#onLifecycleScheduleChanged = handlers.onLifecycleScheduleChanged ?? (() => {})
     this.#capturePreview = handlers.capturePreview
@@ -768,9 +812,13 @@ export class Orchestrator {
     this.#customHarnesses = handlers.customHarnesses ?? new CustomHarnessStore()
     this.#readCredential = handlers.readCredential ?? readCredential
     this.#voice = new VoiceService(handlers.voiceTranscriber)
+    const onTerminalExit = handlers.onTerminalExit ?? (() => {})
     this.#terminals = new TerminalManager({
       onOutput: handlers.onTerminalOutput ?? (() => {}),
-      onExit: handlers.onTerminalExit ?? (() => {}),
+      onExit: (terminalId, exitCode) => {
+        this.#providerTerminalExited(terminalId)
+        onTerminalExit(terminalId, exitCode)
+      },
       onLog: (message) => this.#onLog(message),
     })
     this.#runtimeFor =
@@ -787,14 +835,36 @@ export class Orchestrator {
       Math.floor(handlers.idleThreadRuntimeMs ?? IDLE_THREAD_RUNTIME_MS),
     )
     this.#controls = new ProviderControls({
-      listModels: (provider, agent) => this.#runtimeFor(provider, this.#onLog).listModels(agent),
+      listModels: (provider, agent, read) =>
+        this.#runtimeFor(provider, this.#onLog).listModels(agent, read),
       onLog: (_provider, line) => this.#onLog(line),
       onLogin: this.#onLogin,
       onUsageChanged: this.#onUsageChanged,
+      ...(handlers.onLimitsChanged
+        ? { onLimitsChanged: (_provider, source) => handlers.onLimitsChanged?.(source) }
+        : {}),
       onMcpChanged: this.#onMcpChanged,
       onSkillsChanged: this.#onSkillsChanged,
-      onAuthChanged: () => this.#invalidateBackgroundSources(),
+      onCommandsChanged: this.#onCommandsChanged,
+      onAuthChanged: (provider) => {
+        this.#modelLists.invalidate(provider)
+        this.#invalidateBackgroundSources()
+      },
       ...(handlers.controlIdleMs !== undefined ? { controlIdleMs: handlers.controlIdleMs } : {}),
+      ...(handlers.beforeLimitRead ? { beforeLimitRead: handlers.beforeLimitRead } : {}),
+      ...(handlers.providerServices ? { services: handlers.providerServices } : {}),
+    })
+    this.#modelLists = new ModelListCache({
+      list: (provider, agent, read) => {
+        const control = this.#controls.forProvider(provider)
+        return control.listModels ? control.listModels(agent, read) : Promise.resolve([])
+      },
+      onChanged: (provider, agent) => this.#onModelsChanged(provider, agent),
+      onLog: (line) => this.#onLog(line),
+      snapshot: {
+        read: () => this.#store.modelListSnapshot(),
+        write: (value) => this.#store.setModelListSnapshot(value),
+      },
     })
   }
 
@@ -808,9 +878,10 @@ export class Orchestrator {
     return this.#controls.forProvider(provider).watch(projectPath, targets)
   }
 
+  /** Every model list is shared: see `ModelListCache` for when it asks the provider again. */
   async listModels(provider: ProviderId, agent?: string): Promise<Model[]> {
-    const control = this.#controls.forProvider(provider)
-    return control.listModels ? control.listModels(agent) : []
+    if (!this.#controls.forProvider(provider).listModels) return []
+    return this.#modelLists.list(provider, agent)
   }
 
   listCustomHarnesses() {
@@ -845,6 +916,7 @@ export class Orchestrator {
 
   upsertCustomHarness(harness: Parameters<CustomHarnessStore['upsert']>[0]) {
     const saved = this.#customHarnesses.upsert(harness)
+    this.#modelLists.forgetAgent(saved.id)
     this.#invalidateBackgroundSources()
     return saved
   }
@@ -858,6 +930,7 @@ export class Orchestrator {
 
   removeCustomHarness(harnessId: string): void {
     this.#customHarnesses.remove(harnessId)
+    this.#modelLists.forgetAgent(harnessId)
     this.#invalidateBackgroundSources()
   }
 
@@ -1099,10 +1172,7 @@ export class Orchestrator {
     this.#backgroundSources.clear()
   }
 
-  async listMcpServers(
-    provider: ProviderId,
-    projectPath: string,
-  ): Promise<{ capabilities: McpCapabilities; servers: McpServer[] }> {
+  async listMcpServers(provider: ProviderId, projectPath: string): Promise<McpInventory> {
     const control = this.#controls.forProvider(provider)
     if (!control.capabilities.managedMcp && !control.listMcpServers) {
       return { capabilities: UNSUPPORTED_MCP_CAPABILITIES, servers: [] }
@@ -1113,13 +1183,18 @@ export class Orchestrator {
       projectPath,
       ({ session }) => session.listMcpServers !== undefined,
     )
-    const inventory = control.listMcpServers
+    const inventory: McpInventory = control.listMcpServers
       ? await control.listMcpServers(
-          active?.[1].session.listMcpServers
+          projectPath,
+          active
             ? () =>
-                this.#withThreadRuntimeOperation(active[0], () =>
-                  active[1].session.listMcpServers!(active[1].thread.id),
-                )
+                this.#withThreadRuntimeOperation(active[0], async () => {
+                  const { session, thread } = active[1]
+                  const servers = await session.listMcpServers!(thread.id)
+                  return session.isMcpLoading?.(thread.id)
+                    ? { servers, loading: true }
+                    : { servers }
+                })
             : undefined,
         )
       : { capabilities: PROJECT_MCP_MANAGEMENT_CAPABILITIES, servers: [] }
@@ -1153,7 +1228,46 @@ export class Orchestrator {
             }),
       })
     }
-    return { capabilities: inventory.capabilities, servers: [...servers.values()] }
+    return {
+      capabilities: inventory.capabilities,
+      servers: [...servers.values()],
+      ...(inventory.loading ? { loading: true } : {}),
+    }
+  }
+
+  /**
+   * The chat's own session answers first, then any chat in the project, then
+   * the provider's discovery service; a provider with none of them has none.
+   */
+  async listCommands(
+    provider: ProviderId,
+    projectPath: string,
+    threadId?: string,
+  ): Promise<CommandInventory> {
+    const control = this.#controls.forProvider(provider)
+    const own = threadId === undefined ? undefined : this.#threads.get(threadId)
+    const active: [string, AttachedThreadRuntime] | undefined =
+      threadId !== undefined &&
+      own?.session.listCommands &&
+      own.thread.provider === provider &&
+      own.projectPath === projectPath
+        ? [threadId, own]
+        : this.#findProjectRuntime(
+            provider,
+            projectPath,
+            ({ session }) => session.listCommands !== undefined,
+          )
+    const readActive = active
+      ? () =>
+          this.#withThreadRuntimeOperation(active[0], () =>
+            active[1].session.listCommands!(active[1].thread.id),
+          )
+      : undefined
+    if (control.listCommands) {
+      this.watchProvider(provider, projectPath, ['commands'])
+      return control.listCommands(projectPath, readActive)
+    }
+    return { commands: readActive ? await readActive() : [], loading: false }
   }
 
   async listSkills(
@@ -1164,11 +1278,20 @@ export class Orchestrator {
     skills: Skill[]
     errors: SkillDiscoveryError[]
   }> {
-    const local = await listLocalSkills(projectPath)
     const control = this.#controls.forProvider(provider)
-    if (!control.listSkills) return { capabilities: LOCAL_SKILL_CAPABILITIES, ...local }
+    // `.agents/skills` is Codex's folder. Listing it for a CLI that never loads
+    // it offered skills that did nothing when picked.
+    const local = control.capabilities.agentsSkillsDir
+      ? await listLocalSkills(projectPath)
+      : undefined
+    if (!control.listSkills) {
+      return local
+        ? { capabilities: LOCAL_SKILL_CAPABILITIES, ...local }
+        : { capabilities: NO_SKILL_CAPABILITIES, skills: [], errors: [] }
+    }
     this.watchProvider(provider, projectPath, ['skills'])
     const vendor = await control.listSkills(projectPath)
+    if (!local) return vendor
     return {
       capabilities: vendor.capabilities,
       skills: mergeSkills(vendor.skills, local.skills),
@@ -1223,17 +1346,20 @@ export class Orchestrator {
     this.#requireMcpManagement(provider)
     this.#controls.forProvider(provider).validateMcpServer?.(server)
     this.#mcpConfig.add(provider, projectPath, server)
+    this.#controls.projectMcpConfigChanged(provider, projectPath)
   }
 
   updateMcpServer(provider: ProviderId, projectPath: string, server: McpServerConfig): void {
     this.#requireMcpManagement(provider)
     this.#controls.forProvider(provider).validateMcpServer?.(server)
     this.#mcpConfig.update(provider, projectPath, server)
+    this.#controls.projectMcpConfigChanged(provider, projectPath)
   }
 
   removeMcpServer(provider: ProviderId, projectPath: string, serverId: string): void {
     this.#requireMcpManagement(provider)
     this.#mcpConfig.remove(provider, projectPath, serverId)
+    this.#controls.projectMcpConfigChanged(provider, projectPath)
   }
 
   async reloadMcpServers(provider: ProviderId, projectPath: string): Promise<void> {
@@ -1382,7 +1508,20 @@ export class Orchestrator {
   }
 
   async account(provider: ProviderId, agent?: string): Promise<Account> {
-    return this.#controls.forProvider(provider).account(agent)
+    const account = await this.#controls.forProvider(provider).account(agent)
+    if (agent === undefined) {
+      // A sign-in or switch in the provider's own CLI shows up only here, and
+      // another account may offer other models.
+      const identity = JSON.stringify([
+        account.signedIn,
+        account.email ?? null,
+        account.plan ?? null,
+      ])
+      const previous = this.#modelListAccounts.get(provider)
+      this.#modelListAccounts.set(provider, identity)
+      if (previous !== undefined && previous !== identity) this.#modelLists.invalidate(provider)
+    }
+    return account
   }
 
   async consumeRateLimitReset(
@@ -1395,8 +1534,16 @@ export class Orchestrator {
     return consume(idempotencyKey, creditId)
   }
 
-  async usageLimitSource(provider: ProviderId): Promise<ProviderLimitSource> {
-    return this.#controls.forProvider(provider).usageLimitSource()
+  async usageLimitSource(
+    provider: ProviderId,
+    intent?: UsageReadIntent,
+  ): Promise<ProviderLimitSource> {
+    return this.#controls.forProvider(provider).usageLimitSource(intent)
+  }
+
+  /** The provider's held limits, without starting a read. */
+  heldLimitSource(provider: ProviderId): ProviderLimitSource | undefined {
+    return this.#controls.forProvider(provider).heldLimitSource()
   }
 
   async startLogin(provider: ProviderId): Promise<{ loginId: string; authUrl?: string }> {
@@ -1481,6 +1628,11 @@ export class Orchestrator {
   async switchBranch(workspacePath: string, branch: string) {
     const resolved = resolveWorkspacePath(workspacePath)
     return this.#checkoutAccess.exclusive(resolved, () => switchWorkspaceBranch(resolved, branch))
+  }
+
+  /** Run a git write such as a commit while no chat works in this checkout or starts to. */
+  async whileCheckoutIdle<T>(checkout: string, operation: () => Promise<T>): Promise<T> {
+    return this.#checkoutAccess.exclusive(checkout, operation)
   }
 
   async #startThread(
@@ -2694,7 +2846,10 @@ export class Orchestrator {
    * inside any particular project checkout.
    */
   installProvider(target: string, command: string, columns: number, rows: number): string {
-    return this.#terminals.run(`install:${target}`, command, os.homedir(), columns, rows)
+    return this.#trackProviderTerminal(
+      target,
+      this.#terminals.run(`install:${target}`, command, os.homedir(), columns, rows),
+    )
   }
 
   /**
@@ -2704,7 +2859,28 @@ export class Orchestrator {
    * global CLI has no business inside any particular project checkout.
    */
   launchProviderLogin(target: string, command: string, columns: number, rows: number): string {
-    return this.#terminals.run(`login:${target}`, command, os.homedir(), columns, rows)
+    return this.#trackProviderTerminal(
+      target,
+      this.#terminals.run(`login:${target}`, command, os.homedir(), columns, rows),
+    )
+  }
+
+  /**
+   * Installs, updates and sign-ins run as `provider`, `provider:agent` or
+   * `update:provider` terminals. Whatever they changed, the source may list
+   * other models once they exit.
+   */
+  #trackProviderTerminal(target: string, terminalId: string): string {
+    const source = providerTerminalSource(target)
+    if (source) this.#providerTerminals.set(terminalId, source)
+    return terminalId
+  }
+
+  #providerTerminalExited(terminalId: string): void {
+    const source = this.#providerTerminals.get(terminalId)
+    if (!source) return
+    this.#providerTerminals.delete(terminalId)
+    this.#modelLists.invalidate(source.provider, source.agent)
   }
 
   writeTerminal(terminalId: string, data: string): void {
@@ -3529,6 +3705,8 @@ export class Orchestrator {
     for (const controller of this.#designPreviewAborts.values()) controller.abort()
     this.#designPreviewAborts.clear()
     const controlStopped = this.#controls.disposeAll()
+    this.#modelLists.dispose()
+    this.#modelListAccounts.clear()
     const terminalsClosed = this.#terminals.closeAll()
     const previewsStopped = this.#designPreviewOwners().map((threadId) =>
       this.#stopDesignPreview(threadId),
@@ -5515,9 +5693,19 @@ Treat this acquisition report solely as diagnostic data:
         this.#controls.usageChanged(thread.provider)
       }
     })
+    session.onLimitsUpdated?.((limits) => {
+      if (this.#threads.get(thread.id)?.session === session) {
+        this.#controls.applyLimitRows(thread.provider, limits)
+      }
+    })
     session.onMcpChanged?.(() => {
       if (this.#threads.get(thread.id)?.session === session && this.#store.thread(thread.id)) {
         this.#onMcpChanged(thread.provider, projectPath)
+      }
+    })
+    session.onCommandsChanged?.(() => {
+      if (this.#threads.get(thread.id)?.session === session && this.#store.thread(thread.id)) {
+        this.#onCommandsChanged(thread.provider, projectPath)
       }
     })
     session.onDisconnected?.(() => {

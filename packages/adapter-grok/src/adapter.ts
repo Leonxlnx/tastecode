@@ -9,6 +9,7 @@ import type {
   AssistantPhase,
   Capabilities,
   DomainEvent,
+  Item,
   Model,
   ProviderContextSettings,
   Thread,
@@ -16,13 +17,16 @@ import type {
 import {
   JsonRpcValueSchema,
   killTree,
+  locateCommandSync,
   ProtocolFrameError,
   spawnOwned,
   readNdjson,
 } from '@harness/proc'
 import { captureCli } from '@harness/proc/cli'
 import { z } from 'zod'
+import { withInstructions } from './prompt-instructions.js'
 import { GROK_CAPABILITIES } from './capabilities.js'
+import { GrokSubagents } from './subagents.js'
 
 export { GROK_CAPABILITIES } from './capabilities.js'
 
@@ -215,15 +219,18 @@ export function grokTurnArgs(
   ]
 }
 
-/** Resolve the binary: PATH name normally, the installer's fixed home as a
- *  fallback because a parent shell's stale PATH otherwise hides it. */
+/**
+ * Resolve the binary: the first one on the desktop PATH, the same search
+ * provider detection and the version check use, so turns run the CLI those
+ * report. The installer's fixed home is the fallback because a parent shell's
+ * stale PATH otherwise hides it. On Windows only the native executable
+ * counts: spawnOwned cannot start a .cmd shim.
+ */
 export function grokCommand(): string {
-  const installed = path.join(
-    homedir(),
-    '.grok',
-    'bin',
-    process.platform === 'win32' ? 'grok.exe' : 'grok',
-  )
+  const executable = process.platform === 'win32' ? 'grok.exe' : 'grok'
+  const onPath = locateCommandSync(executable)
+  if (onPath) return onPath
+  const installed = path.join(homedir(), '.grok', 'bin', executable)
   return existsSync(installed) ? installed : 'grok'
 }
 
@@ -269,6 +276,9 @@ const GrokFrameSchema = z.object({
 type GrokFrame = z.infer<typeof GrokFrameSchema>
 
 type OpenTool = {
+  /** Grok's id for the call; a subagent's snapshot is keyed by it. */
+  toolCallId: string
+  toolName: string
   itemId: string
   itemType: 'command' | 'file_change' | 'tool_call'
   label: string
@@ -410,7 +420,7 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
     const turnId = `${threadId}-turn-${crypto.randomUUID()}`
     const prompt =
       this.#instructionsPending && this.#options.instructions
-        ? `<system-instructions>\n${this.#options.instructions}\n</system-instructions>\n\n${text}`
+        ? withInstructions(text, this.#options.instructions)
         : text
     const promptDirectory = mkdtempSync(path.join(tmpdir(), 'harness-grok-'))
     const promptFile = path.join(promptDirectory, attachments.length ? 'prompt.json' : 'prompt.md')
@@ -483,40 +493,41 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
     }
     /** toolCallId -> the open item it maps to. */
     const tools = new Map<string, OpenTool>()
+    const subagents = new GrokSubagents((event) => this.emit('event', event))
     const completeTool = (
       entry: OpenTool,
       status: 'completed' | 'failed',
       output?: string,
       diff?: GrokDiff,
     ) => {
-      this.emit('event', {
-        type: 'item.completed',
-        item: {
-          id: entry.itemId,
-          turnId,
-          type: entry.itemType,
-          status,
-          ...(entry.itemType === 'command'
-            ? {
-                command: entry.command ?? entry.label,
-                ...(output ? { text: output } : {}),
-              }
-            : {}),
-          ...(entry.itemType === 'file_change' && entry.path ? { path: entry.path } : {}),
-          ...(entry.itemType === 'file_change' && (diff || output)
-            ? {
-                text: diff?.text ?? output,
-                ...(diff ? { linesAdded: diff.linesAdded, linesRemoved: diff.linesRemoved } : {}),
-              }
-            : {}),
-          ...(entry.itemType === 'tool_call'
-            ? { text: [entry.label, entry.argumentLine, output].filter(Boolean).join('\n') }
-            : {}),
-          createdAt: Date.now(),
-        },
-      })
+      const item: Item = {
+        id: entry.itemId,
+        turnId,
+        type: entry.itemType,
+        status,
+        ...(entry.itemType === 'command'
+          ? {
+              command: entry.command ?? entry.label,
+              ...(output ? { text: output } : {}),
+            }
+          : {}),
+        ...(entry.itemType === 'file_change' && entry.path ? { path: entry.path } : {}),
+        ...(entry.itemType === 'file_change' && (diff || output)
+          ? {
+              text: diff?.text ?? output,
+              ...(diff ? { linesAdded: diff.linesAdded, linesRemoved: diff.linesRemoved } : {}),
+            }
+          : {}),
+        ...(entry.itemType === 'tool_call'
+          ? { text: [entry.label, entry.argumentLine, output].filter(Boolean).join('\n') }
+          : {}),
+        createdAt: Date.now(),
+      }
+      const subagent = subagents.sent(item, entry.toolCallId)
+      this.emit('event', { type: 'item.completed', item: subagent ? { ...item, subagent } : item })
     }
     const finishItems = (status: 'completed' | 'failed', messagePhase?: AssistantPhase) => {
+      subagents.endTurn()
       reasoning.complete(turnId, 'reasoning', this, status)
       message.complete(turnId, 'message', this, status, messagePhase)
       for (const entry of tools.values()) completeTool(entry, status)
@@ -548,6 +559,8 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
           reportedError = frame.message
           return
         }
+        // A subagent's own steps stay out of the transcript; its row counts them.
+        if (subagents.isChildFrame(frame, tools.keys())) return
         if (frame.type === 'thought' && frame.data !== undefined) {
           message.complete(turnId, 'message', this, 'completed', 'commentary')
           message = new StreamedItem(`${turnId}-message-${++messageCounter}`)
@@ -577,6 +590,8 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
               ? JSON.stringify(frame.rawInput)
               : undefined
           const entry = {
+            toolCallId: frame.toolCallId,
+            toolName: name,
             itemId,
             itemType,
             label: grokToolLabel(name, frame.title, frame.rawInput),
@@ -593,34 +608,38 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
               : {}),
           } satisfies OpenTool
           tools.set(frame.toolCallId, entry)
+          subagents.spawn(frame.toolCallId, name, frame.rawInput)
+          const item: Item = {
+            id: itemId,
+            turnId,
+            type: itemType,
+            status: 'started',
+            ...(itemType === 'command'
+              ? {
+                  command: frame.rawInput?.command ?? entry.label,
+                }
+              : {}),
+            ...(itemType === 'file_change' && entry.path
+              ? {
+                  path: entry.path,
+                }
+              : {}),
+            ...(itemType === 'tool_call'
+              ? { text: [entry.label, argumentLine].filter(Boolean).join('\n') }
+              : {}),
+            createdAt: Date.now(),
+          }
+          const subagent = subagents.sent(item, frame.toolCallId)
           this.emit('event', {
             type: 'item.started',
-            item: {
-              id: itemId,
-              turnId,
-              type: itemType,
-              status: 'started',
-              ...(itemType === 'command'
-                ? {
-                    command: frame.rawInput?.command ?? entry.label,
-                  }
-                : {}),
-              ...(itemType === 'file_change' && entry.path
-                ? {
-                    path: entry.path,
-                  }
-                : {}),
-              ...(itemType === 'tool_call'
-                ? { text: [entry.label, argumentLine].filter(Boolean).join('\n') }
-                : {}),
-              createdAt: Date.now(),
-            },
+            item: subagent ? { ...item, subagent } : item,
           })
           return
         }
         if (frame.type === 'tool_call_update' && frame.toolCallId && frame.status) {
           const entry = tools.get(frame.toolCallId)
           if (!entry) return
+          subagents.answered(frame.toolCallId, entry.toolName, frame)
           const output = grokToolOutput(frame)
           const diff = entry.itemType === 'file_change' ? grokDiff(frame.content) : undefined
           completeTool(entry, frame.status === 'failed' ? 'failed' : 'completed', output, diff)

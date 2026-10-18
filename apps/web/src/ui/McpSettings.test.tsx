@@ -59,6 +59,24 @@ describe('MCP settings', () => {
     expect(screen.getByText('Changes apply when you start or resume a session.')).toBeTruthy()
   })
 
+  it('keeps the session note off an empty project list', async () => {
+    const transport = client(async () => ({
+      capabilities: { inventory: false, add: true, reload: false },
+      servers: [],
+    }))
+    render(
+      <McpSettings
+        transport={transport}
+        provider="claude-code"
+        providerName="Claude Code"
+        projectPath="/work/project"
+        projectName="Project"
+      />,
+    )
+    expect(await screen.findByText('No MCP servers have been added to this project.')).toBeTruthy()
+    expect(screen.queryByText('Changes apply when you start or resume a session.')).toBeNull()
+  })
+
   it('hides an inherited server by ID without inventing transport or changing global settings', async () => {
     const requests: unknown[] = []
     const transport = client(async (method, params) => {
@@ -221,8 +239,11 @@ describe('MCP settings', () => {
     )
 
     expect(await screen.findByText('Developer Docs')).toBeTruthy()
-    expect(screen.getByText('Codex · MCP inventory available')).toBeTruthy()
-    expect(screen.getByRole('status').getAttribute('aria-live')).toBe('polite')
+    expect(screen.getByText('Codex · Project')).toBeTruthy()
+    // A failed start reads on the row itself: its state, its leader and the reason under it.
+    const row = screen.getByText('Developer Docs').closest<HTMLElement>('.set-entity')
+    expect(row?.dataset['tone']).toBe('error')
+    expect(row?.querySelector('.set-entity__status')?.textContent).toBe('Failed')
     expect(screen.queryByText('Available in Project')).toBeNull()
     expect(screen.getByText('OAuth token expired')).toBeTruthy()
     fireEvent.click(screen.getByText(/1 tools/))
@@ -276,7 +297,7 @@ describe('MCP settings', () => {
     )
 
     expect(await screen.findByText('legacy-server')).toBeTruthy()
-    expect(screen.getByText('status unavailable')).toBeTruthy()
+    expect(screen.getByText('Status unavailable')).toBeTruthy()
   })
 
   it('lists servers the provider already loads apart from the empty project list', async () => {
@@ -343,6 +364,165 @@ describe('MCP settings', () => {
     ])
   })
 
+  it('offers no hide controls when the provider declares inherited servers read-only', async () => {
+    const transport = client(async () => ({
+      capabilities: {
+        inventory: true,
+        add: true,
+        update: true,
+        remove: true,
+        reload: false,
+        startOAuth: false,
+        cancelOAuth: false,
+        hideInherited: false,
+      },
+      servers: [
+        {
+          id: 'design-taste',
+          scope: 'global',
+          enabled: true,
+          startup: { state: 'ready' },
+          tools: [],
+          resources: [],
+          resourceTemplates: [],
+        },
+      ],
+    }))
+    render(
+      <McpSettings
+        transport={transport}
+        provider="claude-code"
+        providerName="Claude Code"
+        projectPath="/work/project"
+        projectName="Project"
+      />,
+    )
+
+    const inherited = await screen.findByRole('region', { name: 'From Claude Code settings' })
+    expect(inherited.textContent).toContain('Change them in Claude Code.')
+    expect(screen.queryByRole('switch')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Hide server by ID' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Add server' })).toBeTruthy()
+    // The controls box stays empty, so settings-system.css collapses it.
+    expect(inherited.querySelector('.set-entity__actions:not(:empty)')).toBeNull()
+  })
+
+  it('says it is still checking while the provider collects its servers', async () => {
+    const inventory = (loading: boolean) => ({
+      capabilities: {
+        inventory: true,
+        add: true,
+        update: true,
+        remove: true,
+        reload: true,
+        startOAuth: true,
+        cancelOAuth: false,
+      },
+      servers: [
+        {
+          id: 'docs',
+          scope: 'global',
+          enabled: true,
+          startup: loading ? { state: 'starting' } : { state: 'ready' },
+          tools: [],
+          resources: [],
+          resourceTemplates: [],
+        },
+      ],
+      ...(loading ? { loading: true } : {}),
+    })
+    let loading = true
+    let changed: ((event: { provider: string; projectPath: string }) => void) | undefined
+    const transport = {
+      ...client(async () => inventory(loading)),
+      on: vi.fn((channel: string, listener: typeof changed) => {
+        if (channel === 'mcp.changed') changed = listener
+        return () => {}
+      }),
+    } as unknown as Transport
+    render(
+      <McpSettings
+        transport={transport}
+        provider="codex"
+        providerName="Codex"
+        projectPath="/work/project"
+        projectName="Project"
+      />,
+    )
+
+    expect(await screen.findByText('Checking Codex MCP servers…')).toBeTruthy()
+    expect(screen.getByRole('region', { name: 'From Codex settings' }).textContent).toContain(
+      'Starting…',
+    )
+    // The project's own list is final, so the page keeps its shape when the provider answers.
+    expect(screen.getByText('No MCP servers have been added to this project.')).toBeTruthy()
+
+    loading = false
+    act(() => changed?.({ provider: 'codex', projectPath: '/work/project' }))
+    await waitFor(() => expect(screen.queryByText('Checking Codex MCP servers…')).toBeNull())
+    expect(screen.getByRole('region', { name: 'From Codex settings' }).textContent).toContain(
+      'Ready',
+    )
+  })
+
+  it('shows loading rows instead of an empty list while nothing is reported yet', async () => {
+    const transport = client(async () => ({
+      capabilities: { inventory: true, add: true },
+      servers: [],
+      loading: true,
+    }))
+    render(
+      <McpSettings
+        transport={transport}
+        provider="codex"
+        providerName="Codex"
+        projectPath="/work/project"
+        projectName="Project"
+      />,
+    )
+
+    expect(await screen.findByText('Loading MCP servers…')).toBeTruthy()
+    expect(screen.queryByText('Checking Codex MCP servers…')).toBeNull()
+    expect(screen.queryByText(/No MCP servers have been added/)).toBeNull()
+  })
+
+  it('renders a server tool list only after its details open', async () => {
+    const transport = client(async () => ({
+      capabilities: { inventory: true, add: false },
+      servers: [
+        {
+          id: 'apps',
+          scope: 'global',
+          enabled: true,
+          startup: { state: 'ready' },
+          tools: Array.from({ length: 200 }, (_, index) => ({
+            name: `tool_${index}`,
+            inputSchema: { type: 'object' },
+          })),
+          resources: [],
+          resourceTemplates: [],
+        },
+      ],
+    }))
+    render(
+      <McpSettings
+        transport={transport}
+        provider="codex"
+        providerName="Codex"
+        projectPath="/work/project"
+        projectName="Project"
+      />,
+    )
+
+    const summary = await screen.findByText(/200 tools/)
+    expect(document.querySelectorAll('.mcp-row__details li')).toHaveLength(0)
+    const details = summary.closest('details')!
+    details.open = true
+    fireEvent(details, new Event('toggle'))
+    expect(await screen.findByText('tool_199')).toBeTruthy()
+    expect(document.querySelectorAll('.mcp-row__details li')).toHaveLength(200)
+  })
+
   it('offers no per-project switch for inherited servers without live inventory', async () => {
     const transport = client(async () => ({
       capabilities: {
@@ -405,10 +585,11 @@ describe('MCP settings', () => {
 
     expect(
       await screen.findByText(
-        /Claude Code chats still load the servers and plugins from Claude Code's own settings/,
+        'Servers from Claude Code’s own settings are loaded in chats but can’t be listed here.',
       ),
     ).toBeTruthy()
-    expect(screen.getByText('Claude Code · MCP inventory unavailable')).toBeTruthy()
+    expect(screen.getByText('No MCP servers have been added to this project.')).toBeTruthy()
+    expect(screen.getByText('Claude Code · Project')).toBeTruthy()
     expect(screen.queryAllByRole('button')).toHaveLength(0)
   })
 
@@ -452,7 +633,12 @@ describe('MCP settings', () => {
     fireEvent.click(picker)
     fireEvent.click(await screen.findByRole('option', { name: 'Grok' }))
 
-    expect(await screen.findByText('Grok · MCP inventory unavailable')).toBeTruthy()
+    expect(
+      await screen.findByText(
+        'Servers from Grok’s own settings are loaded in chats but can’t be listed here.',
+      ),
+    ).toBeTruthy()
+    expect(screen.getByText('Grok · Project')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Add server' }))
     fireEvent.change(screen.getByRole('textbox', { name: 'Server ID' }), {
       target: { value: 'test-tools' },
@@ -499,7 +685,11 @@ describe('MCP settings', () => {
       />,
     )
 
-    expect(await screen.findByText('OpenCode · MCP inventory unavailable')).toBeTruthy()
+    expect(
+      await screen.findByText(
+        'Servers from OpenCode’s own settings are loaded in chats but can’t be listed here.',
+      ),
+    ).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Add server' })).toBeTruthy()
   })
 
@@ -518,7 +708,7 @@ describe('MCP settings', () => {
     )
 
     expect((await screen.findByRole('alert')).textContent).toContain('Codex did not respond')
-    expect(screen.getByText('Codex · MCP inventory status unavailable')).toBeTruthy()
+    expect(screen.getByText('Codex · Project')).toBeTruthy()
     expect(screen.queryByText('Loading MCP servers…')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
     await waitFor(() => expect(transport.request).toHaveBeenCalledTimes(2))
@@ -896,7 +1086,7 @@ describe('MCP settings', () => {
         projectName="Beta"
       />,
     )
-    expect(screen.getByText('Checking Codex MCP support…')).toBeTruthy()
+    expect(screen.getByText('Loading MCP servers…')).toBeTruthy()
     expect(await screen.findByText('beta')).toBeTruthy()
 
     await act(async () => finishChange?.())

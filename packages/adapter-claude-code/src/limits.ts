@@ -8,9 +8,12 @@ import {
 } from './sdk-runtime.js'
 
 export type ProviderLimit = {
+  /** Stable within Claude, so a live window replaces exactly this row. */
+  id?: string | undefined
   label: string
   usedPercent: number
   resetsAt?: number | undefined
+  windowMinutes?: number | undefined
   valueLabel?: string | undefined
 }
 
@@ -25,15 +28,18 @@ export type ClaudeLimitSourceOptions = {
 }
 
 /**
- * Claude answers the usage request only after it has scanned the local
- * transcripts behind `/usage`. Captured against Claude Code 2.1.296 on a
- * machine with about 10 GB of history, the request itself took 17 to 60
- * seconds after a 2-second start, so a 10-second deadline reported a working
- * account as a failure. A slow answer is still an answer; only a stuck one is
- * cut off, with headroom because the scan grows with the history.
+ * The read asks Claude to skip the local transcript scan behind `/usage`'s
+ * behaviors section, which plan limits never use. With the scan, Claude Code
+ * 2.1.296 needed 17 to 60 seconds on about 10 GB of history and did not
+ * answer within two minutes on 17 GB; without it the answer follows the CLI's
+ * own start of a few seconds. An older CLI that predates the option ignores
+ * it and scans, so on a long history it reports a timeout here rather than
+ * keeping a heavy scan running.
  */
-const TIMEOUT_MS = 120_000
+const TIMEOUT_MS = 20_000
+const USAGE_REQUEST = { skipBehaviors: true } as const
 const TIMED_OUT = 'Claude usage request timed out.'
+const NOT_REPORTED = 'Claude did not report plan limits this time.'
 const PercentSchema = z
   .number()
   .finite()
@@ -69,29 +75,56 @@ const UsageResponseSchema = z.looseObject({
 
 type UsageWindow = z.infer<typeof UsageWindowSchema>
 
-function windowRow(label: string, window: UsageWindow | null | undefined): ProviderLimit[] {
+const SESSION_MINUTES = 5 * 60
+const WEEK_MINUTES = 7 * 24 * 60
+
+function windowRow(
+  id: string,
+  label: string,
+  window: UsageWindow | null | undefined,
+  windowMinutes?: number,
+): ProviderLimit[] {
   if (!window || window.utilization === null) return []
   return [
     {
+      id,
       label,
       usedPercent: window.utilization,
       ...(window.resets_at === null ? {} : { resetsAt: window.resets_at }),
+      ...(windowMinutes === undefined ? {} : { windowMinutes }),
     },
   ]
+}
+
+function modelSlug(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
 }
 
 export function mapClaudeUsage(value: unknown): ClaudeLimitSource {
   const result = UsageResponseSchema.safeParse(value)
   if (!result.success) throw new Error('Claude usage response was invalid.')
   const { rate_limits: rateLimits, rate_limits_available: available } = result.data
-  if (!available || rateLimits === null) return { status: 'unavailable' }
+  // Only `rate_limits_available: false` means plan limits do not apply (API
+  // key, Bedrock, Vertex). Available limits that came back null are a read
+  // that failed: the same subscription reported its windows on other reads,
+  // so answering "no plan limits" here hid them for the whole cache period.
+  if (!available) return { status: 'unavailable' }
+  if (rateLimits === null) throw new Error(NOT_REPORTED)
 
   const limits = [
-    ...windowRow('Session', rateLimits.five_hour),
-    ...windowRow('Weekly', rateLimits.seven_day),
-    ...windowRow('Sonnet weekly', rateLimits.seven_day_sonnet),
-    ...windowRow('Opus weekly', rateLimits.seven_day_opus),
-    ...windowRow('OAuth apps weekly', rateLimits.seven_day_oauth_apps),
+    ...windowRow('five_hour', 'Session', rateLimits.five_hour, SESSION_MINUTES),
+    ...windowRow('seven_day', 'Weekly', rateLimits.seven_day, WEEK_MINUTES),
+    ...windowRow('seven_day_sonnet', 'Sonnet weekly', rateLimits.seven_day_sonnet, WEEK_MINUTES),
+    ...windowRow('seven_day_opus', 'Opus weekly', rateLimits.seven_day_opus, WEEK_MINUTES),
+    ...windowRow(
+      'seven_day_oauth_apps',
+      'OAuth apps weekly',
+      rateLimits.seven_day_oauth_apps,
+      WEEK_MINUTES,
+    ),
   ]
   const labels = new Set(limits.map((limit) => limit.label))
   for (const window of rateLimits.model_scoped ?? []) {
@@ -99,15 +132,107 @@ export function mapClaudeUsage(value: unknown): ClaudeLimitSource {
     if (!name) continue
     const label = `${name.charAt(0).toUpperCase()}${name.slice(1)} weekly`
     if (labels.has(label)) continue
-    const [row] = windowRow(label, window)
+    const slug = modelSlug(name)
+    if (!slug) continue
+    const [row] = windowRow(`model:${slug}`, label, window, WEEK_MINUTES)
     if (!row) continue
     limits.push(row)
     labels.add(label)
   }
   if (rateLimits.extra_usage?.is_enabled) {
-    limits.push(...windowRow('Extra usage', { ...rateLimits.extra_usage, resets_at: null }))
+    limits.push(
+      ...windowRow('extra_usage', 'Extra usage', { ...rateLimits.extra_usage, resets_at: null }),
+    )
   }
   return { status: 'ready', limits }
+}
+
+/** The windows a live event can report, under the row ids and labels the full read uses. */
+const LIVE_WINDOWS = {
+  five_hour: { label: 'Session', windowMinutes: SESSION_MINUTES },
+  seven_day: { label: 'Weekly', windowMinutes: WEEK_MINUTES },
+  seven_day_sonnet: { label: 'Sonnet weekly', windowMinutes: WEEK_MINUTES },
+  seven_day_opus: { label: 'Opus weekly', windowMinutes: WEEK_MINUTES },
+} as const satisfies Record<string, { label: string; windowMinutes: number }>
+/** The event reports utilization as a fraction; anything else is a unit this mapping does not know. */
+const FractionSchema = z.number().min(0).max(1)
+const EpochSecondsSchema = z.number().positive().finite()
+const LiveWindowSchema = z.looseObject({
+  utilization: FractionSchema.nullish().catch(undefined),
+  resetsAt: EpochSecondsSchema.nullish().catch(undefined),
+})
+const RateLimitInfoSchema = z.looseObject({
+  status: z.string().optional(),
+  rateLimitType: z.string().optional(),
+  utilization: FractionSchema.optional().catch(undefined),
+  resetsAt: EpochSecondsSchema.optional().catch(undefined),
+  unifiedWindows: z.record(z.string(), LiveWindowSchema).optional().catch(undefined),
+})
+
+function liveRow(
+  type: string,
+  utilization: number | null | undefined,
+  resetsAt: number | null | undefined,
+): ProviderLimit[] {
+  if (!Object.hasOwn(LIVE_WINDOWS, type) || utilization === null || utilization === undefined) {
+    return []
+  }
+  const window = LIVE_WINDOWS[type as keyof typeof LIVE_WINDOWS]
+  return [
+    {
+      id: type,
+      label: window.label,
+      usedPercent: Math.round(utilization * 10_000) / 100,
+      ...(resetsAt === null || resetsAt === undefined ? {} : { resetsAt: resetsAt * 1000 }),
+      windowMinutes: window.windowMinutes,
+    },
+  ]
+}
+
+/**
+ * The plan-limit windows a `rate_limit_event` reports during a turn. Claude
+ * Code 2.1.296 lists the windows an event reports in `unifiedWindows`
+ * (utilization as a fraction, reset times in epoch seconds; each of the 27
+ * events captured so far listed only `five_hour`) and sets the top-level
+ * `utilization` only near a limit. A refused request with no utilization
+ * means the window is used up. Windows this mapping does not know, such as
+ * overage, are left to the full read rather than guessed.
+ */
+export function mapClaudeRateLimitEvent(info: unknown): ProviderLimit[] {
+  const parsed = RateLimitInfoSchema.safeParse(info)
+  if (!parsed.success) return []
+  const { status, rateLimitType, utilization, resetsAt, unifiedWindows } = parsed.data
+  const rows = unifiedWindows
+    ? Object.entries(unifiedWindows).flatMap(([type, window]) =>
+        liveRow(type, window.utilization, window.resetsAt),
+      )
+    : rateLimitType
+      ? liveRow(rateLimitType, utilization, resetsAt)
+      : []
+  if (status === 'rejected' && rateLimitType && !rows.some((row) => row.id === rateLimitType)) {
+    rows.push(...liveRow(rateLimitType, 1, unifiedWindows?.[rateLimitType]?.resetsAt ?? resetsAt))
+  }
+  return rows
+}
+
+/**
+ * The limit read starts a full CLI only to ask one control question, so it
+ * turns off the startup work an interactive session does. All four names are
+ * read by Claude Code 2.1.296; a CLI that does not know one ignores it.
+ */
+function limitReadEnvironment(base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const env = { ...base }
+  // claude.ai connectors are fetched outside the filesystem settings, so
+  // `settingSources: []` and `strictMcpConfig` alone do not stop that request.
+  env.ENABLE_CLAUDEAI_MCP_SERVERS = 'false'
+  // IDE detection walks the process list; on Windows every read would start a
+  // `tasklist | findstr` process tree.
+  env.CLAUDE_CODE_AUTO_CONNECT_IDE = '0'
+  // A read must never install an IDE extension.
+  env.CLAUDE_CODE_IDE_SKIP_AUTO_INSTALL = '1'
+  // An inherited value would make the CLI treat the read as an IDE terminal.
+  delete env.FORCE_CODE_TERMINAL
+  return env
 }
 
 /** Read Claude's own structured /usage data without accessing its credentials. */
@@ -126,20 +251,21 @@ export async function claudeLimitSource(
       mcpServers: {},
       strictMcpConfig: true,
       settingSources: [],
-      env: { ...(options.environment ?? process.env) },
+      env: limitReadEnvironment(options.environment ?? process.env),
       spawnClaudeCodeProcess: claudeSdkSpawner(options.spawn),
     },
   })
   let usage: unknown
   try {
     usage = await withTimeout(
-      query.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET(),
+      query.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET(USAGE_REQUEST),
       options.timeoutMs ?? TIMEOUT_MS,
     )
   } catch (error) {
     // Only stable messages leave the adapter; the CLI's own text can carry
-    // account details.
-    throw new Error(error instanceof TimeoutError ? TIMED_OUT : 'Claude usage request failed.')
+    // account details. A missed deadline keeps the TimeoutError name, so the
+    // caller can stop repeating a read that never finishes.
+    throw error instanceof TimeoutError ? error : new Error('Claude usage request failed.')
   } finally {
     abortController.abort()
     query.close()
@@ -147,7 +273,9 @@ export async function claudeLimitSource(
   return mapClaudeUsage(usage)
 }
 
-class TimeoutError extends Error {}
+class TimeoutError extends Error {
+  override readonly name = 'TimeoutError'
+}
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined

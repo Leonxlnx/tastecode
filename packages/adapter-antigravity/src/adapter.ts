@@ -1,16 +1,21 @@
 import { EventEmitter } from 'node:events'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
-import { existsSync } from 'node:fs'
-import path from 'node:path'
 import type { ApprovalMode, Capabilities, DomainEvent, Model, Thread } from '@harness/contracts'
 import { killTree, ProtocolFrameError, spawnOwned, readNdjson } from '@harness/proc'
-import { captureCli } from '@harness/proc/cli'
 import { z } from 'zod'
+import { antigravityCommand } from './command.js'
+import {
+  ANTIGRAVITY_SIGN_IN_REQUIRED,
+  antigravitySignIn,
+  readAgyModels,
+  sharedAgyModels,
+} from './sign-in.js'
 import {
   collapseAntigravityModels,
   getAntigravityIndex,
   rememberAntigravityIndex,
   resolveAntigravityModel,
+  type AntigravityListedModel,
 } from './models.js'
 
 /**
@@ -97,16 +102,6 @@ export function antigravityTurnArgs(
     ...(options.approval === 'full' ? ['--dangerously-skip-permissions'] : []),
     ...(conversationId ? ['--conversation', conversationId] : []),
   ]
-}
-
-/** Resolve the binary: PATH name normally, the installer's fixed Windows home
- *  as a fallback because the installing shell's PATH update needs a restart. */
-export function antigravityCommand(): string {
-  if (process.platform !== 'win32') return 'agy'
-  const localAppData = process.env['LOCALAPPDATA']
-  if (!localAppData) return 'agy.exe'
-  const installed = path.join(localAppData, 'agy', 'bin', 'agy.exe')
-  return existsSync(installed) ? installed : 'agy.exe'
 }
 
 const AgyUsageSchema = z.object({
@@ -384,23 +379,22 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
 
   /**
    * `agy models` prints one model slug per line with efforts baked into the
-   * slugs; the listing is collapsed into base models so effort lives on the
-   * slider (see models.ts). Verified against agy 1.1.10.
+   * slugs, since 1.1.11 each with agy's own name; the listing is collapsed
+   * into base models so effort lives on the slider (see models.ts). Verified
+   * against agy 1.1.10, 1.3.4 and 1.4.0.
    *
    * The CLI blocks forever on a piped stdin that never closes — captured: an
    * open-stdin `agy models` never exits, a closed one answers in under two
    * seconds — so stdin closes immediately and the discovery must not go
    * through helpers that keep it open.
+   *
+   * The built-in CLI shares this read with the sign-in check (sign-in.ts); a
+   * custom harness launches its own binary and never borrows that answer.
    */
   async listModels(): Promise<Model[]> {
-    const child = this.#spawn(antigravityCommand(), ['models'], {
-      stdio: ['pipe', 'pipe', 'pipe'],
-      windowsHide: true,
-    })
-    const captured = captureCli(child, 15_000)
-    child.stdin.on('error', () => undefined)
-    child.stdin.end()
-    const result = await captured
+    const result =
+      this.#spawn === spawnOwned ? await sharedAgyModels() : await readAgyModels(this.#spawn)
+    if (antigravitySignIn(result) === false) throw new Error(ANTIGRAVITY_SIGN_IN_REQUIRED)
     if (result.code !== 0) throw new Error('Antigravity model discovery failed')
     return parseAntigravityModels(result.stdout)
   }
@@ -424,25 +418,24 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
 }
 
 export function parseAntigravityModels(output: string): Model[] {
-  const slugs = [
-    ...new Set(
-      output
-        .split('\n')
-        .map((line) => line.trim())
-        .filter(Boolean)
-        // agy 1.1.10 printed one slug per line. Starting in 1.1.11 it prints a
-        // table (`slug<TAB>Display Name`), so only the first column belongs on
-        // the wire. A status sentence uses ordinary single spaces; a table
-        // column uses a tab or padding, while a legacy id has no remainder.
-        .map((line) => {
-          const slug = line.split(/\s+/, 1)[0] ?? ''
-          const remainder = line.slice(slug.length)
-          return remainder && !/^(?:\t| {2,})/.test(remainder) ? '' : slug
-        })
-        .filter((slug) => /^[\w./:-]+$/i.test(slug) && !/^(?:id|model|model-id)$/i.test(slug)),
-    ),
-  ]
-  const { models, index } = collapseAntigravityModels(slugs)
+  const listing: AntigravityListedModel[] = []
+  const seen = new Set<string>()
+  for (const raw of output.split('\n')) {
+    const line = raw.trim()
+    // agy 1.1.10 printed one slug per line. Starting in 1.1.11 it prints a
+    // table (`slug<TAB>Display Name`): the slug goes on the wire and the name
+    // is agy's own for it. A status sentence uses ordinary single spaces; a
+    // table column uses a tab or padding, while a legacy id has no remainder.
+    const slug = line.split(/\s+/, 1)[0] ?? ''
+    const remainder = line.slice(slug.length)
+    if (remainder && !/^(?:\t| {2,})/.test(remainder)) continue
+    if (!/^[\w./:-]+$/i.test(slug) || /^(?:id|model|model-id)$/i.test(slug)) continue
+    if (seen.has(slug)) continue
+    seen.add(slug)
+    const displayName = remainder.trim()
+    listing.push(displayName ? { slug, displayName } : { slug })
+  }
+  const { models, index } = collapseAntigravityModels(listing)
   rememberAntigravityIndex(index)
   return models
 }

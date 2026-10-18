@@ -1,5 +1,5 @@
-import { ANTIGRAVITY_CAPABILITIES } from '@harness/adapter-antigravity'
-import { CURSOR_CAPABILITIES, CURSOR_SUPPORTED_VERSION } from '@harness/adapter-cursor'
+import { ANTIGRAVITY_CAPABILITIES, antigravityInstallCommand } from '@harness/adapter-antigravity'
+import { CURSOR_CAPABILITIES, cursorInstallCommand } from '@harness/adapter-cursor'
 import { OPENCODE_CAPABILITIES } from '@harness/adapter-opencode'
 import { PI_CAPABILITIES } from '@harness/adapter-pi'
 import { codexLoginStatus } from '@harness/adapter-codex/auth'
@@ -7,11 +7,12 @@ import { CLAUDE_CAPABILITIES } from '@harness/adapter-claude-code/capabilities'
 import { CODEX_CAPABILITIES } from '@harness/adapter-codex/capabilities'
 import { GROK_CAPABILITIES } from '@harness/adapter-grok/capabilities'
 import { CODEX_UPDATES, codexInstallCommand } from '@harness/adapter-codex/updates'
-import { CLAUDE_UPDATES } from '@harness/adapter-claude-code/updates'
-import { GROK_UPDATES } from '@harness/adapter-grok/updates'
+import { CLAUDE_UPDATES, claudeInstallCommand } from '@harness/adapter-claude-code/updates'
+import { GROK_UPDATES, grokInstallCommand } from '@harness/adapter-grok/updates'
 import type { CliUpdateSource } from '@harness/proc/updates'
 import type { ProviderSetup, ProviderSourceShape, ProviderStatus } from '@harness/contracts'
-import { commandVersion, isInstalled } from '@harness/proc/cli'
+import { refreshWindowsPath } from '@harness/proc/desktop-path'
+import { cliProbe } from './cli-probe.js'
 
 /**
  * What this machine can actually run.
@@ -19,8 +20,8 @@ import { commandVersion, isInstalled } from '@harness/proc/cli'
  * Detection is by looking for the binary and asking it its version. We never
  * inspect a credential file to decide whether someone is signed in — that is
  * the line in rules/security.md, and it is why `auth` is mostly `unknown` here.
- * The one provider that can tell us is Codex, which answers over its own
- * protocol, and that answer is fetched on demand rather than on every listing.
+ * A probe may declare a short sign-in check that reads its CLI's public output
+ * (Codex does); every other provider is answered later by its account read.
  *
  * A provider we have not built stays in the list with a `problem` explaining
  * why. Silently omitting it would leave the user unable to tell "not supported"
@@ -34,9 +35,19 @@ type Probe = {
   capabilities?: ProviderStatus['capabilities']
   setup: ProviderSetup
   updater?: CliUpdateSource
-  supportedVersion?: string
   /** Interactive sign-in command, for providers whose login lives in their own CLI. */
   loginCommand?: string
+  /**
+   * A short sign-in check the scan runs for an installed CLI, from that CLI's
+   * public output. Without one the scan reports `unknown` and the account read
+   * decides later.
+   */
+  auth?: () => Promise<ProviderStatus['auth']>
+  /**
+   * False when the scan must never start the CLI to ask its version: finding
+   * the binary is enough to call it installed, and the version stays unknown.
+   */
+  readsVersion?: false
   /** Set when the adapter does not exist yet, in words we can show the user. */
   unbuilt?: string
   /** What its chat sources must name. Absent means `DIRECT_SOURCE`. */
@@ -63,7 +74,7 @@ const PROBES: Probe[] = [
     capabilities: CLAUDE_CAPABILITIES,
     setup: {
       installUrl: 'https://code.claude.com/docs/en/getting-started',
-      installCommand: 'npm install -g @anthropic-ai/claude-code',
+      installCommand: claudeInstallCommand(),
       login: 'provider',
       loginOpensBrowser: true,
     },
@@ -82,6 +93,7 @@ const PROBES: Probe[] = [
       loginOpensBrowser: true,
     },
     loginCommand: 'codex login',
+    auth: () => codexLoginStatus(),
   },
   {
     id: 'grok',
@@ -91,6 +103,7 @@ const PROBES: Probe[] = [
     capabilities: GROK_CAPABILITIES,
     setup: {
       installUrl: 'https://x.ai/cli',
+      installCommand: grokInstallCommand(),
       login: 'provider',
       loginOpensBrowser: false,
     },
@@ -102,9 +115,12 @@ const PROBES: Probe[] = [
     displayName: 'Cursor',
     command: 'cursor-agent',
     capabilities: CURSOR_CAPABILITIES,
-    supportedVersion: CURSOR_SUPPORTED_VERSION,
+    // No version gate: cursor-agent updates itself to a new date-stamped build
+    // every month, and a gate blocked each working one. A changed wire still
+    // fails the turn, through the stream's ProtocolFrameError.
     setup: {
-      installUrl: 'https://docs.cursor.com/en/cli/installation',
+      installUrl: 'https://cursor.com/docs/cli/installation',
+      installCommand: cursorInstallCommand(),
       login: 'app',
     },
   },
@@ -127,11 +143,18 @@ const PROBES: Probe[] = [
     capabilities: ANTIGRAVITY_CAPABILITIES,
     setup: {
       installUrl: 'https://antigravity.google/docs/cli',
+      installCommand: antigravityInstallCommand(),
       login: 'provider',
     },
-    // First interactive run signs in with the user's Google account; there is
-    // no separate login subcommand as of agy 1.1.10.
+    // The installer does not sign in. agy's first interactive run asks for
+    // the Google account; there is no login subcommand as of agy 1.4.0.
     loginCommand: 'agy',
+    // Every agy start launches its language server and may launch its
+    // self-updater, which replaces agy.exe in place. A scan that started it
+    // for `--version` (12.8 s cold, minutes right after an update) and killed
+    // it at the time limit could stop that updater mid-swap and leave no
+    // binary behind. Finding agy is all the scan needs.
+    readsVersion: false,
   },
   {
     id: 'pi',
@@ -160,14 +183,28 @@ export type SystemProbe = {
   version(command: string): Promise<string | undefined>
   auth(provider: ProviderStatus['id']): Promise<ProviderStatus['auth']>
   acpAgents(): Promise<Array<{ name: string; installed: boolean }>>
+  /** Pick up PATH changes made since launch, such as an installer's new folder. */
+  refreshPath?(): Promise<void>
 }
 
+/**
+ * The model catalog waits for providers.list, so a listing waits only briefly
+ * for a `--version` read; a slow one finishes in the background and the next
+ * listing reports it.
+ */
+const LISTING_VERSION_WAIT_MS = 250
+
 const REAL_SYSTEM: SystemProbe = {
-  isInstalled,
-  version: commandVersion,
+  isInstalled: (command) => cliProbe.installed(command),
+  version: (command) => cliProbe.version(command, { waitMs: LISTING_VERSION_WAIT_MS }),
   acpAgents: async () => (await import('@harness/adapter-acp/agents')).detectAgents(),
-  auth: (provider) =>
-    provider === 'codex' ? codexLoginStatus() : Promise.resolve<ProviderStatus['auth']>('unknown'),
+  refreshPath: () => refreshWindowsPath(),
+  auth: (provider) => installTimeAuth(provider),
+}
+
+/** The sign-in check a provider's probe declares, or `unknown` when it has none. */
+export function installTimeAuth(provider: ProviderStatus['id']): Promise<ProviderStatus['auth']> {
+  return PROBES.find((entry) => entry.id === provider)?.auth?.() ?? Promise.resolve('unknown')
 }
 
 export function providerUpdateSources() {
@@ -234,40 +271,20 @@ export async function launchCommandFor(
 }
 
 const providerDetections = new WeakMap<SystemProbe, Promise<ProviderStatus[]>>()
-const PROVIDER_PREWARM_TTL_MS = 30_000
-const prewarmedProviderDetections = new WeakMap<
-  SystemProbe,
-  { detection: Promise<ProviderStatus[]>; expiresAt: number }
->()
 
 /**
- * Start one provider scan before the renderer asks for it. The resolved result
- * is consumed once, so later refreshes still observe installs and login changes.
+ * Start one provider scan before the renderer asks for it, so the version
+ * reads it needs are under way. The first listing joins it while it runs.
  */
 export function prewarmProviders(system: SystemProbe = REAL_SYSTEM): Promise<ProviderStatus[]> {
-  const current = prewarmedProviderDetections.get(system)
-  if (current) return current.detection
-
-  const detection = scanProviders(system)
-  prewarmedProviderDetections.set(system, {
-    detection,
-    expiresAt: Date.now() + PROVIDER_PREWARM_TTL_MS,
-  })
-  void detection.catch(() => {
-    if (prewarmedProviderDetections.get(system)?.detection === detection) {
-      prewarmedProviderDetections.delete(system)
-    }
-  })
-  return detection
+  return scanProviders(system)
 }
 
+/**
+ * Every listing scans again, so installs and sign-ins show up. The scan is
+ * cheap: lookups run in process and versions come from the shared probe.
+ */
 export function detectProviders(system: SystemProbe = REAL_SYSTEM): Promise<ProviderStatus[]> {
-  const prewarmed = prewarmedProviderDetections.get(system)
-  if (prewarmed) {
-    prewarmedProviderDetections.delete(system)
-    if (prewarmed.expiresAt >= Date.now()) return prewarmed.detection
-  }
-
   return scanProviders(system)
 }
 
@@ -275,10 +292,13 @@ function scanProviders(system: SystemProbe): Promise<ProviderStatus[]> {
   const current = providerDetections.get(system)
   if (current) return current
 
-  const detection = Promise.all([
-    Promise.all(PROBES.map((entry) => probe(entry, system))),
-    acpStatus(system),
-  ]).then(([direct, acp]) => [...direct, acp])
+  const scan = () =>
+    Promise.all([Promise.all(PROBES.map((entry) => probe(entry, system))), acpStatus(system)])
+  const pathRefresh = system.refreshPath?.()
+  const detection = (pathRefresh ? pathRefresh.then(scan) : scan()).then(([direct, acp]) => [
+    ...direct,
+    acp,
+  ])
   providerDetections.set(system, detection)
   const clear = () => {
     if (providerDetections.get(system) === detection) providerDetections.delete(system)
@@ -314,8 +334,10 @@ async function probe(entry: Probe, system: SystemProbe): Promise<ProviderStatus>
     }
   }
 
-  const [version, auth] = await Promise.all([system.version(entry.command), system.auth(entry.id)])
-  const unsupported = version && entry.supportedVersion && !version.includes(entry.supportedVersion)
+  const [version, auth] = await Promise.all([
+    entry.readsVersion === false ? undefined : system.version(entry.command),
+    system.auth(entry.id),
+  ])
   return {
     id: entry.id,
     displayName: entry.displayName,
@@ -325,11 +347,6 @@ async function probe(entry: Probe, system: SystemProbe): Promise<ProviderStatus>
     source,
     ...(version ? { version } : {}),
     ...(entry.capabilities ? { capabilities: entry.capabilities } : {}),
-    ...(unsupported
-      ? {
-          problem: `Adapter supports ${entry.supportedVersion}.x; installed version is ${version}`,
-        }
-      : {}),
   }
 }
 

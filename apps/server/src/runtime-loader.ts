@@ -10,7 +10,17 @@ import { PROVIDER_CAPABILITIES } from './provider-capabilities.js'
 
 type AdaptersModule = typeof import('./adapters.js')
 
-const loadAdapters = retryableLazy<AdaptersModule>(() => import('./adapters.js'))
+let adaptersRequested = false
+const loadAdapters = retryableLazy<AdaptersModule>(() => {
+  adaptersRequested = true
+  return import('./adapters.js')
+})
+
+/** Stops model listings still running; none can run before a runtime was loaded. */
+export async function stopModelListings(): Promise<void> {
+  if (!adaptersRequested) return
+  await (await loadAdapters()).stopModelListings()
+}
 
 function deferredRuntime(
   load: () => Promise<ProviderRuntime>,
@@ -21,8 +31,8 @@ function deferredRuntime(
     async start(workspacePath, options) {
       return (await resolve()).start(workspacePath, options)
     },
-    async listModels(agent) {
-      return (await resolve()).listModels(agent)
+    async listModels(agent, read) {
+      return (await resolve()).listModels(agent, read)
     },
   }
   if (supportsResume) {

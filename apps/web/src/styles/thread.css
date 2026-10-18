@@ -25,18 +25,28 @@
   scrollbar-gutter: stable both-edges;
 }
 
+/* The prompt bar's text box: the bar's width minus its text inset on both
+   sides. 100cqi is the chat pane (.stage, or the side chat), the same box the
+   bar is sized from, so the scrollbar gutter reserved on .thread cannot push
+   the column past the bar's edges. */
 .thread__col {
-  width: 100%;
-  max-width: calc(var(--chat-w) + 48px);
+  width: min(
+    calc(var(--chat-w) - 2 * var(--chat-text-inset)),
+    calc(100cqi - 2 * (var(--chat-gutter) + var(--chat-text-inset)))
+  );
   margin: 0 auto;
-  padding: 0 18px;
   display: flex;
   flex-direction: column;
   gap: 12px;
+  /* Where a tool row's label starts: the row's -3.5px pull and 2px padding,
+     the 18px icon box and the 6px gap (.aux__row, .aux__glyph). Output and
+     previews opened under a row start here, standalone, in a batch or live. */
+  --tool-label-x: 22.5px;
   /* The working rail's full footprint: the 30px summary line plus the gap to
      the response below it. The rail itself is absolutely positioned so it can
-     stay mounted for the whole turn; is-rail-anchor and .thread__rail-spacer
-     reserve exactly this much space for it to overlay. */
+     stay mounted for the whole turn; is-rail-anchor, or the runway's end before
+     any response row exists, reserves exactly this much space for it to overlay
+     (WORKING_RAIL_PX in Thread.tsx). */
   --working-rail-h: 42px;
 }
 
@@ -81,12 +91,6 @@
   top: 0;
   left: 0;
   width: 100%;
-}
-
-/* Holds the rail's space in the column while no response row exists yet. */
-.thread__rail-spacer {
-  flex: none;
-  height: var(--working-rail-h);
 }
 
 .thread__row.is-entering > :is(.reply, .aux, .activity, .turn-error) {
@@ -134,8 +138,9 @@
   font-size: var(--t-md);
   /* Its own keyframes, not menu-in: that one animates transform from a value
      with no translateX, so this button visibly slid in from the left edge
-     every time it appeared — which is on every scroll-up during a stream. */
-  animation: jump-in var(--dur-slow) var(--ease-out);
+     every time it appeared — which is on every scroll-up during a stream.
+     The short delay keeps a moment of reading above the end from flashing it. */
+  animation: jump-in var(--dur-slow) var(--ease-out) 120ms both;
   transition:
     background var(--dur-fast) var(--ease-out),
     border-color var(--dur-fast) var(--ease-out),
@@ -477,6 +482,14 @@ button.thread__older:hover {
   transition: color var(--dur-fast) var(--ease-out);
 }
 
+/* The -3.5px above lines a 15px icon in its 18px box up with the text edge.
+   A row with no icon starts on its label, which would then sit 1.5px left of
+   the reply text. A class, not :has(), because these rows re-render while a
+   turn streams. */
+.activity__summary--bare {
+  margin-left: -2px;
+}
+
 /* Only the summaries that actually open respond to hover. */
 .activity > button.activity__summary:hover {
   color: var(--text);
@@ -671,12 +684,30 @@ button.thread__older:hover {
   font-variant-numeric: tabular-nums;
 }
 
-.activity__working-orb {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
+/* The working dot, the same for every turn: one slow breath, on the
+   compositor only (transform and opacity), so a streaming reply beside it
+   never waits on it. */
+.activity__pulse {
+  width: 7px;
+  height: 7px;
+  /* A pill radius on a square clamps to half its side: the same circle. */
+  border-radius: var(--r-pill);
+  background: var(--text-2);
+  animation: working-pulse 1.6s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+  will-change: transform, opacity;
+}
+
+@keyframes working-pulse {
+  0%,
+  100% {
+    opacity: 0.38;
+    transform: scale(0.62);
+  }
+
+  50% {
+    opacity: 0.9;
+    transform: scale(1);
+  }
 }
 
 .activity__working-label-swap {
@@ -771,6 +802,11 @@ button.thread__older:hover {
     display: none;
   }
 
+  .activity__pulse {
+    animation: none;
+    opacity: 0.6;
+  }
+
   .activity--live .activity__label {
     animation: none;
     background: none;
@@ -818,7 +854,7 @@ button.thread__older:hover {
    the label so the icon column stays clean. */
 .activity__body .aux__out {
   max-height: 220px;
-  margin: 3px 0 6px 21px;
+  margin: 3px 0 6px var(--tool-label-x);
   padding: 8px 10px;
   background: color-mix(in srgb, var(--surface) 45%, var(--bg));
   border: 1px solid color-mix(in srgb, var(--line) 65%, transparent);
@@ -842,8 +878,8 @@ button.thread__older:hover {
 
 .viewed-image-preview {
   --viewed-image-frame-h: 180px;
-  width: min(320px, calc(100% - 21px));
-  margin: 7px 0 2px 21px;
+  width: min(320px, calc(100% - var(--tool-label-x)));
+  margin: 7px 0 2px var(--tool-label-x);
 }
 
 .viewed-image-preview__open {
@@ -996,14 +1032,15 @@ button.thread__older:hover {
   white-space: pre-wrap;
   max-height: 300px;
   overflow: auto;
-  margin: 8px 0 2px;
+  margin: 8px 0 2px var(--tool-label-x);
   padding: 9px 11px;
   background: var(--surface);
   border-radius: var(--r-lg);
 }
 
+/* No measure of its own: like a reply, it runs to the column's right edge,
+   which already keeps lines readable. */
 .reasoning-summary {
-  max-width: 72ch;
   color: var(--text-3);
   font-family: var(--font-ui);
   font-size: var(--t-md);
@@ -1013,7 +1050,7 @@ button.thread__older:hover {
 .aux--reasoning .reasoning-summary {
   max-height: 300px;
   overflow: auto;
-  margin: 8px 0 2px 24px;
+  margin: 8px 0 2px var(--tool-label-x);
 }
 
 .reasoning-summary > .md > :last-child {
@@ -1118,10 +1155,6 @@ button.thread__older:hover {
 
 .aux--live .aux__time {
   display: none;
-}
-
-.aux--live .aux__out {
-  margin-left: 32px;
 }
 
 /* A thread-level failure is a statement, not a collapsible row: the alert

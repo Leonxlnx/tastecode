@@ -11,8 +11,10 @@ import type {
   McpServer,
   McpServerConfig,
   Model,
+  ProviderCommand,
   ProviderContextSettings,
   ProviderId,
+  ProviderLimit,
   StoredModelConnection,
   Thread,
 } from '@harness/contracts'
@@ -25,6 +27,7 @@ import {
   resolveCustomHarnessLaunch,
   runCustomHarness,
 } from './custom-harness-launch.js'
+import type { ModelListRead } from './model-list-cache.js'
 import { retryableLazy } from './retryable-lazy.js'
 import { mapProviderSession, StartupCleanupError } from './provider-session.js'
 
@@ -181,6 +184,8 @@ export interface AgentSession {
   steer?(threadId: string, text: string, attachments?: string[]): Promise<void>
   interrupt(threadId: string): Promise<void>
   listMcpServers?(threadId?: string): Promise<McpServer[]>
+  /** The MCP answer still holds only configured servers; a change event follows. */
+  isMcpLoading?(threadId?: string): boolean
   reloadMcpServers?(
     threadId: string,
     servers: McpServerConfig[],
@@ -197,8 +202,17 @@ export interface AgentSession {
   ): void
   /** Provider-owned subscription usage changed; the server should refetch. */
   onUsageChanged?(listener: () => void): void
+  /**
+   * Plan-limit windows the live session reported, each with a stable `id`.
+   * Sparse: windows it does not name keep their held values.
+   */
+  onLimitsUpdated?(listener: (limits: ProviderLimit[]) => void): void
   /** Provider MCP discovery changed; the project inventory should be refreshed. */
   onMcpChanged?(listener: () => void): (() => void) | void
+  /** Slash commands and skills the provider runs itself when a message starts with them. */
+  listCommands?(threadId?: string): Promise<ProviderCommand[]>
+  /** The provider reported a new command list for this session. */
+  onCommandsChanged?(listener: () => void): (() => void) | void
   /**
    * False when the live session negotiated no way to reload it, so releasing an
    * idle runtime would lose it. Absent means the runtime's `resume` decides.
@@ -231,7 +245,8 @@ export type ProviderRuntime = {
     workspacePath: string,
     options: StartOptions,
   ): Promise<{ thread: Thread; session: AgentSession }>
-  listModels(agent?: string): Promise<Model[]>
+  /** `read.refresh`: the caller keeps an earlier list if this read fails. */
+  listModels(agent?: string, read?: ModelListRead): Promise<Model[]>
 }
 
 export function providerRuntime(
@@ -805,6 +820,17 @@ function openCodeRuntime(
  * client, is where that has to be impossible.
  */
 const openCodeModelListings = new Map<string, Promise<Model[]>>()
+/** Listings whose process is running; a closing server stops them. */
+const runningListings = new Set<{ dispose(): Promise<void> }>()
+
+/**
+ * Stops model listings that are still running. Their processes belong to no
+ * session, so without this a server that closes while one starts (an OpenCode
+ * serve can take 30 s) exits and leaves it running.
+ */
+export async function stopModelListings(): Promise<void> {
+  await Promise.allSettled([...runningListings].map((listing) => listing.dispose()))
+}
 
 function listOpenCodeModels(harness?: CustomHarness): Promise<Model[]> {
   const key = harness?.id ?? 'default'
@@ -813,10 +839,12 @@ function listOpenCodeModels(harness?: CustomHarness): Promise<Model[]> {
   const listing = (async () => {
     const { OpenCodeAdapter } = await loadOpenCodeAdapter()
     const adapter = new OpenCodeAdapter(harness ? { spawn: customHarnessSpawn(harness) } : {})
+    runningListings.add(adapter)
     try {
       const listing = adapter.listModels()
       return harness ? await customHarnessOperation(harness, 'list models', listing) : await listing
     } finally {
+      runningListings.delete(adapter)
       await adapter.dispose()
     }
   })().finally(() => {
@@ -837,7 +865,8 @@ function codexRuntime(
       ...(options.mcpServers ? { mcpServers: options.mcpServers } : {}),
       ...(options.mcpCredentials ? { mcpCredentials: options.mcpCredentials } : {}),
       // Codex spawns its app-server without a cwd; the wrapper resolves from the project.
-      ...(harness ? { spawn: customHarnessSpawn(harness, workspacePath) } : {}),
+      // A wrapper may run another account, whose limit windows are not the default account's.
+      ...(harness ? { spawn: customHarnessSpawn(harness, workspacePath), liveLimits: false } : {}),
     })
     adapter.on('log', onLog)
     return startedSession(adapter, async () => {
@@ -961,7 +990,8 @@ function claudeRuntime(
     return adapter
   }
 
-  const sessionFor = (adapter: ClaudeCodeAdapter): AgentSession => ({
+  // A custom harness may run another account, whose limit windows are not the default account's.
+  const sessionFor = (adapter: ClaudeCodeAdapter, agent: string | undefined): AgentSession => ({
     capabilities: adapter.capabilities,
     sendTurn: (threadId, text, attachments, turnOptions) =>
       adapter.sendTurn(threadId, text, attachments, turnOptions),
@@ -970,7 +1000,18 @@ function claudeRuntime(
     respondToApproval: (id, decision) => adapter.respondToApproval(id, decision),
     respondToUserInput: (id, answers) => adapter.respondToUserInput(id, answers),
     setApproval: (approval) => adapter.setApproval(approval),
-    onUsageChanged: (listener) => adapter.on('usageChanged', listener),
+    ...(agent ? {} : { onLimitsUpdated: (listener) => adapter.on('limitsUpdated', listener) }),
+    listMcpServers: (threadId) => adapter.listMcpServers(threadId),
+    isMcpLoading: () => adapter.isMcpLoading(),
+    onMcpChanged: (listener) => {
+      adapter.on('mcpChanged', listener)
+      return () => adapter.off('mcpChanged', listener)
+    },
+    listCommands: (threadId) => adapter.listCommands(threadId),
+    onCommandsChanged: (listener) => {
+      adapter.on('commandsChanged', listener)
+      return () => adapter.off('commandsChanged', listener)
+    },
     onDisconnected: (listener) => adapter.onDisconnected(listener),
     dispose: () => adapter.dispose(),
     on: (event: 'event' | 'log', listener: never) => adapter.on(event, listener),
@@ -979,7 +1020,7 @@ function claudeRuntime(
   return {
     async start(workspacePath, options) {
       const adapter = await adapterFor(options.agent, workspacePath)
-      return startedSession(sessionFor(adapter), () =>
+      return startedSession(sessionFor(adapter, options.agent), () =>
         adapter.startThread(workspacePath, {
           model: options.model,
           effort: options.effort,
@@ -996,7 +1037,7 @@ function claudeRuntime(
       const adapter = await adapterFor(options.agent, workspacePath)
       return mapProviderSession(
         threadId,
-        await startedSession(sessionFor(adapter), () =>
+        await startedSession(sessionFor(adapter, options.agent), () =>
           adapter.resumeThread(options.providerSessionId ?? threadId, workspacePath, {
             model: options.model,
             effort: options.effort,
@@ -1009,10 +1050,10 @@ function claudeRuntime(
         ),
       )
     },
-    async listModels(agent) {
+    async listModels(agent, read) {
       const adapter = await adapterFor(agent)
       try {
-        return await adapter.listModels()
+        return await adapter.listModels({ refresh: read?.refresh === true })
       } finally {
         await adapter.dispose()
       }

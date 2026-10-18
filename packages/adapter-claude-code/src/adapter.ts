@@ -17,15 +17,19 @@ import type {
   Capabilities,
   DomainEvent,
   Item,
+  McpServer,
   McpServerConfig,
   Model,
+  ProviderCommand,
   ProviderContextSettings,
+  SubagentState,
   Thread,
   UserInputQuestion,
 } from '@harness/contracts'
 import { JsonRpcValueSchema, killTree, spawnCli } from '@harness/proc'
 import { z } from 'zod'
 import { CLAUDE_CAPABILITIES } from './capabilities.js'
+import { mapClaudeCommands, mapClaudeMcpServers } from './inventory.js'
 import { ClaudeMcpRedactor, prepareClaudeMcpServers } from './mcp.js'
 import { activateClaudeMcpServers, createClaudeMcpBootstrap } from './mcp-bootstrap.js'
 import {
@@ -46,6 +50,8 @@ import {
   type ClaudeQueryRuntime,
   type ClaudeSpawn,
 } from './sdk-runtime.js'
+import { mapClaudeRateLimitEvent, type ProviderLimit } from './limits.js'
+import { ClaudeSubagents } from './subagents.js'
 
 export { CLAUDE_CAPABILITIES } from './capabilities.js'
 
@@ -148,6 +154,14 @@ const OLDER_CLAUDE_MODELS: Model[] = [
 ]
 export const CLAUDE_MODELS: Model[] = [...CURRENT_CLAUDE_MODELS, ...OLDER_CLAUDE_MODELS]
 
+/**
+ * The last live answer per Claude config directory, for this process. Live rows
+ * use the runtime's alias ids (`opus`, `claude-fable-5-1[1m]`) where the catalog
+ * uses versioned ids, so answering a slow discovery with the catalog would change
+ * the ids behind the user's selection and visibility choices.
+ */
+const lastDiscoveredClaudeModels = new Map<string, Model[]>()
+
 function claudeModel(
   id: string,
   displayName: string,
@@ -214,9 +228,19 @@ const PERMISSION_MODE = {
 export type ClaudeAdapterEvents = {
   event: [DomainEvent]
   log: [string]
-  usageChanged: []
+  /** Plan-limit windows a rate_limit_event reported, by stable row id. */
+  limitsUpdated: [ProviderLimit[]]
   disconnected: []
+  /** The session's MCP servers finished starting; a new read shows their final state. */
+  mcpChanged: []
+  /** The session reported a new command list or what its skills are. */
+  commandsChanged: []
 }
+
+/** Claude starts MCP servers in the background; this long is a server still worth waiting for. */
+const MCP_SETTLE_MS = 30_000
+const MCP_SETTLE_POLL_MS = 1_000
+type McpSettling = { timer?: ReturnType<typeof setTimeout> | undefined }
 
 export type ClaudeStartOptions = {
   instructions?: string | undefined
@@ -271,6 +295,14 @@ function isMissingClaudeConversation(error: unknown): boolean {
   return /No conversation found with session ID/i.test(
     error instanceof Error ? error.message : String(error),
   )
+}
+
+function sameNames(
+  left: ReadonlySet<string> | undefined,
+  right: ReadonlySet<string> | undefined,
+): boolean {
+  if (!left || !right) return left === right
+  return left.size === right.size && [...left].every((name) => right.has(name))
 }
 
 type ImageMediaType = 'image/gif' | 'image/jpeg' | 'image/png' | 'image/webp'
@@ -429,6 +461,14 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
   /** Tool calls awaiting their result, by tool_use id, so the result lands on the call. */
   readonly #toolCalls = new Map<string, Item>()
   readonly #streamedMessageIds = new Set<string>()
+  /** system/init `skills` and `terminal_slash_commands`; they arrive with the first prompt. */
+  #skillNames: ReadonlySet<string> | undefined
+  #terminalCommands: ReadonlySet<string> | undefined
+  /** Polls MCP startup after a query starts, until nothing is pending. */
+  #mcpSettling: McpSettling | undefined
+  /** The latest status list still had a server starting. */
+  #mcpPending = false
+  readonly #subagents = new ClaudeSubagents((event) => this.emit('event', event))
 
   constructor(
     options: {
@@ -442,7 +482,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     this.#createQuery = options.createQuery ?? createClaudeQuery
     this.#spawn = options.spawn ?? spawnCli
     this.#environment = options.environment ?? process.env
-    this.#startupTimeoutMs = options.startupTimeoutMs ?? 15_000
+    this.#startupTimeoutMs = options.startupTimeoutMs ?? CLAUDE_STARTUP_TIMEOUT_MS
     if (!Number.isFinite(this.#startupTimeoutMs) || this.#startupTimeoutMs <= 0)
       throw new Error('Claude startup timeout must be a positive number')
   }
@@ -661,8 +701,13 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     })
   }
 
-  /** Ask the installed Claude runtime for its live model inventory without sending a prompt. */
-  async listModels(): Promise<Model[]> {
+  /**
+   * Ask the installed Claude runtime for its live model inventory without
+   * sending a prompt. With `refresh`, the caller already holds a list it keeps
+   * when this fails, so a discovery that cannot answer rejects instead of
+   * answering with the catalog.
+   */
+  async listModels(options: { refresh?: boolean } = {}): Promise<Model[]> {
     const abort = new AbortController()
     const query = this.#createQuery({
       prompt: waitForAbort(abort.signal),
@@ -675,32 +720,95 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
         strictMcpConfig: true,
       }),
     })
+    const discoveryKey = this.#environment.CLAUDE_CONFIG_DIR ?? ''
+    const fallback = (reason: string): Model[] => {
+      const previous = lastDiscoveredClaudeModels.get(discoveryKey)
+      if (previous) {
+        this.#log(`Claude model discovery kept the last live list: ${reason}`)
+        return previous
+      }
+      // The caller's list may come from an earlier launch with the live alias
+      // ids, which the catalog's versioned ids would replace.
+      if (options.refresh) throw new Error(`Claude model discovery did not answer: ${reason}`)
+      this.#log(`Claude model discovery fell back to known values: ${reason}`)
+      return CLAUDE_MODELS
+    }
+    // Settled outside the try, so a refresh that rejects is not caught as a
+    // discovery failure of its own.
+    let failure: string
     try {
       const models = await withTimeout(
         query.supportedModels(),
         30_000,
         'Claude model discovery timed out',
       )
-      if (models.length === 0) return CLAUDE_MODELS
-      const ultracodeAvailable = await withTimeout(
-        readClaudeAppliedSettings(query),
-        10_000,
-        'Claude settings discovery timed out',
-      ).then(
-        (applied) => applied?.ultracodeAvailable === true,
-        (error: unknown) => {
-          this.#log(`Claude Ultracode discovery failed; not offering it: ${String(error)}`)
-          return false
-        },
-      )
-      return mergeClaudeModels(models).map((model) => withUltracode(model, ultracodeAvailable))
+      if (models.length > 0) {
+        const ultracodeAvailable = await withTimeout(
+          readClaudeAppliedSettings(query),
+          10_000,
+          'Claude settings discovery timed out',
+        ).then(
+          (applied) => applied?.ultracodeAvailable === true,
+          (error: unknown) => {
+            this.#log(`Claude Ultracode discovery failed; not offering it: ${String(error)}`)
+            return false
+          },
+        )
+        const discovered = mergeClaudeModels(models).map((model) =>
+          withUltracode(model, ultracodeAvailable),
+        )
+        lastDiscoveredClaudeModels.set(discoveryKey, discovered)
+        return discovered
+      }
+      failure = 'the runtime listed no models'
     } catch (error) {
-      this.#log(`Claude model discovery fell back to known values: ${String(error)}`)
-      return CLAUDE_MODELS
+      failure = String(error)
     } finally {
       abort.abort()
       query.close()
     }
+    return fallback(failure)
+  }
+
+  /** The MCP servers this session loaded, from Claude's own status list. */
+  async listMcpServers(threadId?: string): Promise<McpServer[]> {
+    const { query, redactor } = await this.#liveQuery(threadId)
+    try {
+      const statuses = await query.mcpServerStatus()
+      if (query === this.#query)
+        this.#mcpPending = statuses.some((status) => status.status === 'pending')
+      return mapClaudeMcpServers(statuses, (text) => redactor.redact(text))
+    } catch (error) {
+      throw new Error(redactor.redact(error instanceof Error ? error.message : String(error)))
+    }
+  }
+
+  /** Some servers were still starting at the last read, and `mcpChanged` follows. */
+  isMcpLoading(): boolean {
+    return this.#mcpPending && this.#mcpSettling !== undefined
+  }
+
+  /** Commands and skills this session runs when a message starts with `/name`. */
+  async listCommands(threadId?: string): Promise<ProviderCommand[]> {
+    const { query, redactor } = await this.#liveQuery(threadId)
+    try {
+      // The SDK answers from the list it keeps current; this is not a CLI round trip.
+      return mapClaudeCommands(await query.supportedCommands(), {
+        skills: this.#skillNames,
+        terminal: this.#terminalCommands,
+      })
+    } catch (error) {
+      throw new Error(redactor.redact(error instanceof Error ? error.message : String(error)))
+    }
+  }
+
+  async #liveQuery(threadId?: string) {
+    if (threadId !== undefined) this.#assertThread(threadId)
+    // A start or an effort restart replaces the query; wait for it rather than report none.
+    await this.#configuration
+    await this.#starting?.catch(() => undefined)
+    if (threadId !== undefined) this.#assertThread(threadId)
+    return { query: this.#requireQuery(), redactor: this.#redactor }
   }
 
   dispose(): Promise<void> {
@@ -716,6 +824,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     this.#disposed = true
     this.#sessionGeneration += 1
     this.#queryGeneration += 1
+    this.#stopMcpSettle()
     this.#settlePending('Claude session closed.')
     this.#queryAbort?.abort()
     this.#promptQueue?.close()
@@ -730,10 +839,13 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     this.#queryAbort = undefined
     this.#promptQueue = undefined
     this.#query = undefined
-    this.#completeStreamingItems('failed')
+    this.#completeStreamingItems('failed', 'interrupted')
+    this.#subagents.endSession()
     this.#activeTurnId = undefined
     this.#clearStreamingState()
     this.#options = {}
+    this.#skillNames = undefined
+    this.#terminalCommands = undefined
     this.#redactor = new ClaudeMcpRedactor()
     this.removeAllListeners()
     return cleanup().then(() => {
@@ -798,6 +910,8 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     const effortOptions = claudeEffortOptions(options.effort)
     let bootstrap: Awaited<ReturnType<typeof createClaudeMcpBootstrap>> | undefined
     let bootstrapReady: ReturnType<typeof createClaudeMcpBootstrap> | undefined
+    // One budget covers the whole start; the message names the step that stalled.
+    let phase: ClaudeStartupPhase = 'start'
     try {
       await withTimeout(
         (async () => {
@@ -844,14 +958,17 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
           this.#queryCostUsd = 0
           void this.#consume(query, generation)
           await query.initializationResult()
-          if (bootstrap)
+          if (bootstrap) {
+            phase = 'mcp'
             await activateClaudeMcpServers(query, bootstrap.servers, mcp.servers, abort.signal)
+          }
           if (this.#query !== query || abort.signal.aborted)
             throw new Error('Claude session is closed')
           if (options.effort === CLAUDE_ULTRACODE_EFFORT) this.#confirmUltracode(query)
+          this.#settleMcp(query, generation)
         })(),
         this.#startupTimeoutMs,
-        'Claude session startup timed out. Check Claude Code and the project MCP servers, then retry.',
+        () => claudeStartupTimeoutMessage(phase, this.#startupTimeoutMs),
         abort.signal,
       )
     } catch (error) {
@@ -911,6 +1028,50 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     )
   }
 
+  /**
+   * Claude starts plugin, connector and settings servers after init without
+   * telling the stream, so the first status list shows them pending. Poll
+   * until none is (at most 30 s), then announce one change. The first check
+   * waits a poll interval, so the owner has subscribed by then.
+   */
+  #settleMcp(query: ClaudeQueryRuntime, generation: number): void {
+    this.#stopMcpSettle()
+    const settling: McpSettling = {}
+    this.#mcpSettling = settling
+    const deadline = Date.now() + MCP_SETTLE_MS
+    const live = () =>
+      this.#mcpSettling === settling &&
+      this.#query === query &&
+      generation === this.#queryGeneration &&
+      !this.#disposed
+    const check = async () => {
+      settling.timer = undefined
+      if (!live()) return
+      let pending: boolean
+      try {
+        pending = (await query.mcpServerStatus()).some((status) => status.status === 'pending')
+      } catch {
+        // A query that cannot answer has nothing left to settle.
+        pending = false
+      }
+      if (!live()) return
+      this.#mcpPending = pending
+      if (pending && Date.now() < deadline) {
+        settling.timer = setTimeout(() => void check(), MCP_SETTLE_POLL_MS)
+        return
+      }
+      this.#mcpSettling = undefined
+      this.emit('mcpChanged')
+    }
+    settling.timer = setTimeout(() => void check(), MCP_SETTLE_POLL_MS)
+  }
+
+  #stopMcpSettle(): void {
+    if (this.#mcpSettling?.timer) clearTimeout(this.#mcpSettling.timer)
+    this.#mcpSettling = undefined
+    this.#mcpPending = false
+  }
+
   async #restartSession(options: ClaudeStartOptions): Promise<void> {
     if (this.#activeTurnId) throw new Error('Claude effort cannot change during a running turn')
     const generation = ++this.#queryGeneration
@@ -920,6 +1081,8 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     this.#promptQueue = undefined
     this.#query = undefined
     this.#clearStreamingState()
+    // Background agents run inside the closed process.
+    this.#subagents.endSession()
     try {
       // An unused session has no transcript yet, so it must keep --session-id.
       await this.#startQuery(this.#resumeOnRestart ? this.#sessionId : undefined, options)
@@ -961,6 +1124,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
         this.#query = undefined
         this.#promptQueue?.close()
         this.#promptQueue = undefined
+        this.#subagents.endSession()
         this.#settlePending('Claude session disconnected.')
         if (!this.#disposed) this.emit('disconnected')
       }
@@ -994,6 +1158,10 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
       // Output that no turn waits for, such as a steer that outlived its turn, gets its own.
       const turnId = this.#activeTurnId ?? this.#startTurn()
       const event = parsed.data
+      for (const block of event.message?.content ?? []) {
+        if (block.type === 'tool_use' && block.id && block.name)
+          this.#subagents.spawn(block.id, block.name, block.input ?? {})
+      }
       this.#reportedModel = event.message?.model
       const used = contextTokens(event.message?.usage)
       if (used > 0) this.#contextTokens = used
@@ -1065,7 +1233,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
         : message.is_error
           ? 'failed'
           : 'completed'
-      this.#completeStreamingItems(status === 'completed' ? 'completed' : 'failed')
+      this.#completeStreamingItems(status === 'completed' ? 'completed' : 'failed', status)
       // A steer cuts the run it steers short, and the CLI starts it as a run of its own, Stop
       // or not. Until every steer has started, a result ends only one run of the turn.
       const steerWaits =
@@ -1098,7 +1266,9 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
           `rate limit at ${Math.round((message.rate_limit_info.utilization ?? 0) * 100)}%`,
         )
       }
-      this.emit('usageChanged')
+      // The event carries the windows' values, so nothing has to be read again.
+      const rows = mapClaudeRateLimitEvent(message.rate_limit_info)
+      if (rows.length) this.emit('limitsUpdated', rows)
       return
     }
 
@@ -1107,9 +1277,18 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
       return
     }
 
+    if (message.type === 'system' && message.subtype === 'commands_changed') {
+      // The SDK keeps supportedCommands() current with this push.
+      this.emit('commandsChanged')
+      return
+    }
+
+    if (message.type === 'system' && this.#subagents.onTaskMessage(message)) return
+
     if (message.type === 'system' && message.subtype === 'init') {
       this.#reportedModel = message.model
       this.#messageLifecycle = message.capabilities?.includes('msg_lifecycle_v1') ?? false
+      this.#onCommandHints(message.skills, message.terminal_slash_commands)
       if (message.claude_code_version && !message.claude_code_version.startsWith(SUPPORTED)) {
         this.emit(
           'log',
@@ -1117,6 +1296,26 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
         )
       }
     }
+  }
+
+  /** system/init says which commands are skills and which only work in a terminal. */
+  #onCommandHints(skills: unknown, terminal: unknown): void {
+    const names = (value: unknown) =>
+      Array.isArray(value)
+        ? new Set(value.filter((entry): entry is string => typeof entry === 'string'))
+        : undefined
+    const nextSkills = names(skills)
+    const nextTerminal = names(terminal)
+    if (
+      sameNames(nextSkills, this.#skillNames) &&
+      sameNames(nextTerminal ?? this.#terminalCommands, this.#terminalCommands)
+    )
+      return
+    this.#skillNames = nextSkills
+    // Claude leaves the field out when no command carries the tag and on older
+    // CLIs; the list known so far (the captured one at first) then stays.
+    if (nextTerminal) this.#terminalCommands = nextTerminal
+    this.emit('commandsChanged')
   }
 
   #onCommandLifecycle(message: unknown): void {
@@ -1167,8 +1366,9 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
           ...toolUseItemFields(raw.name, input),
           createdAt: Date.now(),
         }
+        this.#subagents.spawn(raw.id, raw.name, input)
         this.#streamItems.set(id, item)
-        this.emit('event', { type: 'item.started', item })
+        this.emit('event', { type: 'item.started', item: this.#subagents.withSnapshot(item) })
         return
       }
       if (raw.type !== 'text' && raw.type !== 'thinking') return
@@ -1270,6 +1470,8 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
       if (event.type === 'item.completed') this.#streamItems.delete(event.item.id)
       if (event.type === 'usage.updated' && this.#reportedModel) {
         this.emit('event', { ...event, usage: { ...event.usage, model: this.#reportedModel } })
+      } else if (event.type === 'item.started' || event.type === 'item.completed') {
+        this.emit('event', { ...event, item: this.#subagents.withSnapshot(event.item) })
       } else {
         this.emit('event', event)
       }
@@ -1399,7 +1601,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
       return
     }
     this.emit('event', { type: 'thread.error', threadId: this.#threadId, message })
-    this.#completeStreamingItems('failed')
+    this.#completeStreamingItems('failed', this.#interruptRequested ? 'interrupted' : 'failed')
     this.emit('event', {
       type: 'turn.completed',
       turnId,
@@ -1419,14 +1621,22 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     this.#streamedMessageIds.clear()
   }
 
-  #completeStreamingItems(status: 'completed' | 'failed'): void {
+  #completeStreamingItems(status: 'completed' | 'failed', ended: SubagentState = status): void {
+    // The turn waited on its foreground agents; whatever still runs ends with it.
+    this.#subagents.endTurn(ended)
     for (const item of this.#streamItems.values()) {
       const { text: _streamedText, ...started } = item
-      this.emit('event', { type: 'item.completed', item: { ...started, status } })
+      this.emit('event', {
+        type: 'item.completed',
+        item: this.#subagents.withSnapshot({ ...started, status }),
+      })
     }
     // A call whose result never came back ends with the turn, not as "running".
     for (const call of this.#toolCalls.values()) {
-      this.emit('event', { type: 'item.completed', item: { ...call, status } })
+      this.emit('event', {
+        type: 'item.completed',
+        item: this.#subagents.withSnapshot({ ...call, status }),
+      })
     }
     this.#streamItems.clear()
     this.#toolCalls.clear()
@@ -1669,10 +1879,33 @@ function versionedClaudeModelName(id: string): string | undefined {
   return `${family} ${version}`
 }
 
+/**
+ * A session start measured 5-44 s on a busy Windows machine: the native
+ * binary is large and loads settings and plugins before it answers. 15 s
+ * failed sessions that would have started.
+ */
+const CLAUDE_STARTUP_TIMEOUT_MS = 60_000
+
+type ClaudeStartupPhase = 'start' | 'mcp'
+
+function claudeStartupTimeoutMessage(phase: ClaudeStartupPhase, timeoutMs: number): string {
+  const budget = describeDuration(timeoutMs)
+  return phase === 'mcp'
+    ? `Claude Code started, but the project MCP servers did not connect within ${budget}. Check them in Settings, then try again.`
+    : `Claude Code did not start within ${budget}. It may be updating, or the computer is busy. Try again.`
+}
+
+function describeDuration(ms: number): string {
+  if (ms === 60_000) return 'a minute'
+  if (ms > 60_000 && ms % 60_000 === 0) return `${ms / 60_000} minutes`
+  const seconds = Math.max(1, Math.round(ms / 1_000))
+  return seconds === 1 ? '1 second' : `${seconds} seconds`
+}
+
 async function withTimeout<T>(
   promise: Promise<T>,
   timeoutMs: number,
-  message: string,
+  message: string | (() => string),
   signal?: AbortSignal,
 ): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -1681,7 +1914,10 @@ async function withTimeout<T>(
     return await Promise.race([
       promise,
       new Promise<T>((_, reject) => {
-        timer = setTimeout(() => reject(new Error(message)), timeoutMs)
+        timer = setTimeout(
+          () => reject(new Error(typeof message === 'function' ? message() : message)),
+          timeoutMs,
+        )
         if (signal) {
           onAbort = () => reject(new Error('Claude session is closed'))
           if (signal.aborted) onAbort()
