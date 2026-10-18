@@ -1,6 +1,11 @@
 // @vitest-environment happy-dom
 import { describe, expect, it, vi } from 'vitest'
-import { REVEAL_FRESH, REVEAL_PENDING_ATTRIBUTE, createRevealClock } from './reveal-clock.js'
+import {
+  REVEAL_FRESH,
+  REVEAL_PENDING_ATTRIBUTE,
+  REVEAL_VEIL,
+  createRevealClock,
+} from './reveal-clock.js'
 import { fakeRevealEnvironment as fakeEnvironment, visibleText } from './reveal-clock.fixture.js'
 
 function liveRoot() {
@@ -219,6 +224,28 @@ describe('reveal clock', () => {
     expect(visibleText(root, fake.ranges())).not.toContain('A new')
   })
 
+  it('keeps its ranges when text lands inside the veil', () => {
+    const fake = fakeEnvironment()
+    const { root, text } = liveRoot()
+    const cursor = createRevealClock(fake.env).attach(root)
+    text.appendData(prose(100))
+    cursor.appended(100)
+    fake.frame(16)
+    const [veil] = fake.ranges()
+    const created = vi.spyOn(fake.env, 'createRange')
+
+    // Inside the last block, which the veil already covers to the root's end.
+    text.appendData(' and then some')
+    cursor.appended(14)
+    // Markup the parser holds back.
+    cursor.appended(0)
+
+    expect(created).not.toHaveBeenCalled()
+    expect(fake.ranges()).toHaveLength(1)
+    expect(fake.ranges()[0]).toBe(veil)
+    expect(visibleText(root, fake.ranges())).not.toContain('then some')
+  })
+
   it('walks into nodes appended after it and skips code block labels', () => {
     const fake = fakeEnvironment()
     const { root, text } = liveRoot()
@@ -416,6 +443,47 @@ describe('reveal clock leading edge', () => {
     expect(widths.length).toBeGreaterThan(40)
     expect(Math.min(...widths)).toBeGreaterThanOrEqual(12)
     expect(Math.max(...widths)).toBeLessThanOrEqual(18)
+  })
+
+  it('replaces a range only when its boundaries moved', () => {
+    const fake = fakeEnvironment()
+    const { root, text } = liveRoot()
+    const cursor = createRevealClock(fake.env).attach(root)
+    const names = [REVEAL_VEIL, ...REVEAL_FRESH]
+    const same = (a: AbstractRange, b: AbstractRange) =>
+      a.startContainer === b.startContainer &&
+      a.startOffset === b.startOffset &&
+      a.endContainer === b.endContainer &&
+      a.endOffset === b.endOffset
+    let previous = names.map((name) => fake.ranges(name)[0])
+    let unchangedButReplaced = 0
+    let partial = 0
+    for (let frame = 0; frame < 120; frame += 1) {
+      // About 80 characters a second: the edge and the band starts move on
+      // different frames.
+      if (frame % 4 === 0) {
+        text.appendData('word ')
+        cursor.appended(5)
+      }
+      fake.frame(16)
+      const current = names.map((name) => fake.ranges(name)[0])
+      let kept = 0
+      let replaced = 0
+      current.forEach((range, index) => {
+        const before = previous[index]
+        if (!range || !before) return
+        if (range === before) kept += 1
+        else {
+          replaced += 1
+          if (same(range, before)) unchangedButReplaced += 1
+        }
+      })
+      if (kept > 0 && replaced > 0) partial += 1
+      previous = current
+    }
+
+    expect(unchangedButReplaced).toBe(0)
+    expect(partial).toBeGreaterThan(0)
   })
 
   it('draws no bands where nothing is veiled', () => {
