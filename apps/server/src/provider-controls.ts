@@ -23,6 +23,7 @@ import {
 } from '@harness/adapter-claude-code/capabilities'
 import { GROK_MCP_CAPABILITIES } from '@harness/adapter-grok/mcp'
 import { OPENCODE_MCP_CAPABILITIES } from '@harness/adapter-opencode/inventory'
+import { parseLimitSnapshot, serializeLimitSnapshot } from './limit-snapshot.js'
 import type { ModelListRead } from './model-list-cache.js'
 import { ProjectInventoryCache, type ProjectInventoryService } from './project-inventory-cache.js'
 import { PROVIDER_CAPABILITIES, type ProviderControlCapabilities } from './provider-capabilities.js'
@@ -128,8 +129,12 @@ export type ProviderControl = {
   account(agent?: string): Promise<Account>
   /** Absent intent is treated as `visible`, as the contract asks of servers. */
   usageLimitSource(intent?: UsageReadIntent): Promise<ProviderLimitSource>
-  /** The held snapshot without reading; undefined until a read or live window arrives. */
-  heldLimitSource(): ProviderLimitSource | undefined
+  /**
+   * The held snapshot without reading; undefined until a read or live window
+   * arrives. A view that shows the limits (any intent but `background`) also
+   * gets the last session's full read until then, which the next read replaces.
+   */
+  heldLimitSource(intent?: UsageReadIntent): ProviderLimitSource | undefined
   signOut(agent?: string): Promise<void>
   watch(projectPath: string, targets: WatchTarget[]): { expiresInMs: number }
   listModels?: (agent?: string, read?: ModelListRead) => Promise<Model[]>
@@ -190,6 +195,12 @@ export type ProviderControlsOptions = {
   accountCacheMs?: number
   /** How long the last confirmed sign-in answers when a later account read fails. */
   accountFallbackMs?: number
+  /**
+   * Keeps each provider's last full limit read across restarts, so the first
+   * view that shows the limits after a launch paints figures at once instead
+   * of waiting seconds for a vendor process.
+   */
+  limitSnapshot?: { read: () => string | undefined; write: (value: string) => void }
   createCodex?: () => CodexControlAdapter | Promise<CodexControlAdapter>
   services?: Partial<Record<ProviderId, ProviderServices>>
 }
@@ -449,6 +460,12 @@ export class ProviderControls {
   readonly #limitChangeIntervalMs: number
   readonly #limitPublishIntervalMs: number
   readonly #limits = new Map<ProviderId, LimitEntry>()
+  /**
+   * The last full read per provider, kept across restarts. Only views that
+   * show the limits see it, and only until this session holds a value; a
+   * passive figure never shows numbers this session has not confirmed.
+   */
+  #savedLimits: Map<ProviderId, ReadyLimitSource> | undefined
   readonly #accountCacheMs: number
   readonly #accountFallbackMs: number
   /** Keyed by provider and agent; an auth change deletes the provider's entries. */
@@ -682,7 +699,9 @@ export class ProviderControls {
               intent,
             )
           : this.#read(async () => ({ provider, status: 'unavailable' })),
-      heldLimitSource: () => this.#limits.get(provider)?.value,
+      heldLimitSource: (intent) =>
+        this.#limits.get(provider)?.value ??
+        (intent === 'background' ? undefined : this.#lastSession(provider)),
       signOut: (agent) =>
         this.#auth(provider, async (generation) => {
           const login = this.#logins.get(provider)
@@ -884,12 +903,52 @@ export class ProviderControls {
     return this.#limitReadIntervalMs ?? capabilities.limitReadIntervalMs
   }
 
+  /**
+   * The last session's full read, for a view that shows the limits while this
+   * session holds nothing yet. A failed read of this session marks it as the
+   * last known values, as it would a value this session read.
+   */
+  #lastSession(provider: ProviderId): ReadyLimitSource | undefined {
+    const saved = this.#saved().get(provider)
+    const failure = this.#limits.get(provider)?.failure
+    return saved && failure ? lastKnownLimits(saved, failure) : saved
+  }
+
+  #saved(): Map<ProviderId, ReadyLimitSource> {
+    if (!this.#savedLimits) {
+      let text: string | undefined
+      try {
+        text = this.#options.limitSnapshot?.read()
+      } catch {
+        // Without it the first shown view waits for its read, as before.
+        text = undefined
+      }
+      this.#savedLimits = parseLimitSnapshot(text)
+    }
+    return this.#savedLimits
+  }
+
+  /** Keeps a provider's newest full read for the next launch, or forgets it. */
+  #saveLimits(provider: ProviderId, source: ReadyLimitSource | undefined): void {
+    const snapshot = this.#options.limitSnapshot
+    if (!snapshot) return
+    const saved = this.#saved()
+    if (source) saved.set(provider, source)
+    else if (!saved.delete(provider)) return
+    try {
+      snapshot.write(serializeLimitSnapshot(saved))
+    } catch {
+      // Costs the next launch only its figures before the first read answers.
+    }
+  }
+
   #invalidateLimits(provider: ProviderId, accountChanged: boolean, forced = false): LimitEntry {
     const entry = this.#limitEntry(provider)
     if (accountChanged) {
       entry.accountVersion += 1
       // Another account starts without this one's values, failures or read times.
       entry.value = undefined
+      this.#saveLimits(provider, undefined)
       entry.live = undefined
       entry.failure = undefined
       entry.detailsOmitted = undefined
@@ -936,6 +995,10 @@ export class ProviderControls {
   ): Promise<ProviderLimitSource> {
     this.#assertOpen()
     const entry = this.#limitEntry(provider)
+    // A shown view was answered from the last session's read; from here on it
+    // is the held value, so this session's read replaces it or, failing, keeps
+    // it as the last known values. A passive figure never takes it over.
+    if (!entry.value && intent !== 'background') entry.value = this.#lastSession(provider)
     if (entry.reading) return entry.reading
     const startedAt = Date.now()
     // A shown view needs the details a background read left out.
@@ -1017,6 +1080,7 @@ export class ProviderControls {
                 : entry.version === version
                   ? now + Math.max(this.#limitCacheMs, interval)
                   : readStartedAt + interval
+          this.#saveLimits(provider, value.status === 'ready' ? heldValues(value) : undefined)
           this.#heldReplaced(provider, entry, previous)
           return value
         },
