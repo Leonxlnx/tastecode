@@ -5701,6 +5701,11 @@ describe('new chats', () => {
   )
 
   it('shows a running sign-in in its one workspace terminal again from Settings', async () => {
+    // Load the lazy Settings dialog, workspace panel and terminal first, so this
+    // test does not depend on an earlier test having imported them.
+    await import('./ui/Settings.js')
+    await import('./ui/workspace/WorkspacePanel.js')
+    await import('./ui/InstallTerminal.js')
     desktopShell.enabled = true
     serverProjects = []
     serverProviders = [
@@ -5758,7 +5763,7 @@ describe('new chats', () => {
     // Settings opened on top of the open terminal reaches the same one.
     await openProviderSettings()
     await showTerminal()
-  })
+  }, 20_000)
 
   it('offers a stored custom model from an enabled nightly provider', async () => {
     const stored = '[{"provider":"cursor","modelId":"cursor-large","displayName":"Cursor Large"}]'
