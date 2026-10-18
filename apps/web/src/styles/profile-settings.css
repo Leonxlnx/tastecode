@@ -22,9 +22,9 @@
   color: var(--text);
   caret-color: var(--text);
   font-family: inherit;
-  font-size: var(--t-xl);
+  font-size: var(--t-lg);
   font-weight: 500;
-  letter-spacing: -0.018em;
+  letter-spacing: -0.012em;
   line-height: 1.25;
   text-align: center;
   outline: none;

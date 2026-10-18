@@ -55,8 +55,8 @@
 .keybind-settings__intro {
   margin: 0 0 30px;
   color: var(--text-3);
-  font-size: var(--t-md);
-  letter-spacing: -0.006em;
+  font-size: var(--t-sm);
+  letter-spacing: -0.003em;
   line-height: 1.45;
 }
 
@@ -86,8 +86,8 @@
   border: 0;
   color: var(--text);
   font: inherit;
-  font-size: var(--t-lg);
-  letter-spacing: -0.012em;
+  font-size: var(--t-sm);
+  letter-spacing: -0.003em;
   outline: 0;
 }
 
@@ -119,8 +119,8 @@
   grid-template-columns: minmax(0, max-content) minmax(32px, 1fr) max-content;
   align-items: baseline;
   padding-block: 10px;
-  font-size: var(--t-lg);
-  letter-spacing: -0.012em;
+  font-size: var(--t-sm);
+  letter-spacing: -0.003em;
   line-height: 1.35;
   transition: --keybind-wire var(--dur-fast) var(--ease-out);
 }
@@ -338,8 +338,8 @@
   min-height: 0;
   overflow-x: visible;
   overflow-y: clip;
-  font-size: var(--t-md);
-  letter-spacing: -0.006em;
+  font-size: var(--t-sm);
+  letter-spacing: -0.003em;
   line-height: 1.45;
 }
 
@@ -422,7 +422,7 @@
 .keybind-settings__empty {
   margin: 30px 0 0;
   color: var(--text-3);
-  font-size: var(--t-md);
+  font-size: var(--t-sm);
 }
 
 .command-palette__shortcut {

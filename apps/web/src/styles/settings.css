@@ -501,7 +501,7 @@
   display: block;
   margin-top: 10px;
   overflow: hidden;
-  font-size: var(--t-md);
+  font-size: var(--t-sm);
   text-align: center;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -565,8 +565,8 @@
   grid-template-columns: minmax(0, max-content) minmax(32px, 1fr) max-content;
   align-items: baseline;
   padding-block: 11px;
-  font-size: 14px;
-  letter-spacing: -0.009em;
+  font-size: var(--t-sm);
+  letter-spacing: -0.003em;
   line-height: 1.35;
   transition: --appearance-leader var(--dur-fast) var(--ease-out);
 }
@@ -598,7 +598,7 @@
   max-width: 52ch;
   margin: 3px 0 0;
   color: var(--text-3);
-  font-size: var(--t-sm);
+  font-size: var(--t-xs);
   letter-spacing: -0.003em;
   line-height: 1.4;
 }
@@ -797,7 +797,7 @@
   /* Keep paragraph margins from expanding compact rows. */
   margin: 0;
   color: var(--text);
-  font-size: var(--t-md);
+  font-size: var(--t-sm);
   font-weight: 500;
   line-height: 1.35;
 }
