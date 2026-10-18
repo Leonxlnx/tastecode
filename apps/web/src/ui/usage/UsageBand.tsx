@@ -97,7 +97,6 @@ export const UsageBand = memo(function UsageBand(props: {
             viewBox={`0 0 ${width} ${BAND_HEIGHT}`}
             aria-hidden
           >
-            <line className="usage-band__base" x1={0} x2={width} y1={BASE + 0.5} y2={BASE + 0.5} />
             {ink.ticks.map((tick) => (
               <rect
                 key={tick.x}
