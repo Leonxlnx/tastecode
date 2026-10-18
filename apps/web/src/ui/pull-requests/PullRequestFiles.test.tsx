@@ -1,4 +1,7 @@
 // @vitest-environment happy-dom
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { ReactNode } from 'react'
@@ -180,6 +183,24 @@ describe('PullRequestFiles', () => {
       page: 1,
       refresh: true,
     })
+  })
+
+  it('wraps review comment Markdown as GitHub does, not as a chat reply', async () => {
+    const stylesheet = document.createElement('style')
+    stylesheet.textContent = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), '../../styles/markdown.css'),
+      'utf8',
+    )
+    document.head.append(stylesheet)
+    try {
+      setupFiles()
+      const comment = await screen.findByText('Can this be clearer?')
+
+      expect(comment.closest('.md')?.tagName).toBe('DIV')
+      expect(getComputedStyle(comment).whiteSpace).not.toBe('pre-line')
+    } finally {
+      stylesheet.remove()
+    }
   })
 
   it('replies to the top-level comment from Files after an existing reply', async () => {

@@ -620,8 +620,12 @@ const StreamingMarkdown = memo(function StreamingMarkdown({
 })
 
 const PlainCompletedMarkdown = memo(function PlainCompletedMarkdown({ text }: { text: string }) {
+  // A chat reply shows line breaks, so a paragraph's outer ones would be blank lines.
   const paragraphs = text.includes('\n')
-    ? text.split(PLAIN_PARAGRAPH_BREAK).filter(Boolean)
+    ? text
+        .split(PLAIN_PARAGRAPH_BREAK)
+        .map((paragraph) => paragraph.trim())
+        .filter(Boolean)
     : [text]
   return (
     <div className="md" data-plain-markdown>
