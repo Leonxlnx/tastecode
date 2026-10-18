@@ -658,6 +658,22 @@ describe('provider accounts', () => {
       client.terminate()
     }
   })
+
+  it('remembers an identity only from the CLI sign-in check itself', async () => {
+    const { port } = await listen()
+    const { client, ask } = await connect(port)
+    try {
+      await ask('auth.status', { provider: 'codex', accountId: 'default' })
+      await ask('auth.status', { provider: 'claude-code' })
+      await ask('auth.status', { provider: 'codex', agent: 'my-harness' })
+      expect(state.accountCalls).toEqual([
+        ['recordIdentity', 'codex', 'default', { signedIn: false }],
+        ['recordIdentity', 'claude-code', undefined, { signedIn: false }],
+      ])
+    } finally {
+      client.terminate()
+    }
+  })
 })
 
 describe('the pull request for a chat checkout', () => {

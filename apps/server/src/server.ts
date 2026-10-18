@@ -866,7 +866,10 @@ export function startServer(
       case 'auth.status': {
         const p = parseParams(method, params)
         defaultAccountOnly(p.provider, p.accountId)
-        return orchestrator.account(p.provider, p.agent)
+        const account = await orchestrator.account(p.provider, p.agent)
+        // A custom harness may sign in as someone else; only the CLI's own check names the account.
+        if (p.agent === undefined) accounts.recordIdentity(p.provider, p.accountId, account)
+        return account
       }
 
       case 'auth.startLogin': {
