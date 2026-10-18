@@ -18,7 +18,11 @@ import {
   type ResultOf,
 } from '@harness/contracts'
 import type { AccountHomeSource } from '@harness/proc/account-home'
-import { AccountNotFoundError, type AccountDirectory } from './account-directory.js'
+import {
+  AccountNotFoundError,
+  existingAccountHome,
+  type AccountDirectory,
+} from './account-directory.js'
 import { accountRead } from './account-identity.js'
 import type { Store, StoredProviderAccount } from './store.js'
 
@@ -137,6 +141,17 @@ export class ProviderAccounts implements AccountDirectory {
   home(provider: ProviderId, accountId: AccountId | undefined): string | undefined {
     if (accountId === undefined || accountId === DEFAULT_ACCOUNT_ID) return undefined
     return this.#require(provider, accountId).home
+  }
+
+  /**
+   * The variables that make a CLI run as the account, laid over the inherited
+   * environment, as its adapter maps them; none for the default account.
+   * Refuses an account whose folder is gone, where a CLI would quietly make a
+   * new, signed-out account.
+   */
+  environment(provider: ProviderId, accountId: AccountId | undefined): NodeJS.ProcessEnv {
+    const home = existingAccountHome(this, provider, accountId)
+    return home === undefined ? {} : this.#source(provider).environment(home)
   }
 
   create(provider: ProviderId, label: string, home: ProviderAccountHome): ProviderAccount {

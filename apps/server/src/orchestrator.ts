@@ -774,7 +774,10 @@ export class Orchestrator {
   /** What every account's controls share with the default account's. */
   #scopeOptions: Pick<ProviderControlsOptions, 'controlIdleMs' | 'beforeLimitRead' | 'services'>
   /** Install, update and sign-in terminals, by terminal id, and the source they change. */
-  #providerTerminals = new Map<string, { provider: ProviderId; agent?: string | undefined }>()
+  #providerTerminals = new Map<
+    string,
+    { provider: ProviderId; agent?: string | undefined; accountId?: AccountId }
+  >()
 
   constructor(
     store: Store,
@@ -3008,12 +3011,22 @@ export class Orchestrator {
    * Run a provider's interactive sign-in CLI in its own terminal session.
    * Keyed by target so a second Sign in click reattaches to the session
    * already going, and rooted in the home directory because signing in to a
-   * global CLI has no business inside any particular project checkout.
+   * global CLI has no business inside any particular project checkout. As
+   * another `account`, the CLI runs with that account's variables and signs
+   * its folder in, in a terminal of its own.
    */
-  launchProviderLogin(target: string, command: string, columns: number, rows: number): string {
+  launchProviderLogin(
+    target: string,
+    command: string,
+    columns: number,
+    rows: number,
+    account?: { id: AccountId; environment: NodeJS.ProcessEnv },
+  ): string {
+    const key = account ? `login:${target}@${account.id}` : `login:${target}`
     return this.#trackProviderTerminal(
       target,
-      this.#terminals.run(`login:${target}`, command, os.homedir(), columns, rows),
+      this.#terminals.run(key, command, os.homedir(), columns, rows, account?.environment),
+      account?.id,
     )
   }
 
@@ -3022,9 +3035,10 @@ export class Orchestrator {
    * `update:provider` terminals. Whatever they changed, the source may list
    * other models once they exit.
    */
-  #trackProviderTerminal(target: string, terminalId: string): string {
+  #trackProviderTerminal(target: string, terminalId: string, accountId?: AccountId): string {
     const source = providerTerminalSource(target)
-    if (source) this.#providerTerminals.set(terminalId, source)
+    if (source)
+      this.#providerTerminals.set(terminalId, accountId ? { ...source, accountId } : source)
     return terminalId
   }
 
@@ -3032,7 +3046,10 @@ export class Orchestrator {
     const source = this.#providerTerminals.get(terminalId)
     if (!source) return
     this.#providerTerminals.delete(terminalId)
-    this.#modelLists.invalidate(source.provider, source.agent)
+    const modelLists = source.accountId
+      ? this.#accountScopes.get(accountScopeKey(source.provider, source.accountId))?.modelLists
+      : this.#modelLists
+    modelLists?.invalidate(source.provider, source.agent)
   }
 
   writeTerminal(terminalId: string, data: string): void {

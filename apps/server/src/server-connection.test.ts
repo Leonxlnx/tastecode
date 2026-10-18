@@ -133,6 +133,16 @@ vi.mock('./orchestrator.js', () => ({
       state.handled.push(`models.list(${provider}, ${accountId})`)
       return []
     }
+    launchProviderLogin(
+      target: string,
+      command: string,
+      _columns: number,
+      _rows: number,
+      account?: { id: string; environment: Record<string, string> },
+    ) {
+      state.handled.push(`providers.launch(${target}, ${command}, ${JSON.stringify(account)})`)
+      return 'login-terminal'
+    }
     async startThread(provider: string, _workspacePath: string, options: { accountId?: string }) {
       state.handled.push(`thread.start(${provider}, ${options.accountId ?? 'active'})`)
       return { id: 'started-thread' }
@@ -143,6 +153,7 @@ vi.mock('./providers.js', () => ({
   prewarmProviders: () => {
     state.prewarmed += 1
   },
+  launchCommandFor: async (provider: string) => `${provider} login`,
 }))
 // The registry's own rules are covered in provider-accounts.test.ts; this is its wiring.
 vi.mock('./provider-accounts.js', () => ({
@@ -171,6 +182,9 @@ vi.mock('./provider-accounts.js', () => ({
     }
     supports(provider: string) {
       return provider !== 'grok'
+    }
+    environment(_provider: string, accountId: string | undefined) {
+      return accountId === undefined || accountId === 'default' ? {} : { ACCOUNT_HOME: accountId }
     }
     home(provider: string, accountId: string | undefined) {
       if (accountId === undefined || accountId === 'default') return undefined
@@ -655,7 +669,6 @@ describe('provider accounts', () => {
     const notYet = 'Running this provider as another account is not available yet.'
     try {
       for (const [method, params] of [
-        ['providers.launch', { provider: 'codex', accountId: 'work', columns: 80, rows: 24 }],
         ['usage.summary', { provider: 'codex', accountId: 'work' }],
         [
           'usage.consumeReset',
@@ -683,7 +696,7 @@ describe('provider accounts', () => {
     }
   })
 
-  it('runs sign-in, sign-out and model lists as the account a request names', async () => {
+  it('runs sign-in, sign-out, the sign-in terminal and model lists as the account asked for', async () => {
     const { port } = await listen()
     const { client, ask } = await connect(port)
     try {
@@ -694,6 +707,8 @@ describe('provider accounts', () => {
         ['auth.useApiKey', { provider: 'codex', accountId: 'work', apiKey: 'test-key' }],
         ['auth.signOut', { provider: 'codex', accountId: 'work' }],
         ['models.list', { provider: 'codex', accountId: 'work' }],
+        ['providers.launch', { provider: 'codex', accountId: 'work', columns: 80, rows: 24 }],
+        ['providers.launch', { provider: 'codex', columns: 80, rows: 24 }],
       ] as const) {
         expect(await ask(method, params), method).toHaveProperty('result')
       }
@@ -704,6 +719,8 @@ describe('provider accounts', () => {
         'auth.useApiKey(codex, work)',
         'auth.signOut(codex, work)',
         'models.list(codex, work)',
+        'providers.launch(codex, codex login, {"id":"work","environment":{"ACCOUNT_HOME":"work"}})',
+        'providers.launch(codex, codex login, undefined)',
       ])
       // The CLI's own answers name the account's identity.
       expect(state.accountCalls).toEqual([

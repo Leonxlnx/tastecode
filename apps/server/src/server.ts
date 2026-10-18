@@ -3,6 +3,7 @@ import { timingSafeEqual } from 'node:crypto'
 import { isIPv4 } from 'node:net'
 import { WebSocketServer, type WebSocket } from 'ws'
 import {
+  DEFAULT_ACCOUNT_ID,
   ErrorCode,
   methods,
   PROTOCOL_VERSION,
@@ -26,6 +27,7 @@ import { acquireDataLease } from './data-lease.js'
 import { PreviewCaptureCoordinator } from './preview-capture.js'
 import type { CheckoutPullRequests } from './checkout-pull-request.js'
 import type { PullRequestService } from './pull-requests.js'
+import { sourceAccount } from './account-directory.js'
 import { ProviderAccounts } from './provider-accounts.js'
 import { DEFAULT_PORT } from './server-config.js'
 import { Store } from './store.js'
@@ -138,9 +140,9 @@ export function startServer(
   })
   /**
    * A request may name a provider account. One the provider cannot have is
-   * refused. Until a sign-in terminal, plan limits and usage history run per
-   * account, any account but the default one is refused there as well, so a
-   * request for another account can never act on the default one instead.
+   * refused. Until an account's own plan limits, reset credits and usage history
+   * are read per account, any account but the default one is refused there as
+   * well, so a request for another account can never act on the default one.
    */
   const defaultAccountOnly = (provider: ProviderId, accountId: AccountId | undefined) => {
     if (accounts.home(provider, accountId) !== undefined) {
@@ -774,13 +776,19 @@ export function startServer(
 
       case 'providers.launch': {
         const p = parseParams(method, params)
-        defaultAccountOnly(p.provider, p.accountId)
+        // The CLI signs in as the account in its folder; a custom harness has no other.
+        const accountId = sourceAccount(p.agent, p.accountId)
+        const environment = accounts.environment(p.provider, accountId)
         const { launchCommandFor } = await import('./providers.js')
         const command = await launchCommandFor(p.provider, p.agent)
         const target = p.agent ? `${p.provider}:${p.agent}` : p.provider
+        const account =
+          accountId === undefined || accountId === DEFAULT_ACCOUNT_ID
+            ? undefined
+            : { id: accountId, environment }
         return {
           terminalId: setupTerminal(
-            orchestrator.launchProviderLogin(target, command, p.columns, p.rows),
+            orchestrator.launchProviderLogin(target, command, p.columns, p.rows, account),
           ),
         }
       }

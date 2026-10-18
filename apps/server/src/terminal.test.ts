@@ -37,6 +37,28 @@ describe('TerminalManager', () => {
     expect(manager.status('missing').status).toBe('unknown')
   })
 
+  it("runs a command with an account's variables over the terminal's own environment", () => {
+    const pty = controlledPty()
+    let env: Record<string, string | undefined> | undefined
+    const manager = new TerminalManager(
+      { onOutput: () => {}, onExit: () => {} },
+      {
+        spawnPty: (_file, _args, options) => {
+          env = options.env
+          return pty
+        },
+      },
+    )
+    manager.run('login:codex@work', 'codex login', os.tmpdir(), 80, 24, {
+      CODEX_HOME: 'D:\\accounts\\codex\\work',
+    })
+    expect(env).toMatchObject({
+      CODEX_HOME: 'D:\\accounts\\codex\\work',
+      TERM: 'xterm-256color',
+    })
+    pty.emitExit(0)
+  })
+
   it('expires old completed jobs without dropping a running terminal', () => {
     vi.useFakeTimers()
     try {

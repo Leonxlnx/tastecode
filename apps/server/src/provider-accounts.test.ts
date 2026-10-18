@@ -72,6 +72,25 @@ describe('provider accounts', () => {
     return expect(accounts.remove('grok', 'work')).rejects.toThrow(refused)
   })
 
+  it('gives a CLI the variables of an account whose folder is still there', () => {
+    const { accounts, base } = setup()
+    const managed = accounts.create('codex', 'Work', { kind: 'managed' })
+    const brought = path.join(base, 'brought')
+    mkdirSync(brought)
+    const existing = accounts.create('codex', 'Old laptop', { kind: 'existing', path: brought })
+
+    expect(accounts.environment('codex', undefined)).toEqual({})
+    expect(accounts.environment('codex', 'default')).toEqual({})
+    expect(accounts.environment('codex', managed.id)).toEqual({ FAKE_CLI_HOME: managed.home })
+    rmSync(brought, { recursive: true })
+    expect(() => accounts.environment('codex', existing.id)).toThrow(
+      `This account's folder is missing (${brought}). Put it back, or remove the account.`,
+    )
+    expect(() => accounts.environment('grok', 'work')).toThrow(
+      'This provider runs as one account only.',
+    )
+  })
+
   it('creates a managed folder with copies of the non-secret settings only', () => {
     const { accounts, root, changed } = setup()
     const account = accounts.create('codex', '  Work Laptop ', { kind: 'managed' })
