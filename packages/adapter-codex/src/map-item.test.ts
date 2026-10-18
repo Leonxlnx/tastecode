@@ -97,6 +97,16 @@ describe('Codex collaboration items', () => {
     ).toMatchObject({ status: 'completed', text: '1 of 2 subagents still running' })
   })
 
+  // Codex 0.163 names neither receivers nor states on a wait (fixtures/subagent-codex-0.163.jsonl).
+  it('does not call a wait for unnamed subagents a single subagent', () => {
+    expect(
+      mapThreadItem(
+        collab({ tool: 'wait', prompt: null, receiverThreadIds: [], agentsStates: {} }),
+        context,
+      ),
+    ).toMatchObject({ status: 'completed', text: 'Subagents finished' })
+  })
+
   it.each([
     ['sendInput', 'Could not send input to a subagent'],
     ['resumeAgent', 'Could not resume a subagent'],

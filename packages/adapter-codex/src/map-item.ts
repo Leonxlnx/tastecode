@@ -473,6 +473,8 @@ function collabAgentLabel(
           ? `${running} of ${targets} subagents still running`
           : 'Subagent still running'
       }
+      // Codex 0.163 names no subagents on a wait (fixtures/subagent-codex-0.163.jsonl).
+      if (targets === 0) return 'Subagents finished'
       return plural ? `${targets} subagents finished` : 'Subagent finished'
     case 'sendInput':
       if (status === 'failed') return 'Could not send input to a subagent'
