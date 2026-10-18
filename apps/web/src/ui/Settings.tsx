@@ -161,7 +161,7 @@ import { ModelBulkActions, ModelVisibilityRow } from './ModelVisibilityControls.
 import { LARGE_MODEL_SOURCE_ROWS, ModelLabSection } from './ModelLabSection.js'
 import { SettingsMeta, StateLabel } from './SettingsStatus.js'
 import { UsageSettings } from './UsageSettings.js'
-import type { PlanLimitsSource } from './usage/UsageLimits.js'
+import type { PlanLimitsSource } from './usage/usage-sheets.js'
 import {
   SettingsEmpty,
   SettingsNotice,

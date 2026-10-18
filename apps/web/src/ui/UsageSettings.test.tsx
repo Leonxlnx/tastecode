@@ -1,11 +1,17 @@
 // @vitest-environment happy-dom
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import type { UsageHistoryRange } from '@harness/contracts'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import type {
+  ProviderLimit,
+  ProviderLimitSource,
+  ResultOf,
+  UsageHistoryRange,
+} from '@harness/contracts'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Transport } from '../transport.js'
-import { ProfileSettings } from './ProfileSettings.js'
+import type { UsageSummaryState } from '../usage-summary-state.js'
 import { UsageSettings } from './UsageSettings.js'
-import { historyResult } from './usage/usage-history.fixture.js'
+import { historyResult, usageTotals } from './usage/usage-history.fixture.js'
+import type { PlanLimitsSource } from './usage/usage-sheets.js'
 
 afterEach(() => {
   cleanup()
@@ -16,48 +22,207 @@ async function advance(ms: number): Promise<void> {
   await act(() => vi.advanceTimersByTimeAsync(ms))
 }
 
+const NOW = Date.UTC(2026, 7, 8, 12)
+
+function transportOf(result: (range: UsageHistoryRange) => ResultOf<'usage.history'>) {
+  const request = vi.fn(
+    async (_method: string, params: { range: UsageHistoryRange; refresh?: boolean }) =>
+      result(params.range),
+  )
+  return { request, transport: { request } as unknown as Transport }
+}
+
+function limitsOf(states: UsageSummaryState[]) {
+  return {
+    snapshot: () => states,
+    subscribe: () => () => {},
+    refresh: vi.fn<PlanLimitsSource['refresh']>(),
+  } satisfies PlanLimitsSource
+}
+
+function ready(
+  provider: ProviderLimitSource['provider'],
+  limits: ProviderLimit[],
+): UsageSummaryState {
+  const none = {
+    inputTokens: 0,
+    cachedInputTokens: 0,
+    outputTokens: 0,
+    reasoningTokens: 0,
+    totalTokens: 0,
+  }
+  return {
+    status: 'ready',
+    provider,
+    summary: {
+      session: none,
+      today: none,
+      limitSource: { provider, status: 'ready', limits },
+      limits,
+    },
+  }
+}
+
+/** Three days of Codex use with four models, the busiest on the last day. */
+function codexHistory(range: UsageHistoryRange): ResultOf<'usage.history'> {
+  const result = historyResult(range)
+  result.startDate = '2026-08-06'
+  result.daily = [
+    ['2026-08-06', 0, 0, 0],
+    ['2026-08-07', 400_000, 3.21, 1],
+    ['2026-08-08', 830_000, 9.13, 3],
+  ].map(([date, tokens, value, sessions]) => ({
+    date: date as string,
+    sessionCount: sessions as number,
+    totals: usageTotals({ processedTokens: tokens as number, estimatedCostUsd: value as number }),
+    providers:
+      (tokens as number) > 0
+        ? [{ provider: 'codex', tokens: tokens as number, estimatedCostUsd: value as number }]
+        : [],
+  }))
+  result.activeDays = 2
+  result.models = ['gpt-a', 'gpt-b', 'gpt-c', 'gpt-d'].map((model, index) => ({
+    provider: 'codex',
+    model,
+    sessionCount: 1,
+    pricing: index === 1 ? 'family' : index === 3 ? 'unpriced' : 'exact',
+    totals: usageTotals({ processedTokens: 1_000 * (4 - index), estimatedCostUsd: 4 - index }),
+  }))
+  return result
+}
+
 describe('usage settings', () => {
   it('loads local history, changes period, and explicitly requests a rescan', async () => {
-    const request = vi.fn(
-      async (_method: string, params: { range: UsageHistoryRange; refresh?: boolean }) =>
-        historyResult(params.range),
-    )
-    const transport = { request } as unknown as Transport
+    const { request, transport } = transportOf(historyResult)
     render(<UsageSettings transport={transport} />)
 
     expect(screen.getByRole('heading', { level: 1, name: 'Usage' })).toBeTruthy()
     expect(screen.getByRole('status', { name: 'Reading the usage index' })).toBeTruthy()
-    expect(await screen.findByText('4 sessions · Jul 10 to Aug 8, 2026')).toBeTruthy()
-    expect(screen.queryByRole('status', { name: 'Reading the usage index' })).toBeNull()
+    expect(await screen.findByText('4 sessions on 1 of 1 days')).toBeTruthy()
+    expect(screen.getAllByText('1.23M tokens')).toHaveLength(2)
     expect(request).toHaveBeenNthCalledWith(1, 'usage.history', { range: '30d' })
-    expect(screen.getByRole('radio', { name: '30 days' }).getAttribute('aria-checked')).toBe('true')
+    const period = screen.getByRole<HTMLSelectElement>('combobox', { name: 'Period' })
+    expect(period.value).toBe('30d')
 
-    fireEvent.click(screen.getByRole('radio', { name: '7 days' }))
+    fireEvent.change(period, { target: { value: '7d' } })
     await waitFor(() => {
       expect(request).toHaveBeenNthCalledWith(2, 'usage.history', { range: '7d' })
     })
+    expect(period.closest('label')?.firstElementChild?.textContent).toBe('Last 7 days')
 
     fireEvent.click(screen.getByRole('button', { name: 'Check for new usage' }))
     await waitFor(() => {
-      expect(request).toHaveBeenNthCalledWith(3, 'usage.history', {
-        range: '7d',
-        refresh: true,
-      })
+      expect(request).toHaveBeenNthCalledWith(3, 'usage.history', { range: '7d', refresh: true })
     })
   })
 
-  it('says how current the index is and where the numbers come from', async () => {
-    const result = historyResult('30d')
+  it('draws one sheet per provider with its value, models and the close', async () => {
+    const result = codexHistory('30d')
     result.sources.push({ provider: 'grok', available: false, sessionCount: 0 })
     result.warnings = ['Some token records use models without a known public API price.']
     vi.useFakeTimers({ now: result.generatedAt + 5 * 60_000, toFake: ['Date'] })
-    const transport = { request: vi.fn(async () => result) } as unknown as Transport
+    const { transport } = transportOf(() => result)
     render(<UsageSettings transport={transport} />)
 
-    expect(await screen.findByText('Indexed 5m ago · 4 files · Codex')).toBeTruthy()
+    const codex = await screen.findByRole('region', { name: 'Codex' })
+    expect(within(codex).getByText('$12.34')).toBeTruthy()
+    expect(within(codex).getByText('1.23M tokens on 2 days · 4 sessions')).toBeTruthy()
+    expect(within(codex).getByText('≈ $3.00').getAttribute('title')).toBe(
+      'Priced from a sibling model, so approximate',
+    )
+    expect(within(codex).queryByText('gpt-d')).toBeNull()
+    fireEvent.click(within(codex).getByRole('button', { name: '1 more model' }))
+    expect(within(codex).getByText('not priced')).toBeTruthy()
+    expect(within(codex).getByRole('button', { name: 'Fewer models' })).toBeTruthy()
+    expect(within(codex).getByText('No plan limits reported')).toBeTruthy()
+
+    expect(screen.getByText('$4.56')).toBeTruthy()
+    expect(screen.getByText('Without caching, these tokens would come to $16.90.')).toBeTruthy()
     expect(
-      screen.getByText('Some token records use models without a known public API price.'),
+      screen.getByText(/Some token records use models without a known public API price\./),
     ).toBeTruthy()
+    expect(screen.getByText('Indexed 5 min ago from 4 files in the Codex histories.')).toBeTruthy()
+  })
+
+  it('reads one day across every sheet and fades the period’s models', async () => {
+    const { transport } = transportOf(codexHistory)
+    render(<UsageSettings transport={transport} />)
+    const codex = await screen.findByRole('region', { name: 'Codex' })
+    const band = within(codex).getByRole('img', { name: /Codex daily tokens, 2 active days/ })
+
+    fireEvent.focus(band)
+    expect(document.querySelector('.usage-page')?.classList.contains('is-scrubbing')).toBe(true)
+    expect(within(codex).getByText('830K tokens on Aug 8')).toBeTruthy()
+    expect(within(codex).getByText('$9.13')).toBeTruthy()
+    expect(screen.getAllByText('Sat, Aug 8')).toHaveLength(2)
+    expect(screen.getByText('3 sessions')).toBeTruthy()
+
+    fireEvent.keyDown(band, { key: 'ArrowLeft', shiftKey: true })
+    expect(within(codex).getByText('No use on Aug 6')).toBeTruthy()
+    expect(within(codex).getByText('no use')).toBeTruthy()
+
+    fireEvent.keyDown(band, { key: 'Escape' })
+    expect(document.querySelector('.usage-page')?.classList.contains('is-scrubbing')).toBe(false)
+    expect(within(codex).getByText('$12.34')).toBeTruthy()
+  })
+
+  it('names a reached and a low limit under the top line and keeps them in their sheets', async () => {
+    vi.useFakeTimers({ now: NOW, toFake: ['Date'] })
+    const limits = limitsOf([
+      ready('codex', [{ label: 'Session', usedPercent: 90, resetsAt: NOW + 42 * 60_000 }]),
+      ready('grok', [{ label: 'Weekly', usedPercent: 100, resetsAt: NOW + 3 * 3_600_000 }]),
+    ])
+    const { transport } = transportOf(historyResult)
+    render(<UsageSettings transport={transport} limits={limits} />)
+
+    expect(
+      await screen.findByText(
+        'Grok weekly limit reached, resets in 3h. Codex session limit at 10% left, resets in 42m.',
+      ),
+    ).toBeTruthy()
+    const codex = screen.getByRole('region', { name: 'Codex' })
+    expect(within(codex).getByText('10% left')).toBeTruthy()
+    expect(
+      within(codex)
+        .getByRole('progressbar', { name: 'Codex Session left' })
+        .getAttribute('aria-valuenow'),
+    ).toBe('10')
+    const grok = screen.getByRole('region', { name: 'Grok' })
+    expect(within(grok).getByText('Reached')).toBeTruthy()
+  })
+
+  it('collapses a provider without sessions to one row and its limits', async () => {
+    const limits = limitsOf([
+      ready('grok', [{ label: 'Weekly', usedPercent: 20 }]),
+      ready('claude-code', [{ label: 'Credits', usedPercent: 0, valueLabel: '$209.60' }]),
+    ])
+    const { transport } = transportOf(historyResult)
+    render(<UsageSettings transport={transport} limits={limits} />)
+
+    const grok = await screen.findByRole('region', { name: 'Grok' })
+    expect(within(grok).getByText('No sessions in the last 30 days')).toBeTruthy()
+    expect(within(grok).getByText('80% left')).toBeTruthy()
+    expect(within(grok).queryByRole('img')).toBeNull()
+    const claude = screen.getByRole('region', { name: 'Claude Code' })
+    expect(within(claude).getByText('$209.60')).toBeTruthy()
+    expect(within(claude).queryByRole('progressbar')).toBeNull()
+    const sheets = [...document.querySelectorAll('.usage-sheet')]
+    expect(sheets.map((sheet) => sheet.getAttribute('aria-label'))).toEqual([
+      'Codex',
+      'Grok',
+      'Claude Code',
+    ])
+  })
+
+  it('offers a retry for plan limits that could not be read', async () => {
+    const limits = limitsOf([{ status: 'error', provider: 'grok', message: 'offline' }])
+    const { transport } = transportOf(historyResult)
+    render(<UsageSettings transport={transport} limits={limits} />)
+
+    const grok = await screen.findByRole('region', { name: 'Grok' })
+    expect(within(grok).getByText('Unavailable')).toBeTruthy()
+    fireEvent.click(within(grok).getByRole('button', { name: 'Retry' }))
+    expect(limits.refresh).toHaveBeenCalledWith('grok')
   })
 
   it('keeps cached totals visible and checks a background scan again after 2 s', async () => {
@@ -76,7 +241,7 @@ describe('usage settings', () => {
     // A refresh of an existing index that is over by the next read is never
     // announced: the notice would only push the page down and back up.
     expect(screen.queryByText(/Indexing local usage/)).toBeNull()
-    expect(screen.getByText('4 sessions · Jul 10 to Aug 8, 2026')).toBeTruthy()
+    expect(screen.getByText('4 sessions on 1 of 1 days')).toBeTruthy()
     await advance(1_999)
     expect(request).toHaveBeenCalledTimes(1)
     await advance(1)
@@ -140,7 +305,9 @@ describe('usage settings', () => {
     expect(screen.getByText(/Indexing local usage/)).toBeTruthy()
     await advance(2_000)
     expect(request).toHaveBeenCalledTimes(2)
-    expect(screen.getByText(/Temporary connection failure/)).toBeTruthy()
+    expect(screen.getByText(/The last refresh failed/).getAttribute('title')).toBe(
+      'Temporary connection failure',
+    )
     await advance(3_000)
     expect(request).toHaveBeenCalledTimes(3)
     expect(screen.queryByText(/Indexing local usage/)).toBeNull()
@@ -163,6 +330,30 @@ describe('usage settings', () => {
     expect(request).toHaveBeenCalledTimes(1)
   })
 
+  it('says a refresh failed and offers to try again', async () => {
+    let fail = false
+    const request = vi.fn(async (_method: string, params: { range: UsageHistoryRange }) => {
+      if (fail) throw new Error('The index could not be opened.')
+      return historyResult(params.range)
+    })
+    render(<UsageSettings transport={{ request } as unknown as Transport} />)
+    await screen.findByText('4 sessions on 1 of 1 days')
+
+    fail = true
+    fireEvent.click(screen.getByRole('button', { name: 'Check for new usage' }))
+    const notice = await screen.findByText(
+      /The last refresh failed, so the figures are from the one before\./,
+    )
+    expect(notice.getAttribute('title')).toBe('The index could not be opened.')
+    expect(screen.getByText('4 sessions on 1 of 1 days')).toBeTruthy()
+
+    fail = false
+    fireEvent.click(within(notice).getByRole('button', { name: 'Try again' }))
+    await waitFor(() => {
+      expect(screen.queryByText(/The last refresh failed/)).toBeNull()
+    })
+  })
+
   it('offers another try when the first read fails', async () => {
     let fail = true
     const request = vi.fn(async (_method: string, params: { range: UsageHistoryRange }) => {
@@ -176,23 +367,7 @@ describe('usage settings', () => {
     expect(alert.textContent).toContain('The index could not be opened.')
     fail = false
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
-    expect(await screen.findByText('4 sessions · Jul 10 to Aug 8, 2026')).toBeTruthy()
+    expect(await screen.findByText('4 sessions on 1 of 1 days')).toBeTruthy()
     expect(screen.queryByRole('alert')).toBeNull()
-  })
-
-  it('shares the all-time history with the profile page', async () => {
-    const request = vi.fn(async (_method: string, params: { range: UsageHistoryRange }) =>
-      historyResult(params.range),
-    )
-    const transport = { request } as unknown as Transport
-    const view = render(<UsageSettings transport={transport} />)
-    await screen.findByText('4 sessions · Jul 10 to Aug 8, 2026')
-    fireEvent.click(screen.getByRole('radio', { name: 'All' }))
-    await waitFor(() => expect(request).toHaveBeenCalledTimes(2))
-    view.unmount()
-
-    render(<ProfileSettings transport={transport} account={undefined} providerName="Codex" />)
-    expect(await screen.findByRole('heading', { name: 'Local activity' })).toBeTruthy()
-    expect(request).toHaveBeenCalledTimes(2)
   })
 })
