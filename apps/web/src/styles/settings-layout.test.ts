@@ -214,6 +214,11 @@ describe('settings viewport CSS', () => {
     )
   })
 
+  it('runs a read-only entity row to the column edge', () => {
+    // An empty controls box would keep its 14px margin beside the status.
+    expect(systemCss).toMatch(/\.settings \.set-entity__actions:empty \{[^}]*display: none;/s)
+  })
+
   it('draws every settings button from one 28px set', () => {
     expect(systemCss).toMatch(
       /\.settings \.set-button \{[^}]*height: 28px;[^}]*padding: 0 10px;[^}]*border: 1px solid var\(--line-strong\);[^}]*border-radius: var\(--r-md\);[^}]*font-size: var\(--t-sm\);[^}]*font-weight: 500;/s,

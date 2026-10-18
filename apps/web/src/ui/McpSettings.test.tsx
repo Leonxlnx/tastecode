@@ -403,6 +403,8 @@ describe('MCP settings', () => {
     expect(screen.queryByRole('switch')).toBeNull()
     expect(screen.queryByRole('button', { name: 'Hide server by ID' })).toBeNull()
     expect(screen.getByRole('button', { name: 'Add server' })).toBeTruthy()
+    // The controls box stays empty, so settings-system.css collapses it.
+    expect(inherited.querySelector('.set-entity__actions:not(:empty)')).toBeNull()
   })
 
   it('says it is still checking while the provider collects its servers', async () => {

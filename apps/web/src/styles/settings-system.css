@@ -327,6 +327,12 @@
   margin-left: 14px;
 }
 
+/* A read-only row (an inherited MCP server) has no controls; its margin
+   would stop the status short of the column edge. */
+.settings .set-entity__actions:empty {
+  display: none;
+}
+
 .settings .set-entity__detail {
   max-width: 64ch;
   margin: 2px 0 0;
