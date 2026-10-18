@@ -1,4 +1,4 @@
-import { memo, useState, type CSSProperties } from 'react'
+import { memo, useState, type CSSProperties, type ReactNode } from 'react'
 import type { ProviderId, UsageHistoryModel } from '@harness/contracts'
 import { providerMark } from '../../provider-presentation.js'
 import { ProviderIcon } from '../ProviderIcon.js'
@@ -8,8 +8,8 @@ import {
   formatValue,
   resetText,
   type ProviderSheet,
+  type SheetAccount,
   type SheetLimit,
-  type SheetLimits,
 } from './usage-sheets.js'
 
 /** Models listed before "N more models". */
@@ -20,18 +20,23 @@ function plural(value: number, one: string, many: string): string {
 }
 
 /**
- * One provider: its mark and name, its daily tokens on the shared band, its
- * value, then its plan limits and its models. A provider without sessions in
- * the period is one quiet row and its limits.
+ * One provider: its mark, name and figures beside its band on the shared
+ * axis, its value, then its plan limits and its models, each group named in
+ * the margin. A provider signed in more than once lists its accounts with
+ * their limits instead. A provider without sessions in the period is one
+ * quiet row and its limits.
  */
 export function UsageSheet(props: {
   sheet: ProviderSheet
   index: number
   top: number
   width: number
+  /** "day", or "week" on a long period. */
+  unit: string
+  ticks: readonly number[]
   hover: number | undefined
-  /** The hovered day as text, when a day is hovered. */
-  hoverDay: string | undefined
+  /** Every provider's tokens in the hovered slot. */
+  hoverTotal: number | undefined
   /** "No sessions in the last 7 days"; undefined when the history could not be read. */
   emptyText: string | undefined
   now: number
@@ -41,128 +46,263 @@ export function UsageSheet(props: {
   const { sheet, hover } = props
   const retry = () => props.onRetry(sheet.provider)
   const style = { '--usage-sheet-index': props.index } as CSSProperties
-  const who = (
-    <div className="usage-sheet__who">
+  const title = (
+    <div className="usage-sheet__title">
       <ProviderIcon className="usage-sheet__mark" mark={providerMark(sheet.provider)} size={20} />
       <h2 className="usage-sheet__name">{sheet.name}</h2>
     </div>
+  )
+  const split = sheet.accounts.length > 1
+  const groups = split ? (
+    <SheetGroup label="Accounts">
+      {sheet.accounts.map((account) => (
+        <AccountRows
+          key={account.key}
+          sheet={sheet}
+          account={account}
+          now={props.now}
+          onRetry={retry}
+        />
+      ))}
+    </SheetGroup>
+  ) : (
+    <SheetLimitGroup sheet={sheet} now={props.now} onRetry={retry} quietWhenNone={sheet.empty} />
   )
 
   if (sheet.empty) {
     return (
       <section className="usage-sheet is-empty" aria-label={sheet.name} style={style}>
         <div className="usage-sheet__head">
-          {who}
+          <div className="usage-sheet__who">{title}</div>
           <p className="usage-sheet__empty">{props.emptyText}</p>
           <span />
         </div>
-        <SheetLimitRows
-          name={sheet.name}
-          limits={sheet.limits}
-          now={props.now}
-          onRetry={retry}
-          quietWhenNone
-        />
+        {groups}
       </section>
     )
   }
 
-  const day = hover === undefined ? undefined : sheet.daily[hover]
-  const idle = day !== undefined && day.tokens <= 0
-  // Tokens with no value that day come from models without an API price, not free use.
-  const unpricedDay = day !== undefined && day.tokens > 0 && day.value <= 0
-  const caption =
-    day === undefined
-      ? `${formatTokens(sheet.tokens)} tokens on ${plural(sheet.activeDays, 'day', 'days')} · ${plural(sheet.sessions, 'session', 'sessions')}${sheet.quiet ? ' · too few to rise on this scale' : ''}`
-      : idle
-        ? `No use on ${props.hoverDay}`
-        : `${formatTokens(day.tokens)} tokens on ${props.hoverDay}`
+  const slot = hover === undefined ? undefined : sheet.slots[hover]
+  const idle = slot !== undefined && slot.tokens <= 0
+  // Tokens with no value in a slot come from models without an API price, not free use.
+  const unpriced = slot !== undefined && slot.tokens > 0 && slot.value <= 0
+  const share =
+    slot !== undefined && slot.tokens > 0 && props.hoverTotal ? slot.tokens / props.hoverTotal : 0
 
   return (
     <section className="usage-sheet" aria-label={sheet.name} style={style}>
       <div className="usage-sheet__head">
-        {who}
+        <div className="usage-sheet__who">
+          {title}
+          <p className="usage-sheet__fact">
+            {slot === undefined
+              ? `${formatTokens(sheet.tokens)} tokens`
+              : idle
+                ? 'No use'
+                : `${formatTokens(slot.tokens)} tokens`}
+          </p>
+          <p className="usage-sheet__fact is-soft">
+            {slot === undefined ? (
+              <>
+                <span>{plural(sheet.sessions, 'session', 'sessions')}</span>{' '}
+                <span>{plural(sheet.activeDays, 'day', 'days')}</span>
+              </>
+            ) : idle ? null : (
+              `${Math.max(1, Math.round(share * 100))}% of the ${props.unit}`
+            )}
+          </p>
+        </div>
         <UsageBand
           name={sheet.name}
-          daily={sheet.daily}
+          slots={sheet.slots}
+          unit={props.unit}
           quiet={sheet.quiet}
           activeDays={sheet.activeDays}
           top={props.top}
           width={props.width}
+          ticks={props.ticks}
           hover={hover}
           onHover={props.onHover}
         />
-        <span className={`usage-sheet__value${idle || unpricedDay ? ' is-quiet' : ''}`}>
+        <span className={`usage-sheet__value${idle || unpriced ? ' is-quiet' : ''}`}>
           {idle
             ? 'no use'
-            : unpricedDay
+            : unpriced
               ? 'not priced'
-              : formatValue(day === undefined ? sheet.value : day.value)}
+              : formatValue(slot === undefined ? sheet.value : slot.value)}
         </span>
       </div>
-      <div className="usage-sheet__row usage-sheet__caption-row">
-        <span />
-        <p className="usage-sheet__caption">{caption}</p>
-      </div>
-      <SheetLimitRows name={sheet.name} limits={sheet.limits} now={props.now} onRetry={retry} />
-      <SheetModels models={sheet.models} />
+      {groups}
+      <SheetModels models={sheet.models} tokens={sheet.tokens} />
     </section>
   )
 }
 
-function SheetLimitRows(props: {
-  name: string
-  limits: SheetLimits
-  now: number
-  onRetry: () => void
-  /** A collapsed sheet says nothing about limits it does not have. */
-  quietWhenNone?: boolean
-}) {
-  const { rows, status, retryable } = props.limits
+/** A group of rows named once in the margin. */
+function SheetGroup(props: { label: string; className?: string; children: ReactNode }) {
   return (
-    <div className="usage-sheet__limits">
-      {rows.map((limit, index) => (
-        <LimitRow key={`${limit.label}:${index}`} name={props.name} limit={limit} now={props.now} />
-      ))}
-      {status ? (
-        <div className="usage-sheet__row usage-sheet__status">
-          <span className="usage-sheet__label">{status.label}</span>
-          <span className="usage-sheet__mid">
-            <span className="usage-sheet__aside is-start">{status.detail}</span>
-          </span>
-          {retryable ? (
-            <button
-              className="usage-sheet__more usage-sheet__retry"
-              type="button"
-              onClick={props.onRetry}
-            >
-              Retry
-            </button>
-          ) : (
-            <span />
-          )}
-        </div>
-      ) : rows.length === 0 && !props.quietWhenNone ? (
-        <div className="usage-sheet__row">
-          <span className="usage-sheet__label">No plan limits reported</span>
-        </div>
-      ) : null}
+    <div
+      className={`usage-sheet__group${props.className ? ` ${props.className}` : ''}`}
+      role="group"
+      aria-label={props.label}
+    >
+      <span className="usage-sheet__group-label" aria-hidden>
+        {props.label}
+      </span>
+      <div className="usage-sheet__rows">{props.children}</div>
     </div>
   )
 }
 
-function LimitRow(props: { name: string; limit: SheetLimit; now: number }) {
+/** One row on the sheet's sub-grid: name, a drawing, a note, and the figure at the edge. */
+function SheetRow(props: {
+  className?: string | undefined
+  name: ReactNode
+  nameTitle?: string | undefined
+  graphic?: ReactNode
+  aside?: ReactNode
+  asideTitle?: string | undefined
+  end?: ReactNode
+  endClassName?: string | undefined
+  endTitle?: string | undefined
+}) {
+  return (
+    <div className={`usage-sheet__row${props.className ? ` ${props.className}` : ''}`}>
+      <span className="usage-sheet__mid">
+        <span className="usage-sheet__label" title={props.nameTitle}>
+          {props.name}
+        </span>
+        <span className="usage-sheet__graphic">{props.graphic}</span>
+        <span className="usage-sheet__aside" title={props.asideTitle}>
+          {props.aside}
+        </span>
+      </span>
+      <span
+        className={`usage-sheet__end${props.endClassName ? ` ${props.endClassName}` : ''}`}
+        title={props.endTitle}
+      >
+        {props.end}
+      </span>
+    </div>
+  )
+}
+
+/** A thin bar for a share of the whole, without a track: it is a proportion, not a meter. */
+function ShareBar(props: { share: number }) {
+  return (
+    <span
+      className="usage-sheet__share"
+      style={{ '--usage-share': Math.max(0, Math.min(1, props.share)) } as CSSProperties}
+      aria-hidden
+    />
+  )
+}
+
+function SheetLimitGroup(props: {
+  sheet: ProviderSheet
+  now: number
+  onRetry: () => void
+  /** A collapsed sheet says nothing about limits it does not have. */
+  quietWhenNone: boolean
+}) {
+  const account = props.sheet.accounts[0]
+  if (!account) return null
+  const { rows, status } = account.limits
+  if (rows.length === 0 && !status && props.quietWhenNone) return null
+  return (
+    <SheetGroup label="Plan limits">
+      <LimitRows sheet={props.sheet} account={account} now={props.now} onRetry={props.onRetry} />
+      {rows.length === 0 && !status ? <SheetRow className="is-soft" name="None reported" /> : null}
+    </SheetGroup>
+  )
+}
+
+/** An account's share of the provider, then its limits indented under it. */
+function AccountRows(props: {
+  sheet: ProviderSheet
+  account: SheetAccount
+  now: number
+  onRetry: () => void
+}) {
+  const { sheet, account } = props
+  return (
+    <>
+      <SheetRow
+        className="usage-sheet__account"
+        name={account.label}
+        nameTitle={account.label}
+        graphic={
+          account.tokens > 0 && sheet.tokens > 0 ? (
+            <ShareBar share={account.tokens / sheet.tokens} />
+          ) : null
+        }
+        aside={account.tokens > 0 ? `${formatTokens(account.tokens)} tokens` : 'No sessions'}
+        end={account.tokens > 0 ? formatValue(account.value) : null}
+      />
+      <LimitRows sheet={sheet} account={account} now={props.now} onRetry={props.onRetry} nested />
+    </>
+  )
+}
+
+function LimitRows(props: {
+  sheet: ProviderSheet
+  account: SheetAccount
+  now: number
+  onRetry: () => void
+  /** Under an account row. */
+  nested?: boolean
+}) {
+  const { rows, status, retryable } = props.account.limits
+  const owner =
+    props.sheet.accounts.length > 1
+      ? `${props.sheet.name} ${props.account.label}`
+      : props.sheet.name
+  const nested = props.nested ? ' is-nested' : ''
+  return (
+    <>
+      {rows.map((limit, index) => (
+        <LimitRow
+          key={`${limit.label}:${index}`}
+          owner={owner}
+          limit={limit}
+          now={props.now}
+          nested={nested}
+        />
+      ))}
+      {status ? (
+        <SheetRow
+          className={`usage-sheet__status${nested}`}
+          name={status.label}
+          graphic={
+            status.detail ? <span className="usage-sheet__detail">{status.detail}</span> : null
+          }
+          end={
+            retryable ? (
+              <button className="usage-sheet__more" type="button" onClick={props.onRetry}>
+                Retry
+              </button>
+            ) : null
+          }
+        />
+      ) : null}
+    </>
+  )
+}
+
+function LimitRow(props: { owner: string; limit: SheetLimit; now: number; nested: string }) {
   const { limit } = props
   const reset = limit.resetsAt === undefined ? undefined : resetText(limit.resetsAt, props.now)
   return (
-    <div className={`usage-sheet__row usage-sheet__limit is-${limit.state}`}>
-      <span className="usage-sheet__label">{limit.label}</span>
-      <span className="usage-sheet__mid">
-        {limit.valueLabel === undefined ? (
+    <SheetRow
+      className={`usage-sheet__limit is-${limit.state}${props.nested}`}
+      name={limit.label}
+      nameTitle={limit.label}
+      graphic={
+        limit.valueLabel === undefined ? (
           <span
             className="usage-sheet__meter"
             role="progressbar"
-            aria-label={`${props.name} ${limit.label} left`}
+            aria-label={`${props.owner} ${limit.label} left`}
             aria-valuenow={limit.left}
             aria-valuemin={0}
             aria-valuemax={100}
@@ -172,55 +312,49 @@ function LimitRow(props: { name: string; limit: SheetLimit; now: number }) {
               style={{ '--usage-sheet-left': `${limit.left}%` } as CSSProperties}
             />
           </span>
-        ) : null}
-        {reset ? (
-          <span className="usage-sheet__aside" title={reset.title}>
-            {reset.label}
-          </span>
-        ) : null}
-      </span>
-      <span className="usage-sheet__end">
-        {limit.valueLabel ?? (limit.state === 'reached' ? 'Reached' : `${limit.left}% left`)}
-      </span>
-    </div>
+        ) : null
+      }
+      aside={reset?.label}
+      asideTitle={reset?.title}
+      end={limit.valueLabel ?? (limit.state === 'reached' ? 'Reached' : `${limit.left}% left`)}
+    />
   )
 }
 
-/** The period's models: they describe the period, so a day hover fades them. */
-const SheetModels = memo(function SheetModels(props: { models: UsageHistoryModel[] }) {
+/** The period's models: they describe the period, so a hover on the band fades them. */
+const SheetModels = memo(function SheetModels(props: {
+  models: UsageHistoryModel[]
+  tokens: number
+}) {
   const [expanded, setExpanded] = useState(false)
   const { models } = props
   if (models.length === 0) return null
   const shown = expanded ? models : models.slice(0, MODELS_SHOWN)
   const rest = models.length - MODELS_SHOWN
   return (
-    <div className="usage-sheet__models">
+    <SheetGroup label="Models" className="usage-sheet__models">
       {shown.map((model) => (
-        <div className="usage-sheet__row usage-sheet__model" key={model.model}>
-          <span className="usage-sheet__label" title={model.model}>
-            {model.model}
-          </span>
-          <span className="usage-sheet__mid">
-            <span className="usage-sheet__aside is-start">
-              {formatTokens(model.totals.processedTokens)} tokens
-            </span>
-          </span>
-          {model.pricing === 'unpriced' ? (
-            <span className="usage-sheet__end is-unpriced">not priced</span>
-          ) : (
-            <span
-              className="usage-sheet__end"
-              title={
-                model.pricing === 'family'
-                  ? 'Priced from a sibling model, so approximate'
-                  : undefined
-              }
-            >
-              {model.pricing === 'family' ? '≈ ' : ''}
-              {formatValue(model.totals.estimatedCostUsd)}
-            </span>
-          )}
-        </div>
+        <SheetRow
+          key={model.model}
+          className="usage-sheet__model"
+          name={model.model}
+          nameTitle={model.model}
+          graphic={
+            props.tokens > 0 ? (
+              <ShareBar share={model.totals.processedTokens / props.tokens} />
+            ) : null
+          }
+          aside={`${formatTokens(model.totals.processedTokens)} tokens`}
+          end={
+            model.pricing === 'unpriced'
+              ? 'not priced'
+              : `${model.pricing === 'family' ? '≈ ' : ''}${formatValue(model.totals.estimatedCostUsd)}`
+          }
+          endClassName={model.pricing === 'unpriced' ? 'is-unpriced' : undefined}
+          endTitle={
+            model.pricing === 'family' ? 'Priced from a sibling model, so approximate' : undefined
+          }
+        />
       ))}
       {rest > 0 ? (
         <div className="usage-sheet__row usage-sheet__more-row">
@@ -234,6 +368,6 @@ const SheetModels = memo(function SheetModels(props: { models: UsageHistoryModel
           </button>
         </div>
       ) : null}
-    </div>
+    </SheetGroup>
   )
 })

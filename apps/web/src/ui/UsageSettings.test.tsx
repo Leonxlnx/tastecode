@@ -99,7 +99,8 @@ describe('usage settings', () => {
     expect(screen.getByRole('heading', { level: 1, name: 'Usage' })).toBeTruthy()
     expect(screen.getByRole('status', { name: 'Reading the usage index' })).toBeTruthy()
     expect(await screen.findByText('4 sessions on 1 of 1 days')).toBeTruthy()
-    expect(screen.getAllByText('1.23M tokens')).toHaveLength(2)
+    // The top line, the Codex sheet and its one model.
+    expect(screen.getAllByText('1.23M tokens')).toHaveLength(3)
     expect(request).toHaveBeenNthCalledWith(1, 'usage.history', { range: '30d' })
     const period = screen.getByRole<HTMLSelectElement>('combobox', { name: 'Period' })
     expect(period.value).toBe('30d')
@@ -126,7 +127,9 @@ describe('usage settings', () => {
 
     const codex = await screen.findByRole('region', { name: 'Codex' })
     expect(within(codex).getByText('$12.34')).toBeTruthy()
-    expect(within(codex).getByText('1.23M tokens on 2 days · 4 sessions')).toBeTruthy()
+    expect(within(codex).getByText('4 sessions').parentElement?.textContent).toBe(
+      '4 sessions 2 days',
+    )
     expect(within(codex).getByText('≈ $3.00').getAttribute('title')).toBe(
       'Priced from a sibling model, so approximate',
     )
@@ -134,7 +137,9 @@ describe('usage settings', () => {
     fireEvent.click(within(codex).getByRole('button', { name: '1 more model' }))
     expect(within(codex).getByText('not priced')).toBeTruthy()
     expect(within(codex).getByRole('button', { name: 'Fewer models' })).toBeTruthy()
-    expect(within(codex).getByText('No plan limits reported')).toBeTruthy()
+    expect(
+      within(within(codex).getByRole('group', { name: 'Plan limits' })).getByText('None reported'),
+    ).toBeTruthy()
 
     expect(screen.getByText('$4.56')).toBeTruthy()
     expect(screen.getByText('Without caching, these tokens would come to $16.90.')).toBeTruthy()
@@ -148,17 +153,19 @@ describe('usage settings', () => {
     const { transport } = transportOf(codexHistory)
     render(<UsageSettings transport={transport} />)
     const codex = await screen.findByRole('region', { name: 'Codex' })
-    const band = within(codex).getByRole('img', { name: /Codex daily tokens, 2 active days/ })
+    const band = within(codex).getByRole('img', { name: /Codex tokens a day, 2 active days/ })
 
     fireEvent.focus(band)
     expect(document.querySelector('.usage-page')?.classList.contains('is-scrubbing')).toBe(true)
-    expect(within(codex).getByText('830K tokens on Aug 8')).toBeTruthy()
+    expect(within(codex).getByText('830K tokens')).toBeTruthy()
+    expect(within(codex).getByText('100% of the day')).toBeTruthy()
     expect(within(codex).getByText('$9.13')).toBeTruthy()
     expect(screen.getAllByText('Sat, Aug 8')).toHaveLength(2)
     expect(screen.getByText('3 sessions')).toBeTruthy()
 
     fireEvent.keyDown(band, { key: 'ArrowLeft', shiftKey: true })
-    expect(within(codex).getByText('No use on Aug 6')).toBeTruthy()
+    expect(within(codex).getByText('No use')).toBeTruthy()
+    expect(screen.getAllByText('Thu, Aug 6')).toHaveLength(2)
     expect(within(codex).getByText('no use')).toBeTruthy()
 
     fireEvent.keyDown(band, { key: 'Escape' })
@@ -174,8 +181,8 @@ describe('usage settings', () => {
     render(<UsageSettings transport={transport} />)
     const codex = await screen.findByRole('region', { name: 'Codex' })
 
-    fireEvent.focus(within(codex).getByRole('img', { name: /Codex daily tokens/ }))
-    expect(within(codex).getByText('830K tokens on Aug 8')).toBeTruthy()
+    fireEvent.focus(within(codex).getByRole('img', { name: /Codex tokens a day/ }))
+    expect(within(codex).getByText('830K tokens')).toBeTruthy()
     expect(within(codex).getByText('not priced')).toBeTruthy()
     expect(within(codex).queryByText('$0.00')).toBeNull()
   })
