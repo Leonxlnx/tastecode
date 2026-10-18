@@ -142,7 +142,16 @@ describe('provider sheets', () => {
     } as unknown as UsageSummaryState
 
     expect(sheetLimits(unavailable)).toBeUndefined()
-    expect(sheetLimits(ready('codex', []))).toEqual({ rows: [], retryable: false })
+    const none = {
+      status: 'ready',
+      provider: 'codex',
+      summary: {
+        provider: 'codex',
+        limits: [],
+        limitSource: { provider: 'codex', status: 'ready', limits: [] },
+      },
+    } as unknown as UsageSummaryState
+    expect(sheetLimits(none)).toEqual({ rows: [], retryable: false })
     expect(sheetLimits(failed)).toEqual({
       rows: [],
       status: { label: 'Unavailable', detail: 'Plan limits couldn’t be loaded. offline' },
