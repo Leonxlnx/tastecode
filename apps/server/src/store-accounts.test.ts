@@ -171,3 +171,42 @@ describe('provider accounts in the store', () => {
     }
   })
 })
+
+describe('the account a chat is pinned to', () => {
+  it('keeps chats from before accounts on the default account', () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), 'harness-store-accounts-'))
+    roots.push(root)
+    const location = path.join(root, 'tastecode.db')
+    const first = open(location)
+    first.addThread({ id: 'older', projectPath: root, provider: 'codex', title: 'Older' })
+    first.close()
+    stores.splice(stores.indexOf(first), 1)
+    // The table as a build before accounts left it.
+    const raw = new DatabaseSync(location)
+    raw.prepare(`ALTER TABLE threads DROP COLUMN account_id`).run()
+    raw.close()
+
+    const store = open(location)
+    store.addThread({
+      id: 'pinned',
+      projectPath: root,
+      provider: 'codex',
+      accountId: 'work-1a2b3c',
+      title: 'Pinned',
+    })
+    expect(store.thread('older')?.accountId).toBeUndefined()
+    expect(store.thread('pinned')?.accountId).toBe('work-1a2b3c')
+    expect(
+      store.sidebarThreads().map((thread) => [thread.id, thread.accountId ?? 'default']),
+    ).toEqual(
+      expect.arrayContaining([
+        ['older', 'default'],
+        ['pinned', 'work-1a2b3c'],
+      ]),
+    )
+    store.close()
+    stores.splice(stores.indexOf(store), 1)
+    // Read back from disk, not from the store's cache.
+    expect(open(location).thread('pinned')?.accountId).toBe('work-1a2b3c')
+  })
+})

@@ -110,6 +110,8 @@ export type StoredThread = {
   agent?: string | undefined
   /** Non-secret connection identity for direct API sessions. */
   connectionId?: string | undefined
+  /** The provider account this chat is pinned to. Absent means the default account. */
+  accountId?: string | undefined
   /** Opaque provider-owned resume identity. Never used as the TasteCode id. */
   providerSessionId?: string | undefined
   title: string
@@ -140,6 +142,8 @@ export type StoredSidebarThread = {
   agent?: string | undefined
   /** Non-secret connection identity for direct API sessions. */
   connectionId?: string | undefined
+  /** The provider account this chat is pinned to. Absent means the default account. */
+  accountId?: string | undefined
   title: string
   pinned: boolean
   createdAt: number
@@ -341,6 +345,7 @@ CREATE TABLE IF NOT EXISTS threads (
   provider     TEXT NOT NULL,
   agent        TEXT,
   connection_id TEXT,
+  account_id   TEXT,
   provider_session_id TEXT,
   title        TEXT NOT NULL,
   pinned       INTEGER NOT NULL DEFAULT 0,
@@ -620,6 +625,7 @@ const ADDED_COLUMNS: Array<{ table: string; column: string; definition: string }
   { table: 'threads', column: 'restore_context_pending', definition: 'INTEGER NOT NULL DEFAULT 0' },
   { table: 'threads', column: 'provider_session_id', definition: 'TEXT' },
   { table: 'threads', column: 'connection_id', definition: 'TEXT' },
+  { table: 'threads', column: 'account_id', definition: 'TEXT' },
   { table: 'threads', column: 'history_rewrite_after', definition: 'INTEGER' },
   { table: 'threads', column: 'history_rewrite_through', definition: 'INTEGER' },
 ]
@@ -652,6 +658,7 @@ type ThreadRow = {
   provider: string
   agent: string | null
   connection_id: string | null
+  account_id: string | null
   provider_session_id: string | null
   title: string
   pinned: SqliteInteger
@@ -677,6 +684,7 @@ type SidebarThreadRow = Pick<
   | 'provider'
   | 'agent'
   | 'connection_id'
+  | 'account_id'
   | 'title'
   | 'pinned'
   | 'created_at'
@@ -1199,10 +1207,10 @@ export class Store {
     this.#findProject = this.#db.prepare(`SELECT * FROM projects WHERE path = ?`)
     this.#insertThread = this.#db.prepare(
       `INSERT INTO threads
-        (id, project_path, provider, agent, connection_id, provider_session_id, title, created_at,
-          worktree_path, worktree_branch,
+        (id, project_path, provider, agent, connection_id, account_id, provider_session_id, title,
+          created_at, worktree_path, worktree_branch,
           lifecycle_state, keep_active, unread, last_active_at, ephemeral, parent_thread_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 0, 0, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 0, 0, ?, ?, ?)`,
     )
     this.#listProjects = this.#db.prepare(`SELECT * FROM projects ORDER BY created_at`)
     this.#listProjectThreads = this.#db.prepare(
@@ -1212,7 +1220,8 @@ export class Store {
       `SELECT * FROM threads WHERE ephemeral = 0 ORDER BY created_at DESC`,
     )
     this.#listSidebarThreads = this.#db.prepare(
-      `SELECT id, project_path, provider, agent, connection_id, title, pinned, created_at, closed_at,
+      `SELECT id, project_path, provider, agent, connection_id, account_id, title, pinned, created_at,
+              closed_at,
               worktree_branch, lifecycle_state, lifecycle_at, lifecycle_reason, wake_at,
               keep_active, woke_at, unread
        FROM threads WHERE ephemeral = 0 ORDER BY created_at DESC`,
@@ -1573,6 +1582,7 @@ export class Store {
       stored.provider,
       stored.agent ?? null,
       stored.connectionId ?? null,
+      stored.accountId ?? null,
       stored.providerSessionId ?? null,
       stored.title,
       stored.createdAt,
@@ -4985,6 +4995,7 @@ function toSidebarThread(row: SidebarThreadRow): StoredSidebarThread | undefined
     provider,
     ...(row.agent === null ? {} : { agent: row.agent }),
     ...(row.connection_id === null ? {} : { connectionId: row.connection_id }),
+    ...(row.account_id === null ? {} : { accountId: row.account_id }),
     title: row.title,
     pinned: row.pinned === 1,
     createdAt: Number(row.created_at),
@@ -5007,6 +5018,7 @@ function toThread(row: ThreadRow): StoredThread | undefined {
     provider,
     ...(row.agent === null ? {} : { agent: row.agent }),
     ...(row.connection_id === null ? {} : { connectionId: row.connection_id }),
+    ...(row.account_id === null ? {} : { accountId: row.account_id }),
     ...(row.provider_session_id === null ? {} : { providerSessionId: row.provider_session_id }),
     title: row.title,
     pinned: row.pinned === 1,
