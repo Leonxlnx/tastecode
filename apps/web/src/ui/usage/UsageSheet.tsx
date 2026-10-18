@@ -69,6 +69,8 @@ export function UsageSheet(props: {
 
   const day = hover === undefined ? undefined : sheet.daily[hover]
   const idle = day !== undefined && day.tokens <= 0
+  // Tokens with no value that day come from models without an API price, not free use.
+  const unpricedDay = day !== undefined && day.tokens > 0 && day.value <= 0
   const caption =
     day === undefined
       ? `${formatTokens(sheet.tokens)} tokens on ${plural(sheet.activeDays, 'day', 'days')} · ${plural(sheet.sessions, 'session', 'sessions')}${sheet.quiet ? ' · too few to rise on this scale' : ''}`
@@ -90,8 +92,12 @@ export function UsageSheet(props: {
           hover={hover}
           onHover={props.onHover}
         />
-        <span className={`usage-sheet__value${idle ? ' is-quiet' : ''}`}>
-          {idle ? 'no use' : formatValue(day === undefined ? sheet.value : day.value)}
+        <span className={`usage-sheet__value${idle || unpricedDay ? ' is-quiet' : ''}`}>
+          {idle
+            ? 'no use'
+            : unpricedDay
+              ? 'not priced'
+              : formatValue(day === undefined ? sheet.value : day.value)}
         </span>
       </div>
       <div className="usage-sheet__row usage-sheet__caption-row">

@@ -166,6 +166,20 @@ describe('usage settings', () => {
     expect(within(codex).getByText('$12.34')).toBeTruthy()
   })
 
+  it('reads a day whose tokens have no API price as not priced, not as free', async () => {
+    const result = codexHistory('30d')
+    const last = result.daily.at(-1)?.providers[0]
+    if (last) last.estimatedCostUsd = 0
+    const { transport } = transportOf(() => result)
+    render(<UsageSettings transport={transport} />)
+    const codex = await screen.findByRole('region', { name: 'Codex' })
+
+    fireEvent.focus(within(codex).getByRole('img', { name: /Codex daily tokens/ }))
+    expect(within(codex).getByText('830K tokens on Aug 8')).toBeTruthy()
+    expect(within(codex).getByText('not priced')).toBeTruthy()
+    expect(within(codex).queryByText('$0.00')).toBeNull()
+  })
+
   it('names a reached and a low limit under the top line and keeps them in their sheets', async () => {
     vi.useFakeTimers({ now: NOW, toFake: ['Date'] })
     const limits = limitsOf([
