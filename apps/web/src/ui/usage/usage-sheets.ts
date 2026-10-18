@@ -101,7 +101,11 @@ export function sheetLimits(state: UsageSummaryState): SheetLimits | undefined {
   const limits = source?.status === 'ready' ? source.limits : []
   return {
     rows: limits.map(sheetLimit),
-    status: sourceStatus(state, source, limits.length > 0),
+    // A source that answered without windows reads as having none, not as a status.
+    status:
+      state.status === 'error' || source === undefined
+        ? sourceStatus(state, source, limits.length > 0)
+        : undefined,
     retryable: state.status === 'error',
   }
 }

@@ -142,6 +142,7 @@ describe('provider sheets', () => {
     } as unknown as UsageSummaryState
 
     expect(sheetLimits(unavailable)).toBeUndefined()
+    expect(sheetLimits(ready('codex', []))).toEqual({ rows: [], retryable: false })
     expect(sheetLimits(failed)).toEqual({
       rows: [],
       status: { label: 'Unavailable', detail: 'Plan limits couldn’t be loaded. offline' },
