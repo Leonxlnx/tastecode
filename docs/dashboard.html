@@ -291,13 +291,33 @@
           <a href="./feature-inventory.html">Inventory</a>
         </nav>
         <span class="meta"
-          >2026-10-16 main 0ad74ec3 · Full-width replies, context ring, model order</span
+          >2026-10-18 main b86daab1 · Restore cut, kept drafts, Claude task plans</span
         >
       </div>
     </div>
 
     <div class="wrap">
       <section id="scope">
+        <p>
+          October 18 (main b86daab1): Karol's October 16 and 17 round landed. The Restore dialog
+          lists the chat's prompts with a dotted cut above the one to go back to (PR #1715), its
+          Undo notice stays until the user acts (PR #1681), restored turns stay out of later
+          provider history imports (PR #1679), and a shortened checkpoint label ends with an
+          ellipsis (PR #1703). Composer drafts survive a reload or restart (PR #1700), a chat delete
+          that a quit interrupted finishes on the next start (PR #1702), and an image chip that gets
+          no preview says so (PR #1636). Chat replies show single line breaks (PR #1674), raw HTML
+          in agent replies shows as source text (PR #1669), bold keeps its weight once a reply
+          completes (PR #1678), and text cuts no longer split an emoji (PR #1639). Claude Code task
+          lists show as the turn plan, also after a resume (PR #1701), and background writing tries
+          the next source when one cannot answer (PR #1635). On macOS only Command acts as the
+          primary shortcut modifier (PR #1699). The Full access description drops its false undo
+          claim (PR #1698), the project rename field has an accessible name (PR #1668), and the
+          access label fades with its morphing icon (PR #1840). The dev stack stops as a whole when
+          its terminal closes (PR #1634). A test audit removed code, CSS and package exports nothing
+          calls (PRs #1796, #1797, #1798), fixed stale test inputs, an obsolete bench and two flaky
+          tests (PR #1799), and stopped shipping profile probes, the beta 7 upload branch and unused
+          root dependencies (PR #1800).
+        </p>
         <p>
           October 16 (main 0ad74ec3): Leon's overnight round landed. Assistant replies use the full
           transcript width (PR #1616), code block controls line up with the label and the block
@@ -877,10 +897,11 @@
                     current lineup (Fable 5.1, Opus 5.5, Sonnet 5.5, Haiku 5.5) first and visible
                     and every older generation hidden by default, effort up to Ultracode while
                     Claude Code reports it available, steer, resume (also for a chat whose first
-                    prompt never reached the CLI), approvals, structured questions, pasted and
-                    selected image input, selected file references, structured subscription limits
-                    with a 120 s read, and project MCP definitions on start and resume; unsupported
-                    inherited-server hiding is rejected before saving</span
+                    prompt never reached the CLI), approvals, structured questions, task lists shown
+                    as the turn plan (also after a resume), pasted and selected image input,
+                    selected file references, structured subscription limits with a 120 s read, and
+                    project MCP definitions on start and resume; unsupported inherited-server hiding
+                    is rejected before saving</span
                   >
                 </span>
               </li>
@@ -916,16 +937,17 @@
                     before a narrow toolbar can overlap, and the permission chip keeps its icon; one
                     smooth effort pill, with the level shown as dots on the composer model button,
                     and a context meter with its percentage for Codex and Claude Code chats too;
-                    replies use the full transcript width and streamed text reveals at a steady
-                    pace; streamed tables, links and task lists render live, a stopped reply ends
-                    with its own summary and a Stopped by you marker, Arrow Up in an empty composer
-                    recalls the last prompt, and code blocks wrap on demand; completing replies and
-                    their code blocks keep their height, Jump to latest lands at the moving end, and
-                    toasts open above the docked composer; plus an in-pane session header with
-                    shared rename in a visible field, pin, delete, checkpoint, Workspace, and
-                    Terminal actions; the idle voice control stays flat; Stop immediately restores
-                    the idle presentation while provider interruption finishes in the
-                    background</span
+                    replies use the full transcript width, show single line breaks and render raw
+                    HTML from agents as source text, and streamed text reveals at a steady pace;
+                    unsent drafts survive a reload or restart; streamed tables, links and task lists
+                    render live, a stopped reply ends with its own summary and a Stopped by you
+                    marker, Arrow Up in an empty composer recalls the last prompt, and code blocks
+                    wrap on demand; completing replies and their code blocks keep their height, Jump
+                    to latest lands at the moving end, and toasts open above the docked composer;
+                    plus an in-pane session header with shared rename in a visible field, pin,
+                    delete, checkpoint, Workspace, and Terminal actions; the idle voice control
+                    stays flat; Stop immediately restores the idle presentation while provider
+                    interruption finishes in the background</span
                   >
                 </span>
               </li>
@@ -1114,7 +1136,8 @@
                   >Durable prompt delivery and reconnect convergence
                   <span class="d"
                     >queued prompts survive restart; accepted, rejected, and indeterminate sends
-                    converge once without duplicate rows or cross-thread draft leaks</span
+                    converge once without duplicate rows or cross-thread draft leaks; a chat delete
+                    that a quit interrupted finishes on the next start</span
                   >
                 </span>
               </li>
@@ -1125,7 +1148,8 @@
                   <span class="d"
                     >reconnects, push gaps, and cached reopens fetch only the missing event suffix;
                     checkpoint restore and undo keep files, transcript, and cursor atomic and reach
-                    every connected client</span
+                    every connected client, and restored turns stay out of later provider history
+                    imports</span
                   >
                 </span>
               </li>
