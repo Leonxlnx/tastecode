@@ -15,7 +15,8 @@
  * provider.
  *
  * Per frame and live message: a few multiplications, a TreeWalker step over a
- * handful of characters and one StaticRange. No DOM mutation, no layout read.
+ * handful of characters and a new StaticRange for each highlight whose
+ * boundaries moved. No DOM mutation, no layout read.
  */
 
 /** The veil aims to trail arrival by at least this much, so a burst never shows at once. */
@@ -316,6 +317,55 @@ interface ClockInternals {
   forget(cursor: Cursor): void
 }
 
+/**
+ * The one range a cursor keeps in a highlight. A range is replaced only when
+ * one of its boundaries moved: each replacement costs a new StaticRange, two
+ * highlight updates and later garbage, and makes the browser rebuild every
+ * highlight's markers and repaint the text under them. Text that lands inside
+ * an unchanged range needs nothing from here: the browser marks highlights
+ * again after every DOM change.
+ */
+class HighlightSlot {
+  private range: AbstractRange | undefined
+  private startContainer: Node | undefined
+  private startOffset = 0
+  private endContainer: Node | undefined
+  private endOffset = 0
+
+  constructor(
+    private readonly env: RevealEnvironment,
+    private readonly highlight: RevealHighlight,
+  ) {}
+
+  show(startContainer: Node, startOffset: number, endContainer: Node, endOffset: number): void {
+    if (
+      this.range &&
+      this.startContainer === startContainer &&
+      this.startOffset === startOffset &&
+      this.endContainer === endContainer &&
+      this.endOffset === endOffset
+    ) {
+      return
+    }
+    const previous = this.range
+    this.range = this.env.createRange({ startContainer, startOffset, endContainer, endOffset })
+    this.startContainer = startContainer
+    this.startOffset = startOffset
+    this.endContainer = endContainer
+    this.endOffset = endOffset
+    if (previous) this.highlight.delete(previous)
+    this.highlight.add(this.range)
+  }
+
+  clear(): void {
+    if (!this.range) return
+    this.highlight.delete(this.range)
+    this.range = undefined
+    this.startContainer = undefined
+    this.endContainer = undefined
+  }
+}
+
 class Cursor implements RevealCursor {
   readonly tracking = true
   private readonly pace = new RevealPace()
@@ -326,8 +376,9 @@ class Cursor implements RevealCursor {
    * edge was a third, two thirds and all of the ramp time ago.
    */
   private readonly trail: readonly [TextPosition, TextPosition, TextPosition]
-  private veil: AbstractRange | undefined
-  private readonly bands: Array<AbstractRange | undefined> = [undefined, undefined, undefined]
+  private readonly veil: HighlightSlot
+  /** The fade bands' ranges, nearest the edge first. */
+  private readonly bands: readonly [HighlightSlot, HighlightSlot, HighlightSlot]
   /** Recent frames: when, and how many characters the edge had passed. */
   private readonly times: number[] = []
   private readonly counts: number[] = []
@@ -348,6 +399,13 @@ class Cursor implements RevealCursor {
   ) {
     this.edge = new TextPosition(root, (node) => this.enter(node))
     this.trail = [new TextPosition(root), new TextPosition(root), new TextPosition(root)]
+    const { env, veil, fresh } = clock
+    this.veil = new HighlightSlot(env, veil)
+    this.bands = [
+      new HighlightSlot(env, fresh[0]),
+      new HighlightSlot(env, fresh[1]),
+      new HighlightSlot(env, fresh[2]),
+    ]
   }
 
   appended(characters: number): void {
@@ -357,8 +415,11 @@ class Cursor implements RevealCursor {
       this.showAll()
       return
     }
-    // The old veil ended where the root ended; new text past it would show
-    // for a frame. Repaint it before the browser paints.
+    // The veil ends where the root ended. A new block appended to the root
+    // lies past it and would show for a frame, so the veil moves its end
+    // before the browser paints; a first character after everything was
+    // shown needs a veil again. Text that lands inside an existing block is
+    // already covered, and nothing is replaced for it.
     this.paint()
     if (this.edge.count < this.pace.total) this.clock.wake(this)
   }
@@ -389,13 +450,9 @@ class Cursor implements RevealCursor {
     if (this.disposed) return
     this.disposed = true
     if (this.fallback !== undefined) this.clock.env.clearTimer(this.fallback)
-    if (this.veil) this.clock.veil.delete(this.veil)
-    this.veil = undefined
+    this.veil.clear()
     this.releaseBoxes()
-    this.bands.forEach((band, index) => {
-      if (band) this.clock.fresh[index]!.delete(band)
-      this.bands[index] = undefined
-    })
+    for (const band of this.bands) band.clear()
     this.clock.forget(this)
   }
 
@@ -541,38 +598,30 @@ class Cursor implements RevealCursor {
     this.onDrained?.()
   }
 
+  /** Brings the veil and the bands up to the positions; unmoved ranges stay as they are. */
   private paint(): void {
-    const { env, veil, fresh } = this.clock
-    const previous = this.veil
-    this.veil =
-      this.edge.count < this.pace.total
-        ? env.createRange({
-            startContainer: this.edge.container,
-            startOffset: this.edge.boundary,
-            endContainer: this.root,
-            endOffset: this.root.childNodes.length,
-          })
-        : undefined
-    if (previous) veil.delete(previous)
-    if (this.veil) veil.add(this.veil)
+    if (this.edge.count < this.pace.total) {
+      this.veil.show(
+        this.edge.container,
+        this.edge.boundary,
+        this.root,
+        this.root.childNodes.length,
+      )
+    } else {
+      this.veil.clear()
+    }
 
     let end = this.edge
-    this.trail.forEach((start, index) => {
-      const band = this.bands[index]
-      if (band) fresh[index]!.delete(band)
-      const next =
-        start.count < end.count
-          ? env.createRange({
-              startContainer: start.container,
-              startOffset: start.boundary,
-              endContainer: end.container,
-              endOffset: end.boundary,
-            })
-          : undefined
-      this.bands[index] = next
-      if (next) fresh[index]!.add(next)
+    for (let index = 0; index < 3; index += 1) {
+      const start = this.trail[index]!
+      const band = this.bands[index]!
+      if (start.count < end.count) {
+        band.show(start.container, start.boundary, end.container, end.boundary)
+      } else {
+        band.clear()
+      }
       end = start
-    })
+    }
   }
 }
 /** Where nothing is ever veiled: no API, so text shows as it lands. */
