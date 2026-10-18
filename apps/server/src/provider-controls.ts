@@ -24,7 +24,12 @@ import {
 import { GROK_MCP_CAPABILITIES } from '@harness/adapter-grok/mcp'
 import { OPENCODE_MCP_CAPABILITIES } from '@harness/adapter-opencode/inventory'
 import { accountRead, type AccountIdentity } from './account-identity.js'
-import { parseLimitSnapshot, serializeLimitSnapshot } from './limit-snapshot.js'
+import {
+  parseLimitFailures,
+  parseLimitSnapshot,
+  serializeLimitSnapshot,
+  type SavedLimitFailure,
+} from './limit-snapshot.js'
 import type { ModelListRead } from './model-list-cache.js'
 import { ProjectInventoryCache, type ProjectInventoryService } from './project-inventory-cache.js'
 import { PROVIDER_CAPABILITIES, type ProviderControlCapabilities } from './provider-capabilities.js'
@@ -255,6 +260,10 @@ type LimitEntry = {
 }
 type LimitFailure = { error: unknown; count: number; timeouts: number; retryAt: number }
 type ReadyLimitSource = Extract<ProviderLimitSource, { status: 'ready' }>
+type SavedLimits = {
+  sources: Map<ProviderId, ReadyLimitSource>
+  failures: Map<ProviderId, SavedLimitFailure>
+}
 
 const REFRESH_ERROR_LIMIT = 300
 const REFRESH_ERROR_FALLBACK = 'Plan limits could not be refreshed.'
@@ -323,6 +332,17 @@ function lastKnownLimits(held: ReadyLimitSource, failure: LimitFailure): ReadyLi
 function refreshErrorOf(failure: LimitFailure): string {
   const message = failure.error instanceof Error ? failure.error.message.trim() : ''
   return message ? message.slice(0, REFRESH_ERROR_LIMIT) : REFRESH_ERROR_FALLBACK
+}
+
+/** A source whose newest read failed and that holds no values to keep. */
+function failedLimits(provider: ProviderId, failure: LimitFailure): ProviderLimitSource {
+  return {
+    provider,
+    status: 'unavailable',
+    reason: 'failed',
+    error: refreshErrorOf(failure),
+    ...(Number.isFinite(failure.retryAt) ? { retryAt: failure.retryAt } : {}),
+  }
 }
 
 /** Failed reads wait 5, 10 and 20 minutes, then every 30 minutes. */
@@ -464,9 +484,10 @@ export class ProviderControls {
   /**
    * The last full read per provider, kept across restarts. Only views that
    * show the limits see it, and only until this session holds a value; a
-   * passive figure never shows numbers this session has not confirmed.
+   * passive figure never shows numbers this session has not confirmed. Beside
+   * it, each provider's newest failed read, whose backoff a launch keeps.
    */
-  #savedLimits: Map<ProviderId, ReadyLimitSource> | undefined
+  #savedLimits: SavedLimits | undefined
   readonly #accountCacheMs: number
   readonly #accountFallbackMs: number
   /** Keyed by provider and agent; an auth change deletes the provider's entries. */
@@ -700,9 +721,7 @@ export class ProviderControls {
               intent,
             )
           : this.#read(async () => ({ provider, status: 'unavailable' })),
-      heldLimitSource: (intent) =>
-        this.#limits.get(provider)?.value ??
-        (intent === 'background' ? undefined : this.#lastSession(provider)),
+      heldLimitSource: (intent) => this.#heldLimits(provider, intent),
       signOut: (agent) =>
         this.#auth(provider, async (generation) => {
           const login = this.#logins.get(provider)
@@ -890,6 +909,8 @@ export class ProviderControls {
         stored: 0,
         readAt: Number.NEGATIVE_INFINITY,
         freshUntil: 0,
+        // The last session's newest read failed: its backoff still applies.
+        failure: this.#savedFailure(provider),
         liveAt: Number.NEGATIVE_INFINITY,
         notifiedAt: Number.NEGATIVE_INFINITY,
         publishedAt: Number.NEGATIVE_INFINITY,
@@ -910,12 +931,30 @@ export class ProviderControls {
    * last known values, as it would a value this session read.
    */
   #lastSession(provider: ProviderId): ReadyLimitSource | undefined {
-    const saved = this.#saved().get(provider)
-    const failure = this.#limits.get(provider)?.failure
+    const saved = this.#saved().sources.get(provider)
+    const failure = this.#limitEntry(provider).failure
     return saved && failure ? lastKnownLimits(saved, failure) : saved
   }
 
-  #saved(): Map<ProviderId, ReadyLimitSource> {
+  /**
+   * What a view is answered with before this session's read does. A shown
+   * view also gets the last session's full read and, without one, the newest
+   * failed read, so a source that keeps failing does not hold up the first
+   * view after every launch. A retry waits for the read it asked for.
+   */
+  #heldLimits(
+    provider: ProviderId,
+    intent: UsageReadIntent = 'visible',
+  ): ProviderLimitSource | undefined {
+    const held = this.#limits.get(provider)?.value
+    if (held || intent === 'background') return held
+    const lastSession = this.#lastSession(provider)
+    if (lastSession || intent === 'retry') return lastSession
+    const failure = this.#limitEntry(provider).failure
+    return failure ? failedLimits(provider, failure) : undefined
+  }
+
+  #saved(): SavedLimits {
     if (!this.#savedLimits) {
       let text: string | undefined
       try {
@@ -924,22 +963,50 @@ export class ProviderControls {
         // Without it the first shown view waits for its read, as before.
         text = undefined
       }
-      this.#savedLimits = parseLimitSnapshot(text)
+      this.#savedLimits = { sources: parseLimitSnapshot(text), failures: parseLimitFailures(text) }
     }
     return this.#savedLimits
   }
 
+  /** The last session's newest failed read, when no read has answered since. */
+  #savedFailure(provider: ProviderId): LimitFailure | undefined {
+    const saved = this.#saved().failures.get(provider)
+    if (!saved) return undefined
+    const { error, ...failure } = saved
+    return { ...failure, error: new Error(error) }
+  }
+
   /** Keeps a provider's newest full read for the next launch, or forgets it. */
   #saveLimits(provider: ProviderId, source: ReadyLimitSource | undefined): void {
-    const snapshot = this.#options.limitSnapshot
-    if (!snapshot) return
-    const saved = this.#saved()
-    if (source) saved.set(provider, source)
-    else if (!saved.delete(provider)) return
+    if (!this.#options.limitSnapshot) return
+    const { sources, failures } = this.#saved()
+    // Any answer, or another account, ends the failures before it.
+    const failed = failures.delete(provider)
+    if (source) sources.set(provider, source)
+    else if (!sources.delete(provider) && !failed) return
+    this.#writeSnapshot()
+  }
+
+  /** Keeps a failed read for the next launch, which answers with it until its retry time. */
+  #saveFailure(provider: ProviderId, failure: LimitFailure): void {
+    if (!this.#options.limitSnapshot) return
+    this.#saved().failures.set(provider, {
+      error: refreshErrorOf(failure),
+      count: failure.count,
+      timeouts: failure.timeouts,
+      // A source that ran out of timeouts waits for an account change in this
+      // session; a later launch tries it once more after the longest wait.
+      retryAt: Number.isFinite(failure.retryAt) ? failure.retryAt : Date.now() + LIMIT_RETRY_MAX_MS,
+    })
+    this.#writeSnapshot()
+  }
+
+  #writeSnapshot(): void {
+    const { sources, failures } = this.#saved()
     try {
-      snapshot.write(serializeLimitSnapshot(saved))
+      this.#options.limitSnapshot?.write(serializeLimitSnapshot(sources, failures))
     } catch {
-      // Costs the next launch only its figures before the first read answers.
+      // Costs the next launch only what it shows before the first read answers.
     }
   }
 
@@ -1089,6 +1156,7 @@ export class ProviderControls {
           if (!current()) throw error
           const failure = limitFailure(entry.failure, error, capabilities.limitReadTimeoutLimit)
           entry.failure = failure
+          this.#saveFailure(provider, failure)
           // One failed refresh does not make the account's known limits unknown.
           const previous = entry.value
           if (previous?.status !== 'ready') throw error
