@@ -191,6 +191,22 @@ describe('runCli', () => {
     expect(result).toEqual({ code: 0, signal: null, stdout: 'early-late', stderr: '' })
   })
 
+  it('lays an extra environment over the inherited one and keeps the desktop PATH', async () => {
+    const script =
+      'process.stdout.write(JSON.stringify([process.env.HARNESS_RUNCLI_HOME, process.env.PATH]))'
+    const result = await runCli(process.execPath, ['-e', script], 10_000, {
+      env: { HARNESS_RUNCLI_HOME: 'account-home' },
+    })
+
+    expect(result.code).toBe(0)
+    const [home, childPath] = JSON.parse(result.stdout) as [string, string]
+    expect(home).toBe('account-home')
+    const same = (left: string, right: string) =>
+      process.platform === 'win32' ? left.toLowerCase() === right.toLowerCase() : left === right
+    const userBin = path.join(os.homedir(), '.local', 'bin')
+    expect(childPath.split(path.delimiter).some((entry) => same(entry, userBin))).toBe(true)
+  })
+
   it('captures provider status text written to stderr', async () => {
     const result = await runCli(process.execPath, ['-e', "process.stderr.write('provider status')"])
 
