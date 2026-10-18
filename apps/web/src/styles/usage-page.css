@@ -1,127 +1,613 @@
 /* ---------- Usage page ----------
-   The Settings column and page header, with dashboard sections under them.
-   Its own mark is the rung: plan limits and the activity chart are measured
-   in 3 px rungs on the 5 px rhythm of the leader dots every Settings row
-   draws, so the numbers read like the rest of Settings, only denser. */
+   One sheet per provider on one grid: the who column, the band column and the
+   value column. Every band shares one time axis and one height scale, so the
+   lines show who carried the period; limits and models sit under their
+   provider's band on the same grid. */
 
 .settings .usage-page {
-  --usage-rung-on: var(--text-2);
-  --usage-rung-off: color-mix(in srgb, var(--text) 9%, transparent);
-  --usage-rung-low: var(--error);
+  --usage-cols: 156px minmax(0, 1fr) 108px;
+  --usage-gap: 24px;
+  --usage-wash: color-mix(in srgb, var(--text) 7%, transparent);
+  --usage-base: color-mix(in srgb, var(--text) 13%, transparent);
+  --usage-track: color-mix(in srgb, var(--text) 10%, transparent);
+  font-family: var(--font-ui);
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
 }
 
 .settings .usage-page .set-page__head {
-  flex-wrap: wrap;
+  margin-bottom: 10px;
 }
 
-.settings .usage-page.is-refreshing .usage-page__refresh svg {
-  animation: spin 0.9s linear infinite;
-}
+/* Top line: the period is the name, the period's figures follow on one baseline */
 
-/* Sections: a 15 px title, then the section's own content. */
-
-.settings .usage-section {
-  min-width: 0;
-}
-
-.settings .usage-section + .usage-section {
-  margin-top: 40px;
-}
-
-.settings .usage-section__head {
+.settings .usage-page__top {
   display: flex;
-  flex-wrap: wrap;
   align-items: baseline;
-  justify-content: space-between;
-  gap: 8px 16px;
-  margin: 0 0 12px;
-}
-
-.settings .usage-section__title {
-  margin: 0;
-  color: var(--text);
+  gap: 18px;
   font-size: var(--t-lg);
-  font-weight: 550;
-  line-height: 1.3;
+  line-height: 22px;
+  letter-spacing: -0.006em;
 }
 
-.settings .usage-section__note {
-  max-width: 90ch;
-  margin: -6px 0 8px;
+.settings .usage-page__period {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  align-items: baseline;
+  gap: 4px;
+  color: var(--text);
+  font-weight: 550;
+  cursor: pointer;
+}
+
+.settings .usage-page__period-select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  opacity: 0;
+  font: inherit;
+  cursor: pointer;
+}
+
+.settings .usage-page__period:has(.usage-page__period-select:focus-visible) {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+  border-radius: var(--r-xs);
+}
+
+.settings .usage-page__chevron {
+  align-self: center;
+  color: var(--text-3);
+  transition: color var(--dur-hover) var(--ease-out);
+}
+
+.settings .usage-page__period:hover .usage-page__chevron {
+  color: var(--text);
+}
+
+.settings .usage-page__facts {
+  display: flex;
+  align-items: baseline;
+  gap: 18px;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.settings .usage-page__fact.is-name {
+  font-weight: 550;
+}
+
+.settings .usage-page__fact.is-soft {
+  color: var(--text-3);
+}
+
+.settings .usage-page__refresh {
+  display: grid;
+  place-items: center;
+  align-self: center;
+  width: 26px;
+  height: 26px;
+  margin: -3px -6px -3px auto;
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: var(--r-sm);
+  color: var(--text-3);
+  cursor: pointer;
+  transition: color var(--dur-hover) var(--ease-out);
+}
+
+.settings .usage-page__refresh:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.settings .usage-page__refresh:disabled {
+  cursor: default;
+}
+
+.settings .usage-page__refresh:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 0;
+}
+
+.settings .usage-page__refresh.is-busy svg {
+  animation: usage-spin 1.2s linear infinite;
+}
+
+@keyframes usage-spin {
+  to {
+    rotate: 360deg;
+  }
+}
+
+/* The sentence slot under the top line: limits first, then the index */
+
+.settings .usage-page__alert,
+.settings .usage-page__notice {
+  margin: 8px 0 0;
+  font-size: var(--t-md);
+  line-height: 20px;
+}
+
+.settings .usage-page__alert {
+  color: var(--error);
+}
+
+.settings .usage-page__alert + .usage-page__notice {
+  margin-top: 2px;
+}
+
+.settings .usage-page__notice {
+  color: var(--text-3);
+}
+
+.settings .usage-page__notice.is-failed {
+  color: var(--text-2);
+}
+
+.settings .usage-page .set-notice {
+  margin-top: 12px;
+}
+
+/* The grid every row shares: who, the band, the value */
+
+.settings .usage-page__axis,
+.settings .usage-sheet__head,
+.settings .usage-sheet__row {
+  display: grid;
+  grid-template-columns: var(--usage-cols);
+  column-gap: var(--usage-gap);
+  align-items: baseline;
+}
+
+.settings .usage-page__sheets {
+  margin-top: 26px;
+}
+
+.settings .usage-page__axis {
+  align-items: end;
+  height: 20px;
+  margin-bottom: 14px;
   color: var(--text-3);
   font-size: var(--t-sm);
-  line-height: 1.45;
+  line-height: 16px;
 }
 
-.settings .usage-section__empty {
+.settings .usage-page__axis-end-label {
+  text-align: right;
+}
+
+.settings .usage-page__axis-track {
+  position: relative;
+  height: 16px;
+}
+
+.settings .usage-page__axis-start,
+.settings .usage-page__axis-end,
+.settings .usage-page__axis-day {
+  position: absolute;
+  top: 0;
+  white-space: nowrap;
+  transition: opacity 120ms var(--ease-out);
+}
+
+.settings .usage-page__axis-start {
+  left: 0;
+}
+
+.settings .usage-page__axis-end {
+  right: 0;
+}
+
+.settings .usage-page__axis-day {
+  translate: -50% 0;
+  color: var(--text);
+}
+
+.settings .usage-page.is-scrubbing .usage-page__axis-start,
+.settings .usage-page.is-scrubbing .usage-page__axis-end {
+  opacity: 0;
+}
+
+.settings .usage-page__empty {
   margin: 0;
-  padding-block: 8px;
   color: var(--text-3);
   font-size: var(--t-md);
 }
 
-/* While the first answer loads: outlines where the sections will be. */
+/* One sheet per provider */
+
+.settings .usage-sheet + .usage-sheet {
+  margin-top: 28px;
+}
+
+.settings .usage-sheet__head {
+  align-items: end;
+}
+
+.settings .usage-sheet__who {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  height: 22px;
+}
+
+.settings .usage-sheet__mark {
+  flex: none;
+  color: var(--text);
+}
+
+.settings .usage-sheet__name {
+  margin: 0;
+  overflow: hidden;
+  font-size: var(--t-lg);
+  font-weight: 550;
+  line-height: 22px;
+  letter-spacing: -0.012em;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.settings .usage-sheet__value {
+  font-size: var(--t-lg);
+  line-height: 22px;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.settings .usage-sheet__value.is-quiet {
+  color: var(--text-3);
+}
+
+/* The band */
+
+.settings .usage-band {
+  position: relative;
+  height: 56px;
+  margin-bottom: -1px;
+  outline: none;
+  cursor: crosshair;
+}
+
+.settings .usage-band:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 4px;
+  border-radius: var(--r-xs);
+}
+
+.settings .usage-band svg {
+  display: block;
+  overflow: visible;
+}
+
+.settings .usage-band__hover {
+  position: absolute;
+  inset: 0 auto auto 0;
+  pointer-events: none;
+}
+
+.settings .usage-band__base {
+  stroke: var(--usage-base);
+  stroke-width: 1;
+}
+
+.settings .usage-band__line {
+  fill: none;
+  stroke: var(--text);
+  stroke-width: 1.75;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.settings .usage-band__wash {
+  fill: var(--usage-wash);
+}
+
+.settings .usage-band__tick {
+  fill: var(--text-2);
+}
+
+.settings .usage-band__break-gap {
+  fill: var(--bg);
+}
+
+.settings .usage-band__break-line {
+  fill: none;
+  stroke: var(--text-2);
+  stroke-width: 1;
+}
+
+.settings .usage-band__peak {
+  fill: var(--text-3);
+  font-family: var(--font-ui);
+  font-size: 12px;
+}
+
+.settings .usage-band__slot {
+  fill: color-mix(in srgb, var(--text) 5%, transparent);
+}
+
+.settings .usage-band__cross {
+  stroke: var(--text-3);
+  stroke-width: 1;
+}
+
+.settings .usage-band__dot {
+  fill: var(--text);
+  stroke: var(--bg);
+  stroke-width: 2;
+}
+
+/* Rows under the band */
+
+.settings .usage-sheet__row {
+  min-height: 25px;
+  font-size: var(--t-md);
+  line-height: 20px;
+}
+
+.settings .usage-sheet__caption-row {
+  min-height: 0;
+  margin: 6px 0 8px;
+}
+
+.settings .usage-sheet__caption {
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--t-sm);
+  line-height: 18px;
+}
+
+.settings .usage-sheet__label {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-2);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.settings .usage-sheet__mid {
+  display: flex;
+  align-items: center;
+  align-self: center;
+  gap: 16px;
+  min-width: 0;
+}
+
+.settings .usage-sheet__aside {
+  flex: 0 0 132px;
+  margin-left: auto;
+  color: var(--text-3);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.settings .usage-sheet__aside.is-start {
+  flex: 0 1 auto;
+  min-width: 0;
+  margin-left: 0;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+}
+
+.settings .usage-sheet__end {
+  color: var(--text);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.settings .usage-sheet__end.is-unpriced {
+  color: var(--text-3);
+}
+
+.settings .usage-sheet__meter {
+  position: relative;
+  flex: 1 1 auto;
+  height: 4px;
+  overflow: hidden;
+  background: var(--usage-track);
+  border-radius: 2px;
+}
+
+.settings .usage-sheet__meter-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--usage-sheet-left);
+  background: var(--text-2);
+  border-radius: 2px;
+}
+
+.settings .usage-sheet__limit .usage-sheet__label {
+  color: var(--text);
+}
+
+.settings .usage-sheet__limit.is-low .usage-sheet__label,
+.settings .usage-sheet__limit.is-low .usage-sheet__end,
+.settings .usage-sheet__limit.is-low .usage-sheet__aside,
+.settings .usage-sheet__limit.is-reached .usage-sheet__label,
+.settings .usage-sheet__limit.is-reached .usage-sheet__end,
+.settings .usage-sheet__limit.is-reached .usage-sheet__aside {
+  color: var(--error);
+}
+
+.settings .usage-sheet__limit.is-low .usage-sheet__meter-fill {
+  background: var(--error);
+}
+
+.settings .usage-sheet__limit.is-reached .usage-sheet__meter {
+  background: color-mix(in srgb, var(--error) 28%, transparent);
+}
+
+.settings .usage-sheet__limits {
+  margin-bottom: 6px;
+}
+
+.settings .usage-sheet__models {
+  transition: opacity 160ms var(--ease-out);
+}
+
+.settings .usage-page.is-scrubbing .usage-sheet__models {
+  opacity: 0.32;
+}
+
+.settings .usage-sheet__more-row {
+  min-height: 24px;
+}
+
+.settings .usage-sheet__more {
+  justify-self: start;
+  padding: 0;
+  background: none;
+  border: 0;
+  color: var(--text-3);
+  font: inherit;
+  cursor: pointer;
+  transition: color var(--dur-hover) var(--ease-out);
+}
+
+.settings .usage-sheet__more:hover {
+  color: var(--text);
+}
+
+.settings .usage-sheet__more:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 2px;
+  border-radius: var(--r-xs);
+}
+
+.settings .usage-sheet__retry {
+  justify-self: end;
+}
+
+.settings .usage-page__retry {
+  color: var(--text);
+}
+
+/* A provider without sessions in the period: one quiet row and its limits */
+
+.settings .usage-sheet.is-empty .usage-sheet__head {
+  align-items: baseline;
+  margin-bottom: 6px;
+}
+
+.settings .usage-sheet__empty {
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--t-md);
+}
+
+.settings .usage-sheet.is-empty .usage-sheet__mark,
+.settings .usage-sheet.is-empty .usage-sheet__name {
+  color: var(--text-2);
+}
+
+/* Close */
+
+.settings .usage-page__close {
+  margin-top: 34px;
+}
+
+.settings .usage-page__saved {
+  font-size: var(--t-lg);
+  line-height: 22px;
+}
+
+.settings .usage-page__saved-name {
+  font-weight: 550;
+  white-space: nowrap;
+}
+
+.settings .usage-page__saved-note {
+  color: var(--text-3);
+  font-size: var(--t-md);
+}
+
+.settings .usage-page__saved-value {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.settings .usage-page__notes {
+  display: grid;
+  grid-template-columns: var(--usage-cols);
+  column-gap: var(--usage-gap);
+  margin-top: 10px;
+}
+
+.settings .usage-page__note {
+  grid-column: 2 / 4;
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--t-md);
+  line-height: 20px;
+  text-wrap: pretty;
+}
+
+.settings .usage-page__note + .usage-page__note {
+  margin-top: 4px;
+}
+
+/* While the first answer loads: where the bands will be. */
 
 .settings .usage-skeleton {
   display: grid;
-  gap: 14px;
+  gap: 28px;
   margin-top: 40px;
 }
 
 .settings .usage-skeleton > .skeleton {
   display: block;
+  width: 100%;
+  height: 56px;
   border-radius: var(--r-sm);
 }
 
-.settings .usage-skeleton__title {
-  width: 96px;
-  height: 16px;
+/* A new period draws each band left to right, one sheet after another */
+
+.settings .usage-band__ink {
+  animation: usage-reveal 760ms var(--ease-out) both;
+  animation-delay: calc(var(--usage-sheet-index, 0) * 80ms);
 }
 
-.settings .usage-skeleton__stats {
-  width: 100%;
-  height: 48px;
+.settings .usage-band__peaks {
+  animation: usage-fade 300ms var(--ease-out) 600ms both;
 }
 
-.settings .usage-skeleton__chart {
-  width: 100%;
-  height: 140px;
+.settings .usage-sheet__value {
+  animation: usage-turn 420ms var(--ease-out) both;
+  animation-delay: calc(var(--usage-sheet-index, 0) * 80ms + 300ms);
 }
 
-/* Where the numbers come from. */
-
-.settings .usage-footer {
-  margin-top: 40px;
-  padding-top: 14px;
-  border-top: 1px solid var(--line);
-  color: var(--text-3);
-  font-size: var(--t-sm);
-  line-height: 1.5;
+@keyframes usage-reveal {
+  from {
+    clip-path: inset(-20px 100% -20px 0);
+  }
+  to {
+    clip-path: inset(-20px 0 -20px 0);
+  }
 }
 
-.settings .usage-footer p {
-  margin: 0;
+@keyframes usage-fade {
+  from {
+    opacity: 0;
+  }
 }
 
-.settings .usage-footer .usage-footer__facts {
-  color: var(--text-2);
-  font-variant-numeric: tabular-nums;
-}
-
-.settings .usage-footer .usage-footer__warning {
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
-  margin-top: 6px;
-}
-
-.settings .usage-footer__warning svg {
-  flex: none;
-  margin-top: 3px;
+@keyframes usage-turn {
+  from {
+    opacity: 0;
+    translate: 0 6px;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .settings .usage-page.is-refreshing .usage-page__refresh svg {
-    animation: none;
+  .settings .usage-page *,
+  .settings .usage-page *::before,
+  .settings .usage-page *::after {
+    animation: none !important;
+    transition: none !important;
   }
 }
