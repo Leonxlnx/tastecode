@@ -24,6 +24,7 @@ import {
 } from '@harness/proc'
 import { captureCli } from '@harness/proc/cli'
 import { z } from 'zod'
+import { withInstructions } from './prompt-instructions.js'
 import { GROK_CAPABILITIES } from './capabilities.js'
 import { GrokSubagents } from './subagents.js'
 
@@ -419,7 +420,7 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
     const turnId = `${threadId}-turn-${crypto.randomUUID()}`
     const prompt =
       this.#instructionsPending && this.#options.instructions
-        ? `<system-instructions>\n${this.#options.instructions}\n</system-instructions>\n\n${text}`
+        ? withInstructions(text, this.#options.instructions)
         : text
     const promptDirectory = mkdtempSync(path.join(tmpdir(), 'harness-grok-'))
     const promptFile = path.join(promptDirectory, attachments.length ? 'prompt.json' : 'prompt.md')
