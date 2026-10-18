@@ -9,6 +9,7 @@ import {
 import {
   Streamdown,
   defaultRehypePlugins,
+  defaultRemarkPlugins,
   parseMarkdownIntoBlocks,
   type Components,
 } from 'streamdown'
@@ -165,6 +166,7 @@ type ImageTreeNode = {
   type: string
   tagName?: string
   properties?: Record<string, unknown>
+  value?: string
   children?: ImageTreeNode[]
 }
 
@@ -203,6 +205,87 @@ function preserveRelativeLinks() {
   }
 }
 
+type MarkdownTreeNode = { type: string; value?: string; children?: MarkdownTreeNode[] }
+
+const FLOW_CONTAINERS = new Set(['root', 'blockquote', 'listItem', 'footnoteDefinition'])
+
+/** Raw HTML as the live parser shows it: inline tags as text, an HTML block as a paragraph. */
+function literalHtmlNodes() {
+  return (tree: MarkdownTreeNode) => {
+    const pending = [tree]
+    while (pending.length) {
+      const node = pending.pop()!
+      if (!node.children) continue
+      const flow = FLOW_CONTAINERS.has(node.type)
+      node.children = node.children.map((child) => {
+        if (child.type !== 'html') return child
+        const text = { type: 'text', value: child.value ?? '' }
+        return flow ? { type: 'paragraph', children: [text] } : text
+      })
+      pending.push(...node.children)
+    }
+  }
+}
+
+const BLOCK_ELEMENTS = new Set([
+  'blockquote',
+  'div',
+  'h1',
+  'h2',
+  'h3',
+  'h4',
+  'h5',
+  'h6',
+  'hr',
+  'li',
+  'ol',
+  'p',
+  'pre',
+  'table',
+  'ul',
+])
+const COLLAPSIBLE_WHITESPACE = /^[ \t\r\n]+$/
+
+function isBlockElement(node: ImageTreeNode | undefined): boolean {
+  return node?.type === 'element' && BLOCK_ELEMENTS.has(node.tagName ?? '')
+}
+
+/**
+ * Chat replies show line breaks (white-space: pre-line), so the line endings
+ * Markdown writes between blocks and after a hard break's <br> would show as
+ * blank lines. Normal wrapping collapses them, so no other view changes.
+ */
+function dropFormattingLineEndings() {
+  return (tree: ImageTreeNode) => {
+    const pending = [tree]
+    while (pending.length) {
+      const node = pending.pop()!
+      if (!node.children || node.tagName === 'pre') continue
+      const kept: ImageTreeNode[] = []
+      for (const [index, child] of node.children.entries()) {
+        const previous = node.children[index - 1]
+        if (child.type === 'text') {
+          const value =
+            previous?.tagName === 'br' ? child.value?.replace(/^\r?\n/, '') : child.value
+          if (!value) continue
+          if (
+            COLLAPSIBLE_WHITESPACE.test(value) &&
+            (isBlockElement(previous) || isBlockElement(node.children[index + 1]))
+          )
+            continue
+          child.value = value
+        }
+        kept.push(child)
+        pending.push(child)
+      }
+      node.children = kept
+    }
+  }
+}
+
+const REMARK_PLUGINS = Object.values(defaultRemarkPlugins)
+const LITERAL_HTML_REMARK_PLUGINS = [...REMARK_PLUGINS, literalHtmlNodes]
+const { raw: RAW_HTML_REHYPE_PLUGIN, ...HARDENING_REHYPE_PLUGINS } = defaultRehypePlugins
 const STREAMDOWN_PLUGINS = { code: shikiPlugin }
 const STREAMDOWN_CONTROLS = { code: true, table: true, mermaid: false }
 const STREAM_ANIMATION = {
@@ -218,20 +301,26 @@ const STREAM_ANIMATION = {
 export const CompletedMarkdown = memo(function CompletedMarkdown({
   text,
   projectPath,
+  literalHtml = false,
 }: {
   text: string
   projectPath?: string | undefined
+  /** Shows raw HTML outside code as its source text instead of rendering it. */
+  literalHtml?: boolean | undefined
 }) {
   const renderedText = useMemo(() => preserveProjectFileLinks(text), [text])
   const imageSource = useContext(MarkdownImageContext)
   const rehypePlugins = useMemo(() => {
-    const plugins = Object.values(defaultRehypePlugins)
+    const plugins = Object.values(HARDENING_REHYPE_PLUGINS)
     // Resolve repository- and project-relative paths after raw HTML parsing,
     // before the existing sanitizer/hardener can discard an origin-less URL.
-    plugins.splice(1, 0, preserveRelativeLinks)
-    if (imageSource) plugins.splice(1, 0, [normalizeImageSources, imageSource.normalize])
+    plugins.unshift(preserveRelativeLinks)
+    if (imageSource) plugins.unshift([normalizeImageSources, imageSource.normalize])
+    // Literal HTML leaves no raw HTML for rehype-raw to parse.
+    if (!literalHtml) plugins.unshift(RAW_HTML_REHYPE_PLUGIN!)
+    plugins.push(dropFormattingLineEndings)
     return plugins
-  }, [imageSource])
+  }, [imageSource, literalHtml])
 
   return (
     <ProjectPathContext.Provider value={projectPath}>
@@ -247,6 +336,7 @@ export const CompletedMarkdown = memo(function CompletedMarkdown({
         controls={STREAMDOWN_CONTROLS}
         icons={STREAMDOWN_ICONS}
         components={imageSource ? IMAGE_COMPONENTS : STREAMDOWN_COMPONENTS}
+        remarkPlugins={literalHtml ? LITERAL_HTML_REMARK_PLUGINS : REMARK_PLUGINS}
         rehypePlugins={rehypePlugins}
       >
         {renderedText}
