@@ -282,15 +282,23 @@
   overflow: visible;
 }
 
+.settings .usage-band__ink {
+  position: relative;
+}
+
 .settings .usage-band__hover {
   position: absolute;
   inset: 0 auto auto 0;
   pointer-events: none;
 }
 
-.settings .usage-band__base {
-  stroke: var(--usage-base);
-  stroke-width: 1;
+/* The baseline stays put while a new period draws in. */
+.settings .usage-band::before {
+  position: absolute;
+  inset: 50px 0 auto;
+  height: 1px;
+  background: var(--usage-base);
+  content: '';
 }
 
 .settings .usage-band__line {
