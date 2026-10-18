@@ -19,6 +19,7 @@ import {
   SkillCapabilitiesSchema,
   SkillSchema,
   ThreadLifecycleSchema,
+  UsageHistoryResultSchema,
   type ProviderLimit,
   type ProviderLimitSource,
 } from './protocol.js'
@@ -234,6 +235,64 @@ describe('domain events', () => {
 describe('protocol envelopes', () => {
   it('validates a request envelope', () => {
     expect(RequestSchema.parse({ id: '1', method: 'system.info', params: {} })).toBeTruthy()
+  })
+
+  it('keeps usage estimates paired with their pricing coverage', () => {
+    const totals = {
+      uncachedInputTokens: 100,
+      cachedInputTokens: 200,
+      cacheWriteInputTokens: 10,
+      outputTokens: 20,
+      reasoningTokens: 5,
+      processedTokens: 330,
+      estimatedCostUsd: 0.01,
+      cacheSavingsUsd: 0.02,
+      providerReportedCostUsd: 0,
+      providerReportedTokens: 0,
+      pricedTokens: 300,
+      unpricedTokens: 30,
+    }
+    const result = {
+      range: '30d' as const,
+      startDate: '2026-07-10',
+      endDate: '2026-08-08',
+      generatedAt: 1,
+      sessionCount: 1,
+      activeDays: 1,
+      totals,
+      providers: [{ provider: 'codex' as const, sessionCount: 1, totals }],
+      models: [
+        {
+          provider: 'codex' as const,
+          model: 'gpt-5.6-sol',
+          sessionCount: 1,
+          pricing: 'exact' as const,
+          totals,
+        },
+      ],
+      daily: [
+        {
+          date: '2026-08-08',
+          sessionCount: 1,
+          totals,
+          providers: [{ provider: 'codex' as const, tokens: 330, estimatedCostUsd: 0.01 }],
+        },
+      ],
+      sources: [{ provider: 'codex' as const, available: true, sessionCount: 1 }],
+      scan: { status: 'idle' as const, filesProcessed: 1, filesTotal: 1 },
+      warnings: [],
+    }
+
+    expect(UsageHistoryResultSchema.parse(result)).toEqual(result)
+  })
+
+  it('keeps local usage history separate from earned provider reset credits', () => {
+    const history = { range: '30d', refresh: true }
+    expect(methods['usage.history'].params.parse(history)).toEqual(history)
+    expect(methods['usage.history'].params.safeParse({ range: 'forever' }).success).toBe(false)
+    expect(methods['usage.resetHistory'].result.parse({ started: true })).toEqual({ started: true })
+    expect(methods['usage.resetHistory'].result.safeParse({ outcome: 'reset' }).success).toBe(false)
+    expect(methods['usage.consumeReset'].result.safeParse({ started: true }).success).toBe(false)
   })
 
   it('requires a sequence on every push so clients can detect gaps', () => {
