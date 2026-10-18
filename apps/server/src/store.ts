@@ -55,6 +55,7 @@ const BACKGROUND_MODEL_SETTING = 'background-model'
 const PROVIDER_CONTEXT_SETTING = 'provider-context'
 const FEEDBACK_LEDGER_SETTING = 'feedback-ledger'
 const MODEL_LISTS_SETTING = 'model-lists'
+const LIMIT_SNAPSHOT_SETTING = 'limit-snapshot'
 const AUTOMATIC_BACKGROUND_MODEL_PREFERENCE: BackgroundModelPreference = Object.freeze({
   mode: 'automatic',
 })
@@ -2236,6 +2237,15 @@ export class Store {
 
   setModelListSnapshot(value: string): void {
     this.#writeAppSetting.run(MODEL_LISTS_SETTING, value)
+  }
+
+  /** Each provider's last full plan-limit read, as `ProviderControls` serialized it. */
+  limitSnapshot(): string | undefined {
+    return sqliteRow<StringValueRow>(this.#readAppSetting, LIMIT_SNAPSHOT_SETTING)?.value
+  }
+
+  setLimitSnapshot(value: string): void {
+    this.#writeAppSetting.run(LIMIT_SNAPSHOT_SETTING, value)
   }
 
   #updateThread(

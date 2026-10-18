@@ -36,6 +36,8 @@ export type ModelListCacheOptions = {
    * again, so launch-time work is not joined by every listing process.
    */
   restoredRefreshDelayMs?: number | undefined
+  /** How far apart those reads start, so the listing processes do not all run at once. */
+  restoredRefreshStaggerMs?: number | undefined
   now?: (() => number) | undefined
 }
 
@@ -60,6 +62,7 @@ export const MODEL_LIST_FRESH_MS = 10 * 60_000
 export const MODEL_LIST_MAX_STALE_MS = 24 * 60 * 60_000
 export const MODEL_LIST_RETRY_MS = 60_000
 export const MODEL_LIST_RESTORED_REFRESH_DELAY_MS = 20_000
+export const MODEL_LIST_RESTORED_REFRESH_STAGGER_MS = 5_000
 /** Larger lists are kept for this launch only; one would outweigh every other setting. */
 export const MAX_PERSISTED_MODELS = 2_000
 
@@ -84,8 +87,9 @@ const SnapshotListSchema = z.object({
  * to ask again. A failed read is never stored: a request without a usable
  * answer reads again, and one that still has an answer keeps it for up to a
  * day, so a slow or failing CLI cannot take away a known list. The last good
- * lists are kept in `snapshot`, so the next launch answers from them while it
- * reads each source once more.
+ * lists are kept in `snapshot`, so the next launch answers from them. A saved
+ * list is as fresh as its age says: one read minutes before a restart is not
+ * read again, and older ones are read again one by one once launch work settled.
  */
 export class ModelListCache {
   readonly #options: ModelListCacheOptions
@@ -93,8 +97,10 @@ export class ModelListCache {
   readonly #freshMs: number
   readonly #maxStaleMs: number
   readonly #retryMs: number
-  readonly #restoredRefreshAt: number
+  readonly #restoredRefreshStaggerMs: number
   readonly #now: () => number
+  /** When the next read of a list from the last launch may start. */
+  #nextRestoredRefreshAt: number
   #restoredSnapshot = false
 
   constructor(options: ModelListCacheOptions) {
@@ -105,8 +111,12 @@ export class ModelListCache {
       duration(options.maxStaleMs, MODEL_LIST_MAX_STALE_MS),
     )
     this.#retryMs = duration(options.retryMs, MODEL_LIST_RETRY_MS)
+    this.#restoredRefreshStaggerMs = duration(
+      options.restoredRefreshStaggerMs,
+      MODEL_LIST_RESTORED_REFRESH_STAGGER_MS,
+    )
     this.#now = options.now ?? (() => Date.now())
-    this.#restoredRefreshAt =
+    this.#nextRestoredRefreshAt =
       this.#now() + duration(options.restoredRefreshDelayMs, MODEL_LIST_RESTORED_REFRESH_DELAY_MS)
   }
 
@@ -115,8 +125,9 @@ export class ModelListCache {
     if (entry.value !== undefined) {
       const now = this.#now()
       const age = now - entry.listedAt
-      const fresh = !entry.stale && !entry.restored
-      if (age >= 0 && age < this.#freshMs && fresh) return Promise.resolve(entry.value)
+      // `listedAt` is when the provider answered, in this launch or the last
+      // one, so a list read minutes before a restart is still fresh.
+      if (age >= 0 && age < this.#freshMs && !entry.stale) return Promise.resolve(entry.value)
       if (age >= 0 && age < this.#maxStaleMs) {
         this.#refreshInBackground(entry, now)
         return Promise.resolve(entry.value)
@@ -239,23 +250,35 @@ export class ModelListCache {
   }
 
   #refreshInBackground(entry: Entry, now: number): void {
-    if (entry.reading || entry.refreshTimer) return
-    if (entry.restored && now < this.#restoredRefreshAt) {
-      entry.refreshTimer = setTimeout(() => {
-        entry.refreshTimer = undefined
-        if (this.#entries.get(entryKey(entry.provider, entry.agent)) === entry) {
-          this.#refreshInBackground(entry, this.#now())
-        }
-      }, this.#restoredRefreshAt - now)
-      entry.refreshTimer.unref?.()
-      return
+    if (entry.reading || entry.refreshTimer || this.#failedRecently(entry, now)) return
+    if (entry.restored) {
+      // Launch work settles first, and each list from the last launch takes
+      // its own slot, so their listing processes do not all start at once.
+      const at = Math.max(this.#nextRestoredRefreshAt, now)
+      this.#nextRestoredRefreshAt = at + this.#restoredRefreshStaggerMs
+      if (at > now) {
+        entry.refreshTimer = setTimeout(() => {
+          entry.refreshTimer = undefined
+          if (this.#entries.get(entryKey(entry.provider, entry.agent)) !== entry) return
+          if (entry.reading || this.#failedRecently(entry, this.#now())) return
+          this.#refresh(entry)
+        }, at - now)
+        entry.refreshTimer.unref?.()
+        return
+      }
     }
-    if (
+    this.#refresh(entry)
+  }
+
+  #failedRecently(entry: Entry, now: number): boolean {
+    return (
       entry.failedAt !== undefined &&
       now - entry.failedAt >= 0 &&
       now - entry.failedAt < this.#retryMs
     )
-      return
+  }
+
+  #refresh(entry: Entry): void {
     void this.#read(entry).catch((error: unknown) => {
       this.#options.onLog?.(
         `Kept the last ${describe(entry)} model list; refreshing it failed: ${
