@@ -168,7 +168,7 @@
 .settings .usage-page__axis {
   align-items: end;
   height: 20px;
-  margin-bottom: 14px;
+  margin-bottom: 8px;
   color: var(--text-3);
   font-size: var(--t-sm);
   line-height: 16px;
