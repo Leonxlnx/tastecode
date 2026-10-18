@@ -17,6 +17,7 @@ import {
 } from 'react'
 import {
   elementScroll,
+  measureElement as measureVirtualElement,
   useVirtualizer,
   type Range,
   type VirtualizerOptions,
@@ -258,6 +259,8 @@ export const Thread = memo(function Thread(props: ThreadProps) {
     holding: false,
     intent: undefined,
   })
+  /** The virtual list's scroll correction still to be written; see scrollToFn. */
+  const listScroll = useRef<ListScroll | undefined>(undefined)
   // While a turn streams, the end glides into view instead of jumping a line
   // at a time. Its writes are ours like any other, so they are recorded the
   // same way; sub-pixel steps are exact, hence no 1px early return here.
@@ -278,6 +281,8 @@ export const Thread = memo(function Thread(props: ThreadProps) {
       // A write puts the scroll somewhere on purpose; a glide continuing from
       // its own idea of the position would undo it on the next frame.
       glide.stop()
+      // So does a correction the virtual list has not written yet: this one is newer.
+      listScroll.current = undefined
       // Clamp before comparing: an out-of-range target gets clamped by the
       // browser, so the write would land somewhere we did not record.
       const max = Math.max(0, el.scrollHeight - el.clientHeight)
@@ -462,7 +467,7 @@ export const Thread = memo(function Thread(props: ThreadProps) {
    * reply collapsed, the list compensated, and the reply then moved up by
    * the lag in one frame (8-10 px measured at an 800 px window).
    */
-  const scrollToFn = useCallback<VirtualizerOptions<HTMLDivElement, Element>['scrollToFn']>(
+  const scrollList = useCallback<VirtualizerOptions<HTMLDivElement, Element>['scrollToFn']>(
     (offset, options, instance) => {
       elementScroll(offset, options, instance)
       const el = scroller.current
@@ -474,9 +479,76 @@ export const Thread = memo(function Thread(props: ThreadProps) {
     },
     [glide],
   )
+  const flushListScroll = useCallback(() => {
+    const pending = listScroll.current
+    if (!pending) return
+    listScroll.current = undefined
+    scrollList(pending.offset, { adjustments: pending.adjustments }, pending.instance)
+  }, [scrollList])
+  /**
+   * What the virtual list's notifications leave for the end of the task: its
+   * scroll correction and the follow. Still before paint.
+   */
+  const virtualFlush = useRef({ queued: false, follow: false })
+  const runVirtualFlush = useRef<() => void>(() => undefined)
+  const queueVirtualFlush = useCallback(() => {
+    const flush = virtualFlush.current
+    if (flush.queued) return
+    flush.queued = true
+    queueMicrotask(() => {
+      flush.queued = false
+      runVirtualFlush.current()
+    })
+  }, [])
+  /**
+   * A correction for rows measured above the viewport is written once, when
+   * the task that measured them is done. Row by row, each write laid the
+   * whole transcript out again, as the row before had just moved everything
+   * below it. The list carries its own offset forward at once, so its last
+   * target is the sum of them all. A smooth scroll and a scroll to a place
+   * are written at once.
+   */
+  const scrollToFn = useCallback<VirtualizerOptions<HTMLDivElement, Element>['scrollToFn']>(
+    (offset, options, instance) => {
+      if (options.adjustments === undefined || options.behavior === 'smooth') {
+        listScroll.current = undefined
+        scrollList(offset, options, instance)
+        return
+      }
+      listScroll.current = { offset, adjustments: options.adjustments, instance }
+      queueVirtualFlush()
+    },
+    [queueVirtualFlush, scrollList],
+  )
+  /**
+   * Rows this commit mounted that the list has no size for yet. The list read
+   * each one's height as its ref attached, right after it had positioned the
+   * row before, so every read laid the transcript out again. They are read
+   * together once the commit has attached them all (see measureMountedRows).
+   */
+  const unmeasuredRows = useRef<Element[]>([])
+  const measureElement = useCallback<
+    NonNullable<VirtualizerOptions<HTMLDivElement, Element>['measureElement']>
+  >(
+    (element, entry, instance) => {
+      if (entry) return measureVirtualElement(element, entry, instance)
+      const index = instance.indexFromElement(element)
+      const cached = instance.itemSizeCache.get(instance.options.getItemKey(index))
+      const assumed = instance.measurementsCache[index]?.size
+      if (cached !== undefined || assumed === undefined) {
+        return measureVirtualElement(element, entry, instance)
+      }
+      unmeasuredRows.current.push(element)
+      queueVirtualFlush()
+      // The size the list already assumes, so taking it changes nothing yet.
+      return assumed
+    },
+    [queueVirtualFlush],
+  )
   const virtualizer = useVirtualizer({
     count: thread.items.length,
     scrollToFn,
+    measureElement,
     getScrollElement: () => scroller.current,
     // A wrong estimate costs a scroll correction when the row is first
     // measured. Hidden tool rows are most rows in a working session, so they
@@ -501,6 +573,22 @@ export const Thread = memo(function Thread(props: ThreadProps) {
     paddingEnd: railReserve,
   })
   virtualizerRef.current = virtualizer
+  /**
+   * Measures the rows mounted since the last call: every height first, while
+   * nothing has moved, then the sizes. Runs when the commit has attached them
+   * all, before anything opens or follows (FrameScrollFollower), and at the
+   * end of the task for rows a row mounted on its own.
+   */
+  const measureMountedRows = useCallback(() => {
+    const rows = unmeasuredRows.current
+    if (rows.length === 0) return
+    unmeasuredRows.current = []
+    const sizes = rows.map((row) => (row.isConnected ? (row as HTMLElement).offsetHeight : -1))
+    rows.forEach((row, index) => {
+      if (sizes[index]! >= 0)
+        virtualizer.resizeItem(virtualizer.indexFromElement(row), sizes[index]!)
+    })
+  }, [virtualizer])
   // Mocked lists in tests have no container to size.
   const sizeRunway = (virtualizer as { containerRef?: (node: HTMLElement | null) => void })
     .containerRef
@@ -895,6 +983,10 @@ export const Thread = memo(function Thread(props: ThreadProps) {
   // notification a frame later finds nothing left to change.
   const measureRow = useCallback(
     (row: Element, header: Element | null) => {
+      // Layout and scroll below are read with the rows mounted so far in
+      // place, and where the list's last correction put the scroll.
+      measureMountedRows()
+      flushListScroll()
       const el = scroller.current
       const index = virtualizer.indexFromElement(row)
       const size = Math.round(row.getBoundingClientRect().height)
@@ -941,7 +1033,7 @@ export const Thread = memo(function Thread(props: ThreadProps) {
       // starts everything that moved from where it was, before paint.
       virtualizer.resizeItem(index, size)
     },
-    [settledHeight, virtualizer],
+    [flushListScroll, measureMountedRows, settledHeight, virtualizer],
   )
 
   // Keep the turn timer above its first response until the whole turn ends.
@@ -989,6 +1081,8 @@ export const Thread = memo(function Thread(props: ThreadProps) {
   const syncFollow = useCallback(() => {
     const element = scroller.current
     if (!element) return
+    // Everything below starts from where the list's last correction put the scroll.
+    flushListScroll()
     const state = follow.current
     state.total = virtualizer.getTotalSize()
     sizeRunwayNow()
@@ -1062,6 +1156,7 @@ export const Thread = memo(function Thread(props: ThreadProps) {
   }, [
     applyRoom,
     endOf,
+    flushListScroll,
     followTo,
     measureFollow,
     settledHeight,
@@ -1070,10 +1165,28 @@ export const Thread = memo(function Thread(props: ThreadProps) {
     virtualizer,
     writeScrollTop,
   ])
+  runVirtualFlush.current = () => {
+    measureMountedRows()
+    flushListScroll()
+    const flush = virtualFlush.current
+    if (!flush.follow) return
+    flush.follow = false
+    if (virtualizer.getTotalSize() !== follow.current.total) syncFollow()
+  }
   virtualChanged.current = () => {
     placeRail()
     // Scrolling changes the rows shown too; only a new total moved anything.
-    if (virtualizer.getTotalSize() !== follow.current.total) syncFollow()
+    if (virtualizer.getTotalSize() === follow.current.total) return
+    // A disclosure applies its scroll in the step that took its size (measureRow).
+    if (pendingEndAnchor.current) {
+      syncFollow()
+      return
+    }
+    // One ResizeObserver callback measures many rows, and each notifies.
+    // Followed row by row, every follow read the layout the row before had
+    // just changed; once at the end of the task is enough.
+    virtualFlush.current.follow = true
+    queueVirtualFlush()
   }
 
   // The reading position changes on purpose at two moments: when the user
@@ -1094,6 +1207,8 @@ export const Thread = memo(function Thread(props: ThreadProps) {
   useLayoutEffect(() => {
     const el = scroller.current
     const state = follow.current
+    // What follows reads the scroll where the list's last correction put it.
+    flushListScroll()
     const request = props.revealRequest ?? 0
     const revealed = completedRevealRequest.current !== request
     completedRevealRequest.current = request
@@ -1137,6 +1252,7 @@ export const Thread = memo(function Thread(props: ThreadProps) {
     activeAnchor,
     applyRoom,
     endOf,
+    flushListScroll,
     measureFollow,
     props.revealRequest,
     props.threadId,
@@ -1322,6 +1438,7 @@ export const Thread = memo(function Thread(props: ThreadProps) {
           settledHeight={settledHeight}
           applyRoom={applyRoom}
           syncFollow={syncFollow}
+          measureMountedRows={measureMountedRows}
           endOf={endOf}
           updateJump={updateJump}
           setMode={setMode}
@@ -1388,6 +1505,7 @@ function FrameScrollFollower({
   settledHeight,
   applyRoom,
   syncFollow,
+  measureMountedRows,
   endOf,
   updateJump,
   setMode,
@@ -1408,6 +1526,7 @@ function FrameScrollFollower({
   settledHeight: (element: HTMLElement) => number
   applyRoom: () => void
   syncFollow: () => void
+  measureMountedRows: () => void
   endOf: () => number
   /** Offers or withdraws Jump to latest for the end's distance while free. */
   updateJump: (distance: number) => void
@@ -1455,6 +1574,9 @@ function FrameScrollFollower({
   // Follow every render before paint: replay and virtual row measurements can
   // change the scroll height without changing the live text frame version.
   useLayoutEffect(() => {
+    // The rows of this commit are all attached now: they take their sizes
+    // before the end below is opened or followed.
+    measureMountedRows()
     const state = follow.current
     const now = performance.now()
     // The end glides while a turn runs, and a moment after it: the reply
@@ -1490,6 +1612,13 @@ function FrameScrollFollower({
   })
 
   return null
+}
+
+/** A scroll correction the virtual list asked for: its offset and the adjustment on top. */
+type ListScroll = {
+  offset: number
+  adjustments: number
+  instance: Virtualizer<HTMLDivElement, Element>
 }
 
 /** What the follow logic knows about the scroller without reading layout per frame. */

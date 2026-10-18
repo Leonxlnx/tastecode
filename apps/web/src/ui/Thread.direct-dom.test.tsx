@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { act, cleanup, render } from '@testing-library/react'
+import { act, cleanup, fireEvent, render } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Item } from '@harness/contracts'
 import { ThreadFrameStore } from '../thread-frame-store.js'
@@ -165,6 +165,111 @@ describe('Thread virtual rows', () => {
     expect(runway.style.height).toBe('142px')
     expect(rail.style.transform).toBe('translateY(60px)')
     expect(view.container.querySelector('.thread__rail-spacer')).toBeNull()
+  })
+
+  it('reads the heights of the rows a commit mounted before it places any of them', () => {
+    heights = [333, 211, 287, 199, 341, 263]
+    const items = heights.map((_, index) =>
+      item(`row-${index}`, {
+        role: index % 2 === 0 ? 'user' : 'assistant',
+        text: `Message ${index}`,
+        createdAt: index,
+      }),
+    )
+    // Each read, with the runway height it found: a height written between
+    // two reads would have laid the transcript out again.
+    const reads: string[] = []
+    vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      if (this.classList.contains('thread')) return VIEWPORT
+      const index = this.getAttribute('data-index')
+      if (index === null) return 0
+      reads.push(this.closest<HTMLElement>('.thread__runway')!.style.height)
+      return heights[Number(index)] ?? 0
+    })
+    const store = new ThreadFrameStore({ ...emptyThread, items: items.slice(0, 1) })
+    const view = render(
+      <Thread frameStore={store} onDecide={() => undefined} onAnswerUserInput={() => undefined} />,
+    )
+    reads.length = 0
+
+    // The rest of the chat arrives in one commit.
+    act(() => store.publish({ ...emptyThread, items }))
+
+    expect(reads).toHaveLength(heights.length - 1)
+    expect(new Set(reads).size).toBe(1)
+    const runway = view.container.querySelector<HTMLElement>('.thread__runway')!
+    expect(runway.style.height).toBe(`${total()}px`)
+    const rows = view.container.querySelectorAll<HTMLElement>('.thread__row')
+    expect(rows[5]!.style.transform).toBe(`translate3d(0, ${total() - heights[5]!}px, 0)`)
+  })
+
+  it('follows rows that one observer callback measured once, after the callback', async () => {
+    // A finished chat open at its end, three viewports long.
+    heights = Array.from({ length: 30 }, () => 100)
+    const items = heights.map((_, index) =>
+      item(`row-${index}`, {
+        role: index % 2 === 0 ? 'user' : 'assistant',
+        text: `Message ${index}`,
+        createdAt: index,
+      }),
+    )
+    let top = 0
+    let writes = 0
+    let heightReads = 0
+    vi.spyOn(Element.prototype, 'scrollTop', 'get').mockImplementation(() => top)
+    vi.spyOn(Element.prototype, 'scrollTop', 'set').mockImplementation((next: number) => {
+      writes += 1
+      top = next
+    })
+    vi.spyOn(Element.prototype, 'scrollHeight', 'get').mockImplementation(function (this: Element) {
+      heightReads += 1
+      const runway = this.querySelector<HTMLElement>('.thread__runway')
+      return runway ? Number.parseFloat(runway.style.height) : 0
+    })
+    const store = new ThreadFrameStore({ ...emptyThread, items })
+    const view = render(
+      <Thread
+        frameStore={store}
+        threadId="long"
+        onDecide={() => undefined}
+        onAnswerUserInput={() => undefined}
+      />,
+    )
+    const scroller = view.container.querySelector<HTMLElement>('.thread')!
+    // The list learns where the chat opened and lays out the rows there.
+    fireEvent.scroll(scroller)
+    await act(async () => undefined)
+    const end = top
+    expect(end).toBe(total() - VIEWPORT)
+
+    // The last three rows grew, reported together.
+    const rows = [27, 28, 29].map((index) =>
+      view.container.querySelector<HTMLElement>(`.thread__row[data-index="${index}"]`)!,
+    )
+    const observer = observers.find((entry) => rows.every((row) => entry.targets.has(row)))!
+    for (const index of [27, 28, 29]) heights[index]! += 20
+    writes = 0
+    heightReads = 0
+    act(() =>
+      observer.callback(
+        rows.map(
+          (row) =>
+            ({
+              target: row,
+              borderBoxSize: [{ blockSize: heights[Number(row.dataset.index)], inlineSize: 720 }],
+            }) as never,
+        ),
+        {} as ResizeObserver,
+      ),
+    )
+    expect(writes).toBe(0)
+    await act(async () => undefined)
+
+    expect(top).toBe(end + 60)
+    expect(writes).toBe(1)
+    expect(heightReads).toBe(1)
   })
 
   it('moves the rows and the working rail below a row that grew, without a render', () => {

@@ -16,6 +16,8 @@ const layout = vi.hoisted(() => ({
   starts: [] as number[],
   /** The scroll function Thread gave the list, if any. */
   scrollToFn: undefined as ScrollToFn | undefined,
+  /** How often the list's own scroll was written to the element. */
+  listWrites: 0,
 }))
 
 type ScrollToFn = (
@@ -47,7 +49,10 @@ vi.mock('@tanstack/react-virtual', () => {
     scrollToIndex: () => undefined,
   }
   return {
-    elementScroll: (...args: Parameters<ScrollToFn>) => elementScroll(...args),
+    elementScroll: (...args: Parameters<ScrollToFn>) => {
+      layout.listWrites += 1
+      elementScroll(...args)
+    },
     useVirtualizer: ({ count, scrollToFn }: { count: number; scrollToFn?: ScrollToFn }) => {
       layout.count = count
       layout.scrollToFn = scrollToFn
@@ -103,6 +108,7 @@ beforeEach(() => {
   layout.height = 1_200
   layout.heightReads = 0
   layout.starts = []
+  layout.listWrites = 0
   frames = []
   now = 1_000
   vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockImplementation(() => {
@@ -316,7 +322,7 @@ describe('Thread scroll position', () => {
       expect(scroller.scrollTop).toBe(916)
     })
 
-    it('glides on from where the list corrected the scroll for a row above', () => {
+    it('glides on from where the list corrected the scroll for a row above', async () => {
       const { view, scroller, grow } = streaming()
       grow(100)
       runFrame()
@@ -326,7 +332,8 @@ describe('Thread scroll position', () => {
       const before = scroller.scrollTop
       layout.height -= 120
       const scrollTo = layout.scrollToFn ?? elementScroll
-      act(() => scrollTo(before, { adjustments: -120 }, { scrollElement: scroller }))
+      // The correction is written once the task that measured the row is done.
+      await act(async () => scrollTo(before, { adjustments: -120 }, { scrollElement: scroller }))
       fireEvent.scroll(scroller)
       const corrected = scroller.scrollTop
       expect(corrected).toBe(before - 120)
@@ -338,6 +345,35 @@ describe('Thread scroll position', () => {
       expect(steps(corrected, tops).every((move) => move >= 0)).toBe(true)
       expect(scroller.scrollTop).toBe(980)
       expect(view.queryByRole('button', { name: 'Jump to latest' })).toBeNull()
+    })
+
+    it('writes the corrections for rows measured together once', async () => {
+      const view = render(<Thread {...props()} threadId="corrections" />)
+      const scroller = view.container.querySelector<HTMLElement>('.thread')!
+      fireEvent.wheel(scroller, { deltaY: -100 })
+      scroller.scrollTop = 400
+      fireEvent.scroll(scroller)
+      const scrollTo = layout.scrollToFn!
+      const instance = { scrollElement: scroller }
+      layout.listWrites = 0
+
+      // Three rows above the viewport measured taller in one observer callback.
+      act(() => {
+        scrollTo(400, { adjustments: 30 }, instance)
+        scrollTo(430, { adjustments: 20 }, instance)
+        scrollTo(450, { adjustments: 10 }, instance)
+      })
+      expect(layout.listWrites).toBe(0)
+      await act(async () => undefined)
+      expect(layout.listWrites).toBe(1)
+      expect(scroller.scrollTop).toBe(460)
+
+      // The list's own move is not the user's: they still read where they were.
+      fireEvent.scroll(scroller)
+      expect(view.getByRole('button', { name: 'Jump to latest' })).toBeTruthy()
+      // A smooth scroll is written at once.
+      act(() => scrollTo(100, { behavior: 'smooth' }, instance))
+      expect(layout.listWrites).toBe(2)
     })
 
     it('keeps the end in view at once with reduced motion', () => {
