@@ -219,6 +219,12 @@ describe('settings viewport CSS', () => {
     expect(systemCss).toMatch(/\.settings \.set-entity__actions:empty \{[^}]*display: none;/s)
   })
 
+  it('wraps page actions inside a narrow column', () => {
+    expect(systemCss).toMatch(
+      /@container settings-content \(max-width: 560px\) \{[\s\S]*?\.settings \.set-page__actions \{[^}]*flex: 0 1 auto;[^}]*flex-wrap: wrap;[^}]*min-width: 0;/s,
+    )
+  })
+
   it('draws every settings button from one 28px set', () => {
     expect(systemCss).toMatch(
       /\.settings \.set-button \{[^}]*height: 28px;[^}]*padding: 0 10px;[^}]*border: 1px solid var\(--line-strong\);[^}]*border-radius: var\(--r-md\);[^}]*font-size: var\(--t-sm\);[^}]*font-weight: 500;/s,

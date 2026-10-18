@@ -399,6 +399,15 @@
     flex-wrap: wrap;
     row-gap: 14px;
   }
+
+  /* On that line they may still be wider than the column (MCP servers:
+     provider select, hide-by-id and Add server); they wrap inside it
+     instead of running past its edge. */
+  .settings .set-page__actions {
+    flex: 0 1 auto;
+    flex-wrap: wrap;
+    min-width: 0;
+  }
 }
 
 /* Buttons: one set, every one 28px tall, fading through button-feedback.css.
