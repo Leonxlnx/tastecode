@@ -225,7 +225,7 @@
       <div class="topbar-inner">
         <h1>Feature Inventory</h1>
         <span class="total" id="total">0 checked</span>
-        <span class="meta">2026-10-18 nightly d1f57f65 · includes main 0ad74ec3</span>
+        <span class="meta">2026-10-18 nightly 517ef5f5 · includes main 0ad74ec3</span>
       </div>
     </div>
 
@@ -1222,13 +1222,15 @@
                   the user hid, and removes the old keys (hiddenModels, listedModels,
                   modelVisibilityVersion, modelVisibilityRows); search also matches the lab a source
                   declares; the server keeps one model list per source, answers from the last launch
-                  and refreshes it in the background, and a models.changed push lists a source
-                  again, so a CLI model change appears without a restart; a provider the composer is
-                  not on is listed when the picker opens; the catalog is listed again on window
-                  focus or show when the last listing is 6 hours or older, and after an app-run
-                  provider update; the launch snapshot of the catalog is written once per refresh
-                  (one trailing write while sources settle, then the full catalog) and dropped
-                  instead of written when it outgrows its 2,000-row / 2M-character limit</span
+                  and refreshes it in the background unless the last launch listed it less than 10
+                  minutes ago (older lists are listed again 5 s apart), and a models.changed push
+                  lists a source again, so a CLI model change appears without a restart; a provider
+                  the composer is not on is listed when the picker opens; the catalog is listed
+                  again on window focus or show when the last listing is 6 hours or older, and after
+                  an app-run provider update; the launch snapshot of the catalog is written once per
+                  refresh (one trailing write while sources settle, then the full catalog) and
+                  dropped instead of written when it outgrows its 2,000-row / 2M-character
+                  limit</span
                 ></span
               ></label
             >
@@ -1509,16 +1511,17 @@
                   come from one shared formatter; streamed text is laid out as it arrives and
                   revealed a character at a time by one animation-frame clock on the CSS Custom
                   Highlight API, about 100-180 ms behind the provider, with a 3-step fading edge
-                  over the last ~12 characters (never wider than 18); code chips, file reference
-                  icons and list bullets appear with their first character, and tables and code
-                  blocks show their structure first; a live table appears with its first row, so the
-                  header never lays out alone; numbered and nested lists, rules and code lines
-                  stream with their final layout; while a rich reply streams, its finished Markdown
-                  renders ahead, hidden, from its closed blocks every 300 ms, and a finished reply
-                  drains its reveal and then shows that render in place with code already
-                  highlighted, so it does not move or freeze at completion (under reduced motion the
-                  swap renders in a background render); reduced motion, a hidden window or a missing
-                  Highlight API show text as it lands</span
+                  over the last ~12 characters (never wider than 18), replacing only the highlight
+                  ranges that moved; code chips, file reference icons and list bullets appear with
+                  their first character, and tables and code blocks show their structure first; a
+                  live table appears with its first row, so the header never lays out alone;
+                  numbered and nested lists, rules and code lines stream with their final layout;
+                  while a rich reply streams, its finished Markdown renders ahead, hidden, from its
+                  closed blocks every 300 ms, and a finished reply drains its reveal and then shows
+                  that render in place with code already highlighted, so it does not move or freeze
+                  at completion (under reduced motion the swap renders in a background render);
+                  reduced motion, a hidden window or a missing Highlight API show text as it
+                  lands</span
                 ></span
               ></label
             >
@@ -1609,9 +1612,11 @@
                   tails stay exact; streamed frames overlay only the active turn, and stable
                   completed-row identities survive both streaming and optimistic-to-canonical
                   reconciliation; the virtual list writes row positions and the runway height
-                  directly, so the transcript re-renders only when its visible rows change, and its
-                  own scroll moves count as the follow's own, so a turn end keeps the reply in place
-                  and a reopened chat lands at the end</span
+                  directly, so the transcript re-renders only when its visible rows change; the rows
+                  a commit mounts are measured in one layout and scroll corrections for rows above
+                  the view are written once per task; its own scroll moves count as the follow's
+                  own, so a turn end keeps the reply in place and a reopened chat lands at the
+                  end</span
                 ></span
               ></label
             >
@@ -3004,10 +3009,11 @@
                 <span class="d"
                   >the server answers the first project list before its background work: provider
                   prewarm with the registry PATH read, the provider history scan and worktree
-                  recovery start after the first projects.list, or 1.5 s after listening; timed
-                  history refreshes and CLI version re-reads (held up to 2 minutes) and uncached
-                  limit reads (up to 10 s) wait for a 2 s pause in streaming, while user requests
-                  never wait</span
+                  recovery start after the first projects.list, or 1.5 s after listening; provider,
+                  account, model, usage and inventory reads start one event-loop turn later, so
+                  store reads sent in the same batch answer first; timed history refreshes and CLI
+                  version re-reads (held up to 2 minutes) and uncached limit reads (up to 10 s) wait
+                  for a 2 s pause in streaming, while user requests never wait</span
                 ></span
               ></label
             >
