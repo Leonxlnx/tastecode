@@ -291,12 +291,73 @@
           <a href="./feature-inventory.html">Inventory</a>
           <a href="./CLAUDE-HANDOFF.md">Claude handoff</a>
         </nav>
-        <span class="meta">2026-10-16 nightly 04580dfe · includes main 0ad74ec3</span>
+        <span class="meta">2026-10-18 nightly 54ee3536 · includes main 0ad74ec3</span>
       </div>
     </div>
 
     <div class="wrap">
       <section id="scope">
+        <p>
+          October 18 on nightly (54ee3536): the October 16 improvement round landed in one merge
+          commit (PR #1841). Every lane top was merged into one integration branch, checked with the
+          four gates and in the Electron shell on a copy of real data, and fixed there; nightly's
+          tree is identical to that tested tree, and all 172 lane PRs show as merged. The round's
+          contracts (PRs #1637, #1638, #1640, #1643, #1659, #1661, #1662, #1675, #1680) and in-app
+          feedback (PRs #1604 to #1607, #1690) were merged on October 16. Streaming (PRs #1676,
+          #1677, #1735 to #1738, #1790 to #1792, #1820 to #1823): text is revealed a character at a
+          time behind a soft edge, a finished reply is rendered ahead so completion neither moves
+          nor freezes it, a new turn pins its prompt near the top, the follow glides, and one
+          breathing dot marks a working turn. Chat column (PRs #1670 to #1673, #1711 to #1714): the
+          transcript sits inside the prompt bar's text edges, code blocks get ghost actions on hover
+          or focus, a real Copied state and a text label, and tables sit in a rounded card. Models
+          (PRs #1641, #1642, #1682 to #1685, #1770 to #1777, #1802 to #1804, #1828 to #1830, #1833
+          to #1835): visibility keeps only explicit choices and a newer generation hides the older
+          one; one model list per source answers from the last launch, and models.changed brings new
+          CLI models without a restart; OpenCode offers only its connected providers with up to four
+          recommended models, Cursor waits up to 60 s and starts six models ordered by lab,
+          Antigravity uses agy's own names, and large sources in Settings are grouped by lab. MCP
+          and slash commands (PRs #1686 to #1688, #1733, #1734, #1779 to #1782, #1813 to #1819,
+          #1831, #1832): Claude Code, Grok and OpenCode list their own MCP servers, commands and
+          skills, also without an open chat, and / lists TasteCode commands first, then the
+          provider's commands and skills.
+        </p>
+        <p>
+          Providers (PRs #1654 to #1658, #1689, #1691, #1692, #1694, #1710, #1719 to #1721, #1744 to
+          #1747): shared account reads keep a confirmed sign-in through a slow re-check, Send stays
+          available when an account cannot be confirmed, Cursor has no version gate, Antigravity and
+          OpenCode report their real sign-in, and Install runs the vendor's official installer for
+          Claude Code, Grok, Cursor and Antigravity. Plan limits (PRs #1644 to #1647, #1693, #1695
+          to #1697, #1739 to #1743, #1759 to #1763): Claude reads skip the transcript scan and stop
+          at 20 s, live Codex and Claude windows reach the bars within about a second, a failed
+          refresh keeps the last known values with a freshness label, limits survive chat switches,
+          and bars get an even-pace tick. Usage (PRs #1660, #1704 to #1706, #1722 to #1725, #1748 to
+          #1752, #1784 to #1789, #1836 to #1839): the usage index is compacted and read
+          incrementally, cost comes from cited list prices and reads Partial estimate below 95%
+          priced tokens, and Usage and Profile are new pages. Settings (PRs #1648 to #1653, #1707 to
+          #1709, #1716 to #1718, #1754 to #1757, #1807 to #1812): one Settings v1 layout with one
+          button, switch, select and field family on all 11 tabs, and one terminal look. Performance
+          (PRs #1663 to #1667, #1726 to #1732, #1753, #1758, #1793 to #1795): CLI discovery without
+          where.exe, startup answers the first project list before background work, background reads
+          wait for pauses in streaming, the history refresh backs off while idle, history metadata
+          is kept in the database, Claude Code and Codex histories are read incrementally, and no
+          opencode serve is left behind. Subagents and pull requests (PRs #1764 to #1767, #1778,
+          #1783, #1801, #1805, #1806, #1824 to #1827): Claude Code, Codex and Grok subagents get
+          live rows, the chat header shows its pull request, and Review can commit, push and create
+          a pull request.
+        </p>
+        <p>
+          Checks on the integration tree (ed488891, Windows): <code>pnpm lint</code>,
+          <code>pnpm typecheck</code> and <code>pnpm build</code> passed, every package suite and
+          the desktop suite passed, web passed 2,832 of 2,833 tests with one failure that nightly
+          had before, and the server's remaining failures were load timeouts and Windows EBUSY on
+          temp cleanup that pass alone, the same classes that fail on nightly without the round.
+          Twenty commits came out of the gates and the Electron shell checks, including fixes for
+          two Grok bugs nightly already had; PR #1841 lists them. Not verified live yet: the Last
+          known label, the one terminal look, the OS clipboard after Copy and a hanging Grok in
+          chat. As of October 18 no installer has been built from this nightly. The release
+          checklist below still describes main; once Leon has tested nightly, it is promoted to main
+          as v0.1.3 with every provider.
+        </p>
         <p>
           October 16 on nightly (04580dfe): main is synchronized through 0ad74ec3 (PR #1632) with
           every nightly provider, API connection and the usage history kept, bringing main's October
@@ -921,9 +982,9 @@
             <small>thread, review, sessions, git, settings, TasteCode identity</small>
           </div>
           <div class="kpi">
-            <b>1</b>
+            <b>2</b>
             <span>workstreams running</span>
-            <small>design</small>
+            <small>design, v0.1.3 from nightly</small>
           </div>
           <div class="kpi">
             <b>6</b>
@@ -1431,8 +1492,23 @@
           </div>
 
           <div class="lane l-active">
-            <header>In progress <span class="count">2</span></header>
+            <header>In progress <span class="count">3</span></header>
             <ul>
+              <li>
+                <i class="tick">●</i>
+                <span
+                  >v0.1.3 from nightly
+                  <span class="d"
+                    >the October 16 improvement round is on nightly through PR #1841 (172 lane PRs
+                    in ten lanes, merge 54ee3536) and passed the local gates and the Electron shell
+                    checks on a copy of real data; next are Leon's own test, an installer from the
+                    newest nightly, the remaining nightly refactors so shared code never branches on
+                    provider names, version 0.1.3 and its release notes, then the promotion PR that
+                    brings every provider to main; multiple accounts per provider follow (contracts
+                    in PR #1675; server, adapters and UI not built yet)</span
+                  >
+                </span>
+              </li>
               <li>
                 <i class="tick">●</i>
                 <span
@@ -1590,7 +1666,9 @@
         <h2>Nightly only</h2>
         <p class="sub">
           Built and tested, and absent from main's code since 2026-10-03. All of it runs on the
-          nightly branch; bringing one back to main is a port from nightly, not a roster switch.
+          nightly branch; bringing one back to main is a port from nightly, not a roster switch. On
+          2026-10-16 Leon decided that all of it returns to main with v0.1.3, promoted from nightly
+          after testing.
         </p>
         <div class="parked">
           <span>Cursor adapter</span>
