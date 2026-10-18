@@ -5653,6 +5653,7 @@ export function App() {
               accountLoading={
                 accountCheck.provider !== provider || accountCheck.state === 'loading'
               }
+              usageLimits={usageController}
               profileIdentity={profileIdentity}
               onProfileIdentityChange={updateProfileIdentity}
               providerStatuses={providerStatuses}

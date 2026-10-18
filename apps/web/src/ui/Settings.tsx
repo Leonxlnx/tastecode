@@ -50,6 +50,7 @@ import {
   IconUserCircle as CircleUserRound,
   IconBlocks as Blocks,
   IconBug as Bug,
+  IconChartBar as BarChart3,
   IconDatabase as Database,
   IconEye as Eye,
   IconEyeOff as EyeOff,
@@ -149,6 +150,8 @@ import {
 } from '../shortcuts.js'
 import { KeybindSettings } from './KeybindSettings.js'
 import { GeneralSettings } from './GeneralSettings.js'
+import { UsageSettings } from './UsageSettings.js'
+import type { PlanLimitsSource } from './usage/UsageLimits.js'
 import { ProviderUpdateCheck } from './ProviderUpdates.js'
 import { useProviderUpdates, type ProviderUpdateSimulation } from '../provider-updates.js'
 
@@ -165,6 +168,7 @@ export type SettingsSection =
   | 'mcp'
   | 'skills'
   | 'workflows'
+  | 'usage'
   | 'appearance'
   | 'keybinds'
   | 'data'
@@ -265,6 +269,8 @@ function SettingsComponent(props: {
   projectName: string | undefined
   account: Account | undefined
   accountLoading?: boolean | undefined
+  /** Plan limits for every provider, shown on the Usage tab. */
+  usageLimits?: PlanLimitsSource | undefined
   profileIdentity?: ProfileIdentityPreferences | undefined
   onProfileIdentityChange?: ((updates: Partial<ProfileIdentityPreferences>) => void) | undefined
   providerStatuses: ProviderStatus[]
@@ -424,6 +430,12 @@ function SettingsComponent(props: {
             onClick={() => setSection('skills')}
           />
           <SettingsNavItem
+            active={section === 'usage'}
+            icon={<BarChart3 size={15} aria-hidden />}
+            label="Usage"
+            onClick={() => setSection('usage')}
+          />
+          <SettingsNavItem
             active={section === 'data'}
             icon={<Database size={15} aria-hidden />}
             label="Data & privacy"
@@ -462,6 +474,9 @@ function SettingsComponent(props: {
           {section === 'mcp' ? <McpSettings {...props} providers={MCP_PROVIDER_OPTIONS} /> : null}
           {section === 'skills' ? <SkillsSettings {...props} /> : null}
           {section === 'workflows' ? <GeneralSettings {...props} /> : null}
+          {section === 'usage' ? (
+            <UsageSettings transport={props.transport} limits={props.usageLimits} />
+          ) : null}
           {section === 'appearance' ? <AppearanceSettings {...props} /> : null}
           {section === 'keybinds' ? (
             <KeybindSettings
@@ -483,6 +498,7 @@ function SettingsComponent(props: {
                   Force onboarding
                 </button>
               </SettingsRow>
+              <UsageHistoryReset transport={props.transport} />
               <AppUpdateSimulationRow />
               <ProviderUpdateSimulationRow transport={props.transport} />
               <SettingsRow
@@ -1869,6 +1885,45 @@ function ResetConfirmation(props: { onCancel: () => void; onConfirm: () => void 
       </div>
     </div>,
     document.body,
+  )
+}
+
+export function UsageHistoryReset(props: { transport: Transport }) {
+  const [state, setState] = useState<'idle' | 'resetting' | 'started' | 'error'>('idle')
+  const [error, setError] = useState<string>()
+
+  const resetUsage = async () => {
+    setState('resetting')
+    setError(undefined)
+    try {
+      await props.transport.request('usage.resetHistory', {})
+      setState('started')
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+      setState('error')
+    }
+  }
+
+  return (
+    <SettingsRow
+      title="Usage history index"
+      note="Clears the generated cache and reparses every local provider history. Sessions and Harness data are not deleted."
+      className="settings__row--roomy"
+    >
+      {state === 'started' ? <StateLabel state="checking" detail="Scan started" live /> : null}
+      {state === 'error' && error ? (
+        <RowIssue message={error} tip="Restart the app, then try the reset again." />
+      ) : null}
+      <button
+        className="settings__action"
+        type="button"
+        disabled={state === 'resetting'}
+        onClick={() => void resetUsage()}
+      >
+        <RotateCcw size={13} aria-hidden />
+        <span>{state === 'resetting' ? 'Resetting…' : 'Reset and rescan'}</span>
+      </button>
+    </SettingsRow>
   )
 }
 

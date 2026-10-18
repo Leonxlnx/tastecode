@@ -1,0 +1,155 @@
+/* ---------- Usage page: plan limits ----------
+   One group per provider, one row per window. A meter is a comb of rungs:
+   unlit for the window, lit for what is left. */
+
+.settings .usage-limits__source + .usage-limits__source {
+  margin-top: 14px;
+}
+
+.settings .usage-limits__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+}
+
+.settings .usage-limits__name {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  color: var(--text);
+  font-size: var(--t-md);
+  font-weight: 500;
+}
+
+.settings .usage-limits__name svg {
+  flex: none;
+  color: var(--text-2);
+}
+
+.settings .usage-limits__status {
+  margin-left: auto;
+  color: var(--text-3);
+  font-size: var(--t-sm);
+  white-space: nowrap;
+}
+
+.settings .usage-limits__retry {
+  margin-block: -4px;
+  margin-right: -10px;
+}
+
+.settings .usage-limit {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr) 92px 128px;
+  align-items: center;
+  column-gap: 16px;
+  min-height: 32px;
+  padding-left: 22px;
+  font-size: var(--t-md);
+  font-variant-numeric: tabular-nums;
+}
+
+.settings .usage-limit__label {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-2);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings .usage-limit__value {
+  color: var(--text);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.settings .usage-limit__text {
+  grid-column: 2 / 4;
+  color: var(--text);
+  text-align: right;
+}
+
+.settings .usage-limit__reset {
+  color: var(--text-3);
+  font-size: var(--t-sm);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.settings .usage-limit[data-state='low'] {
+  --usage-rung-on: var(--usage-rung-low);
+}
+
+.settings .usage-limit[data-state='blocked'] {
+  --usage-rung-off: color-mix(in srgb, var(--error) 24%, transparent);
+}
+
+.settings .usage-limit[data-state='blocked'] .usage-limit__value {
+  color: var(--error);
+}
+
+.settings .usage-meter {
+  position: relative;
+  height: 10px;
+}
+
+.settings .usage-meter__rungs {
+  position: absolute;
+  inset: 0;
+  background: var(--usage-rung-off);
+  mask: repeating-linear-gradient(to right, #000 0 3px, transparent 3px 5px);
+}
+
+.settings .usage-meter__fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--usage-meter-fill);
+  background: var(--usage-rung-on);
+  transition: width var(--dur-slow) var(--ease-out);
+}
+
+@supports (width: round(nearest, 10%, 5px)) {
+  /* Whole rungs only: a share never lights a sliver of one. */
+  .settings .usage-meter__fill {
+    width: round(nearest, var(--usage-meter-fill), 5px);
+  }
+}
+
+@container settings-content (max-width: 600px) {
+  .settings .usage-limit {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      'label value'
+      'meter meter'
+      'reset reset';
+    row-gap: 6px;
+    padding-block: 6px;
+  }
+
+  .settings .usage-limit__label {
+    grid-area: label;
+  }
+
+  .settings .usage-limit__value,
+  .settings .usage-limit__text {
+    grid-area: value;
+  }
+
+  .settings .usage-meter {
+    grid-area: meter;
+  }
+
+  .settings .usage-limit__reset {
+    grid-area: reset;
+    text-align: left;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings .usage-meter__fill {
+    transition: none;
+  }
+}
