@@ -241,9 +241,14 @@ describe('Claude Code subscription limits', () => {
     expect(mapClaudeUsage({ rate_limits_available: false, rate_limits: null })).toEqual({
       status: 'unavailable',
     })
-    expect(mapClaudeUsage({ rate_limits_available: true, rate_limits: null })).toEqual({
-      status: 'unavailable',
-    })
+  })
+
+  it('reports available limits that came back empty as a failed read', () => {
+    // The same subscription answered with its windows on other reads; "no plan
+    // limits" would hide them until the unavailable answer expired.
+    expect(() => mapClaudeUsage({ rate_limits_available: true, rate_limits: null })).toThrow(
+      'Claude did not report plan limits this time.',
+    )
   })
 
   it('rejects malformed experimental responses', () => {
@@ -342,8 +347,7 @@ describe('Claude Code subscription limits', () => {
   it('waits for a usage answer that arrives behind a slow CLI start', async () => {
     vi.useFakeTimers()
     const close = vi.fn()
-    // A Team account reports no plan windows at all; a slow machine can take
-    // several seconds to start the CLI before it answers.
+    // A slow machine can take several seconds to start the CLI before it answers.
     const usage = vi.fn(
       () =>
         new Promise<SDKControlGetUsageResponse>((resolve) =>
@@ -351,7 +355,7 @@ describe('Claude Code subscription limits', () => {
             () =>
               resolve({
                 rate_limits_available: true,
-                rate_limits: null,
+                rate_limits: { five_hour: { utilization: 40, resets_at: null } },
               } as SDKControlGetUsageResponse),
             19_999,
           ),
@@ -365,7 +369,10 @@ describe('Claude Code subscription limits', () => {
     const read = claudeLimitSource({ createQuery })
     await vi.advanceTimersByTimeAsync(19_999)
 
-    await expect(read).resolves.toEqual({ status: 'unavailable' })
+    await expect(read).resolves.toEqual({
+      status: 'ready',
+      limits: [{ id: 'five_hour', label: 'Session', usedPercent: 40, windowMinutes: 300 }],
+    })
     expect(close).toHaveBeenCalledOnce()
   })
 

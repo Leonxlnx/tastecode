@@ -39,6 +39,7 @@ export type ClaudeLimitSourceOptions = {
 const TIMEOUT_MS = 20_000
 const USAGE_REQUEST = { skipBehaviors: true } as const
 const TIMED_OUT = 'Claude usage request timed out.'
+const NOT_REPORTED = 'Claude did not report plan limits this time.'
 const PercentSchema = z
   .number()
   .finite()
@@ -106,7 +107,12 @@ export function mapClaudeUsage(value: unknown): ClaudeLimitSource {
   const result = UsageResponseSchema.safeParse(value)
   if (!result.success) throw new Error('Claude usage response was invalid.')
   const { rate_limits: rateLimits, rate_limits_available: available } = result.data
-  if (!available || rateLimits === null) return { status: 'unavailable' }
+  // Only `rate_limits_available: false` means plan limits do not apply (API
+  // key, Bedrock, Vertex). Available limits that came back null are a read
+  // that failed: the same subscription reported its windows on other reads,
+  // so answering "no plan limits" here hid them for the whole cache period.
+  if (!available) return { status: 'unavailable' }
+  if (rateLimits === null) throw new Error(NOT_REPORTED)
 
   const limits = [
     ...windowRow('five_hour', 'Session', rateLimits.five_hour, SESSION_MINUTES),
