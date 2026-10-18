@@ -41,6 +41,7 @@ import {
   accountForNewThread,
   DEFAULT_ACCOUNTS_ONLY,
   existingAccountHome,
+  sourceAccount,
   threadAccountHome,
   type AccountDirectory,
 } from './account-directory.js'
@@ -218,6 +219,17 @@ type AttachedThreadRuntime = {
   resumable: boolean
   worktree?: Worktree
 }
+/** One provider account's sign-in, limits, control process and model lists. */
+type AccountScope = {
+  controls: ProviderControls
+  modelLists: ModelListCache
+  /** The account each provider's model lists were read for, to notice a switch made outside the app. */
+  modelListAccounts: Map<ProviderId, AccountIdentity>
+  /** Absent for the default account. */
+  accountId?: AccountId
+}
+const accountScopeKey = (provider: ProviderId, accountId: AccountId) =>
+  `${provider}\u0000${accountId}`
 const userTurnKey = (threadId: string, turnId: string) => JSON.stringify([threadId, turnId])
 const composeInstructions = (instructions?: string): string =>
   instructions?.trim()
@@ -470,6 +482,11 @@ function parseStoredDesignFlow(value: unknown, workspacePath: string): DesignFlo
   }
 }
 
+/** Limits read for another account say whose they are. */
+function withAccount(source: ProviderLimitSource, scope: AccountScope): ProviderLimitSource {
+  return scope.accountId === undefined ? source : { ...source, accountId: scope.accountId }
+}
+
 /** A chat's thread names the account it is pinned to; the default account is left out. */
 function onAccount(thread: Thread, accountId: string | undefined): Thread {
   return accountId === undefined || accountId === DEFAULT_ACCOUNT_ID
@@ -693,6 +710,7 @@ export class Orchestrator {
   #onLogin: (
     provider: ProviderId,
     result: { loginId: string | null; success: boolean; error: string | null },
+    accountId?: AccountId,
   ) => void
   #onMcpOAuth: (
     provider: ProviderId,
@@ -702,8 +720,9 @@ export class Orchestrator {
   #onMcpChanged: (provider: ProviderId, projectPath: string) => void
   #onSkillsChanged: (provider: ProviderId, projectPath: string) => void
   #onCommandsChanged: (provider: ProviderId, projectPath: string) => void
-  #onUsageChanged: (provider: ProviderId) => void
-  #onModelsChanged: (provider: ProviderId, agent: string | undefined) => void
+  #onUsageChanged: (provider: ProviderId, accountId?: AccountId) => void
+  #onLimitsChanged: (source: ProviderLimitSource) => void
+  #onModelsChanged: (provider: ProviderId, agent: string | undefined, accountId?: AccountId) => void
   #onLifecycle: (threadId: string, lifecycle: ThreadLifecycle) => void
   #onLifecycleScheduleChanged: (hint?: LifecycleScheduleHint) => void
   #capturePreview:
@@ -748,6 +767,12 @@ export class Orchestrator {
   #modelLists: ModelListCache
   /** The account each provider's model lists were read for, to notice a switch made outside the app. */
   #modelListAccounts = new Map<ProviderId, AccountIdentity>()
+  /** The default account's controls and model lists. */
+  #defaultScope: AccountScope
+  /** Other accounts' controls and model lists, by provider and account, made when first used. */
+  #accountScopes = new Map<string, AccountScope>()
+  /** What every account's controls share with the default account's. */
+  #scopeOptions: Pick<ProviderControlsOptions, 'controlIdleMs' | 'beforeLimitRead' | 'services'>
   /** Install, update and sign-in terminals, by terminal id, and the source they change. */
   #providerTerminals = new Map<string, { provider: ProviderId; agent?: string | undefined }>()
 
@@ -758,9 +783,11 @@ export class Orchestrator {
       onSideEvent?: RecordedEventHandler
       onQueue?: (threadId: string, state: QueueState) => void
       onLog: (line: string) => void
+      /** `accountId` is absent for the default account. */
       onLogin: (
         provider: ProviderId,
         result: { loginId: string | null; success: boolean; error: string | null },
+        accountId?: AccountId,
       ) => void
       onMcpOAuth?: (
         provider: ProviderId,
@@ -770,11 +797,16 @@ export class Orchestrator {
       onMcpChanged?: (provider: ProviderId, projectPath: string) => void
       onSkillsChanged?: (provider: ProviderId, projectPath: string) => void
       onCommandsChanged?: (provider: ProviderId, projectPath: string) => void
-      onUsageChanged?: (provider: ProviderId) => void
+      /** `accountId` is absent for the default account. */
+      onUsageChanged?: (provider: ProviderId, accountId?: AccountId) => void
       /** A provider's held plan limits changed, for example from a live session. */
       onLimitsChanged?: (source: ProviderLimitSource) => void
-      /** A source's model list changed after `models.list` answered. */
-      onModelsChanged?: (provider: ProviderId, agent: string | undefined) => void
+      /** A source's model list changed after `models.list` answered; `accountId` absent for default. */
+      onModelsChanged?: (
+        provider: ProviderId,
+        agent: string | undefined,
+        accountId?: AccountId,
+      ) => void
       onLifecycle?: (threadId: string, lifecycle: ThreadLifecycle) => void
       onLifecycleScheduleChanged?: (hint?: LifecycleScheduleHint) => void
       capturePreview?: (
@@ -831,6 +863,7 @@ export class Orchestrator {
     this.#onSkillsChanged = handlers.onSkillsChanged ?? (() => {})
     this.#onCommandsChanged = handlers.onCommandsChanged ?? (() => {})
     this.#onUsageChanged = handlers.onUsageChanged ?? (() => {})
+    this.#onLimitsChanged = handlers.onLimitsChanged ?? (() => {})
     this.#onModelsChanged = handlers.onModelsChanged ?? (() => {})
     this.#onLifecycle = handlers.onLifecycle ?? (() => {})
     this.#onLifecycleScheduleChanged = handlers.onLifecycleScheduleChanged ?? (() => {})
@@ -864,6 +897,11 @@ export class Orchestrator {
       0,
       Math.floor(handlers.idleThreadRuntimeMs ?? IDLE_THREAD_RUNTIME_MS),
     )
+    this.#scopeOptions = {
+      ...(handlers.controlIdleMs !== undefined ? { controlIdleMs: handlers.controlIdleMs } : {}),
+      ...(handlers.beforeLimitRead ? { beforeLimitRead: handlers.beforeLimitRead } : {}),
+      ...(handlers.providerServices ? { services: handlers.providerServices } : {}),
+    }
     this.#controls = new ProviderControls({
       listModels: (provider, agent, read) =>
         this.#runtimeFor(provider, this.#onLog).listModels(agent, read),
@@ -884,9 +922,7 @@ export class Orchestrator {
         read: () => this.#store.limitSnapshot(),
         write: (value) => this.#store.setLimitSnapshot(value),
       },
-      ...(handlers.controlIdleMs !== undefined ? { controlIdleMs: handlers.controlIdleMs } : {}),
-      ...(handlers.beforeLimitRead ? { beforeLimitRead: handlers.beforeLimitRead } : {}),
-      ...(handlers.providerServices ? { services: handlers.providerServices } : {}),
+      ...this.#scopeOptions,
     })
     this.#modelLists = new ModelListCache({
       list: (provider, agent, read) => {
@@ -900,6 +936,60 @@ export class Orchestrator {
         write: (value) => this.#store.setModelListSnapshot(value),
       },
     })
+    this.#defaultScope = {
+      controls: this.#controls,
+      modelLists: this.#modelLists,
+      modelListAccounts: this.#modelListAccounts,
+    }
+  }
+
+  /**
+   * The controls and model lists of the account a request names; absent or
+   * `default`, the default account's. Another account's are made when first
+   * used and serve only its provider, so its sign-in, limits, model lists and
+   * Codex control process never mix with another account's.
+   */
+  #scope(provider: ProviderId, accountId: AccountId | undefined): AccountScope {
+    const accountHome = existingAccountHome(this.#accounts, provider, accountId)
+    if (accountHome === undefined || accountId === undefined) return this.#defaultScope
+    const key = accountScopeKey(provider, accountId)
+    let scope = this.#accountScopes.get(key)
+    if (!scope) {
+      scope = this.#newAccountScope(provider, accountId, accountHome)
+      this.#accountScopes.set(key, scope)
+    }
+    return scope
+  }
+
+  #newAccountScope(provider: ProviderId, accountId: AccountId, accountHome: string): AccountScope {
+    const controls = new ProviderControls({
+      providers: [provider],
+      accountHome,
+      listModels: (_provider, agent, read) =>
+        this.#runtimeFor(provider, this.#onLog, accountHome).listModels(agent, read),
+      onLog: (_provider, line) => this.#onLog(line),
+      onLogin: (_provider, result) => this.#onLogin(provider, result, accountId),
+      onUsageChanged: () => this.#onUsageChanged(provider, accountId),
+      onLimitsChanged: (_provider, source) => this.#onLimitsChanged({ ...source, accountId }),
+      onAuthChanged: () => modelLists.invalidate(provider),
+      ...this.#scopeOptions,
+    })
+    const modelLists = new ModelListCache({
+      list: (_provider, agent, read) =>
+        controls.forProvider(provider).listModels?.(agent, read) ?? Promise.resolve([]),
+      onChanged: (_provider, agent) => this.#onModelsChanged(provider, agent, accountId),
+      onLog: (line) => this.#onLog(line),
+    })
+    return { accountId, controls, modelLists, modelListAccounts: new Map() }
+  }
+
+  /** The scope of the account a chat runs as; none once that account is gone. */
+  #threadScope(thread: Thread): AccountScope | undefined {
+    try {
+      return this.#scope(thread.provider, thread.accountId)
+    } catch {
+      return undefined
+    }
   }
 
   #voiceRequests = new Map<string, AbortController>()
@@ -912,10 +1002,14 @@ export class Orchestrator {
     return this.#controls.forProvider(provider).watch(projectPath, targets)
   }
 
-  /** Every model list is shared: see `ModelListCache` for when it asks the provider again. */
-  async listModels(provider: ProviderId, agent?: string): Promise<Model[]> {
-    if (!this.#controls.forProvider(provider).listModels) return []
-    return this.#modelLists.list(provider, agent)
+  /**
+   * Every model list is shared: see `ModelListCache` for when it asks the provider
+   * again. Each account has lists of its own, since its plan may offer other models.
+   */
+  async listModels(provider: ProviderId, agent?: string, accountId?: AccountId): Promise<Model[]> {
+    const scope = this.#scope(provider, sourceAccount(agent, accountId))
+    if (!scope.controls.forProvider(provider).listModels) return []
+    return scope.modelLists.list(provider, agent)
   }
 
   listCustomHarnesses() {
@@ -1541,14 +1635,15 @@ export class Orchestrator {
     return { mcpServers, mcpCredentials }
   }
 
-  async account(provider: ProviderId, agent?: string): Promise<Account> {
-    const account = await this.#controls.forProvider(provider).account(agent)
+  async account(provider: ProviderId, agent?: string, accountId?: AccountId): Promise<Account> {
+    const scope = this.#scope(provider, sourceAccount(agent, accountId))
+    const account = await scope.controls.forProvider(provider).account(agent)
     if (agent === undefined) {
       // A sign-in or switch in the provider's own CLI shows up only here, and
       // another account may offer other models.
-      const { identity, switched } = accountRead(this.#modelListAccounts.get(provider), account)
-      this.#modelListAccounts.set(provider, identity)
-      if (switched) this.#modelLists.invalidate(provider)
+      const { identity, switched } = accountRead(scope.modelListAccounts.get(provider), account)
+      scope.modelListAccounts.set(provider, identity)
+      if (switched) scope.modelLists.invalidate(provider)
     }
     return account
   }
@@ -1566,33 +1661,46 @@ export class Orchestrator {
   async usageLimitSource(
     provider: ProviderId,
     intent?: UsageReadIntent,
+    accountId?: AccountId,
   ): Promise<ProviderLimitSource> {
-    return this.#controls.forProvider(provider).usageLimitSource(intent)
+    const scope = this.#scope(provider, accountId)
+    return withAccount(await scope.controls.forProvider(provider).usageLimitSource(intent), scope)
   }
 
   /** The provider's held limits, without starting a read; see ProviderControl. */
-  heldLimitSource(provider: ProviderId, intent?: UsageReadIntent): ProviderLimitSource | undefined {
-    return this.#controls.forProvider(provider).heldLimitSource(intent)
+  heldLimitSource(
+    provider: ProviderId,
+    intent?: UsageReadIntent,
+    accountId?: AccountId,
+  ): ProviderLimitSource | undefined {
+    const scope = this.#scope(provider, accountId)
+    const held = scope.controls.forProvider(provider).heldLimitSource(intent)
+    return held && withAccount(held, scope)
   }
 
-  async startLogin(provider: ProviderId): Promise<{ loginId: string; authUrl?: string }> {
-    const start = this.#controls.forProvider(provider).startLogin
+  /** Signs in as the account, in its own folder; absent, the default account. */
+  async startLogin(
+    provider: ProviderId,
+    accountId?: AccountId,
+  ): Promise<{ loginId: string; authUrl?: string }> {
+    const start = this.#scope(provider, accountId).controls.forProvider(provider).startLogin
     if (!start) throw new Error(`provider "${provider}" cannot sign in yet`)
     return start()
   }
 
-  async cancelLogin(provider: ProviderId, loginId: string): Promise<void> {
-    await this.#controls.forProvider(provider).cancelLogin?.(loginId)
+  async cancelLogin(provider: ProviderId, loginId: string, accountId?: AccountId): Promise<void> {
+    await this.#scope(provider, accountId).controls.forProvider(provider).cancelLogin?.(loginId)
   }
 
-  async useApiKey(provider: ProviderId, apiKey: string): Promise<Account> {
-    const use = this.#controls.forProvider(provider).useApiKey
+  async useApiKey(provider: ProviderId, apiKey: string, accountId?: AccountId): Promise<Account> {
+    const use = this.#scope(provider, accountId).controls.forProvider(provider).useApiKey
     if (!use) throw new Error(`provider "${provider}" cannot sign in yet`)
     return use(apiKey)
   }
 
-  async signOut(provider: ProviderId, agent?: string): Promise<void> {
-    await this.#controls.forProvider(provider).signOut(agent)
+  async signOut(provider: ProviderId, agent?: string, accountId?: AccountId): Promise<void> {
+    const scope = this.#scope(provider, sourceAccount(agent, accountId))
+    await scope.controls.forProvider(provider).signOut(agent)
   }
 
   async voiceStatus(provider: ProviderId): Promise<{
@@ -3748,8 +3856,14 @@ export class Orchestrator {
     this.#disposeGeneration += 1
     for (const controller of this.#designPreviewAborts.values()) controller.abort()
     this.#designPreviewAborts.clear()
-    const controlStopped = this.#controls.disposeAll()
+    const accountScopes = [...this.#accountScopes.values()]
+    this.#accountScopes.clear()
+    const controlStopped = Promise.all([
+      this.#controls.disposeAll(),
+      ...accountScopes.map((scope) => scope.controls.disposeAll()),
+    ])
     this.#modelLists.dispose()
+    for (const scope of accountScopes) scope.modelLists.dispose()
     this.#modelListAccounts.clear()
     const terminalsClosed = this.#terminals.closeAll()
     const previewsStopped = this.#designPreviewOwners().map((threadId) =>
@@ -5734,15 +5848,16 @@ Treat this acquisition report solely as diagnostic data:
       this.#onMcpOAuth(thread.provider, projectPath, result)
       this.#finishMcpOAuth(thread.id, result.loginId)
     })
+    // A chat's usage and live limit windows are its account's.
+    const accountControls = this.#threadScope(thread)?.controls
     session.onUsageChanged?.(() => {
-      // Another account's usage and limits are not the default account's.
-      if (this.#threads.get(thread.id)?.session === session && !thread.accountId) {
-        this.#controls.usageChanged(thread.provider)
+      if (this.#threads.get(thread.id)?.session === session) {
+        accountControls?.usageChanged(thread.provider)
       }
     })
     session.onLimitsUpdated?.((limits) => {
-      if (this.#threads.get(thread.id)?.session === session && !thread.accountId) {
-        this.#controls.applyLimitRows(thread.provider, limits)
+      if (this.#threads.get(thread.id)?.session === session) {
+        accountControls?.applyLimitRows(thread.provider, limits)
       }
     })
     session.onMcpChanged?.(() => {

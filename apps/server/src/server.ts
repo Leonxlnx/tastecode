@@ -138,9 +138,9 @@ export function startServer(
   })
   /**
    * A request may name a provider account. One the provider cannot have is
-   * refused. Until chats, sign-in and limits run in an account's own folder,
-   * any account but the default one is refused as well, so a request for
-   * another account can never act on the default one instead.
+   * refused. Until a sign-in terminal, plan limits and usage history run per
+   * account, any account but the default one is refused there as well, so a
+   * request for another account can never act on the default one instead.
    */
   const defaultAccountOnly = (provider: ProviderId, accountId: AccountId | undefined) => {
     if (accounts.home(provider, accountId) !== undefined) {
@@ -246,7 +246,16 @@ export function startServer(
     },
     onQueue: (threadId, state) => push.broadcast('thread.queue', { threadId, ...state }),
     onLog: (line) => console.log(`[agent] ${line}`),
-    onLogin: (provider, result) => push.broadcast('auth.event', { provider, ...result }),
+    onLogin: (provider, result, accountId) => {
+      push.broadcast('auth.event', { provider, ...(accountId ? { accountId } : {}), ...result })
+      // Whoever just signed in is that account's identity from now on.
+      if (result.success && accounts.supports(provider)) {
+        void orchestrator
+          .account(provider, undefined, accountId)
+          .then((account) => accounts.recordIdentity(provider, accountId, account))
+          .catch(() => undefined)
+      }
+    },
     onMcpOAuth: (provider, projectPath, result) =>
       push.broadcast('mcp.oauth', { provider, projectPath, ...result }),
     onMcpChanged: (provider, projectPath) =>
@@ -255,10 +264,15 @@ export function startServer(
       push.broadcast('skills.changed', { provider, projectPath }),
     onCommandsChanged: (provider, projectPath) =>
       push.broadcast('commands.changed', { provider, projectPath }),
-    onUsageChanged: (provider) => push.broadcast('usage.changed', { provider }),
+    onUsageChanged: (provider, accountId) =>
+      push.broadcast('usage.changed', accountId ? { provider, accountId } : { provider }),
     onLimitsChanged: (source) => push.broadcast('usage.limits', { source }),
-    onModelsChanged: (provider, agent) =>
-      push.broadcast('models.changed', agent === undefined ? { provider } : { provider, agent }),
+    onModelsChanged: (provider, agent, accountId) =>
+      push.broadcast('models.changed', {
+        provider,
+        ...(agent === undefined ? {} : { agent }),
+        ...(accountId ? { accountId } : {}),
+      }),
     onLifecycle: (threadId, lifecycle) =>
       push.broadcast('thread.lifecycle', { threadId, lifecycle }),
     onLifecycleScheduleChanged: (hint) => notifyLifecycleScheduleChanged(hint),
@@ -866,8 +880,7 @@ export function startServer(
 
       case 'auth.status': {
         const p = parseParams(method, params)
-        defaultAccountOnly(p.provider, p.accountId)
-        const account = await orchestrator.account(p.provider, p.agent)
+        const account = await orchestrator.account(p.provider, p.agent, p.accountId)
         // A custom harness may sign in as someone else; only the CLI's own check names the account.
         if (p.agent === undefined) accounts.recordIdentity(p.provider, p.accountId, account)
         return account
@@ -875,27 +888,25 @@ export function startServer(
 
       case 'auth.startLogin': {
         const p = parseParams(method, params)
-        defaultAccountOnly(p.provider, p.accountId)
-        return orchestrator.startLogin(p.provider)
+        return orchestrator.startLogin(p.provider, p.accountId)
       }
 
       case 'auth.cancelLogin': {
         const p = parseParams(method, params)
-        defaultAccountOnly(p.provider, p.accountId)
-        await orchestrator.cancelLogin(p.provider, p.loginId)
+        await orchestrator.cancelLogin(p.provider, p.loginId, p.accountId)
         return {}
       }
 
       case 'auth.useApiKey': {
         const p = parseParams(method, params)
-        defaultAccountOnly(p.provider, p.accountId)
-        return orchestrator.useApiKey(p.provider, p.apiKey)
+        const account = await orchestrator.useApiKey(p.provider, p.apiKey, p.accountId)
+        accounts.recordIdentity(p.provider, p.accountId, account)
+        return account
       }
 
       case 'auth.signOut': {
         const p = parseParams(method, params)
-        defaultAccountOnly(p.provider, p.accountId)
-        await orchestrator.signOut(p.provider, p.agent)
+        await orchestrator.signOut(p.provider, p.agent, p.accountId)
         return {}
       }
 
@@ -980,8 +991,7 @@ export function startServer(
 
       case 'models.list': {
         const p = parseParams(method, params)
-        defaultAccountOnly(p.provider, p.accountId)
-        return { models: await orchestrator.listModels(p.provider, p.agent) }
+        return { models: await orchestrator.listModels(p.provider, p.agent, p.accountId) }
       }
 
       case 'backgroundModel.settings':
@@ -1252,6 +1262,8 @@ export function startServer(
         const provider = thread?.provider ?? ('provider' in p ? p.provider : undefined)
         if (!provider) throw new Error('provider not found')
         if ('accountId' in p) defaultAccountOnly(provider, p.accountId)
+        // A chat's limits are those of the account it runs as.
+        const accountId = thread?.accountId
         const startOfToday = new Date()
         startOfToday.setHours(0, 0, 0, 0)
         const empty = {
@@ -1268,8 +1280,10 @@ export function startServer(
         return usageSummaryWithLimits(
           totals,
           provider,
-          (requestedProvider) => orchestrator.usageLimitSource(requestedProvider, p.intent),
-          (requestedProvider) => orchestrator.heldLimitSource(requestedProvider, p.intent),
+          (requestedProvider) =>
+            orchestrator.usageLimitSource(requestedProvider, p.intent, accountId),
+          (requestedProvider) =>
+            orchestrator.heldLimitSource(requestedProvider, p.intent, accountId),
         )
       }
 

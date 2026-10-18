@@ -1,19 +1,60 @@
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import type { AccountId, ProviderId } from '@harness/contracts'
-import { afterAll, describe, expect, it } from 'vitest'
+import type {
+  AccountId,
+  Model,
+  ProviderId,
+  ProviderLimit,
+  ProviderLimitSource,
+} from '@harness/contracts'
+import { afterAll, describe, expect, it, vi } from 'vitest'
 import { AccountNotFoundError, type AccountDirectory } from './account-directory.js'
 import type { AgentSession, ProviderRuntime } from './adapters.js'
 import { McpConfigStore } from './mcp-config.js'
 import { Orchestrator } from './orchestrator.js'
 import { Store } from './store.js'
 
+type LoginResult = { loginId: string; success: boolean; error: string | null }
+
+/** What Claude's own sign-in calls were asked to run as, by folder. */
+const claude = vi.hoisted(() => ({
+  calls: [] as string[][],
+  complete: undefined as ((result: LoginResult) => void) | undefined,
+}))
+
+vi.mock('@harness/adapter-claude-code', async (importOriginal) => {
+  const original = await importOriginal<typeof import('@harness/adapter-claude-code')>()
+  return {
+    ...original,
+    claudeAccount: async (options?: { accountHome?: string }) => {
+      claude.calls.push(['account', options?.accountHome ?? 'default'])
+      return {
+        signedIn: true,
+        email: options?.accountHome ? 'work@example.test' : 'me@example.test',
+      }
+    },
+    startClaudeLogin: (
+      complete: (result: LoginResult) => void,
+      options?: { accountHome?: string },
+    ) => {
+      claude.calls.push(['login', options?.accountHome ?? 'default'])
+      claude.complete = complete
+      return { loginId: 'login-1', cancel: async () => {} }
+    },
+    signOutClaude: async (options?: { accountHome?: string }) => {
+      claude.calls.push(['signOut', options?.accountHome ?? 'default'])
+    },
+  }
+})
+
 const root = mkdtempSync(path.join(os.tmpdir(), 'harness-orchestrator-accounts-'))
 afterAll(() => rmSync(root, { recursive: true, force: true }))
 
 const workHome = path.join(root, 'codex-work')
 mkdirSync(workHome)
+const claudeHome = path.join(root, 'claude-work')
+mkdirSync(claudeHome)
 
 /** A registry with the given folders by `provider:id`; anything else is gone. */
 function directory(
@@ -31,7 +72,10 @@ function directory(
   }
 }
 
-function session(): AgentSession {
+/** The newest session's live usage and limit listeners. */
+type Live = { limits?: (limits: ProviderLimit[]) => void; usage?: () => void }
+
+function session(live: Live): AgentSession {
   return {
     capabilities: {
       steer: false,
@@ -46,13 +90,29 @@ function session(): AgentSession {
     respondToApproval: () => {},
     dispose: () => {},
     on: () => {},
+    onLimitsUpdated: (listener) => {
+      live.limits = listener
+    },
+    onUsageChanged: (listener) => {
+      live.usage = listener
+    },
   }
+}
+
+function model(id: string): Model {
+  return { id, displayName: id, isDefault: true, reasoningEfforts: [] }
 }
 
 type Launch = { kind: 'start' | 'resume'; provider: ProviderId; accountHome: string | undefined }
 
 function setup(accounts: AccountDirectory, store = new Store(':memory:')) {
   const launches: Launch[] = []
+  const live: Live = {}
+  const pushed = {
+    logins: [] as unknown[][],
+    usage: [] as unknown[][],
+    limits: [] as ProviderLimitSource[],
+  }
   let started = 0
   const runtimeFor = (
     provider: ProviderId,
@@ -64,29 +124,32 @@ function setup(accounts: AccountDirectory, store = new Store(':memory:')) {
       started += 1
       return {
         thread: { id: `${provider}-${started}`, provider, workspacePath, createdAt: Date.now() },
-        session: session(),
+        session: session(live),
       }
     },
     async resume(threadId, workspacePath) {
       launches.push({ kind: 'resume', provider, accountHome })
       return {
         thread: { id: threadId, provider, workspacePath, createdAt: Date.now() },
-        session: session(),
+        session: session(live),
       }
     },
     async listModels() {
-      return []
+      return [model(accountHome ? 'work-model' : 'default-model')]
     },
   })
   const orchestrator = new Orchestrator(store, {
     onEvent: () => {},
     onLog: () => {},
-    onLogin: () => {},
+    onLogin: (provider, result, accountId) =>
+      pushed.logins.push([provider, result.success, accountId]),
+    onUsageChanged: (provider, accountId) => pushed.usage.push([provider, accountId]),
+    onLimitsChanged: (source) => pushed.limits.push(source),
     runtimeFor,
     accounts,
     mcpConfig: new McpConfigStore(path.join(root, 'mcp.json')),
   })
-  return { orchestrator, launches, store }
+  return { orchestrator, launches, store, live, pushed }
 }
 
 describe('chats pinned to a provider account', () => {
@@ -187,5 +250,65 @@ describe('chats pinned to a provider account', () => {
     )
     expect(second.launches).toEqual([])
     await second.orchestrator.disposeAll()
+  })
+})
+
+describe('sign-in, model lists and limits per account', () => {
+  it('signs each account in and out in its own folder', async () => {
+    claude.calls.length = 0
+    const { orchestrator, pushed } = setup(directory({ 'claude-code:work': claudeHome }))
+    await expect(orchestrator.account('claude-code', undefined, 'work')).resolves.toMatchObject({
+      email: 'work@example.test',
+    })
+    await expect(orchestrator.account('claude-code')).resolves.toMatchObject({
+      email: 'me@example.test',
+    })
+    await orchestrator.startLogin('claude-code', 'work')
+    claude.complete?.({ loginId: 'login-1', success: true, error: null })
+    await vi.waitFor(() => expect(pushed.logins).toEqual([['claude-code', true, 'work']]))
+    await orchestrator.signOut('claude-code', undefined, 'work')
+
+    expect(claude.calls).toEqual([
+      ['account', claudeHome],
+      ['account', 'default'],
+      ['login', claudeHome],
+      ['signOut', claudeHome],
+    ])
+    await orchestrator.disposeAll()
+  })
+
+  it('keeps model lists apart per account', async () => {
+    const { orchestrator } = setup(directory({ 'claude-code:work': claudeHome }))
+    const ids = (models: Model[]) => models.map((each) => each.id)
+
+    expect(ids(await orchestrator.listModels('claude-code', undefined, 'work'))).toEqual([
+      'work-model',
+    ])
+    expect(ids(await orchestrator.listModels('claude-code'))).toEqual(['default-model'])
+    await expect(orchestrator.listModels('claude-code', 'wrapper', 'work')).rejects.toThrow(
+      'A custom harness runs with its own sign-in, not as another account.',
+    )
+    await orchestrator.disposeAll()
+  })
+
+  it("keeps a chat's live limits and usage on its account", async () => {
+    const { orchestrator, pushed, live } = setup(directory({ 'claude-code:work': claudeHome }))
+    await orchestrator.startThread('claude-code', root, { accountId: 'work' })
+    const fiveHour = { id: 'five_hour', label: '5-hour', usedPercent: 40 }
+    live.limits?.([fiveHour])
+    live.usage?.()
+
+    expect(pushed.limits).toEqual([
+      expect.objectContaining({ provider: 'claude-code', accountId: 'work', limits: [fiveHour] }),
+    ])
+    expect(pushed.usage.length).toBeGreaterThan(0)
+    expect(pushed.usage.every(([, accountId]) => accountId === 'work')).toBe(true)
+    expect(orchestrator.heldLimitSource('claude-code', 'visible', 'work')).toMatchObject({
+      accountId: 'work',
+      limits: [fiveHour],
+    })
+    // The default account's figures are untouched.
+    expect(orchestrator.heldLimitSource('claude-code', 'visible')).toBeUndefined()
+    await orchestrator.disposeAll()
   })
 })

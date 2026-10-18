@@ -111,9 +111,27 @@ vi.mock('./orchestrator.js', () => ({
     async submitTurn() {
       return { queued: false, turnId: 'turn' }
     }
-    account(provider: string) {
-      state.handled.push(`auth.status(${provider})`)
+    account(provider: string, _agent?: string, accountId?: string) {
+      state.handled.push(`auth.status(${provider}${accountId ? `, ${accountId}` : ''})`)
       return Promise.resolve({ signedIn: false })
+    }
+    async startLogin(provider: string, accountId?: string) {
+      state.handled.push(`auth.startLogin(${provider}, ${accountId})`)
+      return { loginId: 'login-1' }
+    }
+    async cancelLogin(provider: string, loginId: string, accountId?: string) {
+      state.handled.push(`auth.cancelLogin(${provider}, ${loginId}, ${accountId})`)
+    }
+    async useApiKey(provider: string, _apiKey: string, accountId?: string) {
+      state.handled.push(`auth.useApiKey(${provider}, ${accountId})`)
+      return { signedIn: true }
+    }
+    async signOut(provider: string, _agent?: string, accountId?: string) {
+      state.handled.push(`auth.signOut(${provider}, ${accountId})`)
+    }
+    async listModels(provider: string, _agent?: string, accountId?: string) {
+      state.handled.push(`models.list(${provider}, ${accountId})`)
+      return []
     }
     async startThread(provider: string, _workspacePath: string, options: { accountId?: string }) {
       state.handled.push(`thread.start(${provider}, ${options.accountId ?? 'active'})`)
@@ -150,6 +168,9 @@ vi.mock('./provider-accounts.js', () => ({
     }
     setActive(provider: string, accountId: string) {
       state.accountCalls.push(['setActive', provider, accountId])
+    }
+    supports(provider: string) {
+      return provider !== 'grok'
     }
     home(provider: string, accountId: string | undefined) {
       if (accountId === undefined || accountId === 'default') return undefined
@@ -634,11 +655,7 @@ describe('provider accounts', () => {
     const notYet = 'Running this provider as another account is not available yet.'
     try {
       for (const [method, params] of [
-        ['auth.signOut', { provider: 'codex', accountId: 'work' }],
-        ['auth.startLogin', { provider: 'claude-code', accountId: 'work' }],
-        ['auth.status', { provider: 'codex', accountId: 'work' }],
         ['providers.launch', { provider: 'codex', accountId: 'work', columns: 80, rows: 24 }],
-        ['models.list', { provider: 'codex', accountId: 'work' }],
         ['usage.summary', { provider: 'codex', accountId: 'work' }],
         [
           'usage.consumeReset',
@@ -650,13 +667,7 @@ describe('provider accounts', () => {
           error: { code: 'internal', message: notYet },
         })
       }
-      expect(await ask('auth.status', { provider: 'grok', accountId: 'work' })).toMatchObject({
-        error: { message: 'This provider runs as one account only.' },
-      })
-      expect(state.handled.filter((entry) => entry.startsWith('auth.'))).toEqual([])
-      expect(await ask('auth.status', { provider: 'codex', accountId: 'default' })).toMatchObject({
-        result: { signedIn: false },
-      })
+      expect(state.handled).toEqual([])
       // A chat is pinned to its account by the orchestrator, which checks it.
       for (const accountId of ['work', undefined]) {
         expect(
@@ -666,6 +677,38 @@ describe('provider accounts', () => {
       expect(state.handled.filter((entry) => entry.startsWith('thread.'))).toEqual([
         'thread.start(codex, work)',
         'thread.start(codex, active)',
+      ])
+    } finally {
+      client.terminate()
+    }
+  })
+
+  it('runs sign-in, sign-out and model lists as the account a request names', async () => {
+    const { port } = await listen()
+    const { client, ask } = await connect(port)
+    try {
+      for (const [method, params] of [
+        ['auth.status', { provider: 'codex', accountId: 'work' }],
+        ['auth.startLogin', { provider: 'claude-code', accountId: 'work' }],
+        ['auth.cancelLogin', { provider: 'claude-code', accountId: 'work', loginId: 'login-1' }],
+        ['auth.useApiKey', { provider: 'codex', accountId: 'work', apiKey: 'test-key' }],
+        ['auth.signOut', { provider: 'codex', accountId: 'work' }],
+        ['models.list', { provider: 'codex', accountId: 'work' }],
+      ] as const) {
+        expect(await ask(method, params), method).toHaveProperty('result')
+      }
+      expect(state.handled).toEqual([
+        'auth.status(codex, work)',
+        'auth.startLogin(claude-code, work)',
+        'auth.cancelLogin(claude-code, login-1, work)',
+        'auth.useApiKey(codex, work)',
+        'auth.signOut(codex, work)',
+        'models.list(codex, work)',
+      ])
+      // The CLI's own answers name the account's identity.
+      expect(state.accountCalls).toEqual([
+        ['recordIdentity', 'codex', 'work', { signedIn: false }],
+        ['recordIdentity', 'codex', 'work', { signedIn: true }],
       ])
     } finally {
       client.terminate()
