@@ -324,6 +324,26 @@ describe('profile settings', () => {
     expect(reads()).toHaveLength(1)
   })
 
+  it('opens again on the plans the last visit read while it checks them again', async () => {
+    let answer: Promise<unknown> = Promise.resolve({ signedIn: true, plan: 'Max' })
+    const request = vi.fn((method: string) =>
+      method === 'auth.status' ? answer : new Promise(() => {}),
+    )
+    const transport = { request } as unknown as Transport
+    const first = renderProfile({ transport, providers: PROVIDERS })
+    const accounts = () => screen.getByRole('region', { name: 'Accounts' })
+    await waitFor(() => expect(within(accounts()).getAllByText('Max')).toHaveLength(2))
+    first.unmount()
+
+    // This visit's checks never answer; the rows keep the plans the last one read.
+    answer = new Promise(() => {})
+    renderProfile({ transport, providers: PROVIDERS })
+    expect(within(accounts()).getAllByText('Max')).toHaveLength(2)
+    expect(within(accounts()).queryByText(/Checking/u)).toBeNull()
+    const reads = request.mock.calls.filter(([method]) => method === 'auth.status')
+    expect(reads.length).toBeGreaterThan(1)
+  })
+
   it('shows a provider being checked, signed out or unreadable without guessing', async () => {
     // Claude Code never answers, Codex is signed out, Cursor's check fails.
     const answer = (provider: string): Promise<unknown> =>

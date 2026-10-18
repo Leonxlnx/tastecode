@@ -9,6 +9,9 @@ import { Skeleton, SkeletonRows, SkeletonStatus } from './Skeleton.js'
 type AccountRead =
   { phase: 'loading' } | { phase: 'ready'; account: Account } | { phase: 'error'; message: string }
 
+/** The last answer per provider and connection, kept across visits to Profile. */
+const knownReads = new WeakMap<Transport, Partial<Record<ProviderId, AccountRead>>>()
+
 /** The account the app already reads for the provider in use, so Profile does not ask twice. */
 export type CurrentAccount = {
   provider: ProviderId
@@ -42,7 +45,11 @@ export function ProfileAccounts(props: {
     .filter((provider) => !fromApp(provider))
     .join('|')
 
-  const [reads, setReads] = useState<Partial<Record<ProviderId, AccountRead>>>({})
+  // A visit starts from what the last one learned and refreshes it, instead
+  // of a skeleton per provider until each sign-in check answers.
+  const [reads, setReads] = useState<Partial<Record<ProviderId, AccountRead>>>(
+    () => knownReads.get(props.transport) ?? {},
+  )
   // Each provider is asked once per connection, however often the list changes.
   const asked = useRef<{ transport: Transport; providers: Set<string> } | undefined>(undefined)
   useEffect(() => {
@@ -54,6 +61,7 @@ export function ProfileAccounts(props: {
       if (!provider || batch.providers.has(provider)) continue
       batch.providers.add(provider)
       const settle = (read: AccountRead) => {
+        knownReads.set(batch.transport, { ...knownReads.get(batch.transport), [provider]: read })
         if (asked.current === batch) setReads((known) => ({ ...known, [provider]: read }))
       }
       props.transport.request('auth.status', { provider }).then(
