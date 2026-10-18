@@ -1,12 +1,25 @@
 import { EventEmitter } from 'node:events'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const mocks = vi.hoisted(() => ({ close: vi.fn(), nodeModeAtStart: undefined as unknown }))
+const mocks = vi.hoisted(() => ({
+  close: vi.fn(),
+  nodeModeAtStart: undefined as unknown,
+  order: [] as string[],
+  enableCompileCache: vi.fn(),
+}))
 vi.mock('./server.js', () => ({
   DEFAULT_PORT: 4311,
   startServer: () => {
+    mocks.order.push('server started')
     mocks.nodeModeAtStart = process.env['ELECTRON_RUN_AS_NODE']
     return { close: mocks.close }
+  },
+}))
+vi.mock('@harness/proc/compile-cache', () => ({
+  COMPILE_CACHE_ENV: 'HARNESS_COMPILE_CACHE_DIR',
+  enableCompileCache: (directory: string) => {
+    mocks.order.push('compile cache')
+    return mocks.enableCompileCache(directory)
   },
 }))
 
@@ -132,5 +145,23 @@ describe('server main startup', () => {
     await import('./main.js')
     expect(mocks.nodeModeAtStart).toBeUndefined()
     expect(process.env['ELECTRON_RUN_AS_NODE']).toBeUndefined()
+  })
+
+  it("turns on the desktop's compile cache before the server process loads", async () => {
+    vi.stubEnv('HARNESS_COMPILE_CACHE_DIR', 'C:\\data\\node-compile-cache')
+    mocks.order.length = 0
+    mocks.enableCompileCache.mockReset()
+    await import('./main.js')
+    expect(mocks.enableCompileCache).toHaveBeenCalledWith('C:\\data\\node-compile-cache')
+    expect(mocks.order).toEqual(['compile cache', 'server started'])
+    // Terminals and agent CLIs inherit the server's environment.
+    expect(process.env['HARNESS_COMPILE_CACHE_DIR']).toBeUndefined()
+  })
+
+  it('loads without a cache when the desktop names no folder', async () => {
+    vi.stubEnv('HARNESS_COMPILE_CACHE_DIR', undefined)
+    mocks.enableCompileCache.mockReset()
+    await import('./main.js')
+    expect(mocks.enableCompileCache).not.toHaveBeenCalled()
   })
 })

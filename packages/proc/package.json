@@ -20,6 +20,10 @@
       "types": "./dist/kill.d.ts",
       "default": "./dist/kill.js"
     },
+    "./compile-cache": {
+      "types": "./dist/compile-cache.d.ts",
+      "default": "./dist/compile-cache.js"
+    },
     "./updates": {
       "types": "./dist/updates.d.ts",
       "default": "./dist/updates.js"
