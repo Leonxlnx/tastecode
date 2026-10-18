@@ -71,6 +71,7 @@
   align-items: baseline;
   gap: 18px;
   min-width: 0;
+  font-size: var(--t-sm);
   white-space: nowrap;
 }
 
@@ -126,7 +127,7 @@
 .settings .usage-page__alert,
 .settings .usage-page__notice {
   margin: 8px 0 0;
-  font-size: var(--t-md);
+  font-size: var(--t-sm);
   line-height: 20px;
 }
 
@@ -213,7 +214,7 @@
 .settings .usage-page__empty {
   margin: 0;
   color: var(--text-3);
-  font-size: var(--t-md);
+  font-size: var(--t-sm);
 }
 
 /* One sheet per provider */
@@ -251,7 +252,7 @@
 }
 
 .settings .usage-sheet__value {
-  font-size: var(--t-lg);
+  font-size: var(--t-sm);
   line-height: 22px;
   text-align: right;
   white-space: nowrap;
@@ -352,7 +353,7 @@
 
 .settings .usage-sheet__row {
   min-height: 25px;
-  font-size: var(--t-md);
+  font-size: var(--t-sm);
   line-height: 20px;
 }
 
@@ -504,7 +505,7 @@
 .settings .usage-sheet__empty {
   margin: 0;
   color: var(--text-3);
-  font-size: var(--t-md);
+  font-size: var(--t-sm);
 }
 
 .settings .usage-sheet.is-empty .usage-sheet__mark,
@@ -530,10 +531,11 @@
 
 .settings .usage-page__saved-note {
   color: var(--text-3);
-  font-size: var(--t-md);
+  font-size: var(--t-sm);
 }
 
 .settings .usage-page__saved-value {
+  font-size: var(--t-sm);
   text-align: right;
   white-space: nowrap;
 }
@@ -549,7 +551,7 @@
   grid-column: 2 / 4;
   margin: 0;
   color: var(--text-3);
-  font-size: var(--t-md);
+  font-size: var(--t-sm);
   line-height: 20px;
   text-wrap: pretty;
 }
