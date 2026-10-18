@@ -12,6 +12,52 @@ type AccountRead =
 /** The last answer per provider and connection, kept across visits to Profile. */
 const knownReads = new WeakMap<Transport, Partial<Record<ProviderId, AccountRead>>>()
 
+/**
+ * The last sign-in and plan each provider reported, kept on this device so
+ * the first visit after a launch shows rows at once instead of waiting for
+ * every provider's CLI. Only what a row shows is kept: never an email.
+ */
+const LAST_KNOWN_KEY = 'harness.profileAccounts'
+
+type LastKnown = Map<string, Account>
+
+function shownAccount(account: Account): Account {
+  return account.plan === undefined
+    ? { signedIn: account.signedIn }
+    : { signedIn: account.signedIn, plan: account.plan }
+}
+
+function readLastKnown(): LastKnown {
+  const known: LastKnown = new Map()
+  try {
+    const stored: unknown = JSON.parse(localStorage.getItem(LAST_KNOWN_KEY) ?? '{}')
+    if (!stored || typeof stored !== 'object') return known
+    for (const [provider, value] of Object.entries(stored)) {
+      if (!value || typeof value !== 'object') continue
+      const { signedIn, plan } = value as { signedIn?: unknown; plan?: unknown }
+      if (typeof signedIn !== 'boolean') continue
+      if (plan !== undefined && typeof plan !== 'string') continue
+      known.set(provider, plan === undefined ? { signedIn } : { signedIn, plan })
+    }
+  } catch {
+    // Unreadable or blocked storage only means a first visit waits for its checks.
+  }
+  return known
+}
+
+function rememberAccount(provider: ProviderId, account: Account): void {
+  try {
+    const known = readLastKnown()
+    const next = JSON.stringify(shownAccount(account))
+    const previous = known.get(provider)
+    if (previous && JSON.stringify(previous) === next) return
+    known.set(provider, shownAccount(account))
+    localStorage.setItem(LAST_KNOWN_KEY, JSON.stringify(Object.fromEntries(known)))
+  } catch {
+    // A display cache: the row still shows the answer when storage is full or blocked.
+  }
+}
+
 /** The account the app already reads for the provider in use, so Profile does not ask twice. */
 export type CurrentAccount = {
   provider: ProviderId
@@ -50,6 +96,8 @@ export function ProfileAccounts(props: {
   const [reads, setReads] = useState<Partial<Record<ProviderId, AccountRead>>>(
     () => knownReads.get(props.transport) ?? {},
   )
+  // The first visit of a connection starts from what an earlier launch read.
+  const [lastKnown] = useState(readLastKnown)
   // Each provider is asked once per connection, however often the list changes.
   const asked = useRef<{ transport: Transport; providers: Set<string> } | undefined>(undefined)
   useEffect(() => {
@@ -62,6 +110,7 @@ export function ProfileAccounts(props: {
       batch.providers.add(provider)
       const settle = (read: AccountRead) => {
         knownReads.set(batch.transport, { ...knownReads.get(batch.transport), [provider]: read })
+        if (read.phase === 'ready') rememberAccount(provider, read.account)
         if (asked.current === batch) setReads((known) => ({ ...known, [provider]: read }))
       }
       props.transport.request('auth.status', { provider }).then(
@@ -75,12 +124,23 @@ export function ProfileAccounts(props: {
     }
   }, [props.transport, unread])
 
+  // The app's own read of the provider in use is kept for the next launch too.
+  const currentProvider = current?.provider
+  const currentAccount = current?.account
+  useEffect(() => {
+    if (currentProvider && currentAccount) rememberAccount(currentProvider, currentAccount)
+  }, [currentProvider, currentAccount])
+
+  // While a check runs, a row shows what this connection or an earlier launch
+  // last read; a skeleton only when nothing is known yet.
   const readOf = (provider: ProviderId): AccountRead => {
-    if (current?.provider === provider) {
-      if (current.account) return { phase: 'ready', account: current.account }
-      if (current.loading) return { phase: 'loading' }
+    if (current?.provider === provider && current.account) {
+      return { phase: 'ready', account: current.account }
     }
-    return reads[provider] ?? { phase: 'loading' }
+    const known = reads[provider]
+    if (known) return known
+    const remembered = lastKnown.get(provider)
+    return remembered ? { phase: 'ready', account: remembered } : { phase: 'loading' }
   }
 
   return (

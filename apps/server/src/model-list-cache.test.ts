@@ -277,12 +277,70 @@ describe('model lists across launches', () => {
   })
   it('refreshes a list from the last launch at once when launch work is over', async () => {
     const { store } = memory(
-      snapshot([{ provider: 'grok', listedAt: 999_000, models: [model('grok-4.7')] }]),
+      snapshot([
+        { provider: 'grok', listedAt: 1_000_000 - 11 * 60_000, models: [model('grok-4.7')] },
+      ]),
     )
     const { cache, list } = setup({ snapshot: store, restoredRefreshDelayMs: 0 })
     await expect(cache.list('grok')).resolves.toEqual([model('grok-4.7')])
     await flush()
     expect(list).toHaveBeenCalledOnce()
+  })
+
+  it('does not read a list from the last launch again while it is fresh', async () => {
+    const { store } = memory(
+      snapshot([
+        { provider: 'codex', listedAt: 1_000_000 - 2 * 60_000, models: [model('gpt-6.1-sol')] },
+      ]),
+    )
+    const { cache, list, advance } = setup({ snapshot: store, restoredRefreshDelayMs: 0 })
+    await expect(cache.list('codex')).resolves.toEqual([model('gpt-6.1-sol')])
+    advance(7 * 60_000)
+    await expect(cache.list('codex')).resolves.toEqual([model('gpt-6.1-sol')])
+    await flush()
+    // A restart minutes after a read does not start every listing process again.
+    expect(list).not.toHaveBeenCalled()
+
+    // Once its age passes the fresh window it refreshes like a list read in this launch.
+    advance(60_000)
+    await expect(cache.list('codex')).resolves.toEqual([model('gpt-6.1-sol')])
+    await flush()
+    expect(list).toHaveBeenCalledExactlyOnceWith('codex', undefined, { refresh: true })
+  })
+
+  it('reads the older lists from the last launch one after another', async () => {
+    vi.useFakeTimers()
+    try {
+      const listedAt = Date.now() - 3_600_000
+      const providers: ProviderId[] = ['claude-code', 'codex', 'grok']
+      const { store } = memory(
+        snapshot(providers.map((provider) => ({ provider, listedAt, models: [model(provider)] }))),
+      )
+      const { cache, list, reads } = setup({
+        snapshot: store,
+        restoredRefreshDelayMs: 20_000,
+        restoredRefreshStaggerMs: 5_000,
+        now: () => Date.now(),
+      })
+      await Promise.all(providers.map((provider) => cache.list(provider)))
+      const started = () => list.mock.calls.map((call) => call[0])
+
+      await vi.advanceTimersByTimeAsync(19_999)
+      expect(started()).toEqual([])
+      await vi.advanceTimersByTimeAsync(1)
+      expect(started()).toEqual(['claude-code'])
+      await vi.advanceTimersByTimeAsync(4_999)
+      expect(started()).toEqual(['claude-code'])
+      await vi.advanceTimersByTimeAsync(1)
+      expect(started()).toEqual(['claude-code', 'codex'])
+      await vi.advanceTimersByTimeAsync(5_000)
+      expect(started()).toEqual(['claude-code', 'codex', 'grok'])
+      for (const read of reads) read.resolve([model(read.provider)])
+      await vi.advanceTimersByTimeAsync(0)
+      expect(list).toHaveBeenCalledTimes(3)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('does not wait for launch work once the list is known to be out of date', async () => {

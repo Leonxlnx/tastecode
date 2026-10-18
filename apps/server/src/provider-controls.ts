@@ -23,6 +23,13 @@ import {
 } from '@harness/adapter-claude-code/capabilities'
 import { GROK_MCP_CAPABILITIES } from '@harness/adapter-grok/mcp'
 import { OPENCODE_MCP_CAPABILITIES } from '@harness/adapter-opencode/inventory'
+import { accountRead, type AccountIdentity } from './account-identity.js'
+import {
+  parseLimitFailures,
+  parseLimitSnapshot,
+  serializeLimitSnapshot,
+  type SavedLimitFailure,
+} from './limit-snapshot.js'
 import type { ModelListRead } from './model-list-cache.js'
 import { ProjectInventoryCache, type ProjectInventoryService } from './project-inventory-cache.js'
 import { PROVIDER_CAPABILITIES, type ProviderControlCapabilities } from './provider-capabilities.js'
@@ -128,8 +135,12 @@ export type ProviderControl = {
   account(agent?: string): Promise<Account>
   /** Absent intent is treated as `visible`, as the contract asks of servers. */
   usageLimitSource(intent?: UsageReadIntent): Promise<ProviderLimitSource>
-  /** The held snapshot without reading; undefined until a read or live window arrives. */
-  heldLimitSource(): ProviderLimitSource | undefined
+  /**
+   * The held snapshot without reading; undefined until a read or live window
+   * arrives. A view that shows the limits (any intent but `background`) also
+   * gets the last session's full read until then, which the next read replaces.
+   */
+  heldLimitSource(intent?: UsageReadIntent): ProviderLimitSource | undefined
   signOut(agent?: string): Promise<void>
   watch(projectPath: string, targets: WatchTarget[]): { expiresInMs: number }
   listModels?: (agent?: string, read?: ModelListRead) => Promise<Model[]>
@@ -190,6 +201,12 @@ export type ProviderControlsOptions = {
   accountCacheMs?: number
   /** How long the last confirmed sign-in answers when a later account read fails. */
   accountFallbackMs?: number
+  /**
+   * Keeps each provider's last full limit read across restarts, so the first
+   * view that shows the limits after a launch paints figures at once instead
+   * of waiting seconds for a vendor process.
+   */
+  limitSnapshot?: { read: () => string | undefined; write: (value: string) => void }
   createCodex?: () => CodexControlAdapter | Promise<CodexControlAdapter>
   services?: Partial<Record<ProviderId, ProviderServices>>
 }
@@ -221,8 +238,8 @@ type LimitEntry = {
   reads: number
   /** The number of the read behind `value`. */
   stored: number
-  /** The last account read, which shows a sign-in or switch made outside the app. */
-  account?: string | undefined
+  /** Who the account reads named, which shows a sign-in or switch made outside the app. */
+  account?: AccountIdentity | undefined
   value?: ProviderLimitSource | undefined
   /** When the read behind `value` started. */
   readAt: number
@@ -243,6 +260,10 @@ type LimitEntry = {
 }
 type LimitFailure = { error: unknown; count: number; timeouts: number; retryAt: number }
 type ReadyLimitSource = Extract<ProviderLimitSource, { status: 'ready' }>
+type SavedLimits = {
+  sources: Map<ProviderId, ReadyLimitSource>
+  failures: Map<ProviderId, SavedLimitFailure>
+}
 
 const REFRESH_ERROR_LIMIT = 300
 const REFRESH_ERROR_FALLBACK = 'Plan limits could not be refreshed.'
@@ -311,6 +332,17 @@ function lastKnownLimits(held: ReadyLimitSource, failure: LimitFailure): ReadyLi
 function refreshErrorOf(failure: LimitFailure): string {
   const message = failure.error instanceof Error ? failure.error.message.trim() : ''
   return message ? message.slice(0, REFRESH_ERROR_LIMIT) : REFRESH_ERROR_FALLBACK
+}
+
+/** A source whose newest read failed and that holds no values to keep. */
+function failedLimits(provider: ProviderId, failure: LimitFailure): ProviderLimitSource {
+  return {
+    provider,
+    status: 'unavailable',
+    reason: 'failed',
+    error: refreshErrorOf(failure),
+    ...(Number.isFinite(failure.retryAt) ? { retryAt: failure.retryAt } : {}),
+  }
 }
 
 /** Failed reads wait 5, 10 and 20 minutes, then every 30 minutes. */
@@ -449,6 +481,13 @@ export class ProviderControls {
   readonly #limitChangeIntervalMs: number
   readonly #limitPublishIntervalMs: number
   readonly #limits = new Map<ProviderId, LimitEntry>()
+  /**
+   * The last full read per provider, kept across restarts. Only views that
+   * show the limits see it, and only until this session holds a value; a
+   * passive figure never shows numbers this session has not confirmed. Beside
+   * it, each provider's newest failed read, whose backoff a launch keeps.
+   */
+  #savedLimits: SavedLimits | undefined
   readonly #accountCacheMs: number
   readonly #accountFallbackMs: number
   /** Keyed by provider and agent; an auth change deletes the provider's entries. */
@@ -682,7 +721,7 @@ export class ProviderControls {
               intent,
             )
           : this.#read(async () => ({ provider, status: 'unavailable' })),
-      heldLimitSource: () => this.#limits.get(provider)?.value,
+      heldLimitSource: (intent) => this.#heldLimits(provider, intent),
       signOut: (agent) =>
         this.#auth(provider, async (generation) => {
           const login = this.#logins.get(provider)
@@ -870,6 +909,8 @@ export class ProviderControls {
         stored: 0,
         readAt: Number.NEGATIVE_INFINITY,
         freshUntil: 0,
+        // The last session's newest read failed: its backoff still applies.
+        failure: this.#savedFailure(provider),
         liveAt: Number.NEGATIVE_INFINITY,
         notifiedAt: Number.NEGATIVE_INFINITY,
         publishedAt: Number.NEGATIVE_INFINITY,
@@ -884,12 +925,98 @@ export class ProviderControls {
     return this.#limitReadIntervalMs ?? capabilities.limitReadIntervalMs
   }
 
+  /**
+   * The last session's full read, for a view that shows the limits while this
+   * session holds nothing yet. A failed read of this session marks it as the
+   * last known values, as it would a value this session read.
+   */
+  #lastSession(provider: ProviderId): ReadyLimitSource | undefined {
+    const saved = this.#saved().sources.get(provider)
+    const failure = this.#limitEntry(provider).failure
+    return saved && failure ? lastKnownLimits(saved, failure) : saved
+  }
+
+  /**
+   * What a view is answered with before this session's read does. A shown
+   * view also gets the last session's full read and, without one, the newest
+   * failed read, so a source that keeps failing does not hold up the first
+   * view after every launch. A retry waits for the read it asked for.
+   */
+  #heldLimits(
+    provider: ProviderId,
+    intent: UsageReadIntent = 'visible',
+  ): ProviderLimitSource | undefined {
+    const held = this.#limits.get(provider)?.value
+    if (held || intent === 'background') return held
+    const lastSession = this.#lastSession(provider)
+    if (lastSession || intent === 'retry') return lastSession
+    const failure = this.#limitEntry(provider).failure
+    return failure ? failedLimits(provider, failure) : undefined
+  }
+
+  #saved(): SavedLimits {
+    if (!this.#savedLimits) {
+      let text: string | undefined
+      try {
+        text = this.#options.limitSnapshot?.read()
+      } catch {
+        // Without it the first shown view waits for its read, as before.
+        text = undefined
+      }
+      this.#savedLimits = { sources: parseLimitSnapshot(text), failures: parseLimitFailures(text) }
+    }
+    return this.#savedLimits
+  }
+
+  /** The last session's newest failed read, when no read has answered since. */
+  #savedFailure(provider: ProviderId): LimitFailure | undefined {
+    const saved = this.#saved().failures.get(provider)
+    if (!saved) return undefined
+    const { error, ...failure } = saved
+    return { ...failure, error: new Error(error) }
+  }
+
+  /** Keeps a provider's newest full read for the next launch, or forgets it. */
+  #saveLimits(provider: ProviderId, source: ReadyLimitSource | undefined): void {
+    if (!this.#options.limitSnapshot) return
+    const { sources, failures } = this.#saved()
+    // Any answer, or another account, ends the failures before it.
+    const failed = failures.delete(provider)
+    if (source) sources.set(provider, source)
+    else if (!sources.delete(provider) && !failed) return
+    this.#writeSnapshot()
+  }
+
+  /** Keeps a failed read for the next launch, which answers with it until its retry time. */
+  #saveFailure(provider: ProviderId, failure: LimitFailure): void {
+    if (!this.#options.limitSnapshot) return
+    this.#saved().failures.set(provider, {
+      error: refreshErrorOf(failure),
+      count: failure.count,
+      timeouts: failure.timeouts,
+      // A source that ran out of timeouts waits for an account change in this
+      // session; a later launch tries it once more after the longest wait.
+      retryAt: Number.isFinite(failure.retryAt) ? failure.retryAt : Date.now() + LIMIT_RETRY_MAX_MS,
+    })
+    this.#writeSnapshot()
+  }
+
+  #writeSnapshot(): void {
+    const { sources, failures } = this.#saved()
+    try {
+      this.#options.limitSnapshot?.write(serializeLimitSnapshot(sources, failures))
+    } catch {
+      // Costs the next launch only what it shows before the first read answers.
+    }
+  }
+
   #invalidateLimits(provider: ProviderId, accountChanged: boolean, forced = false): LimitEntry {
     const entry = this.#limitEntry(provider)
     if (accountChanged) {
       entry.accountVersion += 1
       // Another account starts without this one's values, failures or read times.
       entry.value = undefined
+      this.#saveLimits(provider, undefined)
       entry.live = undefined
       entry.failure = undefined
       entry.detailsOmitted = undefined
@@ -936,6 +1063,10 @@ export class ProviderControls {
   ): Promise<ProviderLimitSource> {
     this.#assertOpen()
     const entry = this.#limitEntry(provider)
+    // A shown view was answered from the last session's read; from here on it
+    // is the held value, so this session's read replaces it or, failing, keeps
+    // it as the last known values. A passive figure never takes it over.
+    if (!entry.value && intent !== 'background') entry.value = this.#lastSession(provider)
     if (entry.reading) return entry.reading
     const startedAt = Date.now()
     // A shown view needs the details a background read left out.
@@ -1017,6 +1148,7 @@ export class ProviderControls {
                 : entry.version === version
                   ? now + Math.max(this.#limitCacheMs, interval)
                   : readStartedAt + interval
+          this.#saveLimits(provider, value.status === 'ready' ? heldValues(value) : undefined)
           this.#heldReplaced(provider, entry, previous)
           return value
         },
@@ -1024,6 +1156,7 @@ export class ProviderControls {
           if (!current()) throw error
           const failure = limitFailure(entry.failure, error, capabilities.limitReadTimeoutLimit)
           entry.failure = failure
+          this.#saveFailure(provider, failure)
           // One failed refresh does not make the account's known limits unknown.
           const previous = entry.value
           if (previous?.status !== 'ready') throw error
@@ -1148,10 +1281,10 @@ export class ProviderControls {
   /** A sign-in or account switch in the provider's own CLI reaches the app only here. */
   #accountRead(provider: ProviderId, account: Account): Account {
     const entry = this.#limitEntry(provider)
-    const identity = JSON.stringify([account.signedIn, account.email ?? null, account.plan ?? null])
-    if (entry.account !== undefined && entry.account !== identity) {
-      this.#invalidateLimits(provider, true)
-    }
+    // A read that cannot name the email or plan, as one does when the
+    // provider's own lookup fails under load, keeps the held and saved limits.
+    const { identity, switched } = accountRead(entry.account, account)
+    if (switched) this.#invalidateLimits(provider, true)
     entry.account = identity
     return account
   }

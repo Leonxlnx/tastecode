@@ -11,6 +11,8 @@ import { ProfileSettings } from './ProfileSettings.js'
 afterEach(() => {
   cleanup()
   vi.useRealTimers()
+  // Accounts remember the last plans on this device; each test starts without them.
+  localStorage.clear()
 })
 
 const pendingTransport = { request: () => new Promise(() => {}) } as unknown as Transport
@@ -342,6 +344,75 @@ describe('profile settings', () => {
     expect(within(accounts()).queryByText(/Checking/u)).toBeNull()
     const reads = request.mock.calls.filter(([method]) => method === 'auth.status')
     expect(reads.length).toBeGreaterThan(1)
+  })
+
+  it('opens the first visit of a launch on the plans an earlier launch read, then checks them', async () => {
+    const request = vi.fn((method: string, params: { provider: string }) =>
+      method === 'auth.status'
+        ? Promise.resolve(
+            params.provider === 'claude-code'
+              ? { signedIn: true, email: 'blue.emi@example.com', plan: 'Max' }
+              : { signedIn: false },
+          )
+        : new Promise(() => {}),
+    )
+    const earlier = renderProfile({
+      transport: { request } as unknown as Transport,
+      providers: PROVIDERS,
+    })
+    const accounts = () => screen.getByRole('region', { name: 'Accounts' })
+    await waitFor(() => expect(within(accounts()).getByText('Signed out')).toBeTruthy())
+    expect(within(accounts()).getByText('Max')).toBeTruthy()
+    // What a row shows is kept for the next launch, and nothing more.
+    expect(localStorage.getItem('harness.profileAccounts')).not.toMatch(/blue\.emi/u)
+    earlier.unmount()
+
+    // A new launch is a new connection whose checks have not answered yet.
+    const pending = vi.fn((_method: string, _params: unknown) => new Promise(() => {}))
+    renderProfile({ transport: { request: pending } as unknown as Transport, providers: PROVIDERS })
+    expect(within(accounts()).getByText('Max')).toBeTruthy()
+    expect(within(accounts()).getByText('Signed out')).toBeTruthy()
+    expect(within(accounts()).queryByText(/Checking/u)).toBeNull()
+    expect(pending).toHaveBeenCalledWith('auth.status', { provider: 'claude-code' })
+    expect(pending).toHaveBeenCalledWith('auth.status', { provider: 'codex' })
+  })
+
+  it('replaces a remembered plan with the fresh answer and keeps the app read too', async () => {
+    localStorage.setItem(
+      'harness.profileAccounts',
+      JSON.stringify({ 'claude-code': { signedIn: true, plan: 'Pro' }, codex: { plan: 7 } }),
+    )
+    let answer: (account: { signedIn: boolean; plan?: string }) => void = () => {}
+    const request = vi.fn((method: string, params: { provider: string }) =>
+      method === 'auth.status' && params.provider === 'claude-code'
+        ? new Promise((resolve) => (answer = resolve))
+        : new Promise(() => {}),
+    )
+    const transport = { request } as unknown as Transport
+    const view = renderProfile({
+      transport,
+      provider: 'codex',
+      accountLoading: true,
+      providers: PROVIDERS,
+    })
+    const accounts = screen.getByRole('region', { name: 'Accounts' })
+    expect(within(accounts).getByText('Pro')).toBeTruthy()
+    // A malformed entry is no answer: Codex waits for the app's own read.
+    expect(within(accounts).getByText('Checking Codex…')).toBeTruthy()
+
+    await act(async () => answer({ signedIn: true, plan: 'Max' }))
+    expect(within(accounts).getByText('Max')).toBeTruthy()
+    expect(within(accounts).queryByText('Pro')).toBeNull()
+
+    view.rerenderProfile({
+      transport,
+      accountLoading: false,
+      account: { signedIn: true, email: 'blue.emi@example.com', plan: 'Plus' },
+    })
+    expect(JSON.parse(localStorage.getItem('harness.profileAccounts')!)).toEqual({
+      'claude-code': { signedIn: true, plan: 'Max' },
+      codex: { signedIn: true, plan: 'Plus' },
+    })
   })
 
   it('shows a provider being checked, signed out or unreadable without guessing', async () => {

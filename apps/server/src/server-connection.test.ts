@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process'
 import { once } from 'node:events'
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
-import { connect } from 'node:net'
+import { connect, type Socket } from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -31,6 +31,7 @@ const state = vi.hoisted(() => ({
   recovered: 0,
   historyScans: new Map<string, Promise<void>>(),
   idleCheckouts: [] as string[],
+  handled: [] as string[],
 }))
 const temporary: string[] = []
 
@@ -41,6 +42,7 @@ vi.mock('@harness/proc/desktop-path', () => ({ applyDesktopPath: () => undefined
 vi.mock('./store.js', () => ({
   Store: class {
     projects() {
+      state.handled.push('projects.list')
       return state.projects
     }
     thread(id: string) {
@@ -105,6 +107,10 @@ vi.mock('./orchestrator.js', () => ({
     }
     async submitTurn() {
       return { queued: false, turnId: 'turn' }
+    }
+    account(provider: string) {
+      state.handled.push(`auth.status(${provider})`)
+      return Promise.resolve({ signedIn: false })
     }
   },
 }))
@@ -196,6 +202,7 @@ afterEach(async () => {
   state.recovered = 0
   state.historyScans.clear()
   state.idleCheckouts.length = 0
+  state.handled.length = 0
   vi.unstubAllEnvs()
   await Promise.all(
     temporary.splice(0).map((directory) => rm(directory, { recursive: true, maxRetries: 5 })),
@@ -983,6 +990,43 @@ describe('background startup work', () => {
     await new Promise((resolve) => setTimeout(resolve, 1_700))
     expect(state.historySources).toEqual([])
     expect([state.prewarmed, state.recovered]).toEqual([0, 0])
+  })
+})
+
+describe("a client's first batch", () => {
+  it('answers store reads before the provider reads queued ahead of them', async () => {
+    const { port } = await listen()
+    const client = new WebSocket(`ws://127.0.0.1:${port}`)
+    const upgraded = new Promise<Socket>((resolve) => {
+      client.once('upgrade', (response) => resolve(response.socket))
+    })
+    try {
+      await once(client, 'message')
+      const replies: string[] = []
+      const answered = new Promise<void>((resolve) => {
+        client.on('message', (raw) => {
+          const message: unknown = JSON.parse(String(raw))
+          if (message && typeof message === 'object' && 'id' in message) {
+            replies.push(String(message.id))
+          }
+          if (replies.length === 2) resolve()
+        })
+      })
+      // One write, the way the renderer flushes the requests it queued before the socket opened.
+      const socket = await upgraded
+      socket.cork()
+      client.send(
+        JSON.stringify({ id: 'auth', method: 'auth.status', params: { provider: 'claude-code' } }),
+      )
+      client.send(JSON.stringify({ id: 'projects', method: 'projects.list', params: {} }))
+      socket.uncork()
+      await answered
+      // A provider read can load an adapter synchronously; the project list must not wait for it.
+      expect(state.handled).toEqual(['projects.list', 'auth.status(claude-code)'])
+      expect(replies).toEqual(['projects', 'auth'])
+    } finally {
+      client.terminate()
+    }
   })
 })
 

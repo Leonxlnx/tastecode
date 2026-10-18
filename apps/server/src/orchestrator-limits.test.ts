@@ -106,6 +106,72 @@ describe('provider limit sources', () => {
     expect(sources.disposed).toEqual([2, 1])
   })
 
+  it('answers the first shown view after a restart from the last session read', async () => {
+    const store = new Store(':memory:')
+    const handlers = { onEvent: () => {}, onLog: () => {}, onLogin: () => {} }
+    sources.grok.mockResolvedValue({
+      status: 'ready',
+      limits: [{ label: 'Monthly', usedPercent: 30 }],
+    })
+    const first = new Orchestrator(store, handlers)
+    await first.usageLimitSource('grok', 'visible')
+    await first.disposeAll()
+
+    const second = new Orchestrator(store, handlers)
+    // No vendor read is needed to paint the limits view again.
+    expect(second.heldLimitSource('grok', 'visible')).toMatchObject({
+      status: 'ready',
+      limits: [{ label: 'Monthly', usedPercent: 30 }],
+      origin: 'read',
+    })
+    // A passive figure still waits for this session's own values.
+    expect(second.heldLimitSource('grok', 'background')).toBeUndefined()
+    expect(sources.grok).toHaveBeenCalledOnce()
+    await second.disposeAll()
+  })
+
+  it('answers the first shown view after a restart with the last failed read and its backoff', async () => {
+    const store = new Store(':memory:')
+    const handlers = { onEvent: () => {}, onLog: () => {}, onLogin: () => {} }
+    const error = 'Claude did not report plan limits this time.'
+    sources.claude.mockRejectedValue(new Error(error))
+    const first = new Orchestrator(store, handlers)
+    await expect(first.usageLimitSource('claude-code', 'visible')).rejects.toThrow(error)
+    await first.disposeAll()
+
+    const second = new Orchestrator(store, handlers)
+    // The view shows the outcome at once instead of waiting for a read that
+    // is likely to fail the same way.
+    expect(second.heldLimitSource('claude-code', 'visible')).toEqual({
+      provider: 'claude-code',
+      status: 'unavailable',
+      reason: 'failed',
+      error,
+      retryAt: expect.any(Number),
+    })
+    await expect(second.usageLimitSource('claude-code', 'visible')).rejects.toThrow(error)
+    expect(sources.claude).toHaveBeenCalledOnce()
+    // Retry still reads at once.
+    sources.claude.mockResolvedValue({
+      status: 'ready',
+      limits: [{ label: 'Weekly', usedPercent: 5 }],
+    })
+    await expect(second.usageLimitSource('claude-code', 'retry')).resolves.toMatchObject({
+      status: 'ready',
+    })
+    expect(sources.claude).toHaveBeenCalledTimes(2)
+    await second.disposeAll()
+
+    // The answer ended the failure, so the launch after it shows the values.
+    const third = new Orchestrator(store, handlers)
+    expect(third.heldLimitSource('claude-code', 'visible')).toMatchObject({
+      status: 'ready',
+      limits: [{ label: 'Weekly', usedPercent: 5 }],
+    })
+    expect(third.heldLimitSource('claude-code', 'visible')).not.toHaveProperty('stale')
+    await third.disposeAll()
+  })
+
   it('preserves a supported provider unavailable state', async () => {
     sources.claude.mockResolvedValue({ status: 'unavailable' })
     const instance = orchestrator()
