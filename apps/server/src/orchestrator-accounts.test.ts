@@ -75,8 +75,11 @@ function directory(
 /** The newest session's live usage and limit listeners. */
 type Live = { limits?: (limits: ProviderLimit[]) => void; usage?: () => void }
 
-function session(live: Live): AgentSession {
-  return {
+type FakeSession = AgentSession & { disposed: boolean }
+
+function session(live: Live): FakeSession {
+  const created: FakeSession = {
+    disposed: false,
     capabilities: {
       steer: false,
       fork: false,
@@ -88,7 +91,9 @@ function session(live: Live): AgentSession {
     sendTurn: async () => 'turn-1',
     interrupt: async () => {},
     respondToApproval: () => {},
-    dispose: () => {},
+    dispose: () => {
+      created.disposed = true
+    },
     on: () => {},
     onLimitsUpdated: (listener) => {
       live.limits = listener
@@ -97,6 +102,7 @@ function session(live: Live): AgentSession {
       live.usage = listener
     },
   }
+  return created
 }
 
 function model(id: string): Model {
@@ -108,6 +114,12 @@ type Launch = { kind: 'start' | 'resume'; provider: ProviderId; accountHome: str
 function setup(accounts: AccountDirectory, store = new Store(':memory:')) {
   const launches: Launch[] = []
   const live: Live = {}
+  const sessions: FakeSession[] = []
+  const opened = () => {
+    const created = session(live)
+    sessions.push(created)
+    return created
+  }
   const pushed = {
     logins: [] as unknown[][],
     usage: [] as unknown[][],
@@ -124,14 +136,14 @@ function setup(accounts: AccountDirectory, store = new Store(':memory:')) {
       started += 1
       return {
         thread: { id: `${provider}-${started}`, provider, workspacePath, createdAt: Date.now() },
-        session: session(live),
+        session: opened(),
       }
     },
     async resume(threadId, workspacePath) {
       launches.push({ kind: 'resume', provider, accountHome })
       return {
         thread: { id: threadId, provider, workspacePath, createdAt: Date.now() },
-        session: session(live),
+        session: opened(),
       }
     },
     async listModels() {
@@ -149,7 +161,7 @@ function setup(accounts: AccountDirectory, store = new Store(':memory:')) {
     accounts,
     mcpConfig: new McpConfigStore(path.join(root, 'mcp.json')),
   })
-  return { orchestrator, launches, store, live, pushed }
+  return { orchestrator, launches, store, live, pushed, sessions }
 }
 
 describe('chats pinned to a provider account', () => {
@@ -309,6 +321,59 @@ describe('sign-in, model lists and limits per account', () => {
     })
     // The default account's figures are untouched.
     expect(orchestrator.heldLimitSource('claude-code', 'visible')).toBeUndefined()
+    await orchestrator.disposeAll()
+  })
+})
+
+describe('removing an account', () => {
+  it("stops the account's chats and controls, and its chats cannot go on after it", async () => {
+    claude.calls.length = 0
+    const accounts = directory({ 'claude-code:work': claudeHome })
+    let removed = false
+    const { orchestrator, sessions } = setup({
+      ...accounts,
+      home: (provider, accountId) => {
+        if (removed && accountId === 'work') throw new AccountNotFoundError()
+        return accounts.home(provider, accountId)
+      },
+    })
+    const thread = await orchestrator.startThread('claude-code', root, { accountId: 'work' })
+    await orchestrator.account('claude-code', undefined, 'work')
+
+    await orchestrator.releaseAccount('claude-code', 'work')
+    expect(sessions[0]?.disposed).toBe(true)
+    // Nothing the account had read was kept.
+    await orchestrator.account('claude-code', undefined, 'work')
+    expect(claude.calls).toEqual([
+      ['account', claudeHome],
+      ['account', claudeHome],
+    ])
+
+    // Once the registry dropped it, the chat says why it cannot go on.
+    removed = true
+    await expect(orchestrator.setThreadApproval(thread.id, 'ask')).rejects.toThrow(
+      'The account this chat ran on was removed, so the chat cannot continue. Start a new chat.',
+    )
+    await orchestrator.disposeAll()
+  })
+
+  it('keeps an account while a chat on it still has work waiting', async () => {
+    const { orchestrator, store, sessions } = setup(directory({ 'claude-code:work': claudeHome }))
+    const thread = await orchestrator.startThread('claude-code', root, { accountId: 'work' })
+    store.enqueueQueuedTurn({
+      id: 'queued',
+      threadId: thread.id,
+      text: 'next',
+      attachments: [],
+      options: {},
+      createdAt: 1,
+      channel: 'main',
+    })
+
+    await expect(orchestrator.releaseAccount('claude-code', 'work')).rejects.toThrow(
+      'A chat on this account is still working. Stop it first, then remove the account.',
+    )
+    expect(sessions[0]?.disposed).toBe(false)
     await orchestrator.disposeAll()
   })
 })

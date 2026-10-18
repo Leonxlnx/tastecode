@@ -143,6 +143,9 @@ vi.mock('./orchestrator.js', () => ({
       state.handled.push(`providers.launch(${target}, ${command}, ${JSON.stringify(account)})`)
       return 'login-terminal'
     }
+    async releaseAccount(provider: string, accountId: string) {
+      state.accountCalls.push(['release', provider, accountId])
+    }
     async startThread(provider: string, _workspacePath: string, options: { accountId?: string }) {
       state.handled.push(`thread.start(${provider}, ${options.accountId ?? 'active'})`)
       return { id: 'started-thread' }
@@ -645,7 +648,10 @@ describe('provider accounts', () => {
         ['create', 'codex', 'Work', { kind: 'managed' }],
         ['rename', 'codex', 'default', 'Mine'],
         ['setActive', 'codex', 'work-1a2b3c'],
+        // What runs as the account stops before it is removed.
+        ['release', 'codex', 'work-1a2b3c'],
         ['remove', 'codex', 'work-1a2b3c', false],
+        ['release', 'codex', 'work-1a2b3c'],
         ['remove', 'codex', 'work-1a2b3c', true],
       ])
 

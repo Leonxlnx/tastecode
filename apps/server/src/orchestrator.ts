@@ -3052,6 +3052,46 @@ export class Orchestrator {
     modelLists?.invalidate(source.provider, source.agent)
   }
 
+  /**
+   * Stops what runs as a provider account before it is removed: its chats'
+   * sessions, its sign-in terminal, its control process and its cached reads.
+   * Windows cannot delete a folder a running CLI still uses, and a removed
+   * account's chats must not go on in it. A chat that is still working keeps
+   * the account until the user stops it.
+   */
+  async releaseAccount(provider: ProviderId, accountId: AccountId): Promise<void> {
+    const runsAs = (thread: { provider: ProviderId; accountId?: string | undefined } | undefined) =>
+      thread?.provider === provider && thread.accountId === accountId
+    const attached = [...this.#threads]
+      .filter(([, entry]) => runsAs(entry.thread))
+      .map(([threadId]) => threadId)
+    const busy =
+      [...this.#resumingThreads.keys()].some((threadId) => runsAs(this.#store.thread(threadId))) ||
+      attached.some(
+        (threadId) =>
+          this.isTurnRunning(threadId) ||
+          this.#hasQueuedTurns(threadId) ||
+          this.#designFlows.has(threadId),
+      )
+    if (busy) {
+      throw new Error(
+        'A chat on this account is still working. Stop it first, then remove the account.',
+      )
+    }
+    const key = accountScopeKey(provider, accountId)
+    const scope = this.#accountScopes.get(key)
+    this.#accountScopes.delete(key)
+    scope?.modelLists.dispose()
+    const terminals = [...this.#providerTerminals]
+      .filter(([, source]) => runsAs(source))
+      .map(([terminalId]) => terminalId)
+    await Promise.all([
+      ...attached.map((threadId) => this.#disposeThreadRuntime(threadId, 'disconnect')),
+      ...terminals.map((terminalId) => this.#terminals.close(terminalId)),
+      scope?.controls.disposeAll(),
+    ])
+  }
+
   writeTerminal(terminalId: string, data: string): void {
     this.#terminals.write(terminalId, data)
   }
