@@ -1869,6 +1869,17 @@ export class Store {
     })
   }
 
+  /**
+   * Records that `revision` of a thread's provider copy was read, without
+   * importing anything. mergeProviderHistory records it too, but it also
+   * retires every imported event the entries do not name.
+   */
+  markProviderHistoryLoaded(threadId: string, revision: string): void {
+    this.#db
+      .prepare('UPDATE provider_history SET loaded_revision = ? WHERE thread_id = ?')
+      .run(revision, threadId)
+  }
+
   /** Keep stable log positions so imported updates cannot invalidate local checkpoints. */
   mergeProviderHistory(
     threadId: string,

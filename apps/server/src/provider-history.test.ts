@@ -1298,6 +1298,43 @@ describe('provider history integration', () => {
     expect(messages('local').at(-1)?.text).toBe('From outside')
   })
 
+  it('remembers across restarts that a native chat has no provider copy, until the copy changes', async () => {
+    store.addThread({
+      id: 'local',
+      provider: 'codex',
+      providerSessionId: 'native',
+      projectPath: process.cwd(),
+      title: 'Existing',
+    })
+    for (const event of transcript('native')) store.append('local', event)
+    const { history, source, hooks } = setup()
+    vi.mocked(source.read).mockResolvedValue([])
+    await history.refresh()
+    expect(await history.load('local')).toBe(false)
+    expect(store.providerHistories()[0]).toMatchObject({ threadId: 'local', loadedRevision: '1' })
+    // The chat's own transcript is untouched.
+    expect(messages('local')).toHaveLength(2)
+
+    // The copy is gone for good, so the provider no longer lists it.
+    vi.mocked(source.list).mockResolvedValue([])
+    const restarted = new ProviderHistory(store, [{ provider: 'codex', history: source }], hooks)
+    histories.push(restarted)
+    await restarted.refresh()
+    expect(await restarted.load('local')).toBe(false)
+    expect(source.read).toHaveBeenCalledOnce()
+
+    // A copy that comes back changed is read again.
+    vi.mocked(source.list).mockResolvedValue([{ ...metadata(), revision: '2' }])
+    vi.mocked(source.read).mockResolvedValue([
+      ...transcript('native'),
+      ...transcript('later', 'From outside', 90000).slice(1),
+    ])
+    await restarted.refresh()
+    await restarted.load('local')
+    expect(source.read).toHaveBeenCalledTimes(2)
+    expect(messages('local').at(-1)?.text).toBe('From outside')
+  })
+
   it('matches local turns whose provider IDs differ using user content and native time', async () => {
     const { history, source } = setup()
     await history.refresh()

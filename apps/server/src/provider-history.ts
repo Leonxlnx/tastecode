@@ -351,8 +351,11 @@ export class ProviderHistory {
           // A native chat keeps its own transcript; the copy only adds turns taken
           // outside TasteCode. A copy that is gone (Codex archived the session and
           // its rollout was deleted) must not keep the chat from opening. This
-          // revision is not read again; a changed copy is.
+          // revision is not read again, also after a restart: each launch used to
+          // read it once more, and a Codex read of a session it cannot find lists
+          // every saved rollout. A changed copy is read again.
           current.loadedRevision = current.session.revision
+          this.store.markProviderHistoryLoaded(threadId, current.session.revision)
           break
         }
         // A turn that finished during the read is local too; its echo must still be dropped.
