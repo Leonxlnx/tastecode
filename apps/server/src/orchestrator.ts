@@ -850,6 +850,10 @@ export class Orchestrator {
         this.#modelLists.invalidate(provider)
         this.#invalidateBackgroundSources()
       },
+      limitSnapshot: {
+        read: () => this.#store.limitSnapshot(),
+        write: (value) => this.#store.setLimitSnapshot(value),
+      },
       ...(handlers.controlIdleMs !== undefined ? { controlIdleMs: handlers.controlIdleMs } : {}),
       ...(handlers.beforeLimitRead ? { beforeLimitRead: handlers.beforeLimitRead } : {}),
       ...(handlers.providerServices ? { services: handlers.providerServices } : {}),
@@ -1541,9 +1545,9 @@ export class Orchestrator {
     return this.#controls.forProvider(provider).usageLimitSource(intent)
   }
 
-  /** The provider's held limits, without starting a read. */
-  heldLimitSource(provider: ProviderId): ProviderLimitSource | undefined {
-    return this.#controls.forProvider(provider).heldLimitSource()
+  /** The provider's held limits, without starting a read; see ProviderControl. */
+  heldLimitSource(provider: ProviderId, intent?: UsageReadIntent): ProviderLimitSource | undefined {
+    return this.#controls.forProvider(provider).heldLimitSource(intent)
   }
 
   async startLogin(provider: ProviderId): Promise<{ loginId: string; authUrl?: string }> {
