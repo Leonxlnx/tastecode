@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import type { AccountId, DomainEvent, ProviderId } from '@harness/contracts'
+import type { AccountId, ProviderId } from '@harness/contracts'
 import { afterAll, describe, expect, it } from 'vitest'
 import { AccountNotFoundError, type AccountDirectory } from './account-directory.js'
 import type { AgentSession, ProviderRuntime } from './adapters.js'
@@ -31,7 +31,7 @@ function directory(
   }
 }
 
-function session(events: Array<(event: DomainEvent) => void>): AgentSession {
+function session(): AgentSession {
   return {
     capabilities: {
       steer: false,
@@ -45,9 +45,7 @@ function session(events: Array<(event: DomainEvent) => void>): AgentSession {
     interrupt: async () => {},
     respondToApproval: () => {},
     dispose: () => {},
-    on: (event: 'event' | 'log', listener: never) => {
-      if (event === 'event') events.push(listener)
-    },
+    on: () => {},
   }
 }
 
@@ -55,7 +53,6 @@ type Launch = { kind: 'start' | 'resume'; provider: ProviderId; accountHome: str
 
 function setup(accounts: AccountDirectory, store = new Store(':memory:')) {
   const launches: Launch[] = []
-  const events: Array<(event: DomainEvent) => void> = []
   let started = 0
   const runtimeFor = (
     provider: ProviderId,
@@ -67,14 +64,14 @@ function setup(accounts: AccountDirectory, store = new Store(':memory:')) {
       started += 1
       return {
         thread: { id: `${provider}-${started}`, provider, workspacePath, createdAt: Date.now() },
-        session: session(events),
+        session: session(),
       }
     },
     async resume(threadId, workspacePath) {
       launches.push({ kind: 'resume', provider, accountHome })
       return {
         thread: { id: threadId, provider, workspacePath, createdAt: Date.now() },
-        session: session(events),
+        session: session(),
       }
     },
     async listModels() {
@@ -89,10 +86,7 @@ function setup(accounts: AccountDirectory, store = new Store(':memory:')) {
     accounts,
     mcpConfig: new McpConfigStore(path.join(root, 'mcp.json')),
   })
-  /** The newest session finished its turn. */
-  const completeTurn = () =>
-    events.at(-1)?.({ type: 'turn.completed', turnId: 'turn-1', status: 'completed' })
-  return { orchestrator, launches, store, completeTurn }
+  return { orchestrator, launches, store }
 }
 
 describe('chats pinned to a provider account', () => {
@@ -108,8 +102,8 @@ describe('chats pinned to a provider account', () => {
 
     // After a restart the chat comes back in the same folder, whatever is active now.
     const second = setup(directory({ 'codex:work': workHome }, { codex: 'default' }), first.store)
-    await second.orchestrator.submitTurn(thread.id, 'go on')
-    second.completeTurn()
+    // Changing a chat's access level reopens it without starting a turn.
+    await second.orchestrator.setThreadApproval(thread.id, 'ask')
     expect(second.launches).toEqual([{ kind: 'resume', provider: 'codex', accountHome: workHome }])
     await second.orchestrator.disposeAll()
   })
@@ -130,12 +124,21 @@ describe('chats pinned to a provider account', () => {
   })
 
   it('runs Side chat as the main chat account', async () => {
-    const { orchestrator, launches, store, completeTurn } = setup(
-      directory({ 'codex:work': workHome }),
-    )
+    const { orchestrator, launches, store } = setup(directory({ 'codex:work': workHome }))
     const main = await orchestrator.startThread('codex', root, { accountId: 'work' })
-    await orchestrator.submitTurn(main.id, 'Main question', [], {}, 'main-question')
-    completeTurn()
+    // Side chat opens on a conversation that has a question in it.
+    store.append(main.id, {
+      type: 'item.completed',
+      item: {
+        id: 'question',
+        turnId: 'turn-1',
+        type: 'message',
+        role: 'user',
+        status: 'completed',
+        text: 'Main question',
+        createdAt: 1,
+      },
+    })
     const side = await orchestrator.startSideThread(main.id)
 
     expect(side.accountId).toBe('work')
@@ -179,7 +182,7 @@ describe('chats pinned to a provider account', () => {
     await first.orchestrator.disposeAll()
 
     const second = setup(directory({}), first.store)
-    await expect(second.orchestrator.submitTurn(thread.id, 'go on')).rejects.toThrow(
+    await expect(second.orchestrator.setThreadApproval(thread.id, 'ask')).rejects.toThrow(
       'The account this chat ran on was removed, so the chat cannot continue. Start a new chat.',
     )
     expect(second.launches).toEqual([])
