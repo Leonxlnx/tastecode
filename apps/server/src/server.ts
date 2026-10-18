@@ -51,6 +51,28 @@ const SERVER_VERSION = '0.0.0'
 const DEFAULT_RENDERER_ORIGIN = 'http://127.0.0.1:5183'
 /** When no client has asked for its projects by then, background work starts anyway. */
 const BACKGROUND_WORK_DELAY_MS = 1_500
+/**
+ * Reads of provider state that may load an adapter or start a vendor CLI on
+ * first use. The desktop's Node (24) loads and compiles an imported module
+ * graph synchronously inside `import()`, so the first of these held the event
+ * loop for 0.2 to 0.6 s while the renderer's first batch was handled, and the
+ * store reads behind it in that batch (the project list among them) waited as
+ * long. They start one turn later, once the replies to the rest of their batch
+ * went out. None of them changes what a store read answers.
+ */
+const PROVIDER_READS: ReadonlySet<MethodName> = new Set<MethodName>([
+  'acp.agents',
+  'auth.status',
+  'commands.list',
+  'mcp.list',
+  'models.list',
+  'providers.list',
+  'providers.updates',
+  'skills.list',
+  'usage.history',
+  'usage.summary',
+  'voice.status',
+])
 export { DEFAULT_PORT } from './server-config.js'
 
 const startupStartedAt = Number(process.env['HARNESS_STARTUP_STARTED_AT'])
@@ -510,6 +532,8 @@ export function startServer(
       respondError(socket, id, ErrorCode.BAD_REQUEST, `unknown method: ${method}`)
       return
     }
+    // Store reads that arrived in the same batch answer first; see PROVIDER_READS.
+    if (PROVIDER_READS.has(method)) await new Promise<void>((resolve) => setImmediate(resolve))
     const createsSession = method === 'thread.start' || method === 'sideChat.start'
     if (createsSession) historySessionStarts += 1
     try {
