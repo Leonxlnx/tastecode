@@ -2216,6 +2216,61 @@ describe('limits from the last session', () => {
     expect(grok.heldLimitSource('visible')).toBeUndefined()
     expect(parseLimitSnapshot(snapshot.write.mock.lastCall?.[0]).has('grok')).toBe(false)
   })
+
+  it('keeps the held and saved limits through an account read that names no email or plan', async () => {
+    const named = { signedIn: true, email: 'dev@example.test', plan: 'X Premium' }
+    const account = vi
+      .fn()
+      .mockResolvedValueOnce(named)
+      // The provider could not look up who is signed in, only that someone is.
+      .mockResolvedValueOnce({ signedIn: true })
+      .mockResolvedValue(named)
+    const usageLimitSource = vi.fn(async () => weekly(40))
+    const snapshot = lastSession('grok')
+    const { registry } = setup({
+      accountCacheMs: 0,
+      limitSnapshot: snapshot,
+      services: { grok: { account, usageLimitSource } },
+    })
+    const grok = registry.forProvider('grok')
+    await grok.account()
+    await grok.usageLimitSource('visible')
+    await grok.account()
+    expect(grok.heldLimitSource('visible')).toMatchObject({ limits: weekly(40).limits })
+    expect(parseLimitSnapshot(snapshot.write.mock.lastCall?.[0]).get('grok')).toMatchObject({
+      limits: weekly(40).limits,
+    })
+    await grok.account()
+    await expect(grok.usageLimitSource('visible')).resolves.toMatchObject({
+      limits: weekly(40).limits,
+    })
+    expect(usageLimitSource).toHaveBeenCalledOnce()
+  })
+
+  it('still forgets them when a read after one without detail names another account', async () => {
+    const account = vi
+      .fn()
+      .mockResolvedValueOnce({ signedIn: true, email: 'first@example.test', plan: 'X Premium' })
+      .mockResolvedValueOnce({ signedIn: true })
+      .mockResolvedValue({ signedIn: true, email: 'second@example.test', plan: 'X Premium' })
+    const usageLimitSource = vi.fn(async () => weekly(40))
+    const snapshot = lastSession('grok')
+    const { registry } = setup({
+      accountCacheMs: 0,
+      limitSnapshot: snapshot,
+      services: { grok: { account, usageLimitSource } },
+    })
+    const grok = registry.forProvider('grok')
+    await grok.account()
+    await grok.usageLimitSource('visible')
+    await grok.account()
+    // Switched in the provider's own CLI.
+    await grok.account()
+    expect(grok.heldLimitSource('visible')).toBeUndefined()
+    expect(parseLimitSnapshot(snapshot.write.mock.lastCall?.[0]).has('grok')).toBe(false)
+    await grok.usageLimitSource('visible')
+    expect(usageLimitSource).toHaveBeenCalledTimes(2)
+  })
 })
 
 describe('login ownership', () => {

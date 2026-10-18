@@ -23,6 +23,7 @@ import {
 } from '@harness/adapter-claude-code/capabilities'
 import { GROK_MCP_CAPABILITIES } from '@harness/adapter-grok/mcp'
 import { OPENCODE_MCP_CAPABILITIES } from '@harness/adapter-opencode/inventory'
+import { accountRead, type AccountIdentity } from './account-identity.js'
 import { parseLimitSnapshot, serializeLimitSnapshot } from './limit-snapshot.js'
 import type { ModelListRead } from './model-list-cache.js'
 import { ProjectInventoryCache, type ProjectInventoryService } from './project-inventory-cache.js'
@@ -232,8 +233,8 @@ type LimitEntry = {
   reads: number
   /** The number of the read behind `value`. */
   stored: number
-  /** The last account read, which shows a sign-in or switch made outside the app. */
-  account?: string | undefined
+  /** Who the account reads named, which shows a sign-in or switch made outside the app. */
+  account?: AccountIdentity | undefined
   value?: ProviderLimitSource | undefined
   /** When the read behind `value` started. */
   readAt: number
@@ -1212,10 +1213,10 @@ export class ProviderControls {
   /** A sign-in or account switch in the provider's own CLI reaches the app only here. */
   #accountRead(provider: ProviderId, account: Account): Account {
     const entry = this.#limitEntry(provider)
-    const identity = JSON.stringify([account.signedIn, account.email ?? null, account.plan ?? null])
-    if (entry.account !== undefined && entry.account !== identity) {
-      this.#invalidateLimits(provider, true)
-    }
+    // A read that cannot name the email or plan, as one does when the
+    // provider's own lookup fails under load, keeps the held and saved limits.
+    const { identity, switched } = accountRead(entry.account, account)
+    if (switched) this.#invalidateLimits(provider, true)
     entry.account = identity
     return account
   }
