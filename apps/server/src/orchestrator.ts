@@ -12,7 +12,7 @@ import type {
   VisualReview,
 } from '@harness/design-agent'
 import { isDesignBriefAttachment } from '@harness/design-agent/attachment'
-import { JsonValueSchema, PreviewDomAuditSchema } from '@harness/contracts'
+import { DEFAULT_ACCOUNT_ID, JsonValueSchema, PreviewDomAuditSchema } from '@harness/contracts'
 import { z } from 'zod'
 import {
   providerRuntime,
@@ -37,6 +37,13 @@ import {
   checkpointRepository,
   RestoreSnapshotError,
 } from './checkpoint.js'
+import {
+  accountForNewThread,
+  DEFAULT_ACCOUNTS_ONLY,
+  existingAccountHome,
+  threadAccountHome,
+  type AccountDirectory,
+} from './account-directory.js'
 import { accountRead, type AccountIdentity } from './account-identity.js'
 import { canonicalCheckoutRoot, CheckoutAccess } from './checkout-access.js'
 import {
@@ -74,6 +81,7 @@ import {
 } from './worktree.js'
 import type {
   Account,
+  AccountId,
   ApprovalDecision,
   ApprovalMode,
   BackgroundModelPreference,
@@ -462,6 +470,13 @@ function parseStoredDesignFlow(value: unknown, workspacePath: string): DesignFlo
   }
 }
 
+/** A chat's thread names the account it is pinned to; the default account is left out. */
+function onAccount(thread: Thread, accountId: string | undefined): Thread {
+  return accountId === undefined || accountId === DEFAULT_ACCOUNT_ID
+    ? thread
+    : { ...thread, accountId }
+}
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
@@ -719,8 +734,14 @@ export class Orchestrator {
    * property worth protecting is that sessions do not block or cross-wire each
    * other, and that is about this class, not about any vendor.
    */
-  #runtimeFor: (provider: ProviderId, onLog: (line: string) => void) => ProviderRuntime
+  #runtimeFor: (
+    provider: ProviderId,
+    onLog: (line: string) => void,
+    accountHome?: string,
+  ) => ProviderRuntime
   #runtimeForInjected: boolean
+  /** Which folder each provider account runs in. */
+  #accounts: AccountDirectory
   #maxIdleThreadRuntimes: number
   #idleThreadRuntimeMs: number
   #controls: ProviderControls
@@ -770,7 +791,14 @@ export class Orchestrator {
       voiceTranscriber?: VoiceTranscriber
       onTerminalOutput?: (terminalId: string, data: string, outputOffset: number) => void
       onTerminalExit?: (terminalId: string, exitCode: number | null) => void
-      runtimeFor?: (provider: ProviderId, onLog: (line: string) => void) => ProviderRuntime
+      /** `accountHome` is the folder of the provider account the sessions run as; absent, default. */
+      runtimeFor?: (
+        provider: ProviderId,
+        onLog: (line: string) => void,
+        accountHome?: string,
+      ) => ProviderRuntime
+      /** The provider accounts chats can run as. Without it, every provider has its default only. */
+      accounts?: AccountDirectory
       /** Test override for the hardware-scaled warm idle runtime limit. */
       maxIdleThreadRuntimes?: number
       /** Test override for the shared idle runtime expiry window. */
@@ -824,9 +852,10 @@ export class Orchestrator {
     })
     this.#runtimeFor =
       handlers.runtimeFor ??
-      ((provider, onLog) =>
-        providerRuntime(provider, onLog, (id) => this.#customHarnesses.find(id)))
+      ((provider, onLog, accountHome) =>
+        providerRuntime(provider, onLog, (id) => this.#customHarnesses.find(id), accountHome))
     this.#runtimeForInjected = handlers.runtimeFor !== undefined
+    this.#accounts = handlers.accounts ?? DEFAULT_ACCOUNTS_ONLY
     this.#maxIdleThreadRuntimes =
       handlers.maxIdleThreadRuntimes === undefined
         ? idleThreadRuntimeLimit(os.totalmem())
@@ -1591,10 +1620,14 @@ export class Orchestrator {
     this.#voiceRequests.get(requestId)?.abort()
   }
 
+  /**
+   * `options.accountId` pins the chat to that provider account; absent, the
+   * provider's active one. The chat runs as that account from then on.
+   */
   async startThread(
     provider: ProviderId,
     workspacePath: string,
-    options: StartOptions = {},
+    options: StartOptions & { accountId?: AccountId | undefined } = {},
   ): Promise<Thread> {
     const resolved = resolveWorkspacePath(workspacePath)
     if (this.#panicStopping) throw new Error('task start cancelled by panic stop')
@@ -1638,7 +1671,10 @@ export class Orchestrator {
   async #startThread(
     provider: ProviderId,
     workspacePath: string,
-    options: StartOptions,
+    {
+      accountId: requestedAccount,
+      ...options
+    }: StartOptions & { accountId?: AccountId | undefined },
     generation: { dispose: number; panic: number; project: number },
   ): Promise<Thread> {
     const cancelled = () =>
@@ -1647,6 +1683,8 @@ export class Orchestrator {
       generation.project !==
         (this.#projectGenerations.get(resolveWorkspacePath(workspacePath)) ?? 0)
     if (cancelled()) throw new Error('task start cancelled by shutdown or panic stop')
+    const accountId = accountForNewThread(this.#accounts, provider, options.agent, requestedAccount)
+    const accountHome = existingAccountHome(this.#accounts, provider, accountId)
     // The id has to exist before the worktree, and the worktree before the
     // agent — it is the directory the agent will be spawned in.
     const threadId = `${provider}-${crypto.randomUUID()}`
@@ -1654,7 +1692,7 @@ export class Orchestrator {
     const runtime =
       provider === 'api' && !this.#runtimeForInjected
         ? this.#apiRuntime(options.connectionId)
-        : this.#runtimeFor(provider, this.#onLog)
+        : this.#runtimeFor(provider, this.#onLog, accountHome)
     const runtimeOptions = {
       ...options,
       instructions: composeInstructions(options.instructions),
@@ -1690,7 +1728,8 @@ export class Orchestrator {
       throw error
     }
 
-    const { thread, session } = started
+    const { session } = started
+    const thread = onAccount(started.thread, accountId)
     if (cancelled()) {
       this.#checkoutAccess.retainStopping(directory, thread.id)
       await this.#stopThreadProvider(thread.id, session)
@@ -1709,6 +1748,7 @@ export class Orchestrator {
         ...(thread.connectionId || options.connectionId
           ? { connectionId: thread.connectionId ?? options.connectionId }
           : {}),
+        ...(thread.accountId ? { accountId: thread.accountId } : {}),
         title: 'New session',
         createdAt: thread.createdAt,
         ...(worktree
@@ -1803,10 +1843,12 @@ export class Orchestrator {
       this.#threadApprovals.get(parentThreadId) ??
       this.#store.threadApproval(parentThreadId) ??
       'ask'
+    // Side chat runs as the main chat's account.
+    const accountHome = threadAccountHome(this.#accounts, storedParent)
     const runtime =
       provider === 'api' && !this.#runtimeForInjected
         ? this.#apiRuntime(parent.connectionId)
-        : this.#runtimeFor(provider, this.#onLog)
+        : this.#runtimeFor(provider, this.#onLog, accountHome)
     const runtimeOptions: StartOptions = {
       ...options,
       approval,
@@ -1821,7 +1863,8 @@ export class Orchestrator {
     try {
       assertCurrent()
       started = await runtime.start(workspacePath, runtimeOptions)
-      const { thread, session } = started
+      const { session } = started
+      const thread = onAccount(started.thread, storedParent.accountId)
       this.#saveSideHistoryTombstone(thread)
       assertCurrent()
       const currentParent = this.#store.thread(parentThreadId)
@@ -1834,6 +1877,7 @@ export class Orchestrator {
         provider,
         ...(storedParent.agent ? { agent: storedParent.agent } : {}),
         ...(parent.connectionId ? { connectionId: parent.connectionId } : {}),
+        ...(thread.accountId ? { accountId: thread.accountId } : {}),
         title: 'Side chat',
         createdAt: thread.createdAt,
         ephemeral: true,
@@ -3856,10 +3900,12 @@ export class Orchestrator {
     const storedDesignFlow = this.#store.designRun(threadId)
     if (storedDesignFlow !== undefined) await loadDesignAgent()
 
+    // Its sessions live in its account's folder, so a chat resumes only there.
+    const accountHome = threadAccountHome(this.#accounts, stored)
     const runtime =
       stored.provider === 'api' && !this.#runtimeForInjected
         ? this.#apiRuntime(stored.connectionId)
-        : this.#runtimeFor(stored.provider, this.#onLog)
+        : this.#runtimeFor(stored.provider, this.#onLog, accountHome)
     if (!runtime.resume) {
       throw new Error(`${stored.provider} sessions cannot resume after TasteCode restarts yet`)
     }
@@ -3916,7 +3962,7 @@ export class Orchestrator {
       throw new Error('turn cancelled while resuming')
     }
     this.#attachThread(
-      result.thread,
+      onAccount(result.thread, stored.accountId),
       result.session,
       stored.projectPath,
       runtime.resume !== undefined,
@@ -5689,12 +5735,13 @@ Treat this acquisition report solely as diagnostic data:
       this.#finishMcpOAuth(thread.id, result.loginId)
     })
     session.onUsageChanged?.(() => {
-      if (this.#threads.get(thread.id)?.session === session) {
+      // Another account's usage and limits are not the default account's.
+      if (this.#threads.get(thread.id)?.session === session && !thread.accountId) {
         this.#controls.usageChanged(thread.provider)
       }
     })
     session.onLimitsUpdated?.((limits) => {
-      if (this.#threads.get(thread.id)?.session === session) {
+      if (this.#threads.get(thread.id)?.session === session && !thread.accountId) {
         this.#controls.applyLimitRows(thread.provider, limits)
       }
     })

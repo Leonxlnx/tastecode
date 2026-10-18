@@ -115,6 +115,10 @@ vi.mock('./orchestrator.js', () => ({
       state.handled.push(`auth.status(${provider})`)
       return Promise.resolve({ signedIn: false })
     }
+    async startThread(provider: string, _workspacePath: string, options: { accountId?: string }) {
+      state.handled.push(`thread.start(${provider}, ${options.accountId ?? 'active'})`)
+      return { id: 'started-thread' }
+    }
   },
 }))
 vi.mock('./providers.js', () => ({
@@ -640,7 +644,6 @@ describe('provider accounts', () => {
           'usage.consumeReset',
           { provider: 'codex', accountId: 'work', idempotencyKey: crypto.randomUUID() },
         ],
-        ['thread.start', { provider: 'codex', accountId: 'work', workspacePath: 'C:\\x' }],
         ['usage.history', { range: '7d', account: { provider: 'codex', accountId: 'work' } }],
       ] as const) {
         expect(await ask(method, params), method).toMatchObject({
@@ -654,6 +657,16 @@ describe('provider accounts', () => {
       expect(await ask('auth.status', { provider: 'codex', accountId: 'default' })).toMatchObject({
         result: { signedIn: false },
       })
+      // A chat is pinned to its account by the orchestrator, which checks it.
+      for (const accountId of ['work', undefined]) {
+        expect(
+          await ask('thread.start', { provider: 'codex', accountId, workspacePath: 'C:\\x' }),
+        ).toMatchObject({ result: { threadId: 'started-thread' } })
+      }
+      expect(state.handled.filter((entry) => entry.startsWith('thread.'))).toEqual([
+        'thread.start(codex, work)',
+        'thread.start(codex, active)',
+      ])
     } finally {
       client.terminate()
     }

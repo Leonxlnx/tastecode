@@ -277,6 +277,7 @@ export function startServer(
     // the Origin check whenever nothing else holds that port.
     reservedPreviewPorts: new Set([port, ...httpOriginPort(rendererOrigin)]),
     beforeLimitRead: () => streamQuiet.whenQuiet(),
+    accounts,
   })
   reportStartupMilestone('server-orchestrator-ready')
   let providerStatuses: readonly ProviderStatus[] = []
@@ -1307,7 +1308,6 @@ export function startServer(
 
       case 'thread.start': {
         const p = parseParams(method, params)
-        defaultAccountOnly(p.provider, p.accountId)
         const thread = await orchestrator.startThread(p.provider, p.workspacePath, {
           baseRef: p.baseRef,
           model: p.model,
@@ -1316,6 +1316,7 @@ export function startServer(
           approval: p.approval,
           agent: p.agent,
           connectionId: p.connectionId,
+          accountId: p.accountId,
           isolate: p.isolate,
         })
         return { threadId: thread.id }
