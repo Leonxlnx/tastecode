@@ -291,7 +291,7 @@
           <a href="./feature-inventory.html">Inventory</a>
           <a href="./CLAUDE-HANDOFF.md">Claude handoff</a>
         </nav>
-        <span class="meta">2026-10-18 nightly 517ef5f5 · includes main 0ad74ec3</span>
+        <span class="meta">2026-10-18 nightly 8ed311c9 · includes main 0ad74ec3</span>
       </div>
     </div>
 
@@ -347,10 +347,13 @@
           not listed again at startup and older ones are listed again 5 s apart, store reads in the
           first request batch answer before provider reads, a long chat measures the rows a commit
           mounts in one layout instead of one per row (open, switch back, first scroll up), and the
-          streaming reveal replaces only the highlight ranges that moved. Subagents and pull
-          requests (PRs #1764 to #1767, #1778, #1783, #1801, #1805, #1806, #1824 to #1827): Claude
-          Code, Codex and Grok subagents get live rows, the chat header shows its pull request, and
-          Review can commit, push and create a pull request.
+          streaming reveal replaces only the highlight ranges that moved. PR #1851 followed: an
+          account read that names no email or plan, as Grok's does when its subscription lookup
+          fails under load, no longer counts as an account switch, so it keeps the held and saved
+          plan limits and the model list. Subagents and pull requests (PRs #1764 to #1767, #1778,
+          #1783, #1801, #1805, #1806, #1824 to #1827): Claude Code, Codex and Grok subagents get
+          live rows, the chat header shows its pull request, and Review can commit, push and create
+          a pull request.
         </p>
         <p>
           Checks on the integration tree (ed488891, Windows): <code>pnpm lint</code>,

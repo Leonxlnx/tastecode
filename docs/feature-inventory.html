@@ -225,7 +225,7 @@
       <div class="topbar-inner">
         <h1>Feature Inventory</h1>
         <span class="total" id="total">0 checked</span>
-        <span class="meta">2026-10-18 nightly 517ef5f5 · includes main 0ad74ec3</span>
+        <span class="meta">2026-10-18 nightly 8ed311c9 · includes main 0ad74ec3</span>
       </div>
     </div>
 
@@ -1045,11 +1045,12 @@
                   reads are at least 15 minutes apart for Claude Code, 5 for Codex and 30 s for
                   Grok, while a redeemed reset or an account change reads at once. A failed refresh
                   answers with the held values marked stale, with the reason and the next try; an
-                  account change drops them. Live windows from running chats merge into the held
-                  values by window id, the renderer applies the usage.limits push directly (at most
-                  one a second per provider), and usage.changed follows at most every 30 s;
-                  usage.summary answers a chat's totals with the held limits at once and refreshes
-                  them in the background</span
+                  account change drops them, while a read that names no email or plan is not a
+                  change and keeps them. Live windows from running chats merge into the held values
+                  by window id, the renderer applies the usage.limits push directly (at most one a
+                  second per provider), and usage.changed follows at most every 30 s; usage.summary
+                  answers a chat's totals with the held limits at once and refreshes them in the
+                  background</span
                 ></span
               ></label
             >
