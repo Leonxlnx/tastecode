@@ -32,6 +32,9 @@ const state = vi.hoisted(() => ({
   historyScans: new Map<string, Promise<void>>(),
   idleCheckouts: [] as string[],
   handled: [] as string[],
+  accountCalls: [] as unknown[][],
+  accountsRoot: '',
+  accountsChanged: (_provider: string) => {},
 }))
 const temporary: string[] = []
 
@@ -119,6 +122,41 @@ vi.mock('./providers.js', () => ({
     state.prewarmed += 1
   },
 }))
+// The registry's own rules are covered in provider-accounts.test.ts; this is its wiring.
+vi.mock('./provider-accounts.js', () => ({
+  ProviderAccounts: class {
+    constructor(_rows: unknown, options: { root: string; onChanged: (provider: string) => void }) {
+      state.accountsRoot = options.root
+      state.accountsChanged = options.onChanged
+    }
+    list(provider?: string) {
+      state.accountCalls.push(['list', provider])
+      return { accounts: [], active: {} }
+    }
+    create(provider: string, label: string, home: unknown) {
+      state.accountCalls.push(['create', provider, label, home])
+      return { id: 'work-1a2b3c', provider, label, home: path.resolve('w'), managed: true }
+    }
+    rename(provider: string, accountId: string, label: string) {
+      state.accountCalls.push(['rename', provider, accountId, label])
+      return { id: accountId, provider, label, managed: false }
+    }
+    async remove(provider: string, accountId: string, deleteHome: boolean) {
+      state.accountCalls.push(['remove', provider, accountId, deleteHome])
+    }
+    setActive(provider: string, accountId: string) {
+      state.accountCalls.push(['setActive', provider, accountId])
+    }
+    home(provider: string, accountId: string | undefined) {
+      if (accountId === undefined || accountId === 'default') return undefined
+      if (provider === 'grok') throw new Error('This provider runs as one account only.')
+      return path.resolve(accountId)
+    }
+    recordIdentity(provider: string, accountId: string | undefined, account: unknown) {
+      state.accountCalls.push(['recordIdentity', provider, accountId, account])
+    }
+  },
+}))
 vi.mock('./runtime-loader.js', () => ({
   stopModelListings: async () => {
     state.shutdown.push('listings')
@@ -203,6 +241,7 @@ afterEach(async () => {
   state.historyScans.clear()
   state.idleCheckouts.length = 0
   state.handled.length = 0
+  state.accountCalls.length = 0
   vi.unstubAllEnvs()
   await Promise.all(
     temporary.splice(0).map((directory) => rm(directory, { recursive: true, maxRetries: 5 })),
@@ -511,6 +550,78 @@ describe('methods without a route', () => {
       id: 'ask',
       error: { code: 'bad_request', message: 'unknown method: no.such.method' },
     })
+  })
+})
+
+describe('provider accounts', () => {
+  async function connect(port: number) {
+    const client = new WebSocket(`ws://127.0.0.1:${port}`)
+    const messages: Array<Record<string, unknown>> = []
+    client.on('message', (message) => messages.push(JSON.parse(String(message))))
+    await once(client, 'message')
+    let next = 0
+    const ask = async (method: string, params: unknown) => {
+      const id = `ask-${(next += 1)}`
+      client.send(JSON.stringify({ id, method, params }))
+      await vi.waitFor(() => expect(messages.some((message) => message['id'] === id)).toBe(true))
+      return messages.find((message) => message['id'] === id)
+    }
+    return { client, messages, ask }
+  }
+
+  it('answers the accounts methods and tells every client when they change', async () => {
+    const { port } = await listen()
+    const { client, messages, ask } = await connect(port)
+    try {
+      expect(path.basename(state.accountsRoot)).toBe('accounts')
+      expect(await ask('accounts.list', { provider: 'codex' })).toMatchObject({
+        result: { accounts: [], active: {} },
+      })
+      expect(
+        await ask('accounts.create', {
+          provider: 'codex',
+          label: ' Work ',
+          home: { kind: 'managed' },
+        }),
+      ).toMatchObject({ result: { account: { id: 'work-1a2b3c', label: 'Work', managed: true } } })
+      await ask('accounts.rename', { provider: 'codex', accountId: 'default', label: 'Mine' })
+      await ask('accounts.setActive', { provider: 'codex', accountId: 'work-1a2b3c' })
+      expect(
+        await ask('accounts.remove', { provider: 'codex', accountId: 'work-1a2b3c' }),
+      ).toMatchObject({ result: {} })
+      await ask('accounts.remove', {
+        provider: 'codex',
+        accountId: 'work-1a2b3c',
+        deleteHome: true,
+      })
+      expect(
+        await ask('accounts.create', {
+          provider: 'codex',
+          label: 'Relative',
+          home: { kind: 'existing', path: 'relative/folder' },
+        }),
+      ).toMatchObject({ error: { code: 'bad_request' } })
+      expect(state.accountCalls).toEqual([
+        ['list', 'codex'],
+        ['create', 'codex', 'Work', { kind: 'managed' }],
+        ['rename', 'codex', 'default', 'Mine'],
+        ['setActive', 'codex', 'work-1a2b3c'],
+        ['remove', 'codex', 'work-1a2b3c', false],
+        ['remove', 'codex', 'work-1a2b3c', true],
+      ])
+
+      state.accountsChanged('claude-code')
+      await vi.waitFor(() =>
+        expect(messages).toContainEqual(
+          expect.objectContaining({
+            channel: 'accounts.changed',
+            data: { provider: 'claude-code' },
+          }),
+        ),
+      )
+    } finally {
+      client.terminate()
+    }
   })
 })
 

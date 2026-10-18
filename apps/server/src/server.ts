@@ -25,6 +25,7 @@ import { acquireDataLease } from './data-lease.js'
 import { PreviewCaptureCoordinator } from './preview-capture.js'
 import type { CheckoutPullRequests } from './checkout-pull-request.js'
 import type { PullRequestService } from './pull-requests.js'
+import { ProviderAccounts } from './provider-accounts.js'
 import { DEFAULT_PORT } from './server-config.js'
 import { Store } from './store.js'
 import { createProjectListProjector, type ProjectListState } from './project-list.js'
@@ -130,6 +131,10 @@ export function startServer(
     throw error
   }
   const push = new PushBus()
+  const accounts = new ProviderAccounts(store, {
+    root: path.join(path.dirname(databasePath), 'accounts'),
+    onChanged: (provider) => push.broadcast('accounts.changed', { provider }),
+  })
   // Install, update and sign-in terminals can add, replace or update a CLI.
   const setupTerminals = new Set<string>()
   const setupTerminal = (terminalId: string) => {
@@ -869,6 +874,31 @@ export function startServer(
       case 'auth.signOut': {
         const p = parseParams(method, params)
         await orchestrator.signOut(p.provider, p.agent)
+        return {}
+      }
+
+      case 'accounts.list':
+        return accounts.list(parseParams(method, params).provider)
+
+      case 'accounts.create': {
+        const p = parseParams(method, params)
+        return { account: accounts.create(p.provider, p.label, p.home) }
+      }
+
+      case 'accounts.rename': {
+        const p = parseParams(method, params)
+        return { account: accounts.rename(p.provider, p.accountId, p.label) }
+      }
+
+      case 'accounts.remove': {
+        const p = parseParams(method, params)
+        await accounts.remove(p.provider, p.accountId, p.deleteHome ?? false)
+        return {}
+      }
+
+      case 'accounts.setActive': {
+        const p = parseParams(method, params)
+        accounts.setActive(p.provider, p.accountId)
         return {}
       }
 
