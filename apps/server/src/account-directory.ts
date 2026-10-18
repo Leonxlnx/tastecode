@@ -37,9 +37,23 @@ export const DEFAULT_ACCOUNTS_ONLY: AccountDirectory = {
 }
 
 /**
+ * The account a request for a source names. A custom harness runs with its
+ * own sign-in, so a request for one names no other account.
+ */
+export function sourceAccount(
+  agent: string | undefined,
+  requested: AccountId | undefined,
+): AccountId | undefined {
+  if (agent === undefined) return requested
+  if (requested !== undefined && requested !== DEFAULT_ACCOUNT_ID) {
+    throw new Error('A custom harness runs with its own sign-in, not as another account.')
+  }
+  return undefined
+}
+
+/**
  * The account a new chat is pinned to: the one asked for, else the
- * provider's active account. A custom harness runs with its own sign-in, so
- * its chats stay on the default account.
+ * provider's active account. A custom harness's chats stay on the default.
  */
 export function accountForNewThread(
   directory: AccountDirectory,
@@ -47,11 +61,8 @@ export function accountForNewThread(
   agent: string | undefined,
   requested: AccountId | undefined,
 ): AccountId {
-  if (agent === undefined) return requested ?? directory.active(provider)
-  if (requested !== undefined && requested !== DEFAULT_ACCOUNT_ID) {
-    throw new Error('A custom harness runs with its own sign-in, not as another account.')
-  }
-  return DEFAULT_ACCOUNT_ID
+  if (agent !== undefined) return sourceAccount(agent, requested) ?? DEFAULT_ACCOUNT_ID
+  return requested ?? directory.active(provider)
 }
 
 /**
