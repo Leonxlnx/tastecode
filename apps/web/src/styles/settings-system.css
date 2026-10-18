@@ -1,0 +1,758 @@
+/* ---------- settings v1 system ----------
+   One page header, open sections and leader rows for every Settings tab; cards
+   are left to dashboards and forms. Five text roles: the 26px title, the
+   13.5px row name and value, the 12.5px section heading and note, and 11.5px
+   fine print; entity rows add their 15px name, sub-rows step down to 12.5.
+   Weights stay at 400, 500 and 550. Spacing steps are 4, 8, 12,
+   16 and 24, plus 28 under the page header and 36 between sections. */
+
+@property --set-leader {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: transparent;
+}
+
+/* Page header */
+
+.settings .set-page__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 0 0 28px;
+}
+
+.settings .set-page__heading {
+  min-width: 0;
+}
+
+.settings .set-page__head .settings__title {
+  margin: 0;
+}
+
+.settings .set-page__description {
+  max-width: 64ch;
+  margin: 6px 0 0;
+  color: var(--text-3);
+  font-size: var(--t-md);
+  line-height: 1.45;
+}
+
+/* Centred on the title's own line (26px at 1.2). */
+.settings .set-page__actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  min-height: calc(var(--t-2xl) * 1.2);
+}
+
+/* Sections */
+
+/* A page may open with loose rows; a titled section after them keeps the
+   same distance as one section after another. */
+.settings .set-section + .set-section,
+.settings .set-row + .set-section {
+  margin-top: 36px;
+}
+
+.settings .set-section__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 0 0 4px;
+}
+
+.settings .set-section__title {
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--t-sm);
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+/* One quiet action on the heading's line (Reset colors): the 28px button
+   overhangs the 12.5px line instead of growing it. */
+.settings .set-section__action {
+  display: flex;
+  flex: none;
+  gap: 8px;
+  margin-block: -6px;
+}
+
+/* A trailing quiet action, on a page header or a section heading, sets its
+   label flush with the column edge, under the values. */
+.settings :is(.set-page__actions, .set-section__action) > .set-button--quiet:last-child {
+  margin-right: -10px;
+}
+
+.settings .set-section__note {
+  max-width: 64ch;
+  margin: 0 0 8px;
+  color: var(--text-3);
+  font-size: var(--t-sm);
+  line-height: 1.45;
+}
+
+/* Rows: name, leader, value. No fill, no divider; only the leader and the
+   name's ink answer the pointer. */
+
+.settings .set-row {
+  --set-leader: color-mix(in srgb, var(--text-3) 46%, transparent);
+
+  display: grid;
+  grid-template-columns: minmax(0, max-content) minmax(32px, 1fr) max-content;
+  /* Centred, not baseline-aligned: a button's baseline comes from its icon,
+     which would drop the name below the button's label. */
+  align-items: center;
+  min-height: 40px;
+  padding-block: 10px;
+  font-size: var(--t-md);
+  line-height: 1.35;
+  transition: --set-leader var(--dur-fast) var(--ease-out);
+}
+
+/* A 28px control would make its row 48px; trimming the padding keeps every
+   row on the same 40px rhythm. */
+.settings .set-row:has(> .set-row__value > :is(button, .app-select, .settings__switch-skeleton)) {
+  padding-block: 6px;
+}
+
+/* A muted row (nothing set yet) still lights under the pointer; an active or
+   failing row keeps its tone. */
+.settings .set-row[data-tone='muted'] {
+  --set-leader: color-mix(in srgb, var(--text-3) 28%, transparent);
+}
+
+.settings .set-row:is(:hover, :focus-within) {
+  --set-leader: color-mix(in srgb, var(--text-3) 85%, transparent);
+}
+
+.settings .set-row[data-tone='active'] {
+  --set-leader: var(--text-2);
+}
+
+.settings .set-row[data-tone='error'] {
+  --set-leader: var(--error);
+}
+
+.settings .set-row__name {
+  min-width: 0;
+  margin: 0;
+  color: var(--text-2);
+  font-weight: 500;
+  overflow-wrap: anywhere;
+  transition: color var(--dur-fast) var(--ease-out);
+}
+
+.settings .set-row:is(:hover, :focus-within) .set-row__name {
+  color: var(--text);
+}
+
+/* Small and close-set, so it reads as a line, not beads. Centring puts it at
+   mid-line; the nudge sets it back on the name's baseline. */
+.settings .set-leader {
+  height: 5px;
+  margin-inline: 14px;
+  translate: 0 0.17em;
+  background: radial-gradient(circle, var(--set-leader) 0.75px, transparent 1.15px) left center /
+    5px 100% repeat-x;
+}
+
+.settings .set-row__value {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+  color: var(--text);
+}
+
+/* A value reads at the row's own size; only status lines step down. */
+.settings .set-row__value > .settings-meta {
+  color: var(--text);
+  font-size: inherit;
+}
+
+.settings .set-row__value .state-label {
+  font-size: var(--t-sm);
+}
+
+.settings .set-row__note {
+  grid-column: 1 / -1;
+  max-width: 60ch;
+  margin: 2px 0 0;
+  color: var(--text-3);
+  font-size: var(--t-sm);
+  line-height: 1.45;
+}
+
+/* Entity rows: a thing with a name of its own (a provider, a skill, an MCP
+   server). The name is the one 15px role and the status steps down to the
+   note size. Providers keep their own wired layout; listed entities share
+   the one below. */
+
+.settings .set-entity__name {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--text-2);
+  font-size: var(--t-lg);
+  font-weight: 550;
+  letter-spacing: -0.012em;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings .set-entity__status {
+  min-width: 0;
+  color: var(--text-3);
+  font-size: var(--t-sm);
+}
+
+/* Sub-rows: the settings an entity carries (a provider's defaults). A row one
+   step down: the name at 12.5/400 in --text-3, the shared leader, and an
+   inline select at the same size as the value. */
+
+.settings .set-subrow {
+  --set-leader: color-mix(in srgb, var(--text-3) 46%, transparent);
+
+  display: grid;
+  grid-template-columns: minmax(0, max-content) minmax(24px, 1fr) minmax(0, max-content);
+  align-items: center;
+  min-height: 32px;
+  font-size: var(--t-sm);
+  line-height: 1.35;
+  transition: --set-leader var(--dur-fast) var(--ease-out);
+}
+
+.settings .set-subrow:is(:hover, :focus-within) {
+  --set-leader: color-mix(in srgb, var(--text-3) 85%, transparent);
+}
+
+.settings .set-subrow__name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-3);
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: color var(--dur-fast) var(--ease-out);
+}
+
+.settings .set-subrow:is(:hover, :focus-within) .set-subrow__name {
+  color: var(--text-2);
+}
+
+.settings .set-subrow__value {
+  display: flex;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+/* Listed entities (skills, MCP servers): the name runs along the leader to
+   its status, the controls sit at the far edge of that line, and what the
+   entity is (a description, a path, a failure) hangs under the name at the
+   note size. The leader runs level with the controls, as a provider's does. */
+
+.settings .set-entity {
+  --set-leader: color-mix(in srgb, var(--text-3) 46%, transparent);
+
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  align-items: start;
+  padding-block: 10px;
+  transition: --set-leader var(--dur-fast) var(--ease-out);
+}
+
+.settings .set-entity:is(:hover, :focus-within) {
+  --set-leader: color-mix(in srgb, var(--text-3) 85%, transparent);
+}
+
+/* Switched off: a fainter leader and a quieter name until pointed at. */
+.settings .set-entity[data-tone='muted'] {
+  --set-leader: color-mix(in srgb, var(--text-3) 28%, transparent);
+}
+
+.settings .set-entity[data-tone='error'] {
+  --set-leader: var(--error);
+}
+
+.settings .set-entity__main {
+  min-width: 0;
+}
+
+.settings .set-entity__head {
+  display: grid;
+  grid-template-columns: minmax(0, max-content) minmax(32px, 1fr) minmax(0, max-content);
+  align-items: center;
+  min-height: 28px;
+}
+
+.settings .set-entity__head > .set-leader {
+  translate: none;
+}
+
+/* With no status, the leader runs on to the controls' own margin. */
+.settings .set-entity__head > .set-leader:last-child {
+  margin-right: 0;
+}
+
+.settings .set-entity__head > .set-entity__status {
+  justify-self: end;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings .set-entity .set-entity__name {
+  transition: color var(--dur-fast) var(--ease-out);
+}
+
+.settings .set-entity:is(:hover, :focus-within) .set-entity__name {
+  color: var(--text);
+}
+
+.settings .set-entity[data-tone='muted']:not(:hover, :focus-within) .set-entity__name {
+  color: var(--text-3);
+}
+
+.settings .set-entity__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+  margin-left: 14px;
+}
+
+/* A read-only row (an inherited MCP server) has no controls; its margin
+   would stop the status short of the column edge. */
+.settings .set-entity__actions:empty {
+  display: none;
+}
+
+.settings .set-entity__detail {
+  max-width: 64ch;
+  margin: 2px 0 0;
+  color: var(--text-3);
+  font-size: var(--t-sm);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+/* A path or command: one line in the code face, cut at the column edge. */
+.settings .set-entity__detail--code {
+  max-width: none;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings .set-entity__detail strong {
+  font-weight: 550;
+}
+
+.settings .set-entity__detail--error {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  color: var(--error);
+}
+
+.settings .set-entity__detail--error > svg {
+  flex: none;
+  margin-top: 2px;
+}
+
+/* Centred where the first detail line's text would sit. */
+.settings .set-entity__skeleton-detail {
+  max-width: 100%;
+  margin: 7px 0 3px;
+}
+
+@container settings-content (max-width: 560px) {
+  .settings .set-leader {
+    display: none;
+  }
+
+  .settings :is(.set-row, .set-subrow) {
+    grid-template-columns: minmax(0, max-content) minmax(0, 1fr);
+    column-gap: 16px;
+  }
+
+  .settings .set-entity__head {
+    grid-template-columns: minmax(0, max-content) minmax(0, 1fr);
+    column-gap: 16px;
+  }
+
+  .settings .set-row__value {
+    flex-wrap: wrap;
+  }
+
+  /* Page actions that do not fit beside the title take their own line under
+     the description, rather than squeezing it into a narrow column. */
+  .settings .set-page__head {
+    flex-wrap: wrap;
+    row-gap: 14px;
+  }
+
+  /* On that line they may still be wider than the column (MCP servers:
+     provider select, hide-by-id and Add server); they wrap inside it
+     instead of running past its edge. */
+  .settings .set-page__actions {
+    flex: 0 1 auto;
+    flex-wrap: wrap;
+    min-width: 0;
+  }
+}
+
+/* Buttons: one set, every one 28px tall, fading through button-feedback.css.
+   The default is outlined; primary is filled and only submits a form; danger
+   is a quiet slab that shows its consequence on hover; quiet is ink alone. */
+
+.settings .set-button {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  background: transparent;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--t-sm);
+  font-weight: 500;
+  line-height: 1;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.settings .set-button > svg {
+  flex: none;
+}
+
+.settings .set-button:hover:not(:disabled) {
+  background: var(--control-hover);
+}
+
+.settings .set-button:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.settings .set-button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.settings .set-button--primary {
+  background: var(--text);
+  border-color: var(--text);
+  color: var(--bg);
+}
+
+.settings .set-button--primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--text) 86%, var(--bg));
+}
+
+.settings .set-button--danger {
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+  border-color: color-mix(in srgb, var(--text) 7%, transparent);
+  color: var(--text-2);
+}
+
+.settings .set-button--danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--error) 10%, transparent);
+  border-color: color-mix(in srgb, var(--error) 14%, transparent);
+  color: var(--error);
+}
+
+.settings .set-button--danger:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--error) 55%, transparent);
+  outline-offset: 2px;
+}
+
+.settings .set-button--quiet {
+  border-color: transparent;
+  color: var(--text-3);
+  font-weight: 400;
+}
+
+.settings .set-button--quiet:hover:not(:disabled) {
+  background: transparent;
+  color: var(--text);
+}
+
+/* An icon alone keeps the 28px height and goes square; it pairs with any of
+   the looks above and needs an aria-label. */
+.settings .set-button--icon {
+  width: 28px;
+  padding: 0;
+}
+
+/* Text fields: one 28px field for every form; a textarea starts at 72px. */
+
+.settings .set-input {
+  width: 100%;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  background: var(--bg);
+  border: 1px solid var(--chrome-border);
+  border-radius: var(--r-md);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--t-sm);
+  /* What is typed reads at the regular weight inside a 500 label. */
+  font-weight: 400;
+  outline: none;
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out);
+}
+
+.settings textarea.set-input {
+  height: auto;
+  min-height: 72px;
+  padding: 6px 8px;
+  line-height: 1.45;
+  resize: vertical;
+}
+
+.settings .set-input::placeholder {
+  color: var(--text-3);
+}
+
+.settings .set-input:focus {
+  border-color: var(--text-3);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+.settings .set-input:disabled {
+  color: var(--text-3);
+  cursor: default;
+}
+
+/* Forms: the one card Settings draws outside its dashboards. Two columns of
+   labelled fields on the rail tint; a wide field, a note, an error and the
+   actions take the whole width, and one column is left when the pane is
+   narrow. */
+
+.settings .set-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 16px;
+  margin: 0 0 24px;
+  padding: 16px;
+  background: var(--bg-rail);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+}
+
+/* After the rows it adds to, the form keeps a step away from the last one. */
+.settings :is(.set-entity, .provider-row, .set-empty) + .set-form {
+  margin-top: 12px;
+}
+
+.settings :is(.set-form label, .set-form__field) {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  color: var(--text-2);
+  font-size: var(--t-sm);
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+.settings :is(.set-form__wide, .set-form__note, .set-form__error, .set-form__actions) {
+  grid-column: 1 / -1;
+}
+
+.settings .set-form__note {
+  max-width: 64ch;
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--t-sm);
+  line-height: 1.45;
+}
+
+.settings .set-form__hint {
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  font-weight: 400;
+  line-height: 1.45;
+}
+
+.settings .set-form__error {
+  margin: 0;
+  color: var(--error);
+  font-size: var(--t-sm);
+  line-height: 1.45;
+}
+
+.settings .set-form__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+@container settings-content (max-width: 560px) {
+  .settings .set-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Segmented control: a 28px track of equal choices, the chosen one raised. */
+
+.set-segmented {
+  display: inline-flex;
+  flex: none;
+  align-items: stretch;
+  height: 28px;
+  padding: 2px;
+  background: var(--bg);
+  border: 1px solid var(--chrome-border);
+  border-radius: var(--r-md);
+}
+
+.set-segmented__option {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 10px;
+  background: none;
+  border: 0;
+  border-radius: var(--r-sm);
+  color: var(--text-3);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--t-sm);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.set-segmented__option:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.set-segmented .set-segmented__option[aria-checked='true'] {
+  background: var(--menu-hover);
+  color: var(--text);
+}
+
+.set-segmented__option:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-inset);
+}
+
+/* Page-level notice */
+
+.settings .set-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0 0 16px;
+  padding: 8px 12px;
+  background: color-mix(in srgb, var(--text) 4%, transparent);
+  border: 1px solid transparent;
+  border-radius: var(--r-lg);
+  color: var(--text-2);
+  font-size: var(--t-sm);
+  line-height: 1.45;
+}
+
+.settings .set-notice__icon {
+  flex: none;
+  margin-top: 2px;
+  color: var(--text-3);
+}
+
+.settings .set-notice__text {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+}
+
+/* A notice about several things gives each one a line under the first. */
+.settings .set-notice__line {
+  display: block;
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.settings .set-notice__action {
+  display: flex;
+  flex: none;
+  gap: 8px;
+  margin-block: -4px;
+}
+
+.settings .set-notice[data-tone='progress'] .set-notice__icon {
+  animation: spin 0.9s linear infinite;
+}
+
+.settings .set-notice[data-tone='error'] {
+  background: color-mix(in srgb, var(--error) 8%, transparent);
+  border-color: color-mix(in srgb, var(--error) 22%, transparent);
+  color: var(--text);
+}
+
+.settings .set-notice[data-tone='error'] .set-notice__icon {
+  color: var(--error);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings .set-notice[data-tone='progress'] .set-notice__icon {
+    animation: none;
+  }
+}
+
+/* Empty state: where the rows would start, left-aligned, no card. */
+
+.settings .set-empty {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding-block: 12px;
+}
+
+.settings .set-empty__icon {
+  display: inline-flex;
+  flex: none;
+  margin-top: 1px;
+  color: var(--text-3);
+}
+
+.settings .set-empty__icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.settings .set-empty__title {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--t-md);
+  line-height: 1.35;
+}
+
+.settings .set-empty__detail {
+  max-width: 60ch;
+  margin: 2px 0 0;
+  color: var(--text-3);
+  font-size: var(--t-sm);
+  line-height: 1.45;
+}
+
+.settings .set-empty__action {
+  margin-top: 12px;
+}
