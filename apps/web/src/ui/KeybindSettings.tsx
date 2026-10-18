@@ -244,7 +244,7 @@ export function KeybindSettings(props: {
       </p>
 
       <label className="keybind-settings__search">
-        <Search className="keybind-settings__search-icon" size={15} stroke={1.75} aria-hidden />
+        <Search className="keybind-settings__search-icon" size={14} stroke={1.75} aria-hidden />
         <input
           type="search"
           value={query}

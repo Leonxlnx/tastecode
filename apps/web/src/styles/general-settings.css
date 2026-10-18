@@ -41,8 +41,8 @@
   max-width: 34ch;
   margin: 6px 0 0;
   color: var(--text-3);
-  font-size: var(--t-md);
-  letter-spacing: -0.006em;
+  font-size: var(--t-sm);
+  letter-spacing: -0.003em;
   line-height: 1.45;
 }
 
@@ -96,9 +96,9 @@
 .general-option__label {
   display: block;
   margin-top: 10px;
-  font-size: var(--t-md);
+  font-size: var(--t-sm);
   font-weight: 500;
-  letter-spacing: -0.006em;
+  letter-spacing: -0.003em;
   transition: color var(--dur-fast) var(--ease-out);
 }
 
@@ -150,8 +150,8 @@
 .general-settle__name,
 .general-settle__value {
   margin: 0;
-  font-size: var(--t-md);
-  letter-spacing: -0.006em;
+  font-size: var(--t-sm);
+  letter-spacing: -0.003em;
   line-height: 1.3;
 }
 
