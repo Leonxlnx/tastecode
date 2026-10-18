@@ -409,7 +409,7 @@
   height: 4px;
   overflow: hidden;
   background: var(--usage-track);
-  border-radius: 2px;
+  border-radius: var(--r-xs);
 }
 
 .settings .usage-sheet__meter-fill {
@@ -417,7 +417,7 @@
   inset: 0 auto 0 0;
   width: var(--usage-sheet-left);
   background: var(--text-2);
-  border-radius: 2px;
+  border-radius: var(--r-xs);
 }
 
 .settings .usage-sheet__limit .usage-sheet__label {
