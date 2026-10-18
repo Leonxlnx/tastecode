@@ -291,7 +291,7 @@
           <a href="./feature-inventory.html">Inventory</a>
           <a href="./CLAUDE-HANDOFF.md">Claude handoff</a>
         </nav>
-        <span class="meta">2026-10-18 nightly d1f57f65 · includes main 0ad74ec3</span>
+        <span class="meta">2026-10-18 nightly 517ef5f5 · includes main 0ad74ec3</span>
       </div>
     </div>
 
@@ -343,9 +343,14 @@
           opencode serve is left behind. After the round was measured (PRs #1843, #1844), the first
           Usage page or account popup after a launch opens on the last session's plan limits instead
           of waiting for each CLI, and Profile's accounts open on the plans the last launch read.
-          Subagents and pull requests (PRs #1764 to #1767, #1778, #1783, #1801, #1805, #1806, #1824
-          to #1827): Claude Code, Codex and Grok subagents get live rows, the chat header shows its
-          pull request, and Review can commit, push and create a pull request.
+          PRs #1846 to #1848 followed: a model list the last launch read less than 10 minutes ago is
+          not listed again at startup and older ones are listed again 5 s apart, store reads in the
+          first request batch answer before provider reads, a long chat measures the rows a commit
+          mounts in one layout instead of one per row (open, switch back, first scroll up), and the
+          streaming reveal replaces only the highlight ranges that moved. Subagents and pull
+          requests (PRs #1764 to #1767, #1778, #1783, #1801, #1805, #1806, #1824 to #1827): Claude
+          Code, Codex and Grok subagents get live rows, the chat header shows its pull request, and
+          Review can commit, push and create a pull request.
         </p>
         <p>
           Checks on the integration tree (ed488891, Windows): <code>pnpm lint</code>,
@@ -354,11 +359,14 @@
           had before, and the server's remaining failures were load timeouts and Windows EBUSY on
           temp cleanup that pass alone, the same classes that fail on nightly without the round.
           Twenty commits came out of the gates and the Electron shell checks, including fixes for
-          two Grok bugs nightly already had; PR #1841 lists them. Not verified live yet: the Last
-          known label, the one terminal look, the OS clipboard after Copy and a hanging Grok in
-          chat. As of October 18 no installer has been built from this nightly. The release
-          checklist below still describes main; once Leon has tested nightly, it is promoted to main
-          as v0.1.3 with every provider.
+          two Grok bugs nightly already had; PR #1841 lists them. On nightly with the five
+          performance fixes (3163b9ad) the gates passed again: lint, typecheck, build, every
+          package, desktop and all 2,841 web tests; the server had one failure, a test that fixed
+          the start order of two concurrent background titles, made order-independent in PR #1849.
+          Not verified live yet: the Last known label, the one terminal look, the OS clipboard after
+          Copy and a hanging Grok in chat. As of October 18 no installer has been built from this
+          nightly. The release checklist below still describes main; once Leon has tested nightly,
+          it is promoted to main as v0.1.3 with every provider.
         </p>
         <p>
           October 16 on nightly (04580dfe): main is synchronized through 0ad74ec3 (PR #1632) with
