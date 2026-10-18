@@ -1,3 +1,4 @@
+import path from 'node:path'
 import { timingSafeEqual } from 'node:crypto'
 import { isIPv4 } from 'node:net'
 import { WebSocketServer, type WebSocket } from 'ws'
@@ -22,6 +23,7 @@ import { DEFAULT_PORT } from './server-config.js'
 import { Store } from './store.js'
 import { createProjectListProjector, type ProjectListState } from './project-list.js'
 import { imageFileName, materializeAttachment } from './uploaded-attachment.js'
+import type { UsageHistoryService } from './usage-history.js'
 import { usageSummaryWithLimits } from './usage-summary.js'
 import { listWorkspaceBranches, readWorkspace } from './workspace.js'
 import {
@@ -130,6 +132,18 @@ export function startServer(
       ({ PullRequestService }) => new PullRequestService(),
     ))
   let notifyLifecycleScheduleChanged: (hint?: LifecycleScheduleHint) => void = () => {}
+  let usageHistory: Promise<UsageHistoryService> | undefined
+  let usageHistoryClosing = false
+  const usageHistoryService = () =>
+    (usageHistory ??= import('./usage-history.js').then(({ UsageHistoryService }) => {
+      const service = new UsageHistoryService({
+        cacheFile: path.join(path.dirname(databasePath), 'usage-history.json'),
+        harnessUsage: () => store.usageEvents(),
+      })
+      if (usageHistoryClosing) service.dispose()
+      else void service.startBackgroundRefresh()
+      return service
+    }))
   const orchestrator = new Orchestrator(store, {
     onEvent: (threadId, event, seq, serializedEvent) => {
       if (serializedEvent === undefined) {
@@ -944,6 +958,15 @@ export function startServer(
         )
       }
 
+      case 'usage.history': {
+        const p = parseParams(method, params)
+        return (await usageHistoryService()).history(p.range, p.refresh ?? false)
+      }
+
+      case 'usage.resetHistory':
+        await (await usageHistoryService()).resetAndRefresh()
+        return { started: true as const }
+
       case 'usage.consumeReset': {
         const p = parseParams(method, params)
         return orchestrator.consumeRateLimitReset(p.provider, p.idempotencyKey, p.creditId)
@@ -1143,6 +1166,8 @@ export function startServer(
       void orchestrator.closeAllTerminals().catch(() => undefined)
       await providerHistory.then((history) => history.close()).catch(() => undefined)
       lifecycleScheduler.dispose()
+      usageHistoryClosing = true
+      await usageHistory?.then((service) => service.dispose()).catch(() => undefined)
       const orchestratorClosed = orchestrator.disposeAll()
       for (const socket of wss.clients) socket.terminate()
       const results = await Promise.allSettled([

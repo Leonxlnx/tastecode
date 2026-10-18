@@ -148,6 +148,13 @@ export type StoredCheckpoint = {
   createdAt: number
 }
 
+export type StoredUsageEvent = {
+  threadId: string
+  provider: ProviderId
+  at: number
+  usage: Usage
+}
+
 export type StoredQueuedTurn = {
   id: string
   threadId: string
@@ -3649,6 +3656,30 @@ export class Store {
       if (event === undefined) continue
       this.#indexInboxEvent(Number(row.seq), row.thread_id, event, row.payload)
     }
+  }
+
+  usageEvents(): StoredUsageEvent[] {
+    const rows = sqliteRows<{
+      thread_id: string
+      at: SqliteInteger
+      payload: string
+      provider: string
+    }>(
+      this.#db.prepare(
+        `SELECT u.thread_id, u.at, u.payload, t.provider
+         FROM usage_events u JOIN threads t ON t.id = u.thread_id
+         ORDER BY u.thread_id, u.event_seq`,
+      ),
+    )
+    const events: StoredUsageEvent[] = []
+    for (const row of rows) {
+      const provider = toProviderId(row.provider)
+      if (!provider) continue
+      const event = parseDomainEvent(row.payload, `usage history for thread ${row.thread_id}`)
+      if (event?.type !== 'usage.updated') continue
+      events.push({ threadId: row.thread_id, provider, at: Number(row.at), usage: event.usage })
+    }
+    return events
   }
 
   usageSummary(threadId: string, since: number): UsageSummary {

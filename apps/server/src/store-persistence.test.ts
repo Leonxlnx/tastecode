@@ -38,6 +38,62 @@ const message = (text: string, createdAt = 1): DomainEvent => ({
 })
 
 describe('durable history ownership', () => {
+  it('keeps usage history available through the indexed event log', () => {
+    const { store, root, location } = setup()
+    store.addThread({ id: 'grok', projectPath: root, provider: 'grok', title: 'Grok' })
+    store.append('thread', message('ordinary message'))
+    store.append('thread', {
+      type: 'usage.updated',
+      usage: {
+        inputTokens: 10,
+        cachedInputTokens: 0,
+        outputTokens: 20,
+        reasoningTokens: 0,
+        totalTokens: 30,
+      },
+    })
+    store.append('grok', {
+      type: 'usage.updated',
+      usage: {
+        inputTokens: 30,
+        cachedInputTokens: 0,
+        outputTokens: 40,
+        reasoningTokens: 0,
+        totalTokens: 70,
+      },
+    })
+    const reopened = new Store(location)
+    stores.push(reopened)
+    expect(
+      reopened
+        .usageEvents()
+        .map(({ threadId, provider, usage }) => ({ threadId, provider, usage })),
+    ).toEqual([
+      {
+        threadId: 'grok',
+        provider: 'grok',
+        usage: {
+          inputTokens: 30,
+          cachedInputTokens: 0,
+          outputTokens: 40,
+          reasoningTokens: 0,
+          totalTokens: 70,
+        },
+      },
+      {
+        threadId: 'thread',
+        provider: 'codex',
+        usage: {
+          inputTokens: 10,
+          cachedInputTokens: 0,
+          outputTokens: 20,
+          reasoningTokens: 0,
+          totalTokens: 30,
+        },
+      },
+    ])
+  })
+
   it.each(['before', 'between'])(
     'fills search pages after removing a project %s page requests',
     (when) => {
