@@ -3,27 +3,38 @@ import { describe, expect, it } from 'vitest'
 import type { UsageSummaryState } from '../../usage-summary-state.js'
 import { historyResult, usageTotals } from './usage-history.fixture.js'
 import {
+  axisTicks,
   dayText,
   deriveSheets,
   formatValue,
   indexedAgo,
   limitAlert,
   listText,
+  rangeText,
   resetText,
   sheetLimits,
+  type ProviderSheet,
   type SheetLimits,
 } from './usage-sheets.js'
 
 type History = ResultOf<'usage.history'>
+
+/** The day key `index` days after Aug 1, 2026. */
+function dateAt(index: number): string {
+  const date = new Date(2026, 7, 1 + index, 12)
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+}
 
 /** A history whose days carry the given tokens per provider, one array entry per day. */
 function historyOf(days: Partial<Record<ProviderId, number[]>>): History {
   const result = historyResult('30d')
   const length = Math.max(...Object.values(days).map((tokens) => tokens.length))
   result.daily = Array.from({ length }, (_, index) => ({
-    date: `2026-08-${String(index + 1).padStart(2, '0')}`,
+    date: dateAt(index),
     sessionCount: 1,
-    totals: usageTotals({}),
+    totals: usageTotals({
+      processedTokens: Object.values(days).reduce((sum, tokens) => sum + (tokens[index] ?? 0), 0),
+    }),
     providers: Object.entries(days)
       .filter(([, tokens]) => (tokens[index] ?? 0) > 0)
       .map(([provider, tokens]) => ({
@@ -66,10 +77,42 @@ describe('provider sheets', () => {
     )
 
     expect(sheets.map((sheet) => sheet.provider)).toEqual(['claude-code', 'codex'])
-    expect(sheets[1]?.daily.map((day) => day.tokens)).toEqual([0, 100, 300])
+    expect(sheets[1]?.slots.map((slot) => slot.tokens)).toEqual([0, 100, 300])
     expect(sheets[1]?.activeDays).toBe(2)
     expect(top).toBe(600)
     expect(capped).toBe(false)
+  })
+
+  it('draws a period longer than a quarter a week to a slot, the last ending today', () => {
+    const tokens = Array.from({ length: 100 }, (_, index) => index + 1)
+    const { slots, span, sheets } = deriveSheets(historyOf({ codex: tokens }), NO_LIMITS)
+
+    expect(span).toBe(7)
+    expect(slots).toHaveLength(15)
+    expect(slots[0]).toMatchObject({ start: dateAt(0), end: dateAt(1), tokens: 3, activeDays: 2 })
+    expect(slots[0]?.sessions).toBeUndefined()
+    expect(slots.at(-1)).toMatchObject({ start: dateAt(93), end: dateAt(99), tokens: 679 })
+    expect(sheets[0]?.slots.at(-1)?.tokens).toBe(679)
+    expect(sheets[0]?.activeDays).toBe(100)
+  })
+
+  it('keeps a quarter a day to a slot with its sessions', () => {
+    const { slots, span } = deriveSheets(historyOf({ codex: [5, 0, 7] }), NO_LIMITS)
+
+    expect(span).toBe(1)
+    expect(slots.map((slot) => [slot.start, slot.tokens, slot.sessions])).toEqual([
+      [dateAt(0), 5, 1],
+      [dateAt(1), 0, 1],
+      [dateAt(2), 7, 1],
+    ])
+  })
+
+  it('caps a year drawn in weeks at its second busiest week', () => {
+    const weeks = Array.from({ length: 140 }, (_, index) => (index === 70 ? 10_000 : 10))
+    const { top, capped } = deriveSheets(historyOf({ codex: weeks }), NO_LIMITS)
+
+    expect(capped).toBe(true)
+    expect(top).toBe(105)
   })
 
   it('caps the scale at 1.5 times the 98th percentile when one day towers over the rest', () => {
@@ -101,7 +144,7 @@ describe('provider sheets', () => {
       ['codex', false],
       ['grok', true],
     ])
-    expect(sheets[1]?.limits.rows).toEqual([
+    expect(sheets[1]?.accounts[0]?.limits.rows).toEqual([
       { label: 'Weekly', left: 80, state: 'ok', resetsAt: NOW + 3 * 3_600_000 },
     ])
   })
@@ -160,6 +203,72 @@ describe('provider sheets', () => {
   })
 })
 
+describe('axis ticks', () => {
+  const slotsOf = (count: number, span: 1 | 7) =>
+    Array.from({ length: count }, (_, index) => ({
+      start: dateAt(index * span),
+      end: dateAt(index * span + span - 1),
+      tokens: 0,
+      value: 0,
+      activeDays: 0,
+    }))
+
+  it('labels every weekday on a week, Mondays on a month and month starts beyond', () => {
+    // Aug 1, 2026 is a Saturday.
+    expect(axisTicks(slotsOf(7, 1), 1).map((tick) => tick.label)).toEqual([
+      'Sun',
+      'Mon',
+      'Tue',
+      'Wed',
+      'Thu',
+    ])
+    expect(axisTicks(slotsOf(30, 1), 1)).toEqual([
+      { index: 2, label: 'Aug 3' },
+      { index: 9, label: 'Aug 10' },
+      { index: 16, label: 'Aug 17' },
+      { index: 23, label: 'Aug 24' },
+    ])
+    expect(axisTicks(slotsOf(90, 1), 1)).toEqual([
+      { index: 31, label: 'Sep' },
+      { index: 61, label: 'Oct' },
+    ])
+  })
+
+  it('puts a month on the week that holds its first day, and the year on January', () => {
+    const ticks = axisTicks(slotsOf(30, 7), 7)
+
+    expect(ticks.slice(0, 5)).toEqual([
+      { index: 4, label: 'Sep' },
+      { index: 8, label: 'Oct' },
+      { index: 13, label: 'Nov' },
+      { index: 17, label: 'Dec' },
+      { index: 21, label: '2027' },
+    ])
+  })
+})
+
+describe('accounts', () => {
+  it('names the account in a limit alert once a provider has more than one', () => {
+    const limits = sheetLimits(ready('codex', [{ label: 'Weekly', usedPercent: 95 }]))!
+    const [sheet] = deriveSheets(historyOf({ codex: [10] }), new Map([['codex', limits]])).sheets
+    const split: ProviderSheet = {
+      ...sheet!,
+      accounts: [
+        { ...sheet!.accounts[0]!, key: 'work', label: 'Work' },
+        {
+          ...sheet!.accounts[0]!,
+          key: 'home',
+          label: 'Home',
+          limits: { rows: [], retryable: false },
+        },
+      ],
+    }
+
+    expect(limitAlert([sheet!], NOW)).toBe('Codex weekly limit at 5% left, resets in 3h.')
+    expect(limitAlert([split], NOW)).toBe('Codex Work weekly limit at 5% left, resets in 3h.')
+  })
+})
+
 describe('limit alert', () => {
   it('names reached limits first, then those running low, with their resets', () => {
     const limits = new Map<ProviderId, SheetLimits>([
@@ -190,6 +299,14 @@ describe('usage words', () => {
     expect(resetText(NOW + 2 * 86_400_000, NOW)?.label).toMatch(/^resets [A-Z][a-z]{2} \d/)
     expect(resetText(NOW + 30 * 86_400_000, NOW)?.label).toBe('resets Nov 17')
     expect(resetText(Number.NaN, NOW)).toBeUndefined()
+  })
+
+  it('reads a week as a range, naming the year once and only off the reference year', () => {
+    expect(rangeText('2026-10-06', '2026-10-12', 2026)).toBe('Oct 6 – 12')
+    expect(rangeText('2026-09-29', '2026-10-05', 2026)).toBe('Sep 29 – Oct 5')
+    expect(rangeText('2025-12-29', '2026-01-04', 2026)).toBe('Dec 29, 2025 – Jan 4')
+    expect(rangeText('2025-10-06', '2025-10-12', 2026)).toBe('Oct 6 – 12, 2025')
+    expect(rangeText('2026-10-12', '2026-10-12', 2026)).toBe('Mon, Oct 12')
   })
 
   it('formats values, days, ages and lists', () => {

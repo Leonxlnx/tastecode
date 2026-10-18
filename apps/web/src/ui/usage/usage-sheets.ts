@@ -23,9 +23,11 @@ export type PlanLimitsSource = {
 /** At or under this share left, a window reads as running low. */
 const LOW_SHARE = 15
 
-/** The scale is capped at this multiple of the 98th percentile of active days. */
+/** The scale is capped at this multiple of the 98th percentile of active slots. */
 const CAP_MULTIPLE = 1.5
 const CAP_PERCENTILE = 0.02
+/** Fewer active slots than this are too few to call one of them an outlier. */
+const CAP_MIN_SLOTS = 10
 
 /** A provider whose busiest day stays under this share of the scale is drawn as ticks. */
 const QUIET_SHARE = 0.04
@@ -33,7 +35,25 @@ const QUIET_SHARE = 0.04
 /** The value is a partial estimate under this share of priced tokens. */
 const FULL_ESTIMATE_SHARE = 0.95
 
-export type SheetDay = { tokens: number; value: number }
+/** A period longer than this many days is drawn a week to a slot. */
+const DAILY_DAYS = 92
+
+/** One provider's share of one slot of the time axis. */
+export type SheetSlot = { tokens: number; value: number }
+
+/** One step of the shared time axis: a day, or a week on a long period. */
+export type PeriodSlot = {
+  start: string
+  end: string
+  tokens: number
+  value: number
+  activeDays: number
+  /** Sessions are counted per day, so a week cannot sum them. */
+  sessions?: number | undefined
+}
+
+/** A labelled point on the time axis, between its first and last slot. */
+export type AxisTick = { index: number; label: string }
 
 export type SheetLimit = {
   label: string
@@ -52,6 +72,16 @@ export type SheetLimits = {
   retryable: boolean
 }
 
+/** Usage and plan limits under one sign-in. */
+export type SheetAccount = {
+  key: string
+  label: string
+  sessions: number
+  tokens: number
+  value: number
+  limits: SheetLimits
+}
+
 export type ProviderSheet = {
   provider: ProviderId
   name: string
@@ -59,20 +89,28 @@ export type ProviderSheet = {
   tokens: number
   value: number
   activeDays: number
-  /** One entry per day of the history, in its order. */
-  daily: SheetDay[]
+  /** One entry per slot of the period, in its order. */
+  slots: SheetSlot[]
   /** Its use is too small to rise on the shared scale. */
   quiet: boolean
   /** No sessions in the period: the sheet collapses to one row and its limits. */
   empty: boolean
   /** By value, then tokens. */
   models: UsageHistoryModel[]
-  limits: SheetLimits
+  /**
+   * One per sign-in. The history reports a provider as a whole, so today
+   * this is one account holding the provider's usage and limits.
+   */
+  accounts: SheetAccount[]
 }
 
 export type UsageSheets = {
   sheets: ProviderSheet[]
-  /** The height every band shares, in tokens a day. */
+  /** The time axis every band shares. */
+  slots: PeriodSlot[]
+  /** Days to a slot: 1, or 7 on a long period. */
+  span: 1 | 7
+  /** The height every band shares, in tokens a slot. */
   top: number
   capped: boolean
 }
@@ -110,11 +148,23 @@ export function sheetLimits(state: UsageSummaryState): SheetLimits | undefined {
   }
 }
 
+/** Index ranges of the slots, each `span` days, the last ending on the last day. */
+function slotRanges(days: number, span: number): Array<[number, number]> {
+  const ranges: Array<[number, number]> = []
+  for (let end = days - 1; end >= 0; end -= span) ranges.unshift([Math.max(0, end - span + 1), end])
+  return ranges
+}
+
+function sum<T>(items: readonly T[], read: (item: T) => number): number {
+  return items.reduce((total, item) => total + read(item), 0)
+}
+
 /**
  * One sheet per provider found in the history or the plan limits, by value,
- * with providers that had no sessions last. Every band shares one linear
- * scale; when the busiest day is far above the rest the scale is capped so
- * one day does not flatten every other.
+ * with providers that had no sessions last. Every band shares one time axis
+ * and one linear scale; when the busiest slot is far above the rest the
+ * scale is capped so one slot does not flatten every other. A period longer
+ * than a quarter is drawn a week to a slot.
  */
 export function deriveSheets(
   history: History | undefined,
@@ -125,22 +175,36 @@ export function deriveSheets(
     if (!ids.includes(entry.provider)) ids.push(entry.provider)
   }
   const days = history?.daily ?? []
+  const span = days.length > DAILY_DAYS ? 7 : 1
+  const ranges = slotRanges(days.length, span).map(([from, to]) => days.slice(from, to + 1))
+  const slots = ranges.map((range): PeriodSlot => ({
+    start: range[0]?.date ?? '',
+    end: range.at(-1)?.date ?? '',
+    tokens: sum(range, (day) => day.totals.processedTokens),
+    value: sum(range, (day) => day.totals.estimatedCostUsd),
+    activeDays: range.filter((day) => day.totals.processedTokens > 0).length,
+    sessions: span === 1 ? sum(range, (day) => day.sessionCount) : undefined,
+  }))
   const sheets = ids.map((provider): ProviderSheet => {
     const summary = history?.providers.find((entry) => entry.provider === provider)
-    const daily = days.map((day) => {
-      const share = day.providers.find((entry) => entry.provider === provider)
-      return { tokens: share?.tokens ?? 0, value: share?.estimatedCostUsd ?? 0 }
-    })
-    const activeDays = daily.filter((day) => day.tokens > 0).length
+    const share = (day: (typeof days)[number]) =>
+      day.providers.find((entry) => entry.provider === provider)
+    const activeDays = days.filter((day) => (share(day)?.tokens ?? 0) > 0).length
+    const name = providerDisplayName(provider)
     const sessions = summary?.sessionCount ?? 0
+    const tokens = summary?.totals.processedTokens ?? 0
+    const value = summary?.totals.estimatedCostUsd ?? 0
     return {
       provider,
-      name: providerDisplayName(provider),
+      name,
       sessions,
-      tokens: summary?.totals.processedTokens ?? 0,
-      value: summary?.totals.estimatedCostUsd ?? 0,
+      tokens,
+      value,
       activeDays,
-      daily,
+      slots: ranges.map((range) => ({
+        tokens: sum(range, (day) => share(day)?.tokens ?? 0),
+        value: sum(range, (day) => share(day)?.estimatedCostUsd ?? 0),
+      })),
       quiet: false,
       empty: sessions === 0 && activeDays === 0,
       models: (history?.models ?? [])
@@ -150,24 +214,72 @@ export function deriveSheets(
             right.totals.estimatedCostUsd - left.totals.estimatedCostUsd ||
             right.totals.processedTokens - left.totals.processedTokens,
         ),
-      limits: limits.get(provider) ?? NO_LIMITS,
+      accounts: [
+        {
+          key: provider,
+          label: name,
+          sessions,
+          tokens,
+          value,
+          limits: limits.get(provider) ?? NO_LIMITS,
+        },
+      ],
     }
   })
   sheets.sort((left, right) => Number(left.empty) - Number(right.empty) || right.value - left.value)
 
   const pooled = sheets
-    .flatMap((sheet) => sheet.daily.map((day) => day.tokens))
+    .flatMap((sheet) => sheet.slots.map((slot) => slot.tokens))
     .filter((tokens) => tokens > 0)
     .toSorted((left, right) => right - left)
   const max = pooled[0] ?? 0
-  const cap = (pooled[Math.floor(pooled.length * CAP_PERCENTILE)] ?? max) * CAP_MULTIPLE
-  const capped = max > cap
+  // Never the busiest slot itself, so a year drawn in weeks can still cap its outlier.
+  const rank = Math.max(1, Math.floor(pooled.length * CAP_PERCENTILE))
+  const cap = (pooled[rank] ?? max) * CAP_MULTIPLE
+  const capped = pooled.length >= CAP_MIN_SLOTS && max > cap
   const top = capped ? cap : max
   for (const sheet of sheets) {
-    const peak = Math.max(0, ...sheet.daily.map((day) => day.tokens))
+    const peak = Math.max(0, ...sheet.slots.map((slot) => slot.tokens))
     sheet.quiet = sheet.activeDays > 0 && peak < top * QUIET_SHARE
   }
-  return { sheets, top, capped }
+  return { sheets, slots, span, top, capped }
+}
+
+const weekday = new Intl.DateTimeFormat('en-US', { weekday: 'short' })
+const monthDay = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' })
+const clock = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' })
+const monthName = new Intl.DateTimeFormat('en-US', { month: 'short' })
+
+/** "Mar", and the year in January's place so a long axis keeps its years. */
+function monthText(date: Date): string {
+  return date.getMonth() === 0 ? String(date.getFullYear()) : monthName.format(date)
+}
+
+/**
+ * The labels between the axis ends: every weekday on a week, Mondays on a
+ * month, and month starts on anything longer.
+ */
+export function axisTicks(slots: readonly PeriodSlot[], span: 1 | 7): AxisTick[] {
+  const ticks: AxisTick[] = []
+  for (let index = 1; index < slots.length - 1; index += 1) {
+    const slot = slots[index]
+    if (!slot) continue
+    const start = dateFromKey(slot.start)
+    if (span === 7) {
+      // The week that holds the first of a month carries that month.
+      const end = dateFromKey(slot.end)
+      const first =
+        start.getDate() === 1 ? start : end.getDate() < start.getDate() ? end : undefined
+      if (first) ticks.push({ index, label: monthText(first) })
+    } else if (slots.length <= 14) {
+      ticks.push({ index, label: weekday.format(start) })
+    } else if (slots.length <= 45) {
+      if (start.getDay() === 1) ticks.push({ index, label: monthDay.format(start) })
+    } else if (start.getDate() === 1) {
+      ticks.push({ index, label: monthText(start) })
+    }
+  }
+  return ticks
 }
 
 /** Share of tokens with a public or provider-reported price, or undefined without tokens. */
@@ -207,10 +319,6 @@ export function emptySheetText(range: UsageHistoryRange): string {
   return `No sessions ${PERIODS[range].within}`
 }
 
-const weekday = new Intl.DateTimeFormat('en-US', { weekday: 'short' })
-const monthDay = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' })
-const clock = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' })
-
 /**
  * "resets in 42m" and "resets in 3h 12m" within a day, the weekday and time
  * within the week, the date after that. The exact time is kept for hover.
@@ -242,17 +350,37 @@ export function limitAlert(sheets: readonly ProviderSheet[], now: number): strin
   const reached: string[] = []
   const low: string[] = []
   for (const sheet of sheets) {
-    for (const limit of sheet.limits.rows) {
-      if (limit.state === 'ok') continue
-      const reset = limit.resetsAt === undefined ? undefined : resetText(limit.resetsAt, now)
-      const name = `${sheet.name} ${limit.label.toLowerCase()} limit`
-      const tail = reset ? `, ${reset.label}` : ''
-      if (limit.state === 'reached') reached.push(`${name} reached${tail}`)
-      else low.push(`${name} at ${limit.left}% left${tail}`)
+    for (const account of sheet.accounts) {
+      const owner = sheet.accounts.length > 1 ? `${sheet.name} ${account.label}` : sheet.name
+      for (const limit of account.limits.rows) {
+        if (limit.state === 'ok') continue
+        const reset = limit.resetsAt === undefined ? undefined : resetText(limit.resetsAt, now)
+        const name = `${owner} ${limit.label.toLowerCase()} limit`
+        const tail = reset ? `, ${reset.label}` : ''
+        if (limit.state === 'reached') reached.push(`${name} reached${tail}`)
+        else low.push(`${name} at ${limit.left}% left${tail}`)
+      }
     }
   }
   const parts = [...reached, ...low]
   return parts.length > 0 ? `${parts.join('. ')}.` : undefined
+}
+
+/** "Oct 6 – 12", "Sep 29 – Oct 5", with the year when it is not the reference year. */
+export function rangeText(start: string, end: string, referenceYear: number): string {
+  if (start === end) return dayText(start, referenceYear, true)
+  const from = dateFromKey(start)
+  const to = dateFromKey(end)
+  if (from.getFullYear() === to.getFullYear() && from.getMonth() === to.getMonth()) {
+    const year = to.getFullYear() === referenceYear ? '' : `, ${to.getFullYear()}`
+    return `${monthDay.format(from)} – ${to.getDate()}${year}`
+  }
+  // Within one year, the year is named once, at the end.
+  const head = dayText(
+    start,
+    from.getFullYear() === to.getFullYear() ? from.getFullYear() : referenceYear,
+  )
+  return `${head} – ${dayText(end, referenceYear)}`
 }
 
 /** "Oct 3", "Sat, Oct 3", with the year when it is not the reference year. */

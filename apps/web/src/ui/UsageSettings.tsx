@@ -18,6 +18,7 @@ import { SettingsNotice, SettingsPage } from './settings/SettingsLayout.js'
 import { UsageSheet } from './usage/UsageSheet.js'
 import { formatInteger, formatTokens } from './usage/usage-format.js'
 import {
+  axisTicks,
   dayKey,
   dayText,
   deriveSheets,
@@ -30,7 +31,10 @@ import {
   listText,
   PERIOD_OPTIONS,
   pricedShare,
+  rangeText,
   sheetLimits,
+  type AxisTick,
+  type PeriodSlot,
   type PlanLimitsSource,
   type SheetLimits,
 } from './usage/usage-sheets.js'
@@ -42,14 +46,24 @@ const NO_LIMIT_STATES: UsageSummaryState[] = []
 const noLimits = () => NO_LIMIT_STATES
 const subscribeNothing = () => () => {}
 
+/** Room kept between two axis labels, and the width of one character, in pixels. */
+const LABEL_GAP = 14
+const LABEL_CHAR = 7
+
 function plural(value: number, one: string, many: string): string {
   return `${formatInteger(value)} ${value === 1 ? one : many}`
 }
 
+function slotText(slot: PeriodSlot, span: 1 | 7, referenceYear: number): string {
+  return span === 1
+    ? dayText(slot.start, referenceYear, true)
+    : rangeText(slot.start, slot.end, referenceYear)
+}
+
 /**
- * Usage: one sheet per provider, each with its daily tokens on one shared
- * time axis and height scale, its value at API prices, its plan limits and
- * its models; a limit running low is also named under the top line.
+ * Usage: one sheet per provider, each with its tokens over time on one shared
+ * axis and height scale, its value at API prices, its plan limits and its
+ * models; a limit running low is also named under the top line.
  */
 export function UsageSettings(props: {
   transport: Transport
@@ -81,12 +95,13 @@ export function UsageSettings(props: {
     }
     return byProvider
   }, [states])
-  const { sheets, top } = useMemo(() => deriveSheets(data, limits), [data, limits])
+  const { sheets, slots, span, top } = useMemo(() => deriveSheets(data, limits), [data, limits])
+  const unit = span === 7 ? 'week' : 'day'
 
   // A hover belongs to the period it was made in.
   const [scrub, setScrub] = useState<{ range: UsageHistoryRange; index: number }>()
   const hover =
-    data && scrub?.range === data.range && scrub.index < data.daily.length ? scrub.index : undefined
+    data && scrub?.range === data.range && scrub.index < slots.length ? scrub.index : undefined
   const dataRange = data?.range
   const onHover = useCallback(
     (index: number | undefined) =>
@@ -100,7 +115,18 @@ export function UsageSettings(props: {
   const [track, setTrack] = useState<HTMLDivElement | null>(null)
   const width = useWidth(track)
   const referenceYear = data ? Number(data.endDate.slice(0, 4)) : new Date(now).getFullYear()
-  const hoverDay = data && hover !== undefined ? data.daily[hover] : undefined
+  const hoverSlot = hover === undefined ? undefined : slots[hover]
+  const startText = data ? dayText(data.startDate, referenceYear) : ''
+  const endText = !data
+    ? ''
+    : data.endDate === dayKey(now)
+      ? 'Today'
+      : dayText(data.endDate, referenceYear)
+  const ticks = useMemo(
+    () => placeTicks(axisTicks(slots, span), slots.length, width, startText, endText),
+    [slots, span, width, startText, endText],
+  )
+  const tickIndexes = useMemo(() => ticks.map((tick) => tick.index), [ticks])
   const alert = limitAlert(sheets, now)
   const failed = error !== undefined && data !== undefined
   const charted = data !== undefined && sheets.some((sheet) => !sheet.empty)
@@ -130,7 +156,9 @@ export function UsageSettings(props: {
             ))}
           </select>
         </label>
-        {data ? <TopFacts data={data} hover={hover} referenceYear={referenceYear} /> : null}
+        {data ? (
+          <TopFacts data={data} slot={hoverSlot} span={span} referenceYear={referenceYear} />
+        ) : null}
         <button
           className={`usage-page__refresh${busy ? ' is-busy' : ''}`}
           type="button"
@@ -178,18 +206,19 @@ export function UsageSettings(props: {
         <div className="usage-page__sheets">
           {charted ? (
             <div className="usage-page__axis" aria-hidden>
-              <span>Tokens a day</span>
+              <span>Tokens a {unit}</span>
               <div className="usage-page__axis-track" ref={setTrack}>
-                <span className="usage-page__axis-start">
-                  {dayText(data.startDate, referenceYear)}
-                </span>
-                <span className="usage-page__axis-end">
-                  {data.endDate === dayKey(now) ? 'Today' : dayText(data.endDate, referenceYear)}
-                </span>
-                {hoverDay && hover !== undefined ? (
+                <span className="usage-page__axis-start">{startText}</span>
+                {ticks.map((tick) => (
+                  <span key={tick.index} className="usage-page__axis-tick" style={{ left: tick.x }}>
+                    {tick.label}
+                  </span>
+                ))}
+                <span className="usage-page__axis-end">{endText}</span>
+                {hoverSlot && hover !== undefined ? (
                   <AxisDay
-                    text={dayText(hoverDay.date, referenceYear, true)}
-                    x={((hover + 0.5) / data.daily.length) * width}
+                    text={slotText(hoverSlot, span, referenceYear)}
+                    x={((hover + 0.5) / slots.length) * width}
                     width={width}
                   />
                 ) : null}
@@ -204,8 +233,10 @@ export function UsageSettings(props: {
               index={index}
               top={top}
               width={width}
+              unit={unit}
+              ticks={tickIndexes}
               hover={hover}
-              hoverDay={hoverDay ? dayText(hoverDay.date, referenceYear) : undefined}
+              hoverTotal={hoverSlot?.tokens}
               emptyText={data ? emptySheetText(data.range) : undefined}
               now={now}
               onHover={onHover}
@@ -225,20 +256,26 @@ export function UsageSettings(props: {
   )
 }
 
-/** The period's figures on the top line, or the hovered day's. */
-function TopFacts(props: { data: History; hover: number | undefined; referenceYear: number }) {
-  const { data, hover } = props
-  const day = hover === undefined ? undefined : data.daily[hover]
-  if (day) {
+/** The period's figures on the top line, or the hovered day's or week's. */
+function TopFacts(props: {
+  data: History
+  slot: PeriodSlot | undefined
+  span: 1 | 7
+  referenceYear: number
+}) {
+  const { data, slot } = props
+  if (slot) {
     return (
       <span className="usage-page__facts">
         <span className="usage-page__fact is-name">
-          {dayText(day.date, props.referenceYear, true)}
+          {slotText(slot, props.span, props.referenceYear)}
         </span>
-        <span className="usage-page__fact">{formatTokens(day.totals.processedTokens)} tokens</span>
-        <span className="usage-page__fact">{formatValue(day.totals.estimatedCostUsd)}</span>
+        <span className="usage-page__fact">{formatTokens(slot.tokens)} tokens</span>
+        <span className="usage-page__fact">{formatValue(slot.value)}</span>
         <span className="usage-page__fact is-soft">
-          {plural(day.sessionCount, 'session', 'sessions')}
+          {slot.sessions === undefined
+            ? plural(slot.activeDays, 'active day', 'active days')
+            : plural(slot.sessions, 'session', 'sessions')}
         </span>
       </span>
     )
@@ -253,6 +290,31 @@ function TopFacts(props: { data: History; hover: number | undefined; referenceYe
       </span>
     </span>
   )
+}
+
+/**
+ * The axis labels that fit between its two ends, left to right, each kept
+ * clear of its neighbours.
+ */
+function placeTicks(
+  ticks: readonly AxisTick[],
+  slots: number,
+  width: number,
+  start: string,
+  end: string,
+): Array<AxisTick & { x: number }> {
+  if (width <= 0 || slots <= 0) return []
+  const half = (label: string) => (label.length * LABEL_CHAR) / 2
+  let right = start.length * LABEL_CHAR + LABEL_GAP
+  const limit = width - end.length * LABEL_CHAR - LABEL_GAP
+  const placed: Array<AxisTick & { x: number }> = []
+  for (const tick of ticks) {
+    const x = ((tick.index + 0.5) / slots) * width
+    if (x - half(tick.label) < right || x + half(tick.label) > limit) continue
+    placed.push({ ...tick, x })
+    right = x + half(tick.label) + LABEL_GAP
+  }
+  return placed
 }
 
 /** The hovered date, centred on the crosshair and kept inside the track. */
@@ -284,13 +346,11 @@ function UsageClose(props: { data: History; now: number; indexing: boolean }) {
   return (
     <div className="usage-page__close">
       {totals.processedTokens > 0 ? (
-        <div className="usage-sheet__row usage-page__saved">
+        <div className="usage-page__saved">
           <span className="usage-page__saved-name">Caching saved</span>
-          <span className="usage-sheet__mid">
-            <span className="usage-page__saved-note">
-              Without caching, these tokens would come to{' '}
-              {formatValue(totals.estimatedCostUsd + totals.cacheSavingsUsd)}.
-            </span>
+          <span className="usage-page__saved-note">
+            Without caching, these tokens would come to{' '}
+            {formatValue(totals.estimatedCostUsd + totals.cacheSavingsUsd)}.
           </span>
           <span className="usage-page__saved-value">{formatValue(totals.cacheSavingsUsd)}</span>
         </div>
@@ -315,13 +375,16 @@ function UsageClose(props: { data: History; now: number; indexing: boolean }) {
   )
 }
 
-/** While the first answer loads: the sheets' outline, no numbers. */
+/** While the first answer loads: each sheet's name and band, no numbers. */
 function HistorySkeleton() {
   return (
     <div className="usage-skeleton" role="status" aria-label="Reading the usage index">
-      <span className="skeleton usage-skeleton__band" />
-      <span className="skeleton usage-skeleton__band" />
-      <span className="skeleton usage-skeleton__band" />
+      {[0, 1, 2].map((index) => (
+        <div className="usage-skeleton__sheet" key={index}>
+          <span className="skeleton usage-skeleton__name" />
+          <span className="skeleton usage-skeleton__band" />
+        </div>
+      ))}
     </div>
   )
 }
