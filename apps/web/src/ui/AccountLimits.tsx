@@ -112,7 +112,7 @@ function LimitSource(props: {
 }
 
 /** The one muted word beside a provider's name, with any detail kept for hover. */
-function sourceStatus(
+export function sourceStatus(
   state: AccountLimitsState,
   source: ProviderLimitSource | undefined,
   hasValues: boolean,
@@ -336,7 +336,7 @@ function ResetCreditExpiries(props: {
   )
 }
 
-function limitSource(state: AccountLimitsState): ProviderLimitSource | undefined {
+export function limitSource(state: AccountLimitsState): ProviderLimitSource | undefined {
   const summary = state.summary
   if (!summary) return undefined
   if (summary.limitSource) return summary.limitSource
@@ -345,7 +345,7 @@ function limitSource(state: AccountLimitsState): ProviderLimitSource | undefined
     : { provider: state.provider, status: 'unavailable' }
 }
 
-function remaining(limit: Limit): number {
+export function remaining(limit: Limit): number {
   return Math.min(100, Math.max(0, Math.round(100 - limit.usedPercent)))
 }
 
