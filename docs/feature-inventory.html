@@ -225,16 +225,19 @@
       <div class="topbar-inner">
         <h1>Feature Inventory</h1>
         <span class="total" id="total">0 checked</span>
-        <span class="meta">2026-10-16 nightly 04580dfe · includes main 0ad74ec3</span>
+        <span class="meta">2026-10-18 nightly 54ee3536 · includes main 0ad74ec3</span>
       </div>
     </div>
 
     <div class="wrap">
       <p class="intro">
         <a href="./CLAUDE-HANDOFF.md">October 9 Claude handoff</a>: current source, branches,
-        references and verification limits. This nightly source includes main through 16b95be9,
-        synchronized on 2026-10-14 (PRs #1533, #1541, #1545 and this sync). Published desktop 0.1.1
-        and the old 0.1.2 draft are separate from the source features listed below.
+        references and verification limits. This nightly source includes main through 0ad74ec3,
+        synchronized on 2026-10-16 (PR #1632), and the October 16 improvement round, which landed on
+        2026-10-18 through PR #1841 (172 lane PRs in ten lanes: streaming, chat column, models, MCP
+        and slash commands, providers, plan limits, usage, Settings, performance, subagents and pull
+        requests). Published desktop 0.1.1 and the old 0.1.2 draft are separate from the source
+        features listed below.
       </p>
       <p class="intro">
         Every feature the app has today, as concrete as it gets. This is the working checklist for
@@ -283,12 +286,12 @@
                 >Live model list from the provider
                 <span class="d"
                   >only models the installed CLI still ships, newest generation of each tier first
-                  in tier order (Astra, Sol, Terra, Luna), then older generations newest first and
-                  the legacy GPT-5.5, with no model ids in the ordering: GPT-6-Astra (default,
-                  visible), then GPT-5.6 Sol, Terra and Luna on codex-cli 0.154, older rows hidden
-                  by default; removed models such as GPT-5.4 and 5.3-Codex-Spark are no longer
-                  re-added, and a chat saved on one still opens and sends with a model Codex still
-                  has</span
+                  in tier order (Astra, Sol, Terra, Luna), then older generations newest first, with
+                  no model ids in the ordering: GPT-6-Astra (default, visible), then GPT-5.6 Sol,
+                  Terra and Luna on codex-cli 0.154, older rows hidden by default; removed models
+                  such as GPT-5.4 and 5.3-Codex-Spark are no longer re-added, and GPT-5.5, which
+                  Codex no longer offers, is no longer added either; a chat saved on one still opens
+                  and sends with a model Codex still has</span
                 ></span
               ></label
             >
@@ -342,7 +345,23 @@
                   control beside each selectable expiry that spends that reset; confirmation keeps
                   the date visible and moves Confirm away from Use so a second click cannot spend
                   it; non-ChatGPT accounts are honestly unavailable and malformed provider responses
-                  stay errors</span
+                  stay errors; the rolling account/rateLimits/updated values Codex sends during
+                  turns merge into the held read without starting a new app-server, so the bars
+                  follow a running chat within about a second; full reads happen at most every 5
+                  minutes; background reads skip the reset-credit details, which a shown popup reads
+                  in full</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Subagents report their progress
+                <span class="d"
+                  >a subagent's own thread stays out of the chat; the spawning item reports its
+                  name, tool count, newest tool, tokens, duration, answer and end state; a wait that
+                  names no subagents reads Subagents finished instead of counting one</span
                 ></span
               ></label
             >
@@ -373,7 +392,7 @@
                   fills account details without sending a prompt; null email and subscription
                   metadata preserve signed-in status without inventing account details; readable
                   plan labels include Max x5 or Max x20 when the local CLI configuration provides
-                  that tier</span
+                  that tier; the account check (claude auth status) allows 20 s</span
                 ></span
               ></label
             >
@@ -392,7 +411,9 @@
                   generation by version, dated snapshots such as Haiku 4.5 included, while older
                   rows remain available in Settings; a model a saved profile never listed starts on
                   its default, a one-time reset returns saved Claude Code rows to that lineup, and
-                  the static fallback lists the same lineup when discovery fails</span
+                  the static fallback lists the same lineup when discovery fails; when discovery
+                  stalls, the last live model ids stay instead of being swapped for catalog ids, and
+                  a refresh that could only answer with the catalog is refused</span
                 ></span
               ></label
             >
@@ -422,7 +443,9 @@
                   dies, the next send resumes the saved session in a new process; after a restart or
                   idle release, that send resumes with its own model, effort and tier, so the CLI
                   starts once instead of twice; a chat whose first prompt never reached the CLI is
-                  created under the same session id instead of failing every later send</span
+                  created under the same session id instead of failing every later send; a session
+                  start allows 60 s, and its timeout says whether Claude Code itself or the
+                  project's MCP servers stalled</span
                 ></span
               ></label
             >
@@ -444,11 +467,29 @@
               ><input type="checkbox" /><span
                 >Provider-owned subscription-limit source
                 <span class="d"
-                  >the short-lived Agent SDK usage control reports session, weekly, model, and
-                  extra-usage windows without exposing provider credentials; non-subscription
-                  sessions stay honestly unavailable and malformed responses stay errors; the read
-                  waits up to 120 s, because Claude Code scans its local transcripts before it
-                  answers, and a stuck read reports a timeout instead of a generic failure</span
+                  >the short-lived Agent SDK usage control (SDK 0.3.296) reports session, weekly,
+                  model, and extra-usage windows without exposing provider credentials;
+                  non-subscription sessions stay honestly unavailable and malformed responses stay
+                  errors; the read skips Claude Code's transcript scan and the IDE auto-connect, IDE
+                  extension install and claude.ai connector startup, and times out after 20 s; full
+                  reads happen at most every 15 minutes and only while the account popup or the
+                  Usage page shows the limits; rate_limit_event windows from running chats keep the
+                  session window current in between; two timeouts in a row stop automatic reads
+                  until the account changes, and Retry still reads once more; an answer that says
+                  plan limits apply but carries none is a failed read (Unavailable with Retry and
+                  the last known values), not an account without limits</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Subagents report their progress
+                <span class="d"
+                  >the Agent call reports the subagent's type, task, background flag, tool and token
+                  counts, duration, newest tool, current step and result; background agents settle
+                  on their own report</span
                 ></span
               ></label
             >
@@ -466,7 +507,11 @@
                   keeps reading; only an oversized frame ends the turn; on Windows a turn starts the
                   CLI's bundled node.exe instead of the cmd.exe shim, so multi-line prompts and the
                   first turn of a new chat reach the CLI, and session instructions are kept for the
-                  next turn if the CLI cannot start</span
+                  next turn if the CLI cannot start; models declare lab, family and generation from
+                  their id stems and are ordered by lab (Anthropic, OpenAI, Google, xAI, Cursor,
+                  Moonshot, Z.ai, Meta), newest generation first; six start on: Claude Opus 5.5 1M,
+                  Claude Fable 5.1 1M, GPT-5.6 Sol 1M, Gemini 4 Argon, Grok 4.7 and Composer
+                  2.5</span
                 ></span
               ></label
             >
@@ -488,7 +533,11 @@
                   and Settings and the composer offer Sign in, while an offline machine with a valid
                   sign-in stays signed in; model discovery refused for an expired sign-in says "Your
                   Cursor sign-in has expired or is missing. Sign in to Cursor again." instead of
-                  "Cursor model discovery failed"</span
+                  "Cursor model discovery failed"; account and model reads run the bundled node, the
+                  status read allows 30 s, and the sign-in check and the model picker share one
+                  cursor-agent models read that waits up to 60 s (an answered read is reused for 60
+                  s, a refused or failed one never); Settings shows the signed-in Cursor address;
+                  there is no version gate, so a self-updated cursor-agent stays usable</span
                 ></span
               ></label
             >
@@ -500,9 +549,16 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Live model catalog across its configured providers
+                >Live model catalog from the providers connected in OpenCode
                 <span class="d"
-                  >free tier, MiniMax plans, and more; on the v1 protocol a model id without its
+                  >only models of providers connected in OpenCode (from /config/providers),
+                  deprecated ones dropped, newest first; models declare lab, family, generation and
+                  release day and are named without the provider prefix unless two connected
+                  providers share the name; a beta or alpha release does not replace the stable
+                  model; up to 4 recommended models start on: the agent default plus the best per
+                  lab in the order DeepSeek, Anthropic, OpenAI, Google, xAI, Moonshot, Z.ai,
+                  MiniMax, Qwen, Xiaomi, where DeepSeek may take Pro and Flash; previews and
+                  non-agent models never start on; on the v1 protocol a model id without its
                   provider/ prefix is rejected before the turn opens and the previous model stays,
                   so later turns still start</span
                 ></span
@@ -529,7 +585,10 @@
                 <span class="d"
                   >a stream that ends during session opening rejects the start; late disconnect
                   listeners still receive the failure, so the next attempt cannot retain a dead
-                  runtime</span
+                  runtime; the serve gets 30 s to start, and on Windows an npm install starts
+                  opencode.exe directly; a serve that is still starting is stopped on dispose, and a
+                  closing server stops running model listings, so no opencode serve is left
+                  behind</span
                 ></span
               ></label
             >
@@ -537,7 +596,12 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Sign in through its own CLI in the guided card</span
+                >Sign in through its own CLI in the guided card
+                <span class="d"
+                  >signed in when opencode auth list shows a stored credential or a provider key in
+                  the environment (60 s limit); Sign out explains where to sign out (opencode auth
+                  logout) instead of pretending to</span
+                ></span
               ></label
             >
           </li>
@@ -548,9 +612,12 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Per-effort slugs collapsed to clean names
+                >Per-effort slugs collapsed to agy's own model names
                 <span class="d"
-                  >Gemini 3.6 Flash, Gemini 3.1 Pro, Claude Sonnet 4.6, GPT-OSS 120B</span
+                  >such as Gemini 4 Argon, Gemini 3.8 Flash, Claude Sonnet 4.6 (Thinking), Claude
+                  Opus 4.6 (Thinking) and GPT-OSS 120B; the agy-demo alias slugs fold into their
+                  model, so no Agy Demo row appears, and ids stay stable whichever slug agy lists
+                  first</span
                 ></span
               ></label
             >
@@ -558,7 +625,23 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Effort resolves back to the real slug from the captured listing</span
+                >Effort resolves back to the real slug from the captured listing
+                <span class="d">efforts run on the slug that spells the model's name</span></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Real sign-in state from agy's own model listing
+                <span class="d"
+                  >agy models decides it, so Settings and the composer show Signed in or Not signed
+                  in instead of always signed out; the sign-in check and the model list share one
+                  agy read (a signed-in answer serves both for 30 s, the limit is 2 min); a
+                  signed-out listing says to sign in from Settings &gt; Providers; provider scans
+                  never start agy, so no version is shown; Sign out explains where to sign out (agy
+                  /logout) instead of pretending to</span
+                ></span
               ></label
             >
           </li>
@@ -584,7 +667,9 @@
                 <span class="d"
                   >the live catalog exposes Grok 4.7, 4.6, and 4.5; when grok exits after an error
                   frame, the chat error carries Grok's own reason, such as a model it no longer
-                  lists, instead of the bare exit code</span
+                  lists, instead of the bare exit code; turns start the first native grok on the
+                  desktop PATH, the same binary detection and the version check found, and fall back
+                  to ~/.grok/bin</span
                 ></span
               ></label
             >
@@ -601,8 +686,10 @@
                   emits one interrupted terminal state after process shutdown and restores sending
                   without a duplicate completion; open streamed and tool items settle on end,
                   failure, interruption, replacement, and close; a follow-up that is still waiting
-                  for the previous grok process to stop when its chat closes starts no new
-                  process</span
+                  for the previous grok process to stop when its chat closes starts no new process;
+                  history replay takes TasteCode's instructions block off a session's first prompt,
+                  so a reopened chat shows the user's own message and no duplicate stopped
+                  turn</span
                 ></span
               ></label
             >
@@ -629,7 +716,20 @@
                 >Provider-reported billing limits over ACP
                 <span class="d"
                   >weekly/reset, prepaid, and pay-as-you-go rows appear only when reported; signed
-                  out is unavailable and provider failures remain errors</span
+                  out is unavailable and provider failures remain errors; a billing JSON-RPC error
+                  reads "Grok Build did not report its credits."</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Subagents report their progress
+                <span class="d"
+                  >a spawn_subagent call reports the subagent's type, task, background flag, tool
+                  count, newest tool, duration and result; its own steps stay out of the chat;
+                  background results settle on get_command_or_subagent_output</span
                 ></span
               ></label
             >
@@ -659,9 +759,10 @@
               ><input type="checkbox" /><span
                 >Full agent loop through the shared ACP adapter
                 <span class="d"
-                  >K2.7 Coding, K2.7 Highspeed, K3, K3-256k; a model switch in a running chat is
-                  sent through the agent's session config option before the next turn, and a
-                  rejected switch fails before the turn opens</span
+                  >the adapter declares one Kimi K line, so the newest K version and its variants
+                  (K3, K3-256k) start on and older K versions such as K2.7 start hidden; a model
+                  switch in a running chat is sent through the agent's session config option before
+                  the next turn, and a rejected switch fails before the turn opens</span
                 ></span
               ></label
             >
@@ -741,6 +842,18 @@
               ></label
             >
           </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >API connections section in Settings › Providers
+                <span class="d"
+                  >a section at the column edge; each connection is a roster row (mark, name, a
+                  solid wire with a key stored, an open leader and Key missing without one, Remove);
+                  the add form is the shared settings form card</span
+                ></span
+              ></label
+            >
+          </li>
         </ul>
 
         <h3>Provider management</h3>
@@ -764,7 +877,14 @@
                   hairlines; primary and secondary actions share the right edge on desktop and
                   narrow layouts; CLI versions live in the provider-mark tooltip instead of widening
                   account rows; account labels use the same email-or-signed-in grammar; error
-                  tooltips stay inside the viewport and support keyboard dismissal;
+                  tooltips stay inside the viewport and support keyboard dismissal; the page has the
+                  Settings v1 header, each provider is an entity row (15/550 name, 12.5 status) on
+                  the shared settings leader, its New chat defaults are settings sub-rows, and the
+                  updates line uses quiet 12.5 px buttons; every provider's Sign out is the same
+                  danger button in the same column, Kimi CLI included; a provider that is not
+                  installed offers Check again beside its setup guide or Install button; when a
+                  background re-check fails, the row keeps the known account and gets a problem dot
+                  (Could not refresh this account);
                   <a href="./screenshots/provider-roster-wired.png">desktop</a> and
                   <a href="./screenshots/provider-roster-wired-390.png">390 px</a> evidence</span
                 ></span
@@ -780,7 +900,29 @@
                   Path entries and emit one PATH key. Missing program errors no longer claim that
                   the project folder is unavailable; packaged checks exercise a real provider-helper
                   command launch. Version probes and one-shot CLI commands end stdin, so a CLI that
-                  reads until end of input answers instead of timing out.</span
+                  reads until end of input answers instead of timing out. The in-process PATH lookup
+                  is cached, needs no where.exe, agrees with launching and never searches the
+                  working directory. Versions are read once per binary and shared with update
+                  checks; providers.list waits at most 250 ms for a version, and a late version
+                  shows on the next listing. A CLI installed while the app is open is found without
+                  a restart: the Windows registry PATH is re-read on every scan, the WinGet Links
+                  folder and Cursor's %LOCALAPPDATA%\cursor-agent are on the desktop PATH, and the
+                  caches clear when an install, update or sign-in terminal ends. Providers are
+                  checked again when the window gets focus, at most every 30 s, while one is missing
+                  or an account could not be confirmed. providers.list also declares each provider's
+                  source shape (agent, connection or direct).</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Account reads are shared and remembered
+                <span class="d"
+                  >callers share one read; a signed-in answer is reused for 60 s; when a re-check
+                  fails, the last sign-in confirmed within 30 minutes is kept and the server logs
+                  it; a signed-out answer is always read again</span
                 ></span
               ></label
             >
@@ -810,7 +952,13 @@
               ><input type="checkbox" /><span
                 >Guided install per provider in the expanded workspace terminal card; since 0.1.1,
                 Codex uses the official standalone installer without npm. Packaged macOS setup with
-                npm and Node excluded from PATH passed</span
+                npm and Node excluded from PATH passed
+                <span class="d"
+                  >Install runs the vendor's official installer for Codex, Claude Code (native
+                  installer, no Node or npm), Grok, Cursor and Antigravity; OpenCode and ACP agents
+                  install through npm; Pi links its setup guide; Cursor's setup guide links
+                  cursor.com/docs/cli/installation</span
+                ></span
               ></label
             >
           </li>
@@ -835,7 +983,12 @@
                   >provider installs and sign-ins plus GitHub CLI install and login share one live
                   workspace terminal; codes are entered directly in the CLI. Sign-ins can be
                   canceled from the terminal or Settings; failure closes the terminal and keeps its
-                  log behind Details</span
+                  log behind Details. Embedded provider terminals (Settings Details, the update
+                  notice) use the workspace terminal profile (Ghostty palette, terminal font, 13 px)
+                  with a 12 px inset inside a hairline frame; with the workspace handler, a running
+                  sign-in or install offers Show terminal, which brings the one workspace view back
+                  instead of a second inline view, and asking again for an open sign-in terminal
+                  keeps its one tab</span
                 ></span
               ></label
             >
@@ -875,14 +1028,63 @@
                 <span class="d"
                   >adapters own ready, unavailable, and error truth; the server returns one
                   authoritative source with an exact legacy flatten, while change notifications
-                  carry only the provider id; installed sources prefetch in the background through
-                  bounded provider reads, so the account dialog opens cached values without a fresh
-                  request, keeps every source separate, distinguishes loading, successful-empty,
-                  unavailable, and failure with one muted word beside the provider (Checking…,
-                  Unavailable, Last known, None reported) and the reason in its tooltip instead of
-                  an alert colour, retains usable values during failed refreshes, and routes a small
-                  text Retry to the correct provider; focus enters on the limits list and returns on
-                  close</span
+                  carry only the provider id; plan limits belong to the account, so a chat switch
+                  keeps them and asks nothing; only the active provider is read at launch, other
+                  installed providers when the account popup opens, after which they keep their
+                  values and follow pushes; requests carry a read intent (the sidebar figure reads
+                  in the background, an open popup or Usage page reads as visible, Retry as a
+                  retry), a passive figure is answered from held values, and opening the popup asks
+                  each source once and shows held values at once; the dialog keeps every source
+                  separate, distinguishes loading, successful-empty, unavailable, and failure with
+                  one muted word beside the provider (Checking…, Unavailable, Last known, None
+                  reported) and the reason in its tooltip instead of an alert colour, shows
+                  Checking… and then Unavailable with Retry for a source not read yet, and routes a
+                  small text Retry to the correct provider; focus enters on the limits list and
+                  returns on close. One read in flight is shared; failed reads back off 5, 10 and 20
+                  minutes, then every 30, until a success, sign-in, sign-out or account switch;
+                  reads are at least 15 minutes apart for Claude Code, 5 for Codex and 30 s for
+                  Grok, while a redeemed reset or an account change reads at once. A failed refresh
+                  answers with the held values marked stale, with the reason and the next try; an
+                  account change drops them. Live windows from running chats merge into the held
+                  values by window id, the renderer applies the usage.limits push directly (at most
+                  one a second per provider), and usage.changed follows at most every 30 s;
+                  usage.summary answers a chat's totals with the held limits at once and refreshes
+                  them in the background</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Plan-limit freshness
+                <span class="d"
+                  >a failed refresh shows Last known · &lt;age&gt; ago with the reason on hover;
+                  values older than 10 minutes show Updated &lt;age&gt; ago; times are read when the
+                  popup opens or the values change, with no ticking timer</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Even-pace marker on limit bars
+                <span class="d"
+                  >a hairline tick where even spending would be, for rows with a window length and
+                  reset time; hover says At an even pace, N% would be left now.</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Multiple accounts per provider
+                <span class="d"
+                  >pending: only the contracts exist (accounts.* methods, account-pinned chats,
+                  account-scoped sign-in, models, limits and usage); server, adapters and UI are not
+                  built yet</span
                 ></span
               ></label
             >
@@ -901,7 +1103,12 @@
               ><input type="checkbox" /><span
                 >Chat and provider errors appear in a compact red shelf above the project and branch
                 shelf, with a plain icon, a recovery action where available, and a dismiss button;
-                dismissal preserves the draft and send guards, and new failures appear again</span
+                dismissal preserves the draft and send guards, and new failures appear again
+                <span class="d"
+                  >Send stays available when an account cannot be confirmed: the notice reads Could
+                  not confirm this account, but you can still send, with Retry instead of Check
+                  setup, and Send opens after 5 s while an account check is still running</span
+                ></span
               ></label
             >
           </li>
@@ -948,8 +1155,21 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Skills and MCP servers searchable from /, $, or @ with keyboard navigation, a
-                compact resource picker, and selected resource chips</span
+                >Slash commands, skills and MCP servers from /, $, or @ with keyboard navigation, a
+                compact resource picker, and selected resource chips
+                <span class="d"
+                  >/ at the start of a message lists TasteCode commands (/side and /btw in a started
+                  chat, /feedback while feedback is available), then the provider's commands, then
+                  its skills, and no longer opens mid-message; TasteCode commands win name
+                  collisions in the menu; choosing a command types /name into the draft for the
+                  provider to expand, and Enter on an exactly typed command without arguments sends
+                  it at once; @ lists MCP servers; $ lists skills, with Codex skill chips unchanged;
+                  the provider list comes from commands.list: Claude Code from an open chat or, for
+                  a project without one, the cached background probe, with the built-ins that change
+                  state TasteCode owns and terminal-only commands hidden; Grok, OpenCode and other
+                  ACP agents from a live chat or a probe; when the probe failed, the menu says
+                  "Couldn't load commands." and asks again the next time it opens</span
+                ></span
               ></label
             >
           </li>
@@ -985,18 +1205,29 @@
                 source is still listing its models the picker shows its loading state and Send waits
                 with the draft kept; new-chat source changes keep readiness checks silent; default
                 visibility hides, within each source, every row older than its family's newest
-                generation as read from the display name (GPT-5.5 and older untiered ids stay on a
-                fixed list), so GPT-5.6 Sol hides once GPT-6 Sol is listed and every Claude
-                generation older than Fable 5.1, Opus 5.5, Sonnet 5.5 and Haiku 5.5 hides; GPT 6.1
-                Sol, Astra, Luna, Daybreak, Fable 5.1 and the Claude 5.5 lineup including Haiku 5.5
-                stay enabled when discovered; on a profile without saved visibility, each source's
-                older models hide as soon as that source answers, so an open picker does not drop
-                rows under the pointer; new models start enabled unless they are an older
-                generation, and a defaults update moves only the models whose default changed (the
-                one-time Claude Code reset moves every stock Claude Code row), each row once as soon
-                as it is cached or listed, from the first paint and even while another source such
-                as Cursor fails discovery, so other saved visibility choices and later edits
-                persist</span
+                generation, read from the lab, family and generation the adapter declares or else
+                from the display name (GPT-5.5 and older untiered ids stay on a fixed list), so
+                GPT-5.6 Sol hides once GPT-6 Sol is listed and every Claude generation older than
+                Fable 5.1, Opus 5.5, Sonnet 5.5 and Haiku 5.5 hides; adapters can also mark models
+                recommended or deprecated; GPT 6.1 Sol, Astra, Luna, Daybreak, Fable 5.1 and the
+                Claude 5.5 lineup including Haiku 5.5 stay enabled when discovered; new models start
+                enabled unless they are an older generation
+                <span class="d"
+                  >visibility stores only explicit choices (harness.modelVisibility.v2): defaults
+                  follow the catalog, a newer generation hides the older one per source in the same
+                  session, also one the user had switched on, and showing an older one again after
+                  that sticks; the upgrade resets once to the new defaults, keeping only the models
+                  the user hid, and removes the old keys (hiddenModels, listedModels,
+                  modelVisibilityVersion, modelVisibilityRows); search also matches the lab a source
+                  declares; the server keeps one model list per source, answers from the last launch
+                  and refreshes it in the background, and a models.changed push lists a source
+                  again, so a CLI model change appears without a restart; a provider the composer is
+                  not on is listed when the picker opens; the catalog is listed again on window
+                  focus or show when the last listing is 6 hours or older, and after an app-run
+                  provider update; the launch snapshot of the catalog is written once per refresh
+                  (one trailing write while sources settle, then the full catalog) and dropped
+                  instead of written when it outgrows its 2,000-row / 2M-character limit</span
+                ></span
               ></label
             >
           </li>
@@ -1034,8 +1265,8 @@
             <label
               ><input type="checkbox" /><span
                 >Include or exclude individual catalog models in Settings while every catalog choice
-                remains visible; each provider also has a tri-state master switch for its whole
-                catalog, while visibility counts remain omitted</span
+                remains visible; each source has All and None, applied as one change; a source with
+                more than 20 models notes how many of them the model picker shows</span
               ></label
             >
           </li>
@@ -1269,15 +1500,57 @@
                   production dependency audit clear; assistant prose uses denser type and spacing
                   without changing prompts, headings, or code; renderer and worker share curated
                   grammars, with plain-text fallback for other languages; replies use the full
-                  transcript width; code block copy and download controls sit on the language header
-                  row with the label on the block's left edge and the controls on its right edge,
-                  leaving no gap above the code; a completing rich reply keeps its live rendering
-                  until the rich renderer has loaded and then swaps in one commit, so it never
-                  collapses into plain paragraphs; code blocks render at their real height in the
-                  frame they mount, without Streamdown's 200 px placeholder, so rows below no longer
-                  jump; reply times come from one shared formatter; a Wrap toggle beside Copy
+                  transcript width; a completing rich reply keeps its live rendering until the rich
+                  renderer has loaded and then swaps in one commit, so it never collapses into plain
+                  paragraphs; code blocks render at their real height in the frame they mount,
+                  without Streamdown's 200 px placeholder, so rows below no longer jump; reply times
+                  come from one shared formatter; streamed text is laid out as it arrives and
+                  revealed a character at a time by one animation-frame clock on the CSS Custom
+                  Highlight API, about 100-180 ms behind the provider, with a 3-step fading edge
+                  over the last ~12 characters (never wider than 18); code chips, file reference
+                  icons and list bullets appear with their first character, and tables and code
+                  blocks show their structure first; a live table appears with its first row, so the
+                  header never lays out alone; numbered and nested lists, rules and code lines
+                  stream with their final layout; while a rich reply streams, its finished Markdown
+                  renders ahead, hidden, from its closed blocks every 300 ms, and a finished reply
+                  drains its reveal and then shows that render in place with code already
+                  highlighted, so it does not move or freeze at completion (under reduced motion the
+                  swap renders in a background render); reduced motion, a hidden window or a missing
+                  Highlight API show text as it lands</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Code blocks and tables with their own header row
+                <span class="d"
+                  >the language label sits on the block's left edge and Wrap, Download and Copy on
+                  its right edge, leaving no gap above the code; a fence without a language shows a
+                  text label; the actions are ghost icon buttons like the reply actions, revealed on
+                  block hover or keyboard focus and always shown where there is no hover; Download
+                  is hidden in blocks under 360 px; Copy goes through the app clipboard with Copied
+                  and failed states (alert glyph, retry tooltip, announced error); the Wrap toggle
                   soft-wraps long lines in every code block, streaming ones too, and remembers the
-                  choice</span
+                  choice; tables get the same header row (table label plus Copy, Download and
+                  Fullscreen ghost actions) in a rounded card with inner lines, wide tables scroll
+                  inside the card, and the copy and download menus use the app font</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >The transcript lines up with the prompt text
+                <span class="d"
+                  >prose, code, tables, file cards and the right edge of user bubbles sit 17 px
+                  inside the prompt bar's edges at every width, in the main chat, the side chat and
+                  the loading skeleton; summaries without an icon (Worked for, Working for, the turn
+                  duration) start on the reply text edge; tool outputs, reasoning summaries and
+                  image previews open under their row label with one indent, so nothing jumps when a
+                  live tool finishes; reasoning summaries use the full column width</span
                 ></span
               ></label
             >
@@ -1312,6 +1585,20 @@
           <li>
             <label
               ><input type="checkbox" /><span
+                >Subagent rows for Claude Code, Codex and Grok
+                <span class="d"
+                  >name, task, Running, Failed or Stopped, tool and token counts, live time or
+                  duration, and a Background tag; a row opens to the task, newest tool and report;
+                  subagents started together share one header; the live work summary names the
+                  subagents the agent waits on, and a finished turn shows a background subagent that
+                  still runs</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
                 >Virtualized list with folded deltas once per frame
                 <span class="d"
                   >completed replay rebuilds 10,000 items linearly, while active-tail search stays
@@ -1319,7 +1606,10 @@
                   and presentation snapshots without changing reconstructed state, while reconnect
                   tails stay exact; streamed frames overlay only the active turn, and stable
                   completed-row identities survive both streaming and optimistic-to-canonical
-                  reconciliation</span
+                  reconciliation; the virtual list writes row positions and the runway height
+                  directly, so the transcript re-renders only when its visible rows change, and its
+                  own scroll moves count as the follow's own, so a turn end keeps the reply in place
+                  and a reopened chat lands at the end</span
                 ></span
               ></label
             >
@@ -1351,7 +1641,9 @@
                   start, and stops at completion; completed tool details remain in the work summary;
                   between tool calls the live row says Thinking even when the model sends no
                   reasoning summary; a turn the user stopped settles as Stopped after with its work
-                  summary and ends with a Stopped by you marker</span
+                  summary and ends with a Stopped by you marker; every turn, Design turns included,
+                  shows one breathing dot while it works (compositor-only, static under reduced
+                  motion), and live tool labels keep their shimmer</span
                 ></span
               ></label
             >
@@ -1381,8 +1673,17 @@
                 >Turn navigation, jump between turns
                 <span class="d"
                   >saved chats open at the bottom and stay there as content loads or changes size;
-                  scrolling up stops automatic following; Jump to latest chases the end of an answer
-                  that is still growing, lands there and follows it again</span
+                  Jump to latest chases the end of an answer that is still growing, lands there and
+                  follows it again; while a turn runs, and for 1.2 s after it, the end is followed
+                  with a critically damped glide, while opening a chat, reduced motion, viewport
+                  resizes and shrinking content move at once, and a pointer or touch on the
+                  transcript pauses it; only an upward move, upward wheel or scroll key leaves
+                  follow, and a downward scroll within 56 px of the end, or a gesture that asked for
+                  the end, follows again; Jump to latest shows only beyond 160 px from the end,
+                  hides below 96 px, fades in after 120 ms and decelerates into the end; a turn sent
+                  from the end pins its prompt 24 px below the top, the answer fills the screen
+                  without scrolling and the follow then glides after it, blank room stays below a
+                  short answer until the next message, and a send from far up lands at once</span
                 ></span
               ></label
             >
@@ -1462,8 +1763,26 @@
                 <span class="d"
                   >current checkout against HEAD, including staged, unstaged and untracked files;
                   structured hunks, collapsed unchanged ranges, changed-file tree and live
-                  filtering; refreshes after each turn in its chat and on reconnect, keeping a
-                  drafted commit message while the changes stay the same</span
+                  filtering; follows a running turn's file edits (at most every 2 s) and refreshes
+                  on reconnect, while a hidden Review tab reads nothing until it is shown; a drafted
+                  commit message stays while the changes stay the same</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Commit, push and create a pull request from Review
+                <span class="d"
+                  >Commit: an editable message, Draft from the background model, Copy and
+                  Ctrl/Cmd+Enter; it commits what Review shows, untracked files included, and waits
+                  while the chat's turn runs (workspace.commit: checkout lock, project-folder scope,
+                  message on stdin). Push or Publish the branch with its ahead count, never forced
+                  (workspace.push: same-named branch, sets the upstream). Create pull request: title
+                  and body from the last commit, a Draft toggle, into the default branch
+                  (pullRequests.create through gh, base always set, body on stdin), then a PR chip
+                  in the Review toolbar</span
                 ></span
               ></label
             >
@@ -1556,7 +1875,31 @@
                   fails to load affects only that provider's imported chats; local and native chats
                   keep opening and sending. Local and native chats also open from the store at once
                   while the first provider history scan after a server start is still running; what
-                  the scan changes arrives in the background and open chats reload it.</span
+                  the scan changes arrives in the background and open chats reload it. Turns and
+                  imported-chat reads wait only for their own provider's first history scan. A
+                  native chat whose provider copy is gone (archived and deleted in the CLI) still
+                  opens with its own transcript.</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Provider history import reads only what changed
+                <span class="d"
+                  >the refresh runs every 15 s while chats change or the app is used and backs off
+                  to 2 minutes while idle; what a source listed per transcript is kept in the app
+                  database (provider_history_metadata), so a restart lists unchanged transcripts
+                  without reading them, and rows of transcripts a complete listing no longer names
+                  are pruned. Claude Code transcripts are listed from positioned chunk reads that
+                  yield between chunks (64 KB head and tail, 1 MB token scan, 32 stats at a time),
+                  never whole-file reads; a growing transcript is read on from where the last
+                  listing stopped, one that shrank or was rewritten from the start, and a
+                  sessions-index.json change re-lists its session. Codex's state index is read
+                  incrementally (rows with a newer updated_at_ms plus row and archive counts); full
+                  reads (first listing, removal, archive, every 10 minutes) go 500 rows per
+                  event-loop turn, and only rollouts whose rows changed are stat-ed again</span
                 ></span
               ></label
             >
@@ -1663,7 +2006,9 @@
                 >Git branch and diff stats detected live for the context chip
                 <span class="d"
                   >agent turns refresh them only after the project becomes idle; new chats default
-                  to main and remember the last branch picked for each project</span
+                  to main and remember the last branch picked for each project; workspace branches
+                  are listed only for the new-chat shelf and its branch menu and cached for 30 s per
+                  project, so opening a chat no longer lists them</span
                 ></span
               ></label
             >
@@ -1691,7 +2036,22 @@
                   merge and auto-merge; reviews, merges and auto-merge are bound to the head commit
                   the user inspected and fail if new commits arrive; authenticated private image
                   uploads and repository-file previews, including SVG and animated images up to 10
-                  MiB, relative image paths, lazy loading, bounded caches and retryable errors</span
+                  MiB, relative image paths, lazy loading, bounded caches and retryable errors; the
+                  surface can open on a given pull request, including one outside the authored and
+                  review lists, and still opens it when the list fails</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Pull request chip in the chat header
+                <span class="d"
+                  >the chat checkout's pull request (number, Open, Draft, Merged or Closed, checks)
+                  opens it in Pull requests (pullRequests.forCheckout); the lookup keeps the branch,
+                  upstream and ahead count when GitHub cannot be asked or the remote is another
+                  host</span
                 ></span
               ></label
             >
@@ -1703,12 +2063,49 @@
                 <span class="d"
                   >provider-neutral server-owned totals feed the live session and today summaries;
                   malformed or parser-stale generated caches trigger a cold rebuild; failed
-                  background scans back off, while Profile and Usage polling recovers from transient
-                  request failures; money only appears when the provider reports real cost; the
-                  account card's meter shows the tightest percentage limit across providers with
-                  that provider's mark, its tooltip names provider, window and what is left (Grok ·
-                  Weekly · 60% left), and it shows no figure while a provider whose read failed has
-                  nothing on record</span
+                  background scans back off; Profile and Usage share one usage-history store per
+                  connection: answers are cached per range, a running scan is polled at 2 s backing
+                  off to 10 s, nothing polls while the window is hidden, and a dropped-connection
+                  failure is retried once before it shows; the session and today summaries show
+                  money only when the provider reports real cost, while Usage shows API-equivalent
+                  values from cited list prices; the account card's meter shows the tightest known
+                  percentage limit across providers with that provider's mark, its tooltip names
+                  provider, window and what is left (Grok · Weekly · 60% left), and a source whose
+                  limits are unknown adds a muted open ring and is named on hover instead of hiding
+                  the figure. The usage index is compacted per session, model and day (cache v8; a
+                  v7 cache is migrated in place without rescanning); grown Codex rollouts, Claude
+                  Code transcripts and the Grok log are read on from a checkpoint (byte offset, head
+                  and tail hashes, adapter parser state) instead of reparsed, a rewritten, truncated
+                  or rotated log is read in full again, and checkpoints are kept for logs changed in
+                  the last two days; usage.history reuses computed figures while the index, Harness
+                  events, sources and day are unchanged, only changed archive files cross the worker
+                  boundary, unchanged scans skip the cache write, and a saved index above 4 MB is
+                  read in the usage worker</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Model prices as cited data
+                <span class="d"
+                  >each price row in apps/server/src/model-prices.ts names its official pricing page
+                  and check date (Anthropic, OpenAI, xAI and Google, checked 2026-10-17); ids match
+                  by normalized model name, an unlisted variant is priced approximately and an
+                  unlisted version stays unpriced; dated price changes (Gemini 3.6 and 3.8 Flash on
+                  2027-01-01) apply by record day</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Honest Usage cost headline
+                <span class="d"
+                  >below 95% priced tokens the dollar value is muted and captioned Partial estimate
+                  · N% of tokens priced; estimated model prices are badged approximate</span
                 ></span
               ></label
             >
@@ -1936,8 +2333,9 @@
                   photo, or the generated seal struck from the profile coin's seed), the name, a 3
                   px usage meter with the provider it measures, and a gear that opens Settings; the
                   popup opens flush above the card with the same width and corner radius and shows
-                  prefetched limit windows at once in one soft well, then Edit profile and
-                  Settings</span
+                  the held limit windows at once in one soft well, with an even-pace tick on bars
+                  that have a window length and reset time, while providers not read yet are asked
+                  as it opens, then Edit profile and Settings</span
                 ></span
               ></label
             >
@@ -2018,7 +2416,10 @@
                   labels and portable recorded Option keys. Direct workspace tool shortcuts work
                   before and after the panel opens and respect modal keyboard ownership. The
                   recorder refuses those, the number keys, find, turn navigation and the debug
-                  chord</span
+                  chord. The page has the Settings v1 header with a description and Restore
+                  defaults; groups are sections, rows sit on the shared settings leader with tones
+                  for not set, recording and refused, search is the settings text field with Clear,
+                  and no matches shows one empty line</span
                 ></span
               ></label
             >
@@ -2039,13 +2440,47 @@
                 inspect, per-project scope
                 <span class="d"
                   >a provider selector manages separate Codex, Claude Code, and Grok project
-                  definitions; below them a read-only From Codex settings section lists the servers
-                  Codex already loads, with status, tool counts, Sign in and the per-project off
-                  switch, and one server's unknown auth status no longer discards the list; open
-                  Codex chats resume with saved changes, Grok receives selected servers through ACP,
-                  and Claude receives enabled definitions on start and resume with credentials kept
-                  out of process arguments; controls follow the available capabilities, and Claude
-                  rejects unsupported inherited-server hiding before saving</span
+                  definitions; below them a read-only From &lt;provider&gt; settings section lists
+                  the servers the provider already loads from its own settings. Codex: status, tool
+                  counts, Sign in and the per-project off switch; configured servers show as
+                  starting (config-disabled ones as stopped) under Checking Codex MCP servers… while
+                  Codex's status list loads, and one server's unknown auth status no longer discards
+                  the list. Claude Code: the servers Claude loads (plugins, user settings, claude.ai
+                  connectors) with state and tools, from an open Claude chat or, for a project
+                  without one, a cached background probe (about 10-15 s, one at a time, 10-minute
+                  cache, refreshed when Claude or project config files change). Grok: the servers
+                  its configuration loads, including the Claude settings it reads, with state and
+                  tool names, from a cached probe (about 3-6 s, no prompt, session closed
+                  afterwards, one at a time, 10-minute cache, refreshed on Grok config and skill
+                  folder changes). OpenCode: the servers its config loads, with state but no tool
+                  names, from the chat's server or a probe, and an inherited server can be turned
+                  off for a project. Hiding inherited servers follows the provider's declared
+                  hideInherited capability, with the legacy rule when it is absent, and a server's
+                  tool list renders only when its row is expanded; open Codex chats resume with
+                  saved changes, Grok receives selected servers through ACP, and Claude receives
+                  enabled definitions on start and resume with credentials kept out of process
+                  arguments; controls follow the available capabilities, and Claude rejects
+                  unsupported inherited-server hiding before saving</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >MCP servers page in the Settings v1 layout
+                <span class="d"
+                  >title MCP servers, like its nav label, with &lt;provider&gt; · &lt;project&gt; as
+                  the description; the provider picker, Hide server by ID and Add server are page
+                  actions that wrap under the description in a narrow pane; a provider that cannot
+                  list its own servers shows an info notice (Servers from &lt;provider&gt;'s own
+                  settings are loaded in chats but can't be listed here.); errors are the shared
+                  notice with Retry and nothing added is a plain empty line; each server is an
+                  entity row (name along the leader to its state, the failure reason under it, tools
+                  behind a disclosure, switch, Edit and Remove at the far edge), read-only rows run
+                  to the column edge, and inherited servers sit in a From &lt;provider&gt; settings
+                  section; the editor is the shared form card, and the session note shows once a
+                  server or change exists</span
                 ></span
               ></label
             >
@@ -2072,11 +2507,18 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Agent Skills: empty project view until explicitly imported, then browse, enable per
+                >Skills: empty project view until explicitly imported, then browse, enable per
                 project, progressive loading
                 <span class="d"
-                  >stale refreshes cannot replace confirmed project state; the heading reports
-                  provider capability instead of the active project name</span
+                  >stale refreshes cannot replace confirmed project state; the page title is Skills,
+                  like its nav label, with &lt;provider&gt; · &lt;project&gt; as the description in
+                  place of the old provider-capability status line, and Install from folder as the
+                  page action; a provider that cannot list skills gets an info notice, skill load
+                  errors share one notice with a line each, and each skill is an entity row with its
+                  switch at the end of the leader; .agents/skills are listed only for providers
+                  whose CLI loads them (Codex), while the others show their own skill inventory or
+                  unavailable; Grok and OpenCode list their skills with scope, and their project
+                  skills show here</span
                 ></span
               ></label
             >
@@ -2090,7 +2532,9 @@
                   make, painted in the app's surfaces with the changed part in ink and the chosen
                   one ringed, beside a line on what the setting decides; the terminal starts on the
                   right until moved. Under Inbox a logarithmic settle scale from 1 to 90 days or
-                  never moves the Settled fold in the Inbox picture as it is dragged</span
+                  never moves the Settled fold in the Inbox picture as it is dragged. The page has
+                  the Settings v1 header; setting names and notes use the row type (13.5/500 and
+                  12.5), settings sit 36 px apart</span
                 ></span
               ></label
             >
@@ -2109,9 +2553,10 @@
               ><input type="checkbox" /><span
                 >Theme preview: System, Light, Dark
                 <span class="d"
-                  >Three centred previews, each a miniature TasteCode window (sidebar, reply, prompt
-                  bar) painted in that mode's chosen background and accent, so a color change shows
-                  in its preview at once. The chosen one is ringed just outside its edge</span
+                  >Three previews starting at the column edge, each a miniature TasteCode window
+                  (sidebar, reply, prompt bar) painted in that mode's chosen background and accent,
+                  so a color change shows in its preview at once. The chosen one is ringed just
+                  outside its edge</span
                 ></span
               ></label
             >
@@ -2145,10 +2590,11 @@
                   Accent and background show a square chip with the preset name (hex for a custom
                   color) and open a color panel with a saturation square, the hue bar under it, a
                   hex row typed in place and Pick from screen where the platform has one; the panel
-                  lists no presets, so a named one stays only if saved; Reset colors appears beside
-                  a mode once either color changes. Trackpad haptics and font smoothing remain
-                  shared macOS controls. Custom backgrounds choose light or dark text for
-                  contrast</span
+                  lists no presets, so a named one stays only if saved; the Light mode and Dark mode
+                  sections use the shared Settings v1 rows, and Reset colors is the section's quiet
+                  action once either color changes; font and translucency use the inline select.
+                  Trackpad haptics and font smoothing remain shared macOS controls. Custom
+                  backgrounds choose light or dark text for contrast</span
                 ></span
               ></label
             >
@@ -2239,10 +2685,12 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Ten compact sections with flat selection states
+                >Eleven compact sections with flat selection states
                 <span class="d"
-                  >General, Profile, Appearance, and Keybinds first, then Providers, Models, MCP,
-                  Skills, Data &amp; privacy, About; Settings opens on General</span
+                  >General, Profile, Appearance, and Keybinds first, then Providers, Models, MCP
+                  servers, Skills, Usage, Data &amp; privacy, About; Settings opens on General; each
+                  nav label equals its page title, every tab opens scrolled to the top with the same
+                  title position and column, and every panel is named by its heading</span
                 ></span
               ></label
             >
@@ -2257,18 +2705,19 @@
                   previewed live, kept only on Keep this seal; Back to your name returns to the name
                   in one click): the first letter picks the colour, a vowel at the end a light
                   ground, the letter count the symmetry, and each character lays one tile (vowels in
-                  the second colour, A–M in the first, the rest a gap). A small coin-shaped "?"
-                  turns the coin into its own explanation: the slice that repeats carries the
-                  letters that laid each tile, the rest steps back, and four notes tied to the rim
-                  read the colour, ground, symmetry and tile rules for the word; words without
-                  letters are hashed. The seal is minted when the page opens and re-struck from the
-                  centre out once typing pauses; the sidebar card draws the same seal unless a photo
-                  is set. The other face holds a PNG, JPEG or WebP photo up to 1 MB: Turn over for a
-                  photo flips the coin and opens the file picker, dragging a photo onto the page
-                  turns it to the empty face, Turn back returns to the seal and keeps the photo for
-                  this session. Brushing the cursor across the coin nudges it on a damped spring.
-                  Settings › Debug has an avatar generator lab for previewing names at every shipped
-                  size</span
+                  the second colour, A–M in the first, the rest a gap). The seal guide "?" in the
+                  page header turns the coin into its own explanation: the slice that repeats
+                  carries the letters that laid each tile, the rest steps back, and notes under the
+                  coin read the colour, ground, symmetry and tile rules for the word; words without
+                  letters are hashed. The identity row starts at the page's left edge: the coin at
+                  96 px (160 px while trying a word), then the name, facts and quiet actions. The
+                  seal is minted when the page opens and re-struck from the centre out once typing
+                  pauses; the sidebar card draws the same seal unless a photo is set. The other face
+                  holds a PNG, JPEG or WebP photo up to 1 MB: Turn over for a photo flips the coin
+                  and opens the file picker, dragging a photo onto the page turns it to the empty
+                  face, Turn back returns to the seal and keeps the photo for this session. Brushing
+                  the cursor across the coin nudges it on a damped spring. Settings › Debug has an
+                  avatar generator lab for previewing names at every shipped size</span
                 ></span
               ></label
             >
@@ -2276,8 +2725,32 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Flat Settings cards with small corners, 48 px base rows, clear labels and notes,
-                and provider names aligned beside their icons</span
+                >Profile accounts and local activity
+                <span class="d"
+                  >Accounts lists each installed provider that signs in with its plan, Signed in,
+                  Signed out or Unavailable, opens on the last known plans while every provider is
+                  asked again, and Manage opens Providers; Local activity is a 12-month heatmap from
+                  the shared usage store, with month labels from the first full month, an Open Usage
+                  link and a refresh icon; the streak and the model breakdown are on Usage now;
+                  multiple accounts per provider are not built yet</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Settings v1 layout: open leader rows on every tab, cards only for the Usage and
+                Profile dashboards and for forms
+                <span class="d"
+                  >setting rows 13.5/500, entity rows 15/550, sub-rows 12.5/400, with provider names
+                  aligned beside their icons; one 28 px button set (default, primary for form
+                  submit, danger, quiet, square icon), one 30x18 switch on every tab and in the
+                  provider context panel, one 28 px text field (API connections, MCP editor, avatar
+                  lab), two select looks (boxed for forms and headers, inline for leader rows), and
+                  a segmented control for the provider context window and the model list's All and
+                  None; page actions wrap inside a narrow column</span
+                ></span
               ></label
             >
           </li>
@@ -2290,7 +2763,9 @@
                   >the context ruler offers only what the provider declares (Codex 272K or 872K and
                   compaction no later than 90%, Claude Code 200K or 1M and no later than 93% or Off,
                   Grok 256K); model, effort, and access apply to New chat, context settings apply
-                  when a session starts or resumes, and neither changes a running session</span
+                  when a session starts or resumes, and neither changes a running session; the
+                  defaults are settings sub-rows under the provider, with inline selects and a
+                  segmented context window picker</span
                 ></span
               ></label
             >
@@ -2298,17 +2773,22 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Models: compact search-free Settings lists keep every catalog model and individual
-                visibility switch visible, with a two-state master switch for each provider; partial
-                groups appear off, and enabling a provider makes every model visible
+                >Models: every catalog model keeps its own visibility switch, with All and None for
+                each source; a source with more than 20 models is grouped by creator lab and
+                searchable
                 <span class="d"
-                  >composer pickers retain full-catalog search; first-run defaults are saved once
-                  every installed provider is listed, but a new profile's first visibility choice
-                  saves them together with that choice and keeps it, even while a source fails
-                  discovery or its first discovery is still running; failed discovery retries after
-                  reconnect without blocking an already-valid catalog; stored custom entries remain
-                  usable while creation controls are parked;
-                  <a href="./screenshots/model-settings-no-search.png">desktop evidence</a></span
+                  >Background work is an open section with inline selects and the shared error
+                  notice; each source is an open section (identity heading, All and None, 40 px
+                  leader rows with the 30x18 switch, hidden models muted) with the shared empty
+                  line; All and None apply as one change; a large source shows how many of its
+                  models the picker shows, a search over name, id and lab, and one collapsed row per
+                  lab with its count and, when open, its own All and None; only open labs and search
+                  hits render rows, and during a search All and None act on the matches; a source
+                  whose model list failed keeps its section with the reason and Retry, and a loading
+                  notice while it is asked again; composer pickers retain full-catalog search;
+                  failed discovery retries after reconnect without blocking an already-valid
+                  catalog; stored custom entries remain usable while creation controls are
+                  parked</span
                 ></span
               ></label
             >
@@ -2323,7 +2803,48 @@
                   newest cost-oriented model at its lowest advertised effort across connected
                   subscription, custom harness, and direct API providers; Models settings exposes an
                   explicit model and effort override, plus Standard/Fast speed for models that
-                  support Fast, including Codex</span
+                  support Fast, including Codex; its note names no providers or models</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Usage: same 744 px column and page header as every tab
+                <span class="d"
+                  >ranges 7 days, 30 days, 90 days, 1 year and All (default 30 days); an icon
+                  refresh; a skeleton while loading; indexing and failure notices, where a refresh
+                  of an existing index is announced only once a later read still finds it running,
+                  so a quick refresh never moves the page</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Usage › Plan limits first
+                <span class="d"
+                  >every provider's windows with the share left on a rung meter, the reset
+                  countdown, the even-pace tick and freshness (Last known, Updated Xm ago, Checking,
+                  Unavailable with Retry); Limit reached, and a low state under 15%</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Usage › Activity, API value and Models
+                <span class="d"
+                  >Activity: today against the 7-day average, the period total and per active day,
+                  active days and the streak (moved from Profile), and a daily chart (weekly past 3
+                  months) stacked by provider, with a tooltip and a keyboard walk; API value: the
+                  total, per provider and cache savings, with Partial estimate · x% of tokens priced
+                  and muted figures under 95% priced tokens; Models: by tokens with share, value and
+                  approximate or unpriced badges, with Show all; a footer with the last index time,
+                  files, sources and warnings</span
                 ></span
               ></label
             >
@@ -2333,22 +2854,24 @@
               ><input type="checkbox" /><span
                 >Data: project count and confirmed renderer-preference reset
                 <span class="d"
-                  >Debug is a hidden settings category, toggled with Cmd/Ctrl+Alt+Shift+D and kept
-                  unlocked across restarts until toggled off, and offers Force onboarding without
-                  resetting saved data and a simulated app update (update, failure with retry, or up
-                  to date) that drives the sidebar button and About without downloading anything,
-                  plus simulated provider updates (one release, three, or a failure that recovers on
-                  retry) that pop the update notice with releases one step past the installed
-                  versions and play the update without running a CLI or remembering a dismissal;
-                  projects, workspaces, files, history, and provider credentials remain untouched;
-                  upgrades move legacy history and config into TasteCode paths without overwriting
-                  existing TasteCode data; desktop background provider probes start in app storage
-                  instead of inheriting the launch directory (macOS removable-volume permission
-                  verification pending); bounded opt-in text diagnostics rotate at 512 KiB, stop
-                  when disabled, and exclude legacy native dumps from the revealed folder; native
-                  crash collection is removed; logs can be revealed or copied only by the user after
-                  keyed and standalone credential shapes, private keys, emails, project paths, and
-                  cross-platform home paths are scrubbed;
+                  >Data &amp; privacy, About and Debug use open leader rows; the reset row is titled
+                  Reset app preferences, with a note on what is cleared and what stays, and a Reset…
+                  button; Debug is a hidden settings category, toggled with Cmd/Ctrl+Alt+Shift+D and
+                  kept unlocked across restarts until toggled off, and offers Force onboarding
+                  without resetting saved data and a simulated app update (update, failure with
+                  retry, or up to date) that drives the sidebar button and About without downloading
+                  anything, plus simulated provider updates (one release, three, or a failure that
+                  recovers on retry) that pop the update notice with releases one step past the
+                  installed versions and play the update without running a CLI or remembering a
+                  dismissal; projects, workspaces, files, history, and provider credentials remain
+                  untouched; upgrades move legacy history and config into TasteCode paths without
+                  overwriting existing TasteCode data; desktop background provider probes start in
+                  app storage instead of inheriting the launch directory (macOS removable-volume
+                  permission verification pending); bounded opt-in text diagnostics rotate at 512
+                  KiB, stop when disabled, and exclude legacy native dumps from the revealed folder;
+                  native crash collection is removed; logs can be revealed or copied only by the
+                  user after keyed and standalone credential shapes, private keys, emails, project
+                  paths, and cross-platform home paths are scrubbed;
                   <a href="./screenshots/reset-preferences-confirm.png"
                     >production evidence</a
                   ></span
@@ -2373,22 +2896,23 @@
             <label
               ><input type="checkbox" /><span
                 >About: version plus check, download, install, and relaunch update status from
-                public <code>Leonxlnx/tastecode</code> GitHub Releases; hourly checks and an in-app
-                sidebar update button beside the profile name are implemented. The button shows
-                download progress, restarts to install a ready update, and retries failures without
-                opening Settings. Windows and signed/notarized macOS beta 6 are published. Windows
-                public-download clean installation, onboarding and a live update check pass. Beta 7
-                adds newest-publication selection and verified EXE/DMG updates, with beta 6
-                compatibility files during the transition. From beta 8, only the EXE and DMG are
-                uploaded; beta 6 users must have moved to beta 7 before that cutoff. macOS beta 7 is
-                published, signed, and notarized. Its public beta 6 to beta 7 native installed
-                update preserves the test chat and setting. Unsigned Windows beta 7 is published
-                with verified package contents, public download hashes, and legacy and new update
-                discovery. Beta 9 is published from b65a844f: the isolated Windows beta 7 update
-                button, installation, automatic relaunch, chats and settings passed; the macOS
-                maintainer verified its installed beta 7 upgrade. Version 0.1.1 is published from
-                d2b3754c with both installers: installed Beta 9 upgrades preserve chats/settings on
-                both platforms, and Windows automatic relaunch passes. On September 22, the
+                public <code>Leonxlnx/tastecode</code> GitHub Releases, with a refresh icon on Check
+                for updates; hourly checks and an in-app sidebar update button beside the profile
+                name are implemented. The button shows download progress, restarts to install a
+                ready update, and retries failures without opening Settings. Windows and
+                signed/notarized macOS beta 6 are published. Windows public-download clean
+                installation, onboarding and a live update check pass. Beta 7 adds
+                newest-publication selection and verified EXE/DMG updates, with beta 6 compatibility
+                files during the transition. From beta 8, only the EXE and DMG are uploaded; beta 6
+                users must have moved to beta 7 before that cutoff. macOS beta 7 is published,
+                signed, and notarized. Its public beta 6 to beta 7 native installed update preserves
+                the test chat and setting. Unsigned Windows beta 7 is published with verified
+                package contents, public download hashes, and legacy and new update discovery. Beta
+                9 is published from b65a844f: the isolated Windows beta 7 update button,
+                installation, automatic relaunch, chats and settings passed; the macOS maintainer
+                verified its installed beta 7 upgrade. Version 0.1.1 is published from d2b3754c with
+                both installers: installed Beta 9 upgrades preserve chats/settings on both
+                platforms, and Windows automatic relaunch passes. On September 22, the
                 later-published Linux-only Beta 8 proof was returned to draft to restore existing
                 clients. The next build selects releases by semantic version. Public discovery and
                 both downloads pass. Beta 6 and earlier users who missed the Beta 7 bridge need one
@@ -2448,10 +2972,12 @@
                   and exclude current-directory executable lookup on Windows; Windows child-process
                   cleanup runs taskkill asynchronously, so stopping a process tree no longer blocks
                   the server for about half a second (#1556), and waits for Node to observe exit
-                  after taskkill succeeds (#1394); media access requires explicit audio-only details
-                  from the owning main renderer and main frame, with malformed, mixed, unknown,
-                  camera and subframe requests denied in both Chromium checks and permission
-                  requests</span
+                  after taskkill succeeds (#1394); a Windows process stop never orphans the real
+                  CLI, because taskkill itself is never killed and the shim is killed only after
+                  taskkill failed; CLI timeout errors name the command and the limit; media access
+                  requires explicit audio-only details from the owning main renderer and main frame,
+                  with malformed, mixed, unknown, camera and subframe requests denied in both
+                  Chromium checks and permission requests</span
                 ></span
               ></label
             >
@@ -2462,7 +2988,23 @@
                 >One local WebSocket server with typed zod contracts
                 <span class="d"
                   >127.0.0.1:4311; the renderer transport isolates each connection-state listener,
-                  so one that throws cannot stop reconnects, the handshake, or later listeners</span
+                  so one that throws cannot stop reconnects, the handshake, or later listeners; a
+                  declared method without a route answers bad_request (unknown method)</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Background work stays out of startup and streaming
+                <span class="d"
+                  >the server answers the first project list before its background work: provider
+                  prewarm with the registry PATH read, the provider history scan and worktree
+                  recovery start after the first projects.list, or 1.5 s after listening; timed
+                  history refreshes and CLI version re-reads (held up to 2 minutes) and uncached
+                  limit reads (up to 10 s) wait for a 2 s pause in streaming, while user requests
+                  never wait</span
                 ></span
               ></label
             >
@@ -2602,7 +3144,11 @@
 
       <footer>
         Companion to docs/dashboard.html. Nightly retains its full provider roster and usage history
-        alongside main 16b95be9, synchronized on 2026-10-14.
+        alongside main 0ad74ec3, synchronized on 2026-10-16. The October 16 improvement round landed
+        through <a href="https://github.com/Leonxlnx/tastecode/pull/1841">PR #1841</a> (merge
+        54ee3536, tree identical to the tested integration tip ed488891): the four gates passed
+        locally on Windows apart from the pre-existing test failures listed in that PR, and the
+        Electron shell was checked on a copy of real data at 1440 and 800 px.
         <a href="https://github.com/Leonxlnx/tastecode/pull/1392">Synchronization PR #1392</a>
         merged into nightly at 17aa22a3; dashboard support is integrated on nightly through
         <a href="https://github.com/Leonxlnx/tastecode/pull/1393">PR #1393</a>, not a public
