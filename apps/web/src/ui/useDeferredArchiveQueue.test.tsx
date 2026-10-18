@@ -41,18 +41,18 @@ it('commits every pending archive after the undo window', async () => {
   expect(harness.queue.hiddenIds).toEqual([])
 })
 
-it('undoes pending work and returns the last chat', () => {
+it('undoes pending work and returns the restored chats in queue order', () => {
   const harness = renderQueue()
   const commit = vi.fn(async () => undefined)
   act(() => {
     harness.queue.queue('a', commit)
     harness.queue.queue('b', commit)
   })
-  let restored: string | undefined
+  let restored: string[] | undefined
   act(() => {
     restored = harness.queue.undo()
   })
-  expect(restored).toBe('b')
+  expect(restored).toEqual(['a', 'b'])
   expect(harness.queue.hiddenIds).toEqual([])
   expect(commit).not.toHaveBeenCalled()
 })

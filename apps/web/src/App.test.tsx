@@ -24,6 +24,7 @@ import { mockKeyboardModifierState } from './test-keyboard.js'
 import { NEWEST_HISTORY_TURNS } from './thread-controller.js'
 
 const NEWEST_PAGE = { turnLimit: NEWEST_HISTORY_TURNS }
+const PENDING_CHAT_DELETES_KEY = 'harness.pendingChatDeletes.v1'
 
 beforeEach(mockKeyboardModifierState)
 
@@ -1736,6 +1737,7 @@ describe('web client', () => {
     expect(transport.request).not.toHaveBeenCalledWith('thread.delete', {
       threadId: 'untouched-thread',
     })
+    expect(localStorage.getItem(PENDING_CHAT_DELETES_KEY)).toBeNull()
   })
 
   it.each(['number shortcut', 'next chat', 'palette'] as const)(
@@ -5636,6 +5638,144 @@ describe('new chats', () => {
     expect(await screen.findByRole('button', { name: 'Delete New session' })).toBeTruthy()
     await act(async () => new Promise((resolve) => nativeTimeout(resolve, 1_050)))
     expect(transport.request).not.toHaveBeenCalledWith('thread.delete', expect.anything())
+  })
+
+  it('saves a queued delete for the next start until Undo', async () => {
+    await openNewSession()
+    fireEvent.click(screen.getByRole('button', { name: 'Delete New session' }))
+    await screen.findByText('Chat deleted')
+    expect(JSON.parse(localStorage.getItem(PENDING_CHAT_DELETES_KEY)!)).toEqual([
+      { threadId: 'untouched-thread', checkout: 'keep' },
+    ])
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }))
+    expect(localStorage.getItem(PENDING_CHAT_DELETES_KEY)).toBeNull()
+  })
+
+  it('finishes a delete on the next start when the app quit inside the undo window', async () => {
+    serverProjects[0]!.sessions.push({ id: 'kept-thread', title: 'Kept chat', createdAt: 5 })
+    await openNewSession()
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method, params) =>
+      method === 'thread.delete' ? new Promise(() => undefined) : request(method, params),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Delete New session' }))
+    await screen.findByText('Chat deleted')
+
+    cleanup()
+    transport.request.mockImplementation(request)
+    transport.request.mockClear()
+    shellRenders.sidebar.mockClear()
+    render(<App />)
+
+    await screen.findByRole('button', { name: 'Delete Kept chat' })
+    await waitFor(() => expect(localStorage.getItem(PENDING_CHAT_DELETES_KEY)).toBeNull())
+    expect(transport.request.mock.calls.filter(([method]) => method === 'thread.delete')).toEqual([
+      ['thread.delete', { threadId: 'untouched-thread' }],
+    ])
+    const shownChats = shellRenders.sidebar.mock.calls.flatMap(([props]) =>
+      (props as ComponentProps<typeof import('./ui/Sidebar.js').Sidebar>).projects.flatMap(
+        (project) => project.sessions.map((session) => session.id),
+      ),
+    )
+    expect(new Set(shownChats)).toEqual(new Set(['kept-thread']))
+  })
+
+  it('drops a saved delete for a chat that is already gone', async () => {
+    localStorage.setItem(
+      PENDING_CHAT_DELETES_KEY,
+      JSON.stringify([{ threadId: 'gone-thread', checkout: 'keep' }]),
+    )
+    render(<App />)
+    await screen.findByRole('button', { name: 'Delete New session' })
+    await waitFor(() => expect(localStorage.getItem(PENDING_CHAT_DELETES_KEY)).toBeNull())
+    expect(rpcCount('thread.delete')).toBe(0)
+  })
+
+  it('discards a saved isolated checkout before deleting its chat, without asking again', async () => {
+    serverProjects[0]!.sessions[0]!.worktreeBranch = 'harness/untouched-thread'
+    localStorage.setItem(
+      PENDING_CHAT_DELETES_KEY,
+      JSON.stringify([{ threadId: 'untouched-thread', checkout: 'force-discard' }]),
+    )
+    render(<App />)
+    await waitFor(() => expect(rpcCount('thread.delete')).toBe(1))
+    expect(
+      transport.request.mock.calls.filter(([method]) =>
+        ['thread.unsavedWork', 'thread.close', 'thread.discardWorktree', 'thread.delete'].includes(
+          method,
+        ),
+      ),
+    ).toEqual([
+      ['thread.close', { threadId: 'untouched-thread' }],
+      ['thread.discardWorktree', { threadId: 'untouched-thread', force: true }],
+      ['thread.delete', { threadId: 'untouched-thread' }],
+    ])
+    expect(screen.queryByRole('dialog', { name: 'Discard isolated checkout' })).toBeNull()
+  })
+
+  it('reports a saved delete that fails and shows its chat again', async () => {
+    localStorage.setItem(
+      PENDING_CHAT_DELETES_KEY,
+      JSON.stringify([{ threadId: 'untouched-thread', checkout: 'keep' }]),
+    )
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method, params) =>
+      method === 'thread.delete'
+        ? Promise.reject(new Error('The chat is still starting.'))
+        : request(method, params),
+    )
+    render(<App />)
+    expect((await screen.findByRole('alert')).textContent).toBe('The chat is still starting.')
+    expect(await screen.findByRole('button', { name: 'Delete New session' })).toBeTruthy()
+    expect(localStorage.getItem(PENDING_CHAT_DELETES_KEY)).toBeNull()
+  })
+
+  it('keeps a delete whose request fails for the next start', async () => {
+    const nativeTimeout = globalThis.setTimeout
+    vi.spyOn(globalThis, 'setTimeout').mockImplementation(
+      (...args: Parameters<typeof setTimeout>) => {
+        if (args[1] === 10_000) args[1] = 50
+        return nativeTimeout(...args)
+      },
+    )
+    await openNewSession()
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method, params) =>
+      method === 'thread.delete'
+        ? Promise.reject(new Error('The chat is still starting.'))
+        : request(method, params),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Delete New session' }))
+    expect((await screen.findByRole('alert')).textContent).toBe('The chat is still starting.')
+    expect(await screen.findByRole('button', { name: 'Delete New session' })).toBeTruthy()
+    expect(JSON.parse(localStorage.getItem(PENDING_CHAT_DELETES_KEY)!)).toEqual([
+      { threadId: 'untouched-thread', checkout: 'keep' },
+    ])
+  })
+
+  it('retries a delete the closed connection failed once on the next start', async () => {
+    await openNewSession()
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method, params) =>
+      method === 'thread.delete'
+        ? Promise.reject(new Error('Connection closed.'))
+        : request(method, params),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Delete New session' }))
+    await screen.findByText('Chat deleted')
+
+    cleanup()
+    await waitFor(() => expect(rpcCount('thread.delete')).toBe(1))
+    expect(JSON.parse(localStorage.getItem(PENDING_CHAT_DELETES_KEY)!)).toEqual([
+      { threadId: 'untouched-thread', checkout: 'keep' },
+    ])
+
+    transport.request.mockClear()
+    render(<App />)
+    expect((await screen.findByRole('alert')).textContent).toBe('Connection closed.')
+    expect(await screen.findByRole('button', { name: 'Delete New session' })).toBeTruthy()
+    expect(rpcCount('thread.delete')).toBe(1)
+    expect(localStorage.getItem(PENDING_CHAT_DELETES_KEY)).toBeNull()
   })
 
   it('reconciles workspace ownership when a running session is archived', async () => {

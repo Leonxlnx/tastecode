@@ -1704,8 +1704,12 @@
                   >sidebar delete actions show a top toast with a white Undo button. The toast
                   closes after 5 seconds, pausing on hover or focus within the 10-second undo
                   window, and fade and slide visible rows before removal. Deletion is permanent once
-                  the window ends; selecting or sending in a pending chat cancels it. Shift-click
-                  range selection covers only visible rows. Reduced motion skips these effects</span
+                  the window ends; selecting or sending in a pending chat cancels it. A delete still
+                  in its window when the app quits normally finishes on the next start, and the chat
+                  is not shown again. A delete whose request failed is tried once more on the next
+                  start. A crash or hard kill within about 5 seconds of the click can still lose the
+                  delete. Shift-click range selection covers only visible rows. Reduced motion skips
+                  these effects</span
                 ></span
               ></label
             >
