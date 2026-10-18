@@ -6,6 +6,7 @@ import {
   ErrorCode,
   methods,
   PROTOCOL_VERSION,
+  type AccountId,
   type MethodName,
   type ProviderHistorySource,
   type ProviderId,
@@ -135,6 +136,17 @@ export function startServer(
     root: path.join(path.dirname(databasePath), 'accounts'),
     onChanged: (provider) => push.broadcast('accounts.changed', { provider }),
   })
+  /**
+   * A request may name a provider account. One the provider cannot have is
+   * refused. Until chats, sign-in and limits run in an account's own folder,
+   * any account but the default one is refused as well, so a request for
+   * another account can never act on the default one instead.
+   */
+  const defaultAccountOnly = (provider: ProviderId, accountId: AccountId | undefined) => {
+    if (accounts.home(provider, accountId) !== undefined) {
+      throw new Error('Running this provider as another account is not available yet.')
+    }
+  }
   // Install, update and sign-in terminals can add, replace or update a CLI.
   const setupTerminals = new Set<string>()
   const setupTerminal = (terminalId: string) => {
@@ -747,6 +759,7 @@ export function startServer(
 
       case 'providers.launch': {
         const p = parseParams(method, params)
+        defaultAccountOnly(p.provider, p.accountId)
         const { launchCommandFor } = await import('./providers.js')
         const command = await launchCommandFor(p.provider, p.agent)
         const target = p.agent ? `${p.provider}:${p.agent}` : p.provider
@@ -852,27 +865,32 @@ export function startServer(
 
       case 'auth.status': {
         const p = parseParams(method, params)
+        defaultAccountOnly(p.provider, p.accountId)
         return orchestrator.account(p.provider, p.agent)
       }
 
       case 'auth.startLogin': {
         const p = parseParams(method, params)
+        defaultAccountOnly(p.provider, p.accountId)
         return orchestrator.startLogin(p.provider)
       }
 
       case 'auth.cancelLogin': {
         const p = parseParams(method, params)
+        defaultAccountOnly(p.provider, p.accountId)
         await orchestrator.cancelLogin(p.provider, p.loginId)
         return {}
       }
 
       case 'auth.useApiKey': {
         const p = parseParams(method, params)
+        defaultAccountOnly(p.provider, p.accountId)
         return orchestrator.useApiKey(p.provider, p.apiKey)
       }
 
       case 'auth.signOut': {
         const p = parseParams(method, params)
+        defaultAccountOnly(p.provider, p.accountId)
         await orchestrator.signOut(p.provider, p.agent)
         return {}
       }
@@ -958,6 +976,7 @@ export function startServer(
 
       case 'models.list': {
         const p = parseParams(method, params)
+        defaultAccountOnly(p.provider, p.accountId)
         return { models: await orchestrator.listModels(p.provider, p.agent) }
       }
 
@@ -1228,6 +1247,7 @@ export function startServer(
         if ('threadId' in p && !thread) throw new Error('thread not found')
         const provider = thread?.provider ?? ('provider' in p ? p.provider : undefined)
         if (!provider) throw new Error('provider not found')
+        if ('accountId' in p) defaultAccountOnly(provider, p.accountId)
         const startOfToday = new Date()
         startOfToday.setHours(0, 0, 0, 0)
         const empty = {
@@ -1251,6 +1271,7 @@ export function startServer(
 
       case 'usage.history': {
         const p = parseParams(method, params)
+        if (p.account) defaultAccountOnly(p.account.provider, p.account.accountId)
         return (await usageHistoryService()).history(p.range, p.refresh ?? false)
       }
 
@@ -1260,6 +1281,7 @@ export function startServer(
 
       case 'usage.consumeReset': {
         const p = parseParams(method, params)
+        defaultAccountOnly(p.provider, p.accountId)
         return orchestrator.consumeRateLimitReset(p.provider, p.idempotencyKey, p.creditId)
       }
 
@@ -1282,6 +1304,7 @@ export function startServer(
 
       case 'thread.start': {
         const p = parseParams(method, params)
+        defaultAccountOnly(p.provider, p.accountId)
         const thread = await orchestrator.startThread(p.provider, p.workspacePath, {
           baseRef: p.baseRef,
           model: p.model,

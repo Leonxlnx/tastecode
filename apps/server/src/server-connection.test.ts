@@ -623,6 +623,41 @@ describe('provider accounts', () => {
       client.terminate()
     }
   })
+
+  it('refuses an account it cannot run instead of acting on the default one', async () => {
+    const { port } = await listen()
+    const { client, ask } = await connect(port)
+    const notYet = 'Running this provider as another account is not available yet.'
+    try {
+      for (const [method, params] of [
+        ['auth.signOut', { provider: 'codex', accountId: 'work' }],
+        ['auth.startLogin', { provider: 'claude-code', accountId: 'work' }],
+        ['auth.status', { provider: 'codex', accountId: 'work' }],
+        ['providers.launch', { provider: 'codex', accountId: 'work', columns: 80, rows: 24 }],
+        ['models.list', { provider: 'codex', accountId: 'work' }],
+        ['usage.summary', { provider: 'codex', accountId: 'work' }],
+        [
+          'usage.consumeReset',
+          { provider: 'codex', accountId: 'work', idempotencyKey: crypto.randomUUID() },
+        ],
+        ['thread.start', { provider: 'codex', accountId: 'work', workspacePath: 'C:\\x' }],
+        ['usage.history', { range: '7d', account: { provider: 'codex', accountId: 'work' } }],
+      ] as const) {
+        expect(await ask(method, params), method).toMatchObject({
+          error: { code: 'internal', message: notYet },
+        })
+      }
+      expect(await ask('auth.status', { provider: 'grok', accountId: 'work' })).toMatchObject({
+        error: { message: 'This provider runs as one account only.' },
+      })
+      expect(state.handled.filter((entry) => entry.startsWith('auth.'))).toEqual([])
+      expect(await ask('auth.status', { provider: 'codex', accountId: 'default' })).toMatchObject({
+        result: { signedIn: false },
+      })
+    } finally {
+      client.terminate()
+    }
+  })
 })
 
 describe('the pull request for a chat checkout', () => {
