@@ -13,6 +13,7 @@ import path from 'node:path'
 import {
   ApprovalModeSchema,
   BackgroundModelPreferenceSchema,
+  DEFAULT_ACCOUNT_ID,
   DiffDecisionSchema,
   DomainEventSchema,
   ProviderContextSettingsMapSchema,
@@ -218,6 +219,24 @@ type SearchSnapshot = {
 }
 
 export type UsageSummary = { session: UsageTotal; today: UsageTotal }
+
+/**
+ * One provider account as stored. `label` is absent only on a default
+ * account's row that was never renamed; `home` is set only for a folder the
+ * user brought.
+ */
+export type StoredProviderAccount = {
+  provider: ProviderId
+  id: string
+  label?: string
+  home?: string
+  managed: boolean
+  email?: string
+  plan?: string
+  createdAt: number
+  /** New chats with this provider start on it. No active row means the default account. */
+  active: boolean
+}
 
 type UsageSample = { total: UsageTotal; cumulative: boolean }
 
@@ -538,6 +557,23 @@ CREATE TABLE IF NOT EXISTS app_settings (
   value TEXT NOT NULL
 );
 
+-- Provider accounts beyond the CLI's own. The default account gets a row only
+-- for a label or identity of its own. A managed account's folder is derived
+-- from the data folder, so only a folder the user brought is stored in home.
+-- No credential ever lands here; the vendor CLI keeps those in its folder.
+CREATE TABLE IF NOT EXISTS provider_accounts (
+  provider   TEXT NOT NULL,
+  id         TEXT NOT NULL,
+  label      TEXT,
+  home       TEXT,
+  managed    INTEGER NOT NULL DEFAULT 0,
+  email      TEXT,
+  plan       TEXT,
+  created_at INTEGER NOT NULL,
+  active     INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (provider, id)
+) WITHOUT ROWID;
+
 CREATE INDEX IF NOT EXISTS checkpoints_by_thread ON checkpoints (thread_id, seq);
 CREATE INDEX IF NOT EXISTS events_by_thread ON events (thread_id, seq);
 CREATE INDEX IF NOT EXISTS queued_turn_events_by_thread
@@ -593,6 +629,17 @@ type ColumnRow = { name: string }
 type StringValueRow = { value: string }
 type MigrationRow = { name: string }
 type ProjectRow = { path: string; name: string; pinned: SqliteInteger; created_at: SqliteInteger }
+type ProviderAccountRow = {
+  provider: ProviderId
+  id: string
+  label: string | null
+  home: string | null
+  managed: SqliteInteger
+  email: string | null
+  plan: string | null
+  created_at: SqliteInteger
+  active: SqliteInteger
+}
 type WorktreeRow = {
   id: string
   project_path: string
@@ -2246,6 +2293,116 @@ export class Store {
 
   setLimitSnapshot(value: string): void {
     this.#writeAppSetting.run(LIMIT_SNAPSHOT_SETTING, value)
+  }
+
+  // ---- provider accounts --------------------------------------------------
+
+  /** Oldest first. Rows of providers this build does not know stay in the table untouched. */
+  providerAccounts(provider: ProviderId): StoredProviderAccount[] {
+    return sqliteRows<ProviderAccountRow>(
+      this.#db.prepare(
+        `SELECT * FROM provider_accounts WHERE provider = ? ORDER BY created_at, id`,
+      ),
+      provider,
+    ).map((row) => ({
+      provider: row.provider,
+      id: row.id,
+      ...(row.label === null ? {} : { label: row.label }),
+      ...(row.home === null ? {} : { home: row.home }),
+      managed: Number(row.managed) === 1,
+      ...(row.email === null ? {} : { email: row.email }),
+      ...(row.plan === null ? {} : { plan: row.plan }),
+      createdAt: Number(row.created_at),
+      active: Number(row.active) === 1,
+    }))
+  }
+
+  /** Fails when the provider already has an account with this id. */
+  addProviderAccount(
+    account: Pick<StoredProviderAccount, 'provider' | 'id' | 'label' | 'home' | 'managed'> & {
+      createdAt: number
+    },
+  ): void {
+    this.#db
+      .prepare(
+        `INSERT INTO provider_accounts (provider, id, label, home, managed, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        account.provider,
+        account.id,
+        account.label ?? null,
+        account.home ?? null,
+        account.managed ? 1 : 0,
+        account.createdAt,
+      )
+  }
+
+  renameProviderAccount(provider: ProviderId, id: string, label: string): void {
+    this.#updateProviderAccount(
+      provider,
+      id,
+      `UPDATE provider_accounts SET label = ? WHERE provider = ? AND id = ?`,
+      label,
+    )
+  }
+
+  /** The last identity this account's own sign-in check named; absent fields are cleared. */
+  recordProviderAccountIdentity(
+    provider: ProviderId,
+    id: string,
+    identity: { email?: string; plan?: string },
+  ): void {
+    this.#updateProviderAccount(
+      provider,
+      id,
+      `UPDATE provider_accounts SET email = ?, plan = ? WHERE provider = ? AND id = ?`,
+      identity.email ?? null,
+      identity.plan ?? null,
+    )
+  }
+
+  /** False when there was no such account. */
+  removeProviderAccount(provider: ProviderId, id: string): boolean {
+    const result = this.#db
+      .prepare(`DELETE FROM provider_accounts WHERE provider = ? AND id = ?`)
+      .run(provider, id)
+    return Number(result.changes) > 0
+  }
+
+  /** The default account is active when no row is. */
+  setActiveProviderAccount(provider: ProviderId, id: string): void {
+    this.#transaction(() => {
+      this.#db
+        .prepare(`UPDATE provider_accounts SET active = 0 WHERE provider = ? AND active = 1`)
+        .run(provider)
+      if (id === DEFAULT_ACCOUNT_ID) return
+      const result = this.#db
+        .prepare(`UPDATE provider_accounts SET active = 1 WHERE provider = ? AND id = ?`)
+        .run(provider, id)
+      if (Number(result.changes) === 0) throw new Error('account not found')
+    })
+  }
+
+  /** The default account always exists, so its row is added on its first change. */
+  #updateProviderAccount(
+    provider: ProviderId,
+    id: string,
+    sql: string,
+    ...values: SQLInputValue[]
+  ): void {
+    this.#transaction(() => {
+      if (id === DEFAULT_ACCOUNT_ID) {
+        this.#db
+          .prepare(
+            `INSERT OR IGNORE INTO provider_accounts (provider, id, managed, created_at)
+             VALUES (?, ?, 0, ?)`,
+          )
+          .run(provider, id, Date.now())
+      }
+      const result = this.#db.prepare(sql).run(...values, provider, id)
+      if (Number(result.changes) === 0) throw new Error('account not found')
+    })
   }
 
   #updateThread(
