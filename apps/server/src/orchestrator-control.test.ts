@@ -303,6 +303,28 @@ describe('shared model lists', () => {
     await orchestrator.disposeAll()
   })
 
+  it('keeps the model list through an account read that names no email or plan', async () => {
+    control.models = [row('gpt-6-astra')]
+    const { orchestrator, first } = await started()
+    await first
+    await orchestrator.account('codex')
+
+    // The CLI could confirm only that someone is signed in.
+    control.account = { signedIn: true }
+    const realNow = Date.now.bind(Date)
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => realNow() + 61_000)
+    try {
+      await orchestrator.account('codex')
+      await expect(orchestrator.listModels('codex')).resolves.toEqual([row('gpt-6-astra')])
+      // A list read in the background would have started by now.
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    } finally {
+      clock.mockRestore()
+    }
+    expect(control.listed).toBe(1)
+    await orchestrator.disposeAll()
+  })
+
   it('reads the source of an install, update or sign-in terminal', () => {
     expect(providerTerminalSource('claude-code')).toEqual({ provider: 'claude-code' })
     expect(providerTerminalSource('acp:kimi')).toEqual({ provider: 'acp', agent: 'kimi' })

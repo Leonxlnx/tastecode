@@ -37,6 +37,7 @@ import {
   checkpointRepository,
   RestoreSnapshotError,
 } from './checkpoint.js'
+import { accountRead, type AccountIdentity } from './account-identity.js'
 import { canonicalCheckoutRoot, CheckoutAccess } from './checkout-access.js'
 import {
   ProviderControls,
@@ -725,7 +726,7 @@ export class Orchestrator {
   #controls: ProviderControls
   #modelLists: ModelListCache
   /** The account each provider's model lists were read for, to notice a switch made outside the app. */
-  #modelListAccounts = new Map<ProviderId, string>()
+  #modelListAccounts = new Map<ProviderId, AccountIdentity>()
   /** Install, update and sign-in terminals, by terminal id, and the source they change. */
   #providerTerminals = new Map<string, { provider: ProviderId; agent?: string | undefined }>()
 
@@ -1516,14 +1517,9 @@ export class Orchestrator {
     if (agent === undefined) {
       // A sign-in or switch in the provider's own CLI shows up only here, and
       // another account may offer other models.
-      const identity = JSON.stringify([
-        account.signedIn,
-        account.email ?? null,
-        account.plan ?? null,
-      ])
-      const previous = this.#modelListAccounts.get(provider)
+      const { identity, switched } = accountRead(this.#modelListAccounts.get(provider), account)
       this.#modelListAccounts.set(provider, identity)
-      if (previous !== undefined && previous !== identity) this.#modelLists.invalidate(provider)
+      if (switched) this.#modelLists.invalidate(provider)
     }
     return account
   }
