@@ -390,11 +390,15 @@ describe('background title source discovery', () => {
 
     // The read that began before sign-out still answers its own request, but
     // nothing after the change sees it: Codex is read again and found signed out.
-    expect(started).toEqual([
-      { provider: 'codex', model: 'gpt-5.6-luna' },
-      { provider: 'grok', model: 'grok-4.6' },
-      { provider: 'grok', model: 'grok-4.6' },
-    ])
+    // The first two titles run at the same time, so either may start first.
+    expect(started).toHaveLength(3)
+    expect(started.slice(0, 2)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ provider: 'codex', model: 'gpt-5.6-luna' }),
+        expect.objectContaining({ provider: 'grok', model: 'grok-4.6' }),
+      ]),
+    )
+    expect(started[2]).toMatchObject({ provider: 'grok', model: 'grok-4.6' })
     expect([...vendor.calls].sort()).toEqual(
       ['account:codex', 'account:codex', 'models:codex', 'account:grok', 'models:grok'].sort(),
     )
