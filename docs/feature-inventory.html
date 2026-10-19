@@ -2984,7 +2984,10 @@
                   the server for about half a second (#1556), and waits for Node to observe exit
                   after taskkill succeeds (#1394); a Windows process stop never orphans the real
                   CLI, because taskkill itself is never killed and the shim is killed only after
-                  taskkill failed; CLI timeout errors name the command and the limit; media access
+                  taskkill failed; a process that exits stops every tree it still owns first (one
+                  taskkill run, waited for while the shims are alive, so the CLI behind each shim is
+                  reached), and a server that has to be force-stopped at quit is stopped with its
+                  whole tree; CLI timeout errors name the command and the limit; media access
                   requires explicit audio-only details from the owning main renderer and main frame,
                   with malformed, mixed, unknown, camera and subframe requests denied in both
                   Chromium checks and permission requests</span
