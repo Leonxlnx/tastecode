@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   applyProjectOrder,
   applySessionOrder,
+  chatList,
+  moveChat,
   moveRailSession,
   parseStoredProjectOrder,
   parseStoredSessionOrder,
@@ -134,5 +136,59 @@ describe('dropping a chat in the rail', () => {
     expect(moveRailSession(saved, 'Z', 'P', 'before')).toBe(saved)
     expect(moveRailSession(saved, 'missing', 'X', 'before')).toBe(saved)
     expect(moveRailSession(saved, 'X', 'X', 'after')).toBe(saved)
+  })
+})
+
+describe('the flat chat list', () => {
+  const at = (source: Project, id: string, patch: Partial<Session>): Project => ({
+    ...source,
+    sessions: source.sessions.map((session) =>
+      session.id === id ? { ...session, ...patch } : session,
+    ),
+  })
+  const ids = (entries: { session: Session }[]) => entries.map(({ session }) => session.id)
+
+  it('lists active chats newest first across projects and never re-ranks them by status', () => {
+    const web = project('/web', ['w0', 'w1'])
+    const api = { ...project('/api', ['a0']), pinned: true }
+    const calm = chatList([web, api], [], '')
+    expect(ids(calm.active)).toEqual(['w1', 'w0', 'a0'])
+    expect(calm.projects.map((entry) => entry.path)).toEqual(['/api', '/web'])
+
+    const busy = chatList([at(web, 'w0', { status: 'working', unread: true }), api], [], '')
+    expect(ids(busy.active)).toEqual(['w1', 'w0', 'a0'])
+  })
+
+  it('splits pinned and archived chats out and scopes the rest to one project', () => {
+    const web = at(at(project('/web', ['w0', 'w1', 'w2']), 'w0', { pinned: true }), 'w1', {
+      lifecycle: { state: 'settled', settledAt: 5, reason: 'manual' },
+    })
+    const api = project('/api', ['a0'])
+    const all = chatList([web, api], [], '')
+    expect(ids(all.pinned)).toEqual(['w0'])
+    expect(ids(all.active)).toEqual(['w2', 'a0'])
+    expect(ids(all.archived)).toEqual(['w1'])
+
+    const scoped = chatList([web, api], [], '/api')
+    expect(ids(scoped.pinned)).toEqual(['w0'])
+    expect(ids(scoped.active)).toEqual(['a0'])
+    expect(scoped.archived).toEqual([])
+  })
+
+  it('keeps a dragged order and still puts a newer chat on top', () => {
+    const web = project('/web', ['w0', 'w1', 'w2'])
+    expect(ids(chatList([web], ['w0', 'w2', 'w1'], '').active)).toEqual(['w0', 'w2', 'w1'])
+    const newer = {
+      ...web,
+      sessions: [...web.sessions, { ...web.sessions[0]!, id: 'w3', createdAt: 9 }],
+    }
+    expect(ids(chatList([newer], ['w0', 'w2', 'w1'], '').active)).toEqual(['w3', 'w0', 'w2', 'w1'])
+  })
+
+  it('drops a chat exactly before or after the chat it lands on', () => {
+    expect(moveChat(['a', 'b', 'c', 'd'], 'a', 'c', 'after')).toEqual(['b', 'c', 'a', 'd'])
+    expect(moveChat(['a', 'b', 'c', 'd'], 'd', 'b', 'before')).toEqual(['a', 'd', 'b', 'c'])
+    expect(moveChat(['a', 'b'], 'a', 'a', 'after')).toEqual(['a', 'b'])
+    expect(moveChat(['a', 'b'], 'x', 'a', 'after')).toEqual(['a', 'b'])
   })
 })

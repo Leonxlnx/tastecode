@@ -146,11 +146,124 @@ export function sidebarSessions(projects: Project[], mode: 'classic' | 'inbox'):
   if (mode === 'inbox') {
     return classifyInboxEntries(projects, '', '').ordered.map(({ session }) => session)
   }
-  const { orderedProjects, pinnedSessions } = sidebarRail(projects)
-  return [
-    ...pinnedSessions.map(({ session }) => session),
-    ...orderedProjects.flatMap((project) => project.sessions),
-  ]
+  const { pinned, active } = chatList(projects, readStoredChatOrder(), '')
+  return [...pinned, ...active].map(({ session }) => session)
+}
+
+/** A chat in the flat list, with the project it belongs to. */
+export type ChatEntry = { projectPath: string; session: Session }
+export type ChatList = {
+  /** Every project, pinned ones first, in the user's order: the filter's choices. */
+  projects: Project[]
+  pinned: ChatEntry[]
+  active: ChatEntry[]
+  /** Archived and snoozed chats, the most recently put away first. */
+  archived: ChatEntry[]
+}
+
+export const CHAT_ORDER_KEY = 'harness.sidebar.chatOrder'
+const CHAT_ORDER_SCOPE = '*'
+
+let cachedChatOrderRaw: string | null | undefined
+let cachedChatOrder: string[] = []
+
+/** The flat list's saved order, parsed once per stored value. Never throws. */
+export function readStoredChatOrder(): readonly string[] {
+  let raw: string | null = null
+  try {
+    raw = globalThis.localStorage?.getItem(CHAT_ORDER_KEY) ?? null
+  } catch {
+    raw = null
+  }
+  if (raw === cachedChatOrderRaw) return cachedChatOrder
+  cachedChatOrderRaw = raw
+  try {
+    const value: unknown = JSON.parse(raw ?? '[]')
+    cachedChatOrder = isStringArray(value) ? value : []
+  } catch {
+    cachedChatOrder = []
+  }
+  return cachedChatOrder
+}
+
+export function writeStoredChatOrder(order: readonly string[]): void {
+  try {
+    globalThis.localStorage?.setItem(CHAT_ORDER_KEY, JSON.stringify(order))
+  } catch {
+    // A blocked store only loses the order after a reload; the list still works.
+  }
+}
+
+/**
+ * The flat sidebar: pinned chats, then every other active chat newest first by
+ * creation, then archived ones. A status change, a new message or a read never
+ * moves a chat; only a new chat (on top), a pin, a drag or archiving does.
+ * `scope` keeps one project's chats in the active and archived lists; pinned
+ * chats stay visible whatever the filter says.
+ */
+export function chatList(
+  projects: Project[],
+  savedOrder: readonly string[],
+  scope: string,
+): ChatList {
+  const pinnedProjects: Project[] = []
+  const otherProjects: Project[] = []
+  const pinned: ChatEntry[] = []
+  const active: ChatEntry[] = []
+  const archived: ChatEntry[] = []
+  for (const project of projects) {
+    ;(project.pinned ? pinnedProjects : otherProjects).push(project)
+    const inScope = scope === '' || project.path === scope
+    for (const session of project.sessions) {
+      const entry = { projectPath: project.path, session }
+      if (session.pinned) pinned.push(entry)
+      else if (!inScope) continue
+      else if (session.lifecycle.state === 'active') active.push(entry)
+      else archived.push(entry)
+    }
+  }
+  const newestFirst = (a: ChatEntry, b: ChatEntry) => b.session.createdAt - a.session.createdAt
+  pinned.sort(newestFirst)
+  active.sort(newestFirst)
+  archived.sort((a, b) => putAwayAt(b.session) - putAwayAt(a.session))
+  const order = savedOrder.length > 0 ? { [CHAT_ORDER_SCOPE]: [...savedOrder] } : {}
+  const byId = (entries: ChatEntry[]) =>
+    applySessionOrder(
+      CHAT_ORDER_SCOPE,
+      entries.map((entry) => ({ id: entry.session.id, createdAt: entry.session.createdAt, entry })),
+      order,
+    ).map(({ entry }) => entry)
+  return {
+    projects: [...pinnedProjects, ...otherProjects],
+    pinned: byId(pinned),
+    active: byId(active),
+    archived,
+  }
+}
+
+function putAwayAt(session: Session): number {
+  const lifecycle = session.lifecycle
+  if (lifecycle.state === 'settled') return lifecycle.settledAt
+  if (lifecycle.state === 'snoozed') return lifecycle.snoozedAt
+  return session.createdAt
+}
+
+/**
+ * The saved flat order after a drop: the dragged chat lands exactly before or
+ * after the chat it was dropped on, and every other chat keeps its place.
+ */
+export function moveChat(
+  shownIds: readonly string[],
+  sourceId: string,
+  targetId: string,
+  position: 'before' | 'after',
+): string[] {
+  if (sourceId === targetId || !shownIds.includes(sourceId)) return [...shownIds]
+  const rest = shownIds.filter((id) => id !== sourceId)
+  const target = rest.indexOf(targetId)
+  if (target < 0) return [...shownIds]
+  const index = target + (position === 'after' ? 1 : 0)
+  return [...rest.slice(0, index), sourceId, ...rest.slice(index)]
 }
 
 /**

@@ -1,0 +1,194 @@
+/* The flat chat list: one filter, then single-line rows. Rows reuse the chat
+   row rules in app.css (.sessrow, .sess, .sess__*), so pinned, active and
+   archived chats look and behave alike. */
+
+.chatlist {
+  /* Rows start in the rail's outer gutter; the active pill sits in it. */
+  --sess-indent: 7px;
+  --sess-indicator-x: 1px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  row-gap: 2px;
+  min-width: 0;
+  max-width: 100%;
+  margin: 2px 0 8px;
+  padding: 0;
+  list-style: none;
+}
+
+.chatlist--pinned {
+  margin-bottom: 4px;
+}
+
+/* Past the virtual threshold the list is as tall as every row, and only the
+   mounted rows are placed on its fixed pitch. */
+.chatlist--virtual {
+  position: relative;
+  display: block;
+  contain: layout style;
+}
+
+.chatlist--virtual > .sessrow {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+}
+
+.chatlist > .proj__sessions-toggle-row > .proj__sessions-toggle {
+  padding-left: calc(var(--sess-indent) + 21px);
+}
+
+.chatlist__empty {
+  padding-left: 28px;
+}
+
+/* The project name reads as a quiet prefix and gives way before the title. */
+.sess__project {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 34%;
+  overflow: hidden;
+  color: var(--text-3);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sess__snoozed {
+  color: var(--text-3);
+}
+
+/* A row with nothing to offer on hover keeps its time: no empty slot. */
+.sessrow:not(.has-actions):focus-within .sess__meta {
+  opacity: 1;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .sessrow:not(.has-actions):hover .sess__meta {
+    opacity: 1;
+  }
+}
+
+.sess__actions .menuwrap {
+  display: flex;
+}
+
+/* ---------- filter ---------- */
+
+.chatfilter {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  height: 26px;
+  margin: 6px 0 3px;
+  padding-right: 3px;
+}
+
+.chatfilter > .menuwrap:first-child {
+  min-width: 0;
+}
+
+.chatfilter > .menuwrap + .menuwrap {
+  margin-left: auto;
+}
+
+.menutrigger.chatfilter__trigger {
+  gap: 6px;
+  height: 24px;
+  padding: 0 7px;
+  border-radius: var(--r-sm);
+  color: var(--text-3);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--t-xs);
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+.menutrigger.chatfilter__trigger:is(:hover, :focus-visible, [aria-expanded='true']) {
+  background: var(--control-hover);
+  color: var(--text);
+}
+
+.chatfilter__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chatfilter__trigger .sess__status-dot {
+  margin: 0;
+}
+
+/* The project options stay quiet until the filter row is in use. */
+.chatfilter .dots {
+  opacity: 0;
+}
+
+.chatfilter:is(:hover, :focus-within) .dots {
+  opacity: 1;
+}
+
+.chatfilter > .menuwrap + .menuwrap .menutrigger {
+  padding: 0;
+  background: transparent;
+}
+
+.chatfilter > .rename {
+  height: 24px;
+  padding: 0 7px;
+  font-size: var(--t-xs);
+}
+
+/* A waiting project's dot takes its folder icon's place in the menu. */
+.chatfilter__waiting {
+  display: grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  flex: none;
+}
+
+.chatfilter__waiting > .sess__status-dot {
+  margin: 0;
+}
+
+.menu--chatfilter {
+  max-height: min(420px, calc(100vh - 120px));
+  overflow-y: auto;
+}
+
+/* ---------- archived ---------- */
+
+.archived {
+  margin-top: 4px;
+}
+
+.archived__toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  height: 24px;
+  margin: 4px 0 3px;
+  background: none;
+  border: 0;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+  transition: color var(--dur-fast) var(--ease-out);
+}
+
+.archived__toggle:is(:hover, :focus-visible) {
+  color: var(--text-2);
+}
+
+.archived__count {
+  font-variant-numeric: tabular-nums;
+}
