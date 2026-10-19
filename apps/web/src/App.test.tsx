@@ -5215,6 +5215,72 @@ describe('new chats', () => {
     ).toHaveLength(2)
   })
 
+  it('reads the active account at launch and names every account in the popup', async () => {
+    const codex = serverProviders[0]!
+    serverProviders = [
+      { ...codex, capabilities: { ...codex.capabilities!, multipleAccounts: true } },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'accounts.list') {
+        return Promise.resolve({
+          accounts: [
+            { id: 'default', provider: 'codex', label: 'Personal', managed: false },
+            {
+              id: 'work-1a2b3c',
+              provider: 'codex',
+              label: 'Work',
+              home: 'C:\\TasteCode\\accounts\\codex\\work-1a2b3c',
+              managed: true,
+            },
+          ],
+          active: { codex: 'work-1a2b3c' },
+        })
+      }
+      if (method === 'usage.summary') {
+        const { accountId } = params as { accountId?: string }
+        return (request(method, params) as Promise<ResultOf<'usage.summary'>>).then((summary) => ({
+          ...summary,
+          limits: [{ label: '5 hours', usedPercent: accountId === 'work-1a2b3c' ? 60 : 25 }],
+        }))
+      }
+      return request(method, params)
+    })
+    render(<App />)
+
+    // New chats start on Work, so Work is the account read at launch.
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('usage.summary', {
+        provider: 'codex',
+        accountId: 'work-1a2b3c',
+        intent: 'background',
+      }),
+    )
+    // The card's figure is about where new chats run.
+    expect(await screen.findByText('40% left')).toBeTruthy()
+    expect(screen.queryByText('75% left')).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Account' }))
+    const personal = await screen.findByRole('region', { name: 'Codex · Personal' })
+    const work = screen.getByRole('region', { name: 'Codex · Work' })
+    expect(within(work).getByText('40% left')).toBeTruthy()
+    expect(await within(personal).findByText('75% left')).toBeTruthy()
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('usage.summary', {
+        provider: 'codex',
+        intent: 'visible',
+      }),
+    )
+    // The active account comes first; the raw id is never shown.
+    const regions = screen.getAllByRole('region', { name: /^Codex/ })
+    expect(regions.map((region) => region.querySelector('h3')?.textContent)).toEqual([
+      'Codex · Work',
+      'Codex · Personal',
+    ])
+    expect(screen.queryByText(/work-1a2b3c/)).toBeNull()
+  })
+
   it('keeps plan limits and asks nothing new when switching chats of one provider', async () => {
     serverProjects = [
       {

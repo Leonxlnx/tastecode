@@ -1,6 +1,11 @@
 import type { ProviderAccount, ResultOf } from '@harness/contracts'
 import { describe, expect, it } from 'vitest'
-import { accountsOf, activeAccountOf, ProviderAccountsStore } from './provider-accounts-state.js'
+import {
+  accountLabelOf,
+  accountsOf,
+  activeAccountOf,
+  ProviderAccountsStore,
+} from './provider-accounts-state.js'
 import { TestTransport } from './test-transport.js'
 
 const work: ProviderAccount = {
@@ -101,5 +106,18 @@ describe('ProviderAccountsStore', () => {
     expect(activeAccountOf({ ...snapshot, active: { codex: 'work-1a2b3c' } }, 'codex')).toBe(
       'work-1a2b3c',
     )
+  })
+})
+
+describe('accountLabelOf', () => {
+  it('names an account by its label, never its id, and a removed one as removed', () => {
+    const ready = { phase: 'ready' as const, ...listing() }
+    expect(accountLabelOf(ready, 'codex', 'work-1a2b3c')).toBe('Work')
+    expect(accountLabelOf(ready, 'codex', undefined)).toBe('Default')
+    expect(accountLabelOf(ready, 'codex', 'gone-9f9f9f')).toBe('Removed account')
+    // Before the list answers, an unknown id is not called removed yet.
+    const loading = { phase: 'loading' as const, accounts: [], active: {} }
+    expect(accountLabelOf(loading, 'codex', 'work-1a2b3c')).toBe('Account')
+    expect(accountLabelOf(loading, 'codex', 'default')).toBe('Default')
   })
 })

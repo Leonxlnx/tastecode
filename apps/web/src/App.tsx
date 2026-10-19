@@ -13,6 +13,7 @@ import type { CSSProperties, TransitionEvent as ReactTransitionEvent } from 'rea
 import { IconLoader2 as LoaderCircle } from '@tabler/icons-react'
 import type {
   Account,
+  AccountId,
   ApprovalDecision,
   ApprovalMode,
   DomainEvent,
@@ -126,7 +127,15 @@ import { serverBaseUrl } from './server-url.js'
 import { addDesignBriefing } from './design-agent/briefing.js'
 import { sourceSupportsAttachments } from './attachment-capability.js'
 import { canCaptureVoice, type VoiceRecording } from './voice-capability.js'
-import { UsageLimitsController } from './usage-limits-state.js'
+import { UsageLimitsController, type LimitTarget } from './usage-limits-state.js'
+import { sameAccount } from './usage-summary-state.js'
+import {
+  accountLabelOf,
+  accountsOf,
+  activeAccountOf,
+  useProviderAccounts,
+  type AccountLabel,
+} from './provider-accounts-state.js'
 import {
   agentMark,
   connectionMark,
@@ -603,24 +612,32 @@ export function App() {
   const readUsage = useCallback(() => usageController.snapshot(), [usageController])
   const usageState = useSyncExternalStore(subscribeUsage, readUsage, readUsage)
   const refreshUsage = useCallback(
-    (requestedProvider?: ProviderId) => usageController.refresh(requestedProvider),
+    (requestedProvider?: ProviderId, accountId?: AccountId) =>
+      usageController.refresh(requestedProvider, undefined, accountId),
     [usageController],
   )
   const retryUsage = useCallback(
-    (requestedProvider: ProviderId) => usageController.refresh(requestedProvider, 'retry'),
+    (requestedProvider: ProviderId, accountId?: AccountId) =>
+      usageController.refresh(requestedProvider, 'retry', accountId),
     [usageController],
   )
   const showUsage = useCallback(() => usageController.show(), [usageController])
   const consumeReset = useCallback(
-    async (requestedProvider: ProviderId, idempotencyKey: string, creditId?: string) => {
+    async (
+      requestedProvider: ProviderId,
+      idempotencyKey: string,
+      creditId?: string,
+      accountId?: AccountId,
+    ) => {
       try {
         return await transport.request('usage.consumeReset', {
           provider: requestedProvider,
+          ...(accountId === undefined || accountId === DEFAULT_ACCOUNT_ID ? {} : { accountId }),
           idempotencyKey,
           ...(creditId === undefined ? {} : { creditId }),
         })
       } finally {
-        refreshUsage(requestedProvider)
+        refreshUsage(requestedProvider, accountId)
       }
     },
     [transport, refreshUsage],
@@ -793,6 +810,14 @@ export function App() {
       }
     })
   const [providerStatuses, setProviderStatuses] = useState<ProviderStatus[]>([])
+  // The provider accounts, kept while an installed provider can have more
+  // than one: plan limits are read per account, and the views name them.
+  const { snapshot: providerAccounts } = useProviderAccounts(
+    transport,
+    providerStatuses.some(
+      (status) => status.installed && status.capabilities?.multipleAccounts === true,
+    ),
+  )
   const [acpAgents, setAcpAgents] = useState<ResultOf<'acp.agents'>['agents']>([])
   const [modelConnections, setModelConnections] = useState<ModelConnection[]>([])
   const [catalogRequest, setCatalogRequest] = useState(0)
@@ -3223,10 +3248,41 @@ export function App() {
         .map((status) => status.id),
     [provider, providerStatuses],
   )
+  // Each provider account is a limit source of its own. New chats start on a
+  // provider's active account, so that one is read for the current provider;
+  // its other accounts join the other providers, read when a view shows them.
+  const limitTargets = useMemo(() => {
+    const targetsOf = (id: ProviderId): LimitTarget[] => {
+      const listed = accountsOf(providerAccounts, id)
+      if (listed.length < 2) return [{ provider: id }]
+      const active = activeAccountOf(providerAccounts, id)
+      return [active, ...listed.map((account) => account.id).filter((each) => each !== active)].map(
+        (accountId) =>
+          accountId === DEFAULT_ACCOUNT_ID ? { provider: id } : { provider: id, accountId },
+      )
+    }
+    const [main = { provider }, ...rest] = targetsOf(provider)
+    return { main, onDemand: [...rest, ...otherUsageProviders.flatMap(targetsOf)] }
+  }, [provider, otherUsageProviders, providerAccounts])
 
   useLayoutEffect(() => {
-    usageController.select([{ provider }], otherUsageProviders)
-  }, [usageController, provider, otherUsageProviders])
+    usageController.select([limitTargets.main], limitTargets.onDemand)
+  }, [usageController, limitTargets])
+
+  // The account card's one figure is about where new chats run: each
+  // provider's active account. The popup lists every account.
+  const cardUsageState = useMemo(
+    () =>
+      usageState.filter((state) =>
+        sameAccount(state.accountId, activeAccountOf(providerAccounts, state.provider)),
+      ),
+    [usageState, providerAccounts],
+  )
+  const accountLabel = useCallback<AccountLabel>(
+    (requestedProvider, accountId) =>
+      accountLabelOf(providerAccounts, requestedProvider, accountId),
+    [providerAccounts],
+  )
 
   // First load, plus the one-time handover from localStorage. Anything found
   // there stays recoverable until the server acknowledges that project.
@@ -6095,6 +6151,8 @@ export function App() {
           providerName={providerName(provider, sourceAgentName)}
           keybindings={keybindings}
           usageStates={usageState}
+          usageCardStates={cardUsageState}
+          accountLabel={accountLabel}
           onShowUsage={showUsage}
           onRetryUsage={retryUsage}
           onConsumeReset={consumeReset}

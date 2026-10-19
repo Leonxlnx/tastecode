@@ -7,8 +7,16 @@ import {
   useRef,
   useState,
 } from 'react'
-import type { ProviderId, ProviderLimitSource, ResultOf } from '@harness/contracts'
+import {
+  DEFAULT_ACCOUNT_ID,
+  type AccountId,
+  type ProviderId,
+  type ProviderLimitSource,
+  type ResultOf,
+} from '@harness/contracts'
+import type { AccountLabel } from '../provider-accounts-state.js'
 import { providerDisplayName, providerMark } from '../provider-presentation.js'
+import { limitKey } from '../usage-limits-state.js'
 import type { UsageSummaryState } from '../usage-summary-state.js'
 import '../styles/account-limits.css'
 import { ProviderIcon } from './ProviderIcon.js'
@@ -22,20 +30,25 @@ type ConsumeReset = (
   provider: ProviderId,
   idempotencyKey: string,
   creditId?: string,
+  /** Absent means the default account. */
+  accountId?: AccountId,
 ) => Promise<ResultOf<'usage.consumeReset'>>
 
 export type AccountLimitsState = UsageSummaryState
 
 /**
- * Plan limits, grouped by provider, shown as soon as the account popup opens.
- * A provider that cannot report is one quiet line in its own group, never an
- * alert: it is a missing number, not a problem the person has to act on.
+ * Plan limits, grouped by provider account, shown as soon as the account
+ * popup opens. A provider that cannot report is one quiet line in its own
+ * group, never an alert: it is a missing number, not a problem the person has
+ * to act on. A provider shown with more than one account names each one.
  */
 export function AccountLimits(props: {
   states: AccountLimitsState[]
+  /** Names a provider account; without it a further account reads as "Account". */
+  accountLabel?: AccountLabel | undefined
   /** Called once while the limits are on screen; returns the release for when they leave. */
   onShow?: (() => () => void) | undefined
-  onRetry: (provider: ProviderId) => void
+  onRetry: (provider: ProviderId, accountId?: AccountId) => void
   onConsumeReset?: ConsumeReset | undefined
 }) {
   const panel = useRef<HTMLElement>(null)
@@ -56,10 +69,12 @@ export function AccountLimits(props: {
   // and before paint, so a source not read yet already reads as checking.
   useLayoutEffect(() => onShow.current?.(), [])
 
-  const retry = (provider: ProviderId) => {
+  const retry = (provider: ProviderId, accountId: AccountId | undefined) => {
     // The Retry button unmounts while the source reloads; keep focus in the popup.
     panel.current?.focus()
-    props.onRetry(provider)
+    // The default account is asked for as the provider alone, as before accounts.
+    if (accountId === undefined) props.onRetry(provider)
+    else props.onRetry(provider, accountId)
   }
 
   if (visibleStates.length === 0) return null
@@ -78,10 +93,11 @@ export function AccountLimits(props: {
     >
       {visibleStates.map((state) => (
         <LimitSource
-          key={state.provider}
+          key={limitKey(state.provider, state.accountId)}
           state={state}
+          name={sourceName(state, visibleStates, props.accountLabel)}
           now={now}
-          onRetry={() => retry(state.provider)}
+          onRetry={() => retry(state.provider, state.accountId)}
           onConsumeReset={props.onConsumeReset}
         />
       ))}
@@ -89,8 +105,27 @@ export function AccountLimits(props: {
   )
 }
 
+/**
+ * "Codex", or "Codex · Work" once the popup shows more than one of the
+ * provider's accounts or a further account alone.
+ */
+function sourceName(
+  state: AccountLimitsState,
+  shown: readonly AccountLimitsState[],
+  accountLabel: AccountLabel | undefined,
+): string {
+  const name = providerDisplayName(state.provider)
+  const further = state.accountId !== undefined && state.accountId !== DEFAULT_ACCOUNT_ID
+  const siblings = shown.filter((each) => each.provider === state.provider).length
+  if (!further && siblings < 2) return name
+  const label = accountLabel?.(state.provider, state.accountId) ?? (further ? 'Account' : 'Default')
+  return `${name} · ${label}`
+}
+
 function LimitSource(props: {
   state: AccountLimitsState
+  /** The provider, and the account when the popup names it. */
+  name: string
   now: number
   onRetry: () => void
   onConsumeReset?: ConsumeReset | undefined
@@ -99,7 +134,7 @@ function LimitSource(props: {
   const statusId = useId()
   const source = limitSource(props.state)
   const limits = source?.status === 'ready' ? source.limits : []
-  const name = providerDisplayName(props.state.provider)
+  const name = props.name
   const status = sourceStatus(props.state, source, limits.length > 0, props.now)
   // Automatic retries run on their own; the button returns once they stop.
   const retrying = props.state.status !== 'ready' && props.state.retry !== undefined
@@ -140,6 +175,7 @@ function LimitSource(props: {
           key={`${limit.label}:${index}`}
           name={name}
           provider={props.state.provider}
+          accountId={props.state.accountId}
           limit={limit}
           now={props.now}
           order={index}
@@ -210,6 +246,7 @@ function lastKnownLabel(checkedAt: number | undefined, now: number): string {
 function LimitRow(props: {
   name: string
   provider: ProviderId
+  accountId?: AccountId | undefined
   limit: Limit
   now: number
   order: number
@@ -265,12 +302,17 @@ function LimitRow(props: {
         <ResetCreditExpiries
           credits={credits}
           provider={props.provider}
+          accountId={props.accountId}
           now={props.now}
           onConsumeReset={consumable ? props.onConsumeReset : undefined}
         />
       ) : null}
       {consumable && !hasSelectableCredits ? (
-        <ResetCreditRow provider={props.provider} onConsumeReset={props.onConsumeReset}>
+        <ResetCreditRow
+          provider={props.provider}
+          accountId={props.accountId}
+          onConsumeReset={props.onConsumeReset}
+        >
           Next available reset
         </ResetCreditRow>
       ) : null}
@@ -281,6 +323,7 @@ function LimitRow(props: {
 function ResetCreditRow(props: {
   children: ReactNode
   provider: ProviderId
+  accountId?: AccountId | undefined
   creditId?: string | undefined
   onConsumeReset?: ConsumeReset | undefined
 }) {
@@ -302,7 +345,10 @@ function ResetCreditRow(props: {
     setPending(true)
     setMessage(undefined)
     try {
-      const { outcome } = await props.onConsumeReset(props.provider, key, props.creditId)
+      const { outcome } =
+        props.accountId === undefined
+          ? await props.onConsumeReset(props.provider, key, props.creditId)
+          : await props.onConsumeReset(props.provider, key, props.creditId, props.accountId)
       attemptKey.current = undefined
       setConfirming(false)
       if (outcome === 'nothingToReset') setMessage('Nothing needed a reset.')
@@ -380,6 +426,7 @@ function ResetCreditRow(props: {
 function ResetCreditExpiries(props: {
   credits: NonNullable<Limit['resetCredits']>
   provider: ProviderId
+  accountId?: AccountId | undefined
   now: number
   onConsumeReset?: ConsumeReset | undefined
 }) {
@@ -398,6 +445,7 @@ function ResetCreditExpiries(props: {
           <li key={id ?? `${expiresAt}:${index}`}>
             <ResetCreditRow
               provider={props.provider}
+              accountId={props.accountId}
               creditId={id}
               onConsumeReset={usable ? props.onConsumeReset : undefined}
             >

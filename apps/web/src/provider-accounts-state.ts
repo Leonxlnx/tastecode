@@ -204,6 +204,27 @@ export function activeAccountOf(
     : DEFAULT_ACCOUNT_ID
 }
 
+/** Names a provider account where limits or usage are listed by account. */
+export type AccountLabel = (provider: ProviderId, accountId: AccountId | undefined) => string
+
+/**
+ * The account's own label, never its id. Usage can outlive an account, so an
+ * id the server no longer lists reads as removed once the list is known.
+ */
+export function accountLabelOf(
+  snapshot: ProviderAccountsSnapshot,
+  provider: ProviderId,
+  accountId: AccountId | undefined,
+): string {
+  const id = accountId ?? DEFAULT_ACCOUNT_ID
+  const listed = snapshot.accounts.find(
+    (account) => account.provider === provider && account.id === id,
+  )
+  if (listed) return listed.label
+  if (id === DEFAULT_ACCOUNT_ID) return 'Default'
+  return snapshot.phase === 'ready' ? 'Removed account' : 'Account'
+}
+
 /**
  * The accounts snapshot, kept current while `enabled`: a view passes false
  * when no installed provider can have accounts, so nothing is asked.
