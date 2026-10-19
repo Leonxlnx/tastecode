@@ -917,6 +917,9 @@ export function App() {
     () => rememberedVoice(provider) === undefined,
   )
   const [settingsOpen, setSettingsOpen] = useState(false)
+  // Settings that comes back in place of a provider login terminal skips its
+  // fade: while it faded in, the chat settling underneath showed through.
+  const [settingsReturning, setSettingsReturning] = useState(false)
   const [keybindings, setKeybindings] = useState(readKeybindings)
   const [surface, setSurface] = useState<'chat' | 'pull-requests'>('chat')
   const [settingsSection, setSettingsSection] = useState<SettingsSectionRequest>({
@@ -4340,6 +4343,7 @@ export function App() {
     setWorkspacePanelExpanded(completed.restorePanelExpanded)
     if (completed.restoreSettings) {
       setSettingsSection(requestSettingsSection('providers'))
+      setSettingsReturning(true)
       setSettingsOpen(true)
     }
     if (completed.source === 'pull-requests') {
@@ -5324,6 +5328,7 @@ export function App() {
   }, [activeId])
   const openSettings = useCallback((section: SettingsSection = 'workflows') => {
     setSettingsSection(requestSettingsSection(section))
+    setSettingsReturning(false)
     setSettingsOpen(true)
   }, [])
   const changeKeybinding = useCallback((action: KeybindingId, shortcut: Shortcut | null) => {
@@ -5481,6 +5486,7 @@ export function App() {
       setWorkspacePanelExpanded(providerLoginTerminal.restorePanelExpanded)
       if (providerLoginTerminal.restoreSettings) {
         setSettingsSection(requestSettingsSection('providers'))
+        setSettingsReturning(true)
         setSettingsOpen(true)
       }
     },
@@ -6368,7 +6374,7 @@ export function App() {
       </div>
 
       {SettingsView ? (
-        <div className="surface-enter">
+        <div className={`surface-enter${settingsReturning ? ' is-returning' : ''}`}>
           <SurfaceErrorBoundary
             name="Settings"
             onClose={closeSettings}
