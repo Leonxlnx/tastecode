@@ -2432,16 +2432,17 @@ describe('web client', () => {
       await claudeModels
     })
 
-    const trigger = await screen.findByRole('button', { name: 'Model and reasoning' })
-    expect(trigger.textContent).toContain('opus')
-    expect(composerProps().modelChoice?.key).toBe('claude-code:opus')
-    expect(composer.value).toBe('Wait for the model')
-    fireEvent.keyDown(composer, { key: 'Enter' })
+    // The Enter pressed while the model loaded is sent once it is known, on
+    // the provider and model the picker names, never on Grok's default.
     await waitFor(() =>
       expect(transport.request).toHaveBeenCalledWith(
         'thread.start',
         expect.objectContaining({ provider: 'claude-code', model: 'opus' }),
       ),
+    )
+    expect(transport.request).not.toHaveBeenCalledWith(
+      'thread.start',
+      expect.objectContaining({ provider: 'grok' }),
     )
   })
 
