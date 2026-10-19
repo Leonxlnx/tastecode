@@ -1482,6 +1482,9 @@ describe('web client', () => {
       await restoreAndOfferUndo()
       fireEvent.click(screen.getByRole('button', { name: 'Undo restore' }))
       const notice = (await screen.findByText('Restore undone.')).closest('.notice')!
+      // The notice arms its timer in a passive effect, which React may run in a task of its own
+      // after the commit that shows the text; let that task run before the clock moves.
+      await act(async () => new Promise((resolve) => window.setTimeout(resolve, 20)))
 
       act(() => vi.advanceTimersByTime(4_900))
       expect(notice.getAttribute('data-state')).toBe('open')
