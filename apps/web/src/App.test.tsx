@@ -11892,7 +11892,7 @@ describe('live sessions', () => {
     })
 
     const working = screen.getByRole('button', { name: 'First session, Codex, working' })
-    expect(working.querySelector('.sess__spinner.tabler-icon-loader-2')).not.toBeNull()
+    expect(working.querySelector('.sess__spinner > .tabler-icon-loader-2')).not.toBeNull()
 
     fireEvent.click(screen.getByRole('button', { name: /^Second session,/ }))
     emitThreadEvent('thread-2', {
