@@ -444,8 +444,9 @@
   transition: background var(--dur-fast) var(--ease-out);
 }
 
+/* The rail's one hover surface, shared with project heads and the top actions. */
 .sessrow:hover {
-  --sess-bg: var(--surface);
+  --sess-bg: var(--control-hover);
 }
 
 .sessrow.is-active {
