@@ -18,6 +18,7 @@ import {
   type ProviderStatus,
 } from '@harness/contracts'
 import {
+  IconCheck as Check,
   IconChevronDown as ChevronDown,
   IconDots as Ellipsis,
   IconFolderOpen as FolderOpen,
@@ -228,9 +229,9 @@ function confirmCopy(confirm: Confirm) {
 }
 
 /** Who an account last signed in as, with the email behind the usual reveal. */
-function AccountIdentityText(props: { account: ProviderAccount }) {
+function AccountIdentityText(props: { account: ProviderAccount; active?: boolean }) {
   const { email, plan } = props.account
-  if (!email && !plan) return <>Not signed in</>
+  if (!email && !plan) return <>{props.active ? 'Active · Not signed in' : 'Not signed in'}</>
   return (
     <span className="settings__account">
       {email ? <AccountEmail email={email} /> : 'Signed in'}
@@ -271,25 +272,12 @@ function AccountRow(props: {
       <div className="provider-row__status set-entity__status">
         {props.issue ? <RowIssue message={props.issue} announce label="Problem details" /> : null}
         <span className="provider-row__status-text">
-          <AccountIdentityText account={account} />
+          {/* Sign in takes the action slot, so an account still waiting for
+              one says here that new chats start on it. */}
+          <AccountIdentityText account={account} active={props.active && !signedIn} />
         </span>
       </div>
-      <div className="provider-account__active">
-        {props.active ? (
-          <span className="provider-account__current">Active</span>
-        ) : (
-          <button
-            className="set-button set-button--quiet"
-            type="button"
-            disabled={props.busy}
-            aria-label={`Use ${account.label} for new ${props.provider.displayName} chats`}
-            onClick={props.onSetActive}
-          >
-            Set active
-          </button>
-        )}
-      </div>
-      <div className="provider-account__more">
+      <div className="provider-row__secondary provider-account__more">
         <Menu
           align="right"
           drop="down"
@@ -301,6 +289,16 @@ function AccountRow(props: {
         >
           {(close) => (
             <>
+              {!signedIn && !props.active ? (
+                <MenuItem
+                  title="Set active"
+                  icon={<Check size={14} aria-hidden />}
+                  onClick={() => {
+                    close()
+                    props.onSetActive()
+                  }}
+                />
+              ) : null}
               <MenuItem
                 title="Rename"
                 icon={<Pencil size={14} aria-hidden />}
@@ -344,7 +342,24 @@ function AccountRow(props: {
           )}
         </Menu>
       </div>
-      <div className="provider-row__primary">{props.signIn}</div>
+      {/* One action per row, in the roster's action slot: Sign in until the
+          account names who it is, then Set active or the word Active. */}
+      <div className="provider-row__primary provider-account__action">
+        {props.signIn}
+        {!signedIn ? null : props.active ? (
+          <span className="provider-account__current">Active</span>
+        ) : (
+          <button
+            className="set-button set-button--quiet"
+            type="button"
+            disabled={props.busy}
+            aria-label={`Use ${account.label} for new ${props.provider.displayName} chats`}
+            onClick={props.onSetActive}
+          >
+            Set active
+          </button>
+        )}
+      </div>
     </div>
   )
 }

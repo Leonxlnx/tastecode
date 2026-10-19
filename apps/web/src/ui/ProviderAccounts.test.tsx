@@ -111,13 +111,12 @@ describe('Provider accounts in Settings', () => {
   })
 
   it('lists a provider’s accounts once it has two, and sets one active', async () => {
-    const transport = serve([defaultAccount('codex'), work])
+    const transport = serve([defaultAccount('codex'), { ...work, email: 'work@example.com' }])
     render(<ProviderAccountsSection transport={transport} providers={[codex]} />)
 
     expect(await screen.findByText('Codex · Work')).toBeTruthy()
     expect(screen.getByText('Codex · Default')).toBeTruthy()
     expect(screen.getByText('Active')).toBeTruthy()
-    expect(screen.getByText('Not signed in')).toBeTruthy()
 
     fireEvent.click(screen.getByRole('button', { name: 'Use Work for new Codex chats' }))
     await waitFor(() =>
@@ -128,6 +127,30 @@ describe('Provider accounts in Settings', () => {
     await waitFor(() =>
       expect(screen.getByRole('button', { name: 'Use Default for new Codex chats' })).toBeTruthy(),
     )
+  })
+
+  it('gives an account that has not signed in one action, Sign in, and Set active in its menu', async () => {
+    const transport = serve([defaultAccount('codex'), work])
+    render(<ProviderAccountsSection transport={transport} providers={[codex]} />)
+
+    const row = (await screen.findByText('Codex · Work')).closest<HTMLElement>('.provider-row')!
+    expect(row.textContent).toContain('Not signed in')
+    const action = row.querySelector('.provider-account__action')!
+    expect([...action.children].map((child) => child.textContent)).toEqual(['Sign in'])
+    // The menu comes before the action on every row, so the menus line up.
+    expect(row.querySelector('.provider-account__more + .provider-account__action')).toBe(action)
+
+    fireEvent.click(within(row).getByRole('button', { name: 'Work account actions' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Set active' }))
+    await waitFor(() =>
+      expect(calls(transport, 'accounts.setActive')).toEqual([
+        { provider: 'codex', accountId: 'work-1a2b3c' },
+      ]),
+    )
+    // Sign in keeps the slot; the status says new chats start here.
+    expect(await within(row).findByText('Active · Not signed in')).toBeTruthy()
+    fireEvent.click(within(row).getByRole('button', { name: 'Work account actions' }))
+    expect(screen.queryByRole('menuitem', { name: 'Set active' })).toBeNull()
   })
 
   it('signs an account in through its own sign-in terminal and reads who it is', async () => {
