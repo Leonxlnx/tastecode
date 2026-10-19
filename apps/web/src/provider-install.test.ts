@@ -286,6 +286,8 @@ describe('cancelInstall', () => {
     const cancel = cancelInstall(transport, key)
     await vi.waitFor(() => expect(installState(key)?.canceling).toBe(true))
     transport.emit('terminal.exit', { terminalId: 'login-hangup', exitCode: 129 })
+    // Nothing is left to stop once the CLI is gone, even before the stop answers.
+    expect(installState(key)).toMatchObject({ phase: 'canceled', canceling: false })
     finishClose()
     await cancel
     answerStatus()
@@ -295,7 +297,7 @@ describe('cancelInstall', () => {
       ),
     )
     await new Promise((resolve) => setTimeout(resolve, 0))
-    expect(installState(key)).toMatchObject({ phase: 'canceled', exitCode: 129 })
+    expect(installState(key)).toMatchObject({ phase: 'canceled', canceling: false, exitCode: 129 })
   })
 
   it('keeps a failed stop available for retry', async () => {

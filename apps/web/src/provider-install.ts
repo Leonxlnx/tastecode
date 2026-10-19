@@ -375,6 +375,7 @@ async function attachJob(
             : event.exitCode === 0
               ? 'succeeded'
               : 'failed',
+      canceling: false,
       exitCode: event.exitCode,
     })
     notify()
