@@ -1945,7 +1945,13 @@ function ActiveIndicator() {
  *  the news, and how long ago it started is not. */
 function SessionStatus(props: { status: Session['status']; since: number }) {
   if (props.status === 'starting' || props.status === 'working') {
-    return <LoaderCircle className="sess__spinner" size={14} aria-hidden />
+    // The rotation sits on an HTML box, which the compositor can turn on its
+    // own; a rotating <svg> is repainted on the main thread every frame.
+    return (
+      <span className="sess__spinner" aria-hidden>
+        <LoaderCircle size={14} />
+      </span>
+    )
   }
 
   if (props.status === 'approval' || props.status === 'input' || props.status === 'queued') {
