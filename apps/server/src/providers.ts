@@ -323,30 +323,40 @@ export async function launchCommandFor(
 }
 
 const providerDetections = new WeakMap<SystemProbe, Promise<ProviderStatus[]>>()
+/** Systems that answered their first listing, the one the app makes at launch. */
+const launchListed = new WeakSet<SystemProbe>()
 
 /**
  * Start one provider scan before the renderer asks for it, so the version
  * reads it needs are under way. The first listing joins it while it runs.
  */
 export function prewarmProviders(system: SystemProbe = REAL_SYSTEM): Promise<ProviderStatus[]> {
-  return scanProviders(system)
+  return scanProviders(system, false)
 }
 
 /**
  * Every listing scans again, so installs and sign-ins show up. The scan is
  * cheap: lookups run in process and versions come from the shared probe.
+ *
+ * The first listing uses the PATH this server started with, which is what
+ * Windows gave it a moment ago; reading the registry (two `reg.exe` runs,
+ * 0.2-3.7 s on a busy machine) only delayed Send at launch. Every later
+ * listing, from a focus re-check or "Check again", reads it first, because
+ * that is how a CLI installed while the app runs becomes visible.
  */
 export function detectProviders(system: SystemProbe = REAL_SYSTEM): Promise<ProviderStatus[]> {
-  return scanProviders(system)
+  const refreshPath = launchListed.has(system)
+  launchListed.add(system)
+  return scanProviders(system, refreshPath)
 }
 
-function scanProviders(system: SystemProbe): Promise<ProviderStatus[]> {
+function scanProviders(system: SystemProbe, refreshPath: boolean): Promise<ProviderStatus[]> {
   const current = providerDetections.get(system)
   if (current) return current
 
   const scan = () =>
     Promise.all([Promise.all(PROBES.map((entry) => probe(entry, system))), acpStatus(system)])
-  const pathRefresh = system.refreshPath?.()
+  const pathRefresh = refreshPath ? system.refreshPath?.() : undefined
   const detection = (pathRefresh ? pathRefresh.then(scan) : scan()).then(([direct, acp]) => [
     ...direct,
     acp,
