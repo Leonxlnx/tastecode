@@ -43,6 +43,7 @@ function limitsOf(states: UsageSummaryState[]) {
   return {
     snapshot: () => states,
     subscribe: () => () => {},
+    show: vi.fn<PlanLimitsSource['show']>(() => () => {}),
     refresh: vi.fn<PlanLimitsSource['refresh']>(),
   } satisfies PlanLimitsSource
 }
@@ -266,7 +267,9 @@ describe('usage settings', () => {
     const grok = await screen.findByRole('region', { name: 'Grok' })
     expect(within(grok).getByText('Unavailable')).toBeTruthy()
     fireEvent.click(within(grok).getByRole('button', { name: 'Retry' }))
-    expect(limits.refresh).toHaveBeenCalledWith('grok')
+    expect(limits.refresh).toHaveBeenCalledWith('grok', 'retry')
+    // Opening the page asks the server to read sources it reads only on view.
+    expect(limits.show).toHaveBeenCalledTimes(1)
   })
 
   it('keeps cached totals visible and checks a background scan again after 2 s', async () => {

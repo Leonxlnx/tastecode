@@ -1,4 +1,12 @@
-import { useCallback, useMemo, useState, useSyncExternalStore, type CSSProperties } from 'react'
+import {
+  useCallback,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type CSSProperties,
+} from 'react'
 import type { ProviderId, ResultOf, UsageHistoryRange } from '@harness/contracts'
 import { IconChevronDown as ChevronDown, IconRefresh as RefreshCw } from '@tabler/icons-react'
 import { providerDisplayName, providerMark } from '../provider-presentation.js'
@@ -74,6 +82,11 @@ export function UsageSettings(props: {
     [source],
   )
   const read = useCallback(() => source?.snapshot() ?? NO_LIMIT_STATES, [source])
+  // Showing the limits lets the server read sources it reads only on view.
+  // Once per mount, before paint, so sources not read yet start as checking.
+  const shown = useRef(source)
+  shown.current = source
+  useLayoutEffect(() => shown.current?.show(), [])
   const states = useSyncExternalStore(
     source ? subscribe : subscribeNothing,
     source ? read : noLimits,
@@ -82,14 +95,14 @@ export function UsageSettings(props: {
   const limits = useMemo(() => {
     const byProvider = new Map<ProviderId, SheetLimits>()
     for (const state of states) {
-      const entry = sheetLimits(state)
+      const entry = sheetLimits(state, now)
       if (entry) byProvider.set(state.provider, entry)
     }
     return byProvider
-  }, [states])
+  }, [states, now])
   const { sheets, slots, span } = useMemo(() => deriveSheets(data, limits), [data, limits])
   const unit = span === 7 ? 'week' : 'day'
-  const retry = useCallback((provider: ProviderId) => source?.refresh(provider), [source])
+  const retry = useCallback((provider: ProviderId) => source?.refresh(provider, 'retry'), [source])
 
   const endDate = data?.endDate
   const startDate = data?.startDate

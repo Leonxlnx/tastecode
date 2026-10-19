@@ -4,6 +4,7 @@ import type {
   UsageHistoryModel,
   UsageHistoryRange,
   UsageHistoryTotals,
+  UsageReadIntent,
 } from '@harness/contracts'
 import { providerDisplayName, type ProviderMark } from '../../provider-presentation.js'
 import type { UsageSummaryState } from '../../usage-summary-state.js'
@@ -17,7 +18,9 @@ type Limit = ResultOf<'usage.summary'>['limits'][number]
 export type PlanLimitsSource = {
   snapshot(): UsageSummaryState[]
   subscribe(listener: () => void): () => void
-  refresh(provider?: ProviderId): void
+  /** A view shows the limits until the returned release is called. */
+  show(): () => void
+  refresh(provider?: ProviderId, intent?: UsageReadIntent): void
 }
 
 /** At or under this share left, a window reads as running low. */
@@ -119,18 +122,20 @@ function sheetLimit(limit: Limit): SheetLimit {
 }
 
 /** A provider's limits, or undefined when its source reports no plan limits at all. */
-export function sheetLimits(state: UsageSummaryState): SheetLimits | undefined {
+export function sheetLimits(state: UsageSummaryState, now: number): SheetLimits | undefined {
   const source = limitSource(state)
-  if (source?.status === 'unavailable') return undefined
+  // A source that could not be read stays, so its failure and Retry show.
+  if (source?.status === 'unavailable' && source.reason !== 'failed') return undefined
   const limits = source?.status === 'ready' ? source.limits : []
   return {
     rows: limits.map(sheetLimit),
     // A source that answered without windows reads as having none, not as a status.
     status:
-      state.status === 'error' || source === undefined
-        ? sourceStatus(state, source, limits.length > 0)
-        : undefined,
-    retryable: state.status === 'error',
+      source?.status === 'ready' && limits.length === 0 && state.status !== 'error'
+        ? undefined
+        : sourceStatus(state, source, limits.length > 0, now),
+    retryable:
+      state.status === 'error' || (state.status === 'ready' && source?.status === 'unavailable'),
   }
 }
 
