@@ -71,7 +71,7 @@ import {
 } from './provider-session.js'
 import { REPLY_STYLE_INSTRUCTIONS } from './reply-style.js'
 import { LOCAL_SKILL_CAPABILITIES, listLocalSkills, mergeSkills } from './skill-inventory.js'
-import type { Store, StoredCheckpoint } from './store.js'
+import type { ProviderAccountSnapshotKind, Store, StoredCheckpoint } from './store.js'
 import {
   createWorktree,
   hasUncommittedChanges,
@@ -965,6 +965,12 @@ export class Orchestrator {
   }
 
   #newAccountScope(provider: ProviderId, accountId: AccountId, accountHome: string): AccountScope {
+    // Its last limits and model lists answer at once after a restart, as the default account's do.
+    const snapshot = (kind: ProviderAccountSnapshotKind) => ({
+      read: () => this.#store.providerAccountSnapshot(provider, accountId, kind),
+      write: (value: string) =>
+        this.#store.setProviderAccountSnapshot(provider, accountId, kind, value),
+    })
     const controls = new ProviderControls({
       providers: [provider],
       accountHome,
@@ -975,6 +981,7 @@ export class Orchestrator {
       onUsageChanged: () => this.#onUsageChanged(provider, accountId),
       onLimitsChanged: (_provider, source) => this.#onLimitsChanged({ ...source, accountId }),
       onAuthChanged: () => modelLists.invalidate(provider),
+      limitSnapshot: snapshot('limits'),
       ...this.#scopeOptions,
     })
     const modelLists = new ModelListCache({
@@ -982,6 +989,7 @@ export class Orchestrator {
         controls.forProvider(provider).listModels?.(agent, read) ?? Promise.resolve([]),
       onChanged: (_provider, agent) => this.#onModelsChanged(provider, agent, accountId),
       onLog: (line) => this.#onLog(line),
+      snapshot: snapshot('models'),
     })
     return { accountId, controls, modelLists, modelListAccounts: new Map() }
   }

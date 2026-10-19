@@ -45,6 +45,11 @@ vi.mock('@harness/adapter-claude-code', async (importOriginal) => {
     signOutClaude: async (options?: { accountHome?: string }) => {
       claude.calls.push(['signOut', options?.accountHome ?? 'default'])
     },
+    claudeLimitSource: async (options?: { accountHome?: string }) => {
+      claude.calls.push(['limits', options?.accountHome ?? 'default'])
+      const usedPercent = options?.accountHome ? 70 : 10
+      return { status: 'ready', limits: [{ id: 'seven_day', label: 'Weekly', usedPercent }] }
+    },
   }
 })
 
@@ -115,6 +120,8 @@ function setup(accounts: AccountDirectory, store = new Store(':memory:')) {
   const launches: Launch[] = []
   const live: Live = {}
   const sessions: FakeSession[] = []
+  /** Each model list read, by the folder it ran in. */
+  const listed: Array<string | undefined> = []
   const opened = () => {
     const created = session(live)
     sessions.push(created)
@@ -147,6 +154,7 @@ function setup(accounts: AccountDirectory, store = new Store(':memory:')) {
       }
     },
     async listModels() {
+      listed.push(accountHome)
       return [model(accountHome ? 'work-model' : 'default-model')]
     },
   })
@@ -161,7 +169,7 @@ function setup(accounts: AccountDirectory, store = new Store(':memory:')) {
     accounts,
     mcpConfig: new McpConfigStore(path.join(root, 'mcp.json')),
   })
-  return { orchestrator, launches, store, live, pushed, sessions }
+  return { orchestrator, launches, store, live, pushed, sessions, listed }
 }
 
 describe('chats pinned to a provider account', () => {
@@ -322,6 +330,39 @@ describe('sign-in, model lists and limits per account', () => {
     // The default account's figures are untouched.
     expect(orchestrator.heldLimitSource('claude-code', 'visible')).toBeUndefined()
     await orchestrator.disposeAll()
+  })
+})
+
+describe("an account's saved limits and model lists", () => {
+  it('answer after a restart and stay apart from the default account', async () => {
+    claude.calls.length = 0
+    const store = new Store(':memory:')
+    store.addProviderAccount({
+      provider: 'claude-code',
+      id: 'work',
+      label: 'Work',
+      managed: true,
+      createdAt: 1,
+    })
+    const accounts = directory({ 'claude-code:work': claudeHome })
+    const first = setup(accounts, store)
+    await first.orchestrator.usageLimitSource('claude-code', 'visible', 'work')
+    await first.orchestrator.listModels('claude-code', undefined, 'work')
+    await first.orchestrator.disposeAll()
+
+    const second = setup(accounts, store)
+    expect(second.orchestrator.heldLimitSource('claude-code', 'visible', 'work')).toMatchObject({
+      accountId: 'work',
+      limits: [{ id: 'seven_day', usedPercent: 70 }],
+    })
+    // The default account has read nothing, so it shows nothing of the other one.
+    expect(second.orchestrator.heldLimitSource('claude-code', 'visible')).toBeUndefined()
+    expect(store.limitSnapshot()).toBeUndefined()
+    const models = await second.orchestrator.listModels('claude-code', undefined, 'work')
+    expect(models.map((each) => each.id)).toEqual(['work-model'])
+    expect(second.listed).toEqual([])
+    expect(claude.calls).toEqual([['limits', claudeHome]])
+    await second.orchestrator.disposeAll()
   })
 })
 
