@@ -1530,7 +1530,7 @@ function ComposerComponent(props: {
                 label="Workspace mode"
                 drop="down"
                 triggerClassName="shelf-control shelf-control--mode"
-                panelClassName="menu--compact"
+                panelClassName="menu--compact menu--mode"
                 shortcutAria={shortcutAria(keybindings.toggleIsolatedSession)}
                 trigger={() => (
                   <span className="shelf-control__content">
