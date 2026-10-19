@@ -1036,7 +1036,7 @@ describe('Sidebar chat actions', () => {
     }
   })
 
-  it('keeps active and unread chats above the saved chat order', () => {
+  it('keeps working and unread chats in the saved chat order', () => {
     const unread = {
       ...session('thread-unread', 'Just done'),
       status: 'ready' as const,
@@ -1087,7 +1087,7 @@ describe('Sidebar chat actions', () => {
       [...document.querySelectorAll('.proj__sessions:not(.pinned-sessions) .sess__title')].map(
         (title) => title.textContent,
       ),
-    ).toEqual(['Still running', 'Just done', 'Older chat', 'Newer chat'])
+    ).toEqual(['Older chat', 'Just done', 'Still running', 'Newer chat'])
     const justDone = screen.getByRole('button', { name: 'Just done, Codex, ready, unread' })
     expect(justDone.querySelector('.sess__meta > .sess__status-dot.is-success')).not.toBeNull()
     expect(justDone.querySelector('.sess__unread-dot')).toBeNull()
