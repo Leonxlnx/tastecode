@@ -12,7 +12,10 @@ import { startServer } from './server.js'
 const state = vi.hoisted(() => ({
   servers: [] as WebSocketServer[],
   projects: [] as Array<{ path: string }>,
-  threads: new Map<string, { projectPath: string; worktreePath?: string; provider?: string }>(),
+  threads: new Map<
+    string,
+    { projectPath: string; worktreePath?: string; provider?: string; accountId?: string }
+  >(),
   historyPage: vi.fn(),
   read: [] as string[],
   reservedPreviewPorts: [] as Array<ReadonlySet<number> | undefined>,
@@ -50,6 +53,16 @@ vi.mock('./store.js', () => ({
     }
     thread(id: string) {
       return state.threads.get(id)
+    }
+    usageSummary() {
+      const none = {
+        inputTokens: 0,
+        cachedInputTokens: 0,
+        outputTokens: 0,
+        reasoningTokens: 0,
+        totalTokens: 0,
+      }
+      return { session: none, today: none }
     }
     recoverInterruptedThreads() {}
     nextLifecycleRefreshAt() {}
@@ -149,6 +162,22 @@ vi.mock('./orchestrator.js', () => ({
     async startThread(provider: string, _workspacePath: string, options: { accountId?: string }) {
       state.handled.push(`thread.start(${provider}, ${options.accountId ?? 'active'})`)
       return { id: 'started-thread' }
+    }
+    heldLimitSource() {
+      return undefined
+    }
+    async usageLimitSource(provider: string, _intent?: string, accountId?: string) {
+      state.handled.push(`usage.limits(${provider}, ${accountId})`)
+      return { provider, ...(accountId ? { accountId } : {}), status: 'ready', limits: [] }
+    }
+    async consumeRateLimitReset(
+      provider: string,
+      _idempotencyKey: string,
+      _creditId?: string,
+      accountId?: string,
+    ) {
+      state.handled.push(`usage.consumeReset(${provider}, ${accountId})`)
+      return { outcome: 'reset' }
     }
   },
 }))
@@ -674,18 +703,12 @@ describe('provider accounts', () => {
     const { client, ask } = await connect(port)
     const notYet = 'Running this provider as another account is not available yet.'
     try {
-      for (const [method, params] of [
-        ['usage.summary', { provider: 'codex', accountId: 'work' }],
-        [
-          'usage.consumeReset',
-          { provider: 'codex', accountId: 'work', idempotencyKey: crypto.randomUUID() },
-        ],
-        ['usage.history', { range: '7d', account: { provider: 'codex', accountId: 'work' } }],
-      ] as const) {
-        expect(await ask(method, params), method).toMatchObject({
-          error: { code: 'internal', message: notYet },
-        })
-      }
+      expect(
+        await ask('usage.history', {
+          range: '7d',
+          account: { provider: 'codex', accountId: 'work' },
+        }),
+      ).toMatchObject({ error: { code: 'internal', message: notYet } })
       expect(state.handled).toEqual([])
       // A chat is pinned to its account by the orchestrator, which checks it.
       for (const accountId of ['work', undefined]) {
@@ -732,6 +755,41 @@ describe('provider accounts', () => {
       expect(state.accountCalls).toEqual([
         ['recordIdentity', 'codex', 'work', { signedIn: false }],
         ['recordIdentity', 'codex', 'work', { signedIn: true }],
+      ])
+    } finally {
+      client.terminate()
+    }
+  })
+
+  it('answers plan limits and spends reset credits as the account asked for', async () => {
+    const { port } = await listen()
+    const { client, ask } = await connect(port)
+    state.threads.set('work-chat', { projectPath: 'C:\\x', provider: 'codex', accountId: 'work' })
+    state.threads.set('own-chat', { projectPath: 'C:\\x', provider: 'codex' })
+    try {
+      expect(await ask('usage.summary', { provider: 'codex', accountId: 'work' })).toMatchObject({
+        result: { limitSource: { provider: 'codex', accountId: 'work', status: 'ready' } },
+      })
+      await ask('usage.summary', { provider: 'codex' })
+      // A chat's limits are its account's, whichever account is active.
+      await ask('usage.summary', { threadId: 'work-chat' })
+      await ask('usage.summary', { threadId: 'own-chat' })
+      for (const accountId of ['work', undefined]) {
+        expect(
+          await ask('usage.consumeReset', {
+            provider: 'codex',
+            accountId,
+            idempotencyKey: crypto.randomUUID(),
+          }),
+        ).toMatchObject({ result: { outcome: 'reset' } })
+      }
+      expect(state.handled).toEqual([
+        'usage.limits(codex, work)',
+        'usage.limits(codex, undefined)',
+        'usage.limits(codex, work)',
+        'usage.limits(codex, undefined)',
+        'usage.consumeReset(codex, work)',
+        'usage.consumeReset(codex, undefined)',
       ])
     } finally {
       client.terminate()

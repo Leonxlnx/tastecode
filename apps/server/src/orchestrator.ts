@@ -1659,12 +1659,15 @@ export class Orchestrator {
     return account
   }
 
+  /** Spends a reset the account earned, in its own folder; absent, the default account's. */
   async consumeRateLimitReset(
     provider: ProviderId,
     idempotencyKey: string,
     creditId?: string,
+    accountId?: AccountId,
   ): Promise<{ outcome: 'reset' | 'nothingToReset' | 'noCredit' | 'alreadyRedeemed' }> {
-    const consume = this.#controls.forProvider(provider).consumeRateLimitReset
+    const { controls } = this.#scope(provider, accountId)
+    const consume = controls.forProvider(provider).consumeRateLimitReset
     if (!consume) throw new Error(`provider "${provider}" cannot consume a rate-limit reset`)
     return consume(idempotencyKey, creditId)
   }

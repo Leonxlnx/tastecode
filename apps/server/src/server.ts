@@ -140,9 +140,9 @@ export function startServer(
   })
   /**
    * A request may name a provider account. One the provider cannot have is
-   * refused. Until an account's own plan limits, reset credits and usage history
-   * are read per account, any account but the default one is refused there as
-   * well, so a request for another account can never act on the default one.
+   * refused. Until usage history is read per account, any account but the
+   * default one is refused there as well, so a request for another account can
+   * never answer with the default one's usage.
    */
   const defaultAccountOnly = (provider: ProviderId, accountId: AccountId | undefined) => {
     if (accounts.home(provider, accountId) !== undefined) {
@@ -1273,9 +1273,9 @@ export function startServer(
         if ('threadId' in p && !thread) throw new Error('thread not found')
         const provider = thread?.provider ?? ('provider' in p ? p.provider : undefined)
         if (!provider) throw new Error('provider not found')
-        if ('accountId' in p) defaultAccountOnly(provider, p.accountId)
-        // A chat's limits are those of the account it runs as.
-        const accountId = thread?.accountId
+        // A chat's limits are those of the account it runs as; otherwise the
+        // named account's, which the orchestrator refuses if it cannot run.
+        const accountId = thread ? thread.accountId : 'accountId' in p ? p.accountId : undefined
         const startOfToday = new Date()
         startOfToday.setHours(0, 0, 0, 0)
         const empty = {
@@ -1311,8 +1311,12 @@ export function startServer(
 
       case 'usage.consumeReset': {
         const p = parseParams(method, params)
-        defaultAccountOnly(p.provider, p.accountId)
-        return orchestrator.consumeRateLimitReset(p.provider, p.idempotencyKey, p.creditId)
+        return orchestrator.consumeRateLimitReset(
+          p.provider,
+          p.idempotencyKey,
+          p.creditId,
+          p.accountId,
+        )
       }
 
       case 'sideChat.start': {
