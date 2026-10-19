@@ -515,7 +515,7 @@ describe('profile settings', () => {
     const work = await within(accounts).findByText('Codex · Work')
     expect(work.closest('.set-row')?.textContent).toContain('Pro')
     const side = within(accounts).getByText('Codex · Side').closest('.set-row')!
-    expect(side.textContent).toContain('Not signed in')
+    expect(side.textContent).toContain('Signed out')
     expect(side.getAttribute('data-tone')).toBe('muted')
     expect(within(accounts).getByText('Codex')).toBeTruthy()
     expect(within(accounts).queryByText(/work@example\.com/)).toBeNull()

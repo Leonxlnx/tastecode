@@ -215,7 +215,8 @@ export function ProfileAccounts(props: {
 
 /**
  * A further account shows what the server last learned about it: its plan,
- * or that it signed in, never its email.
+ * or that it signed in, never its email. One that has not signed in reads
+ * "Signed out", as the provider rows here do.
  */
 function FurtherAccountRow(props: { account: ProviderAccount; provider: ProviderStatus }) {
   const { account } = props
@@ -233,7 +234,7 @@ function FurtherAccountRow(props: { account: ProviderAccount; provider: Provider
       {signedIn ? (
         <span>{account.plan ?? 'Signed in'}</span>
       ) : (
-        <span className="profile-accounts__state">Not signed in</span>
+        <span className="profile-accounts__state">Signed out</span>
       )}
     </SettingsRow>
   )
