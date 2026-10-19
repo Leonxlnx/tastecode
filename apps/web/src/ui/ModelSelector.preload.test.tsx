@@ -14,6 +14,7 @@ const MODEL: Model = {
   isDefault: true,
   reasoningEfforts: ['low', 'medium', 'high'],
   defaultReasoningEffort: 'medium',
+  serviceTiers: [],
 }
 const MODELS: ModelChoice[] = [
   { key: 'codex:gpt-5.6-sol', provider: 'codex', sourceName: 'Codex', mark: 'openai', model: MODEL },
@@ -36,6 +37,7 @@ it('loads the picker panel in an idle moment, so its first open has nothing to l
       models={MODELS}
       modelId="codex:gpt-5.6-sol"
       effort="medium"
+      serviceTier={undefined}
       disabled={false}
       onModelChange={() => {}}
       onEffortChange={() => {}}
