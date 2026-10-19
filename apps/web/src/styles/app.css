@@ -1037,14 +1037,6 @@
   letter-spacing: 0;
 }
 
-.sess__unread-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: var(--r-circle);
-  background: var(--light);
-  flex: none;
-}
-
 .sess__actions {
   position: absolute;
   right: 0;
@@ -1125,7 +1117,8 @@
   background: var(--error);
 }
 
-/* An answer nobody has read yet: the unread dot's colour. */
+/* An answer nobody has read yet, in the band. The tree shows it as a heavier
+   title only, so a row never carries two dots. */
 .sess__status-dot.is-done {
   background: var(--light);
 }

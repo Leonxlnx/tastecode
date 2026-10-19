@@ -12465,6 +12465,12 @@ describe('live sessions', () => {
     expect(
       screen
         .getByRole('button', { name: 'Background chat, Codex, ready, unread' })
+        .closest('.sessrow')
+        ?.classList.contains('is-unread'),
+    ).toBe(true)
+    expect(
+      screen
+        .getByRole('button', { name: 'Background chat, Codex, ready, unread' })
         .querySelector('.sess__status-dot.is-success'),
     ).not.toBeNull()
   })
