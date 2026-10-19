@@ -134,6 +134,18 @@ describe('provider history integration', () => {
     await expect(history.scanned('grok')).resolves.toBeUndefined()
   })
 
+  it('tells which chats a scan linked to a saved session', async () => {
+    store.addThread({ id: 'native', projectPath: process.cwd(), provider: 'codex', title: 'Local' })
+    store.addThread({ id: 'fresh', projectPath: process.cwd(), provider: 'codex', title: 'New' })
+    const { history } = setup([metadata('native')])
+    expect(history.hasCopy('native')).toBe(false)
+
+    await history.refresh()
+    expect(history.hasCopy('native')).toBe(true)
+    // A chat whose session the provider has not saved yet has nothing to merge.
+    expect(history.hasCopy('fresh')).toBe(false)
+  })
+
   it('keeps what a source listed across restarts and forgets transcripts it no longer names', async () => {
     const transcripts = new Map([
       ['a.jsonl', 'a1'],

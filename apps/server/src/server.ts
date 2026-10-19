@@ -352,6 +352,14 @@ export function startServer(
     )
   /** Set once background work starts; see startBackgroundWork. */
   let providerHistory: Promise<ProviderHistory> | undefined
+  /** The same service once it exists, for checks that must not wait for it. */
+  let providerHistoryReady: ProviderHistory | undefined
+  /**
+   * Chats this server run started. Their provider sessions began after the
+   * launch, so until a scan links one to its saved session there are no turns
+   * taken outside TasteCode to merge, and a turn need not wait for the scan.
+   */
+  const startedThisRun = new Set<string>()
   const historySchedule = new HistoryRefreshSchedule(async () => {
     if (historyClosing || !providerHistory) return false
     // A timed refresh can read an index for hundreds of milliseconds; not mid-stream.
@@ -378,6 +386,7 @@ export function startServer(
     // Opening a task during startup must not replay an obsolete imported transcript
     // before adapter revisions and ownership have been refreshed.
     const initial = service.then(async (history) => {
+      providerHistoryReady = history
       await history.refresh()
       return history
     })
@@ -446,6 +455,9 @@ export function startServer(
     // An imported chat or a turn needs the scan now, not after the start delay.
     startBackgroundWork()
     historySchedule.activity()
+    // A first scan of a large history took minutes, and a new chat's first
+    // message waited for it although it had nothing to merge.
+    if (startedThisRun.has(threadId) && !providerHistoryReady?.hasCopy(threadId)) return
     let history: ProviderHistory
     try {
       if (!providerHistory) throw new Error('Provider history is closed')
@@ -1241,6 +1253,7 @@ export function startServer(
           effort: p.effort,
           approval: p.approval,
         })
+        startedThisRun.add(thread.id)
         return { threadId: thread.id }
       }
 
@@ -1262,6 +1275,7 @@ export function startServer(
           connectionId: p.connectionId,
           isolate: p.isolate,
         })
+        startedThisRun.add(thread.id)
         return { threadId: thread.id }
       }
 

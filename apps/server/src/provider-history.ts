@@ -64,6 +64,12 @@ export class ProviderHistory {
     return this.#scanned.get(provider)?.done ?? Promise.resolve()
   }
 
+  /** Whether a saved provider session is linked to this chat, so a load may merge outside turns. */
+  hasCopy(threadId: string): boolean {
+    const entry = this.#byThread.get(threadId)
+    return entry !== undefined && !entry.session.internal
+  }
+
   #remember(entry: Imported): void {
     const previous = this.#entries.get(`${entry.provider}:${entry.session.id}`)
     if (previous && previous.threadId !== entry.threadId) this.#byThread.delete(previous.threadId)
