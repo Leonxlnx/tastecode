@@ -3,6 +3,7 @@ import { IconUserCircle as UserCircle } from '@tabler/icons-react'
 import { accountsOf, activeAccountOf, useProviderAccounts } from '../provider-accounts-state.js'
 import type { Transport } from '../transport.js'
 import { Menu, MenuItem } from './Menu.js'
+import '../styles/composer-account.css'
 
 /**
  * Which of the provider's accounts a new chat starts on, beside the other
