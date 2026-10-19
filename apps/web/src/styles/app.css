@@ -1140,13 +1140,21 @@
   color: var(--text);
 }
 
+/* The box turns, not the icon: the compositor rotates an HTML box on its own,
+   while a rotating <svg> is restyled and repainted on the main thread every
+   frame for as long as a chat works (about half a core at 144 Hz). */
 .sess__spinner {
   position: relative;
+  display: block;
   width: 14px;
   height: 14px;
   flex: none;
   color: var(--running);
   animation: spin 800ms linear infinite;
+}
+
+.sess__spinner > svg {
+  display: block;
 }
 
 @media (prefers-reduced-motion: reduce) {
