@@ -1,4 +1,9 @@
-import type { DataOf, ProviderId } from '@harness/contracts'
+import {
+  DEFAULT_ACCOUNT_ID,
+  type AccountId,
+  type DataOf,
+  type ProviderId,
+} from '@harness/contracts'
 import type { Transport } from './transport.js'
 
 /**
@@ -43,9 +48,14 @@ export function installKey(target: InstallTarget): string {
  * attachable terminal — but never the same entry, so an install and a login
  * for one target cannot clobber each other.
  */
-export function loginKey(target: InstallTarget): string {
-  return `login:${installKey(target)}`
+export function loginKey(target: LoginTarget): string {
+  const account =
+    target.accountId && target.accountId !== DEFAULT_ACCOUNT_ID ? `@${target.accountId}` : ''
+  return `login:${installKey(target)}${account}`
 }
+
+/** A sign-in may run as one of the provider's further accounts; absent means its default. */
+export type LoginTarget = InstallTarget & { accountId?: AccountId }
 
 export function updateKey(provider: ProviderId): string {
   return `update:${provider}`
@@ -160,7 +170,7 @@ export async function beginInstall(transport: Transport, target: InstallTarget):
  */
 export async function beginLogin(
   transport: Transport,
-  target: InstallTarget,
+  target: LoginTarget,
   openUrl: (url: string) => void = (url) => window.open(url, '_blank', 'noopener,noreferrer'),
 ): Promise<void> {
   return begin(
@@ -170,6 +180,9 @@ export async function beginLogin(
       transport.request('providers.launch', {
         provider: target.provider,
         ...(target.agent ? { agent: target.agent } : {}),
+        ...(target.accountId && target.accountId !== DEFAULT_ACCOUNT_ID
+          ? { accountId: target.accountId }
+          : {}),
         columns: LOGIN_COLUMNS,
         rows: 30,
       }),
