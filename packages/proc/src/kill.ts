@@ -11,6 +11,11 @@ export type KillableProcess = Pick<ChildProcess, 'exitCode' | 'signalCode' | 'pi
 const groups = new WeakMap<KillableProcess, number>()
 const stopping = new WeakMap<KillableProcess, Promise<void>>()
 
+/** Owned children whose exit this process has not seen, and POSIX groups not yet retired. */
+const unfinished = new Set<ChildProcess>()
+const openGroups = new Set<number>()
+let stopsOwnedTreesAtExit = false
+
 /** Native executable spawn with a private process group on POSIX. */
 export function spawnOwned(
   command: string,
@@ -28,9 +33,11 @@ export function spawnOwned(
   options: SpawnOptions = {},
 ): ChildProcess {
   const child = spawn(command, args, { ...options, detached: process.platform !== 'win32' })
+  if (child.pid) ownUntilExit(child)
   if (process.platform !== 'win32' && child.pid) {
     const group = child.pid
     groups.set(child, group)
+    openGroups.add(group)
     // The leader can exit before a background command. Keep its descendants
     // inside the same owned lifetime, and retire the group before pid reuse.
     child.once('exit', () => {
@@ -67,6 +74,7 @@ async function terminate(child: KillableProcess): Promise<void> {
       }
     }
     groups.delete(child)
+    openGroups.delete(group)
     return
   }
   if (child.exitCode != null || child.signalCode != null) return
@@ -96,6 +104,73 @@ async function terminate(child: KillableProcess): Promise<void> {
   if (!(await waitUntil(() => child.exitCode != null || child.signalCode != null, 1_000))) {
     throw new Error('Child process did not exit after forced termination')
   }
+}
+
+/**
+ * A process that exits must not leave the trees it owns running. An orderly
+ * stop ends each tree first, but a launch that was still starting, a read in
+ * flight or a stop that had not finished yet was left behind: Node ends its
+ * direct children on Windows (libuv's job object), so a .cmd shim died with
+ * the server while the CLI behind it ran on, with every MCP server, `rg` and
+ * `git` it had started. Each still-running tree is stopped here, from the
+ * synchronous `exit` event: one `taskkill /T /F` on Windows, waited for while
+ * the shims are still alive; a forced group signal on POSIX.
+ */
+function ownUntilExit(child: ChildProcess): void {
+  unfinished.add(child)
+  child.once('exit', () => unfinished.delete(child))
+  if (stopsOwnedTreesAtExit) return
+  stopsOwnedTreesAtExit = true
+  process.once('exit', () => stopUnfinishedTrees())
+}
+
+/** Pids per taskkill run, well inside the Windows command-line limit. */
+const TASKKILL_PIDS_PER_RUN = 200
+
+/** Stop every owned tree still running. Synchronous; for the `exit` event. */
+export function stopUnfinishedTrees(
+  launch: (args: string[]) => void = runTaskkillBeforeExit,
+): void {
+  if (process.platform === 'win32') {
+    // A pid stays reserved while Node still holds its process handle, which it
+    // does until it sees the exit, so none of these can name another process.
+    const pids = [...unfinished].flatMap((child) => (child.pid ? [child.pid] : []))
+    for (let start = 0; start < pids.length; start += TASKKILL_PIDS_PER_RUN) {
+      const batch = pids.slice(start, start + TASKKILL_PIDS_PER_RUN)
+      launch([...batch.flatMap((pid) => ['/pid', String(pid)]), '/T', '/F'])
+    }
+    return
+  }
+  for (const group of openGroups) {
+    try {
+      process.kill(-group, 'SIGKILL')
+    } catch {
+      // Already gone.
+    }
+  }
+}
+
+/** How long the exit may wait for taskkill; it has needed 30 s on a loaded PC. */
+const EXIT_TASKKILL_TIMEOUT_MS = 10_000
+
+function runTaskkillBeforeExit(args: string[]): void {
+  try {
+    // Waited for on purpose. Once this process is gone, Node's job object ends
+    // the shims at once, and taskkill can only walk a tree from a live root: a
+    // detached run started here found them gone, and the CLIs behind them ran on.
+    spawnSync('taskkill', args, {
+      stdio: 'ignore',
+      windowsHide: true,
+      timeout: EXIT_TASKKILL_TIMEOUT_MS,
+    })
+  } catch {
+    // Nothing else can be done while exiting.
+  }
+}
+
+/** The owned children this process still waits for, for tests. */
+export function unfinishedChildrenForTests(): ReadonlySet<ChildProcess> {
+  return unfinished
 }
 
 /**
