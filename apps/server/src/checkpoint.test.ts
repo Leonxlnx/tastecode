@@ -257,6 +257,187 @@ describe('takeSnapshot from the checkout index', () => {
   })
 })
 
+describe('takeSnapshot of a checkout that matches HEAD', () => {
+  /** The git commands an action runs, from git's own trace; every run inherits this environment. */
+  async function gitCommands<T>(
+    action: () => Promise<T>,
+  ): Promise<{ result: T; commands: string[] }> {
+    const traceDir = mkdtempSync(path.join(os.tmpdir(), 'harness-cp-trace-'))
+    const trace = path.join(traceDir, 'trace.json')
+    vi.stubEnv('GIT_TRACE2_EVENT', trace)
+    try {
+      const result = await action()
+      const commands = existsSync(trace)
+        ? readFileSync(trace, 'utf8')
+            .split('\n')
+            .filter(Boolean)
+            .map((line) => JSON.parse(line) as { event: string; sid: string; name?: string })
+            // Top-level runs only; a git that starts another git nests its session id.
+            .filter((event) => event.event === 'cmd_name' && !event.sid.includes('/'))
+            .map((event) => event.name ?? '')
+        : []
+      return { result, commands }
+    } finally {
+      vi.unstubAllEnvs()
+      rmSync(traceDir, { recursive: true, force: true })
+    }
+  }
+  /**
+   * The tree a full snapshot records, built here independently: HEAD in a
+   * private index, every working change, and the ignored files the user's own
+   * index tracks.
+   */
+  function fullSnapshotTree(): string {
+    const indexDir = mkdtempSync(path.join(os.tmpdir(), 'harness-cp-index-'))
+    try {
+      const env = { ...process.env, GIT_INDEX_FILE: path.join(indexDir, 'index') }
+      const run = (...args: string[]) =>
+        execFileSync('git', args, { cwd: repo, env, windowsHide: true }).toString().trim()
+      const trackedIgnored = git('ls-files', '--cached', '--ignored', '--exclude-standard', '-z')
+        .split('\0')
+        .filter(Boolean)
+      run('read-tree', 'HEAD')
+      run('add', '-A')
+      if (trackedIgnored.length) run('add', '-f', '--', ...trackedIgnored)
+      return run('write-tree')
+    } finally {
+      rmSync(indexDir, { recursive: true, force: true })
+    }
+  }
+  const treeOf = (commit: string) => git('rev-parse', `${commit}^{tree}`).trim()
+  const FULL_PATH = ['add', 'write-tree']
+
+  it('records HEAD with a status instead of rebuilding the tree', async () => {
+    const { result: snapshot, commands } = await gitCommands(() => takeSnapshot(repo))
+
+    expect(snapshot).toEqual({ commit: git('rev-parse', 'HEAD').trim(), clean: true })
+    expect(treeOf(snapshot.commit)).toBe(fullSnapshotTree())
+    expect(commands).toContain('status')
+    expect(commands).not.toEqual(expect.arrayContaining(FULL_PATH))
+    // Two HEAD reads, the status, the index mark check and the protecting ref.
+    expect(commands).toHaveLength(5)
+  })
+
+  it('records HEAD beside ignored files, which no snapshot holds', async () => {
+    write('.gitignore', 'build/\n*.log\n')
+    git('add', '.gitignore')
+    git('commit', '-m', 'ignore build output')
+    mkdirSync(path.join(repo, 'build'))
+    write(path.join('build', 'out.js'), 'generated\n')
+    write('debug.log', 'noise\n')
+
+    const { result: snapshot, commands } = await gitCommands(() => takeSnapshot(repo))
+
+    expect(snapshot.commit).toBe(git('rev-parse', 'HEAD').trim())
+    expect(treeOf(snapshot.commit)).toBe(fullSnapshotTree())
+    expect(commands).not.toEqual(expect.arrayContaining(FULL_PATH))
+  })
+
+  it.each([
+    ['a modified file', () => write('tracked.txt', 'changed\n')],
+    ['an untracked file', () => write('new.txt', 'new\n')],
+    ['a deleted file', () => rmSync(path.join(repo, 'tracked.txt'))],
+    [
+      'a staged change undone in the working copy',
+      () => {
+        write('tracked.txt', 'staged\n')
+        git('add', 'tracked.txt')
+        write('tracked.txt', 'original\n')
+      },
+    ],
+    [
+      'a force-added ignored file',
+      () => {
+        write('.gitignore', 'local.txt\n')
+        git('add', '.gitignore')
+        git('commit', '-m', 'ignore local file')
+        write('local.txt', 'kept on purpose\n')
+        git('add', '-f', 'local.txt')
+      },
+    ],
+    [
+      'modified, untracked, ignored and deleted files together',
+      () => {
+        write('gone.txt', 'committed\n')
+        write('.gitignore', '*.log\n')
+        git('add', '.')
+        git('commit', '-m', 'second')
+        write('tracked.txt', 'changed\n')
+        write('new.txt', 'new\n')
+        write('debug.log', 'ignored\n')
+        rmSync(path.join(repo, 'gone.txt'))
+      },
+    ],
+  ])('takes the full snapshot of a checkout with %s', async (_, change) => {
+    change()
+
+    const { result: snapshot, commands } = await gitCommands(() => takeSnapshot(repo))
+
+    expect(commands).toEqual(expect.arrayContaining(FULL_PATH))
+    expect(treeOf(snapshot.commit)).toBe(fullSnapshotTree())
+    expect(git('ls-tree', '-r', '--name-only', snapshot.commit)).not.toContain('debug.log')
+  })
+
+  it('takes the full snapshot when the index hides an edit from status', async () => {
+    git('update-index', '--assume-unchanged', 'tracked.txt')
+    write('tracked.txt', 'kept out of git status\n')
+    expect(git('status', '--porcelain')).toBe('')
+
+    const { result: snapshot, commands } = await gitCommands(() => takeSnapshot(repo))
+
+    expect(commands).toEqual(expect.arrayContaining(FULL_PATH))
+    expect(git('show', `${snapshot.commit}:tracked.txt`)).toBe('kept out of git status\n')
+  })
+
+  it.each([
+    ['a clean checkout', () => undefined, 5],
+    ['a changed checkout', () => write('tracked.txt', 'changed\n'), undefined],
+  ])(
+    'keeps the checkpoint of %s with the run that protects its snapshot',
+    async (_, change, runs) => {
+      change()
+
+      const { result: snapshot, commands } = await gitCommands(() =>
+        takeSnapshot(repo, { retainIn: 'turns' }),
+      )
+
+      expect(commands.filter((command) => command === 'update-ref')).toHaveLength(1)
+      if (runs !== undefined) expect(commands).toHaveLength(runs)
+      expect(git('for-each-ref', '--format=%(refname)', 'refs/harness/').split('\n')).toEqual(
+        expect.arrayContaining([
+          `refs/harness/checkpoints/turns/${snapshot.commit}`,
+          `refs/harness/snapshots/${snapshot.commit}`,
+        ]),
+      )
+    },
+  )
+
+  it('refuses a checkpoint namespace that is not a plain name', async () => {
+    await expect(takeSnapshot(repo, { retainIn: '../heads/main' })).rejects.toThrow(
+      'invalid checkpoint namespace',
+    )
+    expect(git('for-each-ref', 'refs/harness/')).toBe('')
+  })
+
+  it('restores from a checkpoint taken on a clean checkout', async () => {
+    write('gone.txt', 'committed\n')
+    git('add', '.')
+    git('commit', '-m', 'second')
+    const { result: before, commands } = await gitCommands(() => takeSnapshot(repo))
+    expect(commands).not.toEqual(expect.arrayContaining(FULL_PATH))
+    write('tracked.txt', 'agent edit\n')
+    write('agent.txt', 'agent file\n')
+    rmSync(path.join(repo, 'gone.txt'))
+
+    await restoreSnapshot(repo, before.commit)
+
+    expect(read('tracked.txt')).toBe('original\n')
+    expect(read('gone.txt')).toBe('committed\n')
+    expect(existsSync(path.join(repo, 'agent.txt'))).toBe(false)
+    expect(git('status', '--porcelain')).toBe('')
+  })
+})
+
 describe('restoreSnapshot', () => {
   it('preserves leading whitespace in Git paths and leaves ignored lookalikes alone', async () => {
     write('.gitignore', 'victim.txt\n')

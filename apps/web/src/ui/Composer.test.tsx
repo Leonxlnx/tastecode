@@ -2515,3 +2515,49 @@ describe('Composer error dismissal', () => {
     expect(screen.getByText('Sign in to use this provider.')).toBeTruthy()
   })
 })
+
+describe('Composer Enter while Send is loading', () => {
+  it('sends the words once Send is ready', () => {
+    const onSend = vi.fn()
+    const view = renderComposer(onSend, { sendAvailability: 'loading' })
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+    fireEvent.change(composer, { target: { value: 'Ship it' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    expect(onSend).not.toHaveBeenCalled()
+    expect(composer.value).toBe('Ship it')
+
+    view.rerenderComposer({ sendAvailability: 'ready' })
+    expect(onSend).toHaveBeenCalledTimes(1)
+    expect(onSend).toHaveBeenCalledWith('Ship it', [])
+    expect(composer.value).toBe('')
+  })
+
+  it('does not send after the words changed or the check asked for setup', () => {
+    const onSend = vi.fn()
+    const view = renderComposer(onSend, { sendAvailability: 'loading' })
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+    fireEvent.change(composer, { target: { value: 'First' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    fireEvent.change(composer, { target: { value: 'First, then more' } })
+    view.rerenderComposer({ sendAvailability: 'ready' })
+    expect(onSend).not.toHaveBeenCalled()
+
+    view.rerenderComposer({ sendAvailability: 'loading' })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    view.rerenderComposer({ sendAvailability: 'setup-required' })
+    view.rerenderComposer({ sendAvailability: 'ready' })
+    expect(onSend).not.toHaveBeenCalled()
+    expect(composer.value).toBe('First, then more')
+  })
+
+  it('does not carry an Enter over to another chat', () => {
+    const onSend = vi.fn()
+    const view = renderComposer(onSend, { sendAvailability: 'loading', threadId: 'thread-a' })
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+    fireEvent.change(composer, { target: { value: 'Same words' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    view.rerenderComposer({ threadId: 'thread-b' })
+    view.rerenderComposer({ sendAvailability: 'ready' })
+    expect(onSend).not.toHaveBeenCalled()
+  })
+})
