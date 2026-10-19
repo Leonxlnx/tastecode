@@ -791,10 +791,11 @@
                   bounded provider reads, so the account dialog opens cached values without a fresh
                   request, keeps every source separate, distinguishes loading, successful-empty,
                   unavailable, and failure with one muted word beside the provider (Checking…,
-                  Unavailable, Last known, None reported) and the reason in its tooltip instead of
-                  an alert colour, retains usable values during failed refreshes, and routes a small
-                  text Retry to the correct provider; focus enters on the limits list and returns on
-                  close</span
+                  Retrying…, Last known, None reported) and the reason in its tooltip instead of an
+                  alert colour; a failed read with nothing to show retries on its own three times
+                  (after 5, 15 and 30 s) and then leaves the list until a later read succeeds,
+                  usable values stay through failed refreshes, and a small text Retry goes to the
+                  correct provider; focus enters on the limits list and returns on close</span
                 ></span
               ></label
             >

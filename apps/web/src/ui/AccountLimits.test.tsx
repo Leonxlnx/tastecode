@@ -161,6 +161,52 @@ describe('account limits', () => {
     expect(document.activeElement).toBe(screen.getByRole('region', { name: 'Plan limits' }))
   })
 
+  it('says a failed source is retrying, then leaves it out once the retries gave up', () => {
+    const codex: AccountLimitsState = {
+      status: 'ready',
+      provider: 'codex',
+      summary: summary([{ label: 'Weekly', usedPercent: 29 }]),
+    }
+    const view = render(
+      <AccountLimits
+        states={[
+          {
+            status: 'loading',
+            provider: 'grok',
+            retry: { attempt: 2, of: 3, message: 'Grok Build did not report its credits.' },
+          },
+          codex,
+        ]}
+        onRetry={() => {}}
+      />,
+    )
+
+    const grok = screen.getByRole('region', { name: 'Grok' })
+    const status = statusOf(grok)!
+    expect(status.firstChild?.textContent).toBe('Retrying…')
+    expect(status.title).toBe(
+      'Plan limits couldn’t be loaded. Grok Build did not report its credits. Trying again, 2 of 3.',
+    )
+    expect(within(grok).queryByRole('button', { name: 'Retry' })).toBeNull()
+
+    view.rerender(
+      <AccountLimits
+        states={[
+          {
+            status: 'error',
+            provider: 'grok',
+            message: 'Grok Build did not report its credits.',
+            gaveUp: true,
+          },
+          codex,
+        ]}
+        onRetry={() => {}}
+      />,
+    )
+    expect(screen.queryByRole('region', { name: 'Grok' })).toBeNull()
+    expect(screen.getByRole('region', { name: 'Codex' })).toBeTruthy()
+  })
+
   it('keeps last known values and retries each source independently', () => {
     const onRetry = vi.fn()
     render(
