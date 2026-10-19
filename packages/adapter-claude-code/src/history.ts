@@ -31,11 +31,21 @@ const SESSION_FILE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 const LINE_FEED = 0x0a
 // Rows that set a title or working directory from anywhere in a transcript. A quoted
 // token matches a key or an exact value, never text inside a string: there the quotes
-// are escaped. UTF-8 never encodes another character with these bytes.
-const METADATA_TOKENS = ['"customTitle"', '"aiTitle"', '"relocated"'].map((token) =>
-  Buffer.from(token, 'latin1'),
-)
-const TOKEN_OVERLAP = Math.max(...METADATA_TOKENS.map((token) => token.length)) - 1
+// are escaped. UTF-8 never encodes another character with these bytes. Each token is a
+// head plus the tail searched for: both title keys end in `Title"`, which one pass finds
+// several times faster than either whole key (a transcript is full of `"`, the byte every
+// token starts with), and the bytes before a hit say which key it ends.
+const TOKEN_SEARCHES = [
+  { tail: 'Title"', heads: ['"custom', '"ai'] },
+  { tail: '"relocated"', heads: [''] },
+].map(({ tail, heads }) => ({
+  tail: Buffer.from(tail, 'latin1'),
+  heads: heads.map((head) => Buffer.from(head, 'latin1')),
+}))
+const TOKEN_OVERLAP =
+  Math.max(
+    ...TOKEN_SEARCHES.flatMap(({ tail, heads }) => heads.map((head) => head.length + tail.length)),
+  ) - 1
 // Transcripts are read in positioned chunks: whole files reached hundreds of megabytes
 // and a cold listing read 3 GB, blocking the event loop for seconds. Every chunk is an
 // await, so no synchronous multi-megabyte stretch remains.
@@ -217,9 +227,17 @@ async function addTokenRows(
         pending = undefined
       }
       const hits: number[] = []
-      for (const token of METADATA_TOKENS)
-        for (let hit = window.indexOf(token); hit !== -1; hit = window.indexOf(token, hit + 1))
-          if (hit + token.length > kept) hits.push(hit)
+      for (const { tail, heads } of TOKEN_SEARCHES)
+        for (let end = window.indexOf(tail); end !== -1; end = window.indexOf(tail, end + 1)) {
+          // A token wholly inside the bytes carried over was counted in the chunk before.
+          if (end + tail.length <= kept) continue
+          for (const head of heads)
+            if (
+              end >= head.length &&
+              window.compare(head, 0, head.length, end - head.length, end) === 0
+            )
+              hits.push(end - head.length)
+        }
       for (const hit of hits.sort((left, right) => left - right)) {
         // Each line is searched once, so a line with many tokens costs no more than one.
         if (pending !== undefined || base + hit < lineEnd) continue
