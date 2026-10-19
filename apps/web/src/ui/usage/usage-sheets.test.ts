@@ -110,7 +110,7 @@ describe('provider sheets', () => {
 
   it('collapses a provider with limits but no sessions and sorts it last', () => {
     const limits = new Map<ProviderId, SheetLimits>([
-      ['grok', sheetLimits(ready('grok', [{ label: 'Weekly', usedPercent: 20 }]))!],
+      ['grok', sheetLimits(ready('grok', [{ label: 'Weekly', usedPercent: 20 }]), NOW)!],
     ])
     const { sheets } = deriveSheets(historyOf({ codex: [5, 0, 0] }), limits)
 
@@ -158,7 +158,22 @@ describe('provider sheets', () => {
       message: 'offline',
     } as unknown as UsageSummaryState
 
-    expect(sheetLimits(unavailable)).toBeUndefined()
+    expect(sheetLimits(unavailable, NOW)).toBeUndefined()
+    const unread = {
+      status: 'ready',
+      provider: 'grok',
+      summary: {
+        provider: 'grok',
+        limits: [],
+        limitSource: { provider: 'grok', status: 'unavailable', reason: 'failed', error: 'down' },
+      },
+    } as unknown as UsageSummaryState
+    // A source the server failed to read stays, with its reason and a Retry.
+    expect(sheetLimits(unread, NOW)).toEqual({
+      rows: [],
+      status: { label: 'Unavailable', detail: 'Plan limits couldn’t be loaded. down' },
+      retryable: true,
+    })
     const none = {
       status: 'ready',
       provider: 'codex',
@@ -168,8 +183,8 @@ describe('provider sheets', () => {
         limitSource: { provider: 'codex', status: 'ready', limits: [] },
       },
     } as unknown as UsageSummaryState
-    expect(sheetLimits(none)).toEqual({ rows: [], retryable: false })
-    expect(sheetLimits(failed)).toEqual({
+    expect(sheetLimits(none, NOW)).toEqual({ rows: [], retryable: false })
+    expect(sheetLimits(failed, NOW)).toEqual({
       rows: [],
       status: { label: 'Unavailable', detail: 'Plan limits couldn’t be loaded. offline' },
       retryable: true,
@@ -223,7 +238,7 @@ describe('axis ticks', () => {
 
 describe('accounts', () => {
   it('names the account in a limit alert once a provider has more than one', () => {
-    const limits = sheetLimits(ready('codex', [{ label: 'Weekly', usedPercent: 95 }]))!
+    const limits = sheetLimits(ready('codex', [{ label: 'Weekly', usedPercent: 95 }]), NOW)!
     const [sheet] = deriveSheets(historyOf({ codex: [10] }), new Map([['codex', limits]])).sheets
     const split: ProviderSheet = {
       ...sheet!,
@@ -246,9 +261,12 @@ describe('accounts', () => {
 describe('limit alert', () => {
   it('names reached limits first, then those running low, with their resets', () => {
     const limits = new Map<ProviderId, SheetLimits>([
-      ['claude-code', sheetLimits(ready('claude-code', [{ label: 'Session', usedPercent: 90 }]))!],
-      ['grok', sheetLimits(ready('grok', [{ label: 'Weekly', usedPercent: 100 }]))!],
-      ['codex', sheetLimits(ready('codex', [{ label: '30 days', usedPercent: 40 }]))!],
+      [
+        'claude-code',
+        sheetLimits(ready('claude-code', [{ label: 'Session', usedPercent: 90 }]), NOW)!,
+      ],
+      ['grok', sheetLimits(ready('grok', [{ label: 'Weekly', usedPercent: 100 }]), NOW)!],
+      ['codex', sheetLimits(ready('codex', [{ label: '30 days', usedPercent: 40 }]), NOW)!],
     ])
     const { sheets } = deriveSheets(historyOf({ 'claude-code': [10], grok: [1] }), limits)
 
@@ -259,7 +277,7 @@ describe('limit alert', () => {
 
   it('says nothing while every limit has room', () => {
     const limits = new Map<ProviderId, SheetLimits>([
-      ['codex', sheetLimits(ready('codex', [{ label: 'Weekly', usedPercent: 84 }]))!],
+      ['codex', sheetLimits(ready('codex', [{ label: 'Weekly', usedPercent: 84 }]), NOW)!],
     ])
     expect(limitAlert(deriveSheets(undefined, limits).sheets, NOW)).toBeUndefined()
   })
