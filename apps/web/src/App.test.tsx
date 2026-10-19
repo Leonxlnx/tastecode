@@ -2907,7 +2907,7 @@ describe('web client', () => {
       reasoningEfforts: [],
       serviceTiers: [],
     })
-    const announce = (payload: { provider: string; agent?: string }) =>
+    const announce = (payload: { provider: string; agent?: string; accountId?: string }) =>
       act(() => transport.listeners.get('models.changed')?.(payload))
     const settled = () => act(async () => new Promise((resolve) => window.setTimeout(resolve, 0)))
 
@@ -2932,6 +2932,11 @@ describe('web client', () => {
 
       // A source this catalog does not list is not requested.
       announce({ provider: 'acp', agent: 'kimi' })
+      await settled()
+      expect(rpcCount('models.list')).toBe(2)
+
+      // Nor another account's list: the catalog lists the default account.
+      announce({ provider: 'codex', accountId: 'work-1a2b3c' })
       await settled()
       expect(rpcCount('models.list')).toBe(2)
     })
@@ -5268,6 +5273,31 @@ describe('new chats', () => {
     expect(transport.request).not.toHaveBeenCalledWith('usage.summary', expect.anything())
   })
 
+  it('keeps another account’s pushed limits and changes off the default account', async () => {
+    render(<App />)
+    expect(await screen.findByText('75% left')).toBeTruthy()
+    transport.request.mockClear()
+
+    act(() => {
+      transport.listeners.get('usage.limits')?.({
+        source: {
+          provider: 'codex',
+          accountId: 'work-1a2b3c',
+          status: 'ready',
+          limits: [{ id: 'codex:primary', label: '5 hours', usedPercent: 90 }],
+          checkedAt: Date.now(),
+          origin: 'live',
+        },
+      })
+      transport.listeners.get('usage.changed')?.({ provider: 'codex', accountId: 'work-1a2b3c' })
+    })
+    await act(async () => new Promise((resolve) => window.setTimeout(resolve, 120)))
+
+    expect(screen.getByText('75% left')).toBeTruthy()
+    expect(screen.queryByText('10% left')).toBeNull()
+    expect(transport.request).not.toHaveBeenCalledWith('usage.summary', expect.anything())
+  })
+
   it('refreshes usage once for active-provider change bursts', async () => {
     render(<App />)
     await waitFor(() =>
@@ -5939,6 +5969,89 @@ describe('new chats', () => {
       }
     },
   )
+
+  it('signs a further account in through the sign-in terminal and asks that account who it is', async () => {
+    desktopShell.enabled = true
+    serverProjects = []
+    const codex = serverProviders[0]!
+    serverProviders = [
+      { ...codex, capabilities: { ...codex.capabilities!, multipleAccounts: true } },
+    ]
+    let workSignedIn = false
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'accounts.list') {
+        return Promise.resolve({
+          accounts: [
+            {
+              id: 'default',
+              provider: 'codex',
+              label: 'Default',
+              managed: false,
+              email: 'me@x.test',
+            },
+            {
+              id: 'work-1a2b3c',
+              provider: 'codex',
+              label: 'Work',
+              home: 'C:\\TasteCode\\accounts\\codex\\work-1a2b3c',
+              managed: true,
+              ...(workSignedIn ? { email: 'work@x.test' } : {}),
+            },
+          ],
+          active: {},
+        })
+      }
+      if (method === 'auth.status') {
+        const { accountId } = methods['auth.status'].params.parse(params)
+        if (accountId === 'work-1a2b3c') workSignedIn = true
+        return Promise.resolve({ signedIn: true, email: accountId ? 'work@x.test' : 'me@x.test' })
+      }
+      if (method === 'providers.launch') return Promise.resolve({ terminalId: 'term-codex-work' })
+      if (method === 'terminal.close') return Promise.resolve({})
+      return request(method, params)
+    })
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        observe(): void {}
+        unobserve(): void {}
+        disconnect(): void {}
+      },
+    )
+
+    render(<App />)
+    await openProviderSettings()
+    fireEvent.click(await screen.findByRole('button', { name: 'Sign in to Work' }))
+
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Settings' })).toBeNull())
+    expect(await screen.findByLabelText('Codex (Work) login terminal')).toBeTruthy()
+    expect(transport.request).toHaveBeenCalledWith('providers.launch', {
+      provider: 'codex',
+      accountId: 'work-1a2b3c',
+      columns: 320,
+      rows: 30,
+    })
+
+    act(() => {
+      transport.listeners.get('terminal.exit')!({ terminalId: 'term-codex-work', exitCode: 0 })
+    })
+    await screen.findByRole('dialog', { name: 'Settings' })
+    expect(screen.queryByLabelText('Codex (Work) login terminal')).toBeNull()
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('auth.status', {
+        provider: 'codex',
+        accountId: 'work-1a2b3c',
+      }),
+    )
+    // The server keeps that answer as Work's identity and says the list changed.
+    act(() => {
+      transport.listeners.get('accounts.changed')?.({ provider: 'codex' })
+    })
+    expect(await screen.findByText('work@x.test')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Sign in to Work' })).toBeNull()
+  })
 
   it('shows a running sign-in in its one workspace terminal again from Settings', async () => {
     // Load the lazy Settings dialog, workspace panel and terminal first, so this

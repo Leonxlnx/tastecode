@@ -1,5 +1,12 @@
 import { useEffect, useId, useRef, useState } from 'react'
-import type { Account, ProviderId, ProviderStatus } from '@harness/contracts'
+import {
+  DEFAULT_ACCOUNT_ID,
+  type Account,
+  type ProviderAccount,
+  type ProviderId,
+  type ProviderStatus,
+} from '@harness/contracts'
+import { accountsOf, useProviderAccounts } from '../provider-accounts-state.js'
 import { providerMark } from '../provider-presentation.js'
 import type { Transport } from '../transport.js'
 import { ProviderIcon } from './ProviderIcon.js'
@@ -67,9 +74,9 @@ export type CurrentAccount = {
 
 /**
  * Who each provider on this device is signed in as: one row per installed
- * provider that signs in with an account, with its plan. This is where a
- * provider's further accounts will be listed; email addresses stay in
- * Providers, behind their reveal.
+ * provider that signs in with an account, with its plan, followed by that
+ * provider's further accounts from Settings > Providers. Email addresses stay
+ * in Providers, behind their reveal.
  */
 export function ProfileAccounts(props: {
   transport: Transport
@@ -82,6 +89,11 @@ export function ProfileAccounts(props: {
   // A provider signs in with an account when its adapter declares a sign-in setup.
   const signIns = (props.providers ?? []).filter(
     (status) => status.installed && status.setup !== undefined,
+  )
+  // Further accounts are asked for only when a provider here can have them.
+  const { snapshot: accounts } = useProviderAccounts(
+    props.transport,
+    signIns.some((status) => status.capabilities?.multipleAccounts === true),
   )
   const current = props.current
   const fromApp = (provider: ProviderId) =>
@@ -169,9 +181,12 @@ export function ProfileAccounts(props: {
           detail="Providers lists the ones you can install and sign in to."
         />
       ) : (
-        signIns.map((status) => {
+        signIns.flatMap((status) => {
           const read = readOf(status.id)
-          return (
+          const further = accountsOf(accounts, status.id).filter(
+            (account) => account.id !== DEFAULT_ACCOUNT_ID,
+          )
+          return [
             <SettingsRow
               key={status.id}
               name={
@@ -183,11 +198,44 @@ export function ProfileAccounts(props: {
               tone={read.phase === 'ready' && read.account.signedIn ? undefined : 'muted'}
             >
               <AccountValue read={read} provider={status.displayName} />
-            </SettingsRow>
-          )
+            </SettingsRow>,
+            ...further.map((account) => (
+              <FurtherAccountRow
+                key={`${status.id}/${account.id}`}
+                account={account}
+                provider={status}
+              />
+            )),
+          ]
         })
       )}
     </section>
+  )
+}
+
+/**
+ * A further account shows what the server last learned about it: its plan,
+ * or that it signed in, never its email.
+ */
+function FurtherAccountRow(props: { account: ProviderAccount; provider: ProviderStatus }) {
+  const { account } = props
+  const signedIn = account.email !== undefined || account.plan !== undefined
+  return (
+    <SettingsRow
+      name={
+        <span className="profile-accounts__provider">
+          <ProviderIcon mark={providerMark(account.provider)} size={13} />
+          {`${props.provider.displayName} · ${account.label}`}
+        </span>
+      }
+      tone={signedIn ? undefined : 'muted'}
+    >
+      {signedIn ? (
+        <span>{account.plan ?? 'Signed in'}</span>
+      ) : (
+        <span className="profile-accounts__state">Not signed in</span>
+      )}
+    </SettingsRow>
   )
 }
 

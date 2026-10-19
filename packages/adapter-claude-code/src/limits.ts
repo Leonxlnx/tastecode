@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { withClaudeAccount } from './account-home.js'
 import {
   claudeSdkSpawner,
   createClaudeUsageQuery,
@@ -25,6 +26,8 @@ export type ClaudeLimitSourceOptions = {
   environment?: NodeJS.ProcessEnv | undefined
   spawn?: ClaudeSpawn | undefined
   timeoutMs?: number | undefined
+  /** Read the plan of the account in this config folder. Absent: the default account. */
+  accountHome?: string | undefined
 }
 
 /**
@@ -251,7 +254,9 @@ export async function claudeLimitSource(
       mcpServers: {},
       strictMcpConfig: true,
       settingSources: [],
-      env: limitReadEnvironment(options.environment ?? process.env),
+      env: limitReadEnvironment(
+        withClaudeAccount(options.environment ?? process.env, options.accountHome),
+      ),
       spawnClaudeCodeProcess: claudeSdkSpawner(options.spawn),
     },
   })

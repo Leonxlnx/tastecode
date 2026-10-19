@@ -25,6 +25,7 @@ import type {
   ResultOf,
   SidebarSettings,
 } from '@harness/contracts'
+import { DEFAULT_ACCOUNT_ID } from '@harness/contracts'
 import {
   isDesktop,
   isMacOS,
@@ -1319,6 +1320,13 @@ export function App() {
       providerStatuses.find((entry) => entry.id === provider)?.capabilities?.autoReview === true,
     [provider, providerStatuses],
   )
+  // A new chat with such a provider offers its accounts beside the composer tools.
+  const providerHasAccounts = useMemo(
+    () =>
+      providerStatuses.find((entry) => entry.id === provider)?.capabilities?.multipleAccounts ===
+      true,
+    [provider, providerStatuses],
+  )
 
   const defaultApproval =
     approvalByProvider[provider] ?? (autoReviewSupported ? 'auto-review' : 'full')
@@ -1911,8 +1919,8 @@ export function App() {
       setWorkspaceDesignPreviewRequest({ requestId: request.requestId, url: request.url })
     })
     const offSidebarSettings = transport.on('sidebar.settings', acceptSidebarSettings)
-    const offUsageChanged = transport.on('usage.changed', ({ provider }) => {
-      usageController.changed(provider)
+    const offUsageChanged = transport.on('usage.changed', ({ provider, accountId }) => {
+      usageController.changed(provider, accountId)
     })
     // Live windows reach the bars as the server folds them in, not only after
     // the spaced usage.changed signal and a new request.
@@ -2669,7 +2677,10 @@ export function App() {
   // restart.
   useEffect(
     () =>
-      transport.on('models.changed', ({ provider, agent }) => {
+      transport.on('models.changed', ({ provider, agent, accountId }) => {
+        // The picker lists the default account's models; another account's
+        // list is read where that account is used.
+        if (accountId !== undefined && accountId !== DEFAULT_ACCOUNT_ID) return
         catalogSources.current?.relist(sourceKey({ provider, agentId: agent }))
       }),
     [transport],
@@ -4357,6 +4368,15 @@ export function App() {
     }
     const completedProvider = completed.provider
     if (!completedProvider) return
+    if (completed.accountId !== undefined && completed.accountId !== DEFAULT_ACCOUNT_ID) {
+      // A further account: its own check is what the server keeps as who signed
+      // in, and accounts.changed tells every accounts view. The default
+      // account's state is untouched.
+      void transport
+        .request('auth.status', { provider: completedProvider, accountId: completed.accountId })
+        .catch(() => undefined)
+      return
+    }
     setProviderAuthRefreshRevision((revision) => revision + 1)
     void transport
       .request('auth.status', { provider: completedProvider })
@@ -6193,6 +6213,7 @@ export function App() {
                     projectPath={activePath}
                     projectName={activeProject ? displayName(activeProject) : undefined}
                     threadId={activeId && !activeId.startsWith('pending:') ? activeId : undefined}
+                    accountProvider={!activeId && providerHasAccounts ? provider : undefined}
                     projectsLoading={projectsStatus === 'loading'}
                     branch={
                       (!activeId && activePath

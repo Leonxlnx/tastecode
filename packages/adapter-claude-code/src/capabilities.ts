@@ -48,6 +48,9 @@ export const CLAUDE_CAPABILITIES: Capabilities = {
   images: true,
   // task_progress messages count each agent's tool calls and tokens while it runs.
   subagents: 'progress',
+  // Every process can run in another CLAUDE_CONFIG_DIR, which holds that
+  // account's sign-in, settings and transcripts (account-home.ts).
+  multipleAccounts: true,
   // Claude Code compacts about 13K tokens short of a 200K window by default,
   // and ignores an override later than that. 1M applies only where the model
   // offers it.

@@ -33,6 +33,9 @@ const state = vi.hoisted(() => ({
   historyCopies: new Set<string>(),
   idleCheckouts: [] as string[],
   handled: [] as string[],
+  accountCalls: [] as unknown[][],
+  accountsRoot: '',
+  accountsChanged: (_provider: string) => {},
 }))
 const temporary: string[] = []
 
@@ -109,20 +112,94 @@ vi.mock('./orchestrator.js', () => ({
     async submitTurn() {
       return { queued: false, turnId: 'turn' }
     }
-    async startThread(provider: string, workspacePath: string) {
+    account(provider: string, _agent?: string, accountId?: string) {
+      state.handled.push(`auth.status(${provider}${accountId ? `, ${accountId}` : ''})`)
+      return Promise.resolve({ signedIn: false })
+    }
+    async startLogin(provider: string, accountId?: string) {
+      state.handled.push(`auth.startLogin(${provider}, ${accountId})`)
+      return { loginId: 'login-1' }
+    }
+    async cancelLogin(provider: string, loginId: string, accountId?: string) {
+      state.handled.push(`auth.cancelLogin(${provider}, ${loginId}, ${accountId})`)
+    }
+    async useApiKey(provider: string, _apiKey: string, accountId?: string) {
+      state.handled.push(`auth.useApiKey(${provider}, ${accountId})`)
+      return { signedIn: true }
+    }
+    async signOut(provider: string, _agent?: string, accountId?: string) {
+      state.handled.push(`auth.signOut(${provider}, ${accountId})`)
+    }
+    async listModels(provider: string, _agent?: string, accountId?: string) {
+      state.handled.push(`models.list(${provider}, ${accountId})`)
+      return []
+    }
+    launchProviderLogin(
+      target: string,
+      command: string,
+      _columns: number,
+      _rows: number,
+      account?: { id: string; environment: Record<string, string> },
+    ) {
+      state.handled.push(`providers.launch(${target}, ${command}, ${JSON.stringify(account)})`)
+      return 'login-terminal'
+    }
+    async releaseAccount(provider: string, accountId: string) {
+      state.accountCalls.push(['release', provider, accountId])
+    }
+    async startThread(provider: string, workspacePath: string, options: { accountId?: string }) {
       const id = `${provider}-started`
       state.threads.set(id, { projectPath: workspacePath, provider })
+      state.handled.push(`thread.start(${provider}, ${options.accountId ?? 'active'})`)
       return { id }
-    }
-    account(provider: string) {
-      state.handled.push(`auth.status(${provider})`)
-      return Promise.resolve({ signedIn: false })
     }
   },
 }))
 vi.mock('./providers.js', () => ({
   prewarmProviders: () => {
     state.prewarmed += 1
+  },
+  launchCommandFor: async (provider: string) => `${provider} login`,
+}))
+// The registry's own rules are covered in provider-accounts.test.ts; this is its wiring.
+vi.mock('./provider-accounts.js', () => ({
+  ProviderAccounts: class {
+    constructor(_rows: unknown, options: { root: string; onChanged: (provider: string) => void }) {
+      state.accountsRoot = options.root
+      state.accountsChanged = options.onChanged
+    }
+    list(provider?: string) {
+      state.accountCalls.push(['list', provider])
+      return { accounts: [], active: {} }
+    }
+    create(provider: string, label: string, home: unknown) {
+      state.accountCalls.push(['create', provider, label, home])
+      return { id: 'work-1a2b3c', provider, label, home: path.resolve('w'), managed: true }
+    }
+    rename(provider: string, accountId: string, label: string) {
+      state.accountCalls.push(['rename', provider, accountId, label])
+      return { id: accountId, provider, label, managed: false }
+    }
+    async remove(provider: string, accountId: string, deleteHome: boolean) {
+      state.accountCalls.push(['remove', provider, accountId, deleteHome])
+    }
+    setActive(provider: string, accountId: string) {
+      state.accountCalls.push(['setActive', provider, accountId])
+    }
+    supports(provider: string) {
+      return provider !== 'grok'
+    }
+    environment(_provider: string, accountId: string | undefined) {
+      return accountId === undefined || accountId === 'default' ? {} : { ACCOUNT_HOME: accountId }
+    }
+    home(provider: string, accountId: string | undefined) {
+      if (accountId === undefined || accountId === 'default') return undefined
+      if (provider === 'grok') throw new Error('This provider runs as one account only.')
+      return path.resolve(accountId)
+    }
+    recordIdentity(provider: string, accountId: string | undefined, account: unknown) {
+      state.accountCalls.push(['recordIdentity', provider, accountId, account])
+    }
   },
 }))
 vi.mock('./runtime-loader.js', () => ({
@@ -213,6 +290,7 @@ afterEach(async () => {
   state.historyCopies.clear()
   state.idleCheckouts.length = 0
   state.handled.length = 0
+  state.accountCalls.length = 0
   vi.unstubAllEnvs()
   await Promise.all(
     temporary.splice(0).map((directory) => rm(directory, { recursive: true, maxRetries: 5 })),
@@ -521,6 +599,166 @@ describe('methods without a route', () => {
       id: 'ask',
       error: { code: 'bad_request', message: 'unknown method: no.such.method' },
     })
+  })
+})
+
+describe('provider accounts', () => {
+  async function connect(port: number) {
+    const client = new WebSocket(`ws://127.0.0.1:${port}`)
+    const messages: Array<Record<string, unknown>> = []
+    client.on('message', (message) => messages.push(JSON.parse(String(message))))
+    await once(client, 'message')
+    let next = 0
+    const ask = async (method: string, params: unknown) => {
+      const id = `ask-${(next += 1)}`
+      client.send(JSON.stringify({ id, method, params }))
+      await vi.waitFor(() => expect(messages.some((message) => message['id'] === id)).toBe(true))
+      return messages.find((message) => message['id'] === id)
+    }
+    return { client, messages, ask }
+  }
+
+  it('answers the accounts methods and tells every client when they change', async () => {
+    const { port } = await listen()
+    const { client, messages, ask } = await connect(port)
+    try {
+      expect(path.basename(state.accountsRoot)).toBe('accounts')
+      expect(await ask('accounts.list', { provider: 'codex' })).toMatchObject({
+        result: { accounts: [], active: {} },
+      })
+      expect(
+        await ask('accounts.create', {
+          provider: 'codex',
+          label: ' Work ',
+          home: { kind: 'managed' },
+        }),
+      ).toMatchObject({ result: { account: { id: 'work-1a2b3c', label: 'Work', managed: true } } })
+      await ask('accounts.rename', { provider: 'codex', accountId: 'default', label: 'Mine' })
+      await ask('accounts.setActive', { provider: 'codex', accountId: 'work-1a2b3c' })
+      expect(
+        await ask('accounts.remove', { provider: 'codex', accountId: 'work-1a2b3c' }),
+      ).toMatchObject({ result: {} })
+      await ask('accounts.remove', {
+        provider: 'codex',
+        accountId: 'work-1a2b3c',
+        deleteHome: true,
+      })
+      expect(
+        await ask('accounts.create', {
+          provider: 'codex',
+          label: 'Relative',
+          home: { kind: 'existing', path: 'relative/folder' },
+        }),
+      ).toMatchObject({ error: { code: 'bad_request' } })
+      expect(state.accountCalls).toEqual([
+        ['list', 'codex'],
+        ['create', 'codex', 'Work', { kind: 'managed' }],
+        ['rename', 'codex', 'default', 'Mine'],
+        ['setActive', 'codex', 'work-1a2b3c'],
+        // What runs as the account stops before it is removed.
+        ['release', 'codex', 'work-1a2b3c'],
+        ['remove', 'codex', 'work-1a2b3c', false],
+        ['release', 'codex', 'work-1a2b3c'],
+        ['remove', 'codex', 'work-1a2b3c', true],
+      ])
+
+      state.accountsChanged('claude-code')
+      await vi.waitFor(() =>
+        expect(messages).toContainEqual(
+          expect.objectContaining({
+            channel: 'accounts.changed',
+            data: { provider: 'claude-code' },
+          }),
+        ),
+      )
+    } finally {
+      client.terminate()
+    }
+  })
+
+  it('refuses an account it cannot run instead of acting on the default one', async () => {
+    const { port } = await listen()
+    const { client, ask } = await connect(port)
+    const notYet = 'Running this provider as another account is not available yet.'
+    try {
+      for (const [method, params] of [
+        ['usage.summary', { provider: 'codex', accountId: 'work' }],
+        [
+          'usage.consumeReset',
+          { provider: 'codex', accountId: 'work', idempotencyKey: crypto.randomUUID() },
+        ],
+        ['usage.history', { range: '7d', account: { provider: 'codex', accountId: 'work' } }],
+      ] as const) {
+        expect(await ask(method, params), method).toMatchObject({
+          error: { code: 'internal', message: notYet },
+        })
+      }
+      expect(state.handled).toEqual([])
+      // A chat is pinned to its account by the orchestrator, which checks it.
+      for (const accountId of ['work', undefined]) {
+        expect(
+          await ask('thread.start', { provider: 'codex', accountId, workspacePath: 'C:\\x' }),
+        ).toMatchObject({ result: { threadId: 'codex-started' } })
+      }
+      expect(state.handled.filter((entry) => entry.startsWith('thread.'))).toEqual([
+        'thread.start(codex, work)',
+        'thread.start(codex, active)',
+      ])
+    } finally {
+      client.terminate()
+    }
+  })
+
+  it('runs sign-in, sign-out, the sign-in terminal and model lists as the account asked for', async () => {
+    const { port } = await listen()
+    const { client, ask } = await connect(port)
+    try {
+      for (const [method, params] of [
+        ['auth.status', { provider: 'codex', accountId: 'work' }],
+        ['auth.startLogin', { provider: 'claude-code', accountId: 'work' }],
+        ['auth.cancelLogin', { provider: 'claude-code', accountId: 'work', loginId: 'login-1' }],
+        ['auth.useApiKey', { provider: 'codex', accountId: 'work', apiKey: 'test-key' }],
+        ['auth.signOut', { provider: 'codex', accountId: 'work' }],
+        ['models.list', { provider: 'codex', accountId: 'work' }],
+        ['providers.launch', { provider: 'codex', accountId: 'work', columns: 80, rows: 24 }],
+        ['providers.launch', { provider: 'codex', columns: 80, rows: 24 }],
+      ] as const) {
+        expect(await ask(method, params), method).toHaveProperty('result')
+      }
+      expect(state.handled).toEqual([
+        'auth.status(codex, work)',
+        'auth.startLogin(claude-code, work)',
+        'auth.cancelLogin(claude-code, login-1, work)',
+        'auth.useApiKey(codex, work)',
+        'auth.signOut(codex, work)',
+        'models.list(codex, work)',
+        'providers.launch(codex, codex login, {"id":"work","environment":{"ACCOUNT_HOME":"work"}})',
+        'providers.launch(codex, codex login, undefined)',
+      ])
+      // The CLI's own answers name the account's identity.
+      expect(state.accountCalls).toEqual([
+        ['recordIdentity', 'codex', 'work', { signedIn: false }],
+        ['recordIdentity', 'codex', 'work', { signedIn: true }],
+      ])
+    } finally {
+      client.terminate()
+    }
+  })
+
+  it('remembers an identity only from the CLI sign-in check itself', async () => {
+    const { port } = await listen()
+    const { client, ask } = await connect(port)
+    try {
+      await ask('auth.status', { provider: 'codex', accountId: 'default' })
+      await ask('auth.status', { provider: 'claude-code' })
+      await ask('auth.status', { provider: 'codex', agent: 'my-harness' })
+      expect(state.accountCalls).toEqual([
+        ['recordIdentity', 'codex', 'default', { signedIn: false }],
+        ['recordIdentity', 'claude-code', undefined, { signedIn: false }],
+      ])
+    } finally {
+      client.terminate()
+    }
   })
 })
 

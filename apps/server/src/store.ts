@@ -13,6 +13,7 @@ import path from 'node:path'
 import {
   ApprovalModeSchema,
   BackgroundModelPreferenceSchema,
+  DEFAULT_ACCOUNT_ID,
   DiffDecisionSchema,
   DomainEventSchema,
   ProviderContextSettingsMapSchema,
@@ -109,6 +110,8 @@ export type StoredThread = {
   agent?: string | undefined
   /** Non-secret connection identity for direct API sessions. */
   connectionId?: string | undefined
+  /** The provider account this chat is pinned to. Absent means the default account. */
+  accountId?: string | undefined
   /** Opaque provider-owned resume identity. Never used as the TasteCode id. */
   providerSessionId?: string | undefined
   title: string
@@ -139,6 +142,8 @@ export type StoredSidebarThread = {
   agent?: string | undefined
   /** Non-secret connection identity for direct API sessions. */
   connectionId?: string | undefined
+  /** The provider account this chat is pinned to. Absent means the default account. */
+  accountId?: string | undefined
   title: string
   pinned: boolean
   createdAt: number
@@ -218,6 +223,26 @@ type SearchSnapshot = {
 }
 
 export type UsageSummary = { session: UsageTotal; today: UsageTotal }
+
+/**
+ * One provider account as stored. `label` is absent only on a default
+ * account's row that was never renamed; `home` is set only for a folder the
+ * user brought.
+ */
+export type StoredProviderAccount = {
+  provider: ProviderId
+  id: string
+  label?: string
+  home?: string
+  managed: boolean
+  email?: string
+  plan?: string
+  createdAt: number
+  /** New chats with this provider start on it. No active row means the default account. */
+  active: boolean
+}
+
+export type ProviderAccountSnapshotKind = 'limits' | 'models'
 
 type UsageSample = { total: UsageTotal; cumulative: boolean }
 
@@ -322,6 +347,7 @@ CREATE TABLE IF NOT EXISTS threads (
   provider     TEXT NOT NULL,
   agent        TEXT,
   connection_id TEXT,
+  account_id   TEXT,
   provider_session_id TEXT,
   title        TEXT NOT NULL,
   pinned       INTEGER NOT NULL DEFAULT 0,
@@ -539,6 +565,33 @@ CREATE TABLE IF NOT EXISTS app_settings (
   value TEXT NOT NULL
 );
 
+-- Provider accounts beyond the CLI's own. The default account gets a row only
+-- for a label or identity of its own. A managed account's folder is derived
+-- from the data folder, so only a folder the user brought is stored in home.
+-- No credential ever lands here; the vendor CLI keeps those in its folder.
+CREATE TABLE IF NOT EXISTS provider_accounts (
+  provider   TEXT NOT NULL,
+  id         TEXT NOT NULL,
+  label      TEXT,
+  home       TEXT,
+  managed    INTEGER NOT NULL DEFAULT 0,
+  email      TEXT,
+  plan       TEXT,
+  created_at INTEGER NOT NULL,
+  active     INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (provider, id)
+) WITHOUT ROWID;
+
+-- What an account's own controls keep across restarts, as they serialized it:
+-- its last plan limits and model lists. Removed with the account.
+CREATE TABLE IF NOT EXISTS provider_account_snapshots (
+  provider TEXT NOT NULL,
+  id       TEXT NOT NULL,
+  kind     TEXT NOT NULL CHECK (kind IN ('limits', 'models')),
+  value    TEXT NOT NULL,
+  PRIMARY KEY (provider, id, kind)
+) WITHOUT ROWID;
+
 CREATE INDEX IF NOT EXISTS checkpoints_by_thread ON checkpoints (thread_id, seq);
 CREATE INDEX IF NOT EXISTS events_by_thread ON events (thread_id, seq);
 CREATE INDEX IF NOT EXISTS queued_turn_events_by_thread
@@ -585,6 +638,7 @@ const ADDED_COLUMNS: Array<{ table: string; column: string; definition: string }
   { table: 'threads', column: 'restore_context_pending', definition: 'INTEGER NOT NULL DEFAULT 0' },
   { table: 'threads', column: 'provider_session_id', definition: 'TEXT' },
   { table: 'threads', column: 'connection_id', definition: 'TEXT' },
+  { table: 'threads', column: 'account_id', definition: 'TEXT' },
   { table: 'threads', column: 'history_rewrite_after', definition: 'INTEGER' },
   { table: 'threads', column: 'history_rewrite_through', definition: 'INTEGER' },
   { table: 'threads', column: 'restored_at', definition: 'INTEGER' },
@@ -595,6 +649,17 @@ type ColumnRow = { name: string }
 type StringValueRow = { value: string }
 type MigrationRow = { name: string }
 type ProjectRow = { path: string; name: string; pinned: SqliteInteger; created_at: SqliteInteger }
+type ProviderAccountRow = {
+  provider: ProviderId
+  id: string
+  label: string | null
+  home: string | null
+  managed: SqliteInteger
+  email: string | null
+  plan: string | null
+  created_at: SqliteInteger
+  active: SqliteInteger
+}
 type WorktreeRow = {
   id: string
   project_path: string
@@ -607,6 +672,7 @@ type ThreadRow = {
   provider: string
   agent: string | null
   connection_id: string | null
+  account_id: string | null
   provider_session_id: string | null
   title: string
   pinned: SqliteInteger
@@ -632,6 +698,7 @@ type SidebarThreadRow = Pick<
   | 'provider'
   | 'agent'
   | 'connection_id'
+  | 'account_id'
   | 'title'
   | 'pinned'
   | 'created_at'
@@ -1154,10 +1221,10 @@ export class Store {
     this.#findProject = this.#db.prepare(`SELECT * FROM projects WHERE path = ?`)
     this.#insertThread = this.#db.prepare(
       `INSERT INTO threads
-        (id, project_path, provider, agent, connection_id, provider_session_id, title, created_at,
-          worktree_path, worktree_branch,
+        (id, project_path, provider, agent, connection_id, account_id, provider_session_id, title,
+          created_at, worktree_path, worktree_branch,
           lifecycle_state, keep_active, unread, last_active_at, ephemeral, parent_thread_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 0, 0, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 0, 0, ?, ?, ?)`,
     )
     this.#listProjects = this.#db.prepare(`SELECT * FROM projects ORDER BY created_at`)
     this.#listProjectThreads = this.#db.prepare(
@@ -1167,7 +1234,8 @@ export class Store {
       `SELECT * FROM threads WHERE ephemeral = 0 ORDER BY created_at DESC`,
     )
     this.#listSidebarThreads = this.#db.prepare(
-      `SELECT id, project_path, provider, agent, connection_id, title, pinned, created_at, closed_at,
+      `SELECT id, project_path, provider, agent, connection_id, account_id, title, pinned, created_at,
+              closed_at,
               worktree_branch, lifecycle_state, lifecycle_at, lifecycle_reason, wake_at,
               keep_active, woke_at, unread
        FROM threads WHERE ephemeral = 0 ORDER BY created_at DESC`,
@@ -1528,6 +1596,7 @@ export class Store {
       stored.provider,
       stored.agent ?? null,
       stored.connectionId ?? null,
+      stored.accountId ?? null,
       stored.providerSessionId ?? null,
       stored.title,
       stored.createdAt,
@@ -2254,6 +2323,155 @@ export class Store {
 
   setLimitSnapshot(value: string): void {
     this.#writeAppSetting.run(LIMIT_SNAPSHOT_SETTING, value)
+  }
+
+  // ---- provider accounts --------------------------------------------------
+
+  /** Oldest first. Rows of providers this build does not know stay in the table untouched. */
+  providerAccounts(provider: ProviderId): StoredProviderAccount[] {
+    return sqliteRows<ProviderAccountRow>(
+      this.#db.prepare(
+        `SELECT * FROM provider_accounts WHERE provider = ? ORDER BY created_at, id`,
+      ),
+      provider,
+    ).map((row) => ({
+      provider: row.provider,
+      id: row.id,
+      ...(row.label === null ? {} : { label: row.label }),
+      ...(row.home === null ? {} : { home: row.home }),
+      managed: Number(row.managed) === 1,
+      ...(row.email === null ? {} : { email: row.email }),
+      ...(row.plan === null ? {} : { plan: row.plan }),
+      createdAt: Number(row.created_at),
+      active: Number(row.active) === 1,
+    }))
+  }
+
+  /** Fails when the provider already has an account with this id. */
+  addProviderAccount(
+    account: Pick<StoredProviderAccount, 'provider' | 'id' | 'label' | 'home' | 'managed'> & {
+      createdAt: number
+    },
+  ): void {
+    this.#db
+      .prepare(
+        `INSERT INTO provider_accounts (provider, id, label, home, managed, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        account.provider,
+        account.id,
+        account.label ?? null,
+        account.home ?? null,
+        account.managed ? 1 : 0,
+        account.createdAt,
+      )
+  }
+
+  renameProviderAccount(provider: ProviderId, id: string, label: string): void {
+    this.#updateProviderAccount(
+      provider,
+      id,
+      `UPDATE provider_accounts SET label = ? WHERE provider = ? AND id = ?`,
+      label,
+    )
+  }
+
+  /** The last identity this account's own sign-in check named; absent fields are cleared. */
+  recordProviderAccountIdentity(
+    provider: ProviderId,
+    id: string,
+    identity: { email?: string; plan?: string },
+  ): void {
+    this.#updateProviderAccount(
+      provider,
+      id,
+      `UPDATE provider_accounts SET email = ?, plan = ? WHERE provider = ? AND id = ?`,
+      identity.email ?? null,
+      identity.plan ?? null,
+    )
+  }
+
+  /** False when there was no such account. Its snapshots go with it. */
+  removeProviderAccount(provider: ProviderId, id: string): boolean {
+    return this.#transaction(() => {
+      this.#db
+        .prepare(`DELETE FROM provider_account_snapshots WHERE provider = ? AND id = ?`)
+        .run(provider, id)
+      const result = this.#db
+        .prepare(`DELETE FROM provider_accounts WHERE provider = ? AND id = ?`)
+        .run(provider, id)
+      return Number(result.changes) > 0
+    })
+  }
+
+  /** An account's own last plan limits or model lists, as its controls serialized them. */
+  providerAccountSnapshot(
+    provider: ProviderId,
+    id: string,
+    kind: ProviderAccountSnapshotKind,
+  ): string | undefined {
+    return sqliteRow<StringValueRow>(
+      this.#db.prepare(
+        `SELECT value FROM provider_account_snapshots WHERE provider = ? AND id = ? AND kind = ?`,
+      ),
+      provider,
+      id,
+      kind,
+    )?.value
+  }
+
+  /** Kept only while the account exists, so a late write cannot outlive its removal. */
+  setProviderAccountSnapshot(
+    provider: ProviderId,
+    id: string,
+    kind: ProviderAccountSnapshotKind,
+    value: string,
+  ): void {
+    this.#db
+      .prepare(
+        `INSERT INTO provider_account_snapshots (provider, id, kind, value)
+         SELECT ?, ?, ?, ? WHERE EXISTS (
+           SELECT 1 FROM provider_accounts WHERE provider = ? AND id = ?
+         )
+         ON CONFLICT (provider, id, kind) DO UPDATE SET value = excluded.value`,
+      )
+      .run(provider, id, kind, value, provider, id)
+  }
+
+  /** The default account is active when no row is. */
+  setActiveProviderAccount(provider: ProviderId, id: string): void {
+    this.#transaction(() => {
+      this.#db
+        .prepare(`UPDATE provider_accounts SET active = 0 WHERE provider = ? AND active = 1`)
+        .run(provider)
+      if (id === DEFAULT_ACCOUNT_ID) return
+      const result = this.#db
+        .prepare(`UPDATE provider_accounts SET active = 1 WHERE provider = ? AND id = ?`)
+        .run(provider, id)
+      if (Number(result.changes) === 0) throw new Error('account not found')
+    })
+  }
+
+  /** The default account always exists, so its row is added on its first change. */
+  #updateProviderAccount(
+    provider: ProviderId,
+    id: string,
+    sql: string,
+    ...values: SQLInputValue[]
+  ): void {
+    this.#transaction(() => {
+      if (id === DEFAULT_ACCOUNT_ID) {
+        this.#db
+          .prepare(
+            `INSERT OR IGNORE INTO provider_accounts (provider, id, managed, created_at)
+             VALUES (?, ?, 0, ?)`,
+          )
+          .run(provider, id, Date.now())
+      }
+      const result = this.#db.prepare(sql).run(...values, provider, id)
+      if (Number(result.changes) === 0) throw new Error('account not found')
+    })
   }
 
   #updateThread(
@@ -4841,6 +5059,7 @@ function toSidebarThread(row: SidebarThreadRow): StoredSidebarThread | undefined
     provider,
     ...(row.agent === null ? {} : { agent: row.agent }),
     ...(row.connection_id === null ? {} : { connectionId: row.connection_id }),
+    ...(row.account_id === null ? {} : { accountId: row.account_id }),
     title: row.title,
     pinned: row.pinned === 1,
     createdAt: Number(row.created_at),
@@ -4863,6 +5082,7 @@ function toThread(row: ThreadRow): StoredThread | undefined {
     provider,
     ...(row.agent === null ? {} : { agent: row.agent }),
     ...(row.connection_id === null ? {} : { connectionId: row.connection_id }),
+    ...(row.account_id === null ? {} : { accountId: row.account_id }),
     ...(row.provider_session_id === null ? {} : { providerSessionId: row.provider_session_id }),
     title: row.title,
     pinned: row.pinned === 1,

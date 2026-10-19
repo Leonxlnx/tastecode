@@ -17,6 +17,7 @@ import type {
   UsageReadIntent,
 } from '@harness/contracts'
 import { validateAcpMcpServer } from '@harness/adapter-acp/mcp'
+import { withClaudeAccount } from '@harness/adapter-claude-code/account-home'
 import {
   CLAUDE_MCP_CAPABILITIES,
   validateClaudeMcpServer,
@@ -209,6 +210,14 @@ export type ProviderControlsOptions = {
   limitSnapshot?: { read: () => string | undefined; write: (value: string) => void }
   createCodex?: () => CodexControlAdapter | Promise<CodexControlAdapter>
   services?: Partial<Record<ProviderId, ProviderServices>>
+  /**
+   * The config folder of the provider account these controls run as; absent,
+   * each provider's default account. Its sign-in, limits, model lists and
+   * Codex control process are that account's alone.
+   */
+  accountHome?: string | undefined
+  /** The providers these controls serve; absent, every provider. */
+  providers?: readonly ProviderId[] | undefined
 }
 
 type ProcessEntry = {
@@ -459,6 +468,36 @@ const defaultServices = {
   },
 } satisfies Record<ProviderId, ProviderServices>
 
+/**
+ * The calls of the providers that can run as another account, made as the
+ * account in `accountHome`. Codex's calls go through its control process,
+ * which takes the folder itself.
+ */
+const accountServices = new Map<ProviderId, (accountHome: string) => ProviderServices>([
+  ['codex', () => ({})],
+  [
+    'claude-code',
+    (accountHome) => ({
+      ...defaultServices['claude-code'],
+      projectInventory: {
+        ...defaultServices['claude-code'].projectInventory,
+        discover: async (projectPath, options) =>
+          (await loadClaude()).discoverClaudeProject(projectPath, { ...options, accountHome }),
+        watchPaths: async (projectPath) =>
+          (await loadClaude()).claudeInventoryWatchPaths(
+            projectPath,
+            withClaudeAccount(process.env, accountHome),
+          ),
+      },
+      account: async () => (await loadClaude()).claudeAccount({ accountHome }),
+      usageLimitSource: async () => (await loadClaude()).claudeLimitSource({ accountHome }),
+      startLogin: async (complete) =>
+        (await loadClaude()).startClaudeLogin(complete, { accountHome }),
+      signOut: async () => (await loadClaude()).signOutClaude({ accountHome }),
+    }),
+  ],
+])
+
 /** Vendor settings and the processes that serve them have one owner. */
 export class ProviderControls {
   readonly #options: ProviderControlsOptions
@@ -531,7 +570,8 @@ export class ProviderControls {
     const watchTtlMs = duration(options.watchTtlMs, 60_000, 1)
     this.#skills = new WatchLeases(watchTtlMs)
     this.#mcp = new WatchLeases(watchTtlMs)
-    for (const provider of Object.keys(PROVIDER_CAPABILITIES) as ProviderId[]) {
+    for (const provider of options.providers ??
+      (Object.keys(PROVIDER_CAPABILITIES) as ProviderId[])) {
       this.#controls.set(provider, this.#makeControl(provider))
     }
   }
@@ -694,10 +734,12 @@ export class ProviderControls {
 
   #makeControl(provider: ProviderId): ProviderControl {
     const capabilities = PROVIDER_CAPABILITIES[provider]
-    const services: ProviderServices = {
-      ...defaultServices[provider],
-      ...this.#options.services?.[provider],
-    }
+    const home = this.#options.accountHome
+    const ownServices =
+      home === undefined ? defaultServices[provider] : accountServices.get(provider)?.(home)
+    // The default account's calls would act on the user's own sign-in instead.
+    if (!ownServices) throw new Error(`${provider} cannot run as another account`)
+    const services: ProviderServices = { ...ownServices, ...this.#options.services?.[provider] }
     const inventory = this.#projectInventory(provider, services)
     const control: ProviderControl = {
       capabilities,
@@ -1349,9 +1391,10 @@ export class ProviderControls {
     const generation = this.#generation
     const creating = Promise.resolve().then(async () => {
       this.#assertOpen(generation)
+      const home = this.#options.accountHome
       return this.#options.createCodex
         ? this.#options.createCodex()
-        : new (await loadCodex()).CodexAdapter()
+        : new (await loadCodex()).CodexAdapter(home === undefined ? {} : { accountHome: home })
     })
     const entry: ProcessEntry = {
       creating,

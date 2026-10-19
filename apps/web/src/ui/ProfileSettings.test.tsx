@@ -3,6 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import type { ComponentProps } from 'react'
 import type { ProviderId, ProviderStatus, ResultOf, UsageHistoryTotals } from '@harness/contracts'
 import type { Transport } from '../transport.js'
+import { TestTransport } from '../test-transport.js'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { CELL, generatedAvatar } from '../generated-avatar.js'
 import { STRIKE_DELAY_MS } from './ProfileCoin.js'
@@ -465,6 +466,65 @@ describe('profile settings', () => {
     view.rerenderProfile({ transport, accountLoading: false, account: undefined })
     expect(await screen.findByText('Plus')).toBeTruthy()
     expect(request).toHaveBeenCalledWith('auth.status', { provider: 'codex' })
+  })
+
+  it('lists every account of a provider that can have more than one, never an email', async () => {
+    const multi = (id: ProviderId, name: string): ProviderStatus => ({
+      ...provider(id, name),
+      capabilities: {
+        steer: false,
+        fork: false,
+        interrupt: false,
+        reasoningItems: false,
+        approvals: false,
+        images: false,
+        multipleAccounts: true,
+      },
+    })
+    const transport = new TestTransport((method) => {
+      if (method === 'auth.status') return { signedIn: true, plan: 'Plus' }
+      if (method === 'accounts.list') {
+        return {
+          accounts: [
+            { id: 'default', provider: 'codex', label: 'Default', managed: false },
+            {
+              id: 'work-1a2b3c',
+              provider: 'codex',
+              label: 'Work',
+              home: 'C:\\TasteCode\\accounts\\codex\\work-1a2b3c',
+              managed: true,
+              email: 'work@example.com',
+              plan: 'Pro',
+            },
+            {
+              id: 'side-4d5e6f',
+              provider: 'codex',
+              label: 'Side',
+              home: 'D:\\codex-side',
+              managed: false,
+            },
+          ],
+          active: {},
+        }
+      }
+      throw new Error(`unexpected ${method}`)
+    })
+    renderProfile({ transport, providers: [multi('codex', 'Codex')] })
+
+    const accounts = screen.getByRole('region', { name: 'Accounts' })
+    const work = await within(accounts).findByText('Codex · Work')
+    expect(work.closest('.set-row')?.textContent).toContain('Pro')
+    const side = within(accounts).getByText('Codex · Side').closest('.set-row')!
+    expect(side.textContent).toContain('Not signed in')
+    expect(side.getAttribute('data-tone')).toBe('muted')
+    expect(within(accounts).getByText('Codex')).toBeTruthy()
+    expect(within(accounts).queryByText(/work@example\.com/)).toBeNull()
+  })
+
+  it('does not ask for accounts while no provider here can have more than one', () => {
+    const request = vi.fn(() => new Promise(() => {}))
+    renderProfile({ transport: { request } as unknown as Transport, providers: PROVIDERS })
+    expect(request).not.toHaveBeenCalledWith('accounts.list', expect.anything())
   })
 
   it('holds the accounts place until providers arrive and opens Providers to manage them', () => {

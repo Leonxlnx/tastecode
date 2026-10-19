@@ -394,13 +394,18 @@ function resolveExecutable(
   return undefined
 }
 
-/** Run a short, non-interactive CLI command and capture its public output. */
+/**
+ * Run a short, non-interactive CLI command and capture its public output.
+ * `env` is laid over the inherited environment, as with spawnCli, such as the
+ * variable that points a CLI at one account's config folder.
+ */
 export function runCli(
   command: string,
   args: string[],
   timeoutMs = 5000,
+  options: { env?: NodeJS.ProcessEnv } = {},
 ): Promise<{ code: number | null; stdout: string; stderr?: string | undefined }> {
-  const child = spawnCli(command, args)
+  const child = spawnCli(command, args, options)
   const captured = capture(child, timeoutMs, 1024 * 1024, commandLabel(command), 'leave')
   endStdin(child)
   return captured
