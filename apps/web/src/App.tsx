@@ -5189,6 +5189,17 @@ export function App() {
     (id: string) => void archiveSession(id),
     [archiveSession],
   )
+  // Archive is the lifecycle's settle: the chat keeps its transcript and
+  // checkout, waits under its project's Archived row, and comes back on Restore
+  // or when the user sends to it.
+  const archiveSidebarChat = useCallback(
+    (id: string) => void hideSession(id, 'settle'),
+    [hideSession],
+  )
+  const restoreSidebarChat = useCallback(
+    (id: string) => void restoreSession(id, 'unsettle'),
+    [restoreSession],
+  )
   const archiveSidebarProject = useCallback(
     (sessionIds: string[]) => {
       void (async () => {
@@ -6036,6 +6047,8 @@ export function App() {
           onRenameSession={renameSidebarSession}
           onToggleSessionPin={toggleSidebarSessionPin}
           onDeleteSession={deleteSidebarSession}
+          onArchiveSession={archiveSidebarChat}
+          onRestoreSession={restoreSidebarChat}
           onArchiveProject={archiveSidebarProject}
           onReorderProject={reorderSidebarProject}
           onReorderSession={reorderSidebarSession}

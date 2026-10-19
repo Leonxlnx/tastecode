@@ -25,6 +25,8 @@ import type {
 } from '@harness/contracts'
 import {
   IconTrash as Trash,
+  IconArchive as Archive,
+  IconArrowBackUp as Restore,
   IconDots as Ellipsis,
   IconFolderOpen as FolderOpen,
   IconGitPullRequest as GitPullRequest,
@@ -151,6 +153,8 @@ export type Project = {
   /** User-chosen name. Falls back to the folder name. */
   name?: string
   sessions: Session[]
+  /** Chats the user archived, folded at the end of the project (set by the rail). */
+  archived?: Session[]
   pinned?: boolean
 }
 
@@ -235,6 +239,9 @@ function SidebarComponent(props: {
   onRenameSession: (id: string, title: string) => void
   onToggleSessionPin?: (id: string) => void
   onDeleteSession: (id: string) => void
+  /** Puts a chat away without deleting it; it waits in its project's Archived row. */
+  onArchiveSession?: ((id: string) => void) | undefined
+  onRestoreSession?: ((id: string) => void) | undefined
   onArchiveProject: (sessionIds: string[]) => void
   onReorderProject?: (sourcePath: string, targetPath: string, position: DropPosition) => void
   onReorderSession: (
@@ -500,6 +507,14 @@ function SidebarComponent(props: {
       animateArchive(sessionIds, (ids) => actionsRef.current.onArchiveProject(ids)),
     [animateArchive],
   )
+  const archiveSession = useCallback(
+    (id: string) =>
+      animateArchive([id], (ids) => {
+        for (const sessionId of ids) actionsRef.current.onArchiveSession?.(sessionId)
+      }),
+    [animateArchive],
+  )
+  const restoreSession = useCallback((id: string) => actionsRef.current.onRestoreSession?.(id), [])
   const reorderSession = useCallback(
     (projectPath: string, sourceId: string, targetId: string, position: DropPosition) =>
       actionsRef.current.onReorderSession(projectPath, sourceId, targetId, position),
@@ -855,6 +870,8 @@ function SidebarComponent(props: {
                     onRenameSession={renameSession}
                     onToggleSessionPin={props.onToggleSessionPin ? toggleSessionPin : undefined}
                     onDeleteSession={deleteSession}
+                    onArchiveSession={props.onArchiveSession ? archiveSession : undefined}
+                    onRestoreSession={props.onRestoreSession ? restoreSession : undefined}
                     onArchiveProject={archiveProject}
                     onReorderSession={reorderSession}
                   />
@@ -1245,6 +1262,8 @@ const ProjectRow = memo(function ProjectRow(props: {
   onRenameSession: (id: string, title: string) => void
   onToggleSessionPin: ((id: string) => void) | undefined
   onDeleteSession: (id: string) => void
+  onArchiveSession: ((id: string) => void) | undefined
+  onRestoreSession: ((id: string) => void) | undefined
   onArchiveProject: (sessionIds: string[]) => void
   onReorderSession: (
     projectPath: string,
@@ -1450,7 +1469,7 @@ const ProjectRow = memo(function ProjectRow(props: {
             path={props.project.path}
             onConfirm={() => {
               if (confirming === 'archive') {
-                props.onArchiveProject(props.project.sessions.map((session) => session.id))
+                props.onArchiveProject(projectChats(props.project).map((session) => session.id))
               } else {
                 props.onRemoveProject(props.project.path)
               }
@@ -1488,6 +1507,8 @@ const ProjectRow = memo(function ProjectRow(props: {
             onSelectSession={props.onSelectSession}
             onRenameSession={props.onRenameSession}
             onDeleteSession={props.onDeleteSession}
+            onArchiveSession={props.onArchiveSession}
+            onRestoreSession={props.onRestoreSession}
             onToggleSessionPin={props.onToggleSessionPin}
             onReorderSession={props.onReorderSession}
           />
@@ -1507,6 +1528,8 @@ const ProjectSessions = memo(function ProjectSessions(props: {
   onRenameSession: (id: string, title: string) => void
   onToggleSessionPin: ((id: string) => void) | undefined
   onDeleteSession: (id: string) => void
+  onArchiveSession: ((id: string) => void) | undefined
+  onRestoreSession: ((id: string) => void) | undefined
   onReorderSession: (
     projectPath: string,
     sourceId: string,
@@ -1515,6 +1538,8 @@ const ProjectSessions = memo(function ProjectSessions(props: {
   ) => void
 }) {
   const count = props.project.sessions.length
+  const archived = props.project.archived ?? []
+  const [archivedOpen, setArchivedOpen] = useState(false)
   const [draggedSessionId, setDraggedSessionId] = useState<string>()
   const [dropTarget, setDropTarget] = useState<{
     id: string
@@ -1576,7 +1601,7 @@ const ProjectSessions = memo(function ProjectSessions(props: {
 
   return (
     <ul className="proj__sessions">
-      {count === 0 ? <li className="rail__hint">No chats</li> : null}
+      {count === 0 && archived.length === 0 ? <li className="rail__hint">No chats</li> : null}
       {visibleSessions.map((session) => (
         <ProjectSessionRow
           key={session.id}
@@ -1586,6 +1611,7 @@ const ProjectSessions = memo(function ProjectSessions(props: {
           onSelectSession={props.onSelectSession}
           onRenameSession={props.onRenameSession}
           onDeleteSession={props.onDeleteSession}
+          onArchiveSession={props.onArchiveSession}
           onToggleSessionPin={props.onToggleSessionPin}
           reorderable
           dragging={session.id === draggedSessionId}
@@ -1612,6 +1638,40 @@ const ProjectSessions = memo(function ProjectSessions(props: {
           </button>
         </li>
       ) : null}
+      {archived.length > 0 ? (
+        <li className="proj__sessions-toggle-row">
+          <button
+            type="button"
+            className="proj__sessions-toggle"
+            aria-expanded={archivedOpen}
+            onClick={() => setArchivedOpen(!archivedOpen)}
+          >
+            Archived <span className="proj__archived-count">{archived.length}</span>
+          </button>
+        </li>
+      ) : null}
+      {archivedOpen
+        ? archived.map((session) => (
+            <ProjectSessionRow
+              key={session.id}
+              session={session}
+              projectPath={props.project.path}
+              active={session.id === props.activeSessionId}
+              onSelectSession={props.onSelectSession}
+              onRenameSession={props.onRenameSession}
+              onDeleteSession={props.onDeleteSession}
+              onRestoreSession={props.onRestoreSession}
+              onToggleSessionPin={props.onToggleSessionPin}
+              reorderable={false}
+              dragging={false}
+              dropPosition={undefined}
+              onDragStart={startSessionDrag}
+              onDragOver={dragOverSession}
+              onDrop={dropSession}
+              onDragEnd={endDrag}
+            />
+          ))
+        : null}
     </ul>
   )
 })
@@ -1623,6 +1683,8 @@ const ProjectSessionRow = memo(function ProjectSessionRow(props: {
   onSelectSession: (id: string) => void
   onRenameSession: (id: string, title: string) => void
   onDeleteSession: (id: string) => void
+  onArchiveSession?: ((id: string) => void) | undefined
+  onRestoreSession?: ((id: string) => void) | undefined
   onToggleSessionPin: ((id: string) => void) | undefined
   reorderable: boolean
   dragging: boolean
@@ -1633,6 +1695,7 @@ const ProjectSessionRow = memo(function ProjectSessionRow(props: {
   onDragEnd: () => void
 }) {
   const { session } = props
+  const { onArchiveSession, onRestoreSession } = props
   return (
     <SessionRow
       session={session}
@@ -1640,6 +1703,8 @@ const ProjectSessionRow = memo(function ProjectSessionRow(props: {
       onSelect={() => props.onSelectSession(session.id)}
       onRename={(title) => props.onRenameSession(session.id, title)}
       onDelete={() => props.onDeleteSession(session.id)}
+      onArchive={onArchiveSession ? () => onArchiveSession(session.id) : undefined}
+      onRestore={onRestoreSession ? () => onRestoreSession(session.id) : undefined}
       onTogglePin={() => props.onToggleSessionPin?.(session.id)}
       onOpenInExplorer={() => void revealPath(props.projectPath)}
       reorderable={props.reorderable}
@@ -1659,6 +1724,10 @@ function SessionRow(props: {
   onSelect: () => void
   onRename: (title: string) => void
   onDelete: () => void
+  /** Present where the row may be archived: an unpinned chat in a project. */
+  onArchive?: (() => void) | undefined
+  /** Present on an archived chat's row. */
+  onRestore?: (() => void) | undefined
   onTogglePin: () => void
   onOpenInExplorer: () => void
   standalone?: boolean
@@ -1673,6 +1742,11 @@ function SessionRow(props: {
   const [renaming, setRenaming] = useState(false)
   const contextMenuTarget = useRef<HTMLButtonElement>(null)
   const finishRename = useRenameFocusReturn(renaming, setRenaming, contextMenuTarget)
+  // The row's one right slot shows the time at rest, or a live state. Its one
+  // hover action may take the time's place, never a spinner's or a dot's.
+  const atRest = !isLiveStatus(props.session.status)
+  const archive = atRest ? props.onArchive : undefined
+  const action = props.onRestore ?? archive
 
   if (renaming) {
     return (
@@ -1698,7 +1772,7 @@ function SessionRow(props: {
     <li
       className={`sessrow ${props.active ? 'is-active' : ''} ${props.standalone ? 'is-pinned' : ''} ${
         props.dragging ? 'is-dragging' : ''
-      } ${props.session.unread ? 'is-unread' : ''}`}
+      } ${props.session.unread ? 'is-unread' : ''} ${action ? 'has-action' : ''}`}
       data-archive-session-id={props.session.id}
       draggable={props.reorderable}
       data-drop-position={props.dropPosition}
@@ -1731,26 +1805,31 @@ function SessionRow(props: {
         </span>
       </button>
 
-      <span className="sess__actions">
-        <button
-          type="button"
-          className="sess__action"
-          onClick={() => setRenaming(true)}
-          aria-label={`Rename ${props.session.title}`}
-          title="Rename chat"
-        >
-          <Pencil size={13} aria-hidden />
-        </button>
-        <button
-          type="button"
-          className="sess__action"
-          onClick={props.onDelete}
-          aria-label={`Delete ${props.session.title}`}
-          title="Delete chat"
-        >
-          <Trash size={14} aria-hidden />
-        </button>
-      </span>
+      {action ? (
+        <span className="sess__actions">
+          {props.onRestore ? (
+            <button
+              type="button"
+              className="sess__action"
+              onClick={props.onRestore}
+              aria-label={`Restore ${props.session.title}`}
+              title="Restore chat"
+            >
+              <Restore size={14} aria-hidden />
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="sess__action"
+              onClick={archive}
+              aria-label={`Archive ${props.session.title}`}
+              title="Archive chat"
+            >
+              <Archive size={14} aria-hidden />
+            </button>
+          )}
+        </span>
+      ) : null}
 
       <Menu
         drop="down"
@@ -1784,14 +1863,25 @@ function SessionRow(props: {
                 close()
               }}
             />
-            <MenuItem
-              title="Delete chat"
-              icon={<Trash size={14} aria-hidden />}
-              onClick={() => {
-                props.onDelete()
-                close()
-              }}
-            />
+            {props.onRestore ? (
+              <MenuItem
+                title="Restore chat"
+                icon={<Restore size={14} aria-hidden />}
+                onClick={() => {
+                  props.onRestore?.()
+                  close()
+                }}
+              />
+            ) : archive ? (
+              <MenuItem
+                title="Archive chat"
+                icon={<Archive size={14} aria-hidden />}
+                onClick={() => {
+                  archive()
+                  close()
+                }}
+              />
+            ) : null}
             {isDesktop ? (
               <MenuItem
                 title="Open in Explorer"
@@ -1802,6 +1892,15 @@ function SessionRow(props: {
                 }}
               />
             ) : null}
+            <MenuItem
+              title="Delete chat"
+              icon={<Trash size={14} aria-hidden />}
+              className="menu__item--danger"
+              onClick={() => {
+                props.onDelete()
+                close()
+              }}
+            />
           </>
         )}
       </Menu>
@@ -1813,6 +1912,23 @@ type ConfirmCopy = { title: string; body: string; action: string; destructive: b
 
 function chatCount(count: number): string {
   return `${count} chat${count === 1 ? '' : 's'}`
+}
+
+/** A project's listed chats plus the ones folded under Archived. */
+function projectChats(project: Project): Session[] {
+  return project.archived ? [...project.sessions, ...project.archived] : project.sessions
+}
+
+/** Working, queued or waiting on the user: the row's slot shows that, not the time. */
+function isLiveStatus(status: Session['status']): boolean {
+  return (
+    status === 'starting' ||
+    status === 'working' ||
+    status === 'queued' ||
+    status === 'approval' ||
+    status === 'input' ||
+    status === 'failed'
+  )
 }
 
 /** What a folded project reports: how many chats wait on the user, and one
@@ -1838,7 +1954,7 @@ function waitingLabel(count: number): string {
 /** Removing only forgets the sidebar entry, so it is not styled as destructive.
  *  It does stop live turns, which is the one consequence worth naming. */
 function removeProjectCopy(project: Project): ConfirmCopy {
-  const chats = project.sessions.length
+  const chats = projectChats(project).length
   const live = project.sessions.filter((session) =>
     ['starting', 'working', 'queued', 'approval', 'input'].includes(session.status),
   ).length
@@ -1858,7 +1974,7 @@ function removeProjectCopy(project: Project): ConfirmCopy {
 }
 
 function deleteChatsCopy(project: Project): ConfirmCopy {
-  const chats = project.sessions.length
+  const chats = projectChats(project).length
   return {
     title:
       chats === 0

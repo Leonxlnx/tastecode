@@ -120,8 +120,10 @@ function sameIds<T>(
 /**
  * The rail: pinned chats in their own section, then pinned projects ahead of
  * the rest. Every list keeps its saved order. A chat that starts, waits,
- * finishes or is read stays where it is; only a new chat, a pin or a drag
- * moves one.
+ * finishes or is read stays where it is; only a new chat, a pin, a drag or
+ * archiving moves one. A chat the user archived leaves its project's list for
+ * the project's folded Archived row; one the server settled for inactivity
+ * stays where it is, because nothing the user did moved it.
  */
 export function sidebarRail(projects: Project[]): SidebarRail {
   const pinned: PinnedSession[] = []
@@ -175,7 +177,12 @@ export function moveRailSession(
 }
 
 function inProjectTree(session: Session): boolean {
-  return !session.pinned
+  return !session.pinned && !archivedByUser(session)
+}
+
+/** Archived from the sidebar or settled in Inbox: the user put it away. */
+export function archivedByUser(session: Session): boolean {
+  return session.lifecycle.state === 'settled' && session.lifecycle.reason === 'manual'
 }
 
 const projectSidebarProjections = new WeakMap<Project, ProjectSidebarProjection>()
@@ -186,11 +193,16 @@ function projectSidebarProjection(source: Project): ProjectSidebarProjection {
 
   const pinnedSessions: PinnedSession[] = []
   const sessions: Session[] = []
+  const archived: Session[] = []
   for (const session of source.sessions) {
     if (session.pinned) pinnedSessions.push({ projectPath: source.path, session })
+    else if (archivedByUser(session)) archived.push(session)
     else sessions.push(session)
   }
-  const project = pinnedSessions.length === 0 ? source : { ...source, sessions }
+  const project =
+    pinnedSessions.length === 0 && archived.length === 0
+      ? source
+      : { ...source, sessions, ...(archived.length > 0 ? { archived } : {}) }
   const projection = { project, pinnedSessions }
   projectSidebarProjections.set(source, projection)
   return projection

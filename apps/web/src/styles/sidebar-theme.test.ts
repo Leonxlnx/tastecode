@@ -80,18 +80,21 @@ describe('sidebar theme CSS', () => {
     )
   })
 
-  it('reserves touch-row actions so the time stays beside them', () => {
+  it("gives a touch row its one action in the time's place", () => {
     expect(appCss).toMatch(
-      /@media \(max-width: 700px\) \{[\s\S]*?\.sessrow \.sess \{[^}]*padding-right: 56px/s,
+      /@media \(max-width: 700px\) \{[\s\S]*?\.sessrow\.has-action \.sess__meta \{[^}]*opacity: 0/s,
     )
     expect(appCss).not.toContain('.sess__source')
   })
 
-  it('hides the time and status when chat row actions are visible', () => {
+  it('lets the row action replace the time but never a live state', () => {
+    // Only a row at rest gets .has-action, so a spinner or a dot stays visible
+    // under the pointer.
     expect(appCss).toMatch(
-      /@media \(hover: hover\) and \(pointer: fine\) \{[\s\S]*?\.sessrow:hover \.sess__meta \{[^}]*opacity: 0;/s,
+      /@media \(hover: hover\) and \(pointer: fine\) \{[\s\S]*?\.sessrow\.has-action:hover \.sess__meta \{[^}]*opacity: 0;/s,
     )
-    expect(appCss).toMatch(/\.sessrow:focus-within \.sess__meta \{[^}]*opacity: 0;/s)
+    expect(appCss).toMatch(/\.sessrow\.has-action:focus-within \.sess__meta \{[^}]*opacity: 0;/s)
+    expect(appCss).not.toMatch(/\.sessrow:(hover|focus-within) \.sess__meta/)
     expect(appCss).toMatch(
       /\.sess__time \{[^}]*font-size: var\(--t-xs\);[^}]*font-variant-numeric: tabular-nums;/s,
     )

@@ -138,3 +138,31 @@ describe('dropping a chat in the rail', () => {
     expect(moveRailSession(saved, 'X', 'X', 'after')).toBe(saved)
   })
 })
+
+describe('archived chats in the rail', () => {
+  const archived = (id: string, reason: 'manual' | 'inactivity') =>
+    chat(id, { lifecycle: { state: 'settled', settledAt: 1, reason } })
+
+  it('folds a chat the user archived out of its list and keeps one the server settled', () => {
+    const rail = sidebarRail([
+      { path: '/p', sessions: [chat('A'), archived('B', 'manual'), archived('C', 'inactivity')] },
+    ])
+    const project = rail.orderedProjects[0]!
+    // Nothing the user did moved C, so it stays where it was.
+    expect(ids(project.sessions)).toEqual(['A', 'C'])
+    expect(ids(project.archived ?? [])).toEqual(['B'])
+  })
+
+  it('keeps a pinned chat pinned even when it was archived', () => {
+    const rail = sidebarRail([
+      { path: '/p', sessions: [{ ...archived('A', 'manual'), pinned: true }, chat('B')] },
+    ])
+    expect(rail.pinnedSessions.map(({ session }) => session.id)).toEqual(['A'])
+    expect(rail.orderedProjects[0]!.archived).toBeUndefined()
+  })
+
+  it('ignores a drop on an archived chat', () => {
+    const sessions = [chat('A'), archived('B', 'manual'), chat('C')]
+    expect(moveRailSession(sessions, 'C', 'B', 'before')).toBe(sessions)
+  })
+})

@@ -506,7 +506,8 @@
   pointer-events: auto;
 }
 
-.sessrow:focus-within .sess__meta {
+/* Only a row whose slot shows the time has an action; a live state stays. */
+.sessrow.has-action:focus-within .sess__meta {
   opacity: 0;
 }
 
@@ -517,7 +518,7 @@
     pointer-events: auto;
   }
 
-  .sessrow:hover .sess__meta {
+  .sessrow.has-action:hover .sess__meta {
     opacity: 0;
   }
 
@@ -858,6 +859,11 @@
 
 .proj__waiting > .sess__status-dot {
   margin: 0;
+}
+
+.proj__archived-count {
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
 }
 
 /* 'auto' cannot be transitioned, but 0fr → 1fr can, and it measures the real
@@ -3631,11 +3637,9 @@
     height: min(246px, 42dvh);
   }
 
-  /* Touch layouts keep row actions permanently visible. Reserve their two
-     22px targets so neither the source identity nor the title sits under the
-     absolute action layer at the rail's 240px minimum. */
-  .sessrow .sess {
-    padding-right: 56px;
+  /* Touch layouts keep a row's one action visible in the time's place. */
+  .sessrow.has-action .sess__meta {
+    opacity: 0;
   }
 
   .sessrow .sess__actions,
