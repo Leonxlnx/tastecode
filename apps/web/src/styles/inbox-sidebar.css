@@ -295,14 +295,15 @@
   box-shadow: var(--chrome-shadow);
 }
 
+/* Selected is neutral: the attention colour only ever means "needs you". */
 .inbox-card.is-multi-selected {
   --inbox-card-bg:
     linear-gradient(
-      color-mix(in oklab, var(--attention) 7%, transparent),
-      color-mix(in oklab, var(--attention) 7%, transparent)
+      color-mix(in oklab, var(--text) 6%, transparent),
+      color-mix(in oklab, var(--text) 6%, transparent)
     ),
     var(--chrome-raised);
-  border-color: color-mix(in oklab, var(--attention) 35%, var(--chrome-border));
+  border-color: color-mix(in oklab, var(--text) 28%, var(--chrome-border));
 }
 
 .inbox-card__main {
@@ -548,8 +549,8 @@
 }
 
 .inbox-shelf__row.is-multi-selected {
-  background: color-mix(in oklab, var(--attention) 7%, var(--surface));
-  border-color: color-mix(in oklab, var(--attention) 30%, transparent);
+  background: color-mix(in oklab, var(--text) 6%, var(--surface));
+  border-color: color-mix(in oklab, var(--text) 24%, transparent);
 }
 
 .inbox-shelf__main {
