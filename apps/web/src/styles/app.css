@@ -1132,9 +1132,7 @@
   color: var(--text);
 }
 
-/* The box turns, not the icon: the compositor rotates an HTML box on its own,
-   while a rotating <svg> is restyled and repainted on the main thread every
-   frame for as long as a chat works (about half a core at 144 Hz). */
+/* The box turns, not its <svg>, which Chromium repaints every frame. */
 .sess__spinner {
   position: relative;
   display: block;
@@ -1173,10 +1171,8 @@
 
 /* ---------- stage ---------- */
 
-/* The right panel width is written inline on .workspace-layout on every frame
-   of a resize drag, and only that grid reads it. Left inheritable, each write
-   restyled the whole chat and Browser subtree under it (about 9 ms a frame next
-   to a long chat); not inherited, it restyles one element. */
+/* Set inline on .workspace-layout on every frame of a resize drag and read
+   only there. Not inherited, so a write restyles one element, not the chat. */
 @property --workspace-panel-w {
   syntax: '*';
   inherits: false;
