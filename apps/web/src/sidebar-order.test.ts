@@ -3,8 +3,10 @@ import {
   applyProjectOrder,
   applySessionOrder,
   moveRailSession,
+  needsYouSessions,
   parseStoredProjectOrder,
   parseStoredSessionOrder,
+  projectAttention,
   sidebarRail,
 } from './sidebar-order.js'
 import type { Project, Session } from './ui/Sidebar.js'
@@ -84,6 +86,9 @@ const chat = (id: string, changes: Partial<Session> = {}): Session => ({
   ...changes,
 })
 const ids = (sessions: Session[]) => sessions.map(({ id }) => id)
+const archived = (settledAt: number): Partial<Session> => ({
+  lifecycle: { state: 'settled', settledAt, reason: 'manual' },
+})
 const shown = (sessions: Session[]) =>
   ids(sidebarRail([{ path: '/p', sessions }]).orderedProjects[0]!.sessions)
 
@@ -113,6 +118,77 @@ describe('the rail keeps its order', () => {
     const rail = sidebarRail(projects)
     expect(rail.orderedProjects[0]).toBe(projects[0])
     expect(sidebarRail(projects).orderedProjects[0]).toBe(rail.orderedProjects[0])
+  })
+})
+
+describe('chats that need you', () => {
+  it('lists blocked agents first, then unread failures and answers, the longest wait first', () => {
+    const projects: Project[] = [
+      {
+        path: '/one',
+        sessions: [
+          chat('working', { status: 'working', statusSince: 1 }),
+          chat('approval', { status: 'approval', statusSince: 30 }),
+          chat('read-failure', { status: 'failed', statusSince: 2 }),
+          chat('done', { status: 'ready', unread: true, statusSince: 20 }),
+        ],
+      },
+      {
+        path: '/two',
+        sessions: [
+          chat('question', { status: 'input', statusSince: 10 }),
+          chat('failed', { status: 'failed', unread: true, statusSince: 40 }),
+          chat('archived', { status: 'ready', unread: true, statusSince: 5, ...archived(6) }),
+          chat('idle'),
+        ],
+      },
+    ]
+
+    expect(
+      needsYouSessions(projects, undefined).map(({ session, attention }) => [
+        session.id,
+        attention,
+      ]),
+    ).toEqual([
+      ['question', 'input'],
+      ['approval', 'approval'],
+      ['done', 'done'],
+      ['failed', 'failed'],
+    ])
+  })
+
+  it('leaves out the open chat and clears an entry once it is read', () => {
+    const done = chat('done', { status: 'ready', unread: true })
+    const projects: Project[] = [{ path: '/one', sessions: [done, chat('other')] }]
+
+    expect(needsYouSessions(projects, undefined).map(({ session }) => session.id)).toEqual(['done'])
+    expect(needsYouSessions(projects, 'done')).toEqual([])
+    const read: Project[] = [
+      { path: '/one', sessions: [{ ...done, status: 'idle', unread: false }, chat('other')] },
+    ]
+    expect(needsYouSessions(read, undefined)).toEqual([])
+  })
+
+  it('counts what needs you inside a project and names the most urgent kind', () => {
+    expect(projectAttention(project('/quiet', ['a', 'b']))).toBeUndefined()
+    expect(
+      projectAttention({
+        path: '/busy',
+        sessions: [
+          chat('done', { status: 'ready', unread: true }),
+          chat('failed', { status: 'failed', unread: true }),
+        ],
+      }),
+    ).toEqual({ count: 2, attention: 'failed' })
+    expect(
+      projectAttention({
+        path: '/waiting',
+        sessions: [
+          chat('failed', { status: 'failed', unread: true }),
+          chat('approval', { status: 'approval' }),
+        ],
+      }),
+    ).toEqual({ count: 2, attention: 'approval' })
   })
 })
 

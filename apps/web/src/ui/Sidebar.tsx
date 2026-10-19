@@ -25,6 +25,7 @@ import type {
   ThreadLifecycle,
 } from '@harness/contracts'
 import {
+  IconCheck as Check,
   IconTrash as Trash,
   IconDots as Ellipsis,
   IconFolderOpen as FolderOpen,
@@ -62,7 +63,13 @@ import {
   sessionSourcePresentation,
 } from '../provider-presentation.js'
 import { avatarSeedName, type ProfileIdentityPreferences } from '../profile-preferences.js'
-import { sidebarRail } from '../sidebar-order.js'
+import {
+  needsYouSessions,
+  projectAttention,
+  sidebarRail,
+  type Attention,
+  type NeedsYouEntry,
+} from '../sidebar-order.js'
 import {
   DEFAULT_KEYBINDINGS,
   isComposingKey,
@@ -240,6 +247,8 @@ function SidebarComponent(props: {
   onRenameSession: (id: string, title: string) => void
   onToggleSessionPin?: (id: string) => void
   onDeleteSession: (id: string) => void
+  /** Reads a finished or failed chat without opening it, which clears it from Needs you. */
+  onMarkSessionRead?: ((id: string) => void) | undefined
   onArchiveProject: (sessionIds: string[]) => void
   onReorderProject?: (sourcePath: string, targetPath: string, position: DropPosition) => void
   onReorderSession: (
@@ -491,6 +500,10 @@ function SidebarComponent(props: {
     (id: string) => actionsRef.current.onToggleSessionPin?.(id),
     [],
   )
+  const markSessionRead = useCallback(
+    (id: string) => actionsRef.current.onMarkSessionRead?.(id),
+    [],
+  )
   const animateArchive = useArchiveMotion()
   const deleteSession = useCallback(
     (id: string) => {
@@ -534,6 +547,14 @@ function SidebarComponent(props: {
   // every unchanged projection stable so React only reconciles that project.
   const { orderedProjects, pinnedSessions } = useMemo(
     () => sidebarRail(props.projects),
+    [props.projects],
+  )
+  const needsYou = useMemo(
+    () => needsYouSessions(props.projects, props.activeSessionId),
+    [props.projects, props.activeSessionId],
+  )
+  const projectNames = useMemo(
+    () => new Map(props.projects.map((project) => [project.path, displayName(project)])),
     [props.projects],
   )
   const [draggedProjectPath, setDraggedProjectPath] = useState<string>()
@@ -794,6 +815,14 @@ function SidebarComponent(props: {
               className="rail__body"
               onScroll={(event) => setBodyScrolled(event.currentTarget.scrollTop > 0)}
             >
+              {needsYou.length > 0 ? (
+                <NeedsYouBand
+                  entries={needsYou}
+                  projectNames={projectNames}
+                  onSelectSession={selectSession}
+                  onMarkSessionRead={props.onMarkSessionRead ? markSessionRead : undefined}
+                />
+              ) : null}
               {pinnedSessions.length > 0 ? (
                 <>
                   <p className="section">Pinned</p>
@@ -1269,6 +1298,7 @@ const ProjectRow = memo(function ProjectRow(props: {
   ) => void
 }) {
   const count = props.project.sessions.length
+  const attention = useMemo(() => projectAttention(props.project), [props.project])
   const [open, setOpen] = useState(props.active)
   const [sessionsMounted, setSessionsMounted] = useState(props.active)
   const [showAllSessions, setShowAllSessions] = useState(false)
@@ -1281,6 +1311,7 @@ const ProjectRow = memo(function ProjectRow(props: {
   const openRef = useRef(props.active)
   const sessionUnmountTimer = useRef<number | undefined>(undefined)
   const expanded = open
+  const folded = expanded ? undefined : attention
 
   const cancelSessionUnmount = useCallback(() => {
     if (sessionUnmountTimer.current === undefined) return
@@ -1362,10 +1393,22 @@ const ProjectRow = memo(function ProjectRow(props: {
                 setProjectOpen(!expanded)
               }}
               aria-expanded={expanded}
+              aria-label={
+                folded
+                  ? `${displayName(props.project)}, ${folded.count} ${folded.count === 1 ? 'needs' : 'need'} you`
+                  : undefined
+              }
               title={props.project.path}
             >
               <span className="proj__mark" aria-hidden />
               <span className="proj__name">{displayName(props.project)}</span>
+              {/* A folded project still says when something inside needs the user. */}
+              {folded ? (
+                <span className="proj__attention" data-attention={folded.attention} aria-hidden>
+                  <span className={`sess__status-dot ${attentionTone(folded.attention)}`} />
+                  {folded.count}
+                </span>
+              ) : null}
             </button>
 
             <Menu
@@ -1892,6 +1935,129 @@ function SessionRow(props: {
       </Menu>
     </li>
   )
+}
+
+/** Rows the band shows before it folds the rest behind "+N more". */
+const NEEDS_YOU_VISIBLE = 5
+
+/**
+ * The chats waiting for the user, above everything else. It lists each one a
+ * second time, beside its place in the tree, so it stays short: an entry
+ * leaves once the chat is answered or read, and with nothing waiting the band
+ * takes no space at all.
+ */
+const NeedsYouBand = memo(function NeedsYouBand(props: {
+  entries: NeedsYouEntry[]
+  projectNames: ReadonlyMap<string, string>
+  onSelectSession: (id: string) => void
+  onMarkSessionRead: ((id: string) => void) | undefined
+}) {
+  const [expanded, setExpanded] = useState(false)
+  const shown = expanded ? props.entries : props.entries.slice(0, NEEDS_YOU_VISIBLE)
+  const folded = props.entries.length - shown.length
+  return (
+    <section className="needs-band" aria-label="Needs you">
+      <p className="section" aria-hidden>
+        Needs you
+      </p>
+      <ul className="proj__sessions needs-band__list">
+        {shown.map((entry) => (
+          <NeedsYouRow
+            key={entry.session.id}
+            entry={entry}
+            projectName={props.projectNames.get(entry.projectPath) ?? basename(entry.projectPath)}
+            onSelectSession={props.onSelectSession}
+            onMarkSessionRead={props.onMarkSessionRead}
+          />
+        ))}
+        {folded > 0 || (expanded && props.entries.length > NEEDS_YOU_VISIBLE) ? (
+          <li className="proj__sessions-toggle-row">
+            <button
+              type="button"
+              className="proj__sessions-toggle"
+              aria-expanded={expanded}
+              onClick={() => setExpanded(!expanded)}
+            >
+              {expanded ? 'Show less' : `+${folded} more`}
+            </button>
+          </li>
+        ) : null}
+      </ul>
+    </section>
+  )
+})
+
+const NeedsYouRow = memo(function NeedsYouRow(props: {
+  entry: NeedsYouEntry
+  projectName: string
+  onSelectSession: (id: string) => void
+  onMarkSessionRead: ((id: string) => void) | undefined
+}) {
+  const { session, attention } = props.entry
+  // Approvals and questions leave only once they are answered, in the chat.
+  const markRead =
+    props.onMarkSessionRead && (attention === 'failed' || attention === 'done')
+      ? props.onMarkSessionRead
+      : undefined
+  const label = `${session.title}, ${attentionLabel(attention)}, ${props.projectName}`
+  return (
+    <li
+      className={`sessrow needs-band__row${session.unread ? ' is-unread' : ''}${markRead ? ' has-action' : ''}`}
+      data-attention={attention}
+    >
+      <button
+        type="button"
+        className="sess"
+        onClick={() => props.onSelectSession(session.id)}
+        aria-label={label}
+        title={label}
+      >
+        <AttentionMark attention={attention} />
+        <span className="sess__title">{session.title}</span>
+        <span className="sess__project">{props.projectName}</span>
+      </button>
+      {markRead ? (
+        <span className="sess__actions">
+          <button
+            type="button"
+            className="sess__action"
+            onClick={() => markRead(session.id)}
+            aria-label={`Mark ${session.title} as read`}
+            title="Mark as read"
+          >
+            <Check size={14} aria-hidden />
+          </button>
+        </span>
+      ) : null}
+    </li>
+  )
+})
+
+/** One dot per reason, in the colour that names it; the same dots the tree uses. */
+function AttentionMark(props: { attention: Attention }) {
+  return (
+    <span className="sess__mark" aria-hidden>
+      <span className={`sess__status-dot ${attentionTone(props.attention)}`} />
+    </span>
+  )
+}
+
+function attentionTone(attention: Attention): string {
+  if (attention === 'failed') return 'is-failed'
+  return attention === 'done' ? 'is-done' : 'is-attention'
+}
+
+function attentionLabel(attention: Attention): string {
+  switch (attention) {
+    case 'approval':
+      return 'waiting for approval'
+    case 'input':
+      return 'waiting for an answer'
+    case 'failed':
+      return 'failed'
+    case 'done':
+      return 'finished, unread'
+  }
 }
 
 type ConfirmCopy = { title: string; body: string; action: string; destructive: boolean }
