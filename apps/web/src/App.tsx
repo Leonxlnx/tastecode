@@ -174,6 +174,7 @@ import {
   type ProviderLoginTerminalTarget,
 } from './provider-install.js'
 import { providerScanChanged, useRecheckOnFocus } from './provider-recheck.js'
+import { rememberedSignIn, rememberSignIn } from './remembered-sign-in.js'
 import {
   pinnedModelChoice,
   readProviderDefaults,
@@ -383,6 +384,8 @@ type AccountCheck = {
   error?: ComposerError
   /** Set on a read that is still running after ACCOUNT_CHECK_SEND_GRACE_MS. */
   slow?: true
+  /** Set on a read of a provider whose last read said signed in (remembered-sign-in.ts). */
+  remembered?: true
 }
 
 /**
@@ -489,7 +492,11 @@ export function resolveSendAvailability(input: {
   // A check that could not answer in time, or still has not after the grace
   // period, confirms nothing either way. Send stays available: a CLI that
   // really is signed out says so in the turn.
-  if (input.accountCheck.state === 'loading') return input.accountCheck.slow ? 'ready' : 'loading'
+  // A read of a provider that was signed in last time keeps Send available
+  // too; an answer that it is signed out turns it off.
+  if (input.accountCheck.state === 'loading') {
+    return input.accountCheck.slow || input.accountCheck.remembered ? 'ready' : 'loading'
+  }
   if (input.accountCheck.state === 'failed') return 'ready'
   return input.accountCheck.account?.signedIn ? 'ready' : 'setup-required'
 }
@@ -2750,10 +2757,14 @@ export function App() {
     }
     // Retrying a check that could not answer keeps Send available until the
     // new answer arrives; it would otherwise lock the composer for the read.
+    // So does a provider whose last read said signed in. ACP reads are per
+    // agent, so they are not remembered per provider.
+    const remembers = provider !== 'acp'
+    const remembered = remembers && rememberedSignIn(provider)
     setAccountCheck((current) =>
       current.provider === provider && current.state === 'failed'
         ? current
-        : { provider, state: 'loading' },
+        : { provider, state: 'loading', ...(remembered ? { remembered: true as const } : {}) },
     )
     const grace = setTimeout(() => {
       if (cancelled || revision !== accountRequestRevision.current) return
@@ -2772,6 +2783,7 @@ export function App() {
       })
       .finally(() => clearTimeout(grace))
       .then((nextAccount) => {
+        if (remembers) rememberSignIn(provider, nextAccount.signedIn)
         if (cancelled || revision !== accountRequestRevision.current) return
         setAccount(nextAccount)
         setAccountCheck({ provider, state: 'ready', account: nextAccount })
@@ -4248,6 +4260,7 @@ export function App() {
 
   const handleAccountChange = useCallback(
     (changedProvider: ProviderId, changedAccount: Account) => {
+      if (changedProvider !== 'acp') rememberSignIn(changedProvider, changedAccount.signedIn)
       if (changedProvider === providerRef.current) {
         accountRequestRevision.current += 1
         setAccount(changedAccount)
