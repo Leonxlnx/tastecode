@@ -4089,7 +4089,6 @@ describe('web client', () => {
       expect(transport.request).toHaveBeenCalledWith('thread.start', {
         provider: 'codex',
         workspacePath: '/work/project',
-        baseRef: 'main',
         approval: 'auto-review',
         model: 'gpt-6.1-sol',
         effort: 'high',
@@ -6039,7 +6038,6 @@ describe('new chats', () => {
       expect(transport.request).toHaveBeenCalledWith('thread.start', {
         provider: 'codex',
         workspacePath: '/work/project',
-        baseRef: 'main',
         approval: 'auto-review',
         isolate: true,
       })
@@ -6168,6 +6166,30 @@ describe('new chats', () => {
       expect.objectContaining({ baseRef: 'main' }),
     )
     expect(transport.request).not.toHaveBeenCalledWith('workspace.switchBranch', expect.anything())
+  })
+
+  it('starts a chat on the checkout without waiting for the branch list', async () => {
+    serverProjects = [
+      { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },
+    ]
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'workspace.branches' ? new Promise(() => undefined) : request(method, params),
+    )
+    render(<App />)
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('workspace.info', { path: '/work/project' }),
+    )
+
+    submitTurn('Start right away')
+
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('thread.start', expect.anything()),
+    )
+    expect(transport.request).toHaveBeenCalledWith(
+      'thread.start',
+      expect.not.objectContaining({ baseRef: expect.anything() }),
+    )
   })
   it.each([
     ['other project', 'harness.branch:/work/other', 'feature/shelf', 'main'],
@@ -8454,7 +8476,6 @@ describe('new chats', () => {
       expect(transport.request).toHaveBeenCalledWith('thread.start', {
         provider: 'codex',
         workspacePath: '/work/project',
-        baseRef: 'main',
         approval: 'auto-review',
       })
     })
@@ -8577,7 +8598,6 @@ describe('new chats', () => {
       expect(transport.request).toHaveBeenCalledWith('thread.start', {
         provider: 'codex',
         workspacePath: '/work/project',
-        baseRef: 'main',
         approval: 'auto-review',
       })
       expect(screen.getByRole('button', { name: /^Fix the sidebar,/ })).toBeTruthy()
@@ -8647,7 +8667,6 @@ describe('new chats', () => {
       expect(transport.request).toHaveBeenCalledWith('thread.start', {
         provider: 'codex',
         workspacePath: '/work/project',
-        baseRef: 'main',
         approval: 'auto-review',
         model: 'gpt-6.1-sol',
         effort: 'xhigh',
@@ -8838,7 +8857,6 @@ describe('new chats', () => {
       expect(transport.request).toHaveBeenCalledWith('thread.start', {
         provider: 'codex',
         workspacePath: '/work/project',
-        baseRef: 'main',
         approval: 'auto-review',
         model: 'gpt-5.6-mini',
         effort: 'high',
@@ -9488,7 +9506,6 @@ describe('new chats', () => {
       expect(transport.request).toHaveBeenCalledWith('thread.start', {
         provider: 'claude-code',
         workspacePath: '/work/project',
-        baseRef: 'main',
         approval: 'full',
         model: 'opus',
         effort: 'high',
