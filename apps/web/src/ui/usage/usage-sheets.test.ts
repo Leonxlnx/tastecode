@@ -71,7 +71,7 @@ function ready(provider: ProviderId, limits: Array<{ label: string; usedPercent:
 
 describe('provider sheets', () => {
   it('orders sheets by value and keeps each day on the shared range', () => {
-    const { sheets, top, capped } = deriveSheets(
+    const { sheets } = deriveSheets(
       historyOf({ codex: [0, 100, 300], 'claude-code': [500, 0, 600] }),
       NO_LIMITS,
     )
@@ -79,8 +79,6 @@ describe('provider sheets', () => {
     expect(sheets.map((sheet) => sheet.provider)).toEqual(['claude-code', 'codex'])
     expect(sheets[1]?.slots.map((slot) => slot.tokens)).toEqual([0, 100, 300])
     expect(sheets[1]?.activeDays).toBe(2)
-    expect(top).toBe(600)
-    expect(capped).toBe(false)
   })
 
   it('draws a period longer than a quarter a week to a slot, the last ending today', () => {
@@ -105,33 +103,6 @@ describe('provider sheets', () => {
       [dateAt(1), 0, 1],
       [dateAt(2), 7, 1],
     ])
-  })
-
-  it('caps a year drawn in weeks at its second busiest week', () => {
-    const weeks = Array.from({ length: 140 }, (_, index) => (index === 70 ? 10_000 : 10))
-    const { top, capped } = deriveSheets(historyOf({ codex: weeks }), NO_LIMITS)
-
-    expect(capped).toBe(true)
-    expect(top).toBe(105)
-  })
-
-  it('caps the scale at 1.5 times the 98th percentile when one day towers over the rest', () => {
-    const busy = Array.from({ length: 60 }, () => 100)
-    busy[10] = 10_000
-    const { top, capped } = deriveSheets(historyOf({ codex: busy }), NO_LIMITS)
-
-    expect(capped).toBe(true)
-    expect(top).toBe(150)
-  })
-
-  it('marks a provider too small to rise on the scale as quiet', () => {
-    const { sheets } = deriveSheets(
-      historyOf({ codex: [1_000, 900, 800], grok: [0, 30, 0] }),
-      NO_LIMITS,
-    )
-
-    expect(sheets.find((sheet) => sheet.provider === 'grok')?.quiet).toBe(true)
-    expect(sheets.find((sheet) => sheet.provider === 'codex')?.quiet).toBe(false)
   })
 
   it('collapses a provider with limits but no sessions and sorts it last', () => {

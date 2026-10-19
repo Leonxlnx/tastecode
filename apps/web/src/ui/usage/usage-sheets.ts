@@ -23,15 +23,6 @@ export type PlanLimitsSource = {
 /** At or under this share left, a window reads as running low. */
 const LOW_SHARE = 15
 
-/** The scale is capped at this multiple of the 98th percentile of active slots. */
-const CAP_MULTIPLE = 1.5
-const CAP_PERCENTILE = 0.02
-/** Fewer active slots than this are too few to call one of them an outlier. */
-const CAP_MIN_SLOTS = 10
-
-/** A provider whose busiest day stays under this share of the scale is drawn as ticks. */
-const QUIET_SHARE = 0.04
-
 /** The value is a partial estimate under this share of priced tokens. */
 const FULL_ESTIMATE_SHARE = 0.95
 
@@ -91,8 +82,6 @@ export type ProviderSheet = {
   activeDays: number
   /** One entry per slot of the period, in its order. */
   slots: SheetSlot[]
-  /** Its use is too small to rise on the shared scale. */
-  quiet: boolean
   /** No sessions in the period: the sheet collapses to one row and its limits. */
   empty: boolean
   /** By value, then tokens. */
@@ -106,13 +95,10 @@ export type ProviderSheet = {
 
 export type UsageSheets = {
   sheets: ProviderSheet[]
-  /** The time axis every band shares. */
+  /** The time axis every chart shares. */
   slots: PeriodSlot[]
   /** Days to a slot: 1, or 7 on a long period. */
   span: 1 | 7
-  /** The height every band shares, in tokens a slot. */
-  top: number
-  capped: boolean
 }
 
 const NO_LIMITS: SheetLimits = { rows: [], retryable: false }
@@ -161,10 +147,8 @@ function sum<T>(items: readonly T[], read: (item: T) => number): number {
 
 /**
  * One sheet per provider found in the history or the plan limits, by value,
- * with providers that had no sessions last. Every band shares one time axis
- * and one linear scale; when the busiest slot is far above the rest the
- * scale is capped so one slot does not flatten every other. A period longer
- * than a quarter is drawn a week to a slot.
+ * with providers that had no sessions last. Every chart shares one time
+ * axis; a period longer than a quarter is drawn a week to a slot.
  */
 export function deriveSheets(
   history: History | undefined,
@@ -205,7 +189,6 @@ export function deriveSheets(
         tokens: sum(range, (day) => share(day)?.tokens ?? 0),
         value: sum(range, (day) => share(day)?.estimatedCostUsd ?? 0),
       })),
-      quiet: false,
       empty: sessions === 0 && activeDays === 0,
       models: (history?.models ?? [])
         .filter((model) => model.provider === provider)
@@ -227,22 +210,7 @@ export function deriveSheets(
     }
   })
   sheets.sort((left, right) => Number(left.empty) - Number(right.empty) || right.value - left.value)
-
-  const pooled = sheets
-    .flatMap((sheet) => sheet.slots.map((slot) => slot.tokens))
-    .filter((tokens) => tokens > 0)
-    .toSorted((left, right) => right - left)
-  const max = pooled[0] ?? 0
-  // Never the busiest slot itself, so a year drawn in weeks can still cap its outlier.
-  const rank = Math.max(1, Math.floor(pooled.length * CAP_PERCENTILE))
-  const cap = (pooled[rank] ?? max) * CAP_MULTIPLE
-  const capped = pooled.length >= CAP_MIN_SLOTS && max > cap
-  const top = capped ? cap : max
-  for (const sheet of sheets) {
-    const peak = Math.max(0, ...sheet.slots.map((slot) => slot.tokens))
-    sheet.quiet = sheet.activeDays > 0 && peak < top * QUIET_SHARE
-  }
-  return { sheets, slots, span, top, capped }
+  return { sheets, slots, span }
 }
 
 const weekday = new Intl.DateTimeFormat('en-US', { weekday: 'short' })
