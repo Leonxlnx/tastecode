@@ -384,12 +384,12 @@ function InboxSidebarComponent(props: {
                 event.preventDefault()
                 focusBoundary(event.key === 'ArrowDown' ? 1 : -1)
               }}
-              placeholder="Search threads"
-              aria-label="Search threads"
+              placeholder="Search chats"
+              aria-label="Search chats"
               spellCheck={false}
             />
             {query ? (
-              <button type="button" aria-label="Clear thread search" onClick={() => setQuery('')}>
+              <button type="button" aria-label="Clear chat search" onClick={() => setQuery('')}>
                 <X size={12} aria-hidden />
               </button>
             ) : null}
@@ -425,7 +425,7 @@ function InboxSidebarComponent(props: {
           </label>
           <button className="inbox-toolbar__add" type="button" onClick={props.onAddProject}>
             <FolderPlus size={13} aria-hidden />
-            <span>Add Project</span>
+            <span>Add project</span>
           </button>
         </div>
         {props.onOpenPullRequests ? (
@@ -447,14 +447,14 @@ function InboxSidebarComponent(props: {
         ) : (
           <div className="inbox">
             {selectedIds.size > 1 ? (
-              <p className="inbox__selection-count">{selectedIds.size} threads selected</p>
+              <p className="inbox__selection-count">{selectedIds.size} chats selected</p>
             ) : null}
 
             {!normalizedQuery || active.length > 0 ? (
               <>
                 <SectionHeading title="Active" count={active.length} />
                 {active.length > 0 ? (
-                  <ul className="inbox__list" aria-label="Active threads">
+                  <ul className="inbox__list" aria-label="Active chats">
                     {visibleActive.map((entry) => {
                       const selected = selectedIds.has(entry.session.id)
                       return (
@@ -493,7 +493,7 @@ function InboxSidebarComponent(props: {
                     ) : null}
                   </ul>
                 ) : (
-                  <p className="inbox__empty">No active threads in this project.</p>
+                  <p className="inbox__empty">No active chats in this project.</p>
                 )}
               </>
             ) : null}
@@ -1002,7 +1002,7 @@ function ThreadMenu(props: {
     <Menu
       drop="down"
       align="right"
-      label={`Thread options for ${props.entry.session.title}`}
+      label={`Chat options for ${props.entry.session.title}`}
       triggerClassName="inbox-card__menu"
       panelClassName="menu--sidebar"
       contextMenuTargetRef={props.contextMenuTarget}
@@ -1114,7 +1114,7 @@ function ThreadMenu(props: {
                   onClick={() => finish(close, props.onRename)}
                 />
                 <MenuItem
-                  title={props.entry.session.pinned ? 'Unpin thread' : 'Pin thread'}
+                  title={props.entry.session.pinned ? 'Unpin chat' : 'Pin chat'}
                   icon={
                     props.entry.session.pinned ? (
                       <PinOff size={13} aria-hidden />
@@ -1142,7 +1142,7 @@ function ThreadMenu(props: {
             ) : null}
             <div className="menu__rule" />
             <MenuItem
-              title={multiple ? `Delete ${props.entries.length} threads` : 'Delete thread'}
+              title={multiple ? `Delete ${props.entries.length} chats` : 'Delete chat'}
               icon={<Trash2 size={13} aria-hidden />}
               className="menu__item--danger"
               onClick={() =>
@@ -1250,7 +1250,7 @@ function canHide(session: Session): boolean {
 }
 
 function threadCount(count: number): string {
-  return `${count} ${count === 1 ? 'thread' : 'threads'}`
+  return `${count} ${count === 1 ? 'chat' : 'chats'}`
 }
 
 function navigateRows(

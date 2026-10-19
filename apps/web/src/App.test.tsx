@@ -10034,7 +10034,7 @@ describe('inbox lifecycle', () => {
     fireEvent.click(newest, { metaKey: true })
     fireEvent.click(middle, { metaKey: true })
     fireEvent.contextMenu(middle)
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Settle 2 threads' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Settle 2 chats' }))
 
     await waitFor(() => {
       expect(transport.request).toHaveBeenCalledWith('thread.settle', { threadId: 'newest' })
@@ -11835,7 +11835,7 @@ describe('live sessions', () => {
   it('returns focus to inbox search after the command palette opener unmounts', async () => {
     serverSidebarSettings.mode = 'inbox'
     render(<App />)
-    const inboxSearch = await screen.findByRole('textbox', { name: 'Search threads' })
+    const inboxSearch = await screen.findByRole('textbox', { name: 'Search chats' })
     fireEvent.keyDown(window, { key: 'k', metaKey: true })
     const commandSearch = await screen.findByRole('textbox', { name: 'Search commands' })
     fireEvent.change(commandSearch, { target: { value: 'search all chats' } })

@@ -117,9 +117,9 @@ describe('InboxSidebar', () => {
     expect(screen.queryByText('Active 12')).toBeNull()
     fireEvent.click(first)
     fireEvent.click(last, { shiftKey: true })
-    expect(screen.getByText('13 threads selected')).toBeTruthy()
+    expect(screen.getByText('13 chats selected')).toBeTruthy()
     fireEvent.contextMenu(last)
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Delete 13 threads' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Delete 13 chats' }))
     expect(onArchiveSessions).toHaveBeenCalledWith([
       ...Array.from({ length: 12 }, (_, index) => `a-${index}`),
       'settled',
@@ -130,12 +130,12 @@ describe('InboxSidebar', () => {
     const view = render(<InboxSidebar {...props([])} loading />)
 
     expect(screen.getByRole('status').textContent).toBe('Loading threads…')
-    expect(screen.queryByText('No active threads in this project.')).toBeNull()
-    expect(screen.getByRole('textbox', { name: 'Search threads' })).toBeTruthy()
+    expect(screen.queryByText('No active chats in this project.')).toBeNull()
+    expect(screen.getByRole('textbox', { name: 'Search chats' })).toBeTruthy()
 
     view.rerender(<InboxSidebar {...props([])} loading={false} />)
     expect(screen.queryByRole('status')).toBeNull()
-    expect(screen.getByText('No active threads in this project.')).toBeTruthy()
+    expect(screen.getByText('No active chats in this project.')).toBeTruthy()
   })
 
   it('moves only changed rows in retained many-thread groups', () => {
@@ -380,7 +380,7 @@ describe('InboxSidebar', () => {
 
     expect(container.querySelectorAll('.inbox-card')).toHaveLength(12)
     expect(container.querySelectorAll('.inbox-shelf__row')).toHaveLength(10)
-    const activeList = screen.getByRole('list', { name: 'Active threads' })
+    const activeList = screen.getByRole('list', { name: 'Active chats' })
     expect(activeList.querySelector('.inbox__more')).toBeNull()
 
     act(() => fillActivePage?.({ didTimeout: false, timeRemaining: () => 10 }))
@@ -703,18 +703,18 @@ describe('InboxSidebar', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'New chat' }))
     expect(onNewSession).toHaveBeenCalledWith('/alpha', false)
-    expect(screen.getByRole('button', { name: 'Add Project' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Add project' })).toBeTruthy()
 
-    expect(screen.queryByRole('button', { name: 'Thread options for Alpha task' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Chat options for Alpha task' })).toBeNull()
     fireEvent.focusIn(screen.getByText('Alpha task').closest('button')!)
-    fireEvent.click(screen.getByRole('button', { name: 'Thread options for Alpha task' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Chat options for Alpha task' }))
     expect(screen.getByRole('menuitem', { name: 'This evening' })).toBeTruthy()
     expect(screen.getByRole('menuitem', { name: 'Tomorrow morning' })).toBeTruthy()
     expect(screen.getByRole('menuitem', { name: 'Next week' })).toBeTruthy()
     fireEvent.click(screen.getByRole('menuitem', { name: 'In one hour' }))
     expect(actions.onSnooze).toHaveBeenCalledWith('alpha', expect.any(Number))
 
-    fireEvent.click(screen.getByRole('button', { name: 'Thread options for Alpha task' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Chat options for Alpha task' }))
     fireEvent.click(screen.getByRole('menuitem', { name: 'Keep active' }))
     expect(actions.onKeepActive).toHaveBeenCalledWith('alpha', true)
   })
@@ -740,7 +740,7 @@ describe('InboxSidebar', () => {
     const view = render(<InboxSidebar {...props([project])} />)
     try {
       expect(screen.getByRole('button', { name: 'Settle Alpha task' })).toBeTruthy()
-      expect(screen.getByRole('button', { name: 'Thread options for Alpha task' })).toBeTruthy()
+      expect(screen.getByRole('button', { name: 'Chat options for Alpha task' })).toBeTruthy()
     } finally {
       view.unmount()
       matchMedia.mockRestore()
@@ -766,7 +766,7 @@ describe('InboxSidebar', () => {
     const { container } = render(<InboxSidebar {...props([project])} activeSessionId="settled" />)
 
     expect(screen.queryByText('Snoozed result')).toBeNull()
-    const search = screen.getByRole('textbox', { name: 'Search threads' })
+    const search = screen.getByRole('textbox', { name: 'Search chats' })
     fireEvent.change(search, {
       target: { value: 'result' },
     })
@@ -804,7 +804,7 @@ describe('InboxSidebar', () => {
     for (const item of screen.getAllByRole('menuitem')) {
       expect(item.querySelector('svg')).not.toBeNull()
     }
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Settle 2 threads' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Settle 2 chats' }))
 
     expect(onSettleMany).toHaveBeenCalledWith(['one', 'two'])
     expect(actions.onSettle).not.toHaveBeenCalled()

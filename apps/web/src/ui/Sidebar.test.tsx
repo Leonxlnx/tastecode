@@ -164,7 +164,7 @@ describe('Sidebar chat actions', () => {
     expect(screen.getByText('Loading threads…')).toBeTruthy()
     expect(document.querySelector('.inbox-skeleton-toolbar')).not.toBeNull()
 
-    expect(await screen.findByRole('textbox', { name: 'Search threads' })).toBeTruthy()
+    expect(await screen.findByRole('textbox', { name: 'Search chats' })).toBeTruthy()
     expect(document.querySelector('.inbox-skeleton-toolbar')).toBeNull()
     expect(screen.getByText('Loading threads…')).toBeTruthy()
   })
@@ -636,9 +636,9 @@ describe('Sidebar chat actions', () => {
     rendered.rerender(view)
 
     expect(screen.queryByRole('button', { name: /Switch to V[12]/ })).toBeNull()
-    expect(await screen.findByRole('textbox', { name: 'Search threads' })).toBeTruthy()
+    expect(await screen.findByRole('textbox', { name: 'Search chats' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'New chat' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'Add Project' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Add project' })).toBeTruthy()
     expect(document.querySelector('.account__name')?.textContent).toBe('Local profile')
     const accountTrigger = screen.getByRole('button', { name: 'Account' })
     expect(accountTrigger.querySelector('.account__usage-value')?.textContent).toBe('15% left')
