@@ -118,9 +118,10 @@ function sameIds<T>(
 }
 
 /**
- * The classic rail: pinned chats in their own section, then pinned projects
- * ahead of the rest, each project with working and unread chats lifted above
- * its other chats.
+ * The rail: pinned chats in their own section, then pinned projects ahead of
+ * the rest. Every list keeps its saved order. A chat that starts, waits,
+ * finishes or is read stays where it is; only a new chat, a pin or a drag
+ * moves one.
  */
 export function sidebarRail(projects: Project[]): SidebarRail {
   const pinned: PinnedSession[] = []
@@ -134,7 +135,7 @@ export function sidebarRail(projects: Project[]): SidebarRail {
   }
   return {
     orderedProjects: [...pinnedProjects, ...unpinnedProjects],
-    pinnedSessions: prioritizeSessions(pinned, ({ session }) => session),
+    pinnedSessions: pinned,
   }
 }
 
@@ -154,12 +155,9 @@ export function sidebarSessions(projects: Project[], mode: 'classic' | 'inbox'):
 }
 
 /**
- * The saved order after a chat is dropped in the rail. The rail lifts working
- * and unread chats and moves pinned ones to their own section, so the drop is
- * resolved against what it shows: the chat lands exactly where it was dropped
- * among chats of its own rank, and otherwise as close to the drop target as
- * that allows. Every other chat keeps its saved place, so a chat that was only
- * lifted returns to it once it is read or done.
+ * The saved order after a chat is dropped in the rail: it lands exactly where
+ * it was dropped. Pinned chats live in their own section, so a drop on one of
+ * them cannot be placed in the project and is ignored.
  */
 export function moveRailSession(
   sessions: Session[],
@@ -170,23 +168,14 @@ export function moveRailSession(
   const source = sessions.find((session) => session.id === sourceId)
   if (!source || sourceId === targetId) return sessions
   const saved = sessions.filter((session) => session !== source)
-  const shown = prioritizeSessions(
-    saved.filter((session) => !session.pinned),
-    (session) => session,
-  )
-  const targetIndex = shown.findIndex((session) => session.id === targetId)
-  if (targetIndex < 0) return sessions
-
-  const dropIndex = targetIndex + (position === 'after' ? 1 : 0)
-  const rank = railRank(source)
-  const above = shown.findLast((session, index) => index < dropIndex && railRank(session) === rank)
-  const below = shown.find((session, index) => index >= dropIndex && railRank(session) === rank)
-  const target = saved.indexOf(shown[targetIndex]!)
-  const index = Math.min(
-    Math.max(position === 'after' ? target + 1 : target, above ? saved.indexOf(above) + 1 : 0),
-    below ? saved.indexOf(below) : saved.length,
-  )
+  const target = saved.findIndex((session) => session.id === targetId)
+  if (target < 0 || !inProjectTree(saved[target]!)) return sessions
+  const index = target + (position === 'after' ? 1 : 0)
   return [...saved.slice(0, index), source, ...saved.slice(index)]
+}
+
+function inProjectTree(session: Session): boolean {
+  return !session.pinned
 }
 
 const projectSidebarProjections = new WeakMap<Project, ProjectSidebarProjection>()
@@ -196,41 +185,13 @@ function projectSidebarProjection(source: Project): ProjectSidebarProjection {
   if (cached) return cached
 
   const pinnedSessions: PinnedSession[] = []
-  const unpinnedSessions: Session[] = []
+  const sessions: Session[] = []
   for (const session of source.sessions) {
     if (session.pinned) pinnedSessions.push({ projectPath: source.path, session })
-    else unpinnedSessions.push(session)
+    else sessions.push(session)
   }
-  const sessions = prioritizeSessions(unpinnedSessions, (session) => session)
-  const sessionsUnchanged =
-    pinnedSessions.length === 0 &&
-    sessions.length === source.sessions.length &&
-    sessions.every((session, index) => session === source.sessions[index])
-  const project = sessionsUnchanged ? source : { ...source, sessions }
+  const project = pinnedSessions.length === 0 ? source : { ...source, sessions }
   const projection = { project, pinnedSessions }
   projectSidebarProjections.set(source, projection)
   return projection
-}
-
-function prioritizeSessions<T>(sessions: T[], getSession: (value: T) => Session): T[] {
-  const groups: [T[], T[], T[]] = [[], [], []]
-  for (const value of sessions) groups[railRank(getSession(value))].push(value)
-  const ordered = [...groups[0], ...groups[1], ...groups[2]]
-  return ordered.every((value, index) => value === sessions[index]) ? sessions : ordered
-}
-
-/** The rail's grouping: working chats first, then unread ones, then the rest. */
-function railRank(session: Session): 0 | 1 | 2 {
-  if (isActiveStatus(session.status)) return 0
-  return session.unread ? 1 : 2
-}
-
-function isActiveStatus(status: Session['status']): boolean {
-  return (
-    status === 'starting' ||
-    status === 'working' ||
-    status === 'queued' ||
-    status === 'approval' ||
-    status === 'input'
-  )
 }
