@@ -1860,7 +1860,7 @@ describe('workspace paths', () => {
     await orchestrator.sendTurn(thread.id, 'hello')
 
     expect(startedIn).toEqual([resolvedPath])
-    expect(snapshot).toHaveBeenCalledWith(resolvedPath)
+    expect(snapshot).toHaveBeenCalledWith(resolvedPath, { retainIn: expect.any(String) })
     expect(store.thread(thread.id)?.projectPath).toBe(projectPath)
     await orchestrator.disposeAll()
   })
