@@ -220,6 +220,15 @@ export function startServer(
     (usageHistory ??= import('./usage-history.js').then(({ UsageHistoryService }) => {
       const service = new UsageHistoryService({
         cacheFile: path.join(path.dirname(databasePath), 'usage-history.json'),
+        // Every other provider account keeps its history in its own folder.
+        accountHomes: () => {
+          const { accounts: listed } = accounts.list()
+          return listed.flatMap(({ provider, id, home }) =>
+            home === undefined || id === DEFAULT_ACCOUNT_ID
+              ? []
+              : [{ provider, accountId: id, home }],
+          )
+        },
         harnessUsage: () => store.usageEvents(),
       })
       if (usageHistoryClosing) service.dispose()

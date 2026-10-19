@@ -7,16 +7,19 @@ import { GROK_USAGE_HISTORY } from '@harness/adapter-grok'
 import { OPENCODE_USAGE_HISTORY } from '@harness/adapter-opencode'
 import type { UsageArchiveFile, UsageHistorySource } from '@harness/proc/usage-archive'
 import { isUsageCheckpoint, type UsageCheckpoint } from '@harness/proc/usage-log'
-import type {
-  LocalUsageRecord,
-  ProviderId,
-  Usage,
-  UsageHistoryDay,
-  UsageHistoryModel,
-  UsageHistoryProvider,
-  UsageHistoryRange,
-  UsageHistoryResult,
-  UsageHistoryTotals,
+import {
+  AccountIdSchema,
+  DEFAULT_ACCOUNT_ID,
+  type AccountId,
+  type LocalUsageRecord,
+  type ProviderId,
+  type Usage,
+  type UsageHistoryDay,
+  type UsageHistoryModel,
+  type UsageHistoryProvider,
+  type UsageHistoryRange,
+  type UsageHistoryResult,
+  type UsageHistoryTotals,
 } from '@harness/contracts'
 import { modelRate, priceEntry, type ModelRate } from './model-prices.js'
 import type { StoredUsageEvent } from './store.js'
@@ -71,6 +74,8 @@ type TokenCounts = LocalUsageRecord['tokens']
 export type CachedUsageFile = {
   path: string
   provider: ProviderId
+  /** The provider account whose folder holds this file; absent for the default account. */
+  accountId?: AccountId
   mtimeMs: number
   size: number
   entries: LocalUsageRecord[]
@@ -86,10 +91,15 @@ export type UsageCache = {
   warnings: string[]
 }
 
-type UsageFile = UsageArchiveFile<LocalUsageRecord> & { provider: ProviderId }
+type UsageFile = UsageArchiveFile<LocalUsageRecord> & {
+  provider: ProviderId
+  accountId?: AccountId
+}
 
 export type SourceState = {
   provider: ProviderId
+  /** The account whose folder holds this archive; absent for the default account. */
+  accountId?: AccountId
   /** The adapter's name for a local archive; event-only providers have none. */
   label?: string
   available: boolean
@@ -98,7 +108,16 @@ export type SourceState = {
 /** Where one local source's archive lives, resolved once on the main thread. */
 export type UsageSourceRoot = {
   provider: ProviderId
+  /** The account whose folder holds this archive; absent for the default account. */
+  accountId?: AccountId
   root: string
+}
+
+/** A provider account beyond the default one, whose own CLI folder holds its history. */
+export type UsageAccountHome = {
+  provider: ProviderId
+  accountId: AccountId
+  home: string
 }
 
 type MutableBucket = {
@@ -117,7 +136,7 @@ export type UsageScanProgress = {
  */
 export type UsageFileFingerprint = Pick<
   CachedUsageFile,
-  'path' | 'provider' | 'mtimeMs' | 'size' | 'checkpoint'
+  'path' | 'provider' | 'accountId' | 'mtimeMs' | 'size' | 'checkpoint'
 >
 
 export type UsageScanRequest = {
@@ -152,6 +171,11 @@ type UsageHistoryOptions = {
   cacheFile: string
   /** Archive locations by provider in place of each adapter's default; tests use fixtures. */
   sourceRoots?: Partial<Record<ProviderId, string>>
+  /**
+   * The provider accounts beyond the default ones. Asked at the start of every
+   * scan, so an account added or removed meanwhile is read or left out then.
+   */
+  accountHomes?: () => readonly UsageAccountHome[]
   harnessUsage?: () => StoredUsageEvent[]
   now?: () => Date
   scanRunner?: UsageScanRunner
@@ -200,6 +224,7 @@ const emptyTotals = (): UsageHistoryTotals => ({
 export class UsageHistoryService {
   readonly #cacheFile: string
   readonly #sourceRoots: UsageSourceRoot[]
+  readonly #accountHomes: () => readonly UsageAccountHome[]
   readonly #harnessUsage: () => StoredUsageEvent[]
   readonly #now: () => Date
   readonly #scanRunner: UsageScanRunner
@@ -235,6 +260,7 @@ export class UsageHistoryService {
       provider: source.provider,
       root: options.sourceRoots?.[source.provider] ?? source.root(),
     }))
+    this.#accountHomes = options.accountHomes ?? (() => [])
     this.#harnessUsage = options.harnessUsage ?? (() => [])
     this.#now = options.now ?? (() => new Date())
     this.#scanRunner = options.scanRunner ?? runUsageScanWorker
@@ -335,10 +361,11 @@ export class UsageHistoryService {
     // The worker gets fingerprints only; the entries stay here instead of being
     // re-read from disk by the worker and cloned back after every scan.
     const request: UsageScanRequest = {
-      sources: this.#sourceRoots,
+      sources: this.#roots(),
       indexed: base.files.map((file) => ({
         path: file.path,
         provider: file.provider,
+        ...(file.accountId === undefined ? {} : { accountId: file.accountId }),
         mtimeMs: file.mtimeMs,
         size: file.size,
         ...(file.checkpoint && keepsCheckpoint(file, generatedAt)
@@ -373,6 +400,23 @@ export class UsageHistoryService {
         if (this.#scanAbort === abort) this.#scanAbort = undefined
         this.#refreshing = undefined
       })
+  }
+
+  /** Each provider's own archive, then every other account's archive inside its folder. */
+  #roots(): UsageSourceRoot[] {
+    let homes: readonly UsageAccountHome[]
+    try {
+      homes = this.#accountHomes()
+    } catch {
+      // The default accounts' usage still counts when the account list cannot be read.
+      homes = []
+    }
+    const accountRoots = homes.flatMap(({ provider, accountId, home }) => {
+      const source = LOCAL_USAGE_SOURCES.find((candidate) => candidate.provider === provider)
+      if (!source || accountId === DEFAULT_ACCOUNT_ID) return []
+      return [{ provider, accountId, root: source.root(home) }]
+    })
+    return [...this.#sourceRoots, ...accountRoots]
   }
 
   /**
@@ -586,13 +630,12 @@ export class UsageHistoryService {
       ...providerSessions.keys(),
     ])
     const sources = [...sourceProviders].map((provider) => {
-      const localSource = this.#sources.find((source) => source.provider === provider)
+      // A provider's history is there when any of its accounts' archives is.
+      const archived = this.#sources.some(
+        (source) => source.provider === provider && source.available,
+      )
       const sessionCount = providerSessions.get(provider)?.size ?? 0
-      return {
-        provider,
-        available: (localSource?.available ?? false) || sessionCount > 0,
-        sessionCount,
-      }
+      return { provider, available: archived || sessionCount > 0, sessionCount }
     })
 
     return {
@@ -633,6 +676,7 @@ export async function runUsageHistoryScan(
     const prior = indexed.get(file.path)
     return !(
       prior?.provider === file.provider &&
+      prior.accountId === file.accountId &&
       prior.mtimeMs === file.mtimeMs &&
       prior.size === file.size
     )
@@ -672,6 +716,7 @@ async function parseUsageFile(
   const fingerprint = {
     path: file.path,
     provider: file.provider,
+    ...(file.accountId === undefined ? {} : { accountId: file.accountId }),
     mtimeMs: file.mtimeMs,
     size: file.size,
   }
@@ -682,7 +727,11 @@ async function parseUsageFile(
       appended: false,
     }
   }
-  const checkpoint = prior?.provider === file.provider ? prior.checkpoint : undefined
+  // A file that now belongs to another account is read again in full.
+  const checkpoint =
+    prior?.provider === file.provider && prior.accountId === file.accountId
+      ? prior.checkpoint
+      : undefined
   const read = await file.readFrom(file.path, checkpoint)
   return {
     ...fingerprint,
@@ -887,6 +936,7 @@ function isCachedUsageFile(value: unknown): value is CachedUsageFile {
     file &&
     typeof file['path'] === 'string' &&
     LOCAL_USAGE_SOURCES.some((source) => source.provider === file['provider']) &&
+    (file['accountId'] === undefined || AccountIdSchema.safeParse(file['accountId']).success) &&
     nonNegativeNumber(file['mtimeMs']) &&
     nonNegativeNumber(file['size']) &&
     Array.isArray(file['entries']) &&
@@ -1024,11 +1074,19 @@ function emptySources(): SourceState[] {
   })
 }
 
+const sourceKey = (source: Pick<SourceState, 'provider' | 'accountId'>) =>
+  `${source.provider}\u0000${source.accountId ?? DEFAULT_ACCOUNT_ID}`
+
+/** Every reported provider's default source, then each other account's, by provider and account. */
 function mergeSources(sources: readonly SourceState[]): SourceState[] {
-  const merged = new Map(emptySources().map((source) => [source.provider, source]))
+  const merged = new Map(emptySources().map((source) => [sourceKey(source), source]))
   for (const source of sources) {
-    const known = merged.get(source.provider)
-    if (known) merged.set(source.provider, { ...known, ...source })
+    if (source.accountId !== undefined && !AccountIdSchema.safeParse(source.accountId).success) {
+      continue
+    }
+    // Another account's archive is one more archive of a provider already listed.
+    const listed = merged.get(sourceKey({ provider: source.provider }))
+    if (listed) merged.set(sourceKey(source), { ...listed, ...source })
   }
   return [...merged.values()]
 }
@@ -1041,38 +1099,45 @@ async function discoverUsageSources(
   roots: readonly UsageSourceRoot[],
 ): Promise<{ files: UsageFile[]; sources: SourceState[] }> {
   const discovered = await Promise.all(
-    roots.flatMap(({ provider, root }) => {
-      const source = LOCAL_USAGE_SOURCES.find((candidate) => candidate.provider === provider)
+    roots.flatMap((root) => {
+      const source = LOCAL_USAGE_SOURCES.find((candidate) => candidate.provider === root.provider)
       return source ? [discoverSource(source, root)] : []
     }),
   )
+  // A file two archives share, as in one folder inside another, counts once:
+  // for the first archive, the default account's before any other.
+  const seen = new Set<string>()
+  const files = discovered
+    .flatMap((source) => source.files)
+    .filter((file) => {
+      const key = process.platform === 'linux' ? file.path : file.path.toLowerCase()
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
   return {
-    files: discovered.flatMap((source) => source.files),
-    sources: mergeSources(
-      discovered.map((source) => ({
-        provider: source.provider,
-        label: source.label,
-        available: source.available,
-      })),
-    ),
+    files,
+    sources: mergeSources(discovered.map(({ files: _files, ...source }) => source)),
   }
 }
 
 async function discoverSource(
   source: UsageHistorySource<ProviderId, LocalUsageRecord>,
-  root: string,
-): Promise<{ provider: ProviderId; label: string; available: boolean; files: UsageFile[] }> {
+  { root, accountId }: UsageSourceRoot,
+): Promise<SourceState & { label: string; files: UsageFile[] }> {
   const { provider, label } = source
+  const account = accountId === undefined ? {} : { accountId }
   try {
     const archive = await source.discover(root)
     return {
       provider,
+      ...account,
       label,
       available: archive.available,
-      files: archive.files.map((file) => ({ ...file, provider })),
+      files: archive.files.map((file) => ({ ...file, provider, ...account })),
     }
   } catch {
-    return { provider, label, available: false, files: [] }
+    return { provider, ...account, label, available: false, files: [] }
   }
 }
 

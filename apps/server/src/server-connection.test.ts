@@ -36,6 +36,9 @@ const state = vi.hoisted(() => ({
   idleCheckouts: [] as string[],
   handled: [] as string[],
   accountCalls: [] as unknown[][],
+  accountList: [] as unknown[],
+  usageHistory: undefined as { accountHomes?: () => unknown } | undefined,
+  usageHistoryCalls: [] as unknown[][],
   accountsRoot: '',
   accountsChanged: (_provider: string) => {},
 }))
@@ -196,7 +199,7 @@ vi.mock('./provider-accounts.js', () => ({
     }
     list(provider?: string) {
       state.accountCalls.push(['list', provider])
-      return { accounts: [], active: {} }
+      return { accounts: state.accountList, active: {} }
     }
     create(provider: string, label: string, home: unknown) {
       state.accountCalls.push(['create', provider, label, home])
@@ -226,6 +229,20 @@ vi.mock('./provider-accounts.js', () => ({
     recordIdentity(provider: string, accountId: string | undefined, account: unknown) {
       state.accountCalls.push(['recordIdentity', provider, accountId, account])
     }
+  },
+}))
+// The index's own rules are covered in usage-history.test.ts; this is its wiring.
+vi.mock('./usage-history.js', () => ({
+  UsageHistoryService: class {
+    constructor(options: { accountHomes?: () => unknown }) {
+      state.usageHistory = options
+    }
+    async startBackgroundRefresh() {}
+    async history(...args: unknown[]) {
+      state.usageHistoryCalls.push(args)
+      return { range: args[0] }
+    }
+    dispose() {}
   },
 }))
 vi.mock('./runtime-loader.js', () => ({
@@ -313,6 +330,9 @@ afterEach(async () => {
   state.idleCheckouts.length = 0
   state.handled.length = 0
   state.accountCalls.length = 0
+  state.accountList = []
+  state.usageHistory = undefined
+  state.usageHistoryCalls.length = 0
   vi.unstubAllEnvs()
   await Promise.all(
     temporary.splice(0).map((directory) => rm(directory, { recursive: true, maxRetries: 5 })),
@@ -790,6 +810,25 @@ describe('provider accounts', () => {
         'usage.limits(codex, undefined)',
         'usage.consumeReset(codex, work)',
         'usage.consumeReset(codex, undefined)',
+      ])
+    } finally {
+      client.terminate()
+    }
+  })
+
+  it("gives the usage index every other account's folder", async () => {
+    const { port } = await listen()
+    const { client, ask } = await connect(port)
+    try {
+      await ask('usage.history', { range: '7d' })
+      state.accountList = [
+        { id: 'default', provider: 'codex', label: 'Default', managed: false },
+        { id: 'work', provider: 'codex', label: 'Work', home: 'D:\\work', managed: true },
+        { id: 'work', provider: 'claude-code', label: 'Work', home: 'D:\\claude', managed: false },
+      ]
+      expect(state.usageHistory?.accountHomes?.()).toEqual([
+        { provider: 'codex', accountId: 'work', home: 'D:\\work' },
+        { provider: 'claude-code', accountId: 'work', home: 'D:\\claude' },
       ])
     } finally {
       client.terminate()
