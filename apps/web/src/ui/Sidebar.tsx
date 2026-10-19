@@ -1426,6 +1426,7 @@ const ProjectRow = memo(function ProjectRow(props: {
             <button
               className="icon-btn"
               onClick={() => props.onNewSession(props.project.path)}
+              aria-label={`New chat in ${displayName(props.project)}`}
               title="New chat here"
             >
               {actionsReady ? <SquarePen size={15} aria-hidden /> : null}

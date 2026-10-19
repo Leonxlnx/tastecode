@@ -522,11 +522,12 @@ describe('Sidebar chat actions', () => {
     expect(projectHead.querySelector('.proj__mark')).not.toBeNull()
     expect(projectHead.querySelectorAll('svg')).toHaveLength(0)
 
-    fireEvent.focus(screen.getByRole('button', { name: 'New chat here' }))
+    // Named before its icon mounts, so it is never an unnamed focus stop.
+    fireEvent.focus(screen.getByRole('button', { name: 'New chat in TasteCode' }))
     expect(projectHead.querySelectorAll('svg')).toHaveLength(2)
 
     rendered.rerender(view(latestNewSession))
-    fireEvent.click(screen.getByRole('button', { name: 'New chat here' }))
+    fireEvent.click(screen.getByRole('button', { name: 'New chat in TasteCode' }))
 
     expect(firstNewSession).not.toHaveBeenCalled()
     expect(latestNewSession).toHaveBeenCalledWith('/work/harness', undefined)
