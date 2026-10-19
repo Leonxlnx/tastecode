@@ -456,7 +456,7 @@
 }
 
 .sessrow:hover {
-  --sess-bg: var(--surface);
+  --sess-bg: var(--control-hover);
 }
 
 .sessrow.is-active {
@@ -482,10 +482,6 @@
   border-radius: var(--r-pill);
   background: var(--text-2);
   pointer-events: none;
-}
-
-.sessrow.is-reorderable .sess {
-  cursor: grab;
 }
 
 .sessrow.is-dragging {
