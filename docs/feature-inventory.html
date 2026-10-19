@@ -374,7 +374,8 @@
                   >Codex account dictation beside Send, with a flat idle button, a smooth voice
                   curve, morphing Tabler icons, a starting state, and Escape to cancel. Ask first
                   and Design hide while Plus keeps accepting files. Account credentials stay inside
-                  the adapter</span
+                  the adapter. The button follows the provider's last voice status at once while the
+                  status is read again, instead of a placeholder</span
                 ></span
               ></label
             >
@@ -1113,7 +1114,8 @@
                   not confirm this account, but you can still send, with Retry instead of Check
                   setup, and Send opens after 5 s while an account check is still running, or at
                   once when the provider's last check said signed in; a check that answers signed
-                  out turns Send off again</span
+                  out turns Send off again; an Enter pressed while Send is still loading is sent
+                  once Send is ready, unless the words or the chat changed meanwhile</span
                 ></span
               ></label
             >
