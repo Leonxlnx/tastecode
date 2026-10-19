@@ -183,7 +183,13 @@ type UsageHistoryOptions = {
   largeCacheLoader?: UsageCacheLoader
 }
 
-type AttributedUsageRecord = LocalUsageRecord & { provider: ProviderId }
+type AttributedUsageRecord = LocalUsageRecord & { provider: ProviderId; accountId?: AccountId }
+
+/** One provider account, whose usage a request can ask for alone. */
+export type UsageHistoryAccount = { provider: ProviderId; accountId: AccountId }
+
+const accountKey = (provider: ProviderId, accountId: AccountId | undefined) =>
+  `${provider}\u0000${accountId ?? DEFAULT_ACCOUNT_ID}`
 
 /** Everything in a usage.history result that is derived from the indexed records. */
 type UsageHistoryFigures = Omit<UsageHistoryResult, 'generatedAt' | 'scan' | 'warnings'>
@@ -245,7 +251,7 @@ export class UsageHistoryService {
   #harnessUsageLoadedAt = 0
   #harnessUsageCache: StoredUsageEvent[] | undefined
   /** Pages poll usage.history every 500 ms while a scan runs; most polls change nothing. */
-  readonly #aggregates = new Map<UsageHistoryRange, AggregateMemo>()
+  readonly #aggregates = new Map<string, AggregateMemo>()
   #sources: SourceState[] = emptySources()
   #scanWarnings: string[] = []
   #scan: UsageHistoryResult['scan'] = {
@@ -273,7 +279,12 @@ export class UsageHistoryService {
     this.#startRefresh()
   }
 
-  async history(range: UsageHistoryRange, refresh = false): Promise<UsageHistoryResult> {
+  /** Every account's usage, or with `account` that account's alone. */
+  async history(
+    range: UsageHistoryRange,
+    refresh = false,
+    account?: UsageHistoryAccount,
+  ): Promise<UsageHistoryResult> {
     await this.#loadCache()
     const now = this.#now().getTime()
     if (refresh) this.#harnessUsageLoadedAt = 0
@@ -284,7 +295,7 @@ export class UsageHistoryService {
     ) {
       this.#startRefresh()
     }
-    return this.#aggregate(range)
+    return this.#aggregate(range, account)
   }
 
   async waitForRefresh(): Promise<void> {
@@ -451,11 +462,17 @@ export class UsageHistoryService {
     }
   }
 
-  #aggregate(range: UsageHistoryRange): UsageHistoryResult {
+  #aggregate(
+    range: UsageHistoryRange,
+    account: UsageHistoryAccount | undefined,
+  ): UsageHistoryResult {
     const now = this.#now()
     const endDate = localDateKey(now)
     const harness = this.#cachedHarnessUsage(now.getTime())
-    let memo = this.#aggregates.get(range)
+    const memoKey = account
+      ? `${range}\u0000${accountKey(account.provider, account.accountId)}`
+      : range
+    let memo = this.#aggregates.get(memoKey)
     if (
       !memo ||
       memo.cache !== this.#cache ||
@@ -468,9 +485,9 @@ export class UsageHistoryService {
         harness,
         sources: this.#sources,
         endDate,
-        figures: this.#figures(range, endDate, harness),
+        figures: this.#figures(range, endDate, harness, account),
       }
-      this.#aggregates.set(range, memo)
+      this.#aggregates.set(memoKey, memo)
     }
 
     const { figures } = memo
@@ -495,15 +512,29 @@ export class UsageHistoryService {
     }
   }
 
+  /**
+   * A provider's usage on accounts beyond its default one is split into a row
+   * per account; with `account`, only that account's usage counts.
+   */
   #figures(
     range: UsageHistoryRange,
     endDate: string,
     harness: readonly StoredUsageEvent[],
+    account: UsageHistoryAccount | undefined,
   ): UsageHistoryFigures {
     const files = this.#cache?.files ?? []
-    const richProviders = new Set<ProviderId>()
-    for (const file of files) if (file.entries.length > 0) richProviders.add(file.provider)
-    const harnessEntries = harnessUsageRecords(harness, richProviders)
+    const richAccounts = new Set<string>()
+    for (const file of files) {
+      if (file.entries.length > 0) richAccounts.add(accountKey(file.provider, file.accountId))
+    }
+    const harnessEntries = harnessUsageRecords(harness, richAccounts)
+    const wanted = account && accountKey(account.provider, account.accountId)
+    /** Providers with usage on another account than the default one, at any date. */
+    const splitProviders = new Set<ProviderId>()
+    const accountBuckets = new Map<
+      string,
+      MutableBucket & { provider: ProviderId; accountId: AccountId }
+    >()
     // 'all' starts at the earliest record, so it only needs the end bound.
     const fixedStartDate = range === 'all' ? undefined : rangeStartDate(range, endDate, undefined)
     let earliestDate: string | undefined
@@ -523,7 +554,16 @@ export class UsageHistoryService {
       MutableBucket & { providers: Map<ProviderId, { tokens: number; estimatedCostUsd: number }> }
     >()
 
-    const addRecord = (providerId: ProviderId, entry: LocalUsageRecord) => {
+    const addRecord = (
+      providerId: ProviderId,
+      accountId: AccountId | undefined,
+      entry: LocalUsageRecord,
+    ) => {
+      const key = accountKey(providerId, accountId)
+      if (wanted !== undefined && key !== wanted) return
+      if (accountId !== undefined && accountId !== DEFAULT_ACCOUNT_ID) {
+        splitProviders.add(providerId)
+      }
       if (!earliestDate || entry.date < earliestDate) earliestDate = entry.date
       let knownSessions = providerSessions.get(providerId)
       if (!knownSessions) {
@@ -549,6 +589,17 @@ export class UsageHistoryService {
       const provider = getBucket(providerBuckets, providerId)
       addEntry(provider.totals, entry.tokens, priced)
       provider.sessions.add(sessionKey)
+      let accountBucket = accountBuckets.get(key)
+      if (!accountBucket) {
+        accountBucket = {
+          ...newBucket(),
+          provider: providerId,
+          accountId: accountId ?? DEFAULT_ACCOUNT_ID,
+        }
+        accountBuckets.set(key, accountBucket)
+      }
+      addEntry(accountBucket.totals, entry.tokens, priced)
+      accountBucket.sessions.add(sessionKey)
 
       const modelKey = `${providerId}:${entry.model}`
       let model = modelBuckets.get(modelKey)
@@ -584,18 +635,31 @@ export class UsageHistoryService {
       day.providers.set(providerId, providerDay)
     }
     for (const file of files) {
-      for (const entry of file.entries) addRecord(file.provider, entry)
+      for (const entry of file.entries) addRecord(file.provider, file.accountId, entry)
     }
-    for (const entry of harnessEntries) addRecord(entry.provider, entry)
+    for (const entry of harnessEntries) addRecord(entry.provider, entry.accountId, entry)
     const startDate = fixedStartDate ?? rangeStartDate(range, endDate, earliestDate)
 
-    const providers: UsageHistoryProvider[] = [...providerBuckets.entries()]
-      .map(([provider, bucket]) => ({
-        provider,
-        sessionCount: bucket.sessions.size,
-        totals: bucket.totals,
-      }))
-      .sort((a, b) => b.totals.estimatedCostUsd - a.totals.estimatedCostUsd)
+    // An account asked for alone names itself, as does every account of a split provider.
+    const byAccount = (provider: ProviderId) =>
+      account !== undefined || splitProviders.has(provider)
+    const providers: UsageHistoryProvider[] = [
+      ...[...providerBuckets]
+        .filter(([provider]) => !byAccount(provider))
+        .map(([provider, bucket]) => ({
+          provider,
+          sessionCount: bucket.sessions.size,
+          totals: bucket.totals,
+        })),
+      ...[...accountBuckets.values()]
+        .filter((bucket) => byAccount(bucket.provider))
+        .map((bucket) => ({
+          provider: bucket.provider,
+          accountId: bucket.accountId,
+          sessionCount: bucket.sessions.size,
+          totals: bucket.totals,
+        })),
+    ].sort((a, b) => b.totals.estimatedCostUsd - a.totals.estimatedCostUsd)
 
     const models: UsageHistoryModel[] = [...modelBuckets.values()]
       .map((bucket) => ({
@@ -625,13 +689,17 @@ export class UsageHistoryService {
       }
     })
 
+    const sourceStates =
+      wanted === undefined
+        ? this.#sources
+        : this.#sources.filter((source) => accountKey(source.provider, source.accountId) === wanted)
     const sourceProviders = new Set<ProviderId>([
-      ...this.#sources.map((source) => source.provider),
+      ...sourceStates.map((source) => source.provider),
       ...providerSessions.keys(),
     ])
     const sources = [...sourceProviders].map((provider) => {
       // A provider's history is there when any of its accounts' archives is.
-      const archived = this.#sources.some(
+      const archived = sourceStates.some(
         (source) => source.provider === provider && source.available,
       )
       const sessionCount = providerSessions.get(provider)?.size ?? 0
@@ -1141,15 +1209,19 @@ async function discoverSource(
   }
 }
 
+/**
+ * Usage from TasteCode's own events, for each provider account without
+ * records of its own in the local archives, which count more.
+ */
 function harnessUsageRecords(
   events: readonly StoredUsageEvent[],
-  richerLocalProviders: ReadonlySet<ProviderId>,
+  richerLocalAccounts: ReadonlySet<string>,
 ): AttributedUsageRecord[] {
   const records: AttributedUsageRecord[] = []
   const previous = new Map<string, TokenCounts>()
 
   for (const event of events) {
-    if (richerLocalProviders.has(event.provider)) continue
+    if (richerLocalAccounts.has(accountKey(event.provider, event.accountId))) continue
     const sessionKey = `${event.provider}:${event.threadId}`
     const current = usageTokenCounts(event.usage)
     const tokens = event.usage.cumulative
@@ -1165,6 +1237,7 @@ function harnessUsageRecords(
     const model = event.usage.model ?? 'Unknown model'
     records.push({
       provider: event.provider,
+      ...(event.accountId === undefined ? {} : { accountId: event.accountId }),
       date: localDateKey(new Date(event.at)),
       model,
       sessionId: event.threadId,

@@ -721,14 +721,16 @@ describe('provider accounts', () => {
   it('refuses an account it cannot run instead of acting on the default one', async () => {
     const { port } = await listen()
     const { client, ask } = await connect(port)
-    const notYet = 'Running this provider as another account is not available yet.'
     try {
       expect(
         await ask('usage.history', {
           range: '7d',
-          account: { provider: 'codex', accountId: 'work' },
+          account: { provider: 'grok', accountId: 'work' },
         }),
-      ).toMatchObject({ error: { code: 'internal', message: notYet } })
+      ).toMatchObject({
+        error: { code: 'internal', message: 'This provider runs as one account only.' },
+      })
+      expect(state.usageHistoryCalls).toEqual([])
       expect(state.handled).toEqual([])
       // A chat is pinned to its account by the orchestrator, which checks it.
       for (const accountId of ['work', undefined]) {
@@ -816,7 +818,7 @@ describe('provider accounts', () => {
     }
   })
 
-  it("gives the usage index every other account's folder", async () => {
+  it("reads every other account's folder into usage and answers one account alone", async () => {
     const { port } = await listen()
     const { client, ask } = await connect(port)
     try {
@@ -829,6 +831,12 @@ describe('provider accounts', () => {
       expect(state.usageHistory?.accountHomes?.()).toEqual([
         { provider: 'codex', accountId: 'work', home: 'D:\\work' },
         { provider: 'claude-code', accountId: 'work', home: 'D:\\claude' },
+      ])
+      const account = { provider: 'codex', accountId: 'work' }
+      await ask('usage.history', { range: '30d', refresh: true, account })
+      expect(state.usageHistoryCalls).toEqual([
+        ['7d', false, undefined],
+        ['30d', true, account],
       ])
     } finally {
       client.terminate()

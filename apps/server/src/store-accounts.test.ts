@@ -245,4 +245,24 @@ describe('the account a chat is pinned to', () => {
     // Read back from disk, not from the store's cache.
     expect(open(location).thread('pinned')?.accountId).toBe('work-1a2b3c')
   })
+
+  it("names the account of each chat's usage", () => {
+    const store = open()
+    store.addThread({ id: 'own', projectPath: 'C:\\x', provider: 'codex', title: 'Own' })
+    store.addThread({
+      id: 'work',
+      projectPath: 'C:\\x',
+      provider: 'codex',
+      accountId: 'work-1a2b3c',
+      title: 'Work',
+    })
+    const usage = { inputTokens: 1, cachedInputTokens: 0, outputTokens: 1, totalTokens: 2 }
+    for (const threadId of ['own', 'work']) {
+      store.append(threadId, { type: 'usage.updated', usage: { ...usage, reasoningTokens: 0 } })
+    }
+    expect(store.usageEvents().map((event) => [event.threadId, event.accountId])).toEqual([
+      ['own', undefined],
+      ['work', 'work-1a2b3c'],
+    ])
+  })
 })

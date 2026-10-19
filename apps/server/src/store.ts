@@ -169,6 +169,8 @@ export type StoredCheckpoint = {
 export type StoredUsageEvent = {
   threadId: string
   provider: ProviderId
+  /** The account the chat is pinned to; absent for the default account. */
+  accountId?: string | undefined
   at: number
   usage: Usage
 }
@@ -3992,9 +3994,10 @@ export class Store {
       at: SqliteInteger
       payload: string
       provider: string
+      account_id: string | null
     }>(
       this.#db.prepare(
-        `SELECT u.thread_id, u.at, u.payload, t.provider
+        `SELECT u.thread_id, u.at, u.payload, t.provider, t.account_id
          FROM usage_events u JOIN threads t ON t.id = u.thread_id
          ORDER BY u.thread_id, u.event_seq`,
       ),
@@ -4005,7 +4008,13 @@ export class Store {
       if (!provider) continue
       const event = parseDomainEvent(row.payload, `usage history for thread ${row.thread_id}`)
       if (event?.type !== 'usage.updated') continue
-      events.push({ threadId: row.thread_id, provider, at: Number(row.at), usage: event.usage })
+      events.push({
+        threadId: row.thread_id,
+        provider,
+        ...(row.account_id === null ? {} : { accountId: row.account_id }),
+        at: Number(row.at),
+        usage: event.usage,
+      })
     }
     return events
   }

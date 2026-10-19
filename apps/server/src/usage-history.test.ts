@@ -11,8 +11,9 @@ import {
 import os from 'node:os'
 import path from 'node:path'
 import { readClaudeUsageHistory } from '@harness/adapter-claude-code'
-import type { ProviderId, UsageHistoryRange } from '@harness/contracts'
+import type { ProviderId, UsageHistoryRange, UsageHistoryResult } from '@harness/contracts'
 import { afterEach, describe, expect, it } from 'vitest'
+import type { StoredUsageEvent } from './store.js'
 import {
   type CachedUsageFile,
   loadUsageCache,
@@ -1216,6 +1217,84 @@ describe('usage history of provider accounts', () => {
     expect((await readUsageCache(cacheFile)).files.map((file) => file.accountId)).toEqual([
       undefined,
     ])
+  })
+
+  it("splits a provider's usage by account and answers one account alone", async () => {
+    const root = temporaryDirectory()
+    const codexRoot = path.join(root, 'codex', 'sessions')
+    const workCodex = path.join(root, 'accounts', 'codex', 'work')
+    writeCodexRollout(path.join(codexRoot, 'own.jsonl'), 'own-session', 1_000)
+    writeCodexRollout(path.join(workCodex, 'sessions', 'work.jsonl'), 'work-session', 2_000)
+    const usage = (inputTokens: number) => ({
+      inputTokens,
+      cachedInputTokens: 0,
+      outputTokens: 0,
+      reasoningTokens: 0,
+      totalTokens: inputTokens,
+    })
+    const at = new Date('2026-08-08T11:00:00.000Z').getTime()
+    let homes: { provider: 'codex'; accountId: string; home: string }[] = []
+    let events: StoredUsageEvent[] = [
+      { threadId: 'api-chat', provider: 'api', at, usage: usage(500) },
+    ]
+    let now = new Date('2026-08-08T12:00:00.000Z').getTime()
+    const service = usageService({
+      cacheFile: path.join(root, 'cache', 'usage.json'),
+      sourceRoots: { codex: codexRoot, 'claude-code': path.join(root, 'missing-claude') },
+      accountHomes: () => homes,
+      harnessUsage: () => events,
+      now: () => new Date(now),
+    })
+    const rows = (history: UsageHistoryResult) =>
+      history.providers.map((row) => [row.provider, row.accountId, row.totals.processedTokens])
+
+    // Usage on the default account alone keeps one row per provider, as before accounts.
+    expect(rows(await settledHistory(service, '7d'))).toEqual([
+      ['codex', undefined, 1_100],
+      ['api', undefined, 500],
+    ])
+
+    homes = [{ provider: 'codex', accountId: 'work', home: workCodex }]
+    events = [
+      ...events,
+      // Work's own archive has its records, so its events would count them twice.
+      { threadId: 'work-chat', provider: 'codex', accountId: 'work', at, usage: usage(9_000) },
+      // An account without records of its own counts its chats' events.
+      { threadId: 'client-chat', provider: 'codex', accountId: 'client', at, usage: usage(700) },
+    ]
+    now += 60_000
+    const all = await settledHistory(service, '7d', true)
+    expect(rows(all).sort()).toEqual(
+      [
+        ['codex', 'work', 2_200],
+        ['codex', 'default', 1_100],
+        ['codex', 'client', 700],
+        ['api', undefined, 500],
+      ].sort(),
+    )
+    expect(all.totals.processedTokens).toBe(2_200 + 1_100 + 700 + 500)
+
+    const work = await service.history('7d', false, { provider: 'codex', accountId: 'work' })
+    expect(rows(work)).toEqual([['codex', 'work', 2_200]])
+    expect(work.totals.processedTokens).toBe(2_200)
+    expect(work.sessionCount).toBe(1)
+    expect(work.models.map((model) => [model.provider, model.totals.processedTokens])).toEqual([
+      ['codex', 2_200],
+    ])
+    expect(work.daily.at(-1)?.providers).toEqual([
+      { provider: 'codex', tokens: 2_200, estimatedCostUsd: expect.any(Number) },
+    ])
+    expect(work.sources).toEqual([{ provider: 'codex', available: true, sessionCount: 1 }])
+    // The same question is answered from the figures already computed.
+    expect(
+      (await service.history('7d', false, { provider: 'codex', accountId: 'work' })).totals,
+    ).toBe(work.totals)
+
+    const own = await service.history('7d', false, { provider: 'codex', accountId: 'default' })
+    expect(rows(own)).toEqual([['codex', 'default', 1_100]])
+    const api = await service.history('7d', false, { provider: 'api', accountId: 'default' })
+    expect(rows(api)).toEqual([['api', 'default', 500]])
+    expect(api.sources).toEqual([{ provider: 'api', available: true, sessionCount: 1 }])
   })
 
   it("keeps each file's account in the saved index and refuses a malformed one", async () => {

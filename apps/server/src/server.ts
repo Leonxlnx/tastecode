@@ -7,7 +7,6 @@ import {
   ErrorCode,
   methods,
   PROTOCOL_VERSION,
-  type AccountId,
   type MethodName,
   type ProviderHistorySource,
   type ProviderId,
@@ -138,17 +137,7 @@ export function startServer(
     root: path.join(path.dirname(databasePath), 'accounts'),
     onChanged: (provider) => push.broadcast('accounts.changed', { provider }),
   })
-  /**
-   * A request may name a provider account. One the provider cannot have is
-   * refused. Until usage history is read per account, any account but the
-   * default one is refused there as well, so a request for another account can
-   * never answer with the default one's usage.
-   */
-  const defaultAccountOnly = (provider: ProviderId, accountId: AccountId | undefined) => {
-    if (accounts.home(provider, accountId) !== undefined) {
-      throw new Error('Running this provider as another account is not available yet.')
-    }
-  }
+
   // Install, update and sign-in terminals can add, replace or update a CLI.
   const setupTerminals = new Set<string>()
   const setupTerminal = (terminalId: string) => {
@@ -1310,8 +1299,9 @@ export function startServer(
 
       case 'usage.history': {
         const p = parseParams(method, params)
-        if (p.account) defaultAccountOnly(p.account.provider, p.account.accountId)
-        return (await usageHistoryService()).history(p.range, p.refresh ?? false)
+        // An account the provider cannot have, or one that is gone, is refused.
+        if (p.account) accounts.home(p.account.provider, p.account.accountId)
+        return (await usageHistoryService()).history(p.range, p.refresh ?? false, p.account)
       }
 
       case 'usage.resetHistory':
