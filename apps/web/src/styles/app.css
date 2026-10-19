@@ -810,7 +810,7 @@
 }
 
 .proj__name {
-  flex: 1;
+  flex: 0 1 auto;
   /* Parents carry the weight; their chats read lighter beneath them. */
   font-weight: 500;
   overflow: hidden;
@@ -1122,6 +1122,75 @@
 
 .sess__status-dot.is-failed {
   background: var(--error);
+}
+
+/* An answer nobody has read yet: the unread dot's colour. */
+.sess__status-dot.is-done {
+  background: var(--light);
+}
+
+/* ---------- needs you ---------- */
+
+/* Chats waiting for the user, above Pinned. Only rendered when one is. */
+.needs-band__list {
+  margin: 0 0 10px;
+}
+
+/* The band's state mark sits in the provider mark's column, so every title in
+   the rail starts on one line. */
+.sess__mark {
+  display: grid;
+  place-items: center;
+  width: 13px;
+  height: 13px;
+  flex: none;
+}
+
+.sess__mark > .sess__status-dot {
+  margin: 0;
+}
+
+.sess__project {
+  flex: 0 1 auto;
+  min-width: 0;
+  /* The title is what the row is about; a long project name gives way first. */
+  max-width: 32%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  letter-spacing: 0;
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+
+/* The row's one action takes the project name's place; the state mark on the
+   left never hides. */
+.sessrow.has-action:focus-within .sess__project {
+  opacity: 0;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .sessrow.has-action:hover .sess__project {
+    opacity: 0;
+  }
+}
+
+/* A folded project's count of chats that need the user, right after its name. */
+.proj__attention {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+  color: var(--text-2);
+  font-size: var(--t-xs);
+  font-variant-numeric: tabular-nums;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+
+.proj__attention > .sess__status-dot {
+  margin: 0;
 }
 
 /* ---------- stage ---------- */

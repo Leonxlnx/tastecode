@@ -5250,6 +5250,18 @@ export function App() {
     (id: string) => void archiveSession(id),
     [archiveSession],
   )
+  // The server marks a chat read when its history is fetched, as it does for
+  // the open chat after a turn. Asking for nothing past the end keeps that
+  // fetch empty.
+  const markSidebarSessionRead = useCallback(
+    (id: string) => {
+      setProjects((current) => updateSession(current, id, markSessionRead))
+      void transport
+        .request('thread.history', { threadId: id, afterSeq: Number.MAX_SAFE_INTEGER })
+        .catch(() => undefined)
+    },
+    [transport],
+  )
   const archiveSidebarProject = useCallback(
     (sessionIds: string[]) => {
       void (async () => {
@@ -6113,6 +6125,7 @@ export function App() {
           onRenameSession={renameSidebarSession}
           onToggleSessionPin={toggleSidebarSessionPin}
           onDeleteSession={deleteSidebarSession}
+          onMarkSessionRead={markSidebarSessionRead}
           onArchiveProject={archiveSidebarProject}
           onReorderProject={reorderSidebarProject}
           onReorderSession={reorderSidebarSession}

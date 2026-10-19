@@ -5,6 +5,10 @@ export type SessionOrder = Record<string, string[]>
 export type PinnedSession = { projectPath: string; session: Session }
 type ProjectSidebarProjection = { project: Project; pinnedSessions: PinnedSession[] }
 export type SidebarRail = { orderedProjects: Project[]; pinnedSessions: PinnedSession[] }
+/** Why a chat is waiting for the user: a request it cannot pass, or an answer not yet read. */
+export type Attention = 'approval' | 'input' | 'failed' | 'done'
+export type NeedsYouEntry = PinnedSession & { attention: Attention }
+export type ProjectAttention = { count: number; attention: Attention }
 
 let cachedProjectOrderRaw: string | null | undefined
 let cachedProjectOrder: string[] = []
@@ -194,4 +198,79 @@ function projectSidebarProjection(source: Project): ProjectSidebarProjection {
   const projection = { project, pinnedSessions }
   projectSidebarProjections.set(source, projection)
   return projection
+}
+
+/**
+ * What a chat is waiting for, if anything. An approval or a question blocks
+ * the agent until it is answered. A failed or finished turn waits only until
+ * it is read, so opening the chat clears it.
+ */
+export function sessionAttention(session: Session): Attention | undefined {
+  if (session.status === 'approval') return 'approval'
+  if (session.status === 'input') return 'input'
+  if (!session.unread || session.lifecycle.state === 'settled') return undefined
+  if (session.status === 'failed') return 'failed'
+  if (session.status === 'ready' || session.status === 'idle') return 'done'
+  return undefined
+}
+
+const projectNeedsYou = new WeakMap<Project, NeedsYouEntry[]>()
+
+function projectEntries(project: Project): NeedsYouEntry[] {
+  const cached = projectNeedsYou.get(project)
+  if (cached) return cached
+  const entries: NeedsYouEntry[] = []
+  for (const session of project.sessions) {
+    const attention = sessionAttention(session)
+    if (attention) entries.push({ projectPath: project.path, session, attention })
+  }
+  projectNeedsYou.set(project, entries)
+  return entries
+}
+
+/**
+ * The chats waiting for the user. Agents blocked on an approval or a question
+ * come first, then failed or finished answers nobody has read; within each,
+ * the longest wait first, so a new arrival joins the end of its group. The
+ * open chat is left out: it is already in front of the user, and opening an
+ * answer is what reads it.
+ */
+export function needsYouSessions(
+  projects: readonly Project[],
+  activeSessionId: string | undefined,
+): NeedsYouEntry[] {
+  const entries: NeedsYouEntry[] = []
+  for (const project of projects) {
+    for (const entry of projectEntries(project)) {
+      if (entry.session.id !== activeSessionId) entries.push(entry)
+    }
+  }
+  return entries.sort(
+    (a, b) =>
+      Number(isBlocking(b.attention)) - Number(isBlocking(a.attention)) ||
+      waitingSince(a.session) - waitingSince(b.session),
+  )
+}
+
+function isBlocking(attention: Attention): boolean {
+  return attention === 'approval' || attention === 'input'
+}
+
+function waitingSince(session: Session): number {
+  return session.statusSince ?? session.createdAt
+}
+
+const ATTENTION_ORDER: readonly Attention[] = ['approval', 'input', 'failed', 'done']
+
+/** How many chats in a project need the user, and the most urgent reason. */
+export function projectAttention(project: Project): ProjectAttention | undefined {
+  const entries = projectEntries(project)
+  if (entries.length === 0) return undefined
+  let attention: Attention = 'done'
+  for (const entry of entries) {
+    if (ATTENTION_ORDER.indexOf(entry.attention) < ATTENTION_ORDER.indexOf(attention)) {
+      attention = entry.attention
+    }
+  }
+  return { count: entries.length, attention }
 }
