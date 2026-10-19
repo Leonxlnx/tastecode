@@ -22,7 +22,15 @@ const codex: ProviderStatus = {
   displayName: 'Codex',
   installed: true,
   auth: 'authenticated',
-  capabilities: { multipleAccounts: true },
+  capabilities: {
+    steer: false,
+    fork: false,
+    interrupt: false,
+    reasoningItems: false,
+    approvals: false,
+    images: false,
+    multipleAccounts: true,
+  },
 }
 const claude: ProviderStatus = { ...codex, id: 'claude-code', displayName: 'Claude Code' }
 
