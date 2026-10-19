@@ -6092,7 +6092,7 @@ describe('new chats', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Sign in to Work' }))
 
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Settings' })).toBeNull())
-    expect(await screen.findByLabelText('Codex (Work) login terminal')).toBeTruthy()
+    expect(await screen.findByLabelText('Codex · Work login terminal')).toBeTruthy()
     expect(transport.request).toHaveBeenCalledWith('providers.launch', {
       provider: 'codex',
       accountId: 'work-1a2b3c',
@@ -6104,7 +6104,7 @@ describe('new chats', () => {
       transport.listeners.get('terminal.exit')!({ terminalId: 'term-codex-work', exitCode: 0 })
     })
     await screen.findByRole('dialog', { name: 'Settings' })
-    expect(screen.queryByLabelText('Codex (Work) login terminal')).toBeNull()
+    expect(screen.queryByLabelText('Codex · Work login terminal')).toBeNull()
     await waitFor(() =>
       expect(transport.request).toHaveBeenCalledWith('auth.status', {
         provider: 'codex',

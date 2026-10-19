@@ -205,6 +205,11 @@ export function ProviderAccountsSection(props: {
   )
 }
 
+/** "Codex · Work", as Profile and the account popup name it. */
+function accountName(provider: ProviderStatus, account: ProviderAccount): string {
+  return `${provider.displayName} · ${account.label}`
+}
+
 function confirmCopy(confirm: Confirm) {
   const label = confirm.account.label
   return confirm.deleteHome
@@ -257,8 +262,9 @@ function AccountRow(props: {
         <ProviderIcon mark={providerMark(account.provider)} size={18} />
       </div>
       <div className="provider-row__identity">
+        {/* The provider is named too: every provider has an account called Default. */}
         <p className="set-entity__name" title={account.home}>
-          {account.label}
+          {accountName(props.provider, account)}
         </p>
       </div>
       <span className="set-leader" aria-hidden />
@@ -385,7 +391,7 @@ function AccountSignIn(props: {
   const busy = running || starting
   if (signedIn && !busy) return null
 
-  const title = `${provider.displayName} (${account.label})`
+  const title = accountName(provider, account)
   const openTerminal = () =>
     onOpenTerminal?.({
       provider: account.provider,

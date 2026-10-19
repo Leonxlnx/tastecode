@@ -114,8 +114,8 @@ describe('Provider accounts in Settings', () => {
     const transport = serve([defaultAccount('codex'), work])
     render(<ProviderAccountsSection transport={transport} providers={[codex]} />)
 
-    expect(await screen.findByText('Work')).toBeTruthy()
-    expect(screen.getByText('Default')).toBeTruthy()
+    expect(await screen.findByText('Codex · Work')).toBeTruthy()
+    expect(screen.getByText('Codex · Default')).toBeTruthy()
     expect(screen.getByText('Active')).toBeTruthy()
     expect(screen.getByText('Not signed in')).toBeTruthy()
 
@@ -168,7 +168,7 @@ describe('Provider accounts in Settings', () => {
       expect(opened).toHaveBeenCalledWith({
         provider: 'codex',
         accountId: 'work-1a2b3c',
-        displayName: 'Codex (Work)',
+        displayName: 'Codex · Work',
         installKey: 'login:codex@work-1a2b3c',
       }),
     )
@@ -202,7 +202,7 @@ describe('Provider accounts in Settings', () => {
       ]),
     )
     await waitFor(() => expect(screen.queryByRole('form', { name: 'Add account' })).toBeNull())
-    expect(await screen.findByText('Work')).toBeTruthy()
+    expect(await screen.findByText('Codex · Work')).toBeTruthy()
 
     fireEvent.click(screen.getByRole('button', { name: 'Add account' }))
     const second = screen.getByRole('form', { name: 'Add account' })
@@ -257,7 +257,7 @@ describe('Provider accounts in Settings', () => {
       target: { value: 'Client' },
     })
     fireEvent.click(within(form).getByRole('button', { name: 'Save' }))
-    expect(await screen.findByText('Client')).toBeTruthy()
+    expect(await screen.findByText('Codex · Client')).toBeTruthy()
     expect(calls(transport, 'accounts.rename')).toEqual([
       { provider: 'codex', accountId: 'work-1a2b3c', label: 'Client' },
     ])
@@ -285,7 +285,7 @@ describe('Provider accounts in Settings', () => {
         { provider: 'codex', accountId: 'work-1a2b3c' },
       ]),
     )
-    await waitFor(() => expect(screen.queryByText('Work')).toBeNull())
+    await waitFor(() => expect(screen.queryByText('Codex · Work')).toBeNull())
   })
 
   it('deletes a managed folder only as its own confirmed action', async () => {
