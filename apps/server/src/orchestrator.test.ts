@@ -13,7 +13,7 @@ import {
 } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CLAUDE_MCP_CAPABILITIES } from '@harness/adapter-claude-code/capabilities'
 import { GROK_MCP_CAPABILITIES } from '@harness/adapter-grok/mcp'
 import { OPENCODE_MCP_CAPABILITIES } from '@harness/adapter-opencode/inventory'
@@ -310,6 +310,20 @@ const quietOpenCodeInventory: NonNullable<ProviderControlsOptions['services']>['
   },
 }
 
+// Every orchestrator under test gets its own MCP config folder. Remove them when the file is done:
+// one run builds a few hundred, and each was left behind in the temp directory.
+const mcpConfigDirectories: string[] = []
+function temporaryMcpConfig(): McpConfigStore {
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'harness-mcp-'))
+  mcpConfigDirectories.push(directory)
+  return new McpConfigStore(path.join(directory, 'mcp.json'))
+}
+afterAll(() => {
+  for (const directory of mcpConfigDirectories.splice(0)) {
+    rmSync(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
+  }
+})
+
 type QueueNotificationError = { current?: Error }
 type CredentialFailure = { current?: Error }
 type LifecycleHook = {
@@ -436,9 +450,7 @@ function harness(
     onUsageChanged: (provider) => usageChanges.push(provider),
     onMcpChanged: (provider, projectPath) => mcpChanges.push({ provider, projectPath }),
     onCommandsChanged: (provider, projectPath) => commandChanges.push({ provider, projectPath }),
-    mcpConfig: new McpConfigStore(
-      path.join(mkdtempSync(path.join(os.tmpdir(), 'harness-mcp-')), 'mcp.json'),
-    ),
+    mcpConfig: temporaryMcpConfig(),
     readCredential: (reference) => {
       if (credentialFailure.current) throw credentialFailure.current
       return `secret:${reference}`
@@ -902,7 +914,7 @@ describe('idle thread runtime retention', () => {
     store.addThread({ id: 'thread-1', projectPath: '/repo', provider: 'codex', title: 'T' })
     const { orchestrator, sessions, resumedIds } = harness(undefined, store, 8, 1_000)
     try {
-      await orchestrator.setThreadApproval('thread-1', 'never')
+      await orchestrator.setThreadApproval('thread-1', 'full')
 
       expect(resumedIds).toEqual(['thread-1'])
       expect(sessions[0]?.disposed).toBe(false)
@@ -1860,7 +1872,7 @@ describe('workspace paths', () => {
     await orchestrator.sendTurn(thread.id, 'hello')
 
     expect(startedIn).toEqual([resolvedPath])
-    expect(snapshot).toHaveBeenCalledWith(resolvedPath)
+    expect(snapshot).toHaveBeenCalledWith(resolvedPath, { retainIn: expect.any(String) })
     expect(store.thread(thread.id)?.projectPath).toBe(projectPath)
     await orchestrator.disposeAll()
   })
@@ -7957,7 +7969,7 @@ describe('sidebar inbox lifecycle', () => {
   it('prioritizes approvals and questions over an active turn and its queue', async () => {
     const { orchestrator, sessions } = harness()
     const thread = await orchestrator.startThread('codex', '/repo')
-    sessions[0]!.emit(turnStarted(thread.id))
+    sessions[0]!.emit(turnStarted(thread.id, 'turn-1'))
     await orchestrator.submitTurn(thread.id, 'queued')
     sessions[0]!.emit({
       type: 'user_input.requested',
@@ -9377,6 +9389,34 @@ describe('rolling a session back', () => {
     expect(checkpoints[0]?.label).toBe('change the file')
   })
 
+  it('stores a checkpoint label that stops before an emoji split at 60 code units', async () => {
+    const { orchestrator } = harness()
+    const thread = await orchestrator.startThread('codex', repo)
+    await orchestrator.sendTurn(thread.id, 'y'.repeat(59) + '🌊 reply with ok')
+    expect(orchestrator.checkpoints(thread.id)[0]?.label).toBe(`${'y'.repeat(59)}…`)
+  })
+
+  it('stores an ascii checkpoint label cut at 60 code units', async () => {
+    const { orchestrator } = harness()
+    const thread = await orchestrator.startThread('codex', repo)
+    await orchestrator.sendTurn(thread.id, 'b'.repeat(80))
+    expect(orchestrator.checkpoints(thread.id)[0]?.label).toBe(`${'b'.repeat(60)}…`)
+  })
+
+  it('stores an end-trimmed ellipsis for a long prompt and the prompt itself when it is short', async () => {
+    const { orchestrator } = harness()
+    const longThread = await orchestrator.startThread('codex', repo)
+    await orchestrator.sendTurn(longThread.id, `${'word '.repeat(12)}more`)
+    const nested = path.join(repo, 'nested')
+    mkdirSync(nested)
+    const shortThread = await orchestrator.startThread('codex', nested)
+    await orchestrator.sendTurn(shortThread.id, 'keep this short')
+    expect(orchestrator.checkpoints(longThread.id)[0]?.label).toBe(
+      'word word word word word word word word word word word word…',
+    )
+    expect(orchestrator.checkpoints(shortThread.id)[0]?.label).toBe('keep this short')
+  })
+
   it('refuses restore through another task while the shared checkout is busy', async () => {
     const { orchestrator, sessions } = harness()
     const first = await orchestrator.startThread('codex', repo)
@@ -9863,9 +9903,7 @@ describe('overnight race pins', () => {
       onEvent: () => {},
       onLog: () => {},
       onLogin: () => {},
-      mcpConfig: new McpConfigStore(
-        path.join(mkdtempSync(path.join(os.tmpdir(), 'harness-mcp-')), 'mcp.json'),
-      ),
+      mcpConfig: temporaryMcpConfig(),
       readCredential: () => '',
       runtimeFor: () => ({
         async start() {

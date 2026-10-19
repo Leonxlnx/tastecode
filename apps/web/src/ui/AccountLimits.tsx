@@ -1,4 +1,12 @@
-import { type ReactNode, useId, useLayoutEffect, useRef, useState } from 'react'
+import {
+  type CSSProperties,
+  type ReactNode,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react'
 import type { ProviderId, ProviderLimitSource, ResultOf } from '@harness/contracts'
 import { providerDisplayName, providerMark } from '../provider-presentation.js'
 import type { UsageSummaryState } from '../usage-summary-state.js'
@@ -93,9 +101,12 @@ function LimitSource(props: {
   const limits = source?.status === 'ready' ? source.limits : []
   const name = providerDisplayName(props.state.provider)
   const status = sourceStatus(props.state, source, limits.length > 0, props.now)
+  // Automatic retries run on their own; the button returns once they stop.
+  const retrying = props.state.status !== 'ready' && props.state.retry !== undefined
   const retryable =
-    props.state.status === 'error' ||
-    (props.state.status === 'ready' && source?.status === 'unavailable')
+    !retrying &&
+    (props.state.status === 'error' ||
+      (props.state.status === 'ready' && source?.status === 'unavailable'))
   return (
     <section
       className="account-menu__source"
@@ -131,6 +142,7 @@ function LimitSource(props: {
           provider={props.state.provider}
           limit={limit}
           now={props.now}
+          order={index}
           onConsumeReset={props.onConsumeReset}
         />
       ))}
@@ -149,6 +161,13 @@ export function sourceStatus(
   hasValues: boolean,
   now: number,
 ): { label: string; detail?: string | undefined } | undefined {
+  if (state.status !== 'ready' && state.retry) {
+    const { attempt, of, message } = state.retry
+    return {
+      label: 'Retrying…',
+      detail: `Plan limits couldn’t be loaded. ${message} Trying again, ${attempt} of ${of}.`,
+    }
+  }
   const checkedAt = source?.status === 'ready' ? source.checkedAt : undefined
   if (state.status === 'error') {
     return hasValues
@@ -193,26 +212,36 @@ function LimitRow(props: {
   provider: ProviderId
   limit: Limit
   now: number
+  order: number
   onConsumeReset?: ConsumeReset | undefined
 }) {
   const consumable = props.limit.action === 'consume-reset' && props.onConsumeReset !== undefined
   const credits = props.limit.resetCredits
   const hasSelectableCredits = credits?.some((credit) => credit.id !== undefined)
-  const value = props.limit.valueLabel ?? `${remaining(props.limit)}% left`
+  const left = remaining(props.limit)
+  const gauge = props.limit.valueLabel === undefined
+  const value = props.limit.valueLabel ?? `${left}% left`
   const pace = evenPace(props.limit, props.now)
 
   return (
-    <div className="account-menu__limit">
+    <div
+      className="account-menu__limit"
+      data-gauge={gauge ? '' : undefined}
+      // The bar takes its length and colour from how much is left.
+      style={
+        gauge ? ({ '--left': left / 100, '--order': props.order } as CSSProperties) : undefined
+      }
+    >
       <div className="account-menu__limit-row">
         <span className="account-menu__limit-label">{props.limit.label}</span>
         <span className="account-menu__limit-value">{value}</span>
       </div>
-      {props.limit.valueLabel === undefined ? (
+      {gauge ? (
         <div
           className="account-menu__limit-bar"
           role="progressbar"
           aria-label={`${props.name} ${props.limit.label} left`}
-          aria-valuenow={remaining(props.limit)}
+          aria-valuenow={left}
           aria-valuemin={0}
           aria-valuemax={100}
           title={
@@ -221,10 +250,7 @@ function LimitRow(props: {
               : `At an even pace, ${Math.round(pace)}% would be left now.`
           }
         >
-          <span
-            data-low={remaining(props.limit) <= 15 ? '' : undefined}
-            style={{ width: `${remaining(props.limit)}%` }}
-          />
+          <span />
           {pace === undefined ? null : (
             <span className="account-menu__limit-pace" style={{ left: `${pace}%` }} />
           )}
@@ -407,6 +433,9 @@ function ResetCreditExpiries(props: {
 }
 
 export function limitSource(state: AccountLimitsState): ProviderLimitSource | undefined {
+  // Retries that all failed leave the source out, as if it reported nothing.
+  if (state.status !== 'ready' && state.gaveUp)
+    return { provider: state.provider, status: 'unavailable' }
   const summary = state.summary
   if (!summary) return undefined
   if (summary.limitSource) return summary.limitSource

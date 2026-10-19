@@ -40,7 +40,7 @@ vi.mock('@harness/proc', async (importOriginal) => ({
 }))
 
 const { grokCommand } = await import('./adapter.js')
-const { grokLimitSource, grokLimits, mapGrokBilling } = await import('./limits.js')
+const { grokLimitSource, mapGrokBilling } = await import('./limits.js')
 
 beforeEach(() => {
   fake.calls = []
@@ -58,6 +58,8 @@ async function settle(): Promise<void> {
 }
 
 describe('mapGrokBilling', () => {
+  const signedIn = async () => ({ signedIn: true })
+
   it('maps the captured weekly, prepaid, and on-demand credit fields', () => {
     const rows = mapGrokBilling({
       config: {
@@ -278,7 +280,10 @@ describe('mapGrokBilling', () => {
       },
     }
 
-    await expect(grokLimits()).resolves.toEqual([{ label: 'Weekly', usedPercent: 12 }])
+    await expect(grokLimitSource(signedIn)).resolves.toEqual({
+      status: 'ready',
+      limits: [{ label: 'Weekly', usedPercent: 12 }],
+    })
     expect(fake.calls.map((call) => call.method)).toEqual(['initialize', '_x.ai/billing'])
     expect(fake.spawns).toEqual([
       {
@@ -296,7 +301,7 @@ describe('mapGrokBilling', () => {
       vi.useFakeTimers()
       fake.hangs.add(method)
 
-      const result = grokLimits()
+      const result = grokLimitSource(signedIn)
       const rejected = expect(result).rejects.toThrow('grok billing did not answer in time')
       await settle()
       expect(fake.calls.map((call) => call.method)).toContain(method)
@@ -313,8 +318,8 @@ describe('mapGrokBilling', () => {
       resolveBilling = resolve
     })
 
-    const first = grokLimits()
-    const second = grokLimits()
+    const first = grokLimitSource(signedIn)
+    const second = grokLimitSource(signedIn)
     await settle()
     expect(fake.spawns).toHaveLength(1)
     expect(fake.calls.filter((call) => call.method === '_x.ai/billing')).toHaveLength(1)
@@ -325,12 +330,12 @@ describe('mapGrokBilling', () => {
       },
     })
     await expect(Promise.all([first, second])).resolves.toEqual([
-      [{ label: 'Weekly', usedPercent: 12 }],
-      [{ label: 'Weekly', usedPercent: 12 }],
+      { status: 'ready', limits: [{ label: 'Weekly', usedPercent: 12 }] },
+      { status: 'ready', limits: [{ label: 'Weekly', usedPercent: 12 }] },
     ])
 
     fake.error = new Error('billing unavailable')
-    await expect(grokLimits()).rejects.toThrow('billing unavailable')
+    await expect(grokLimitSource(signedIn)).rejects.toThrow('billing unavailable')
     fake.error = undefined
     fake.billing = {
       config: {
@@ -338,7 +343,10 @@ describe('mapGrokBilling', () => {
         currentPeriod: { type: 'USAGE_PERIOD_TYPE_WEEKLY' },
       },
     }
-    await expect(grokLimits()).resolves.toEqual([{ label: 'Weekly', usedPercent: 34 }])
+    await expect(grokLimitSource(signedIn)).resolves.toEqual({
+      status: 'ready',
+      limits: [{ label: 'Weekly', usedPercent: 34 }],
+    })
     expect(fake.spawns).toHaveLength(3)
     expect(fake.disposed).toBe(3)
   })

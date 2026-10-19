@@ -95,10 +95,12 @@ const AccountLimits = lazy(loadAccountLimits)
 
 function AccountLimitsLoading(props: { states: AccountLimitsState[] }) {
   const panel = useRef<HTMLElement>(null)
-  const visible = props.states.some(({ summary }) =>
-    summary?.limitSource
-      ? summary.limitSource.status !== 'unavailable'
-      : !summary || summary.limits.length > 0,
+  const visible = props.states.some((state) =>
+    state.status !== 'ready' && state.gaveUp
+      ? false
+      : state.summary?.limitSource
+        ? state.summary.limitSource.status !== 'unavailable'
+        : !state.summary || state.summary.limits.length > 0,
   )
   useLayoutEffect(() => panel.current?.focus(), [])
   if (!visible) return null
@@ -1342,6 +1344,7 @@ const ProjectRow = memo(function ProjectRow(props: {
         {renaming ? (
           <InlineRename
             value={displayName(props.project)}
+            ariaLabel={`Rename ${displayName(props.project)}`}
             onCommit={(name, fromKeyboard) => {
               props.onRenameProject(props.project.path, name)
               finishRename(fromKeyboard)
@@ -1812,7 +1815,9 @@ function SessionRow(props: {
             status={props.session.status}
             since={props.session.statusSince ?? props.session.createdAt}
           />
-          {props.session.unread ? <span className="sess__unread-dot" aria-hidden /> : null}
+          {props.session.unread && props.session.status !== 'ready' ? (
+            <span className="sess__unread-dot" aria-hidden />
+          ) : null}
         </span>
       </button>
 
@@ -1962,6 +1967,10 @@ function SessionStatus(props: { status: Session['status']; since: number }) {
     return <span className="sess__status-dot is-failed" aria-hidden />
   }
 
+  if (props.status === 'ready') {
+    return <span className="sess__status-dot is-success" aria-hidden />
+  }
+
   return <SessionTime at={props.since} />
 }
 
@@ -2041,7 +2050,7 @@ function useRenameFocusReturn(
 function InlineRename(props: {
   value: string
   className?: string
-  ariaLabel?: string
+  ariaLabel: string
   onCommit: (value: string, fromKeyboard: boolean) => void
   onCancel: (fromKeyboard: boolean) => void
 }) {

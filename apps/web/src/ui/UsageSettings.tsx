@@ -1,36 +1,69 @@
-import { useState, useSyncExternalStore } from 'react'
-import type { ResultOf, UsageHistoryRange } from '@harness/contracts'
-import { IconAlertCircle as CircleAlert, IconRefresh as RefreshCw } from '@tabler/icons-react'
-import { providerDisplayName } from '../provider-presentation.js'
+import {
+  useCallback,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type CSSProperties,
+} from 'react'
+import type { ProviderId, ResultOf, UsageHistoryRange } from '@harness/contracts'
+import { IconChevronDown as ChevronDown, IconRefresh as RefreshCw } from '@tabler/icons-react'
+import { providerDisplayName, providerMark } from '../provider-presentation.js'
 import '../styles/usage-page.css'
 import type { Transport } from '../transport.js'
 import { useUsageHistory } from '../usage-history-state.js'
-import { compactRelativeTime, readSessionClock, subscribeSessionClock } from './session-clock.js'
+import type { UsageSummaryState } from '../usage-summary-state.js'
+import { readSessionClock, subscribeSessionClock } from './session-clock.js'
 import { SettingsNotice, SettingsPage } from './settings/SettingsLayout.js'
-import { SettingsSegmented } from './settings/SettingsSegmented.js'
-import { UsageActivity } from './usage/UsageActivity.js'
-import { UsageLimits, type PlanLimitsSource } from './usage/UsageLimits.js'
-import { UsageModels } from './usage/UsageModels.js'
-import { UsageValue } from './usage/UsageValue.js'
-import { formatDateRange, formatInteger } from './usage/usage-format.js'
+import type { ChartAxis } from './usage/UsageChart.js'
+import { UsageSheet } from './usage/UsageSheet.js'
+import { formatInteger, formatTokens } from './usage/usage-format.js'
+import {
+  axisTicks,
+  dayKey,
+  dayText,
+  deriveSheets,
+  emptySheetText,
+  formatValue,
+  indexedAgo,
+  isPartialEstimate,
+  isPeriod,
+  limitAlert,
+  listText,
+  markInk,
+  PERIOD_OPTIONS,
+  pricedShare,
+  providerShares,
+  rangeText,
+  shareText,
+  sheetLimits,
+  type PeriodSlot,
+  type PlanLimitsSource,
+  type SheetLimits,
+} from './usage/usage-sheets.js'
 import { useIndexingNotice } from './usage/useIndexingNotice.js'
 
-const RANGE_OPTIONS = [
-  { value: '7d', label: '7 days', period: 'Last 7 days' },
-  { value: '30d', label: '30 days', period: 'Last 30 days' },
-  { value: '90d', label: '90 days', period: 'Last 90 days' },
-  { value: '365d', label: '1 year', period: 'Last year' },
-  { value: 'all', label: 'All', period: 'All time' },
-] as const satisfies ReadonlyArray<{ value: UsageHistoryRange; label: string; period: string }>
+type History = ResultOf<'usage.history'>
 
-function isRange(value: string): value is UsageHistoryRange {
-  return RANGE_OPTIONS.some((option) => option.value === value)
+const NO_LIMIT_STATES: UsageSummaryState[] = []
+const noLimits = () => NO_LIMIT_STATES
+const subscribeNothing = () => () => {}
+
+function plural(value: number, one: string, many: string): string {
+  return `${formatInteger(value)} ${value === 1 ? one : many}`
+}
+
+function slotText(slot: PeriodSlot, span: 1 | 7, referenceYear: number): string {
+  return span === 1
+    ? dayText(slot.start, referenceYear, true)
+    : rangeText(slot.start, slot.end, referenceYear)
 }
 
 /**
- * Usage: plan limits first, since they are what can stop work today; then
- * the local history of the chosen period, its API value and its models, and
- * where the numbers come from.
+ * Usage: the period's totals under the title, then one sheet per provider
+ * with its tokens over the period, its plan limits and its models; a limit
+ * running low is also named under the totals.
  */
 export function UsageSettings(props: {
   transport: Transport
@@ -39,56 +72,111 @@ export function UsageSettings(props: {
 }) {
   const [range, setRange] = useState<UsageHistoryRange>('30d')
   const { data, loading, error, refresh } = useUsageHistory(props.transport, range)
-  const scanning = data?.scan.status === 'scanning'
-  const indexingNotice = useIndexingNotice(data)
-  const busy = loading || scanning
-  const period = RANGE_OPTIONS.find((option) => option.value === range)?.period ?? ''
+  const indexing = useIndexingNotice(data)
+  const busy = loading || data?.scan.status === 'scanning'
+  const now = useSyncExternalStore(subscribeSessionClock, readSessionClock, readSessionClock)
+
+  const source = props.limits
+  const subscribe = useCallback(
+    (listener: () => void) => source?.subscribe(listener) ?? (() => {}),
+    [source],
+  )
+  const read = useCallback(() => source?.snapshot() ?? NO_LIMIT_STATES, [source])
+  // Showing the limits lets the server read sources it reads only on view.
+  // Once per mount, before paint, so sources not read yet start as checking.
+  const shown = useRef(source)
+  shown.current = source
+  useLayoutEffect(() => shown.current?.show(), [])
+  const states = useSyncExternalStore(
+    source ? subscribe : subscribeNothing,
+    source ? read : noLimits,
+    source ? read : noLimits,
+  )
+  const limits = useMemo(() => {
+    const byProvider = new Map<ProviderId, SheetLimits>()
+    for (const state of states) {
+      const entry = sheetLimits(state, now)
+      if (entry) byProvider.set(state.provider, entry)
+    }
+    return byProvider
+  }, [states, now])
+  const { sheets, slots, span } = useMemo(() => deriveSheets(data, limits), [data, limits])
+  const unit = span === 7 ? 'week' : 'day'
+  const retry = useCallback((provider: ProviderId) => source?.refresh(provider, 'retry'), [source])
+
+  const endDate = data?.endDate
+  const startDate = data?.startDate
+  const today = dayKey(now)
+  const axis = useMemo((): ChartAxis => {
+    const referenceYear = endDate ? Number(endDate.slice(0, 4)) : new Date().getFullYear()
+    return {
+      slots: slots.map((slot) => slotText(slot, span, referenceYear)),
+      ticks: axisTicks(slots, span),
+      start: startDate ? dayText(startDate, referenceYear) : '',
+      end: !endDate ? '' : endDate === today ? 'Today' : dayText(endDate, referenceYear),
+    }
+  }, [slots, span, startDate, endDate, today])
+  const shares = useMemo(() => providerShares(sheets), [sheets])
+  const alert = limitAlert(sheets, now)
+  const failed = error !== undefined && data !== undefined
+  const showSheets = data !== undefined || !loading
 
   return (
     <SettingsPage
       title="Usage"
-      className={`usage-page${busy ? ' is-refreshing' : ''}`}
-      description={
-        data
-          ? `${formatInteger(data.sessionCount)} ${data.sessionCount === 1 ? 'session' : 'sessions'} · ${formatDateRange(data.startDate, data.endDate)}`
-          : undefined
-      }
+      className="usage-page"
+      description={data ? <Totals data={data} /> : null}
       actions={
         <>
-          <SettingsSegmented
-            ariaLabel="Usage period"
-            value={range}
-            options={RANGE_OPTIONS}
-            onChange={(value) => {
-              if (isRange(value)) setRange(value)
-            }}
-          />
+          <label className="usage-page__period">
+            <span>{PERIOD_OPTIONS.find((option) => option.value === range)?.label}</span>
+            <ChevronDown className="usage-page__chevron" size={13} stroke={2} aria-hidden />
+            <select
+              className="usage-page__period-select"
+              aria-label="Period"
+              value={range}
+              onChange={(event) => {
+                if (isPeriod(event.target.value)) setRange(event.target.value)
+              }}
+            >
+              {PERIOD_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
           <button
-            className="set-button set-button--quiet set-button--icon usage-page__refresh"
+            className={`usage-page__refresh${busy ? ' is-busy' : ''}`}
             type="button"
-            aria-label="Check for new usage"
-            title="Check for new usage"
+            aria-label={failed ? 'Retry' : 'Check for new usage'}
+            title={failed ? 'Retry' : 'Check for new usage'}
             disabled={busy}
             onClick={refresh}
           >
-            <RefreshCw size={14} aria-hidden />
+            <RefreshCw size={14} stroke={2} aria-hidden />
           </button>
         </>
       }
     >
-      {indexingNotice && data ? (
-        <SettingsNotice tone="progress">
+      {shares.length > 0 ? <ShareBar shares={shares} /> : null}
+      {alert ? <p className="usage-page__alert">{alert}</p> : null}
+      {indexing && data ? (
+        <p className="usage-page__notice">
           Indexing local usage
           {data.scan.filesTotal > 0
             ? ` · ${formatInteger(data.scan.filesProcessed)} of ${formatInteger(data.scan.filesTotal)} files`
             : ' · finding sessions'}
           . The figures update as it goes.
-        </SettingsNotice>
+        </p>
       ) : null}
-      {error && data ? (
-        <SettingsNotice tone="error">
-          The last refresh failed, so the figures are from the one before. {error}
-        </SettingsNotice>
+      {failed ? (
+        <p className="usage-page__notice is-failed" title={error}>
+          The last refresh failed, so the figures are from the one before.{' '}
+          <button className="usage-sheet__more usage-page__retry" type="button" onClick={refresh}>
+            Try again
+          </button>
+        </p>
       ) : null}
       {!data && !loading ? (
         <SettingsNotice
@@ -103,66 +191,134 @@ export function UsageSettings(props: {
         </SettingsNotice>
       ) : null}
 
-      {props.limits ? <UsageLimits source={props.limits} /> : null}
-
-      {data ? (
-        <>
-          <UsageActivity data={data} periodLabel={period} />
-          <UsageValue data={data} />
-          <UsageModels data={data} />
-          <UsageFooter data={data} />
-        </>
-      ) : loading ? (
+      {showSheets ? (
+        <div className="usage-page__sheets">
+          {sheets.map((sheet, index) => (
+            <UsageSheet
+              key={`${data?.range ?? 'none'}:${sheet.provider}`}
+              sheet={sheet}
+              index={index}
+              axis={axis}
+              unit={unit}
+              emptyText={data ? emptySheetText(data.range) : undefined}
+              now={now}
+              onRetry={retry}
+            />
+          ))}
+          {data && sheets.length === 0 ? (
+            <p className="usage-page__empty">{emptySheetText(data.range)}.</p>
+          ) : null}
+        </div>
+      ) : (
         <HistorySkeleton />
-      ) : null}
+      )}
+
+      {data ? <UsageClose data={data} now={now} indexing={indexing} /> : null}
     </SettingsPage>
   )
 }
 
-/** While the first answer loads: the sections' outline, no numbers. */
-function HistorySkeleton() {
+/** The period's totals, each figure named. */
+function Totals(props: { data: History }) {
+  const { data } = props
   return (
-    <div className="usage-skeleton" role="status" aria-label="Reading the usage index">
-      <span className="skeleton usage-skeleton__title" />
-      <span className="skeleton usage-skeleton__stats" />
-      <span className="skeleton usage-skeleton__chart" />
+    <span className="usage-page__totals">
+      <span>
+        <b>{formatTokens(data.totals.processedTokens)}</b> tokens
+      </span>
+      <span>
+        <b>{formatValue(data.totals.estimatedCostUsd)}</b> at API prices
+      </span>
+      <span>
+        <b>{formatInteger(data.sessionCount)}</b> {data.sessionCount === 1 ? 'session' : 'sessions'}{' '}
+        on {formatInteger(data.activeDays)} of {plural(data.daily.length, 'day', 'days')}
+      </span>
+    </span>
+  )
+}
+
+/** Each provider's share of the period's tokens in its colour, named under the bar. */
+function ShareBar(props: { shares: ReturnType<typeof providerShares> }) {
+  const label = props.shares.map((part) => `${part.name} ${shareText(part.share)}`).join(', ')
+  return (
+    <div className="usage-share" role="img" aria-label={`Tokens by provider: ${label}`}>
+      <div className="usage-share__bar">
+        {props.shares.map((part) => (
+          <span
+            key={part.provider}
+            className="usage-share__part"
+            style={
+              {
+                flexGrow: part.share,
+                '--usage-ink': markInk(providerMark(part.provider)),
+              } as CSSProperties
+            }
+          />
+        ))}
+      </div>
+      <ul className="usage-share__legend">
+        {props.shares.map((part) => (
+          <li
+            key={part.provider}
+            style={{ '--usage-ink': markInk(providerMark(part.provider)) } as CSSProperties}
+          >
+            <span className="usage-share__swatch" />
+            {part.name}
+            <span className="usage-share__value">{shareText(part.share)}</span>
+          </li>
+        ))}
+      </ul>
     </div>
   )
 }
 
-/** Where the numbers come from and how current the index is. */
-function UsageFooter(props: { data: ResultOf<'usage.history'> }) {
+/** What caching saved, then what the values mean and where they come from. */
+function UsageClose(props: { data: History; now: number; indexing: boolean }) {
   const { data } = props
-  const now = useSyncExternalStore(subscribeSessionClock, readSessionClock, readSessionClock)
-  const age = data.generatedAt > 0 ? compactRelativeTime(data.generatedAt, now) : undefined
-  const sources = data.sources
-    .filter((source) => source.available)
-    .map((source) => providerDisplayName(source.provider))
-  const facts = [
-    age === undefined
-      ? 'Not indexed yet'
-      : age === 'now'
-        ? 'Indexed just now'
-        : `Indexed ${age} ago`,
-    data.scan.status === 'idle' && data.scan.filesTotal > 0
-      ? `${formatInteger(data.scan.filesTotal)} ${data.scan.filesTotal === 1 ? 'file' : 'files'}`
-      : undefined,
-    sources.length > 0 ? sources.join(', ') : undefined,
-  ].filter(Boolean)
-
+  const { totals } = data
+  const priced = pricedShare(totals)
+  const sources = listText(
+    data.sources
+      .filter((entry) => entry.available)
+      .map((entry) => providerDisplayName(entry.provider)),
+  )
+  const histories = sources ? `the ${sources} histories` : 'the histories'
   return (
-    <footer className="usage-footer">
-      <p className="usage-footer__facts">{facts.join(' · ')}</p>
-      <p>
-        Counted on this device from your providers&rsquo; local histories and TasteCode&rsquo;s own
-        usage records.
-      </p>
-      {data.warnings.map((warning) => (
-        <p className="usage-footer__warning" key={warning}>
-          <CircleAlert size={13} aria-hidden />
-          {warning}
+    <div className="usage-page__close">
+      {totals.processedTokens > 0 ? (
+        <p className="usage-page__saved">
+          Caching saved <b>{formatValue(totals.cacheSavingsUsd)}</b>. Without it, these tokens would
+          come to {formatValue(totals.estimatedCostUsd + totals.cacheSavingsUsd)}.
         </p>
+      ) : null}
+      <p className="usage-page__note">
+        Values are what the tokens would cost at public API list prices, not what your plans bill.{' '}
+        {priced !== undefined && isPartialEstimate(totals)
+          ? `Public prices cover ${Math.floor(priced * 100)}% of these tokens, so the total is a partial estimate. `
+          : null}
+        {data.warnings.map((warning) => `${warning} `)}≈ marks a model priced from a sibling.
+      </p>
+      <p className="usage-page__note">
+        {props.indexing
+          ? `Reading ${histories}. Figures so far are from ${plural(data.scan.filesProcessed, 'file', 'files')}.`
+          : data.generatedAt > 0
+            ? `Indexed ${indexedAgo(data.generatedAt, props.now)} from ${plural(data.scan.filesTotal, 'file', 'files')} in ${histories}.`
+            : 'Not indexed yet.'}
+      </p>
+    </div>
+  )
+}
+
+/** While the first answer loads: each sheet's name and chart, no numbers. */
+function HistorySkeleton() {
+  return (
+    <div className="usage-skeleton" role="status" aria-label="Reading the usage index">
+      {[0, 1, 2].map((index) => (
+        <div className="usage-skeleton__sheet" key={index}>
+          <span className="skeleton usage-skeleton__name" />
+          <span className="skeleton usage-skeleton__chart" />
+        </div>
       ))}
-    </footer>
+    </div>
   )
 }

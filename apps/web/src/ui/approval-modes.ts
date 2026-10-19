@@ -39,7 +39,7 @@ export const APPROVAL_MODES: {
     id: 'full',
     title: 'Full access',
     short: 'Full access',
-    detail: 'No sandbox, prompts, or undo',
+    detail: 'No sandbox or prompts',
     icon: LockOpen,
   },
 ]

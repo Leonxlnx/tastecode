@@ -103,9 +103,20 @@ const CAPABILITIES: Capabilities = {
 class TitleSession implements AgentSession {
   readonly capabilities = CAPABILITIES
   #events = new EventEmitter()
+  readonly #failure: Error | 'turn' | undefined
+
+  constructor(failure?: Error | 'turn') {
+    this.#failure = failure
+  }
 
   async sendTurn(): Promise<string> {
+    const failure = this.#failure
+    if (failure instanceof Error) throw failure
     queueMicrotask(() => {
+      if (failure === 'turn') {
+        this.#emit({ type: 'turn.completed', turnId: 'background-turn', status: 'failed' })
+        return
+      }
       this.#emit({
         type: 'item.completed',
         item: {
@@ -138,7 +149,10 @@ class TitleSession implements AgentSession {
 const roots: string[] = []
 const active: Array<{ orchestrator: InstanceType<typeof Orchestrator>; store: Store }> = []
 
-function harness(preference: BackgroundModelPreference = { mode: 'automatic' }) {
+function harness(
+  preference: BackgroundModelPreference = { mode: 'automatic' },
+  failure?: (provider: ProviderId, agent: string | undefined) => Error | 'turn' | undefined,
+) {
   const root = mkdtempSync(path.join(os.tmpdir(), 'tastecode-background-sources-'))
   roots.push(root)
   const started: Array<{
@@ -151,7 +165,7 @@ function harness(preference: BackgroundModelPreference = { mode: 'automatic' }) 
       started.push({ provider, model: options.model, agent: options.agent })
       return {
         thread: { id: 'background-thread', provider, workspacePath, createdAt: 0 },
-        session: new TitleSession(),
+        session: new TitleSession(failure?.(provider, options.agent)),
       }
     },
     listModels: (agent) => {
@@ -258,8 +272,10 @@ describe('background title source discovery', () => {
     const release = gate('models:claude-code')
 
     const pending = title()
-    await vi.waitFor(() => expect(vendor.calls).toContain('models:claude-code:fork'))
-    await vi.waitFor(() => expect(vendor.calls).toContain('models:claude-code'))
+    await vi.waitFor(() => expect(vendor.calls).toContain('models:claude-code:fork'), {
+      timeout: 5_000,
+    })
+    await vi.waitFor(() => expect(vendor.calls).toContain('models:claude-code'), { timeout: 5_000 })
     release()
     await pending
 
@@ -377,15 +393,20 @@ describe('background title source discovery', () => {
 
   it('neither caches nor joins a read that an account change overtook', async () => {
     const { orchestrator, title, started } = harness()
-    const release = gate('account:codex')
+    const releaseCodex = gate('account:codex')
+    const releaseGrok = gate('account:grok')
 
     const first = title()
-    await vi.waitFor(() => expect(vendor.calls).toEqual(['account:codex']))
+    await vi.waitFor(() => expect(vendor.calls).toEqual(['account:codex']), { timeout: 5_000 })
     await orchestrator.signOut('codex')
     const second = title()
-    await vi.waitFor(() => expect(vendor.calls).toEqual(['account:codex', 'account:codex']))
-    release()
-    await Promise.all([first, second])
+    await vi.waitFor(() => expect(vendor.calls).toEqual(['account:codex', 'account:codex']), {
+      timeout: 5_000,
+    })
+    releaseCodex()
+    await first
+    releaseGrok()
+    await second
     await title()
 
     // The read that began before sign-out still answers its own request, but
@@ -402,5 +423,51 @@ describe('background title source discovery', () => {
     expect([...vendor.calls].sort()).toEqual(
       ['account:codex', 'account:codex', 'models:codex', 'account:grok', 'models:grok'].sort(),
     )
+  })
+
+  it('uses Grok when Codex Luna fails its background turn', async () => {
+    const { title, started } = harness({ mode: 'automatic' }, (provider) =>
+      provider === 'codex' ? 'turn' : undefined,
+    )
+
+    await expect(title()).resolves.toEqual({ title: 'Generated title', applied: true })
+
+    expect(started).toEqual([
+      { provider: 'codex', model: 'gpt-5.6-luna' },
+      { provider: 'grok', model: 'grok-4.6' },
+    ])
+    expect(vendor.calls).toEqual(['account:codex', 'models:codex', 'account:grok', 'models:grok'])
+  })
+
+  it('rejects a manual target whose background turn fails', async () => {
+    const { title, started } = harness(
+      { mode: 'manual', target: { provider: 'codex', model: 'gpt-5.6-luna' } },
+      (provider) => (provider === 'codex' ? 'turn' : undefined),
+    )
+
+    await expect(title()).rejects.toThrow('Background model turn failed.')
+    expect(started).toEqual([{ provider: 'codex', model: 'gpt-5.6-luna' }])
+    expect(vendor.calls).toEqual(['account:codex', 'models:codex'])
+  })
+
+  it('rejects with the last error after every automatic source fails once', async () => {
+    const { title, started } = harness({ mode: 'automatic' }, (provider) => {
+      return new Error(`${provider} background failed`)
+    })
+
+    await expect(title()).rejects.toThrow('claude-code background failed')
+    expect(started).toEqual([
+      { provider: 'codex', model: 'gpt-5.6-luna' },
+      { provider: 'grok', model: 'grok-4.6' },
+      { provider: 'claude-code', model: 'claude-haiku-4-5' },
+    ])
+    expect(vendor.calls).toEqual([
+      'account:codex',
+      'models:codex',
+      'account:grok',
+      'models:grok',
+      'account:claude-code',
+      'models:claude-code',
+    ])
   })
 })

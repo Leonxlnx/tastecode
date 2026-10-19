@@ -51,6 +51,7 @@ import {
   type KeybindingId,
   type Shortcut,
 } from './shortcuts.js'
+import { sliceCodeUnits } from './slice-code-units.js'
 import { readTerminalPlacement, subscribeTerminalPlacement } from './terminal-placement.js'
 import { ProviderUpdateNotice } from './ui/ProviderUpdates.js'
 import { IndeterminateRequestError, Transport } from './transport.js'
@@ -179,6 +180,7 @@ import {
   type ProviderLoginTerminalTarget,
 } from './provider-install.js'
 import { providerScanChanged, useRecheckOnFocus } from './provider-recheck.js'
+import { rememberedSignIn, rememberSignIn } from './remembered-sign-in.js'
 import {
   pinnedModelChoice,
   readProviderDefaults,
@@ -258,6 +260,7 @@ const SESSION_ORDER_KEY = 'harness.sessionOrder.dragged'
  *  which provider histories happened to arrive, so they are discarded. */
 const LEGACY_SESSION_ORDER_KEY = 'harness.sessionOrder'
 const STARTUP_PROJECT_NAME_KEY = 'harness.startupProjectName'
+const PENDING_CHAT_DELETES_KEY = 'harness.pendingChatDeletes.v1'
 const MODEL_KEY = 'harness.model'
 const MODEL_CATALOG_KEY = 'harness.modelCatalog.v1'
 const MODEL_CATALOG_CACHE_WRITE_DELAY_MS = 1_000
@@ -268,6 +271,7 @@ const CUSTOM_MODELS_KEY = 'harness.customModels.v1'
  *  restores the exact working setup instead of a best-guess translation. */
 const MODEL_BY_SOURCE_KEY = 'harness.modelBySource'
 const MODEL_BY_THREAD_PREFIX = 'harness.modelByThread:'
+const COMPOSER_DRAFTS_KEY = 'harness.composerDrafts.v1'
 const EMPTY_PALETTE_COMMANDS: PaletteCommand[] = []
 /** Only the user's own visibility choices; the defaults follow the catalog. */
 const MODEL_VISIBILITY_KEY = 'harness.modelVisibility.v2'
@@ -399,6 +403,8 @@ type AccountCheck = {
   error?: ComposerError
   /** Set on a read that is still running after ACCOUNT_CHECK_SEND_GRACE_MS. */
   slow?: true
+  /** Set on a read of a provider whose last read said signed in (remembered-sign-in.ts). */
+  remembered?: true
 }
 
 /**
@@ -505,7 +511,11 @@ export function resolveSendAvailability(input: {
   // A check that could not answer in time, or still has not after the grace
   // period, confirms nothing either way. Send stays available: a CLI that
   // really is signed out says so in the turn.
-  if (input.accountCheck.state === 'loading') return input.accountCheck.slow ? 'ready' : 'loading'
+  // A read of a provider that was signed in last time keeps Send available
+  // too; an answer that it is signed out turns it off.
+  if (input.accountCheck.state === 'loading') {
+    return input.accountCheck.slow || input.accountCheck.remembered ? 'ready' : 'loading'
+  }
   if (input.accountCheck.state === 'failed') return 'ready'
   return input.accountCheck.account?.signedIn ? 'ready' : 'setup-required'
 }
@@ -707,7 +717,16 @@ export function App() {
   const [onboardingMounted, setOnboardingMounted] = useState(onboardingWanted)
   if (onboardingWanted && !onboardingMounted) setOnboardingMounted(true)
   const [offline, setOffline] = useState(false)
-  const [threadController] = useState(() => new ThreadController(transport))
+  const [threadController] = useState(
+    () =>
+      new ThreadController(transport, {
+        read: () => readSetting(COMPOSER_DRAFTS_KEY),
+        write: (drafts) =>
+          drafts === undefined
+            ? removeSetting(COMPOSER_DRAFTS_KEY)
+            : writeSetting(COMPOSER_DRAFTS_KEY, drafts),
+      }),
+  )
   const [activeId, setActiveIdState] = useState<string | undefined>()
   const setActiveId = useCallback(
     (id: string | undefined) => {
@@ -897,9 +916,14 @@ export function App() {
   const [accountCheck, setAccountCheck] = useState<AccountCheck>({ provider, state: 'loading' })
   const accountRequestRevision = useRef(0)
   const [authStatusRequest, setAuthStatusRequest] = useState(0)
-  const [voiceAvailable, setVoiceAvailable] = useState(false)
-  const [voiceStatusLoading, setVoiceStatusLoading] = useState(true)
+  const [voiceAvailable, setVoiceAvailable] = useState(() => rememberedVoice(provider) ?? false)
+  const [voiceStatusLoading, setVoiceStatusLoading] = useState(
+    () => rememberedVoice(provider) === undefined,
+  )
   const [settingsOpen, setSettingsOpen] = useState(false)
+  // Settings that comes back in place of a provider login terminal skips its
+  // fade: while it faded in, the chat settling underneath showed through.
+  const [settingsReturning, setSettingsReturning] = useState(false)
   const [keybindings, setKeybindings] = useState(readKeybindings)
   const [surface, setSurface] = useState<'chat' | 'pull-requests'>('chat')
   const [settingsSection, setSettingsSection] = useState<SettingsSectionRequest>({
@@ -982,12 +1006,25 @@ export function App() {
   const [archiveToastDismissed, setArchiveToastDismissed] = useState(false)
   const pendingDeletionChecks = useRef(new Map<string, object>())
   const {
-    hiddenIds: archivingIds,
+    hiddenIds: queuedArchiveIds,
     pendingIds: pendingArchives,
     queue: enqueueArchive,
     undo: undoQueuedArchives,
     cancel: cancelQueuedArchive,
   } = useDeferredArchiveQueue(10_000)
+  const [interruptedDeletes, setInterruptedDeletes] = useState(readPendingChatDeletes)
+  const archivingIds = useMemo(
+    () => [...queuedArchiveIds, ...interruptedDeletes.map((pending) => pending.threadId)],
+    [queuedArchiveIds, interruptedDeletes],
+  )
+  const cancelArchive = useCallback(
+    (id: string) => {
+      if (!cancelQueuedArchive(id)) return false
+      forgetPendingChatDeletes([id])
+      return true
+    },
+    [cancelQueuedArchive],
+  )
   const archiveProjects = useMemo(() => {
     if (archivingIds.length === 0) return projects
     const hidden = new Set(archivingIds)
@@ -1424,6 +1461,14 @@ export function App() {
   activeIdRef.current = activeId
   const activePathRef = useRef(activePath)
   activePathRef.current = activePath
+  useEffect(() => {
+    const flushDrafts = () => threadController.flushDrafts()
+    window.addEventListener('pagehide', flushDrafts)
+    return () => {
+      window.removeEventListener('pagehide', flushDrafts)
+      flushDrafts()
+    }
+  }, [threadController])
   const publishComposerDraft = useCallback((draft: ComposerDraft) => {
     setComposerDraft((current) => ({
       text: draft.text,
@@ -2660,6 +2705,14 @@ export function App() {
       setVoiceStatusLoading(false)
       return
     }
+    // Until this provider's status answers, its last answer stands in, so the
+    // composer is not held on that read (`codex login status`, 5-9 s on a busy
+    // machine); the answer corrects it.
+    const remembered = rememberedVoice(provider)
+    if (remembered !== undefined) {
+      setVoiceAvailable(remembered)
+      setVoiceStatusLoading(false)
+    }
     // Wait until the same catalog revision has resolved the provider fallback,
     // so either startup order produces one status request.
     if (
@@ -2672,6 +2725,7 @@ export function App() {
     void transport
       .request('voice.status', { provider })
       .then((status) => {
+        writeSetting(`${VOICE_AVAILABLE_KEY}:${provider}`, String(status.available))
         if (!cancelled) setVoiceAvailable(status.available)
       })
       .catch(() => {
@@ -2772,10 +2826,14 @@ export function App() {
     }
     // Retrying a check that could not answer keeps Send available until the
     // new answer arrives; it would otherwise lock the composer for the read.
+    // So does a provider whose last read said signed in. ACP reads are per
+    // agent, so they are not remembered per provider.
+    const remembers = provider !== 'acp'
+    const remembered = remembers && rememberedSignIn(provider)
     setAccountCheck((current) =>
       current.provider === provider && current.state === 'failed'
         ? current
-        : { provider, state: 'loading' },
+        : { provider, state: 'loading', ...(remembered ? { remembered: true as const } : {}) },
     )
     const grace = setTimeout(() => {
       if (cancelled || revision !== accountRequestRevision.current) return
@@ -2794,6 +2852,7 @@ export function App() {
       })
       .finally(() => clearTimeout(grace))
       .then((nextAccount) => {
+        if (remembers) rememberSignIn(provider, nextAccount.signedIn)
         if (cancelled || revision !== accountRequestRevision.current) return
         setAccount(nextAccount)
         setAccountCheck({ provider, state: 'ready', account: nextAccount })
@@ -3570,21 +3629,15 @@ export function App() {
       setRollbackOpen(false)
       setActivePath(projectPath)
       try {
-        let branch = projectBranches.current.get(projectPath)
-        if (!branch) {
-          const known = branchLists.current.get(projectPath)
-          const available =
-            known && Date.now() - known.at < BRANCH_LIST_TTL_MS
-              ? known.branches
-              : (await transport.request('workspace.branches', { path: projectPath })).branches
-          const remembered = readSetting(`harness.branch:${projectPath}`)
-          branch =
-            remembered && available.includes(remembered)
-              ? remembered
-              : available.includes('main')
-                ? 'main'
-                : undefined
-        }
+        // The shelf names the branch a new chat starts on. Only one other than
+        // the checked-out branch needs the server to check and switch; asking
+        // every time ran git before the agent started, and waiting here for a
+        // branch list held the chat for seconds on a busy machine.
+        const shown = projectBranches.current.get(projectPath)
+        const branch =
+          shown !== undefined && shown !== checkedOutBranches.current.get(projectPath)
+            ? shown
+            : undefined
         if (projectRemoved())
           throw new Error('The project was removed before the chat could start.')
         let sessionApproval = approval === 'auto-review' && !autoReviewSupported ? 'full' : approval
@@ -3816,7 +3869,7 @@ export function App() {
       const restoreDraftAfterFailedStart = () =>
         restoreRejectedDraft(NEW_CHAT_DRAFT_KEY, { text, attachments })
       if (activeId) pendingDeletionChecks.current.delete(activeId)
-      if (activeId && !cancelQueuedArchive(activeId)) {
+      if (activeId && !cancelArchive(activeId)) {
         restoreDraft()
         reportError('This chat is being deleted.')
         return
@@ -4219,7 +4272,7 @@ export function App() {
       restoreRejectedDraft,
       sendAvailability,
       publishComposerDraft,
-      cancelQueuedArchive,
+      cancelArchive,
     ],
   )
 
@@ -4270,6 +4323,7 @@ export function App() {
 
   const handleAccountChange = useCallback(
     (changedProvider: ProviderId, changedAccount: Account) => {
+      if (changedProvider !== 'acp') rememberSignIn(changedProvider, changedAccount.signedIn)
       if (changedProvider === providerRef.current) {
         accountRequestRevision.current += 1
         setAccount(changedAccount)
@@ -4293,6 +4347,7 @@ export function App() {
     setWorkspacePanelExpanded(completed.restorePanelExpanded)
     if (completed.restoreSettings) {
       setSettingsSection(requestSettingsSection('providers'))
+      setSettingsReturning(true)
       setSettingsOpen(true)
     }
     if (completed.source === 'pull-requests') {
@@ -4364,6 +4419,7 @@ export function App() {
               branch,
             })
         projectBranches.current.set(activePath, branch)
+        if (info) checkedOutBranches.current.set(activePath, info.branch)
         writeSetting(`harness.branch:${activePath}`, branch)
         const known = branchLists.current.get(activePath)
         if (known) known.branches = [branch, ...known.branches.filter((item) => item !== branch)]
@@ -4392,7 +4448,7 @@ export function App() {
     async (id: string) => {
       setSurface('chat')
       pendingDeletionChecks.current.delete(id)
-      if (!cancelQueuedArchive(id)) {
+      if (!cancelArchive(id)) {
         reportError('This chat is being deleted.')
         return
       }
@@ -4480,7 +4536,7 @@ export function App() {
       commitModelChoice,
       readOpenedHistory,
       transport,
-      cancelQueuedArchive,
+      cancelArchive,
     ],
   )
 
@@ -4729,30 +4785,60 @@ export function App() {
     [transport, clearWorkspaceThread, refreshWorkspaceAfterCompletion],
   )
 
-  const queueArchive = useCallback(
-    (id: string, commit: () => Promise<void>) => {
-      setArchiveToastDismissed(false)
-      enqueueArchive(id, async () => {
-        try {
-          await commit()
-        } catch (error) {
-          reportError(error instanceof Error ? error.message : String(error))
-          await refreshProjects().catch(() => undefined)
+  const commitChatDelete = useCallback(
+    async ({ threadId, checkout }: PendingChatDelete) => {
+      try {
+        if (checkout !== 'keep') {
+          await transport.request('thread.close', { threadId })
+          await transport.request(
+            'thread.discardWorktree',
+            checkout === 'force-discard' ? { threadId, force: true } : { threadId },
+          )
         }
-      })
+        await deleteSession(threadId)
+        forgetPendingChatDeletes([threadId])
+      } catch (error) {
+        reportError(error instanceof Error ? error.message : String(error))
+        await refreshProjects().catch(() => undefined)
+      }
+    },
+    [transport, deleteSession, reportError, refreshProjects],
+  )
+
+  const queueArchive = useCallback(
+    (pending: PendingChatDelete) => {
+      const id = pending.threadId
+      setArchiveToastDismissed(false)
+      savePendingChatDelete(pending)
+      enqueueArchive(id, () => commitChatDelete(pending))
       if (activeIdRef.current === id) {
         activeIdRef.current = undefined
         setActiveId(undefined)
         setThread(emptyThread)
       }
     },
-    [enqueueArchive, refreshProjects],
+    [enqueueArchive, commitChatDelete],
   )
 
   const undoArchive = useCallback(() => {
-    const id = undoQueuedArchives()
+    const ids = undoQueuedArchives()
+    forgetPendingChatDeletes(ids)
+    const id = ids.at(-1)
     if (id) void selectSession(id)
   }, [selectSession, undoQueuedArchives])
+
+  const interruptedDeletesRun = useRef(false)
+  useEffect(() => {
+    if (projectsStatus !== 'ready' || interruptedDeletesRun.current) return
+    interruptedDeletesRun.current = true
+    void (async () => {
+      for (const pending of interruptedDeletes) {
+        if (findSession(projectsRef.current, pending.threadId)) await commitChatDelete(pending)
+        forgetPendingChatDeletes([pending.threadId])
+        setInterruptedDeletes((current) => current.filter((entry) => entry !== pending))
+      }
+    })()
+  }, [projectsStatus, interruptedDeletes, commitChatDelete])
 
   const archiveSession = useCallback(
     async (id: string): Promise<'queued' | 'confirming' | 'skipped' | 'failed'> => {
@@ -4774,13 +4860,7 @@ export function App() {
           )
           return 'confirming'
         }
-        queueArchive(id, async () => {
-          if (work.isolated) {
-            await transport.request('thread.close', { threadId: id })
-            await transport.request('thread.discardWorktree', { threadId: id })
-          }
-          await deleteSession(id)
-        })
+        queueArchive({ threadId: id, checkout: work.isolated ? 'discard' : 'keep' })
         return 'queued'
       } catch (error) {
         reportError(error instanceof Error ? error.message : String(error))
@@ -4791,7 +4871,7 @@ export function App() {
           pendingDeletionChecks.current.delete(id)
       }
     },
-    [transport, deleteSession, refreshProjects, queueArchive],
+    [transport, refreshProjects, queueArchive],
   )
 
   const discardAndArchive = useCallback(async () => {
@@ -4799,11 +4879,7 @@ export function App() {
     setCheckoutDeleteBusy(true)
     try {
       const id = checkoutDelete.id
-      queueArchive(id, async () => {
-        await transport.request('thread.close', { threadId: id })
-        await transport.request('thread.discardWorktree', { threadId: id, force: true })
-        await deleteSession(id)
-      })
+      queueArchive({ threadId: id, checkout: 'force-discard' })
       dropCheckoutDelete(id)
     } catch (error) {
       reportError(error instanceof Error ? error.message : String(error))
@@ -4811,7 +4887,7 @@ export function App() {
     } finally {
       setCheckoutDeleteBusy(false)
     }
-  }, [transport, checkoutDelete, deleteSession, dropCheckoutDelete, refreshProjects, queueArchive])
+  }, [checkoutDelete, dropCheckoutDelete, refreshProjects, queueArchive])
 
   const startNewChat = useCallback(() => {
     const currentProjects = projectsRef.current
@@ -5256,6 +5332,7 @@ export function App() {
   }, [activeId])
   const openSettings = useCallback((section: SettingsSection = 'workflows') => {
     setSettingsSection(requestSettingsSection(section))
+    setSettingsReturning(false)
     setSettingsOpen(true)
   }, [])
   const changeKeybinding = useCallback((action: KeybindingId, shortcut: Shortcut | null) => {
@@ -5424,6 +5501,7 @@ export function App() {
       setWorkspacePanelExpanded(providerLoginTerminal.restorePanelExpanded)
       if (providerLoginTerminal.restoreSettings) {
         setSettingsSection(requestSettingsSection('providers'))
+        setSettingsReturning(true)
         setSettingsOpen(true)
       }
     },
@@ -6311,7 +6389,10 @@ export function App() {
       </div>
 
       {SettingsView ? (
-        <div className="surface-enter" onAnimationEnd={coverShell}>
+        <div
+          className={`surface-enter${settingsReturning ? ' is-returning' : ''}`}
+          onAnimationEnd={coverShell}
+        >
           <SurfaceErrorBoundary
             name="Settings"
             onClose={closeSettings}
@@ -6516,6 +6597,7 @@ export function App() {
         role="alert"
         visible={Boolean(notice)}
         dismissKey={notice}
+        autoDismissPaused={Boolean(undoRestore)}
         onDismiss={() => {
           setNotice(undefined)
           setUndoRestore(undefined)
@@ -6645,10 +6727,14 @@ function affectsSessionStatus(event: DomainEvent): boolean {
     event.type === 'turn.completed' ||
     event.type === 'approval.requested' ||
     event.type === 'approval.resolved' ||
+    event.type === 'user_input.requested' ||
+    event.type === 'user_input.resolved' ||
     event.type === 'thread.error'
   )
 }
 
+/** Mirrors the server's sidebar status: an approval first, then a question from
+ *  the agent, then whether the turn still runs. */
 function statusFor(
   state: ThreadState,
   event: DomainEvent,
@@ -6658,6 +6744,7 @@ function statusFor(
   if (event.type === 'turn.completed')
     return event.status === 'failed' ? 'failed' : background ? 'ready' : 'idle'
   if (state.approvals.length > 0) return 'approval'
+  if (state.userInputs.length > 0) return 'input'
   return state.running ? 'working' : 'idle'
 }
 
@@ -6684,9 +6771,9 @@ function displayName(project: { path: string; name?: string | undefined }): stri
 }
 
 /** The first thing a user types is the best title we get for free. */
-function titleFrom(text: string): string {
+export function titleFrom(text: string): string {
   const clean = text.trim().replace(/\s+/g, ' ')
-  return clean.length > 40 ? `${clean.slice(0, 40)}…` : clean
+  return clean.length > 40 ? `${sliceCodeUnits(clean, 40)}…` : clean
 }
 
 /**
@@ -6742,6 +6829,41 @@ function saveStartupProjectName(project: Project | undefined): void {
   if ((readSetting(STARTUP_PROJECT_NAME_KEY) ?? undefined) === name) return
   if (name) writeSetting(STARTUP_PROJECT_NAME_KEY, name)
   else removeSetting(STARTUP_PROJECT_NAME_KEY)
+}
+
+type PendingChatDelete = {
+  threadId: string
+  checkout: 'keep' | 'discard' | 'force-discard'
+}
+
+function readPendingChatDeletes(): PendingChatDelete[] {
+  try {
+    const stored: unknown = JSON.parse(readSetting(PENDING_CHAT_DELETES_KEY) ?? '[]')
+    if (!Array.isArray(stored)) return []
+    return stored.filter(
+      (entry): entry is PendingChatDelete =>
+        isRecord(entry) &&
+        typeof entry['threadId'] === 'string' &&
+        (entry['checkout'] === 'keep' ||
+          entry['checkout'] === 'discard' ||
+          entry['checkout'] === 'force-discard'),
+    )
+  } catch {
+    return []
+  }
+}
+
+function savePendingChatDelete(pending: PendingChatDelete): void {
+  const others = readPendingChatDeletes().filter((entry) => entry.threadId !== pending.threadId)
+  writeSetting(PENDING_CHAT_DELETES_KEY, JSON.stringify([...others, pending]))
+}
+
+function forgetPendingChatDeletes(threadIds: readonly string[]): void {
+  const stored = readPendingChatDeletes()
+  const remaining = stored.filter((entry) => !threadIds.includes(entry.threadId))
+  if (remaining.length === stored.length) return
+  if (remaining.length) writeSetting(PENDING_CHAT_DELETES_KEY, JSON.stringify(remaining))
+  else removeSetting(PENDING_CHAT_DELETES_KEY)
 }
 
 type SourceSelection = {
@@ -7055,6 +7177,14 @@ function writeSetting(key: string, value: string): void {
   } catch {
     // A lost preference beats a white screen.
   }
+}
+
+/** What each provider's last voice.status said, so the composer can show it before the next read answers. */
+const VOICE_AVAILABLE_KEY = 'harness.voiceAvailable'
+
+function rememberedVoice(provider: ProviderId): boolean | undefined {
+  const value = readSetting(`${VOICE_AVAILABLE_KEY}:${provider}`)
+  return value === 'true' ? true : value === 'false' ? false : undefined
 }
 
 /** With site data blocked, merely touching localStorage throws SecurityError —

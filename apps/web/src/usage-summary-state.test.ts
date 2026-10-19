@@ -23,6 +23,11 @@ const summary = (marker: number): Summary => ({
   limits: [],
 })
 
+const withLimits = (marker: number): Summary => ({
+  ...summary(marker),
+  limits: [{ label: 'Weekly', usedPercent: marker }],
+})
+
 function deferred<T>() {
   let resolve!: (value: T) => void
   let reject!: (error: DeferredFailure) => void
@@ -40,7 +45,8 @@ async function settle(): Promise<void> {
 }
 
 describe('UsageSummaryController', () => {
-  it('keeps same-target values through a failed refresh', async () => {
+  it('keeps same-target values through a failed refresh without retrying', async () => {
+    vi.useFakeTimers()
     const first = deferred<Summary>()
     const second = deferred<Summary>()
     const reads = [first, second]
@@ -49,20 +55,119 @@ describe('UsageSummaryController', () => {
 
     state.select({ provider: 'codex', threadId: 'thread-a' })
     expect(state.snapshot()).toEqual({ status: 'loading', provider: 'codex' })
-    first.resolve(summary(1))
+    first.resolve(withLimits(1))
     await settle()
-    expect(state.snapshot()).toEqual({ status: 'ready', provider: 'codex', summary: summary(1) })
+    expect(state.snapshot()).toEqual({
+      status: 'ready',
+      provider: 'codex',
+      summary: withLimits(1),
+    })
 
     state.refresh()
-    expect(state.snapshot()).toEqual({ status: 'loading', provider: 'codex', summary: summary(1) })
+    expect(state.snapshot()).toEqual({
+      status: 'loading',
+      provider: 'codex',
+      summary: withLimits(1),
+    })
     second.reject(new Error('Temporary provider failure'))
     await settle()
     expect(state.snapshot()).toEqual({
       status: 'error',
       provider: 'codex',
       message: 'Temporary provider failure',
-      summary: summary(1),
+      summary: withLimits(1),
     })
+    await vi.runAllTimersAsync()
+    expect(load).toHaveBeenCalledTimes(2)
+  })
+
+  it('retries a failed read with nothing to show, then gives up', async () => {
+    vi.useFakeTimers()
+    const load = vi.fn(() => Promise.reject(new Error('Grok Build did not report its credits.')))
+    const state = new UsageSummaryController(load, 100, () => 'visible', [10, 20, 30])
+    const retry = (attempt: number) => ({
+      attempt,
+      of: 3,
+      message: 'Grok Build did not report its credits.',
+    })
+
+    state.select({ provider: 'grok' })
+    await settle()
+    expect(state.snapshot()).toEqual({
+      status: 'error',
+      provider: 'grok',
+      message: 'Grok Build did not report its credits.',
+      retry: retry(1),
+    })
+
+    await vi.advanceTimersByTimeAsync(10)
+    expect(load).toHaveBeenCalledTimes(2)
+    expect(state.snapshot()).toMatchObject({ status: 'error', retry: retry(2) })
+    await vi.advanceTimersByTimeAsync(20)
+    expect(state.snapshot()).toMatchObject({ status: 'error', retry: retry(3) })
+    await vi.advanceTimersByTimeAsync(30)
+    expect(load).toHaveBeenCalledTimes(4)
+    expect(state.snapshot()).toEqual({
+      status: 'error',
+      provider: 'grok',
+      message: 'Grok Build did not report its credits.',
+      gaveUp: true,
+    })
+
+    await vi.runAllTimersAsync()
+    expect(load).toHaveBeenCalledTimes(4)
+  })
+
+  it('shows the retry while it reads, and keeps a later failed read quiet', async () => {
+    vi.useFakeTimers()
+    const [first, second, third] = [deferred<Summary>(), deferred<Summary>(), deferred<Summary>()]
+    const reads = [first, second, third]
+    const load = vi.fn(() => reads.shift()!.promise)
+    const state = new UsageSummaryController(load, 100, () => 'visible', [10])
+
+    state.select({ provider: 'grok' })
+    first.reject(new Error('offline'))
+    await settle()
+    await vi.advanceTimersByTimeAsync(10)
+    expect(state.snapshot()).toEqual({
+      status: 'loading',
+      provider: 'grok',
+      retry: { attempt: 1, of: 1, message: 'offline' },
+    })
+    second.reject(new Error('offline'))
+    await settle()
+    expect(state.snapshot()).toMatchObject({ status: 'error', gaveUp: true })
+
+    state.refresh()
+    expect(state.snapshot()).toEqual({ status: 'loading', provider: 'grok', gaveUp: true })
+    third.resolve(withLimits(2))
+    await settle()
+    expect(state.snapshot()).toEqual({ status: 'ready', provider: 'grok', summary: withLimits(2) })
+  })
+
+  it('starts the retries over after a success or a new target', async () => {
+    vi.useFakeTimers()
+    const load = vi
+      .fn<() => Promise<Summary>>()
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValueOnce(summary(1))
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockRejectedValueOnce(new Error('offline'))
+    const state = new UsageSummaryController(load, 100, () => 'visible', [10, 20])
+
+    state.select({ provider: 'grok' })
+    await settle()
+    await vi.advanceTimersByTimeAsync(10)
+    expect(state.snapshot()).toEqual({ status: 'ready', provider: 'grok', summary: summary(1) })
+
+    state.refresh()
+    await settle()
+    expect(state.snapshot()).toMatchObject({ retry: { attempt: 1, of: 2 } })
+
+    state.select({ provider: 'codex' })
+    await settle()
+    expect(state.snapshot()).toMatchObject({ provider: 'codex', retry: { attempt: 1, of: 2 } })
+    state.dispose()
   })
 
   it('clears on a target switch and ignores the superseded response', async () => {
@@ -294,6 +399,7 @@ describe('UsageSummaryController', () => {
       status: 'error',
       provider: 'api',
       message: 'socket send failed',
+      retry: { attempt: 1, of: 3, message: 'socket send failed' },
     })
 
     state.refresh()

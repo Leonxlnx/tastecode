@@ -22,13 +22,7 @@ import { bundledLanguages, type BundledLanguage } from './shiki-languages.js'
  * could never run here anyway.
  */
 export * from 'shiki/core'
-export {
-  bundledLanguages,
-  languageAliases,
-  plainLanguages,
-  type BundledLanguage,
-  type ShippedLanguage,
-} from './shiki-languages.js'
+export { bundledLanguages, type BundledLanguage } from './shiki-languages.js'
 
 export const bundledThemes = {
   'github-dark-default': () => import('@shikijs/themes/github-dark-default'),

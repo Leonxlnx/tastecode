@@ -1,3 +1,4 @@
+import { z } from 'zod'
 import type { ComposerResource } from './ui/ComposerResourcePicker.js'
 
 export const NEW_CHAT_DRAFT_KEY = 'new-chat'
@@ -45,4 +46,44 @@ export function moveComposerDraft(
   drafts.delete(from)
   if (!draft || drafts.has(to)) return
   drafts.set(to, draft)
+}
+
+const SavedComposerDraftsSchema = z.record(
+  z.string(),
+  z.object({
+    text: z.string(),
+    attachments: z.array(z.string()),
+    resources: z.array(
+      z.object({
+        key: z.string(),
+        // A command is typed into the text as `/name`, never kept as a chip.
+        kind: z.enum({ skill: 'skill', mcp: 'mcp' } satisfies {
+          [Kind in Exclude<ComposerResource['kind'], 'command'>]: Kind
+        }),
+        id: z.string(),
+        name: z.string(),
+        description: z.string(),
+        scope: z.string(),
+        token: z.string(),
+        available: z.boolean(),
+        unavailableReason: z.string().optional(),
+      }),
+    ),
+  }),
+)
+
+export function parseComposerDrafts(saved: string | null): Map<string, ComposerDraft> {
+  if (!saved) return new Map()
+  try {
+    return new Map(Object.entries(SavedComposerDraftsSchema.parse(JSON.parse(saved))))
+  } catch {
+    return new Map()
+  }
+}
+
+export function serializeComposerDrafts(
+  drafts: ReadonlyMap<string, ComposerDraft>,
+): string | undefined {
+  const restorable = [...drafts].filter(([key]) => !key.startsWith('pending:'))
+  return restorable.length > 0 ? JSON.stringify(Object.fromEntries(restorable)) : undefined
 }

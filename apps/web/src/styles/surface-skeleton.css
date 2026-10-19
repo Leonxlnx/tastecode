@@ -611,6 +611,12 @@
   animation: fade-in var(--dur-fast) var(--ease-out);
 }
 
+/* Back in place of the full-window surface that covered it: the layout
+   behind is still settling, so it must not show through a fade. */
+.surface-enter.is-returning {
+  animation: none;
+}
+
 /* [class] lifts this above a surface root's own single-class rule, which loads
    later with the surface's chunk and would otherwise win on order. */
 .surface-enter > [class] {

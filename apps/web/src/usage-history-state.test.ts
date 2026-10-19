@@ -2,7 +2,7 @@
 import type { ParamsOf, ResultOf, UsageHistoryRange, UsageHistoryTotals } from '@harness/contracts'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { IndeterminateRequestError } from './transport.js'
-import { cacheHitRate, UsageHistoryController, type PageVisibility } from './usage-history-state.js'
+import { UsageHistoryController, type PageVisibility } from './usage-history-state.js'
 
 type History = ResultOf<'usage.history'>
 
@@ -234,18 +234,5 @@ describe('UsageHistoryController', () => {
     finish(history('7d'))
     await settle()
     expect(load).toHaveBeenLastCalledWith({ range: '7d', refresh: true })
-  })
-
-  it('counts cache writes as input in the cache hit rate', () => {
-    expect(
-      cacheHitRate(
-        usageTotals({
-          uncachedInputTokens: 100,
-          cachedInputTokens: 800,
-          cacheWriteInputTokens: 100,
-        }),
-      ),
-    ).toBe(0.8)
-    expect(cacheHitRate(usageTotals({ outputTokens: 10 }))).toBeUndefined()
   })
 })

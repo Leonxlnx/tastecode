@@ -106,11 +106,6 @@ export const PREVIEW_PAGE_HEIGHT_SCRIPT = `(() => {
   }
 })()`
 
-/** Validate raw DOM measurements before they reach native bitmap allocation. */
-export function previewCaptureHeight(value: unknown, viewportHeight: number): number {
-  return previewPageHeights(value, viewportHeight).capturedHeight
-}
-
 /**
  * The capture is cut at MAX_PREVIEW_HEIGHT, and never holds what a page scroller
  * hides below its first screen; the document height says how much was left out.

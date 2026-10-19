@@ -1,10 +1,6 @@
 import type { Item } from '@harness/contracts'
 import { bench, describe } from 'vitest'
-import {
-  createThreadSearchIndex,
-  createThreadSearchIndexer,
-  findThreadSearchHits,
-} from './thread-search-index.js'
+import { createThreadSearchIndexer, findThreadSearchHits } from './thread-search-index.js'
 
 const OPTIONS = { iterations: 30, time: 0, warmupIterations: 5, warmupTime: 0 }
 const items: Item[] = Array.from({ length: 10_000 }, (_, index) => ({
@@ -16,7 +12,7 @@ const items: Item[] = Array.from({ length: 10_000 }, (_, index) => ({
   text: `Completed performance work for thread ${index} with enough text to model a real result.`,
   createdAt: index,
 }))
-const index = createThreadSearchIndex(items)
+const index = createThreadSearchIndexer()(items)
 const appendedItem: Item = {
   ...items.at(-1)!,
   id: 'appended',
@@ -88,7 +84,7 @@ describe('long-thread search index updates', () => {
     'renormalizes 10,000 items after one tail change',
     () => {
       structuralFrame = structuralFrame === 0 ? 1 : 0
-      const projected = createThreadSearchIndex(structuralFrames[structuralFrame]!)
+      const projected = createThreadSearchIndexer()(structuralFrames[structuralFrame]!)
       if (projected.searchable.length !== structuralFrames[structuralFrame]!.length) {
         throw new Error('invalid rebuilt index')
       }

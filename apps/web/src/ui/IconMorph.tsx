@@ -114,15 +114,39 @@ function sampleLayer(layer: Element | undefined, bounds: DOMRect): IconTrack[] {
     .filter((track): track is IconTrack => track !== undefined)
 }
 
+/**
+ * Buttons fade their icons' colour, so the glyph being morphed into may still
+ * hold its old colour. It stays hidden for the whole morph; finishing the fade
+ * lets the morph aim at the colour it ends on instead of snapping to it.
+ */
+function settleColourFades(layer: Element | undefined): void {
+  const svg = layer?.querySelector('svg')
+  for (const animation of svg?.getAnimations?.({ subtree: true }) ?? []) {
+    if ('transitionProperty' in animation) animation.finish()
+  }
+}
+
 function mix(from: number, to: number, progress: number): number {
   return from + (to - from) * progress
 }
 
+/**
+ * Blends paint colours in the space a CSS colour transition uses (sRGB for two
+ * legacy colours, Oklab otherwise), so a label transitioning beside the glyph
+ * keeps the same colour as it.
+ */
+function mixPaint(from: string, to: string, progress: number): string {
+  if (from === to || !isVisiblePaint(to)) return from
+  if (!isVisiblePaint(from)) return to
+  const space = from.startsWith('rgb') && to.startsWith('rgb') ? 'srgb' : 'oklab'
+  return `color-mix(in ${space}, ${from} ${((1 - progress) * 100).toFixed(2)}%, ${to})`
+}
+
 function interpolatePaint(from: MorphPaint, to: MorphPaint, progress: number): MorphPaint {
   return {
-    fill: progress < 0.5 ? from.fill : to.fill,
+    fill: mixPaint(from.fill, to.fill, progress),
     fillOpacity: mix(from.fillOpacity, to.fillOpacity, progress),
-    stroke: progress < 0.5 ? from.stroke : to.stroke,
+    stroke: mixPaint(from.stroke, to.stroke, progress),
     strokeOpacity: mix(from.strokeOpacity, to.strokeOpacity, progress),
     strokeWidth: mix(from.strokeWidth, to.strokeWidth, progress),
     lineCap: progress < 0.5 ? from.lineCap : to.lineCap,
@@ -239,6 +263,7 @@ export function IconMorph(props: {
     const bounds = root.getBoundingClientRect()
     const layers = Array.from(root.querySelectorAll('.icon-morph__layer'))
     const fromTracks = previous?.tracks ?? sampleLayer(layers[from], bounds)
+    settleColourFades(layers[active])
     const toTracks = sampleLayer(layers[active], bounds)
     const pairs = pairMorphTracks(fromTracks, toTracks)
     const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
@@ -262,7 +287,10 @@ export function IconMorph(props: {
     root.setAttribute('data-morphing', '')
     const duration = durationInMilliseconds(root)
     const ease = easingFunction(root)
-    const started = performance.now()
+    // CSS transitions start at the current frame's time, so a label fading
+    // beside the glyph runs on the same clock as the morph.
+    const frameTime = document.timeline?.currentTime
+    const started = typeof frameTime === 'number' ? frameTime : performance.now()
     const running: RunningMorph = {
       frame: 0,
       tracks: pairs.map((pair) => pair.from),

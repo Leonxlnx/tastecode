@@ -824,6 +824,59 @@ describe('Composer attachment source switching', () => {
   })
 })
 
+describe('Composer attachment preview', () => {
+  it('says the preview is unavailable once the attempt resolves without one', async () => {
+    const settle = deferred()
+    bridge.previewViewedImage.mockReturnValue(settle.promise)
+    bridge.pickFiles.mockResolvedValue([{ path: '/work/dot.png', name: 'dot.png' }])
+    renderComposer(vi.fn())
+    fireEvent.click(screen.getByRole('button', { name: 'Attach files' }))
+
+    const loading = await screen.findByRole('button', { name: 'Loading preview of dot.png' })
+    expect((loading as HTMLButtonElement).disabled).toBe(true)
+
+    await act(async () => settle.resolve(undefined))
+    const unavailable = await screen.findByRole('button', {
+      name: 'Preview unavailable for dot.png',
+    })
+    expect((unavailable as HTMLButtonElement).disabled).toBe(true)
+    expect(bridge.previewViewedImage).toHaveBeenCalledWith('/work/dot.png')
+  })
+
+  it('opens the attachment once its preview resolves', async () => {
+    bridge.previewViewedImage.mockResolvedValue({
+      path: '/work/dot.png',
+      name: 'dot.png',
+      mediaType: 'image',
+      previewUrl: 'tastecode-attachment://preview/dot',
+    })
+    bridge.pickFiles.mockResolvedValue([{ path: '/work/dot.png', name: 'dot.png' }])
+    renderComposer(vi.fn())
+    fireEvent.click(screen.getByRole('button', { name: 'Attach files' }))
+
+    const open = await screen.findByRole('button', { name: 'Open dot.png' })
+    expect((open as HTMLButtonElement).disabled).toBe(false)
+    expect(bridge.previewViewedImage).toHaveBeenCalledWith('/work/dot.png')
+  })
+
+  it('keeps the preview the picker already supplied', async () => {
+    bridge.pickFiles.mockResolvedValue([
+      {
+        path: '/work/dot.png',
+        name: 'dot.png',
+        mediaType: 'image',
+        previewUrl: 'tastecode-attachment://preview/dot',
+      },
+    ])
+    renderComposer(vi.fn())
+    fireEvent.click(screen.getByRole('button', { name: 'Attach files' }))
+
+    const open = await screen.findByRole('button', { name: 'Open dot.png' })
+    expect((open as HTMLButtonElement).disabled).toBe(false)
+    expect(bridge.previewViewedImage).not.toHaveBeenCalled()
+  })
+})
+
 describe('Composer send handoff', () => {
   it('switches directly to Stop without starting a looping send animation', () => {
     const onSend = vi.fn()
@@ -1999,6 +2052,17 @@ describe('Composer branch shelf', () => {
     expect(screen.getByRole('menu').classList.contains('menu--project-picker')).toBe(true)
   })
 
+  it('sizes the workspace mode menu to its labels', () => {
+    renderComposer(vi.fn())
+    fireEvent.click(screen.getByRole('button', { name: 'Workspace mode' }))
+
+    const menu = screen.getByRole('menu')
+    expect(menu.classList.contains('menu--compact')).toBe(true)
+    expect(menu.classList.contains('menu--mode')).toBe(true)
+    expect(screen.getByRole('menuitemradio', { name: 'Local' })).toBeTruthy()
+    expect(screen.getByRole('menuitemradio', { name: 'Isolated' })).toBeTruthy()
+  })
+
   it('shows the branch picker only when the project has branches', () => {
     renderComposer(vi.fn())
     expect(screen.getByRole('button', { name: 'Choose branch' })).toBeTruthy()
@@ -2294,6 +2358,14 @@ describe('Composer prompt recall', () => {
   })
 })
 
+function deferred() {
+  let resolve!: (value: unknown) => void
+  const promise = new Promise<unknown>((res) => {
+    resolve = res
+  })
+  return { promise, resolve }
+}
+
 function renderComposer(
   onSend: (text: string, attachments: string[]) => void,
   overrides: Partial<Parameters<typeof Composer>[0]> = {},
@@ -2513,5 +2585,51 @@ describe('Composer error dismissal', () => {
     view.rerenderComposer({ sendAvailability: 'ready' })
     view.rerenderComposer({ sendAvailability: 'setup-required' })
     expect(screen.getByText('Sign in to use this provider.')).toBeTruthy()
+  })
+})
+
+describe('Composer Enter while Send is loading', () => {
+  it('sends the words once Send is ready', () => {
+    const onSend = vi.fn()
+    const view = renderComposer(onSend, { sendAvailability: 'loading' })
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+    fireEvent.change(composer, { target: { value: 'Ship it' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    expect(onSend).not.toHaveBeenCalled()
+    expect(composer.value).toBe('Ship it')
+
+    view.rerenderComposer({ sendAvailability: 'ready' })
+    expect(onSend).toHaveBeenCalledTimes(1)
+    expect(onSend).toHaveBeenCalledWith('Ship it', [])
+    expect(composer.value).toBe('')
+  })
+
+  it('does not send after the words changed or the check asked for setup', () => {
+    const onSend = vi.fn()
+    const view = renderComposer(onSend, { sendAvailability: 'loading' })
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+    fireEvent.change(composer, { target: { value: 'First' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    fireEvent.change(composer, { target: { value: 'First, then more' } })
+    view.rerenderComposer({ sendAvailability: 'ready' })
+    expect(onSend).not.toHaveBeenCalled()
+
+    view.rerenderComposer({ sendAvailability: 'loading' })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    view.rerenderComposer({ sendAvailability: 'setup-required' })
+    view.rerenderComposer({ sendAvailability: 'ready' })
+    expect(onSend).not.toHaveBeenCalled()
+    expect(composer.value).toBe('First, then more')
+  })
+
+  it('does not carry an Enter over to another chat', () => {
+    const onSend = vi.fn()
+    const view = renderComposer(onSend, { sendAvailability: 'loading', threadId: 'thread-a' })
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+    fireEvent.change(composer, { target: { value: 'Same words' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    view.rerenderComposer({ threadId: 'thread-b' })
+    view.rerenderComposer({ sendAvailability: 'ready' })
+    expect(onSend).not.toHaveBeenCalled()
   })
 })
