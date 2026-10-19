@@ -3,7 +3,6 @@ import {
   lazy,
   memo,
   Suspense,
-  type CSSProperties,
   type DragEvent,
   type KeyboardEvent,
   type PointerEvent,
@@ -191,12 +190,9 @@ const INITIAL_PROJECT_RENDER_COUNT = 30
 const DEFERRED_PROJECT_RENDER_COUNT = 20
 const DEFERRED_PROJECT_RENDER_TIMEOUT_MS = 100
 const COLLAPSED_PROJECT_SESSION_COUNT = 5
-const VIRTUALIZED_PROJECT_SESSION_COUNT = 64
-/** A 28px chat row plus the list's 2px row gap. */
-const VIRTUAL_SESSION_ROW_HEIGHT = 30
-const VIRTUAL_SESSION_VIEWPORT_ROWS = 16
-const VIRTUAL_SESSION_OVERSCAN = 6
-const VIRTUAL_SESSION_VIEWPORT_HEIGHT = VIRTUAL_SESSION_ROW_HEIGHT * VIRTUAL_SESSION_VIEWPORT_ROWS
+/** A long project grows in place by this many chats per "Show more", so the
+ *  rail keeps one scroll and only rows someone asked for are mounted. */
+const PROJECT_SESSION_BATCH = 10
 const projectMenuTrigger = () => (
   <span className="dots">
     <Ellipsis size={16} aria-hidden />
@@ -1260,7 +1256,7 @@ const ProjectRow = memo(function ProjectRow(props: {
   const count = props.project.sessions.length
   const [open, setOpen] = useState(props.active)
   const [sessionsMounted, setSessionsMounted] = useState(props.active)
-  const [showAllSessions, setShowAllSessions] = useState(false)
+  const [sessionLimit, setSessionLimit] = useState(COLLAPSED_PROJECT_SESSION_COUNT)
   const [actionsReady, setActionsReady] = useState(false)
   const [renaming, setRenaming] = useState(false)
   const [confirming, setConfirming] = useState<'archive' | 'remove'>()
@@ -1347,7 +1343,7 @@ const ProjectRow = memo(function ProjectRow(props: {
                   setProjectOpen(!expanded)
                   return
                 }
-                if (expanded) setShowAllSessions(false)
+                if (expanded) setSessionLimit(COLLAPSED_PROJECT_SESSION_COUNT)
                 setProjectOpen(!expanded)
               }}
               aria-expanded={expanded}
@@ -1477,8 +1473,8 @@ const ProjectRow = memo(function ProjectRow(props: {
           <ProjectSessions
             project={props.project}
             activeSessionId={props.activeSessionId}
-            showAll={showAllSessions}
-            onShowAllChange={setShowAllSessions}
+            limit={sessionLimit}
+            onLimitChange={setSessionLimit}
             onSelectSession={props.onSelectSession}
             onRenameSession={props.onRenameSession}
             onDeleteSession={props.onDeleteSession}
@@ -1494,8 +1490,9 @@ const ProjectRow = memo(function ProjectRow(props: {
 const ProjectSessions = memo(function ProjectSessions(props: {
   project: Project
   activeSessionId: string | undefined
-  showAll: boolean
-  onShowAllChange: (showAll: boolean) => void
+  /** How many chats the list shows; it grows by PROJECT_SESSION_BATCH. */
+  limit: number
+  onLimitChange: (limit: number) => void
   onSelectSession: (id: string) => void
   onRenameSession: (id: string, title: string) => void
   onToggleSessionPin: ((id: string) => void) | undefined
@@ -1515,62 +1512,13 @@ const ProjectSessions = memo(function ProjectSessions(props: {
   }>()
   const draggedSessionIdRef = useRef<string | undefined>(undefined)
   const dropTargetRef = useRef<{ id: string; position: DropPosition } | undefined>(undefined)
-  const virtualSessionList = useRef<HTMLUListElement>(null)
-  const virtualized = props.showAll && count > VIRTUALIZED_PROJECT_SESSION_COUNT
-  const [virtualRange, setVirtualRange] = useState(() =>
-    virtualSessionRange(0, props.project.sessions.length),
-  )
-  const virtualRangeRef = useRef(virtualRange)
-  const updateVirtualRange = useCallback(
-    (scrollTop: number) => {
-      const next = virtualSessionRange(scrollTop, count)
-      const current = virtualRangeRef.current
-      if (current.start === next.start && current.end === next.end) return
-      virtualRangeRef.current = next
-      setVirtualRange(next)
-    },
-    [count],
-  )
-  const visibleStart = virtualized ? virtualRange.start : 0
-  const visibleSessions = props.showAll
-    ? virtualized
-      ? props.project.sessions.slice(virtualRange.start, virtualRange.end)
-      : props.project.sessions
-    : props.project.sessions.slice(0, COLLAPSED_PROJECT_SESSION_COUNT)
-  const virtualHeight = (count + 1) * VIRTUAL_SESSION_ROW_HEIGHT
-  const virtualListStyle = virtualized
-    ? ({
-        '--virtual-session-height': `${virtualHeight}px`,
-        height: Math.min(virtualHeight, VIRTUAL_SESSION_VIEWPORT_HEIGHT),
-      } as CSSProperties)
-    : undefined
-
-  // Deleting or restoring a chat changes the count but must not move the list.
-  // Only a newly active chat, or virtualization switching on (null), re-centres.
-  const centredSessionId = useRef<string | undefined | null>(null)
-  useLayoutEffect(() => {
-    if (!virtualized) {
-      centredSessionId.current = null
-      return
-    }
-    const list = virtualSessionList.current
-    if (!list) return
-    if (centredSessionId.current !== props.activeSessionId) {
-      centredSessionId.current = props.activeSessionId
-      const activeIndex = props.activeSessionId
-        ? props.project.sessions.findIndex((session) => session.id === props.activeSessionId)
-        : -1
-      const target = Math.max(
-        0,
-        Math.min(
-          activeIndex * VIRTUAL_SESSION_ROW_HEIGHT - VIRTUAL_SESSION_VIEWPORT_HEIGHT / 2,
-          virtualHeight - VIRTUAL_SESSION_VIEWPORT_HEIGHT,
-        ),
-      )
-      list.scrollTop = activeIndex >= 0 ? target : 0
-    }
-    updateVirtualRange(list.scrollTop)
-  }, [props.activeSessionId, updateVirtualRange, virtualHeight, virtualized])
+  // The open chat always has its row, even when it sits past the current batch.
+  const activeIndex = props.activeSessionId
+    ? props.project.sessions.findIndex((session) => session.id === props.activeSessionId)
+    : -1
+  const shown = Math.min(count, Math.max(props.limit, activeIndex + 1))
+  const visibleSessions =
+    shown === count ? props.project.sessions : props.project.sessions.slice(0, shown)
 
   const endDrag = useCallback(() => {
     draggedSessionIdRef.current = undefined
@@ -1617,58 +1565,40 @@ const ProjectSessions = memo(function ProjectSessions(props: {
   )
 
   return (
-    <ul
-      ref={virtualSessionList}
-      className={`proj__sessions${virtualized ? ' proj__sessions--virtual' : ''}`}
-      style={virtualListStyle}
-      tabIndex={virtualized ? 0 : undefined}
-      aria-label={virtualized ? `${displayName(props.project)} chats` : undefined}
-      onScroll={
-        virtualized ? (event) => updateVirtualRange(event.currentTarget.scrollTop) : undefined
-      }
-    >
+    <ul className="proj__sessions">
       {count === 0 ? <li className="rail__hint">No chats</li> : null}
-      {visibleSessions.map((session, visibleIndex) => {
-        const sessionIndex = visibleStart + visibleIndex
-        return (
-          <ProjectSessionRow
-            key={session.id}
-            session={session}
-            projectPath={props.project.path}
-            active={session.id === props.activeSessionId}
-            onSelectSession={props.onSelectSession}
-            onRenameSession={props.onRenameSession}
-            onDeleteSession={props.onDeleteSession}
-            onToggleSessionPin={props.onToggleSessionPin}
-            reorderable
-            dragging={session.id === draggedSessionId}
-            dropPosition={dropTarget?.id === session.id ? dropTarget.position : undefined}
-            onDragStart={startSessionDrag}
-            onDragOver={dragOverSession}
-            onDrop={dropSession}
-            onDragEnd={endDrag}
-            virtualTop={virtualized ? sessionIndex * VIRTUAL_SESSION_ROW_HEIGHT : undefined}
-            virtualPosition={virtualized ? sessionIndex + 1 : undefined}
-            virtualSetSize={virtualized ? count : undefined}
-          />
-        )
-      })}
+      {visibleSessions.map((session) => (
+        <ProjectSessionRow
+          key={session.id}
+          session={session}
+          projectPath={props.project.path}
+          active={session.id === props.activeSessionId}
+          onSelectSession={props.onSelectSession}
+          onRenameSession={props.onRenameSession}
+          onDeleteSession={props.onDeleteSession}
+          onToggleSessionPin={props.onToggleSessionPin}
+          reorderable
+          dragging={session.id === draggedSessionId}
+          dropPosition={dropTarget?.id === session.id ? dropTarget.position : undefined}
+          onDragStart={startSessionDrag}
+          onDragOver={dragOverSession}
+          onDrop={dropSession}
+          onDragEnd={endDrag}
+        />
+      ))}
       {count > COLLAPSED_PROJECT_SESSION_COUNT ? (
-        <li
-          className="proj__sessions-toggle-row"
-          style={
-            virtualized
-              ? { transform: `translateY(${count * VIRTUAL_SESSION_ROW_HEIGHT}px)` }
-              : undefined
-          }
-        >
+        <li className="proj__sessions-toggle-row">
           <button
             type="button"
             className="proj__sessions-toggle"
-            aria-expanded={props.showAll}
-            onClick={() => props.onShowAllChange(!props.showAll)}
+            aria-expanded={shown >= count}
+            onClick={() =>
+              props.onLimitChange(
+                shown >= count ? COLLAPSED_PROJECT_SESSION_COUNT : shown + PROJECT_SESSION_BATCH,
+              )
+            }
           >
-            {props.showAll ? 'Show less' : 'Show more'}
+            {shown >= count ? 'Show less' : 'Show more'}
           </button>
         </li>
       ) : null}
@@ -1691,9 +1621,6 @@ const ProjectSessionRow = memo(function ProjectSessionRow(props: {
   onDragOver: (event: DragEvent<HTMLLIElement>, targetId: string) => void
   onDrop: (event: DragEvent<HTMLLIElement>, targetId: string) => void
   onDragEnd: () => void
-  virtualTop: number | undefined
-  virtualPosition: number | undefined
-  virtualSetSize: number | undefined
 }) {
   const { session } = props
   return (
@@ -1712,9 +1639,6 @@ const ProjectSessionRow = memo(function ProjectSessionRow(props: {
       onDragOver={(event) => props.onDragOver(event, session.id)}
       onDrop={(event) => props.onDrop(event, session.id)}
       onDragEnd={props.onDragEnd}
-      virtualTop={props.virtualTop}
-      virtualPosition={props.virtualPosition}
-      virtualSetSize={props.virtualSetSize}
     />
   )
 })
@@ -1735,9 +1659,6 @@ function SessionRow(props: {
   onDragOver: (event: DragEvent<HTMLLIElement>) => void
   onDrop: (event: DragEvent<HTMLLIElement>) => void
   onDragEnd: () => void
-  virtualTop?: number | undefined
-  virtualPosition?: number | undefined
-  virtualSetSize?: number | undefined
 }) {
   const [renaming, setRenaming] = useState(false)
   const contextMenuTarget = useRef<HTMLButtonElement>(null)
@@ -1747,9 +1668,6 @@ function SessionRow(props: {
     return (
       <li
         className={`sessrow is-renaming${props.active ? ' is-active' : ''}${props.standalone ? ' is-pinned' : ''}`}
-        style={virtualSessionStyle(props.virtualTop)}
-        aria-posinset={props.virtualPosition}
-        aria-setsize={props.virtualSetSize}
       >
         {props.active ? <ActiveIndicator /> : null}
         <InlineRename
@@ -1778,9 +1696,6 @@ function SessionRow(props: {
       onDragOver={props.onDragOver}
       onDrop={props.onDrop}
       onDragEnd={props.onDragEnd}
-      style={virtualSessionStyle(props.virtualTop)}
-      aria-posinset={props.virtualPosition}
-      aria-setsize={props.virtualSetSize}
     >
       {props.active ? <ActiveIndicator /> : null}
       <button
@@ -1986,20 +1901,6 @@ function sessionLabel(session: Session): string {
     default:
       return `${session.title}, ${source}${unread}${branch}`
   }
-}
-
-function virtualSessionRange(scrollTop: number, count: number) {
-  const firstVisible = Math.floor(scrollTop / VIRTUAL_SESSION_ROW_HEIGHT)
-  const start = Math.max(0, firstVisible - VIRTUAL_SESSION_OVERSCAN)
-  const end = Math.min(
-    count,
-    firstVisible + VIRTUAL_SESSION_VIEWPORT_ROWS + VIRTUAL_SESSION_OVERSCAN,
-  )
-  return { start, end }
-}
-
-function virtualSessionStyle(top: number | undefined): CSSProperties | undefined {
-  return top === undefined ? undefined : { transform: `translateY(${top}px)` }
 }
 
 /** Rename in place. Enter commits, Escape reverts, blur commits. */

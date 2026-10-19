@@ -1092,81 +1092,75 @@ describe('Sidebar chat actions', () => {
   })
 
   it.each([65, 10_000])(
-    'keeps a %d-chat expanded project bounded while every chat stays reachable',
+    'grows a %d-chat project in place, ten chats at a time, inside the one rail scroll',
     (sessionCount) => {
-      let commitCount = 0
-      render(
-        <Profiler id="large-sidebar" onRender={() => (commitCount += 1)}>
-          <Sidebar
-            projects={[
-              {
-                path: '/work/large',
-                name: 'Large project',
-                sessions: Array.from({ length: sessionCount }, (_, index) =>
-                  session(`thread-${index + 1}`, `Chat ${index + 1}`),
-                ),
-              },
-            ]}
-            activeProjectPath="/work/large"
-            activeSessionId="thread-1"
-            account={undefined}
-            providerName="Codex"
-            collapsed={false}
-            width={248}
-            onWidthChange={vi.fn()}
-            onClose={vi.fn()}
-            onAddProject={vi.fn()}
-            onNewSession={vi.fn()}
-            onSelectSession={vi.fn()}
-            onRenameProject={vi.fn()}
-            onRemoveProject={vi.fn()}
-            onTogglePin={vi.fn()}
-            onRenameSession={vi.fn()}
-            onDeleteSession={vi.fn()}
-            onArchiveProject={vi.fn()}
-            onReorderSession={vi.fn()}
-            onOpenSearch={vi.fn()}
-            onOpenSettings={vi.fn()}
-          />
-        </Profiler>,
+      const largeProject = (activeSessionId: string) => (
+        <Sidebar
+          projects={[
+            {
+              path: '/work/large',
+              name: 'Large project',
+              sessions: Array.from({ length: sessionCount }, (_, index) =>
+                session(`thread-${index + 1}`, `Chat ${index + 1}`),
+              ),
+            },
+          ]}
+          activeProjectPath="/work/large"
+          activeSessionId={activeSessionId}
+          account={undefined}
+          providerName="Codex"
+          collapsed={false}
+          width={248}
+          onWidthChange={vi.fn()}
+          onClose={vi.fn()}
+          onAddProject={vi.fn()}
+          onNewSession={vi.fn()}
+          onSelectSession={vi.fn()}
+          onRenameProject={vi.fn()}
+          onRemoveProject={vi.fn()}
+          onTogglePin={vi.fn()}
+          onRenameSession={vi.fn()}
+          onDeleteSession={vi.fn()}
+          onArchiveProject={vi.fn()}
+          onReorderSession={vi.fn()}
+          onOpenSearch={vi.fn()}
+          onOpenSettings={vi.fn()}
+        />
       )
+      const view = render(largeProject('thread-1'))
+      const rows = () => document.querySelectorAll('.proj__sessions .sessrow').length
 
+      expect(rows()).toBe(5)
       fireEvent.click(screen.getByRole('button', { name: 'Show more' }))
-      const list = screen.getByRole('list', { name: 'Large project chats' })
-      expect(list.getAttribute('tabindex')).toBe('0')
-      expect(list.querySelectorAll('.sessrow').length).toBeLessThanOrEqual(28)
+      expect(rows()).toBe(15)
+      fireEvent.click(screen.getByRole('button', { name: 'Show more' }))
+      expect(rows()).toBe(25)
+      // No list of its own scrolls inside the rail any more.
+      expect(document.querySelector('.proj__sessions--virtual')).toBeNull()
+      expect(document.querySelector('.proj__sessions')?.getAttribute('tabindex')).toBeNull()
       expect(screen.queryByRole('button', { name: `Chat ${sessionCount}, Codex` })).toBeNull()
 
-      const commitsBeforeSameRangeScroll = commitCount
-      list.scrollTop = 1
-      fireEvent.scroll(list)
-      list.scrollTop = 29
-      fireEvent.scroll(list)
-      expect(commitCount).toBe(commitsBeforeSameRangeScroll)
-
-      list.scrollTop = 30
-      fireEvent.scroll(list)
-      expect(commitCount).toBe(commitsBeforeSameRangeScroll + 1)
-
-      list.scrollTop = sessionCount * 30
-      fireEvent.scroll(list)
-
-      const last = screen.getByRole('button', { name: `Chat ${sessionCount}, Codex` }).closest('li')
-      expect(last?.getAttribute('aria-posinset')).toBe(String(sessionCount))
-      expect(last?.getAttribute('aria-setsize')).toBe(String(sessionCount))
-      expect(list.querySelectorAll('.sessrow').length).toBeLessThanOrEqual(28)
+      // The open chat keeps its row, even past the batch that is shown.
+      view.rerender(largeProject('thread-40'))
+      expect(rows()).toBe(40)
+      expect(screen.getByRole('button', { name: 'Chat 40, Codex' })).toBeTruthy()
     },
   )
 
-  it('keeps an expanded long project scrolled in place when a chat is deleted or restored', () => {
-    const sessions = Array.from({ length: 70 }, (_, index) =>
-      session(`thread-${index + 1}`, `Chat ${index + 1}`),
-    )
-    const content = (projectSessions: typeof sessions, activeSessionId: string) => (
+  it('folds a long project back to five chats with Show less', () => {
+    render(
       <Sidebar
-        projects={[{ path: '/work/large', name: 'Large project', sessions: projectSessions }]}
+        projects={[
+          {
+            path: '/work/large',
+            name: 'Large project',
+            sessions: Array.from({ length: 12 }, (_, index) =>
+              session(`thread-${index + 1}`, `Chat ${index + 1}`),
+            ),
+          },
+        ]}
         activeProjectPath="/work/large"
-        activeSessionId={activeSessionId}
+        activeSessionId="thread-1"
         account={undefined}
         providerName="Codex"
         collapsed={false}
@@ -1185,29 +1179,14 @@ describe('Sidebar chat actions', () => {
         onReorderSession={vi.fn()}
         onOpenSearch={vi.fn()}
         onOpenSettings={vi.fn()}
-      />
+      />,
     )
-    const view = render(content(sessions, 'thread-1'))
     fireEvent.click(screen.getByRole('button', { name: 'Show more' }))
-    const list = screen.getByRole('list', { name: 'Large project chats' })
-    list.scrollTop = 60 * 30
-    fireEvent.scroll(list)
-
-    view.rerender(
-      content(
-        sessions.filter((entry) => entry.id !== 'thread-61'),
-        'thread-1',
-      ),
-    )
-    expect(list.scrollTop).toBe(60 * 30)
-    expect(screen.getByRole('button', { name: 'Chat 62, Codex' })).toBeTruthy()
-
-    view.rerender(content(sessions, 'thread-1'))
-    expect(list.scrollTop).toBe(60 * 30)
-    expect(screen.getByRole('button', { name: 'Chat 61, Codex' })).toBeTruthy()
-
-    view.rerender(content(sessions, 'thread-40'))
-    expect(list.scrollTop).toBe(39 * 30 - 8 * 30)
+    expect(screen.getByRole('button', { name: 'Chat 12, Codex' })).toBeTruthy()
+    const less = screen.getByRole('button', { name: 'Show less' })
+    expect(less.getAttribute('aria-expanded')).toBe('true')
+    fireEvent.click(less)
+    expect(document.querySelectorAll('.proj__sessions .sessrow')).toHaveLength(5)
   })
 
   it('starts with only the active project expanded', () => {

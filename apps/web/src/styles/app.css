@@ -905,29 +905,6 @@
   max-width: 100%;
 }
 
-.proj__sessions--virtual {
-  position: relative;
-  overflow-x: hidden;
-  overflow-y: auto;
-  overflow-anchor: none;
-  contain: layout paint style;
-  scrollbar-width: thin;
-}
-
-.proj__sessions--virtual::before {
-  content: '';
-  display: block;
-  width: 1px;
-  height: var(--virtual-session-height);
-}
-
-.proj__sessions--virtual > :is(.sessrow, .proj__sessions-toggle-row) {
-  position: absolute;
-  top: 0;
-  right: 0;
-  left: 0;
-}
-
 .proj__sessions-toggle {
   width: 100%;
   max-width: 100%;
