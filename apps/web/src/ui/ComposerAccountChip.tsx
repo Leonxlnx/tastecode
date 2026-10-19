@@ -18,9 +18,10 @@ export function ComposerAccountChip(props: { transport: Transport; provider: Pro
   const active = accounts.find((account) => account.id === activeId) ?? accounts[0]!
 
   return (
+    // Named apart from the sidebar's Account menu, which shows who is signed in.
     <Menu
-      label="Account"
-      triggerTitle={`Account: ${active.label}`}
+      label="New chat account"
+      triggerTitle={`New chat account: ${active.label}`}
       triggerClassName="composer__account"
       panelLabel="Account"
       panelClassName="menu--compact"

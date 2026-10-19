@@ -48,7 +48,7 @@ describe('ComposerAccountChip', () => {
     const transport = serve([defaultAccount, work])
     render(<ComposerAccountChip transport={transport} provider="codex" />)
 
-    const trigger = await screen.findByRole('button', { name: 'Account' })
+    const trigger = await screen.findByRole('button', { name: 'New chat account' })
     expect(trigger.textContent).toContain('Default')
     fireEvent.click(trigger)
     fireEvent.click(await screen.findByRole('menuitem', { name: /Work/ }))
@@ -59,7 +59,9 @@ describe('ComposerAccountChip', () => {
       ).toEqual([{ provider: 'codex', accountId: 'work-1a2b3c' }]),
     )
     await waitFor(() =>
-      expect(screen.getByRole('button', { name: 'Account' }).textContent).toContain('Work'),
+      expect(screen.getByRole('button', { name: 'New chat account' }).textContent).toContain(
+        'Work',
+      ),
     )
   })
 })
