@@ -5234,6 +5234,7 @@ describe('new chats', () => {
               home: 'C:\\TasteCode\\accounts\\codex\\work-1a2b3c',
               managed: true,
             },
+
           ],
           active: { codex: 'work-1a2b3c' },
         })
@@ -5274,11 +5275,12 @@ describe('new chats', () => {
     )
     // The active account comes first; the raw id is never shown.
     const regions = screen.getAllByRole('region', { name: /^Codex/ })
-    expect(regions.map((region) => region.querySelector('h3')?.textContent)).toEqual([
+    expect(regions.map((region) => region.getAttribute('aria-label'))).toEqual([
       'Codex · Work',
       'Codex · Personal',
     ])
     expect(screen.queryByText(/work-1a2b3c/)).toBeNull()
+
   })
 
   it('keeps plan limits and asks nothing new when switching chats of one provider', async () => {

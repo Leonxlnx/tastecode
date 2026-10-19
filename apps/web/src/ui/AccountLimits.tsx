@@ -40,7 +40,8 @@ export type AccountLimitsState = UsageSummaryState
  * Plan limits, grouped by provider account, shown as soon as the account
  * popup opens. A provider that cannot report is one quiet line in its own
  * group, never an alert: it is a missing number, not a problem the person has
- * to act on. A provider shown with more than one account names each one.
+ * to act on. A provider shown with more than one account is named once, with
+ * each account under it by its own name.
  */
 export function AccountLimits(props: {
   states: AccountLimitsState[]
@@ -91,41 +92,74 @@ export function AccountLimits(props: {
       // A scroll container that keyboard users can reach and scroll.
       tabIndex={0}
     >
-      {visibleStates.map((state) => (
-        <LimitSource
-          key={limitKey(state.provider, state.accountId)}
-          state={state}
-          name={sourceName(state, visibleStates, props.accountLabel)}
-          now={now}
-          onRetry={() => retry(state.provider, state.accountId)}
-          onConsumeReset={props.onConsumeReset}
-        />
-      ))}
+      {groupByProvider(visibleStates).map((group) => {
+        const name = providerDisplayName(group.provider)
+        const source = (state: AccountLimitsState, account?: string) => (
+          <LimitSource
+            key={limitKey(state.provider, state.accountId)}
+            state={state}
+            name={account === undefined ? name : `${name} · ${account}`}
+            account={account}
+            now={now}
+            onRetry={() => retry(state.provider, state.accountId)}
+            onConsumeReset={props.onConsumeReset}
+          />
+        )
+        if (!namesAccounts(group.states)) return source(group.states[0]!)
+        // The provider once, then each account under it by its own name.
+        return (
+          <div
+            key={group.provider}
+            className="account-menu__provider"
+            role="group"
+            aria-label={name}
+          >
+            <h3 className="account-menu__provider-name">
+              <ProviderIcon mark={providerMark(group.provider)} size={14} />
+              <span>{name}</span>
+            </h3>
+            {group.states.map((state) =>
+              source(
+                state,
+                props.accountLabel?.(state.provider, state.accountId) ??
+                  (further(state) ? 'Account' : 'Default'),
+              ),
+            )}
+          </div>
+        )
+      })}
     </section>
   )
 }
 
-/**
- * "Codex", or "Codex · Work" once the popup shows more than one of the
- * provider's accounts or a further account alone.
- */
-function sourceName(
-  state: AccountLimitsState,
-  shown: readonly AccountLimitsState[],
-  accountLabel: AccountLabel | undefined,
-): string {
-  const name = providerDisplayName(state.provider)
-  const further = state.accountId !== undefined && state.accountId !== DEFAULT_ACCOUNT_ID
-  const siblings = shown.filter((each) => each.provider === state.provider).length
-  if (!further && siblings < 2) return name
-  const label = accountLabel?.(state.provider, state.accountId) ?? (further ? 'Account' : 'Default')
-  return `${name} · ${label}`
+function further(state: AccountLimitsState): boolean {
+  return state.accountId !== undefined && state.accountId !== DEFAULT_ACCOUNT_ID
+}
+
+/** A provider shown with more than one account, or with a further account alone, names them. */
+function namesAccounts(states: readonly AccountLimitsState[]): boolean {
+  return states.length > 1 || states.some(further)
+}
+
+/** The sources in their order, each provider's accounts together where its first one is. */
+function groupByProvider(
+  states: readonly AccountLimitsState[],
+): Array<{ provider: ProviderId; states: AccountLimitsState[] }> {
+  const groups: Array<{ provider: ProviderId; states: AccountLimitsState[] }> = []
+  for (const state of states) {
+    const group = groups.find((each) => each.provider === state.provider)
+    if (group) group.states.push(state)
+    else groups.push({ provider: state.provider, states: [state] })
+  }
+  return groups
 }
 
 function LimitSource(props: {
   state: AccountLimitsState
-  /** The provider, and the account when the popup names it. */
+  /** The provider, and the account when the popup names it, as assistive tech reads it. */
   name: string
+  /** Set under a provider heading: the source is titled by this account name alone. */
+  account?: string | undefined
   now: number
   onRetry: () => void
   onConsumeReset?: ConsumeReset | undefined
@@ -144,15 +178,21 @@ function LimitSource(props: {
       (props.state.status === 'ready' && source?.status === 'unavailable'))
   return (
     <section
-      className="account-menu__source"
-      aria-labelledby={titleId}
+      className={`account-menu__source${props.account === undefined ? '' : ' is-account'}`}
+      {...(props.account === undefined ? { 'aria-labelledby': titleId } : { 'aria-label': name })}
       aria-busy={props.state.status === 'loading'}
     >
       <div className="account-menu__source-head">
-        <h3 id={titleId}>
-          <ProviderIcon mark={providerMark(props.state.provider)} size={14} />
-          <span>{name}</span>
-        </h3>
+        {props.account === undefined ? (
+          <h3 id={titleId}>
+            <ProviderIcon mark={providerMark(props.state.provider)} size={14} />
+            <span>{name}</span>
+          </h3>
+        ) : (
+          <h4 id={titleId}>
+            <span>{props.account}</span>
+          </h4>
+        )}
         {status ? (
           <span className="account-menu__source-status" id={statusId} title={status.detail}>
             {status.label}
