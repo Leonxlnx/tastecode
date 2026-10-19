@@ -67,9 +67,16 @@ export class RestoreSnapshotError extends AggregateError {
 export async function takeSnapshot(repoPath: string): Promise<Snapshot> {
   const scope = path.relative(canonicalCheckoutRoot(repoPath), realpathSync(repoPath)) || '.'
   repoPath = canonicalCheckoutRoot(repoPath)
-  const base = await snapshotBase(repoPath)
+  // Every turn starts with a snapshot, and building one took about ten git
+  // runs in a row (23 s on a busy Windows machine) before the agent got the
+  // prompt. A checkout that matches HEAD needs only a status.
+  const [base, status] = await Promise.all([snapshotBase(repoPath), cleanStatus(repoPath, scope)])
   // Before the first commit there is no HEAD; snapshots then start from the empty tree.
   const head = base.head
+  if (head && status === '' && (await indexTrustsWorkingTree(repoPath))) {
+    await protectSnapshot(repoPath, head)
+    return { commit: head, clean: true }
+  }
 
   const indexDir = await mkdtemp(path.join(os.tmpdir(), 'harness-index-'))
   const indexFile = path.join(indexDir, 'index')
@@ -236,6 +243,39 @@ async function seedFromCheckoutIndex(
   await rm(indexFile, { force: true }).catch(() => undefined)
   await rm(`${indexFile}.lock`, { force: true }).catch(() => undefined)
   return false
+}
+
+/**
+ * Empty when nothing in `scope` differs from HEAD: no staged or working
+ * change, no untracked file outside the ignore rules, and no submodule change.
+ * Ignored files never enter a snapshot, so they do not count. Undefined when
+ * git could not tell. Without optional locks, so the user's own git commands
+ * never find the index locked by a backup they did not ask for.
+ */
+async function cleanStatus(repoPath: string, scope: string): Promise<string | undefined> {
+  return git(repoPath, [
+    '--no-optional-locks',
+    'status',
+    '--porcelain=v1',
+    '-z',
+    '--untracked-files=all',
+    '--ignore-submodules=none',
+    '--',
+    `:(literal)${scope}`,
+  ])
+}
+
+/**
+ * Whether git compares every tracked file with the working tree. Status skips
+ * files marked assume-unchanged or skip-worktree, so an edit to one of them
+ * would look clean although the full snapshot records it.
+ */
+async function indexTrustsWorkingTree(repoPath: string): Promise<boolean> {
+  const entries = await git(repoPath, ['ls-files', '-v', '-z'])
+  return (
+    entries !== undefined &&
+    entries.split('\0').every((entry) => entry === '' || entry.startsWith('H '))
+  )
 }
 
 /**
