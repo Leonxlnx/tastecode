@@ -24,11 +24,18 @@ type LazyModelSelectorPanelModule = {
 
 let modelSelectorPanelPromise: Promise<LazyModelSelectorPanelModule> | undefined
 let resolvedModelSelectorPanel: ModelSelectorPanelComponent | undefined
+/** One import for the idle preload, the trigger intent and the open; a failed one is tried again by the next caller. */
 const loadModelSelectorPanel = (): Promise<LazyModelSelectorPanelModule> =>
-  (modelSelectorPanelPromise ??= import('./ModelSelectorPanel.js').then((module) => {
-    resolvedModelSelectorPanel = module.ModelSelectorPanel
-    return { default: module.ModelSelectorPanel }
-  }))
+  (modelSelectorPanelPromise ??= import('./ModelSelectorPanel.js').then(
+    (module) => {
+      resolvedModelSelectorPanel = module.ModelSelectorPanel
+      return { default: module.ModelSelectorPanel }
+    },
+    (error: unknown) => {
+      modelSelectorPanelPromise = undefined
+      throw error
+    },
+  ))
 const ModelSelectorPanel = lazy(loadModelSelectorPanel)
 /** Set once the first selector on screen asked for the panel to load in an idle moment. */
 let panelPreloadScheduled = false
