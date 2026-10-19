@@ -87,7 +87,7 @@ function LimitSource(props: {
             {status.detail ? <span className="visually-hidden">. {status.detail}</span> : null}
           </span>
         ) : null}
-        {props.state.status === 'error' ? (
+        {props.state.status === 'error' && !props.state.retry ? (
           <button
             className="account-menu__retry"
             type="button"
@@ -117,6 +117,13 @@ function sourceStatus(
   source: ProviderLimitSource | undefined,
   hasValues: boolean,
 ): { label: string; detail?: string | undefined } | undefined {
+  if (state.status !== 'ready' && state.retry) {
+    const { attempt, of, message } = state.retry
+    return {
+      label: 'Retrying…',
+      detail: `Plan limits couldn’t be loaded. ${message} Trying again, ${attempt} of ${of}.`,
+    }
+  }
   if (state.status === 'error') {
     return hasValues
       ? { label: 'Last known', detail: `Couldn’t refresh plan limits. ${state.message}` }
@@ -337,6 +344,9 @@ function ResetCreditExpiries(props: {
 }
 
 function limitSource(state: AccountLimitsState): ProviderLimitSource | undefined {
+  // Retries that all failed leave the source out, as if it reported nothing.
+  if (state.status !== 'ready' && state.gaveUp)
+    return { provider: state.provider, status: 'unavailable' }
   const summary = state.summary
   if (!summary) return undefined
   if (summary.limitSource) return summary.limitSource
