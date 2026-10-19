@@ -25,7 +25,10 @@ import type {
   ThreadLifecycle,
 } from '@harness/contracts'
 import {
+  IconArchive as Archive,
+  IconArrowBackUp as Restore,
   IconCheck as Check,
+  IconChevronRight as ChevronRight,
   IconTrash as Trash,
   IconDots as Ellipsis,
   IconFolderOpen as FolderOpen,
@@ -69,6 +72,7 @@ import {
   sidebarRail,
   type Attention,
   type NeedsYouEntry,
+  type PinnedSession,
 } from '../sidebar-order.js'
 import {
   DEFAULT_KEYBINDINGS,
@@ -249,6 +253,9 @@ function SidebarComponent(props: {
   onRenameSession: (id: string, title: string) => void
   onToggleSessionPin?: (id: string) => void
   onDeleteSession: (id: string) => void
+  /** Moves a chat to Archived without deleting it; sending to it later brings it back. */
+  onArchiveSession?: ((id: string) => void) | undefined
+  onRestoreSession?: ((id: string) => void) | undefined
   /** Reads a finished or failed chat without opening it, which clears it from Needs you. */
   onMarkSessionRead?: ((id: string) => void) | undefined
   onArchiveProject: (sessionIds: string[]) => void
@@ -506,6 +513,8 @@ function SidebarComponent(props: {
     (id: string) => actionsRef.current.onMarkSessionRead?.(id),
     [],
   )
+  const archiveSession = useCallback((id: string) => actionsRef.current.onArchiveSession?.(id), [])
+  const restoreSession = useCallback((id: string) => actionsRef.current.onRestoreSession?.(id), [])
   const animateArchive = useArchiveMotion()
   const deleteSession = useCallback(
     (id: string) => {
@@ -547,7 +556,7 @@ function SidebarComponent(props: {
 
   // A status push replaces one project in an otherwise retained tree. Keep
   // every unchanged projection stable so React only reconciles that project.
-  const { orderedProjects, pinnedSessions } = useMemo(
+  const { orderedProjects, pinnedSessions, archivedSessions } = useMemo(
     () => sidebarRail(props.projects),
     [props.projects],
   )
@@ -901,11 +910,22 @@ function SidebarComponent(props: {
                     onRenameSession={renameSession}
                     onToggleSessionPin={props.onToggleSessionPin ? toggleSessionPin : undefined}
                     onDeleteSession={deleteSession}
+                    onArchiveSession={props.onArchiveSession ? archiveSession : undefined}
                     onArchiveProject={archiveProject}
                     onReorderSession={reorderSession}
                   />
                 ))
               )}
+              {archivedSessions.length > 0 ? (
+                <ArchivedSection
+                  entries={archivedSessions}
+                  projectNames={projectNames}
+                  activeSessionId={props.activeSessionId}
+                  onSelectSession={selectSession}
+                  onRestoreSession={props.onRestoreSession ? restoreSession : undefined}
+                  onDeleteSession={deleteSession}
+                />
+              ) : null}
             </div>
           </>
         )}
@@ -1291,6 +1311,7 @@ const ProjectRow = memo(function ProjectRow(props: {
   onRenameSession: (id: string, title: string) => void
   onToggleSessionPin: ((id: string) => void) | undefined
   onDeleteSession: (id: string) => void
+  onArchiveSession: ((id: string) => void) | undefined
   onArchiveProject: (sessionIds: string[]) => void
   onReorderSession: (
     projectPath: string,
@@ -1537,6 +1558,7 @@ const ProjectRow = memo(function ProjectRow(props: {
             onSelectSession={props.onSelectSession}
             onRenameSession={props.onRenameSession}
             onDeleteSession={props.onDeleteSession}
+            onArchiveSession={props.onArchiveSession}
             onToggleSessionPin={props.onToggleSessionPin}
             onReorderSession={props.onReorderSession}
           />
@@ -1555,6 +1577,7 @@ const ProjectSessions = memo(function ProjectSessions(props: {
   onRenameSession: (id: string, title: string) => void
   onToggleSessionPin: ((id: string) => void) | undefined
   onDeleteSession: (id: string) => void
+  onArchiveSession: ((id: string) => void) | undefined
   onReorderSession: (
     projectPath: string,
     sourceId: string,
@@ -1694,6 +1717,7 @@ const ProjectSessions = memo(function ProjectSessions(props: {
             onSelectSession={props.onSelectSession}
             onRenameSession={props.onRenameSession}
             onDeleteSession={props.onDeleteSession}
+            onArchiveSession={props.onArchiveSession}
             onToggleSessionPin={props.onToggleSessionPin}
             reorderable
             dragging={session.id === draggedSessionId}
@@ -1738,6 +1762,7 @@ const ProjectSessionRow = memo(function ProjectSessionRow(props: {
   onSelectSession: (id: string) => void
   onRenameSession: (id: string, title: string) => void
   onDeleteSession: (id: string) => void
+  onArchiveSession: ((id: string) => void) | undefined
   onToggleSessionPin: ((id: string) => void) | undefined
   reorderable: boolean
   dragging: boolean
@@ -1758,6 +1783,7 @@ const ProjectSessionRow = memo(function ProjectSessionRow(props: {
       onSelect={() => props.onSelectSession(session.id)}
       onRename={(title) => props.onRenameSession(session.id, title)}
       onDelete={() => props.onDeleteSession(session.id)}
+      onArchive={props.onArchiveSession ? () => props.onArchiveSession?.(session.id) : undefined}
       onTogglePin={() => props.onToggleSessionPin?.(session.id)}
       onOpenInExplorer={() => void revealPath(props.projectPath)}
       reorderable={props.reorderable}
@@ -1780,6 +1806,8 @@ function SessionRow(props: {
   onSelect: () => void
   onRename: (title: string) => void
   onDelete: () => void
+  /** Absent where a chat cannot be archived from, such as the Pinned section. */
+  onArchive?: (() => void) | undefined
   onTogglePin: () => void
   onOpenInExplorer: () => void
   standalone?: boolean
@@ -1797,6 +1825,11 @@ function SessionRow(props: {
   const [renaming, setRenaming] = useState(false)
   const contextMenuTarget = useRef<HTMLButtonElement>(null)
   const finishRename = useRenameFocusReturn(renaming, setRenaming, contextMenuTarget)
+  // A running or waiting chat cannot be archived, and its state is never
+  // covered: the hover action only takes the place of a quiet time.
+  const archive =
+    props.onArchive && !isLiveStatus(props.session.status) ? props.onArchive : undefined
+  const archiveOnHover = archive && props.session.status !== 'failed' ? archive : undefined
 
   if (renaming) {
     return (
@@ -1825,7 +1858,9 @@ function SessionRow(props: {
     <li
       className={`sessrow ${props.active ? 'is-active' : ''} ${props.standalone ? 'is-pinned' : ''} ${
         props.reorderable ? 'is-reorderable' : ''
-      } ${props.dragging ? 'is-dragging' : ''} ${props.session.unread ? 'is-unread' : ''}`}
+      } ${props.dragging ? 'is-dragging' : ''} ${props.session.unread ? 'is-unread' : ''} ${
+        archiveOnHover ? 'has-action' : ''
+      }`}
       data-archive-session-id={props.session.id}
       draggable={props.reorderable}
       data-drop-position={props.dropPosition}
@@ -1864,26 +1899,19 @@ function SessionRow(props: {
         </span>
       </button>
 
-      <span className="sess__actions">
-        <button
-          type="button"
-          className="sess__action"
-          onClick={() => setRenaming(true)}
-          aria-label={`Rename ${props.session.title}`}
-          title="Rename chat"
-        >
-          <Pencil size={13} aria-hidden />
-        </button>
-        <button
-          type="button"
-          className="sess__action"
-          onClick={props.onDelete}
-          aria-label={`Delete ${props.session.title}`}
-          title="Delete chat"
-        >
-          <Trash size={14} aria-hidden />
-        </button>
-      </span>
+      {archiveOnHover ? (
+        <span className="sess__actions">
+          <button
+            type="button"
+            className="sess__action"
+            onClick={archiveOnHover}
+            aria-label={`Archive ${props.session.title}`}
+            title="Archive chat"
+          >
+            <Archive size={14} aria-hidden />
+          </button>
+        </span>
+      ) : null}
 
       <Menu
         drop="down"
@@ -1917,14 +1945,16 @@ function SessionRow(props: {
                 close()
               }}
             />
-            <MenuItem
-              title="Delete chat"
-              icon={<Trash size={14} aria-hidden />}
-              onClick={() => {
-                props.onDelete()
-                close()
-              }}
-            />
+            {archive ? (
+              <MenuItem
+                title="Archive chat"
+                icon={<Archive size={14} aria-hidden />}
+                onClick={() => {
+                  archive()
+                  close()
+                }}
+              />
+            ) : null}
             {isDesktop ? (
               <MenuItem
                 title="Open in Explorer"
@@ -1935,12 +1965,185 @@ function SessionRow(props: {
                 }}
               />
             ) : null}
+            <MenuItem
+              title="Delete chat"
+              icon={<Trash size={14} aria-hidden />}
+              className="menu__item--danger"
+              onClick={() => {
+                props.onDelete()
+                close()
+              }}
+            />
           </>
         )}
       </Menu>
     </li>
   )
 }
+
+/** A chat in one of these states is running or waiting on the user. */
+function isLiveStatus(status: Session['status']): boolean {
+  return (
+    status === 'starting' ||
+    status === 'working' ||
+    status === 'queued' ||
+    status === 'approval' ||
+    status === 'input'
+  )
+}
+
+/** Archived rows mount in batches as the section is read, never all at once. */
+const ARCHIVED_BATCH = 10
+
+/**
+ * Chats that are done but kept: folded at the end of the rail and found by
+ * search. Opening one reads it where it is; sending to it brings it back to
+ * its project.
+ */
+const ArchivedSection = memo(function ArchivedSection(props: {
+  entries: PinnedSession[]
+  projectNames: ReadonlyMap<string, string>
+  activeSessionId: string | undefined
+  onSelectSession: (id: string) => void
+  onRestoreSession: ((id: string) => void) | undefined
+  onDeleteSession: (id: string) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [limit, setLimit] = useState(ARCHIVED_BATCH)
+  const activeIndex = props.entries.findIndex(({ session }) => session.id === props.activeSessionId)
+  // The open chat is never hidden inside a folded section.
+  const expanded = open || activeIndex >= 0
+  const shown = props.entries.slice(0, Math.max(limit, activeIndex + 1))
+  return (
+    <section className="archived" aria-label="Archived">
+      <button
+        type="button"
+        className="section archived__toggle"
+        aria-expanded={expanded}
+        aria-label={`Archived, ${chatCount(props.entries.length)}`}
+        onClick={() => {
+          setOpen(!expanded)
+          setLimit(ARCHIVED_BATCH)
+        }}
+      >
+        <span>Archived</span>
+        <span className="archived__count">{props.entries.length}</span>
+        <ChevronRight className="archived__chevron" size={12} aria-hidden />
+      </button>
+      {expanded ? (
+        <ul className="proj__sessions archived__list">
+          {shown.map(({ projectPath, session }) => (
+            <ArchivedRow
+              key={session.id}
+              session={session}
+              projectPath={projectPath}
+              projectName={props.projectNames.get(projectPath) ?? basename(projectPath)}
+              active={session.id === props.activeSessionId}
+              onSelectSession={props.onSelectSession}
+              onRestoreSession={props.onRestoreSession}
+              onDeleteSession={props.onDeleteSession}
+            />
+          ))}
+          {shown.length < props.entries.length ? (
+            <li className="proj__sessions-toggle-row">
+              <button
+                type="button"
+                className="proj__sessions-toggle"
+                onClick={() => setLimit(shown.length + ARCHIVED_BATCH)}
+              >
+                Show more
+              </button>
+            </li>
+          ) : null}
+        </ul>
+      ) : null}
+    </section>
+  )
+})
+
+const ArchivedRow = memo(function ArchivedRow(props: {
+  session: Session
+  projectPath: string
+  projectName: string
+  active: boolean
+  onSelectSession: (id: string) => void
+  onRestoreSession: ((id: string) => void) | undefined
+  onDeleteSession: (id: string) => void
+}) {
+  const { session } = props
+  const contextMenuTarget = useRef<HTMLButtonElement>(null)
+  const restore = props.onRestoreSession
+  const label = `${sessionLabel(session)}, archived, ${props.projectName}`
+  return (
+    <li
+      className={`sessrow archived__row${props.active ? ' is-active' : ''}${session.unread ? ' is-unread' : ''}${restore ? ' has-action' : ''}`}
+    >
+      {props.active ? <ActiveIndicator /> : null}
+      <button
+        ref={contextMenuTarget}
+        type="button"
+        className={`sess ${props.active ? 'is-active' : ''}`}
+        onClick={() => props.onSelectSession(session.id)}
+        aria-label={label}
+        title={label}
+      >
+        <span className="sess__provider" aria-hidden>
+          <ProviderIcon
+            mark={sessionSourcePresentation(session.provider, session.agent).mark}
+            size={12}
+          />
+        </span>
+        <span className="sess__title">{session.title}</span>
+        <span className="sess__project">{props.projectName}</span>
+      </button>
+      {restore ? (
+        <span className="sess__actions">
+          <button
+            type="button"
+            className="sess__action"
+            onClick={() => restore(session.id)}
+            aria-label={`Restore ${session.title}`}
+            title="Restore to project"
+          >
+            <Restore size={14} aria-hidden />
+          </button>
+        </span>
+      ) : null}
+      <Menu
+        drop="down"
+        align="right"
+        label={`Options for ${session.title}`}
+        panelClassName="menu--sidebar"
+        contextMenuTargetRef={contextMenuTarget}
+        contextMenuOnly
+      >
+        {(close) => (
+          <>
+            {restore ? (
+              <MenuItem
+                title="Restore to project"
+                icon={<Restore size={14} aria-hidden />}
+                onClick={() => {
+                  restore(session.id)
+                  close()
+                }}
+              />
+            ) : null}
+            <MenuItem
+              title="Delete chat"
+              icon={<Trash size={14} aria-hidden />}
+              className="menu__item--danger"
+              onClick={() => {
+                props.onDeleteSession(session.id)
+                close()
+              }}
+            />
+          </>
+        )}
+      </Menu>
+    </li>
+  )
+})
 
 /** Rows the band shows before it folds the rest behind "+N more". */
 const NEEDS_YOU_VISIBLE = 5
