@@ -11277,7 +11277,7 @@ describe('live sessions', () => {
     expect(screen.queryByLabelText('Queued prompts')).toBeNull()
   })
 
-  it('shows the most recently active session first', async () => {
+  it('keeps the newest chat first when an older one starts a turn', async () => {
     serverSidebarSettings.mode = 'classic'
     serverProjects = [
       {
@@ -11302,7 +11302,9 @@ describe('live sessions', () => {
       turn: { id: 'turn-1', threadId: 'thread-1', status: 'running', createdAt: 0 },
     })
 
-    expect(sessionTitles()).toEqual(['Older session', 'Newer session'])
+    // A turn starting does not move the chat; its mark says it is working.
+    expect(screen.getByRole('button', { name: 'Older session, Codex, working' })).toBeTruthy()
+    expect(sessionTitles()).toEqual(['Newer session', 'Older session'])
   })
 
   it('folds streamed deltas once per animation frame', async () => {
