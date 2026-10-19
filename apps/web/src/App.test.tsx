@@ -9835,6 +9835,40 @@ describe('sidebar chat ordering', () => {
 
     await waitFor(() => expect(sidebarOrder()).toEqual(titles))
   })
+
+  it('archives a chat the idle rule settled by bringing it back first', async () => {
+    serverProjects = [
+      serverProject('/work/one', 'One', [
+        {
+          id: 'idle',
+          title: 'Idle chat',
+          createdAt: 1,
+          lifecycle: { state: 'settled', settledAt: 2, reason: 'inactivity' },
+        },
+        {
+          id: 'kept',
+          title: 'Kept chat',
+          createdAt: 2,
+          lifecycle: { state: 'active', keepActive: false },
+        },
+      ]),
+    ]
+
+    render(<App />)
+    await screen.findByRole('button', { name: /^Idle chat,/ })
+    act(() => sidebarProps().onArchiveSession?.('idle'))
+
+    // The server settles only active chats, so an idle-settled one is first made active.
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('thread.settle', { threadId: 'idle' }),
+    )
+    const idleCalls = vi
+      .mocked(transport.request)
+      .mock.calls.filter(([, params]) => (params as { threadId?: string })?.threadId === 'idle')
+      .map(([method]) => method)
+      .filter((method) => method === 'thread.settle' || method === 'thread.unsettle')
+    expect(idleCalls).toEqual(['thread.unsettle', 'thread.settle'])
+  })
 })
 
 describe('inbox lifecycle', () => {

@@ -5193,8 +5193,19 @@ export function App() {
   // checkout, waits under its project's Archived row, and comes back on Restore
   // or when the user sends to it.
   const archiveSidebarChat = useCallback(
-    (id: string) => void hideSession(id, 'settle'),
-    [hideSession],
+    (id: string) =>
+      void (async () => {
+        // The server settles only active chats. One the idle rule settled, or
+        // one snoozed in Inbox, stays in this sidebar's list, so archiving it
+        // brings it back first and then settles it as the user's own archive.
+        const lifecycle = findSession(projectsRef.current, id)?.session.lifecycle
+        if (lifecycle?.state === 'snoozed') await restoreSession(id, 'unsnooze')
+        else if (lifecycle?.state === 'settled' && lifecycle.reason !== 'manual') {
+          await restoreSession(id, 'unsettle')
+        }
+        await hideSession(id, 'settle')
+      })(),
+    [hideSession, restoreSession],
   )
   const restoreSidebarChat = useCallback(
     (id: string) => void restoreSession(id, 'unsettle'),
