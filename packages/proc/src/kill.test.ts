@@ -84,10 +84,14 @@ const wait = setInterval(() => { if (existsSync(${JSON.stringify(file)})) { clea
 `,
       )
       try {
-        const run = spawn(process.execPath, ['--experimental-strip-types', '--no-warnings', owner], {
-          stdio: 'ignore',
-          windowsHide: true,
-        })
+        const run = spawn(
+          process.execPath,
+          ['--experimental-strip-types', '--no-warnings', owner],
+          {
+            stdio: 'ignore',
+            windowsHide: true,
+          },
+        )
         expect((await once(run, 'exit'))[0]).toBe(0)
         await waitUntilStill(file)
       } finally {

@@ -128,7 +128,9 @@ function ownUntilExit(child: ChildProcess): void {
 const TASKKILL_PIDS_PER_RUN = 200
 
 /** Stop every owned tree still running. Synchronous; for the `exit` event. */
-export function stopUnfinishedTrees(launch: (args: string[]) => void = runTaskkillBeforeExit): void {
+export function stopUnfinishedTrees(
+  launch: (args: string[]) => void = runTaskkillBeforeExit,
+): void {
   if (process.platform === 'win32') {
     // A pid stays reserved while Node still holds its process handle, which it
     // does until it sees the exit, so none of these can name another process.
