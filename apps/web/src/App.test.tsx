@@ -2703,7 +2703,7 @@ describe('web client', () => {
       reasoningEfforts: [],
       serviceTiers: [],
     })
-    const announce = (payload: { provider: string; agent?: string }) =>
+    const announce = (payload: { provider: string; agent?: string; accountId?: string }) =>
       act(() => transport.listeners.get('models.changed')?.(payload))
     const settled = () => act(async () => new Promise((resolve) => window.setTimeout(resolve, 0)))
 
@@ -2728,6 +2728,11 @@ describe('web client', () => {
 
       // A source this catalog does not list is not requested.
       announce({ provider: 'acp', agent: 'kimi' })
+      await settled()
+      expect(rpcCount('models.list')).toBe(2)
+
+      // Nor another account's list: the catalog lists the default account.
+      announce({ provider: 'codex', accountId: 'work-1a2b3c' })
       await settled()
       expect(rpcCount('models.list')).toBe(2)
     })

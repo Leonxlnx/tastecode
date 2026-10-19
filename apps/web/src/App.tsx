@@ -25,6 +25,7 @@ import type {
   ResultOf,
   SidebarSettings,
 } from '@harness/contracts'
+import { DEFAULT_ACCOUNT_ID } from '@harness/contracts'
 import {
   isDesktop,
   isMacOS,
@@ -2606,7 +2607,10 @@ export function App() {
   // restart.
   useEffect(
     () =>
-      transport.on('models.changed', ({ provider, agent }) => {
+      transport.on('models.changed', ({ provider, agent, accountId }) => {
+        // The picker lists the default account's models; another account's
+        // list is read where that account is used.
+        if (accountId !== undefined && accountId !== DEFAULT_ACCOUNT_ID) return
         catalogSources.current?.relist(sourceKey({ provider, agentId: agent }))
       }),
     [transport],
