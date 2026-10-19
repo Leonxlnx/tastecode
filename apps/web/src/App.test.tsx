@@ -1346,6 +1346,14 @@ describe('web client', () => {
     expect(
       resolve({ auth: 'unauthenticated' }, { provider: 'codex', state: 'loading', slow: true }),
     ).toBe('setup-required')
+    // A provider that was signed in at its last read does not wait for this one.
+    expect(resolve({}, { provider: 'codex', state: 'loading', remembered: true })).toBe('ready')
+    expect(
+      resolve(
+        { auth: 'unauthenticated' },
+        { provider: 'codex', state: 'loading', remembered: true },
+      ),
+    ).toBe('setup-required')
   })
 
   it.each([false, true])(
