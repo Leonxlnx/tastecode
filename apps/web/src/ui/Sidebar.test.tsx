@@ -1051,7 +1051,9 @@ describe('Sidebar chat actions', () => {
       ),
     ).toEqual(['Older chat', 'Just done', 'Still running', 'Newer chat'])
     const justDone = screen.getByRole('button', { name: 'Just done, Codex, ready, unread' })
-    expect(justDone.querySelector('.sess__meta > .sess__unread-dot')).not.toBeNull()
+    // Unread is the heavier title alone: the row's one slot keeps the time.
+    expect(justDone.querySelector('.sess__meta')?.children).toHaveLength(1)
+    expect(justDone.querySelector('.sess__meta .sess__time')).not.toBeNull()
     expect(justDone.closest('.sessrow')?.classList.contains('is-unread')).toBe(true)
   })
 

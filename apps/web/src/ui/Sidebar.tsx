@@ -1890,7 +1890,6 @@ function SessionRow(props: {
             status={props.session.status}
             since={props.session.statusSince ?? props.session.createdAt}
           />
-          {props.session.unread ? <span className="sess__unread-dot" aria-hidden /> : null}
         </span>
       </button>
 

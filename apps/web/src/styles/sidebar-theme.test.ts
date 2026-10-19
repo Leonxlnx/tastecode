@@ -191,18 +191,16 @@ describe('sidebar theme CSS', () => {
     expect(sidebarSource).not.toContain('IconChevronUp')
   })
 
-  it('uses the light foreground color for unread chat dots', () => {
-    expect(appCss).toMatch(
-      /\.sess__unread-dot \{[^}]*width: 6px;[^}]*height: 6px;[^}]*background: var\(--light\);/s,
-    )
+  it('marks an unread chat by a heavier title, not a second dot', () => {
+    // A failed or waiting chat already shows a dot in the row's one slot; an
+    // unread dot beside it made two. The band carries the unread mark instead.
+    expect(appCss).toMatch(/\.sessrow\.is-unread \.sess__title \{[^}]*font-weight: 560;/s)
+    expect(appCss).not.toContain('.sess__unread-dot')
+    expect(appCss).toMatch(/\.sess__status-dot\.is-done \{[^}]*background: var\(--light\);/s)
   })
 
   it('keeps unread chat titles on the shared text line', () => {
-    // An inline dot before the title pushed unread titles right of every
-    // other chat title. The dot trails the title inside the row's meta group.
     expect(appCss).toMatch(/\.sess__meta \{[^}]*display: flex;[^}]*flex: none;/s)
-    expect(appCss).toMatch(/\.sess__unread-dot \{[^}]*width: 6px;[^}]*flex: none;/s)
-    expect(appCss).not.toMatch(/\.sess__unread-dot \{[^}]*position: absolute/s)
   })
 
   it('gives project rows a consistent readable rhythm', () => {
