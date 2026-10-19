@@ -2016,7 +2016,10 @@
                   >agent turns refresh them only after the project becomes idle; new chats default
                   to main and remember the last branch picked for each project; workspace branches
                   are listed only for the new-chat shelf and its branch menu and cached for 30 s per
-                  project, so opening a chat no longer lists them</span
+                  project, so opening a chat no longer lists them; a new chat asks the server to
+                  switch only when the shelf names a branch other than the checked-out one, never
+                  waits for the branch list (sent before it arrives, it starts on the checkout), and
+                  starts in place when git cannot read the checkout's branch</span
                 ></span
               ></label
             >
