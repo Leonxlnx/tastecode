@@ -33,6 +33,8 @@ export type InstallTarget = { provider: ProviderId; agent?: string }
 
 export type ProviderLoginTerminalTarget = {
   provider?: ProviderId
+  /** The provider account a sign-in runs as; absent means its default. */
+  accountId?: AccountId
   displayName: string
   installKey: string
   operation?: 'install' | 'login'

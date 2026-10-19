@@ -4288,6 +4288,15 @@ export function App() {
     }
     const completedProvider = completed.provider
     if (!completedProvider) return
+    if (completed.accountId !== undefined && completed.accountId !== DEFAULT_ACCOUNT_ID) {
+      // A further account: its own check is what the server keeps as who signed
+      // in, and accounts.changed tells every accounts view. The default
+      // account's state is untouched.
+      void transport
+        .request('auth.status', { provider: completedProvider, accountId: completed.accountId })
+        .catch(() => undefined)
+      return
+    }
     setProviderAuthRefreshRevision((revision) => revision + 1)
     void transport
       .request('auth.status', { provider: completedProvider })

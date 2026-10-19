@@ -387,7 +387,12 @@ function AccountSignIn(props: {
 
   const title = `${provider.displayName} (${account.label})`
   const openTerminal = () =>
-    onOpenTerminal?.({ provider: account.provider, displayName: title, installKey: key })
+    onOpenTerminal?.({
+      provider: account.provider,
+      accountId: account.id,
+      displayName: title,
+      installKey: key,
+    })
   const start = () => {
     setStarting(true)
     setStartError(undefined)

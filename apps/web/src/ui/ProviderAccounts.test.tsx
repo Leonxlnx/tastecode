@@ -167,6 +167,7 @@ describe('Provider accounts in Settings', () => {
     await waitFor(() =>
       expect(opened).toHaveBeenCalledWith({
         provider: 'codex',
+        accountId: 'work-1a2b3c',
         displayName: 'Codex (Work)',
         installKey: 'login:codex@work-1a2b3c',
       }),
