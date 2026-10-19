@@ -212,33 +212,54 @@ describe('Claude Code saved history', () => {
     expect(session?.updatedAt).toBe(Math.max((await stat(f.file)).mtimeMs, AT + 201_000))
   })
 
-  it('finds a title row wherever it falls across the scan chunks', async () => {
-    const configDir = await mkdtemp(path.join(os.tmpdir(), 'claude-history-'))
-    directories.push(configDir)
-    const project = path.join(configDir, 'projects', '-fixture')
-    await mkdir(project, { recursive: true })
-    const head = [row('meta', 'user', 'Caveat', null, { isMeta: true }), row('p', 'user', 'Edges')]
-      .map((item) => JSON.stringify(item) + '\n')
-      .join('')
-    const filler = (length: number) =>
-      JSON.stringify(row('f', 'assistant', 'x'.repeat(length), null, { isSidechain: true })) + '\n'
-    // Token scans read 1 MB chunks from the end of the head and carry 12 bytes over, one
-    // less than the longest token.
-    const boundary = Buffer.byteLength(head) + 1024 * 1024
-    const offsets = [0, 1, 6, 12, 13, 14]
-    for (const [index, back] of offsets.entries()) {
-      const id = `00000000-0000-4000-8000-00000000000${index}`
-      const title = JSON.stringify({ type: 'custom-title', sessionId: id, customTitle: `E${back}` })
-      const before = boundary - back - title.indexOf('"customTitle"')
-      const pad = before - Buffer.byteLength(head) - Buffer.byteLength(filler(0))
-      const text = Buffer.from(head + filler(pad) + title + '\n' + filler(10))
-      expect(text.indexOf('"customTitle"')).toBe(boundary - back)
-      await writeFile(path.join(project, `${id}.jsonl`), text)
-    }
-    const sessions = await createClaudeHistorySource({ configDir }).list()
-    expect(sessions.map((session) => session.title).sort()).toEqual(
-      offsets.map((back) => `E${back}`).sort(),
-    )
+  it.each(['customTitle', 'aiTitle'])(
+    'finds a %s row wherever it falls across the scan chunks',
+    async (key) => {
+      const configDir = await mkdtemp(path.join(os.tmpdir(), 'claude-history-'))
+      directories.push(configDir)
+      const project = path.join(configDir, 'projects', '-fixture')
+      await mkdir(project, { recursive: true })
+      const head = [
+        row('meta', 'user', 'Caveat', null, { isMeta: true }),
+        row('p', 'user', 'Edges'),
+      ]
+        .map((item) => JSON.stringify(item) + '\n')
+        .join('')
+      const filler = (length: number) =>
+        JSON.stringify(row('f', 'assistant', 'x'.repeat(length), null, { isSidechain: true })) +
+        '\n'
+      // Token scans read 1 MB chunks from the end of the head and carry 12 bytes over, one
+      // less than the longest token.
+      const boundary = Buffer.byteLength(head) + 1024 * 1024
+      const offsets = [0, 1, 3, 6, 7, 8, 12, 13, 14]
+      for (const [index, back] of offsets.entries()) {
+        const id = `00000000-0000-4000-8000-00000000000${index}`
+        const type = key === 'customTitle' ? 'custom-title' : 'ai-title'
+        const title = JSON.stringify({ type, sessionId: id, [key]: `E${back}` })
+        const before = boundary - back - title.indexOf(`"${key}"`)
+        const pad = before - Buffer.byteLength(head) - Buffer.byteLength(filler(0))
+        const text = Buffer.from(head + filler(pad) + title + '\n' + filler(10))
+        expect(text.indexOf(`"${key}"`)).toBe(boundary - back)
+        await writeFile(path.join(project, `${id}.jsonl`), text)
+      }
+      const sessions = await createClaudeHistorySource({ configDir }).list()
+      expect(sessions.map((session) => session.title).sort()).toEqual(
+        offsets.map((back) => `E${back}`).sort(),
+      )
+    },
+  )
+
+  it('takes no other key that ends in Title for a title row', async () => {
+    const f = await fixture([
+      row('u1', 'user', 'First prompt'),
+      { type: 'page', sessionId: SESSION, pageTitle: 'Not a session title' },
+      { type: 'note', sessionId: SESSION, subTitle: 'Neither', aiTitles: ['nor this'] },
+      row('a1', 'assistant', 'Quoted "aiTitle" and "customTitle" in text are not keys.'),
+    ])
+
+    const [session] = await f.source.list()
+
+    expect(session?.title).toBe('First prompt')
   })
 
   it('lists generated transcripts as their rows say', async () => {

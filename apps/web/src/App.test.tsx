@@ -1346,6 +1346,14 @@ describe('web client', () => {
     expect(
       resolve({ auth: 'unauthenticated' }, { provider: 'codex', state: 'loading', slow: true }),
     ).toBe('setup-required')
+    // A provider that was signed in at its last read does not wait for this one.
+    expect(resolve({}, { provider: 'codex', state: 'loading', remembered: true })).toBe('ready')
+    expect(
+      resolve(
+        { auth: 'unauthenticated' },
+        { provider: 'codex', state: 'loading', remembered: true },
+      ),
+    ).toBe('setup-required')
   })
 
   it.each([false, true])(
@@ -11892,7 +11900,7 @@ describe('live sessions', () => {
     })
 
     const working = screen.getByRole('button', { name: 'First session, Codex, working' })
-    expect(working.querySelector('.sess__spinner.tabler-icon-loader-2')).not.toBeNull()
+    expect(working.querySelector('.sess__spinner > .tabler-icon-loader-2')).not.toBeNull()
 
     fireEvent.click(screen.getByRole('button', { name: /^Second session,/ }))
     emitThreadEvent('thread-2', {

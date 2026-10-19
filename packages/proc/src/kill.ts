@@ -49,9 +49,48 @@ export function spawnOwned(
 
 /** Terminate only a tree we own, then wait for bounded TERM/KILL escalation. */
 export function killTree(child: KillableProcess): Promise<void> {
+  return stopTree(child, true)
+}
+
+/**
+ * How long a short command that missed its time limit may go on by itself
+ * before its tree is stopped after all.
+ */
+export const LEFT_RUNNING_LIMIT_MS = 60_000
+
+export type LeftRunningProcess = KillableProcess &
+  Pick<ChildProcess, 'unref' | 'once' | 'stdin' | 'stdout' | 'stderr'>
+
+/**
+ * Stop waiting for a short command without stopping it.
+ *
+ * A version or sign-in probe that misses its limit on a loaded PC is nearly
+ * always slow, not stuck: it answers a few seconds later and exits. Stopping
+ * its tree started `taskkill`, and a second one 5 s later, and every process
+ * start holds this process's event loop for up to seconds under load (33
+ * taskkill runs, 17 s, in one session). The command now finishes by itself and
+ * no longer keeps this process alive. One that is still running after
+ * `limitMs` is stuck: its tree is stopped then, with a single taskkill run.
+ */
+export function leaveRunning(child: LeftRunningProcess, limitMs = LEFT_RUNNING_LIMIT_MS): void {
+  const exited = () => child.exitCode != null || child.signalCode != null
+  if (exited()) return
+  child.unref()
+  for (const stream of [child.stdin, child.stdout, child.stderr]) {
+    // Pipes are sockets; a stream without a handle has nothing to release.
+    ;(stream as { unref?: () => unknown } | null)?.unref?.()
+  }
+  const timer = setTimeout(() => {
+    if (!exited()) void stopTree(child, false).catch(() => undefined)
+  }, limitMs)
+  timer.unref()
+  child.once('exit', () => clearTimeout(timer))
+}
+
+function stopTree(child: KillableProcess, retry: boolean): Promise<void> {
   const existing = stopping.get(child)
   if (existing) return existing
-  const done = terminate(child).catch((error: unknown) => {
+  const done = terminate(child, retry).catch((error: unknown) => {
     stopping.delete(child)
     throw error
   })
@@ -62,7 +101,7 @@ export function killTree(child: KillableProcess): Promise<void> {
   return done
 }
 
-async function terminate(child: KillableProcess): Promise<void> {
+async function terminate(child: KillableProcess, retry: boolean): Promise<void> {
   const group = groups.get(child)
   if (group) {
     // Keep the group after its leader exits: children can still be alive.
@@ -86,10 +125,14 @@ async function terminate(child: KillableProcess): Promise<void> {
     // call would stop the server's only event loop, and every stream with it.
     // taskkill can finish before Node observes the child's exit event.
     const exited = () => child.exitCode != null || child.signalCode != null
-    const outcome = await stopWindowsTree(child.pid, () => {
-      // Every late run failed, so no taskkill is walking the tree any more.
-      if (!exited()) child.kill()
-    })
+    const outcome = await stopWindowsTree(
+      child.pid,
+      () => {
+        // Every late run failed, so no taskkill is walking the tree any more.
+        if (!exited()) child.kill()
+      },
+      retry,
+    )
     // taskkill still owns this stop. Killing the shim now would orphan the CLI
     // it started, so the stop is left to the run that is still going.
     if (outcome === 'running') return
@@ -219,7 +262,8 @@ export function setTaskkillLauncherForTests(launcher?: TaskkillLauncher): void {
  * a slow taskkill and then the shim is how dozens of `opencode serve` processes
  * outlived the app. A slow run keeps going while a second one is tried. After
  * the budget the runs are left to finish on their own, and `onLateFailure`
- * runs if every one of them then fails.
+ * runs if every one of them then fails. Without `retry` there is only the
+ * first run.
  *
  * `stopped`: a run exited cleanly. `failed`: every run exited with an error and
  * none is still running. `running`: the budget ran out with taskkill still busy.
@@ -227,11 +271,14 @@ export function setTaskkillLauncherForTests(launcher?: TaskkillLauncher): void {
 async function stopWindowsTree(
   pid: number,
   onLateFailure: () => void,
+  retry: boolean,
 ): Promise<'stopped' | 'failed' | 'running'> {
   const startedAt = Date.now()
   const runs = [launchTaskkill(pid)]
-  if ((await taskkillOutcome(runs, TASKKILL_RETRY_AFTER_MS)) === 'stopped') return 'stopped'
-  runs.push(launchTaskkill(pid))
+  if (retry) {
+    if ((await taskkillOutcome(runs, TASKKILL_RETRY_AFTER_MS)) === 'stopped') return 'stopped'
+    runs.push(launchTaskkill(pid))
+  }
   const outcome = await taskkillOutcome(runs, TASKKILL_BUDGET_MS - (Date.now() - startedAt))
   if (outcome === 'running') {
     for (const run of runs) run.release()
