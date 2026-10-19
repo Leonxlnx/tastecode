@@ -118,6 +118,13 @@
   --light: #ededed;
   --on-danger: #fefefe;
 
+  /* Which provider, where a page tells them apart (the Usage sheets), keyed
+     by brand mark: Claude's clay, OpenAI's ink, and a violet for Grok, whose
+     own brand is ink too and needs a hue to stand apart from Codex. */
+  --mark-anthropic: #d97757;
+  --mark-openai: var(--text);
+  --mark-grok: #9085e9;
+
   /* Meaning only. */
   --running: #d4d4d4;
   --attention: #4c9dff;
@@ -401,6 +408,9 @@
 
   --on-light: #fefefe;
   --light: #27272a;
+
+  --mark-anthropic: #c6613f;
+  --mark-grok: #6250d6;
 
   --running: #52525b;
   --attention: #2563eb;

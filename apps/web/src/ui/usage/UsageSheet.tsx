@@ -6,6 +6,7 @@ import { UsageChart, type ChartAxis } from './UsageChart.js'
 import { formatInteger, formatTokens } from './usage-format.js'
 import {
   formatValue,
+  markInk,
   resetText,
   type ProviderSheet,
   type SheetAccount,
@@ -38,7 +39,11 @@ export function UsageSheet(props: {
 }) {
   const { sheet } = props
   const retry = () => props.onRetry(sheet.provider)
-  const style = { '--usage-sheet-index': props.index } as CSSProperties
+  const mark = providerMark(sheet.provider)
+  const style = {
+    '--usage-sheet-index': props.index,
+    '--usage-ink': markInk(mark),
+  } as CSSProperties
   const split = sheet.accounts.length > 1
   const limits = split ? (
     <SheetGroup label="Accounts">
@@ -63,7 +68,7 @@ export function UsageSheet(props: {
       style={style}
     >
       <header className="usage-sheet__head">
-        <ProviderIcon className="usage-sheet__mark" mark={providerMark(sheet.provider)} size={16} />
+        <ProviderIcon className="usage-sheet__mark" mark={mark} size={16} />
         <h2 className="usage-sheet__name">{sheet.name}</h2>
         {sheet.empty ? (
           <p className="usage-sheet__totals">{props.emptyText}</p>

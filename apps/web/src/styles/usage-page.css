@@ -1,14 +1,14 @@
 /* ---------- Usage page ----------
-   The period's totals under the title, then one sheet per provider, read top
-   to bottom: name and totals, a bar chart of its tokens with its own dates,
-   then its plan limits beside a table of its models. Type follows Providers:
-   15px provider names, 12.5px rows, 11.5px dates and notes. */
+   The period's totals under the title and each provider's share of its
+   tokens, then one sheet per provider, read top to bottom: name and totals,
+   a bar chart of its tokens with its own dates, then its plan limits beside a
+   table of its models. Each provider keeps its brand colour (--usage-ink) on
+   its mark, bars and meters. Type follows Providers: 15px provider names,
+   12.5px rows, 11.5px dates and notes. */
 
 .settings .usage-page {
-  --usage-bar: color-mix(in srgb, var(--text) 34%, transparent);
   --usage-base: color-mix(in srgb, var(--text) 14%, transparent);
   --usage-slot: color-mix(in srgb, var(--text) 5%, transparent);
-  --usage-track: color-mix(in srgb, var(--text) 10%, transparent);
   font-family: var(--font-ui);
   color: var(--text);
   font-variant-numeric: tabular-nums;
@@ -121,6 +121,56 @@
   }
 }
 
+/* Each provider's share of the period's tokens, named under the bar */
+
+.settings .usage-share {
+  margin: -12px 0 36px;
+}
+
+.settings .usage-share__bar {
+  display: flex;
+  gap: 2px;
+  height: 6px;
+}
+
+.settings .usage-share__part {
+  flex-basis: 0;
+  min-width: 3px;
+  background: var(--usage-ink);
+  border-radius: var(--r-xs);
+}
+
+.settings .usage-share__legend {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: 20px;
+  row-gap: 4px;
+  margin: 10px 0 0;
+  padding: 0;
+  color: var(--text-2);
+  font-size: var(--t-sm);
+  line-height: 18px;
+  list-style: none;
+}
+
+.settings .usage-share__legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+}
+
+.settings .usage-share__swatch {
+  width: 8px;
+  height: 8px;
+  background: var(--usage-ink);
+  border-radius: var(--r-xs);
+}
+
+.settings .usage-share__value {
+  color: var(--text-3);
+}
+
 /* Sentences between the header and the sheets: limits first, then the index */
 
 .settings .usage-page__alert,
@@ -171,7 +221,7 @@
 
 .settings .usage-sheet__mark {
   flex: none;
-  color: var(--text);
+  color: var(--usage-ink);
 }
 
 .settings .usage-sheet__name {
@@ -212,9 +262,12 @@
   font-weight: 500;
 }
 
-.settings .usage-sheet.is-empty .usage-sheet__mark,
 .settings .usage-sheet.is-empty .usage-sheet__name {
   color: var(--text-2);
+}
+
+.settings .usage-sheet.is-empty .usage-sheet__mark {
+  opacity: 0.7;
 }
 
 /* The chart: a bar a day (a week on a long period), dates under it, and a
@@ -248,12 +301,13 @@
 }
 
 .settings .usage-chart__bar {
-  fill: var(--usage-bar);
-  transition: fill 80ms var(--ease-out);
+  fill: var(--usage-ink);
+  transition: opacity 80ms var(--ease-out);
 }
 
-.settings .usage-chart__bar.is-active {
-  fill: var(--text);
+/* The read bar keeps its colour; the rest step back. */
+.settings .usage-chart.is-reading .usage-chart__bar:not(.is-active) {
+  opacity: 0.35;
 }
 
 .settings .usage-chart__slot {
@@ -405,7 +459,7 @@
   height: 4px;
   margin-top: 5px;
   overflow: hidden;
-  background: var(--usage-track);
+  background: color-mix(in srgb, var(--usage-ink) 16%, transparent);
   border-radius: var(--r-xs);
 }
 
@@ -413,7 +467,7 @@
   position: absolute;
   inset: 0 auto 0 0;
   width: var(--usage-limit-left);
-  background: var(--text-2);
+  background: var(--usage-ink);
   border-radius: var(--r-xs);
 }
 

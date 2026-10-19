@@ -5,7 +5,7 @@ import type {
   UsageHistoryRange,
   UsageHistoryTotals,
 } from '@harness/contracts'
-import { providerDisplayName } from '../../provider-presentation.js'
+import { providerDisplayName, type ProviderMark } from '../../provider-presentation.js'
 import type { UsageSummaryState } from '../../usage-summary-state.js'
 import { limitSource, remaining, sourceStatus } from '../AccountLimits.js'
 import { dateFromKey, formatMoney } from './usage-format.js'
@@ -259,6 +259,31 @@ export function pricedShare(totals: UsageHistoryTotals): number | undefined {
 export function isPartialEstimate(totals: UsageHistoryTotals): boolean {
   const share = pricedShare(totals)
   return share !== undefined && share < FULL_ESTIMATE_SHARE
+}
+
+/** A provider's colour: its brand mark's token, grey for a mark without one. */
+export function markInk(mark: ProviderMark): string {
+  return `var(--mark-${mark}, var(--text-2))`
+}
+
+/** One provider's share of the period's tokens, for the bar under the totals. */
+export type ProviderShare = { provider: ProviderId; name: string; share: number }
+
+/** Each provider with tokens in the period, in sheet order, and its share of them. */
+export function providerShares(sheets: readonly ProviderSheet[]): ProviderShare[] {
+  const total = sum(sheets, (sheet) => sheet.tokens)
+  if (total <= 0) return []
+  return sheets
+    .filter((sheet) => sheet.tokens > 0)
+    .map((sheet) => ({ provider: sheet.provider, name: sheet.name, share: sheet.tokens / total }))
+}
+
+/** "81%", "0.4%" under one percent, and "under 0.1%" below that. */
+export function shareText(share: number): string {
+  const percent = share * 100
+  if (percent >= 1) return `${Math.round(percent)}%`
+  if (percent >= 0.1) return `${percent.toFixed(1)}%`
+  return 'under 0.1%'
 }
 
 /** "$1,234.56", and "under $0.01" for a value that would round to nothing. */
