@@ -2748,7 +2748,10 @@
                   nav label equals its page title, every tab opens scrolled to the top with the same
                   title position and column, and every panel is named by its heading; Settings loads
                   in an idle moment once the project list is ready, so its first open does not load
-                  it, and a failed preload is loaded again on open</span
+                  it, and a failed preload is loaded again on open; once Settings covers the app,
+                  the app's endless loops (a working chat's spinner, the live activity row) pause
+                  until it closes, also when it returns after a sign-in, while one-shot animations
+                  behind it still finish</span
                 ></span
               ></label
             >

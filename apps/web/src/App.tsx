@@ -9,7 +9,11 @@ import {
   useState,
   useSyncExternalStore,
 } from 'react'
-import type { CSSProperties, TransitionEvent as ReactTransitionEvent } from 'react'
+import type {
+  AnimationEvent as ReactAnimationEvent,
+  CSSProperties,
+  TransitionEvent as ReactTransitionEvent,
+} from 'react'
 import { IconLoader2 as LoaderCircle } from '@tabler/icons-react'
 import type {
   Account,
@@ -5455,6 +5459,20 @@ export function App() {
     },
   )
   const closeSettings = useCallback(() => setSettingsOpen(false), [])
+  // Settings covers the window with an opaque page. Once its fade-in has
+  // finished, the app behind it cannot be seen, so the app's endless loops (a
+  // working chat's spinner, the live activity row) pause until it closes
+  // instead of drawing a frame every refresh.
+  const shellBody = useRef<HTMLDivElement>(null)
+  const coverShell = useCallback((event: ReactAnimationEvent<HTMLDivElement>) => {
+    if (event.target === event.currentTarget) shellBody.current?.setAttribute('data-covered', '')
+  }, [])
+  useLayoutEffect(() => {
+    if (!settingsOpen) shellBody.current?.removeAttribute('data-covered')
+    // Settings back in place of a login terminal has no fade: it covers the
+    // app from its first frame.
+    else if (settingsReturning) shellBody.current?.setAttribute('data-covered', '')
+  }, [settingsOpen, settingsReturning])
   const forceOnboarding = useCallback(() => {
     setSettingsOpen(false)
     setOnboardingPreview(true)
@@ -6151,7 +6169,7 @@ export function App() {
       ) : null}
       {isDesktop ? <ZoomHud /> : null}
 
-      <div className="shell__body">
+      <div className="shell__body" ref={shellBody}>
         <Sidebar
           projects={archiveProjects}
           projectsLoading={projectsStatus === 'loading'}
@@ -6463,7 +6481,10 @@ export function App() {
       </div>
 
       {SettingsView ? (
-        <div className={`surface-enter${settingsReturning ? ' is-returning' : ''}`}>
+        <div
+          className={`surface-enter${settingsReturning ? ' is-returning' : ''}`}
+          onAnimationEnd={coverShell}
+        >
           <SurfaceErrorBoundary
             name="Settings"
             onClose={closeSettings}
