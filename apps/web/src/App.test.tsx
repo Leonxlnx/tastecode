@@ -3520,6 +3520,26 @@ describe('web client', () => {
     },
   )
 
+  it('pauses the app behind Settings once its fade-in has covered it', async () => {
+    render(<App />)
+    await screen.findByRole('button', { name: /^New session,/ })
+    const shellBody = document.querySelector('.shell__body')!
+
+    openSettings()
+    // The first open of a test file compiles the lazy Settings module.
+    const settings = await screen.findByRole('dialog', { name: 'Settings' }, { timeout: 15_000 })
+    const surface = document.querySelector('.surface-enter')!
+    // An animation inside Settings ending is not the cover being complete.
+    fireEvent.animationEnd(within(settings).getByRole('button', { name: 'Back to app' }))
+    expect(shellBody.hasAttribute('data-covered')).toBe(false)
+    fireEvent.animationEnd(surface)
+    expect(shellBody.hasAttribute('data-covered')).toBe(true)
+
+    fireEvent.click(within(settings).getByRole('button', { name: 'Back to app' }))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Settings' })).toBeNull())
+    expect(shellBody.hasAttribute('data-covered')).toBe(false)
+  })
+
   it('returns open Settings to Keybinds when the keybinds shortcut is pressed again', async () => {
     render(<App />)
     await screen.findByRole('button', { name: 'Show workspace tools' })
