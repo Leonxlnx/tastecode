@@ -12314,6 +12314,62 @@ describe('live sessions', () => {
     expect(screen.getByRole('button', { name: 'First session, Codex' })).toBeTruthy()
   })
 
+  it('marks a chat whose agent asks the user a question as waiting, open or not', async () => {
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'project',
+        pinned: false,
+        createdAt: 0,
+        sessions: [
+          { id: 'thread-1', title: 'First session', running: false },
+          { id: 'thread-2', title: 'Second session', running: false },
+        ],
+      },
+    ]
+
+    render(<App />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /^First session,/ }))
+    emitThreadEvent('thread-1', {
+      type: 'turn.started',
+      turn: { id: 'turn-1', threadId: 'thread-1', status: 'running', createdAt: 0 },
+    })
+    emitThreadEvent('thread-1', {
+      type: 'user_input.requested',
+      request: {
+        id: 'question-1',
+        turnId: 'turn-1',
+        createdAt: 0,
+        autoResolutionMs: null,
+        questions: [
+          {
+            id: 'choice',
+            header: 'Choice',
+            question: 'Which option?',
+            allowOther: true,
+            secret: false,
+            options: null,
+          },
+        ],
+      },
+    })
+
+    const waiting = screen.getByRole('button', { name: 'First session, Codex, needs attention' })
+    expect(waiting.querySelector('.sess__status-dot.is-attention')).not.toBeNull()
+    expect(waiting.querySelector('.sess__spinner')).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: /^Second session,/ }))
+    const background = screen.getByRole('button', {
+      name: 'First session, Codex, needs attention',
+    })
+    expect(background.querySelector('.sess__status-dot.is-attention')).not.toBeNull()
+
+    emitThreadEvent('thread-1', { type: 'user_input.resolved', id: 'question-1' })
+    const answered = screen.getByRole('button', { name: 'First session, Codex, working' })
+    expect(answered.querySelector('.sess__spinner')).not.toBeNull()
+  })
+
   it('keeps running chats above newly unread completed chats', async () => {
     serverProjects = [
       {

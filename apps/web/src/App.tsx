@@ -6703,10 +6703,14 @@ function affectsSessionStatus(event: DomainEvent): boolean {
     event.type === 'turn.completed' ||
     event.type === 'approval.requested' ||
     event.type === 'approval.resolved' ||
+    event.type === 'user_input.requested' ||
+    event.type === 'user_input.resolved' ||
     event.type === 'thread.error'
   )
 }
 
+/** Mirrors the server's sidebar status: an approval first, then a question from
+ *  the agent, then whether the turn still runs. */
 function statusFor(
   state: ThreadState,
   event: DomainEvent,
@@ -6716,6 +6720,7 @@ function statusFor(
   if (event.type === 'turn.completed')
     return event.status === 'failed' ? 'failed' : background ? 'ready' : 'idle'
   if (state.approvals.length > 0) return 'approval'
+  if (state.userInputs.length > 0) return 'input'
   return state.running ? 'working' : 'idle'
 }
 
