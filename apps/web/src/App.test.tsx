@@ -5014,6 +5014,33 @@ describe('new chats', () => {
     expect(screen.getByText('75% left')).toBeTruthy()
   })
 
+  it('keeps a chat in its sidebar place when a turn starts in it', async () => {
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'project',
+        pinned: false,
+        createdAt: 0,
+        sessions: [
+          { id: 'thread-a', title: 'First chat', provider: 'codex', createdAt: 1, running: false },
+          { id: 'thread-b', title: 'Second chat', provider: 'codex', createdAt: 0, running: false },
+        ],
+      },
+    ]
+    render(<App />)
+    await screen.findByRole('button', { name: 'Second chat, Codex' })
+    const order = () => sidebarProps().projects[0]!.sessions.map(({ id }) => id)
+    expect(order()).toEqual(['thread-a', 'thread-b'])
+
+    startTurn('thread-b', 'turn-b')
+    await waitFor(() =>
+      expect(sidebarProps().projects[0]!.sessions.find(({ id }) => id === 'thread-b')?.status).toBe(
+        'working',
+      ),
+    )
+    expect(order()).toEqual(['thread-a', 'thread-b'])
+  })
+
   it('shows pushed plan limits without asking again', async () => {
     render(<App />)
     expect(await screen.findByText('75% left')).toBeTruthy()
