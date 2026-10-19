@@ -3,8 +3,17 @@ import type { Project, Session } from './ui/Sidebar.js'
 
 export type SessionOrder = Record<string, string[]>
 export type PinnedSession = { projectPath: string; session: Session }
-type ProjectSidebarProjection = { project: Project; pinnedSessions: PinnedSession[] }
-export type SidebarRail = { orderedProjects: Project[]; pinnedSessions: PinnedSession[] }
+type ProjectSidebarProjection = {
+  project: Project
+  pinnedSessions: PinnedSession[]
+  archivedSessions: PinnedSession[]
+}
+export type SidebarRail = {
+  orderedProjects: Project[]
+  pinnedSessions: PinnedSession[]
+  /** Archived chats of every project, the most recently archived first. */
+  archivedSessions: PinnedSession[]
+}
 /** Why a chat is waiting for the user: a request it cannot pass, or an answer not yet read. */
 export type Attention = 'approval' | 'input' | 'failed' | 'done'
 export type NeedsYouEntry = PinnedSession & { attention: Attention }
@@ -123,29 +132,42 @@ function sameIds<T>(
 
 /**
  * The rail: pinned chats in their own section, then pinned projects ahead of
- * the rest. Every list keeps its saved order. A chat that starts, waits,
- * finishes or is read stays where it is; only a new chat, a pin or a drag
- * moves one.
+ * the rest, then archived chats at the end. Every list keeps its saved order.
+ * A chat that starts, waits, finishes or is read stays where it is; only a new
+ * chat, a pin, a drag or archiving moves one.
  */
 export function sidebarRail(projects: Project[]): SidebarRail {
   const pinned: PinnedSession[] = []
+  const archived: PinnedSession[] = []
   const pinnedProjects: Project[] = []
   const unpinnedProjects: Project[] = []
   for (const source of projects) {
     const projection = projectSidebarProjection(source)
     pinned.push(...projection.pinnedSessions)
+    archived.push(...projection.archivedSessions)
     if (source.pinned) pinnedProjects.push(projection.project)
     else unpinnedProjects.push(projection.project)
   }
   return {
     orderedProjects: [...pinnedProjects, ...unpinnedProjects],
     pinnedSessions: pinned,
+    archivedSessions: archived.sort((a, b) => archivedAt(b.session) - archivedAt(a.session)),
   }
 }
 
+/** Archived chats leave the tree. A pinned chat stays pinned, archived or not. */
+export function isArchived(session: Session): boolean {
+  return session.lifecycle.state === 'settled'
+}
+
+function archivedAt(session: Session): number {
+  return session.lifecycle.state === 'settled' ? session.lifecycle.settledAt : 0
+}
+
 /**
- * Every chat in the order the sidebar lists it, from the top. The inbox's
- * project filter and search box are not applied, so every chat is reachable.
+ * Every chat in the order the sidebar lists it, from the top, without the
+ * folded Archived section. The inbox's project filter and search box are not
+ * applied, so every chat is reachable.
  */
 export function sidebarSessions(projects: Project[], mode: 'classic' | 'inbox'): Session[] {
   if (mode === 'inbox') {
@@ -160,8 +182,8 @@ export function sidebarSessions(projects: Project[], mode: 'classic' | 'inbox'):
 
 /**
  * The saved order after a chat is dropped in the rail: it lands exactly where
- * it was dropped. Pinned chats live in their own section, so a drop on one of
- * them cannot be placed in the project and is ignored.
+ * it was dropped. Pinned and archived chats live in their own sections, so a
+ * drop on one of them cannot be placed in the project and is ignored.
  */
 export function moveRailSession(
   sessions: Session[],
@@ -179,7 +201,7 @@ export function moveRailSession(
 }
 
 function inProjectTree(session: Session): boolean {
-  return !session.pinned
+  return !session.pinned && !isArchived(session)
 }
 
 const projectSidebarProjections = new WeakMap<Project, ProjectSidebarProjection>()
@@ -189,13 +211,15 @@ function projectSidebarProjection(source: Project): ProjectSidebarProjection {
   if (cached) return cached
 
   const pinnedSessions: PinnedSession[] = []
+  const archivedSessions: PinnedSession[] = []
   const sessions: Session[] = []
   for (const session of source.sessions) {
     if (session.pinned) pinnedSessions.push({ projectPath: source.path, session })
+    else if (isArchived(session)) archivedSessions.push({ projectPath: source.path, session })
     else sessions.push(session)
   }
-  const project = pinnedSessions.length === 0 ? source : { ...source, sessions }
-  const projection = { project, pinnedSessions }
+  const project = sessions.length === source.sessions.length ? source : { ...source, sessions }
+  const projection = { project, pinnedSessions, archivedSessions }
   projectSidebarProjections.set(source, projection)
   return projection
 }
@@ -208,7 +232,7 @@ function projectSidebarProjection(source: Project): ProjectSidebarProjection {
 export function sessionAttention(session: Session): Attention | undefined {
   if (session.status === 'approval') return 'approval'
   if (session.status === 'input') return 'input'
-  if (!session.unread || session.lifecycle.state === 'settled') return undefined
+  if (!session.unread || isArchived(session)) return undefined
   if (session.status === 'failed') return 'failed'
   if (session.status === 'ready' || session.status === 'idle') return 'done'
   return undefined

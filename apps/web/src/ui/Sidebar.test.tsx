@@ -711,9 +711,10 @@ describe('Sidebar chat actions', () => {
     expect(onOpenSettings).toHaveBeenLastCalledWith()
   })
 
-  it('shows direct Tabler rename and archive actions for each chat', () => {
+  it('offers Archive on hover and keeps rename and delete in the row menu', () => {
     const onRenameSession = vi.fn()
     const onDeleteSession = vi.fn()
+    const onArchiveSession = vi.fn()
 
     render(
       <Sidebar
@@ -740,6 +741,7 @@ describe('Sidebar chat actions', () => {
         onTogglePin={vi.fn()}
         onRenameSession={onRenameSession}
         onDeleteSession={onDeleteSession}
+        onArchiveSession={onArchiveSession}
         onArchiveProject={vi.fn()}
         onReorderSession={vi.fn()}
         onOpenSearch={vi.fn()}
@@ -763,12 +765,28 @@ describe('Sidebar chat actions', () => {
       chat.closest('.sessrow')?.firstElementChild?.classList.contains('sessrow__indicator'),
     ).toBe(true)
 
-    const rename = screen.getByRole('button', { name: 'Rename Polish the sidebar' })
-    const archive = screen.getByRole('button', { name: 'Delete Polish the sidebar' })
-    expect(rename.querySelector('svg')).not.toBeNull()
+    // One action on hover, and it does not take anything away.
+    const archive = screen.getByRole('button', { name: 'Archive Polish the sidebar' })
     expect(archive.querySelector('svg')).not.toBeNull()
+    expect(chat.closest('.sessrow')?.classList.contains('has-action')).toBe(true)
+    expect(screen.queryByRole('button', { name: 'Delete Polish the sidebar' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Rename Polish the sidebar' })).toBeNull()
+    fireEvent.click(archive)
+    expect(onArchiveSession).toHaveBeenCalledWith('thread-1')
 
-    fireEvent.click(rename)
+    fireEvent.contextMenu(chat)
+    expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual([
+      'Pin chat',
+      'Rename chat',
+      'Archive chat',
+      'Delete chat',
+    ])
+    expect(
+      screen
+        .getByRole('menuitem', { name: 'Delete chat' })
+        .classList.contains('menu__item--danger'),
+    ).toBe(true)
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Rename chat' }))
     const input = screen.getByDisplayValue('Polish the sidebar')
     expect(input.classList.contains('rename--chat')).toBe(true)
     expect(input.getAttribute('aria-label')).toBe('Rename Polish the sidebar')
@@ -780,7 +798,8 @@ describe('Sidebar chat actions', () => {
     fireEvent.keyDown(input, { key: 'Enter' })
     expect(onRenameSession).toHaveBeenCalledWith('thread-1', 'Wider sidebar chats')
 
-    fireEvent.click(screen.getByRole('button', { name: 'Delete Polish the sidebar' }))
+    fireEvent.contextMenu(screen.getByRole('button', { name: 'Polish the sidebar, Codex' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Delete chat' }))
     expect(onDeleteSession).toHaveBeenCalledWith('thread-1')
   })
 
@@ -820,7 +839,8 @@ describe('Sidebar chat actions', () => {
     )
     const chatRow = () => screen.getByRole('button', { name: 'Polish the sidebar, Codex' })
     const renameChat = () => {
-      fireEvent.click(screen.getByRole('button', { name: 'Rename Polish the sidebar' }))
+      fireEvent.contextMenu(chatRow())
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Rename chat' }))
       return screen.getByRole('textbox', { name: 'Rename Polish the sidebar' })
     }
 
@@ -1092,6 +1112,95 @@ describe('Sidebar chat actions', () => {
     expect(justDone.querySelector('.sess__meta > .sess__status-dot.is-success')).not.toBeNull()
     expect(justDone.querySelector('.sess__unread-dot')).toBeNull()
     expect(justDone.closest('.sessrow')?.classList.contains('is-unread')).toBe(true)
+  })
+
+  it('moves archived chats out of their project into Archived and restores them', () => {
+    const onRestoreSession = vi.fn()
+    const onSelectSession = vi.fn()
+    const archivedChat = (index: number): Session => ({
+      ...session(`thread-old-${index}`, `Finished work ${index}`),
+      lifecycle: { state: 'settled', settledAt: 100 - index, reason: 'manual' },
+    })
+    const working = { ...session('thread-busy', 'Busy chat'), status: 'working' as const }
+    const view = (active?: string) => (
+      <Sidebar
+        projects={[
+          {
+            path: '/work/harness',
+            name: 'TasteCode',
+            sessions: [
+              session('thread-1', 'Current work'),
+              working,
+              ...Array.from({ length: 12 }, (_, index) => archivedChat(index)),
+            ],
+          },
+        ]}
+        activeProjectPath="/work/harness"
+        activeSessionId={active}
+        account={undefined}
+        providerName="Codex"
+        collapsed={false}
+        width={248}
+        onWidthChange={vi.fn()}
+        onClose={vi.fn()}
+        onAddProject={vi.fn()}
+        onNewSession={vi.fn()}
+        onSelectSession={onSelectSession}
+        onRenameProject={vi.fn()}
+        onRemoveProject={vi.fn()}
+        onTogglePin={vi.fn()}
+        onRenameSession={vi.fn()}
+        onDeleteSession={vi.fn()}
+        onArchiveSession={vi.fn()}
+        onRestoreSession={onRestoreSession}
+        onArchiveProject={vi.fn()}
+        onReorderSession={vi.fn()}
+        onOpenSearch={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />
+    )
+    const rendered = render(view('thread-1'))
+
+    expect(
+      [...document.querySelectorAll('.proj__drawer .sess__title')].map(
+        (title) => title.textContent,
+      ),
+    ).toEqual(['Current work', 'Busy chat'])
+    // A running chat keeps its spinner under the pointer and offers no archive.
+    const busy = screen.getByRole('button', { name: 'Busy chat, Codex, working' })
+    expect(busy.querySelector('.sess__spinner')).not.toBeNull()
+    expect(busy.closest('.sessrow')?.classList.contains('has-action')).toBe(false)
+    expect(screen.queryByRole('button', { name: 'Archive Busy chat' })).toBeNull()
+
+    const toggle = screen.getByRole('button', { name: 'Archived, 12 chats' })
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    expect(screen.queryByText('Finished work 0')).toBeNull()
+    fireEvent.click(toggle)
+    // The most recently archived first, in batches of ten.
+    const archived = screen.getByRole('region', { name: 'Archived' })
+    expect(archived.querySelectorAll('.sessrow')).toHaveLength(10)
+    expect(archived.querySelector('.sess__title')?.textContent).toBe('Finished work 0')
+    fireEvent.click(within(archived).getByRole('button', { name: 'Show more' }))
+    expect(archived.querySelectorAll('.sessrow')).toHaveLength(12)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Restore Finished work 3' }))
+    expect(onRestoreSession).toHaveBeenCalledWith('thread-old-3')
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Finished work 3, Codex, archived, TasteCode' }),
+    )
+    expect(onSelectSession).toHaveBeenCalledWith('thread-old-3')
+
+    // An open archived chat keeps the section open around it.
+    fireEvent.click(toggle)
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    rendered.rerender(view('thread-old-11'))
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    expect(
+      screen
+        .getByRole('button', { name: 'Finished work 11, Codex, archived, TasteCode' })
+        .closest('.sessrow')
+        ?.querySelector('.sessrow__indicator'),
+    ).not.toBeNull()
   })
 
   it('lists chats that need you above the tree and clears an entry once it is read', () => {

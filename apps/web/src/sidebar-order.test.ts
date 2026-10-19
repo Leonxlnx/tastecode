@@ -8,6 +8,7 @@ import {
   parseStoredSessionOrder,
   projectAttention,
   sidebarRail,
+  sidebarSessions,
 } from './sidebar-order.js'
 import type { Project, Session } from './ui/Sidebar.js'
 
@@ -119,6 +120,34 @@ describe('the rail keeps its order', () => {
     expect(rail.orderedProjects[0]).toBe(projects[0])
     expect(sidebarRail(projects).orderedProjects[0]).toBe(rail.orderedProjects[0])
   })
+  it('moves archived chats out of the tree, newest archived first, and keeps pinned ones pinned', () => {
+    const rail = sidebarRail([
+      {
+        path: '/one',
+        sessions: [
+          chat('kept'),
+          chat('old', archived(10)),
+          chat('pin', { pinned: true, ...archived(5) }),
+        ],
+      },
+      { path: '/two', sessions: [chat('newer', archived(20)), chat('two')] },
+    ])
+
+    expect(rail.orderedProjects.map((entry) => ids(entry.sessions))).toEqual([['kept'], ['two']])
+    expect(
+      rail.archivedSessions.map(({ projectPath, session }) => [projectPath, session.id]),
+    ).toEqual([
+      ['/two', 'newer'],
+      ['/one', 'old'],
+    ])
+    expect(rail.pinnedSessions.map(({ session }) => session.id)).toEqual(['pin'])
+    expect(
+      sidebarSessions(
+        [{ path: '/one', sessions: [chat('a'), chat('b', archived(1))] }],
+        'classic',
+      ).map(({ id }) => id),
+    ).toEqual(['a'])
+  })
 })
 
 describe('chats that need you', () => {
@@ -205,11 +234,18 @@ describe('dropping a chat in the rail', () => {
     expect(ids(moveRailSession(saved, 'W', 'B', 'before'))).toEqual(['W', 'B', 'A'])
   })
 
-  it('leaves pinned chats in their saved place and ignores drops it cannot place', () => {
-    const saved = [chat('X'), chat('P', { pinned: true }), chat('Y'), chat('Z')]
+  it('leaves pinned and archived chats in their saved place and ignores drops it cannot place', () => {
+    const saved = [
+      chat('X'),
+      chat('P', { pinned: true }),
+      chat('Y'),
+      chat('R', archived(1)),
+      chat('Z'),
+    ]
 
-    expect(ids(moveRailSession(saved, 'Z', 'X', 'before'))).toEqual(['Z', 'X', 'P', 'Y'])
+    expect(ids(moveRailSession(saved, 'Z', 'X', 'before'))).toEqual(['Z', 'X', 'P', 'Y', 'R'])
     expect(moveRailSession(saved, 'Z', 'P', 'before')).toBe(saved)
+    expect(moveRailSession(saved, 'Z', 'R', 'before')).toBe(saved)
     expect(moveRailSession(saved, 'missing', 'X', 'before')).toBe(saved)
     expect(moveRailSession(saved, 'X', 'X', 'after')).toBe(saved)
   })

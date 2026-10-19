@@ -5043,6 +5043,16 @@ export function App() {
     }),
     [hideSession, hideSessions, restoreSession, restoreSessions, keepSessionActive],
   )
+  // Archive is the inbox's settle: the chat leaves its project for the
+  // Archived section and comes back when the user sends to it.
+  const archiveSidebarChat = useCallback(
+    (id: string) => void hideSession(id, 'settle'),
+    [hideSession],
+  )
+  const restoreSidebarChat = useCallback(
+    (id: string) => void restoreSession(id, 'unsettle'),
+    [restoreSession],
+  )
   const closeSidebar = useCallback(() => setCollapsed(true), [])
   const resizeSidebar = useCallback((width: number) => {
     setRailWidth(width)
@@ -6126,6 +6136,8 @@ export function App() {
           onToggleSessionPin={toggleSidebarSessionPin}
           onDeleteSession={deleteSidebarSession}
           onMarkSessionRead={markSidebarSessionRead}
+          onArchiveSession={archiveSidebarChat}
+          onRestoreSession={restoreSidebarChat}
           onArchiveProject={archiveSidebarProject}
           onReorderProject={reorderSidebarProject}
           onReorderSession={reorderSidebarSession}
