@@ -1848,8 +1848,8 @@ export function App() {
       setWorkspaceDesignPreviewRequest({ requestId: request.requestId, url: request.url })
     })
     const offSidebarSettings = transport.on('sidebar.settings', acceptSidebarSettings)
-    const offUsageChanged = transport.on('usage.changed', ({ provider }) => {
-      usageController.changed(provider)
+    const offUsageChanged = transport.on('usage.changed', ({ provider, accountId }) => {
+      usageController.changed(provider, accountId)
     })
     // Live windows reach the bars as the server folds them in, not only after
     // the spaced usage.changed signal and a new request.

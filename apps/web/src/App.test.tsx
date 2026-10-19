@@ -5035,6 +5035,31 @@ describe('new chats', () => {
     expect(transport.request).not.toHaveBeenCalledWith('usage.summary', expect.anything())
   })
 
+  it('keeps another account’s pushed limits and changes off the default account', async () => {
+    render(<App />)
+    expect(await screen.findByText('75% left')).toBeTruthy()
+    transport.request.mockClear()
+
+    act(() => {
+      transport.listeners.get('usage.limits')?.({
+        source: {
+          provider: 'codex',
+          accountId: 'work-1a2b3c',
+          status: 'ready',
+          limits: [{ id: 'codex:primary', label: '5 hours', usedPercent: 90 }],
+          checkedAt: Date.now(),
+          origin: 'live',
+        },
+      })
+      transport.listeners.get('usage.changed')?.({ provider: 'codex', accountId: 'work-1a2b3c' })
+    })
+    await act(async () => new Promise((resolve) => window.setTimeout(resolve, 120)))
+
+    expect(screen.getByText('75% left')).toBeTruthy()
+    expect(screen.queryByText('10% left')).toBeNull()
+    expect(transport.request).not.toHaveBeenCalledWith('usage.summary', expect.anything())
+  })
+
   it('refreshes usage once for active-provider change bursts', async () => {
     render(<App />)
     await waitFor(() =>
