@@ -175,6 +175,7 @@ import {
   type ProviderLoginTerminalTarget,
 } from './provider-install.js'
 import { providerScanChanged, useRecheckOnFocus } from './provider-recheck.js'
+import { rememberedSignIn, rememberSignIn } from './remembered-sign-in.js'
 import {
   pinnedModelChoice,
   readProviderDefaults,
@@ -395,6 +396,8 @@ type AccountCheck = {
   error?: ComposerError
   /** Set on a read that is still running after ACCOUNT_CHECK_SEND_GRACE_MS. */
   slow?: true
+  /** Set on a read of a provider whose last read said signed in (remembered-sign-in.ts). */
+  remembered?: true
 }
 
 /**
@@ -501,7 +504,11 @@ export function resolveSendAvailability(input: {
   // A check that could not answer in time, or still has not after the grace
   // period, confirms nothing either way. Send stays available: a CLI that
   // really is signed out says so in the turn.
-  if (input.accountCheck.state === 'loading') return input.accountCheck.slow ? 'ready' : 'loading'
+  // A read of a provider that was signed in last time keeps Send available
+  // too; an answer that it is signed out turns it off.
+  if (input.accountCheck.state === 'loading') {
+    return input.accountCheck.slow || input.accountCheck.remembered ? 'ready' : 'loading'
+  }
   if (input.accountCheck.state === 'failed') return 'ready'
   return input.accountCheck.account?.signedIn ? 'ready' : 'setup-required'
 }
@@ -893,8 +900,10 @@ export function App() {
   const [accountCheck, setAccountCheck] = useState<AccountCheck>({ provider, state: 'loading' })
   const accountRequestRevision = useRef(0)
   const [authStatusRequest, setAuthStatusRequest] = useState(0)
-  const [voiceAvailable, setVoiceAvailable] = useState(false)
-  const [voiceStatusLoading, setVoiceStatusLoading] = useState(true)
+  const [voiceAvailable, setVoiceAvailable] = useState(() => rememberedVoice(provider) ?? false)
+  const [voiceStatusLoading, setVoiceStatusLoading] = useState(
+    () => rememberedVoice(provider) === undefined,
+  )
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [keybindings, setKeybindings] = useState(readKeybindings)
   const [surface, setSurface] = useState<'chat' | 'pull-requests'>('chat')
@@ -2656,6 +2665,14 @@ export function App() {
       setVoiceStatusLoading(false)
       return
     }
+    // Until this provider's status answers, its last answer stands in, so the
+    // composer is not held on that read (`codex login status`, 5-9 s on a busy
+    // machine); the answer corrects it.
+    const remembered = rememberedVoice(provider)
+    if (remembered !== undefined) {
+      setVoiceAvailable(remembered)
+      setVoiceStatusLoading(false)
+    }
     // Wait until the same catalog revision has resolved the provider fallback,
     // so either startup order produces one status request.
     if (
@@ -2668,6 +2685,7 @@ export function App() {
     void transport
       .request('voice.status', { provider })
       .then((status) => {
+        writeSetting(`${VOICE_AVAILABLE_KEY}:${provider}`, String(status.available))
         if (!cancelled) setVoiceAvailable(status.available)
       })
       .catch(() => {
@@ -2768,10 +2786,14 @@ export function App() {
     }
     // Retrying a check that could not answer keeps Send available until the
     // new answer arrives; it would otherwise lock the composer for the read.
+    // So does a provider whose last read said signed in. ACP reads are per
+    // agent, so they are not remembered per provider.
+    const remembers = provider !== 'acp'
+    const remembered = remembers && rememberedSignIn(provider)
     setAccountCheck((current) =>
       current.provider === provider && current.state === 'failed'
         ? current
-        : { provider, state: 'loading' },
+        : { provider, state: 'loading', ...(remembered ? { remembered: true as const } : {}) },
     )
     const grace = setTimeout(() => {
       if (cancelled || revision !== accountRequestRevision.current) return
@@ -2790,6 +2812,7 @@ export function App() {
       })
       .finally(() => clearTimeout(grace))
       .then((nextAccount) => {
+        if (remembers) rememberSignIn(provider, nextAccount.signedIn)
         if (cancelled || revision !== accountRequestRevision.current) return
         setAccount(nextAccount)
         setAccountCheck({ provider, state: 'ready', account: nextAccount })
@@ -4260,6 +4283,7 @@ export function App() {
 
   const handleAccountChange = useCallback(
     (changedProvider: ProviderId, changedAccount: Account) => {
+      if (changedProvider !== 'acp') rememberSignIn(changedProvider, changedAccount.signedIn)
       if (changedProvider === providerRef.current) {
         accountRequestRevision.current += 1
         setAccount(changedAccount)
@@ -7035,6 +7059,14 @@ function writeSetting(key: string, value: string): void {
   } catch {
     // A lost preference beats a white screen.
   }
+}
+
+/** What each provider's last voice.status said, so the composer can show it before the next read answers. */
+const VOICE_AVAILABLE_KEY = 'harness.voiceAvailable'
+
+function rememberedVoice(provider: ProviderId): boolean | undefined {
+  const value = readSetting(`${VOICE_AVAILABLE_KEY}:${provider}`)
+  return value === 'true' ? true : value === 'false' ? false : undefined
 }
 
 /** With site data blocked, merely touching localStorage throws SecurityError —

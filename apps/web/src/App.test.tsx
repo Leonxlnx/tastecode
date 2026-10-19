@@ -1346,6 +1346,14 @@ describe('web client', () => {
     expect(
       resolve({ auth: 'unauthenticated' }, { provider: 'codex', state: 'loading', slow: true }),
     ).toBe('setup-required')
+    // A provider that was signed in at its last read does not wait for this one.
+    expect(resolve({}, { provider: 'codex', state: 'loading', remembered: true })).toBe('ready')
+    expect(
+      resolve(
+        { auth: 'unauthenticated' },
+        { provider: 'codex', state: 'loading', remembered: true },
+      ),
+    ).toBe('setup-required')
   })
 
   it.each([false, true])(
@@ -4729,6 +4737,36 @@ describe('web client', () => {
         transport.request.mock.calls.filter(([method]) => method === 'voice.status'),
       ).toHaveLength(1)
     })
+  })
+
+  it('shows the last voice answer at once and corrects it when the read answers', async () => {
+    desktopShell.enabled = true
+    localStorage.setItem('harness.voiceAvailable:codex', 'true')
+    let resolveVoice!: (value: { available: boolean }) => void
+    const voice = new Promise<{ available: boolean }>((resolve) => {
+      resolveVoice = resolve
+    })
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method, params) => {
+      if (method === 'voice.status') return voice
+      return request(method, params)
+    })
+
+    render(<App />)
+    // `codex login status` behind voice.status can take seconds; the composer does not wait.
+    expect(
+      await screen.findByRole('button', { name: 'Record voice note' }, { timeout: 10_000 }),
+    ).toBeTruthy()
+    expect(document.querySelector('.composer-skeleton-voice')).toBeNull()
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('voice.status', expect.anything()),
+    )
+
+    await act(async () => resolveVoice({ available: false }))
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'Record voice note' })).toBeNull(),
+    )
+    expect(localStorage.getItem('harness.voiceAvailable:codex')).toBe('false')
   })
 
   it('keeps the selected nightly provider when checking voice after discovery', async () => {
