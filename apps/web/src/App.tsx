@@ -893,8 +893,10 @@ export function App() {
   const [accountCheck, setAccountCheck] = useState<AccountCheck>({ provider, state: 'loading' })
   const accountRequestRevision = useRef(0)
   const [authStatusRequest, setAuthStatusRequest] = useState(0)
-  const [voiceAvailable, setVoiceAvailable] = useState(false)
-  const [voiceStatusLoading, setVoiceStatusLoading] = useState(true)
+  const [voiceAvailable, setVoiceAvailable] = useState(() => rememberedVoice(provider) ?? false)
+  const [voiceStatusLoading, setVoiceStatusLoading] = useState(
+    () => rememberedVoice(provider) === undefined,
+  )
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [keybindings, setKeybindings] = useState(readKeybindings)
   const [surface, setSurface] = useState<'chat' | 'pull-requests'>('chat')
@@ -2656,6 +2658,14 @@ export function App() {
       setVoiceStatusLoading(false)
       return
     }
+    // Until this provider's status answers, its last answer stands in, so the
+    // composer is not held on that read (`codex login status`, 5-9 s on a busy
+    // machine); the answer corrects it.
+    const remembered = rememberedVoice(provider)
+    if (remembered !== undefined) {
+      setVoiceAvailable(remembered)
+      setVoiceStatusLoading(false)
+    }
     // Wait until the same catalog revision has resolved the provider fallback,
     // so either startup order produces one status request.
     if (
@@ -2668,6 +2678,7 @@ export function App() {
     void transport
       .request('voice.status', { provider })
       .then((status) => {
+        writeSetting(`${VOICE_AVAILABLE_KEY}:${provider}`, String(status.available))
         if (!cancelled) setVoiceAvailable(status.available)
       })
       .catch(() => {
@@ -7040,6 +7051,14 @@ function writeSetting(key: string, value: string): void {
   } catch {
     // A lost preference beats a white screen.
   }
+}
+
+/** What each provider's last voice.status said, so the composer can show it before the next read answers. */
+const VOICE_AVAILABLE_KEY = 'harness.voiceAvailable'
+
+function rememberedVoice(provider: ProviderId): boolean | undefined {
+  const value = readSetting(`${VOICE_AVAILABLE_KEY}:${provider}`)
+  return value === 'true' ? true : value === 'false' ? false : undefined
 }
 
 /** With site data blocked, merely touching localStorage throws SecurityError —
