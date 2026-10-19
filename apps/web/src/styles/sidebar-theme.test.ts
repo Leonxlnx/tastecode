@@ -224,7 +224,7 @@ describe('sidebar theme CSS', () => {
     expect(sessRule).toContain('font-size: var(--rail-font-size);')
     expect(sessRule).toContain('font-weight: var(--rail-font-weight);')
     expect(sessRule).toContain('border-radius: var(--r-md);')
-    expect(sidebarSource).toContain('const VIRTUAL_SESSION_ROW_HEIGHT = 30')
+    expect(sidebarSource).toContain('const CHAT_ROW_PITCH = 30')
     expect(appCss).toMatch(
       /\.proj\[data-drop-position\]::before \{[^}]*right: 6px;[^}]*left: 26px;[^}]*height: 2px;[^}]*background: var\(--light\);/s,
     )
