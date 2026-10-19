@@ -10,6 +10,7 @@ import {
   installTimeAuth,
   launchCommandFor,
   prewarmProviders,
+  SignInChecks,
   type SystemProbe,
 } from './providers.js'
 
@@ -205,6 +206,43 @@ describe('detectProviders', () => {
 
     expect(find(providers, 'codex').auth).toBe('authenticated')
     expect(find(providers, 'claude-code').auth).toBe('unknown')
+  })
+
+  it('bounds a slow sign-in check and reports its answer to a later listing', async () => {
+    vi.useFakeTimers()
+    let checks = 0
+    let answer!: (value: 'authenticated') => void
+    const checksOf = new SignInChecks(() => {
+      checks += 1
+      return new Promise((resolve) => {
+        answer = resolve
+      })
+    }, 250)
+
+    const first = checksOf.read('codex')
+    const joined = checksOf.read('codex')
+    await vi.advanceTimersByTimeAsync(250)
+    await expect(first).resolves.toBe('unknown')
+    await expect(joined).resolves.toBe('unknown')
+    // The check goes on in the background; a second listing does not start another.
+    expect(checks).toBe(1)
+
+    answer('authenticated')
+    await vi.advanceTimersByTimeAsync(0)
+    const next = checksOf.read('codex')
+    expect(checks).toBe(2)
+    await vi.advanceTimersByTimeAsync(250)
+    // The new check has not answered, so the last answer stands in for it.
+    await expect(next).resolves.toBe('authenticated')
+  })
+
+  it('reports a sign-in check that answers in time, and unknown for one that fails', async () => {
+    const answered = new SignInChecks(async () => 'unauthenticated', 250)
+    await expect(answered.read('codex')).resolves.toBe('unauthenticated')
+    const failed = new SignInChecks(async () => {
+      throw new Error('no codex')
+    }, 250)
+    await expect(failed.read('codex')).resolves.toBe('unknown')
   })
 
   it('reports unknown for a provider whose probe declares no sign-in check', async () => {

@@ -193,13 +193,65 @@ export type SystemProbe = {
  * listing reports it.
  */
 const LISTING_VERSION_WAIT_MS = 250
+/**
+ * The same bound for a sign-in check. `codex login status` took 2.9-11.3 s on
+ * a busy machine, and Send waited for all of it. A check that is still running
+ * reports its last answer, or `unknown`, which the account read settles.
+ */
+const LISTING_AUTH_WAIT_MS = 250
+
+type AuthStatus = ProviderStatus['auth']
+
+/**
+ * Install-time sign-in checks that answer a listing within `waitMs`. A check
+ * that takes longer goes on, and a later listing gets its answer; one check
+ * per provider runs at a time.
+ */
+export class SignInChecks {
+  #checks = new Map<ProviderStatus['id'], { last?: AuthStatus; running?: Promise<AuthStatus> }>()
+
+  constructor(
+    private readonly check: (provider: ProviderStatus['id']) => Promise<AuthStatus>,
+    private readonly waitMs: number,
+  ) {}
+
+  read(provider: ProviderStatus['id']): Promise<AuthStatus> {
+    let entry = this.#checks.get(provider)
+    if (!entry) {
+      entry = {}
+      this.#checks.set(provider, entry)
+    }
+    const current = entry
+    if (!current.running) {
+      const running = this.check(provider).then(
+        (value) => value,
+        (): AuthStatus => 'unknown',
+      )
+      current.running = running
+      void running.then((value) => {
+        current.last = value
+        if (current.running === running) current.running = undefined
+      })
+    }
+    const running = current.running
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => resolve(current.last ?? 'unknown'), this.waitMs)
+      void running.then((value) => {
+        clearTimeout(timer)
+        resolve(value)
+      })
+    })
+  }
+}
+
+const signInChecks = new SignInChecks((provider) => installTimeAuth(provider), LISTING_AUTH_WAIT_MS)
 
 const REAL_SYSTEM: SystemProbe = {
   isInstalled: (command) => cliProbe.installed(command),
   version: (command) => cliProbe.version(command, { waitMs: LISTING_VERSION_WAIT_MS }),
   acpAgents: async () => (await import('@harness/adapter-acp/agents')).detectAgents(),
   refreshPath: () => refreshWindowsPath(),
-  auth: (provider) => installTimeAuth(provider),
+  auth: (provider) => signInChecks.read(provider),
 }
 
 /** The sign-in check a provider's probe declares, or `unknown` when it has none. */
