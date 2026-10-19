@@ -328,10 +328,11 @@
           (sidebar direction B), PR #1877 (pause animations while Settings covers the app), PR #1884
           (start a new chat in place on main) and the multiple-accounts stack (PRs #1854 to #1856,
           #1858 to #1865, #1885 to #1890). Closing gates on Windows: on b32d2602 lint, typecheck and
-          build passed, and every suite passed except one web test, the startup CSS budget, which PR
-          #1874 had taken 288 bytes over; PR #1891 shortened two comments. On d8925ba3 all four
-          gates passed: lint (the two known warnings), typecheck, build and every test suite (web
-          2,858 tests, server 1,641, desktop 436, every package).
+          build passed, and the tests stopped at one failing web test, the startup CSS budget, which
+          PR #1874 had taken 288 bytes over (Grok's suite did not run there; server and desktop, run
+          alone, passed); PR #1891 shortened two comments. On d8925ba3 all four gates passed: lint
+          (the two known warnings), typecheck, build and every test suite (web 2,858 tests, server
+          1,641, desktop 436, every package).
         </p>
         <p>
           October 18 on nightly (54ee3536): the October 16 improvement round landed in one merge
