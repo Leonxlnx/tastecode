@@ -236,9 +236,11 @@ describe('sidebar theme CSS', () => {
     expect(appCss).not.toMatch(
       /\.proj__sessions:not\(\.proj__sessions--virtual\) > \.sessrow\.is-active \{[^}]*height:/s,
     )
-    expect(appCss).toMatch(
-      /\.sessrow\.is-active \{[^}]*--sess-bg: color-mix\(in srgb, var\(--surface-2\) 75%, var\(--bg-rail-tint\)\);[^}]*box-shadow: none;/s,
-    )
+    // One selected surface, a step above the hover surface, in both themes.
+    expect(appCss).toMatch(/\.sessrow\.is-active \{[^}]*--sess-bg: var\(--menu-hover\);/s)
+    expect(appCss).toMatch(/\.sessrow:hover \{[^}]*--sess-bg: var\(--control-hover\);/s)
+    expect(appCss).not.toContain(":root[data-theme='light'] .sessrow.is-active")
+    expect(appCss).toMatch(/\.rail__pull-requests\.is-active \{[^}]*background: var\(--menu-hover\);/s)
   })
 
   it('marks the active chat with one pill that moves by transform alone', () => {

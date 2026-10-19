@@ -356,9 +356,7 @@
 }
 
 .rail__pull-requests.is-active {
-  background: var(--chrome-raised);
-  border-color: var(--chrome-border);
-  box-shadow: var(--chrome-shadow);
+  background: var(--menu-hover);
   color: var(--rail-text);
 }
 
@@ -449,14 +447,9 @@
   --sess-bg: var(--control-hover);
 }
 
+/* The rail's one selected surface, a step above hover, in both themes. */
 .sessrow.is-active {
-  --sess-bg: color-mix(in srgb, var(--surface-2) 75%, var(--bg-rail-tint));
-  box-shadow: none;
-}
-
-:root[data-theme='light'] .sessrow.is-active {
-  --sess-bg: var(--chrome-raised);
-  box-shadow: var(--chrome-shadow);
+  --sess-bg: var(--menu-hover);
 }
 
 /* One pill marks the active chat: on a project's guide, or in the outer
