@@ -5871,6 +5871,9 @@ describe('new chats', () => {
       render(<App />)
       await openProviderSettings()
       await screen.findByText('Claude Code')
+      expect(document.querySelector('.surface-enter')?.classList.contains('is-returning')).toBe(
+        false,
+      )
       fireEvent.click(await screen.findByRole('button', { name: 'Sign in' }))
 
       await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Settings' })).toBeNull())
@@ -5906,6 +5909,10 @@ describe('new chats', () => {
       }
 
       await screen.findByRole('dialog', { name: 'Settings' })
+      // Settings replaces the terminal in place: a fade would show the chat settling behind it.
+      expect(document.querySelector('.surface-enter')?.classList.contains('is-returning')).toBe(
+        true,
+      )
       await waitFor(() => expect(workspace.classList.contains('is-panel-open')).toBe(false))
       expect(workspace.classList.contains('is-panel-expanded')).toBe(false)
       expect(screen.queryByLabelText('Claude Code login terminal')).toBeNull()
