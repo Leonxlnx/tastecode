@@ -1,0 +1,79 @@
+/* Provider accounts sit on the roster's own rows (settings.css): the mark,
+   the account's name, its wire and status. Two slots join the actions: the
+   Active word or a quiet Set active, then the account menu, ahead of the
+   sign-in action. */
+
+.settings .provider-row.provider-account {
+  grid-template-columns:
+    max-content minmax(0, max-content) minmax(44px, 1fr) minmax(0, max-content)
+    max-content max-content max-content;
+}
+
+.provider-account__active,
+.provider-account__more {
+  display: flex;
+  align-items: center;
+  grid-row: 1;
+}
+
+.provider-account__active {
+  grid-column: 5;
+  margin-left: 14px;
+}
+
+.provider-account__more {
+  grid-column: 6;
+  margin-left: 4px;
+}
+
+.settings .provider-account .provider-row__primary {
+  grid-column: 7;
+}
+
+/* The roster's shared action width is for Sign in and Sign out; the quiet
+   Set active and the menu keep their own. */
+.settings .provider-account :is(.provider-account__active, .provider-account__more) .set-button {
+  min-width: 0;
+}
+
+.provider-account__current {
+  padding: 0 10px;
+  color: var(--text-3);
+  font-size: var(--t-sm);
+}
+
+.provider-accounts__path {
+  display: flex;
+  gap: 8px;
+}
+
+.provider-accounts__path > .set-input {
+  flex: 1;
+}
+
+.settings .provider-accounts__error {
+  margin: 0 0 8px;
+}
+
+@container settings-content (max-width: 560px) {
+  .settings .provider-row.provider-account {
+    grid-template-columns: max-content minmax(0, 1fr) max-content max-content max-content;
+  }
+
+  .provider-account__active,
+  .provider-account__more {
+    grid-row: 1 / 3;
+  }
+
+  .provider-account__active {
+    grid-column: 3;
+  }
+
+  .provider-account__more {
+    grid-column: 4;
+  }
+
+  .settings .provider-account .provider-row__primary {
+    grid-column: 5;
+  }
+}

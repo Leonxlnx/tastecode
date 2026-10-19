@@ -146,6 +146,8 @@ import {
 import { AppSelect, type AppSelectOption } from './AppSelect.js'
 import { Menu, MenuItem } from './Menu.js'
 import { AccountEmail } from './AccountEmail.js'
+import { ProviderAccountsSection } from './ProviderAccounts.js'
+import { multiAccountProviders } from '../provider-accounts-state.js'
 import { ProviderIcon } from './ProviderIcon.js'
 import { McpSettings } from './McpSettings.js'
 import { groupModelsBySource } from './model-selector-utils.js'
@@ -1266,6 +1268,10 @@ export function ProviderSettings(props: {
           {renderAgentRow(agent)}
         </div>
       ))}
+      <ProviderAccountsSection
+        transport={props.transport}
+        providers={multiAccountProviders(props.providerStatuses)}
+      />
       <SettingsSection title="API connections">
         {(props.modelConnections ?? []).map((connection) => (
           <ConnectionRow
