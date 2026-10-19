@@ -331,6 +331,19 @@ describe('sign-in, model lists and limits per account', () => {
     expect(orchestrator.heldLimitSource('claude-code', 'visible')).toBeUndefined()
     await orchestrator.disposeAll()
   })
+
+  it('spends a reset credit only through the account asked for', async () => {
+    const { orchestrator } = setup(directory({ 'claude-code:work': claudeHome }))
+    const key = () => crypto.randomUUID()
+    // Claude earns no reset credits; the request reached the Work account's own controls.
+    await expect(
+      orchestrator.consumeRateLimitReset('claude-code', key(), undefined, 'work'),
+    ).rejects.toThrow('provider "claude-code" cannot consume a rate-limit reset')
+    await expect(
+      orchestrator.consumeRateLimitReset('codex', key(), undefined, 'gone'),
+    ).rejects.toBeInstanceOf(AccountNotFoundError)
+    await orchestrator.disposeAll()
+  })
 })
 
 describe("an account's saved limits and model lists", () => {

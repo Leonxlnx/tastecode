@@ -7,7 +7,6 @@ import {
   ErrorCode,
   methods,
   PROTOCOL_VERSION,
-  type AccountId,
   type MethodName,
   type ProviderHistorySource,
   type ProviderId,
@@ -138,17 +137,7 @@ export function startServer(
     root: path.join(path.dirname(databasePath), 'accounts'),
     onChanged: (provider) => push.broadcast('accounts.changed', { provider }),
   })
-  /**
-   * A request may name a provider account. One the provider cannot have is
-   * refused. Until an account's own plan limits, reset credits and usage history
-   * are read per account, any account but the default one is refused there as
-   * well, so a request for another account can never act on the default one.
-   */
-  const defaultAccountOnly = (provider: ProviderId, accountId: AccountId | undefined) => {
-    if (accounts.home(provider, accountId) !== undefined) {
-      throw new Error('Running this provider as another account is not available yet.')
-    }
-  }
+
   // Install, update and sign-in terminals can add, replace or update a CLI.
   const setupTerminals = new Set<string>()
   const setupTerminal = (terminalId: string) => {
@@ -220,6 +209,15 @@ export function startServer(
     (usageHistory ??= import('./usage-history.js').then(({ UsageHistoryService }) => {
       const service = new UsageHistoryService({
         cacheFile: path.join(path.dirname(databasePath), 'usage-history.json'),
+        // Every other provider account keeps its history in its own folder.
+        accountHomes: () => {
+          const { accounts: listed } = accounts.list()
+          return listed.flatMap(({ provider, id, home }) =>
+            home === undefined || id === DEFAULT_ACCOUNT_ID
+              ? []
+              : [{ provider, accountId: id, home }],
+          )
+        },
         harnessUsage: () => store.usageEvents(),
       })
       if (usageHistoryClosing) service.dispose()
@@ -1285,9 +1283,9 @@ export function startServer(
         if ('threadId' in p && !thread) throw new Error('thread not found')
         const provider = thread?.provider ?? ('provider' in p ? p.provider : undefined)
         if (!provider) throw new Error('provider not found')
-        if ('accountId' in p) defaultAccountOnly(provider, p.accountId)
-        // A chat's limits are those of the account it runs as.
-        const accountId = thread?.accountId
+        // A chat's limits are those of the account it runs as; otherwise the
+        // named account's, which the orchestrator refuses if it cannot run.
+        const accountId = thread ? thread.accountId : 'accountId' in p ? p.accountId : undefined
         const startOfToday = new Date()
         startOfToday.setHours(0, 0, 0, 0)
         const empty = {
@@ -1313,8 +1311,9 @@ export function startServer(
 
       case 'usage.history': {
         const p = parseParams(method, params)
-        if (p.account) defaultAccountOnly(p.account.provider, p.account.accountId)
-        return (await usageHistoryService()).history(p.range, p.refresh ?? false)
+        // An account the provider cannot have, or one that is gone, is refused.
+        if (p.account) accounts.home(p.account.provider, p.account.accountId)
+        return (await usageHistoryService()).history(p.range, p.refresh ?? false, p.account)
       }
 
       case 'usage.resetHistory':
@@ -1323,8 +1322,12 @@ export function startServer(
 
       case 'usage.consumeReset': {
         const p = parseParams(method, params)
-        defaultAccountOnly(p.provider, p.accountId)
-        return orchestrator.consumeRateLimitReset(p.provider, p.idempotencyKey, p.creditId)
+        return orchestrator.consumeRateLimitReset(
+          p.provider,
+          p.idempotencyKey,
+          p.creditId,
+          p.accountId,
+        )
       }
 
       case 'sideChat.start': {

@@ -27,9 +27,11 @@ import { OPENCODE_MCP_CAPABILITIES } from '@harness/adapter-opencode/inventory'
 import { accountRead, type AccountIdentity } from './account-identity.js'
 import {
   parseLimitFailures,
+  parseLimitIdentities,
   parseLimitSnapshot,
   serializeLimitSnapshot,
   type SavedLimitFailure,
+  type SavedLimitIdentity,
 } from './limit-snapshot.js'
 import type { ModelListRead } from './model-list-cache.js'
 import { ProjectInventoryCache, type ProjectInventoryService } from './project-inventory-cache.js'
@@ -272,6 +274,8 @@ type ReadyLimitSource = Extract<ProviderLimitSource, { status: 'ready' }>
 type SavedLimits = {
   sources: Map<ProviderId, ReadyLimitSource>
   failures: Map<ProviderId, SavedLimitFailure>
+  /** Who the account reads named, so a later launch notices a sign-in made in between. */
+  identities: Map<ProviderId, SavedLimitIdentity>
 }
 
 const REFRESH_ERROR_LIMIT = 300
@@ -953,6 +957,8 @@ export class ProviderControls {
         freshUntil: 0,
         // The last session's newest read failed: its backoff still applies.
         failure: this.#savedFailure(provider),
+        // Whose the saved values are: the first account read tells whether they still apply.
+        account: this.#saved().identities.get(provider),
         liveAt: Number.NEGATIVE_INFINITY,
         notifiedAt: Number.NEGATIVE_INFINITY,
         publishedAt: Number.NEGATIVE_INFINITY,
@@ -1005,7 +1011,11 @@ export class ProviderControls {
         // Without it the first shown view waits for its read, as before.
         text = undefined
       }
-      this.#savedLimits = { sources: parseLimitSnapshot(text), failures: parseLimitFailures(text) }
+      this.#savedLimits = {
+        sources: parseLimitSnapshot(text),
+        failures: parseLimitFailures(text),
+        identities: parseLimitIdentities(text),
+      }
     }
     return this.#savedLimits
   }
@@ -1022,7 +1032,7 @@ export class ProviderControls {
   #saveLimits(provider: ProviderId, source: ReadyLimitSource | undefined): void {
     if (!this.#options.limitSnapshot) return
     const { sources, failures } = this.#saved()
-    // Any answer, or another account, ends the failures before it.
+    // Any answer ends the failures before it.
     const failed = failures.delete(provider)
     if (source) sources.set(provider, source)
     else if (!sources.delete(provider) && !failed) return
@@ -1043,10 +1053,38 @@ export class ProviderControls {
     this.#writeSnapshot()
   }
 
+  /** Someone else signed in: nothing saved for the account before applies to them. */
+  #forgetSaved(provider: ProviderId): void {
+    if (!this.#options.limitSnapshot) return
+    const { sources, failures, identities } = this.#saved()
+    const forgot = [
+      sources.delete(provider),
+      failures.delete(provider),
+      identities.delete(provider),
+    ]
+    if (forgot.includes(true)) this.#writeSnapshot()
+  }
+
+  /** Keeps whose the saved limits are, for the next launch to compare with. */
+  #saveIdentity(provider: ProviderId, identity: AccountIdentity): void {
+    if (!this.#options.limitSnapshot) return
+    const { identities } = this.#saved()
+    const saved = identities.get(provider)
+    if (
+      saved?.signedIn === identity.signedIn &&
+      saved.email === identity.email &&
+      saved.plan === identity.plan
+    ) {
+      return
+    }
+    identities.set(provider, identity)
+    this.#writeSnapshot()
+  }
+
   #writeSnapshot(): void {
-    const { sources, failures } = this.#saved()
+    const { sources, failures, identities } = this.#saved()
     try {
-      this.#options.limitSnapshot?.write(serializeLimitSnapshot(sources, failures))
+      this.#options.limitSnapshot?.write(serializeLimitSnapshot(sources, failures, identities))
     } catch {
       // Costs the next launch only what it shows before the first read answers.
     }
@@ -1058,7 +1096,7 @@ export class ProviderControls {
       entry.accountVersion += 1
       // Another account starts without this one's values, failures or read times.
       entry.value = undefined
-      this.#saveLimits(provider, undefined)
+      this.#forgetSaved(provider)
       entry.live = undefined
       entry.failure = undefined
       entry.detailsOmitted = undefined
@@ -1325,9 +1363,11 @@ export class ProviderControls {
     const entry = this.#limitEntry(provider)
     // A read that cannot name the email or plan, as one does when the
     // provider's own lookup fails under load, keeps the held and saved limits.
+    // The first read after a launch compares with whose the saved limits are.
     const { identity, switched } = accountRead(entry.account, account)
     if (switched) this.#invalidateLimits(provider, true)
     entry.account = identity
+    this.#saveIdentity(provider, identity)
     return account
   }
 

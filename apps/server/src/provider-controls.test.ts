@@ -10,6 +10,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   parseLimitFailures,
+  parseLimitIdentities,
   parseLimitSnapshot,
   serializeLimitSnapshot,
   type SavedLimitFailure,
@@ -2501,6 +2502,61 @@ describe('a failed limit read from the last session', () => {
     expect(parseLimitFailures(snapshot.write.mock.lastCall?.[0]).has('grok')).toBe(false)
     await expect(grok.usageLimitSource('visible')).resolves.toMatchObject({
       limits: weekly(40).limits,
+    })
+  })
+
+  describe('when the CLI may have signed in someone else between launches', () => {
+    const first = { signedIn: true, email: 'first@example.test', plan: 'max' }
+    /** A launch whose account reads name `account`, on the snapshot the last one left. */
+    const launch = (
+      snapshot: ReturnType<typeof lastSession>,
+      account: typeof first,
+      usageLimitSource = failing(),
+    ) => ({
+      claude: setup({
+        accountCacheMs: 0,
+        limitSnapshot: snapshot,
+        services: { 'claude-code': { account: async () => account, usageLimitSource } },
+      }).registry.forProvider('claude-code'),
+      usageLimitSource,
+    })
+
+    it('forgets the failure and values saved for the account signed in before', async () => {
+      const snapshot = lastSession('claude-code', { values: true })
+      const before = launch(snapshot, first)
+      await before.claude.account()
+      expect(parseLimitIdentities(snapshot.read()).get('claude-code')).toEqual(first)
+
+      const second = { ...first, email: 'second@example.test' }
+      const after = launch(
+        snapshot,
+        second,
+        vi.fn(async () => weekly(40)),
+      )
+      // Until the CLI says who is signed in, the saved values are the best guess.
+      expect(after.claude.heldLimitSource('visible')).toMatchObject({ stale: true })
+      await after.claude.account()
+      expect(after.claude.heldLimitSource('visible')).toBeUndefined()
+      const saved = snapshot.read()
+      expect(parseLimitFailures(saved).has('claude-code')).toBe(false)
+      expect(parseLimitSnapshot(saved).has('claude-code')).toBe(false)
+      expect(parseLimitIdentities(saved).get('claude-code')).toEqual(second)
+      // The new account is read at once instead of waiting out the old one's backoff.
+      await expect(after.claude.usageLimitSource('visible')).resolves.toMatchObject({
+        limits: weekly(40).limits,
+      })
+      expect(after.usageLimitSource).toHaveBeenCalledOnce()
+    })
+
+    it('keeps them while the same account is signed in', async () => {
+      const snapshot = lastSession('claude-code')
+      await launch(snapshot, first).claude.account()
+      const after = launch(snapshot, first)
+      await after.claude.account()
+      expect(after.claude.heldLimitSource('visible')).toEqual({ ...failed, retryAt: 5 * 60_000 })
+      await expect(after.claude.usageLimitSource('visible')).rejects.toThrow(NOT_REPORTED)
+      expect(after.usageLimitSource).not.toHaveBeenCalled()
+      expect(parseLimitFailures(snapshot.read()).has('claude-code')).toBe(true)
     })
   })
 })

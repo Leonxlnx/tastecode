@@ -12,7 +12,10 @@ import { startServer } from './server.js'
 const state = vi.hoisted(() => ({
   servers: [] as WebSocketServer[],
   projects: [] as Array<{ path: string }>,
-  threads: new Map<string, { projectPath: string; worktreePath?: string; provider?: string }>(),
+  threads: new Map<
+    string,
+    { projectPath: string; worktreePath?: string; provider?: string; accountId?: string }
+  >(),
   historyPage: vi.fn(),
   read: [] as string[],
   reservedPreviewPorts: [] as Array<ReadonlySet<number> | undefined>,
@@ -34,6 +37,9 @@ const state = vi.hoisted(() => ({
   idleCheckouts: [] as string[],
   handled: [] as string[],
   accountCalls: [] as unknown[][],
+  accountList: [] as unknown[],
+  usageHistory: undefined as { accountHomes?: () => unknown } | undefined,
+  usageHistoryCalls: [] as unknown[][],
   accountsRoot: '',
   accountsChanged: (_provider: string) => {},
 }))
@@ -51,6 +57,16 @@ vi.mock('./store.js', () => ({
     }
     thread(id: string) {
       return state.threads.get(id)
+    }
+    usageSummary() {
+      const none = {
+        inputTokens: 0,
+        cachedInputTokens: 0,
+        outputTokens: 0,
+        reasoningTokens: 0,
+        totalTokens: 0,
+      }
+      return { session: none, today: none }
     }
     recoverInterruptedThreads() {}
     nextLifecycleRefreshAt() {}
@@ -153,6 +169,22 @@ vi.mock('./orchestrator.js', () => ({
       state.handled.push(`thread.start(${provider}, ${options.accountId ?? 'active'})`)
       return { id }
     }
+    heldLimitSource() {
+      return undefined
+    }
+    async usageLimitSource(provider: string, _intent?: string, accountId?: string) {
+      state.handled.push(`usage.limits(${provider}, ${accountId})`)
+      return { provider, ...(accountId ? { accountId } : {}), status: 'ready', limits: [] }
+    }
+    async consumeRateLimitReset(
+      provider: string,
+      _idempotencyKey: string,
+      _creditId?: string,
+      accountId?: string,
+    ) {
+      state.handled.push(`usage.consumeReset(${provider}, ${accountId})`)
+      return { outcome: 'reset' }
+    }
   },
 }))
 vi.mock('./providers.js', () => ({
@@ -170,7 +202,7 @@ vi.mock('./provider-accounts.js', () => ({
     }
     list(provider?: string) {
       state.accountCalls.push(['list', provider])
-      return { accounts: [], active: {} }
+      return { accounts: state.accountList, active: {} }
     }
     create(provider: string, label: string, home: unknown) {
       state.accountCalls.push(['create', provider, label, home])
@@ -200,6 +232,20 @@ vi.mock('./provider-accounts.js', () => ({
     recordIdentity(provider: string, accountId: string | undefined, account: unknown) {
       state.accountCalls.push(['recordIdentity', provider, accountId, account])
     }
+  },
+}))
+// The index's own rules are covered in usage-history.test.ts; this is its wiring.
+vi.mock('./usage-history.js', () => ({
+  UsageHistoryService: class {
+    constructor(options: { accountHomes?: () => unknown }) {
+      state.usageHistory = options
+    }
+    async startBackgroundRefresh() {}
+    async history(...args: unknown[]) {
+      state.usageHistoryCalls.push(args)
+      return { range: args[0] }
+    }
+    dispose() {}
   },
 }))
 vi.mock('./runtime-loader.js', () => ({
@@ -291,6 +337,9 @@ afterEach(async () => {
   state.idleCheckouts.length = 0
   state.handled.length = 0
   state.accountCalls.length = 0
+  state.accountList = []
+  state.usageHistory = undefined
+  state.usageHistoryCalls.length = 0
   vi.unstubAllEnvs()
   await Promise.all(
     temporary.splice(0).map((directory) => rm(directory, { recursive: true, maxRetries: 5 })),
@@ -679,20 +728,16 @@ describe('provider accounts', () => {
   it('refuses an account it cannot run instead of acting on the default one', async () => {
     const { port } = await listen()
     const { client, ask } = await connect(port)
-    const notYet = 'Running this provider as another account is not available yet.'
     try {
-      for (const [method, params] of [
-        ['usage.summary', { provider: 'codex', accountId: 'work' }],
-        [
-          'usage.consumeReset',
-          { provider: 'codex', accountId: 'work', idempotencyKey: crypto.randomUUID() },
-        ],
-        ['usage.history', { range: '7d', account: { provider: 'codex', accountId: 'work' } }],
-      ] as const) {
-        expect(await ask(method, params), method).toMatchObject({
-          error: { code: 'internal', message: notYet },
-        })
-      }
+      expect(
+        await ask('usage.history', {
+          range: '7d',
+          account: { provider: 'grok', accountId: 'work' },
+        }),
+      ).toMatchObject({
+        error: { code: 'internal', message: 'This provider runs as one account only.' },
+      })
+      expect(state.usageHistoryCalls).toEqual([])
       expect(state.handled).toEqual([])
       // A chat is pinned to its account by the orchestrator, which checks it.
       for (const accountId of ['work', undefined]) {
@@ -739,6 +784,66 @@ describe('provider accounts', () => {
       expect(state.accountCalls).toEqual([
         ['recordIdentity', 'codex', 'work', { signedIn: false }],
         ['recordIdentity', 'codex', 'work', { signedIn: true }],
+      ])
+    } finally {
+      client.terminate()
+    }
+  })
+
+  it('answers plan limits and spends reset credits as the account asked for', async () => {
+    const { port } = await listen()
+    const { client, ask } = await connect(port)
+    state.threads.set('work-chat', { projectPath: 'C:\\x', provider: 'codex', accountId: 'work' })
+    state.threads.set('own-chat', { projectPath: 'C:\\x', provider: 'codex' })
+    try {
+      expect(await ask('usage.summary', { provider: 'codex', accountId: 'work' })).toMatchObject({
+        result: { limitSource: { provider: 'codex', accountId: 'work', status: 'ready' } },
+      })
+      await ask('usage.summary', { provider: 'codex' })
+      // A chat's limits are its account's, whichever account is active.
+      await ask('usage.summary', { threadId: 'work-chat' })
+      await ask('usage.summary', { threadId: 'own-chat' })
+      for (const accountId of ['work', undefined]) {
+        expect(
+          await ask('usage.consumeReset', {
+            provider: 'codex',
+            accountId,
+            idempotencyKey: crypto.randomUUID(),
+          }),
+        ).toMatchObject({ result: { outcome: 'reset' } })
+      }
+      expect(state.handled).toEqual([
+        'usage.limits(codex, work)',
+        'usage.limits(codex, undefined)',
+        'usage.limits(codex, work)',
+        'usage.limits(codex, undefined)',
+        'usage.consumeReset(codex, work)',
+        'usage.consumeReset(codex, undefined)',
+      ])
+    } finally {
+      client.terminate()
+    }
+  })
+
+  it("reads every other account's folder into usage and answers one account alone", async () => {
+    const { port } = await listen()
+    const { client, ask } = await connect(port)
+    try {
+      await ask('usage.history', { range: '7d' })
+      state.accountList = [
+        { id: 'default', provider: 'codex', label: 'Default', managed: false },
+        { id: 'work', provider: 'codex', label: 'Work', home: 'D:\\work', managed: true },
+        { id: 'work', provider: 'claude-code', label: 'Work', home: 'D:\\claude', managed: false },
+      ]
+      expect(state.usageHistory?.accountHomes?.()).toEqual([
+        { provider: 'codex', accountId: 'work', home: 'D:\\work' },
+        { provider: 'claude-code', accountId: 'work', home: 'D:\\claude' },
+      ])
+      const account = { provider: 'codex', accountId: 'work' }
+      await ask('usage.history', { range: '30d', refresh: true, account })
+      expect(state.usageHistoryCalls).toEqual([
+        ['7d', false, undefined],
+        ['30d', true, account],
       ])
     } finally {
       client.terminate()

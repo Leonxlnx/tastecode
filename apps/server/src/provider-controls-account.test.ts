@@ -2,7 +2,11 @@ import type { ProviderId } from '@harness/contracts'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 /** What each vendor call was asked to run as. */
-const calls = vi.hoisted(() => ({ claude: [] as unknown[][], codex: [] as unknown[] }))
+const calls = vi.hoisted(() => ({
+  claude: [] as unknown[][],
+  codex: [] as unknown[],
+  resets: [] as unknown[][],
+}))
 
 vi.mock('@harness/adapter-claude-code', async (importOriginal) => {
   const original = await importOriginal<typeof import('@harness/adapter-claude-code')>()
@@ -31,7 +35,9 @@ vi.mock('@harness/adapter-codex', async (importOriginal) => {
   return {
     ...original,
     CodexAdapter: class {
+      readonly #options: unknown
       constructor(options?: unknown) {
+        this.#options = options
         calls.codex.push(options)
       }
       on(): void {}
@@ -40,6 +46,10 @@ vi.mock('@harness/adapter-codex', async (importOriginal) => {
       async dispose(): Promise<void> {}
       async account() {
         return { signedIn: true }
+      }
+      async consumeRateLimitReset(idempotencyKey: string) {
+        calls.resets.push([this.#options, idempotencyKey])
+        return 'reset'
       }
     },
   }
@@ -62,6 +72,7 @@ function controls(accountHome?: string, providers?: ProviderId[]) {
 beforeEach(() => {
   calls.claude.length = 0
   calls.codex.length = 0
+  calls.resets.length = 0
 })
 afterEach(async () => {
   await Promise.all(opened.splice(0).map((each) => each.disposeAll()))
@@ -97,6 +108,26 @@ describe('provider controls for one account', () => {
     await controls().forProvider('codex').account()
 
     expect(calls.codex).toEqual([{ accountHome: work }, { accountHome: client }, {}])
+  })
+
+  it("spends a Codex reset credit in the account's own folder", async () => {
+    const work = 'D:\\accounts\\codex\\work-1a2b3c'
+    const changed: unknown[][] = []
+    const created = new ProviderControls({
+      listModels: async () => [],
+      accountHome: work,
+      providers: ['codex'],
+      controlIdleMs: 0,
+      onUsageChanged: (provider, ...rest) => changed.push([provider, ...rest]),
+    })
+    opened.push(created)
+    await expect(
+      created.forProvider('codex').consumeRateLimitReset!('key-1', undefined),
+    ).resolves.toEqual({ outcome: 'reset' })
+
+    expect(calls.resets).toEqual([[{ accountHome: work }, 'key-1']])
+    // The account's figures are read again after the reset.
+    expect(changed).toEqual([['codex']])
   })
 
   it('serves only its own providers and refuses one that cannot run as an account', () => {

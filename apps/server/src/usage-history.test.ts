@@ -11,8 +11,9 @@ import {
 import os from 'node:os'
 import path from 'node:path'
 import { readClaudeUsageHistory } from '@harness/adapter-claude-code'
-import type { ProviderId, UsageHistoryRange } from '@harness/contracts'
+import type { ProviderId, UsageHistoryRange, UsageHistoryResult } from '@harness/contracts'
 import { afterEach, describe, expect, it } from 'vitest'
+import type { StoredUsageEvent } from './store.js'
 import {
   type CachedUsageFile,
   loadUsageCache,
@@ -1128,6 +1129,253 @@ describe('local usage history', () => {
     expect(readFileSync(largeFile, 'utf8')).toBe(largeIndex)
   })
 })
+
+describe('usage history of provider accounts', () => {
+  it("reads every account's own folder beside the default one", async () => {
+    const root = temporaryDirectory()
+    const codexRoot = path.join(root, 'codex', 'sessions')
+    const workCodex = path.join(root, 'accounts', 'codex', 'work')
+    const workClaude = path.join(root, 'accounts', 'claude-code', 'work')
+    const cacheFile = path.join(root, 'cache', 'usage.json')
+    writeCodexRollout(path.join(codexRoot, 'own.jsonl'), 'own-session', 1_000)
+    writeCodexRollout(path.join(workCodex, 'sessions', 'work.jsonl'), 'work-session', 2_000)
+    mkdirSync(path.join(workClaude, 'projects', 'app'), { recursive: true })
+    writeJsonLines(path.join(workClaude, 'projects', 'app', 'session.jsonl'), [
+      claudeAssistantRecord({
+        id: 'message',
+        model: 'claude-sonnet-4-5',
+        sessionId: 'claude-work',
+        input: 300,
+        output: 30,
+      }),
+    ])
+    let homes = [
+      { provider: 'codex' as const, accountId: 'work', home: workCodex },
+      { provider: 'claude-code' as const, accountId: 'work', home: workClaude },
+      // A provider without a local archive has nothing to read there.
+      { provider: 'cursor' as const, accountId: 'work', home: path.join(root, 'cursor') },
+    ]
+    let now = new Date('2026-08-08T12:00:00.000Z').getTime()
+    const service = usageService({
+      cacheFile,
+      sourceRoots: { codex: codexRoot, 'claude-code': path.join(root, 'missing-claude') },
+      accountHomes: () => homes,
+      now: () => new Date(now),
+    })
+
+    const history = await settledHistory(service, '7d')
+    expect(history.totals.processedTokens).toBe(1_100 + 2_200 + 330)
+    expect(history.sessionCount).toBe(3)
+    expect(history.sources.find((source) => source.provider === 'claude-code')).toEqual({
+      provider: 'claude-code',
+      available: true,
+      sessionCount: 1,
+    })
+    const saved = await readUsageCache(cacheFile)
+    expect(
+      saved.files.map((file) => [path.basename(file.path), file.provider, file.accountId]),
+    ).toEqual(
+      expect.arrayContaining([
+        ['own.jsonl', 'codex', undefined],
+        ['work.jsonl', 'codex', 'work'],
+        ['session.jsonl', 'claude-code', 'work'],
+      ]),
+    )
+    expect(saved.sources).toEqual(
+      expect.arrayContaining([
+        { provider: 'codex', label: expect.any(String), available: true },
+        { provider: 'codex', accountId: 'work', label: expect.any(String), available: true },
+      ]),
+    )
+
+    // A removed account's folder stays on disk but is no longer read.
+    homes = []
+    now += 60_000
+    const removed = await settledHistory(service, '7d', true)
+    expect(removed.totals.processedTokens).toBe(1_100)
+    expect((await readUsageCache(cacheFile)).files.map((file) => file.accountId)).toEqual([
+      undefined,
+    ])
+  })
+
+  it('counts a file that two folders share once, for the default account', async () => {
+    const root = temporaryDirectory()
+    const home = path.join(root, 'codex')
+    writeCodexRollout(path.join(home, 'sessions', 'own.jsonl'), 'own-session', 1_000)
+    const cacheFile = path.join(root, 'cache', 'usage.json')
+    const service = usageService({
+      cacheFile,
+      sourceRoots: {
+        codex: path.join(home, 'sessions'),
+        'claude-code': path.join(root, 'missing-claude'),
+      },
+      accountHomes: () => [{ provider: 'codex', accountId: 'twice', home }],
+      now: () => new Date('2026-08-08T12:00:00.000Z'),
+    })
+
+    expect((await settledHistory(service, '7d')).totals.processedTokens).toBe(1_100)
+    expect((await readUsageCache(cacheFile)).files.map((file) => file.accountId)).toEqual([
+      undefined,
+    ])
+  })
+
+  it("splits a provider's usage by account and answers one account alone", async () => {
+    const root = temporaryDirectory()
+    const codexRoot = path.join(root, 'codex', 'sessions')
+    const workCodex = path.join(root, 'accounts', 'codex', 'work')
+    writeCodexRollout(path.join(codexRoot, 'own.jsonl'), 'own-session', 1_000)
+    writeCodexRollout(path.join(workCodex, 'sessions', 'work.jsonl'), 'work-session', 2_000)
+    const usage = (inputTokens: number) => ({
+      inputTokens,
+      cachedInputTokens: 0,
+      outputTokens: 0,
+      reasoningTokens: 0,
+      totalTokens: inputTokens,
+    })
+    const at = new Date('2026-08-08T11:00:00.000Z').getTime()
+    let homes: { provider: 'codex'; accountId: string; home: string }[] = []
+    let events: StoredUsageEvent[] = [
+      { threadId: 'api-chat', provider: 'api', at, usage: usage(500) },
+    ]
+    let now = new Date('2026-08-08T12:00:00.000Z').getTime()
+    const service = usageService({
+      cacheFile: path.join(root, 'cache', 'usage.json'),
+      sourceRoots: { codex: codexRoot, 'claude-code': path.join(root, 'missing-claude') },
+      accountHomes: () => homes,
+      harnessUsage: () => events,
+      now: () => new Date(now),
+    })
+    const rows = (history: UsageHistoryResult) =>
+      history.providers.map((row) => [row.provider, row.accountId, row.totals.processedTokens])
+
+    // Usage on the default account alone keeps one row per provider, as before accounts.
+    expect(rows(await settledHistory(service, '7d'))).toEqual([
+      ['codex', undefined, 1_100],
+      ['api', undefined, 500],
+    ])
+
+    homes = [{ provider: 'codex', accountId: 'work', home: workCodex }]
+    events = [
+      ...events,
+      // Work's own archive has its records, so its events would count them twice.
+      { threadId: 'work-chat', provider: 'codex', accountId: 'work', at, usage: usage(9_000) },
+      // An account without records of its own counts its chats' events.
+      { threadId: 'client-chat', provider: 'codex', accountId: 'client', at, usage: usage(700) },
+    ]
+    now += 60_000
+    const all = await settledHistory(service, '7d', true)
+    expect(rows(all).sort()).toEqual(
+      [
+        ['codex', 'work', 2_200],
+        ['codex', 'default', 1_100],
+        ['codex', 'client', 700],
+        ['api', undefined, 500],
+      ].sort(),
+    )
+    expect(all.totals.processedTokens).toBe(2_200 + 1_100 + 700 + 500)
+
+    const work = await service.history('7d', false, { provider: 'codex', accountId: 'work' })
+    expect(rows(work)).toEqual([['codex', 'work', 2_200]])
+    expect(work.totals.processedTokens).toBe(2_200)
+    expect(work.sessionCount).toBe(1)
+    expect(work.models.map((model) => [model.provider, model.totals.processedTokens])).toEqual([
+      ['codex', 2_200],
+    ])
+    expect(work.daily.at(-1)?.providers).toEqual([
+      { provider: 'codex', tokens: 2_200, estimatedCostUsd: expect.any(Number) },
+    ])
+    expect(work.sources).toEqual([{ provider: 'codex', available: true, sessionCount: 1 }])
+    // The same question is answered from the figures already computed.
+    expect(
+      (await service.history('7d', false, { provider: 'codex', accountId: 'work' })).totals,
+    ).toBe(work.totals)
+
+    const own = await service.history('7d', false, { provider: 'codex', accountId: 'default' })
+    expect(rows(own)).toEqual([['codex', 'default', 1_100]])
+    const api = await service.history('7d', false, { provider: 'api', accountId: 'default' })
+    expect(rows(api)).toEqual([['api', 'default', 500]])
+    expect(api.sources).toEqual([{ provider: 'api', available: true, sessionCount: 1 }])
+  })
+
+  it('splits a provider by account in every range, also one without that account', async () => {
+    const root = temporaryDirectory()
+    const codexRoot = path.join(root, 'codex', 'sessions')
+    writeCodexRollout(path.join(codexRoot, 'own.jsonl'), 'own-session', 1_000)
+    const now = new Date('2026-08-08T12:00:00.000Z').getTime()
+    const usage = {
+      inputTokens: 700,
+      cachedInputTokens: 0,
+      outputTokens: 0,
+      reasoningTokens: 0,
+      totalTokens: 700,
+    }
+    const service = usageService({
+      cacheFile: path.join(root, 'cache', 'usage.json'),
+      sourceRoots: { codex: codexRoot, 'claude-code': path.join(root, 'missing-claude') },
+      // A chat on Work a month ago, before the last 7 days.
+      harnessUsage: () => [
+        {
+          threadId: 'work-chat',
+          provider: 'codex',
+          accountId: 'work',
+          at: now - 30 * 86_400_000,
+          usage,
+        },
+      ],
+      now: () => new Date(now),
+    })
+    const rows = (history: UsageHistoryResult) =>
+      history.providers.map((row) => [row.provider, row.accountId, row.totals.processedTokens])
+
+    expect(rows(await settledHistory(service, '7d'))).toEqual([['codex', 'default', 1_100]])
+    expect(rows(await service.history('all')).sort()).toEqual(
+      [
+        ['codex', 'default', 1_100],
+        ['codex', 'work', 700],
+      ].sort(),
+    )
+    const work = await service.history('7d', false, { provider: 'codex', accountId: 'work' })
+    expect(rows(work)).toEqual([])
+    expect(work.totals.processedTokens).toBe(0)
+  })
+
+  it("keeps each file's account in the saved index and refuses a malformed one", async () => {
+    const root = temporaryDirectory()
+    const cacheFile = path.join(root, 'usage.json')
+    const file = (accountId: unknown) => ({
+      path: path.join(root, 'work.jsonl'),
+      provider: 'codex',
+      accountId,
+      mtimeMs: 1,
+      size: 1,
+      entries: [],
+    })
+    writeFileSync(cacheFile, JSON.stringify(cacheFixture(8, [file('work') as CachedUsageFile])))
+    expect((await loadUsageCache(cacheFile)).cache.files.map((each) => each.accountId)).toEqual([
+      'work',
+    ])
+
+    writeFileSync(cacheFile, JSON.stringify(cacheFixture(8, [file('Work') as CachedUsageFile])))
+    expect((await loadUsageCache(cacheFile)).cache.files).toEqual([])
+  })
+})
+
+/** A Codex rollout of one session whose token count reaches `input` in, a tenth of it out. */
+function writeCodexRollout(filePath: string, sessionId: string, input: number): void {
+  mkdirSync(path.dirname(filePath), { recursive: true })
+  writeJsonLines(filePath, [
+    { timestamp: '2026-08-08T09:00:00.000Z', type: 'session_meta', payload: { id: sessionId } },
+    {
+      timestamp: '2026-08-08T09:00:01.000Z',
+      type: 'turn_context',
+      payload: { model: 'gpt-5.6-luna' },
+    },
+    codexTokenRecord('2026-08-08T09:01:00.000Z', {
+      input_tokens: input,
+      output_tokens: input / 10,
+    }),
+  ])
+}
 
 function uncompactedFixtureFiles(root: string) {
   const tokens = (values: Partial<CachedUsageFile['entries'][number]['tokens']>) => ({
