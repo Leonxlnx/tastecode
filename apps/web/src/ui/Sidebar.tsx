@@ -1779,7 +1779,9 @@ function SessionRow(props: {
             status={props.session.status}
             since={props.session.statusSince ?? props.session.createdAt}
           />
-          {props.session.unread ? <span className="sess__unread-dot" aria-hidden /> : null}
+          {props.session.unread && props.session.status !== 'ready' ? (
+            <span className="sess__unread-dot" aria-hidden />
+          ) : null}
         </span>
       </button>
 
@@ -1921,6 +1923,10 @@ function SessionStatus(props: { status: Session['status']; since: number }) {
 
   if (props.status === 'failed') {
     return <span className="sess__status-dot is-failed" aria-hidden />
+  }
+
+  if (props.status === 'ready') {
+    return <span className="sess__status-dot is-success" aria-hidden />
   }
 
   return <SessionTime at={props.since} />

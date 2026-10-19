@@ -11071,7 +11071,7 @@ describe('live sessions', () => {
     expect(
       screen
         .getByRole('button', { name: 'Background chat, Codex, ready, unread' })
-        .querySelector('.sess__unread-dot'),
+        .querySelector('.sess__status-dot.is-success'),
     ).not.toBeNull()
   })
 })

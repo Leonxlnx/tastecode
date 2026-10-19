@@ -1107,7 +1107,11 @@
 }
 
 .sess__status-dot.is-attention {
-  background: var(--attention);
+  background: var(--warning);
+}
+
+.sess__status-dot.is-success {
+  background: var(--success);
 }
 
 .sess__status-dot.is-failed {

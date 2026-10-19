@@ -382,7 +382,7 @@
 .inbox-card__woke {
   margin-left: auto;
   flex: none;
-  color: var(--attention);
+  color: var(--warning);
 }
 
 .inbox-status {
@@ -401,8 +401,8 @@
 
 .inbox-status.is-attention,
 .inbox-status.is-woke {
-  color: var(--attention);
-  background: color-mix(in oklab, var(--attention) 10%, transparent);
+  color: var(--warning);
+  background: color-mix(in oklab, var(--warning) 10%, transparent);
 }
 
 .inbox-status.is-failed {

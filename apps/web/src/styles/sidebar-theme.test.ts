@@ -8,6 +8,7 @@ const menuSource = readFileSync(new URL('../ui/Menu.tsx', import.meta.url), 'utf
 const accountLimitsCss = readFileSync(new URL('./account-limits.css', import.meta.url), 'utf8')
 const tokensCss = readFileSync(new URL('./tokens.css', import.meta.url), 'utf8')
 const accountCardCss = readFileSync(new URL('./account-card.css', import.meta.url), 'utf8')
+const inboxCss = readFileSync(new URL('./inbox-sidebar.css', import.meta.url), 'utf8')
 
 describe('sidebar theme CSS', () => {
   it('uses the quieter rail width for new and legacy profiles', () => {
@@ -195,6 +196,31 @@ describe('sidebar theme CSS', () => {
     expect(appCss).toMatch(
       /\.sess__unread-dot \{[^}]*width: 6px;[^}]*height: 6px;[^}]*background: var\(--light\);/s,
     )
+  })
+
+  it('uses semantic colors for finished, failed, and waiting threads in both sidebars', () => {
+    expect(appCss).toMatch(/\.sess__status-dot\.is-success \{[^}]*background: var\(--success\);/s)
+    expect(appCss).toMatch(/\.sess__status-dot\.is-failed \{[^}]*background: var\(--error\);/s)
+    expect(appCss).toMatch(/\.sess__status-dot\.is-attention \{[^}]*background: var\(--warning\);/s)
+    expect(inboxCss).toMatch(/\.inbox-status\.is-done \{[^}]*color: var\(--success\);/s)
+    expect(inboxCss).toMatch(/\.inbox-status\.is-failed \{[^}]*color: var\(--error\);/s)
+    expect(inboxCss).toMatch(
+      /\.inbox-status\.is-attention,\s*\.inbox-status\.is-woke \{[^}]*color: var\(--warning\);[^}]*background: color-mix\(in oklab, var\(--warning\) 10%, transparent\);/s,
+    )
+    expect(inboxCss).toMatch(/\.inbox-card__woke \{[^}]*color: var\(--warning\);/s)
+  })
+
+  it('keeps status colors independent of accent presets and custom accents', () => {
+    expect(tokensCss.match(/--warning: #[0-9a-f]+;/g)).toEqual([
+      '--warning: #f2c94c;',
+      '--warning: #946800;',
+    ])
+    const accentRules = tokensCss.matchAll(
+      /:root[^{]*\[data-accent='[^']+'\][^{]*\{(?<body>[^}]*)\}/g,
+    )
+    for (const rule of accentRules) {
+      expect(rule.groups?.['body']).not.toMatch(/--(?:success|error|warning):/)
+    }
   })
 
   it('keeps unread chat titles on the shared text line', () => {
