@@ -291,12 +291,22 @@
           <a href="./feature-inventory.html">Inventory</a>
           <a href="./CLAUDE-HANDOFF.md">Claude handoff</a>
         </nav>
-        <span class="meta">2026-10-19 nightly d8925ba3 · includes main 0ad74ec3</span>
+        <span class="meta">2026-10-19 nightly · includes main b86daab1 (PR #1899)</span>
       </div>
     </div>
 
     <div class="wrap">
       <section id="scope">
+        <p>
+          October 19, main into nightly (PR #1899): main b86daab1, the 99 commits since the last
+          sync at 0ad74ec3, merged with a merge commit while nightly keeps every provider, API
+          connections and the dashboard reference library. It brings chat replies that show raw HTML
+          as text and single line breaks, bold as strong, chat deletes that survive a quit, composer
+          drafts that survive a restart, the restore dialog's cut, Claude task plans, background
+          writing that falls through to the next source, Command-only keybinds on macOS and main's
+          dead-code cleanup. Background writing remembers a failed API connection on its own, so the
+          other connections are still tried.
+        </p>
         <p>
           October 19 on nightly (d8925ba3): what landed on October 18 and 19 after the round; the
           figures are from each PR's own measurement against nightly with fake CLIs. October 18: the
