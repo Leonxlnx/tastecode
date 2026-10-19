@@ -240,7 +240,9 @@ describe('sidebar theme CSS', () => {
     expect(appCss).toMatch(/\.sessrow\.is-active \{[^}]*--sess-bg: var\(--menu-hover\);/s)
     expect(appCss).toMatch(/\.sessrow:hover \{[^}]*--sess-bg: var\(--control-hover\);/s)
     expect(appCss).not.toContain(":root[data-theme='light'] .sessrow.is-active")
-    expect(appCss).toMatch(/\.rail__pull-requests\.is-active \{[^}]*background: var\(--menu-hover\);/s)
+    expect(appCss).toMatch(
+      /\.rail__pull-requests\.is-active \{[^}]*background: var\(--menu-hover\);/s,
+    )
   })
 
   it('marks the active chat with one pill that moves by transform alone', () => {
