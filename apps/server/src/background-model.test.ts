@@ -58,20 +58,59 @@ describe('background model resolution', () => {
     expect(resolved?.serviceTier).toBe(expected)
   })
 
-  it('prefers Luna low for a ChatGPT-authenticated Codex source', () => {
+  it('prefers the newest Haiku at medium through Claude Code', () => {
     const sources: AvailableBackgroundModelSource[] = [
       {
         id: 'codex',
         displayName: 'Codex',
         provider: 'codex',
         codexSubscription: true,
-        models: [model('gpt-5.6-luna', ['low', 'medium', 'high'])],
+        models: [model('gpt-6-luna', ['low', 'medium', 'high'])],
       },
       {
         id: 'claude-code',
         displayName: 'Claude Code',
         provider: 'claude-code',
-        models: [model('claude-haiku-4-5', ['low'])],
+        models: [
+          model('claude-opus-5-5', ['low', 'medium', 'high'], true),
+          model('claude-haiku-5-5', ['low', 'medium', 'high']),
+          model('claude-haiku-4-5'),
+        ],
+      },
+      {
+        id: 'grok',
+        displayName: 'Grok',
+        provider: 'grok',
+        models: [model('grok-4.6', ['low', 'high'])],
+      },
+    ]
+
+    expect(resolveBackgroundModel({ mode: 'automatic' }, sources)).toEqual({
+      provider: 'claude-code',
+      model: 'claude-haiku-5-5',
+      effort: 'medium',
+      sourceName: 'Claude Code',
+      automatic: true,
+    })
+  })
+
+  it('prefers Luna medium for a ChatGPT-authenticated Codex source without Claude Code', () => {
+    const sources: AvailableBackgroundModelSource[] = [
+      {
+        id: 'codex',
+        displayName: 'Codex',
+        provider: 'codex',
+        codexSubscription: true,
+        models: [
+          model('gpt-5.6-luna', ['low', 'medium', 'high']),
+          model('gpt-6-luna', ['low', 'medium', 'high']),
+        ],
+      },
+      {
+        id: 'claude-code',
+        displayName: 'Claude Code',
+        provider: 'claude-code',
+        models: [model('claude-sonnet-5-5', ['low', 'medium', 'high'])],
       },
       {
         id: 'grok',
@@ -83,19 +122,20 @@ describe('background model resolution', () => {
 
     expect(resolveBackgroundModel({ mode: 'automatic' }, sources)).toEqual({
       provider: 'codex',
-      model: 'gpt-5.6-luna',
-      effort: 'low',
+      model: 'gpt-6-luna',
+      effort: 'medium',
       sourceName: 'Codex',
       automatic: true,
     })
   })
 
-  it('prefers Grok 4.6 at low without a Codex subscription', () => {
+  it('prefers Grok 4.6 at low without Claude Code Haiku or a Codex subscription', () => {
     const sources: AvailableBackgroundModelSource[] = [
       {
-        id: 'claude-code',
-        displayName: 'Claude Code',
+        id: 'claude-code:fork',
+        displayName: 'Claude fork',
         provider: 'claude-code',
+        agent: 'fork',
         models: [model('claude-haiku-4-5', ['minimal', 'low'])],
       },
       {
@@ -128,9 +168,10 @@ describe('background model resolution', () => {
         models: [model('gpt-5.6-pro', ['low', 'high'], true)],
       },
       {
-        id: 'claude-code',
-        displayName: 'Claude Code',
+        id: 'claude-code:fork',
+        displayName: 'Claude fork',
         provider: 'claude-code',
+        agent: 'fork',
         models: [
           model('claude-sonnet-5', ['low', 'high'], true),
           model('claude-haiku-3-5', ['low', 'high']),
@@ -141,6 +182,7 @@ describe('background model resolution', () => {
 
     expect(resolveBackgroundModel({ mode: 'automatic' }, sources)).toMatchObject({
       provider: 'claude-code',
+      agent: 'fork',
       model: 'claude-haiku-4-5',
       effort: 'minimal',
       automatic: true,
@@ -193,11 +235,16 @@ describe('staged background model resolution', () => {
         : {}),
     }
 
-  const claude: Entry = { provider: 'claude-code', models: [model('claude-haiku-4-5', ['low'])] }
+  const claude: Entry = {
+    provider: 'claude-code',
+    models: [model('claude-haiku-5-5', ['low', 'medium', 'high'])],
+  }
+  const claudeOut: Entry = { provider: 'claude-code' }
+  const sonnet: Entry = { provider: 'claude-code', models: [model('claude-sonnet-5-5', ['low'])] }
   const lunaPlan: Entry = {
     provider: 'codex',
     codexSubscription: true,
-    models: [model('gpt-5.6-luna', ['low', 'high'])],
+    models: [model('gpt-5.6-luna', ['low', 'medium', 'high'])],
   }
   const lunaKey: Entry = { ...lunaPlan, codexSubscription: false }
   const grok46: Entry = { provider: 'grok', models: [model('grok-4.6', ['low', 'high'])] }
@@ -206,55 +253,76 @@ describe('staged background model resolution', () => {
 
   it.each<[string, BackgroundModelPreference, Entry[], string | undefined, string[]]>([
     [
-      'a subscription Luna reads Codex alone',
+      'a Claude Code Haiku reads Claude Code alone',
       automatic,
       [claude, lunaPlan, grok46],
+      'claude-haiku-5-5',
+      ['claude-code'],
+    ],
+    [
+      'a signed-out Claude Code adds a subscription Luna',
+      automatic,
+      [claudeOut, lunaPlan, grok46],
       'gpt-5.6-luna',
-      ['codex'],
+      ['claude-code', 'codex'],
+    ],
+    [
+      'a Claude Code without Haiku adds a subscription Luna',
+      automatic,
+      [sonnet, lunaPlan, grok46],
+      'gpt-5.6-luna',
+      ['claude-code', 'codex'],
     ],
     [
       'an API-key Codex adds Grok',
       automatic,
-      [claude, lunaKey, grok46],
+      [claudeOut, lunaKey, grok46],
       'grok-4.6',
-      ['codex', 'grok'],
+      ['claude-code', 'codex', 'grok'],
     ],
     [
       'a signed-out Codex adds Grok',
       automatic,
-      [claude, { provider: 'codex', codexSubscription: true }, grok46],
+      [claudeOut, { provider: 'codex', codexSubscription: true }, grok46],
       'grok-4.6',
-      ['codex', 'grok'],
+      ['claude-code', 'codex', 'grok'],
     ],
     [
       'a subscription without Luna adds Grok',
       automatic,
-      [claude, { ...lunaPlan, models: [model('gpt-5.6', ['low'])] }, grok46],
+      [claudeOut, { ...lunaPlan, models: [model('gpt-5.6', ['low'])] }, grok46],
       'grok-4.6',
-      ['codex', 'grok'],
+      ['claude-code', 'codex', 'grok'],
     ],
     [
       'the cheapest fallback reads every source',
       automatic,
       [
-        claude,
+        sonnet,
         { ...lunaKey, models: [model('gpt-5.6-pro', ['low'])] },
         grok45,
         { provider: 'codex', agent: 'fork', models: [model('gpt-4.1-mini', ['low'])] },
       ],
-      'claude-haiku-4-5',
+      'gpt-4.1-mini',
       ['claude-code', 'codex', 'grok', 'codex:fork'],
     ],
     [
       'a price and version tie goes to the earlier source',
       automatic,
       [
-        { ...claude, slow: true },
+        { provider: 'codex', agent: 'first', models: [model('gpt-4.1-mini', ['low'])], slow: true },
         grok45,
-        { provider: 'claude-code', agent: 'fork', models: [model('claude-haiku-4-5', ['low'])] },
+        { provider: 'codex', agent: 'second', models: [model('gpt-4.1-mini', ['low'])] },
       ],
-      'claude-haiku-4-5',
-      ['claude-code', 'grok', 'claude-code:fork'],
+      'gpt-4.1-mini',
+      ['codex:first', 'grok', 'codex:second'],
+    ],
+    [
+      'a custom harness Haiku is no Claude Code pick',
+      automatic,
+      [{ ...claude, agent: 'fork' }, grok46],
+      'grok-4.6',
+      ['grok'],
     ],
     [
       'a custom harness Luna is no subscription pick',
@@ -272,10 +340,10 @@ describe('staged background model resolution', () => {
     ],
     [
       'a manual target reads that source alone',
-      { mode: 'manual', target: { provider: 'claude-code', model: 'claude-haiku-4-5' } },
+      { mode: 'manual', target: { provider: 'codex', model: 'gpt-5.6-luna' } },
       [claude, lunaPlan, grok46],
-      'claude-haiku-4-5',
-      ['claude-code'],
+      'gpt-5.6-luna',
+      ['codex'],
     ],
     [
       'a manual harness target reads that harness alone',

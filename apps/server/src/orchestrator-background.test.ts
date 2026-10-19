@@ -200,6 +200,10 @@ function signIn(provider: ProviderId, models: Model[], account: Partial<Account>
   vendor.models.set(provider, models)
 }
 
+function signedOut(provider: ProviderId): void {
+  vendor.accounts.set(provider, { signedIn: false })
+}
+
 function gate(call: string): () => void {
   let release!: () => void
   vendor.gates.set(
@@ -232,71 +236,96 @@ afterEach(async () => {
 
 describe('background title source discovery', () => {
   beforeEach(() => {
-    signIn('claude-code', [model('claude-haiku-4-5')])
+    signIn('claude-code', [model('claude-haiku-5-5', ['low', 'medium', 'high'])])
     signIn('codex', [model('gpt-5.6-luna')], { plan: 'Pro' })
     signIn('grok', [model('grok-4.6')])
   })
 
-  it('reads only Codex when its subscription offers Luna', async () => {
+  it('reads only Claude Code when it offers Haiku', async () => {
+    const { title, started } = harness()
+
+    await expect(title()).resolves.toEqual({ title: 'Generated title', applied: true })
+
+    expect(started).toEqual([{ provider: 'claude-code', model: 'claude-haiku-5-5' }])
+    expect(vendor.calls).toEqual(['account:claude-code', 'models:claude-code'])
+  })
+
+  it('reads Codex next, and only then, when Claude Code is signed out', async () => {
+    signedOut('claude-code')
     const { title, started } = harness()
 
     await expect(title()).resolves.toEqual({ title: 'Generated title', applied: true })
 
     expect(started).toEqual([{ provider: 'codex', model: 'gpt-5.6-luna' }])
-    expect(vendor.calls).toEqual(['account:codex', 'models:codex'])
+    expect(vendor.calls).toEqual(['account:claude-code', 'account:codex', 'models:codex'])
     expect(vendor.codexProcesses).toBe(1)
   })
 
   it('reads Grok next, and only then, when Codex has no subscription Luna', async () => {
+    signedOut('claude-code')
     signIn('codex', [model('gpt-5.6-luna')], { plan: 'API key' })
     const { title, started } = harness()
 
     await title()
 
     expect(started).toEqual([{ provider: 'grok', model: 'grok-4.6' }])
-    expect(vendor.calls).toEqual(['account:codex', 'models:codex', 'account:grok', 'models:grok'])
+    expect(vendor.calls).toEqual([
+      'account:claude-code',
+      'account:codex',
+      'models:codex',
+      'account:grok',
+      'models:grok',
+    ])
   })
 
   it('reads every source for the cheapest-model fallback and breaks ties by source order', async () => {
+    signIn('claude-code', [model('claude-sonnet-5-5')])
     signIn('codex', [model('gpt-5.6-pro')], { plan: 'API key' })
     signIn('grok', [model('grok-4.5')])
     const { title, started, customHarnesses } = harness()
-    customHarnesses.upsert({
-      id: 'fork',
-      displayName: 'Claude fork',
-      provider: 'claude-code',
-      command: 'claude-fork',
-      args: [],
-    })
-    vendor.models.set('claude-code:fork', [model('claude-haiku-4-5')])
-    const release = gate('models:claude-code')
+    for (const id of ['first', 'second']) {
+      customHarnesses.upsert({
+        id,
+        displayName: `Claude ${id}`,
+        provider: 'claude-code',
+        command: `claude-${id}`,
+        args: [],
+      })
+      vendor.models.set(`claude-code:${id}`, [model('claude-haiku-4-5')])
+    }
+    const release = gate('models:claude-code:first')
 
     const pending = title()
-    await vi.waitFor(() => expect(vendor.calls).toContain('models:claude-code:fork'), {
+    await vi.waitFor(() => expect(vendor.calls).toContain('models:claude-code:second'), {
       timeout: 5_000,
     })
-    await vi.waitFor(() => expect(vendor.calls).toContain('models:claude-code'), { timeout: 5_000 })
+    await vi.waitFor(() => expect(vendor.calls).toContain('models:claude-code:first'), {
+      timeout: 5_000,
+    })
     release()
     await pending
 
-    // The fork answers first with the same model; the earlier source still wins.
-    expect(started).toEqual([{ provider: 'claude-code', model: 'claude-haiku-4-5' }])
+    // The second harness answers first with the same model; the earlier one still wins.
+    expect(started).toEqual([
+      { provider: 'claude-code', model: 'claude-haiku-4-5', agent: 'first' },
+    ])
     expect([...vendor.calls].sort()).toEqual(
       [
+        'account:claude-code',
+        'models:claude-code',
         'account:codex',
         'models:codex',
         'account:grok',
         'models:grok',
-        'account:claude-code',
-        'models:claude-code',
-        'models:claude-code:fork',
+        'models:claude-code:first',
+        'models:claude-code:second',
       ].sort(),
     )
   })
 
   it.each([
     [
-      { provider: 'claude-code', model: 'claude-haiku-4-5' },
+      { provider: 'claude-code', model: 'claude-haiku-5-5' },
       ['account:claude-code', 'models:claude-code'],
     ],
     [{ provider: 'codex', model: 'gpt-5.6-luna' }, ['account:codex', 'models:codex']],
@@ -333,7 +362,7 @@ describe('background title source discovery', () => {
   it('drafts a commit message from the same reduced reads', async () => {
     const { orchestrator, started } = harness({
       mode: 'manual',
-      target: { provider: 'claude-code', model: 'claude-haiku-4-5' },
+      target: { provider: 'claude-code', model: 'claude-haiku-5-5' },
     })
 
     await expect(
@@ -344,7 +373,7 @@ describe('background title source discovery', () => {
       }),
     ).resolves.toBe('Generated title')
 
-    expect(started).toEqual([{ provider: 'claude-code', model: 'claude-haiku-4-5' }])
+    expect(started).toEqual([{ provider: 'claude-code', model: 'claude-haiku-5-5' }])
     expect(vendor.calls).toEqual(['account:claude-code', 'models:claude-code'])
   })
 
@@ -352,18 +381,23 @@ describe('background title source discovery', () => {
     const { orchestrator, title } = harness()
 
     await title()
-    expect(vendor.calls).toEqual(['account:codex', 'models:codex'])
+    expect(vendor.calls).toEqual(['account:claude-code', 'models:claude-code'])
     const settings = await orchestrator.backgroundModelSettings()
     await title()
 
     expect(settings.sources.map((source) => source.id)).toEqual(['claude-code', 'codex', 'grok'])
-    expect(settings.resolved).toMatchObject({ provider: 'codex', model: 'gpt-5.6-luna' })
+    expect(settings.resolved).toMatchObject({
+      provider: 'claude-code',
+      model: 'claude-haiku-5-5',
+      effort: 'medium',
+    })
     expect(vendor.calls.slice(2).sort()).toEqual(
-      ['account:claude-code', 'models:claude-code', 'account:grok', 'models:grok'].sort(),
+      ['account:codex', 'models:codex', 'account:grok', 'models:grok'].sort(),
     )
   })
 
   it('reads the account again after the cached minute and the shared model list once it ages', async () => {
+    signedOut('claude-code')
     const { title } = harness()
     const now = Date.now()
     const clock = vi.spyOn(Date, 'now').mockReturnValue(now)
@@ -373,36 +407,55 @@ describe('background title source discovery', () => {
       await title()
       clock.mockReturnValue(now + 60_000)
       await title()
-      expect(vendor.calls).toEqual(['account:codex', 'models:codex', 'account:codex'])
+      expect(vendor.calls).toEqual([
+        'account:claude-code',
+        'account:codex',
+        'models:codex',
+        'account:claude-code',
+        'account:codex',
+      ])
       // An older shared list still answers at once and is read again behind it.
       clock.mockReturnValue(now + 10 * 60_000)
       await title()
-      await vi.waitFor(() => expect(vendor.calls).toHaveLength(5))
+      await vi.waitFor(() => expect(vendor.calls).toHaveLength(8))
     } finally {
       clock.mockRestore()
     }
 
     expect(vendor.calls).toEqual([
+      'account:claude-code',
       'account:codex',
       'models:codex',
+      'account:claude-code',
       'account:codex',
+      'account:claude-code',
       'account:codex',
       'models:codex',
     ])
   })
 
   it('neither caches nor joins a read that an account change overtook', async () => {
+    signedOut('claude-code')
     const { orchestrator, title, started } = harness()
     const releaseCodex = gate('account:codex')
     const releaseGrok = gate('account:grok')
 
     const first = title()
-    await vi.waitFor(() => expect(vendor.calls).toEqual(['account:codex']), { timeout: 5_000 })
-    await orchestrator.signOut('codex')
-    const second = title()
-    await vi.waitFor(() => expect(vendor.calls).toEqual(['account:codex', 'account:codex']), {
+    await vi.waitFor(() => expect(vendor.calls).toEqual(['account:claude-code', 'account:codex']), {
       timeout: 5_000,
     })
+    await orchestrator.signOut('codex')
+    const second = title()
+    await vi.waitFor(
+      () =>
+        expect(vendor.calls).toEqual([
+          'account:claude-code',
+          'account:codex',
+          'account:claude-code',
+          'account:codex',
+        ]),
+      { timeout: 5_000 },
+    )
     releaseCodex()
     await first
     releaseGrok()
@@ -421,11 +474,39 @@ describe('background title source discovery', () => {
     )
     expect(started[2]).toMatchObject({ provider: 'grok', model: 'grok-4.6' })
     expect([...vendor.calls].sort()).toEqual(
-      ['account:codex', 'account:codex', 'models:codex', 'account:grok', 'models:grok'].sort(),
+      [
+        'account:claude-code',
+        'account:claude-code',
+        'account:codex',
+        'account:codex',
+        'models:codex',
+        'account:grok',
+        'models:grok',
+      ].sort(),
     )
   })
 
+  it('uses Codex Luna when Claude Code Haiku fails its background turn', async () => {
+    const { title, started } = harness({ mode: 'automatic' }, (provider) =>
+      provider === 'claude-code' ? 'turn' : undefined,
+    )
+
+    await expect(title()).resolves.toEqual({ title: 'Generated title', applied: true })
+
+    expect(started).toEqual([
+      { provider: 'claude-code', model: 'claude-haiku-5-5' },
+      { provider: 'codex', model: 'gpt-5.6-luna' },
+    ])
+    expect(vendor.calls).toEqual([
+      'account:claude-code',
+      'models:claude-code',
+      'account:codex',
+      'models:codex',
+    ])
+  })
+
   it('uses Grok when Codex Luna fails its background turn', async () => {
+    signedOut('claude-code')
     const { title, started } = harness({ mode: 'automatic' }, (provider) =>
       provider === 'codex' ? 'turn' : undefined,
     )
@@ -436,7 +517,13 @@ describe('background title source discovery', () => {
       { provider: 'codex', model: 'gpt-5.6-luna' },
       { provider: 'grok', model: 'grok-4.6' },
     ])
-    expect(vendor.calls).toEqual(['account:codex', 'models:codex', 'account:grok', 'models:grok'])
+    expect(vendor.calls).toEqual([
+      'account:claude-code',
+      'account:codex',
+      'models:codex',
+      'account:grok',
+      'models:grok',
+    ])
   })
 
   it('rejects a manual target whose background turn fails', async () => {
@@ -455,19 +542,19 @@ describe('background title source discovery', () => {
       return new Error(`${provider} background failed`)
     })
 
-    await expect(title()).rejects.toThrow('claude-code background failed')
+    await expect(title()).rejects.toThrow('grok background failed')
     expect(started).toEqual([
+      { provider: 'claude-code', model: 'claude-haiku-5-5' },
       { provider: 'codex', model: 'gpt-5.6-luna' },
       { provider: 'grok', model: 'grok-4.6' },
-      { provider: 'claude-code', model: 'claude-haiku-4-5' },
     ])
     expect(vendor.calls).toEqual([
+      'account:claude-code',
+      'models:claude-code',
       'account:codex',
       'models:codex',
       'account:grok',
       'models:grok',
-      'account:claude-code',
-      'models:claude-code',
     ])
   })
 })
