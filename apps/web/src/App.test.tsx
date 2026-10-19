@@ -11,7 +11,6 @@ import {
   type ResultOf,
 } from '@harness/contracts'
 import { StrictMode, type ComponentProps } from 'react'
-import { z } from 'zod'
 import { ACCOUNT_CHECK_SEND_GRACE_MS, App, resolveSendAvailability } from './App.js'
 import type { NativeMenuAction, NativeMenuActionSource } from './bridge.js'
 import { DESIGN_BRIEF_ATTACHMENT } from './design-agent/briefing.js'
@@ -25,12 +24,12 @@ import { resetInstalls } from './provider-install.js'
 import { providerUpdatesStore } from './provider-updates.js'
 import { mockKeyboardModifierState } from './test-keyboard.js'
 import { NEWEST_HISTORY_TURNS } from './thread-controller.js'
+import { CHAT_ORDER_KEY } from './sidebar-order.js'
 
 const NEWEST_PAGE = { turnLimit: NEWEST_HISTORY_TURNS }
 
 beforeEach(mockKeyboardModifierState)
 
-const SessionOrderSchema = z.record(z.string(), z.array(z.string()))
 type TestRequest = (method: string, params: unknown) => unknown | Promise<unknown>
 type ServerProject = ResultOf<'projects.list'>['projects'][number]
 type ServerSession = ServerProject['sessions'][number]
@@ -6749,13 +6748,13 @@ describe('new chats', () => {
 
     await openNewSession()
     transport.request.mockClear()
-    fireEvent.click(screen.getByRole('button', { name: 'Delete New session' }))
+    await chatRowMenu('New session', 'Delete chat')
     expect(await screen.findByText('Chat deleted')).toBeTruthy()
     expect(screen.getByText('Chat deleted').closest('.notice--archive')).toBeTruthy()
-    expect(screen.queryByRole('button', { name: 'Delete New session' })).toBeNull()
+    expect(screen.queryByRole('button', { name: /^New session,/ })).toBeNull()
     expect(transport.request).not.toHaveBeenCalledWith('thread.delete', expect.anything())
     fireEvent.click(screen.getByRole('button', { name: 'Undo' }))
-    expect(await screen.findByRole('button', { name: 'Delete New session' })).toBeTruthy()
+    expect(await screen.findByRole('button', { name: /^New session,/ })).toBeTruthy()
     await act(async () => new Promise((resolve) => nativeTimeout(resolve, 1_050)))
     expect(transport.request).not.toHaveBeenCalledWith('thread.delete', expect.anything())
   })
@@ -6772,7 +6771,7 @@ describe('new chats', () => {
     await openNewSession()
     startTurn('untouched-thread', 'active')
     transport.request.mockClear()
-    fireEvent.click(screen.getByRole('button', { name: 'Delete New session' }))
+    await chatRowMenu('New session', 'Delete chat')
     await waitFor(() =>
       expect(transport.request).toHaveBeenCalledWith('thread.delete', {
         threadId: 'untouched-thread',
@@ -7351,7 +7350,7 @@ describe('new chats', () => {
     serverUnsavedWork = { isolated: true, uncommitted: true }
     render(<App />)
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Delete Parallel work' }))
+    await chatRowMenu('Parallel work', 'Delete chat')
     expect(await screen.findByRole('dialog', { name: 'Discard isolated checkout' })).toBeTruthy()
     expect(transport.request).not.toHaveBeenCalledWith('thread.discardWorktree', expect.anything())
 
@@ -7421,7 +7420,7 @@ describe('new chats', () => {
       return Promise.resolve({ isolated: dirty, uncommitted: dirty })
     })
     render(<App />)
-    await screen.findByRole('button', { name: 'Delete Clean chat' })
+    await screen.findByRole('button', { name: /^Clean chat,/ })
 
     act(() => sidebarProps().onArchiveProject(['first-dirty', 'clean', 'second-dirty']))
 
@@ -7518,7 +7517,7 @@ describe('new chats', () => {
       )
       render(<App />)
       if (operation.startsWith('project')) {
-        fireEvent.contextMenu(await screen.findByRole('button', { name: 'Project name' }))
+        await showProjectOptions('Project name')
         fireEvent.click(
           await screen.findByRole('menuitem', {
             name: operation.endsWith('pin') ? 'Pin to top' : 'Edit name',
@@ -7527,7 +7526,7 @@ describe('new chats', () => {
       } else if (operation.endsWith('pin')) {
         fireEvent.contextMenu(await screen.findByRole('button', { name: /^Saved title,/ }))
         fireEvent.click(await screen.findByRole('menuitem', { name: 'Pin chat' }))
-      } else fireEvent.click(await screen.findByRole('button', { name: 'Rename Saved title' }))
+      } else await chatRowMenu('Saved title', 'Rename chat')
       if (operation.endsWith('rename')) {
         const input = screen.getByDisplayValue(
           operation.startsWith('project') ? 'Project name' : 'Saved title',
@@ -7538,12 +7537,14 @@ describe('new chats', () => {
       expect(await screen.findByText('Save was refused')).toBeTruthy()
       await waitFor(() => {
         expect(screen.queryByText('Unsaved name')).toBeNull()
-        expect(screen.getByRole('button', { name: 'Project name' })).toBeTruthy()
+        if (operation.startsWith('project')) {
+          expect(screen.getByText('Project name', { selector: '.chatfilter__label' })).toBeTruthy()
+        }
         expect(screen.getByRole('button', { name: /^Saved title,/ })).toBeTruthy()
       })
       if (operation === 'chat pin') expect(screen.queryByText('Pinned')).toBeNull()
       if (operation === 'project pin') {
-        fireEvent.contextMenu(screen.getByRole('button', { name: 'Project name' }))
+        fireEvent.click(screen.getByRole('button', { name: 'Project options' }))
         expect(await screen.findByRole('menuitem', { name: 'Pin to top' })).toBeTruthy()
       }
     },
@@ -8569,7 +8570,7 @@ describe('new chats', () => {
     )
   })
 
-  it('toggles an empty project without leaving the current new chat', async () => {
+  it('shows an empty project without leaving the current new chat', async () => {
     serverProjects = [
       {
         path: '/work/project',
@@ -8590,16 +8591,13 @@ describe('new chats', () => {
     render(<App />)
     await screen.findByRole('heading', { name: 'What should we build in TasteCode?' })
 
-    const anotherProject = screen.getByRole('button', { name: 'Another Project' })
-    fireEvent.click(anotherProject)
-
-    await waitFor(() => expect(anotherProject.getAttribute('aria-expanded')).toBe('true'))
-    expect(within(anotherProject.closest('.proj')!).getByText('No chats')).toBeTruthy()
+    await showProject('Another Project')
+    expect(screen.getByText('No chats')).toBeTruthy()
     expect(screen.getByRole('heading').textContent).toBe('What should we build in TasteCode?')
     expect(screen.getByPlaceholderText('Do anything')).toBeTruthy()
 
-    fireEvent.click(anotherProject)
-    await waitFor(() => expect(anotherProject.getAttribute('aria-expanded')).toBe('false'))
+    await showProject('All projects')
+    expect(screen.getByText('All projects', { selector: '.chatfilter__label' })).toBeTruthy()
     expect(screen.getByRole('heading').textContent).toBe('What should we build in TasteCode?')
   })
 
@@ -9603,40 +9601,6 @@ describe('new chats', () => {
 })
 
 describe('sidebar chat ordering', () => {
-  it('persists the order chosen by dragging a project row', async () => {
-    serverProjects = [
-      { path: '/work/first', name: 'First', pinned: false, createdAt: 0, sessions: [] },
-      { path: '/work/second', name: 'Second', pinned: false, createdAt: 0, sessions: [] },
-    ]
-    render(<App />)
-
-    const source = (await screen.findByRole('button', { name: 'First' })).closest('section')!
-    const target = screen.getByRole('button', { name: 'Second' }).closest('section')!
-    vi.spyOn(target, 'getBoundingClientRect').mockReturnValue({
-      bottom: 80,
-      height: 30,
-      left: 0,
-      right: 200,
-      top: 50,
-      width: 200,
-      x: 0,
-      y: 50,
-      toJSON: () => ({}),
-    })
-    const dataTransfer = { dropEffect: 'none', effectAllowed: 'none', setData: vi.fn() }
-
-    fireEvent.dragStart(source, { dataTransfer })
-    fireEvent.dragOver(target, { clientY: 75, dataTransfer })
-    fireEvent.drop(target, { clientY: 75, dataTransfer })
-
-    await waitFor(() => {
-      expect(JSON.parse(localStorage.getItem('harness.projectOrder') ?? '[]')).toEqual([
-        '/work/second',
-        '/work/first',
-      ])
-    })
-  })
-
   it('persists the order chosen by dragging a chat row', async () => {
     serverProjects = [
       {
@@ -9678,14 +9642,15 @@ describe('sidebar chat ordering', () => {
     fireEvent.drop(target, { clientY: 80, dataTransfer })
 
     await waitFor(() => {
-      const order = SessionOrderSchema.parse(
-        JSON.parse(localStorage.getItem('harness.sessionOrder.dragged') ?? '{}'),
-      )
-      expect(order['/work/project']).toEqual(['thread-3', 'thread-1', 'thread-2'])
+      expect(JSON.parse(localStorage.getItem(CHAT_ORDER_KEY) ?? '[]')).toEqual([
+        'thread-3',
+        'thread-1',
+        'thread-2',
+      ])
     })
   })
 
-  it('drops a chat where the rail shows it beside a lifted unread chat', async () => {
+  it('drops a chat exactly where it was dropped beside an unread chat', async () => {
     serverProjects = [
       serverProject('/work/project', 'project', [
         { id: 'thread-b', title: 'B chat' },
@@ -9697,15 +9662,17 @@ describe('sidebar chat ordering', () => {
     render(<App />)
 
     await screen.findByRole('button', { name: /^C chat,/ })
-    expect(sessionTitles()).toEqual(['A chat', 'B chat', 'C chat'])
-    dropChatRow('C chat', 'A chat', 'after')
+    // An unread chat is not lifted: the list keeps its order.
+    expect(sessionTitles()).toEqual(['B chat', 'C chat', 'A chat'])
+    dropChatRow('B chat', 'A chat', 'after')
 
-    expect(sessionTitles()).toEqual(['A chat', 'C chat', 'B chat'])
+    expect(sessionTitles()).toEqual(['C chat', 'A chat', 'B chat'])
     await waitFor(() => {
-      const order = SessionOrderSchema.parse(
-        JSON.parse(localStorage.getItem('harness.sessionOrder.dragged') ?? '{}'),
-      )
-      expect(order['/work/project']).toEqual(['thread-c', 'thread-b', 'thread-a'])
+      expect(JSON.parse(localStorage.getItem(CHAT_ORDER_KEY) ?? '[]')).toEqual([
+        'thread-c',
+        'thread-a',
+        'thread-b',
+      ])
     })
   })
 
@@ -9729,12 +9696,20 @@ describe('sidebar chat ordering', () => {
     await screen.findByRole('button', { name: /^One pinned,/ })
     act(() => sidebarProps().onSelectSession('one-a'))
     await waitFor(() => expect(sidebarProps().activeSessionId).toBe('one-a'))
-    // The rail reads: Pinned (One pinned), Two (Two A), One (One unread, One A, One B).
-    await step('ArrowDown', 'one-b')
-    await step('ArrowDown', 'one-pinned')
-    await step('ArrowDown', 'two-a')
-    await step('ArrowUp', 'one-pinned')
-    await step('ArrowUp', 'one-b')
+    // The list reads: Pinned (One pinned), then every other chat in one list.
+    const shown = Array.from(
+      document.querySelectorAll<HTMLElement>('.sessrow[data-archive-session-id]'),
+      (row) => row.dataset['archiveSessionId']!,
+    )
+    expect(shown[0]).toBe('one-pinned')
+    expect(shown).toHaveLength(5)
+    const after = (offset: number) =>
+      shown[(shown.indexOf('one-a') + offset + shown.length) % shown.length]!
+    await step('ArrowDown', after(1))
+    await step('ArrowDown', after(2))
+    await step('ArrowDown', after(3))
+    await step('ArrowUp', after(2))
+    await step('ArrowUp', after(1))
   })
 
   it('moves to the previous and next chat in the order the inbox shows', async () => {
@@ -10204,7 +10179,7 @@ describe('global shortcuts', () => {
         },
       ]
       render(<App />)
-      await screen.findByRole('button', { name: 'Top' })
+      await screen.findByRole('button', { name: /^Recent 8,/ })
       for (const [key, id] of [
         ['1', 'recent-8'],
         ['9', 'recent-0'],
@@ -10401,7 +10376,7 @@ describe('global shortcuts', () => {
     ]
 
     render(<App />)
-    await screen.findByRole('button', { name: 'Another Project' })
+    await screen.findByRole('button', { name: /^Polish the sidebar,/ })
     fireEvent.keyDown(window, { key: 'k', metaKey: true })
 
     expect(await screen.findByRole('dialog', { name: 'Command palette' })).toBeTruthy()
@@ -10715,7 +10690,7 @@ describe('live sessions', () => {
     fireEvent.change(composer, { target: { value: 'Initial request' } })
     fireEvent.keyDown(composer, { key: 'Enter' })
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Rename Initial request' }))
+    await chatRowMenu('Initial request', 'Rename chat')
     const input = screen.getByDisplayValue('Initial request')
     fireEvent.change(input, { target: { value: 'My custom title' } })
     fireEvent.keyDown(input, { key: 'Enter' })
@@ -12008,7 +11983,7 @@ describe('live sessions', () => {
     expect(screen.getByRole('button', { name: 'First session, Codex' })).toBeTruthy()
   })
 
-  it('keeps running chats above newly unread completed chats', async () => {
+  it('keeps chats in place while they run and when they finish unread', async () => {
     serverProjects = [
       {
         path: '/work/project',
@@ -12025,7 +12000,7 @@ describe('live sessions', () => {
 
     render(<App />)
     await screen.findByRole('button', { name: 'Running chat, Codex, working' })
-    expect(sessionTitles()).toEqual(['Running chat', 'Idle chat', 'Background chat'])
+    expect(sessionTitles()).toEqual(['Idle chat', 'Background chat', 'Running chat'])
 
     emitThreadEvent('background-thread', {
       type: 'turn.started',
@@ -12036,19 +12011,21 @@ describe('live sessions', () => {
         createdAt: 0,
       },
     })
-    expect(sessionTitles()).toEqual(['Background chat', 'Running chat', 'Idle chat'])
+    expect(sessionTitles()).toEqual(['Idle chat', 'Background chat', 'Running chat'])
 
     emitThreadEvent('background-thread', {
       type: 'turn.completed',
       turnId: 'background-turn',
       status: 'completed',
     })
-    expect(sessionTitles()).toEqual(['Running chat', 'Background chat', 'Idle chat'])
+    expect(sessionTitles()).toEqual(['Idle chat', 'Background chat', 'Running chat'])
+    // Unread is the heavier title; the row's one mark stays the provider's.
     expect(
       screen
         .getByRole('button', { name: 'Background chat, Codex, ready, unread' })
-        .querySelector('.sess__unread-dot'),
-    ).not.toBeNull()
+        .closest('.sessrow')
+        ?.classList.contains('is-unread'),
+    ).toBe(true)
   })
 })
 
@@ -12111,6 +12088,23 @@ function emitQueue(
   act(() => {
     transport.listeners.get('thread.queue')?.({ threadId, items, canSteer: true })
   })
+}
+
+/** Opens a chat row's menu and picks one of its items. */
+async function chatRowMenu(title: string, item: string) {
+  fireEvent.contextMenu(await screen.findByRole('button', { name: new RegExp(`^${title},`) }))
+  fireEvent.click(await screen.findByRole('menuitem', { name: item }))
+}
+
+/** Shows one project (or all of them) through the list's filter. */
+async function showProject(name: string) {
+  fireEvent.click(await screen.findByRole('button', { name: 'Show chats from' }))
+  fireEvent.click(await screen.findByRole('menuitemradio', { name }))
+}
+
+async function showProjectOptions(name: string) {
+  await showProject(name)
+  fireEvent.click(await screen.findByRole('button', { name: 'Project options' }))
 }
 
 function sessionTitles(): string[] {
