@@ -1,4 +1,12 @@
-import { type ReactNode, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
+import {
+  type CSSProperties,
+  type ReactNode,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react'
 import type { ProviderId, ProviderLimitSource, ResultOf } from '@harness/contracts'
 import { providerDisplayName, providerMark } from '../provider-presentation.js'
 import type { UsageSummaryState } from '../usage-summary-state.js'
@@ -104,6 +112,7 @@ function LimitSource(props: {
           name={name}
           provider={props.state.provider}
           limit={limit}
+          order={index}
           onConsumeReset={props.onConsumeReset}
         />
       ))}
@@ -131,32 +140,39 @@ function LimitRow(props: {
   name: string
   provider: ProviderId
   limit: Limit
+  order: number
   onConsumeReset?: ConsumeReset | undefined
 }) {
   const consumable = props.limit.action === 'consume-reset' && props.onConsumeReset !== undefined
   const credits = props.limit.resetCredits
   const hasSelectableCredits = credits?.some((credit) => credit.id !== undefined)
-  const value = props.limit.valueLabel ?? `${remaining(props.limit)}% left`
+  const left = remaining(props.limit)
+  const gauge = props.limit.valueLabel === undefined
+  const value = props.limit.valueLabel ?? `${left}% left`
 
   return (
-    <div className="account-menu__limit">
+    <div
+      className="account-menu__limit"
+      data-gauge={gauge ? '' : undefined}
+      // The bar takes its length and colour from how much is left.
+      style={
+        gauge ? ({ '--left': left / 100, '--order': props.order } as CSSProperties) : undefined
+      }
+    >
       <div className="account-menu__limit-row">
         <span className="account-menu__limit-label">{props.limit.label}</span>
         <span className="account-menu__limit-value">{value}</span>
       </div>
-      {props.limit.valueLabel === undefined ? (
+      {gauge ? (
         <div
           className="account-menu__limit-bar"
           role="progressbar"
           aria-label={`${props.name} ${props.limit.label} left`}
-          aria-valuenow={remaining(props.limit)}
+          aria-valuenow={left}
           aria-valuemin={0}
           aria-valuemax={100}
         >
-          <span
-            data-low={remaining(props.limit) <= 15 ? '' : undefined}
-            style={{ width: `${remaining(props.limit)}%` }}
-          />
+          <span />
         </div>
       ) : null}
       {props.limit.resetsAt !== undefined ? (

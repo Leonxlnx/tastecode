@@ -630,7 +630,9 @@ describe('Sidebar chat actions', () => {
     expect(within(accountDialog).getAllByText('15% left')).toHaveLength(1)
     const limitBar = screen.getByRole('progressbar', { name: 'Codex 7 days left' })
     expect(limitBar.getAttribute('aria-valuenow')).toBe('15')
-    expect(limitBar.querySelector<HTMLElement>(':scope > *')!.style.width).toBe('15%')
+    expect(
+      limitBar.closest<HTMLElement>('.account-menu__limit')!.style.getPropertyValue('--left'),
+    ).toBe('0.15')
     expect(document.activeElement).toBe(
       within(accountDialog).getByRole('region', { name: 'Plan limits' }),
     )

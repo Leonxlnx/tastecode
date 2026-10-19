@@ -203,10 +203,32 @@
   font-size: var(--t-xs);
 }
 
-/* A full allowance is a long bar, so it has to stay quiet: a mid-tone fill
-   on a faint track, never a bright rule across the well. */
+/* How much of an allowance the bar shows, 0 to 1. Registered so the bar can
+   fill from empty when the popup opens and glide when a refresh moves it. */
+@property --limit-fill {
+  syntax: '<number>';
+  inherits: true;
+  initial-value: 0;
+}
+
+/* Each bar is a little fuel gauge. The whole red-to-green scale is painted
+   across the track and the fill uncovers it from the empty end, so the
+   colour at the tip says how much is left. */
+.account-menu__limit[data-gauge] {
+  --limit-fill: var(--left);
+  animation: account-limit-fill 820ms var(--ease-overshoot) both;
+  animation-delay: calc(80ms + var(--order) * 70ms);
+  transition: --limit-fill var(--dur-slow) var(--ease-out);
+}
+
+@keyframes account-limit-fill {
+  from {
+    --limit-fill: 0;
+  }
+}
+
 .account-menu__limit-bar {
-  height: 4px;
+  height: 6px;
   border-radius: var(--r-pill);
   background: color-mix(in srgb, var(--text) 9%, transparent);
   overflow: hidden;
@@ -216,11 +238,20 @@
   display: block;
   height: 100%;
   border-radius: inherit;
-  background: color-mix(in srgb, var(--text) 52%, transparent);
+  background: linear-gradient(
+    to right in oklch,
+    var(--gauge-empty),
+    var(--gauge-half),
+    var(--gauge-full)
+  );
+  clip-path: inset(0 calc((1 - var(--limit-fill)) * 100%) 0 0 round var(--r-pill));
 }
 
-.account-menu__limit-bar > span[data-low] {
-  background: var(--error);
+@media (prefers-reduced-motion: reduce) {
+  .account-menu__limit[data-gauge] {
+    animation: none;
+    transition: none;
+  }
 }
 
 .account-menu__limit-reset {
