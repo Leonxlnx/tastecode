@@ -3256,9 +3256,19 @@ export function App() {
       const listed = accountsOf(providerAccounts, id)
       if (listed.length < 2) return [{ provider: id }]
       const active = activeAccountOf(providerAccounts, id)
-      return [active, ...listed.map((account) => account.id).filter((each) => each !== active)].map(
-        (accountId) =>
-          accountId === DEFAULT_ACCOUNT_ID ? { provider: id } : { provider: id, accountId },
+      // A further account is read once it has named who it is: before its
+      // first sign-in every read fails, and the views would offer a Retry.
+      const others = listed
+        .filter(
+          (account) =>
+            account.id !== active &&
+            (account.id === DEFAULT_ACCOUNT_ID ||
+              account.email !== undefined ||
+              account.plan !== undefined),
+        )
+        .map((account) => account.id)
+      return [active, ...others].map((accountId) =>
+        accountId === DEFAULT_ACCOUNT_ID ? { provider: id } : { provider: id, accountId },
       )
     }
     const [main = { provider }, ...rest] = targetsOf(provider)

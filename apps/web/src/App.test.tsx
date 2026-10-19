@@ -5234,7 +5234,13 @@ describe('new chats', () => {
               home: 'C:\\TasteCode\\accounts\\codex\\work-1a2b3c',
               managed: true,
             },
-
+            {
+              id: 'spare-4d5e6f',
+              provider: 'codex',
+              label: 'Spare',
+              home: 'C:\\TasteCode\\accounts\\codex\\spare-4d5e6f',
+              managed: true,
+            },
           ],
           active: { codex: 'work-1a2b3c' },
         })
@@ -5280,7 +5286,11 @@ describe('new chats', () => {
       'Codex · Personal',
     ])
     expect(screen.queryByText(/work-1a2b3c/)).toBeNull()
-
+    // Spare has not signed in yet, so it is not read and not listed.
+    expect(transport.request).not.toHaveBeenCalledWith(
+      'usage.summary',
+      expect.objectContaining({ accountId: 'spare-4d5e6f' }),
+    )
   })
 
   it('keeps plan limits and asks nothing new when switching chats of one provider', async () => {
