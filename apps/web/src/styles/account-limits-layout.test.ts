@@ -43,20 +43,38 @@ describe('account limits layout', () => {
     )
   })
 
-  it('draws quiet bars that only turn red when an allowance runs low', () => {
+  it('draws each bar as a red-to-green gauge and leaves the number in text ink', () => {
     expect(rule('.account-menu__source')).toContain('gap: 8px')
     expect(rule('.account-menu__limit')).toContain('gap: 5px')
     const bar = rule('.account-menu__limit-bar')
-    expect(bar).toContain('height: 4px')
+    expect(bar).toContain('height: 6px')
     expect(bar).toContain('border-radius: var(--r-pill)')
-    expect(rule('.account-menu__limit-bar > span')).toContain(
-      'background: color-mix(in srgb, var(--text) 52%, transparent)',
+    const fill = rule('.account-menu__limit-bar > span')
+    expect(fill).toMatch(
+      /linear-gradient\(\s*to right in oklch,\s*var\(--gauge-empty\),\s*var\(--gauge-half\),\s*var\(--gauge-full\)\s*\)/,
     )
-    expect(rule('.account-menu__limit-bar > span[data-low]')).toContain('background: var(--error)')
+    expect(fill).toContain('clip-path: inset(0 calc((1 - var(--limit-fill)) * 100%) 0 0')
+    expect(rule('.account-menu__limit[data-gauge]')).toContain('--limit-fill: var(--left)')
+    expect(rule('.account-menu__limit-value')).toContain('color: var(--text)')
+    expect(css).not.toContain('[data-gauge] .account-menu__limit-value')
+    expect(css).toMatch(/@property --limit-fill \{[^}]*syntax: '<number>';/s)
+    // Neither the colour nor the fill motion is a hard-coded value.
+    expect(css).not.toMatch(/#[0-9a-f]{3,8}\b/i)
+  })
+
+  it('fills the gauges once when the popup opens, and not at all with reduced motion', () => {
+    const gauge = rule('.account-menu__limit[data-gauge]')
+    expect(gauge).toContain('animation: account-limit-fill')
+    expect(gauge).toContain('animation-delay: calc(80ms + var(--order) * 70ms)')
+    expect(css).toMatch(/@keyframes account-limit-fill \{\s*from \{\s*--limit-fill: 0;/)
+    expect(css).toMatch(
+      /@media \(prefers-reduced-motion: reduce\) \{\s*\.account-menu__limit\[data-gauge\] \{\s*animation: none;\s*transition: none;/,
+    )
     // The even-pace mark is a neutral hairline, never a second bar or an alert.
     const pace = rule('.account-menu__limit-bar > .account-menu__limit-pace')
     expect(pace).toContain('width: 1px')
     expect(pace).toContain('pointer-events: none')
     expect(pace).not.toContain('--error')
+    expect(pace).toContain('clip-path: none')
   })
 })
