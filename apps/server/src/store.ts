@@ -242,6 +242,8 @@ export type StoredProviderAccount = {
   active: boolean
 }
 
+export type ProviderAccountSnapshotKind = 'limits' | 'models'
+
 type UsageSample = { total: UsageTotal; cumulative: boolean }
 
 type InterruptedThreadState = {
@@ -577,6 +579,16 @@ CREATE TABLE IF NOT EXISTS provider_accounts (
   created_at INTEGER NOT NULL,
   active     INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (provider, id)
+) WITHOUT ROWID;
+
+-- What an account's own controls keep across restarts, as they serialized it:
+-- its last plan limits and model lists. Removed with the account.
+CREATE TABLE IF NOT EXISTS provider_account_snapshots (
+  provider TEXT NOT NULL,
+  id       TEXT NOT NULL,
+  kind     TEXT NOT NULL CHECK (kind IN ('limits', 'models')),
+  value    TEXT NOT NULL,
+  PRIMARY KEY (provider, id, kind)
 ) WITHOUT ROWID;
 
 CREATE INDEX IF NOT EXISTS checkpoints_by_thread ON checkpoints (thread_id, seq);
@@ -2372,12 +2384,51 @@ export class Store {
     )
   }
 
-  /** False when there was no such account. */
+  /** False when there was no such account. Its snapshots go with it. */
   removeProviderAccount(provider: ProviderId, id: string): boolean {
-    const result = this.#db
-      .prepare(`DELETE FROM provider_accounts WHERE provider = ? AND id = ?`)
-      .run(provider, id)
-    return Number(result.changes) > 0
+    return this.#transaction(() => {
+      this.#db
+        .prepare(`DELETE FROM provider_account_snapshots WHERE provider = ? AND id = ?`)
+        .run(provider, id)
+      const result = this.#db
+        .prepare(`DELETE FROM provider_accounts WHERE provider = ? AND id = ?`)
+        .run(provider, id)
+      return Number(result.changes) > 0
+    })
+  }
+
+  /** An account's own last plan limits or model lists, as its controls serialized them. */
+  providerAccountSnapshot(
+    provider: ProviderId,
+    id: string,
+    kind: ProviderAccountSnapshotKind,
+  ): string | undefined {
+    return sqliteRow<StringValueRow>(
+      this.#db.prepare(
+        `SELECT value FROM provider_account_snapshots WHERE provider = ? AND id = ? AND kind = ?`,
+      ),
+      provider,
+      id,
+      kind,
+    )?.value
+  }
+
+  /** Kept only while the account exists, so a late write cannot outlive its removal. */
+  setProviderAccountSnapshot(
+    provider: ProviderId,
+    id: string,
+    kind: ProviderAccountSnapshotKind,
+    value: string,
+  ): void {
+    this.#db
+      .prepare(
+        `INSERT INTO provider_account_snapshots (provider, id, kind, value)
+         SELECT ?, ?, ?, ? WHERE EXISTS (
+           SELECT 1 FROM provider_accounts WHERE provider = ? AND id = ?
+         )
+         ON CONFLICT (provider, id, kind) DO UPDATE SET value = excluded.value`,
+      )
+      .run(provider, id, kind, value, provider, id)
   }
 
   /** The default account is active when no row is. */

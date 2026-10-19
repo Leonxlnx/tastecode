@@ -172,6 +172,42 @@ describe('provider accounts in the store', () => {
   })
 })
 
+describe("an account's own snapshots", () => {
+  it('keeps them per account until the account is removed', () => {
+    const store = open()
+    store.addProviderAccount({
+      provider: 'codex',
+      id: 'work',
+      label: 'W',
+      managed: true,
+      createdAt: 1,
+    })
+    store.setProviderAccountSnapshot('codex', 'work', 'limits', '{"read":1}')
+    store.setProviderAccountSnapshot('codex', 'work', 'models', '{"lists":[]}')
+    store.setProviderAccountSnapshot('codex', 'work', 'limits', '{"read":2}')
+    // A late write for an account that is gone is not kept.
+    store.setProviderAccountSnapshot('codex', 'gone', 'limits', '{}')
+
+    expect(store.providerAccountSnapshot('codex', 'work', 'limits')).toBe('{"read":2}')
+    expect(store.providerAccountSnapshot('codex', 'work', 'models')).toBe('{"lists":[]}')
+    expect(store.providerAccountSnapshot('claude-code', 'work', 'limits')).toBeUndefined()
+    expect(store.providerAccountSnapshot('codex', 'gone', 'limits')).toBeUndefined()
+    // The default account's snapshots are its own.
+    expect(store.limitSnapshot()).toBeUndefined()
+    expect(store.modelListSnapshot()).toBeUndefined()
+
+    expect(store.removeProviderAccount('codex', 'work')).toBe(true)
+    store.addProviderAccount({
+      provider: 'codex',
+      id: 'work',
+      label: 'W',
+      managed: true,
+      createdAt: 2,
+    })
+    expect(store.providerAccountSnapshot('codex', 'work', 'limits')).toBeUndefined()
+  })
+})
+
 describe('the account a chat is pinned to', () => {
   it('keeps chats from before accounts on the default account', () => {
     const root = mkdtempSync(path.join(os.tmpdir(), 'harness-store-accounts-'))
