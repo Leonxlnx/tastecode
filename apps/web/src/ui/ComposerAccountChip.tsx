@@ -1,4 +1,4 @@
-import type { ProviderId } from '@harness/contracts'
+import { DEFAULT_ACCOUNT_ID, type ProviderId } from '@harness/contracts'
 import { IconUserCircle as UserCircle } from '@tabler/icons-react'
 import { accountsOf, activeAccountOf, useProviderAccounts } from '../provider-accounts-state.js'
 import type { Transport } from '../transport.js'
@@ -38,6 +38,15 @@ export function ComposerAccountChip(props: { transport: Transport; provider: Pro
           <MenuItem
             key={account.id}
             title={account.label}
+            // A further account that never signed in cannot run a chat yet; the
+            // default account's sign-in shows on its provider.
+            detail={
+              account.id !== DEFAULT_ACCOUNT_ID &&
+              account.email === undefined &&
+              account.plan === undefined
+                ? 'Not signed in'
+                : undefined
+            }
             icon={<UserCircle size={14} aria-hidden />}
             active={account.id === active.id}
             onClick={() => {

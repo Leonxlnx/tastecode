@@ -51,7 +51,13 @@ describe('ComposerAccountChip', () => {
     const trigger = await screen.findByRole('button', { name: 'New chat account' })
     expect(trigger.textContent).toContain('Default')
     fireEvent.click(trigger)
-    fireEvent.click(await screen.findByRole('menuitem', { name: /Work/ }))
+    const workItem = await screen.findByRole('menuitem', { name: /Work/ })
+    // Work has not named who it is yet; the default account's sign-in shows elsewhere.
+    expect(workItem.textContent).toContain('Not signed in')
+    expect(screen.getByRole('menuitem', { name: /Default/ }).textContent).not.toContain(
+      'Not signed in',
+    )
+    fireEvent.click(workItem)
 
     await waitFor(() =>
       expect(
