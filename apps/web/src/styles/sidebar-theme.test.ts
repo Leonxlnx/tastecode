@@ -33,7 +33,6 @@ describe('sidebar theme CSS', () => {
     expect(appCss).toMatch(/\.rail \{[^}]*--rail-text: #dcdcda;/s)
     expect(appCss).toMatch(/:root\[data-theme='light'\] \.rail \{[^}]*--rail-text: var\(--text\);/s)
     expect(appCss).toMatch(/\.navitem \{[^}]*color: var\(--rail-text\);/s)
-    expect(appCss).toMatch(/\.proj__toggle \{[^}]*color: var\(--rail-text\);/s)
     expect(appCss).toMatch(/\.sess \{[^}]*color: var\(--rail-text\);/s)
   })
 
@@ -54,12 +53,11 @@ describe('sidebar theme CSS', () => {
     expect(appCss).toMatch(/\.rail__search \{[^}]*width: 26px;[^}]*height: 26px;/s)
   })
 
-  it('sets chat titles in the rail type, lighter than their project, and softens only dark', () => {
+  it('sets chat titles in the rail type and softens only dark', () => {
     const titleRule =
       appCss.match(/^\.sess__title \{(?<body>[\s\S]*?)\n\}/m)?.groups?.['body'] ?? ''
     expect(titleRule).not.toContain('font-size')
     expect(titleRule).not.toContain('font-weight')
-    expect(appCss).toMatch(/\.proj__name \{[^}]*font-weight: 500;/s)
     expect(appCss).toMatch(/\.sessrow\.is-unread \.sess__title \{[^}]*font-weight: 560;/s)
     expect(appCss).toMatch(
       /:root\[data-theme='dark'\] \.sess__title \{[^}]*color: color-mix\(in srgb, var\(--rail-text\) 78%, transparent\);/s,
@@ -97,21 +95,9 @@ describe('sidebar theme CSS', () => {
     )
   })
 
-  it('hangs project chats off a soft guide under the folder mark', () => {
-    expect(appCss).not.toContain('.proj__chevron')
-    expect(appCss).toMatch(/\.proj__toggle \{[^}]*gap: 8px;[^}]*padding: 2px 7px;/s)
-    expect(appCss).toMatch(
-      /\.proj__sessions \{[^}]*--sess-indent: 7px;[^}]*display: grid;[^}]*grid-template-columns: minmax\(0, 1fr\);[^}]*row-gap: 2px;[^}]*margin: 2px 0 8px;[^}]*padding: 0;/s,
-    )
-    // Pinned chats keep the outer gutter (7px); a project's chats indent past
-    // the guide, which sits on the folder mark's centre (7px + 13px / 2).
-    expect(appCss).toMatch(/\.proj__drawer > \.proj__sessions \{[^}]*--sess-indent: 22px;/s)
-    expect(appCss).toMatch(
-      /\.proj::after \{[^}]*position: absolute;[^}]*left: 13px;[^}]*width: 1px;[^}]*background: var\(--rail-guide\);[^}]*pointer-events: none;/s,
-    )
-    // Pinned chats share the project-chat indent; no override may pull them left.
+  it('starts the text of every chat row on one column', () => {
+    // Pinned chats share the list's indent; no override may pull them left.
     expect(appCss).not.toMatch(/\.sessrow\.is-pinned[^{]*\{[^}]*padding-left/s)
-    expect(appCss).not.toMatch(/\.proj__sessions \{[^}]*border-left/s)
     // Every text that sits in a chat row starts where the title does:
     // indent + 13px mark + 8px gap.
     expect(appCss).toMatch(/\.sess \{[^}]*gap: 8px;[^}]*padding: 0 8px 0 var\(--sess-indent\);/s)
@@ -119,14 +105,7 @@ describe('sidebar theme CSS', () => {
     expect(appCss).toMatch(
       /\.proj__sessions-toggle \{[^}]*padding: 0 8px 0 calc\(var\(--sess-indent\) \+ 21px\);/s,
     )
-    expect(appCss).toMatch(
-      /\.proj__sessions > \.rail__hint \{[^}]*padding-left: calc\(var\(--sess-indent\) \+ 21px\);/s,
-    )
     expect(appCss).not.toMatch(/\.sessrow\.is-pinned \.sess \{/s)
-  })
-
-  it('gives project actions room away from the scrollbar', () => {
-    expect(appCss).toMatch(/\.proj__head > \.icon-btn \{[^}]*width: 28px;[^}]*height: 28px;/s)
   })
 
   it('keeps the provider visible before the working chat spinner', () => {
@@ -205,19 +184,9 @@ describe('sidebar theme CSS', () => {
     expect(appCss).not.toMatch(/\.sess__unread-dot \{[^}]*position: absolute/s)
   })
 
-  it('gives project rows a consistent readable rhythm', () => {
+  it('gives chat rows a consistent readable rhythm', () => {
     const sessRule = appCss.match(/^\.sess \{(?<body>[\s\S]*?)\n\}/m)?.groups?.['body'] ?? ''
     expect(appCss).toMatch(/\.rail__body \{[^}]*padding: 8px 4px 18px 10px;/s)
-    expect(appCss).toMatch(/\.proj \{[^}]*margin-bottom: 4px;/s)
-    expect(appCss).toMatch(
-      /\.proj__drawer\[data-open='false'\] > \.proj__sessions \{[^}]*margin-block: 0;/s,
-    )
-    expect(appCss).toMatch(
-      /\.proj__head \{[^}]*height: 28px;[^}]*min-height: 28px;[^}]*padding-right: 4px;/s,
-    )
-    expect(appCss).toMatch(
-      /\.proj__toggle \{[^}]*font-size: var\(--rail-font-size\);[^}]*font-weight: var\(--rail-font-weight\);[^}]*height: 28px;[^}]*min-height: 28px;/s,
-    )
     expect(appCss).toMatch(/^\s*\.sessrow \{[^}]*height: 28px;[^}]*border-radius: var\(--r-md\);/ms)
     expect(sessRule).toContain('height: 28px;')
     expect(sessRule).toContain('padding: 0 8px 0 var(--sess-indent);')
@@ -225,11 +194,6 @@ describe('sidebar theme CSS', () => {
     expect(sessRule).toContain('font-weight: var(--rail-font-weight);')
     expect(sessRule).toContain('border-radius: var(--r-md);')
     expect(sidebarSource).toContain('const CHAT_ROW_PITCH = 30')
-    expect(appCss).toMatch(
-      /\.proj\[data-drop-position\]::before \{[^}]*right: 6px;[^}]*left: 26px;[^}]*height: 2px;[^}]*background: var\(--light\);/s,
-    )
-    expect(appCss).toMatch(/\.proj\[data-drop-position='before'\]::before \{[^}]*top: -1px;/s)
-    expect(appCss).toMatch(/\.proj\[data-drop-position='after'\]::before \{[^}]*bottom: -1px;/s)
   })
 
   it('uses the reference pill shape without changing the virtual row geometry', () => {
@@ -247,6 +211,5 @@ describe('sidebar theme CSS', () => {
     )
     // The slide is a WAAPI transform (active-indicator.ts), never a layout transition.
     expect(appCss).not.toMatch(/\.sessrow__indicator \{[^}]*transition/s)
-    expect(appCss).toMatch(/\.proj__drawer > \.proj__sessions \{[^}]*--sess-indicator-x: 12px;/s)
   })
 })

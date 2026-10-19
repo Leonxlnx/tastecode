@@ -525,8 +525,7 @@
 }
 
 @media (hover: hover) and (pointer: fine) {
-  .sessrow:hover .sess__actions,
-  .proj__head:hover .dots {
+  .sessrow:hover .sess__actions {
     opacity: 1;
     pointer-events: auto;
   }
@@ -540,18 +539,6 @@
   }
 
   .sess:hover {
-    color: var(--rail-text);
-  }
-
-  .proj__head:hover {
-    background: var(--control-hover);
-  }
-
-  .proj__head:hover .icon-btn {
-    opacity: 1;
-  }
-
-  .proj__toggle:hover {
     color: var(--rail-text);
   }
 
@@ -570,12 +557,6 @@
   color: var(--text-3);
   opacity: 0;
   transition: opacity var(--dur-fast) var(--ease-out);
-}
-
-.proj__head > .menuwrap .menutrigger {
-  padding: 0;
-  background: transparent !important;
-  box-shadow: none !important;
 }
 
 .visually-hidden {
@@ -733,32 +714,6 @@
   line-height: 1.2;
 }
 
-.section--row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding-right: 3px;
-}
-
-.section__add {
-  display: grid;
-  place-items: center;
-  width: 20px;
-  height: 20px;
-  padding: 0;
-  background: none;
-  border: 0;
-  border-radius: var(--r-sm);
-  color: var(--text-3);
-  cursor: pointer;
-  transition: color var(--dur-fast) var(--ease-out);
-}
-
-.section__add:is(:hover, :focus-visible) {
-  background: var(--control-hover);
-  color: var(--text);
-}
-
 .rail__hint {
   color: var(--text-3);
   font-size: var(--t-sm);
@@ -766,185 +721,7 @@
   padding: 2px 8px;
 }
 
-/* ---------- projects & sessions ---------- */
-
-.proj {
-  position: relative;
-  margin-bottom: 4px;
-}
-
-.proj[draggable='true'] > .proj__head {
-  cursor: grab;
-}
-
-.proj.is-dragging {
-  opacity: 0.42;
-}
-
-.proj[data-drop-position]::before {
-  content: '';
-  position: absolute;
-  z-index: 2;
-  right: 6px;
-  left: 26px;
-  height: 2px;
-  border-radius: var(--r-pill);
-  background: var(--light);
-  pointer-events: none;
-}
-
-.proj[data-drop-position='before']::before {
-  top: -1px;
-}
-
-.proj[data-drop-position='after']::before {
-  bottom: -1px;
-}
-
-.proj__head {
-  display: flex;
-  align-items: center;
-  gap: 1px;
-  height: 28px;
-  min-height: 28px;
-  padding-right: 4px;
-  border-radius: var(--r-md);
-  transition: background var(--dur-fast) var(--ease-out);
-}
-
-.proj:has(.proj__toggle:focus-visible) > .proj__head {
-  background: var(--control-hover);
-}
-
-.proj__head > .icon-btn {
-  width: 28px;
-  height: 28px;
-}
-
-.proj__toggle {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  background: none;
-  border: 0;
-  border-radius: var(--r-md);
-  color: var(--rail-text);
-  cursor: pointer;
-  font: inherit;
-  font-size: var(--rail-font-size);
-  font-weight: var(--rail-font-weight);
-  letter-spacing: var(--rail-letter-spacing);
-  height: 28px;
-  min-height: 28px;
-  padding: 2px 7px;
-  text-align: left;
-}
-
-.proj__mark {
-  background: currentColor;
-  color: var(--text-2);
-  flex: none;
-  width: 13px;
-  height: 13px;
-  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5%204h4l3%203h7a2%202%200%200%201%202%202v8a2%202%200%200%201%20-2%202h-14a2%202%200%200%201%20-2%20-2v-11a2%202%200%200%201%202%20-2'/%3E%3C/svg%3E")
-    center / 13px 13px no-repeat;
-  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5%204h4l3%203h7a2%202%200%200%201%202%202v8a2%202%200%200%201%20-2%202h-14a2%202%200%200%201%20-2%20-2v-11a2%202%200%200%201%202%20-2'/%3E%3C/svg%3E")
-    center / 13px 13px no-repeat;
-}
-
-.proj__name {
-  flex: 1;
-  /* Parents carry the weight; their chats read lighter beneath them. */
-  font-weight: 500;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* 'auto' cannot be transitioned, but 0fr → 1fr can, and it measures the real
-   content — no per-row guess, and no dead time at either end. */
-.proj__drawer {
-  display: grid;
-  grid-template-rows: 0fr;
-  overflow: hidden;
-  transition:
-    grid-template-rows var(--dur-slow) var(--ease-out),
-    opacity var(--dur-fast) var(--ease-out);
-}
-
-.proj__drawer[data-open='true'] {
-  grid-template-rows: 1fr;
-}
-
-.proj__drawer[data-open='false'] {
-  opacity: 0;
-}
-
-.proj__drawer[data-open='false'] > .proj__sessions {
-  margin-block: 0;
-}
-
-.proj__drawer > .proj__sessions {
-  /* A project's chats indent past the guide under its folder mark. */
-  --sess-indent: 22px;
-  --sess-indicator-x: 12px;
-  min-height: 0;
-}
-
-/* The guide runs from under the folder mark (centre 13.5px) to the middle of
-   the last row. It hangs on the project so the drawer's clip cannot cut it,
-   and paints nothing once the drawer is shorter than the offsets. */
-.proj::after {
-  content: '';
-  position: absolute;
-  top: 24px;
-  bottom: 22px;
-  left: 13px;
-  width: 1px;
-  border-radius: var(--r-pill);
-  background: var(--rail-guide);
-  pointer-events: none;
-}
-
-.proj__sessions {
-  /* Pinned chats have no parent, so they keep the outer gutter. */
-  --sess-indent: 7px;
-  --sess-indicator-x: 1px;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  row-gap: 2px;
-  list-style: none;
-  margin: 2px 0 8px;
-  padding: 0;
-  /* Let the grid item shrink so long titles reach their ellipsis boundary. */
-  min-width: 0;
-  max-width: 100%;
-}
-
-.proj__sessions--virtual {
-  position: relative;
-  overflow-x: hidden;
-  overflow-y: auto;
-  overflow-anchor: none;
-  contain: layout paint style;
-  scrollbar-width: thin;
-}
-
-.proj__sessions--virtual::before {
-  content: '';
-  display: block;
-  width: 1px;
-  height: var(--virtual-session-height);
-}
-
-.proj__sessions--virtual > :is(.sessrow, .proj__sessions-toggle-row) {
-  position: absolute;
-  top: 0;
-  right: 0;
-  left: 0;
-}
+/* ---------- chat rows ---------- */
 
 .proj__sessions-toggle {
   width: 100%;
@@ -1018,16 +795,6 @@
   font-size: var(--rail-font-size);
   font-weight: var(--rail-font-weight);
   letter-spacing: var(--rail-letter-spacing);
-}
-
-/* Pinned chats keep the same 28px title indent as project chats, so every
-   chat title in the rail starts on one line under the project names. */
-.pinned-sessions {
-  margin: 0 0 10px;
-}
-
-.proj__sessions > .rail__hint {
-  padding-left: calc(var(--sess-indent) + 21px);
 }
 
 .sess__title {
@@ -3672,8 +3439,7 @@
     padding-right: 56px;
   }
 
-  .sessrow .sess__actions,
-  .proj__head .dots {
+  .sessrow .sess__actions {
     opacity: 1;
     pointer-events: auto;
   }

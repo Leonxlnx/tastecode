@@ -9,7 +9,6 @@ describe('hover gating', () => {
   it('keeps hover-only motion on precise pointers', () => {
     expect((appCss.match(/\.sessrow:hover \.sess__actions/g) ?? []).length).toBe(1)
     expect((appCss.match(/\.sessrow:hover \.sess__meta/g) ?? []).length).toBe(1)
-    expect((appCss.match(/\.proj__head:hover \.dots/g) ?? []).length).toBe(1)
     expect((appCss.match(/\.menutrigger:hover \.dots/g) ?? []).length).toBe(1)
     expect((inboxCss.match(/\.inbox-card:hover \.inbox-card__quick/g) ?? []).length).toBe(1)
     expect((threadCss.match(/\.said:hover > \.said__actions/g) ?? []).length).toBe(1)
@@ -21,7 +20,7 @@ describe('hover gating', () => {
     expect(appCss).toMatch(/\.sessrow:focus-within \.sess__actions \{[^}]*pointer-events: auto;/s)
     expect(appCss).toMatch(/\.sessrow:focus-within \.sess__meta \{[^}]*opacity: 0;/s)
     expect(appCss).toMatch(
-      /@media \(hover: hover\) and \(pointer: fine\) \{[\s\S]*?\.sessrow:hover \.sess__actions,[\s\S]*?\.proj__head:hover \.dots \{/s,
+      /@media \(hover: hover\) and \(pointer: fine\) \{[\s\S]*?\.sessrow:hover \.sess__actions \{/s,
     )
     expect(appCss).toMatch(
       /@media \(hover: hover\) and \(pointer: fine\) \{[\s\S]*?\.sessrow:hover \.sess__meta \{/s,
