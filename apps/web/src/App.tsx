@@ -5374,7 +5374,7 @@ export function App() {
   )
   const closeSettings = useCallback(() => setSettingsOpen(false), [])
   // Settings covers the window with an opaque page. Once its fade-in has
-  // finished, the app behind it cannot be seen, so the app's animations (a
+  // finished, the app behind it cannot be seen, so the app's endless loops (a
   // working chat's spinner, the live activity row) pause until it closes
   // instead of drawing a frame every refresh.
   const shellBody = useRef<HTMLDivElement>(null)
@@ -5383,7 +5383,10 @@ export function App() {
   }, [])
   useLayoutEffect(() => {
     if (!settingsOpen) shellBody.current?.removeAttribute('data-covered')
-  }, [settingsOpen])
+    // Settings back in place of a login terminal has no fade: it covers the
+    // app from its first frame.
+    else if (settingsReturning) shellBody.current?.setAttribute('data-covered', '')
+  }, [settingsOpen, settingsReturning])
   const forceOnboarding = useCallback(() => {
     setSettingsOpen(false)
     setOnboardingPreview(true)

@@ -3520,7 +3520,7 @@ describe('web client', () => {
     },
   )
 
-  it('pauses the app behind Settings once its fade-in has covered it', async () => {
+  it("pauses the app's loops behind Settings once its fade-in has covered it", async () => {
     render(<App />)
     await screen.findByRole('button', { name: /^New session,/ })
     const shellBody = document.querySelector('.shell__body')!
@@ -5933,6 +5933,8 @@ describe('new chats', () => {
       expect(document.querySelector('.surface-enter')?.classList.contains('is-returning')).toBe(
         true,
       )
+      // With no fade to wait for, the app's loops behind it pause at once.
+      expect(document.querySelector('.shell__body')!.hasAttribute('data-covered')).toBe(true)
       await waitFor(() => expect(workspace.classList.contains('is-panel-open')).toBe(false))
       expect(workspace.classList.contains('is-panel-expanded')).toBe(false)
       expect(screen.queryByLabelText('Claude Code login terminal')).toBeNull()
