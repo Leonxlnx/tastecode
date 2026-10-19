@@ -208,7 +208,10 @@ type AuthStatus = ProviderStatus['auth']
  * per provider runs at a time.
  */
 export class SignInChecks {
-  #checks = new Map<ProviderStatus['id'], { last?: AuthStatus; running?: Promise<AuthStatus> }>()
+  #checks = new Map<
+    ProviderStatus['id'],
+    { last?: AuthStatus | undefined; running?: Promise<AuthStatus> | undefined }
+  >()
 
   constructor(
     private readonly check: (provider: ProviderStatus['id']) => Promise<AuthStatus>,
