@@ -189,6 +189,19 @@ describe('provider sheets', () => {
       status: { label: 'Unavailable', detail: 'Plan limits couldn’t be loaded. offline' },
       retryable: true,
     })
+    // While the automatic retries run there is no Retry to press.
+    const retrying = {
+      ...failed,
+      retry: { attempt: 1, of: 3, message: 'offline' },
+    } as unknown as UsageSummaryState
+    expect(sheetLimits(retrying, NOW)).toEqual({
+      rows: [],
+      status: {
+        label: 'Retrying…',
+        detail: 'Plan limits couldn’t be loaded. offline Trying again, 1 of 3.',
+      },
+      retryable: false,
+    })
   })
 })
 

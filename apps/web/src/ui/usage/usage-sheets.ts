@@ -134,8 +134,10 @@ export function sheetLimits(state: UsageSummaryState, now: number): SheetLimits 
       source?.status === 'ready' && limits.length === 0 && state.status !== 'error'
         ? undefined
         : sourceStatus(state, source, limits.length > 0, now),
+    // Automatic retries run on their own; the button returns once they stop.
     retryable:
-      state.status === 'error' || (state.status === 'ready' && source?.status === 'unavailable'),
+      !(state.status !== 'ready' && state.retry) &&
+      (state.status === 'error' || (state.status === 'ready' && source?.status === 'unavailable')),
   }
 }
 
