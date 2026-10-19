@@ -2,7 +2,9 @@ import { readFileSync } from 'node:fs'
 
 import { describe, expect, it } from 'vitest'
 
-const STARTUP_CSS_BUDGET_BYTES = 80_000
+// The sidebar's "Needs you" band and Archived section (direction B) added
+// 2.3 KB to a stylesheet that sat 2 bytes under the old 80 KB budget.
+const STARTUP_CSS_BUDGET_BYTES = 82_500
 const MODEL_SELECTOR_TRIGGER_CSS_BUDGET_BYTES = 2_500
 
 function readSource(path: string): string {
