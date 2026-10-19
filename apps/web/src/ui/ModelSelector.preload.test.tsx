@@ -17,7 +17,13 @@ const MODEL: Model = {
   serviceTiers: [],
 }
 const MODELS: ModelChoice[] = [
-  { key: 'codex:gpt-5.6-sol', provider: 'codex', sourceName: 'Codex', mark: 'openai', model: MODEL },
+  {
+    key: 'codex:gpt-5.6-sol',
+    provider: 'codex',
+    sourceName: 'Codex',
+    mark: 'openai',
+    model: MODEL,
+  },
 ]
 
 afterEach(() => {
