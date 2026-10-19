@@ -291,12 +291,23 @@
           <a href="./feature-inventory.html">Inventory</a>
           <a href="./CLAUDE-HANDOFF.md">Claude handoff</a>
         </nav>
-        <span class="meta">2026-10-19 nightly · includes main b86daab1 (PR #1899)</span>
+        <span class="meta">2026-10-19 nightly · includes main 58d89955 (PR #1909)</span>
       </div>
     </div>
 
     <div class="wrap">
       <section id="scope">
+        <p>
+          October 19, second main into nightly (PR #1909): main 58d89955, the seven commits of PRs
+          #1902 to #1907, merged with a merge commit while nightly keeps every provider. Plan limits
+          draw as red-to-green gauges that fill when the popup opens, with nightly's even-pace tick
+          kept on top; a failed limits request with nothing to show retries three times as Retrying…
+          before it leaves the list, on top of nightly's server backoff and pushed limits, and the
+          Usage sheets hide their Retry while that runs; finished, waiting and failed chats get
+          green, yellow and red dots; the workspace mode menu fits its labels; Grok's failed billing
+          read has a stable message. Nightly keeps its Settings v1 type, so main's Settings
+          type-scale fix (#1903) is left out here.
+        </p>
         <p>
           October 19, main into nightly (PR #1899): main b86daab1, the 99 commits since the last
           sync at 0ad74ec3, merged with a merge commit while nightly keeps every provider, API
