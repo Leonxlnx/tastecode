@@ -41,14 +41,6 @@
   background: var(--bg-rail);
 }
 
-/* Set while Settings covers the window with its opaque page (after its
-   fade-in): nothing here can be seen, so nothing here animates either. */
-.shell__body[data-covered] *,
-.shell__body[data-covered] *::before,
-.shell__body[data-covered] *::after {
-  animation-play-state: paused !important;
-}
-
 :root[data-glass='on'][data-shell='desktop']:not([data-theme='light']) .shell__body {
   /* The OS blur material must stay visible behind the sidebar column. */
   background: transparent;
