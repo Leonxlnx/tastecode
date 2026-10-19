@@ -1257,6 +1257,7 @@ const ProjectRow = memo(function ProjectRow(props: {
   const [open, setOpen] = useState(props.active)
   const [sessionsMounted, setSessionsMounted] = useState(props.active)
   const [sessionLimit, setSessionLimit] = useState(COLLAPSED_PROJECT_SESSION_COUNT)
+  const waiting = useMemo(() => waitingSummary(props.project.sessions), [props.project.sessions])
   const [actionsReady, setActionsReady] = useState(false)
   const [renaming, setRenaming] = useState(false)
   const [confirming, setConfirming] = useState<'archive' | 'remove'>()
@@ -1351,6 +1352,15 @@ const ProjectRow = memo(function ProjectRow(props: {
             >
               <span className="proj__mark" aria-hidden />
               <span className="proj__name">{displayName(props.project)}</span>
+              {/* A folded project still says when a chat inside needs the user:
+                  one mark and how many. Open, the rows say it themselves. */}
+              {!expanded && waiting ? (
+                <span className="proj__waiting">
+                  <span className={`sess__status-dot is-${waiting.tone}`} aria-hidden />
+                  <span aria-hidden>{waiting.count}</span>
+                  <span className="visually-hidden">, {waitingLabel(waiting.count)}</span>
+                </span>
+              ) : null}
             </button>
 
             <Menu
@@ -1803,6 +1813,26 @@ type ConfirmCopy = { title: string; body: string; action: string; destructive: b
 
 function chatCount(count: number): string {
   return `${count} chat${count === 1 ? '' : 's'}`
+}
+
+/** What a folded project reports: how many chats wait on the user, and one
+ *  mark for them, the attention colour when any waits on an answer. */
+function waitingSummary(
+  sessions: Session[],
+): { count: number; tone: 'attention' | 'failed' } | undefined {
+  let count = 0
+  let waiting = false
+  for (const session of sessions) {
+    if (session.status === 'approval' || session.status === 'input') {
+      count += 1
+      waiting = true
+    } else if (session.status === 'failed') count += 1
+  }
+  return count === 0 ? undefined : { count, tone: waiting ? 'attention' : 'failed' }
+}
+
+function waitingLabel(count: number): string {
+  return count === 1 ? '1 chat needs you' : `${count} chats need you`
 }
 
 /** Removing only forgets the sidebar entry, so it is not styled as destructive.

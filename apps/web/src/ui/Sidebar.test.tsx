@@ -1972,6 +1972,33 @@ describe('Sidebar direction A rows', () => {
     />
   )
 
+  it('shows one mark and a count on a folded project whose chats need the user', () => {
+    render(
+      quietSidebar([
+        {
+          path: '/work/app',
+          name: 'App',
+          sessions: [
+            { ...session('approval', 'Waiting chat'), status: 'approval' as const },
+            { ...session('failed', 'Failed chat'), status: 'failed' as const, unread: true },
+            { ...session('working', 'Working chat'), status: 'working' as const },
+            session('idle', 'Idle chat'),
+          ],
+        },
+      ]),
+    )
+    const head = screen.getByRole('button', { name: /^App/ })
+    expect(head.getAttribute('aria-expanded')).toBe('false')
+    const mark = head.querySelector('.proj__waiting')
+    expect(mark?.querySelectorAll('.sess__status-dot')).toHaveLength(1)
+    expect(mark?.querySelector('.sess__status-dot.is-attention')).not.toBeNull()
+    expect(head.textContent).toContain('2')
+    expect(head.textContent).toContain('2 chats need you')
+
+    fireEvent.click(head)
+    expect(head.querySelector('.proj__waiting')).toBeNull()
+  })
+
   it('has one top action for each thing: no full-width New project', () => {
     const onAddProject = vi.fn()
     render(quietSidebar([], { onAddProject }))

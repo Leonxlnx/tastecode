@@ -837,12 +837,27 @@
 }
 
 .proj__name {
-  flex: 1;
+  flex: 0 1 auto;
   /* Parents carry the weight; their chats read lighter beneath them. */
   font-weight: 500;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* A folded project's one mark and count of chats that need the user. */
+.proj__waiting {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+  color: var(--text-2);
+  font-size: var(--t-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.proj__waiting > .sess__status-dot {
+  margin: 0;
 }
 
 /* 'auto' cannot be transitioned, but 0fr → 1fr can, and it measures the real
