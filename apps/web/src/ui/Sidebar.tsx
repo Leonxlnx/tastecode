@@ -92,7 +92,7 @@ import { compactRelativeTime, readSessionClock, subscribeSessionClock } from './
 import { formatWakeTime, snoozePresets } from './snooze-presets.js'
 import '../styles/account-card.css'
 import '../styles/sidebar-list.css'
-import { InboxRailSkeleton, SidebarTreeSkeleton } from './SurfaceSkeletons.js'
+import { InboxRailSkeleton, SidebarListSkeleton } from './SurfaceSkeletons.js'
 
 type AccountLimitsModule = typeof import('./AccountLimits.js')
 type AccountLimitsComponent = AccountLimitsModule['AccountLimits']
@@ -846,7 +846,7 @@ function SidebarComponent(props: {
               ) : null}
               {props.projects.length === 0 ? (
                 props.projectsLoading ? (
-                  <SidebarTreeSkeleton />
+                  <SidebarListSkeleton />
                 ) : (
                   <p className="rail__hint">Nothing here yet.</p>
                 )

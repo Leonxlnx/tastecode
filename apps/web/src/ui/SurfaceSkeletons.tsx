@@ -11,38 +11,27 @@ import '../styles/surface-skeleton.css'
  * stylesheets) are lazy chunks that have not loaded yet.
  */
 
-const SIDEBAR_TREE: readonly { name: number; sessions: readonly string[] }[] = [
-  { name: 96, sessions: ['78%', '62%', '86%', '54%'] },
-  { name: 68, sessions: ['70%', '46%'] },
-  { name: 112, sessions: [] },
-  { name: 80, sessions: [] },
-]
+const SIDEBAR_LIST: readonly string[] = ['82%', '64%', '90%', '58%', '76%', '68%', '84%', '52%']
 
-/** Project rows with their chats, drawn with the rail's own row classes. */
-export function SidebarTreeSkeleton() {
+/** The list's filter and a column of chat rows, drawn with the rail's own row classes. */
+export function SidebarListSkeleton() {
   return (
     <SkeletonStatus label="Loading projects…" className="rail-skeleton">
-      {SIDEBAR_TREE.map((project, index) => (
-        <div className="proj" key={index}>
-          <div className="proj__head">
-            <span className="proj__toggle">
+      <div className="chatfilter">
+        <span className="menutrigger chatfilter__trigger">
+          <Skeleton className="rail-skeleton__name" width={72} />
+        </span>
+      </div>
+      <ul className="chatlist">
+        {SIDEBAR_LIST.map((width, row) => (
+          <li className="sessrow" key={row}>
+            <span className="sess">
               <Skeleton className="rail-skeleton__mark" />
-              <Skeleton className="rail-skeleton__name" width={project.name} />
+              <Skeleton className="rail-skeleton__chat" width={width} />
             </span>
-          </div>
-          {project.sessions.length > 0 ? (
-            <ul className="proj__sessions">
-              {project.sessions.map((width, row) => (
-                <li className="sessrow" key={row}>
-                  <span className="sess">
-                    <Skeleton className="rail-skeleton__chat" width={width} />
-                  </span>
-                </li>
-              ))}
-            </ul>
-          ) : null}
-        </div>
-      ))}
+          </li>
+        ))}
+      </ul>
     </SkeletonStatus>
   )
 }
