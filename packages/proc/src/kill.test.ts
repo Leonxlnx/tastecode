@@ -1,5 +1,5 @@
 import { ChildProcess, spawn } from 'node:child_process'
-import { once } from 'node:events'
+import { EventEmitter, once } from 'node:events'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -7,9 +7,11 @@ import { pathToFileURL } from 'node:url'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { killTree, spawnCli, spawnOwned } from './index.js'
 import {
+  leaveRunning,
   setTaskkillLauncherForTests,
   stopUnfinishedTrees,
   unfinishedChildrenForTests,
+  type LeftRunningProcess,
 } from './kill.js'
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -410,6 +412,51 @@ describe('Windows tree termination', () => {
     await expect(stopped).resolves.toBeUndefined()
     expect(child.kill).not.toHaveBeenCalled()
     expect(released).toEqual([true, true])
+  })
+
+  /** A shim as leaveRunning sees it: exit events and handles it can release. */
+  function leftShim() {
+    const events = new EventEmitter()
+    const unrefs: string[] = []
+    const handle = (name: string) => ({ unref: () => unrefs.push(name) })
+    const child = Object.assign(shim(), {
+      unref: () => unrefs.push('child'),
+      once: (event: string, listener: () => void) => {
+        events.once(event, listener)
+        return child
+      },
+      stdin: handle('stdin'),
+      stdout: handle('stdout'),
+      stderr: handle('stderr'),
+    })
+    return { child, events, unrefs, left: child as unknown as LeftRunningProcess }
+  }
+
+  it('leaves a command that missed its limit to finish, without holding this process', async () => {
+    const { child, events, unrefs, left } = leftShim()
+    const { launch } = taskkill(child, [[400, 0]])
+    leaveRunning(left, 60_000)
+    expect(unrefs).toEqual(['child', 'stdin', 'stdout', 'stderr'])
+    await vi.advanceTimersByTimeAsync(30_000)
+    child.exitCode = 0
+    events.emit('exit', 0, null)
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(launch).not.toHaveBeenCalled()
+    expect(child.kill).not.toHaveBeenCalled()
+  })
+
+  it('stops a command still running after the limit with one taskkill run', async () => {
+    const { child, left } = leftShim()
+    const { launch } = taskkill(child, ['never'])
+    leaveRunning(left, 60_000)
+    await vi.advanceTimersByTimeAsync(59_999)
+    expect(launch).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(1)
+    expect(launch).toHaveBeenCalledTimes(1)
+    // No second run joins a slow one, and the shim is never killed under it.
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(launch).toHaveBeenCalledTimes(1)
+    expect(child.kill).not.toHaveBeenCalled()
   })
 
   it('kills the shim once runs that outlived the budget have all failed', async () => {
