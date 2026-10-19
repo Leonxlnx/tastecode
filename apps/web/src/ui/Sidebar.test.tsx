@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { Profiler } from 'react'
-import { Sidebar } from './Sidebar.js'
+import { Sidebar, type Session } from './Sidebar.js'
 import type { AccountLimitsState } from './AccountLimits.js'
 import type { ProfileIdentityPreferences } from '../profile-preferences.js'
 
@@ -1084,7 +1084,7 @@ describe('Sidebar chat actions', () => {
     )
 
     expect(
-      [...document.querySelectorAll('.proj__sessions:not(.pinned-sessions) .sess__title')].map(
+      [...document.querySelectorAll('.proj__drawer .sess__title')].map(
         (title) => title.textContent,
       ),
     ).toEqual(['Older chat', 'Just done', 'Still running', 'Newer chat'])
@@ -1092,6 +1092,147 @@ describe('Sidebar chat actions', () => {
     expect(justDone.querySelector('.sess__meta > .sess__status-dot.is-success')).not.toBeNull()
     expect(justDone.querySelector('.sess__unread-dot')).toBeNull()
     expect(justDone.closest('.sessrow')?.classList.contains('is-unread')).toBe(true)
+  })
+
+  it('lists chats that need you above the tree and clears an entry once it is read', () => {
+    const onSelectSession = vi.fn()
+    const onMarkSessionRead = vi.fn()
+    const approval = {
+      ...session('thread-approval', 'Run the migration'),
+      status: 'approval' as const,
+      statusSince: 1,
+    }
+    const done = {
+      ...session('thread-done', 'Answer is ready'),
+      status: 'ready' as const,
+      unread: true,
+      statusSince: 2,
+    }
+    const tree = (sessions: Session[]) => [{ path: '/work/harness', name: 'TasteCode', sessions }]
+    const view = (projects: ReturnType<typeof tree>, active?: string) => (
+      <Sidebar
+        projects={projects}
+        activeProjectPath="/work/harness"
+        activeSessionId={active}
+        account={undefined}
+        providerName="Codex"
+        collapsed={false}
+        width={248}
+        onWidthChange={vi.fn()}
+        onClose={vi.fn()}
+        onAddProject={vi.fn()}
+        onNewSession={vi.fn()}
+        onSelectSession={onSelectSession}
+        onRenameProject={vi.fn()}
+        onRemoveProject={vi.fn()}
+        onTogglePin={vi.fn()}
+        onRenameSession={vi.fn()}
+        onDeleteSession={vi.fn()}
+        onMarkSessionRead={onMarkSessionRead}
+        onArchiveProject={vi.fn()}
+        onReorderSession={vi.fn()}
+        onOpenSearch={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />
+    )
+    const waiting = tree([session('thread-quiet', 'Quiet chat'), approval, done])
+    const rendered = render(view(waiting))
+
+    const band = screen.getByRole('region', { name: 'Needs you' })
+    expect(
+      within(band)
+        .getAllByRole('button')
+        .map((button) => button.getAttribute('aria-label')),
+    ).toEqual([
+      'Run the migration, waiting for approval, TasteCode',
+      'Answer is ready, finished, unread, TasteCode',
+      'Mark Answer is ready as read',
+    ])
+    // The tree below keeps its own order and lists each chat once more.
+    expect(
+      [...document.querySelectorAll('.proj__drawer .sess__title')].map(
+        (title) => title.textContent,
+      ),
+    ).toEqual(['Quiet chat', 'Run the migration', 'Answer is ready'])
+
+    fireEvent.click(within(band).getByRole('button', { name: 'Mark Answer is ready as read' }))
+    expect(onMarkSessionRead).toHaveBeenCalledWith('thread-done')
+    fireEvent.click(within(band).getByRole('button', { name: /^Run the migration,/ }))
+    expect(onSelectSession).toHaveBeenCalledWith('thread-approval')
+
+    // The open chat is already in front of the user.
+    rendered.rerender(view(waiting, 'thread-approval'))
+    expect(
+      within(screen.getByRole('region', { name: 'Needs you' })).queryByRole('button', {
+        name: /^Run the migration,/,
+      }),
+    ).toBeNull()
+
+    // Answered and read: nothing waits, and the band takes no space at all.
+    rendered.rerender(
+      view(
+        tree([
+          session('thread-quiet', 'Quiet chat'),
+          { ...approval, status: 'idle' },
+          { ...done, status: 'idle', unread: false },
+        ]),
+      ),
+    )
+    expect(screen.queryByRole('region', { name: 'Needs you' })).toBeNull()
+    expect(document.querySelector('.needs-band')).toBeNull()
+  })
+
+  it('folds the band after five chats and counts what a folded project holds', () => {
+    const waiting = Array.from({ length: 7 }, (_, index) => ({
+      ...session(`thread-${index}`, `Waiting ${index}`),
+      status: 'input' as const,
+      statusSince: index,
+    }))
+    render(
+      <Sidebar
+        projects={[
+          { path: '/work/open', name: 'Open project', sessions: [session('open-1', 'Open chat')] },
+          { path: '/work/folded', name: 'Folded project', sessions: waiting },
+        ]}
+        activeProjectPath="/work/open"
+        activeSessionId="open-1"
+        account={undefined}
+        providerName="Codex"
+        collapsed={false}
+        width={248}
+        onWidthChange={vi.fn()}
+        onClose={vi.fn()}
+        onAddProject={vi.fn()}
+        onNewSession={vi.fn()}
+        onSelectSession={vi.fn()}
+        onRenameProject={vi.fn()}
+        onRemoveProject={vi.fn()}
+        onTogglePin={vi.fn()}
+        onRenameSession={vi.fn()}
+        onDeleteSession={vi.fn()}
+        onArchiveProject={vi.fn()}
+        onReorderSession={vi.fn()}
+        onOpenSearch={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />,
+    )
+
+    const band = screen.getByRole('region', { name: 'Needs you' })
+    expect(band.querySelectorAll('.sessrow')).toHaveLength(5)
+    // Questions cannot be marked read: they leave once answered in the chat.
+    expect(within(band).queryByRole('button', { name: /^Mark / })).toBeNull()
+    fireEvent.click(within(band).getByRole('button', { name: '+2 more' }))
+    expect(band.querySelectorAll('.sessrow')).toHaveLength(7)
+    fireEvent.click(within(band).getByRole('button', { name: 'Show less' }))
+    expect(band.querySelectorAll('.sessrow')).toHaveLength(5)
+
+    const folded = screen.getByRole('button', { name: 'Folded project, 7 need you' })
+    expect(folded.getAttribute('aria-expanded')).toBe('false')
+    expect(folded.querySelector('.proj__attention')?.getAttribute('data-attention')).toBe('input')
+    fireEvent.click(folded)
+    expect(
+      screen.getByRole('button', { name: 'Folded project' }).querySelector('.proj__attention'),
+    ).toBeNull()
   })
 
   it('shows five project chats until the list is expanded', () => {
