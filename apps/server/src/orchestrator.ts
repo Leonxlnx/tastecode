@@ -52,7 +52,7 @@ import {
   providerContextControl,
   validateContextSettings,
 } from './provider-context.js'
-import { readWorkspace, switchWorkspaceBranch } from './workspace.js'
+import { currentBranch, switchWorkspaceBranch } from './workspace.js'
 import { compactHistoryReplay } from './history-replay.js'
 import { decodeHistoryCursor, readHistoryPage, type HistoryPage } from './history-page.js'
 import { readIndexedNewestHistoryPage } from './history-tail.js'
@@ -1610,7 +1610,7 @@ export class Orchestrator {
     try {
       if (
         !options.baseRef ||
-        (options.baseRef !== 'HEAD' && (await readWorkspace(resolved)).branch === options.baseRef)
+        (options.baseRef !== 'HEAD' && (await currentBranch(resolved)) === options.baseRef)
       ) {
         return await start()
       }
