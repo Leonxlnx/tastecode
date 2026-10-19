@@ -12,7 +12,7 @@ const COVERED = '.shell__body[data-covered] '
  * mark cannot reach them: Settings itself, onboarding, and the overlays App
  * draws after the shell or portals to the document body.
  */
-const OUTSIDE_SHELL: Record<string, string> = {
+const OUTSIDE_SHELL = {
   '.gwin__term-line[data-cursor]': 'Settings > General',
   ".keybind-row[data-recording]:not([data-tone='error']) .set-leader": 'Settings > Keybinds',
   '.keybind-shortcut__caret::before': 'Settings > Keybinds',
@@ -28,7 +28,8 @@ const OUTSIDE_SHELL: Record<string, string> = {
   '.session-search__spinner': 'session search',
   ".version-reel[data-turn='turning'] .version-reel__strip": 'provider update notice',
   '.media-viewer__video-loading': 'media viewer (portal to the body)',
-}
+} satisfies Record<string, string>
+const outsideShell = new Set<string>(Object.keys(OUTSIDE_SHELL))
 
 interface Rule {
   file: string
@@ -115,7 +116,7 @@ describe('the shell behind Settings', () => {
   it('pauses every endless animation that can render inside the shell', () => {
     expect(loops.length).toBeGreaterThan(20)
     for (const loop of loops) {
-      if (OUTSIDE_SHELL[loop.selector]) continue
+      if (outsideShell.has(loop.selector)) continue
       const label = `${loop.file}: ${loop.selector}`
       expect(paused.has(loop.selector), `${label} loops but keeps running behind Settings`).toBe(
         true,
@@ -136,7 +137,7 @@ describe('the shell behind Settings', () => {
 
   it('names only endless animations that still exist outside the shell', () => {
     const looping = new Set(loops.map((loop) => loop.selector))
-    for (const selector of Object.keys(OUTSIDE_SHELL)) {
+    for (const selector of outsideShell) {
       expect(looping.has(selector), `${selector} no longer loops`).toBe(true)
       expect(paused.has(selector), `${selector} is paused and listed as outside`).toBe(false)
     }
