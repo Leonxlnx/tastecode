@@ -948,6 +948,53 @@ describe('Sidebar chat actions', () => {
     expect(onToggleSessionPin).toHaveBeenCalledWith('thread-1')
   })
 
+  it.each([
+    ['ready', 'ready', 'is-success'],
+    ['failed', 'failed', 'is-failed'],
+    ['approval', 'waiting for approval', 'is-attention'],
+    ['input', 'needs attention', 'is-attention'],
+    ['queued', 'queued', 'is-attention'],
+  ] as const)('shows the %s thread status indicator', (status, label, indicator) => {
+    render(
+      <Sidebar
+        projects={[
+          {
+            path: '/work/harness',
+            name: 'TasteCode',
+            sessions: [{ ...session('thread-1', 'Status chat'), status, unread: true }],
+          },
+        ]}
+        activeProjectPath="/work/harness"
+        activeSessionId={undefined}
+        account={undefined}
+        providerName="Codex"
+        collapsed={false}
+        width={248}
+        onWidthChange={vi.fn()}
+        onClose={vi.fn()}
+        onAddProject={vi.fn()}
+        onNewSession={vi.fn()}
+        onSelectSession={vi.fn()}
+        onRenameProject={vi.fn()}
+        onRemoveProject={vi.fn()}
+        onTogglePin={vi.fn()}
+        onRenameSession={vi.fn()}
+        onDeleteSession={vi.fn()}
+        onArchiveProject={vi.fn()}
+        onReorderSession={vi.fn()}
+        onOpenSearch={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />,
+    )
+
+    const row = screen.getByRole('button', { name: `Status chat, Codex, ${label}, unread` })
+    expect(row.querySelector(`.sess__status-dot.${indicator}`)).not.toBeNull()
+    expect(row.closest('.sessrow')?.classList.contains('is-unread')).toBe(true)
+    if (status === 'ready') {
+      expect(row.querySelector('.sess__unread-dot')).toBeNull()
+    }
+  })
+
   it('keeps active and unread chats above the saved chat order', () => {
     const unread = {
       ...session('thread-unread', 'Just done'),
@@ -1001,7 +1048,8 @@ describe('Sidebar chat actions', () => {
       ),
     ).toEqual(['Still running', 'Just done', 'Older chat', 'Newer chat'])
     const justDone = screen.getByRole('button', { name: 'Just done, Codex, ready, unread' })
-    expect(justDone.querySelector('.sess__meta > .sess__unread-dot')).not.toBeNull()
+    expect(justDone.querySelector('.sess__meta > .sess__status-dot.is-success')).not.toBeNull()
+    expect(justDone.querySelector('.sess__unread-dot')).toBeNull()
     expect(justDone.closest('.sessrow')?.classList.contains('is-unread')).toBe(true)
   })
 

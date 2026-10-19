@@ -123,6 +123,7 @@
   --attention: #4c9dff;
   --file-reference: #515aad;
   --effort: #ef706e;
+  --warning: #f2c94c;
   --error: #e5687a;
   --success: #6fbf8e;
 
@@ -400,6 +401,7 @@
   --running: #52525b;
   --attention: #2563eb;
   --effort: #c2413d;
+  --warning: #946800;
   --error: #be123c;
   --success: #16803c;
 
