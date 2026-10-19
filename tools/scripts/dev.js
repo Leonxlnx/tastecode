@@ -230,20 +230,14 @@ function processGroupExists(groupId) {
   }
 }
 
-async function processGroupId(pid) {
-  const { stdout } = await execFileAsync('ps', ['-o', 'pgid=', '-p', String(pid)])
-  const groupId = Number.parseInt(stdout.trim(), 10)
-  return Number.isInteger(groupId) && groupId > 0 ? groupId : undefined
-}
-
 async function stopProcessGroup(pid, signal) {
   if (isWin) {
     await stopProcessTree(pid)
     return
   }
-  const groupId = await processGroupId(pid).catch(() => undefined)
   try {
-    process.kill(groupId ? -groupId : pid, signal)
+    // Each child is spawned detached, so its pid stays its group id even after it exits.
+    process.kill(-pid, signal)
   } catch (error) {
     if (error?.code !== 'ESRCH') throw error
   }
@@ -279,6 +273,8 @@ async function shutdown(exitCode = 0) {
 
 process.on('SIGINT', () => void shutdown(0))
 process.on('SIGTERM', () => void shutdown(0))
+// Children lead their own process groups, so a closed terminal's hangup reaches only this launcher.
+process.on('SIGHUP', () => void shutdown(0))
 
 await clearDevPorts()
 const self = (await processSnapshot()).find((candidate) => candidate.pid === process.pid)

@@ -902,7 +902,7 @@ describe('idle thread runtime retention', () => {
     store.addThread({ id: 'thread-1', projectPath: '/repo', provider: 'codex', title: 'T' })
     const { orchestrator, sessions, resumedIds } = harness(undefined, store, 8, 1_000)
     try {
-      await orchestrator.setThreadApproval('thread-1', 'never')
+      await orchestrator.setThreadApproval('thread-1', 'full')
 
       expect(resumedIds).toEqual(['thread-1'])
       expect(sessions[0]?.disposed).toBe(false)
@@ -7957,7 +7957,7 @@ describe('sidebar inbox lifecycle', () => {
   it('prioritizes approvals and questions over an active turn and its queue', async () => {
     const { orchestrator, sessions } = harness()
     const thread = await orchestrator.startThread('codex', '/repo')
-    sessions[0]!.emit(turnStarted(thread.id))
+    sessions[0]!.emit(turnStarted(thread.id, 'turn-1'))
     await orchestrator.submitTurn(thread.id, 'queued')
     sessions[0]!.emit({
       type: 'user_input.requested',
@@ -9375,6 +9375,34 @@ describe('rolling a session back', () => {
     const checkpoints = orchestrator.checkpoints(thread.id)
     expect(checkpoints).toHaveLength(1)
     expect(checkpoints[0]?.label).toBe('change the file')
+  })
+
+  it('stores a checkpoint label that stops before an emoji split at 60 code units', async () => {
+    const { orchestrator } = harness()
+    const thread = await orchestrator.startThread('codex', repo)
+    await orchestrator.sendTurn(thread.id, 'y'.repeat(59) + '🌊 reply with ok')
+    expect(orchestrator.checkpoints(thread.id)[0]?.label).toBe(`${'y'.repeat(59)}…`)
+  })
+
+  it('stores an ascii checkpoint label cut at 60 code units', async () => {
+    const { orchestrator } = harness()
+    const thread = await orchestrator.startThread('codex', repo)
+    await orchestrator.sendTurn(thread.id, 'b'.repeat(80))
+    expect(orchestrator.checkpoints(thread.id)[0]?.label).toBe(`${'b'.repeat(60)}…`)
+  })
+
+  it('stores an end-trimmed ellipsis for a long prompt and the prompt itself when it is short', async () => {
+    const { orchestrator } = harness()
+    const longThread = await orchestrator.startThread('codex', repo)
+    await orchestrator.sendTurn(longThread.id, `${'word '.repeat(12)}more`)
+    const nested = path.join(repo, 'nested')
+    mkdirSync(nested)
+    const shortThread = await orchestrator.startThread('codex', nested)
+    await orchestrator.sendTurn(shortThread.id, 'keep this short')
+    expect(orchestrator.checkpoints(longThread.id)[0]?.label).toBe(
+      'word word word word word word word word word word word word…',
+    )
+    expect(orchestrator.checkpoints(shortThread.id)[0]?.label).toBe('keep this short')
   })
 
   it('refuses restore through another task while the shared checkout is busy', async () => {

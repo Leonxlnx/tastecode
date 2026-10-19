@@ -54,27 +54,6 @@ for (const threadId of switchThreadIds) {
   switchStore.saveReplaySnapshot(threadId, snapshot.at(-1)!.seq, snapshot)
 }
 
-const EVICTION_THREAD_COUNT = 65
-const evictionStore = new Store(':memory:')
-evictionStore.addProject('/eviction')
-const evictionThreadIds = Array.from(
-  { length: EVICTION_THREAD_COUNT },
-  (_, index) => `eviction-${index}`,
-)
-for (const threadId of evictionThreadIds) {
-  evictionStore.addThread({
-    id: threadId,
-    projectPath: '/eviction',
-    provider: 'codex',
-    title: threadId,
-  })
-  const snapshot = entries.slice(0, 16).map((entry) => ({
-    seq: evictionStore.append(threadId, entry.event),
-    event: entry.event,
-  }))
-  evictionStore.saveReplaySnapshot(threadId, snapshot.at(-1)!.seq, snapshot)
-}
-
 const staleStore = new Store(':memory:')
 staleStore.addProject('/repo')
 staleStore.addThread({ id: 'stale', projectPath: '/repo', provider: 'codex', title: 'Stale' })
@@ -124,7 +103,6 @@ afterAll(() => {
   store.close()
   staleStore.close()
   switchStore.close()
-  evictionStore.close()
 })
 
 describe('reopening one compact long-thread replay', () => {
@@ -158,18 +136,6 @@ describe('switching across compact thread replays', () => {
         eventCount += switchStore.tailReplaySnapshotForResponse(threadId)?.entries.length ?? 0
       }
       if (eventCount !== SWITCH_THREAD_COUNT * 250) throw new Error('invalid replay total')
-    },
-    OPTIONS,
-  )
-
-  bench(
-    'opens 65 tiny threads across the bounded cache',
-    () => {
-      let eventCount = 0
-      for (const threadId of evictionThreadIds) {
-        eventCount += evictionStore.tailReplaySnapshotForResponse(threadId)?.entries.length ?? 0
-      }
-      if (eventCount !== EVICTION_THREAD_COUNT * 16) throw new Error('invalid eviction total')
     },
     OPTIONS,
   )

@@ -24,7 +24,27 @@ const brief = {
 
 const brand = {
   version: 1 as const,
-  creativeDirection: { summary: 'Warm precision.', keywords: [], avoid: [] },
+  foundation: {
+    strategy: 'extend' as const,
+    existingAssets: ['public/logo.svg'],
+    assetActions: [
+      { asset: 'public/logo.svg', action: 'protect' as const, reason: 'Supplied official mark.' },
+    ],
+    lockedDecisions: ['Keep the supplied logo.'],
+    assumptions: [],
+  },
+  creativeDirection: {
+    summary: 'Warm precision.',
+    traits: [{ quality: 'tactile', boundary: 'not rustic' }],
+    productiveTension: 'Warm craft with precise utility.',
+    signatureDevice: {
+      description: 'A cropped circular roast mark.',
+      status: 'existing' as const,
+      invariants: ['Circular silhouette'],
+    },
+    restraint: 'Use the roast mark once per major surface.',
+    avoid: [],
+  },
   colorPalette: [{ name: 'Ink', value: '#171512', usage: 'Text' }],
   typefaces: [{ family: 'Geist', source: 'Project', roles: ['UI'], weights: [500] }],
   interfaceDirection: 'Editorial commerce.',

@@ -256,19 +256,6 @@ describe('claude event translation', () => {
     expect(events[0]).toMatchObject({ item: { text: 'v22' } })
   })
 
-  it('ends the turn on result, and reports failure as failure', () => {
-    expect(toDomainEvents({ type: 'result', is_error: false }, 't1')).toContainEqual({
-      type: 'turn.completed',
-      turnId: 't1',
-      status: 'completed',
-    })
-    expect(toDomainEvents({ type: 'result', is_error: true }, 't1')).toContainEqual({
-      type: 'turn.completed',
-      turnId: 't1',
-      status: 'failed',
-    })
-  })
-
   it('ignores envelopes it does not understand instead of throwing', () => {
     // The shape will change. A session must not die because of a new event.
     expect(toDomainEvents({ type: 'some_future_event' }, 't1')).toEqual([])
@@ -309,21 +296,14 @@ describe('claude event translation', () => {
   })
 
   it('keeps only cost reported by Claude Code', () => {
-    const events = toDomainEvents(
-      { type: 'result', usage: { input_tokens: 2, output_tokens: 3 }, total_cost_usd: 0.04 },
-      't1',
-    )
-    expect(events).toContainEqual({
-      type: 'usage.updated',
-      usage: {
-        inputTokens: 2,
-        cachedInputTokens: 0,
-        outputTokens: 3,
-        reasoningTokens: 0,
-        totalTokens: 5,
-        costUsd: 0.04,
-        inputIncludesCached: false,
-      },
+    expect(toUsage({ input_tokens: 2, output_tokens: 3 }, 0.04)).toEqual({
+      inputTokens: 2,
+      cachedInputTokens: 0,
+      outputTokens: 3,
+      reasoningTokens: 0,
+      totalTokens: 5,
+      costUsd: 0.04,
+      inputIncludesCached: false,
     })
   })
 })

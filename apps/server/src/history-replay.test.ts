@@ -55,10 +55,10 @@ describe('history replay compaction', () => {
       { type: 'item.started', item: item('reply', '') },
       { type: 'item.delta', turnId: 'turn-1', itemId: 'reply', textDelta: 'Hello ' },
       { type: 'item.delta', turnId: 'turn-1', itemId: 'reply', textDelta: 'world' },
-      { type: 'diff.updated', diff: 'old diff' },
-      { type: 'diff.updated', diff: 'final diff' },
-      { type: 'plan.updated', steps: [{ step: 'Old', status: 'pending' }] },
-      { type: 'plan.updated', steps: [{ step: 'Final', status: 'completed' }] },
+      { type: 'diff.updated', turnId: 'turn-1', diff: 'old diff' },
+      { type: 'diff.updated', turnId: 'turn-1', diff: 'final diff' },
+      { type: 'plan.updated', turnId: 'turn-1', steps: [{ text: 'Old', status: 'pending' }] },
+      { type: 'plan.updated', turnId: 'turn-1', steps: [{ text: 'Final', status: 'done' }] },
       {
         type: 'usage.updated',
         usage: {
@@ -117,8 +117,8 @@ describe('history replay compaction', () => {
         turn: { id: 'turn-1', threadId: 'thread-1', status: 'running', createdAt: 1 },
       },
       { type: 'item.completed', item: item('reply', 'Done', 'completed') },
-      { type: 'diff.updated', diff: 'final diff' },
-      { type: 'plan.updated', steps: [{ step: 'Done', status: 'completed' }] },
+      { type: 'diff.updated', turnId: 'turn-1', diff: 'final diff' },
+      { type: 'plan.updated', turnId: 'turn-1', steps: [{ text: 'Done', status: 'done' }] },
       {
         type: 'usage.updated',
         usage: {
@@ -169,6 +169,7 @@ describe('history replay compaction', () => {
       })),
       ...Array.from({ length: 100 }, (_, index): DomainEvent => ({
         type: 'diff.updated',
+        turnId: 'turn-1',
         diff: `diff ${index} ${'x'.repeat(1_000)}`,
       })),
       { type: 'item.completed', item: item('reply', 'x'.repeat(1_000), 'completed') },

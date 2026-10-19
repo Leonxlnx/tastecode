@@ -272,7 +272,6 @@ describe('audit integration regressions', () => {
           threadId,
           seq: 0,
           commit: snapshot.commit,
-          clean: false,
           label: threadId,
         })
         store.recordCheckpointRepository(checkout)

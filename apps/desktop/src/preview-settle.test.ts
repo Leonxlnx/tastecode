@@ -3,7 +3,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   PREVIEW_PAGE_HEIGHT_SCRIPT,
   PREVIEW_SETTLE_SCRIPT,
-  previewCaptureHeight,
   previewPageHeights,
 } from './preview-settle.js'
 
@@ -324,11 +323,11 @@ describe('preview capture settling', () => {
         },
       ),
     })
-    expect(previewCaptureHeight(value, 844)).toBe(844)
-    expect(previewCaptureHeight({ body: 100_000_000, documentElement: 100_000_000 }, 844)).toBe(
-      12_000,
-    )
-    expect(previewCaptureHeight({ body: 0, documentElement: 1800 }, 844)).toBe(1800)
+    expect(previewPageHeights(value, 844).capturedHeight).toBe(844)
+    expect(
+      previewPageHeights({ body: 100_000_000, documentElement: 100_000_000 }, 844).capturedHeight,
+    ).toBe(12_000)
+    expect(previewPageHeights({ body: 0, documentElement: 1800 }, 844).capturedHeight).toBe(1800)
   })
 
   it.each([
@@ -342,27 +341,29 @@ describe('preview capture settling', () => {
     null,
     undefined,
   ])('rejects invalid DOM and viewport measurements: %s', (value) => {
-    expect(() => previewCaptureHeight({ body: value, documentElement: 0 }, 844)).toThrow(
-      'Invalid preview page height',
-    )
-    expect(() => previewCaptureHeight({ body: 0, documentElement: value }, 844)).toThrow(
-      'Invalid preview page height',
-    )
-    expect(() => previewCaptureHeight({ body: 0, documentElement: 0 }, value as number)).toThrow(
-      'Invalid preview page height',
-    )
+    expect(
+      () => previewPageHeights({ body: value, documentElement: 0 }, 844).capturedHeight,
+    ).toThrow('Invalid preview page height')
+    expect(
+      () => previewPageHeights({ body: 0, documentElement: value }, 844).capturedHeight,
+    ).toThrow('Invalid preview page height')
+    expect(
+      () => previewPageHeights({ body: 0, documentElement: 0 }, value as number).capturedHeight,
+    ).toThrow('Invalid preview page height')
   })
 
   it.each([null, undefined, 1000, {}, { body: 0 }, { documentElement: 0 }])(
     'rejects malformed measurement objects: %s',
     (value) => {
-      expect(() => previewCaptureHeight(value, 844)).toThrow('Invalid preview page height')
+      expect(() => previewPageHeights(value, 844).capturedHeight).toThrow(
+        'Invalid preview page height',
+      )
     },
   )
 
   it('accepts an empty document but rejects a zero viewport', () => {
-    expect(previewCaptureHeight({ body: 0, documentElement: 0 }, 844)).toBe(844)
-    expect(() => previewCaptureHeight({ body: 0, documentElement: 0 }, 0)).toThrow(
+    expect(previewPageHeights({ body: 0, documentElement: 0 }, 844).capturedHeight).toBe(844)
+    expect(() => previewPageHeights({ body: 0, documentElement: 0 }, 0).capturedHeight).toThrow(
       'Invalid preview page height',
     )
   })

@@ -51,7 +51,7 @@ type Fault = {
 /** Command is the primary modifier on macOS only; elsewhere Meta is the Windows key. */
 function heldModifiers(event: ReactKeyboardEvent, macOS: boolean): Modifiers {
   return {
-    primary: (macOS && event.metaKey) || event.ctrlKey,
+    primary: macOS ? event.metaKey : event.ctrlKey,
     alt: event.altKey,
     shift: event.shiftKey,
   }

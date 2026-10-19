@@ -94,6 +94,65 @@ function visibleMessage(row: SavedRecord | undefined): row is SavedRecord {
   return row !== undefined && visible(row) && (row.type === 'user' || row.type === 'assistant')
 }
 
+function claudeProjectsRoot(options: ClaudeHistoryOptions = {}): string {
+  return path.resolve(
+    options.configDir ?? process.env.CLAUDE_CONFIG_DIR ?? path.join(homedir(), '.claude'),
+    'projects',
+  )
+}
+
+async function isClaudeSessionFile(projects: string, locator: string): Promise<boolean> {
+  const relative = path.relative(projects, locator)
+  if (
+    path.isAbsolute(relative) ||
+    relative.startsWith(`..${path.sep}`) ||
+    relative === '..' ||
+    relative.split(path.sep).length !== 2 ||
+    !SESSION_FILE.test(path.basename(locator))
+  )
+    return false
+  const [actualRoot, actualFile] = await Promise.all([realpath(projects), realpath(locator)])
+  const actualRelative = path.relative(actualRoot, actualFile)
+  return (
+    !path.isAbsolute(actualRelative) &&
+    actualRelative !== '..' &&
+    !actualRelative.startsWith(`..${path.sep}`)
+  )
+}
+
+export async function readClaudeSessionRecords(
+  sessionId: string,
+  options: ClaudeHistoryOptions = {},
+): Promise<SavedRecord[]> {
+  if (!SESSION_FILE.test(`${sessionId}.jsonl`)) return []
+  const projects = claudeProjectsRoot(options)
+  try {
+    const directories = await readdir(projects, { withFileTypes: true })
+    let newest: { file: string; mtimeMs: number } | undefined
+    for (const directory of directories) {
+      if (!directory.isDirectory()) continue
+      const file = path.join(projects, directory.name, `${sessionId}.jsonl`)
+      let info
+      try {
+        info = await stat(file)
+      } catch {
+        continue
+      }
+      if (!info.isFile()) continue
+      if (!(await isClaudeSessionFile(projects, file).catch(() => false))) continue
+      if (
+        !newest ||
+        info.mtimeMs > newest.mtimeMs ||
+        (info.mtimeMs === newest.mtimeMs && file < newest.file)
+      )
+        newest = { file, mtimeMs: info.mtimeMs }
+    }
+    return newest ? await records(newest.file) : []
+  } catch {
+    return []
+  }
+}
+
 function parseRecord(line: string): SavedRecord | undefined {
   try {
     const row = object(JSON.parse(line))
@@ -578,34 +637,14 @@ function eventsFor(rows: SavedRecord[], session: ProviderHistorySession): Domain
 export function createClaudeHistorySource(
   options: ClaudeHistoryOptions = {},
 ): ProviderHistorySource {
-  const projects = path.resolve(
-    options.configDir ?? process.env.CLAUDE_CONFIG_DIR ?? path.join(homedir(), '.claude'),
-    'projects',
-  )
+  const projects = claudeProjectsRoot(options)
   // `key` is the revision the server stores a listing under; `progress` is unset for a
   // listing the server kept from an earlier run.
   const cache = new Map<
     string,
     { key: string; session: ProviderHistorySession | undefined; progress: Progress | undefined }
   >()
-  const validLocator = async (locator: string): Promise<boolean> => {
-    const relative = path.relative(projects, locator)
-    if (
-      path.isAbsolute(relative) ||
-      relative.startsWith(`..${path.sep}`) ||
-      relative === '..' ||
-      relative.split(path.sep).length !== 2 ||
-      !SESSION_FILE.test(path.basename(locator))
-    )
-      return false
-    const [actualRoot, actualFile] = await Promise.all([realpath(projects), realpath(locator)])
-    const actualRelative = path.relative(actualRoot, actualFile)
-    return (
-      !path.isAbsolute(actualRelative) &&
-      actualRelative !== '..' &&
-      !actualRelative.startsWith(`..${path.sep}`)
-    )
-  }
+  const validLocator = (locator: string) => isClaudeSessionFile(projects, locator)
   return {
     resolveSessionId: (threadId) => (threadId.startsWith('claude-') ? threadId.slice(7) : threadId),
     async list(options) {

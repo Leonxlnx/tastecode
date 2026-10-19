@@ -38,6 +38,7 @@ import {
   RestoreSnapshotError,
 } from './checkpoint.js'
 import { accountRead, type AccountIdentity } from './account-identity.js'
+import { checkpointLabel } from './slice-code-units.js'
 import { canonicalCheckoutRoot, CheckoutAccess } from './checkout-access.js'
 import {
   ProviderControls,
@@ -1012,25 +1013,49 @@ export class Orchestrator {
   async #runBackgroundTask(prompt: string): Promise<string> {
     const preference = this.#store.backgroundModelPreference()
     // Each source read can start vendor processes; read only what this choice needs.
-    const resolved = await resolveBackgroundModelFrom(preference, this.#backgroundSourceLoaders())
-    if (!resolved) {
-      throw new Error(
-        preference.mode === 'manual'
-          ? 'The selected background model is unavailable. Choose another one in Settings.'
-          : 'Connect a provider with an available model before using background writing.',
+    const failed: Array<Pick<BackgroundModelSourceLoader, 'provider' | 'connectionId' | 'agent'>> =
+      []
+    let lastError: unknown
+    for (;;) {
+      const loaders = this.#backgroundSourceLoaders().filter(
+        (loader) =>
+          !failed.some(
+            (source) =>
+              source.provider === loader.provider &&
+              source.connectionId === loader.connectionId &&
+              source.agent === loader.agent,
+          ),
       )
+      const resolved = await resolveBackgroundModelFrom(preference, loaders)
+      if (!resolved) break
+      const runtime =
+        resolved.provider === 'api'
+          ? this.#apiRuntime(resolved.connectionId)
+          : this.#runtimeFor(resolved.provider, this.#onLog)
+      try {
+        return await runBackgroundCompletion({
+          runtime,
+          selection: resolved,
+          prompt,
+          onCleanupError: (error) =>
+            this.#onLog(`[background] provider cleanup failed: ${errorMessage(error)}`),
+        })
+      } catch (error) {
+        if (preference.mode === 'manual') throw error
+        failed.push({
+          provider: resolved.provider,
+          connectionId: resolved.connectionId,
+          agent: resolved.agent,
+        })
+        lastError = error
+      }
     }
-    const runtime =
-      resolved.provider === 'api'
-        ? this.#apiRuntime(resolved.connectionId)
-        : this.#runtimeFor(resolved.provider, this.#onLog)
-    return runBackgroundCompletion({
-      runtime,
-      selection: resolved,
-      prompt,
-      onCleanupError: (error) =>
-        this.#onLog(`[background] provider cleanup failed: ${errorMessage(error)}`),
-    })
+    if (lastError !== undefined) throw lastError
+    throw new Error(
+      preference.mode === 'manual'
+        ? 'The selected background model is unavailable. Choose another one in Settings.'
+        : 'Connect a provider with an available model before using background writing.',
+    )
   }
 
   #backgroundSourceLoaders(): BackgroundModelSourceLoader[] {
@@ -3109,7 +3134,7 @@ export class Orchestrator {
         threadId,
         seq: this.#store.lastSeq(threadId),
         commit: snapshot.commit,
-        label: label.trim().slice(0, 60) || 'Turn',
+        label: checkpointLabel(label),
       })
     } catch {
       // A folder that is not a repository is a normal case. Failing the turn
