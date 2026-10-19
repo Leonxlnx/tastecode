@@ -389,6 +389,36 @@ describe('takeSnapshot of a checkout that matches HEAD', () => {
     expect(git('show', `${snapshot.commit}:tracked.txt`)).toBe('kept out of git status\n')
   })
 
+  it.each([
+    ['a clean checkout', () => undefined, 5],
+    ['a changed checkout', () => write('tracked.txt', 'changed\n'), undefined],
+  ])(
+    'keeps the checkpoint of %s with the run that protects its snapshot',
+    async (_, change, runs) => {
+      change()
+
+      const { result: snapshot, commands } = await gitCommands(() =>
+        takeSnapshot(repo, { retainIn: 'turns' }),
+      )
+
+      expect(commands.filter((command) => command === 'update-ref')).toHaveLength(1)
+      if (runs !== undefined) expect(commands).toHaveLength(runs)
+      expect(git('for-each-ref', '--format=%(refname)', 'refs/harness/').split('\n')).toEqual(
+        expect.arrayContaining([
+          `refs/harness/checkpoints/turns/${snapshot.commit}`,
+          `refs/harness/snapshots/${snapshot.commit}`,
+        ]),
+      )
+    },
+  )
+
+  it('refuses a checkpoint namespace that is not a plain name', async () => {
+    await expect(takeSnapshot(repo, { retainIn: '../heads/main' })).rejects.toThrow(
+      'invalid checkpoint namespace',
+    )
+    expect(git('for-each-ref', 'refs/harness/')).toBe('')
+  })
+
   it('restores from a checkpoint taken on a clean checkout', async () => {
     write('gone.txt', 'committed\n')
     git('add', '.')
