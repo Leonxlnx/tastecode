@@ -1798,8 +1798,10 @@ export function App() {
       }
 
       if (affectsSessionStatus(event)) {
-        setProjects((current) => {
-          const updated = updateSession(current, threadId, (session) => {
+        // A status change never moves the chat in the sidebar; only a new chat,
+        // a pin or a drag does.
+        setProjects((current) =>
+          updateSession(current, threadId, (session) => {
             const status = statusFor(next, event, threadId !== activeIdRef.current)
             return {
               ...session,
@@ -1811,11 +1813,8 @@ export function App() {
                   }
                 : {}),
             }
-          })
-          return event.type === 'turn.started' && sidebarSettingsRef.current.mode === 'classic'
-            ? promoteSession(updated, threadId)
-            : updated
-        })
+          }),
+        )
         if (event.type === 'turn.completed' && threadId === activeIdRef.current) {
           // Only here for the server's mark-as-read side effect — the live event
           // stream already delivered the turn. afterSeq skips serializing,
