@@ -524,7 +524,8 @@
   pointer-events: auto;
 }
 
-.sessrow:focus-within .sess__meta {
+/* The time gives way to the row's one action; a live state never does. */
+.sessrow.has-action:focus-within .sess__meta {
   opacity: 0;
 }
 
@@ -535,7 +536,7 @@
     pointer-events: auto;
   }
 
-  .sessrow:hover .sess__meta {
+  .sessrow.has-action:hover .sess__meta {
     opacity: 0;
   }
 
@@ -1213,6 +1214,47 @@
   .sessrow.has-action:hover .sess__project {
     opacity: 0;
   }
+}
+
+/* ---------- archived ---------- */
+
+.archived__toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 24px;
+  background: none;
+  border: 0;
+  border-radius: var(--r-md);
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+  transition: color var(--dur-fast) var(--ease-out);
+}
+
+.archived__toggle:is(:hover, :focus-visible) {
+  color: var(--text-2);
+}
+
+.archived__count {
+  font-variant-numeric: tabular-nums;
+  font-weight: 400;
+}
+
+.archived__chevron {
+  flex: none;
+  margin-left: auto;
+  margin-right: 3px;
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+
+.archived__toggle[aria-expanded='true'] .archived__chevron {
+  transform: rotate(90deg);
+}
+
+.archived__list {
+  margin: 0 0 8px;
 }
 
 /* A folded project's count of chats that need the user, right after its name. */
