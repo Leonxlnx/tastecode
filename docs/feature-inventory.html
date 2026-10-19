@@ -1112,7 +1112,9 @@
                 <span class="d"
                   >Send stays available when an account cannot be confirmed: the notice reads Could
                   not confirm this account, but you can still send, with Retry instead of Check
-                  setup, and Send opens after 5 s while an account check is still running</span
+                  setup, and Send opens after 5 s while an account check is still running, or at
+                  once when the provider's last check said signed in; a check that answers signed
+                  out turns Send off again</span
                 ></span
               ></label
             >
@@ -1886,9 +1888,10 @@
                   keep opening and sending. Local and native chats also open from the store at once
                   while the first provider history scan after a server start is still running; what
                   the scan changes arrives in the background and open chats reload it. Turns and
-                  imported-chat reads wait only for their own provider's first history scan. A
-                  native chat whose provider copy is gone (archived and deleted in the CLI) still
-                  opens with its own transcript.</span
+                  imported-chat reads wait only for their own provider's first history scan, and a
+                  chat started since the launch does not wait for it until a scan has linked it to
+                  its saved session. A native chat whose provider copy is gone (archived and deleted
+                  in the CLI) still opens with its own transcript.</span
                 ></span
               ></label
             >
@@ -2985,7 +2988,10 @@
                   the server for about half a second (#1556), and waits for Node to observe exit
                   after taskkill succeeds (#1394); a Windows process stop never orphans the real
                   CLI, because taskkill itself is never killed and the shim is killed only after
-                  taskkill failed; CLI timeout errors name the command and the limit; media access
+                  taskkill failed; a process that exits stops every tree it still owns first (one
+                  taskkill run, waited for while the shims are alive, so the CLI behind each shim is
+                  reached), and a server that has to be force-stopped at quit is stopped with its
+                  whole tree; CLI timeout errors name the command and the limit; media access
                   requires explicit audio-only details from the owning main renderer and main frame,
                   with malformed, mixed, unknown, camera and subframe requests denied in both
                   Chromium checks and permission requests</span
