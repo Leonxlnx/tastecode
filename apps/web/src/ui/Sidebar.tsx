@@ -1402,19 +1402,20 @@ const ProjectRow = memo(function ProjectRow(props: {
                     }}
                   />
                   <MenuItem
-                    title="Delete chats"
-                    icon={<Trash size={14} aria-hidden />}
+                    title="Remove from sidebar"
+                    icon={<PanelLeftClose size={14} aria-hidden />}
                     onClick={() => {
-                      setConfirming('archive')
+                      setConfirming('remove')
                       close()
                     }}
                   />
+                  {/* The one action here that destroys anything is marked so. */}
                   <MenuItem
-                    title="Remove from sidebar"
-                    icon={<PanelLeftClose size={14} aria-hidden />}
+                    title="Delete chats"
+                    icon={<Trash size={14} aria-hidden />}
                     className="menu__item--danger"
                     onClick={() => {
-                      setConfirming('remove')
+                      setConfirming('archive')
                       close()
                     }}
                   />

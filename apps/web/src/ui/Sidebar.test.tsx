@@ -902,7 +902,9 @@ describe('Sidebar chat actions', () => {
     for (const item of [pinItem, editItem, archiveItem, removeItem]) {
       expect(item.querySelector('svg')).not.toBeNull()
     }
-    expect(removeItem.classList.contains('menu__item--danger')).toBe(true)
+    // Removing only forgets the sidebar entry; deleting the chats destroys them.
+    expect(removeItem.classList.contains('menu__item--danger')).toBe(false)
+    expect(archiveItem.classList.contains('menu__item--danger')).toBe(true)
 
     fireEvent.click(archiveItem)
     const deleteDialog = await screen.findByRole('alertdialog', {
