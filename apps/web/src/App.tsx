@@ -1265,6 +1265,13 @@ export function App() {
       providerStatuses.find((entry) => entry.id === provider)?.capabilities?.autoReview === true,
     [provider, providerStatuses],
   )
+  // A new chat with such a provider offers its accounts beside the composer tools.
+  const providerHasAccounts = useMemo(
+    () =>
+      providerStatuses.find((entry) => entry.id === provider)?.capabilities?.multipleAccounts ===
+      true,
+    [provider, providerStatuses],
+  )
 
   const defaultApproval =
     approvalByProvider[provider] ?? (autoReviewSupported ? 'auto-review' : 'full')
@@ -6102,6 +6109,7 @@ export function App() {
                     projectPath={activePath}
                     projectName={activeProject ? displayName(activeProject) : undefined}
                     threadId={activeId && !activeId.startsWith('pending:') ? activeId : undefined}
+                    accountProvider={!activeId && providerHasAccounts ? provider : undefined}
                     projectsLoading={projectsStatus === 'loading'}
                     branch={
                       (!activeId && activePath
