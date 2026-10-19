@@ -3099,8 +3099,9 @@ export class Orchestrator {
     const repoPath = this.#repoPath(threadId)
 
     try {
-      const snapshot = await takeSnapshot(repoPath)
-      await retainCheckpoint(repoPath, this.#store.checkpointNamespace, snapshot.commit)
+      const snapshot = await takeSnapshot(repoPath, {
+        retainIn: this.#store.checkpointNamespace,
+      })
       this.#store.recordCheckpointRepository(canonicalCheckoutRoot(repoPath))
       this.#store.addCheckpoint({
         threadId,
