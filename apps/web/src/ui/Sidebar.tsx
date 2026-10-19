@@ -28,7 +28,6 @@ import {
   IconTrash as Trash,
   IconDots as Ellipsis,
   IconFolderOpen as FolderOpen,
-  IconFolderPlus as FolderPen,
   IconGitPullRequest as GitPullRequest,
   IconLayoutSidebarLeftCollapse as PanelLeftClose,
   IconLoader2 as LoaderCircle,
@@ -765,17 +764,6 @@ function SidebarComponent(props: {
                   <Search size={13} aria-hidden />
                 </button>
               </div>
-              <button
-                className="navitem rail__new-project"
-                onClick={() => {
-                  props.onAddProject()
-                  closeOnNarrowViewport()
-                }}
-                aria-keyshortcuts={shortcutAria(keybindings.newProject)}
-              >
-                <FolderPen size={13} aria-hidden />
-                <span>New project</span>
-              </button>
               {props.onOpenPullRequests ? (
                 <button
                   type="button"
@@ -828,6 +816,7 @@ function SidebarComponent(props: {
                   className="section__add"
                   aria-label="New project"
                   title="New project"
+                  aria-keyshortcuts={shortcutAria(keybindings.newProject)}
                   onClick={() => {
                     props.onAddProject()
                     closeOnNarrowViewport()

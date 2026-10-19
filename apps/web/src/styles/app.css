@@ -288,17 +288,6 @@
   min-width: 0;
 }
 
-.rail__new-project {
-  min-width: 0;
-  width: 100%;
-}
-
-.rail__new-project > span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 /* Sized and rounded exactly like the navitems beside it — one family. */
 .rail__search {
   flex: none;

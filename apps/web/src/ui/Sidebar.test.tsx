@@ -1957,3 +1957,44 @@ describe('Sidebar chat actions', () => {
     expect(shell?.hasAttribute('data-resizing')).toBe(false)
   })
 })
+
+describe('Sidebar direction A rows', () => {
+  const quietSidebar = (
+    projects: Parameters<typeof Sidebar>[0]['projects'],
+    extra: Partial<Parameters<typeof Sidebar>[0]> = {},
+  ) => (
+    <Sidebar
+      projects={projects}
+      activeProjectPath={undefined}
+      activeSessionId={undefined}
+      account={undefined}
+      providerName="Codex"
+      collapsed={false}
+      width={248}
+      onWidthChange={vi.fn()}
+      onClose={vi.fn()}
+      onAddProject={vi.fn()}
+      onNewSession={vi.fn()}
+      onSelectSession={vi.fn()}
+      onRenameProject={vi.fn()}
+      onRemoveProject={vi.fn()}
+      onTogglePin={vi.fn()}
+      onRenameSession={vi.fn()}
+      onDeleteSession={vi.fn()}
+      onArchiveProject={vi.fn()}
+      onReorderSession={vi.fn()}
+      onOpenSearch={vi.fn()}
+      onOpenSettings={vi.fn()}
+      {...extra}
+    />
+  )
+
+  it('has one top action for each thing: no full-width New project', () => {
+    const onAddProject = vi.fn()
+    render(quietSidebar([], { onAddProject }))
+    expect(screen.getAllByRole('button', { name: 'New project' })).toHaveLength(1)
+    expect(document.querySelector('.rail__new-project')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'New project' }))
+    expect(onAddProject).toHaveBeenCalledTimes(1)
+  })
+})
