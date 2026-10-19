@@ -421,6 +421,7 @@ export const CompletedMarkdown = memo(function CompletedMarkdown({
           controls={STREAMDOWN_CONTROLS}
           icons={STREAMDOWN_ICONS}
           components={imageSource ? IMAGE_COMPONENTS : STREAMDOWN_COMPONENTS}
+          remarkPlugins={literalHtml ? LITERAL_HTML_REMARK_PLUGINS : REMARK_PLUGINS}
           rehypePlugins={rehypePlugins}
         >
           {source}
