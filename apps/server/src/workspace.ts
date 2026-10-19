@@ -94,7 +94,7 @@ const HEADS = 'refs/heads/'
  * `rev-parse --abbrev-ref` disambiguates against tags the same way
  * `%(refname:short)` does, so the full symbolic ref is read instead.
  */
-async function currentBranch(path: string): Promise<string | undefined> {
+export async function currentBranch(path: string): Promise<string | undefined> {
   const abbreviated = await git(path, ['rev-parse', '--abbrev-ref', 'HEAD'])
   if (abbreviated === undefined || abbreviated === 'HEAD') return abbreviated
   const ref = await git(path, ['symbolic-ref', '-q', 'HEAD'])
