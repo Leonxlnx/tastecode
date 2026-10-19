@@ -12,7 +12,7 @@ import {
 } from '@harness/contracts'
 import { StrictMode, type ComponentProps } from 'react'
 import { z } from 'zod'
-import { ACCOUNT_CHECK_SEND_GRACE_MS, App, resolveSendAvailability } from './App.js'
+import { ACCOUNT_CHECK_SEND_GRACE_MS, App, resolveSendAvailability, titleFrom } from './App.js'
 import type { NativeMenuAction, NativeMenuActionSource } from './bridge.js'
 import { DESIGN_BRIEF_ATTACHMENT } from './design-agent/briefing.js'
 import { serializeModelCatalogCache as serializeCatalogWithinLimits } from './model-catalog-cache.js'
@@ -27,6 +27,7 @@ import { mockKeyboardModifierState } from './test-keyboard.js'
 import { NEWEST_HISTORY_TURNS } from './thread-controller.js'
 
 const NEWEST_PAGE = { turnLimit: NEWEST_HISTORY_TURNS }
+const PENDING_CHAT_DELETES_KEY = 'harness.pendingChatDeletes.v1'
 
 beforeEach(mockKeyboardModifierState)
 
@@ -1048,7 +1049,14 @@ async function openCheckpointHistory() {
   >
   act(() => header.onOpenRollback())
   fireEvent.click(await screen.findByRole('button', { name: /Before “Fix the parser”/ }))
-  await screen.findByRole('button', { name: 'Restore checkpoint' })
+  await waitFor(() => expect(restoreButton().disabled).toBe(false))
+}
+
+function restoreButton() {
+  return within(screen.getByRole('dialog', { name: 'Restore' })).getByRole<HTMLButtonElement>(
+    'button',
+    { name: /^Restor/ },
+  )
 }
 
 describe('web client', () => {
@@ -1356,6 +1364,14 @@ describe('web client', () => {
     ).toBe('setup-required')
   })
 
+  it('cuts a prompt title before an emoji split at 40 code units', () => {
+    expect(titleFrom('x'.repeat(39) + '🌊 reply with ok')).toBe('x'.repeat(39) + '…')
+  })
+
+  it('cuts a long ascii prompt title at 40 code units', () => {
+    expect(titleFrom('c'.repeat(50))).toBe('c'.repeat(40) + '…')
+  })
+
   it.each([false, true])(
     'preserves the next draft through startup (switch away: %s)',
     async (switchAway) => {
@@ -1452,6 +1468,117 @@ describe('web client', () => {
       '/work/first.png',
     ])
   })
+
+  it('brings back every unsent draft after a restart', async () => {
+    const docs = {
+      key: 'skill:docs',
+      kind: 'skill' as const,
+      id: '/skills/docs/SKILL.md',
+      name: 'Docs',
+      description: 'Project docs',
+      scope: 'Project',
+      token: '$docs',
+      available: true,
+    }
+    const composer = () => screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+    const first = render(<App />)
+    await screen.findByRole('button', { name: /^New session,/ })
+    fireEvent.change(composer(), { target: { value: 'New chat idea' } })
+    fireEvent.click(screen.getByRole('button', { name: /^New session,/ }))
+    fireEvent.change(composer(), { target: { value: 'Half-typed reply' } })
+    act(() => composerProps().onAttachmentsChange?.(['/work/later.png']))
+    act(() => composerProps().onResourcesChange?.([docs]))
+    window.dispatchEvent(new Event('pagehide'))
+    first.unmount()
+
+    render(<App />)
+    await screen.findByRole('button', { name: /^New session,/ })
+    expect(composer().value).toBe('New chat idea')
+    fireEvent.click(screen.getByRole('button', { name: /^New session,/ }))
+    expect(composer().value).toBe('Half-typed reply')
+    expect(screen.getByRole('button', { name: 'Remove later.png' })).toBeTruthy()
+    expect(composerProps().draftRequest?.resources).toEqual([docs])
+  })
+
+  it('saves drafts when the page is hidden instead of on every keystroke', async () => {
+    render(<App />)
+    await screen.findByRole('button', { name: /^New session,/ })
+    const composer = screen.getByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: 'H' } })
+    fireEvent.change(composer, { target: { value: 'Half' } })
+    expect(localStorage.getItem('harness.composerDrafts.v1')).toBeNull()
+    window.dispatchEvent(new Event('pagehide'))
+    expect(JSON.parse(localStorage.getItem('harness.composerDrafts.v1')!)).toEqual({
+      'new-chat': { text: 'Half', attachments: [], resources: [] },
+    })
+  })
+
+  it('saves a draft typed while the chat starts under the real chat only', async () => {
+    const request = transport.request.getMockImplementation()!
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    transport.request.mockImplementation(async (method, params) => {
+      if (method === 'thread.start') await gate
+      return request(method, params)
+    })
+    render(<App />)
+    await screen.findByRole('button', { name: /^New session,/ })
+    submitTurn('First prompt')
+    await waitFor(() => expect(rpcCount('thread.start')).toBe(1))
+    fireEvent.change(screen.getByPlaceholderText('Do anything'), {
+      target: { value: 'Next unsent prompt' },
+    })
+    window.dispatchEvent(new Event('pagehide'))
+    expect(localStorage.getItem('harness.composerDrafts.v1')).toBeNull()
+    await act(async () => release())
+    await waitFor(() => expect(rpcCount('thread.sendTurn')).toBe(1))
+    window.dispatchEvent(new Event('pagehide'))
+    expect(JSON.parse(localStorage.getItem('harness.composerDrafts.v1')!)).toEqual({
+      'thread-1': { text: 'Next unsent prompt', attachments: [], resources: [] },
+    })
+  })
+
+  it("drops a deleted chat's draft from the saved drafts", async () => {
+    serverProjects[0]!.sessions.push({ id: 'doomed-thread', title: 'Doomed chat', createdAt: 5 })
+    const composer = () => screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+    const first = render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^Doomed chat,/ }))
+    fireEvent.change(composer(), { target: { value: 'Doomed draft' } })
+    fireEvent.click(screen.getByRole('button', { name: /^New session,/ }))
+    fireEvent.change(composer(), { target: { value: 'Kept draft' } })
+    act(() => sidebarProps().onDeleteSession('doomed-thread'))
+    await screen.findByText('Chat deleted')
+    await act(async () => window.dispatchEvent(new Event('pagehide')))
+    await waitFor(() =>
+      expect(JSON.parse(localStorage.getItem('harness.composerDrafts.v1')!)).toEqual({
+        'untouched-thread': { text: 'Kept draft', attachments: [], resources: [] },
+      }),
+    )
+    first.unmount()
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
+    expect(composer().value).toBe('Kept draft')
+  })
+
+  it.each(['{not json', '[1,2]', '{"new-chat":{"text":5}}'])(
+    'starts with empty drafts when the saved drafts are corrupt (%s)',
+    async (saved) => {
+      localStorage.setItem('harness.composerDrafts.v1', saved)
+      const composer = () => screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+      const first = render(<App />)
+      await screen.findByRole('button', { name: /^New session,/ })
+      expect(composer().value).toBe('')
+      fireEvent.change(composer(), { target: { value: 'Fresh start' } })
+      first.unmount()
+
+      render(<App />)
+      await screen.findByRole('button', { name: /^New session,/ })
+      expect(composer().value).toBe('Fresh start')
+    },
+  )
 
   it('offers an unsent draft back after Edit as new prompt replaces it', async () => {
     await openNewSession()
@@ -1558,6 +1685,73 @@ describe('web client', () => {
     expect(composerProps().approval).toBe('full')
   })
 
+  describe('restore Undo notice', () => {
+    beforeEach(() => {
+      vi.useFakeTimers({ shouldAdvanceTime: true })
+    })
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    async function restoreAndOfferUndo() {
+      await openNewSession()
+      await openCheckpointHistory()
+      fireEvent.click(screen.getByRole('button', { name: /^Restore( checkpoint)?$/ }))
+      const undo = await screen.findByRole('button', { name: 'Undo restore' })
+      await waitFor(() => expect(rpcCount('thread.checkpoints')).toBe(2))
+      return undo.closest('.notice')!
+    }
+
+    it('keeps offering Undo restore until the user acts', async () => {
+      const notice = await restoreAndOfferUndo()
+
+      act(() => vi.advanceTimersByTime(10_000))
+
+      expect(notice.getAttribute('data-state')).toBe('open')
+      expect(notice.textContent).toContain('Restored to before “Fix the parser”.')
+      expect(screen.getByRole('button', { name: 'Undo restore' })).toBeTruthy()
+    })
+
+    it('ends the Undo restore offer when dismissed', async () => {
+      const notice = await restoreAndOfferUndo()
+
+      fireEvent.click(within(notice as HTMLElement).getByRole('button', { name: 'Dismiss' }))
+
+      expect(notice.getAttribute('data-state')).toBe('closing')
+    })
+
+    it('ends the Undo restore offer when a message is sent', async () => {
+      const notice = await restoreAndOfferUndo()
+
+      act(() => composerProps().onSend('Keep going', []))
+
+      await waitFor(() => expect(notice.getAttribute('data-state')).toBe('closing'))
+    })
+
+    it('ends the Undo restore offer when another chat opens', async () => {
+      serverProjects[0]!.sessions.push({ id: 'second-thread', title: 'Second chat' })
+      const notice = await restoreAndOfferUndo()
+
+      act(() => sidebarProps().onSelectSession('second-thread'))
+
+      await waitFor(() => expect(notice.getAttribute('data-state')).toBe('closing'))
+    })
+
+    it('auto-dismisses the Restore undone notice after five seconds', async () => {
+      await restoreAndOfferUndo()
+      fireEvent.click(screen.getByRole('button', { name: 'Undo restore' }))
+      const notice = (await screen.findByText('Restore undone.')).closest('.notice')!
+      // The notice arms its timer in a passive effect, which React may run in a task of its own
+      // after the commit that shows the text; let that task run before the clock moves.
+      await act(async () => new Promise((resolve) => window.setTimeout(resolve, 20)))
+
+      act(() => vi.advanceTimersByTime(4_900))
+      expect(notice.getAttribute('data-state')).toBe('open')
+      act(() => vi.advanceTimersByTime(100))
+      expect(notice.getAttribute('data-state')).toBe('closing')
+    })
+  })
+
   it.each(['thread.history', 'thread.checkpoints', 'workspace.info'])(
     'retains restore Undo when %s refresh fails',
     async (failedMethod) => {
@@ -1570,7 +1764,7 @@ describe('web client', () => {
       })
       await openNewSession()
       await openCheckpointHistory()
-      fireEvent.click(screen.getByRole('button', { name: 'Restore checkpoint' }))
+      fireEvent.click(restoreButton())
       fireEvent.click(await screen.findByRole('button', { name: 'Undo restore' }))
       await waitFor(() =>
         expect(transport.request).toHaveBeenCalledWith('thread.undoRestore', {
@@ -1579,7 +1773,7 @@ describe('web client', () => {
         }),
       )
       expect(rpcCount('thread.restore')).toBe(1)
-      expect(screen.queryByRole('dialog', { name: 'Restore checkpoint' })).toBeNull()
+      expect(screen.queryByRole('dialog', { name: 'Restore' })).toBeNull()
     },
   )
 
@@ -1636,7 +1830,7 @@ describe('web client', () => {
     })
     await openNewSession()
     await openCheckpointHistory()
-    fireEvent.click(screen.getByRole('button', { name: 'Restore checkpoint' }))
+    fireEvent.click(restoreButton())
     fireEvent.click(await screen.findByRole('button', { name: 'Undo restore' }))
     await waitFor(() => expect(finishInfo.length).toBeGreaterThan(0))
 
@@ -1732,9 +1926,9 @@ describe('web client', () => {
     await openNewSession()
     await openCheckpointHistory()
     fireEvent.click(screen.getByRole('button', { name: /Before “Fix the tests”/ }))
-    expect(screen.queryByRole('button', { name: 'Restore checkpoint' })).toBeNull()
+    expect(restoreButton().disabled).toBe(true)
     await act(async () => reject(new Error('inspection failed')))
-    expect(screen.queryByRole('button', { name: 'Restore checkpoint' })).toBeNull()
+    expect(restoreButton().disabled).toBe(true)
     expect(rpcCount('thread.restore')).toBe(0)
   })
 
@@ -1846,6 +2040,7 @@ describe('web client', () => {
     expect(transport.request).not.toHaveBeenCalledWith('thread.delete', {
       threadId: 'untouched-thread',
     })
+    expect(localStorage.getItem(PENDING_CHAT_DELETES_KEY)).toBeNull()
   })
 
   it.each(['number shortcut', 'next chat', 'palette'] as const)(
@@ -6733,6 +6928,144 @@ describe('new chats', () => {
     expect(transport.request).not.toHaveBeenCalledWith('thread.delete', expect.anything())
   })
 
+  it('saves a queued delete for the next start until Undo', async () => {
+    await openNewSession()
+    fireEvent.click(screen.getByRole('button', { name: 'Delete New session' }))
+    await screen.findByText('Chat deleted')
+    expect(JSON.parse(localStorage.getItem(PENDING_CHAT_DELETES_KEY)!)).toEqual([
+      { threadId: 'untouched-thread', checkout: 'keep' },
+    ])
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }))
+    expect(localStorage.getItem(PENDING_CHAT_DELETES_KEY)).toBeNull()
+  })
+
+  it('finishes a delete on the next start when the app quit inside the undo window', async () => {
+    serverProjects[0]!.sessions.push({ id: 'kept-thread', title: 'Kept chat', createdAt: 5 })
+    await openNewSession()
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method, params) =>
+      method === 'thread.delete' ? new Promise(() => undefined) : request(method, params),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Delete New session' }))
+    await screen.findByText('Chat deleted')
+
+    cleanup()
+    transport.request.mockImplementation(request)
+    transport.request.mockClear()
+    shellRenders.sidebar.mockClear()
+    render(<App />)
+
+    await screen.findByRole('button', { name: 'Delete Kept chat' })
+    await waitFor(() => expect(localStorage.getItem(PENDING_CHAT_DELETES_KEY)).toBeNull())
+    expect(transport.request.mock.calls.filter(([method]) => method === 'thread.delete')).toEqual([
+      ['thread.delete', { threadId: 'untouched-thread' }],
+    ])
+    const shownChats = shellRenders.sidebar.mock.calls.flatMap(([props]) =>
+      (props as ComponentProps<typeof import('./ui/Sidebar.js').Sidebar>).projects.flatMap(
+        (project) => project.sessions.map((session) => session.id),
+      ),
+    )
+    expect(new Set(shownChats)).toEqual(new Set(['kept-thread']))
+  })
+
+  it('drops a saved delete for a chat that is already gone', async () => {
+    localStorage.setItem(
+      PENDING_CHAT_DELETES_KEY,
+      JSON.stringify([{ threadId: 'gone-thread', checkout: 'keep' }]),
+    )
+    render(<App />)
+    await screen.findByRole('button', { name: 'Delete New session' })
+    await waitFor(() => expect(localStorage.getItem(PENDING_CHAT_DELETES_KEY)).toBeNull())
+    expect(rpcCount('thread.delete')).toBe(0)
+  })
+
+  it('discards a saved isolated checkout before deleting its chat, without asking again', async () => {
+    serverProjects[0]!.sessions[0]!.worktreeBranch = 'harness/untouched-thread'
+    localStorage.setItem(
+      PENDING_CHAT_DELETES_KEY,
+      JSON.stringify([{ threadId: 'untouched-thread', checkout: 'force-discard' }]),
+    )
+    render(<App />)
+    await waitFor(() => expect(rpcCount('thread.delete')).toBe(1))
+    expect(
+      transport.request.mock.calls.filter(([method]) =>
+        ['thread.unsavedWork', 'thread.close', 'thread.discardWorktree', 'thread.delete'].includes(
+          method,
+        ),
+      ),
+    ).toEqual([
+      ['thread.close', { threadId: 'untouched-thread' }],
+      ['thread.discardWorktree', { threadId: 'untouched-thread', force: true }],
+      ['thread.delete', { threadId: 'untouched-thread' }],
+    ])
+    expect(screen.queryByRole('dialog', { name: 'Discard isolated checkout' })).toBeNull()
+  })
+
+  it('reports a saved delete that fails and shows its chat again', async () => {
+    localStorage.setItem(
+      PENDING_CHAT_DELETES_KEY,
+      JSON.stringify([{ threadId: 'untouched-thread', checkout: 'keep' }]),
+    )
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method, params) =>
+      method === 'thread.delete'
+        ? Promise.reject(new Error('The chat is still starting.'))
+        : request(method, params),
+    )
+    render(<App />)
+    expect((await screen.findByRole('alert')).textContent).toBe('The chat is still starting.')
+    expect(await screen.findByRole('button', { name: 'Delete New session' })).toBeTruthy()
+    expect(localStorage.getItem(PENDING_CHAT_DELETES_KEY)).toBeNull()
+  })
+
+  it('keeps a delete whose request fails for the next start', async () => {
+    const nativeTimeout = globalThis.setTimeout
+    vi.spyOn(globalThis, 'setTimeout').mockImplementation(
+      (...args: Parameters<typeof setTimeout>) => {
+        if (args[1] === 10_000) args[1] = 50
+        return nativeTimeout(...args)
+      },
+    )
+    await openNewSession()
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method, params) =>
+      method === 'thread.delete'
+        ? Promise.reject(new Error('The chat is still starting.'))
+        : request(method, params),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Delete New session' }))
+    expect((await screen.findByRole('alert')).textContent).toBe('The chat is still starting.')
+    expect(await screen.findByRole('button', { name: 'Delete New session' })).toBeTruthy()
+    expect(JSON.parse(localStorage.getItem(PENDING_CHAT_DELETES_KEY)!)).toEqual([
+      { threadId: 'untouched-thread', checkout: 'keep' },
+    ])
+  })
+
+  it('retries a delete the closed connection failed once on the next start', async () => {
+    await openNewSession()
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method, params) =>
+      method === 'thread.delete'
+        ? Promise.reject(new Error('Connection closed.'))
+        : request(method, params),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Delete New session' }))
+    await screen.findByText('Chat deleted')
+
+    cleanup()
+    await waitFor(() => expect(rpcCount('thread.delete')).toBe(1))
+    expect(JSON.parse(localStorage.getItem(PENDING_CHAT_DELETES_KEY)!)).toEqual([
+      { threadId: 'untouched-thread', checkout: 'keep' },
+    ])
+
+    transport.request.mockClear()
+    render(<App />)
+    expect((await screen.findByRole('alert')).textContent).toBe('Connection closed.')
+    expect(await screen.findByRole('button', { name: 'Delete New session' })).toBeTruthy()
+    expect(rpcCount('thread.delete')).toBe(1)
+    expect(localStorage.getItem(PENDING_CHAT_DELETES_KEY)).toBeNull()
+  })
+
   it('reconciles workspace ownership when a running session is archived', async () => {
     const nativeTimeout = globalThis.setTimeout
     vi.spyOn(globalThis, 'setTimeout').mockImplementation(
@@ -7573,7 +7906,7 @@ describe('new chats', () => {
       for (const listener of transport.stateListeners) listener('open')
     })
     await waitFor(() => expect(historyReads).toBe(2))
-    fireEvent.click(screen.getByRole('button', { name: 'Restore checkpoint' }))
+    fireEvent.click(restoreButton())
     await waitFor(() => expect(restoreRequests).toBe(1))
     await act(async () => releaseRestoreHistory?.())
     await act(async () => rejectRestore(new IndeterminateRequestError('restore reply lost')))
@@ -7582,7 +7915,7 @@ describe('new chats', () => {
       for (const listener of transport.stateListeners) listener('open')
     })
     await waitFor(() => expect(historyReads).toBeGreaterThanOrEqual(3))
-    fireEvent.click(screen.getByRole('button', { name: 'Restore checkpoint' }))
+    fireEvent.click(restoreButton())
     fireEvent.click(await screen.findByRole('button', { name: 'Undo restore' }))
     await waitFor(() => {
       expect(transport.request).toHaveBeenCalledWith('thread.undoRestore', {

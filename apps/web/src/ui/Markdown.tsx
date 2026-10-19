@@ -559,8 +559,12 @@ const StreamingMarkdown = memo(function StreamingMarkdown({
   return <div aria-busy={busy} className="md" data-streaming-markdown ref={root} />
 })
 const PlainCompletedMarkdown = memo(function PlainCompletedMarkdown({ text }: { text: string }) {
+  // A chat reply shows line breaks, so a paragraph's outer ones would be blank lines.
   const paragraphs = text.includes('\n')
-    ? text.split(PLAIN_PARAGRAPH_BREAK).filter(Boolean)
+    ? text
+        .split(PLAIN_PARAGRAPH_BREAK)
+        .map((paragraph) => paragraph.trim())
+        .filter(Boolean)
     : [text]
   return (
     <div className="md" data-plain-markdown>
@@ -577,12 +581,15 @@ export const Markdown = memo(function Markdown({
   projectPath,
   liveUpdate,
   updateVersion,
+  literalHtml,
 }: {
   text: string
   streaming?: boolean
   projectPath?: string | undefined
   liveUpdate?: LiveMarkdownChange | undefined
   updateVersion?: number | undefined
+  /** Shows raw HTML outside code as its source text, as the live parser does. */
+  literalHtml?: boolean | undefined
 }) {
   // A finished reply stays live until its reveal has caught up; only then
   // does the finished renderer take over, as a transition.
@@ -648,6 +655,7 @@ export const Markdown = memo(function Markdown({
           projectPath={projectPath}
           hidden={!settled}
           growing={aheadGrowing}
+          literalHtml={literalHtml}
           onRendered={settled ? undefined : aheadRendered.current}
         />
       ) : null}

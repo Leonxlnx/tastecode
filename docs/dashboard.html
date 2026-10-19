@@ -291,12 +291,22 @@
           <a href="./feature-inventory.html">Inventory</a>
           <a href="./CLAUDE-HANDOFF.md">Claude handoff</a>
         </nav>
-        <span class="meta">2026-10-19 nightly d8925ba3 · includes main 0ad74ec3</span>
+        <span class="meta">2026-10-19 nightly · includes main b86daab1 (PR #1899)</span>
       </div>
     </div>
 
     <div class="wrap">
       <section id="scope">
+        <p>
+          October 19, main into nightly (PR #1899): main b86daab1, the 99 commits since the last
+          sync at 0ad74ec3, merged with a merge commit while nightly keeps every provider, API
+          connections and the dashboard reference library. It brings chat replies that show raw HTML
+          as text and single line breaks, bold as strong, chat deletes that survive a quit, composer
+          drafts that survive a restart, the restore dialog's cut, Claude task plans, background
+          writing that falls through to the next source, Command-only keybinds on macOS and main's
+          dead-code cleanup. Background writing remembers a failed API connection on its own, so the
+          other connections are still tried.
+        </p>
         <p>
           October 19 on nightly (d8925ba3): what landed on October 18 and 19 after the round; the
           figures are from each PR's own measurement against nightly with fake CLIs. October 18: the
@@ -489,6 +499,25 @@
           only the anchor and up to two same-site references; finished dashboards say "Dashboard
           built." (PR #1493). A bad providers.json entry no longer breaks every API connection, and
           Antigravity is found in %LOCALAPPDATA%\agy\bin (PR #1489).
+        </p>
+        <p>
+          October 16 (main 0ad74ec3): Leon's overnight round landed. Assistant replies use the full
+          transcript width (PR #1616), code block controls line up with the label and the block
+          edges (PR #1617), icon-only composer chips are squares the size of Add (PR #1618), command
+          labels start after a cd into an absolute folder (PR #1619), and streamed reply text
+          reveals at a steady pace (PR #1620). Codex and Claude Code order their catalogs by tier
+          with the newest generation first, Astra, Sol, Terra, Luna and Fable, Opus, Sonnet, Haiku
+          (PR #1624), and older generations start hidden by one generation rule instead of fixed
+          lists (PR #1625). Codex and Claude Code chats show the context ring after a turn (PR
+          #1626). Settings > MCP keeps the Codex inventory when a server reports an unknown auth
+          status (PR #1628) and lists the servers a provider already loads (PR #1630); a failed
+          process stop is retried (PR #1629). Settings columns and card rows line up (PR #1612),
+          Windows shortcut labels print arrows (PR #1613), a keyboard-focused workspace tab is
+          ringed whole (PR #1614) and the workspace terminal follows the app background (PR #1615).
+          The design agent keeps acquiring photos while each pass makes progress (PR #1627), accepts
+          model-authored brief answers (PR #1621) and reported folders in the Build file list (PR
+          #1622), and no longer fails Build when a local browser cannot launch (PR #1623). The
+          design-taste plugin 0.5.0 ships without dashboard references.
         </p>
         <p>
           October 15, evening (main 6361163f): Leon's design picks landed. The right panel's X hides

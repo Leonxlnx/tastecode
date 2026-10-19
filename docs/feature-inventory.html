@@ -225,7 +225,7 @@
       <div class="topbar-inner">
         <h1>Feature Inventory</h1>
         <span class="total" id="total">0 checked</span>
-        <span class="meta">2026-10-19 nightly d8925ba3 · includes main 0ad74ec3</span>
+        <span class="meta">2026-10-19 nightly · includes main b86daab1 (PR #1899)</span>
       </div>
     </div>
 
@@ -1856,10 +1856,13 @@
                     href="https://github.com/Leonxlnx/tastecode/pull/1404"
                     >#1404</a
                   >); a restore or its undo tells every connected client to reload that chat, and a
-                  reconnect whose cursor saw removed events reads the history from the start. A
-                  checkout that matches HEAD is checkpointed from one status instead of rebuilding
-                  its tree (5 git runs instead of 11 before the agent gets the turn), and a turn's
-                  two checkpoint refs are written in one git run</span
+                  reconnect whose cursor saw removed events reads the history from the start. The
+                  Restore dialog lists the chat's prompts with a dotted cut above the chosen one,
+                  recedes everything below it, names the files that go back, and moves the cut with
+                  a click or the Up and Down keys. A checkout that matches HEAD is checkpointed from
+                  one status instead of rebuilding its tree (5 git runs instead of 11 before the
+                  agent gets the turn), and a turn's two checkpoint refs are written in one git
+                  run</span
                 ></span
               ></label
             >
@@ -2258,8 +2261,12 @@
                   >sidebar delete actions show a top toast with a white Undo button. The toast
                   closes after 5 seconds, pausing on hover or focus within the 10-second undo
                   window, and fade and slide visible rows before removal. Deletion is permanent once
-                  the window ends; selecting or sending in a pending chat cancels it. Shift-click
-                  range selection covers only visible rows. Reduced motion skips these effects</span
+                  the window ends; selecting or sending in a pending chat cancels it. A delete still
+                  in its window when the app quits normally finishes on the next start, and the chat
+                  is not shown again. A delete whose request failed is tried once more on the next
+                  start. A crash or hard kill within about 5 seconds of the click can still lose the
+                  delete. Shift-click range selection covers only visible rows. Reduced motion skips
+                  these effects</span
                 ></span
               ></label
             >
@@ -2438,13 +2445,14 @@
                   mirror the same actions and current custom accelerators. Cmd+1–9 on macOS and
                   Ctrl+1–9 on Windows/Linux open the nine newest sessions in the first sidebar
                   project. Cmd/Option bindings use Ctrl/Alt on Windows and Linux, with readable key
-                  labels and portable recorded Option keys. Direct workspace tool shortcuts work
-                  before and after the panel opens and respect modal keyboard ownership. The
-                  recorder refuses those, the number keys, find, turn navigation and the debug
-                  chord. The page has the Settings v1 header with a description and Restore
-                  defaults; groups are sections, rows sit on the shared settings leader with tones
-                  for not set, recording and refused, search is the settings text field with Clear,
-                  and no matches shows one empty line</span
+                  labels and portable recorded Option keys. On macOS only Command is the primary
+                  modifier, so Ctrl+letter stays a text-field motion and the recorder refuses Ctrl.
+                  Direct workspace tool shortcuts work before and after the panel opens and respect
+                  modal keyboard ownership. The recorder refuses those, the number keys, find, turn
+                  navigation and the debug chord. The page has the Settings v1 header with a
+                  description and Restore defaults; groups are sections, rows sit on the shared
+                  settings leader with tones for not set, recording and refused, search is the
+                  settings text field with Clear, and no matches shows one empty line</span
                 ></span
               ></label
             >

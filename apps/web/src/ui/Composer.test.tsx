@@ -824,6 +824,59 @@ describe('Composer attachment source switching', () => {
   })
 })
 
+describe('Composer attachment preview', () => {
+  it('says the preview is unavailable once the attempt resolves without one', async () => {
+    const settle = deferred()
+    bridge.previewViewedImage.mockReturnValue(settle.promise)
+    bridge.pickFiles.mockResolvedValue([{ path: '/work/dot.png', name: 'dot.png' }])
+    renderComposer(vi.fn())
+    fireEvent.click(screen.getByRole('button', { name: 'Attach files' }))
+
+    const loading = await screen.findByRole('button', { name: 'Loading preview of dot.png' })
+    expect((loading as HTMLButtonElement).disabled).toBe(true)
+
+    await act(async () => settle.resolve(undefined))
+    const unavailable = await screen.findByRole('button', {
+      name: 'Preview unavailable for dot.png',
+    })
+    expect((unavailable as HTMLButtonElement).disabled).toBe(true)
+    expect(bridge.previewViewedImage).toHaveBeenCalledWith('/work/dot.png')
+  })
+
+  it('opens the attachment once its preview resolves', async () => {
+    bridge.previewViewedImage.mockResolvedValue({
+      path: '/work/dot.png',
+      name: 'dot.png',
+      mediaType: 'image',
+      previewUrl: 'tastecode-attachment://preview/dot',
+    })
+    bridge.pickFiles.mockResolvedValue([{ path: '/work/dot.png', name: 'dot.png' }])
+    renderComposer(vi.fn())
+    fireEvent.click(screen.getByRole('button', { name: 'Attach files' }))
+
+    const open = await screen.findByRole('button', { name: 'Open dot.png' })
+    expect((open as HTMLButtonElement).disabled).toBe(false)
+    expect(bridge.previewViewedImage).toHaveBeenCalledWith('/work/dot.png')
+  })
+
+  it('keeps the preview the picker already supplied', async () => {
+    bridge.pickFiles.mockResolvedValue([
+      {
+        path: '/work/dot.png',
+        name: 'dot.png',
+        mediaType: 'image',
+        previewUrl: 'tastecode-attachment://preview/dot',
+      },
+    ])
+    renderComposer(vi.fn())
+    fireEvent.click(screen.getByRole('button', { name: 'Attach files' }))
+
+    const open = await screen.findByRole('button', { name: 'Open dot.png' })
+    expect((open as HTMLButtonElement).disabled).toBe(false)
+    expect(bridge.previewViewedImage).not.toHaveBeenCalled()
+  })
+})
+
 describe('Composer send handoff', () => {
   it('switches directly to Stop without starting a looping send animation', () => {
     const onSend = vi.fn()
@@ -2293,6 +2346,14 @@ describe('Composer prompt recall', () => {
     expect(composer.value).toBe('other chat draft')
   })
 })
+
+function deferred() {
+  let resolve!: (value: unknown) => void
+  const promise = new Promise<unknown>((res) => {
+    resolve = res
+  })
+  return { promise, resolve }
+}
 
 function renderComposer(
   onSend: (text: string, attachments: string[]) => void,

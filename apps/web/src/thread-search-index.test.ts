@@ -1,10 +1,6 @@
 import type { Item } from '@harness/contracts'
 import { describe, expect, it } from 'vitest'
-import {
-  createThreadSearchIndex,
-  createThreadSearchIndexer,
-  findThreadSearchHits,
-} from './thread-search-index.js'
+import { createThreadSearchIndexer, findThreadSearchHits } from './thread-search-index.js'
 import { emptyThread, reduce } from './thread-store.js'
 
 const items: Item[] = [
@@ -30,7 +26,7 @@ const items: Item[] = [
 
 describe('thread search index', () => {
   it('searches text, commands, and paths without renormalizing the transcript', () => {
-    const index = createThreadSearchIndex(items)
+    const index = createThreadSearchIndexer()(items)
 
     expect(findThreadSearchHits(index, undefined, 'alpha')).toEqual([0])
     expect(findThreadSearchHits(index, undefined, 'pnpm')).toEqual([1])
@@ -38,7 +34,7 @@ describe('thread search index', () => {
   })
 
   it('uses the current live item while keeping settled rows indexed', () => {
-    const index = createThreadSearchIndex(items)
+    const index = createThreadSearchIndexer()(items)
     const live = new Map([
       [
         0,

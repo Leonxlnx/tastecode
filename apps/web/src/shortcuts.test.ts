@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mockKeyboardModifierState } from './test-keyboard.js'
 import {
   createDefaultKeybindings,
+  FIND_IN_CHAT_SHORTCUT,
   findKeybindingConflict,
   isComposingKey,
   isConfirmEnter,
@@ -10,6 +11,7 @@ import {
   KEYBINDING_STORAGE_KEY,
   KEYBINDING_DEFINITIONS,
   matchesShortcut,
+  PREVIOUS_TURN_SHORTCUT,
   readKeybindings,
   reservedShortcutLabel,
   shortcutAria,
@@ -22,6 +24,8 @@ import {
 } from './shortcuts.js'
 
 beforeEach(mockKeyboardModifierState)
+const onPlatform = (platform: string) =>
+  vi.spyOn(navigator, 'platform', 'get').mockReturnValue(platform)
 afterEach(() => {
   localStorage.clear()
   vi.restoreAllMocks()
@@ -49,7 +53,8 @@ describe('shortcuts', () => {
     expect(new Set(assigned).size).toBe(assigned.length)
   })
 
-  it('matches the primary modifier on macOS and Windows without stealing shifted variants', () => {
+  it('matches Ctrl as the primary modifier outside macOS without stealing shifted variants', () => {
+    onPlatform('Win32')
     const commandPalette = createDefaultKeybindings().commandPalette!
     expect(
       matchesShortcut(new KeyboardEvent('keydown', { key: 'k', metaKey: true }), commandPalette),
@@ -63,6 +68,36 @@ describe('shortcuts', () => {
         commandPalette,
       ),
     ).toBe(false)
+  })
+
+  it('leaves Ctrl+letter to text editing on macOS', () => {
+    onPlatform('MacIntel')
+    const keybindings = createDefaultKeybindings()
+    const press = (key: string, init: KeyboardEventInit) =>
+      new KeyboardEvent('keydown', { key, ...init })
+    expect(matchesShortcut(press('k', { metaKey: true }), keybindings.commandPalette)).toBe(true)
+    expect(matchesShortcut(press('k', { ctrlKey: true }), keybindings.commandPalette)).toBe(false)
+    expect(matchesShortcut(press('n', { ctrlKey: true }), keybindings.newChat)).toBe(false)
+    expect(matchesShortcut(press('f', { ctrlKey: true }), FIND_IN_CHAT_SHORTCUT)).toBe(false)
+    expect(
+      matchesShortcut(press('ArrowUp', { ctrlKey: true, altKey: true }), PREVIOUS_TURN_SHORTCUT),
+    ).toBe(false)
+    expect(matchesShortcut(press('ArrowUp', { altKey: true }), PREVIOUS_TURN_SHORTCUT)).toBe(true)
+  })
+
+  it('records Command but not Ctrl as the primary modifier on macOS', () => {
+    onPlatform('MacIntel')
+    expect(
+      shortcutFromKeyboardEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true })),
+    ).toEqual({ key: 'k', primary: true })
+    expect(
+      shortcutFromKeyboardEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true })),
+    ).toBeUndefined()
+    expect(
+      shortcutFromKeyboardEvent(
+        new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, altKey: true }),
+      ),
+    ).toBeUndefined()
   })
 
   it('formats platform-native hints and recognizes every editable target', () => {
@@ -120,7 +155,12 @@ describe('shortcuts', () => {
     }
   })
 
-  it.each(['macOS', 'Windows', 'Linux'])('matches all assigned shortcuts on %s', (platform) => {
+  it.each([
+    ['macOS', 'MacIntel'],
+    ['Windows', 'Win32'],
+    ['Linux', 'Linux x86_64'],
+  ])('matches all assigned shortcuts on %s', (platform, navigatorPlatform) => {
+    onPlatform(navigatorPlatform)
     const shortcuts: Shortcut[] = [
       ...Object.values(createDefaultKeybindings()).filter((shortcut) => shortcut !== null),
       ...WORKSPACE_TOOL_SHORTCUTS.map(({ shortcut }) => shortcut),

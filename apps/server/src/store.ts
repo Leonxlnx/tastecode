@@ -341,6 +341,7 @@ CREATE TABLE IF NOT EXISTS threads (
   ephemeral        INTEGER NOT NULL DEFAULT 0,
   parent_thread_id TEXT,
   restore_context_pending INTEGER NOT NULL DEFAULT 0,
+  restored_at             INTEGER,
   history_rewrite_after   INTEGER,
   history_rewrite_through INTEGER
 );
@@ -586,6 +587,7 @@ const ADDED_COLUMNS: Array<{ table: string; column: string; definition: string }
   { table: 'threads', column: 'connection_id', definition: 'TEXT' },
   { table: 'threads', column: 'history_rewrite_after', definition: 'INTEGER' },
   { table: 'threads', column: 'history_rewrite_through', definition: 'INTEGER' },
+  { table: 'threads', column: 'restored_at', definition: 'INTEGER' },
 ]
 
 type SqliteInteger = number | bigint
@@ -1896,15 +1898,21 @@ export class Store {
         )
         .run(threadId, keys).changes
       if (retired) changed = true
+      // After a restore the local log holds, or deliberately dropped, everything
+      // the provider saved until then; only what the provider saves later is new.
+      const restoredAt = sqliteRow<{ restored_at: SqliteInteger | null }>(
+        this.#db.prepare('SELECT restored_at FROM threads WHERE id = ?'),
+        threadId,
+      )?.restored_at
       let turnAt = this.thread(threadId)?.createdAt ?? 0
       for (const { key, event } of entries) {
         const payload = JSON.stringify(event)
         const existing = previous.get(key)
         if (event.type === 'turn.started') turnAt = event.turn.createdAt
         if (
-          existing?.active &&
-          existing.payload === payload &&
-          !(retired && event.type === 'thread.started')
+          !(retired && event.type === 'thread.started') &&
+          ((existing?.active && existing.payload === payload) ||
+            (restoredAt != null && turnAt <= Number(restoredAt)))
         )
           continue
         if (existing)
@@ -4067,7 +4075,12 @@ export class Store {
         )
         .run(token, threadId, seq, commit, JSON.stringify(events), JSON.stringify(checkpoints))
       this.#truncateAfter(threadId, seq)
-      this.#db.prepare('UPDATE threads SET restore_context_pending = 1 WHERE id = ?').run(threadId)
+      this.#db
+        .prepare(
+          `UPDATE threads SET restore_context_pending = 1,
+             restored_at = MAX(COALESCE(restored_at, 0), ?) WHERE id = ?`,
+        )
+        .run(Date.now(), threadId)
       this.#db.exec('COMMIT')
       return token
     } catch (error) {

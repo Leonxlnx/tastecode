@@ -51,6 +51,7 @@ export const ClaudeEventSchema = z.object({
   duration_ms: z.number().optional(),
   total_cost_usd: z.number().optional(),
   usage: ClaudeUsageSchema.optional(),
+  tool_use_result: z.unknown().optional(),
 })
 
 export type ClaudeEvent = z.infer<typeof ClaudeEventSchema>
@@ -122,18 +123,6 @@ export function toDomainEvents(
         },
       ]
     })
-  }
-
-  if (event.type === 'result') {
-    const events: DomainEvent[] = []
-    const usage = toUsage(event.usage, event.total_cost_usd)
-    if (usage) events.push({ type: 'usage.updated', usage })
-    events.push({
-      type: 'turn.completed',
-      turnId,
-      status: event.is_error ? 'failed' : 'completed',
-    })
-    return events
   }
 
   return []
