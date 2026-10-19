@@ -1,11 +1,16 @@
-import { ChildProcess } from 'node:child_process'
+import { ChildProcess, spawn } from 'node:child_process'
 import { once } from 'node:events'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { killTree, spawnCli, spawnOwned } from './index.js'
-import { setTaskkillLauncherForTests } from './kill.js'
+import {
+  setTaskkillLauncherForTests,
+  stopUnfinishedTrees,
+  unfinishedChildrenForTests,
+} from './kill.js'
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -21,6 +26,120 @@ function heartbeat(file: string, ignoreTerm = false): string {
   return `const fs = require('node:fs'); ${ignoreTerm ? "process.on('SIGTERM', () => {});" : ''}
     const beat = () => fs.writeFileSync(${JSON.stringify(file)}, String(Date.now())); beat(); setInterval(beat, 30);`
 }
+
+async function waitUntilStill(file: string): Promise<void> {
+  const deadline = Date.now() + 15_000
+  let last = readFileSync(file, 'utf8')
+  while (Date.now() < deadline) {
+    await sleep(300)
+    const now = readFileSync(file, 'utf8')
+    if (now === last) return
+    last = now
+  }
+  throw new Error('the process kept running')
+}
+
+describe('owned trees when their owner exits', () => {
+  it.runIf(process.platform === 'win32')(
+    'stops the CLI behind a running shim, which Node itself leaves alive',
+    async () => {
+      const directory = mkdtempSync(path.join(tmpdir(), 'harness-exit-tree-'))
+      const file = path.join(directory, 'leaf')
+      writeFileSync(path.join(directory, 'serve.cjs'), heartbeat(file))
+      const shimFile = path.join(directory, 'fake-serve.cmd')
+      writeFileSync(shimFile, `@echo off\r\n"${process.execPath}" "%~dp0serve.cjs" %*\r\n`)
+      const child = spawnCli(shimFile, ['serve'])
+      try {
+        await waitForFile(file)
+        stopUnfinishedTrees()
+        await waitUntilStill(file)
+      } finally {
+        await killTree(child)
+        rmSync(directory, { recursive: true, force: true })
+      }
+    },
+    30_000,
+  )
+
+  it.runIf(process.platform === 'win32')(
+    'stops the CLI behind a shim when the owning process exits while it runs',
+    async () => {
+      const directory = mkdtempSync(path.join(tmpdir(), 'harness-exit-owner-'))
+      const file = path.join(directory, 'leaf')
+      // Ends by itself after 20 s, so a failing run leaves nothing behind for long.
+      writeFileSync(
+        path.join(directory, 'serve.cjs'),
+        `${heartbeat(file)} setTimeout(() => process.exit(0), 20_000);`,
+      )
+      const shimFile = path.join(directory, 'fake-serve.cmd')
+      writeFileSync(shimFile, `@echo off\r\n"${process.execPath}" "%~dp0serve.cjs" %*\r\n`)
+      // The owner exits as soon as the CLI runs, without stopping it first.
+      const owner = path.join(directory, 'owner.mjs')
+      writeFileSync(
+        owner,
+        `import { existsSync } from 'node:fs'
+import { spawnOwned } from ${JSON.stringify(pathToFileURL(path.join(import.meta.dirname, 'kill.ts')).href)}
+spawnOwned('cmd.exe', ['/d', '/s', '/c', ${JSON.stringify(`""${shimFile}""`)}], { stdio: 'pipe', windowsHide: true, windowsVerbatimArguments: true })
+const wait = setInterval(() => { if (existsSync(${JSON.stringify(file)})) { clearInterval(wait); process.exit(0) } }, 20)
+`,
+      )
+      try {
+        const run = spawn(
+          process.execPath,
+          ['--experimental-strip-types', '--no-warnings', owner],
+          {
+            stdio: 'ignore',
+            windowsHide: true,
+          },
+        )
+        expect((await once(run, 'exit'))[0]).toBe(0)
+        await waitUntilStill(file)
+      } finally {
+        rmSync(directory, { recursive: true, force: true, maxRetries: 10 })
+      }
+    },
+    40_000,
+  )
+
+  it.skipIf(process.platform === 'win32')('stops the groups it still owns', async () => {
+    const directory = mkdtempSync(path.join(tmpdir(), 'harness-exit-group-'))
+    const file = path.join(directory, 'leaf')
+    const child = spawnOwned(process.execPath, ['-e', heartbeat(file, true)], { stdio: 'pipe' })
+    try {
+      await waitForFile(file)
+      stopUnfinishedTrees()
+      await waitUntilStill(file)
+    } finally {
+      await killTree(child)
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('names only the children whose exit it has not seen', async () => {
+    const done = spawnOwned(process.execPath, ['-e', ''], { stdio: 'pipe' })
+    const running = spawnOwned(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+      stdio: 'pipe',
+    })
+    try {
+      await once(done, 'exit')
+      expect(unfinishedChildrenForTests().has(done)).toBe(false)
+      expect(unfinishedChildrenForTests().has(running)).toBe(true)
+      const launches: string[][] = []
+      if (process.platform === 'win32') {
+        stopUnfinishedTrees((args) => launches.push(args))
+        const pids = launches.flatMap((args) =>
+          args.flatMap((arg, at) => (args[at - 1] === '/pid' ? [Number(arg)] : [])),
+        )
+        expect(pids).toContain(running.pid)
+        expect(pids).not.toContain(done.pid)
+        expect(launches.every((args) => args.at(-2) === '/T' && args.at(-1) === '/F')).toBe(true)
+      }
+    } finally {
+      await killTree(running)
+    }
+    expect(unfinishedChildrenForTests().has(running)).toBe(false)
+  })
+})
 
 describe('owned process tree termination', () => {
   it.runIf(process.platform === 'win32')(

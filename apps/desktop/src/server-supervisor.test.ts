@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   MAX_CONSECUTIVE_FAILURES,
   SERVER_SHUTDOWN_TIMEOUT_MS,
+  SERVER_TREE_STOP_BUDGET_MS,
   restartDelayMs,
   ServerSupervisor,
   type SupervisedServerProcess,
@@ -228,6 +229,57 @@ describe('ServerSupervisor', () => {
     await vi.advanceTimersByTimeAsync(1)
     await stopped
     expect(child.wasKilled).toBe(true)
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('stops the whole server tree when it must force the stop, and waits for it', async () => {
+    const child = new FakeChild()
+    const requestShutdown = vi.fn(() => new Promise<void>(() => {}))
+    let treeStopped!: () => void
+    const killTree = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          treeStopped = resolve
+        }),
+    )
+    const sup = new ServerSupervisor({
+      launch: () => ({ ...supervised(child), requestShutdown, killTree }),
+      onLog: vi.fn(),
+    })
+    sup.start()
+    let done = false
+    const stopped = sup.stop().then(() => (done = true))
+    await vi.advanceTimersByTimeAsync(SERVER_SHUTDOWN_TIMEOUT_MS)
+    expect(killTree).toHaveBeenCalledOnce()
+    expect(child.wasKilled).toBe(false)
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(done).toBe(false)
+    treeStopped()
+    await stopped
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('lets the app quit when stopping the server tree hangs', async () => {
+    const child = new FakeChild()
+    const killTree = vi.fn(() => new Promise<void>(() => {}))
+    const logs: string[] = []
+    const sup = new ServerSupervisor({
+      launch: () => ({
+        ...supervised(child),
+        requestShutdown: () => Promise.reject(new Error('channel closed')),
+        killTree,
+      }),
+      onLog: (line) => logs.push(line),
+    })
+    sup.start()
+    const stopped = sup.stop()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(killTree).toHaveBeenCalledOnce()
+    await vi.advanceTimersByTimeAsync(SERVER_TREE_STOP_BUDGET_MS)
+    await stopped
+    // A later exit of the old server does not start a new one.
+    child.emit('exit', null, 'SIGKILL')
+    await vi.advanceTimersByTimeAsync(60_000)
     expect(vi.getTimerCount()).toBe(0)
   })
 
