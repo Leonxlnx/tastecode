@@ -291,12 +291,48 @@
           <a href="./feature-inventory.html">Inventory</a>
           <a href="./CLAUDE-HANDOFF.md">Claude handoff</a>
         </nav>
-        <span class="meta">2026-10-18 nightly 8ed311c9 · includes main 0ad74ec3</span>
+        <span class="meta">2026-10-19 nightly d8925ba3 · includes main 0ad74ec3</span>
       </div>
     </div>
 
     <div class="wrap">
       <section id="scope">
+        <p>
+          October 19 on nightly (d8925ba3): what landed on October 18 and 19 after the round; the
+          figures are from each PR's own measurement against nightly with fake CLIs. October 18: the
+          October 16 round in one merge (PR #1841) and the performance fixes PRs #1843, #1844, #1846
+          to #1848 and #1851, all described below; PR #1857 keeps a failed plan-limit read across
+          launches, so the first Usage view or account popup answers at once with Last known values
+          or Unavailable and the reason, and the backoff continues instead of restarting; test fixes
+          PRs #1849 and #1853. October 19, starting a chat: a chat started since the launch sends
+          its first turn without waiting for the provider's first history scan (PR #1873); a new
+          chat asks for a branch switch only when the shelf names a branch other than the checkout,
+          the server then reads only the branch, and a branch it cannot read starts the chat in
+          place (PR #1883; Enter to thread.start for Claude 3.8 to 1.3 s); a clean checkout's turn
+          checkpoint is answered from HEAD with both refs in one git run (PR #1882; 11 to 5 git runs
+          before a turn); Claude history finds its two title keys in one search (PR #1878). Send:
+          providers.list at launch no longer waits for codex login status or the registry PATH (PR
+          #1867; Send enabled 7.3 to 3.8 s with a 4 s login check), Send stays available while a
+          provider that was signed in is read again (PR #1876), an Enter pressed while Send loads is
+          sent once it is ready (PR #1881), and dictation shows the last voice status at once (PR
+          #1880). Shell: Settings and the model picker load in an idle moment after launch (PR
+          #1868; first Settings open 402 to 89 ms), a focus health check keeps a busy server's
+          socket (PR #1869), and the working chat spinner turns on the compositor (PR #1874;
+          renderer 57.4 to 15.5 % of a core while a turn streams in a background chat), with two
+          app.css comments shortened so the startup stylesheet fits its budget again (PR #1891).
+          Processes: an exiting process stops the trees it still owns, and a forced stop at quit
+          ends the server's whole tree, so no CLI outlives the server (PR #1872; the main process
+          may wait up to 5 s longer for that, after the window has closed); a short check that
+          missed its limit finishes by itself instead of being taskkilled (PR #1879). Closed with
+          their numbers, no measurable gain: PRs #1866, #1870 and #1871. Open for Leon: PR #1875
+          (sidebar direction B), PR #1877 (pause animations while Settings covers the app), PR #1884
+          (start a new chat in place on main) and the multiple-accounts stack (PRs #1854 to #1856,
+          #1858 to #1865, #1885 to #1890). Closing gates on Windows: on b32d2602 lint, typecheck and
+          build passed, and every suite passed except one web test, the startup CSS budget, which PR
+          #1874 had taken 288 bytes over; PR #1891 shortened two comments. On d8925ba3 all four
+          gates passed: lint (the two known warnings), typecheck, build and every test suite (web
+          2,858 tests, server 1,641, desktop 436, every package).
+        </p>
         <p>
           October 18 on nightly (54ee3536): the October 16 improvement round landed in one merge
           commit (PR #1841). Every lane top was merged into one integration branch, checked with the

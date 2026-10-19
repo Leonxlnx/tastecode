@@ -225,7 +225,7 @@
       <div class="topbar-inner">
         <h1>Feature Inventory</h1>
         <span class="total" id="total">0 checked</span>
-        <span class="meta">2026-10-18 nightly 8ed311c9 · includes main 0ad74ec3</span>
+        <span class="meta">2026-10-19 nightly d8925ba3 · includes main 0ad74ec3</span>
       </div>
     </div>
 
@@ -1066,7 +1066,10 @@
                   values older than 10 minutes show Updated &lt;age&gt; ago; times are read when the
                   popup opens or the values change, with no ticking timer; the first popup or Usage
                   view after a launch opens on the last session's full read (saved per provider,
-                  never shown to the sidebar figure) until this session's read replaces it</span
+                  never shown to the sidebar figure) until this session's read replaces it; the
+                  newest failed read is saved too, so after a launch a shown view answers at once
+                  with the saved values as Last known, or Unavailable with the reason when there are
+                  none, and the backoff continues from the last session instead of restarting</span
                 ></span
               ></label
             >
@@ -1235,8 +1238,10 @@
                   again on window focus or show when the last listing is 6 hours or older, and after
                   an app-run provider update; the launch snapshot of the catalog is written once per
                   refresh (one trailing write while sources settle, then the full catalog) and
-                  dropped instead of written when it outgrows its 2,000-row / 2M-character
-                  limit</span
+                  dropped instead of written when it outgrows its 2,000-row / 2M-character limit;
+                  the first selector on screen loads the picker panel in an idle moment, so the
+                  first open does not load it, and a failed load is tried again by the next
+                  caller</span
                 ></span
               ></label
             >
@@ -2710,7 +2715,9 @@
                   >General, Profile, Appearance, and Keybinds first, then Providers, Models, MCP
                   servers, Skills, Usage, Data &amp; privacy, About; Settings opens on General; each
                   nav label equals its page title, every tab opens scrolled to the top with the same
-                  title position and column, and every panel is named by its heading</span
+                  title position and column, and every panel is named by its heading; Settings loads
+                  in an idle moment once the project list is ready, so its first open does not load
+                  it, and a failed preload is loaded again on open</span
                 ></span
               ></label
             >
@@ -3015,7 +3022,10 @@
                 <span class="d"
                   >127.0.0.1:4311; the renderer transport isolates each connection-state listener,
                   so one that throws cannot stop reconnects, the handshake, or later listeners; a
-                  declared method without a route answers bad_request (unknown method)</span
+                  declared method without a route answers bad_request (unknown method); the health
+                  check on window focus does not ask when a frame arrived in the last 5 s, counts
+                  any frame during its wait as an answer and replaces the socket only after 10 s
+                  without one, so a busy server keeps its socket and the requests in flight</span
                 ></span
               ></label
             >
