@@ -3,7 +3,7 @@ import { accessSync, constants, realpathSync, statSync } from 'node:fs'
 import { readdir, readFile, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { applyDesktopPath, desktopPath } from './desktop-path.js'
-import { killTree, spawnOwned } from './kill.js'
+import { killTree, leaveRunning, spawnOwned } from './kill.js'
 
 /**
  * Spawn a CLI that may have been installed as an npm shim.
@@ -358,7 +358,7 @@ async function spawnCommandVersion(
 ): Promise<string | undefined> {
   try {
     const child = spawnCli(command, ['--version'])
-    const captured = captureCli(child, timeoutMs, 64 * 1024, commandLabel(command))
+    const captured = capture(child, timeoutMs, 64 * 1024, commandLabel(command), 'leave')
     endStdin(child)
     const { stdout } = await captured
     return (
@@ -394,14 +394,21 @@ function resolveExecutable(
   return undefined
 }
 
-/** Run a short, non-interactive CLI command and capture its public output. */
+/**
+ * Run a short, non-interactive CLI command and capture its public output.
+ *
+ * A command that misses `timeoutMs` is no longer waited for, but it is left to
+ * finish by itself rather than stopped (see `leaveRunning`): on a loaded PC
+ * these checks are slow, not stuck, and stopping each one cost taskkill runs
+ * that held the event loop.
+ */
 export function runCli(
   command: string,
   args: string[],
   timeoutMs = 5000,
 ): Promise<{ code: number | null; stdout: string; stderr?: string | undefined }> {
   const child = spawnCli(command, args)
-  const captured = captureCli(child, timeoutMs, undefined, commandLabel(command))
+  const captured = capture(child, timeoutMs, 1024 * 1024, commandLabel(command), 'leave')
   endStdin(child)
   return captured
 }
@@ -428,25 +435,44 @@ export function captureCli(
   /** The command's name for the timeout message, such as `cursor-agent`. */
   label?: string,
 ): Promise<CapturedCli> {
+  return capture(child, timeoutMs, maxBytes, label, 'stop')
+}
+
+/** `leave`: a command that misses the limit finishes by itself (`leaveRunning`). */
+function capture(
+  child: ChildProcessWithoutNullStreams,
+  timeoutMs: number,
+  maxBytes: number,
+  label: string | undefined,
+  onTimeout: 'stop' | 'leave',
+): Promise<CapturedCli> {
   return new Promise((resolve, reject) => {
     let stdout = ''
     let stderr = ''
     let bytes = 0
     let settled = false
-    const finish = (result: CapturedCli | Error) => {
+    const finish = (result: CapturedCli | Error, leave = false) => {
       if (settled) return
       settled = true
       clearTimeout(timer)
       // Handlers keep draining pipes but cannot retain more output after failure.
       stdout = ''
       stderr = ''
+      if (leave) {
+        leaveRunning(child)
+        reject(result)
+        return
+      }
       void killTree(child).then(() => {
         if (result instanceof Error) reject(result)
         else resolve(result)
       }, reject)
     }
     const timer = setTimeout(() => {
-      finish(new Error(`${label ?? 'The CLI'} did not answer within ${timeLimit(timeoutMs)}.`))
+      finish(
+        new Error(`${label ?? 'The CLI'} did not answer within ${timeLimit(timeoutMs)}.`),
+        onTimeout === 'leave',
+      )
     }, timeoutMs)
     const append = (chunk: string, stream: 'stdout' | 'stderr') => {
       if (settled) return
