@@ -258,6 +258,46 @@ describe('cancelInstall', () => {
     ])
   })
 
+  it('stays canceled when the stopped CLI exits before the stop answers', async () => {
+    let finishClose!: () => void
+    let answerStatus!: () => void
+    let closing = false
+    const transport = new TestTransport(async (method) => {
+      if (method === 'providers.launch') return { terminalId: 'login-hangup' }
+      if (method === 'terminal.status') {
+        if (!closing) return { status: 'running', output: '', outputOffset: 0, exitCode: null }
+        await new Promise<void>((resolve) => {
+          answerStatus = resolve
+        })
+        return { status: 'exited', output: '', outputOffset: 0, exitCode: 129 }
+      }
+      if (method === 'terminal.close') {
+        closing = true
+        await new Promise<void>((resolve) => {
+          finishClose = resolve
+        })
+        return {}
+      }
+      throw new Error(`unexpected ${method}`)
+    })
+    const target = { provider: 'claude-code' as const }
+    const key = loginKey(target)
+    await beginLogin(transport, target, () => {})
+    const cancel = cancelInstall(transport, key)
+    await vi.waitFor(() => expect(installState(key)?.canceling).toBe(true))
+    transport.emit('terminal.exit', { terminalId: 'login-hangup', exitCode: 129 })
+    finishClose()
+    await cancel
+    answerStatus()
+    await vi.waitFor(() =>
+      expect(transport.requests.filter(({ method }) => method === 'terminal.status')).toHaveLength(
+        2,
+      ),
+    )
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(installState(key)).toMatchObject({ phase: 'canceled', exitCode: 129 })
+  })
+
   it('keeps a failed stop available for retry', async () => {
     let rejectClose = true
     const transport = new TestTransport(async (method) => {
