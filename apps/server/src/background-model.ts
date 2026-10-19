@@ -84,6 +84,7 @@ function resolutionStages(preference: BackgroundModelPreference): ResolutionStag
     ]
   }
   return [
+    { reads: isBuiltIn('claude-code'), pick: pickClaudeHaiku },
     { reads: isBuiltIn('codex'), pick: pickCodexLuna },
     { reads: isBuiltIn('grok'), pick: pickGrok46 },
     { pick: pickCheapest },
@@ -135,6 +136,18 @@ function isBuiltIn(provider: BackgroundModelSource['provider']): (source: Source
   return (source) => source.provider === provider && !source.agent && !source.connectionId
 }
 
+function pickClaudeHaiku(
+  sources: AvailableBackgroundModelSource[],
+): BackgroundModelSelection | undefined {
+  const claude = sources[0]
+  const haiku = claude?.models
+    .filter((model) => isHaiku(model))
+    .sort((left, right) => compareVersions(right, left))[0]
+  if (!claude || !haiku) return undefined
+  const medium = haiku.reasoningEfforts.find((effort) => normalize(effort) === 'medium')
+  return selection(claude, haiku, medium ?? lowestReasoningEffort(haiku), true)
+}
+
 function pickCodexLuna(
   sources: AvailableBackgroundModelSource[],
 ): BackgroundModelSelection | undefined {
@@ -143,8 +156,8 @@ function pickCodexLuna(
     .filter((model) => isLuna(model))
     .sort((left, right) => compareVersions(right, left))[0]
   if (!codex || !luna) return undefined
-  const low = luna.reasoningEfforts.find((effort) => normalize(effort) === 'low')
-  return selection(codex, luna, low ?? lowestReasoningEffort(luna), true)
+  const medium = luna.reasoningEfforts.find((effort) => normalize(effort) === 'medium')
+  return selection(codex, luna, medium ?? lowestReasoningEffort(luna), true)
 }
 
 function pickGrok46(
@@ -220,6 +233,10 @@ function selection(
     sourceName: source.displayName,
     automatic,
   }
+}
+
+function isHaiku(model: Model): boolean {
+  return /\bhaiku\b/i.test(`${model.id} ${model.displayName}`)
 }
 
 function isLuna(model: Model): boolean {

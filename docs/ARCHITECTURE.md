@@ -583,8 +583,9 @@ Change notifications to clients are coalesced to one leading and one trailing no
 provider every 30 seconds. Repeated reads, such as switching threads, reuse the cached result
 until something changes instead of starting a limit-reading process each time.
 Background writing (chat titles, commit messages) reads only the sources its model choice
-needs: a manual target alone, otherwise Codex, then Grok, and every source only for the
-cheapest-model fallback. Each source's account and model read is cached for 60 seconds and
+needs: a manual target alone, otherwise Claude Code, then Codex, then Grok, and every source
+only for the cheapest-model fallback. Automatic writing prefers Claude Code's newest Haiku at
+medium effort, then a Codex subscription's newest Luna at medium, then Grok 4.6 at low. Each source's account and model read is cached for 60 seconds and
 shared with the Settings listing; a sign-in change or harness edit drops them. Reading every
 source per task was rejected: it started six vendor processes per new chat.
 `ThreadController` owns web transcript, replay, queue, submission
@@ -877,3 +878,4 @@ registry entry, which is deliberately a good first outside contribution.
 | 2026-10-11 | Kept closed activity rows from building their detail and gated a collapsed 300-call activity's heap locally.                                                                   |
 | 2026-10-11 | Ended a closed terminal's foreground job after a grace period, and a shell ignoring SIGHUP; background jobs stay.                                                              |
 | 2026-10-14 | Background writing reads only the model sources its choice needs, caches each source separately, and reuses Grok's sign-in `grok models` output for its model list.            |
+| 2026-10-19 | Made Claude Code's newest Haiku at medium the automatic background model, ahead of Codex Luna, which moved from low to medium effort.                                          |
