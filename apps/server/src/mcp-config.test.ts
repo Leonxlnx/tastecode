@@ -1,14 +1,20 @@
 import * as fs from 'node:fs'
-import { mkdtempSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { McpConfigStore } from './mcp-config.js'
 
 vi.mock('node:fs', { spy: true })
 
+const roots: string[] = []
+afterEach(() => {
+  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
+})
+
 function setup() {
   const root = mkdtempSync(path.join(tmpdir(), 'harness-mcp-config-'))
+  roots.push(root)
   const project = path.join(root, 'project')
   mkdirSync(project)
   const location = path.join(root, 'config', 'mcp.json')

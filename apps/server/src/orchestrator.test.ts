@@ -13,7 +13,7 @@ import {
 } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ProviderIdSchema } from '@harness/contracts'
 import type {
   ApprovalMode,
@@ -250,6 +250,20 @@ class FakeSession implements AgentSession {
   }
 }
 
+// Every orchestrator under test gets its own MCP config folder. Remove them when the file is done:
+// one run builds a few hundred, and each was left behind in the temp directory.
+const mcpConfigDirectories: string[] = []
+function temporaryMcpConfig(): McpConfigStore {
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'harness-mcp-'))
+  mcpConfigDirectories.push(directory)
+  return new McpConfigStore(path.join(directory, 'mcp.json'))
+}
+afterAll(() => {
+  for (const directory of mcpConfigDirectories.splice(0)) {
+    rmSync(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
+  }
+})
+
 type QueueNotificationError = { current?: Error }
 type CredentialFailure = { current?: Error }
 type LifecycleHook = {
@@ -370,9 +384,7 @@ function harness(
     onLogin: () => {},
     onUsageChanged: (provider) => usageChanges.push(provider),
     onMcpChanged: (provider, projectPath) => mcpChanges.push({ provider, projectPath }),
-    mcpConfig: new McpConfigStore(
-      path.join(mkdtempSync(path.join(os.tmpdir(), 'harness-mcp-')), 'mcp.json'),
-    ),
+    mcpConfig: temporaryMcpConfig(),
     readCredential: (reference) => {
       if (credentialFailure.current) throw credentialFailure.current
       return `secret:${reference}`
@@ -9185,9 +9197,7 @@ describe('overnight race pins', () => {
       onEvent: () => {},
       onLog: () => {},
       onLogin: () => {},
-      mcpConfig: new McpConfigStore(
-        path.join(mkdtempSync(path.join(os.tmpdir(), 'harness-mcp-')), 'mcp.json'),
-      ),
+      mcpConfig: temporaryMcpConfig(),
       readCredential: () => '',
       runtimeFor: () => ({
         async start() {
