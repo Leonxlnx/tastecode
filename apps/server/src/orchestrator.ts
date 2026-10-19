@@ -1381,11 +1381,13 @@ export class Orchestrator {
     const owner = `start-${crypto.randomUUID()}`
     this.#checkoutAccess.beginTurn(resolved, owner)
     try {
-      if (
-        !options.baseRef ||
-        (options.baseRef !== 'HEAD' && (await currentBranch(resolved)) === options.baseRef)
-      ) {
-        return await start()
+      if (!options.baseRef) return await start()
+      if (options.baseRef !== 'HEAD') {
+        const branch = await currentBranch(resolved)
+        // A git that timed out on a busy machine says nothing about the
+        // checkout. Switching on that guess timed out as well and failed the
+        // chat ("could not switch to main"); starting where it is does not.
+        if (branch === undefined || branch === options.baseRef) return await start()
       }
     } finally {
       this.#checkoutAccess.endTurn(owner)
