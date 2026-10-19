@@ -31,6 +31,14 @@ export function limitKey(provider: ProviderId, accountId?: AccountId): string {
     : `${provider}/${accountId}`
 }
 
+/** The provider account a `limitKey` names; the default account has no `accountId`. */
+export function limitTargetOf(key: string): LimitTarget {
+  const slash = key.indexOf('/')
+  return slash < 0
+    ? { provider: key as ProviderId }
+    : { provider: key.slice(0, slash) as ProviderId, accountId: key.slice(slash + 1) }
+}
+
 const keyOf = (target: LimitTarget): string => limitKey(target.provider, target.accountId)
 
 /** Combines the existing race-safe single-source owners without merging source truth. */
