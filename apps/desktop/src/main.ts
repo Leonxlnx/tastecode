@@ -27,6 +27,11 @@ import {
   type WebContents,
 } from 'electron'
 import type { PreviewCaptureRequest } from '@harness/contracts'
+import {
+  COMPILE_CACHE_ENV,
+  COMPILE_CACHE_FOLDER,
+  enableCompileCache,
+} from '@harness/proc/compile-cache'
 import { applyDesktopPath, desktopPath } from '@harness/proc/desktop-path'
 import {
   ATTACHMENT_PREVIEW_SCHEME,
@@ -117,6 +122,11 @@ const nativeAppName = 'Taste Code'
 const productDataPath = process.env['HARNESS_DESKTOP_DATA_DIR']
   ? path.resolve(process.env['HARNESS_DESKTOP_DATA_DIR'])
   : path.join(app.getPath('appData'), 'TasteCode')
+// V8's compiled code, kept between launches: the server's whole module graph
+// (handed over in startOwnedServer) and what this process loads later, such
+// as the updater. Node keeps one subfolder per runtime version.
+const compileCacheDirectory = path.join(productDataPath, COMPILE_CACHE_FOLDER)
+enableCompileCache(compileCacheDirectory)
 const mainWindowStatePath = path.join(productDataPath, 'window-state.json')
 const windowChromePath = path.join(productDataPath, 'window-chrome.json')
 /** What window-chrome.json holds, so an unchanged report does not rewrite it. */
@@ -378,6 +388,7 @@ function startOwnedServer(): boolean {
   if (process.env['HARNESS_PORT'] && process.env['HARNESS_PORT'] !== serverEnv['HARNESS_PORT']) {
     console.warn('[desktop] ignoring HARNESS_PORT; using the packaged renderer endpoint')
   }
+  serverEnv = { ...serverEnv, [COMPILE_CACHE_ENV]: compileCacheDirectory }
   const serverEntry = app.isPackaged
     ? require.resolve('@harness/server')
     : path.join(here, '../../server/dist/main.js')
