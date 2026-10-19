@@ -43,11 +43,13 @@
   padding-left: 28px;
 }
 
-/* The project name reads as a quiet prefix and gives way before the title. */
+/* The project name reads as a quiet tag, the size of the time, and gives way
+   before the title does. */
 .sess__project {
   flex: 0 1 auto;
   min-width: 0;
-  max-width: 34%;
+  max-width: 32%;
+  font-size: var(--t-xs);
   overflow: hidden;
   color: var(--text-3);
   text-overflow: ellipsis;
