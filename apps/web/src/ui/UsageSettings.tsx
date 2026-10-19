@@ -1,11 +1,4 @@
-import {
-  useCallback,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-  useSyncExternalStore,
-} from 'react'
+import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
 import type { ProviderId, ResultOf, UsageHistoryRange } from '@harness/contracts'
 import { IconChevronDown as ChevronDown, IconRefresh as RefreshCw } from '@tabler/icons-react'
 import { providerDisplayName } from '../provider-presentation.js'
@@ -15,6 +8,7 @@ import { useUsageHistory } from '../usage-history-state.js'
 import type { UsageSummaryState } from '../usage-summary-state.js'
 import { readSessionClock, subscribeSessionClock } from './session-clock.js'
 import { SettingsNotice, SettingsPage } from './settings/SettingsLayout.js'
+import type { ChartAxis } from './usage/UsageChart.js'
 import { UsageSheet } from './usage/UsageSheet.js'
 import { formatInteger, formatTokens } from './usage/usage-format.js'
 import {
@@ -33,7 +27,6 @@ import {
   pricedShare,
   rangeText,
   sheetLimits,
-  type AxisTick,
   type PeriodSlot,
   type PlanLimitsSource,
   type SheetLimits,
@@ -46,10 +39,6 @@ const NO_LIMIT_STATES: UsageSummaryState[] = []
 const noLimits = () => NO_LIMIT_STATES
 const subscribeNothing = () => () => {}
 
-/** Room kept between two axis labels, and the width of one character, in pixels. */
-const LABEL_GAP = 14
-const LABEL_CHAR = 7
-
 function plural(value: number, one: string, many: string): string {
   return `${formatInteger(value)} ${value === 1 ? one : many}`
 }
@@ -61,9 +50,9 @@ function slotText(slot: PeriodSlot, span: 1 | 7, referenceYear: number): string 
 }
 
 /**
- * Usage: one sheet per provider, each with its tokens over time on one shared
- * axis and height scale, its value at API prices, its plan limits and its
- * models; a limit running low is also named under the top line.
+ * Usage: the period's totals under the title, then one sheet per provider
+ * with its tokens over the period, its plan limits and its models; a limit
+ * running low is also named under the totals.
  */
 export function UsageSettings(props: {
   transport: Transport
@@ -95,82 +84,64 @@ export function UsageSettings(props: {
     }
     return byProvider
   }, [states])
-  const { sheets, slots, span, top } = useMemo(() => deriveSheets(data, limits), [data, limits])
+  const { sheets, slots, span } = useMemo(() => deriveSheets(data, limits), [data, limits])
   const unit = span === 7 ? 'week' : 'day'
-
-  // A hover belongs to the period it was made in.
-  const [scrub, setScrub] = useState<{ range: UsageHistoryRange; index: number }>()
-  const hover =
-    data && scrub?.range === data.range && scrub.index < slots.length ? scrub.index : undefined
-  const dataRange = data?.range
-  const onHover = useCallback(
-    (index: number | undefined) =>
-      setScrub(
-        index === undefined || dataRange === undefined ? undefined : { range: dataRange, index },
-      ),
-    [dataRange],
-  )
   const retry = useCallback((provider: ProviderId) => source?.refresh(provider), [source])
 
-  const [track, setTrack] = useState<HTMLDivElement | null>(null)
-  const width = useWidth(track)
-  const referenceYear = data ? Number(data.endDate.slice(0, 4)) : new Date(now).getFullYear()
-  const hoverSlot = hover === undefined ? undefined : slots[hover]
-  const startText = data ? dayText(data.startDate, referenceYear) : ''
-  const endText = !data
-    ? ''
-    : data.endDate === dayKey(now)
-      ? 'Today'
-      : dayText(data.endDate, referenceYear)
-  const ticks = useMemo(
-    () => placeTicks(axisTicks(slots, span), slots.length, width, startText, endText),
-    [slots, span, width, startText, endText],
-  )
-  const tickIndexes = useMemo(() => ticks.map((tick) => tick.index), [ticks])
+  const endDate = data?.endDate
+  const startDate = data?.startDate
+  const today = dayKey(now)
+  const axis = useMemo((): ChartAxis => {
+    const referenceYear = endDate ? Number(endDate.slice(0, 4)) : new Date().getFullYear()
+    return {
+      slots: slots.map((slot) => slotText(slot, span, referenceYear)),
+      ticks: axisTicks(slots, span),
+      start: startDate ? dayText(startDate, referenceYear) : '',
+      end: !endDate ? '' : endDate === today ? 'Today' : dayText(endDate, referenceYear),
+    }
+  }, [slots, span, startDate, endDate, today])
   const alert = limitAlert(sheets, now)
   const failed = error !== undefined && data !== undefined
-  const charted = data !== undefined && sheets.some((sheet) => !sheet.empty)
   const showSheets = data !== undefined || !loading
 
   return (
     <SettingsPage
       title="Usage"
-      className={`usage-page${hover !== undefined ? ' is-scrubbing' : ''}`}
-    >
-      <div className="usage-page__top">
-        <label className="usage-page__period">
-          <span>{PERIOD_OPTIONS.find((option) => option.value === range)?.label}</span>
-          <ChevronDown className="usage-page__chevron" size={14} stroke={2} aria-hidden />
-          <select
-            className="usage-page__period-select"
-            aria-label="Period"
-            value={range}
-            onChange={(event) => {
-              if (isPeriod(event.target.value)) setRange(event.target.value)
-            }}
+      className="usage-page"
+      description={data ? <Totals data={data} /> : null}
+      actions={
+        <>
+          <label className="usage-page__period">
+            <span>{PERIOD_OPTIONS.find((option) => option.value === range)?.label}</span>
+            <ChevronDown className="usage-page__chevron" size={13} stroke={2} aria-hidden />
+            <select
+              className="usage-page__period-select"
+              aria-label="Period"
+              value={range}
+              onChange={(event) => {
+                if (isPeriod(event.target.value)) setRange(event.target.value)
+              }}
+            >
+              {PERIOD_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button
+            className={`usage-page__refresh${busy ? ' is-busy' : ''}`}
+            type="button"
+            aria-label={failed ? 'Retry' : 'Check for new usage'}
+            title={failed ? 'Retry' : 'Check for new usage'}
+            disabled={busy}
+            onClick={refresh}
           >
-            {PERIOD_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        {data ? (
-          <TopFacts data={data} slot={hoverSlot} span={span} referenceYear={referenceYear} />
-        ) : null}
-        <button
-          className={`usage-page__refresh${busy ? ' is-busy' : ''}`}
-          type="button"
-          aria-label={failed ? 'Retry' : 'Check for new usage'}
-          title={failed ? 'Retry' : 'Check for new usage'}
-          disabled={busy}
-          onClick={refresh}
-        >
-          <RefreshCw size={15} stroke={2} aria-hidden />
-        </button>
-      </div>
-
+            <RefreshCw size={14} stroke={2} aria-hidden />
+          </button>
+        </>
+      }
+    >
       {alert ? <p className="usage-page__alert">{alert}</p> : null}
       {indexing && data ? (
         <p className="usage-page__notice">
@@ -204,42 +175,15 @@ export function UsageSettings(props: {
 
       {showSheets ? (
         <div className="usage-page__sheets">
-          {charted ? (
-            <div className="usage-page__axis" aria-hidden>
-              <span>Tokens a {unit}</span>
-              <div className="usage-page__axis-track" ref={setTrack}>
-                <span className="usage-page__axis-start">{startText}</span>
-                {ticks.map((tick) => (
-                  <span key={tick.index} className="usage-page__axis-tick" style={{ left: tick.x }}>
-                    {tick.label}
-                  </span>
-                ))}
-                <span className="usage-page__axis-end">{endText}</span>
-                {hoverSlot && hover !== undefined ? (
-                  <AxisDay
-                    text={slotText(hoverSlot, span, referenceYear)}
-                    x={((hover + 0.5) / slots.length) * width}
-                    width={width}
-                  />
-                ) : null}
-              </div>
-              <span className="usage-page__axis-end-label">At API prices</span>
-            </div>
-          ) : null}
           {sheets.map((sheet, index) => (
             <UsageSheet
               key={`${data?.range ?? 'none'}:${sheet.provider}`}
               sheet={sheet}
               index={index}
-              top={top}
-              width={width}
+              axis={axis}
               unit={unit}
-              ticks={tickIndexes}
-              hover={hover}
-              hoverTotal={hoverSlot?.tokens}
               emptyText={data ? emptySheetText(data.range) : undefined}
               now={now}
-              onHover={onHover}
               onRetry={retry}
             />
           ))}
@@ -256,83 +200,26 @@ export function UsageSettings(props: {
   )
 }
 
-/** The period's figures on the top line, or the hovered day's or week's. */
-function TopFacts(props: {
-  data: History
-  slot: PeriodSlot | undefined
-  span: 1 | 7
-  referenceYear: number
-}) {
-  const { data, slot } = props
-  if (slot) {
-    return (
-      <span className="usage-page__facts">
-        <span className="usage-page__fact is-name">
-          {slotText(slot, props.span, props.referenceYear)}
-        </span>
-        <span className="usage-page__fact">{formatTokens(slot.tokens)} tokens</span>
-        <span className="usage-page__fact">{formatValue(slot.value)}</span>
-        <span className="usage-page__fact is-soft">
-          {slot.sessions === undefined
-            ? plural(slot.activeDays, 'active day', 'active days')
-            : plural(slot.sessions, 'session', 'sessions')}
-        </span>
-      </span>
-    )
-  }
+/** The period's totals, each figure named. */
+function Totals(props: { data: History }) {
+  const { data } = props
   return (
-    <span className="usage-page__facts">
-      <span className="usage-page__fact">{formatTokens(data.totals.processedTokens)} tokens</span>
-      <span className="usage-page__fact">{formatValue(data.totals.estimatedCostUsd)}</span>
-      <span className="usage-page__fact is-soft">
-        {plural(data.sessionCount, 'session', 'sessions')} on {formatInteger(data.activeDays)} of{' '}
-        {formatInteger(data.daily.length)} days
+    <span className="usage-page__totals">
+      <span>
+        <b>{formatTokens(data.totals.processedTokens)}</b> tokens
+      </span>
+      <span>
+        <b>{formatValue(data.totals.estimatedCostUsd)}</b> at API prices
+      </span>
+      <span>
+        <b>{formatInteger(data.sessionCount)}</b> {data.sessionCount === 1 ? 'session' : 'sessions'}{' '}
+        on {formatInteger(data.activeDays)} of {plural(data.daily.length, 'day', 'days')}
       </span>
     </span>
   )
 }
 
-/**
- * The axis labels that fit between its two ends, left to right, each kept
- * clear of its neighbours.
- */
-function placeTicks(
-  ticks: readonly AxisTick[],
-  slots: number,
-  width: number,
-  start: string,
-  end: string,
-): Array<AxisTick & { x: number }> {
-  if (width <= 0 || slots <= 0) return []
-  const half = (label: string) => (label.length * LABEL_CHAR) / 2
-  let right = start.length * LABEL_CHAR + LABEL_GAP
-  const limit = width - end.length * LABEL_CHAR - LABEL_GAP
-  const placed: Array<AxisTick & { x: number }> = []
-  for (const tick of ticks) {
-    const x = ((tick.index + 0.5) / slots) * width
-    if (x - half(tick.label) < right || x + half(tick.label) > limit) continue
-    placed.push({ ...tick, x })
-    right = x + half(tick.label) + LABEL_GAP
-  }
-  return placed
-}
-
-/** The hovered date, centred on the crosshair and kept inside the track. */
-function AxisDay(props: { text: string; x: number; width: number }) {
-  const ref = useRef<HTMLSpanElement>(null)
-  const [half, setHalf] = useState(0)
-  useLayoutEffect(() => {
-    setHalf((ref.current?.offsetWidth ?? 0) / 2)
-  }, [props.text])
-  const left = Math.min(props.width - half, Math.max(half, props.x))
-  return (
-    <span ref={ref} className="usage-page__axis-day" style={{ left }}>
-      {props.text}
-    </span>
-  )
-}
-
-/** Caching savings as a figure, then what the values mean and where they come from. */
+/** What caching saved, then what the values mean and where they come from. */
 function UsageClose(props: { data: History; now: number; indexing: boolean }) {
   const { data } = props
   const { totals } = data
@@ -346,58 +233,39 @@ function UsageClose(props: { data: History; now: number; indexing: boolean }) {
   return (
     <div className="usage-page__close">
       {totals.processedTokens > 0 ? (
-        <div className="usage-page__saved">
-          <span className="usage-page__saved-name">Caching saved</span>
-          <span className="usage-page__saved-note">
-            Without caching, these tokens would come to{' '}
-            {formatValue(totals.estimatedCostUsd + totals.cacheSavingsUsd)}.
-          </span>
-          <span className="usage-page__saved-value">{formatValue(totals.cacheSavingsUsd)}</span>
-        </div>
+        <p className="usage-page__saved">
+          Caching saved <b>{formatValue(totals.cacheSavingsUsd)}</b>. Without it, these tokens would
+          come to {formatValue(totals.estimatedCostUsd + totals.cacheSavingsUsd)}.
+        </p>
       ) : null}
-      <div className="usage-page__notes">
-        <p className="usage-page__note">
-          Values are what the tokens would cost at public API list prices, not what your plans bill.{' '}
-          {priced !== undefined && isPartialEstimate(totals)
-            ? `Public prices cover ${Math.floor(priced * 100)}% of these tokens, so the total is a partial estimate. `
-            : null}
-          {data.warnings.map((warning) => `${warning} `)}≈ marks a model priced from a sibling.
-        </p>
-        <p className="usage-page__note">
-          {props.indexing
-            ? `Reading ${histories}. Figures so far are from ${plural(data.scan.filesProcessed, 'file', 'files')}.`
-            : data.generatedAt > 0
-              ? `Indexed ${indexedAgo(data.generatedAt, props.now)} from ${plural(data.scan.filesTotal, 'file', 'files')} in ${histories}.`
-              : 'Not indexed yet.'}
-        </p>
-      </div>
+      <p className="usage-page__note">
+        Values are what the tokens would cost at public API list prices, not what your plans bill.{' '}
+        {priced !== undefined && isPartialEstimate(totals)
+          ? `Public prices cover ${Math.floor(priced * 100)}% of these tokens, so the total is a partial estimate. `
+          : null}
+        {data.warnings.map((warning) => `${warning} `)}≈ marks a model priced from a sibling.
+      </p>
+      <p className="usage-page__note">
+        {props.indexing
+          ? `Reading ${histories}. Figures so far are from ${plural(data.scan.filesProcessed, 'file', 'files')}.`
+          : data.generatedAt > 0
+            ? `Indexed ${indexedAgo(data.generatedAt, props.now)} from ${plural(data.scan.filesTotal, 'file', 'files')} in ${histories}.`
+            : 'Not indexed yet.'}
+      </p>
     </div>
   )
 }
 
-/** While the first answer loads: each sheet's name and band, no numbers. */
+/** While the first answer loads: each sheet's name and chart, no numbers. */
 function HistorySkeleton() {
   return (
     <div className="usage-skeleton" role="status" aria-label="Reading the usage index">
       {[0, 1, 2].map((index) => (
         <div className="usage-skeleton__sheet" key={index}>
           <span className="skeleton usage-skeleton__name" />
-          <span className="skeleton usage-skeleton__band" />
+          <span className="skeleton usage-skeleton__chart" />
         </div>
       ))}
     </div>
   )
-}
-
-/** The element's content width, kept current as the column resizes. */
-function useWidth(element: HTMLElement | null): number {
-  const [width, setWidth] = useState(0)
-  useLayoutEffect(() => {
-    if (!element) return
-    setWidth(element.clientWidth)
-    const observer = new ResizeObserver(() => setWidth(element.clientWidth))
-    observer.observe(element)
-    return () => observer.disconnect()
-  }, [element])
-  return width
 }

@@ -32,7 +32,6 @@ function sheetWith(accounts: SheetAccount[]): ProviderSheet {
       { tokens: 1_000, value: 10 },
       { tokens: 3_000, value: 30 },
     ],
-    quiet: false,
     empty: false,
     models: [],
     accounts,
@@ -44,15 +43,10 @@ function renderSheet(sheet: ProviderSheet, onRetry = vi.fn()) {
     <UsageSheet
       sheet={sheet}
       index={0}
-      top={3_000}
-      width={0}
+      axis={{ slots: ['Oct 17', 'Oct 18'], ticks: [], start: 'Oct 17', end: 'Today' }}
       unit="day"
-      ticks={[]}
-      hover={undefined}
-      hoverTotal={undefined}
       emptyText={undefined}
       now={NOW}
-      onHover={() => {}}
       onRetry={onRetry}
     />,
   )
@@ -102,19 +96,16 @@ describe('usage sheet', () => {
 
     expect(within(codex).queryByRole('group', { name: 'Plan limits' })).toBeNull()
     const accounts = within(codex).getByRole('group', { name: 'Accounts' })
-    const rows = [...accounts.querySelectorAll('.usage-sheet__row')].map((row) =>
-      [...row.querySelectorAll('.usage-sheet__label, .usage-sheet__aside, .usage-sheet__end')]
-        .map((cell) => cell.textContent)
-        .filter(Boolean)
-        .join(' | '),
+    const lines = [...accounts.querySelectorAll('.usage-sheet__line')].map((line) =>
+      [...line.children].map((cell) => cell.textContent).join(' | '),
     )
-    expect(rows).toEqual([
-      'Work | 3K tokens | $30.00',
+    expect(lines).toEqual([
+      'Work | 3K tokens · $30.00',
       'Weekly | 10% left',
-      'Home | 1K tokens | $10.00',
+      'Home | 1K tokens · $10.00',
       'Weekly | 90% left',
       'Team | No sessions',
-      'Unavailable | Retry',
+      'Unavailable | offline | Retry',
     ])
     expect(
       within(accounts).getByRole('progressbar', { name: 'Codex Work Weekly left' }),

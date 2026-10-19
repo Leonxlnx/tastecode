@@ -24,6 +24,13 @@ async function advance(ms: number): Promise<void> {
 
 const NOW = Date.UTC(2026, 7, 8, 12)
 
+/** Matches an element by its whole text, across the figures set in bold inside it. */
+function wholeText(text: string) {
+  return (_content: string, element: Element | null) =>
+    element?.textContent === text &&
+    [...element.children].every((child) => child.textContent !== text)
+}
+
 function transportOf(result: (range: UsageHistoryRange) => ResultOf<'usage.history'>) {
   const request = vi.fn(
     async (_method: string, params: { range: UsageHistoryRange; refresh?: boolean }) =>
@@ -98,9 +105,16 @@ describe('usage settings', () => {
 
     expect(screen.getByRole('heading', { level: 1, name: 'Usage' })).toBeTruthy()
     expect(screen.getByRole('status', { name: 'Reading the usage index' })).toBeTruthy()
-    expect(await screen.findByText('4 sessions on 1 of 1 days')).toBeTruthy()
-    // The top line, the Codex sheet and its one model.
-    expect(screen.getAllByText('1.23M tokens')).toHaveLength(3)
+    expect(await screen.findByText(wholeText('4 sessions on 1 of 1 day'))).toBeTruthy()
+    const totals = document.querySelector('.usage-page__totals')
+    expect([...(totals?.children ?? [])].map((part) => part.textContent)).toEqual([
+      '1.23M tokens',
+      '$12.34 at API prices',
+      '4 sessions on 1 of 1 day',
+    ])
+    const codex = screen.getByRole('region', { name: 'Codex' })
+    expect(within(codex).getByText('1.23M tokens')).toBeTruthy()
+    expect(within(codex).getByRole('columnheader', { name: 'Tokens' })).toBeTruthy()
     expect(request).toHaveBeenNthCalledWith(1, 'usage.history', { range: '30d' })
     const period = screen.getByRole<HTMLSelectElement>('combobox', { name: 'Period' })
     expect(period.value).toBe('30d')
@@ -126,10 +140,12 @@ describe('usage settings', () => {
     render(<UsageSettings transport={transport} />)
 
     const codex = await screen.findByRole('region', { name: 'Codex' })
-    expect(within(codex).getByText('$12.34')).toBeTruthy()
-    expect(within(codex).getByText('4 sessions').parentElement?.textContent).toBe(
-      '4 sessions 2 days',
-    )
+    const totals = codex.querySelector('.usage-sheet__totals')
+    expect([...(totals?.children ?? [])].map((part) => part.textContent)).toEqual([
+      '4 sessions',
+      '1.23M tokens',
+      '$12.34',
+    ])
     expect(within(codex).getByText('≈ $3.00').getAttribute('title')).toBe(
       'Priced from a sibling model, so approximate',
     )
@@ -141,36 +157,39 @@ describe('usage settings', () => {
       within(within(codex).getByRole('group', { name: 'Plan limits' })).getByText('None reported'),
     ).toBeTruthy()
 
-    expect(screen.getByText('$4.56')).toBeTruthy()
-    expect(screen.getByText('Without caching, these tokens would come to $16.90.')).toBeTruthy()
+    expect(
+      screen.getByText(
+        wholeText('Caching saved $4.56. Without it, these tokens would come to $16.90.'),
+      ),
+    ).toBeTruthy()
     expect(
       screen.getByText(/Some token records use models without a known public API price\./),
     ).toBeTruthy()
     expect(screen.getByText('Indexed 5 min ago from 4 files in the Codex histories.')).toBeTruthy()
   })
 
-  it('reads one day across every sheet and fades the period’s models', async () => {
+  it('reads one day of a chart in a tooltip, by keyboard', async () => {
     const { transport } = transportOf(codexHistory)
     render(<UsageSettings transport={transport} />)
     const codex = await screen.findByRole('region', { name: 'Codex' })
-    const band = within(codex).getByRole('img', { name: /Codex tokens a day, 2 active days/ })
+    const chart = within(codex).getByRole('img', { name: /Codex tokens a day/ })
 
-    fireEvent.focus(band)
-    expect(document.querySelector('.usage-page')?.classList.contains('is-scrubbing')).toBe(true)
-    expect(within(codex).getByText('830K tokens')).toBeTruthy()
-    expect(within(codex).getByText('100% of the day')).toBeTruthy()
-    expect(within(codex).getByText('$9.13')).toBeTruthy()
-    expect(screen.getAllByText('Sat, Aug 8')).toHaveLength(2)
-    expect(screen.getByText('3 sessions')).toBeTruthy()
+    fireEvent.focus(chart)
+    const tip = () => codex.querySelector('.usage-chart__tip')
+    expect([...(tip()?.children ?? [])].map((line) => line.textContent)).toEqual([
+      'Sat, Aug 8',
+      '830K tokens',
+      '$9.13',
+    ])
 
-    fireEvent.keyDown(band, { key: 'ArrowLeft', shiftKey: true })
-    expect(within(codex).getByText('No use')).toBeTruthy()
-    expect(screen.getAllByText('Thu, Aug 6')).toHaveLength(2)
-    expect(within(codex).getByText('no use')).toBeTruthy()
+    fireEvent.keyDown(chart, { key: 'ArrowLeft', shiftKey: true })
+    expect([...(tip()?.children ?? [])].map((line) => line.textContent)).toEqual([
+      'Thu, Aug 6',
+      'No use',
+    ])
 
-    fireEvent.keyDown(band, { key: 'Escape' })
-    expect(document.querySelector('.usage-page')?.classList.contains('is-scrubbing')).toBe(false)
-    expect(within(codex).getByText('$12.34')).toBeTruthy()
+    fireEvent.keyDown(chart, { key: 'Escape' })
+    expect(tip()).toBeNull()
   })
 
   it('reads a day whose tokens have no API price as not priced, not as free', async () => {
@@ -182,12 +201,15 @@ describe('usage settings', () => {
     const codex = await screen.findByRole('region', { name: 'Codex' })
 
     fireEvent.focus(within(codex).getByRole('img', { name: /Codex tokens a day/ }))
-    expect(within(codex).getByText('830K tokens')).toBeTruthy()
-    expect(within(codex).getByText('not priced')).toBeTruthy()
-    expect(within(codex).queryByText('$0.00')).toBeNull()
+    const tip = codex.querySelector('.usage-chart__tip')
+    expect([...(tip?.children ?? [])].map((line) => line.textContent)).toEqual([
+      'Sat, Aug 8',
+      '830K tokens',
+      'not priced',
+    ])
   })
 
-  it('names a reached and a low limit under the top line and keeps them in their sheets', async () => {
+  it('names a reached and a low limit under the totals and keeps them in their sheets', async () => {
     vi.useFakeTimers({ now: NOW, toFake: ['Date'] })
     const limits = limitsOf([
       ready('codex', [{ label: 'Session', usedPercent: 90, resetsAt: NOW + 42 * 60_000 }]),
@@ -212,7 +234,7 @@ describe('usage settings', () => {
     expect(within(grok).getByText('Reached')).toBeTruthy()
   })
 
-  it('collapses a provider without sessions to one row and its limits', async () => {
+  it('collapses a provider without sessions to its name and its limits', async () => {
     const limits = limitsOf([
       ready('grok', [{ label: 'Weekly', usedPercent: 20 }]),
       ready('claude-code', [{ label: 'Credits', usedPercent: 0, valueLabel: '$209.60' }]),
@@ -262,7 +284,7 @@ describe('usage settings', () => {
     // A refresh of an existing index that is over by the next read is never
     // announced: the notice would only push the page down and back up.
     expect(screen.queryByText(/Indexing local usage/)).toBeNull()
-    expect(screen.getByText('4 sessions on 1 of 1 days')).toBeTruthy()
+    expect(screen.getByText(wholeText('4 sessions on 1 of 1 day'))).toBeTruthy()
     await advance(1_999)
     expect(request).toHaveBeenCalledTimes(1)
     await advance(1)
@@ -358,7 +380,7 @@ describe('usage settings', () => {
       return historyResult(params.range)
     })
     render(<UsageSettings transport={{ request } as unknown as Transport} />)
-    await screen.findByText('4 sessions on 1 of 1 days')
+    await screen.findByText(wholeText('4 sessions on 1 of 1 day'))
 
     fail = true
     fireEvent.click(screen.getByRole('button', { name: 'Check for new usage' }))
@@ -366,7 +388,7 @@ describe('usage settings', () => {
       /The last refresh failed, so the figures are from the one before\./,
     )
     expect(notice.getAttribute('title')).toBe('The index could not be opened.')
-    expect(screen.getByText('4 sessions on 1 of 1 days')).toBeTruthy()
+    expect(screen.getByText(wholeText('4 sessions on 1 of 1 day'))).toBeTruthy()
 
     fail = false
     fireEvent.click(within(notice).getByRole('button', { name: 'Try again' }))
@@ -388,7 +410,7 @@ describe('usage settings', () => {
     expect(alert.textContent).toContain('The index could not be opened.')
     fail = false
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
-    expect(await screen.findByText('4 sessions on 1 of 1 days')).toBeTruthy()
+    expect(await screen.findByText(wholeText('4 sessions on 1 of 1 day'))).toBeTruthy()
     expect(screen.queryByRole('alert')).toBeNull()
   })
 })
