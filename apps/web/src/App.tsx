@@ -3548,21 +3548,15 @@ export function App() {
       setRollbackOpen(false)
       setActivePath(projectPath)
       try {
-        let branch = projectBranches.current.get(projectPath)
-        if (!branch) {
-          const known = branchLists.current.get(projectPath)
-          const available =
-            known && Date.now() - known.at < BRANCH_LIST_TTL_MS
-              ? known.branches
-              : (await transport.request('workspace.branches', { path: projectPath })).branches
-          const remembered = readSetting(`harness.branch:${projectPath}`)
-          branch =
-            remembered && available.includes(remembered)
-              ? remembered
-              : available.includes('main')
-                ? 'main'
-                : undefined
-        }
+        // The shelf names the branch a new chat starts on. Only one other than
+        // the checked-out branch needs the server to check and switch; asking
+        // every time ran git before the agent started, and waiting here for a
+        // branch list held the chat for seconds on a busy machine.
+        const shown = projectBranches.current.get(projectPath)
+        const branch =
+          shown !== undefined && shown !== checkedOutBranches.current.get(projectPath)
+            ? shown
+            : undefined
         if (projectRemoved())
           throw new Error('The project was removed before the chat could start.')
         let sessionApproval = approval === 'auto-review' && !autoReviewSupported ? 'full' : approval
@@ -4342,6 +4336,7 @@ export function App() {
               branch,
             })
         projectBranches.current.set(activePath, branch)
+        if (info) checkedOutBranches.current.set(activePath, info.branch)
         writeSetting(`harness.branch:${activePath}`, branch)
         const known = branchLists.current.get(activePath)
         if (known) known.branches = [branch, ...known.branches.filter((item) => item !== branch)]
