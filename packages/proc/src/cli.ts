@@ -394,14 +394,7 @@ function resolveExecutable(
   return undefined
 }
 
-/**
- * Run a short, non-interactive CLI command and capture its public output.
- *
- * A command that misses `timeoutMs` is no longer waited for, but it is left to
- * finish by itself rather than stopped (see `leaveRunning`): on a loaded PC
- * these checks are slow, not stuck, and stopping each one cost taskkill runs
- * that held the event loop.
- */
+/** Run a short, non-interactive CLI command and capture its public output. */
 export function runCli(
   command: string,
   args: string[],
@@ -438,7 +431,12 @@ export function captureCli(
   return capture(child, timeoutMs, maxBytes, label, 'stop')
 }
 
-/** `leave`: a command that misses the limit finishes by itself (`leaveRunning`). */
+/**
+ * `stop` ends the command's tree at the limit. `leave`, for runCli and
+ * commandVersion, stops waiting at the limit but lets the command finish by
+ * itself (`leaveRunning`): on a loaded PC these short checks are slow, not
+ * stuck, and stopping each one cost taskkill runs that held the event loop.
+ */
 function capture(
   child: ChildProcessWithoutNullStreams,
   timeoutMs: number,
