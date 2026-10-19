@@ -523,14 +523,32 @@ export class UsageHistoryService {
     account: UsageHistoryAccount | undefined,
   ): UsageHistoryFigures {
     const files = this.#cache?.files ?? []
-    const richAccounts = new Set<string>()
+    // By provider, so no key string is built for each of thousands of files.
+    const richAccounts = new Map<ProviderId, Set<AccountId>>()
     for (const file of files) {
-      if (file.entries.length > 0) richAccounts.add(accountKey(file.provider, file.accountId))
+      if (file.entries.length === 0) continue
+      let accounts = richAccounts.get(file.provider)
+      if (!accounts) richAccounts.set(file.provider, (accounts = new Set()))
+      accounts.add(file.accountId ?? DEFAULT_ACCOUNT_ID)
     }
     const harnessEntries = harnessUsageRecords(harness, richAccounts)
     const wanted = account && accountKey(account.provider, account.accountId)
+    const otherAccount = (accountId: AccountId | undefined) =>
+      accountId !== undefined && accountId !== DEFAULT_ACCOUNT_ID
     /** Providers with usage on another account than the default one, at any date. */
     const splitProviders = new Set<ProviderId>()
+    if (wanted === undefined) {
+      for (const file of files) {
+        if (file.entries.length > 0 && otherAccount(file.accountId)) {
+          splitProviders.add(file.provider)
+        }
+      }
+      for (const entry of harnessEntries) {
+        if (otherAccount(entry.accountId)) splitProviders.add(entry.provider)
+      }
+    }
+    // Only a split provider's records are counted per account as well: an
+    // account asked for alone is the one provider row there is.
     const accountBuckets = new Map<
       string,
       MutableBucket & { provider: ProviderId; accountId: AccountId }
@@ -559,11 +577,6 @@ export class UsageHistoryService {
       accountId: AccountId | undefined,
       entry: LocalUsageRecord,
     ) => {
-      const key = accountKey(providerId, accountId)
-      if (wanted !== undefined && key !== wanted) return
-      if (accountId !== undefined && accountId !== DEFAULT_ACCOUNT_ID) {
-        splitProviders.add(providerId)
-      }
       if (!earliestDate || entry.date < earliestDate) earliestDate = entry.date
       let knownSessions = providerSessions.get(providerId)
       if (!knownSessions) {
@@ -589,17 +602,20 @@ export class UsageHistoryService {
       const provider = getBucket(providerBuckets, providerId)
       addEntry(provider.totals, entry.tokens, priced)
       provider.sessions.add(sessionKey)
-      let accountBucket = accountBuckets.get(key)
-      if (!accountBucket) {
-        accountBucket = {
-          ...newBucket(),
-          provider: providerId,
-          accountId: accountId ?? DEFAULT_ACCOUNT_ID,
+      if (splitProviders.has(providerId)) {
+        const key = accountKey(providerId, accountId)
+        let accountBucket = accountBuckets.get(key)
+        if (!accountBucket) {
+          accountBucket = {
+            ...newBucket(),
+            provider: providerId,
+            accountId: accountId ?? DEFAULT_ACCOUNT_ID,
+          }
+          accountBuckets.set(key, accountBucket)
         }
-        accountBuckets.set(key, accountBucket)
+        addEntry(accountBucket.totals, entry.tokens, priced)
+        accountBucket.sessions.add(sessionKey)
       }
-      addEntry(accountBucket.totals, entry.tokens, priced)
-      accountBucket.sessions.add(sessionKey)
 
       const modelKey = `${providerId}:${entry.model}`
       let model = modelBuckets.get(modelKey)
@@ -634,31 +650,33 @@ export class UsageHistoryService {
           : priced.estimatedCostUsd
       day.providers.set(providerId, providerDay)
     }
+    // The account is the same for every record of a file, so it is compared once.
     for (const file of files) {
+      if (wanted !== undefined && accountKey(file.provider, file.accountId) !== wanted) continue
       for (const entry of file.entries) addRecord(file.provider, file.accountId, entry)
     }
-    for (const entry of harnessEntries) addRecord(entry.provider, entry.accountId, entry)
+    for (const entry of harnessEntries) {
+      if (wanted !== undefined && accountKey(entry.provider, entry.accountId) !== wanted) continue
+      addRecord(entry.provider, entry.accountId, entry)
+    }
     const startDate = fixedStartDate ?? rangeStartDate(range, endDate, earliestDate)
 
     // An account asked for alone names itself, as does every account of a split provider.
-    const byAccount = (provider: ProviderId) =>
-      account !== undefined || splitProviders.has(provider)
     const providers: UsageHistoryProvider[] = [
       ...[...providerBuckets]
-        .filter(([provider]) => !byAccount(provider))
+        .filter(([provider]) => !splitProviders.has(provider))
         .map(([provider, bucket]) => ({
           provider,
+          ...(account === undefined ? {} : { accountId: account.accountId }),
           sessionCount: bucket.sessions.size,
           totals: bucket.totals,
         })),
-      ...[...accountBuckets.values()]
-        .filter((bucket) => byAccount(bucket.provider))
-        .map((bucket) => ({
-          provider: bucket.provider,
-          accountId: bucket.accountId,
-          sessionCount: bucket.sessions.size,
-          totals: bucket.totals,
-        })),
+      ...[...accountBuckets.values()].map((bucket) => ({
+        provider: bucket.provider,
+        accountId: bucket.accountId,
+        sessionCount: bucket.sessions.size,
+        totals: bucket.totals,
+      })),
     ].sort((a, b) => b.totals.estimatedCostUsd - a.totals.estimatedCostUsd)
 
     const models: UsageHistoryModel[] = [...modelBuckets.values()]
@@ -1215,13 +1233,14 @@ async function discoverSource(
  */
 function harnessUsageRecords(
   events: readonly StoredUsageEvent[],
-  richerLocalAccounts: ReadonlySet<string>,
+  richerLocalAccounts: ReadonlyMap<ProviderId, ReadonlySet<AccountId>>,
 ): AttributedUsageRecord[] {
   const records: AttributedUsageRecord[] = []
   const previous = new Map<string, TokenCounts>()
 
   for (const event of events) {
-    if (richerLocalAccounts.has(accountKey(event.provider, event.accountId))) continue
+    const account = event.accountId ?? DEFAULT_ACCOUNT_ID
+    if (richerLocalAccounts.get(event.provider)?.has(account)) continue
     const sessionKey = `${event.provider}:${event.threadId}`
     const current = usageTokenCounts(event.usage)
     const tokens = event.usage.cumulative

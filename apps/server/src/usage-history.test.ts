@@ -1297,6 +1297,48 @@ describe('usage history of provider accounts', () => {
     expect(api.sources).toEqual([{ provider: 'api', available: true, sessionCount: 1 }])
   })
 
+  it('splits a provider by account in every range, also one without that account', async () => {
+    const root = temporaryDirectory()
+    const codexRoot = path.join(root, 'codex', 'sessions')
+    writeCodexRollout(path.join(codexRoot, 'own.jsonl'), 'own-session', 1_000)
+    const now = new Date('2026-08-08T12:00:00.000Z').getTime()
+    const usage = {
+      inputTokens: 700,
+      cachedInputTokens: 0,
+      outputTokens: 0,
+      reasoningTokens: 0,
+      totalTokens: 700,
+    }
+    const service = usageService({
+      cacheFile: path.join(root, 'cache', 'usage.json'),
+      sourceRoots: { codex: codexRoot, 'claude-code': path.join(root, 'missing-claude') },
+      // A chat on Work a month ago, before the last 7 days.
+      harnessUsage: () => [
+        {
+          threadId: 'work-chat',
+          provider: 'codex',
+          accountId: 'work',
+          at: now - 30 * 86_400_000,
+          usage,
+        },
+      ],
+      now: () => new Date(now),
+    })
+    const rows = (history: UsageHistoryResult) =>
+      history.providers.map((row) => [row.provider, row.accountId, row.totals.processedTokens])
+
+    expect(rows(await settledHistory(service, '7d'))).toEqual([['codex', 'default', 1_100]])
+    expect(rows(await service.history('all')).sort()).toEqual(
+      [
+        ['codex', 'default', 1_100],
+        ['codex', 'work', 700],
+      ].sort(),
+    )
+    const work = await service.history('7d', false, { provider: 'codex', accountId: 'work' })
+    expect(rows(work)).toEqual([])
+    expect(work.totals.processedTokens).toBe(0)
+  })
+
   it("keeps each file's account in the saved index and refuses a malformed one", async () => {
     const root = temporaryDirectory()
     const cacheFile = path.join(root, 'usage.json')
