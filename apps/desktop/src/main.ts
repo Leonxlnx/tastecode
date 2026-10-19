@@ -28,6 +28,7 @@ import {
 } from 'electron'
 import type { PreviewCaptureRequest } from '@harness/contracts'
 import { applyDesktopPath, desktopPath } from '@harness/proc/desktop-path'
+import { killTree } from '@harness/proc/kill'
 import {
   ATTACHMENT_PREVIEW_SCHEME,
   attachmentByteRange,
@@ -427,6 +428,19 @@ function launchUtilityServer(
     serviceName: 'Taste Code Core Server',
     stdio: 'pipe',
   })
+  // What killTree needs to know about the server: its pid, whether it is gone.
+  const server = {
+    // Known once the process has started.
+    get pid() {
+      return child.pid
+    },
+    exitCode: null as number | null,
+    signalCode: null,
+    kill: () => child.kill(),
+  }
+  child.on('exit', (code) => {
+    server.exitCode = code
+  })
   return {
     get stdout() {
       return child.stdout
@@ -435,6 +449,7 @@ function launchUtilityServer(
       return child.stderr
     },
     kill: () => child.kill(),
+    killTree: () => killTree(server),
     requestShutdown: () => child.postMessage({ type: 'harness:shutdown' }),
     onError: (listener) => {
       child.on('error', (type, location) => listener(new Error(`${type} at ${location}`)))

@@ -903,14 +903,15 @@
                   reads until end of input answers instead of timing out. The in-process PATH lookup
                   is cached, needs no where.exe, agrees with launching and never searches the
                   working directory. Versions are read once per binary and shared with update
-                  checks; providers.list waits at most 250 ms for a version, and a late version
-                  shows on the next listing. A CLI installed while the app is open is found without
-                  a restart: the Windows registry PATH is re-read on every scan, the WinGet Links
-                  folder and Cursor's %LOCALAPPDATA%\cursor-agent are on the desktop PATH, and the
-                  caches clear when an install, update or sign-in terminal ends. Providers are
-                  checked again when the window gets focus, at most every 30 s, while one is missing
-                  or an account could not be confirmed. providers.list also declares each provider's
-                  source shape (agent, connection or direct).</span
+                  checks; providers.list waits at most 250 ms for a version or the Codex sign-in
+                  check, and a late answer shows on the next listing. A CLI installed while the app
+                  is open is found without a restart: the Windows registry PATH is re-read on every
+                  scan after the launch listing, the WinGet Links folder and Cursor's
+                  %LOCALAPPDATA%\cursor-agent are on the desktop PATH, and the caches clear when an
+                  install, update or sign-in terminal ends. Providers are checked again when the
+                  window gets focus, at most every 30 s, while one is missing or an account could
+                  not be confirmed. providers.list also declares each provider's source shape
+                  (agent, connection or direct).</span
                 ></span
               ></label
             >
@@ -1887,9 +1888,10 @@
                   keep opening and sending. Local and native chats also open from the store at once
                   while the first provider history scan after a server start is still running; what
                   the scan changes arrives in the background and open chats reload it. Turns and
-                  imported-chat reads wait only for their own provider's first history scan. A
-                  native chat whose provider copy is gone (archived and deleted in the CLI) still
-                  opens with its own transcript.</span
+                  imported-chat reads wait only for their own provider's first history scan, and a
+                  chat started since the launch does not wait for it until a scan has linked it to
+                  its saved session. A native chat whose provider copy is gone (archived and deleted
+                  in the CLI) still opens with its own transcript.</span
                 ></span
               ></label
             >
@@ -2986,7 +2988,10 @@
                   the server for about half a second (#1556), and waits for Node to observe exit
                   after taskkill succeeds (#1394); a Windows process stop never orphans the real
                   CLI, because taskkill itself is never killed and the shim is killed only after
-                  taskkill failed; CLI timeout errors name the command and the limit; media access
+                  taskkill failed; a process that exits stops every tree it still owns first (one
+                  taskkill run, waited for while the shims are alive, so the CLI behind each shim is
+                  reached), and a server that has to be force-stopped at quit is stopped with its
+                  whole tree; CLI timeout errors name the command and the limit; media access
                   requires explicit audio-only details from the owning main renderer and main frame,
                   with malformed, mixed, unknown, camera and subframe requests denied in both
                   Chromium checks and permission requests</span
