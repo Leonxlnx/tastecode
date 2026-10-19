@@ -75,21 +75,36 @@ describe('detectProviders', () => {
     expect(installedChecks).toBe(7)
   })
 
-  it('re-reads the PATH before looking for binaries', async () => {
+  it('re-reads the PATH before looking for binaries after the launch listing', async () => {
     const order: string[] = []
-    const providers = await detectProviders(
-      system({
-        refreshPath: async () => {
-          order.push('path')
-        },
-        isInstalled: async (command) => {
-          order.push(command)
-          return command === 'agy' && order[0] === 'path'
-        },
-      }),
-    )
+    const sharedSystem = system({
+      refreshPath: async () => {
+        order.push('path')
+      },
+      isInstalled: async (command) => {
+        order.push(command)
+        return command === 'agy' && order.includes('path')
+      },
+    })
+    expect(find(await detectProviders(sharedSystem), 'antigravity').installed).toBe(false)
+    order.length = 0
+    const providers = await detectProviders(sharedSystem)
     expect(order[0]).toBe('path')
     expect(find(providers, 'antigravity').installed).toBe(true)
+  })
+
+  it('answers the launch scan and the first listing without reading the registry PATH', async () => {
+    let refreshes = 0
+    const sharedSystem = system({
+      refreshPath: async () => {
+        refreshes += 1
+      },
+    })
+    await prewarmProviders(sharedSystem)
+    await detectProviders(sharedSystem)
+    expect(refreshes).toBe(0)
+    await detectProviders(sharedSystem)
+    expect(refreshes).toBe(1)
   })
 
   it('scans again for a listing after the startup scan, so installs show up', async () => {
