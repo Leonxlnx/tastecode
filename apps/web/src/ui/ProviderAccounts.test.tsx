@@ -130,6 +130,58 @@ describe('Provider accounts in Settings', () => {
     )
   })
 
+  it('signs an account in through its own sign-in terminal and reads who it is', async () => {
+    let signedIn = false
+    const base = serve([defaultAccount('codex'), work])
+    const transport = new TestTransport(async (method, params) => {
+      if (method === 'providers.launch') return { terminalId: 'login-work' }
+      if (method === 'terminal.status') throw new Error('not in this test')
+      if (method === 'auth.status') {
+        // The server keeps what this check names as the account's identity.
+        signedIn = true
+        return { signedIn: true, email: 'work@example.com' }
+      }
+      const answer = await base.request(method, params as never)
+      if (method !== 'accounts.list' || !signedIn) return answer
+      const listed = answer as ResultOf<'accounts.list'>
+      return {
+        ...listed,
+        accounts: listed.accounts.map((account) =>
+          account.id === work.id ? { ...account, email: 'work@example.com' } : account,
+        ),
+      }
+    })
+    const opened = vi.fn()
+    render(
+      <ProviderAccountsSection transport={transport} providers={[codex]} onOpenTerminal={opened} />,
+    )
+
+    // The default account is signed in already, so only Work offers a sign-in.
+    fireEvent.click(await screen.findByRole('button', { name: 'Sign in to Work' }))
+    expect(screen.queryByRole('button', { name: 'Sign in to Default' })).toBeNull()
+    await waitFor(() =>
+      expect(calls(transport, 'providers.launch')).toEqual([
+        { provider: 'codex', accountId: 'work-1a2b3c', columns: 320, rows: 30 },
+      ]),
+    )
+    await waitFor(() =>
+      expect(opened).toHaveBeenCalledWith({
+        provider: 'codex',
+        displayName: 'Codex (Work)',
+        installKey: 'login:codex@work-1a2b3c',
+      }),
+    )
+    expect(screen.getByRole('button', { name: 'Cancel signing in to Work' })).toBeTruthy()
+
+    transport.emit('terminal.exit', { terminalId: 'login-work', exitCode: 0 })
+    await waitFor(() =>
+      expect(calls(transport, 'auth.status')).toEqual([
+        { provider: 'codex', accountId: 'work-1a2b3c' },
+      ]),
+    )
+    expect(await screen.findByText('work@example.com')).toBeTruthy()
+  })
+
   it('adds a managed account and one in a folder the user already has', async () => {
     const transport = serve([defaultAccount('codex')])
     render(<ProviderAccountsSection transport={transport} providers={[codex]} />)

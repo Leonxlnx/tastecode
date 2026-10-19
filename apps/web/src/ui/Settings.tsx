@@ -1271,6 +1271,7 @@ export function ProviderSettings(props: {
       <ProviderAccountsSection
         transport={props.transport}
         providers={multiAccountProviders(props.providerStatuses)}
+        onOpenTerminal={props.onProviderLoginTerminalOpen}
       />
       <SettingsSection title="API connections">
         {(props.modelConnections ?? []).map((connection) => (

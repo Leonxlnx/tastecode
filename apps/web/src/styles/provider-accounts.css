@@ -28,6 +28,9 @@
 
 .settings .provider-account .provider-row__primary {
   grid-column: 7;
+  /* Show terminal and Cancel sign-in while an account signs in, spaced as the
+     roster spaces its two actions. */
+  gap: 6px;
 }
 
 /* The roster's shared action width is for Sign in and Sign out; the quiet

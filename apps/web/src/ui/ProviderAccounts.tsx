@@ -1,4 +1,15 @@
-import { lazy, Suspense, useId, useState, type FormEvent } from 'react'
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type FormEvent,
+  type ReactNode,
+} from 'react'
 import {
   DEFAULT_ACCOUNT_ID,
   type ProviderAccount,
@@ -19,6 +30,15 @@ import { errorMessage } from '../boundary.js'
 import { isDesktop, pickFolder, revealPath } from '../bridge.js'
 import { providerMark } from '../model-catalog.js'
 import { accountsOf, activeAccountOf, useProviderAccounts } from '../provider-accounts-state.js'
+import {
+  beginLogin,
+  cancelInstall,
+  clearInstall,
+  installState,
+  loginKey,
+  subscribeInstalls,
+  type ProviderLoginTerminalTarget,
+} from '../provider-install.js'
 import type { Transport } from '../transport.js'
 import { AccountEmail } from './AccountEmail.js'
 import { Menu, MenuItem } from './Menu.js'
@@ -50,6 +70,8 @@ export function ProviderAccountsSection(props: {
   transport: Transport
   /** Installed providers that declare `multipleAccounts`. */
   providers: readonly ProviderStatus[]
+  /** Shows a running sign-in in the expanded workspace terminal, as the provider rows do. */
+  onOpenTerminal?: ((target: ProviderLoginTerminalTarget) => void) | undefined
 }) {
   const { store, snapshot } = useProviderAccounts(props.transport, props.providers.length > 0)
   const [adding, setAdding] = useState(false)
@@ -57,6 +79,8 @@ export function ProviderAccountsSection(props: {
   const [confirm, setConfirm] = useState<Confirm>()
   const [busy, setBusy] = useState<string>()
   const [issues, setIssues] = useState<Record<string, string | undefined>>({})
+  // Stable, because it ends up in AccountSignIn's effect dependencies.
+  const refresh = useCallback(() => store.refresh(), [store])
   if (props.providers.length === 0) return null
 
   const run = async (key: string, action: () => Promise<unknown>): Promise<boolean> => {
@@ -117,6 +141,15 @@ export function ProviderAccountsSection(props: {
               active={activeAccountOf(snapshot, status.id) === account.id}
               busy={busy === key}
               issue={issues[key]}
+              signIn={
+                <AccountSignIn
+                  account={account}
+                  provider={status}
+                  transport={props.transport}
+                  onSignedIn={refresh}
+                  onOpenTerminal={props.onOpenTerminal}
+                />
+              }
               onSetActive={() => void run(key, () => store.setActive(account.provider, account.id))}
               onRename={() => {
                 setIssues((current) => ({ ...current, [key]: undefined }))
@@ -207,6 +240,7 @@ function AccountRow(props: {
   active: boolean
   busy: boolean
   issue?: string | undefined
+  signIn: ReactNode
   onSetActive: () => void
   onRename: () => void
   onRemove: (deleteHome: boolean) => void
@@ -304,8 +338,98 @@ function AccountRow(props: {
           )}
         </Menu>
       </div>
-      <div className="provider-row__primary" />
+      <div className="provider-row__primary">{props.signIn}</div>
     </div>
+  )
+}
+
+/**
+ * Signs one account in through the same sign-in terminal the provider rows
+ * use, run in that account's folder. Shown until the account names who it is,
+ * and while a sign-in runs. A clean exit asks the account who it is now, which
+ * the server keeps as its identity; a failed one offers a retry.
+ */
+function AccountSignIn(props: {
+  account: ProviderAccount
+  provider: ProviderStatus
+  transport: Transport
+  onSignedIn: () => void
+  onOpenTerminal?: ((target: ProviderLoginTerminalTarget) => void) | undefined
+}) {
+  const { account, provider, transport, onSignedIn, onOpenTerminal } = props
+  const target = { provider: account.provider, accountId: account.id }
+  const key = loginKey(target)
+  const login = useSyncExternalStore(subscribeInstalls, () => installState(key))
+  const [starting, setStarting] = useState(false)
+  const [canceling, setCanceling] = useState(false)
+  const [startError, setStartError] = useState<string>()
+  // Latched: a parent render must not ask twice for one finished sign-in.
+  const confirmed = useRef(false)
+  const succeeded = login?.phase === 'succeeded'
+  useEffect(() => {
+    if (!succeeded) {
+      confirmed.current = false
+      return
+    }
+    if (confirmed.current) return
+    confirmed.current = true
+    if (!onOpenTerminal) clearInstall(key)
+    void transport
+      .request('auth.status', { provider: account.provider, accountId: account.id })
+      .catch(() => undefined)
+      .finally(onSignedIn)
+  }, [succeeded, key, transport, account.provider, account.id, onSignedIn, onOpenTerminal])
+
+  const signedIn = account.email !== undefined || account.plan !== undefined
+  const running = login?.phase === 'running'
+  const busy = running || starting
+  if (signedIn && !busy) return null
+
+  const title = `${provider.displayName} (${account.label})`
+  const openTerminal = () =>
+    onOpenTerminal?.({ provider: account.provider, displayName: title, installKey: key })
+  const start = () => {
+    setStarting(true)
+    setStartError(undefined)
+    void beginLogin(
+      transport,
+      target,
+      // The expanded CLI opens its own browser; do not open the URL it prints as well.
+      onOpenTerminal && provider.setup?.loginOpensBrowser !== false ? () => undefined : undefined,
+    )
+      .then(() => {
+        if (installState(key)?.phase !== 'running' || installState(key)?.canceling) return
+        openTerminal()
+      })
+      .catch((cause: unknown) => setStartError(errorMessage(cause)))
+      .finally(() => setStarting(false))
+  }
+  const cancel = () => {
+    setCanceling(true)
+    void cancelInstall(transport, key)
+      .catch((cause: unknown) => setStartError(errorMessage(cause)))
+      .finally(() => setCanceling(false))
+  }
+  const stopping = canceling || login?.canceling === true
+  const failed = login?.phase === 'failed' || startError !== undefined
+  return (
+    <>
+      {startError ? <RowIssue message={startError} announce label="Sign-in problem" /> : null}
+      {running && onOpenTerminal ? (
+        <button className="set-button set-button--quiet" type="button" onClick={openTerminal}>
+          Show terminal
+        </button>
+      ) : null}
+      <button
+        className="set-button"
+        type="button"
+        disabled={stopping}
+        aria-label={busy ? `Cancel signing in to ${account.label}` : `Sign in to ${account.label}`}
+        onClick={busy ? cancel : start}
+      >
+        {stopping ? 'Canceling…' : busy ? 'Cancel sign-in' : failed ? 'Retry sign-in' : 'Sign in'}
+      </button>
+    </>
   )
 }
 
