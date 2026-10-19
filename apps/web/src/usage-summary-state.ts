@@ -40,14 +40,24 @@ function newerLimits(current: Summary | undefined, next: Summary): Summary {
   return withLimitSource(next, held)
 }
 
+/** An automatic retry after a failed read that left no values to show. */
+export type UsageRetry = { attempt: number; of: number; message: string }
+
+/**
+ * `retry` is set while those retries run. `gaveUp` is set once they all failed;
+ * later reads stay silent and a success brings the source back.
+ */
+type Retrying = { retry?: UsageRetry; gaveUp?: true }
+
 export type UsageSummaryState =
-  | { status: 'loading'; provider: ProviderId; summary?: Summary }
+  | ({ status: 'loading'; provider: ProviderId; summary?: Summary } & Retrying)
   | { status: 'ready'; provider: ProviderId; summary: Summary }
-  | { status: 'error'; provider: ProviderId; message: string; summary?: Summary }
+  | ({ status: 'error'; provider: ProviderId; message: string; summary?: Summary } & Retrying)
 
 type LoadSummary = (params: ParamsOf<'usage.summary'>) => Promise<Summary>
 
 const ERROR_MESSAGE_LIMIT = 300
+const RETRY_DELAYS_MS = [5_000, 15_000, 30_000]
 
 function messageOf(error: Parameters<typeof errorMessage>[0]): string {
   const message = errorMessage(error, 'Plan limits could not be loaded.')
@@ -77,6 +87,7 @@ export class UsageSummaryController {
   readonly #coalesceMs: number
   /** Why the next request is made unless a caller names a reason; see UsageReadIntent. */
   readonly #intent: () => UsageReadIntent
+  readonly #retryDelaysMs: readonly number[]
   readonly #listeners = new Set<() => void>()
   #target: Target | undefined
   /** A reason a caller gave that the next request has not carried yet. */
@@ -87,16 +98,21 @@ export class UsageSummaryController {
   #nextRequestId = 0
   #dirty = false
   #timer: ReturnType<typeof setTimeout> | undefined
+  #retryTimer: ReturnType<typeof setTimeout> | undefined
+  /** Failed reads in a row that had no values to fall back on. */
+  #failures = 0
   #disposed = false
 
   constructor(
     load: LoadSummary,
     coalesceMs = 100,
     intent: () => UsageReadIntent = () => 'visible',
+    retryDelaysMs = RETRY_DELAYS_MS,
   ) {
     this.#load = load
     this.#coalesceMs = coalesceMs
     this.#intent = intent
+    this.#retryDelaysMs = retryDelaysMs
   }
 
   snapshot(): UsageSummaryState | undefined {
@@ -119,6 +135,7 @@ export class UsageSummaryController {
     if (!sameProvider) this.#state = undefined
     this.#dirty = false
     this.#requestedIntent = undefined
+    this.#failures = 0
     this.#clearTimer()
     if (ask) this.#start(this.#revision)
   }
@@ -164,17 +181,42 @@ export class UsageSummaryController {
     this.#revision += 1
     this.#dirty = false
     this.#clearTimer()
+    this.#clearRetryTimer()
     this.#listeners.clear()
+  }
+
+  #retrying(): Retrying {
+    const state = this.#state
+    if (state?.status === 'ready' || !state) return {}
+    return {
+      ...(state.retry ? { retry: state.retry } : {}),
+      ...(state.gaveUp ? { gaveUp: state.gaveUp } : {}),
+    }
+  }
+
+  /** A failed read with nothing to show retries a few times, then gives up quietly. */
+  #failed(revision: number, message: string, summary: Summary | undefined): Retrying {
+    if (summary && summary.limits.length > 0) return {}
+    this.#failures += 1
+    const delay = this.#retryDelaysMs[this.#failures - 1]
+    if (delay === undefined) return { gaveUp: true }
+    this.#retryTimer = setTimeout(() => {
+      this.#retryTimer = undefined
+      if (revision === this.#revision) this.refresh()
+    }, delay)
+    return { retry: { attempt: this.#failures, of: this.#retryDelaysMs.length, message } }
   }
 
   #start(revision: number): void {
     const target = this.#target
     if (this.#disposed || revision !== this.#revision || !target) return
     const summary = this.#state?.summary
+    this.#clearRetryTimer()
     this.#setState({
       status: 'loading',
       provider: target.provider,
       ...(summary ? { summary } : {}),
+      ...this.#retrying(),
     })
     const request = { revision, id: ++this.#nextRequestId }
     this.#request = request
@@ -186,6 +228,7 @@ export class UsageSummaryController {
         (next) => {
           if (!this.#isCurrent(request)) return
           this.#request = undefined
+          this.#failures = 0
           this.#setState({
             status: 'ready',
             provider: target.provider,
@@ -198,11 +241,13 @@ export class UsageSummaryController {
           this.#request = undefined
           // Values pushed while the request ran are the newest known ones.
           const held = this.#state?.summary
+          const message = messageOf(error)
           this.#setState({
             status: 'error',
             provider: target.provider,
-            message: messageOf(error),
+            message,
             ...(held ? { summary: held } : {}),
+            ...this.#failed(revision, message, held),
           })
           this.#flushAfterRequest(revision)
         },
@@ -240,5 +285,10 @@ export class UsageSummaryController {
   #clearTimer(): void {
     clearTimeout(this.#timer)
     this.#timer = undefined
+  }
+
+  #clearRetryTimer(): void {
+    clearTimeout(this.#retryTimer)
+    this.#retryTimer = undefined
   }
 }

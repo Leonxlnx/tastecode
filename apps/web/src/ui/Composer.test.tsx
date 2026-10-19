@@ -2052,6 +2052,17 @@ describe('Composer branch shelf', () => {
     expect(screen.getByRole('menu').classList.contains('menu--project-picker')).toBe(true)
   })
 
+  it('sizes the workspace mode menu to its labels', () => {
+    renderComposer(vi.fn())
+    fireEvent.click(screen.getByRole('button', { name: 'Workspace mode' }))
+
+    const menu = screen.getByRole('menu')
+    expect(menu.classList.contains('menu--compact')).toBe(true)
+    expect(menu.classList.contains('menu--mode')).toBe(true)
+    expect(screen.getByRole('menuitemradio', { name: 'Local' })).toBeTruthy()
+    expect(screen.getByRole('menuitemradio', { name: 'Isolated' })).toBeTruthy()
+  })
+
   it('shows the branch picker only when the project has branches', () => {
     renderComposer(vi.fn())
     expect(screen.getByRole('button', { name: 'Choose branch' })).toBeTruthy()

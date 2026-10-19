@@ -1113,7 +1113,11 @@
 }
 
 .sess__status-dot.is-attention {
-  background: var(--attention);
+  background: var(--warning);
+}
+
+.sess__status-dot.is-success {
+  background: var(--success);
 }
 
 .sess__status-dot.is-failed {
@@ -2620,6 +2624,12 @@
   gap: 0;
   padding: 3px;
   border-radius: var(--r-lg);
+}
+
+/* Local / Isolated are two short labels. The shared .menu floor is 260px. */
+.menu.menu--mode {
+  min-width: max-content;
+  width: max-content;
 }
 
 .menu--project-picker {
