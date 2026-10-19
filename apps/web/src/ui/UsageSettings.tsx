@@ -1,7 +1,7 @@
-import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
+import { useCallback, useMemo, useState, useSyncExternalStore, type CSSProperties } from 'react'
 import type { ProviderId, ResultOf, UsageHistoryRange } from '@harness/contracts'
 import { IconChevronDown as ChevronDown, IconRefresh as RefreshCw } from '@tabler/icons-react'
-import { providerDisplayName } from '../provider-presentation.js'
+import { providerDisplayName, providerMark } from '../provider-presentation.js'
 import '../styles/usage-page.css'
 import type { Transport } from '../transport.js'
 import { useUsageHistory } from '../usage-history-state.js'
@@ -23,9 +23,12 @@ import {
   isPeriod,
   limitAlert,
   listText,
+  markInk,
   PERIOD_OPTIONS,
   pricedShare,
+  providerShares,
   rangeText,
+  shareText,
   sheetLimits,
   type PeriodSlot,
   type PlanLimitsSource,
@@ -100,6 +103,7 @@ export function UsageSettings(props: {
       end: !endDate ? '' : endDate === today ? 'Today' : dayText(endDate, referenceYear),
     }
   }, [slots, span, startDate, endDate, today])
+  const shares = useMemo(() => providerShares(sheets), [sheets])
   const alert = limitAlert(sheets, now)
   const failed = error !== undefined && data !== undefined
   const showSheets = data !== undefined || !loading
@@ -142,6 +146,7 @@ export function UsageSettings(props: {
         </>
       }
     >
+      {shares.length > 0 ? <ShareBar shares={shares} /> : null}
       {alert ? <p className="usage-page__alert">{alert}</p> : null}
       {indexing && data ? (
         <p className="usage-page__notice">
@@ -216,6 +221,41 @@ function Totals(props: { data: History }) {
         on {formatInteger(data.activeDays)} of {plural(data.daily.length, 'day', 'days')}
       </span>
     </span>
+  )
+}
+
+/** Each provider's share of the period's tokens in its colour, named under the bar. */
+function ShareBar(props: { shares: ReturnType<typeof providerShares> }) {
+  const label = props.shares.map((part) => `${part.name} ${shareText(part.share)}`).join(', ')
+  return (
+    <div className="usage-share" role="img" aria-label={`Tokens by provider: ${label}`}>
+      <div className="usage-share__bar">
+        {props.shares.map((part) => (
+          <span
+            key={part.provider}
+            className="usage-share__part"
+            style={
+              {
+                flexGrow: part.share,
+                '--usage-ink': markInk(providerMark(part.provider)),
+              } as CSSProperties
+            }
+          />
+        ))}
+      </div>
+      <ul className="usage-share__legend">
+        {props.shares.map((part) => (
+          <li
+            key={part.provider}
+            style={{ '--usage-ink': markInk(providerMark(part.provider)) } as CSSProperties}
+          >
+            <span className="usage-share__swatch" />
+            {part.name}
+            <span className="usage-share__value">{shareText(part.share)}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
   )
 }
 

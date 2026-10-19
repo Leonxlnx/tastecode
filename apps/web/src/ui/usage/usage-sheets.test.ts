@@ -10,8 +10,11 @@ import {
   indexedAgo,
   limitAlert,
   listText,
+  markInk,
+  providerShares,
   rangeText,
   resetText,
+  shareText,
   sheetLimits,
   type ProviderSheet,
   type SheetLimits,
@@ -259,6 +262,31 @@ describe('limit alert', () => {
       ['codex', sheetLimits(ready('codex', [{ label: 'Weekly', usedPercent: 84 }]))!],
     ])
     expect(limitAlert(deriveSheets(undefined, limits).sheets, NOW)).toBeUndefined()
+  })
+})
+
+describe('provider colours and shares', () => {
+  it('splits the period between the providers with tokens, in sheet order', () => {
+    const { sheets } = deriveSheets(
+      historyOf({ codex: [100, 100], 'claude-code': [600, 0], grok: [0, 0] }),
+      NO_LIMITS,
+    )
+
+    expect(providerShares(sheets)).toEqual([
+      { provider: 'claude-code', name: 'Claude Code', share: 0.75 },
+      { provider: 'codex', name: 'Codex', share: 0.25 },
+    ])
+    expect(providerShares([])).toEqual([])
+  })
+
+  it('reads a share as a whole percent, a tenth under one, and a floor under that', () => {
+    expect(shareText(0.806)).toBe('81%')
+    expect(shareText(0.0024)).toBe('0.2%')
+    expect(shareText(0.0004)).toBe('under 0.1%')
+  })
+
+  it('colours a provider by its brand mark, grey for a mark without a token', () => {
+    expect(markInk('anthropic')).toBe('var(--mark-anthropic, var(--text-2))')
   })
 })
 

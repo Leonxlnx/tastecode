@@ -112,6 +112,7 @@ describe('usage settings', () => {
       '$12.34 at API prices',
       '4 sessions on 1 of 1 day',
     ])
+    expect(screen.getByRole('img', { name: 'Tokens by provider: Codex 100%' })).toBeTruthy()
     const codex = screen.getByRole('region', { name: 'Codex' })
     expect(within(codex).getByText('1.23M tokens')).toBeTruthy()
     expect(within(codex).getByRole('columnheader', { name: 'Tokens' })).toBeTruthy()
