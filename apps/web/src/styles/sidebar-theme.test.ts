@@ -88,11 +88,14 @@ describe('sidebar theme CSS', () => {
     expect(appCss).not.toContain('.sess__source')
   })
 
-  it('hides the time and status when chat row actions are visible', () => {
+  it('hides the time when the row action shows, never a live state', () => {
+    // Only a row with an action (Archive, Restore, Mark as read) gives way; a
+    // spinner or a waiting dot stays visible on hover and focus.
     expect(appCss).toMatch(
-      /@media \(hover: hover\) and \(pointer: fine\) \{[\s\S]*?\.sessrow:hover \.sess__meta \{[^}]*opacity: 0;/s,
+      /@media \(hover: hover\) and \(pointer: fine\) \{[\s\S]*?\.sessrow\.has-action:hover \.sess__meta \{[^}]*opacity: 0;/s,
     )
-    expect(appCss).toMatch(/\.sessrow:focus-within \.sess__meta \{[^}]*opacity: 0;/s)
+    expect(appCss).toMatch(/\.sessrow\.has-action:focus-within \.sess__meta \{[^}]*opacity: 0;/s)
+    expect(appCss).not.toMatch(/\.sessrow:(hover|focus-within) \.sess__meta/)
     expect(appCss).toMatch(
       /\.sess__time \{[^}]*font-size: var\(--t-xs\);[^}]*font-variant-numeric: tabular-nums;/s,
     )
