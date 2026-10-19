@@ -523,9 +523,13 @@ export class UsageHistoryService {
     account: UsageHistoryAccount | undefined,
   ): UsageHistoryFigures {
     const files = this.#cache?.files ?? []
-    const richAccounts = new Set<string>()
+    // By provider, so no key string is built for each of thousands of files.
+    const richAccounts = new Map<ProviderId, Set<AccountId>>()
     for (const file of files) {
-      if (file.entries.length > 0) richAccounts.add(accountKey(file.provider, file.accountId))
+      if (file.entries.length === 0) continue
+      let accounts = richAccounts.get(file.provider)
+      if (!accounts) richAccounts.set(file.provider, (accounts = new Set()))
+      accounts.add(file.accountId ?? DEFAULT_ACCOUNT_ID)
     }
     const harnessEntries = harnessUsageRecords(harness, richAccounts)
     const wanted = account && accountKey(account.provider, account.accountId)
@@ -1229,13 +1233,14 @@ async function discoverSource(
  */
 function harnessUsageRecords(
   events: readonly StoredUsageEvent[],
-  richerLocalAccounts: ReadonlySet<string>,
+  richerLocalAccounts: ReadonlyMap<ProviderId, ReadonlySet<AccountId>>,
 ): AttributedUsageRecord[] {
   const records: AttributedUsageRecord[] = []
   const previous = new Map<string, TokenCounts>()
 
   for (const event of events) {
-    if (richerLocalAccounts.has(accountKey(event.provider, event.accountId))) continue
+    const account = event.accountId ?? DEFAULT_ACCOUNT_ID
+    if (richerLocalAccounts.get(event.provider)?.has(account)) continue
     const sessionKey = `${event.provider}:${event.threadId}`
     const current = usageTokenCounts(event.usage)
     const tokens = event.usage.cumulative
