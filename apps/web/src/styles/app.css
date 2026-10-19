@@ -2544,6 +2544,12 @@
   border-radius: var(--r-lg);
 }
 
+/* Local / Isolated are two short labels. The shared .menu floor is 260px. */
+.menu.menu--mode {
+  min-width: max-content;
+  width: max-content;
+}
+
 .menu--project-picker {
   min-width: 0;
   width: min(240px, calc(100vw - 16px));

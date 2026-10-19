@@ -59,6 +59,13 @@ describe('top-bar tool spacing', () => {
     expect(rule(css, '.stagehead__title')).toContain('text-overflow: ellipsis;')
   })
 
+  it('sizes the workspace mode menu to its two labels', () => {
+    const menu = rule(css, '.menu.menu--mode')
+
+    expect(menu).toContain('min-width: max-content;')
+    expect(menu).toContain('width: max-content;')
+  })
+
   it('keeps the top-bar options menu dense without visible scrollbar chrome', () => {
     const menu = rule(css, '.menu.stagehead__options-menu')
 
