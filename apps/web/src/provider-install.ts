@@ -364,7 +364,17 @@ async function attachJob(
     if (!current) return
     installs.set(key, {
       ...current,
-      phase: current.canceling ? 'canceled' : event.exitCode === 0 ? 'succeeded' : 'failed',
+      // The read that recovers the last output reports the exit a second time,
+      // possibly after a cancel has settled and cleared `canceling`. The first
+      // outcome stands, or a stopped sign-in turns into a failed one.
+      phase:
+        current.phase !== 'running'
+          ? current.phase
+          : current.canceling
+            ? 'canceled'
+            : event.exitCode === 0
+              ? 'succeeded'
+              : 'failed',
       exitCode: event.exitCode,
     })
     notify()
