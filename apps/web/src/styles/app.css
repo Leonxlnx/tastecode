@@ -267,11 +267,6 @@
   display: flex;
   flex-direction: column;
   gap: 3px;
-  border-bottom: 1px solid transparent;
-}
-
-.rail__actions.is-scrolled {
-  border-bottom-color: var(--line-strong);
 }
 
 /* New chat and search share one row: the search icon rides on the right,
@@ -376,6 +371,11 @@
   padding: 8px 4px 18px 10px;
   /* Same reason as .thread: the list must not shift when it crosses the fold. */
   scrollbar-gutter: stable;
+}
+
+/* Scrolled, the list fades under the top actions instead of meeting a rule. */
+.rail__body.is-scrolled {
+  mask-image: linear-gradient(transparent, #000 14px);
 }
 
 /* The 8px side inset matches Menu's viewport gutter. At 6px the trigger sat

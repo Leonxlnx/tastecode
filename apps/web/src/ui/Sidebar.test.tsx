@@ -397,7 +397,7 @@ describe('Sidebar chat actions', () => {
     expect(document.querySelectorAll('.proj')).toHaveLength(100)
   })
 
-  it('shows a divider below the fixed actions only after the project list scrolls', () => {
+  it('fades the list under the fixed actions only after it scrolls, without a rule', () => {
     render(
       <Sidebar
         projects={[]}
@@ -426,16 +426,17 @@ describe('Sidebar chat actions', () => {
 
     const actions = document.querySelector('.rail__actions')
     const body = document.querySelector<HTMLElement>('.rail__body')
-    expect(actions?.classList.contains('is-scrolled')).toBe(false)
+    expect(body?.classList.contains('is-scrolled')).toBe(false)
     if (!body) throw new Error('Missing sidebar body')
 
     body.scrollTop = 12
     fireEvent.scroll(body)
-    expect(actions?.classList.contains('is-scrolled')).toBe(true)
+    expect(body.classList.contains('is-scrolled')).toBe(true)
+    expect(actions?.classList.contains('is-scrolled')).toBe(false)
 
     body.scrollTop = 0
     fireEvent.scroll(body)
-    expect(actions?.classList.contains('is-scrolled')).toBe(false)
+    expect(body.classList.contains('is-scrolled')).toBe(false)
   })
 
   it('toggles an empty project without leaving the current chat', () => {

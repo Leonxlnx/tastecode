@@ -733,7 +733,7 @@ function SidebarComponent(props: {
           </Suspense>
         ) : (
           <>
-            <div className={`rail__actions${bodyScrolled ? ' is-scrolled' : ''}`}>
+            <div className="rail__actions">
               <div className="rail__row">
                 <button
                   className="navitem rail__new-chat"
@@ -779,7 +779,7 @@ function SidebarComponent(props: {
             </div>
 
             <div
-              className="rail__body"
+              className={`rail__body${bodyScrolled ? ' is-scrolled' : ''}`}
               onScroll={(event) => setBodyScrolled(event.currentTarget.scrollTop > 0)}
             >
               {pinnedSessions.length > 0 ? (
