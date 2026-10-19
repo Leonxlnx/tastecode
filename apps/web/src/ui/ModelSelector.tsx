@@ -1,5 +1,6 @@
-import { lazy, memo, Suspense } from 'react'
+import { lazy, memo, Suspense, useEffect } from 'react'
 import { IconChevronDown as ChevronDown, IconBolt as Zap } from '@tabler/icons-react'
+import { preloadWhenIdle } from '../idle-preload.js'
 import { Menu } from './Menu.js'
 import { ProviderIcon } from './ProviderIcon.js'
 import { SkeletonRows, SkeletonStatus } from './Skeleton.js'
@@ -23,12 +24,21 @@ type LazyModelSelectorPanelModule = {
 
 let modelSelectorPanelPromise: Promise<LazyModelSelectorPanelModule> | undefined
 let resolvedModelSelectorPanel: ModelSelectorPanelComponent | undefined
+/** One import for the idle preload, the trigger intent and the open; a failed one is tried again by the next caller. */
 const loadModelSelectorPanel = (): Promise<LazyModelSelectorPanelModule> =>
-  (modelSelectorPanelPromise ??= import('./ModelSelectorPanel.js').then((module) => {
-    resolvedModelSelectorPanel = module.ModelSelectorPanel
-    return { default: module.ModelSelectorPanel }
-  }))
+  (modelSelectorPanelPromise ??= import('./ModelSelectorPanel.js').then(
+    (module) => {
+      resolvedModelSelectorPanel = module.ModelSelectorPanel
+      return { default: module.ModelSelectorPanel }
+    },
+    (error: unknown) => {
+      modelSelectorPanelPromise = undefined
+      throw error
+    },
+  ))
 const ModelSelectorPanel = lazy(loadModelSelectorPanel)
+/** Set once the first selector on screen asked for the panel to load in an idle moment. */
+let panelPreloadScheduled = false
 
 export {
   getCompactModelName,
@@ -43,6 +53,13 @@ export {
 export type { ModelSelectorProps } from './model-selector-utils.js'
 
 export const ModelSelector = memo(function ModelSelector(props: ModelSelectorProps) {
+  // The panel is its own chunk. Loading it in an idle moment keeps the first
+  // open from compiling and styling it on the click.
+  useEffect(() => {
+    if (panelPreloadScheduled) return
+    panelPreloadScheduled = true
+    preloadWhenIdle(loadModelSelectorPanel)
+  }, [])
   const choice = props.choice ?? getSelectedChoice(props.models, props.modelId)
   const model = choice?.model
   const selectedEffort = getSelectedEffort(model, props.effort)
