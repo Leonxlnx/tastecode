@@ -113,6 +113,7 @@ import {
 import { PanelToggles, StageHeader } from './ui/StageHeader.js'
 import { SurfaceErrorBoundary } from './ui/SurfaceErrorBoundary.js'
 import { surfaceLoadFailed } from './surface-load-error.js'
+import { preloadWhenIdle } from './idle-preload.js'
 import { NoticePresence } from './ui/NoticePresence.js'
 import type { ComposerError } from './ui/ComposerErrors.js'
 import { LazyThread } from './ui/LazyThread.js'
@@ -315,11 +316,22 @@ const loadWorkspacePanel = (): Promise<LazyWorkspacePanelModule> =>
     return { default: module.WorkspacePanel }
   }))
 const WorkspacePanel = lazy(loadWorkspacePanel)
-const Settings = lazy(() =>
-  import('./ui/Settings.js')
-    .then((module) => ({ default: module.Settings }))
-    .catch(surfaceLoadFailed),
-)
+type SettingsComponent = (typeof import('./ui/Settings.js'))['Settings']
+let settingsPromise: Promise<{ default: SettingsComponent }> | undefined
+let resolvedSettings: SettingsComponent | undefined
+/** One import for the idle preload and the first open; a failed one is tried again by the next caller. */
+const loadSettings = (): Promise<{ default: SettingsComponent }> =>
+  (settingsPromise ??= import('./ui/Settings.js').then(
+    (module) => {
+      resolvedSettings = module.Settings
+      return { default: module.Settings }
+    },
+    (error: unknown) => {
+      settingsPromise = undefined
+      throw error
+    },
+  ))
+const LazySettings = lazy(() => loadSettings().catch(surfaceLoadFailed))
 const CommandPalette = lazy(() =>
   import('./ui/CommandPalette.js').then((module) => ({ default: module.CommandPalette })),
 )
@@ -797,6 +809,12 @@ export function App() {
       reportStartupMilestone('catalog-ready')
     }
   }, [catalogAvailability, projectsStatus])
+  // Settings is the largest lazy surface. Once the sidebar is up, its chunk
+  // loads in an idle moment, so the first open does not compile it on the click.
+  useEffect(() => {
+    if (projectsStatus !== 'ready') return
+    return preloadWhenIdle(loadSettings)
+  }, [projectsStatus])
   const [modelVisibility, setModelVisibility] = useState(readModelVisibility)
   // The catalog effect reads and settles the record per source without
   // depending on it, so a visibility click never refetches any model list.
@@ -5853,6 +5871,14 @@ export function App() {
   }
   const RightWorkspacePanel = rightPanelType.current ?? WorkspacePanel
   const BottomWorkspacePanel = bottomPanelType.current ?? WorkspacePanel
+  // The same for Settings, per opening: once its chunk is loaded it renders
+  // without a Suspense pass, and a load that lands while it is open does not
+  // swap the type under it.
+  const settingsType = useRef<SettingsComponent | typeof LazySettings>(undefined)
+  if (!settingsOpen) settingsType.current = undefined
+  const SettingsView = settingsOpen
+    ? (settingsType.current ??= resolvedSettings ?? LazySettings)
+    : undefined
 
   const offlineError = useMemo<ComposerError | undefined>(
     () =>
@@ -6264,14 +6290,14 @@ export function App() {
         </div>
       </div>
 
-      {settingsOpen ? (
+      {SettingsView ? (
         <div className="surface-enter">
           <SurfaceErrorBoundary
             name="Settings"
             onClose={closeSettings}
             fallback={<SettingsSkeleton section={settingsSection.section} />}
           >
-            <Settings
+            <SettingsView
               initialSection={settingsSection.section}
               sectionRequest={settingsSection.request}
               showDebug={debugSettingsVisible}

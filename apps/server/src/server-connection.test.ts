@@ -30,6 +30,7 @@ const state = vi.hoisted(() => ({
   prewarmed: 0,
   recovered: 0,
   historyScans: new Map<string, Promise<void>>(),
+  historyCopies: new Set<string>(),
   idleCheckouts: [] as string[],
   handled: [] as string[],
 }))
@@ -108,6 +109,11 @@ vi.mock('./orchestrator.js', () => ({
     async submitTurn() {
       return { queued: false, turnId: 'turn' }
     }
+    async startThread(provider: string, workspacePath: string) {
+      const id = `${provider}-started`
+      state.threads.set(id, { projectPath: workspacePath, provider })
+      return { id }
+    }
     account(provider: string) {
       state.handled.push(`auth.status(${provider})`)
       return Promise.resolve({ signedIn: false })
@@ -135,6 +141,9 @@ vi.mock('./provider-history.js', () => ({
     }
     scanned(provider: string) {
       return state.historyScans.get(provider) ?? state.historyRefresh
+    }
+    hasCopy(threadId: string) {
+      return state.historyCopies.has(threadId)
     }
     async load(threadId: string) {
       state.historyLoads.push(threadId)
@@ -201,6 +210,7 @@ afterEach(async () => {
   state.prewarmed = 0
   state.recovered = 0
   state.historyScans.clear()
+  state.historyCopies.clear()
   state.idleCheckouts.length = 0
   state.handled.length = 0
   vi.unstubAllEnvs()
@@ -906,6 +916,65 @@ describe('chat history during the first provider scan', () => {
         expect(viewer.messages).toContainEqual(expect.objectContaining({ id: 'claude-chat' })),
       )
       expect(state.historyLoads).toEqual(['codex-chat', 'claude-chat'])
+    } finally {
+      viewer.client.terminate()
+    }
+  })
+
+  it('sends the first turn of a chat started in this run without waiting for the scan', async () => {
+    let finishClaude!: () => void
+    state.historyScans.set('claude-code', new Promise<void>((resolve) => (finishClaude = resolve)))
+    state.historyRefresh = new Promise<void>(() => undefined)
+    // A chat from before the launch may have turns taken in the CLI meanwhile.
+    state.threads.set('claude-earlier', { projectPath: '/work', provider: 'claude-code' })
+    const { port } = await listen()
+    const viewer = await connect(port)
+    const ask = (id: string, method: string, params: unknown) =>
+      viewer.client.send(JSON.stringify({ id, method, params }))
+    const replied = (id: string) => viewer.messages.some((message) => message.id === id)
+    try {
+      ask('start', 'thread.start', { provider: 'claude-code', workspacePath: '/work' })
+      await vi.waitFor(() =>
+        expect(viewer.messages).toContainEqual(
+          expect.objectContaining({ id: 'start', result: { threadId: 'claude-code-started' } }),
+        ),
+      )
+      ask('earlier', 'thread.sendTurn', { threadId: 'claude-earlier', text: 'hi' })
+      ask('new', 'thread.sendTurn', { threadId: 'claude-code-started', text: 'hi' })
+      await vi.waitFor(() => expect(replied('new')).toBe(true))
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      expect(replied('earlier')).toBe(false)
+      expect(state.historyLoads).toEqual([])
+
+      finishClaude()
+      await vi.waitFor(() => expect(replied('earlier')).toBe(true))
+      expect(state.historyLoads).toEqual(['claude-earlier'])
+    } finally {
+      viewer.client.terminate()
+    }
+  })
+
+  it('merges outside turns into a chat started in this run once a scan linked its session', async () => {
+    let finishClaude!: () => void
+    state.historyScans.set('claude-code', new Promise<void>((resolve) => (finishClaude = resolve)))
+    const { port } = await listen()
+    await askForProjects(port)
+    await vi.waitFor(() => expect(state.historySources).toHaveLength(1))
+    const viewer = await connect(port)
+    const ask = (id: string, method: string, params: unknown) =>
+      viewer.client.send(JSON.stringify({ id, method, params }))
+    const replied = (id: string) => viewer.messages.some((message) => message.id === id)
+    try {
+      ask('start', 'thread.start', { provider: 'claude-code', workspacePath: '/work' })
+      await vi.waitFor(() => expect(replied('start')).toBe(true))
+      state.historyCopies.add('claude-code-started')
+      ask('second', 'thread.sendTurn', { threadId: 'claude-code-started', text: 'again' })
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      expect(replied('second')).toBe(false)
+
+      finishClaude()
+      await vi.waitFor(() => expect(replied('second')).toBe(true))
+      expect(state.historyLoads).toEqual(['claude-code-started'])
     } finally {
       viewer.client.terminate()
     }

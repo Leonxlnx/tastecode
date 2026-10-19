@@ -171,6 +171,23 @@ describe('settings viewport layout', () => {
     expect(screen.getByRole('heading', { name: 'Appearance', level: 1 })).toBeTruthy()
     expect(main.scrollTop).toBe(0)
   })
+
+  it('leaves the scroller of a freshly opened page alone, so opening forces no layout', () => {
+    let owner: object | null = HTMLElement.prototype
+    while (owner && !Object.getOwnPropertyDescriptor(owner, 'scrollTop')) {
+      owner = Object.getPrototypeOf(owner) as object | null
+    }
+    const setScrollTop = vi.spyOn(owner as HTMLElement, 'scrollTop', 'set')
+    try {
+      const { container } = renderSettings({ initialSection: 'keybinds' })
+      const main = container.querySelector('.settings__main')
+
+      expect(main).toBeTruthy()
+      expect(setScrollTop.mock.contexts).not.toContain(main)
+    } finally {
+      setScrollTop.mockRestore()
+    }
+  })
   it('names the foundational preference categories truthfully', () => {
     renderSettings()
 
