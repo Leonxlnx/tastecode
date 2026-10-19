@@ -304,7 +304,12 @@ describe('account limits', () => {
     expect(within(codex).getByText('$12.40')).toBeTruthy()
     const bar = within(codex).getByRole('progressbar', { name: 'Codex Weekly left' })
     expect(bar.getAttribute('aria-valuenow')).toBe('15')
-    expect((bar.firstElementChild as HTMLElement).style.width).toBe('15%')
+    const row = bar.closest<HTMLElement>('.account-menu__limit')!
+    expect(row.hasAttribute('data-gauge')).toBe(true)
+    expect(row.style.getPropertyValue('--left')).toBe('0.15')
+    const credits = within(codex).getByText('$12.40').closest<HTMLElement>('.account-menu__limit')!
+    expect(credits.hasAttribute('data-gauge')).toBe(false)
+    expect(credits.style.getPropertyValue('--left')).toBe('')
 
     view.rerender(
       limits({
