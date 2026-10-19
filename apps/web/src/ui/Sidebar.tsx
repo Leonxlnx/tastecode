@@ -1767,8 +1767,8 @@ function SessionRow(props: {
   return (
     <li
       className={`sessrow ${props.active ? 'is-active' : ''} ${props.standalone ? 'is-pinned' : ''} ${
-        props.reorderable ? 'is-reorderable' : ''
-      } ${props.dragging ? 'is-dragging' : ''} ${props.session.unread ? 'is-unread' : ''}`}
+        props.dragging ? 'is-dragging' : ''
+      } ${props.session.unread ? 'is-unread' : ''}`}
       data-archive-session-id={props.session.id}
       draggable={props.reorderable}
       data-drop-position={props.dropPosition}

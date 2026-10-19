@@ -473,16 +473,8 @@
   pointer-events: none;
 }
 
-.sessrow.is-reorderable .sess {
-  cursor: grab;
-}
-
 .sessrow.is-dragging {
   opacity: 0.45;
-}
-
-.sessrow.is-dragging .sess {
-  cursor: grabbing;
 }
 
 /* ::after: the active row's accent tick is a later ::before and would hide
@@ -764,10 +756,6 @@
 .proj {
   position: relative;
   margin-bottom: 4px;
-}
-
-.proj[draggable='true'] > .proj__head {
-  cursor: grab;
 }
 
 .proj.is-dragging {
