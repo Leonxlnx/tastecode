@@ -180,7 +180,7 @@ describe('running chats', () => {
     unread: false,
   })
 
-  it('counts every status inside or before a turn, once per chat', () => {
+  it('counts every chat inside a turn or starting one, once per chat', () => {
     const projects: Project[] = [
       {
         path: 'a',
@@ -197,7 +197,7 @@ describe('running chats', () => {
       },
       { path: 'b', sessions: [session('working', 'working')] },
     ]
-    expect(runningChatCount(projects)).toBe(5)
+    expect(runningChatCount(projects)).toBe(4)
     expect(
       serverRunningChatCount([
         {
@@ -206,10 +206,22 @@ describe('running chats', () => {
             { id: 'b', running: false, status: 'queued' },
             { id: 'c', running: false, status: 'ready' },
             { id: 'd', running: false },
+            { id: 'e', running: true, status: 'approval' },
+            { id: 'f', running: false, status: 'input' },
+            { id: 'g', running: false, status: 'starting' },
           ],
         },
       ]),
-    ).toBe(2)
+    ).toBe(4)
+  })
+
+  it('does not count a chat that only holds queued prompts', () => {
+    // After a restart, or after the server could not start the next prompt,
+    // the prompts wait and no turn runs; they come back after the update.
+    expect(runningChatCount([{ path: 'a', sessions: [session('stale', 'queued')] }])).toBe(0)
+    expect(
+      serverRunningChatCount([{ sessions: [{ id: 'stale', running: false, status: 'queued' }] }]),
+    ).toBe(0)
   })
 
   it('words the wait for one chat and for several', () => {
