@@ -91,6 +91,7 @@ import {
   promoteSession,
   reconcileProjectList,
   removeSession,
+  sessionOnProvider,
   updateSession,
   updateSessions,
 } from './project-store.js'
@@ -1313,6 +1314,34 @@ export function App() {
         : false,
     [activeModelSource, models],
   )
+  // An open chat can move to another provider: its next message goes there.
+  const movableChat =
+    activeSession !== undefined &&
+    activeModelSource !== undefined &&
+    !activeSession.id.startsWith('pending:')
+  /**
+   * What the picker offers: the chat's own models, then every other provider's.
+   * Models the user hid from the chat's own source keep the picker away, as
+   * before; a source that lists none at all still lets the chat move on.
+   */
+  const pickerModels = useMemo(
+    () =>
+      movableChat && (selectableModels.length > 0 || !sourceHasCatalogModels)
+        ? [
+            ...selectableModels,
+            ...visibleModels.filter(
+              (choice) => modelSource(choice) !== activeModelSource && choice.provider !== 'api',
+            ),
+          ]
+        : selectableModels,
+    [movableChat, selectableModels, sourceHasCatalogModels, visibleModels, activeModelSource],
+  )
+  // Only the user's own pick moves a chat; a fallback never leaves its provider.
+  const moveChoice = movableChat
+    ? pickerModels.find(
+        (choice) => choice.key === modelId && modelSource(choice) !== activeModelSource,
+      )
+    : undefined
   const preferredModelSource =
     activeModelSource ??
     (storedModelChoice
@@ -1344,12 +1373,19 @@ export function App() {
       ? implicitChoice
       : undefined
   const resolvedModelChoice =
+    moveChoice ??
     selectableModels.find((choice) => choice.key === modelId) ??
     selectableModels.find((choice) => choice.key === preferredModelKey) ??
     selectableModels.find(
       (choice) => modelSource(choice) === preferredModelSource && choice.model.isDefault,
     ) ??
     selectableModels.find((choice) => modelSource(choice) === preferredModelSource)
+  /** The model the chat would use on its own provider, for undoing a pick that moves it. */
+  const chatOwnChoice = moveChoice
+    ? (selectableModels.find((choice) => choice.key === preferredModelKey) ??
+      selectableModels.find((choice) => choice.model.isDefault) ??
+      selectableModels[0])
+    : undefined
   // The preferred source has not listed its models yet, so the model a send
   // would use is not known. The placeholder below keeps that source, but it is
   // only the provider default: the picker waits and Send stays off instead of
@@ -1908,6 +1944,15 @@ export function App() {
       if (endsDesignBriefing(event)) setThreadDesignMode(threadId, false)
       const next = threadController.receive(data, isThreadCacheProtected)
       if (!next) return
+      // Every window that hears of a move shows the chat on its new provider.
+      if (event.type === 'item.completed' && event.item.notice?.kind === 'provider') {
+        const { provider, agent, accountId } = event.item.notice
+        setProjects((current) =>
+          updateSession(current, threadId, (session) =>
+            sessionOnProvider(session, { provider, agent, accountId }),
+          ),
+        )
+      }
       if (
         event.type === 'turn.started' ||
         event.type === 'turn.completed' ||
@@ -4078,6 +4123,15 @@ export function App() {
         restoreDraft()
         return
       }
+      // A model of another provider moves the chat there before this message.
+      const moving = activeId && !activeId.startsWith('pending:') ? moveChoice : undefined
+      if (moving && activeId && threadController.snapshot(activeId)?.running) {
+        restoreDraft()
+        reportError(
+          `Wait for the current turn to finish, or stop it, before this chat switches to ${moving.sourceName}.`,
+        )
+        return
+      }
       // Design briefing questions are TasteCode-owned and answered by the server,
       // so they work for every provider that can complete a text turn — no
       // structured-input capability gate here (that gates provider-originated
@@ -4301,6 +4355,7 @@ export function App() {
           .catch(() => undefined)
       }
       const turnChoice =
+        moving ||
         !existingSession ||
         (selectedModelChoice &&
           sourceKey({
@@ -4318,6 +4373,37 @@ export function App() {
       let turnAccepted = false
       let queuedActionId: string | undefined
       try {
+        if (moving) {
+          const movingThreadId = threadId
+          try {
+            await transport.request('thread.changeProvider', {
+              threadId: movingThreadId,
+              provider: moving.provider,
+              ...(moving.agent ? { agent: moving.agent.id } : {}),
+              ...(moving.model.id ? { model: moving.model.id } : {}),
+              ...(selectedEffort ? { effort: selectedEffort } : {}),
+              ...(selectedServiceTier ? { serviceTier: selectedServiceTier } : {}),
+              approval: displayedApproval,
+            })
+          } catch (error) {
+            // Whether the chat moved is unknown: the sidebar asks the server again.
+            void refreshProjects().catch(() => undefined)
+            throw error instanceof IndeterminateRequestError
+              ? new Error(
+                  `The connection dropped while this chat switched to ${moving.sourceName}. Check which provider the chat shows, then send again.`,
+                )
+              : error
+          }
+          setProjects((current) =>
+            updateSession(current, movingThreadId, (session) =>
+              sessionOnProvider(session, {
+                provider: moving.provider,
+                agent: moving.agent?.id,
+              }),
+            ),
+          )
+          void refreshProjects().catch(() => undefined)
+        }
         const turnRequest = transport.request('thread.sendTurn', {
           threadId,
           text,
@@ -4446,6 +4532,9 @@ export function App() {
       sendAvailability,
       publishComposerDraft,
       cancelArchive,
+      moveChoice,
+      displayedApproval,
+      refreshProjects,
     ],
   )
 
@@ -6303,6 +6392,44 @@ export function App() {
     )
   }, [activeSession, continuedChat, usageState, providerStatuses, providerAccounts])
 
+  // At the same plan limit, every other signed-in provider is offered as well,
+  // with the model the chat would use there. Choosing one only sets it up:
+  // the chat switches with the next message, which the user sends.
+  const switchOptions = useMemo(() => {
+    if (
+      !movableChat ||
+      !activeSession ||
+      continuedChat ||
+      !accountAtLimit(usageState, activeSession.provider, activeSession.accountId, Date.now())
+    )
+      return []
+    const sources = new Map<string, ModelChoice>()
+    for (const choice of visibleModels) {
+      const source = modelSource(choice)
+      if (source === activeModelSource || sources.has(source) || choice.provider === 'api') continue
+      if (
+        providerStatuses.find((status) => status.id === choice.provider)?.auth !== 'authenticated'
+      )
+        continue
+      const remembered = readSourceSelections()[source]?.modelKey
+      sources.set(
+        source,
+        visibleModels.find((each) => each.key === remembered && modelSource(each) === source) ??
+          visibleModels.find((each) => modelSource(each) === source && each.model.isDefault) ??
+          choice,
+      )
+    }
+    return [...sources.values()]
+  }, [
+    movableChat,
+    activeSession,
+    continuedChat,
+    usageState,
+    visibleModels,
+    activeModelSource,
+    providerStatuses,
+  ])
+
   const offlineError = useMemo<ComposerError | undefined>(
     () =>
       offline
@@ -6367,6 +6494,12 @@ export function App() {
         }
       : error
   // Once continued, the failed turn's row leads to the chat that carries it on.
+  /** Sets the chat up to switch, with the request that failed back in the composer. */
+  const switchAtLimit = (choice: ModelChoice) => {
+    commitModelChoice(choice)
+    const request = lastRequest(thread.items)
+    if (request) editMessage(request)
+  }
   const continueOffer: Pick<ComposerError, 'action' | 'choices'> = continuedChat
     ? {
         action: {
@@ -6374,24 +6507,42 @@ export function App() {
           run: () => void selectSession(continuedChat.id),
         },
       }
-    : thread.running || continueOptions.length === 0
+    : thread.running || continueOptions.length + switchOptions.length === 0
       ? {}
-      : continueOptions.length === 1
+      : continueOptions.length + switchOptions.length === 1
         ? {
-            action: {
-              label: `Continue on ${continueOptions[0]!.label}`,
-              run: () => void continueOnAccount(continueOptions[0]!.id),
-            },
+            action: continueOptions[0]
+              ? {
+                  label: `Continue on ${continueOptions[0].label}`,
+                  run: () => void continueOnAccount(continueOptions[0]!.id),
+                }
+              : {
+                  label: `Switch to ${switchOptions[0]!.sourceName}`,
+                  run: () => switchAtLimit(switchOptions[0]!),
+                },
           }
         : {
             choices: {
-              label: 'Continue on another account',
-              options: continueOptions.map((account) => ({
-                id: account.id,
-                label: account.label,
-                detail: account.email ?? account.plan,
-                run: () => void continueOnAccount(account.id),
-              })),
+              label:
+                switchOptions.length === 0
+                  ? 'Continue on another account'
+                  : continueOptions.length === 0
+                    ? 'Switch to another provider'
+                    : 'Continue elsewhere',
+              options: [
+                ...continueOptions.map((account) => ({
+                  id: account.id,
+                  label: account.label,
+                  detail: account.email ?? account.plan,
+                  run: () => void continueOnAccount(account.id),
+                })),
+                ...switchOptions.map((choice) => ({
+                  id: `provider:${modelSource(choice)}`,
+                  label: choice.sourceName,
+                  detail: choice.model.displayName,
+                  run: () => switchAtLimit(choice),
+                })),
+              ],
             },
           }
   const earlierChat =
@@ -6426,6 +6577,24 @@ export function App() {
               earlierChanges[activeSession.id],
             ),
             action: { label: 'Open', run: () => void selectSession(earlierChat.id) },
+          },
+        ]
+      : []),
+    ...(moveChoice && activeSession
+      ? [
+          {
+            id: `moves:${activeSession.id}:${moveChoice.key}`,
+            role: 'status' as const,
+            tone: 'info' as const,
+            message: `Your next message switches this chat to ${moveChoice.sourceName}. The conversation so far goes with it.`,
+            ...(chatOwnChoice
+              ? {
+                  action: {
+                    label: `Stay on ${chatOwnChoice.sourceName}`,
+                    run: () => commitModelChoice(chatOwnChoice),
+                  },
+                }
+              : {}),
           },
         ]
       : []),
@@ -6612,7 +6781,7 @@ export function App() {
                     branches={pathBranches}
                     onBranchMenuOpen={openBranchMenu}
                     branchesLoading={Boolean(activePath) && branchesPath !== activePath}
-                    models={selectableModels}
+                    models={pickerModels}
                     modelsLoaded={modelsLoaded}
                     modelId={selectedModelChoice?.key}
                     modelChoice={selectedModelChoice}

@@ -499,7 +499,7 @@ function isStartedAssistantTailTextUpdate(previous: Item[], next: Item[]): boole
 }
 
 function isActivity(item: Item): boolean {
-  return item.type !== 'message' && item.type !== 'error'
+  return item.type !== 'message' && item.type !== 'error' && item.type !== 'notice'
 }
 
 export function isStackedActivity(item: Item): boolean {

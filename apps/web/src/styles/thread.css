@@ -973,7 +973,8 @@ button.thread__older:hover {
 }
 
 /* Rows without output have nothing to open; they read as plain lines. */
-.aux__row:disabled {
+.aux__row:disabled,
+.aux--notice > .aux__row {
   cursor: default;
 }
 
