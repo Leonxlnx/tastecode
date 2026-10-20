@@ -200,14 +200,16 @@ export async function requestAppUpdateInstall(): Promise<void> {
     return
   }
   publish({ phase: 'checking' })
-  const running = await serverRunning()
+  const server = await serverRunning()
   // Install later or a second click may have moved on meanwhile.
   if (appUpdateInstallState().phase !== 'checking') return
-  if (!running) {
+  // A turn the sidebar saw start while the server answered counts too.
+  const running = Math.max(server ?? 0, live)
+  if (running === 0) {
     await install()
     return
   }
-  publish({ phase: 'waiting', running: Math.max(running, live) })
+  publish({ phase: 'waiting', running })
   if (live === 0) scheduleSettle()
 }
 
