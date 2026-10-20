@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   applyProjectOrder,
   applySessionOrder,
+  isArchived,
   moveRailSession,
   needsYouSessions,
   parseStoredProjectOrder,
@@ -147,6 +148,18 @@ describe('the rail keeps its order', () => {
         'classic',
       ).map(({ id }) => id),
     ).toEqual(['a'])
+  })
+
+  it('leaves a chat the server settled on its own in the tree', () => {
+    const idle = chat('idle', {
+      lifecycle: { state: 'settled', settledAt: 10, reason: 'inactivity' },
+    })
+    const rail = sidebarRail([{ path: '/one', sessions: [chat('a'), idle, chat('b')] }])
+
+    expect(ids(rail.orderedProjects[0]!.sessions)).toEqual(['a', 'idle', 'b'])
+    expect(rail.archivedSessions).toEqual([])
+    expect(isArchived(idle)).toBe(false)
+    expect(isArchived(chat('archived', archived(10)))).toBe(true)
   })
 })
 
