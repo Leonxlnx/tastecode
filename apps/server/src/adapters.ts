@@ -1,3 +1,4 @@
+import path from 'node:path'
 import type { ClaudeCodeAdapter } from '@harness/adapter-claude-code'
 import type { GrokAdapter } from '@harness/adapter-grok'
 import type {
@@ -18,8 +19,14 @@ import type {
   StoredModelConnection,
   Thread,
 } from '@harness/contracts'
-import { createApiWorkspaceTools } from './api-workspace-tools.js'
-import { ApiRuntimeStateSchema, persistentApiSession } from './api-session-state.js'
+import {
+  listCustomModels,
+  openCodeConnectionConfig,
+  openCodeConnectionEnvironment,
+  openCodeModelId,
+  openCodeProvider,
+  writeKeyGuard,
+} from './api-connection-opencode.js'
 import {
   actionableLaunchError,
   customHarnessRun,
@@ -27,13 +34,13 @@ import {
   resolveCustomHarnessLaunch,
   runCustomHarness,
 } from './custom-harness-launch.js'
+import { storeLocation } from './data-location.js'
 import type { ModelListRead } from './model-list-cache.js'
 import { retryableLazy } from './retryable-lazy.js'
 import { mapProviderSession, StartupCleanupError } from './provider-session.js'
 
 const loadAcpAdapter = retryableLazy(() => import('@harness/adapter-acp'))
 const loadAntigravityAdapter = retryableLazy(() => import('@harness/adapter-antigravity'))
-const loadApiAdapter = retryableLazy(() => import('@harness/adapter-api'))
 const loadClaudeAdapter = retryableLazy(() => import('@harness/adapter-claude-code'))
 const loadCodexAdapter = retryableLazy(() => import('@harness/adapter-codex'))
 const loadCursorAdapter = retryableLazy(() => import('@harness/adapter-cursor'))
@@ -81,92 +88,123 @@ export type StartOptions = {
   resumeState?: unknown
 }
 
+/** Chats from before API connections ran on OpenCode; their state belonged to the old runtime. */
+const LEGACY_API_THREAD = /^api-/
+
+/** Where API connections keep their OpenCode sessions and the key guard. */
+function apiOpenCodeHome(): string {
+  return path.join(path.dirname(storeLocation()), 'opencode-api')
+}
+
+/** The last model list each custom endpoint gave, so a chat can switch between them. */
+const customEndpointModels = new Map<string, string[]>()
+
+function vendorModel(connection: StoredModelConnection, model: string): string {
+  const prefix = `${openCodeProvider(connection)}/`
+  return model.startsWith(prefix) ? model.slice(prefix.length) : model
+}
+
+function apiLaunchError(error: unknown): never {
+  if (error instanceof Error && error.message.startsWith('OpenCode is unavailable')) {
+    throw new Error(
+      'API key connections run in OpenCode, which is not available. Install OpenCode to use this connection.',
+    )
+  }
+  throw error
+}
+
+/**
+ * A direct API connection is an OpenCode session that runs on the user's
+ * key: OpenCode is the agent, the connection only chooses its provider.
+ */
 export function apiRuntime(
   connection: StoredModelConnection,
   apiKey: string,
   onLog: (line: string) => void,
 ): ProviderRuntime {
-  const createSession = async (workspacePath: string, options: StartOptions, model: string) => {
-    const {
-      ApiAgentSession,
-      createAnthropicMessagesTransport,
-      createOpenAiCompatibleTransport,
-      createOpenAiResponsesTransport,
-    } = await loadApiAdapter()
-    const transport =
-      connection.transport === 'openai-responses'
-        ? createOpenAiResponsesTransport({ apiKey, baseUrl: connection.baseUrl })
-        : connection.transport === 'anthropic-messages'
-          ? createAnthropicMessagesTransport({ apiKey, baseUrl: connection.baseUrl })
-          : createOpenAiCompatibleTransport({
-              apiKey,
-              provider:
-                connection.preset === 'openrouter' ||
-                connection.preset === 'kimi' ||
-                connection.preset === 'zai'
-                  ? connection.preset
-                  : 'custom',
-              baseUrl: connection.baseUrl,
-            })
-    const workspaceTools = createApiWorkspaceTools(workspacePath, options.approval)
-    const session = new ApiAgentSession({
-      model,
-      transport,
-      secrets: [apiKey],
-      ...workspaceTools,
-      ...(options.instructions ? { instructions: options.instructions } : {}),
+  const adapterFor = async (models: readonly string[], options: Partial<StartOptions> = {}) => {
+    const { OpenCodeAdapter } = await loadOpenCodeAdapter()
+    const home = apiOpenCodeHome()
+    return new OpenCodeAdapter({
+      config: openCodeConnectionConfig(connection, writeKeyGuard(home), models),
+      environment: openCodeConnectionEnvironment(apiKey, path.join(home, 'sessions.db')),
+      ...(options.mcpServers ? { mcpServers: options.mcpServers } : {}),
+      ...(options.mcpCredentials ? { mcpCredentials: options.mcpCredentials } : {}),
     })
-    session.on('log', onLog)
-    return session
+  }
+  const open = async (workspacePath: string, options: StartOptions, threadId?: string) => {
+    if (threadId !== undefined && LEGACY_API_THREAD.test(threadId)) {
+      throw new Error(
+        'This chat ran on the former built-in API runtime and cannot continue. Its history stays readable; start a new chat to keep going.',
+      )
+    }
+    const model = options.model ?? connection.defaultModel
+    if (!model) throw new Error(`choose a model for "${connection.displayName}"`)
+    const adapter = await adapterFor(
+      [...(customEndpointModels.get(connection.id) ?? []), vendorModel(connection, model)],
+      options,
+    )
+    adapter.on('log', onLog)
+    return startedSession(adapter, async () => {
+      await adapter.start().catch(apiLaunchError)
+      const selection = {
+        model: openCodeModelId(connection, model),
+        ...(options.effort ? { effort: options.effort } : {}),
+        ...(options.approval ? { approval: options.approval } : {}),
+        ...(options.instructions ? { instructions: options.instructions } : {}),
+      }
+      const thread =
+        threadId === undefined
+          ? await adapter.startThread(workspacePath, selection)
+          : await adapter.resumeThread(threadId, workspacePath, selection)
+      return { ...thread, provider: 'api' as const, connectionId: connection.id }
+    })
   }
   return {
-    async start(workspacePath, options) {
-      const model = options.model ?? connection.defaultModel
-      if (!model) throw new Error(`choose a model for "${connection.displayName}"`)
-      const session = await createSession(workspacePath, options, model)
-      const thread = session.startThread(workspacePath, connection.id)
-      return { thread, session: persistentApiSession(session, apiKey) }
-    },
-    async resume(threadId, workspacePath, options) {
-      const saved = ApiRuntimeStateSchema.safeParse(options.resumeState)
-      if (!saved.success) throw new Error('Saved API conversation state is missing or invalid.')
-      const { state, model } = saved.data
-      if (
-        state.thread.id !== threadId ||
-        state.thread.provider !== 'api' ||
-        state.thread.connectionId !== connection.id
-      ) {
-        throw new Error('Saved API conversation belongs to another thread or connection.')
-      }
-      const session = await createSession(workspacePath, options, model)
-      const thread = session.resumeThread({ ...state, thread: { ...state.thread, workspacePath } })
-      return { thread, session: persistentApiSession(session, apiKey) }
-    },
-    async listModels() {
-      const { listAnthropicModels, listOpenAiCompatibleModels, listOpenAiModels } =
-        await loadApiAdapter()
-      const options = {
-        apiKey,
-        baseUrl: connection.baseUrl,
-        ...(connection.defaultModel
-          ? {
-              defaultModel: connection.defaultModel,
-            }
-          : {}),
-      }
-      if (connection.transport === 'openai-responses') return listOpenAiModels(options)
-      if (connection.transport === 'anthropic-messages') return listAnthropicModels(options)
-      return listOpenAiCompatibleModels({
-        ...options,
-        provider:
-          connection.preset === 'openrouter' ||
-          connection.preset === 'kimi' ||
-          connection.preset === 'zai'
-            ? connection.preset
-            : 'custom',
-      })
-    },
+    start: open,
+    resume: (threadId, workspacePath, options) => open(workspacePath, options, threadId),
+    listModels: () => listConnectionModels(connection, apiKey, adapterFor),
   }
+}
+
+/** One listing per connection at a time; each one runs its own `opencode serve`. */
+const connectionModelListings = new Map<string, Promise<Model[]>>()
+
+function listConnectionModels(
+  connection: StoredModelConnection,
+  apiKey: string,
+  adapterFor: (models: readonly string[]) => Promise<{
+    listModels(): Promise<Model[]>
+    dispose(): Promise<void>
+  }>,
+): Promise<Model[]> {
+  const existing = connectionModelListings.get(connection.id)
+  if (existing) return existing
+  const listing = (async () => {
+    let custom: string[] = []
+    if (connection.preset === 'custom') {
+      custom = await listCustomModels(connection, apiKey)
+      customEndpointModels.set(connection.id, custom)
+    }
+    const adapter = await adapterFor(custom)
+    runningListings.add(adapter)
+    try {
+      const models = await adapter.listModels().catch(apiLaunchError)
+      const preferred = connection.defaultModel
+        ? openCodeModelId(connection, connection.defaultModel)
+        : undefined
+      return preferred
+        ? models.map((model) => ({ ...model, isDefault: model.id === preferred }))
+        : models
+    } finally {
+      runningListings.delete(adapter)
+      await adapter.dispose()
+    }
+  })().finally(() => {
+    connectionModelListings.delete(connection.id)
+  })
+  connectionModelListings.set(connection.id, listing)
+  return listing
 }
 
 export type TurnOptions = Pick<StartOptions, 'model' | 'serviceTier' | 'effort'>

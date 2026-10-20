@@ -1,0 +1,155 @@
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import path from 'node:path'
+import { pathToFileURL } from 'node:url'
+import type {
+  ModelConnectionPreset,
+  ModelTransport,
+  StoredModelConnection,
+} from '@harness/contracts'
+
+/**
+ * A direct API connection runs on OpenCode with the user's key. Each preset
+ * uses OpenCode's own provider id, so its catalog names the models and knows
+ * their context windows; a custom endpoint gets a provider of its own.
+ */
+const PRESET_PROVIDERS = {
+  openai: 'openai',
+  anthropic: 'anthropic',
+  openrouter: 'openrouter',
+  kimi: 'moonshotai',
+  zai: 'zai',
+} as const satisfies Record<Exclude<ModelConnectionPreset, 'custom'>, string>
+
+const CUSTOM_PROVIDER = 'tastecode'
+
+const CUSTOM_PACKAGES = {
+  'openai-compatible': '@ai-sdk/openai-compatible',
+  'openai-responses': '@ai-sdk/openai',
+  'anthropic-messages': '@ai-sdk/anthropic',
+} as const satisfies Record<ModelTransport, string>
+
+/** The config reads the key from here; it never appears in the config itself. */
+const KEY_VARIABLE = 'TASTECODE_API_KEY'
+
+const DISCOVERY_TIMEOUT_MS = 10_000
+
+/**
+ * OpenCode passes its own environment to every shell command the agent runs,
+ * which would hand the key to the model on request. The `shell.env` hook
+ * cannot remove a variable, but a value it sets replaces the inherited one.
+ */
+const KEY_GUARD_SOURCE = `// Written by TasteCode. Keeps the API key out of the agent's shell commands.
+export const TasteCodeKeyGuard = async () => ({
+  'shell.env': async (_input, output) => {
+    output.env.${KEY_VARIABLE} = ''
+  },
+})
+`
+
+export function openCodeProvider(connection: StoredModelConnection): string {
+  return connection.preset === 'custom' ? CUSTOM_PROVIDER : PRESET_PROVIDERS[connection.preset]
+}
+
+/** A model as OpenCode names it: the provider, a slash, then the vendor's own id. */
+export function openCodeModelId(connection: StoredModelConnection, model: string): string {
+  const provider = openCodeProvider(connection)
+  return model.startsWith(`${provider}/`) ? model : `${provider}/${model}`
+}
+
+/**
+ * Only this connection's provider is enabled, so neither the user's other
+ * OpenCode providers nor a key in the server's environment can run the chat.
+ * A model the user named is added beside the catalog, where OpenCode would
+ * otherwise refuse an id it does not know yet.
+ */
+export function openCodeConnectionConfig(
+  connection: StoredModelConnection,
+  keyGuard: string,
+  customModels: readonly string[] = [],
+) {
+  const provider = openCodeProvider(connection)
+  const models = [
+    ...new Set([...customModels, ...(connection.defaultModel ? [connection.defaultModel] : [])]),
+  ]
+  return {
+    enabled_providers: [provider],
+    plugin: [keyGuard],
+    provider: {
+      [provider]: {
+        ...(connection.preset === 'custom'
+          ? { npm: CUSTOM_PACKAGES[connection.transport], name: connection.displayName }
+          : {}),
+        options: { baseURL: connection.baseUrl, apiKey: `{env:${KEY_VARIABLE}}` },
+        ...(models.length > 0
+          ? { models: Object.fromEntries(models.map((model) => [model, {}])) }
+          : {}),
+      },
+    },
+  }
+}
+
+export function openCodeConnectionEnvironment(apiKey: string, sessionsDatabase: string) {
+  return {
+    [KEY_VARIABLE]: apiKey,
+    // The user's own OpenCode sign-ins stay out: a ChatGPT login on the same
+    // provider id would otherwise run, and bill, the chat instead of the key.
+    OPENCODE_AUTH_CONTENT: '{}',
+    // API chats keep their sessions apart from the user's OpenCode history.
+    OPENCODE_DB: sessionsDatabase,
+  }
+}
+
+/** Writes the guard plugin when it is missing or stale and returns its file URL. */
+export function writeKeyGuard(directory: string): string {
+  const file = path.join(directory, 'key-guard.js')
+  let current: string | undefined
+  try {
+    current = readFileSync(file, 'utf8')
+  } catch {
+    current = undefined
+  }
+  if (current !== KEY_GUARD_SOURCE) {
+    mkdirSync(directory, { recursive: true })
+    writeFileSync(file, KEY_GUARD_SOURCE)
+  }
+  return pathToFileURL(file).href
+}
+
+/**
+ * OpenCode's catalog does not know a custom endpoint, so its models come
+ * from the endpoint itself. An endpoint without a model list yields none,
+ * and the connection's own model still runs.
+ */
+export async function listCustomModels(
+  connection: StoredModelConnection,
+  apiKey: string,
+  request: typeof fetch = fetch,
+): Promise<string[]> {
+  const headers: Record<string, string> =
+    connection.transport === 'anthropic-messages'
+      ? { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' }
+      : { authorization: `Bearer ${apiKey}` }
+  try {
+    const response = await request(`${connection.baseUrl.replace(/\/+$/, '')}/models`, {
+      headers,
+      signal: AbortSignal.timeout(DISCOVERY_TIMEOUT_MS),
+    })
+    if (!response.ok) return []
+    const body: unknown = await response.json()
+    const data =
+      typeof body === 'object' && body !== null && 'data' in body && Array.isArray(body.data)
+        ? (body.data as unknown[])
+        : []
+    return data.flatMap((entry) =>
+      typeof entry === 'object' &&
+      entry !== null &&
+      'id' in entry &&
+      typeof entry.id === 'string' &&
+      entry.id.length > 0
+        ? [entry.id]
+        : [],
+    )
+  } catch {
+    return []
+  }
+}

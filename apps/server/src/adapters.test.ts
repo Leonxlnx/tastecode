@@ -1,7 +1,8 @@
-import { realpathSync } from 'node:fs'
+import { mkdtempSync, realpathSync, rmSync } from 'node:fs'
 import os from 'node:os'
-import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { CustomHarness } from '@harness/contracts'
+import path from 'node:path'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+import type { CustomHarness, StoredModelConnection } from '@harness/contracts'
 import type { StartOptions } from './adapters.js'
 
 /**
@@ -15,6 +16,8 @@ const constructed: FakeOpenCodeAdapter[] = []
 let failOpenCodeThreadStart = false
 let openingFailure: 'initialize' | 'session' | undefined
 let release: (() => void) | undefined
+let openCodeListing: Array<Record<string, unknown>> = []
+let openCodeStartFailure: Error | undefined
 const turnAdapters: FakeTurnAdapter[] = []
 
 class FakeTurnAdapter {
@@ -220,6 +223,10 @@ class FakeOpenCodeAdapter extends FakeResumableAdapter {
     super('opencode', options)
     constructed.push(this)
   }
+  override async start() {
+    if (openCodeStartFailure) throw openCodeStartFailure
+    await super.start()
+  }
   override async startThread(workspacePath: string, options: Record<string, unknown>) {
     if (failOpenCodeThreadStart) throw new Error('openCode startThread failed')
     return super.startThread(workspacePath, options)
@@ -228,7 +235,7 @@ class FakeOpenCodeAdapter extends FakeResumableAdapter {
     await new Promise<void>((resolve) => {
       release = resolve
     })
-    return []
+    return openCodeListing
   }
 }
 
@@ -272,7 +279,7 @@ vi.mock('@harness/proc/cli', async (importOriginal) => ({
   },
 }))
 
-const { providerRuntime, stopModelListings } = await import('./adapters.js')
+const { apiRuntime, providerRuntime, stopModelListings } = await import('./adapters.js')
 
 afterEach(() => {
   constructed.length = 0
@@ -280,6 +287,8 @@ afterEach(() => {
   openingFailure = undefined
   turnAdapters.length = 0
   release = undefined
+  openCodeListing = []
+  openCodeStartFailure = undefined
   vi.restoreAllMocks()
   vi.useRealTimers()
 })
@@ -900,5 +909,113 @@ describe('openCodeRuntime', () => {
     constructed[0]!.disposed = false
     await stopModelListings()
     expect(constructed[0]?.disposed).toBe(false)
+  })
+})
+
+describe('apiRuntime', () => {
+  let dataDir: string
+  const previousDataDir = process.env['HARNESS_DATA_DIR']
+  beforeAll(() => {
+    dataDir = mkdtempSync(path.join(os.tmpdir(), 'tastecode-api-runtime-'))
+    process.env['HARNESS_DATA_DIR'] = dataDir
+  })
+  afterAll(() => {
+    if (previousDataDir === undefined) delete process.env['HARNESS_DATA_DIR']
+    else process.env['HARNESS_DATA_DIR'] = previousDataDir
+    rmSync(dataDir, { recursive: true, force: true })
+  })
+
+  const connection: StoredModelConnection = {
+    id: 'openai-1',
+    displayName: 'OpenAI API',
+    preset: 'openai',
+    transport: 'openai-responses',
+    baseUrl: 'https://api.openai.com/v1',
+    defaultModel: 'gpt-5.6',
+    enabled: true,
+    credentialRef: 'model-connections/openai-1',
+  }
+
+  it("runs the chat in OpenCode on the connection's provider and key", async () => {
+    const { thread } = await apiRuntime(connection, 'sk-test-secret', () => {}).start('/repo', {
+      approval: 'ask',
+      instructions: 'Be brief.',
+    })
+
+    expect(thread).toMatchObject({
+      id: 'opencode-thread',
+      provider: 'api',
+      connectionId: 'openai-1',
+    })
+    const adapter = constructed[0]!
+    expect(adapter.startOptions).toEqual({
+      model: 'openai/gpt-5.6',
+      approval: 'ask',
+      instructions: 'Be brief.',
+    })
+    const launch = adapter.launchOptions as {
+      config: { enabled_providers: string[]; plugin: string[] }
+      environment: Record<string, string>
+    }
+    expect(launch.config.enabled_providers).toEqual(['openai'])
+    expect(launch.config.plugin[0]).toMatch(/^file:.*opencode-api.*key-guard\.js$/)
+    expect(JSON.stringify(launch.config)).not.toContain('sk-test-secret')
+    expect(launch.environment).toEqual({
+      TASTECODE_API_KEY: 'sk-test-secret',
+      OPENCODE_AUTH_CONTENT: '{}',
+      OPENCODE_DB: path.join(dataDir, 'opencode-api', 'sessions.db'),
+    })
+  })
+
+  it('keeps an OpenCode model id the picker already qualified', async () => {
+    await apiRuntime(connection, 'sk-test-secret', () => {}).start('/repo', {
+      model: 'openai/gpt-5.6-pro',
+    })
+    expect(constructed[0]?.startOptions?.['model']).toBe('openai/gpt-5.6-pro')
+  })
+
+  it('resumes through OpenCode and refuses a chat of the former runtime', async () => {
+    const runtime = apiRuntime(connection, 'sk-test-secret', () => {})
+    const { thread } = await runtime.resume!('opencode-ses_1', '/repo', {})
+    expect(thread).toMatchObject({
+      id: 'opencode-ses_1',
+      provider: 'api',
+      connectionId: 'openai-1',
+    })
+
+    await expect(runtime.resume!('api-1234', '/repo', {})).rejects.toThrow(
+      'former built-in API runtime',
+    )
+    expect(constructed).toHaveLength(1)
+  })
+
+  it('says OpenCode is needed when it cannot start, and disposes the adapter', async () => {
+    openCodeStartFailure = new Error(
+      'OpenCode is unavailable. Install it and run `opencode` once to sign in.',
+    )
+    await expect(
+      apiRuntime(connection, 'sk-test-secret', () => {}).start('/repo', {}),
+    ).rejects.toThrow('API key connections run in OpenCode, which is not available.')
+    expect(constructed[0]?.disposed).toBe(true)
+  })
+
+  it("marks the connection's own model as the default in one shared listing", async () => {
+    openCodeListing = [
+      { id: 'openai/gpt-5.6-terra-pro', displayName: 'Terra', isDefault: true },
+      { id: 'openai/gpt-5.6', displayName: 'GPT-5.6', isDefault: false },
+    ]
+    const runtime = apiRuntime(connection, 'sk-test-secret', () => {})
+    const first = runtime.listModels()
+    const second = apiRuntime(connection, 'sk-test-secret', () => {}).listModels()
+    await vi.waitFor(() => expect(constructed).toHaveLength(1))
+    release?.()
+
+    const models = await first
+    expect(await second).toBe(models)
+    expect(models.map((model) => [model.id, model.isDefault])).toEqual([
+      ['openai/gpt-5.6-terra-pro', false],
+      ['openai/gpt-5.6', true],
+    ])
+    expect(constructed[0]?.disposed).toBe(true)
   })
 })

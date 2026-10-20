@@ -82,15 +82,17 @@ function parseConfig(raw: string): ConfigState {
   return state
 }
 
-function capabilities(connection: StoredModelConnection): ModelConnection['capabilities'] {
-  return {
-    streaming: true,
-    tools: true,
-    images: false,
-    reasoning: true,
-    modelDiscovery: connection.preset !== 'zai',
-    usage: connection.preset !== 'zai',
-  }
+/**
+ * Every connection runs on OpenCode, whose catalog lists each preset's models
+ * and reports token use for all of them; a custom endpoint lists its own.
+ */
+const CAPABILITIES: ModelConnection['capabilities'] = {
+  streaming: true,
+  tools: true,
+  images: false,
+  reasoning: true,
+  modelDiscovery: true,
+  usage: true,
 }
 
 export type ModelCredentialStore = {
@@ -159,7 +161,7 @@ export class ModelConnectionStore {
     return {
       ...config,
       credentialConfigured: this.credentials.has(credentialRef),
-      capabilities: capabilities(connection),
+      capabilities: CAPABILITIES,
     }
   }
 
