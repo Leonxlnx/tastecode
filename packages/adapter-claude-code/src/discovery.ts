@@ -1,6 +1,7 @@
 import type { McpServerStatus } from '@anthropic-ai/claude-agent-sdk'
 import type { McpServer, ProviderCommand } from '@harness/contracts'
 import { killTree, spawnCli } from '@harness/proc'
+import { withClaudeAccount } from './account-home.js'
 import { mapClaudeCommands, mapClaudeMcpServers } from './inventory.js'
 import {
   claudeSdkSpawner,
@@ -24,6 +25,8 @@ export type ClaudeProjectDiscoveryOptions = {
   createQuery?: ClaudeQueryFactory
   spawn?: ClaudeSpawn
   environment?: NodeJS.ProcessEnv
+  /** Load what the account in this config folder loads. Absent: the default account. */
+  accountHome?: string | undefined
   /** Claude needs 9-15 s to answer init on a warm machine, longer under load. */
   initTimeoutMs?: number
   /** How long servers may keep starting after init before the answer is final. */
@@ -59,7 +62,7 @@ export async function discoverClaudeProject(
         cwd: projectPath,
         abortController: abort,
         pathToClaudeCodeExecutable: 'claude',
-        env: { ...(options.environment ?? process.env) },
+        env: { ...withClaudeAccount(options.environment ?? process.env, options.accountHome) },
         // The SDK ends the CLI on abort; this keeps the whole tree, MCP servers
         // included, owned until it is gone.
         spawnClaudeCodeProcess: claudeSdkSpawner(

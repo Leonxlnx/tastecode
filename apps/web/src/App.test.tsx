@@ -2927,7 +2927,7 @@ describe('web client', () => {
       reasoningEfforts: [],
       serviceTiers: [],
     })
-    const announce = (payload: { provider: string; agent?: string }) =>
+    const announce = (payload: { provider: string; agent?: string; accountId?: string }) =>
       act(() => transport.listeners.get('models.changed')?.(payload))
     const settled = () => act(async () => new Promise((resolve) => window.setTimeout(resolve, 0)))
 
@@ -2952,6 +2952,11 @@ describe('web client', () => {
 
       // A source this catalog does not list is not requested.
       announce({ provider: 'acp', agent: 'kimi' })
+      await settled()
+      expect(rpcCount('models.list')).toBe(2)
+
+      // Nor another account's list: the catalog lists the default account.
+      announce({ provider: 'codex', accountId: 'work-1a2b3c' })
       await settled()
       expect(rpcCount('models.list')).toBe(2)
     })
@@ -3745,6 +3750,59 @@ describe('web client', () => {
         }),
       ),
     )
+  })
+
+  it('offers no account choice for a new chat on a custom harness, which keeps its own sign-in', async () => {
+    const codex = serverProviders[0]!
+    serverProviders = [
+      { ...codex, capabilities: { ...codex.capabilities!, multipleAccounts: true } },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'harnesses.list') {
+        return Promise.resolve({
+          harnesses: [
+            {
+              id: 'codex-fork',
+              displayName: 'Codex Fork',
+              provider: 'codex',
+              command: 'codex-fork',
+              args: [],
+            },
+          ],
+        })
+      }
+      if (method === 'models.list') {
+        const { agent } = methods['models.list'].params.parse(params)
+        const id = agent === 'codex-fork' ? 'fork-model' : 'codex-model'
+        return Promise.resolve({
+          models: [
+            { id, displayName: id, isDefault: true, reasoningEfforts: ['low'], serviceTiers: [] },
+          ],
+        })
+      }
+      return request(method, params)
+    })
+    render(<App />)
+    act(() => composerProps().onModelSelectorOpen?.())
+    await waitFor(() =>
+      expect(composerProps().models.map((choice) => choice.model.id)).toEqual(
+        expect.arrayContaining(['codex-model', 'fork-model']),
+      ),
+    )
+    const pick = (id: string) =>
+      act(() =>
+        composerProps().onModelChange(
+          composerProps().models.find((choice) => choice.model.id === id)!.key,
+        ),
+      )
+
+    // Codex itself runs as the chosen account, so the choice is offered.
+    pick('codex-model')
+    await waitFor(() => expect(composerProps().accountProvider).toBe('codex'))
+    pick('fork-model')
+    await waitFor(() => expect(composerProps().accountProvider).toBeUndefined())
   })
 
   it('discovers a custom Pi source and binds new sessions to its harness id', async () => {
@@ -5250,6 +5308,150 @@ describe('new chats', () => {
     ).toHaveLength(2)
   })
 
+  it('reads the active account at launch and names every account in the popup', async () => {
+    const codex = serverProviders[0]!
+    serverProviders = [
+      { ...codex, capabilities: { ...codex.capabilities!, multipleAccounts: true } },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'accounts.list') {
+        return Promise.resolve({
+          accounts: [
+            { id: 'default', provider: 'codex', label: 'Personal', managed: false },
+            {
+              id: 'work-1a2b3c',
+              provider: 'codex',
+              label: 'Work',
+              home: 'C:\\TasteCode\\accounts\\codex\\work-1a2b3c',
+              managed: true,
+            },
+            {
+              id: 'spare-4d5e6f',
+              provider: 'codex',
+              label: 'Spare',
+              home: 'C:\\TasteCode\\accounts\\codex\\spare-4d5e6f',
+              managed: true,
+            },
+          ],
+          active: { codex: 'work-1a2b3c' },
+        })
+      }
+      if (method === 'usage.summary') {
+        const { accountId } = params as { accountId?: string }
+        return (request(method, params) as Promise<ResultOf<'usage.summary'>>).then((summary) => ({
+          ...summary,
+          limits: [{ label: '5 hours', usedPercent: accountId === 'work-1a2b3c' ? 60 : 25 }],
+        }))
+      }
+      return request(method, params)
+    })
+    render(<App />)
+
+    // New chats start on Work, so Work is the account read at launch.
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('usage.summary', {
+        provider: 'codex',
+        accountId: 'work-1a2b3c',
+        intent: 'background',
+      }),
+    )
+    // The card's figure is about where new chats run.
+    expect(await screen.findByText('40% left')).toBeTruthy()
+    expect(screen.queryByText('75% left')).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Account' }))
+    const personal = await screen.findByRole('region', { name: 'Codex · Personal' })
+    const work = screen.getByRole('region', { name: 'Codex · Work' })
+    expect(within(work).getByText('40% left')).toBeTruthy()
+    expect(await within(personal).findByText('75% left')).toBeTruthy()
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('usage.summary', {
+        provider: 'codex',
+        intent: 'visible',
+      }),
+    )
+    // The active account comes first; the raw id is never shown.
+    const regions = screen.getAllByRole('region', { name: /^Codex/ })
+    expect(regions.map((region) => region.getAttribute('aria-label'))).toEqual([
+      'Codex · Work',
+      'Codex · Personal',
+    ])
+    expect(screen.queryByText(/work-1a2b3c/)).toBeNull()
+    // Spare has not signed in yet, so it is not read and not listed.
+    expect(transport.request).not.toHaveBeenCalledWith(
+      'usage.summary',
+      expect.objectContaining({ accountId: 'spare-4d5e6f' }),
+    )
+  })
+
+  it("offers each account's own models: the active one for new chats, a chat's own for it", async () => {
+    const codex = serverProviders[0]!
+    serverProviders = [
+      { ...codex, capabilities: { ...codex.capabilities!, multipleAccounts: true } },
+    ]
+    serverProjects[0]!.sessions = [
+      { id: 'chat-personal', title: 'Personal chat', provider: 'codex', createdAt: 1 },
+      {
+        id: 'chat-work',
+        title: 'Work chat',
+        provider: 'codex',
+        accountId: 'work-1a2b3c',
+        createdAt: 2,
+      },
+    ]
+    const model = (id: string): Model => ({
+      id,
+      displayName: id,
+      isDefault: true,
+      reasoningEfforts: ['low'],
+      serviceTiers: [],
+    })
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'accounts.list') {
+        return Promise.resolve({
+          accounts: [
+            { id: 'default', provider: 'codex', label: 'Personal', managed: false },
+            {
+              id: 'work-1a2b3c',
+              provider: 'codex',
+              label: 'Work',
+              home: 'C:\\TasteCode\\accounts\\codex\\work-1a2b3c',
+              managed: true,
+            },
+          ],
+          active: { codex: 'work-1a2b3c' },
+        })
+      }
+      if (method === 'models.list') {
+        const { accountId } = methods['models.list'].params.parse(params)
+        return Promise.resolve({
+          models: [model(accountId === 'work-1a2b3c' ? 'work-plan-model' : 'personal-plan-model')],
+        })
+      }
+      return request(method, params)
+    })
+    const offered = () => composerProps().models.map((choice) => choice.model.id)
+    render(<App />)
+
+    // New chats start on Work, so the picker lists what Work's plan has.
+    await waitFor(() => expect(offered()).toEqual(['work-plan-model']))
+    expect(transport.request).toHaveBeenCalledWith('models.list', {
+      provider: 'codex',
+      accountId: 'work-1a2b3c',
+    })
+
+    // A chat pinned to the default account is offered the default account's models.
+    fireEvent.click(await waitFor(() => treeChatRow('Personal chat')))
+    await waitFor(() => expect(offered()).toEqual(['personal-plan-model']))
+    // A chat on the active account uses the catalog's list again.
+    fireEvent.click(await waitFor(() => treeChatRow('Work chat')))
+    await waitFor(() => expect(offered()).toEqual(['work-plan-model']))
+  })
+
   it('keeps plan limits and asks nothing new when switching chats of one provider', async () => {
     serverProjects = [
       {
@@ -5332,6 +5534,31 @@ describe('new chats', () => {
     )
 
     expect(await screen.findByText('60% left')).toBeTruthy()
+    expect(transport.request).not.toHaveBeenCalledWith('usage.summary', expect.anything())
+  })
+
+  it('keeps another account’s pushed limits and changes off the default account', async () => {
+    render(<App />)
+    expect(await screen.findByText('75% left')).toBeTruthy()
+    transport.request.mockClear()
+
+    act(() => {
+      transport.listeners.get('usage.limits')?.({
+        source: {
+          provider: 'codex',
+          accountId: 'work-1a2b3c',
+          status: 'ready',
+          limits: [{ id: 'codex:primary', label: '5 hours', usedPercent: 90 }],
+          checkedAt: Date.now(),
+          origin: 'live',
+        },
+      })
+      transport.listeners.get('usage.changed')?.({ provider: 'codex', accountId: 'work-1a2b3c' })
+    })
+    await act(async () => new Promise((resolve) => window.setTimeout(resolve, 120)))
+
+    expect(screen.getByText('75% left')).toBeTruthy()
+    expect(screen.queryByText('10% left')).toBeNull()
     expect(transport.request).not.toHaveBeenCalledWith('usage.summary', expect.anything())
   })
 
@@ -6008,6 +6235,89 @@ describe('new chats', () => {
       }
     },
   )
+
+  it('signs a further account in through the sign-in terminal and asks that account who it is', async () => {
+    desktopShell.enabled = true
+    serverProjects = []
+    const codex = serverProviders[0]!
+    serverProviders = [
+      { ...codex, capabilities: { ...codex.capabilities!, multipleAccounts: true } },
+    ]
+    let workSignedIn = false
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'accounts.list') {
+        return Promise.resolve({
+          accounts: [
+            {
+              id: 'default',
+              provider: 'codex',
+              label: 'Default',
+              managed: false,
+              email: 'me@x.test',
+            },
+            {
+              id: 'work-1a2b3c',
+              provider: 'codex',
+              label: 'Work',
+              home: 'C:\\TasteCode\\accounts\\codex\\work-1a2b3c',
+              managed: true,
+              ...(workSignedIn ? { email: 'work@x.test' } : {}),
+            },
+          ],
+          active: {},
+        })
+      }
+      if (method === 'auth.status') {
+        const { accountId } = methods['auth.status'].params.parse(params)
+        if (accountId === 'work-1a2b3c') workSignedIn = true
+        return Promise.resolve({ signedIn: true, email: accountId ? 'work@x.test' : 'me@x.test' })
+      }
+      if (method === 'providers.launch') return Promise.resolve({ terminalId: 'term-codex-work' })
+      if (method === 'terminal.close') return Promise.resolve({})
+      return request(method, params)
+    })
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        observe(): void {}
+        unobserve(): void {}
+        disconnect(): void {}
+      },
+    )
+
+    render(<App />)
+    await openProviderSettings()
+    fireEvent.click(await screen.findByRole('button', { name: 'Sign in to Work' }))
+
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Settings' })).toBeNull())
+    expect(await screen.findByLabelText('Codex · Work login terminal')).toBeTruthy()
+    expect(transport.request).toHaveBeenCalledWith('providers.launch', {
+      provider: 'codex',
+      accountId: 'work-1a2b3c',
+      columns: 320,
+      rows: 30,
+    })
+
+    act(() => {
+      transport.listeners.get('terminal.exit')!({ terminalId: 'term-codex-work', exitCode: 0 })
+    })
+    await screen.findByRole('dialog', { name: 'Settings' })
+    expect(screen.queryByLabelText('Codex · Work login terminal')).toBeNull()
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('auth.status', {
+        provider: 'codex',
+        accountId: 'work-1a2b3c',
+      }),
+    )
+    // The server keeps that answer as Work's identity and says the list changed.
+    act(() => {
+      transport.listeners.get('accounts.changed')?.({ provider: 'codex' })
+    })
+    expect(await screen.findByText('work@x.test')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Sign in to Work' })).toBeNull()
+  })
 
   it('shows a running sign-in in its one workspace terminal again from Settings', async () => {
     // Load the lazy Settings dialog, workspace panel and terminal first, so this

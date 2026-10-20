@@ -30,7 +30,6 @@ import {
   getNextServiceTierForModel,
   isFastModeEnabled,
 } from './model-selector-utils.js'
-import { IconMorph } from './IconMorph.js'
 import { BackgroundModelSettingsSchema } from '@harness/contracts'
 import '../styles/sheet.css'
 import '../styles/switch.css'
@@ -60,8 +59,6 @@ import {
   IconBlocks as Blocks,
   IconBug as Bug,
   IconDatabase as Database,
-  IconEye as Eye,
-  IconEyeOff as EyeOff,
   IconInfoCircle as Info,
   IconPackages as Boxes,
   IconKeyboard as Keyboard,
@@ -158,6 +155,10 @@ import {
 } from '../haptics.js'
 import { AppSelect, type AppSelectOption } from './AppSelect.js'
 import { Menu, MenuItem } from './Menu.js'
+import { AccountEmail } from './AccountEmail.js'
+import { ProviderAccountsSection } from './ProviderAccounts.js'
+import { multiAccountProviders } from '../provider-accounts-state.js'
+import { sameAccount } from '../usage-summary-state.js'
 import { ProviderIcon } from './ProviderIcon.js'
 import { McpSettings } from './McpSettings.js'
 import { groupModelsBySource } from './model-selector-utils.js'
@@ -890,7 +891,8 @@ export function ProviderSettings(props: {
       void refreshAccount(provider)
     }
     const unsubscribe = props.transport.on('auth.event', (event) => {
-      if (event.agent) return
+      // A provider row is its default account; a further account's row reads its own.
+      if (event.agent || !sameAccount(event.accountId, undefined)) return
       const operation = operations.current[event.provider]
       if (!operation) {
         if (event.success) void refreshAccount(event.provider, true)
@@ -1283,6 +1285,11 @@ export function ProviderSettings(props: {
           {renderAgentRow(agent)}
         </div>
       ))}
+      <ProviderAccountsSection
+        transport={props.transport}
+        providers={multiAccountProviders(props.providerStatuses)}
+        onOpenTerminal={props.onProviderLoginTerminalOpen}
+      />
       <SettingsSection title="API connections">
         {(props.modelConnections ?? []).map((connection) => (
           <ConnectionRow
@@ -3043,45 +3050,6 @@ function AccountIdentity(props: { provider: ProviderId; account: Account }) {
       {props.account.plan ? (
         <span className="settings__account-plan"> · {props.account.plan}</span>
       ) : null}
-    </span>
-  )
-}
-
-/** Preview on hover or focus, then let a click keep the address visible. */
-function AccountEmail(props: { email: string }) {
-  const [pinned, setPinned] = useState(false)
-  const [previewed, setPreviewed] = useState(false)
-  const revealed = pinned || previewed
-
-  const togglePinned = () => {
-    setPreviewed(false)
-    setPinned((current) => !current)
-  }
-
-  return (
-    <span className="settings__email" data-revealed={revealed} data-pinned={pinned}>
-      <button
-        className="settings__email-toggle"
-        type="button"
-        aria-label={pinned ? 'Hide account email' : 'Show account email'}
-        aria-pressed={pinned}
-        title={pinned ? 'Click to hide email' : 'Hover to preview or click to keep visible'}
-        onPointerEnter={(event) => {
-          if (event.pointerType !== 'touch') setPreviewed(true)
-        }}
-        onPointerLeave={() => setPreviewed(false)}
-        onFocus={() => setPreviewed(true)}
-        onBlur={() => setPreviewed(false)}
-        onClick={togglePinned}
-      >
-        <IconMorph active={revealed ? 1 : 0}>
-          <Eye className="settings__email-eye--show" size={15} aria-hidden />
-          <EyeOff className="settings__email-eye--hide" size={15} aria-hidden />
-        </IconMorph>
-      </button>
-      <span className="settings__email-clip">
-        <span className="settings__email-value">{props.email}</span>
-      </span>
     </span>
   )
 }

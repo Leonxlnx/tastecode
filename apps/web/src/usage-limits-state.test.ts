@@ -242,6 +242,90 @@ describe('UsageLimitsController', () => {
     expect(controller.snapshot().map((state) => state.provider)).toEqual(['claude-code', 'codex'])
   })
 
+  it('keeps each provider account a source of its own', async () => {
+    const load = vi.fn(async (params: ParamsOf<'usage.summary'>) =>
+      summary('provider' in params ? params.provider : 'codex'),
+    )
+    const controller = new UsageLimitsController(load)
+    const work = { provider: 'codex', accountId: 'work-1a2b3c' } as const
+    controller.select([{ provider: 'codex' }], [work, { provider: 'codex', accountId: 'default' }])
+    await vi.waitFor(() => expect(controller.snapshot()[0]?.status).toBe('ready'))
+    load.mockClear()
+
+    // A push for another account never lands on the default account's bars.
+    const pushed: ProviderLimitSource = {
+      provider: 'codex',
+      accountId: 'work-1a2b3c',
+      status: 'ready',
+      limits: [{ id: 'codex:primary', label: '5h', usedPercent: 80 }],
+    }
+    controller.applySource(pushed)
+    controller.applySource({ ...pushed, accountId: 'other-000000' })
+    expect(controller.snapshot()).toMatchObject([
+      {
+        provider: 'codex',
+        status: 'ready',
+        summary: { limitSource: summary('codex').limitSource },
+      },
+      { provider: 'codex', accountId: 'work-1a2b3c', status: 'ready' },
+    ])
+    expect(controller.snapshot()[0]).not.toHaveProperty('accountId')
+    expect(controller.snapshot()[1]?.summary?.limitSource).toEqual(pushed)
+    expect(load).not.toHaveBeenCalled()
+
+    // Shown, the account is asked as itself; a change to it re-reads only it.
+    const release = controller.show()
+    await vi.waitFor(() => expect(load).toHaveBeenCalledTimes(2))
+    expect(load).toHaveBeenCalledWith({ provider: 'codex', intent: 'visible' })
+    expect(load).toHaveBeenCalledWith({
+      provider: 'codex',
+      accountId: 'work-1a2b3c',
+      intent: 'visible',
+    })
+    await vi.waitFor(() =>
+      expect(controller.snapshot().every((state) => state.status === 'ready')).toBe(true),
+    )
+    load.mockClear()
+    controller.changed('codex', 'work-1a2b3c')
+    await vi.waitFor(() => expect(load).toHaveBeenCalledOnce())
+    expect(load).toHaveBeenCalledWith({
+      provider: 'codex',
+      accountId: 'work-1a2b3c',
+      intent: 'visible',
+    })
+    controller.refresh('codex', 'retry', 'work-1a2b3c')
+    await vi.waitFor(() => expect(load).toHaveBeenCalledTimes(2))
+    expect(load).toHaveBeenLastCalledWith({
+      provider: 'codex',
+      accountId: 'work-1a2b3c',
+      intent: 'retry',
+    })
+    release()
+  })
+
+  it('switches the active source to another account without showing the old limits', async () => {
+    let resolveWork: ((value: Summary) => void) | undefined
+    const load = vi.fn((params: ParamsOf<'usage.summary'>) =>
+      'accountId' in params && params.accountId
+        ? new Promise<Summary>((resolve) => {
+            resolveWork = resolve
+          })
+        : Promise.resolve(summary('codex')),
+    )
+    const controller = new UsageLimitsController(load)
+    controller.select([{ provider: 'codex' }])
+    await vi.waitFor(() => expect(controller.snapshot()[0]?.status).toBe('ready'))
+
+    controller.select([{ provider: 'codex', accountId: 'work-1a2b3c' }])
+    expect(controller.snapshot()).toEqual([
+      { status: 'loading', provider: 'codex', accountId: 'work-1a2b3c' },
+    ])
+    await vi.waitFor(() => expect(resolveWork).toBeDefined())
+    resolveWork?.(summary('codex'))
+    await vi.waitFor(() => expect(controller.snapshot()[0]?.status).toBe('ready'))
+    expect(controller.snapshot()[0]).toMatchObject({ accountId: 'work-1a2b3c' })
+  })
+
   it('coalesces change bursts for only the matching source', async () => {
     vi.useFakeTimers()
     const load = vi.fn(async (params: ParamsOf<'usage.summary'>) =>

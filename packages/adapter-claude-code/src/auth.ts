@@ -4,6 +4,7 @@ import path from 'node:path'
 import type { Account } from '@harness/contracts'
 import { killTree, runCli, spawnCli } from '@harness/proc'
 import { z } from 'zod'
+import { claudeAccountEnvironment } from './account-home.js'
 
 const ClaudeAccountSchema = z.object({
   loggedIn: z.boolean(),
@@ -23,6 +24,13 @@ const ClaudeGlobalConfigSchema = z.object({
 export type ClaudeAccountOptions = {
   run?: typeof runCli
   readRateLimitTier?: () => Promise<string | undefined>
+  /** Ask as the account in this config folder. Absent: the default account. */
+  accountHome?: string | undefined
+}
+
+/** How a CLI command for an account gets that account's folder; nothing for the default one. */
+function accountRunOptions(accountHome: string | undefined): [] | [{ env: NodeJS.ProcessEnv }] {
+  return accountHome === undefined ? [] : [{ env: claudeAccountEnvironment(accountHome) }]
 }
 
 export type ClaudeLogin = {
@@ -42,6 +50,7 @@ export async function claudeAccount(options: ClaudeAccountOptions = {}): Promise
     'claude',
     ['auth', 'status'],
     CLAUDE_AUTH_STATUS_TIMEOUT_MS,
+    ...accountRunOptions(options.accountHome),
   )
   let account: Account
   try {
@@ -51,16 +60,19 @@ export async function claudeAccount(options: ClaudeAccountOptions = {}): Promise
     throw cause
   }
   if (!account.plan) return account
-  const tier = await (options.readRateLimitTier ?? readClaudeRateLimitTier)()
+  const tier = await (options.readRateLimitTier
+    ? options.readRateLimitTier()
+    : readClaudeRateLimitTier(options.accountHome))
   return { ...account, plan: claudePlanLabel(account.plan, tier) }
 }
 
 /**
  * `claude auth status` reports Max without its usage multiplier; the CLI keeps that in the
- * rate-limit tier of its global config (e.g. `default_claude_max_5x`).
+ * rate-limit tier of its global config (e.g. `default_claude_max_5x`), which sits in the
+ * account's config folder when one is set.
  */
-async function readClaudeRateLimitTier(): Promise<string | undefined> {
-  const configDir = process.env['CLAUDE_CONFIG_DIR']
+async function readClaudeRateLimitTier(accountHome?: string): Promise<string | undefined> {
+  const configDir = accountHome ?? process.env['CLAUDE_CONFIG_DIR']
   const file = configDir
     ? path.join(configDir, '.claude.json')
     : path.join(homedir(), '.claude.json')
@@ -101,11 +113,13 @@ export function parseClaudeAccount(output: string): Account {
   }
 }
 
+/** Claude's own sign-in flow; with `accountHome`, it signs that account's folder in. */
 export function startClaudeLogin(
   onComplete: (result: { loginId: string; success: boolean; error: string | null }) => void,
+  options: { accountHome?: string | undefined } = {},
 ): ClaudeLogin {
   const loginId = crypto.randomUUID()
-  const child = spawnCli('claude', ['auth', 'login'])
+  const child = spawnCli('claude', ['auth', 'login'], ...accountRunOptions(options.accountHome))
   // Nothing reads these pipes; an undrained pipe blocks the CLI once it has
   // written a buffer's worth (sign-in URLs, verbose retries) and the sign-in
   // would hang forever.
@@ -133,7 +147,15 @@ export function startClaudeLogin(
   return { loginId, cancel: () => killTree(child) }
 }
 
-export async function signOutClaude(): Promise<void> {
-  const result = await runCli('claude', ['auth', 'logout'], 15_000)
+/** Signs out the default account, or with `accountHome` that account's folder only. */
+export async function signOutClaude(
+  options: { accountHome?: string | undefined; run?: typeof runCli } = {},
+): Promise<void> {
+  const result = await (options.run ?? runCli)(
+    'claude',
+    ['auth', 'logout'],
+    15_000,
+    ...accountRunOptions(options.accountHome),
+  )
   if (result.code !== 0) throw new Error('Claude Code could not sign out.')
 }

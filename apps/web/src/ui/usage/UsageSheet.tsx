@@ -1,5 +1,5 @@
 import { memo, useState, type CSSProperties, type ReactNode } from 'react'
-import type { ProviderId, UsageHistoryModel } from '@harness/contracts'
+import type { AccountId, ProviderId, UsageHistoryModel } from '@harness/contracts'
 import { providerMark } from '../../provider-presentation.js'
 import { ProviderIcon } from '../ProviderIcon.js'
 import { UsageChart, type ChartAxis } from './UsageChart.js'
@@ -35,7 +35,7 @@ export function UsageSheet(props: {
   /** "No sessions in the last 7 days"; undefined when the history could not be read. */
   emptyText: string | undefined
   now: number
-  onRetry: (provider: ProviderId) => void
+  onRetry: (provider: ProviderId, accountId?: AccountId) => void
 }) {
   const { sheet } = props
   const retry = () => props.onRetry(sheet.provider)
@@ -53,7 +53,11 @@ export function UsageSheet(props: {
           sheet={sheet}
           account={account}
           now={props.now}
-          onRetry={retry}
+          onRetry={() =>
+            account.accountId === undefined
+              ? props.onRetry(sheet.provider)
+              : props.onRetry(sheet.provider, account.accountId)
+          }
         />
       ))}
     </SheetGroup>

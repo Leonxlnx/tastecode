@@ -19,11 +19,13 @@ import {
 } from 'react'
 import type {
   Account,
+  AccountId,
   ProviderId,
   ResultOf,
   ThreadInboxStatus,
   ThreadLifecycle,
 } from '@harness/contracts'
+import type { AccountLabel } from '../provider-accounts-state.js'
 import {
   IconArchive as Archive,
   IconArrowBackUp as Restore,
@@ -151,6 +153,8 @@ export type Session = {
   provider: ProviderId
   agent?: string | undefined
   connectionId?: string | undefined
+  /** The provider account the chat is pinned to. Absent means default. */
+  accountId?: string | undefined
   createdAt: number
   /** Client-observed start of the current status, used for elapsed/relative labels. */
   statusSince?: number | undefined
@@ -230,14 +234,19 @@ function SidebarComponent(props: {
   providerName: string
   keybindings?: Keybindings | undefined
   usageStates?: AccountLimitsState[] | undefined
+  /** The sources the card's one figure is taken from; every source by default. */
+  usageCardStates?: AccountLimitsState[] | undefined
+  /** Names a provider account in the popup's plan limits. */
+  accountLabel?: AccountLabel | undefined
   /** The account popup shows plan limits; returns the release for when it closes. */
   onShowUsage?: (() => () => void) | undefined
-  onRetryUsage?: ((provider: ProviderId) => void) | undefined
+  onRetryUsage?: ((provider: ProviderId, accountId?: AccountId) => void) | undefined
   onConsumeReset?:
     | ((
         provider: ProviderId,
         idempotencyKey: string,
         creditId?: string,
+        accountId?: AccountId,
       ) => Promise<ResultOf<'usage.consumeReset'>>)
     | undefined
   mode?: 'classic' | 'inbox'
@@ -278,7 +287,8 @@ function SidebarComponent(props: {
 }) {
   const keybindings = props.keybindings ?? DEFAULT_KEYBINDINGS
   const profileDisplayName = props.profileIdentity?.displayName.trim() || 'Local profile'
-  const usageLimit = useMemo(() => tightestUsageLimit(props.usageStates), [props.usageStates])
+  const cardStates = props.usageCardStates ?? props.usageStates
+  const usageLimit = useMemo(() => tightestUsageLimit(cardStates), [cardStates])
   const usageRemaining = usageLimit
     ? Math.round(Math.min(100, Math.max(0, 100 - usageLimit.usedPercent)))
     : undefined
@@ -997,6 +1007,7 @@ function SidebarComponent(props: {
                       <Suspense fallback={<AccountLimitsLoading states={props.usageStates} />}>
                         <RenderedAccountLimits
                           states={props.usageStates}
+                          accountLabel={props.accountLabel}
                           onShow={props.onShowUsage}
                           onRetry={props.onRetryUsage ?? noop}
                           onConsumeReset={props.onConsumeReset}

@@ -2,9 +2,11 @@ import type { ProviderId, ProviderLimitSource } from '@harness/contracts'
 import { describe, expect, it } from 'vitest'
 import {
   parseLimitFailures,
+  parseLimitIdentities,
   parseLimitSnapshot,
   serializeLimitSnapshot,
   type SavedLimitFailure,
+  type SavedLimitIdentity,
 } from './limit-snapshot.js'
 
 type Ready = Extract<ProviderLimitSource, { status: 'ready' }>
@@ -84,5 +86,28 @@ describe('limit snapshot', () => {
     expect([...parseLimitFailures(text).keys()]).toEqual(['grok'])
     expect(parseLimitFailures(JSON.stringify({ version: 1, failures: [valid] })).size).toBe(0)
     expect(parseLimitFailures('{').size).toBe(0)
+  })
+
+  it('round-trips whose limits they are and skips a malformed identity', () => {
+    const identities = new Map<ProviderId, SavedLimitIdentity>([
+      ['codex', { signedIn: true, email: 'dev@example.test', plan: 'pro' }],
+      ['grok', { signedIn: false }],
+    ])
+    const text = serializeLimitSnapshot(new Map([['codex', codex]]), new Map(), identities)
+    expect(parseLimitIdentities(text)).toEqual(identities)
+    expect(parseLimitSnapshot(text).get('codex')).toEqual(codex)
+    // Without identities the value keeps the shape older builds wrote.
+    expect(JSON.parse(serializeLimitSnapshot(new Map()))).toEqual({ version: 1, sources: [] })
+    const malformed = JSON.stringify({
+      version: 1,
+      sources: [],
+      identities: [
+        { provider: 'codex', signedIn: true, email: '' },
+        { provider: 'nobody', signedIn: true },
+        { provider: 'grok', signedIn: 'yes' },
+        { provider: 'claude-code', signedIn: true },
+      ],
+    })
+    expect([...parseLimitIdentities(malformed).keys()]).toEqual(['claude-code'])
   })
 })

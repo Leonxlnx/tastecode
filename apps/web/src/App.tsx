@@ -17,6 +17,7 @@ import type {
 import { IconLoader2 as LoaderCircle } from '@tabler/icons-react'
 import type {
   Account,
+  AccountId,
   ApprovalDecision,
   ApprovalMode,
   DomainEvent,
@@ -29,6 +30,7 @@ import type {
   ResultOf,
   SidebarSettings,
 } from '@harness/contracts'
+import { DEFAULT_ACCOUNT_ID } from '@harness/contracts'
 import {
   isDesktop,
   isMacOS,
@@ -131,7 +133,16 @@ import { serverBaseUrl } from './server-url.js'
 import { addDesignBriefing } from './design-agent/briefing.js'
 import { sourceSupportsAttachments } from './attachment-capability.js'
 import { canCaptureVoice, type VoiceRecording } from './voice-capability.js'
-import { UsageLimitsController } from './usage-limits-state.js'
+import { UsageLimitsController, type LimitTarget } from './usage-limits-state.js'
+import { sameAccount } from './usage-summary-state.js'
+import {
+  accountLabelOf,
+  accountsOf,
+  activeAccountOf,
+  useProviderAccounts,
+  type AccountLabel,
+  type ProviderAccountsSnapshot,
+} from './provider-accounts-state.js'
 import {
   agentMark,
   connectionMark,
@@ -608,24 +619,32 @@ export function App() {
   const readUsage = useCallback(() => usageController.snapshot(), [usageController])
   const usageState = useSyncExternalStore(subscribeUsage, readUsage, readUsage)
   const refreshUsage = useCallback(
-    (requestedProvider?: ProviderId) => usageController.refresh(requestedProvider),
+    (requestedProvider?: ProviderId, accountId?: AccountId) =>
+      usageController.refresh(requestedProvider, undefined, accountId),
     [usageController],
   )
   const retryUsage = useCallback(
-    (requestedProvider: ProviderId) => usageController.refresh(requestedProvider, 'retry'),
+    (requestedProvider: ProviderId, accountId?: AccountId) =>
+      usageController.refresh(requestedProvider, 'retry', accountId),
     [usageController],
   )
   const showUsage = useCallback(() => usageController.show(), [usageController])
   const consumeReset = useCallback(
-    async (requestedProvider: ProviderId, idempotencyKey: string, creditId?: string) => {
+    async (
+      requestedProvider: ProviderId,
+      idempotencyKey: string,
+      creditId?: string,
+      accountId?: AccountId,
+    ) => {
       try {
         return await transport.request('usage.consumeReset', {
           provider: requestedProvider,
+          ...(accountId === undefined || accountId === DEFAULT_ACCOUNT_ID ? {} : { accountId }),
           idempotencyKey,
           ...(creditId === undefined ? {} : { creditId }),
         })
       } finally {
-        refreshUsage(requestedProvider)
+        refreshUsage(requestedProvider, accountId)
       }
     },
     [transport, refreshUsage],
@@ -798,6 +817,17 @@ export function App() {
       }
     })
   const [providerStatuses, setProviderStatuses] = useState<ProviderStatus[]>([])
+  // The provider accounts, kept while an installed provider can have more
+  // than one: plan limits are read per account, and the views name them.
+  const { snapshot: providerAccounts } = useProviderAccounts(
+    transport,
+    providerStatuses.some(
+      (status) => status.installed && status.capabilities?.multipleAccounts === true,
+    ),
+  )
+  /** For the model catalog's runs, which outlive a render. */
+  const providerAccountsRef = useRef(providerAccounts)
+  providerAccountsRef.current = providerAccounts
   const [acpAgents, setAcpAgents] = useState<ResultOf<'acp.agents'>['agents']>([])
   const [modelConnections, setModelConnections] = useState<ModelConnection[]>([])
   const [catalogRequest, setCatalogRequest] = useState(0)
@@ -1210,13 +1240,63 @@ export function App() {
         })
       : undefined
   }, [activeSession])
-  const selectableModels = useMemo(
-    () =>
-      activeModelSource
-        ? visibleModels.filter((choice) => modelSource(choice) === activeModelSource)
-        : visibleModels,
-    [activeModelSource, visibleModels],
-  )
+  // An open chat runs on its own account. When that is not the account the
+  // catalog lists for its provider, the chat is offered its own account's
+  // models, whose plan may differ; the catalog's stay until they arrive.
+  const chatModelAccount =
+    activeSession &&
+    // A chat still starting runs on the active account, which the catalog lists.
+    !activeSession.id.startsWith('pending:') &&
+    !activeSession.agent &&
+    !activeSession.connectionId &&
+    !sameAccount(
+      activeSession.accountId,
+      modelListAccount(providerAccounts, activeSession.provider),
+    )
+      ? chatAccountKey(activeSession.provider, activeSession.accountId)
+      : undefined
+  const chatModelAccountRef = useRef(chatModelAccount)
+  chatModelAccountRef.current = chatModelAccount
+  const [chatModels, setChatModels] = useState<{ account: string; models: ModelChoice[] }>()
+  const [chatModelsRevision, setChatModelsRevision] = useState(0)
+  useEffect(() => {
+    if (!chatModelAccount) return
+    const [id = '', accountId = DEFAULT_ACCOUNT_ID] = chatModelAccount.split('\u0000')
+    const chatProvider = id as ProviderId
+    let cancelled = false
+    void transport
+      .request('models.list', {
+        provider: chatProvider,
+        ...(accountId === DEFAULT_ACCOUNT_ID ? {} : { accountId }),
+      })
+      .then(
+        (result) => {
+          if (cancelled) return
+          const sourceName = providerName(chatProvider)
+          setChatModels({
+            account: chatModelAccount,
+            models: choicesFor(
+              { provider: chatProvider, sourceName, mark: providerMark(chatProvider) },
+              result.models,
+              false,
+            ),
+          })
+        },
+        // The catalog's list stays offered.
+        () => undefined,
+      )
+    return () => {
+      cancelled = true
+    }
+  }, [chatModelAccount, chatModelsRevision, transport])
+  const selectableModels = useMemo(() => {
+    if (chatModelAccount && chatModels?.account === chatModelAccount && chatModels.models.length) {
+      return chatModels.models.filter((choice) => !hiddenModels.has(choice.key))
+    }
+    return activeModelSource
+      ? visibleModels.filter((choice) => modelSource(choice) === activeModelSource)
+      : visibleModels
+  }, [activeModelSource, visibleModels, chatModelAccount, chatModels, hiddenModels])
   const storedModelChoice = models.find((choice) => choice.key === modelId)
   const sourceHasCatalogModels = useMemo(
     () =>
@@ -1323,6 +1403,13 @@ export function App() {
   const autoReviewSupported = useMemo(
     () =>
       providerStatuses.find((entry) => entry.id === provider)?.capabilities?.autoReview === true,
+    [provider, providerStatuses],
+  )
+  // A new chat with such a provider offers its accounts beside the composer tools.
+  const providerHasAccounts = useMemo(
+    () =>
+      providerStatuses.find((entry) => entry.id === provider)?.capabilities?.multipleAccounts ===
+      true,
     [provider, providerStatuses],
   )
 
@@ -1916,8 +2003,8 @@ export function App() {
       setWorkspaceDesignPreviewRequest({ requestId: request.requestId, url: request.url })
     })
     const offSidebarSettings = transport.on('sidebar.settings', acceptSidebarSettings)
-    const offUsageChanged = transport.on('usage.changed', ({ provider }) => {
-      usageController.changed(provider)
+    const offUsageChanged = transport.on('usage.changed', ({ provider, accountId }) => {
+      usageController.changed(provider, accountId)
     })
     // Live windows reach the bars as the server folds them in, not only after
     // the spaced usage.changed signal and a new request.
@@ -2292,7 +2379,11 @@ export function App() {
           })
         }
         try {
-          const result = await transport.request('models.list', { provider: entry.id })
+          const accountId = modelListAccount(providerAccountsRef.current, entry.id)
+          const result = await transport.request('models.list', {
+            provider: entry.id,
+            ...(accountId ? { accountId } : {}),
+          })
           const models = choicesFor(
             {
               provider: entry.id,
@@ -2674,11 +2765,43 @@ export function App() {
   // restart.
   useEffect(
     () =>
-      transport.on('models.changed', ({ provider, agent }) => {
+      transport.on('models.changed', ({ provider, agent, accountId }) => {
+        // An open chat on another account lists that account's models itself.
+        if (
+          agent === undefined &&
+          chatModelAccountRef.current === chatAccountKey(provider, accountId)
+        ) {
+          setChatModelsRevision((revision) => revision + 1)
+        }
+        // A provider's own list is its active account's; a custom harness keeps its own sign-in.
+        const listed =
+          agent === undefined ? modelListAccount(providerAccountsRef.current, provider) : undefined
+        if (!sameAccount(accountId, listed)) return
         catalogSources.current?.relist(sourceKey({ provider, agentId: agent }))
       }),
     [transport],
   )
+
+  // A provider whose active account changed lists that account's models, so
+  // a new chat is offered what its plan has.
+  const modelListAccounts = useMemo(
+    () =>
+      [...new Set(providerAccounts.accounts.map((account) => account.provider))]
+        .sort()
+        .map((id) => `${id}=${activeAccountOf(providerAccounts, id)}`)
+        .join(','),
+    [providerAccounts],
+  )
+  const listedModelAccounts = useRef(new Map<string, string>())
+  useEffect(() => {
+    for (const entry of modelListAccounts ? modelListAccounts.split(',') : []) {
+      const [id = '', accountId = DEFAULT_ACCOUNT_ID] = entry.split('=')
+      const before = listedModelAccounts.current.get(id) ?? DEFAULT_ACCOUNT_ID
+      listedModelAccounts.current.set(id, accountId)
+      // A provider's own source key is its id.
+      if (before !== accountId) catalogSources.current?.relist(id)
+    }
+  }, [modelListAccounts])
 
   // A window left open for hours lists its models again when it comes back,
   // so a CLI updated outside the app brings its new releases (and retires the
@@ -3217,10 +3340,51 @@ export function App() {
         .map((status) => status.id),
     [provider, providerStatuses],
   )
+  // Each provider account is a limit source of its own. New chats start on a
+  // provider's active account, so that one is read for the current provider;
+  // its other accounts join the other providers, read when a view shows them.
+  const limitTargets = useMemo(() => {
+    const targetsOf = (id: ProviderId): LimitTarget[] => {
+      const listed = accountsOf(providerAccounts, id)
+      if (listed.length < 2) return [{ provider: id }]
+      const active = activeAccountOf(providerAccounts, id)
+      // A further account is read once it has named who it is: before its
+      // first sign-in every read fails, and the views would offer a Retry.
+      const others = listed
+        .filter(
+          (account) =>
+            account.id !== active &&
+            (account.id === DEFAULT_ACCOUNT_ID ||
+              account.email !== undefined ||
+              account.plan !== undefined),
+        )
+        .map((account) => account.id)
+      return [active, ...others].map((accountId) =>
+        accountId === DEFAULT_ACCOUNT_ID ? { provider: id } : { provider: id, accountId },
+      )
+    }
+    const [main = { provider }, ...rest] = targetsOf(provider)
+    return { main, onDemand: [...rest, ...otherUsageProviders.flatMap(targetsOf)] }
+  }, [provider, otherUsageProviders, providerAccounts])
 
   useLayoutEffect(() => {
-    usageController.select([{ provider }], otherUsageProviders)
-  }, [usageController, provider, otherUsageProviders])
+    usageController.select([limitTargets.main], limitTargets.onDemand)
+  }, [usageController, limitTargets])
+
+  // The account card's one figure is about where new chats run: each
+  // provider's active account. The popup lists every account.
+  const cardUsageState = useMemo(
+    () =>
+      usageState.filter((state) =>
+        sameAccount(state.accountId, activeAccountOf(providerAccounts, state.provider)),
+      ),
+    [usageState, providerAccounts],
+  )
+  const accountLabel = useCallback<AccountLabel>(
+    (requestedProvider, accountId) =>
+      accountLabelOf(providerAccounts, requestedProvider, accountId),
+    [providerAccounts],
+  )
 
   // First load, plus the one-time handover from localStorage. Anything found
   // there stays recoverable until the server acknowledges that project.
@@ -4362,6 +4526,15 @@ export function App() {
     }
     const completedProvider = completed.provider
     if (!completedProvider) return
+    if (completed.accountId !== undefined && completed.accountId !== DEFAULT_ACCOUNT_ID) {
+      // A further account: its own check is what the server keeps as who signed
+      // in, and accounts.changed tells every accounts view. The default
+      // account's state is untouched.
+      void transport
+        .request('auth.status', { provider: completedProvider, accountId: completed.accountId })
+        .catch(() => undefined)
+      return
+    }
     setProviderAuthRefreshRevision((revision) => revision + 1)
     void transport
       .request('auth.status', { provider: completedProvider })
@@ -6128,6 +6301,8 @@ export function App() {
           providerName={providerName(provider, sourceAgentName)}
           keybindings={keybindings}
           usageStates={usageState}
+          usageCardStates={cardUsageState}
+          accountLabel={accountLabel}
           onShowUsage={showUsage}
           onRetryUsage={retryUsage}
           onConsumeReset={consumeReset}
@@ -6249,6 +6424,12 @@ export function App() {
                     projectPath={activePath}
                     projectName={activeProject ? displayName(activeProject) : undefined}
                     threadId={activeId && !activeId.startsWith('pending:') ? activeId : undefined}
+                    accountProvider={
+                      // A custom harness runs on its own sign-in, whatever account is chosen.
+                      !activeId && providerHasAccounts && !selectedModelChoice?.agent
+                        ? provider
+                        : undefined
+                    }
                     projectsLoading={projectsStatus === 'loading'}
                     branch={
                       (!activeId && activePath
@@ -6734,6 +6915,23 @@ function Empty(props: {
       </div>
     </div>
   )
+}
+
+/** One provider account, as a key; the default account however it is named. */
+function chatAccountKey(provider: ProviderId, accountId: AccountId | undefined): string {
+  return `${provider}\u0000${accountId ?? DEFAULT_ACCOUNT_ID}`
+}
+
+/**
+ * The account a provider's own model list is read as: the one new chats start
+ * on, whose plan may offer other models. Undefined for the default account.
+ */
+function modelListAccount(
+  accounts: ProviderAccountsSnapshot,
+  provider: ProviderId,
+): AccountId | undefined {
+  const active = activeAccountOf(accounts, provider)
+  return active === DEFAULT_ACCOUNT_ID ? undefined : active
 }
 
 function providerName(id: ProviderId, sourceName?: string): string {

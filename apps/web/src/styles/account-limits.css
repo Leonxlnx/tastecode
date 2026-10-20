@@ -68,6 +68,51 @@
   height: 13px;
 }
 
+/* A provider with more than one account: its name once, then each account
+   as a quieter heading over its own limits, at the space between rows. */
+.account-menu__provider {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.account-menu__provider-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  min-height: 18px;
+  margin: 0;
+  color: var(--text);
+  font-size: var(--t-xs);
+  font-weight: 560;
+  line-height: 1.3;
+}
+
+.account-menu__provider-name > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-menu__provider-name svg {
+  flex: none;
+  width: 13px;
+  height: 13px;
+}
+
+.account-menu__source h4 {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--text-2);
+  font-size: var(--t-xs);
+  font-weight: 500;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* One muted word, never an alert colour: a provider that cannot report is a
    missing number, not something that went wrong for the person. */
 .account-menu__source-status {

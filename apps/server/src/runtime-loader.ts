@@ -49,13 +49,15 @@ export function providerRuntime(
   provider: ProviderId,
   onLog: (line: string) => void,
   resolveHarness: (id: string) => CustomHarness | undefined = () => undefined,
+  accountHome?: string,
 ): ProviderRuntime {
   if (provider === 'api') {
     throw new Error(`provider "${provider}" is not implemented yet`)
   }
   const supportsResume = PROVIDER_CAPABILITIES[provider].resume
   return deferredRuntime(
-    async () => (await loadAdapters()).providerRuntime(provider, onLog, resolveHarness),
+    async () =>
+      (await loadAdapters()).providerRuntime(provider, onLog, resolveHarness, accountHome),
     supportsResume,
   )
 }

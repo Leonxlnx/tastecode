@@ -7,12 +7,20 @@ import {
   useSyncExternalStore,
   type CSSProperties,
 } from 'react'
-import type { ProviderId, ResultOf, UsageHistoryRange } from '@harness/contracts'
+import {
+  DEFAULT_ACCOUNT_ID,
+  type AccountId,
+  type ProviderId,
+  type ResultOf,
+  type UsageHistoryRange,
+} from '@harness/contracts'
 import { IconChevronDown as ChevronDown, IconRefresh as RefreshCw } from '@tabler/icons-react'
+import { accountLabelOf, useProviderAccounts } from '../provider-accounts-state.js'
 import { providerDisplayName, providerMark } from '../provider-presentation.js'
 import '../styles/usage-page.css'
 import type { Transport } from '../transport.js'
 import { useUsageHistory } from '../usage-history-state.js'
+import { limitKey } from '../usage-limits-state.js'
 import type { UsageSummaryState } from '../usage-summary-state.js'
 import { readSessionClock, subscribeSessionClock } from './session-clock.js'
 import { SettingsNotice, SettingsPage } from './settings/SettingsLayout.js'
@@ -49,6 +57,11 @@ type History = ResultOf<'usage.history'>
 const NO_LIMIT_STATES: UsageSummaryState[] = []
 const noLimits = () => NO_LIMIT_STATES
 const subscribeNothing = () => () => {}
+
+/** An account other than the provider's default one. */
+function further(accountId: AccountId | undefined): boolean {
+  return accountId !== undefined && accountId !== DEFAULT_ACCOUNT_ID
+}
 
 function plural(value: number, one: string, many: string): string {
   return `${formatInteger(value)} ${value === 1 ? one : many}`
@@ -93,16 +106,33 @@ export function UsageSettings(props: {
     source ? read : noLimits,
   )
   const limits = useMemo(() => {
-    const byProvider = new Map<ProviderId, SheetLimits>()
+    const byAccount = new Map<string, SheetLimits>()
     for (const state of states) {
       const entry = sheetLimits(state, now)
-      if (entry) byProvider.set(state.provider, entry)
+      if (entry) byAccount.set(limitKey(state.provider, state.accountId), entry)
     }
-    return byProvider
+    return byAccount
   }, [states, now])
-  const { sheets, slots, span } = useMemo(() => deriveSheets(data, limits), [data, limits])
+  // Account names are asked for only once the page has another account to name.
+  const named =
+    states.some((state) => further(state.accountId)) ||
+    (data?.providers.some((entry) => further(entry.accountId)) ?? false)
+  const { snapshot: accounts } = useProviderAccounts(props.transport, named)
+  const { sheets, slots, span } = useMemo(
+    () =>
+      deriveSheets(data, limits, (provider, accountId) =>
+        accountLabelOf(accounts, provider, accountId),
+      ),
+    [data, limits, accounts],
+  )
   const unit = span === 7 ? 'week' : 'day'
-  const retry = useCallback((provider: ProviderId) => source?.refresh(provider, 'retry'), [source])
+  const retry = useCallback(
+    (provider: ProviderId, accountId?: AccountId) =>
+      accountId === undefined
+        ? source?.refresh(provider, 'retry')
+        : source?.refresh(provider, 'retry', accountId),
+    [source],
+  )
 
   const endDate = data?.endDate
   const startDate = data?.startDate

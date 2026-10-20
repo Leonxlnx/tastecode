@@ -17,6 +17,7 @@ import type {
   UsageReadIntent,
 } from '@harness/contracts'
 import { validateAcpMcpServer } from '@harness/adapter-acp/mcp'
+import { withClaudeAccount } from '@harness/adapter-claude-code/account-home'
 import {
   CLAUDE_MCP_CAPABILITIES,
   validateClaudeMcpServer,
@@ -26,9 +27,11 @@ import { OPENCODE_MCP_CAPABILITIES } from '@harness/adapter-opencode/inventory'
 import { accountRead, type AccountIdentity } from './account-identity.js'
 import {
   parseLimitFailures,
+  parseLimitIdentities,
   parseLimitSnapshot,
   serializeLimitSnapshot,
   type SavedLimitFailure,
+  type SavedLimitIdentity,
 } from './limit-snapshot.js'
 import type { ModelListRead } from './model-list-cache.js'
 import { ProjectInventoryCache, type ProjectInventoryService } from './project-inventory-cache.js'
@@ -209,6 +212,14 @@ export type ProviderControlsOptions = {
   limitSnapshot?: { read: () => string | undefined; write: (value: string) => void }
   createCodex?: () => CodexControlAdapter | Promise<CodexControlAdapter>
   services?: Partial<Record<ProviderId, ProviderServices>>
+  /**
+   * The config folder of the provider account these controls run as; absent,
+   * each provider's default account. Its sign-in, limits, model lists and
+   * Codex control process are that account's alone.
+   */
+  accountHome?: string | undefined
+  /** The providers these controls serve; absent, every provider. */
+  providers?: readonly ProviderId[] | undefined
 }
 
 type ProcessEntry = {
@@ -263,6 +274,8 @@ type ReadyLimitSource = Extract<ProviderLimitSource, { status: 'ready' }>
 type SavedLimits = {
   sources: Map<ProviderId, ReadyLimitSource>
   failures: Map<ProviderId, SavedLimitFailure>
+  /** Who the account reads named, so a later launch notices a sign-in made in between. */
+  identities: Map<ProviderId, SavedLimitIdentity>
 }
 
 const REFRESH_ERROR_LIMIT = 300
@@ -459,6 +472,36 @@ const defaultServices = {
   },
 } satisfies Record<ProviderId, ProviderServices>
 
+/**
+ * The calls of the providers that can run as another account, made as the
+ * account in `accountHome`. Codex's calls go through its control process,
+ * which takes the folder itself.
+ */
+const accountServices = new Map<ProviderId, (accountHome: string) => ProviderServices>([
+  ['codex', () => ({})],
+  [
+    'claude-code',
+    (accountHome) => ({
+      ...defaultServices['claude-code'],
+      projectInventory: {
+        ...defaultServices['claude-code'].projectInventory,
+        discover: async (projectPath, options) =>
+          (await loadClaude()).discoverClaudeProject(projectPath, { ...options, accountHome }),
+        watchPaths: async (projectPath) =>
+          (await loadClaude()).claudeInventoryWatchPaths(
+            projectPath,
+            withClaudeAccount(process.env, accountHome),
+          ),
+      },
+      account: async () => (await loadClaude()).claudeAccount({ accountHome }),
+      usageLimitSource: async () => (await loadClaude()).claudeLimitSource({ accountHome }),
+      startLogin: async (complete) =>
+        (await loadClaude()).startClaudeLogin(complete, { accountHome }),
+      signOut: async () => (await loadClaude()).signOutClaude({ accountHome }),
+    }),
+  ],
+])
+
 /** Vendor settings and the processes that serve them have one owner. */
 export class ProviderControls {
   readonly #options: ProviderControlsOptions
@@ -531,7 +574,8 @@ export class ProviderControls {
     const watchTtlMs = duration(options.watchTtlMs, 60_000, 1)
     this.#skills = new WatchLeases(watchTtlMs)
     this.#mcp = new WatchLeases(watchTtlMs)
-    for (const provider of Object.keys(PROVIDER_CAPABILITIES) as ProviderId[]) {
+    for (const provider of options.providers ??
+      (Object.keys(PROVIDER_CAPABILITIES) as ProviderId[])) {
       this.#controls.set(provider, this.#makeControl(provider))
     }
   }
@@ -694,10 +738,12 @@ export class ProviderControls {
 
   #makeControl(provider: ProviderId): ProviderControl {
     const capabilities = PROVIDER_CAPABILITIES[provider]
-    const services: ProviderServices = {
-      ...defaultServices[provider],
-      ...this.#options.services?.[provider],
-    }
+    const home = this.#options.accountHome
+    const ownServices =
+      home === undefined ? defaultServices[provider] : accountServices.get(provider)?.(home)
+    // The default account's calls would act on the user's own sign-in instead.
+    if (!ownServices) throw new Error(`${provider} cannot run as another account`)
+    const services: ProviderServices = { ...ownServices, ...this.#options.services?.[provider] }
     const inventory = this.#projectInventory(provider, services)
     const control: ProviderControl = {
       capabilities,
@@ -911,6 +957,8 @@ export class ProviderControls {
         freshUntil: 0,
         // The last session's newest read failed: its backoff still applies.
         failure: this.#savedFailure(provider),
+        // Whose the saved values are: the first account read tells whether they still apply.
+        account: this.#saved().identities.get(provider),
         liveAt: Number.NEGATIVE_INFINITY,
         notifiedAt: Number.NEGATIVE_INFINITY,
         publishedAt: Number.NEGATIVE_INFINITY,
@@ -963,7 +1011,11 @@ export class ProviderControls {
         // Without it the first shown view waits for its read, as before.
         text = undefined
       }
-      this.#savedLimits = { sources: parseLimitSnapshot(text), failures: parseLimitFailures(text) }
+      this.#savedLimits = {
+        sources: parseLimitSnapshot(text),
+        failures: parseLimitFailures(text),
+        identities: parseLimitIdentities(text),
+      }
     }
     return this.#savedLimits
   }
@@ -980,7 +1032,7 @@ export class ProviderControls {
   #saveLimits(provider: ProviderId, source: ReadyLimitSource | undefined): void {
     if (!this.#options.limitSnapshot) return
     const { sources, failures } = this.#saved()
-    // Any answer, or another account, ends the failures before it.
+    // Any answer ends the failures before it.
     const failed = failures.delete(provider)
     if (source) sources.set(provider, source)
     else if (!sources.delete(provider) && !failed) return
@@ -1001,10 +1053,38 @@ export class ProviderControls {
     this.#writeSnapshot()
   }
 
+  /** Someone else signed in: nothing saved for the account before applies to them. */
+  #forgetSaved(provider: ProviderId): void {
+    if (!this.#options.limitSnapshot) return
+    const { sources, failures, identities } = this.#saved()
+    const forgot = [
+      sources.delete(provider),
+      failures.delete(provider),
+      identities.delete(provider),
+    ]
+    if (forgot.includes(true)) this.#writeSnapshot()
+  }
+
+  /** Keeps whose the saved limits are, for the next launch to compare with. */
+  #saveIdentity(provider: ProviderId, identity: AccountIdentity): void {
+    if (!this.#options.limitSnapshot) return
+    const { identities } = this.#saved()
+    const saved = identities.get(provider)
+    if (
+      saved?.signedIn === identity.signedIn &&
+      saved.email === identity.email &&
+      saved.plan === identity.plan
+    ) {
+      return
+    }
+    identities.set(provider, identity)
+    this.#writeSnapshot()
+  }
+
   #writeSnapshot(): void {
-    const { sources, failures } = this.#saved()
+    const { sources, failures, identities } = this.#saved()
     try {
-      this.#options.limitSnapshot?.write(serializeLimitSnapshot(sources, failures))
+      this.#options.limitSnapshot?.write(serializeLimitSnapshot(sources, failures, identities))
     } catch {
       // Costs the next launch only what it shows before the first read answers.
     }
@@ -1016,7 +1096,7 @@ export class ProviderControls {
       entry.accountVersion += 1
       // Another account starts without this one's values, failures or read times.
       entry.value = undefined
-      this.#saveLimits(provider, undefined)
+      this.#forgetSaved(provider)
       entry.live = undefined
       entry.failure = undefined
       entry.detailsOmitted = undefined
@@ -1283,9 +1363,11 @@ export class ProviderControls {
     const entry = this.#limitEntry(provider)
     // A read that cannot name the email or plan, as one does when the
     // provider's own lookup fails under load, keeps the held and saved limits.
+    // The first read after a launch compares with whose the saved limits are.
     const { identity, switched } = accountRead(entry.account, account)
     if (switched) this.#invalidateLimits(provider, true)
     entry.account = identity
+    this.#saveIdentity(provider, identity)
     return account
   }
 
@@ -1349,9 +1431,10 @@ export class ProviderControls {
     const generation = this.#generation
     const creating = Promise.resolve().then(async () => {
       this.#assertOpen(generation)
+      const home = this.#options.accountHome
       return this.#options.createCodex
         ? this.#options.createCodex()
-        : new (await loadCodex()).CodexAdapter()
+        : new (await loadCodex()).CodexAdapter(home === undefined ? {} : { accountHome: home })
     })
     const entry: ProcessEntry = {
       creating,

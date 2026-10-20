@@ -3,6 +3,7 @@ import { timingSafeEqual } from 'node:crypto'
 import { isIPv4 } from 'node:net'
 import { WebSocketServer, type WebSocket } from 'ws'
 import {
+  DEFAULT_ACCOUNT_ID,
   ErrorCode,
   methods,
   PROTOCOL_VERSION,
@@ -25,6 +26,8 @@ import { acquireDataLease } from './data-lease.js'
 import { PreviewCaptureCoordinator } from './preview-capture.js'
 import type { CheckoutPullRequests } from './checkout-pull-request.js'
 import type { PullRequestService } from './pull-requests.js'
+import { sourceAccount } from './account-directory.js'
+import { ProviderAccounts } from './provider-accounts.js'
 import { DEFAULT_PORT } from './server-config.js'
 import { Store } from './store.js'
 import { createProjectListProjector, type ProjectListState } from './project-list.js'
@@ -130,6 +133,11 @@ export function startServer(
     throw error
   }
   const push = new PushBus()
+  const accounts = new ProviderAccounts(store, {
+    root: path.join(path.dirname(databasePath), 'accounts'),
+    onChanged: (provider) => push.broadcast('accounts.changed', { provider }),
+  })
+
   // Install, update and sign-in terminals can add, replace or update a CLI.
   const setupTerminals = new Set<string>()
   const setupTerminal = (terminalId: string) => {
@@ -201,6 +209,15 @@ export function startServer(
     (usageHistory ??= import('./usage-history.js').then(({ UsageHistoryService }) => {
       const service = new UsageHistoryService({
         cacheFile: path.join(path.dirname(databasePath), 'usage-history.json'),
+        // Every other provider account keeps its history in its own folder.
+        accountHomes: () => {
+          const { accounts: listed } = accounts.list()
+          return listed.flatMap(({ provider, id, home }) =>
+            home === undefined || id === DEFAULT_ACCOUNT_ID
+              ? []
+              : [{ provider, accountId: id, home }],
+          )
+        },
         harnessUsage: () => store.usageEvents(),
       })
       if (usageHistoryClosing) service.dispose()
@@ -229,7 +246,16 @@ export function startServer(
     },
     onQueue: (threadId, state) => push.broadcast('thread.queue', { threadId, ...state }),
     onLog: (line) => console.log(`[agent] ${line}`),
-    onLogin: (provider, result) => push.broadcast('auth.event', { provider, ...result }),
+    onLogin: (provider, result, accountId) => {
+      push.broadcast('auth.event', { provider, ...(accountId ? { accountId } : {}), ...result })
+      // Whoever just signed in is that account's identity from now on.
+      if (result.success && accounts.supports(provider)) {
+        void orchestrator
+          .account(provider, undefined, accountId)
+          .then((account) => accounts.recordIdentity(provider, accountId, account))
+          .catch(() => undefined)
+      }
+    },
     onMcpOAuth: (provider, projectPath, result) =>
       push.broadcast('mcp.oauth', { provider, projectPath, ...result }),
     onMcpChanged: (provider, projectPath) =>
@@ -238,10 +264,15 @@ export function startServer(
       push.broadcast('skills.changed', { provider, projectPath }),
     onCommandsChanged: (provider, projectPath) =>
       push.broadcast('commands.changed', { provider, projectPath }),
-    onUsageChanged: (provider) => push.broadcast('usage.changed', { provider }),
+    onUsageChanged: (provider, accountId) =>
+      push.broadcast('usage.changed', accountId ? { provider, accountId } : { provider }),
     onLimitsChanged: (source) => push.broadcast('usage.limits', { source }),
-    onModelsChanged: (provider, agent) =>
-      push.broadcast('models.changed', agent === undefined ? { provider } : { provider, agent }),
+    onModelsChanged: (provider, agent, accountId) =>
+      push.broadcast('models.changed', {
+        provider,
+        ...(agent === undefined ? {} : { agent }),
+        ...(accountId ? { accountId } : {}),
+      }),
     onLifecycle: (threadId, lifecycle) =>
       push.broadcast('thread.lifecycle', { threadId, lifecycle }),
     onLifecycleScheduleChanged: (hint) => notifyLifecycleScheduleChanged(hint),
@@ -260,6 +291,7 @@ export function startServer(
     // the Origin check whenever nothing else holds that port.
     reservedPreviewPorts: new Set([port, ...httpOriginPort(rendererOrigin)]),
     beforeLimitRead: () => streamQuiet.whenQuiet(),
+    accounts,
   })
   reportStartupMilestone('server-orchestrator-ready')
   let providerStatuses: readonly ProviderStatus[] = []
@@ -754,12 +786,19 @@ export function startServer(
 
       case 'providers.launch': {
         const p = parseParams(method, params)
+        // The CLI signs in as the account in its folder; a custom harness has no other.
+        const accountId = sourceAccount(p.agent, p.accountId)
+        const environment = accounts.environment(p.provider, accountId)
         const { launchCommandFor } = await import('./providers.js')
         const command = await launchCommandFor(p.provider, p.agent)
         const target = p.agent ? `${p.provider}:${p.agent}` : p.provider
+        const account =
+          accountId === undefined || accountId === DEFAULT_ACCOUNT_ID
+            ? undefined
+            : { id: accountId, environment }
         return {
           terminalId: setupTerminal(
-            orchestrator.launchProviderLogin(target, command, p.columns, p.rows),
+            orchestrator.launchProviderLogin(target, command, p.columns, p.rows, account),
           ),
         }
       }
@@ -859,28 +898,74 @@ export function startServer(
 
       case 'auth.status': {
         const p = parseParams(method, params)
-        return orchestrator.account(p.provider, p.agent)
+        const account = await orchestrator.account(p.provider, p.agent, p.accountId)
+        // A custom harness may sign in as someone else; only the CLI's own check names the account.
+        if (p.agent === undefined) accounts.recordIdentity(p.provider, p.accountId, account)
+        return account
       }
 
       case 'auth.startLogin': {
         const p = parseParams(method, params)
-        return orchestrator.startLogin(p.provider)
+        return orchestrator.startLogin(p.provider, p.accountId)
       }
 
       case 'auth.cancelLogin': {
         const p = parseParams(method, params)
-        await orchestrator.cancelLogin(p.provider, p.loginId)
+        await orchestrator.cancelLogin(p.provider, p.loginId, p.accountId)
         return {}
       }
 
       case 'auth.useApiKey': {
         const p = parseParams(method, params)
-        return orchestrator.useApiKey(p.provider, p.apiKey)
+        const account = await orchestrator.useApiKey(p.provider, p.apiKey, p.accountId)
+        accounts.recordIdentity(p.provider, p.accountId, account)
+        return account
       }
 
       case 'auth.signOut': {
         const p = parseParams(method, params)
-        await orchestrator.signOut(p.provider, p.agent)
+        await orchestrator.signOut(p.provider, p.agent, p.accountId)
+        return {}
+      }
+
+      case 'accounts.list':
+        return accounts.list(parseParams(method, params).provider)
+
+      case 'accounts.create': {
+        const p = parseParams(method, params)
+        const account = accounts.create(p.provider, p.label, p.home)
+        // A folder the user brought may already hold a sign-in. Ask it once who
+        // that is, as after a sign-in, so the account does not read as signed
+        // out until someone signs in there again. A new folder holds none.
+        if (!account.managed) {
+          void orchestrator
+            .account(p.provider, undefined, account.id)
+            .then((read) => accounts.recordIdentity(p.provider, account.id, read))
+            .catch(() => undefined)
+        }
+        return { account }
+      }
+
+      case 'accounts.rename': {
+        const p = parseParams(method, params)
+        return { account: accounts.rename(p.provider, p.accountId, p.label) }
+      }
+
+      case 'accounts.remove': {
+        const p = parseParams(method, params)
+        // Refused before anything stops: the default account, a gone one, a brought folder to delete.
+        const removal = accounts.removal(p.provider, p.accountId, p.deleteHome ?? false)
+        // Refused while a chat on it works. Otherwise the account stops resolving
+        // first, so nothing new starts in its folder; then what runs as it stops
+        // (Windows would not let the folder go), and the folder is deleted last.
+        await orchestrator.releaseAccount(p.provider, p.accountId, removal.unregister)
+        await removal.deleteFolder()
+        return {}
+      }
+
+      case 'accounts.setActive': {
+        const p = parseParams(method, params)
+        accounts.setActive(p.provider, p.accountId)
         return {}
       }
 
@@ -940,7 +1025,7 @@ export function startServer(
 
       case 'models.list': {
         const p = parseParams(method, params)
-        return { models: await orchestrator.listModels(p.provider, p.agent) }
+        return { models: await orchestrator.listModels(p.provider, p.agent, p.accountId) }
       }
 
       case 'backgroundModel.settings':
@@ -957,7 +1042,7 @@ export function startServer(
       case 'backgroundModel.generateCommitMessage': {
         const p = parseParams(method, params)
         const diff = await readWorkspaceDiff(workspaceForRequest(store, p))
-        return { message: await orchestrator.generateBackgroundCommitMessage(diff) }
+        return { message: await orchestrator.generateBackgroundCommitMessage(diff, p.threadId) }
       }
 
       case 'voice.status': {
@@ -1210,6 +1295,9 @@ export function startServer(
         if ('threadId' in p && !thread) throw new Error('thread not found')
         const provider = thread?.provider ?? ('provider' in p ? p.provider : undefined)
         if (!provider) throw new Error('provider not found')
+        // A chat's limits are those of the account it runs as; otherwise the
+        // named account's, which the orchestrator refuses if it cannot run.
+        const accountId = thread ? thread.accountId : 'accountId' in p ? p.accountId : undefined
         const startOfToday = new Date()
         startOfToday.setHours(0, 0, 0, 0)
         const empty = {
@@ -1226,14 +1314,18 @@ export function startServer(
         return usageSummaryWithLimits(
           totals,
           provider,
-          (requestedProvider) => orchestrator.usageLimitSource(requestedProvider, p.intent),
-          (requestedProvider) => orchestrator.heldLimitSource(requestedProvider, p.intent),
+          (requestedProvider) =>
+            orchestrator.usageLimitSource(requestedProvider, p.intent, accountId),
+          (requestedProvider) =>
+            orchestrator.heldLimitSource(requestedProvider, p.intent, accountId),
         )
       }
 
       case 'usage.history': {
         const p = parseParams(method, params)
-        return (await usageHistoryService()).history(p.range, p.refresh ?? false)
+        // An account the provider cannot have, or one that is gone, is refused.
+        if (p.account) accounts.home(p.account.provider, p.account.accountId)
+        return (await usageHistoryService()).history(p.range, p.refresh ?? false, p.account)
       }
 
       case 'usage.resetHistory':
@@ -1242,7 +1334,12 @@ export function startServer(
 
       case 'usage.consumeReset': {
         const p = parseParams(method, params)
-        return orchestrator.consumeRateLimitReset(p.provider, p.idempotencyKey, p.creditId)
+        return orchestrator.consumeRateLimitReset(
+          p.provider,
+          p.idempotencyKey,
+          p.creditId,
+          p.accountId,
+        )
       }
 
       case 'sideChat.start': {
@@ -1265,6 +1362,11 @@ export function startServer(
 
       case 'thread.start': {
         const p = parseParams(method, params)
+        // The contract has it for "Continue on another account", which is not built yet;
+        // a fresh chat without the earlier context would look like it worked.
+        if (p.continueFrom !== undefined) {
+          throw new Error('Continuing a chat on another account is not available yet.')
+        }
         const thread = await orchestrator.startThread(p.provider, p.workspacePath, {
           baseRef: p.baseRef,
           model: p.model,
@@ -1273,6 +1375,7 @@ export function startServer(
           approval: p.approval,
           agent: p.agent,
           connectionId: p.connectionId,
+          accountId: p.accountId,
           isolate: p.isolate,
         })
         startedThisRun.add(thread.id)

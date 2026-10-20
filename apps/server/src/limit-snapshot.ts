@@ -24,11 +24,29 @@ export type SavedLimitFailure = {
   retryAt: number
 }
 
+/**
+ * Who a provider's account reads named when its limits were saved, so the
+ * next launch notices that someone else signed in to the CLI meanwhile. Only
+ * what the CLI's own sign-in check shows, never a credential.
+ */
+export type SavedLimitIdentity = {
+  signedIn: boolean
+  email?: string | undefined
+  plan?: string | undefined
+}
+
 const VERSION = 1
 
+const SavedIdentitySchema = z.object({
+  provider: ProviderIdSchema,
+  signedIn: z.boolean(),
+  email: z.string().min(1).max(320).optional(),
+  plan: z.string().min(1).max(120).optional(),
+})
+
 /**
- * Older builds read only `sources`, so failures ride along under their own
- * key without a version change.
+ * Older builds read only `sources`, so failures and identities ride along
+ * under their own keys without a version change.
  */
 const SavedFailureSchema = z.object({
   provider: ProviderIdSchema,
@@ -65,9 +83,24 @@ export function parseLimitFailures(text: string | undefined): Map<ProviderId, Sa
   return saved
 }
 
+/** Reads whose limits each provider's saved ones are; a malformed entry is skipped. */
+export function parseLimitIdentities(
+  text: string | undefined,
+): Map<ProviderId, SavedLimitIdentity> {
+  const saved = new Map<ProviderId, SavedLimitIdentity>()
+  for (const entry of savedEntries(text, 'identities')) {
+    const parsed = SavedIdentitySchema.safeParse(entry)
+    if (!parsed.success) continue
+    const { provider, ...identity } = parsed.data
+    saved.set(provider, identity)
+  }
+  return saved
+}
+
 export function serializeLimitSnapshot(
   saved: ReadonlyMap<ProviderId, ReadyLimitSource>,
   failures: ReadonlyMap<ProviderId, SavedLimitFailure> = new Map(),
+  identities: ReadonlyMap<ProviderId, SavedLimitIdentity> = new Map(),
 ): string {
   return JSON.stringify({
     version: VERSION,
@@ -75,10 +108,16 @@ export function serializeLimitSnapshot(
     ...(failures.size > 0
       ? { failures: [...failures].map(([provider, failure]) => ({ provider, ...failure })) }
       : {}),
+    ...(identities.size > 0
+      ? { identities: [...identities].map(([provider, identity]) => ({ provider, ...identity })) }
+      : {}),
   })
 }
 
-function savedEntries(text: string | undefined, key: 'sources' | 'failures'): unknown[] {
+function savedEntries(
+  text: string | undefined,
+  key: 'sources' | 'failures' | 'identities',
+): unknown[] {
   if (!text) return []
   let value: unknown
   try {

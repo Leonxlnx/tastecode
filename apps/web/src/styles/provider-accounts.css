@@ -1,0 +1,47 @@
+/* Provider accounts sit on the roster's own rows (settings.css): the mark,
+   the account's name, its wire and status, then the account menu in the
+   secondary slot and the row's one action in the primary slot. That slot
+   keeps one width down the list, so every menu lines up and each action
+   ends on the roster's right edge, under the provider rows' Sign in. */
+
+.settings .provider-account .provider-row__primary {
+  min-width: 84px;
+  justify-content: flex-end;
+  /* Show terminal and Cancel sign-in while an account signs in, spaced as the
+     roster spaces its two actions. */
+  gap: 6px;
+}
+
+/* The roster's shared action width is for Sign in and Sign out; the menu and
+   the quiet Set active keep their own. */
+.settings .provider-account :is(.provider-account__more, .provider-account__action) .set-button {
+  min-width: 0;
+}
+
+.settings .provider-account .provider-account__action > .set-button:not(.set-button--quiet) {
+  min-width: 70px;
+}
+
+/* A quiet Set active or the word Active ends flush with the right edge, as a
+   lone quiet roster action does. */
+.settings .provider-account .provider-account__action > .set-button--quiet:last-child {
+  margin-right: -10px;
+}
+
+.provider-account__current {
+  color: var(--text-3);
+  font-size: var(--t-sm);
+}
+
+.provider-accounts__path {
+  display: flex;
+  gap: 8px;
+}
+
+.provider-accounts__path > .set-input {
+  flex: 1;
+}
+
+.settings .provider-accounts__error {
+  margin: 0 0 8px;
+}

@@ -413,6 +413,7 @@ function reconcileServerSession(
   const sameLifecycle = current ? lifecycleEqual(current.lifecycle, lifecycle) : false
   const agent = snapshot.agent || undefined
   const connectionId = snapshot.connectionId || undefined
+  const accountId = snapshot.accountId || undefined
   const pinned = snapshot.pinned ?? false
   const unread = snapshot.unread ?? false
   const worktreeBranch = snapshot.worktreeBranch || undefined
@@ -421,6 +422,7 @@ function reconcileServerSession(
     current.provider === snapshot.provider &&
     current.agent === agent &&
     current.connectionId === connectionId &&
+    current.accountId === accountId &&
     current.createdAt === snapshot.createdAt &&
     current.status === status &&
     current.statusSince === statusSince &&
@@ -437,6 +439,7 @@ function reconcileServerSession(
     provider: snapshot.provider,
     ...(agent ? { agent } : {}),
     ...(connectionId ? { connectionId } : {}),
+    ...(accountId ? { accountId } : {}),
     createdAt: snapshot.createdAt,
     statusSince,
     status,

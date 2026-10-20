@@ -1,12 +1,17 @@
-import type {
-  ProviderId,
-  ResultOf,
-  UsageHistoryModel,
-  UsageHistoryRange,
-  UsageHistoryTotals,
-  UsageReadIntent,
+import {
+  DEFAULT_ACCOUNT_ID,
+  type AccountId,
+  type ProviderId,
+  type ResultOf,
+  type UsageHistoryModel,
+  type UsageHistoryProvider,
+  type UsageHistoryRange,
+  type UsageHistoryTotals,
+  type UsageReadIntent,
 } from '@harness/contracts'
+import type { AccountLabel } from '../../provider-accounts-state.js'
 import { providerDisplayName, type ProviderMark } from '../../provider-presentation.js'
+import { limitKey, limitTargetOf } from '../../usage-limits-state.js'
 import type { UsageSummaryState } from '../../usage-summary-state.js'
 import { limitSource, remaining, sourceStatus } from '../AccountLimits.js'
 import { dateFromKey, formatMoney } from './usage-format.js'
@@ -20,7 +25,7 @@ export type PlanLimitsSource = {
   subscribe(listener: () => void): () => void
   /** A view shows the limits until the returned release is called. */
   show(): () => void
-  refresh(provider?: ProviderId, intent?: UsageReadIntent): void
+  refresh(provider?: ProviderId, intent?: UsageReadIntent, accountId?: AccountId): void
 }
 
 /** At or under this share left, a window reads as running low. */
@@ -69,6 +74,8 @@ export type SheetLimits = {
 /** Usage and plan limits under one sign-in. */
 export type SheetAccount = {
   key: string
+  /** Absent for the provider's default account. */
+  accountId?: AccountId | undefined
   label: string
   sessions: number
   tokens: number
@@ -90,8 +97,9 @@ export type ProviderSheet = {
   /** By value, then tokens. */
   models: UsageHistoryModel[]
   /**
-   * One per sign-in. The history reports a provider as a whole, so today
-   * this is one account holding the provider's usage and limits.
+   * One per sign-in: the default account first, then the others by name. A
+   * provider used and read on its default account alone has one, named after
+   * the provider.
    */
   accounts: SheetAccount[]
 }
@@ -152,16 +160,69 @@ function sum<T>(items: readonly T[], read: (item: T) => number): number {
   return items.reduce((total, item) => total + read(item), 0)
 }
 
+const defaultLabel: AccountLabel = (_provider, accountId) =>
+  accountId === undefined || accountId === DEFAULT_ACCOUNT_ID ? 'Default' : 'Account'
+
+/**
+ * A provider's accounts: each one with usage in the period or plan limits to
+ * show. Only the default account with both reads as the provider itself.
+ */
+function sheetAccounts(
+  provider: ProviderId,
+  name: string,
+  rows: readonly UsageHistoryProvider[],
+  limits: ReadonlyMap<string, SheetLimits>,
+  label: AccountLabel,
+): SheetAccount[] {
+  const ids = new Set<AccountId>()
+  for (const row of rows) ids.add(row.accountId ?? DEFAULT_ACCOUNT_ID)
+  for (const key of limits.keys()) {
+    const target = limitTargetOf(key)
+    if (target.provider === provider) ids.add(target.accountId ?? DEFAULT_ACCOUNT_ID)
+  }
+  const single = ids.size === 0 || (ids.size === 1 && ids.has(DEFAULT_ACCOUNT_ID))
+  const accounts = [...ids].map((id): SheetAccount => {
+    const accountId = id === DEFAULT_ACCOUNT_ID ? undefined : id
+    const own = rows.filter((row) => (row.accountId ?? DEFAULT_ACCOUNT_ID) === id)
+    return {
+      key: limitKey(provider, accountId),
+      ...(accountId === undefined ? {} : { accountId }),
+      label: single ? name : label(provider, accountId),
+      sessions: sum(own, (row) => row.sessionCount),
+      tokens: sum(own, (row) => row.totals.processedTokens),
+      value: sum(own, (row) => row.totals.estimatedCostUsd),
+      limits: limits.get(limitKey(provider, accountId)) ?? NO_LIMITS,
+    }
+  })
+  if (accounts.length === 0) {
+    return [{ key: provider, label: name, sessions: 0, tokens: 0, value: 0, limits: NO_LIMITS }]
+  }
+  // The default account first, then the others by name, so the order holds
+  // across periods and refreshes.
+  return accounts.sort(
+    (left, right) =>
+      Number(left.accountId !== undefined) - Number(right.accountId !== undefined) ||
+      left.label.localeCompare(right.label),
+  )
+}
+
 /**
  * One sheet per provider found in the history or the plan limits, by value,
  * with providers that had no sessions last. Every chart shares one time
- * axis; a period longer than a quarter is drawn a week to a slot.
+ * axis; a period longer than a quarter is drawn a week to a slot. `limits`
+ * is keyed by provider account (`limitKey`); a provider with more than one
+ * account in either lists them, named by `label`.
  */
 export function deriveSheets(
   history: History | undefined,
-  limits: ReadonlyMap<ProviderId, SheetLimits>,
+  limits: ReadonlyMap<string, SheetLimits>,
+  label: AccountLabel = defaultLabel,
 ): UsageSheets {
-  const ids: ProviderId[] = [...limits.keys()]
+  const ids: ProviderId[] = []
+  for (const key of limits.keys()) {
+    const { provider } = limitTargetOf(key)
+    if (!ids.includes(provider)) ids.push(provider)
+  }
   for (const entry of history?.providers ?? []) {
     if (!ids.includes(entry.provider)) ids.push(entry.provider)
   }
@@ -177,14 +238,15 @@ export function deriveSheets(
     sessions: span === 1 ? sum(range, (day) => day.sessionCount) : undefined,
   }))
   const sheets = ids.map((provider): ProviderSheet => {
-    const summary = history?.providers.find((entry) => entry.provider === provider)
+    // A provider split by account has one row per account; the sheet is their sum.
+    const rows = history?.providers.filter((entry) => entry.provider === provider) ?? []
     const share = (day: (typeof days)[number]) =>
       day.providers.find((entry) => entry.provider === provider)
     const activeDays = days.filter((day) => (share(day)?.tokens ?? 0) > 0).length
     const name = providerDisplayName(provider)
-    const sessions = summary?.sessionCount ?? 0
-    const tokens = summary?.totals.processedTokens ?? 0
-    const value = summary?.totals.estimatedCostUsd ?? 0
+    const sessions = sum(rows, (row) => row.sessionCount)
+    const tokens = sum(rows, (row) => row.totals.processedTokens)
+    const value = sum(rows, (row) => row.totals.estimatedCostUsd)
     return {
       provider,
       name,
@@ -204,16 +266,7 @@ export function deriveSheets(
             right.totals.estimatedCostUsd - left.totals.estimatedCostUsd ||
             right.totals.processedTokens - left.totals.processedTokens,
         ),
-      accounts: [
-        {
-          key: provider,
-          label: name,
-          sessions,
-          tokens,
-          value,
-          limits: limits.get(provider) ?? NO_LIMITS,
-        },
-      ],
+      accounts: sheetAccounts(provider, name, rows, limits, label),
     }
   })
   sheets.sort((left, right) => Number(left.empty) - Number(right.empty) || right.value - left.value)
