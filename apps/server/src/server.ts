@@ -1392,10 +1392,12 @@ export function startServer(
           approval: p.approval,
         })
         // The saved copy of the session the chat left stays its own; the new
-        // session's copy is linked by the next scan.
+        // session's copy is linked by the next scan. That scan is scheduled,
+        // not run now: it reads every saved session, and the first turn on
+        // the new provider is about to start.
         providerHistoryReady?.forget(p.threadId)
         startedThisRun.add(p.threadId)
-        refreshProviderHistory()
+        historySchedule.activity()
         return {}
       }
 
