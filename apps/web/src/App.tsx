@@ -6421,7 +6421,12 @@ export function App() {
                     projectPath={activePath}
                     projectName={activeProject ? displayName(activeProject) : undefined}
                     threadId={activeId && !activeId.startsWith('pending:') ? activeId : undefined}
-                    accountProvider={!activeId && providerHasAccounts ? provider : undefined}
+                    accountProvider={
+                      // A custom harness runs on its own sign-in, whatever account is chosen.
+                      !activeId && providerHasAccounts && !selectedModelChoice?.agent
+                        ? provider
+                        : undefined
+                    }
                     projectsLoading={projectsStatus === 'loading'}
                     branch={
                       (!activeId && activePath
