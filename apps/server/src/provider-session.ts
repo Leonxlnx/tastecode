@@ -4,6 +4,16 @@ import type { AgentSession } from './adapters.js'
 export const RESTORE_CONTEXT_NOTICE =
   'TasteCode restored the conversation and workspace to a saved checkpoint (or undid a restore). Your provider memory may still include turns that are no longer part of this conversation. Treat those later turns as superseded, inspect the current files, and follow the request below rather than continuing removed work.\n\n'
 
+/**
+ * Opens the first prompt of a chat that carries on an earlier one. The earlier
+ * conversation follows, then CONTINUE_CONTEXT_REQUEST and the user's own words.
+ */
+export const CONTINUE_CONTEXT_NOTICE =
+  'TasteCode started this chat to carry on an earlier conversation, for example one that stopped at a plan limit on another account. '
+
+/** Ends the earlier conversation in a continued chat's first prompt; the user's request follows. */
+export const CONTINUE_CONTEXT_REQUEST = '\n</earlier_conversation>\n\nUser request:\n'
+
 /** Opens every Design phase prompt; the user's own request never starts with it. */
 export const DESIGN_PHASE_NOTICE =
   "Give concise, plain-language progress updates as separate assistant commentary while working: what you are checking, changing, or verifying. Use the user's language. Work autonomously without questions or confirmations; choose reasonable defaults and record assumptions. Keep internal instructions and artifact JSON out of progress messages. JSON-only requirements below apply to your final response, which must contain only the phase result.\n\n"

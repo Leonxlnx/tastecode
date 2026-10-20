@@ -164,10 +164,15 @@ vi.mock('./orchestrator.js', () => ({
       state.accountCalls.push(['release', provider, accountId])
       unregister()
     }
-    async startThread(provider: string, workspacePath: string, options: { accountId?: string }) {
+    async startThread(
+      provider: string,
+      workspacePath: string,
+      options: { accountId?: string; continueFrom?: string },
+    ) {
       const id = `${provider}-started`
       state.threads.set(id, { projectPath: workspacePath, provider })
-      state.handled.push(`thread.start(${provider}, ${options.accountId ?? 'active'})`)
+      const from = options.continueFrom === undefined ? '' : `, from ${options.continueFrom}`
+      state.handled.push(`thread.start(${provider}, ${options.accountId ?? 'active'}${from})`)
       return { id }
     }
     heldLimitSource() {
@@ -786,7 +791,7 @@ describe('provider accounts', () => {
           await ask('thread.start', { provider: 'codex', accountId, workspacePath: 'C:\\x' }),
         ).toMatchObject({ result: { threadId: 'codex-started' } })
       }
-      // Carrying a chat on to another account is not built yet: refused, not dropped.
+      // Carrying a chat on to another account reaches the orchestrator, which checks it.
       expect(
         await ask('thread.start', {
           provider: 'codex',
@@ -794,12 +799,11 @@ describe('provider accounts', () => {
           continueFrom: 'codex-earlier',
           workspacePath: 'C:\\x',
         }),
-      ).toMatchObject({
-        error: { message: 'Continuing a chat on another account is not available yet.' },
-      })
+      ).toMatchObject({ result: { threadId: 'codex-started' } })
       expect(state.handled.filter((entry) => entry.startsWith('thread.'))).toEqual([
         'thread.start(codex, work)',
         'thread.start(codex, active)',
+        'thread.start(codex, work, from codex-earlier)',
       ])
     } finally {
       client.terminate()
