@@ -15,6 +15,7 @@ import {
   Menu,
   nativeImage,
   nativeTheme,
+  Notification,
   powerMonitor,
   protocol,
   screen,
@@ -42,6 +43,8 @@ import {
   type AppUpdateState,
 } from './app-updater.js'
 import { createApplicationMenuTemplate } from './app-menu.js'
+import { badgeBitmap, badgeDescription, badgeLabel } from './attention-badge.js'
+import { ChatNotifier, type ShownNotification } from './chat-notifier.js'
 import { clipboardText } from './clipboard-text.js'
 import { droppedFolderPaths, MAX_DROPPED_PROJECT_PATHS } from './dropped-folder-paths.js'
 import { forwardBrowserShortcuts } from './browser-shortcuts.js'
@@ -279,6 +282,79 @@ let appUpdater: AppUpdateController | undefined
 let waitingForUpdateCleanup = false
 let waitingForServerShutdown = false
 let mainWindowStatePersistence: MainWindowStatePersistence | undefined
+
+/** OS notifications and the badge for chats that need the user while the window is away. */
+const chatNotifier = new ChatNotifier({
+  isAway: () => {
+    const window = mainWindow
+    return (
+      !window ||
+      window.isDestroyed() ||
+      !window.isVisible() ||
+      window.isMinimized() ||
+      !window.isFocused()
+    )
+  },
+  show: showChatNotification,
+  setBadge: setAttentionBadge,
+  openChat: (chatId) => {
+    const window = mainWindow
+    const ready = window && !window.isDestroyed() && !window.webContents.isLoading()
+    showMainWindow()
+    // A window that is created or still loading (macOS keeps running without one)
+    // gets the chat with its page's first report, once the page listens.
+    if (ready) window.webContents.send('harness:openChat', chatId)
+    else chatToOpen = chatId
+  },
+})
+/** A clicked chat waiting for the page to load. */
+let chatToOpen: string | undefined
+
+// No sound or urgency of our own: the OS decides how a notification sounds
+// and holds it back while do-not-disturb or Focus Assist is on.
+function showChatNotification(
+  title: string,
+  body: string,
+  onClick: () => void,
+): ShownNotification | undefined {
+  if (!Notification.isSupported()) return undefined
+  const notification = new Notification({ title, body })
+  notification.on('click', onClick)
+  notification.on('failed', (_event, error) => {
+    console.warn('[desktop] notification failed:', error)
+  })
+  notification.show()
+  return notification
+}
+
+const overlayIcons = new Map<string, Electron.NativeImage>()
+
+/** Windows has no badge count, so its taskbar button gets an overlay icon instead. */
+function setAttentionBadge(count: number): void {
+  if (process.platform !== 'win32') {
+    app.setBadgeCount(count)
+    return
+  }
+  const window = mainWindow
+  if (!window || window.isDestroyed()) return
+  if (count < 1) {
+    window.setOverlayIcon(null, '')
+    return
+  }
+  const label = badgeLabel(count)
+  let icon = overlayIcons.get(label)
+  if (!icon) {
+    icon = nativeImage.createEmpty()
+    // The taskbar draws the overlay at 16 px times the display scale.
+    for (const scaleFactor of [1, 1.25, 1.5, 2]) {
+      const size = Math.round(16 * scaleFactor)
+      const buffer = badgeBitmap(count, size)
+      if (buffer) icon.addRepresentation({ scaleFactor, width: size, height: size, buffer })
+    }
+    overlayIcons.set(label, icon)
+  }
+  window.setOverlayIcon(icon, badgeDescription(count))
+}
 
 if (Number.isFinite(startupStartedAt) && startupStartedAt > 0) {
   ipcMain.on('harness:startupPreloadReady', (event, elapsed: unknown) => {
@@ -562,7 +638,10 @@ function createWindow(): void {
   window.on('closed', () => {
     if (mainWindow === window) mainWindow = undefined
   })
-  window.on('focus', () => restoreMainWindowPresence(process.platform, app, window))
+  window.on('focus', () => {
+    restoreMainWindowPresence(process.platform, app, window)
+    chatNotifier.windowFocused()
+  })
   window.on('show', () => restoreMainWindowPresence(process.platform, app, window))
   window.on('unresponsive', () => {
     console.error('[desktop] main window renderer became unresponsive')
@@ -582,6 +661,7 @@ function createWindow(): void {
     cancelCaptures: () => previewCaptures.cancelAll(),
     onPageReplaced: () => {
       nativeMenuDispatch.reset(window.webContents)
+      chatNotifier.pageReplaced()
       // A reload during shortcut recording must not leave accelerators off.
       window.webContents.setIgnoreMenuShortcuts(false)
     },
@@ -736,6 +816,17 @@ function sendNativeMenuAction(action: NativeMenuAction, source: NativeMenuAction
 ipcMain.on('harness:menuReady', (event) => {
   if (!isOwnRenderer(event.sender)) return
   nativeMenuDispatch.markReady(event.sender)
+})
+
+// The chats that are not at rest, sent after every sidebar status change.
+// Only the main window's own page reports them.
+ipcMain.on('harness:chatAttention', (event, report: unknown) => {
+  if (!isOwnRenderer(event.sender) || event.sender !== mainWindow?.webContents) return
+  chatNotifier.report(report)
+  if (chatToOpen) {
+    event.sender.send('harness:openChat', chatToOpen)
+    chatToOpen = undefined
+  }
 })
 
 ipcMain.on('harness:suspendMenuShortcuts', (event, suspended: unknown) => {
@@ -1107,6 +1198,8 @@ if (ownsSingleInstance) {
     mainWindowStatePersistence?.saveAndStop()
   })
   app.on('will-quit', () => {
+    // A notification left in the notification centre would reopen a chat of a closed app.
+    chatNotifier.dispose()
     appUpdater?.dispose()
     appUpdater = undefined
     macOSHaptics.stop()

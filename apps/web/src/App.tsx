@@ -55,6 +55,7 @@ import {
 } from './shortcuts.js'
 import { sliceCodeUnits } from './slice-code-units.js'
 import { readTerminalPlacement, subscribeTerminalPlacement } from './terminal-placement.js'
+import { useChatNotifications } from './use-chat-notifications.js'
 import { ProviderUpdateNotice } from './ui/ProviderUpdates.js'
 import { IndeterminateRequestError, Transport } from './transport.js'
 import { OptimisticMutations } from './optimistic-mutations.js'
@@ -5174,6 +5175,16 @@ export function App() {
     [beginSession],
   )
   const selectSidebarSession = useCallback((id: string) => void selectSession(id), [selectSession])
+  // A chat notification was clicked and the shell brought the window up.
+  const openNotifiedChat = useCallback(
+    (id: string) => {
+      if (!findSession(projectsRef.current, id)) return
+      setSettingsOpen(false)
+      void selectSession(id)
+    },
+    [selectSession],
+  )
+  useChatNotifications(projects, projectsStatus === 'ready', openNotifiedChat)
   // The pull request the header chip asked the surface to open with.
   const [pullRequestFocus, setPullRequestFocus] = useState<PullRequestTarget>()
   const openPullRequests = useCallback(() => {
