@@ -9,6 +9,13 @@ import {
   type ReactNode,
 } from 'react'
 import type { SidebarSettings } from '@harness/contracts'
+import { canNotifyChats } from '../bridge.js'
+import {
+  readChatNotificationMode,
+  subscribeChatNotificationMode,
+  writeChatNotificationMode,
+  type ChatNotificationMode,
+} from '../chat-notifications.js'
 import {
   readModelPickerLayout,
   subscribeModelPickerLayout,
@@ -45,6 +52,12 @@ const PICKER_OPTIONS = [
   { value: 'rail', label: 'Rail' },
 ] as const satisfies ReadonlyArray<Option<ModelPickerLayout>>
 
+const NOTIFY_OPTIONS = [
+  { value: 'off', label: 'Off' },
+  { value: 'needs-you', label: 'Needs me' },
+  { value: 'needs-you-or-finished', label: 'Also finished' },
+] as const satisfies ReadonlyArray<Option<ChatNotificationMode>>
+
 function dayCount(days: number): string {
   return days === 1 ? '1 day' : `${days} days`
 }
@@ -60,6 +73,11 @@ export function GeneralSettings(props: {
   onSidebarSettingsChange: (settings: Partial<SidebarSettings>) => void
 }) {
   const picker = useSyncExternalStore(subscribeModelPickerLayout, readModelPickerLayout)
+  const notify = useSyncExternalStore(
+    subscribeChatNotificationMode,
+    readChatNotificationMode,
+    readChatNotificationMode,
+  )
   const terminal = useSyncExternalStore(
     subscribeTerminalPlacement,
     readTerminalPlacement,
@@ -122,6 +140,18 @@ export function GeneralSettings(props: {
           onChange={writeModelPickerLayout}
           picture={(value) => <MiniWindow focus="picker" mode={mode} days={days} picker={value} />}
         />
+        {canNotifyChats ? (
+          <Setting
+            name="Notifications"
+            note="While TasteCode is in the background, for approvals, questions and failures, or also when a chat finishes."
+            value={notify}
+            options={NOTIFY_OPTIONS}
+            onChange={writeChatNotificationMode}
+            picture={(value) => (
+              <MiniWindow focus="notify" mode={mode} days={days} notify={value} />
+            )}
+          />
+        ) : null}
       </div>
     </SettingsPage>
   )
@@ -173,6 +203,7 @@ function Setting<T extends string>(props: {
       </div>
       <div
         className="general-setting__options"
+        data-count={props.options.length}
         role="radiogroup"
         aria-labelledby={nameId}
         aria-describedby={noteId}
@@ -402,11 +433,12 @@ const PICKER_ROWS = [0.4, 0.78, 0.64, 0.7, 0.34, 0.6, 0.82] as const
  * changes is drawn in full ink; the rest stays quiet around it.
  */
 function MiniWindow(props: {
-  focus: 'sidebar' | 'terminal' | 'picker'
+  focus: 'sidebar' | 'terminal' | 'picker' | 'notify'
   mode: SidebarMode
   days: SettleDays
   terminal?: TerminalPlacement
   picker?: ModelPickerLayout
+  notify?: ChatNotificationMode
 }) {
   const inbox = props.mode === 'inbox'
   const active = PLAN_CHATS.filter((chat) => props.days === null || chat.age < props.days).length
@@ -494,6 +526,12 @@ function MiniWindow(props: {
           </span>
         ) : null}
       </span>
+      {props.notify && props.notify !== 'off' ? (
+        <span className="gwin__toasts">
+          {props.notify === 'needs-you-or-finished' ? <Toast kind="finished" /> : null}
+          <Toast kind="needs-you" />
+        </span>
+      ) : null}
       {props.terminal ? (
         <span className="gwin__terminal">
           <i className="gwin__term-line" data-prompt style={rowStyle(0, 0.36)} />
@@ -502,6 +540,17 @@ function MiniWindow(props: {
           <i className="gwin__term-line" data-prompt data-cursor style={rowStyle(3, 0.1)} />
         </span>
       ) : null}
+    </span>
+  )
+}
+
+/** An OS notification in miniature: a state dot, the chat's title and its state. */
+function Toast(props: { kind: 'needs-you' | 'finished' }) {
+  return (
+    <span className="gwin__toast" data-kind={props.kind}>
+      <b />
+      <i style={rowStyle(0, props.kind === 'finished' ? 0.62 : 0.78)} />
+      <i style={rowStyle(1, props.kind === 'finished' ? 0.36 : 0.5)} />
     </span>
   )
 }
