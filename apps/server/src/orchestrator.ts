@@ -3877,15 +3877,19 @@ export class Orchestrator {
     model: string | undefined,
   ): Promise<string> {
     const stored = this.#store.thread(threadId)
-    const own = (await this.history(threadId)).filter((entry) => entry.seq <= through)
+    // git and the engine answer while the history is read; the prompt waits on all three.
+    const [history, workspace, modelWindow] = await Promise.all([
+      this.history(threadId),
+      workspaceChanges(this.#repoPath(threadId)).catch(() => undefined),
+      session.modelContextWindow?.(model).catch(() => undefined),
+    ])
+    const own = history.filter((entry) => entry.seq <= through)
     const earlier = await this.#earlierChats(threadId, own[0]?.seq)
-    const workspace = await workspaceChanges(this.#repoPath(threadId)).catch(() => undefined)
     const context = stored
       ? this.#contextRuntimeOptions(stored.provider, stored.agent).context
       : undefined
     // The user's chosen window first, then what the engine knows of this model,
     // then the engine's default.
-    const modelWindow = await session.modelContextWindow?.(model).catch(() => undefined)
     return handoverPrompt({
       conversations: [...earlier, own],
       request,
