@@ -150,7 +150,7 @@ function AppUpdateWaiting(props: { running: number; focusOnMount: boolean }) {
       label={`${label}. Update options`}
       triggerTitle={label}
       triggerClassName="account-update"
-      panelClassName="menu--compact"
+      panelClassName="menu--compact app-update-menu"
       onOpen={() => setConfirming(false)}
       trigger={() => (
         <>
