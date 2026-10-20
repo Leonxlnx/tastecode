@@ -431,10 +431,13 @@ export function continuationSnapshotEntries(
   conversations: ReadonlyArray<ReadonlyArray<{ event: DomainEvent }>>,
   {
     budget = MAX_SNAPSHOT_CHARACTERS,
+    stepBudget = Number.POSITIVE_INFINITY,
     keepAttachment = () => false,
   }: {
     /** Characters the entries may take as a JSON array. */
     budget?: number
+    /** Characters the tool steps may take at most; by default whatever the messages leave. */
+    stepBudget?: number
     /** Whether an attached file is worth naming, such as because it still exists. */
     keepAttachment?: (path: string) => boolean
   } = {},
@@ -500,13 +503,17 @@ export function continuationSnapshotEntries(
 
   let steps = 0
   let stepsLeftOut = 0
+  let stepRoom = stepBudget
   let full = false
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     if (entries[index]!.kind !== 'activity') continue
     steps += 1
-    if (full || !take(index)) {
+    const cost = entryCost(entries[index]!)
+    if (full || cost > stepRoom || !take(index)) {
       full = true
       stepsLeftOut += 1
+    } else {
+      stepRoom -= cost
     }
   }
 

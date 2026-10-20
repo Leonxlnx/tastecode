@@ -12,6 +12,12 @@ const MIN_CHARACTERS = 6_000
 const MAX_CHARACTERS = 96_000
 /** Room for the notice, the instructions an engine puts in its first prompt, and quoting. */
 const FIXED_ROOM = 4_000
+/**
+ * The share of the budget tool steps may take. The newest steps say what the
+ * work was doing; older ones mostly repeat what the files and git now show,
+ * and a long agent run would otherwise fill every handover to the limit.
+ */
+const STEP_SHARE = 1 / 3
 const TODO_STEPS = 30
 const TODO_STEP_CHARACTERS = 300
 
@@ -97,6 +103,7 @@ export function handoverPrompt({
   const factCost = facts.reduce((sum, fact) => sum + embeddedJson(fact).length + 1, 0)
   const entries = continuationSnapshotEntries(conversations, {
     budget: Math.max(0, budget - factCost),
+    stepBudget: Math.floor(budget * STEP_SHARE),
     ...(keepAttachment ? { keepAttachment } : {}),
   })
   return (

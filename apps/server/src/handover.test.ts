@@ -167,6 +167,47 @@ describe('handover prompt', () => {
     expect(fact.changes.length + fact.moreChanges).toBe(100)
   })
 
+  it('gives tool steps a third of the budget, newest first', () => {
+    const steps = Array.from({ length: 2_000 }, (_, index): Recorded => ({
+      event: {
+        type: 'item.completed',
+        item: {
+          id: `command-${index}`,
+          turnId: 'turn-1',
+          type: 'command',
+          status: 'completed',
+          command: `pnpm test --filter package-${index}`,
+          exitCode: 0,
+          text: 'ok',
+          createdAt: 1,
+        },
+      },
+    }))
+    const prompt = handoverPrompt({
+      conversations: [
+        [
+          said('ask', 'user', 'Make every package pass'),
+          ...steps,
+          said('done', 'assistant', 'Green'),
+        ],
+      ],
+      request: 'Go on',
+      budget: 90_000,
+    })
+
+    const entries = context(prompt) as Array<{ kind: string; command?: string }>
+    const commands = entries.filter((entry) => entry.kind === 'activity')
+    expect(JSON.stringify(commands).length).toBeGreaterThan(25_000)
+    expect(JSON.stringify(commands).length).toBeLessThanOrEqual(30_001)
+    expect(commands.at(-1)?.command).toBe('pnpm test --filter package-1999')
+    expect(entries[0]).toEqual({
+      kind: 'note',
+      text: expect.stringContaining(`${2_000 - commands.length} earlier tool steps are not shown.`),
+    })
+    expect(entries[1]).toEqual({ kind: 'message', role: 'user', text: 'Make every package pass' })
+    expect(entries.at(-1)).toEqual({ kind: 'message', role: 'assistant', text: 'Green' })
+  })
+
   it('puts the chats this one continued first', () => {
     const prompt = handoverPrompt({
       conversations: [
