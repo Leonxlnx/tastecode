@@ -2608,7 +2608,9 @@
                   >Sidebar, Terminal and Model picker each show their two choices as the window they
                   make, painted in the app's surfaces with the changed part in ink and the chosen
                   one ringed, beside a line on what the setting decides; the terminal starts on the
-                  right until moved. Under Inbox a logarithmic settle scale from 1 to 90 days or
+                  right until moved. On the desktop, Notifications shows Off, Needs me (the default)
+                  and Also finished as the window dimmed behind OS notifications in the sidebar's
+                  amber and green dots. Under Inbox a logarithmic settle scale from 1 to 90 days or
                   never moves the Settled fold in the Inbox picture as it is dragged. The page has
                   the Settings v1 header; setting names and notes use the row type (13.5/500 and
                   12.5), settings sit 36 px apart</span
@@ -3152,6 +3154,25 @@
                   caption buttons take the colour the app paints beside them, live in light and
                   dark, on tinted backdrops and in Settings, and the next launch opens in the last
                   colours</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Chat notifications and a badge while the window is away
+                <span class="d"
+                  >when the window is not focused, minimized or hidden, a chat that starts waiting
+                  on an approval or a question, or fails, shows one OS notification (chat title,
+                  then Needs your approval, Has a question or Failed; Finished too under Also
+                  finished); never for changes while the window is in front, one per chat state
+                  change, a newer state replaces the old one, a launch or reload repeats nothing;
+                  clicking opens the chat; coming back to the window clears them. The badge counts
+                  chats that started waiting while away: an amber overlay count on the Windows
+                  taskbar button, app.setBadgeCount on macOS and Linux. No sound of our own; the OS
+                  and its do-not-disturb decide. Reads the sidebar status, so it works for every
+                  provider and API connection</span
                 ></span
               ></label
             >
