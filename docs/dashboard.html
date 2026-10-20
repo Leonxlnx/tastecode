@@ -291,12 +291,28 @@
           <a href="./feature-inventory.html">Inventory</a>
           <a href="./CLAUDE-HANDOFF.md">Claude handoff</a>
         </nav>
-        <span class="meta">2026-10-20 nightly 5da77ebc · includes main 094eac47 (PR #1921)</span>
+        <span class="meta">2026-10-20 nightly 3de247b3 · includes main 094eac47 (PR #1921)</span>
       </div>
     </div>
 
     <div class="wrap">
       <section id="scope">
+        <p>
+          October 20, evening on nightly (3de247b3): all four gates passed on 3de247b3 (web 3,028
+          tests, server 1,721, desktop 484 and every package, no failure). The Windows taskbar
+          button shows the sidebar's amber needs-you dot with a thin dark ring instead of a drawn
+          count; the count is the button's tooltip and what a screen reader announces, and macOS and
+          Linux keep the native badge count (PR #1923). Install now no longer goes through Stop all,
+          which deleted the queued prompts of every chat: it stops each running turn the way the
+          chat's own Stop does, leaves a turn with prompts queued behind it to the restart, and
+          every queue survives the update (PR #1924). Open as drafts for Leon's go, each with a test
+          that fails on 3de247b3: an update no longer waits forever on a chat that only holds queued
+          prompts (PR #1926); a project's five-row fold keeps working, unread, needs-you and open
+          chats in sight (PR #1927); Continue on another account keeps the early messages of a long
+          chat (PR #1925); continuing a chat that has its own checkout carries its uncommitted
+          changes into the new one and says where they are (PR #1928, contracts PR #1929, PR #1930).
+          Not verified yet: the dot on a real Windows taskbar and a real update install.
+        </p>
         <p>
           October 20, overnight on nightly (5da77ebc): what landed, each checked in its own PR with
           stand-in CLIs only; all four gates passed on 5da77ebc (web 3,026 tests, server 1,721,
