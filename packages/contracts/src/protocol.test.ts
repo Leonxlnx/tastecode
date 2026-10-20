@@ -2248,6 +2248,22 @@ describe('provider account contracts', () => {
     ).toBe(false)
   })
 
+  it("says where a continued chat's earlier uncommitted changes went", () => {
+    const result = methods['thread.start'].result
+    expect(result.parse({ threadId: 'th2' })).toEqual({ threadId: 'th2' })
+    const carried = { threadId: 'th2', earlierChanges: { carried: true } }
+    expect(result.parse(carried)).toEqual(carried)
+    const kept = { threadId: 'th2', earlierChanges: { carried: false, keptIn: 'D:\\trees\\a1' } }
+    expect(result.parse(kept)).toEqual(kept)
+    // Changes that stayed behind always say where.
+    expect(result.safeParse({ threadId: 'th2', earlierChanges: { carried: false } }).success).toBe(
+      false,
+    )
+    expect(
+      result.safeParse({ threadId: 'th2', earlierChanges: { carried: false, keptIn: '' } }).success,
+    ).toBe(false)
+  })
+
   it('splits usage history by account on request', () => {
     const history = methods['usage.history'].params
     expect(history.parse({ range: '30d' }).account).toBeUndefined()
