@@ -26,15 +26,15 @@ export type ProviderControlCapabilities = Readonly<{
   /**
    * Minimum spacing of full plan-limit reads, each of which starts a vendor
    * process. A successful read answers at least this long, and a usage change
-   * cannot force an earlier one.
+   * cannot force an earlier one; only a refresh or retry reads sooner.
    */
   limitReadIntervalMs: number
   /** Timed-out limit reads after which the server stops reading until the account changes. */
   limitReadTimeoutLimit?: number
   /**
-   * Full reads wait for a client that shows the limits (`visible` or `retry`
-   * intent). A passive figure is answered from held values only, which live
-   * windows from running sessions keep current.
+   * Full reads wait for a client that shows the limits (any intent but
+   * `background`). A passive figure is answered from held values only, which
+   * live windows from running sessions keep current.
    */
   limitReadsWhenShown?: boolean
 }>

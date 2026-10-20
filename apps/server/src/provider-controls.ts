@@ -988,13 +988,15 @@ export class ProviderControls {
    * What a view is answered with before this session's read does. A shown
    * view also gets the last session's full read and, without one, the newest
    * failed read, so a source that keeps failing does not hold up the first
-   * view after every launch. A retry waits for the read it asked for.
+   * view after every launch. A retry waits for the read it asked for, and so
+   * does a refresh of values already read: the view shows them meanwhile.
    */
   #heldLimits(
     provider: ProviderId,
     intent: UsageReadIntent = 'visible',
   ): ProviderLimitSource | undefined {
     const held = this.#limits.get(provider)?.value
+    if (held?.status === 'ready' && (intent === 'refresh' || intent === 'retry')) return undefined
     if (held || intent === 'background') return held
     const lastSession = this.#lastSession(provider)
     if (lastSession || intent === 'retry') return lastSession
@@ -1151,7 +1153,10 @@ export class ProviderControls {
     const startedAt = Date.now()
     // A shown view needs the details a background read left out.
     const missingDetails = entry.detailsOmitted === true && intent !== 'background'
-    if (entry.value && startedAt < entry.freshUntil && !missingDetails) {
+    // A refresh or retry reads past recent values; an answer that the account
+    // has no plan limits still holds.
+    const forced = (intent === 'refresh' || intent === 'retry') && entry.value?.status === 'ready'
+    if (entry.value && startedAt < entry.freshUntil && !missingDetails && !forced) {
       return Promise.resolve(entry.value)
     }
     const capabilities: ProviderControlCapabilities = PROVIDER_CAPABILITIES[provider]

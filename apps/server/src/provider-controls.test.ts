@@ -1616,6 +1616,56 @@ describe('read intent', () => {
     expect(usageLimitSource).toHaveBeenCalledTimes(4)
   })
 
+  it('reads past recent values for a refresh, but not inside the backoff', async () => {
+    const usageLimitSource = vi
+      .fn()
+      .mockResolvedValueOnce(weekly(10))
+      .mockResolvedValueOnce(weekly(20))
+      .mockRejectedValueOnce(new Error('fixture-failed'))
+      .mockResolvedValue(weekly(40))
+    const { registry } = setup({
+      limitReadIntervalMs: undefined,
+      services: { 'claude-code': { usageLimitSource } },
+    })
+    const claude = registry.forProvider('claude-code')
+    await claude.usageLimitSource('refresh')
+    // An open view keeps asking from recent values.
+    await expect(claude.usageLimitSource('visible')).resolves.toMatchObject({
+      limits: [{ usedPercent: 10 }],
+    })
+    expect(usageLimitSource).toHaveBeenCalledOnce()
+    // Values already read are shown while the refresh reads, so it waits for the read.
+    expect(claude.heldLimitSource('refresh')).toBeUndefined()
+    expect(claude.heldLimitSource('retry')).toBeUndefined()
+    await expect(claude.usageLimitSource('refresh')).resolves.toMatchObject({
+      limits: [{ usedPercent: 20 }],
+    })
+    // A failed refresh keeps the values; the next one waits out the backoff, a retry does not.
+    await expect(claude.usageLimitSource('refresh')).resolves.toMatchObject({
+      stale: true,
+      limits: [{ usedPercent: 20 }],
+    })
+    await expect(claude.usageLimitSource('refresh')).resolves.toMatchObject({ stale: true })
+    expect(usageLimitSource).toHaveBeenCalledTimes(3)
+    await expect(claude.usageLimitSource('retry')).resolves.toMatchObject({
+      limits: [{ usedPercent: 40 }],
+    })
+    expect(usageLimitSource).toHaveBeenCalledTimes(4)
+  })
+
+  it('keeps an answer without plan limits through a refresh', async () => {
+    const usageLimitSource = vi.fn(async () => ({ status: 'unavailable' as const }))
+    const { registry } = setup({ services: { 'claude-code': { usageLimitSource } } })
+    const claude = registry.forProvider('claude-code')
+    await claude.usageLimitSource('visible')
+    expect(claude.heldLimitSource('refresh')).toMatchObject({ status: 'unavailable' })
+    await expect(claude.usageLimitSource('refresh')).resolves.toMatchObject({
+      status: 'unavailable',
+    })
+    await claude.usageLimitSource('retry')
+    expect(usageLimitSource).toHaveBeenCalledOnce()
+  })
+
   it('reads Codex without reset details for a passive figure, in full once they are shown', async () => {
     const resets = { id: 'resets', label: 'Rate limit resets', usedPercent: 0, valueLabel: '2' }
     const adapter = new FakeCodex()
