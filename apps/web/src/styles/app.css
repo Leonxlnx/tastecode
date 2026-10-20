@@ -1138,18 +1138,39 @@
   margin: 0;
 }
 
-.sess__project {
+/* The title is what the row is about: the project name only gets the room
+   the title leaves, so it truncates first, and it hides rather than show a
+   letter or two. */
+:is(.needs-band__row, .archived__row) .sess__title {
   flex: 0 1 auto;
+}
+
+.sess__project {
+  flex: 1 1 0;
   min-width: 0;
-  /* The title is what the row is about; a long project name gives way first. */
-  max-width: 32%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  container-type: inline-size;
   color: var(--text-3);
   font-size: var(--t-xs);
   letter-spacing: 0;
+  text-align: right;
   transition: opacity var(--dur-fast) var(--ease-out);
+}
+
+.sess__project > span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@container (max-width: 31px) {
+  .sess__project > span {
+    visibility: hidden;
+  }
+}
+
+.rail__body[data-narrow] .sess__project {
+  display: none;
 }
 
 /* The row's one action takes the project name's place; the state mark on the

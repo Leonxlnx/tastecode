@@ -204,6 +204,18 @@ describe('sidebar theme CSS', () => {
     expect(appCss).not.toContain('.sess__status-dot.is-done')
   })
 
+  it("lets a band or Archived row's project name give way before its title", () => {
+    expect(appCss).toMatch(
+      /:is\(\.needs-band__row, \.archived__row\) \.sess__title \{[^}]*flex: 0 1 auto;/s,
+    )
+    // Only the room the title leaves; cut to a letter or two, it hides.
+    expect(appCss).toMatch(/\.sess__project \{[^}]*flex: 1 1 0;[^}]*container-type: inline-size;/s)
+    expect(appCss).toMatch(
+      /@container \(max-width: 31px\) \{\s*\.sess__project > span \{\s*visibility: hidden;/s,
+    )
+    expect(appCss).toMatch(/\.rail__body\[data-narrow\] \.sess__project \{\s*display: none;/s)
+  })
+
   it('uses semantic colors for finished, failed, and waiting threads in both sidebars', () => {
     expect(appCss).toMatch(/\.sess__status-dot\.is-success \{[^}]*background: var\(--success\);/s)
     expect(appCss).toMatch(/\.sess__status-dot\.is-failed \{[^}]*background: var\(--error\);/s)
