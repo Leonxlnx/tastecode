@@ -5597,7 +5597,9 @@ describe('new chats', () => {
   })
 
   it('switches an open chat to another provider with its next message', async () => {
-    serverProviders = [...serverProviders, claudeCodeServerProvider()]
+    // The chat's own provider has not said whether it is signed in; the
+    // provider the message goes to has.
+    serverProviders = [{ ...serverProviders[0]!, auth: 'unknown' }, claudeCodeServerProvider()]
     serverProjects[0]!.sessions = [
       { id: 'chat-1', title: 'Webhook retries', provider: 'codex', createdAt: 1 },
     ]
@@ -5658,6 +5660,7 @@ describe('new chats', () => {
 
     act(() => composerProps().onModelChange('claude-code:opus'))
     await waitFor(() => expect(note()).toBeDefined())
+    await waitFor(() => expect(composerProps().sendAvailability).toBe('ready'))
     await act(async () => composerProps().onSend('Now update the tests', []))
 
     await waitFor(() => expect(order).toEqual(['thread.changeProvider', 'thread.sendTurn']))

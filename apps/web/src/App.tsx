@@ -1404,7 +1404,8 @@ export function App() {
         serverBoundSession: Boolean(
           activeSession && activeSession.provider === provider && !implicitChoice,
         ),
-        activeProvider: activeSession?.provider,
+        // A message that switches the chat goes to the provider it switches to.
+        activeProvider: moveChoice ? undefined : activeSession?.provider,
         selectedChoice: selectedModelChoice,
         connections: modelConnections,
         providerStatuses,
