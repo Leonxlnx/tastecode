@@ -157,6 +157,25 @@ describe('app update install', () => {
     expect(appUpdateInstallState()).toEqual({ phase: 'idle' })
   })
 
+  it('waits instead of installing when a chat starts while the server answers', async () => {
+    let answer: (count: number) => void = () => undefined
+    const runningChats = vi.fn(() => new Promise<number>((resolve) => (answer = resolve)))
+    setAppUpdateInstallGate({ runningChats, stopRunningChats: async () => undefined })
+    reportRunningChats(0)
+    const click = requestAppUpdateInstall()
+    expect(appUpdateInstallState()).toEqual({ phase: 'checking' })
+    // The sidebar sees a turn start; the answer was counted before it.
+    reportRunningChats(1)
+    answer(0)
+    await click
+    expect(bridge.install).not.toHaveBeenCalled()
+    expect(appUpdateInstallState()).toEqual({ phase: 'waiting', running: 1 })
+    runningChats.mockResolvedValue(0)
+    reportRunningChats(0)
+    await vi.advanceTimersByTimeAsync(INSTALL_SETTLE_MS)
+    expect(bridge.install).toHaveBeenCalledOnce()
+  })
+
   it('installs as before when the server cannot be asked', async () => {
     const server = gate([0])
     server.runningChats.mockRejectedValueOnce(new Error('offline'))
@@ -180,7 +199,7 @@ describe('running chats', () => {
     unread: false,
   })
 
-  it('counts every status inside or before a turn, once per chat', () => {
+  it('counts every chat inside a turn or starting one, once per chat', () => {
     const projects: Project[] = [
       {
         path: 'a',
@@ -197,7 +216,7 @@ describe('running chats', () => {
       },
       { path: 'b', sessions: [session('working', 'working')] },
     ]
-    expect(runningChatCount(projects)).toBe(5)
+    expect(runningChatCount(projects)).toBe(4)
     expect(
       serverRunningChatCount([
         {
@@ -206,10 +225,22 @@ describe('running chats', () => {
             { id: 'b', running: false, status: 'queued' },
             { id: 'c', running: false, status: 'ready' },
             { id: 'd', running: false },
+            { id: 'e', running: true, status: 'approval' },
+            { id: 'f', running: false, status: 'input' },
+            { id: 'g', running: false, status: 'starting' },
           ],
         },
       ]),
-    ).toBe(2)
+    ).toBe(4)
+  })
+
+  it('does not count a chat that only holds queued prompts', () => {
+    // After a restart, or after the server could not start the next prompt,
+    // the prompts wait and no turn runs; they come back after the update.
+    expect(runningChatCount([{ path: 'a', sessions: [session('stale', 'queued')] }])).toBe(0)
+    expect(
+      serverRunningChatCount([{ sessions: [{ id: 'stale', running: false, status: 'queued' }] }]),
+    ).toBe(0)
   })
 
   it('words the wait for one chat and for several', () => {

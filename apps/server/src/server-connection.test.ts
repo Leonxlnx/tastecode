@@ -40,6 +40,7 @@ const state = vi.hoisted(() => ({
   accountList: [] as unknown[],
   usageHistory: undefined as { accountHomes?: () => unknown } | undefined,
   usageHistoryCalls: [] as unknown[][],
+  earlierChanges: new Map<string, unknown>(),
   accountsRoot: '',
   accountsChanged: (_provider: string) => {},
 }))
@@ -174,6 +175,9 @@ vi.mock('./orchestrator.js', () => ({
       const from = options.continueFrom === undefined ? '' : `, from ${options.continueFrom}`
       state.handled.push(`thread.start(${provider}, ${options.accountId ?? 'active'}${from})`)
       return { id }
+    }
+    earlierChanges(threadId: string) {
+      return state.earlierChanges.get(threadId)
     }
     heldLimitSource() {
       return undefined
@@ -805,6 +809,18 @@ describe('provider accounts', () => {
         'thread.start(codex, active)',
         'thread.start(codex, work, from codex-earlier)',
       ])
+      // Where the earlier chat's uncommitted changes went comes back with the new chat.
+      const kept = { carried: false, keptIn: 'C:\\trees\\earlier' }
+      state.earlierChanges.set('codex-started', kept)
+      expect(
+        await ask('thread.start', {
+          provider: 'codex',
+          accountId: 'work',
+          continueFrom: 'codex-earlier',
+          workspacePath: 'C:\\x',
+        }),
+      ).toMatchObject({ result: { threadId: 'codex-started', earlierChanges: kept } })
+      state.earlierChanges.clear()
     } finally {
       client.terminate()
     }

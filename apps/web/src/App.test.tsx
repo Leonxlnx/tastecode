@@ -5596,6 +5596,112 @@ describe('new chats', () => {
     )
   })
 
+  it("names the isolated chat's checkout when its uncommitted changes stayed there", async () => {
+    const codex = serverProviders[0]!
+    serverProviders = [
+      { ...codex, capabilities: { ...codex.capabilities!, multipleAccounts: true } },
+    ]
+    serverProjects[0]!.sessions = [
+      {
+        id: 'chat-limited',
+        title: 'Webhook retries',
+        provider: 'codex',
+        createdAt: 1,
+        worktreeBranch: 'harness/limited',
+      },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    const starts: unknown[] = []
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'accounts.list') {
+        return Promise.resolve({
+          accounts: [
+            { id: 'default', provider: 'codex', label: 'Personal', managed: false },
+            {
+              id: 'work-1a2b3c',
+              provider: 'codex',
+              label: 'Work',
+              managed: true,
+              email: 'work@example.test',
+            },
+          ],
+          active: {},
+        })
+      }
+      if (method === 'usage.summary') {
+        const { accountId } = params as { accountId?: string }
+        return (request(method, params) as Promise<ResultOf<'usage.summary'>>).then((summary) => ({
+          ...summary,
+          limits: [
+            {
+              label: '5 hours',
+              usedPercent: accountId === undefined ? 100 : 30,
+              resetsAt: Date.now() + 3_600_000,
+            },
+          ],
+        }))
+      }
+      if (method === 'thread.history') {
+        const { threadId } = params as { threadId: string }
+        if (threadId !== 'chat-limited') return request(method, params)
+        return Promise.resolve({
+          events: [
+            {
+              seq: 1,
+              event: { type: 'thread.error', threadId, message: "You've hit your usage limit." },
+            },
+          ],
+          running: false,
+          approval: 'ask',
+        })
+      }
+      if (method === 'thread.start') {
+        starts.push(params)
+        serverProjects[0]!.sessions = [
+          {
+            id: 'chat-next',
+            title: 'New session',
+            provider: 'codex',
+            accountId: 'work-1a2b3c',
+            continuedFrom: 'chat-limited',
+            createdAt: 2,
+            worktreeBranch: 'harness/next',
+          },
+          ...serverProjects[0]!.sessions,
+        ]
+        return Promise.resolve({
+          threadId: 'chat-next',
+          earlierChanges: { carried: false, keptIn: 'C:\\TasteCode\\trees\\limited' },
+        })
+      }
+      return request(method, params)
+    })
+    const errors = () => composerProps().errors ?? []
+    render(<App />)
+
+    fireEvent.click(await waitFor(() => treeChatRow('Webhook retries')))
+    const failed = await waitFor(() => {
+      const row = errors().find((error) => error.message === "You've hit your usage limit.")
+      expect(row?.action?.label).toBe('Continue on Work')
+      return row!
+    })
+    await act(async () => failed.action!.run())
+
+    expect(starts).toEqual([
+      expect.objectContaining({
+        continueFrom: 'chat-limited',
+        isolate: true,
+        baseRef: 'harness/limited',
+      }),
+    ])
+    await waitFor(() =>
+      expect(errors().map((error) => error.message)).toContain(
+        'Continues “Webhook retries” on Work. Its conversation goes with your first message. Its uncommitted changes could not be carried over; they are still in C:\\TasteCode\\trees\\limited.',
+      ),
+    )
+  })
+
   it('keeps plan limits and asks nothing new when switching chats of one provider', async () => {
     serverProjects = [
       {

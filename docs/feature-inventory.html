@@ -1126,14 +1126,18 @@
                   at a plan limit (a window at 100% that has not reset) and another account of the
                   provider is signed in, the error offers Continue on Work (a menu, Continue on
                   another account, when there are several); never automatic. It starts a new chat
-                  pinned to that account in the same project (an isolated chat's branch as base),
-                  with the failed request in its composer; its first prompt carries the earlier
-                  chat's conversation as untrusted context (the Side chat snapshot, kept in the
-                  provider's own session), the transcript shows only the user's words, and until its
-                  first message the new chat says Continues "title" on Work in a neutral note with
-                  Open. The earlier chat is left as it was; its failed turn's row then reads
-                  Continued on Work and opens the new chat. Not yet: per-account Sign out,
-                  MCP/skills inventory and history import per account</span
+                  pinned to that account in the same project (an isolated chat's branch as base, in
+                  a checkout of its own that gets the earlier checkout's uncommitted changes copied
+                  in; when they cannot be copied, the first prompt and the new chat's note say which
+                  folder still holds them), with the failed request in its composer; its first
+                  prompt carries the earlier chat's conversation as untrusted context (the Side chat
+                  snapshot, kept in the provider's own session), the transcript shows only the
+                  user's words, and until its first message the new chat says Continues "title" on
+                  Work in a neutral note with Open (for an isolated chat, also that its uncommitted
+                  changes are already in this chat's checkout, or where they still are). The earlier
+                  chat is left as it was; its failed turn's row then reads Continued on Work and
+                  opens the new chat. Not yet: per-account Sign out, MCP/skills inventory and
+                  history import per account</span
                 ></span
               ></label
             >
@@ -2284,10 +2288,12 @@
                   requests actions without shifting them; a 1 px soft guide drops from each folder
                   mark to the project's last row and its chats indent past it, while pinned chats
                   keep the outer gutter; one active pill slides to the newly selected chat in 220 ms
-                  (it jumps under reduced motion); the larger project add action stays clear of the
-                  scrollbar; drag-folding moves the intact rail and grid closed together, even
-                  before pointer release; Enter or Escape in an inline rename returns focus to the
-                  row without opening it</span
+                  (it jumps under reduced motion); a project lists its first 5 chats, plus every
+                  later chat that is starting, working, needs the user, is unread or is open, each
+                  at its own place, and "Show N more" counts the chats still folded (no toggle when
+                  none is); the larger project add action stays clear of the scrollbar; drag-folding
+                  moves the intact rail and grid closed together, even before pointer release; Enter
+                  or Escape in an inline rename returns focus to the row without opening it</span
                 ></span
               ></label
             >
@@ -3072,7 +3078,9 @@
                 not yet run on a real Mac). On nightly, installing no longer cuts off running chats:
                 while chats run, the sidebar button (an hourglass with the count) and Restart to
                 update in About read “Installs when 2 chats finish” and install by themselves once
-                the last one ends, after the server confirms nothing still runs; Install now stops
+                the last one ends, after the server confirms no turn still runs or starts (a chat
+                waiting on an approval or a question counts; one that only holds queued prompts, as
+                after a restart, does not, since they come back after the update); Install now stops
                 them after one confirmation that names how many and keeps every queued prompt for
                 after the restart, and Install later puts it off</span
               ></label

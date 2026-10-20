@@ -1,4 +1,5 @@
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import type {
@@ -122,7 +123,11 @@ function model(id: string): Model {
 
 type Launch = { kind: 'start' | 'resume'; provider: ProviderId; accountHome: string | undefined }
 
-function setup(accounts: AccountDirectory, store = new Store(':memory:')) {
+function setup(
+  accounts: AccountDirectory,
+  store = new Store(':memory:'),
+  worktreeRoot = path.join(root, 'trees'),
+) {
   const launches: Launch[] = []
   const live: Live = {}
   const sessions: FakeSession[] = []
@@ -174,6 +179,7 @@ function setup(accounts: AccountDirectory, store = new Store(':memory:')) {
     runtimeFor,
     accounts,
     mcpConfig: new McpConfigStore(path.join(root, 'mcp.json')),
+    worktreeRoot,
   })
   return { orchestrator, launches, store, live, pushed, sessions, listed }
 }
@@ -361,6 +367,153 @@ describe('chats pinned to a provider account', () => {
     )
     expect(second.launches).toEqual([])
     await second.orchestrator.disposeAll()
+  })
+})
+
+describe('continuing an isolated chat', () => {
+  const git = (cwd: string, ...args: string[]) =>
+    execFileSync('git', args, { cwd, windowsHide: true }).toString()
+  /** Text as git checks it out here; autocrlf may have added CRs. */
+  const text = (file: string) => readFileSync(file, 'utf8').replaceAll('\r\n', '\n')
+
+  /** A chat in its own checkout that edited files and reached its limit before committing. */
+  async function isolatedChatWithWork() {
+    const repo = mkdtempSync(path.join(root, 'repo-'))
+    git(repo, 'init', '-b', 'main')
+    git(repo, 'config', 'user.email', 'test@example.com')
+    git(repo, 'config', 'user.name', 'Test')
+    writeFileSync(path.join(repo, 'app.ts'), 'export const value = 1\n')
+    git(repo, 'add', '.')
+    git(repo, 'commit', '-m', 'first')
+    const harness = setup(
+      directory({ 'codex:work': workHome }),
+      new Store(':memory:'),
+      `${repo}-trees`,
+    )
+    const earlier = await harness.orchestrator.startThread('codex', repo, { isolate: true })
+    harness.store.append(earlier.id, {
+      type: 'item.completed',
+      item: {
+        id: 'ask',
+        turnId: 'turn-1',
+        type: 'message',
+        role: 'user',
+        status: 'completed',
+        text: 'Raise the value and add a helper',
+        createdAt: 1,
+      },
+    })
+    const checkout = harness.store.thread(earlier.id)!.worktreePath!
+    writeFileSync(path.join(checkout, 'app.ts'), 'export const value = 2\n')
+    writeFileSync(path.join(checkout, 'helper.ts'), 'export const helper = true\n')
+    // As "Continue on another account" asks for it.
+    const continueOn = () =>
+      harness.orchestrator.startThread('codex', repo, {
+        accountId: 'work',
+        continueFrom: earlier.id,
+        isolate: true,
+        baseRef: harness.store.thread(earlier.id)!.worktreeBranch,
+      })
+    return { ...harness, repo, earlier, checkout, continueOn }
+  }
+
+  it('carries its uncommitted changes into a checkout of its own', async () => {
+    const { orchestrator, store, sessions, earlier, checkout, continueOn } =
+      await isolatedChatWithWork()
+    const next = await continueOn()
+    const nextCheckout = store.thread(next.id)!.worktreePath!
+
+    expect(nextCheckout).not.toBe(checkout)
+    expect(text(path.join(nextCheckout, 'app.ts'))).toBe('export const value = 2\n')
+    expect(text(path.join(nextCheckout, 'helper.ts'))).toBe('export const helper = true\n')
+    // The earlier chat and its checkout stay as they were.
+    expect(store.thread(earlier.id)?.worktreePath).toBe(checkout)
+    expect(text(path.join(checkout, 'app.ts'))).toBe('export const value = 2\n')
+    expect(git(checkout, 'status', '--porcelain').split('\n').filter(Boolean).sort()).toEqual([
+      ' M app.ts',
+      '?? helper.ts',
+    ])
+
+    await orchestrator.sendTurn(next.id, 'Go on')
+    const first = sessions.at(-1)!.sent[0]!
+    expect(first).toContain('Its uncommitted changes were carried into this workspace')
+    expect(first).not.toContain('The workspace can already hold')
+    expect(withoutContinuationContext(first)).toBe('Go on')
+    await orchestrator.disposeAll()
+  })
+
+  it('names the earlier checkout when its changes cannot be carried, also after a restart', async () => {
+    const { orchestrator, store, earlier, checkout, continueOn } = await isolatedChatWithWork()
+    // The earlier chat committed on a branch of its own, so its edits sit on a
+    // base the continuation's checkout does not have.
+    git(checkout, 'switch', '-c', 'elsewhere')
+    writeFileSync(path.join(checkout, 'app.ts'), 'export const value = 5\n')
+    git(checkout, 'commit', '-am', 'elsewhere')
+    writeFileSync(path.join(checkout, 'app.ts'), 'export const value = 6\n')
+    const earlierStatus = git(checkout, 'status', '--porcelain')
+
+    const next = await continueOn()
+    const nextCheckout = store.thread(next.id)!.worktreePath!
+    expect(text(path.join(nextCheckout, 'app.ts'))).toBe('export const value = 1\n')
+    expect(existsSync(path.join(nextCheckout, 'helper.ts'))).toBe(false)
+    expect(git(checkout, 'status', '--porcelain')).toBe(earlierStatus)
+    expect(store.thread(earlier.id)?.worktreePath).toBe(checkout)
+    await orchestrator.disposeAll()
+
+    // The first prompt is sent later, by a server started again in between.
+    const again = setup(directory({ 'codex:work': workHome }), store, path.join(root, 'unused'))
+    await again.orchestrator.submitTurn(next.id, 'Go on')
+    const first = again.sessions.at(-1)!.sent[0]!
+    expect(first).toContain(
+      `Its uncommitted changes could not be carried over; they are still in ${checkout}.`,
+    )
+    expect(first).not.toContain('The workspace can already hold')
+    await again.orchestrator.disposeAll()
+  })
+
+  it('leaves a continuation in the project folder as it was', async () => {
+    const repo = mkdtempSync(path.join(root, 'shared-'))
+    git(repo, 'init', '-b', 'main')
+    git(repo, 'config', 'user.email', 'test@example.com')
+    git(repo, 'config', 'user.name', 'Test')
+    writeFileSync(path.join(repo, 'app.ts'), 'export const value = 1\n')
+    git(repo, 'add', '.')
+    git(repo, 'commit', '-m', 'first')
+    const { orchestrator, store, sessions } = setup(
+      directory({ 'codex:work': workHome }),
+      new Store(':memory:'),
+      `${repo}-trees`,
+    )
+    const earlier = await orchestrator.startThread('codex', repo)
+    store.append(earlier.id, {
+      type: 'item.completed',
+      item: {
+        id: 'ask',
+        turnId: 'turn-1',
+        type: 'message',
+        role: 'user',
+        status: 'completed',
+        text: 'Raise the value',
+        createdAt: 1,
+      },
+    })
+    writeFileSync(path.join(repo, 'app.ts'), 'export const value = 2\n')
+
+    const next = await orchestrator.startThread('codex', repo, {
+      accountId: 'work',
+      continueFrom: earlier.id,
+    })
+    expect(store.thread(next.id)?.worktreePath).toBeUndefined()
+    expect(existsSync(`${repo}-trees`)).toBe(false)
+    expect(git(repo, 'status', '--porcelain')).toBe(' M app.ts\n')
+
+    await orchestrator.sendTurn(next.id, 'Go on')
+    const first = sessions.at(-1)!.sent[0]!
+    expect(first).toContain(
+      'The workspace can already hold some of its changes, so check the files before redoing work.',
+    )
+    expect(first).not.toContain('uncommitted changes')
+    await orchestrator.disposeAll()
   })
 })
 

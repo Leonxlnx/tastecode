@@ -10,6 +10,7 @@ vi.mock('./bridge.js', () => ({ installAppUpdate: bridge.install }))
 
 const {
   appUpdateInstallState,
+  INSTALL_SETTLE_MS,
   requestAppUpdateInstall,
   resetAppUpdateInstallForTests,
   stopChatsAndInstall,
@@ -21,7 +22,14 @@ const {
  * saved and survive the restart, Stop all deletes them in every chat, and a
  * turn that ends sends the chat's next queued prompt at once.
  */
-function server(chats: Record<string, { running: boolean; queue: string[] }>) {
+type Chat = {
+  running: boolean
+  queue: string[]
+  /** A running turn that waits on the user. */
+  waits?: 'approval' | 'input'
+}
+
+function server(chats: Record<string, Chat>) {
   const log: string[] = []
   const sent: string[] = []
   let interruptBarrier: Promise<void> | undefined
@@ -43,7 +51,12 @@ function server(chats: Record<string, { running: boolean; queue: string[] }>) {
                 provider: 'codex',
                 createdAt: 0,
                 running: chat.running,
-                status: chat.running ? 'working' : chat.queue.length > 0 ? 'queued' : 'idle',
+                // The server's order: a wait on the user, then the turn, then the queue.
+                status: chat.running
+                  ? (chat.waits ?? 'working')
+                  : chat.queue.length > 0
+                    ? 'queued'
+                    : 'idle',
               })),
             },
           ],
@@ -142,7 +155,8 @@ describe('Install now', () => {
     )
 
     await requestAppUpdateInstall()
-    expect(appUpdateInstallState()).toEqual({ phase: 'waiting', running: 3 })
+    // c runs nothing, so only a and b hold the update.
+    expect(appUpdateInstallState()).toEqual({ phase: 'waiting', running: 2 })
     await stopChatsAndInstall()
 
     expect(chats.a.queue).toEqual(['Follow-up 1', 'Follow-up 2'])
@@ -172,5 +186,74 @@ describe('Install now', () => {
     await installing
     expect(fake.log).toContain('thread.interrupt a')
     expect(bridge.install).toHaveBeenCalledOnce()
+  })
+})
+
+describe('Waiting for chats', () => {
+  it('installs at once when a chat only holds prompts queued before a restart', async () => {
+    vi.useFakeTimers()
+    const chats = { c: { running: false, queue: ['Written before the restart'] } }
+    const fake = server(chats)
+    renderHook(() => useAppUpdateInstallGate(fake.transport, sidebar({ c: 'queued' }), true))
+
+    await requestAppUpdateInstall()
+
+    expect(fake.log).toEqual(['projects.list'])
+    expect(bridge.install).toHaveBeenCalledOnce()
+    expect(appUpdateInstallState()).toEqual({ phase: 'installing' })
+    expect(chats.c.queue).toEqual(['Written before the restart'])
+  })
+
+  it('waits for a running turn, an approval and a question', async () => {
+    vi.useFakeTimers()
+    const fake = server({
+      a: { running: true, queue: [] },
+      b: { running: true, queue: [], waits: 'approval' },
+      c: { running: true, queue: [], waits: 'input' },
+      d: { running: false, queue: ['Written before the restart'] },
+    })
+    renderHook(() =>
+      useAppUpdateInstallGate(
+        fake.transport,
+        sidebar({ a: 'working', b: 'approval', c: 'input', d: 'queued' }),
+        true,
+      ),
+    )
+
+    await requestAppUpdateInstall()
+    await vi.advanceTimersByTimeAsync(60 * 60 * 1000)
+
+    expect(appUpdateInstallState()).toEqual({ phase: 'waiting', running: 3 })
+    expect(bridge.install).not.toHaveBeenCalled()
+  })
+
+  it('installs once the last turn ends, even when its next prompt stays queued', async () => {
+    vi.useFakeTimers()
+    const a: Chat = { running: true, queue: ['Follow-up'] }
+    const b: Chat = { running: true, queue: [], waits: 'approval' }
+    const fake = server({ a, b })
+    const view = renderHook(
+      ({ projects }) => useAppUpdateInstallGate(fake.transport, projects, true),
+      { initialProps: { projects: sidebar({ a: 'working', b: 'approval' }) } },
+    )
+    await requestAppUpdateInstall()
+    expect(appUpdateInstallState()).toEqual({ phase: 'waiting', running: 2 })
+
+    // The approval is answered and b's turn ends.
+    b.running = false
+    delete b.waits
+    view.rerender({ projects: sidebar({ a: 'working', b: 'ready' }) })
+    expect(appUpdateInstallState()).toEqual({ phase: 'waiting', running: 1 })
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(bridge.install).not.toHaveBeenCalled()
+
+    // a's turn ends and the server cannot start its follow-up, so it stays queued.
+    a.running = false
+    view.rerender({ projects: sidebar({ a: 'ready', b: 'ready' }) })
+    await vi.advanceTimersByTimeAsync(INSTALL_SETTLE_MS)
+
+    expect(bridge.install).toHaveBeenCalledOnce()
+    expect(appUpdateInstallState()).toEqual({ phase: 'installing' })
+    expect(a.queue).toEqual(['Follow-up'])
   })
 })

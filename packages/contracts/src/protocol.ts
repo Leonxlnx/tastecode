@@ -1903,7 +1903,21 @@ export const methods = {
           })
         }
       }),
-    result: z.object({ threadId: z.string() }),
+    result: z.object({
+      threadId: z.string(),
+      /**
+       * Set when `continueFrom` names a chat with a checkout of its own that
+       * held uncommitted changes: they were copied into the new chat's
+       * checkout, or could not be and are still in `keptIn`, the earlier
+       * chat's checkout. That checkout is left as it was either way.
+       */
+      earlierChanges: z
+        .discriminatedUnion('carried', [
+          z.object({ carried: z.literal(true) }),
+          z.object({ carried: z.literal(false), keptIn: z.string().min(1) }),
+        ])
+        .optional(),
+    }),
   },
   /**
    * Points this session can be returned to. One is taken before every turn
