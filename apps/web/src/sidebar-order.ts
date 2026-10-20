@@ -3,8 +3,21 @@ import type { Project, Session } from './ui/Sidebar.js'
 
 export type SessionOrder = Record<string, string[]>
 export type PinnedSession = { projectPath: string; session: Session }
-type ProjectSidebarProjection = { project: Project; pinnedSessions: PinnedSession[] }
-export type SidebarRail = { orderedProjects: Project[]; pinnedSessions: PinnedSession[] }
+type ProjectSidebarProjection = {
+  project: Project
+  pinnedSessions: PinnedSession[]
+  archivedSessions: PinnedSession[]
+}
+export type SidebarRail = {
+  orderedProjects: Project[]
+  pinnedSessions: PinnedSession[]
+  /** Archived chats of every project, the most recently archived first. */
+  archivedSessions: PinnedSession[]
+}
+/** Why a chat is waiting for the user: a request it cannot pass, or a failure not yet read. */
+export type Attention = 'approval' | 'input' | 'failed'
+export type NeedsYouEntry = PinnedSession & { attention: Attention }
+export type ProjectAttention = { count: number; attention: Attention }
 
 let cachedProjectOrderRaw: string | null | undefined
 let cachedProjectOrder: string[] = []
@@ -118,29 +131,47 @@ function sameIds<T>(
 }
 
 /**
- * The classic rail: pinned chats in their own section, then pinned projects
- * ahead of the rest, each project with working and unread chats lifted above
- * its other chats.
+ * The rail: pinned chats in their own section, then pinned projects ahead of
+ * the rest, then archived chats at the end. Every list keeps its saved order.
+ * A chat that starts, waits, finishes or is read stays where it is; only a new
+ * chat, a pin, a drag or archiving moves one.
  */
 export function sidebarRail(projects: Project[]): SidebarRail {
   const pinned: PinnedSession[] = []
+  const archived: PinnedSession[] = []
   const pinnedProjects: Project[] = []
   const unpinnedProjects: Project[] = []
   for (const source of projects) {
     const projection = projectSidebarProjection(source)
     pinned.push(...projection.pinnedSessions)
+    archived.push(...projection.archivedSessions)
     if (source.pinned) pinnedProjects.push(projection.project)
     else unpinnedProjects.push(projection.project)
   }
   return {
     orderedProjects: [...pinnedProjects, ...unpinnedProjects],
-    pinnedSessions: prioritizeSessions(pinned, ({ session }) => session),
+    pinnedSessions: pinned,
+    archivedSessions: archived.sort((a, b) => archivedAt(b.session) - archivedAt(a.session)),
   }
 }
 
 /**
- * Every chat in the order the sidebar lists it, from the top. The inbox's
- * project filter and search box are not applied, so every chat is reachable.
+ * Chats the user archived leave the tree. The server also settles chats on its
+ * own (Inbox's idle-days rule); this sidebar leaves those where they are. A
+ * pinned chat stays pinned, archived or not.
+ */
+export function isArchived(session: Session): boolean {
+  return session.lifecycle.state === 'settled' && session.lifecycle.reason === 'manual'
+}
+
+function archivedAt(session: Session): number {
+  return session.lifecycle.state === 'settled' ? session.lifecycle.settledAt : 0
+}
+
+/**
+ * Every chat in the order the sidebar lists it, from the top, without the
+ * folded Archived section. The inbox's project filter and search box are not
+ * applied, so every chat is reachable.
  */
 export function sidebarSessions(projects: Project[], mode: 'classic' | 'inbox'): Session[] {
   if (mode === 'inbox') {
@@ -154,12 +185,9 @@ export function sidebarSessions(projects: Project[], mode: 'classic' | 'inbox'):
 }
 
 /**
- * The saved order after a chat is dropped in the rail. The rail lifts working
- * and unread chats and moves pinned ones to their own section, so the drop is
- * resolved against what it shows: the chat lands exactly where it was dropped
- * among chats of its own rank, and otherwise as close to the drop target as
- * that allows. Every other chat keeps its saved place, so a chat that was only
- * lifted returns to it once it is read or done.
+ * The saved order after a chat is dropped in the rail: it lands exactly where
+ * it was dropped. Pinned and archived chats live in their own sections, so a
+ * drop on one of them cannot be placed in the project and is ignored.
  */
 export function moveRailSession(
   sessions: Session[],
@@ -170,23 +198,14 @@ export function moveRailSession(
   const source = sessions.find((session) => session.id === sourceId)
   if (!source || sourceId === targetId) return sessions
   const saved = sessions.filter((session) => session !== source)
-  const shown = prioritizeSessions(
-    saved.filter((session) => !session.pinned),
-    (session) => session,
-  )
-  const targetIndex = shown.findIndex((session) => session.id === targetId)
-  if (targetIndex < 0) return sessions
-
-  const dropIndex = targetIndex + (position === 'after' ? 1 : 0)
-  const rank = railRank(source)
-  const above = shown.findLast((session, index) => index < dropIndex && railRank(session) === rank)
-  const below = shown.find((session, index) => index >= dropIndex && railRank(session) === rank)
-  const target = saved.indexOf(shown[targetIndex]!)
-  const index = Math.min(
-    Math.max(position === 'after' ? target + 1 : target, above ? saved.indexOf(above) + 1 : 0),
-    below ? saved.indexOf(below) : saved.length,
-  )
+  const target = saved.findIndex((session) => session.id === targetId)
+  if (target < 0 || !inProjectTree(saved[target]!)) return sessions
+  const index = target + (position === 'after' ? 1 : 0)
   return [...saved.slice(0, index), source, ...saved.slice(index)]
+}
+
+function inProjectTree(session: Session): boolean {
+  return !session.pinned && !isArchived(session)
 }
 
 const projectSidebarProjections = new WeakMap<Project, ProjectSidebarProjection>()
@@ -196,41 +215,89 @@ function projectSidebarProjection(source: Project): ProjectSidebarProjection {
   if (cached) return cached
 
   const pinnedSessions: PinnedSession[] = []
-  const unpinnedSessions: Session[] = []
+  const archivedSessions: PinnedSession[] = []
+  const sessions: Session[] = []
   for (const session of source.sessions) {
     if (session.pinned) pinnedSessions.push({ projectPath: source.path, session })
-    else unpinnedSessions.push(session)
+    else if (isArchived(session)) archivedSessions.push({ projectPath: source.path, session })
+    else sessions.push(session)
   }
-  const sessions = prioritizeSessions(unpinnedSessions, (session) => session)
-  const sessionsUnchanged =
-    pinnedSessions.length === 0 &&
-    sessions.length === source.sessions.length &&
-    sessions.every((session, index) => session === source.sessions[index])
-  const project = sessionsUnchanged ? source : { ...source, sessions }
-  const projection = { project, pinnedSessions }
+  const project = sessions.length === source.sessions.length ? source : { ...source, sessions }
+  const projection = { project, pinnedSessions, archivedSessions }
   projectSidebarProjections.set(source, projection)
   return projection
 }
 
-function prioritizeSessions<T>(sessions: T[], getSession: (value: T) => Session): T[] {
-  const groups: [T[], T[], T[]] = [[], [], []]
-  for (const value of sessions) groups[railRank(getSession(value))].push(value)
-  const ordered = [...groups[0], ...groups[1], ...groups[2]]
-  return ordered.every((value, index) => value === sessions[index]) ? sessions : ordered
+/**
+ * What a chat is waiting for, if anything. An approval or a question blocks
+ * the agent until it is answered. A failed turn waits only until it is read,
+ * so opening the chat clears it. A finished answer does not need the user:
+ * the tree shows it unread, with a heavier title, where it already is.
+ */
+export function sessionAttention(session: Session): Attention | undefined {
+  if (session.status === 'approval') return 'approval'
+  if (session.status === 'input') return 'input'
+  if (session.status === 'failed' && session.unread && !isArchived(session)) return 'failed'
+  return undefined
 }
 
-/** The rail's grouping: working chats first, then unread ones, then the rest. */
-function railRank(session: Session): 0 | 1 | 2 {
-  if (isActiveStatus(session.status)) return 0
-  return session.unread ? 1 : 2
+const projectNeedsYou = new WeakMap<Project, NeedsYouEntry[]>()
+
+function projectEntries(project: Project): NeedsYouEntry[] {
+  const cached = projectNeedsYou.get(project)
+  if (cached) return cached
+  const entries: NeedsYouEntry[] = []
+  for (const session of project.sessions) {
+    const attention = sessionAttention(session)
+    if (attention) entries.push({ projectPath: project.path, session, attention })
+  }
+  projectNeedsYou.set(project, entries)
+  return entries
 }
 
-function isActiveStatus(status: Session['status']): boolean {
-  return (
-    status === 'starting' ||
-    status === 'working' ||
-    status === 'queued' ||
-    status === 'approval' ||
-    status === 'input'
+/**
+ * The chats waiting for the user. Agents blocked on an approval or a question
+ * come first, then failures nobody has read; within each, the longest wait
+ * first, so a new arrival joins the end of its group. The open chat is left
+ * out: it is already in front of the user, and opening a failure is what
+ * reads it.
+ */
+export function needsYouSessions(
+  projects: readonly Project[],
+  activeSessionId: string | undefined,
+): NeedsYouEntry[] {
+  const entries: NeedsYouEntry[] = []
+  for (const project of projects) {
+    for (const entry of projectEntries(project)) {
+      if (entry.session.id !== activeSessionId) entries.push(entry)
+    }
+  }
+  return entries.sort(
+    (a, b) =>
+      Number(isBlocking(b.attention)) - Number(isBlocking(a.attention)) ||
+      waitingSince(a.session) - waitingSince(b.session),
   )
+}
+
+function isBlocking(attention: Attention): boolean {
+  return attention === 'approval' || attention === 'input'
+}
+
+function waitingSince(session: Session): number {
+  return session.statusSince ?? session.createdAt
+}
+
+const ATTENTION_ORDER: readonly Attention[] = ['approval', 'input', 'failed']
+
+/** How many chats in a project need the user, and the most urgent reason. */
+export function projectAttention(project: Project): ProjectAttention | undefined {
+  const entries = projectEntries(project)
+  if (entries.length === 0) return undefined
+  let attention: Attention = 'failed'
+  for (const entry of entries) {
+    if (ATTENTION_ORDER.indexOf(entry.attention) < ATTENTION_ORDER.indexOf(attention)) {
+      attention = entry.attention
+    }
+  }
+  return { count: entries.length, attention }
 }

@@ -1019,8 +1019,28 @@ function waitForInitialWorkspace(): Promise<void> {
 
 async function openNewSession(): Promise<void> {
   render(<App />)
-  fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
+  fireEvent.click(await waitFor(() => treeChatRow('New session')))
   await Promise.all([waitForInitialWorkspace(), screen.findByTestId('thread')])
+}
+
+/** Matches a sidebar chat row by its title; the row's name goes on with its source and state. */
+function chatRowName(title: string): RegExp {
+  return new RegExp(`^${title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')},`)
+}
+
+/** A chat's row in the tree. The "Needs you" band may list the same chat again above it. */
+function treeChatRow(title: string): HTMLElement {
+  const rows = screen
+    .getAllByRole('button', { name: chatRowName(title) })
+    .filter((row) => !row.closest('.needs-band'))
+  expect(rows).toHaveLength(1)
+  return rows[0]!
+}
+
+/** Rename and Delete live in a chat row's menu; the row's one hover action is Archive. */
+async function chooseChatMenuItem(title: string, item: 'Rename chat' | 'Delete chat') {
+  fireEvent.contextMenu(await waitFor(() => treeChatRow(title)))
+  fireEvent.click(await screen.findByRole('menuitem', { name: item }))
 }
 
 function setConnectionState(state: ConnectionState): void {
@@ -5350,6 +5370,33 @@ describe('new chats', () => {
     expect(screen.getByText('75% left')).toBeTruthy()
   })
 
+  it('keeps a chat in its sidebar place when a turn starts in it', async () => {
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'project',
+        pinned: false,
+        createdAt: 0,
+        sessions: [
+          { id: 'thread-a', title: 'First chat', provider: 'codex', createdAt: 1, running: false },
+          { id: 'thread-b', title: 'Second chat', provider: 'codex', createdAt: 0, running: false },
+        ],
+      },
+    ]
+    render(<App />)
+    await screen.findByRole('button', { name: 'Second chat, Codex' })
+    const order = () => sidebarProps().projects[0]!.sessions.map(({ id }) => id)
+    expect(order()).toEqual(['thread-a', 'thread-b'])
+
+    startTurn('thread-b', 'turn-b')
+    await waitFor(() =>
+      expect(sidebarProps().projects[0]!.sessions.find(({ id }) => id === 'thread-b')?.status).toBe(
+        'working',
+      ),
+    )
+    expect(order()).toEqual(['thread-a', 'thread-b'])
+  })
+
   it('shows pushed plan limits without asking again', async () => {
     render(<App />)
     expect(await screen.findByText('75% left')).toBeTruthy()
@@ -7137,20 +7184,20 @@ describe('new chats', () => {
 
     await openNewSession()
     transport.request.mockClear()
-    fireEvent.click(screen.getByRole('button', { name: 'Delete New session' }))
+    await chooseChatMenuItem('New session', 'Delete chat')
     expect(await screen.findByText('Chat deleted')).toBeTruthy()
     expect(screen.getByText('Chat deleted').closest('.notice--archive')).toBeTruthy()
-    expect(screen.queryByRole('button', { name: 'Delete New session' })).toBeNull()
+    expect(screen.queryByRole('button', { name: chatRowName('New session') })).toBeNull()
     expect(transport.request).not.toHaveBeenCalledWith('thread.delete', expect.anything())
     fireEvent.click(screen.getByRole('button', { name: 'Undo' }))
-    expect(await screen.findByRole('button', { name: 'Delete New session' })).toBeTruthy()
+    expect(await screen.findByRole('button', { name: chatRowName('New session') })).toBeTruthy()
     await act(async () => new Promise((resolve) => nativeTimeout(resolve, 1_050)))
     expect(transport.request).not.toHaveBeenCalledWith('thread.delete', expect.anything())
   })
 
   it('saves a queued delete for the next start until Undo', async () => {
     await openNewSession()
-    fireEvent.click(screen.getByRole('button', { name: 'Delete New session' }))
+    await chooseChatMenuItem('New session', 'Delete chat')
     await screen.findByText('Chat deleted')
     expect(JSON.parse(localStorage.getItem(PENDING_CHAT_DELETES_KEY)!)).toEqual([
       { threadId: 'untouched-thread', checkout: 'keep' },
@@ -7166,7 +7213,7 @@ describe('new chats', () => {
     transport.request.mockImplementation((method, params) =>
       method === 'thread.delete' ? new Promise(() => undefined) : request(method, params),
     )
-    fireEvent.click(screen.getByRole('button', { name: 'Delete New session' }))
+    await chooseChatMenuItem('New session', 'Delete chat')
     await screen.findByText('Chat deleted')
 
     cleanup()
@@ -7175,7 +7222,7 @@ describe('new chats', () => {
     shellRenders.sidebar.mockClear()
     render(<App />)
 
-    await screen.findByRole('button', { name: 'Delete Kept chat' })
+    await screen.findByRole('button', { name: chatRowName('Kept chat') })
     await waitFor(() => expect(localStorage.getItem(PENDING_CHAT_DELETES_KEY)).toBeNull())
     expect(transport.request.mock.calls.filter(([method]) => method === 'thread.delete')).toEqual([
       ['thread.delete', { threadId: 'untouched-thread' }],
@@ -7194,7 +7241,7 @@ describe('new chats', () => {
       JSON.stringify([{ threadId: 'gone-thread', checkout: 'keep' }]),
     )
     render(<App />)
-    await screen.findByRole('button', { name: 'Delete New session' })
+    await screen.findByRole('button', { name: chatRowName('New session') })
     await waitFor(() => expect(localStorage.getItem(PENDING_CHAT_DELETES_KEY)).toBeNull())
     expect(rpcCount('thread.delete')).toBe(0)
   })
@@ -7234,7 +7281,7 @@ describe('new chats', () => {
     )
     render(<App />)
     expect((await screen.findByRole('alert')).textContent).toBe('The chat is still starting.')
-    expect(await screen.findByRole('button', { name: 'Delete New session' })).toBeTruthy()
+    expect(await screen.findByRole('button', { name: chatRowName('New session') })).toBeTruthy()
     expect(localStorage.getItem(PENDING_CHAT_DELETES_KEY)).toBeNull()
   })
 
@@ -7253,9 +7300,9 @@ describe('new chats', () => {
         ? Promise.reject(new Error('The chat is still starting.'))
         : request(method, params),
     )
-    fireEvent.click(screen.getByRole('button', { name: 'Delete New session' }))
+    await chooseChatMenuItem('New session', 'Delete chat')
     expect((await screen.findByRole('alert')).textContent).toBe('The chat is still starting.')
-    expect(await screen.findByRole('button', { name: 'Delete New session' })).toBeTruthy()
+    expect(await screen.findByRole('button', { name: chatRowName('New session') })).toBeTruthy()
     expect(JSON.parse(localStorage.getItem(PENDING_CHAT_DELETES_KEY)!)).toEqual([
       { threadId: 'untouched-thread', checkout: 'keep' },
     ])
@@ -7269,7 +7316,7 @@ describe('new chats', () => {
         ? Promise.reject(new Error('Connection closed.'))
         : request(method, params),
     )
-    fireEvent.click(screen.getByRole('button', { name: 'Delete New session' }))
+    await chooseChatMenuItem('New session', 'Delete chat')
     await screen.findByText('Chat deleted')
 
     cleanup()
@@ -7281,7 +7328,7 @@ describe('new chats', () => {
     transport.request.mockClear()
     render(<App />)
     expect((await screen.findByRole('alert')).textContent).toBe('Connection closed.')
-    expect(await screen.findByRole('button', { name: 'Delete New session' })).toBeTruthy()
+    expect(await screen.findByRole('button', { name: chatRowName('New session') })).toBeTruthy()
     expect(rpcCount('thread.delete')).toBe(1)
     expect(localStorage.getItem(PENDING_CHAT_DELETES_KEY)).toBeNull()
   })
@@ -7298,7 +7345,7 @@ describe('new chats', () => {
     await openNewSession()
     startTurn('untouched-thread', 'active')
     transport.request.mockClear()
-    fireEvent.click(screen.getByRole('button', { name: 'Delete New session' }))
+    await chooseChatMenuItem('New session', 'Delete chat')
     await waitFor(() =>
       expect(transport.request).toHaveBeenCalledWith('thread.delete', {
         threadId: 'untouched-thread',
@@ -7877,7 +7924,7 @@ describe('new chats', () => {
     serverUnsavedWork = { isolated: true, uncommitted: true }
     render(<App />)
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Delete Parallel work' }))
+    await chooseChatMenuItem('Parallel work', 'Delete chat')
     expect(await screen.findByRole('dialog', { name: 'Discard isolated checkout' })).toBeTruthy()
     expect(transport.request).not.toHaveBeenCalledWith('thread.discardWorktree', expect.anything())
 
@@ -7947,7 +7994,7 @@ describe('new chats', () => {
       return Promise.resolve({ isolated: dirty, uncommitted: dirty })
     })
     render(<App />)
-    await screen.findByRole('button', { name: 'Delete Clean chat' })
+    await screen.findByRole('button', { name: chatRowName('Clean chat') })
 
     act(() => sidebarProps().onArchiveProject(['first-dirty', 'clean', 'second-dirty']))
 
@@ -8053,7 +8100,7 @@ describe('new chats', () => {
       } else if (operation.endsWith('pin')) {
         fireEvent.contextMenu(await screen.findByRole('button', { name: /^Saved title,/ }))
         fireEvent.click(await screen.findByRole('menuitem', { name: 'Pin chat' }))
-      } else fireEvent.click(await screen.findByRole('button', { name: 'Rename Saved title' }))
+      } else await chooseChatMenuItem('Saved title', 'Rename chat')
       if (operation.endsWith('rename')) {
         const input = screen.getByDisplayValue(
           operation.startsWith('project') ? 'Project name' : 'Saved title',
@@ -10211,7 +10258,7 @@ describe('sidebar chat ordering', () => {
     })
   })
 
-  it('drops a chat where the rail shows it beside a lifted unread chat', async () => {
+  it('drops a chat exactly where it was dropped beside an unread chat', async () => {
     serverProjects = [
       serverProject('/work/project', 'project', [
         { id: 'thread-b', title: 'B chat' },
@@ -10223,15 +10270,16 @@ describe('sidebar chat ordering', () => {
     render(<App />)
 
     await screen.findByRole('button', { name: /^C chat,/ })
-    expect(sessionTitles()).toEqual(['A chat', 'B chat', 'C chat'])
-    dropChatRow('C chat', 'A chat', 'after')
+    // The unread chat keeps its place in the tree; the band lists it again.
+    expect(sessionTitles()).toEqual(['B chat', 'C chat', 'A chat'])
+    dropChatRow('B chat', 'A chat', 'after')
 
-    expect(sessionTitles()).toEqual(['A chat', 'C chat', 'B chat'])
+    expect(sessionTitles()).toEqual(['C chat', 'A chat', 'B chat'])
     await waitFor(() => {
       const order = SessionOrderSchema.parse(
         JSON.parse(localStorage.getItem('harness.sessionOrder.dragged') ?? '{}'),
       )
-      expect(order['/work/project']).toEqual(['thread-c', 'thread-b', 'thread-a'])
+      expect(order['/work/project']).toEqual(['thread-c', 'thread-a', 'thread-b'])
     })
   })
 
@@ -10255,12 +10303,14 @@ describe('sidebar chat ordering', () => {
     await screen.findByRole('button', { name: /^One pinned,/ })
     act(() => sidebarProps().onSelectSession('one-a'))
     await waitFor(() => expect(sidebarProps().activeSessionId).toBe('one-a'))
-    // The rail reads: Pinned (One pinned), Two (Two A), One (One unread, One A, One B).
+    // The tree reads: Pinned (One pinned), Two (Two A), One (One A, One B, One unread). The
+    // band's second listing of One unread is not a stop.
     await step('ArrowDown', 'one-b')
+    await step('ArrowDown', 'one-unread')
     await step('ArrowDown', 'one-pinned')
     await step('ArrowDown', 'two-a')
     await step('ArrowUp', 'one-pinned')
-    await step('ArrowUp', 'one-b')
+    await step('ArrowUp', 'one-unread')
   })
 
   it('moves to the previous and next chat in the order the inbox shows', async () => {
@@ -11241,7 +11291,7 @@ describe('live sessions', () => {
     fireEvent.change(composer, { target: { value: 'Initial request' } })
     fireEvent.keyDown(composer, { key: 'Enter' })
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Rename Initial request' }))
+    await chooseChatMenuItem('Initial request', 'Rename chat')
     const input = screen.getByDisplayValue('Initial request')
     fireEvent.change(input, { target: { value: 'My custom title' } })
     fireEvent.keyDown(input, { key: 'Enter' })
@@ -11828,7 +11878,7 @@ describe('live sessions', () => {
     expect(screen.queryByLabelText('Queued prompts')).toBeNull()
   })
 
-  it('shows the most recently active session first', async () => {
+  it('keeps a chat in its place when a turn starts in an older one', async () => {
     serverSidebarSettings.mode = 'classic'
     serverProjects = [
       {
@@ -11853,7 +11903,8 @@ describe('live sessions', () => {
       turn: { id: 'turn-1', threadId: 'thread-1', status: 'running', createdAt: 0 },
     })
 
-    expect(sessionTitles()).toEqual(['Older session', 'Newer session'])
+    expect(screen.getByRole('button', { name: 'Older session, Codex, working' })).toBeTruthy()
+    expect(sessionTitles()).toEqual(['Newer session', 'Older session'])
   })
 
   it('folds streamed deltas once per animation frame', async () => {
@@ -12590,7 +12641,7 @@ describe('live sessions', () => {
     expect(answered.querySelector('.sess__spinner')).not.toBeNull()
   })
 
-  it('keeps running chats above newly unread completed chats', async () => {
+  it('keeps chats in place while they run and when they finish unread', async () => {
     serverProjects = [
       {
         path: '/work/project',
@@ -12607,7 +12658,7 @@ describe('live sessions', () => {
 
     render(<App />)
     await screen.findByRole('button', { name: 'Running chat, Codex, working' })
-    expect(sessionTitles()).toEqual(['Running chat', 'Idle chat', 'Background chat'])
+    expect(sessionTitles()).toEqual(['Idle chat', 'Background chat', 'Running chat'])
 
     emitThreadEvent('background-thread', {
       type: 'turn.started',
@@ -12618,14 +12669,21 @@ describe('live sessions', () => {
         createdAt: 0,
       },
     })
-    expect(sessionTitles()).toEqual(['Background chat', 'Running chat', 'Idle chat'])
+    expect(screen.getByRole('button', { name: 'Background chat, Codex, working' })).toBeTruthy()
+    expect(sessionTitles()).toEqual(['Idle chat', 'Background chat', 'Running chat'])
 
     emitThreadEvent('background-thread', {
       type: 'turn.completed',
       turnId: 'background-turn',
       status: 'completed',
     })
-    expect(sessionTitles()).toEqual(['Running chat', 'Background chat', 'Idle chat'])
+    expect(sessionTitles()).toEqual(['Idle chat', 'Background chat', 'Running chat'])
+    expect(
+      screen
+        .getByRole('button', { name: 'Background chat, Codex, ready, unread' })
+        .closest('.sessrow')
+        ?.classList.contains('is-unread'),
+    ).toBe(true)
     expect(
       screen
         .getByRole('button', { name: 'Background chat, Codex, ready, unread' })
@@ -12695,13 +12753,15 @@ function emitQueue(
   })
 }
 
+/** The chat titles of the tree, top to bottom, without the "Needs you" band's second listing. */
 function sessionTitles(): string[] {
-  return Array.from(document.querySelectorAll('.sess__title'), (node) => node.textContent ?? '')
+  return Array.from(document.querySelectorAll('.sess__title'))
+    .filter((node) => !node.closest('.needs-band'))
+    .map((node) => node.textContent ?? '')
 }
 
 function dropChatRow(sourceTitle: string, targetTitle: string, position: 'before' | 'after') {
-  const row = (title: string) =>
-    screen.getByRole('button', { name: new RegExp(`^${title},`) }).closest('li')!
+  const row = (title: string) => treeChatRow(title).closest('li')!
   const source = row(sourceTitle)
   const target = row(targetTitle)
   vi.spyOn(target, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 60, 200, 28))

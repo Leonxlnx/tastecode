@@ -1871,8 +1871,10 @@ export function App() {
       }
 
       if (affectsSessionStatus(event)) {
-        setProjects((current) => {
-          const updated = updateSession(current, threadId, (session) => {
+        // A status change never moves the chat in the sidebar; only a new chat,
+        // a pin or a drag does.
+        setProjects((current) =>
+          updateSession(current, threadId, (session) => {
             const status = statusFor(next, event, threadId !== activeIdRef.current)
             return {
               ...session,
@@ -1884,11 +1886,8 @@ export function App() {
                   }
                 : {}),
             }
-          })
-          return event.type === 'turn.started' && sidebarSettingsRef.current.mode === 'classic'
-            ? promoteSession(updated, threadId)
-            : updated
-        })
+          }),
+        )
         if (event.type === 'turn.completed' && threadId === activeIdRef.current) {
           // Only here for the server's mark-as-read side effect — the live event
           // stream already delivered the turn. afterSeq skips serializing,
@@ -5130,6 +5129,16 @@ export function App() {
     }),
     [hideSession, hideSessions, restoreSession, restoreSessions, keepSessionActive],
   )
+  // Archive is the inbox's settle: the chat leaves its project for the
+  // Archived section and comes back when the user sends to it.
+  const archiveSidebarChat = useCallback(
+    (id: string) => void hideSession(id, 'settle'),
+    [hideSession],
+  )
+  const restoreSidebarChat = useCallback(
+    (id: string) => void restoreSession(id, 'unsettle'),
+    [restoreSession],
+  )
   const closeSidebar = useCallback(() => setCollapsed(true), [])
   const resizeSidebar = useCallback((width: number) => {
     setRailWidth(width)
@@ -5336,6 +5345,18 @@ export function App() {
   const deleteSidebarSession = useCallback(
     (id: string) => void archiveSession(id),
     [archiveSession],
+  )
+  // The server marks a chat read when its history is fetched, as it does for
+  // the open chat after a turn. Asking for nothing past the end keeps that
+  // fetch empty.
+  const markSidebarSessionRead = useCallback(
+    (id: string) => {
+      setProjects((current) => updateSession(current, id, markSessionRead))
+      void transport
+        .request('thread.history', { threadId: id, afterSeq: Number.MAX_SAFE_INTEGER })
+        .catch(() => undefined)
+    },
+    [transport],
   )
   const archiveSidebarProject = useCallback(
     (sessionIds: string[]) => {
@@ -6202,6 +6223,9 @@ export function App() {
           onRenameSession={renameSidebarSession}
           onToggleSessionPin={toggleSidebarSessionPin}
           onDeleteSession={deleteSidebarSession}
+          onMarkSessionRead={markSidebarSessionRead}
+          onArchiveSession={archiveSidebarChat}
+          onRestoreSession={restoreSidebarChat}
           onArchiveProject={archiveSidebarProject}
           onReorderProject={reorderSidebarProject}
           onReorderSession={reorderSidebarSession}

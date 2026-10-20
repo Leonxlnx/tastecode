@@ -2243,8 +2243,9 @@
               ><input type="checkbox" /><span
                 >Two versions switchable in Settings
                 <span class="d"
-                  >Classic and Inbox with auto-settle after N days; new profiles start on Classic
-                  with three-day settling enabled</span
+                  >Classic and Inbox; Inbox settles untouched chats after N days (new profiles start
+                  on Classic with three-day settling enabled), while Classic leaves those chats in
+                  place and moves only the chats the user archives to Archived</span
                 ></span
               ></label
             >
@@ -2277,6 +2278,39 @@
           <li>
             <label
               ><input type="checkbox" /><span
+                >"Needs you" band above Pinned in Classic
+                <span class="d"
+                  >shown only while a chat is blocked on an approval or a question, or failed and
+                  unread; blocked chats first, then failures, each the longest wait first; the open
+                  chat is left out and an entry leaves once answered or read (a failed one also by
+                  its Mark as read check on hover); a finished unread answer stays in the tree. At
+                  most 5 rows, 3 on a window under 800 px tall, then "+N more"; each chat also keeps
+                  its place in the tree, undimmed. Rows use the tree's status dots and show the
+                  project name as a small muted suffix that gives way before the title and hides on
+                  a rail under 220 px</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Archive chats from the Classic sidebar
+                <span class="d"
+                  >Archive is the row's one hover action and takes the time's place, never a spinner
+                  or a status dot; running and waiting chats cannot be archived. Rename, Archive and
+                  Delete (marked destructive) are in the row's menu. Archived chats leave their
+                  project for a folded "Archived N" section at the end of the rail, the most
+                  recently archived first, 10 at a time, each with Restore; they stay in chat
+                  search, open where they are, and come back to their project when the user sends to
+                  them</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
                 >Undo recently deleted chats
                 <span class="d"
                   >sidebar delete actions show a top toast with a white Undo button. The toast
@@ -2297,7 +2331,12 @@
               ><input type="checkbox" /><span
                 >Drag to reorder projects and sessions with matching inset drop lines, with the
                 chosen order restored on reload; undragged projects stay newest first, and chats
-                imported later from another provider slot in by date</span
+                imported later from another provider slot in by date
+                <span class="d"
+                  >in Classic a chat keeps its place when it starts, waits, finishes or is read;
+                  only a new chat (on top), a pin, a drag or archiving moves one, and a drop lands
+                  exactly where it was dropped</span
+                ></span
               ></label
             >
           </li>
@@ -2329,9 +2368,10 @@
                   >Classic rows show a 12 px provider mark before the title and a quiet relative
                   time on the right (5m, 3h, 2w); a working spinner or a green finished, yellow
                   waiting, or red failed dot takes the time's place, independent of the accent;
-                  unread chats get a heavier title, with no extra dot on finished chats; one shared
-                  30-second clock drives every time label and runs only while a row listens and the
-                  window is visible</span
+                  unread chats get a heavier title and never a second dot; a folded project shows
+                  one dot and a count of its chats that need the user; one shared 30-second clock
+                  drives every time label and runs only while a row listens and the window is
+                  visible</span
                 ></span
               ></label
             >

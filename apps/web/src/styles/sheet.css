@@ -1,0 +1,61 @@
+/* The modal frame shared by the dialogs: Settings' own confirmations, the
+   sidebar's, checkpoints, checkout discard and feedback. Every one of them
+   loads on demand, so the frame stays out of the startup stylesheet. */
+
+.sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: 32px;
+}
+
+.sheet__scrim {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  border: 0;
+  cursor: default;
+}
+
+/* Each dialog restyles its panel with a class of its own (.feedback,
+   .rollback, ...). The build loads a dialog's stylesheet before this shared
+   one, so the frame takes no specificity and the dialog's class always wins,
+   as it did while the frame sat in the startup stylesheet. */
+:where(.sheet__panel) {
+  position: relative;
+  width: 100%;
+  max-width: 460px;
+  max-height: 100%;
+  overflow-y: auto;
+  background: var(--bg-rail);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-dialog);
+  box-shadow: var(--shadow-modal);
+}
+
+.sheet__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px 10px;
+}
+
+.sheet__title {
+  font-size: var(--t-lg);
+  font-weight: 560;
+  letter-spacing: -0.014em;
+  margin: 0;
+}
+
+.sheet__section {
+  padding: 12px 16px 16px;
+  border-top: 1px solid var(--line);
+}
+
+@media (max-width: 700px) {
+  .sheet {
+    padding: 12px;
+  }
+}

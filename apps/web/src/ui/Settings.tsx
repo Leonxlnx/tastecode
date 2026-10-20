@@ -31,6 +31,8 @@ import {
   isFastModeEnabled,
 } from './model-selector-utils.js'
 import { BackgroundModelSettingsSchema } from '@harness/contracts'
+import '../styles/sheet.css'
+import '../styles/switch.css'
 import '../styles/settings.css'
 import type {
   Account,

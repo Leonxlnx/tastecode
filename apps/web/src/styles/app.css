@@ -507,7 +507,8 @@
   pointer-events: auto;
 }
 
-.sessrow:focus-within .sess__meta {
+/* The time gives way to the row's one action; a live state never does. */
+.sessrow.has-action:focus-within .sess__meta {
   opacity: 0;
 }
 
@@ -518,7 +519,7 @@
     pointer-events: auto;
   }
 
-  .sessrow:hover .sess__meta {
+  .sessrow.has-action:hover .sess__meta {
     opacity: 0;
   }
 
@@ -576,106 +577,10 @@
   border: 0;
 }
 
-/* ---------- settings sheet ---------- */
-
-.sheet {
-  position: fixed;
-  inset: 0;
-  z-index: 60;
-  display: grid;
-  place-items: center;
-  padding: 32px;
-}
-
-.sheet__scrim {
-  position: absolute;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.55);
-  border: 0;
-  cursor: default;
-}
-
 @keyframes fade-in {
   from {
     opacity: 0;
   }
-}
-
-.sheet__panel {
-  position: relative;
-  width: 100%;
-  max-width: 460px;
-  max-height: 100%;
-  overflow-y: auto;
-  background: var(--bg-rail);
-  border: 1px solid var(--line-strong);
-  border-radius: var(--r-dialog);
-  box-shadow: var(--shadow-modal);
-}
-
-.sheet__head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 14px 16px 10px;
-}
-
-.sheet__title {
-  font-size: var(--t-lg);
-  font-weight: 560;
-  letter-spacing: -0.014em;
-  margin: 0;
-}
-
-.sheet__section {
-  padding: 12px 16px 16px;
-  border-top: 1px solid var(--line);
-}
-
-.switch {
-  position: relative;
-  width: 36px;
-  height: 22px;
-  flex: none;
-  padding: 0;
-  background: var(--surface-3);
-  border: 1px solid var(--line-strong);
-  border-radius: var(--r-pill);
-  cursor: pointer;
-  transition:
-    background var(--dur-fast) var(--ease-out),
-    border-color var(--dur-fast) var(--ease-out);
-}
-
-.switch.is-on {
-  background: var(--light);
-  border-color: var(--light);
-  color: var(--on-light);
-}
-
-:root[data-theme='light'] .switch:not(.is-on) {
-  background: var(--chrome-recessed);
-  border-color: var(--chrome-border);
-  box-shadow: var(--chrome-inset-shadow);
-}
-
-.switch__thumb {
-  position: absolute;
-  top: 50%;
-  left: 2px;
-  width: 16px;
-  height: 16px;
-  translate: 0 -50%;
-  background: var(--text-2);
-  border-radius: var(--r-circle);
-  transition:
-    transform var(--dur-fast) var(--ease-out),
-    background var(--dur-fast) var(--ease-out);
-}
-
-.switch.is-on .switch__thumb {
-  background: var(--on-light);
-  transform: translateX(14px);
 }
 
 .section {
@@ -810,7 +715,7 @@
 }
 
 .proj__name {
-  flex: 1;
+  flex: 0 1 auto;
   /* Parents carry the weight; their chats read lighter beneath them. */
   font-weight: 500;
   overflow: hidden;
@@ -1036,14 +941,6 @@
   letter-spacing: 0;
 }
 
-.sess__unread-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: var(--r-circle);
-  background: var(--light);
-  flex: none;
-}
-
 .sess__actions {
   position: absolute;
   right: 0;
@@ -1122,6 +1019,132 @@
 
 .sess__status-dot.is-failed {
   background: var(--error);
+}
+
+/* ---------- needs you ---------- */
+
+/* Chats waiting for the user, above Pinned. Only rendered when one is. */
+.needs-band__list {
+  margin: 0 0 10px;
+}
+
+/* The band's state mark sits in the provider mark's column, so every title in
+   the rail starts on one line. */
+.sess__mark {
+  display: grid;
+  place-items: center;
+  width: 13px;
+  height: 13px;
+  flex: none;
+}
+
+.sess__mark > .sess__status-dot {
+  margin: 0;
+}
+
+/* The title is what the row is about: the project name only gets the room
+   the title leaves, so it truncates first, and it hides rather than show a
+   letter or two. */
+:is(.needs-band__row, .archived__row) .sess__title {
+  flex: 0 1 auto;
+}
+
+.sess__project {
+  flex: 1 1 0;
+  min-width: 0;
+  container-type: inline-size;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  letter-spacing: 0;
+  text-align: right;
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+
+.sess__project > span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@container (max-width: 31px) {
+  .sess__project > span {
+    visibility: hidden;
+  }
+}
+
+.rail__body[data-narrow] .sess__project {
+  display: none;
+}
+
+/* The row's one action takes the project name's place; the state mark on the
+   left never hides. */
+.sessrow.has-action:focus-within .sess__project {
+  opacity: 0;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .sessrow.has-action:hover .sess__project {
+    opacity: 0;
+  }
+}
+
+/* ---------- archived ---------- */
+
+.archived__toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 24px;
+  background: none;
+  border: 0;
+  border-radius: var(--r-md);
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+  transition: color var(--dur-fast) var(--ease-out);
+}
+
+.archived__toggle:is(:hover, :focus-visible) {
+  color: var(--text-2);
+}
+
+.archived__count {
+  font-variant-numeric: tabular-nums;
+  font-weight: 400;
+}
+
+.archived__chevron {
+  flex: none;
+  margin-left: auto;
+  margin-right: 3px;
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+
+.archived__toggle[aria-expanded='true'] .archived__chevron {
+  transform: rotate(90deg);
+}
+
+.archived__list {
+  margin: 0 0 8px;
+}
+
+/* A folded project's count of chats that need the user, right after its name. */
+.proj__attention {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+  color: var(--text-2);
+  font-size: var(--t-xs);
+  font-variant-numeric: tabular-nums;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+
+.proj__attention > .sess__status-dot {
+  margin: 0;
 }
 
 /* ---------- stage ---------- */
@@ -3605,10 +3628,6 @@
   .proj__head .dots {
     opacity: 1;
     pointer-events: auto;
-  }
-
-  .sheet {
-    padding: 12px;
   }
 }
 
