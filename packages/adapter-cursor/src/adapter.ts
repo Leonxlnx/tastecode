@@ -30,7 +30,7 @@ export const CURSOR_CAPABILITIES: Capabilities = {
   images: false,
 }
 
-type Events = { event: [DomainEvent]; log: [string] }
+type Events = { event: [DomainEvent]; log: [string]; providerSessionId: [string] }
 type StartOptions = {
   model?: string
   effort?: string
@@ -76,6 +76,20 @@ export class CursorAdapter extends EventEmitter<Events> {
 
   get capabilities(): Capabilities {
     return CURSOR_CAPABILITIES
+  }
+
+  /**
+   * The cursor-agent chat id once the CLI reported one. A new thread's own id
+   * is chosen before the first turn and names no chat; resuming needs this one.
+   */
+  get providerSessionId(): string | undefined {
+    return this.#sessionId
+  }
+
+  /** Called with the chat id whenever the CLI reports a new one, and at once if known. */
+  onProviderSessionId(listener: (providerSessionId: string) => void): void {
+    this.on('providerSessionId', listener)
+    if (this.#sessionId) listener(this.#sessionId)
   }
 
   async startThread(workspacePath: string, options: StartOptions = {}): Promise<Thread> {
@@ -253,7 +267,9 @@ export class CursorAdapter extends EventEmitter<Events> {
 
   #onEvent(event: CursorEvent): void {
     if (event.type === 'system' && event.subtype === 'init' && event.session_id) {
+      if (event.session_id === this.#sessionId) return
       this.#sessionId = event.session_id
+      this.emit('providerSessionId', event.session_id)
       return
     }
     if (!this.#mapper) return
