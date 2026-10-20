@@ -1,3 +1,4 @@
+import { ACP_CAPABILITIES } from '@harness/adapter-acp/capabilities'
 import { ANTIGRAVITY_CAPABILITIES, antigravityInstallCommand } from '@harness/adapter-antigravity'
 import { CURSOR_CAPABILITIES, cursorInstallCommand } from '@harness/adapter-cursor'
 import { OPENCODE_CAPABILITIES } from '@harness/adapter-opencode'
@@ -430,7 +431,8 @@ async function acpStatus(system: SystemProbe): Promise<ProviderStatus> {
     installed: present.length > 0,
     auth: 'unknown',
     source: ACP_SOURCE,
-    ...(present.length > 0 ? { version: present.map((agent) => agent.name).join(', ') } : {}),
-    ...(present.length === 0 ? { problem: 'No ACP agent found on PATH' } : {}),
+    ...(present.length > 0
+      ? { version: present.map((agent) => agent.name).join(', '), capabilities: ACP_CAPABILITIES }
+      : { problem: 'No ACP agent found on PATH' }),
   }
 }

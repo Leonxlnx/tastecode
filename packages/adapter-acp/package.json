@@ -12,6 +12,10 @@
       "types": "./dist/agents.d.ts",
       "default": "./dist/agents.js"
     },
+    "./capabilities": {
+      "types": "./dist/capabilities.d.ts",
+      "default": "./dist/capabilities.js"
+    },
     "./mcp": {
       "types": "./dist/mcp.d.ts",
       "default": "./dist/mcp.js"

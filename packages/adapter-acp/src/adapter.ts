@@ -22,6 +22,7 @@ import {
 } from '@harness/proc'
 import { discoverAgentModels, findAgentSpec, type AcpAgentSpec } from './agents.js'
 import { optionFor, type PermissionOption } from './approvals.js'
+import { ACP_CAPABILITIES } from './capabilities.js'
 import { mapAcpCommands } from './commands.js'
 import { Streamer } from './events.js'
 import type { AcpMcpServer } from './mcp.js'
@@ -207,16 +208,7 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
   }
 
   get capabilities(): Capabilities {
-    return {
-      // ACP has no steer or fork. It does have cancellation and thinking, and
-      // permission requests are core to it rather than optional.
-      steer: false,
-      fork: false,
-      interrupt: true,
-      reasoningItems: true,
-      approvals: true,
-      images: this.#images,
-    }
+    return { ...ACP_CAPABILITIES, images: this.#images }
   }
 
   async startThread(workspacePath: string, options: AcpStartOptions = {}): Promise<Thread> {

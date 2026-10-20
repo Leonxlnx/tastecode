@@ -304,6 +304,20 @@ describe('detectProviders', () => {
     const acp = find(providers, 'acp')
     expect(acp.installed).toBe(true)
     expect(acp.version).toBe('Kimi CLI, Qwen Code')
+    // The composer sends only to a provider that declares what it can do.
+    expect(acp.capabilities).toMatchObject({ interrupt: true, approvals: true, steer: false })
+  })
+
+  it('declares no capabilities while no ACP agent is installed', async () => {
+    const acp = find(
+      await detectProviders(
+        system({ acpAgents: async () => [{ name: 'Devin', installed: false }] }),
+      ),
+      'acp',
+    )
+    expect(acp.installed).toBe(false)
+    expect(acp.capabilities).toBeUndefined()
+    expect(acp.problem).toBe('No ACP agent found on PATH')
   })
 
   it('declares what each provider source must name, installed or not', async () => {

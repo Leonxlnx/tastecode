@@ -16,6 +16,7 @@ export {
   parseKimiModels,
   type AcpAgentSpec,
 } from './agents.js'
+export { ACP_CAPABILITIES } from './capabilities.js'
 export { prepareAcpMcpServers, validateAcpMcpServer, type AcpMcpServer } from './mcp.js'
 export { acpCommandName, acpCommandSkillPath, mapAcpCommands } from './commands.js'
 export { optionFor, type PermissionOption } from './approvals.js'
