@@ -140,6 +140,7 @@ import {
   activeAccountOf,
   useProviderAccounts,
   type AccountLabel,
+  type ProviderAccountsSnapshot,
 } from './provider-accounts-state.js'
 import {
   agentMark,
@@ -823,6 +824,9 @@ export function App() {
       (status) => status.installed && status.capabilities?.multipleAccounts === true,
     ),
   )
+  /** For the model catalog's runs, which outlive a render. */
+  const providerAccountsRef = useRef(providerAccounts)
+  providerAccountsRef.current = providerAccounts
   const [acpAgents, setAcpAgents] = useState<ResultOf<'acp.agents'>['agents']>([])
   const [modelConnections, setModelConnections] = useState<ModelConnection[]>([])
   const [catalogRequest, setCatalogRequest] = useState(0)
@@ -1235,13 +1239,63 @@ export function App() {
         })
       : undefined
   }, [activeSession])
-  const selectableModels = useMemo(
-    () =>
-      activeModelSource
-        ? visibleModels.filter((choice) => modelSource(choice) === activeModelSource)
-        : visibleModels,
-    [activeModelSource, visibleModels],
-  )
+  // An open chat runs on its own account. When that is not the account the
+  // catalog lists for its provider, the chat is offered its own account's
+  // models, whose plan may differ; the catalog's stay until they arrive.
+  const chatModelAccount =
+    activeSession &&
+    // A chat still starting runs on the active account, which the catalog lists.
+    !activeSession.id.startsWith('pending:') &&
+    !activeSession.agent &&
+    !activeSession.connectionId &&
+    !sameAccount(
+      activeSession.accountId,
+      modelListAccount(providerAccounts, activeSession.provider),
+    )
+      ? chatAccountKey(activeSession.provider, activeSession.accountId)
+      : undefined
+  const chatModelAccountRef = useRef(chatModelAccount)
+  chatModelAccountRef.current = chatModelAccount
+  const [chatModels, setChatModels] = useState<{ account: string; models: ModelChoice[] }>()
+  const [chatModelsRevision, setChatModelsRevision] = useState(0)
+  useEffect(() => {
+    if (!chatModelAccount) return
+    const [id = '', accountId = DEFAULT_ACCOUNT_ID] = chatModelAccount.split('\u0000')
+    const chatProvider = id as ProviderId
+    let cancelled = false
+    void transport
+      .request('models.list', {
+        provider: chatProvider,
+        ...(accountId === DEFAULT_ACCOUNT_ID ? {} : { accountId }),
+      })
+      .then(
+        (result) => {
+          if (cancelled) return
+          const sourceName = providerName(chatProvider)
+          setChatModels({
+            account: chatModelAccount,
+            models: choicesFor(
+              { provider: chatProvider, sourceName, mark: providerMark(chatProvider) },
+              result.models,
+              false,
+            ),
+          })
+        },
+        // The catalog's list stays offered.
+        () => undefined,
+      )
+    return () => {
+      cancelled = true
+    }
+  }, [chatModelAccount, chatModelsRevision, transport])
+  const selectableModels = useMemo(() => {
+    if (chatModelAccount && chatModels?.account === chatModelAccount && chatModels.models.length) {
+      return chatModels.models.filter((choice) => !hiddenModels.has(choice.key))
+    }
+    return activeModelSource
+      ? visibleModels.filter((choice) => modelSource(choice) === activeModelSource)
+      : visibleModels
+  }, [activeModelSource, visibleModels, chatModelAccount, chatModels, hiddenModels])
   const storedModelChoice = models.find((choice) => choice.key === modelId)
   const sourceHasCatalogModels = useMemo(
     () =>
@@ -2324,7 +2378,11 @@ export function App() {
           })
         }
         try {
-          const result = await transport.request('models.list', { provider: entry.id })
+          const accountId = modelListAccount(providerAccountsRef.current, entry.id)
+          const result = await transport.request('models.list', {
+            provider: entry.id,
+            ...(accountId ? { accountId } : {}),
+          })
           const models = choicesFor(
             {
               provider: entry.id,
@@ -2707,13 +2765,42 @@ export function App() {
   useEffect(
     () =>
       transport.on('models.changed', ({ provider, agent, accountId }) => {
-        // The picker lists the default account's models; another account's
-        // list is read where that account is used.
-        if (accountId !== undefined && accountId !== DEFAULT_ACCOUNT_ID) return
+        // An open chat on another account lists that account's models itself.
+        if (
+          agent === undefined &&
+          chatModelAccountRef.current === chatAccountKey(provider, accountId)
+        ) {
+          setChatModelsRevision((revision) => revision + 1)
+        }
+        // A provider's own list is its active account's; a custom harness keeps its own sign-in.
+        const listed =
+          agent === undefined ? modelListAccount(providerAccountsRef.current, provider) : undefined
+        if (!sameAccount(accountId, listed)) return
         catalogSources.current?.relist(sourceKey({ provider, agentId: agent }))
       }),
     [transport],
   )
+
+  // A provider whose active account changed lists that account's models, so
+  // a new chat is offered what its plan has.
+  const modelListAccounts = useMemo(
+    () =>
+      [...new Set(providerAccounts.accounts.map((account) => account.provider))]
+        .sort()
+        .map((id) => `${id}=${activeAccountOf(providerAccounts, id)}`)
+        .join(','),
+    [providerAccounts],
+  )
+  const listedModelAccounts = useRef(new Map<string, string>())
+  useEffect(() => {
+    for (const entry of modelListAccounts ? modelListAccounts.split(',') : []) {
+      const [id = '', accountId = DEFAULT_ACCOUNT_ID] = entry.split('=')
+      const before = listedModelAccounts.current.get(id) ?? DEFAULT_ACCOUNT_ID
+      listedModelAccounts.current.set(id, accountId)
+      // A provider's own source key is its id.
+      if (before !== accountId) catalogSources.current?.relist(id)
+    }
+  }, [modelListAccounts])
 
   // A window left open for hours lists its models again when it comes back,
   // so a CLI updated outside the app brings its new releases (and retires the
@@ -6820,6 +6907,23 @@ function Empty(props: {
       </div>
     </div>
   )
+}
+
+/** One provider account, as a key; the default account however it is named. */
+function chatAccountKey(provider: ProviderId, accountId: AccountId | undefined): string {
+  return `${provider}\u0000${accountId ?? DEFAULT_ACCOUNT_ID}`
+}
+
+/**
+ * The account a provider's own model list is read as: the one new chats start
+ * on, whose plan may offer other models. Undefined for the default account.
+ */
+function modelListAccount(
+  accounts: ProviderAccountsSnapshot,
+  provider: ProviderId,
+): AccountId | undefined {
+  const active = activeAccountOf(accounts, provider)
+  return active === DEFAULT_ACCOUNT_ID ? undefined : active
 }
 
 function providerName(id: ProviderId, sourceName?: string): string {

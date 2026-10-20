@@ -5333,6 +5333,72 @@ describe('new chats', () => {
     )
   })
 
+  it("offers each account's own models: the active one for new chats, a chat's own for it", async () => {
+    const codex = serverProviders[0]!
+    serverProviders = [
+      { ...codex, capabilities: { ...codex.capabilities!, multipleAccounts: true } },
+    ]
+    serverProjects[0]!.sessions = [
+      { id: 'chat-personal', title: 'Personal chat', provider: 'codex', createdAt: 1 },
+      {
+        id: 'chat-work',
+        title: 'Work chat',
+        provider: 'codex',
+        accountId: 'work-1a2b3c',
+        createdAt: 2,
+      },
+    ]
+    const model = (id: string): Model => ({
+      id,
+      displayName: id,
+      isDefault: true,
+      reasoningEfforts: ['low'],
+      serviceTiers: [],
+    })
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'accounts.list') {
+        return Promise.resolve({
+          accounts: [
+            { id: 'default', provider: 'codex', label: 'Personal', managed: false },
+            {
+              id: 'work-1a2b3c',
+              provider: 'codex',
+              label: 'Work',
+              home: 'C:\\TasteCode\\accounts\\codex\\work-1a2b3c',
+              managed: true,
+            },
+          ],
+          active: { codex: 'work-1a2b3c' },
+        })
+      }
+      if (method === 'models.list') {
+        const { accountId } = methods['models.list'].params.parse(params)
+        return Promise.resolve({
+          models: [model(accountId === 'work-1a2b3c' ? 'work-plan-model' : 'personal-plan-model')],
+        })
+      }
+      return request(method, params)
+    })
+    const offered = () => composerProps().models.map((choice) => choice.model.id)
+    render(<App />)
+
+    // New chats start on Work, so the picker lists what Work's plan has.
+    await waitFor(() => expect(offered()).toEqual(['work-plan-model']))
+    expect(transport.request).toHaveBeenCalledWith('models.list', {
+      provider: 'codex',
+      accountId: 'work-1a2b3c',
+    })
+
+    // A chat pinned to the default account is offered the default account's models.
+    fireEvent.click(await waitFor(() => treeChatRow('Personal chat')))
+    await waitFor(() => expect(offered()).toEqual(['personal-plan-model']))
+    // A chat on the active account uses the catalog's list again.
+    fireEvent.click(await waitFor(() => treeChatRow('Work chat')))
+    await waitFor(() => expect(offered()).toEqual(['work-plan-model']))
+  })
+
   it('keeps plan limits and asks nothing new when switching chats of one provider', async () => {
     serverProjects = [
       {

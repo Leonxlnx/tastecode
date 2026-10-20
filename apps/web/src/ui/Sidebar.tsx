@@ -153,6 +153,8 @@ export type Session = {
   provider: ProviderId
   agent?: string | undefined
   connectionId?: string | undefined
+  /** The provider account the chat is pinned to. Absent means default. */
+  accountId?: string | undefined
   createdAt: number
   /** Client-observed start of the current status, used for elapsed/relative labels. */
   statusSince?: number | undefined
