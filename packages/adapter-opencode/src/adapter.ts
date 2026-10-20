@@ -236,6 +236,8 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
   readonly #configuredBaseUrl: string | undefined
   readonly #mcpServers: McpServerConfig[]
   readonly #mcpCredentials: Record<string, string>
+  readonly #config: Record<string, JsonRpcValue>
+  readonly #environment: Record<string, string>
   #baseUrl: string | undefined
   #server: { close(): Promise<void> } | undefined
   #starting: Promise<void> | undefined
@@ -268,6 +270,10 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
       baseUrl?: string
       mcpServers?: McpServerConfig[]
       mcpCredentials?: Record<string, string>
+      /** Extra opencode config for the launched server, beside the MCP block. */
+      config?: Record<string, JsonRpcValue>
+      /** Extra variables for the launched server, such as a key the config references. */
+      environment?: Record<string, string>
       spawn?: Spawn
     } = {},
   ) {
@@ -277,6 +283,8 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
     this.#configuredBaseUrl = options.baseUrl
     this.#mcpServers = options.mcpServers ?? []
     this.#mcpCredentials = options.mcpCredentials ?? {}
+    this.#config = options.config ?? {}
+    this.#environment = options.environment ?? {}
   }
 
   get capabilities(): Capabilities {
@@ -309,15 +317,18 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
     this.#launchAbort = abort
     let server: Awaited<ReturnType<typeof launchOpenCodeServer>>
     try {
-      const config =
-        this.#mcpServers.length > 0
+      const config = {
+        ...this.#config,
+        ...(this.#mcpServers.length > 0
           ? { mcp: openCodeMcpConfig(this.#mcpServers, this.#mcpCredentials) }
-          : {}
+          : {}),
+      }
       server = await launchOpenCodeServer(
         config,
         this.#spawn,
         this.#customSpawn ? 'opencode' : ((await nativeShimTarget('opencode')) ?? 'opencode'),
         abort.signal,
+        this.#environment,
       )
     } catch {
       if (generation !== this.#generation)
@@ -1001,6 +1012,7 @@ async function launchOpenCodeServer(
   command = 'opencode',
   /** Aborted when the adapter is disposed: the serve is stopped before it prints its URL. */
   signal?: AbortSignal,
+  environment: Record<string, string> = {},
 ): Promise<{
   url: string
   authorization: string
@@ -1015,6 +1027,7 @@ async function launchOpenCodeServer(
   return new Promise((resolve, reject) => {
     const child = spawn(command, ['serve', '--hostname=127.0.0.1', '--port=0'], {
       env: {
+        ...environment,
         OPENCODE_SERVER_USERNAME: username,
         OPENCODE_SERVER_PASSWORD: password,
         ...(Object.keys(config).length > 0

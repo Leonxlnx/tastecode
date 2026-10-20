@@ -53,6 +53,35 @@ describe('OpenCode server launch', () => {
     expect(child.kill).toHaveBeenCalled()
   })
 
+  it('passes extra config beside the MCP block and extra variables to the serve', async () => {
+    const child = fakeChild()
+    vi.mocked(nativeShimTarget).mockResolvedValue(undefined)
+    // SAFETY: as above, the double implements what the launch and killTree read.
+    vi.mocked(spawnCli).mockReturnValue(child as unknown as ReturnType<typeof spawnCli>)
+    const adapter = new OpenCodeAdapter({
+      config: { enabled_providers: ['openai'] },
+      environment: { XDG_DATA_HOME: '/tmp/isolated' },
+      mcpServers: [
+        {
+          id: 'docs',
+          enabled: true,
+          transport: { type: 'remote', url: 'https://example.com/mcp' },
+        },
+      ],
+    })
+    const starting = adapter.start()
+    await vi.waitFor(() => expect(spawnCli).toHaveBeenCalledTimes(1))
+    const env = vi.mocked(spawnCli).mock.calls[0]?.[2]?.env ?? {}
+    expect(env['XDG_DATA_HOME']).toBe('/tmp/isolated')
+    expect(env['OPENCODE_SERVER_USERNAME']).toBe('opencode')
+    expect(JSON.parse(env['OPENCODE_CONFIG_CONTENT'] ?? '{}')).toEqual({
+      enabled_providers: ['openai'],
+      mcp: { docs: { type: 'remote', url: 'https://example.com/mcp', enabled: true } },
+    })
+    await adapter.dispose()
+    await expect(starting).rejects.toThrow('stopped while it was starting')
+  })
+
   it('starts no serve when disposed while it looked for the executable', async () => {
     let found!: (target: string | undefined) => void
     vi.mocked(nativeShimTarget).mockReturnValue(new Promise((resolve) => (found = resolve)))
