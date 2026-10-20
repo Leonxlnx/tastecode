@@ -2236,6 +2236,16 @@ describe('provider account contracts', () => {
       methods['projects.list'].result.parse({ projects: [project] }).projects[0]?.sessions[0]
         ?.accountId,
     ).toBe('work')
+    const continued = { ...session, id: 'th3', continuedFrom: 'th2' }
+    expect(
+      methods['projects.list'].result.parse({ projects: [{ ...project, sessions: [continued] }] })
+        .projects[0]?.sessions[0]?.continuedFrom,
+    ).toBe('th2')
+    expect(
+      methods['projects.list'].result.safeParse({
+        projects: [{ ...project, sessions: [{ ...continued, continuedFrom: '' }] }],
+      }).success,
+    ).toBe(false)
   })
 
   it('splits usage history by account on request', () => {
