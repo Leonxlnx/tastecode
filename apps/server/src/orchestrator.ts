@@ -2025,12 +2025,24 @@ export class Orchestrator {
         return await stopStarted(errorMessage(error))
       }
       // Stop the session the chat leaves before the new one is attached, so
-      // two agents never answer for one chat.
-      try {
-        await this.#disposeThreadRuntime(threadId, 'disconnect')
-      } catch (error) {
+      // two agents never answer for one chat. A stop that fails is tried
+      // again: macOS can refuse to signal a process group that is going away.
+      let stopFailure: unknown
+      for (const wait of [0, 250, 1_000]) {
+        if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait))
+        try {
+          await (stopFailure === undefined
+            ? this.#disposeThreadRuntime(threadId, 'disconnect')
+            : this.#stopThreadProvider(threadId))
+          stopFailure = undefined
+          break
+        } catch (error) {
+          stopFailure = error
+        }
+      }
+      if (stopFailure !== undefined) {
         return await stopStarted(
-          `The current agent did not stop, so the chat stays where it is: ${errorMessage(error)}`,
+          `The current agent did not stop, so the chat stays where it is: ${errorMessage(stopFailure)}`,
         )
       }
       try {

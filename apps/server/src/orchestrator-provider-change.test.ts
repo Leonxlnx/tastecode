@@ -52,6 +52,8 @@ function setup(
     failStart?: ProviderId
     promptLimit?: Partial<Record<ProviderId, number>>
     startGate?: Promise<void>
+    /** How many times the first session refuses to stop before it does. */
+    stopFailures?: number
   } = {},
 ) {
   const launches: Launch[] = []
@@ -112,6 +114,10 @@ function setup(
       interrupt: async () => {},
       respondToApproval: () => {},
       dispose: () => {
+        if (sessions[0] === created && (behaviour.stopFailures ?? 0) > 0) {
+          behaviour.stopFailures! -= 1
+          throw new Error('kill EPERM')
+        }
         created.disposed = true
       },
       on: (event: 'event' | 'log', listener: (value: never) => void) => {
@@ -268,6 +274,33 @@ describe('moving a chat to another provider', () => {
       'Side chat',
     )
     await orchestrator.disposeAll()
+  })
+
+  it('tries again to stop a session that refuses once, and moves', async () => {
+    const repo = repository()
+    const { orchestrator, store, sessions } = setup(undefined, { stopFailures: 1 })
+    const chat = await orchestrator.startThread('codex', repo)
+
+    await orchestrator.changeProvider(chat.id, { provider: 'claude-code' })
+
+    expect(sessions[0]!.disposed).toBe(true)
+    expect(store.thread(chat.id)?.provider).toBe('claude-code')
+    await orchestrator.disposeAll()
+  })
+
+  it('stays where it is when the session it leaves will not stop', async () => {
+    const repo = repository()
+    const { orchestrator, store, sessions } = setup(undefined, { stopFailures: 10 })
+    const chat = await orchestrator.startThread('codex', repo)
+
+    await expect(orchestrator.changeProvider(chat.id, { provider: 'claude-code' })).rejects.toThrow(
+      'The current agent did not stop, so the chat stays where it is: kill EPERM',
+    )
+
+    expect(store.thread(chat.id)?.provider).toBe('codex')
+    expect(store.threadNeedsHandover(chat.id)).toBe(false)
+    // The session it started at the new place is stopped again.
+    expect(sessions[1]!.disposed).toBe(true)
   })
 
   it('refuses a prompt while the chat is moving', async () => {
