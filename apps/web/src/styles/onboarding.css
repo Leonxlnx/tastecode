@@ -902,242 +902,154 @@
 
 /* ---------- providers ---------- */
 
-.onboarding__providers {
-  display: grid;
-  margin: 0;
-  padding: 0;
-  overflow: hidden;
-  list-style: none;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--r-card);
+@property --pick-dim {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: transparent;
 }
 
-.onboarding__provider {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto auto;
-  align-items: center;
-  gap: 14px;
-  min-height: 60px;
-  padding: 0 16px;
-}
-
-.onboarding__provider + .onboarding__provider {
-  border-top: 1px solid var(--line);
-}
-
-/* The frame lands first, then the rows populate it. */
-.onboarding__step[data-phase='entering'] .onboarding__provider {
-  animation: onboarding-arrive 560ms var(--ease-out) both;
-  animation-delay: 160ms;
-}
-
-.onboarding__step[data-phase='entering'] .onboarding__provider:nth-child(2) {
-  animation-delay: 210ms;
-}
-
-.onboarding__step[data-phase='entering'] .onboarding__provider:nth-child(3) {
-  animation-delay: 260ms;
-}
-
-.onboarding__provider-mark {
-  display: grid;
-  place-items: center;
-  width: 34px;
-  height: 34px;
-  background: var(--surface-2);
-  border: 1px solid var(--chrome-border);
-  border-radius: var(--r-lg);
-  color: var(--text);
-}
-
-.onboarding__provider-name {
-  display: grid;
-  min-width: 0;
-  color: var(--text);
-  font-size: var(--t-md);
-  font-weight: 550;
-  line-height: 1.3;
-}
-
-.onboarding__provider-name small {
-  color: var(--text-3);
-  font-size: var(--t-xs);
-  font-weight: 450;
-}
-
-/* Status is quiet text with a glyph: a ready row draws its check and asks
-   for nothing, a pending row carries its own action instead of a badge. */
-.onboarding__provider-status {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  color: var(--text-3);
-  font-size: var(--t-sm);
-  white-space: nowrap;
-}
-
-.onboarding__provider[data-tone='ready'] .onboarding__provider-status {
-  color: var(--text-2);
-}
-
-.onboarding__check {
-  flex: none;
-  fill: none;
-  stroke: var(--success);
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
-.onboarding__check circle {
-  stroke-width: 1.25;
-  stroke-dasharray: 1;
-  stroke-dashoffset: 1;
-  opacity: 0.5;
-  animation: onboarding-draw 560ms var(--ease-out) 300ms forwards;
-}
-
-.onboarding__check path {
-  stroke-width: 1.75;
-  stroke-dasharray: 1;
-  stroke-dashoffset: 1;
-  animation: onboarding-draw 380ms var(--ease-out) 560ms forwards;
-}
-
-@keyframes onboarding-draw {
-  to {
-    stroke-dashoffset: 0;
-  }
-}
-
-.onboarding__spinner {
-  flex: none;
-  width: 12px;
-  height: 12px;
-  border: 1.5px solid var(--line-strong);
-  border-top-color: var(--text-2);
-  border-radius: var(--r-circle);
-  animation: onboarding-spin 760ms linear infinite;
-}
-
-@keyframes onboarding-spin {
-  to {
-    transform: rotate(1turn);
-  }
-}
-
-.onboarding__provider-action {
-  min-height: 28px;
-  padding: 4px 11px;
-  background: var(--control-hover);
-  border: 1px solid var(--chrome-border);
-  border-radius: var(--r-md);
-  color: var(--text);
-  cursor: pointer;
-  font: inherit;
-  font-size: var(--t-xs);
-  font-weight: 500;
-  line-height: 1.25;
-  white-space: nowrap;
-}
-
-.onboarding__provider-action:hover {
-  background: var(--surface-3);
-}
-
-.onboarding__provider-action:focus-visible {
-  outline: var(--focus-ring);
-  outline-offset: var(--focus-ring-offset);
-}
-
-/* The agents page is a pick list: the providers with their own
-   integration, then the ACP library, each a compact row of the list above
-   that is a checkbox. Long enough to scroll on its own, so the preview
-   beside it stays where it is. */
+/* The agents page sets each agent as one line of the provider roster's own
+   language: its mark and name, a dotted leader, its state, and an empty
+   socket like the one in the preview's model picker. Picking it runs the
+   wire solid into the socket, which fills. Nothing is boxed, tiled or a
+   button; the whole line is the choice. The list scrolls on its own and
+   fades out at the bottom, so the preview beside it stays put. */
 .onboarding__pick {
+  --pick-dim: color-mix(in srgb, var(--text-3) 55%, transparent);
+
   display: grid;
-  gap: 18px;
+  gap: 22px;
   max-height: clamp(260px, calc(100vh - 360px), 520px);
-  margin: 0 -6px;
-  padding: 0 6px 2px;
+  padding-bottom: 28px;
   overflow-y: auto;
   overscroll-behavior: contain;
-  scrollbar-width: thin;
+  scrollbar-width: none;
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 36px), transparent);
+}
+
+.onboarding__pick::-webkit-scrollbar {
+  display: none;
 }
 
 .onboarding__pick-group {
   display: grid;
-  gap: 8px;
 }
 
 .onboarding__pick-title {
-  margin: 0;
+  margin: 0 0 4px;
   color: var(--text-3);
   font-size: var(--t-xs);
   font-weight: 500;
 }
 
-.onboarding__pick .onboarding__provider {
-  display: block;
-  min-height: 0;
-  padding: 0;
-}
-
-.onboarding__pick .onboarding__provider > label {
+.onboarding__picks {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.onboarding__pick-row > label {
+  display: grid;
+  grid-template-columns: 16px max-content minmax(20px, 1fr) max-content 10px;
   align-items: center;
-  gap: 12px;
-  min-height: 50px;
-  padding: 0 12px;
+  column-gap: 10px;
+  min-height: 34px;
   cursor: pointer;
-  transition: background var(--dur-fast) var(--ease-out);
 }
 
-.onboarding__pick .onboarding__provider > label:hover {
-  background: var(--control-hover);
-}
-
-.onboarding__pick .onboarding__provider > label:has(input:focus-visible) {
+.onboarding__pick-row > label:has(input:focus-visible) {
+  border-radius: var(--r-sm);
   outline: var(--focus-ring);
-  outline-offset: -2px;
+  outline-offset: 2px;
 }
 
-.onboarding__pick .onboarding__provider-mark {
-  width: 30px;
-  height: 30px;
+.onboarding__pick-mark {
+  display: grid;
+  place-items: center;
+  color: var(--text-3);
+  transition: color var(--dur-slow) var(--ease-out);
+}
+
+.onboarding__pick-name {
   color: var(--text-2);
+  font-size: var(--t-md);
+  font-weight: 550;
+  transition: color var(--dur-slow) var(--ease-out);
 }
 
-.onboarding__pick .onboarding__provider[data-added] .onboarding__provider-mark {
-  color: var(--text);
+.onboarding__pick-row[data-missing] .onboarding__pick-name {
+  color: var(--text-3);
 }
 
-.onboarding__pick .onboarding__provider-name {
-  font-size: var(--t-sm);
+.onboarding__pick-wire {
+  height: 5px;
+  background: radial-gradient(circle, var(--pick-dim) 0.75px, transparent 1.15px) left center / 5px
+    100% repeat-x;
+  transition: --pick-dim var(--dur-fast) var(--ease-out);
 }
 
-.onboarding__provider-toggle {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-  min-width: 64px;
-  min-height: 26px;
-  padding: 3px 10px;
-  border: 1px solid var(--chrome-border);
-  border-radius: var(--r-md);
-  background: var(--control-hover);
-  color: var(--text);
+.onboarding__pick-state {
+  color: var(--text-3);
   font-size: var(--t-xs);
-  font-weight: 500;
   white-space: nowrap;
 }
 
-.onboarding__provider[data-added] .onboarding__provider-toggle {
-  border-color: transparent;
-  background: none;
+.onboarding__pick-socket {
+  width: 10px;
+  height: 10px;
+  border: 1px dashed color-mix(in srgb, var(--text-3) 75%, transparent);
+  border-radius: var(--r-circle);
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    scale var(--dur-fast) var(--ease-out);
+}
+
+.onboarding__pick-row > label:hover {
+  --pick-dim: var(--text-3);
+}
+
+.onboarding__pick-row > label:hover .onboarding__pick-name {
+  color: var(--text);
+}
+
+.onboarding__pick-row > label:hover .onboarding__pick-socket {
+  border-color: var(--text-3);
+}
+
+/* Plugged in: ink, a solid wire drawn towards the socket, a filled socket. */
+.onboarding__pick-row[data-added] :is(.onboarding__pick-mark, .onboarding__pick-name) {
+  color: var(--text);
+}
+
+.onboarding__pick-row[data-added] .onboarding__pick-state {
   color: var(--text-2);
+}
+
+.onboarding__pick-row[data-added] .onboarding__pick-wire {
+  height: 1px;
+  background: var(--text-2);
+  animation: onboarding-wire 420ms var(--ease-out) both;
+}
+
+.onboarding__pick-row[data-added] .onboarding__pick-socket {
+  background: var(--text);
+  border: 1px solid var(--text);
+  animation: onboarding-socket 260ms var(--ease-out) 300ms both;
+}
+
+@keyframes onboarding-wire {
+  from {
+    clip-path: inset(0 100% 0 0);
+  }
+}
+
+@keyframes onboarding-socket {
+  from {
+    background: transparent;
+    scale: 0.6;
+  }
 }
 
 /* ---------- project ---------- */
@@ -1892,7 +1804,6 @@
   .onboarding__step[data-phase='entering'] .onboarding__mark path,
   .onboarding__step[data-phase='entering'] .onboarding__word,
   .onboarding__step[data-phase='entering'] .onboarding__theme,
-  .onboarding__step[data-phase='entering'] .onboarding__provider,
   .onboarding__avatar-art {
     animation: fade-in var(--dur-fast) var(--ease-out) both !important;
   }
@@ -1904,19 +1815,13 @@
 
   .preview *,
   .preview__window,
-  .onboarding__spinner,
-  .onboarding__check circle,
-  .onboarding__check path {
+  .onboarding__pick-wire,
+  .onboarding__pick-socket {
     animation: none !important;
   }
 
   .preview__activity-icon > .preview__spinner {
     display: none;
-  }
-
-  .onboarding__check circle,
-  .onboarding__check path {
-    stroke-dashoffset: 0;
   }
 
   .onboarding__progress li,

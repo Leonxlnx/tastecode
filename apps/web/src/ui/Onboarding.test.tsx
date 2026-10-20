@@ -114,15 +114,18 @@ describe('first-run onboarding', () => {
     next()
 
     expect(screen.getByRole('status').textContent).toBe(
-      'Add the ones you use. Nothing is added until you pick it.',
+      'Pick the ones you use. Nothing is added until you do.',
     )
     const providers = screen.getByRole('region', { name: 'Providers' })
     const agents = screen.getByRole('region', { name: 'ACP agents' })
-    // Only the providers this server reports, each with its maker and state.
-    expect(providers.textContent).toBe(
-      'ProvidersCodexOpenAI · Signed inAddGrokxAI · Not installedAdd',
-    )
-    expect(agents.textContent).toBe('ACP agentsDevinCognition · InstalledAdd')
+    // Only the providers this server reports, each with its state; the maker is its tooltip.
+    expect(providers.textContent).toBe('ProvidersCodexSigned inGrokNot installed')
+    expect(agents.textContent).toBe('ACP agentsDevinInstalled')
+    expect(
+      within(agents)
+        .getByRole('checkbox', { name: /^Devin/ })
+        .closest('label')?.title,
+    ).toBe('Cognition')
 
     fireEvent.click(within(providers).getByRole('checkbox', { name: /^Codex/ }))
     expect(props.onProviderRosterChange).toHaveBeenCalledWith(['codex'])

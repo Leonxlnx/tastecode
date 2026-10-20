@@ -21,7 +21,6 @@ const OUTSIDE_SHELL = {
   '.settings .provider-row[data-live] > .set-leader': 'Settings > Providers',
   '.settings .usage-page__refresh.is-busy svg': 'Settings > Usage',
   '.provider-update-spinner': 'Settings > Providers (update check)',
-  '.onboarding__spinner': 'onboarding',
   '.preview:not([data-still]) .preview__activity-icon > .preview__spinner': 'onboarding preview',
   '.preview:not([data-still]) .preview__caret': 'onboarding preview',
   '.rollback__cut.is-loading .rollback__dots': 'rollback dialog',

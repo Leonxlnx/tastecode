@@ -40,7 +40,14 @@ const STEPS = [
 type StepId = (typeof STEPS)[number]['id']
 
 /** One provider or ACP agent the agents page offers, keyed as the roster keys it. */
-type PickEntry = { key: string; name: string; mark: ProviderMark; note: string; ready: boolean }
+type PickEntry = {
+  key: string
+  name: string
+  maker: string | undefined
+  mark: ProviderMark
+  state: string
+  installed: boolean
+}
 
 const THEME_CHOICES = [
   { value: 'system', label: 'System', note: 'Matches your OS' },
@@ -167,25 +174,24 @@ export function Onboarding(props: {
       props.providerStatuses.length === 0 ||
       props.providerStatuses.some((status) => status.id === entry.id),
   ).map((entry) => {
-    const readiness = providerReadiness(
-      props.providerStatuses.find((status) => status.id === entry.id),
-    )
+    const status = props.providerStatuses.find((candidate) => candidate.id === entry.id)
+    const readiness = providerReadiness(status)
     return {
       key: entry.id,
       name: providerDisplayName(entry.id),
+      maker: entry.maker,
       mark: providerMark(entry.id),
-      note: `${entry.maker} · ${readiness.label}`,
-      ready: readiness.tone === 'ready',
+      state: readiness.label,
+      installed: status?.installed ?? true,
     }
   })
   const agents: PickEntry[] = props.acpAgents.map((agent) => ({
     key: agentRosterKey(agent.id),
     name: agent.name,
+    maker: agent.maker,
     mark: agentMark(agent.id),
-    note: [agent.maker, agent.installed ? 'Installed' : 'Not installed']
-      .filter(Boolean)
-      .join(' · '),
-    ready: agent.installed,
+    state: agent.installed ? 'Installed' : 'Not installed',
+    installed: agent.installed,
   }))
   const offered = [...direct, ...agents]
   const checking = props.providerStatuses.length === 0
@@ -262,9 +268,7 @@ export function Onboarding(props: {
     // The picker makes room first, so the flight has a place to aim for.
     flushSync(() => setArriving((list) => [...list, key]))
     void fly(
-      root?.querySelector(
-        `.onboarding__provider[data-plan="${key}"] .onboarding__provider-mark svg`,
-      ),
+      root?.querySelector(`.onboarding__pick-row[data-plan="${key}"] .onboarding__pick-mark svg`),
       root?.querySelector(`${PREVIEW} [data-land="agent-${key}"] svg`),
       root,
       { duration: 820 },
@@ -610,7 +614,7 @@ export function Onboarding(props: {
                   {checking
                     ? 'Looking for the coding agents installed on this machine…'
                     : addedCount === 0
-                      ? 'Add the ones you use. Nothing is added until you pick it.'
+                      ? 'Pick the ones you use. Nothing is added until you do.'
                       : `${addedCount} added. Change this any time in Settings › Providers.`}
                 </p>
                 <div className="onboarding__pick">
@@ -712,8 +716,10 @@ function AvatarMorph(props: { name: string }) {
 }
 
 /**
- * One group of the agents page. Each row is a checkbox: picking it adds the
- * agent, and its Add turns into a drawn check.
+ * One group of the agents page, each agent a line in the same language as the
+ * provider roster: its name, a dotted leader and an empty socket like the one
+ * in the preview's model picker. Picking it runs the wire solid into the
+ * socket, which fills, while the agent itself flies into the preview.
  */
 function PickGroup(props: {
   title: string
@@ -728,57 +734,37 @@ function PickGroup(props: {
       <h2 className="onboarding__pick-title" id={titleId}>
         {props.title}
       </h2>
-      <ul className="onboarding__providers">
+      <ul className="onboarding__picks">
         {props.entries.map((entry) => {
           const added = props.roster.includes(entry.key)
           return (
             <li
-              className="onboarding__provider"
+              className="onboarding__pick-row"
               data-plan={entry.key}
-              data-tone={entry.ready ? 'ready' : 'pending'}
               data-added={added || undefined}
+              data-missing={entry.installed ? undefined : true}
               key={entry.key}
             >
-              <label>
+              <label title={entry.maker}>
                 <input
                   className="visually-hidden"
                   type="checkbox"
                   checked={added}
                   onChange={() => props.onToggle(entry.key)}
                 />
-                <span className="onboarding__provider-mark">
-                  <ProviderIcon mark={entry.mark} size={18} />
+                <span className="onboarding__pick-mark">
+                  <ProviderIcon mark={entry.mark} size={16} />
                 </span>
-                <span className="onboarding__provider-name">
-                  {entry.name}
-                  <small>{entry.note}</small>
-                </span>
-                <span className="onboarding__provider-toggle" aria-hidden>
-                  {added ? (
-                    <>
-                      <AddedCheck />
-                      Added
-                    </>
-                  ) : (
-                    'Add'
-                  )}
-                </span>
+                <span className="onboarding__pick-name">{entry.name}</span>
+                <span className="onboarding__pick-wire" aria-hidden />
+                <span className="onboarding__pick-state">{entry.state}</span>
+                <span className="onboarding__pick-socket" aria-hidden />
               </label>
             </li>
           )
         })}
       </ul>
     </section>
-  )
-}
-
-/** Draws itself in when an agent is added. */
-function AddedCheck() {
-  return (
-    <svg className="onboarding__check" width="16" height="16" viewBox="0 0 16 16" aria-hidden>
-      <circle cx="8" cy="8" r="7" pathLength={1} />
-      <path d="M5 8.2l2 2 4-4.2" pathLength={1} />
-    </svg>
   )
 }
 
