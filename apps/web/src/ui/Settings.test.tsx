@@ -2978,9 +2978,9 @@ describe('provider roster', () => {
       },
     })
     expect(screen.getByRole('heading', { name: 'Add providers' })).toBeTruthy()
-    // Its way back sits in the window strip at the content's top-left.
+    // Its way back sits above the title, in the page.
     const back = screen.getByRole('button', { name: 'Back to Providers' })
-    expect(back.closest('.settings__back-slot')).toBeTruthy()
+    expect(back.closest('.set-page')?.querySelector('h1')?.textContent).toBe('Add providers')
     fireEvent.click(back)
     expect(screen.getByRole('heading', { name: 'Providers' })).toBeTruthy()
 
