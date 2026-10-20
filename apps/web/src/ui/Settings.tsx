@@ -37,6 +37,7 @@ import '../styles/settings.css'
 import type {
   Account,
   ApprovalMode,
+  DetectedAccountHome,
   BackgroundModelSettings as BackgroundModelSettingsState,
   BackgroundModelSource,
   BackgroundModelTarget,
@@ -170,7 +171,14 @@ import {
 import { AppSelect, type AppSelectOption } from './AppSelect.js'
 import { Menu, MenuItem } from './Menu.js'
 import { AccountEmail } from './AccountEmail.js'
-import { AddAccountSection, FoundAccountsSection, ProviderAccountRows } from './ProviderAccounts.js'
+import {
+  AddAccountSection,
+  FoundAccountsSection,
+  IgnoredSignInsSection,
+  ProviderAccountRows,
+  useDetectedAccounts,
+} from './ProviderAccounts.js'
+import { signInKey, useIgnoredSignIns } from '../ignored-sign-ins.js'
 import {
   accountsOf,
   activeAccountOf,
@@ -1374,29 +1382,21 @@ export function ProviderSettings(props: {
     setPicking(props.providersView === 'add-providers')
   }, [props.providersView, props.sectionRequest])
 
-  // Sign-ins already on the computer that could be accounts here, recommended
-  // beside the plus; asked again when the picker closes or an account comes or goes.
-  const accountCount = providerAccounts.snapshot.accounts.length
-  const [foundAccounts, setFoundAccounts] = useState(0)
-  const detectable = multiAccountProviders(props.providerStatuses)
-    .map((status) => status.id)
-    .join('|')
-  useEffect(() => {
-    if (picking || !editable || !detectable) return
-    let live = true
-    void props.transport
-      .request('accounts.detect', {})
-      .then(({ found }) => {
-        if (live)
-          setFoundAccounts(
-            found.filter((entry) => detectable.split('|').includes(entry.provider)).length,
-          )
-      })
-      .catch(() => undefined)
-    return () => {
-      live = false
-    }
-  }, [props.transport, picking, editable, detectable, accountCount])
+  // Sign-ins already on the computer that could be accounts here and that
+  // nobody ignored, counted beside the plus; asked again when the picker
+  // closes or an account comes or goes.
+  const ignoredSignIns = useIgnoredSignIns()
+  const detected = useDetectedAccounts(
+    props.transport,
+    multiAccountProviders(props.providerStatuses),
+    {
+      enabled: editable && !picking,
+      again: `${picking} ${providerAccounts.snapshot.accounts.length}`,
+    },
+  )
+  const foundAccounts = detected.filter(
+    (entry) => !ignoredSignIns.includes(signInKey(entry)),
+  ).length
 
   if (picking && editable) {
     return (
@@ -1620,6 +1620,9 @@ function ProviderPicker(props: {
     if (!props.roster.includes(provider)) props.onAdd(provider)
   }
   const accountProviders = multiAccountProviders(props.providerStatuses)
+  const detected = useDetectedAccounts(props.transport, accountProviders)
+  const ignoredKeys = useIgnoredSignIns()
+  const ignored = (entry: DetectedAccountHome) => ignoredKeys.includes(signInKey(entry))
   const row = (input: {
     key: string
     provider: ProviderStatus
@@ -1665,6 +1668,7 @@ function ProviderPicker(props: {
       <FoundAccountsSection
         transport={props.transport}
         providers={accountProviders}
+        found={detected.filter((entry) => !ignored(entry))}
         onAdded={addProviderOf}
       />
       <SettingsSection title="Providers" note="Coding agents with their own integration.">
@@ -1706,6 +1710,7 @@ function ProviderPicker(props: {
         providers={accountProviders}
         onAdded={addProviderOf}
       />
+      <IgnoredSignInsSection providers={accountProviders} ignored={detected.filter(ignored)} />
     </SettingsPage>
   )
 }

@@ -127,6 +127,7 @@ afterEach(() => {
   settingsLoading.terminal = undefined
   writeModelPickerLayout('list')
   localStorage.removeItem(MODEL_PICKER_LAYOUT_KEY)
+  localStorage.removeItem('harness.ignoredSignIns.v1')
   writeAppHaptics(true)
   localStorage.removeItem(HAPTICS_KEY)
   writeTerminalPlacement('workspace')
@@ -3051,9 +3052,17 @@ describe('provider roster', () => {
 
     fireEvent.click(within(page).getByRole('button', { name: /^Add provider/ }))
     expect(await screen.findByRole('button', { name: 'Add Codex · Side' })).toBeTruthy()
+    const titles = () =>
+      [...document.querySelectorAll('.set-section__title')].map((title) => title.textContent)
+    expect(titles()).toEqual(['Found on this computer', 'Providers', 'ACP agents', 'Accounts'])
+
+    // Ignored, it leaves the top for a folded list at the foot, and the count by the plus.
+    fireEvent.click(screen.getByRole('button', { name: 'Ignore Codex · Side' }))
+    expect(titles()).toEqual(['Providers', 'ACP agents', 'Accounts', 'Ignored1'])
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }))
     expect(
-      [...document.querySelectorAll('.set-section__title')].map((title) => title.textContent),
-    ).toEqual(['Found on this computer', 'Providers', 'ACP agents', 'Accounts'])
+      await screen.findByRole('button', { name: 'Add provider' }, { timeout: 2000 }),
+    ).toBeTruthy()
   })
 
   it('offers Install for an added agent that is not on this machine', () => {

@@ -21,6 +21,7 @@ import {
 import {
   IconCheck as Check,
   IconChevronDown as ChevronDown,
+  IconChevronRight as ChevronRight,
   IconCircleMinus as CircleMinus,
   IconDots as Ellipsis,
   IconFolderOpen as FolderOpen,
@@ -29,6 +30,7 @@ import {
   IconUserPlus as UserPlus,
 } from '@tabler/icons-react'
 import { errorMessage } from '../boundary.js'
+import { ignoreSignIn, unignoreSignIn } from '../ignored-sign-ins.js'
 import { isDesktop, pickFolder, revealPath } from '../bridge.js'
 import { providerMark } from '../model-catalog.js'
 import { accountsOf, activeAccountOf, useProviderAccounts } from '../provider-accounts-state.js'
@@ -204,35 +206,62 @@ function folderName(home: string): string {
 
 /**
  * Sign-ins already on this computer in folders of their own, set up by hand
- * or by another tool (`accounts.detect`), offered first on Add providers.
- * Adding one makes it an account that uses the folder as it is, and adds its
- * provider when it was not added yet.
+ * or by another tool, for the given providers (`accounts.detect`). Asked
+ * once, and again whenever `again` changes; a server from before detection,
+ * or one that could not look, finds nothing.
+ */
+export function useDetectedAccounts(
+  transport: Transport,
+  providers: readonly ProviderStatus[],
+  options: { enabled?: boolean; again?: unknown } = {},
+): readonly DetectedAccountHome[] {
+  const [found, setFound] = useState<readonly DetectedAccountHome[]>([])
+  const enabled = options.enabled ?? true
+  const ids = providers.map((status) => status.id).join(' ')
+  useEffect(() => {
+    if (!enabled || !ids) return
+    let live = true
+    void transport
+      .request('accounts.detect', {})
+      .then((result) => {
+        // An answer without the list, as from a server that only half knows the method, finds nothing.
+        if (live) setFound(Array.isArray(result?.found) ? result.found : [])
+      })
+      .catch(() => undefined)
+    return () => {
+      live = false
+    }
+  }, [transport, enabled, ids, options.again])
+  const wanted = ids.split(' ')
+  return found.filter((entry) => wanted.includes(entry.provider))
+}
+
+/** "Found in .claude_personal · used 2 days ago", with the whole path on hover. */
+function foundWhere(entry: DetectedAccountHome, now: number): ReactNode {
+  return (
+    <span title={entry.home}>
+      Found in {folderName(entry.home)}
+      {entry.lastUsed === undefined ? null : ` · used ${indexedAgo(entry.lastUsed, now)}`}
+    </span>
+  )
+}
+
+/**
+ * The found sign-ins nobody ignored, offered first on Add providers. Adding
+ * one makes it an account that uses the folder as it is, and adds its
+ * provider when it was not added yet; Ignore moves it under Ignored.
  */
 export function FoundAccountsSection(props: {
   transport: Transport
   /** Installed providers that declare `multipleAccounts`. */
   providers: readonly ProviderStatus[]
+  found: readonly DetectedAccountHome[]
   onAdded: (provider: ProviderId) => void
 }) {
   const { store } = useProviderAccounts(props.transport, props.providers.length > 0)
   const { busy, issues, run } = useAccountActions()
-  const [found, setFound] = useState<readonly DetectedAccountHome[]>([])
   const [added, setAdded] = useState<readonly string[]>([])
-  const { transport } = props
-  useEffect(() => {
-    let live = true
-    void transport
-      .request('accounts.detect', {})
-      .then(({ found }) => {
-        if (live) setFound(found)
-      })
-      // A server from before detection, or one that could not look, offers nothing.
-      .catch(() => undefined)
-    return () => {
-      live = false
-    }
-  }, [transport])
-  const offered = found.flatMap((entry) => {
+  const offered = props.found.flatMap((entry) => {
     const provider = props.providers.find((status) => status.id === entry.provider)
     return provider ? [{ entry, provider }] : []
   })
@@ -252,15 +281,19 @@ export function FoundAccountsSection(props: {
           <ProviderRow
             key={entry.home}
             provider={{ ...provider, displayName: name }}
-            status={
-              <span title={entry.home}>
-                Found in {folderName(entry.home)}
-                {entry.lastUsed === undefined ? null : ` · used ${indexedAgo(entry.lastUsed, now)}`}
-              </span>
-            }
+            status={foundWhere(entry, now)}
             link={done ? 'connected' : 'open'}
             live={busy === entry.home}
             issue={issue ? { message: issue, announce: true } : undefined}
+            secondary={
+              done || busy === entry.home
+                ? undefined
+                : {
+                    label: 'Ignore',
+                    ariaLabel: `Ignore ${name}`,
+                    onClick: () => ignoreSignIn(entry),
+                  }
+            }
             primary={
               done
                 ? { label: 'Added', done: true }
@@ -285,6 +318,63 @@ export function FoundAccountsSection(props: {
         )
       })}
     </SettingsSection>
+  )
+}
+
+/**
+ * Found sign-ins the user ignored, folded away at the foot of Add providers
+ * until asked for. Unignore offers one again under Found on this computer.
+ */
+export function IgnoredSignInsSection(props: {
+  providers: readonly ProviderStatus[]
+  ignored: readonly DetectedAccountHome[]
+}) {
+  const [open, setOpen] = useState(false)
+  const titleId = useId()
+  const listId = useId()
+  const offered = props.ignored.flatMap((entry) => {
+    const provider = props.providers.find((status) => status.id === entry.provider)
+    return provider ? [{ entry, provider }] : []
+  })
+  if (offered.length === 0) return null
+  const now = Date.now()
+
+  return (
+    <section className="set-section provider-ignored" aria-labelledby={titleId}>
+      <h2 className="set-section__title provider-ignored__title" id={titleId}>
+        <button
+          className="provider-ignored__toggle"
+          type="button"
+          aria-expanded={open}
+          aria-controls={listId}
+          onClick={() => setOpen((current) => !current)}
+        >
+          <ChevronRight className={open ? 'is-open' : undefined} size={14} aria-hidden />
+          Ignored
+          <span className="provider-ignored__count">{offered.length}</span>
+        </button>
+      </h2>
+      <div id={listId} hidden={!open}>
+        {open
+          ? offered.map(({ entry, provider }) => {
+              const name = `${provider.displayName} · ${entry.label}`
+              return (
+                <ProviderRow
+                  key={entry.home}
+                  provider={{ ...provider, displayName: name }}
+                  status={foundWhere(entry, now)}
+                  link="none"
+                  primary={{
+                    label: 'Unignore',
+                    ariaLabel: `Unignore ${name}`,
+                    onClick: () => unignoreSignIn(entry),
+                  }}
+                />
+              )
+            })
+          : null}
+      </div>
+    </section>
   )
 }
 

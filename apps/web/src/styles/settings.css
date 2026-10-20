@@ -1126,6 +1126,48 @@
   color: var(--text);
 }
 
+/* Ignored sign-ins wait folded at the foot of the picker: the section's
+   heading is the disclosure, with the chevron turning as it opens. */
+.provider-ignored__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: -2px;
+  padding: 2px 0;
+  background: none;
+  border: 0;
+  border-radius: var(--r-sm);
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  transition: color var(--dur-fast) var(--ease-out);
+}
+
+.provider-ignored__toggle:hover {
+  color: var(--text-2);
+}
+
+.provider-ignored__toggle:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.provider-ignored__toggle > svg {
+  transition: rotate var(--dur-fast) var(--ease-out);
+}
+
+.provider-ignored__toggle > svg.is-open {
+  rotate: 90deg;
+}
+
+.provider-ignored__count {
+  font-variant-numeric: tabular-nums;
+}
+
+.provider-ignored__count::before {
+  content: '· ';
+}
+
 /* In the picker, an added provider holds the action's place with a settled
    label the width of the buttons around it. */
 .provider-row__done {

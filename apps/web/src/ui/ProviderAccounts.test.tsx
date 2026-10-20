@@ -9,7 +9,12 @@ import type {
   ResultOf,
 } from '@harness/contracts'
 import { TestTransport } from '../test-transport.js'
-import { AddAccountSection, FoundAccountsSection, ProviderAccountRows } from './ProviderAccounts.js'
+import {
+  AddAccountSection,
+  FoundAccountsSection,
+  IgnoredSignInsSection,
+  ProviderAccountRows,
+} from './ProviderAccounts.js'
 
 const bridge = vi.hoisted(() => ({
   isDesktop: false,
@@ -21,6 +26,7 @@ vi.mock('../bridge.js', () => bridge)
 afterEach(() => {
   cleanup()
   vi.clearAllMocks()
+  localStorage.clear()
 })
 
 const codex: ProviderStatus = {
@@ -369,9 +375,16 @@ describe('Provider accounts in Settings', () => {
       // Only providers that can run as more accounts and are on this machine are offered.
       { provider: 'grok', home: '/Users/me/.grok-2', label: '2' },
     ]
-    const transport = serve([defaultAccount('codex')], found)
+    const transport = serve([defaultAccount('codex')])
     const onAdded = vi.fn()
-    render(<FoundAccountsSection transport={transport} providers={[codex]} onAdded={onAdded} />)
+    render(
+      <FoundAccountsSection
+        transport={transport}
+        providers={[codex]}
+        found={found}
+        onAdded={onAdded}
+      />,
+    )
 
     const section = await screen.findByRole('region', { name: 'Found on this computer' })
     expect(section.textContent).toContain('Codex · Side')
@@ -390,14 +403,56 @@ describe('Provider accounts in Settings', () => {
     )
     await waitFor(() => expect(onAdded).toHaveBeenCalledWith('codex'))
     expect(within(section).getByText('Added')).toBeTruthy()
+    expect(within(section).queryByRole('button', { name: 'Ignore Codex · Side' })).toBeNull()
   })
 
-  it('shows no found section when nothing was found or the server cannot look', async () => {
+  it('ignores a found sign-in for good, and keeps it folded under Ignored until taken back', () => {
+    const side: DetectedAccountHome = {
+      provider: 'codex',
+      home: '/Users/me/.codex-side',
+      label: 'Side',
+    }
+    const transport = serve([defaultAccount('codex')])
+    render(
+      <FoundAccountsSection
+        transport={transport}
+        providers={[codex]}
+        found={[side]}
+        onAdded={vi.fn()}
+      />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Ignore Codex · Side' }))
+    expect(JSON.parse(localStorage.getItem('harness.ignoredSignIns.v1')!)).toEqual([
+      'codex /Users/me/.codex-side',
+    ])
+    cleanup()
+
+    render(<IgnoredSignInsSection providers={[codex]} ignored={[side]} />)
+    const toggle = screen.getByRole('button', { name: /^Ignored/ })
+    expect(toggle.textContent).toBe('Ignored1')
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    expect(screen.queryByText('Codex · Side')).toBeNull()
+
+    fireEvent.click(toggle)
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    expect(screen.getByText('Codex · Side')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Unignore Codex · Side' }))
+    expect(JSON.parse(localStorage.getItem('harness.ignoredSignIns.v1')!)).toEqual([])
+  })
+
+  it('shows neither section when there is nothing found or ignored', () => {
     const transport = serve([defaultAccount('codex')])
     const { container } = render(
-      <FoundAccountsSection transport={transport} providers={[codex]} onAdded={vi.fn()} />,
+      <>
+        <FoundAccountsSection
+          transport={transport}
+          providers={[codex]}
+          found={[]}
+          onAdded={vi.fn()}
+        />
+        <IgnoredSignInsSection providers={[codex]} ignored={[]} />
+      </>,
     )
-    await waitFor(() => expect(calls(transport, 'accounts.detect')).toHaveLength(1))
     expect(container.textContent).toBe('')
   })
 })
