@@ -21,7 +21,6 @@ import type {
   ApprovalDecision,
   ApprovalMode,
   DomainEvent,
-  ModelConnection,
   ProviderId,
   ProviderStatus,
   PullRequestListItem,
@@ -146,7 +145,6 @@ import {
 } from './provider-accounts-state.js'
 import {
   agentMark,
-  connectionMark,
   choicesFor,
   customModelChoice,
   customModelKey,
@@ -501,24 +499,12 @@ export function resolveSendAvailability(input: {
   serverBoundSession: boolean
   activeProvider?: ProviderId | undefined
   selectedChoice?: ModelChoice | undefined
-  connections: ModelConnection[]
   providerStatuses: ProviderStatus[]
   accountCheck: AccountCheck
 }): SendAvailability {
   if (input.serverBoundSession && !input.selectedChoice) return 'ready'
   if (input.catalog === 'loading') return 'loading'
   if (input.catalog === 'failed') return 'unavailable'
-
-  // An API connection has no vendor CLI behind it, so no provider status
-  // describes it. Its own credential is the readiness signal. A connection that
-  // is disabled, keyless, or absent from the list is something the user can fix
-  // in Settings, so it reports setup-required: reporting it unavailable showed a
-  // dead end whose button could not change the outcome.
-  const connectionId = input.selectedChoice?.connectionId
-  if (connectionId) {
-    const connection = input.connections.find((entry) => entry.id === connectionId)
-    return connection?.enabled && connection.credentialConfigured ? 'ready' : 'setup-required'
-  }
 
   const provider = input.activeProvider ?? input.selectedChoice?.provider
   if (!provider) {
@@ -853,7 +839,6 @@ export function App() {
   // Read by the catalog run, which must not restart when a provider is added.
   const providerRosterRef = useRef(providerRoster)
   providerRosterRef.current = providerRoster
-  const [modelConnections, setModelConnections] = useState<ModelConnection[]>([])
   const [catalogRequest, setCatalogRequest] = useState(0)
   /** When the catalog was last listed, however that started. */
   const catalogRequestedAt = useRef(Date.now())
@@ -1210,10 +1195,6 @@ export function App() {
   )
   const catalogModelsRef = useRef(catalogModels)
   catalogModelsRef.current = catalogModels
-  /** Latched: the user has, or had, models that a connection pays for. Used to
-   *  decide whether a failed connection list is worth reporting, so a server
-   *  that has no connections at all stays quiet. */
-  const hadConnectionModelsRef = useRef(false)
   const modelsRef = useRef(models)
   modelsRef.current = models
   /** How every listed model starts, recomputed only when the catalog changes. */
@@ -1395,7 +1376,6 @@ export function App() {
           ),
           activeProvider: activeSession?.provider,
           selectedChoice: selectedModelChoice,
-          connections: modelConnections,
           providerStatuses,
           accountCheck,
         })
@@ -1429,9 +1409,8 @@ export function App() {
             }
           : { provider, agentId: sourceAgent },
         providerStatuses,
-        modelConnections,
       ),
-    [selectedModelChoice, provider, sourceAgent, providerStatuses, modelConnections],
+    [selectedModelChoice, provider, sourceAgent, providerStatuses],
   )
   const autoReviewSupported = useMemo(
     () =>
@@ -2181,24 +2160,8 @@ export function App() {
     }
     setCatalogError(undefined)
     const discoveryErrors: Record<string, ComposerError> = {}
-    // Latched before the rebuild below drops any choice whose connection is no
-    // longer resolvable. A failed list is only worth reporting to someone who
-    // has such a model; a build with no connections stays quiet, which is what
-    // keeps this safe against a server too old to know the method.
-    if (catalogModelsRef.current.some((choice) => choice.connectionId !== undefined)) {
-      hadConnectionModelsRef.current = true
-    }
     setCatalogAvailability((current) => (current === 'ready' ? current : 'loading'))
     void (async () => {
-      let connectionsError: unknown
-      const connectionsCatalog = transport.request('connections.list', {}).catch((cause) => {
-        connectionsError = cause
-        return { connections: [] }
-      })
-      void connectionsCatalog.then((result) => {
-        if (cancelled) return
-        setModelConnections(result?.connections ?? [])
-      })
       const agentsCatalog = transport.request('acp.agents', {}).catch(() => ({ agents: [] }))
       const harnessesCatalog = transport
         .request('harnesses.list', {})
@@ -2526,72 +2489,6 @@ export function App() {
           ),
         )
       })
-      const apiPromise = connectionsCatalog.then(async (result) => {
-        if (cancelled) return []
-        const connections = (result?.connections ?? []).filter(
-          (connection) => connection.enabled && connection.credentialConfigured,
-        )
-        setPendingModelSources(
-          (current) =>
-            new Set([
-              ...current,
-              ...connections.map((connection) =>
-                sourceKey({ provider: 'api', connectionId: connection.id }),
-              ),
-            ]),
-        )
-        return Promise.all(
-          connections.map(async (connection) => {
-            const source = sourceKey({ provider: 'api', connectionId: connection.id })
-            try {
-              const result = await transport.request('connections.models', {
-                connectionId: connection.id,
-              })
-              const fallbackModels =
-                result.models.length > 0
-                  ? result.models
-                  : connection.defaultModel
-                    ? [
-                        {
-                          id: connection.defaultModel,
-                          displayName: connection.defaultModel,
-                          isDefault: true,
-                          reasoningEfforts: [],
-                          serviceTiers: [],
-                        },
-                      ]
-                    : []
-              const models = choicesFor(
-                {
-                  provider: 'api',
-                  connectionId: connection.id,
-                  sourceName: connection.displayName,
-                  mark: connectionMark(connection.preset),
-                },
-                fallbackModels,
-                false,
-              )
-              return settleSource(source, { source, discovered: true, models })
-            } catch (cause) {
-              discoveryErrors[source] = {
-                id: 'models:' + source + ':' + catalogRequest,
-                message:
-                  'Could not load ' +
-                  connection.displayName +
-                  ' models. ' +
-                  (cause instanceof Error ? cause.message : String(cause)),
-              }
-              return settleSource(source, {
-                source,
-                discovered: false,
-                models: catalogModelsRef.current.filter(
-                  (choice) => !isCustomModelChoice(choice) && modelSource(choice) === source,
-                ),
-              })
-            }
-          }),
-        )
-      })
       const harnessesResult = await harnessesCatalog
       if (cancelled) return
       const harnesses = harnessesResult?.harnesses ?? []
@@ -2643,10 +2540,9 @@ export function App() {
           ),
         ),
       )
-      const [direct, acp, api, customSources] = await Promise.all([
+      const [direct, acp, customSources] = await Promise.all([
         directPromise,
         acpPromise,
-        apiPromise,
         customSourcesPromise,
       ])
       if (cancelled) return
@@ -2654,7 +2550,7 @@ export function App() {
       // In source order, with each source's latest rows: one listed again
       // before this point keeps its newer list.
       const listedSources = new Set(
-        [...direct, ...acp, ...api, ...customSources].map((entry) => entry.source),
+        [...direct, ...acp, ...customSources].map((entry) => entry.source),
       )
       catalogOrder = [...listedSources]
       const catalog = catalogOrder.flatMap((source) => settledRows.get(source) ?? [])
@@ -2664,17 +2560,6 @@ export function App() {
       if (validatedSources.size > 0) writeModelCatalogCache(catalog, validatedSources)
       setModelCatalog({ models: catalog, loaded: true, unvalidatedModelKeys: unknownKeys })
       setModelErrors(discoveryErrors)
-      // A failed connections.list is otherwise invisible: the models it paid for
-      // simply stop being offered, and none of them can answer a turn, so
-      // silence reads as a working connection.
-      if (connectionsError !== undefined && hadConnectionModelsRef.current) {
-        setCatalogError({
-          id: `connections:${catalogRequest}`,
-          message: `Could not load API connections. ${
-            connectionsError instanceof Error ? connectionsError.message : String(connectionsError)
-          }`,
-        })
-      }
       const stored = readSetting(MODEL_KEY)
       const customPool = customModelsRef.current
         .filter((entry) => rosterAllows(providerRosterRef.current, entry.provider))
@@ -6920,7 +6805,6 @@ export function App() {
               providerRoster={providerRoster}
               onProviderRosterChange={changeProviderRoster}
               providersView={settingsSection.view}
-              modelConnections={modelConnections}
               providersLoading={catalogAvailability === 'loading'}
               models={models}
               modelsLoading={catalogAvailability === 'loading'}

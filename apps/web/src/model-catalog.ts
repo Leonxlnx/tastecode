@@ -2,12 +2,7 @@ import type { Model, ProviderId } from '@harness/contracts'
 import type { ProviderMark } from './provider-presentation.js'
 import { providerPresentation, sourcePresentation } from './provider-presentation.js'
 
-export {
-  agentMark,
-  connectionMark,
-  providerDisplayName,
-  providerMark,
-} from './provider-presentation.js'
+export { agentMark, providerDisplayName, providerMark } from './provider-presentation.js'
 export type { ProviderMark } from './provider-presentation.js'
 
 export type ModelChoice = {

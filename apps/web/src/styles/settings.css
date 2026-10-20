@@ -1346,12 +1346,7 @@
   }
 }
 
-/* API connections: the roster's rows under a section of their own, then the
-   add button or the shared form. Only the form's provider select is its own. */
-.settings .provider-roster + .set-section {
-  margin-top: 36px;
-}
-
+/* The accounts form: its add button and provider select. */
 .settings .provider-connections__add {
   margin-top: 8px;
 }

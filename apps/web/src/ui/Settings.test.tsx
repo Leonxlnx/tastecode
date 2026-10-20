@@ -1035,7 +1035,6 @@ function renderProviders(
       account={account}
       providerStatuses={statuses}
       acpAgents={[]}
-      modelConnections={[]}
       transport={transport}
       onConnectionsChanged={() => {}}
       onAccountChange={() => {}}
@@ -1222,7 +1221,6 @@ describe('missing provider re-check', () => {
         account={undefined}
         providerStatuses={[missingGrok]}
         acpAgents={[]}
-        modelConnections={[]}
         transport={transport}
         onConnectionsChanged={onConnectionsChanged}
         onAccountChange={() => {}}
@@ -1808,110 +1806,6 @@ describe('provider settings', () => {
     expect(await screen.findByRole('button', { name: 'Add server' })).toBeTruthy()
   })
 
-  it('connects an API-only account without installing a CLI and keeps its key out of metadata', async () => {
-    const onConnectionsChanged = vi.fn()
-    const transport = new TestTransport((method, params) => {
-      if (method === 'connections.upsert')
-        return {
-          connection: { ...methods[method].params.parse(params), credentialConfigured: false },
-        }
-      if (method === 'connections.setCredential') return { credentialConfigured: true }
-      throw new Error('Unexpected ' + method)
-    })
-    render(
-      <ProviderSettings
-        provider="api"
-        account={undefined}
-        providerStatuses={[]}
-        transport={transport}
-        onConnectionsChanged={onConnectionsChanged}
-        onAccountChange={() => {}}
-      />,
-    )
-    fireEvent.click(screen.getByRole('button', { name: 'Connect another plan or API' }))
-    // Every field in the form is the one settings text field.
-    for (const label of ['Name', 'Base URL', 'Default model', 'API key']) {
-      expect(screen.getByLabelText(label).className).toBe('set-input')
-    }
-    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Research API' } })
-    fireEvent.change(screen.getByLabelText('Default model'), {
-      target: { value: 'research-model' },
-    })
-    fireEvent.change(screen.getByLabelText('API key'), { target: { value: 'fixture-credential' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Connect' }))
-    await waitFor(() => expect(onConnectionsChanged).toHaveBeenCalledTimes(1))
-    const metadata = transport.requests.find(({ method }) => method === 'connections.upsert')
-    if (!metadata) throw new Error('Connection metadata was not sent')
-    expect(metadata.params).toMatchObject({
-      displayName: 'Research API',
-      defaultModel: 'research-model',
-      enabled: true,
-    })
-    expect(JSON.stringify(metadata)).not.toContain('fixture-credential')
-    expect(
-      transport.requests.find(({ method }) => method === 'connections.setCredential')?.params,
-    ).toEqual({
-      connectionId: methods['connections.upsert'].params.parse(metadata.params).id,
-      apiKey: 'fixture-credential',
-    })
-    expect(
-      transport.requests.some(
-        ({ method }) => method === 'providers.install' || method === 'auth.status',
-      ),
-    ).toBe(false)
-    expect(screen.queryByLabelText('API key')).toBeNull()
-  })
-
-  it('lists API connections on roster rows and removes one by name', async () => {
-    const onConnectionsChanged = vi.fn()
-    const transport = new TestTransport((method) => {
-      if (method === 'connections.remove') return {}
-      throw new Error('Unexpected ' + method)
-    })
-    const connection = (id: string, displayName: string, credentialConfigured: boolean) => ({
-      id,
-      displayName,
-      preset: 'openrouter' as const,
-      transport: 'openai-compatible' as const,
-      baseUrl: 'https://openrouter.ai/api/v1',
-      enabled: true,
-      credentialConfigured,
-    })
-    render(
-      <ProviderSettings
-        provider="api"
-        account={undefined}
-        providerStatuses={[]}
-        modelConnections={[
-          connection('research', 'Research API', true),
-          connection('draft', 'Draft API', false),
-        ]}
-        transport={transport}
-        onConnectionsChanged={onConnectionsChanged}
-        onAccountChange={() => {}}
-      />,
-    )
-
-    const section = screen.getByRole('region', { name: 'API connections' })
-    // A stored key wires the row like a signed-in provider; a missing one leaves it open.
-    const research = within(section).getByText('Research API').closest<HTMLElement>('.provider-row')
-    expect(research?.dataset['link']).toBe('connected')
-    expect(research?.textContent).toContain('OpenRouter')
-    const draft = within(section).getByText('Draft API').closest<HTMLElement>('.provider-row')
-    expect(draft?.dataset['link']).toBe('open')
-    expect(draft?.textContent).toContain('Key missing')
-    expect(
-      within(section).getByRole('button', { name: 'Connect another plan or API' }),
-    ).toBeTruthy()
-
-    fireEvent.click(within(section).getByRole('button', { name: 'Remove Draft API' }))
-    await waitFor(() => expect(onConnectionsChanged).toHaveBeenCalledTimes(1))
-    expect(transport.requests).toContainEqual({
-      method: 'connections.remove',
-      params: { connectionId: 'draft' },
-    })
-  })
-
   it('renders every nightly CLI provider returned by the server', async () => {
     const providers: Array<[ProviderId, string]> = [
       ['cursor', 'Cursor'],
@@ -2118,11 +2012,12 @@ describe('provider settings', () => {
     expect(emailControl.getAttribute('data-pinned')).toBe('false')
     expect(within(codexRow).queryByText(/\*+@example\.com/)).toBeNull()
 
-    // Every configured ACP agent and API connection is available on nightly.
+    // Every configured ACP agent is available on nightly; API connections are gone.
     expect(screen.getByText('Gemini CLI')).toBeTruthy()
     expect(screen.getByText('Qwen Code')).toBeTruthy()
     expect(screen.getByText('Kimi CLI')).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'Connect another plan or API' })).toBeTruthy()
+    expect(screen.queryByRole('region', { name: 'API connections' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Connect another plan or API' })).toBeNull()
 
     const claudeRow = screen.getByText('Claude Code').closest<HTMLElement>('.provider-row')
     const grokRow = screen.getByText('Grok').closest<HTMLElement>('.provider-row')

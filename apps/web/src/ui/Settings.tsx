@@ -42,9 +42,6 @@ import type {
   BackgroundModelSource,
   BackgroundModelTarget,
   DataOf,
-  ModelConnection,
-  ModelConnectionPreset,
-  ModelTransport,
   ProviderAccount,
   ProviderId,
   ProviderStatus,
@@ -55,7 +52,6 @@ import { z } from 'zod'
 import {
   IconChartBar as BarChart3,
   IconChevronDown as ChevronDown,
-  IconKey as KeyRound,
   IconCircleMinus as CircleMinus,
   IconCirclePlus as CirclePlus,
   IconArrowLeft as ArrowLeft,
@@ -74,7 +70,6 @@ import {
   IconUser as UserRound,
 } from '@tabler/icons-react'
 import {
-  connectionMark,
   isCustomModelChoice,
   providerMark,
   sourceKey,
@@ -345,7 +340,6 @@ function SettingsComponent(props: {
   onProviderRosterChange?: ((roster: ProviderRoster) => void) | undefined
   /** Opens Providers on its picker; asked again with every section request. */
   providersView?: 'add-providers' | undefined
-  modelConnections?: ModelConnection[] | undefined
   /** The provider list has not arrived yet. */
   providersLoading?: boolean | undefined
   models: ModelChoice[]
@@ -724,48 +718,6 @@ function SettingsNavItem(props: {
   )
 }
 
-const CONNECTION_PRESETS = {
-  openai: {
-    label: 'OpenAI API',
-    transport: 'openai-responses',
-    baseUrl: 'https://api.openai.com/v1',
-    placeholder: 'gpt-5.6',
-  },
-  anthropic: {
-    label: 'Anthropic API',
-    transport: 'anthropic-messages',
-    baseUrl: 'https://api.anthropic.com/v1',
-    placeholder: 'claude-sonnet-4-6',
-  },
-  openrouter: {
-    label: 'OpenRouter',
-    transport: 'openai-compatible',
-    baseUrl: 'https://openrouter.ai/api/v1',
-    placeholder: 'anthropic/claude-sonnet-4.6',
-  },
-  kimi: {
-    label: 'Kimi API',
-    transport: 'openai-compatible',
-    baseUrl: 'https://api.moonshot.ai/v1',
-    placeholder: 'kimi-k2.5',
-  },
-  zai: {
-    label: 'Z.ai API',
-    transport: 'openai-compatible',
-    baseUrl: 'https://api.z.ai/api/paas/v4',
-    placeholder: 'glm-5',
-  },
-  custom: {
-    label: 'Custom endpoint',
-    transport: 'openai-compatible',
-    baseUrl: 'http://127.0.0.1:11434/v1',
-    placeholder: 'model-id',
-  },
-} satisfies Record<
-  ModelConnectionPreset,
-  { label: string; transport: ModelTransport; baseUrl: string; placeholder: string }
->
-
 type ProviderMap<T> = Partial<Record<ProviderId, T>>
 
 // Every provider with its own integration, shown as it always was before the roster existed.
@@ -791,7 +743,6 @@ export function ProviderSettings(props: {
   onProviderRosterChange?: ((roster: ProviderRoster) => void) | undefined
   providersView?: 'add-providers' | undefined
   sectionRequest?: number | undefined
-  modelConnections?: ModelConnection[] | undefined
   providersLoading?: boolean | undefined
   projectPath?: string | undefined
   transport: Transport
@@ -818,14 +769,6 @@ export function ProviderSettings(props: {
   const [agentAccounts, setAgentAccounts] = useState<Record<string, Account>>({})
   const [agentAccountErrors, setAgentAccountErrors] = useState<Record<string, string>>({})
   const [agentBusy, setAgentBusy] = useState<string>()
-  const [addingConnection, setAddingConnection] = useState(false)
-  const [connectionPreset, setConnectionPreset] = useState<ModelConnectionPreset>('openai')
-  const [connectionName, setConnectionName] = useState(CONNECTION_PRESETS.openai.label)
-  const [connectionBaseUrl, setConnectionBaseUrl] = useState(CONNECTION_PRESETS.openai.baseUrl)
-  const [connectionDefaultModel, setConnectionDefaultModel] = useState('')
-  const [connectionApiKey, setConnectionApiKey] = useState('')
-  const [connectionError, setConnectionError] = useState<string>()
-  const [connectionSaving, setConnectionSaving] = useState(false)
   const [authStates, setAuthStates] = useState<ProviderMap<AuthReadState>>(() =>
     props.account ? { [props.provider]: { phase: 'ready', account: props.account } } : {},
   )
@@ -1094,42 +1037,6 @@ export function ProviderSettings(props: {
       }))
     } finally {
       setAgentBusy((current) => (current === agentId ? undefined : current))
-    }
-  }
-
-  const chooseConnectionPreset = (preset: ModelConnectionPreset) => {
-    const config = CONNECTION_PRESETS[preset]
-    setConnectionPreset(preset)
-    setConnectionName(config.label)
-    setConnectionBaseUrl(config.baseUrl)
-    setConnectionDefaultModel('')
-  }
-
-  const addConnection = async () => {
-    setConnectionSaving(true)
-    setConnectionError(undefined)
-    try {
-      const id = `${connectionPreset}-${crypto.randomUUID()}`
-      await props.transport.request('connections.upsert', {
-        id,
-        displayName: connectionName.trim(),
-        preset: connectionPreset,
-        transport: CONNECTION_PRESETS[connectionPreset].transport,
-        baseUrl: connectionBaseUrl.trim(),
-        ...(connectionDefaultModel.trim() ? { defaultModel: connectionDefaultModel.trim() } : {}),
-        enabled: true,
-      })
-      await props.transport.request('connections.setCredential', {
-        connectionId: id,
-        apiKey: connectionApiKey.trim(),
-      })
-      setAddingConnection(false)
-      setConnectionApiKey('')
-      props.onConnectionsChanged()
-    } catch (cause) {
-      setConnectionError(cause instanceof Error ? cause.message : String(cause))
-    } finally {
-      setConnectionSaving(false)
     }
   }
 
@@ -1529,132 +1436,6 @@ export function ProviderSettings(props: {
           ) : null}
         </div>
       )}
-      <SettingsSection title="API connections">
-        {(props.modelConnections ?? []).map((connection) => (
-          <ConnectionRow
-            key={connection.id}
-            connection={connection}
-            onRemove={() => {
-              void props.transport
-                .request('connections.remove', { connectionId: connection.id })
-                .then(props.onConnectionsChanged)
-            }}
-          />
-        ))}
-        {addingConnection ? (
-          <div className="set-form">
-            <div className="set-form__field">
-              <span>Provider</span>
-              <Menu
-                align="left"
-                drop="down"
-                label={`Provider, ${CONNECTION_PRESETS[connectionPreset].label}`}
-                panelLabel="API provider"
-                panelClassName="provider-form__menu"
-                triggerClassName="provider-form__select set-select"
-                trigger={(open) => (
-                  <>
-                    <span className="provider-form__select-value">
-                      <ProviderIcon mark={connectionMark(connectionPreset)} size={16} />
-                      {CONNECTION_PRESETS[connectionPreset].label}
-                    </span>
-                    <ChevronDown className={open ? 'is-open' : undefined} size={14} aria-hidden />
-                  </>
-                )}
-              >
-                {(close) =>
-                  Object.entries(CONNECTION_PRESETS).map(([value, config]) => (
-                    <MenuItem
-                      key={value}
-                      title={config.label}
-                      icon={
-                        <ProviderIcon
-                          mark={connectionMark(value as ModelConnectionPreset)}
-                          size={16}
-                        />
-                      }
-                      active={value === connectionPreset}
-                      onClick={() => {
-                        chooseConnectionPreset(value as ModelConnectionPreset)
-                        close()
-                      }}
-                    />
-                  ))
-                }
-              </Menu>
-            </div>
-            <label>
-              <span>Name</span>
-              <input
-                className="set-input"
-                value={connectionName}
-                onChange={(event) => setConnectionName(event.target.value)}
-              />
-            </label>
-            <label className="set-form__wide">
-              <span>Base URL</span>
-              <input
-                className="set-input"
-                value={connectionBaseUrl}
-                onChange={(event) => setConnectionBaseUrl(event.target.value)}
-                spellCheck={false}
-              />
-            </label>
-            <label>
-              <span>Default model</span>
-              <input
-                className="set-input"
-                value={connectionDefaultModel}
-                onChange={(event) => setConnectionDefaultModel(event.target.value)}
-                placeholder={CONNECTION_PRESETS[connectionPreset].placeholder}
-                spellCheck={false}
-              />
-            </label>
-            <label className="set-form__wide">
-              <span>API key</span>
-              <input
-                className="set-input"
-                type="password"
-                value={connectionApiKey}
-                onChange={(event) => setConnectionApiKey(event.target.value)}
-                autoComplete="off"
-              />
-            </label>
-            {connectionError ? <p className="set-form__error">{connectionError}</p> : null}
-            <div className="set-form__actions">
-              <button
-                className="set-button set-button--quiet"
-                type="button"
-                onClick={() => setAddingConnection(false)}
-              >
-                Cancel
-              </button>
-              <button
-                className="set-button set-button--primary"
-                type="button"
-                disabled={
-                  connectionSaving ||
-                  !connectionName.trim() ||
-                  !connectionBaseUrl.trim() ||
-                  !connectionApiKey.trim()
-                }
-                onClick={() => void addConnection()}
-              >
-                {connectionSaving ? 'Connecting…' : 'Connect'}
-              </button>
-            </div>
-          </div>
-        ) : (
-          <button
-            className="set-button provider-connections__add"
-            type="button"
-            onClick={() => setAddingConnection(true)}
-          >
-            <KeyRound size={15} aria-hidden />
-            Connect another plan or API
-          </button>
-        )}
-      </SettingsSection>
       <ProviderUpdateCheck transport={props.transport} />
     </SettingsPage>
   )
@@ -1801,41 +1582,6 @@ function ProviderPicker(props: {
   )
 }
 
-/**
- * An API connection on the roster's own row: its mark and name, the solid
- * wire once a key is stored (the open leader while one is missing), and
- * Remove where a provider has Sign out.
- */
-function ConnectionRow(props: { connection: ModelConnection; onRemove: () => void }) {
-  const configured = props.connection.credentialConfigured
-  return (
-    <div className="provider-row" data-link={configured ? 'connected' : 'open'}>
-      <div className="provider-row__mark">
-        <ProviderIcon mark={connectionMark(props.connection.preset)} size={18} />
-      </div>
-      <div className="provider-row__identity">
-        <p className="set-entity__name">{props.connection.displayName}</p>
-      </div>
-      <span className="set-leader" aria-hidden />
-      <div className="provider-row__status set-entity__status">
-        <span className="provider-row__status-text">
-          {configured ? CONNECTION_PRESETS[props.connection.preset].label : 'Key missing'}
-        </span>
-      </div>
-      <div className="provider-row__secondary" />
-      <div className="provider-row__primary">
-        <button
-          className="set-button set-button--danger"
-          type="button"
-          aria-label={`Remove ${props.connection.displayName}`}
-          onClick={props.onRemove}
-        >
-          Remove
-        </button>
-      </div>
-    </div>
-  )
-}
 function ModelSettings(props: {
   transport: Transport
   models: ModelChoice[]
@@ -1846,7 +1592,6 @@ function ModelSettings(props: {
   pendingModelSources?: ReadonlySet<string> | undefined
   providerStatuses: ProviderStatus[]
   acpAgents?: ResultOf<'acp.agents'>['agents'] | undefined
-  modelConnections?: ModelConnection[] | undefined
   hiddenModels: Set<string>
   onModelVisibilityChange: (key: string, visible: boolean) => void
   onModelsVisibilityChange: (keys: readonly string[], visible: boolean) => void
@@ -1956,7 +1701,6 @@ function modelSourcePresentation(
   roster: {
     providerStatuses: ProviderStatus[]
     acpAgents?: ResultOf<'acp.agents'>['agents'] | undefined
-    modelConnections?: ModelConnection[] | undefined
   },
 ): ProviderPresentation | undefined {
   const status = roster.providerStatuses.find((entry) => sourceKey({ provider: entry.id }) === key)
@@ -1965,10 +1709,6 @@ function modelSourcePresentation(
     (entry) => sourceKey({ provider: 'acp', agentId: entry.id }) === key,
   )
   if (agent) return agentPresentation(agent.id, agent.name)
-  const connection = roster.modelConnections?.find(
-    (entry) => sourceKey({ provider: 'api', connectionId: entry.id }) === key,
-  )
-  if (connection) return { label: connection.displayName, mark: connectionMark(connection.preset) }
   return undefined
 }
 

@@ -1,4 +1,4 @@
-import type { ModelConnection, ProviderId, ProviderStatus } from '@harness/contracts'
+import type { ProviderId, ProviderStatus } from '@harness/contracts'
 
 export type AttachmentSource = {
   provider: ProviderId
@@ -14,15 +14,8 @@ export type AttachmentSource = {
 export function sourceSupportsAttachments(
   source: AttachmentSource,
   providers: ProviderStatus[],
-  connections: ModelConnection[],
 ): boolean {
-  if (source.connectionId) {
-    return (
-      connections.find((connection) => connection.id === source.connectionId)?.capabilities
-        ?.images === true
-    )
-  }
-  if (source.agentId) return false
+  if (source.connectionId || source.agentId) return false
   return (
     providers.find((provider) => provider.id === source.provider)?.capabilities?.images === true
   )

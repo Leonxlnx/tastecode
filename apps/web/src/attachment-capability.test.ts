@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { describe, expect, it } from 'vitest'
-import type { ModelConnection, ProviderStatus } from '@harness/contracts'
+import type { ProviderStatus } from '@harness/contracts'
 import { sourceSupportsAttachments } from './attachment-capability.js'
 
 const capabilities = (images: boolean) => ({
@@ -38,44 +38,15 @@ describe('source attachment capability', () => {
       },
     ]
 
-    expect(sourceSupportsAttachments({ provider: 'codex' }, providers, [])).toBe(true)
-    expect(sourceSupportsAttachments({ provider: 'claude-code' }, providers, [])).toBe(true)
-    expect(sourceSupportsAttachments({ provider: 'grok' }, providers, [])).toBe(true)
-    expect(sourceSupportsAttachments({ provider: 'acp', agentId: 'gemini' }, providers, [])).toBe(
-      false,
-    )
+    expect(sourceSupportsAttachments({ provider: 'codex' }, providers)).toBe(true)
+    expect(sourceSupportsAttachments({ provider: 'claude-code' }, providers)).toBe(true)
+    expect(sourceSupportsAttachments({ provider: 'grok' }, providers)).toBe(true)
+    expect(sourceSupportsAttachments({ provider: 'acp', agentId: 'gemini' }, providers)).toBe(false)
   })
 
-  it('uses the selected named API connection instead of a provider-wide assumption', () => {
-    const connections: ModelConnection[] = [
-      {
-        id: 'work-openai',
-        displayName: 'Work OpenAI',
-        preset: 'openai',
-        transport: 'openai-responses',
-        baseUrl: 'https://api.openai.com/v1',
-        enabled: true,
-        credentialConfigured: true,
-        capabilities: {
-          streaming: true,
-          tools: true,
-          images: false,
-          reasoning: true,
-          modelDiscovery: true,
-          usage: true,
-        },
-      },
-    ]
-
-    expect(
-      sourceSupportsAttachments({ provider: 'api', connectionId: 'work-openai' }, [], connections),
-    ).toBe(false)
-    expect(
-      sourceSupportsAttachments(
-        { provider: 'api', connectionId: 'missing-connection' },
-        [],
-        connections,
-      ),
-    ).toBe(false)
+  it('fails closed for a source from a removed API connection', () => {
+    expect(sourceSupportsAttachments({ provider: 'api', connectionId: 'work-openai' }, [])).toBe(
+      false,
+    )
   })
 })

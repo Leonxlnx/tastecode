@@ -1,4 +1,4 @@
-import type { ModelConnectionPreset, ProviderId } from '@harness/contracts'
+import type { ProviderId } from '@harness/contracts'
 
 /** ACP agents drawn with the mark the ACP registry publishes for them (ui/agent-marks.ts). */
 export const AGENT_MARK_IDS = [
@@ -113,12 +113,6 @@ export function sourcePresentation(input: {
     label: (sourceCanOverride ? input.sourceName?.trim() : undefined) || fallback.label,
     mark: sourceCanOverride ? (input.mark ?? fallback.mark) : fallback.mark,
   }
-}
-
-export function connectionMark(preset: ModelConnectionPreset): ProviderMark {
-  if (preset === 'openai') return 'openai'
-  if (preset === 'anthropic') return 'anthropic'
-  return preset
 }
 
 export function agentMark(agentId: string): ProviderMark {
