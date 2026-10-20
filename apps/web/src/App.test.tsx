@@ -9203,6 +9203,40 @@ describe('new chats', () => {
     expect(screen.getByRole('button', { name: 'Permissions' }).textContent).toContain('Ask first')
   })
 
+  it("starts a new chat with the active account's own access", async () => {
+    const codex = serverProviders[0]!
+    serverProviders = [
+      { ...codex, capabilities: { ...codex.capabilities!, multipleAccounts: true } },
+    ]
+    localStorage.setItem(
+      'harness.approvalByProvider',
+      JSON.stringify({ codex: 'full', 'codex@work-1a2b3c': 'ask' }),
+    )
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'accounts.list'
+        ? Promise.resolve({
+            accounts: [
+              { id: 'default', provider: 'codex', label: 'Personal', managed: false },
+              {
+                id: 'work-1a2b3c',
+                provider: 'codex',
+                label: 'Work',
+                home: '/accounts/codex/work-1a2b3c',
+                managed: true,
+              },
+            ],
+            active: { codex: 'work-1a2b3c' },
+          })
+        : request(method, params),
+    )
+    render(<App />)
+    const permissions = await screen.findByRole('button', { name: 'Permissions' })
+    // Work starts new chats, and its own access is Ask first, not the provider's Full access.
+    await waitFor(() => expect(permissions.textContent).toContain('Ask first'))
+  })
+
   it('shows the saved task access mode instead of the provider preference', async () => {
     localStorage.setItem('harness.approvalByProvider', JSON.stringify({ codex: 'ask' }))
     const request = transport.request.getMockImplementation()

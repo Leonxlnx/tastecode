@@ -196,9 +196,13 @@ import {
 import { providerScanChanged, useRecheckOnFocus } from './provider-recheck.js'
 import { rememberedSignIn, rememberSignIn } from './remembered-sign-in.js'
 import {
+  defaultsScope,
+  isDefaultsScope,
   pinnedModelChoice,
   readProviderDefaults,
+  scopedDefault,
   writeProviderDefaults,
+  type DefaultsScope,
   type ProviderDefault,
   type ProviderDefaults,
 } from './provider-defaults.js'
@@ -1442,15 +1446,22 @@ export function App() {
     [provider, providerStatuses],
   )
 
-  const defaultApproval =
-    approvalByProvider[provider] ?? (autoReviewSupported ? 'auto-review' : 'full')
+  // A new chat starts on the provider's active account, with that account's
+  // own defaults, else its provider's.
+  const newChatAccount = providerHasAccounts
+    ? activeAccountOf(providerAccounts, provider)
+    : undefined
+  const newChatAccountRef = useRef(newChatAccount)
+  newChatAccountRef.current = newChatAccount
+  const storedApproval = scopedDefault(approvalByProvider, provider, newChatAccount)
+  const defaultApproval = storedApproval ?? (autoReviewSupported ? 'auto-review' : 'full')
   const approval = activeId ? (activeThreadApproval ?? 'ask') : defaultApproval
   // Auto-review support arrives with the provider list. Until then a saved
   // auto-review choice, or the default, would show as full access and flip.
   const approvalWaitsForProvider =
     catalogAvailability === 'loading' &&
     !providerStatuses.some((entry) => entry.id === provider) &&
-    (approval === 'auto-review' || (!activeId && approvalByProvider[provider] === undefined))
+    (approval === 'auto-review' || (!activeId && storedApproval === undefined))
   const approvalLoading =
     Boolean(activeId && activeThreadApproval === undefined) || approvalWaitsForProvider
   // While waiting, the mode only sizes the placeholder; auto-review is what it
@@ -3661,23 +3672,36 @@ export function App() {
   )
 
   const changeProviderDefault = useCallback(
-    (target: ProviderId, pin: ProviderDefault | undefined) => {
-      setProviderDefaults((current) => {
-        const next = { ...current }
-        if (pin) next[target] = pin
-        else delete next[target]
-        return next
-      })
+    (target: DefaultsScope, pin: ProviderDefault | undefined) => {
+      const next = { ...providerDefaultsRef.current }
+      if (pin) next[target] = pin
+      else delete next[target]
+      providerDefaultsRef.current = next
+      setProviderDefaults(next)
       // A new chat that has not started yet is exactly what the pin
       // describes, so it should not wait for the next one to show it.
-      if (!activeIdRef.current && !sourceAgentRef.current && providerRef.current === target) {
-        applyProviderDefault(target, pin)
+      const current = providerRef.current
+      if (!activeIdRef.current && !sourceAgentRef.current && target.split('@')[0] === current) {
+        applyProviderDefault(current, scopedDefault(next, current, newChatAccountRef.current))
       }
     },
     [applyProviderDefault],
   )
 
-  const changeApprovalDefault = useCallback((target: ProviderId, mode: ApprovalMode) => {
+  // Switching the account a new chat starts on brings that account's pin.
+  const newChatScope = defaultsScope(provider, newChatAccount)
+  const appliedScope = useRef(newChatScope)
+  useEffect(() => {
+    if (appliedScope.current === newChatScope) return
+    appliedScope.current = newChatScope
+    if (activeIdRef.current || sourceAgentRef.current) return
+    applyProviderDefault(
+      providerRef.current,
+      scopedDefault(providerDefaultsRef.current, providerRef.current, newChatAccountRef.current),
+    )
+  }, [newChatScope, applyProviderDefault])
+
+  const changeApprovalDefault = useCallback((target: DefaultsScope, mode: ApprovalMode) => {
     setApprovalByProvider((current) =>
       current[target] === mode ? current : { ...current, [target]: mode },
     )
@@ -4037,7 +4061,14 @@ export function App() {
       setThread(emptyThread)
       // A custom harness is a source of its own; the provider's pin is not its to follow.
       if (!sourceAgentRef.current) {
-        applyProviderDefault(providerRef.current, providerDefaultsRef.current[providerRef.current])
+        applyProviderDefault(
+          providerRef.current,
+          scopedDefault(
+            providerDefaultsRef.current,
+            providerRef.current,
+            newChatAccountRef.current,
+          ),
+        )
       }
       setComposerFocusRequest((request) => request + 1)
     },
@@ -4913,10 +4944,15 @@ export function App() {
    * do both jobs at once: it is this provider's default for every new session,
    * and picking a different mode inside a live chat changes that chat now.
    */
+  // A chat's access is its own account's default; a new chat's, its starting account's.
+  const approvalScope = defaultsScope(
+    provider,
+    activeId ? (activeSession?.accountId as AccountId | undefined) : newChatAccount,
+  )
   const changeApproval = useCallback(
     (mode: ApprovalMode) => {
       setApprovalByProvider((current) =>
-        current[provider] === mode ? current : { ...current, [provider]: mode },
+        current[approvalScope] === mode ? current : { ...current, [approvalScope]: mode },
       )
       const threadId = activeIdRef.current
       if (!threadId) return
@@ -4938,7 +4974,7 @@ export function App() {
         })
       approvalChanges.current.set(threadId, change)
     },
-    [provider, transport],
+    [approvalScope, transport],
   )
   const answerUserInput = useCallback(
     (requestId: string, answers: Record<string, string[]>) => {
@@ -7383,17 +7419,15 @@ function writeThreadModelSelection(threadId: string, selection: ThreadSelection)
   writeSetting(`${MODEL_BY_THREAD_PREFIX}${threadId}`, JSON.stringify(selection))
 }
 
-type ApprovalPreferences = Partial<Record<ProviderId, ApprovalMode>>
+type ApprovalPreferences = Partial<Record<DefaultsScope, ApprovalMode>>
 
 function readApprovalPreferences(activeProvider: ProviderId) {
   const preferences: ApprovalPreferences = {}
   try {
     const stored: unknown = JSON.parse(readSetting(APPROVAL_BY_PROVIDER_KEY) ?? '{}')
     if (isRecord(stored)) {
-      for (const [storedProvider, mode] of Object.entries(stored)) {
-        if (isProviderId(storedProvider) && isApprovalMode(mode)) {
-          preferences[storedProvider] = mode
-        }
+      for (const [scope, mode] of Object.entries(stored)) {
+        if (isDefaultsScope(scope) && isApprovalMode(mode)) preferences[scope] = mode
       }
     }
   } catch {

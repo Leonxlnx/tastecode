@@ -41,6 +41,8 @@ export function ProviderRow(props: {
   provider: ProviderStatus
   /** Overrides the provider's own mark, for an ACP agent drawn as itself. */
   mark?: ProviderMark | undefined
+  /** Overrides the provider's name, as the default account's editable "Codex · Work". */
+  name?: ReactNode
   status: ReactNode
   link?: ProviderLink | undefined
   live?: boolean
@@ -59,7 +61,7 @@ export function ProviderRow(props: {
         <ProviderIcon mark={props.mark ?? providerMark(props.provider.id)} size={18} />
       </div>
       <div className="provider-row__identity">
-        <p className="set-entity__name">{props.provider.displayName}</p>
+        <p className="set-entity__name">{props.name ?? props.provider.displayName}</p>
       </div>
       <span className="set-leader" aria-hidden />
       <div

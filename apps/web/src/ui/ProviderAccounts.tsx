@@ -101,6 +101,8 @@ export function ProviderAccountRows(props: {
   reportsErrors?: boolean | undefined
   /** Shows a running sign-in in the expanded workspace terminal, as the provider rows do. */
   onOpenTerminal?: ((target: ProviderLoginTerminalTarget) => void) | undefined
+  /** The account's own defaults for new chats, under its row. */
+  renderTuning?: ((account: ProviderAccount) => ReactNode) | undefined
 }) {
   const { store, snapshot } = useProviderAccounts(props.transport, true)
   const { busy, issues, run, clear } = useAccountActions()
@@ -124,24 +126,6 @@ export function ProviderAccountRows(props: {
       {error}
       {accounts.map((account) => {
         const key = accountKey(account)
-        if (renaming === key) {
-          return (
-            <RenameAccountForm
-              key={key}
-              account={account}
-              busy={busy === key}
-              error={issues[key]}
-              onCancel={() => setRenaming(undefined)}
-              onSubmit={(label) =>
-                void run(key, () => store.rename(account.provider, account.id, label)).then(
-                  (done) => {
-                    if (done) setRenaming(undefined)
-                  },
-                )
-              }
-            />
-          )
-        }
         return (
           <div className="provider-account-entry" key={key}>
             <button
@@ -170,12 +154,15 @@ export function ProviderAccountRows(props: {
                 />
               }
               onSetActive={() => void run(key, () => store.setActive(account.provider, account.id))}
-              onRename={() => {
-                clear(key)
-                setRenaming(key)
+              renaming={renaming === key}
+              onRenamingChange={(editing) => {
+                if (editing) clear(key)
+                setRenaming(editing ? key : undefined)
               }}
+              onRename={(label) => store.rename(account.provider, account.id, label)}
               onDeleteFolder={() => setConfirm({ account, deleteHome: true })}
             />
+            {props.renderTuning?.(account)}
           </div>
         )
       })}
@@ -473,7 +460,9 @@ function AccountRow(props: {
   issue?: string | undefined
   signIn: ReactNode
   onSetActive: () => void
-  onRename: () => void
+  renaming: boolean
+  onRenamingChange: (renaming: boolean) => void
+  onRename: (label: string) => Promise<unknown>
   /** Deletes a folder TasteCode created; removing is the roster's minus. */
   onDeleteFolder: () => void
 }) {
@@ -491,7 +480,13 @@ function AccountRow(props: {
       <div className="provider-row__identity">
         {/* The provider is named too: every provider has an account called Default. */}
         <p className="set-entity__name" title={account.home}>
-          {accountName(props.provider, account)}
+          <AccountName
+            provider={props.provider}
+            account={account}
+            editing={props.renaming}
+            onEditingChange={props.onRenamingChange}
+            onRename={props.onRename}
+          />
         </p>
       </div>
       <span className="set-leader" aria-hidden />
@@ -530,7 +525,7 @@ function AccountRow(props: {
                 icon={<Pencil size={14} aria-hidden />}
                 onClick={() => {
                   close()
-                  props.onRename()
+                  props.onRenamingChange(true)
                 }}
               />
               {isDesktop && account.home ? (
@@ -675,62 +670,117 @@ function AccountSignIn(props: {
   )
 }
 
-function RenameAccountForm(props: {
+/**
+ * "Codex · Work", with the account's own name editable where it stands: the
+ * pencil beside it, or a double click on it, turns it into a field that saves
+ * on Enter or when left, and puts the name back on Escape. A name the server
+ * refuses keeps the field open with the reason under it.
+ */
+export function AccountName(props: {
+  provider: ProviderStatus
   account: ProviderAccount
-  busy: boolean
-  error?: string | undefined
-  onCancel: () => void
-  onSubmit: (label: string) => void
+  /** Held by the row when its menu can start a rename too; otherwise the name keeps it. */
+  editing?: boolean | undefined
+  onEditingChange?: ((editing: boolean) => void) | undefined
+  onRename: (label: string) => Promise<unknown>
 }) {
-  const [label, setLabel] = useState(props.account.label)
-  const submit = (event: FormEvent) => {
-    event.preventDefault()
-    if (label.trim()) props.onSubmit(label.trim())
+  const [ownEditing, setOwnEditing] = useState(false)
+  const editing = props.editing ?? ownEditing
+  const setEditing = props.onEditingChange ?? setOwnEditing
+  const [draft, setDraft] = useState(props.account.label)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string>()
+  const errorId = useId()
+  const input = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (!editing) return
+    setDraft(props.account.label)
+    setError(undefined)
+    input.current?.focus()
+    input.current?.select()
+  }, [editing, props.account.label])
+
+  const finish = () => {
+    const label = draft.trim()
+    if (!label || label === props.account.label) {
+      setEditing(false)
+      return
+    }
+    setSaving(true)
+    void props
+      .onRename(label)
+      .then(
+        () => setEditing(false),
+        (cause: unknown) => {
+          setError(errorMessage(cause))
+          input.current?.focus()
+        },
+      )
+      .finally(() => setSaving(false))
   }
+
   return (
-    <form
-      className="set-form provider-accounts__form"
-      aria-label={`Rename ${props.account.label}`}
-      onSubmit={submit}
-      onKeyDown={(event) => {
-        if (event.key !== 'Escape' || props.busy) return
-        event.stopPropagation()
-        props.onCancel()
-      }}
-    >
-      <label className="set-form__wide">
-        <span>Name</span>
-        <input
-          className="set-input"
-          value={label}
-          maxLength={80}
-          autoFocus
-          onChange={(event) => setLabel(event.target.value)}
-        />
-      </label>
-      {props.error ? (
-        <p className="set-form__error" role="alert">
-          {props.error}
-        </p>
-      ) : null}
-      <div className="set-form__actions">
-        <button
-          className="set-button set-button--quiet"
-          type="button"
-          disabled={props.busy}
-          onClick={props.onCancel}
-        >
-          Cancel
-        </button>
-        <button
-          className="set-button set-button--primary"
-          type="submit"
-          disabled={props.busy || !label.trim()}
-        >
-          {props.busy ? 'Saving…' : 'Save'}
-        </button>
-      </div>
-    </form>
+    <span className="account-name" data-editing={editing || undefined}>
+      {props.provider.displayName} ·{' '}
+      {editing ? (
+        <>
+          <input
+            ref={input}
+            className="account-name__input"
+            value={draft}
+            maxLength={80}
+            size={Math.max(4, draft.length + 1)}
+            // Read-only, not disabled, while saving: a disabled field lets go of
+            // focus, and Escape after a refusal would then close Settings.
+            readOnly={saving}
+            spellCheck={false}
+            aria-label={`Name of ${props.provider.displayName} account`}
+            aria-invalid={error ? true : undefined}
+            aria-describedby={error ? errorId : undefined}
+            onChange={(event) => {
+              setDraft(event.target.value)
+              setError(undefined)
+            }}
+            onBlur={() => {
+              if (!saving && !error) finish()
+            }}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault()
+                finish()
+              }
+              if (event.key === 'Escape') {
+                // Escape here only puts the name back; Settings stays open.
+                event.preventDefault()
+                event.stopPropagation()
+                setEditing(false)
+              }
+            }}
+          />
+          {error ? (
+            <span className="account-name__error" id={errorId} role="alert">
+              {error}
+            </span>
+          ) : null}
+        </>
+      ) : (
+        <>
+          <span className="account-name__label" onDoubleClick={() => setEditing(true)}>
+            {props.account.label}
+          </span>
+          <button
+            className="account-name__edit"
+            type="button"
+            aria-label={`Rename ${props.account.label}`}
+            title="Rename"
+            onClick={() => setEditing(true)}
+          >
+            <Pencil size={13} aria-hidden />
+          </button>
+        </>
+      )}
+    </span>
   )
 }
 

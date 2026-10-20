@@ -15,6 +15,8 @@ import {
   IconRotate as RotateCcw,
 } from '@tabler/icons-react'
 import type {
+  AccountContextSettings,
+  AccountId,
   ApprovalMode,
   ContextControl,
   ProviderContextSettings,
@@ -48,10 +50,122 @@ export type ContextSettingsState =
   | { phase: 'ready'; settings: ProviderContextSettingsMap }
   | { phase: 'error'; message: string }
 
-type ProviderContextState =
+/** One provider's or account's context settings as the rows show them. */
+export type ProviderContextState =
   | { phase: 'loading' }
   | { phase: 'ready'; settings: ProviderContextSettings | undefined }
   | { phase: 'error'; message: string }
+
+export type AccountContextState =
+  | { phase: 'loading' }
+  | { phase: 'ready'; accounts: readonly AccountContextSettings[] }
+  | { phase: 'error'; message: string }
+
+function accountKey(provider: ProviderId, accountId: AccountId): string {
+  return `${provider}@${accountId}`
+}
+
+function withAccountSettings(
+  accounts: readonly AccountContextSettings[],
+  entry: AccountContextSettings,
+): AccountContextSettings[] {
+  const others = accounts.filter(
+    (each) => each.provider !== entry.provider || each.accountId !== entry.accountId,
+  )
+  const empty = entry.settings.window === undefined && entry.settings.compactAt === undefined
+  return empty ? others : [...others, entry]
+}
+
+/**
+ * Further accounts' own context settings, kept by the server beside the
+ * providers'. An account without any follows its provider's; edits show at
+ * once and fall back to the last saved state when the server refuses them.
+ */
+export function useAccountContextSettings(transport: Transport, enabled: boolean) {
+  const [state, setState] = useState<AccountContextState>({ phase: 'loading' })
+  const [errors, setErrors] = useState<Record<string, string | undefined>>({})
+  const confirmed = useRef<readonly AccountContextSettings[]>([])
+  const updates = useRef<Record<string, number>>({})
+
+  useEffect(() => {
+    if (!enabled) return
+    let live = true
+    void (async () => {
+      try {
+        const result = await transport.request('providers.accountContextSettings', {})
+        if (!live) return
+        // An answer without the list, as from a server that only half knows the method, is none.
+        const accounts = Array.isArray(result?.accounts) ? result.accounts : []
+        confirmed.current = accounts
+        setState({ phase: 'ready', accounts })
+      } catch (cause) {
+        if (live) setState({ phase: 'error', message: errorMessage(cause) })
+      }
+    })()
+    return () => {
+      live = false
+    }
+  }, [transport, enabled])
+
+  const update = useCallback(
+    (provider: ProviderId, accountId: AccountId, settings: ProviderContextSettings) => {
+      const key = accountKey(provider, accountId)
+      const show = (accounts: readonly AccountContextSettings[]) =>
+        setState((current) => (current.phase === 'ready' ? { phase: 'ready', accounts } : current))
+      const request = (updates.current[key] ?? 0) + 1
+      updates.current[key] = request
+      setState((current) =>
+        current.phase === 'ready'
+          ? {
+              phase: 'ready',
+              accounts: withAccountSettings(current.accounts, { provider, accountId, settings }),
+            }
+          : current,
+      )
+      setErrors((current) => ({ ...current, [key]: undefined }))
+      void (async () => {
+        try {
+          const { accounts } = await transport.request('providers.updateAccountContextSettings', {
+            provider,
+            accountId,
+            settings,
+          })
+          confirmed.current = accounts
+          if (updates.current[key] === request) show(accounts)
+        } catch (cause) {
+          if (updates.current[key] !== request) return
+          show(confirmed.current)
+          setErrors((current) => ({ ...current, [key]: errorMessage(cause) }))
+        }
+      })()
+    },
+    [transport],
+  )
+
+  /** The account's own settings, else its provider's, as the rows show them. */
+  const resolve = (
+    providers: ContextSettingsState,
+    provider: ProviderId,
+    accountId: AccountId,
+  ): ProviderContextState => {
+    if (state.phase === 'error') return state
+    if (state.phase === 'loading' || providers.phase === 'loading') return { phase: 'loading' }
+    const own = state.accounts.find(
+      (each) => each.provider === provider && each.accountId === accountId,
+    )
+    if (own) return { phase: 'ready', settings: own.settings }
+    return providers.phase === 'ready'
+      ? { phase: 'ready', settings: providers.settings[provider] }
+      : providers
+  }
+
+  return {
+    state,
+    errors: (provider: ProviderId, accountId: AccountId) => errors[accountKey(provider, accountId)],
+    update,
+    resolve,
+  }
+}
 
 function errorMessage(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause)
@@ -179,14 +293,19 @@ export function ProviderTuning(props: {
   onContextChange: (settings: ProviderContextSettings) => void
   /** The account is still being checked, so the rows hold their place without values. */
   pending?: boolean | undefined
+  /** What the rows are named after, as "Claude Code · Personal"; the provider by default. */
+  name?: string | undefined
+  /** A further account's settings, its own or its provider's, in place of the provider's. */
+  accountContext?: ProviderContextState | undefined
 }) {
   const id = props.provider.id
-  const name = props.provider.displayName
+  const name = props.name ?? props.provider.displayName
   const control = props.provider.capabilities?.context
   const context: ProviderContextState =
-    props.context.phase === 'ready'
+    props.accountContext ??
+    (props.context.phase === 'ready'
       ? { phase: 'ready', settings: props.context.settings[id] }
-      : props.context
+      : props.context)
   const pending = props.pending === true
 
   return (

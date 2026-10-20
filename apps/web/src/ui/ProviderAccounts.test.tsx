@@ -110,6 +110,10 @@ function serve(initial: ProviderAccount[], found: DetectedAccountHome[] = []) {
   return transport
 }
 
+/** An account's whole name, as "Codex · Work", which its parts make up. */
+const named = (text: string) => (_: string, element: Element | null) =>
+  element?.classList.contains('account-name') === true && element.textContent === text
+
 const calls = (transport: TestTransport, method: MethodName) =>
   transport.requests.filter((request) => request.method === method).map(({ params }) => params)
 
@@ -129,9 +133,9 @@ describe('Provider accounts in Settings', () => {
     const transport = serve([defaultAccount('codex'), { ...work, email: 'work@example.com' }])
     render(<ProviderAccountRows transport={transport} provider={codex} />)
 
-    expect(await screen.findByText('Codex · Work')).toBeTruthy()
+    expect(await screen.findByText(named('Codex · Work'))).toBeTruthy()
     // The provider's own row is its default account.
-    expect(screen.queryByText('Codex · Default')).toBeNull()
+    expect(screen.queryByText(named('Codex · Default'))).toBeNull()
     expect(screen.getByRole('button', { name: 'Remove Codex · Work' })).toBeTruthy()
 
     fireEvent.click(screen.getByRole('button', { name: 'Use Work for new Codex chats' }))
@@ -154,7 +158,9 @@ describe('Provider accounts in Settings', () => {
     const transport = serve([defaultAccount('codex'), work])
     render(<ProviderAccountRows transport={transport} provider={codex} />)
 
-    const row = (await screen.findByText('Codex · Work')).closest<HTMLElement>('.provider-row')!
+    const row = (await screen.findByText(named('Codex · Work'))).closest<HTMLElement>(
+      '.provider-row',
+    )!
     expect(row.textContent).toContain('Not signed in')
     const action = row.querySelector('.provider-account__action')!
     expect([...action.children].map((child) => child.textContent)).toEqual(['Sign in'])
@@ -293,20 +299,48 @@ describe('Provider accounts in Settings', () => {
     expect(screen.getByRole('form', { name: 'Add account' })).toBeTruthy()
   })
 
-  it('renames an account', async () => {
+  it('renames an account where its name stands, from its pencil or its menu', async () => {
     const transport = serve([defaultAccount('codex'), work])
     render(<ProviderAccountRows transport={transport} provider={codex} />)
-    fireEvent.click(await screen.findByRole('button', { name: 'Work account actions' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Rename' }))
-    const form = screen.getByRole('form', { name: 'Rename Work' })
-    fireEvent.change(within(form).getByRole('textbox', { name: 'Name' }), {
-      target: { value: 'Client' },
-    })
-    fireEvent.click(within(form).getByRole('button', { name: 'Save' }))
-    expect(await screen.findByText('Codex · Client')).toBeTruthy()
+    fireEvent.click(await screen.findByRole('button', { name: 'Rename Work' }))
+    const field = screen.getByRole('textbox', { name: 'Name of Codex account' })
+    expect(document.activeElement).toBe(field)
+    fireEvent.change(field, { target: { value: 'Client' } })
+    fireEvent.keyDown(field, { key: 'Enter' })
+    expect(await screen.findByText(named('Codex · Client'))).toBeTruthy()
     expect(calls(transport, 'accounts.rename')).toEqual([
       { provider: 'codex', accountId: 'work-1a2b3c', label: 'Client' },
     ])
+
+    // The menu starts the same field; Escape puts the name back and goes no further.
+    fireEvent.click(screen.getByRole('button', { name: 'Client account actions' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Rename' }))
+    const again = screen.getByRole('textbox', { name: 'Name of Codex account' })
+    fireEvent.change(again, { target: { value: 'Other' } })
+    expect(fireEvent.keyDown(again, { key: 'Escape' })).toBe(false)
+    expect(screen.queryByRole('textbox')).toBeNull()
+    expect(screen.getByText(named('Codex · Client'))).toBeTruthy()
+    expect(calls(transport, 'accounts.rename')).toHaveLength(1)
+  })
+
+  it('keeps the name open with the reason when the server refuses it', async () => {
+    const transport = serve([defaultAccount('codex'), work])
+    const request = transport.request.bind(transport)
+    vi.spyOn(transport, 'request').mockImplementation((method, params) =>
+      method === 'accounts.rename'
+        ? Promise.reject(new Error('Another account is already called "Default".'))
+        : request(method, params),
+    )
+    render(<ProviderAccountRows transport={transport} provider={codex} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Rename Work' }))
+    const field = screen.getByRole('textbox', { name: 'Name of Codex account' })
+    fireEvent.change(field, { target: { value: 'Default' } })
+    fireEvent.keyDown(field, { key: 'Enter' })
+    expect((await screen.findByRole('alert')).textContent).toBe(
+      'Another account is already called "Default".',
+    )
+    expect(field.getAttribute('aria-invalid')).toBe('true')
+    expect(document.activeElement).toBe(field)
   })
 
   it('removes an account with its minus and keeps its folder, after a confirmation', async () => {
@@ -330,7 +364,7 @@ describe('Provider accounts in Settings', () => {
         { provider: 'codex', accountId: 'work-1a2b3c' },
       ]),
     )
-    await waitFor(() => expect(screen.queryByText('Codex · Work')).toBeNull())
+    await waitFor(() => expect(screen.queryByText(named('Codex · Work'))).toBeNull())
   })
 
   it('deletes a managed folder only as its own confirmed action', async () => {

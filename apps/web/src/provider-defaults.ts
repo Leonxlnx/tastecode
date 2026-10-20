@@ -1,4 +1,11 @@
-import { ProviderIdSchema, type ApprovalMode, type ProviderId } from '@harness/contracts'
+import {
+  AccountIdSchema,
+  DEFAULT_ACCOUNT_ID,
+  ProviderIdSchema,
+  type AccountId,
+  type ApprovalMode,
+  type ProviderId,
+} from '@harness/contracts'
 import { isCustomModelChoice, type ModelChoice } from './model-catalog.js'
 
 /**
@@ -6,7 +13,37 @@ import { isCustomModelChoice, type ModelChoice } from './model-catalog.js'
  * Without a pin a new chat keeps the last model used there, as it always has.
  */
 export type ProviderDefault = { model: string; effort?: string | undefined }
-export type ProviderDefaults = Partial<Record<ProviderId, ProviderDefault>>
+
+/**
+ * Where a default for new chats is kept: under the provider for its default
+ * account, under `provider@account` for a further one. A further account
+ * without its own value follows its provider's (`scopedDefault`).
+ */
+export type DefaultsScope = ProviderId | `${ProviderId}@${string}`
+
+export function defaultsScope(provider: ProviderId, accountId?: AccountId): DefaultsScope {
+  return accountId === undefined || accountId === DEFAULT_ACCOUNT_ID
+    ? provider
+    : `${provider}@${accountId}`
+}
+
+/** A stored key that names a provider, or a provider and one of its further accounts. */
+export function isDefaultsScope(key: string): key is DefaultsScope {
+  const [provider, accountId, ...rest] = key.split('@')
+  if (rest.length > 0 || !ProviderIdSchema.safeParse(provider).success) return false
+  return accountId === undefined || AccountIdSchema.safeParse(accountId).success
+}
+
+/** The account's own value, else its provider's. */
+export function scopedDefault<T>(
+  values: Partial<Record<DefaultsScope, T>>,
+  provider: ProviderId,
+  accountId?: AccountId,
+): T | undefined {
+  return values[defaultsScope(provider, accountId)] ?? values[provider]
+}
+
+export type ProviderDefaults = Partial<Record<DefaultsScope, ProviderDefault>>
 
 export const PROVIDER_DEFAULTS_KEY = 'harness.providerDefaults'
 
@@ -15,12 +52,11 @@ export function readProviderDefaults() {
   try {
     const stored: unknown = JSON.parse(localStorage.getItem(PROVIDER_DEFAULTS_KEY) ?? '{}')
     if (typeof stored !== 'object' || stored === null || Array.isArray(stored)) return defaults
-    for (const [provider, entry] of Object.entries(stored)) {
-      const id = ProviderIdSchema.safeParse(provider)
-      if (!id.success || typeof entry !== 'object' || entry === null) continue
+    for (const [scope, entry] of Object.entries(stored)) {
+      if (!isDefaultsScope(scope) || typeof entry !== 'object' || entry === null) continue
       const { model, effort } = entry as Record<string, unknown>
       if (typeof model !== 'string' || model.length === 0) continue
-      defaults[id.data] = {
+      defaults[scope] = {
         model,
         ...(typeof effort === 'string' && effort.length > 0 ? { effort } : {}),
       }

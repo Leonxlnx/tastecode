@@ -3058,9 +3058,12 @@ describe('provider roster', () => {
 
     const page = screen.getByRole('region', { name: 'Providers' })
     expect(within(page).queryByRole('region', { name: 'Accounts' })).toBeNull()
-    // The further account sits under its provider; the provider row is the default one.
-    expect(await within(page).findByText('Codex · Work')).toBeTruthy()
-    expect(within(page).queryByText('Codex · Default')).toBeNull()
+    // The further account sits under its provider, whose row is the default one,
+    // named like it once there are two.
+    const named = (text: string) => (_: string, element: Element | null) =>
+      element?.classList.contains('account-name') === true && element.textContent === text
+    expect(await within(page).findByText(named('Codex · Work'))).toBeTruthy()
+    expect(within(page).getAllByText(named('Codex · Default'))).toHaveLength(1)
     expect(
       await within(page).findByRole('button', {
         name: 'Add provider A sign-in found on this computer',
@@ -3083,6 +3086,90 @@ describe('provider roster', () => {
     expect(
       await screen.findByRole('button', { name: 'Add provider' }, { timeout: 2000 }),
     ).toBeTruthy()
+  })
+
+  it('gives a further account defaults of its own, following its provider until changed', async () => {
+    const codex: ProviderStatus = {
+      id: 'codex',
+      displayName: 'Codex',
+      installed: true,
+      auth: 'authenticated',
+      capabilities: {
+        steer: false,
+        fork: false,
+        interrupt: false,
+        reasoningItems: false,
+        approvals: false,
+        images: false,
+        autoReview: true,
+        multipleAccounts: true,
+        context: { windows: [], compaction: true, compactionOff: true, defaultCompactAt: 90 },
+      },
+    }
+    const accountUpdates: unknown[] = []
+    const transport = new TestTransport(async (method, params) => {
+      if (method === 'auth.status') return { signedIn: true, email: 'me@example.com' }
+      if (method === 'providers.updates') return { updates: [], checkedAt: 0 }
+      if (method === 'models.list') return { models: [] }
+      if (method === 'accounts.detect') return { found: [] }
+      if (method === 'providers.contextSettings') return { codex: { compactAt: 70 } }
+      if (method === 'providers.accountContextSettings') return { accounts: [] }
+      if (method === 'providers.updateAccountContextSettings') {
+        accountUpdates.push(params)
+        return { accounts: [params] }
+      }
+      if (method === 'accounts.list') {
+        return {
+          accounts: [
+            { id: 'default', provider: 'codex', label: 'Team', managed: false },
+            {
+              id: 'work-1a2b3c',
+              provider: 'codex',
+              label: 'Max',
+              home: '/Users/me/.codex-max',
+              managed: false,
+              email: 'max@example.com',
+            },
+          ],
+          active: {},
+        }
+      }
+      throw new Error(`unexpected ${method}`)
+    })
+    const onAccessChange = vi.fn()
+    renderSettings({
+      initialSection: 'providers',
+      transport,
+      overrides: {
+        providerStatuses: [codex],
+        acpAgents: library,
+        providerRoster: ['codex'],
+        onProviderRosterChange: vi.fn(),
+        providerDefaults: {
+          pins: {},
+          onPinChange: vi.fn(),
+          access: { codex: 'full' },
+          onAccessChange,
+        },
+      },
+    })
+
+    const team = await screen.findByRole('group', { name: 'Codex · Team defaults' })
+    const max = await screen.findByRole('group', { name: 'Codex · Max defaults' })
+    // Max has nothing of its own yet, so it shows its provider's.
+    expect(
+      within(max).getByRole('button', { name: /^Codex · Max default access: Full/ }),
+    ).toBeTruthy()
+    expect(
+      await within(max).findByRole('button', { name: 'Codex · Max context: Compacts at 70%' }),
+    ).toBeTruthy()
+    expect(
+      within(team).getByRole('button', { name: /^Codex · Team default access: Full/ }),
+    ).toBeTruthy()
+
+    fireEvent.click(within(max).getByRole('button', { name: /^Codex · Max default access/ }))
+    fireEvent.click(screen.getByRole('menuitemradio', { name: /^Ask first/ }))
+    expect(onAccessChange).toHaveBeenCalledWith('codex@work-1a2b3c', 'ask')
   })
 
   it('offers Install for an added agent that is not on this machine', () => {

@@ -45,6 +45,7 @@ import type {
   ModelConnection,
   ModelConnectionPreset,
   ModelTransport,
+  ProviderAccount,
   ProviderId,
   ProviderStatus,
   ResultOf,
@@ -94,15 +95,19 @@ import {
 } from '../provider-roster.js'
 import type { ComposerError } from './ComposerErrors.js'
 import {
+  defaultsScope,
   pinnableModels,
   pinnedModelChoice,
   providerApprovalDefault,
+  scopedDefault,
+  type DefaultsScope,
   type ProviderDefault,
   type ProviderDefaults,
 } from '../provider-defaults.js'
 import {
   ProviderTuning,
   ProviderTuningSkeleton,
+  useAccountContextSettings,
   useProviderContextSettings,
 } from './ProviderTuning.js'
 import { Skeleton, SkeletonCode, SkeletonStatus } from './Skeleton.js'
@@ -172,6 +177,7 @@ import { AppSelect, type AppSelectOption } from './AppSelect.js'
 import { Menu, MenuItem } from './Menu.js'
 import { AccountEmail } from './AccountEmail.js'
 import {
+  AccountName,
   AddAccountSection,
   FoundAccountsSection,
   IgnoredSignInsSection,
@@ -775,10 +781,11 @@ type AcpAgent = ResultOf<'acp.agents'>['agents'][number]
 
 /** What a new chat on each provider starts with. The app shell owns it. */
 export type ProviderDefaultsControls = {
+  /** Keyed by provider for its default account, `provider@account` for a further one. */
   pins: ProviderDefaults
-  onPinChange: (provider: ProviderId, pin: ProviderDefault | undefined) => void
-  access: ProviderMap<ApprovalMode>
-  onAccessChange: (provider: ProviderId, mode: ApprovalMode) => void
+  onPinChange: (scope: DefaultsScope, pin: ProviderDefault | undefined) => void
+  access: Partial<Record<DefaultsScope, ApprovalMode>>
+  onAccessChange: (scope: DefaultsScope, mode: ApprovalMode) => void
 }
 
 export function ProviderSettings(props: {
@@ -1015,6 +1022,10 @@ export function ProviderSettings(props: {
     entries.flatMap((entry) => ('status' in entry ? [entry.status] : [])),
   )
   const providerAccounts = useProviderAccounts(props.transport, accountProviders.length > 0)
+  const accountContext = useAccountContextSettings(
+    props.transport,
+    providerDefaults !== undefined && accountProviders.length > 0,
+  )
   const installedAgentKey = agents
     .filter((agent) => agent.installed)
     .map((agent) => agent.id)
@@ -1189,9 +1200,22 @@ export function ProviderSettings(props: {
     const operation = authOperations[status.id]
     const authError = authErrors[status.id]
     const refreshError = authState.refreshError
-    // The provider row is its default account. With another account active
-    // for new chats, it offers the way back.
+    // The provider row is its default account. Once there are others it
+    // carries the default account's name, renamed in place like theirs, and
+    // with another account active for new chats it offers the way back.
     const further = accountsOf(providerAccounts.snapshot, status.id).length > 1
+    const defaultAccount = further
+      ? accountsOf(providerAccounts.snapshot, status.id).find(
+          (entry) => entry.id === DEFAULT_ACCOUNT_ID,
+        )
+      : undefined
+    const name = defaultAccount ? (
+      <AccountName
+        provider={status}
+        account={defaultAccount}
+        onRename={(label) => providerAccounts.store.rename(status.id, DEFAULT_ACCOUNT_ID, label)}
+      />
+    ) : undefined
     const useDefault: ProviderAction | undefined =
       further &&
       account?.signedIn &&
@@ -1230,6 +1254,7 @@ export function ProviderSettings(props: {
                 ? { message: `Could not refresh this account. ${refreshError}` }
                 : undefined
         }
+        name={name}
         secondary={operation === undefined ? useDefault : undefined}
         primary={
           account?.signedIn
@@ -1336,6 +1361,13 @@ export function ProviderSettings(props: {
     if (authState) return authState.phase === 'loading'
     return !(status.id === props.provider && props.account)
   }
+  // With further accounts the default one is named like them, "Claude Code · Team".
+  const defaultAccountName = (status: ProviderStatus) => {
+    const accounts = accountsOf(providerAccounts.snapshot, status.id)
+    const own =
+      accounts.length > 1 ? accounts.find((each) => each.id === DEFAULT_ACCOUNT_ID) : undefined
+    return own ? `${status.displayName} · ${own.label}` : undefined
+  }
   const renderTuning = (status: ProviderStatus) => {
     if (!providerDefaults) return null
     // A provider that may well be signed in keeps the place of its defaults
@@ -1347,6 +1379,7 @@ export function ProviderSettings(props: {
     return (
       <ProviderTuning
         provider={status}
+        name={defaultAccountName(status)}
         models={pinnableModels(props.models ?? [], status.id, props.hiddenModels)}
         pinned={pin}
         pinnedName={pinnedName}
@@ -1360,6 +1393,33 @@ export function ProviderSettings(props: {
         contextError={context.errors[status.id]}
         onContextChange={(settings) => context.update(status.id, settings)}
         pending={pending}
+      />
+    )
+  }
+  // A further account's own defaults for new chats, each following its
+  // provider's until changed here. Shown once the account names who it is.
+  const renderAccountTuning = (status: ProviderStatus, account: ProviderAccount) => {
+    if (!providerDefaults) return null
+    if (account.email === undefined && account.plan === undefined) return null
+    const scope = defaultsScope(status.id, account.id)
+    const pin = scopedDefault(providerDefaults.pins, status.id, account.id)
+    return (
+      <ProviderTuning
+        provider={status}
+        name={`${status.displayName} · ${account.label}`}
+        models={pinnableModels(props.models ?? [], status.id, props.hiddenModels)}
+        pinned={pin}
+        pinnedName={pinnedModelChoice(props.models ?? [], status.id, pin)?.model.displayName}
+        onPinnedChange={(next) => providerDefaults.onPinChange(scope, next)}
+        access={providerApprovalDefault(
+          scopedDefault(providerDefaults.access, status.id, account.id),
+          status.capabilities?.autoReview === true,
+        )}
+        onAccessChange={(mode) => providerDefaults.onAccessChange(scope, mode)}
+        context={context.state}
+        accountContext={accountContext.resolve(context.state, status.id, account.id)}
+        contextError={accountContext.errors(status.id, account.id)}
+        onContextChange={(settings) => accountContext.update(status.id, account.id, settings)}
       />
     )
   }
@@ -1389,6 +1449,7 @@ export function ProviderSettings(props: {
             provider={entry.status}
             reportsErrors={accountProviders[0] === entry.status}
             onOpenTerminal={props.onProviderLoginTerminalOpen}
+            renderTuning={(account) => renderAccountTuning(entry.status, account)}
           />
         ) : null}
       </div>

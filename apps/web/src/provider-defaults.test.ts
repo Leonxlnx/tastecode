@@ -4,10 +4,13 @@ import type { Model } from '@harness/contracts'
 import { choicesFor, customModelChoice } from './model-catalog.js'
 import {
   PROVIDER_DEFAULTS_KEY,
+  defaultsScope,
+  isDefaultsScope,
   pinnableModels,
   pinnedModelChoice,
   providerApprovalDefault,
   readProviderDefaults,
+  scopedDefault,
   writeProviderDefaults,
 } from './provider-defaults.js'
 
@@ -90,5 +93,43 @@ describe('providerApprovalDefault', () => {
   it('shows full access for a remembered auto-review the engine cannot run', () => {
     expect(providerApprovalDefault('auto-review', false)).toBe('full')
     expect(providerApprovalDefault('auto-review', true)).toBe('auto-review')
+  })
+})
+
+describe('defaults per account', () => {
+  it('keeps a further account apart from its provider, which the default account is', () => {
+    expect(defaultsScope('codex')).toBe('codex')
+    expect(defaultsScope('codex', 'default')).toBe('codex')
+    expect(defaultsScope('codex', 'work-1a2b3c')).toBe('codex@work-1a2b3c')
+    expect(isDefaultsScope('codex@work-1a2b3c')).toBe(true)
+    for (const key of ['nobody', 'codex@Not Valid', 'codex@a@b', 'codex@']) {
+      expect(isDefaultsScope(key)).toBe(false)
+    }
+  })
+
+  it('follows the provider until the account has its own', () => {
+    const access = { codex: 'full', 'codex@work-1a2b3c': 'ask' } as const
+    expect(scopedDefault(access, 'codex', 'work-1a2b3c')).toBe('ask')
+    expect(scopedDefault(access, 'codex', 'side-4d5e6f')).toBe('full')
+    expect(scopedDefault(access, 'codex')).toBe('full')
+    expect(scopedDefault({}, 'codex', 'work-1a2b3c')).toBeUndefined()
+  })
+
+  it('reads and writes pins kept for further accounts', () => {
+    writeProviderDefaults({
+      codex: { model: 'gpt-6' },
+      'codex@work-1a2b3c': { model: 'gpt-6-mini', effort: 'high' },
+    })
+    localStorage.setItem(
+      PROVIDER_DEFAULTS_KEY,
+      JSON.stringify({
+        ...JSON.parse(localStorage.getItem(PROVIDER_DEFAULTS_KEY)!),
+        'codex@Bad Id': { model: 'x' },
+      }),
+    )
+    expect(readProviderDefaults()).toEqual({
+      codex: { model: 'gpt-6' },
+      'codex@work-1a2b3c': { model: 'gpt-6-mini', effort: 'high' },
+    })
   })
 })
