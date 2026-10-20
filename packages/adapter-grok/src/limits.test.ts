@@ -247,9 +247,7 @@ describe('mapGrokBilling', () => {
     }
 
     const source = grokLimitSource(signIn)
-    await vi.waitFor(() =>
-      expect(fake.calls.map((call) => call.method)).toContain('_x.ai/billing'),
-    )
+    await vi.waitFor(() => expect(fake.calls.map((call) => call.method)).toContain('_x.ai/billing'))
     finishSignIn({ signedIn: true })
 
     await expect(source).resolves.toEqual({
