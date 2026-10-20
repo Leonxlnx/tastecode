@@ -150,6 +150,7 @@ import { Menu, MenuItem } from './Menu.js'
 import { AccountEmail } from './AccountEmail.js'
 import { ProviderAccountsSection } from './ProviderAccounts.js'
 import { multiAccountProviders } from '../provider-accounts-state.js'
+import { sameAccount } from '../usage-summary-state.js'
 import { ProviderIcon } from './ProviderIcon.js'
 import { McpSettings } from './McpSettings.js'
 import { groupModelsBySource } from './model-selector-utils.js'
@@ -882,7 +883,8 @@ export function ProviderSettings(props: {
       void refreshAccount(provider)
     }
     const unsubscribe = props.transport.on('auth.event', (event) => {
-      if (event.agent) return
+      // A provider row is its default account; a further account's row reads its own.
+      if (event.agent || !sameAccount(event.accountId, undefined)) return
       const operation = operations.current[event.provider]
       if (!operation) {
         if (event.success) void refreshAccount(event.provider, true)
