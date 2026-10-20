@@ -1,4 +1,12 @@
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { AccountIdSchema, type ProviderId } from '@harness/contracts'
@@ -152,6 +160,35 @@ describe('provider accounts', () => {
     expect(
       accounts.create('claude-code', 'Second', { kind: 'existing', path: brought }),
     ).toMatchObject({ home: brought })
+  })
+
+  it('compares a brought folder with the folders in use as they are on disk', () => {
+    const { accounts, base, cliHome, root } = setup()
+    const brought = path.join(base, 'second-login')
+    mkdirSync(path.join(brought, 'inner'), { recursive: true })
+    accounts.create('codex', 'Second', { kind: 'existing', path: brought })
+    const claudeManaged = accounts.create('claude-code', 'Client', { kind: 'managed' })
+    const create = (picked: string) =>
+      accounts.create('codex', 'Other', { kind: 'existing', path: picked })
+
+    // A junction (a symbolic link elsewhere) to the default folder is the default account.
+    const link = path.join(base, 'link-to-default')
+    symlinkSync(cliHome, link, process.platform === 'win32' ? 'junction' : 'dir')
+    expect(() => create(link)).toThrow('That folder is the default account.')
+    expect(() => create(path.join(cliHome, 'nested'))).toThrow(
+      "That folder is inside the default account's folder.",
+    )
+    expect(() => create(base)).toThrow("That folder contains the default account's folder.")
+    expect(() => create(path.join(brought, 'inner'))).toThrow(
+      'That folder is inside the folder of the account "Second".',
+    )
+    // Another provider's managed folder, the accounts root and the data folder are TasteCode's.
+    expect(() => create(claudeManaged.home!)).toThrow(
+      "That folder is inside TasteCode's own data folder.",
+    )
+    expect(() => create(root)).toThrow("That folder is inside TasteCode's own data folder.")
+    expect(() => create(path.dirname(root))).toThrow("That folder is TasteCode's own data folder.")
+    expect(accounts.list('codex').accounts.map((each) => each.label)).toEqual(['Default', 'Second'])
   })
 
   it('renames any account, the default one included, to a free label', () => {

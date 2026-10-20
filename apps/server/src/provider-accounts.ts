@@ -1,5 +1,13 @@
 import { randomBytes } from 'node:crypto'
-import { constants, copyFileSync, existsSync, mkdirSync, rmSync, statSync } from 'node:fs'
+import {
+  constants,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  realpathSync,
+  rmSync,
+  statSync,
+} from 'node:fs'
 import { rm } from 'node:fs/promises'
 import path from 'node:path'
 import { CLAUDE_ACCOUNT_HOME } from '@harness/adapter-claude-code/account-home'
@@ -368,13 +376,30 @@ export class ProviderAccounts implements AccountDirectory {
       throw new Error('That folder does not exist.')
     }
     if (!isFolder) throw new Error('That is a file, not a folder.')
-    if (sameFolder(folder, source.defaultHome(this.#environment))) {
-      throw new Error('That folder is the default account.')
+    // Compared as the folders they are on disk, so a link or junction to a
+    // folder in use, or a folder around or inside one, is not a new account.
+    const real = realFolder(folder)
+    const relation = (other: string) => folderRelation(real, realFolder(other))
+    const toDefault = relation(source.defaultHome(this.#environment))
+    if (toDefault === 'same') throw new Error('That folder is the default account.')
+    if (toDefault)
+      throw new Error(`That folder ${RELATION_WORDS[toDefault]} the default account's folder.`)
+    for (const account of this.#accounts(provider, rows)) {
+      if (account.home === undefined) continue
+      const toAccount = relation(account.home)
+      if (toAccount === 'same') {
+        throw new Error(`The account "${account.label}" already uses that folder.`)
+      }
+      if (toAccount) {
+        throw new Error(
+          `That folder ${RELATION_WORDS[toAccount]} the folder of the account "${account.label}".`,
+        )
+      }
     }
-    const owner = this.#accounts(provider, rows).find(
-      (account) => account.home !== undefined && sameFolder(account.home, folder),
-    )
-    if (owner) throw new Error(`The account "${owner.label}" already uses that folder.`)
+    // Every managed folder lives in the data folder, whichever provider it is for.
+    const toData = relation(path.dirname(this.#root))
+    if (toData)
+      throw new Error(`That folder ${RELATION_WORDS[toData]} TasteCode's own data folder.`)
     return folder
   }
 
@@ -401,11 +426,37 @@ function isFile(file: string): boolean {
   }
 }
 
-/** Windows and macOS folders ignore case by default. */
-function sameFolder(left: string, right: string): boolean {
-  const a = path.resolve(left)
-  const b = path.resolve(right)
-  return process.platform === 'linux' ? a === b : a.toLowerCase() === b.toLowerCase()
+type FolderRelation = 'same' | 'inside' | 'contains'
+
+const RELATION_WORDS = {
+  same: 'is',
+  inside: 'is inside',
+  contains: 'contains',
+} as const satisfies Record<FolderRelation, string>
+
+/** The folder a path names on disk, links resolved; as written when it is not there. */
+function realFolder(folder: string): string {
+  try {
+    return realpathSync.native(folder)
+  } catch {
+    return path.resolve(folder)
+  }
+}
+
+/** Where `folder` sits against `other`. Windows and macOS folders ignore case by default. */
+function folderRelation(folder: string, other: string): FolderRelation | undefined {
+  const fold = (each: string) =>
+    process.platform === 'linux' ? path.resolve(each) : path.resolve(each).toLowerCase()
+  const a = fold(folder)
+  const b = fold(other)
+  if (a === b) return 'same'
+  const within = (inner: string, outer: string) => {
+    const relative = path.relative(outer, inner)
+    return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative)
+  }
+  if (within(a, b)) return 'inside'
+  if (within(b, a)) return 'contains'
+  return undefined
 }
 
 function errorCode(error: unknown): string {
