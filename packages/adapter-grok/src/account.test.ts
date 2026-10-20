@@ -137,14 +137,36 @@ describe('parseGrokSubscription', () => {
 })
 
 describe('grokAccount', () => {
-  it('reports signed out without starting provider ACP', async () => {
-    const subscription = vi.fn()
+  it('reports signed out and drops what the subscription read said', async () => {
+    const subscription = vi.fn(async () => ({ email: 'dev@example.com', plan: 'X Premium' }))
 
     await expect(
       grokAccount({ signIn: async () => ({ signedIn: false }), subscription }),
     ).resolves.toEqual({ signedIn: false })
-    expect(subscription).not.toHaveBeenCalled()
-    expect(fake.spawns).toEqual([])
+  })
+
+  it('starts the subscription read while the sign-in check still runs', async () => {
+    let finishSignIn: (value: { signedIn: boolean }) => void = () => undefined
+    const signIn = () =>
+      new Promise<{ signedIn: boolean }>((resolve) => {
+        finishSignIn = resolve
+      })
+    const subscription = vi.fn(async () => ({ plan: 'X Premium' }))
+
+    const account = grokAccount({ signIn, subscription })
+    await vi.waitFor(() => expect(subscription).toHaveBeenCalledOnce())
+    finishSignIn({ signedIn: true })
+
+    await expect(account).resolves.toEqual({ signedIn: true, plan: 'X Premium' })
+  })
+
+  it('reports signed out when the subscription read fails as well', async () => {
+    await expect(
+      grokAccount({
+        signIn: async () => ({ signedIn: false }),
+        subscription: () => Promise.reject(new Error('not signed in')),
+      }),
+    ).resolves.toEqual({ signedIn: false })
   })
 
   it('adds the email and plan to a signed-in account', async () => {

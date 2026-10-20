@@ -47,10 +47,16 @@ export type GrokAccountOptions = {
  * Sign-in comes from `grok models`; email and plan from Grok's own ACP
  * extension. The extension only adds detail, so its failure leaves the row at
  * plain "Signed in" rather than hiding the account.
+ *
+ * Each read starts its own Grok process (about 4 s apiece on a quiet machine),
+ * so both start at once instead of one after the other. The sign-in decides:
+ * a signed-out answer drops whatever the extension says.
  */
 export async function grokAccount(options: GrokAccountOptions = {}): Promise<Account> {
+  const subscription = Promise.resolve()
+    .then(options.subscription ?? readGrokSubscription)
+    .catch(() => undefined)
   const signIn = await (options.signIn ?? grokSignIn)()
   if (!signIn.signedIn) return { signedIn: false }
-  const subscription = await (options.subscription ?? readGrokSubscription)().catch(() => undefined)
-  return { signedIn: true, ...subscription }
+  return { signedIn: true, ...(await subscription) }
 }
