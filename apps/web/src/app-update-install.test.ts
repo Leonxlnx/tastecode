@@ -157,6 +157,25 @@ describe('app update install', () => {
     expect(appUpdateInstallState()).toEqual({ phase: 'idle' })
   })
 
+  it('waits instead of installing when a chat starts while the server answers', async () => {
+    let answer: (count: number) => void = () => undefined
+    const runningChats = vi.fn(() => new Promise<number>((resolve) => (answer = resolve)))
+    setAppUpdateInstallGate({ runningChats, stopRunningChats: async () => undefined })
+    reportRunningChats(0)
+    const click = requestAppUpdateInstall()
+    expect(appUpdateInstallState()).toEqual({ phase: 'checking' })
+    // The sidebar sees a turn start; the answer was counted before it.
+    reportRunningChats(1)
+    answer(0)
+    await click
+    expect(bridge.install).not.toHaveBeenCalled()
+    expect(appUpdateInstallState()).toEqual({ phase: 'waiting', running: 1 })
+    runningChats.mockResolvedValue(0)
+    reportRunningChats(0)
+    await vi.advanceTimersByTimeAsync(INSTALL_SETTLE_MS)
+    expect(bridge.install).toHaveBeenCalledOnce()
+  })
+
   it('installs as before when the server cannot be asked', async () => {
     const server = gate([0])
     server.runningChats.mockRejectedValueOnce(new Error('offline'))
