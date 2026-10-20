@@ -5575,20 +5575,18 @@ describe('new chats', () => {
     await waitFor(() => expect(composerProps().draftRequest?.text).toBe('Fix the webhook retries'))
     await waitFor(() =>
       expect(errors().map((error) => error.message)).toContain(
-        'Continues “Webhook retries”. Its conversation goes with your first message.',
+        'Continues “Webhook retries” on Work. Its conversation goes with your first message.',
       ),
     )
 
-    // The earlier chat links to it and offers no second continuation.
+    // The earlier chat's failed turn now leads to it instead of offering a second continuation.
     fireEvent.click(await waitFor(() => treeChatRow('Webhook retries')))
     const link = await waitFor(() => {
-      const row = errors().find((error) => error.message === 'Continued in a new chat on Work.')
-      expect(row).toBeTruthy()
+      const row = errors().find((error) => error.message === "You've hit your usage limit.")
+      expect(row?.action?.label).toBe('Continued on Work')
       return row!
     })
-    expect(
-      errors().find((error) => error.message === "You've hit your usage limit.")?.action,
-    ).toBeUndefined()
+    expect(link.choices).toBeUndefined()
     await act(async () => link.action!.run())
     await waitFor(() =>
       expect(transport.request).toHaveBeenCalledWith(
