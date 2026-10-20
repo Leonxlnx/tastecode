@@ -641,6 +641,7 @@
 .shell__body[data-covered] .orb--stop.is-stopping .orb__stop-glyph,
 .shell__body[data-covered] .composer__design:focus-visible > span,
 .shell__body[data-covered] .brief-input__spinner,
+.shell__body[data-covered] .account-menu__refresh.is-busy svg,
 .shell__body[data-covered] .workspace-browser__progress::before {
   animation-play-state: paused !important;
 }
