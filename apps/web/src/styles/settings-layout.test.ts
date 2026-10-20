@@ -7,6 +7,7 @@ const tuningCss = readFileSync(new URL('./provider-tuning.css', import.meta.url)
 const generalCss = readFileSync(new URL('./general-settings.css', import.meta.url), 'utf8')
 const keybindsCss = readFileSync(new URL('./keybinds.css', import.meta.url), 'utf8')
 const settingsSource = readFileSync(new URL('../ui/Settings.tsx', import.meta.url), 'utf8')
+const accountEmailSource = readFileSync(new URL('../ui/AccountEmail.tsx', import.meta.url), 'utf8')
 
 /** Every component source under ui/, tests excluded, as [path, text]. */
 function uiSources(): Array<[string, string]> {
@@ -186,9 +187,9 @@ describe('settings viewport CSS', () => {
     expect(settingsCss).toMatch(
       /\.settings__email-clip::before \{[^}]*backdrop-filter: blur\(2\.75px\);[^}]*opacity: 1;[^}]*transition: opacity var\(--dur-reveal\) var\(--ease-out\);/s,
     )
-    expect(settingsSource).toContain('<IconMorph active={revealed ? 1 : 0}>')
-    expect(settingsSource).toContain('className="settings__email-eye--show"')
-    expect(settingsSource).toContain('className="settings__email-eye--hide"')
+    expect(accountEmailSource).toContain('<IconMorph active={revealed ? 1 : 0}>')
+    expect(accountEmailSource).toContain('className="settings__email-eye--show"')
+    expect(accountEmailSource).toContain('className="settings__email-eye--hide"')
   })
 
   it('keeps a single provider action at the far edge on wide and narrow rows', () => {

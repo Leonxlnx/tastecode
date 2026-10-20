@@ -7,8 +7,16 @@ import {
   useRef,
   useState,
 } from 'react'
-import type { ProviderId, ProviderLimitSource, ResultOf } from '@harness/contracts'
+import {
+  DEFAULT_ACCOUNT_ID,
+  type AccountId,
+  type ProviderId,
+  type ProviderLimitSource,
+  type ResultOf,
+} from '@harness/contracts'
+import type { AccountLabel } from '../provider-accounts-state.js'
 import { providerDisplayName, providerMark } from '../provider-presentation.js'
+import { limitKey } from '../usage-limits-state.js'
 import type { UsageSummaryState } from '../usage-summary-state.js'
 import '../styles/account-limits.css'
 import { ProviderIcon } from './ProviderIcon.js'
@@ -22,20 +30,26 @@ type ConsumeReset = (
   provider: ProviderId,
   idempotencyKey: string,
   creditId?: string,
+  /** Absent means the default account. */
+  accountId?: AccountId,
 ) => Promise<ResultOf<'usage.consumeReset'>>
 
 export type AccountLimitsState = UsageSummaryState
 
 /**
- * Plan limits, grouped by provider, shown as soon as the account popup opens.
- * A provider that cannot report is one quiet line in its own group, never an
- * alert: it is a missing number, not a problem the person has to act on.
+ * Plan limits, grouped by provider account, shown as soon as the account
+ * popup opens. A provider that cannot report is one quiet line in its own
+ * group, never an alert: it is a missing number, not a problem the person has
+ * to act on. A provider shown with more than one account is named once, with
+ * each account under it by its own name.
  */
 export function AccountLimits(props: {
   states: AccountLimitsState[]
+  /** Names a provider account; without it a further account reads as "Account". */
+  accountLabel?: AccountLabel | undefined
   /** Called once while the limits are on screen; returns the release for when they leave. */
   onShow?: (() => () => void) | undefined
-  onRetry: (provider: ProviderId) => void
+  onRetry: (provider: ProviderId, accountId?: AccountId) => void
   onConsumeReset?: ConsumeReset | undefined
 }) {
   const panel = useRef<HTMLElement>(null)
@@ -56,10 +70,12 @@ export function AccountLimits(props: {
   // and before paint, so a source not read yet already reads as checking.
   useLayoutEffect(() => onShow.current?.(), [])
 
-  const retry = (provider: ProviderId) => {
+  const retry = (provider: ProviderId, accountId: AccountId | undefined) => {
     // The Retry button unmounts while the source reloads; keep focus in the popup.
     panel.current?.focus()
-    props.onRetry(provider)
+    // The default account is asked for as the provider alone, as before accounts.
+    if (accountId === undefined) props.onRetry(provider)
+    else props.onRetry(provider, accountId)
   }
 
   if (visibleStates.length === 0) return null
@@ -76,21 +92,74 @@ export function AccountLimits(props: {
       // A scroll container that keyboard users can reach and scroll.
       tabIndex={0}
     >
-      {visibleStates.map((state) => (
-        <LimitSource
-          key={state.provider}
-          state={state}
-          now={now}
-          onRetry={() => retry(state.provider)}
-          onConsumeReset={props.onConsumeReset}
-        />
-      ))}
+      {groupByProvider(visibleStates).map((group) => {
+        const name = providerDisplayName(group.provider)
+        const source = (state: AccountLimitsState, account?: string) => (
+          <LimitSource
+            key={limitKey(state.provider, state.accountId)}
+            state={state}
+            name={account === undefined ? name : `${name} · ${account}`}
+            account={account}
+            now={now}
+            onRetry={() => retry(state.provider, state.accountId)}
+            onConsumeReset={props.onConsumeReset}
+          />
+        )
+        if (!namesAccounts(group.states)) return source(group.states[0]!)
+        // The provider once, then each account under it by its own name.
+        return (
+          <div
+            key={group.provider}
+            className="account-menu__provider"
+            role="group"
+            aria-label={name}
+          >
+            <h3 className="account-menu__provider-name">
+              <ProviderIcon mark={providerMark(group.provider)} size={14} />
+              <span>{name}</span>
+            </h3>
+            {group.states.map((state) =>
+              source(
+                state,
+                props.accountLabel?.(state.provider, state.accountId) ??
+                  (further(state) ? 'Account' : 'Default'),
+              ),
+            )}
+          </div>
+        )
+      })}
     </section>
   )
 }
 
+function further(state: AccountLimitsState): boolean {
+  return state.accountId !== undefined && state.accountId !== DEFAULT_ACCOUNT_ID
+}
+
+/** A provider shown with more than one account, or with a further account alone, names them. */
+function namesAccounts(states: readonly AccountLimitsState[]): boolean {
+  return states.length > 1 || states.some(further)
+}
+
+/** The sources in their order, each provider's accounts together where its first one is. */
+function groupByProvider(
+  states: readonly AccountLimitsState[],
+): Array<{ provider: ProviderId; states: AccountLimitsState[] }> {
+  const groups: Array<{ provider: ProviderId; states: AccountLimitsState[] }> = []
+  for (const state of states) {
+    const group = groups.find((each) => each.provider === state.provider)
+    if (group) group.states.push(state)
+    else groups.push({ provider: state.provider, states: [state] })
+  }
+  return groups
+}
+
 function LimitSource(props: {
   state: AccountLimitsState
+  /** The provider, and the account when the popup names it, as assistive tech reads it. */
+  name: string
+  /** Set under a provider heading: the source is titled by this account name alone. */
+  account?: string | undefined
   now: number
   onRetry: () => void
   onConsumeReset?: ConsumeReset | undefined
@@ -99,7 +168,7 @@ function LimitSource(props: {
   const statusId = useId()
   const source = limitSource(props.state)
   const limits = source?.status === 'ready' ? source.limits : []
-  const name = providerDisplayName(props.state.provider)
+  const name = props.name
   const status = sourceStatus(props.state, source, limits.length > 0, props.now)
   // Automatic retries run on their own; the button returns once they stop.
   const retrying = props.state.status !== 'ready' && props.state.retry !== undefined
@@ -109,15 +178,21 @@ function LimitSource(props: {
       (props.state.status === 'ready' && source?.status === 'unavailable'))
   return (
     <section
-      className="account-menu__source"
-      aria-labelledby={titleId}
+      className={`account-menu__source${props.account === undefined ? '' : ' is-account'}`}
+      {...(props.account === undefined ? { 'aria-labelledby': titleId } : { 'aria-label': name })}
       aria-busy={props.state.status === 'loading'}
     >
       <div className="account-menu__source-head">
-        <h3 id={titleId}>
-          <ProviderIcon mark={providerMark(props.state.provider)} size={14} />
-          <span>{name}</span>
-        </h3>
+        {props.account === undefined ? (
+          <h3 id={titleId}>
+            <ProviderIcon mark={providerMark(props.state.provider)} size={14} />
+            <span>{name}</span>
+          </h3>
+        ) : (
+          <h4 id={titleId}>
+            <span>{props.account}</span>
+          </h4>
+        )}
         {status ? (
           <span className="account-menu__source-status" id={statusId} title={status.detail}>
             {status.label}
@@ -140,6 +215,7 @@ function LimitSource(props: {
           key={`${limit.label}:${index}`}
           name={name}
           provider={props.state.provider}
+          accountId={props.state.accountId}
           limit={limit}
           now={props.now}
           order={index}
@@ -210,6 +286,7 @@ function lastKnownLabel(checkedAt: number | undefined, now: number): string {
 function LimitRow(props: {
   name: string
   provider: ProviderId
+  accountId?: AccountId | undefined
   limit: Limit
   now: number
   order: number
@@ -265,12 +342,17 @@ function LimitRow(props: {
         <ResetCreditExpiries
           credits={credits}
           provider={props.provider}
+          accountId={props.accountId}
           now={props.now}
           onConsumeReset={consumable ? props.onConsumeReset : undefined}
         />
       ) : null}
       {consumable && !hasSelectableCredits ? (
-        <ResetCreditRow provider={props.provider} onConsumeReset={props.onConsumeReset}>
+        <ResetCreditRow
+          provider={props.provider}
+          accountId={props.accountId}
+          onConsumeReset={props.onConsumeReset}
+        >
           Next available reset
         </ResetCreditRow>
       ) : null}
@@ -281,6 +363,7 @@ function LimitRow(props: {
 function ResetCreditRow(props: {
   children: ReactNode
   provider: ProviderId
+  accountId?: AccountId | undefined
   creditId?: string | undefined
   onConsumeReset?: ConsumeReset | undefined
 }) {
@@ -302,7 +385,10 @@ function ResetCreditRow(props: {
     setPending(true)
     setMessage(undefined)
     try {
-      const { outcome } = await props.onConsumeReset(props.provider, key, props.creditId)
+      const { outcome } =
+        props.accountId === undefined
+          ? await props.onConsumeReset(props.provider, key, props.creditId)
+          : await props.onConsumeReset(props.provider, key, props.creditId, props.accountId)
       attemptKey.current = undefined
       setConfirming(false)
       if (outcome === 'nothingToReset') setMessage('Nothing needed a reset.')
@@ -380,6 +466,7 @@ function ResetCreditRow(props: {
 function ResetCreditExpiries(props: {
   credits: NonNullable<Limit['resetCredits']>
   provider: ProviderId
+  accountId?: AccountId | undefined
   now: number
   onConsumeReset?: ConsumeReset | undefined
 }) {
@@ -398,6 +485,7 @@ function ResetCreditExpiries(props: {
           <li key={id ?? `${expiresAt}:${index}`}>
             <ResetCreditRow
               provider={props.provider}
+              accountId={props.accountId}
               creditId={id}
               onConsumeReset={usable ? props.onConsumeReset : undefined}
             >

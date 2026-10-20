@@ -220,6 +220,8 @@ function projectSession(
     provider: thread.provider,
     ...(thread.agent === undefined ? {} : { agent: thread.agent }),
     ...(thread.connectionId === undefined ? {} : { connectionId: thread.connectionId }),
+    ...(thread.accountId === undefined ? {} : { accountId: thread.accountId }),
+    ...(thread.continuedFrom === undefined ? {} : { continuedFrom: thread.continuedFrom }),
     createdAt: thread.createdAt,
     running,
   }

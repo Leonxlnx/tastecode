@@ -143,4 +143,52 @@ describe('background account re-checks', () => {
     expect(screen.queryByRole('button', { name: 'Problem details' })).toBeNull()
     expect(screen.getByRole('button', { name: 'Sign out' })).toBeTruthy()
   })
+
+  it("re-checks the provider row for its own sign-in, not another account's", async () => {
+    let reads = 0
+    const transport = new TestTransport((method) => {
+      if (method === 'providers.updates') return { updates: [] }
+      if (method === 'auth.status') {
+        reads += 1
+        return account
+      }
+      throw new Error(`Unexpected ${method}`)
+    })
+    render(
+      <ProviderSettings
+        provider="codex"
+        account={account}
+        providerStatuses={statuses}
+        transport={transport}
+        onConnectionsChanged={onConnectionsChanged}
+        onAccountChange={vi.fn()}
+      />,
+    )
+    await act(async () => undefined)
+    expect(reads).toBe(1)
+
+    // Work's sign-in finished in its own folder; the default row stays as it is.
+    act(() =>
+      transport.emit('auth.event', {
+        provider: 'codex',
+        loginId: 'work-login',
+        success: true,
+        error: null,
+        accountId: 'work-1a2b3c',
+      }),
+    )
+    await act(async () => undefined)
+    expect(reads).toBe(1)
+
+    act(() =>
+      transport.emit('auth.event', {
+        provider: 'codex',
+        loginId: 'default-login',
+        success: true,
+        error: null,
+      }),
+    )
+    await act(async () => undefined)
+    expect(reads).toBe(2)
+  })
 })

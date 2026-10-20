@@ -9,6 +9,7 @@ import { compactHistoryReplay } from './history-replay.js'
 import { orderProviderHistory } from './provider-history-order.js'
 import { createProjectListProjector, type ProjectListState } from './project-list.js'
 import { DESIGN_PHASE_NOTICE, RESTORE_CONTEXT_NOTICE } from './provider-session.js'
+import { continuationPromptFromReplay } from './side-chat.js'
 
 let store: Store
 const histories: ProviderHistory[] = []
@@ -264,6 +265,52 @@ describe('provider history integration', () => {
       transcript().map((event): DomainEvent =>
         event.type === 'item.completed' && event.item.role === 'user'
           ? { ...event, item: { ...event.item, text: RESTORE_CONTEXT_NOTICE + event.item.text } }
+          : event,
+      ),
+    )
+    await history.refresh()
+    await history.load('local')
+    expect(
+      messages('local')
+        .filter((item) => item.role === 'user')
+        .map((item) => item.text),
+    ).toEqual(['Hello'])
+  })
+
+  it('does not reimport the first prompt of a continued chat with its earlier conversation', async () => {
+    store.addThread({
+      id: 'local',
+      projectPath: process.cwd(),
+      provider: 'codex',
+      providerSessionId: 'native',
+      title: 'Local',
+    })
+    for (const event of transcript('local-turn')) store.append('local', event)
+    const { history, source } = setup()
+    const wrapped = (text: string) =>
+      continuationPromptFromReplay(
+        [
+          {
+            event: {
+              type: 'item.completed',
+              item: {
+                id: 'earlier',
+                turnId: 'earlier-turn',
+                type: 'message',
+                role: 'user',
+                status: 'completed',
+                text: 'Earlier request',
+                createdAt: 1,
+              },
+            },
+          },
+        ],
+        text,
+      ) ?? text
+    vi.mocked(source.read).mockResolvedValue(
+      transcript().map((event): DomainEvent =>
+        event.type === 'item.completed' && event.item.role === 'user'
+          ? { ...event, item: { ...event.item, text: wrapped(event.item.text ?? '') } }
           : event,
       ),
     )

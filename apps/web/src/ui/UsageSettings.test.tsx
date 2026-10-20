@@ -7,6 +7,7 @@ import type {
   UsageHistoryRange,
 } from '@harness/contracts'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { TestTransport } from '../test-transport.js'
 import type { Transport } from '../transport.js'
 import type { UsageSummaryState } from '../usage-summary-state.js'
 import { UsageSettings } from './UsageSettings.js'
@@ -257,6 +258,67 @@ describe('usage settings', () => {
       'Grok',
       'Claude Code',
     ])
+  })
+
+  it('lists each account of a provider under its sheet, named by its label', async () => {
+    const history = codexHistory('30d')
+    history.providers = [
+      {
+        provider: 'codex',
+        accountId: 'work-1a2b3c',
+        sessionCount: 3,
+        totals: usageTotals({ processedTokens: 830_000, estimatedCostUsd: 9.13 }),
+      },
+      {
+        provider: 'codex',
+        accountId: 'default',
+        sessionCount: 1,
+        totals: usageTotals({ processedTokens: 400_000, estimatedCostUsd: 3.21 }),
+      },
+    ]
+    const limits = limitsOf([
+      ready('codex', [{ label: '5 hours', usedPercent: 25 }]),
+      { status: 'error', provider: 'codex', accountId: 'work-1a2b3c', message: 'offline' },
+    ])
+    const transport = new TestTransport((method) => {
+      if (method === 'usage.history') return history
+      if (method === 'accounts.list') {
+        return {
+          accounts: [
+            { id: 'default', provider: 'codex', label: 'Personal', managed: false },
+            {
+              id: 'work-1a2b3c',
+              provider: 'codex',
+              label: 'Work',
+              home: 'C:\\TasteCode\\accounts\\codex\\work-1a2b3c',
+              managed: true,
+            },
+          ],
+          active: {},
+        }
+      }
+      throw new Error(`unexpected ${method}`)
+    })
+    render(<UsageSettings transport={transport} limits={limits} />)
+
+    const codex = await screen.findByRole('region', { name: 'Codex' })
+    // The sheet is the provider's whole usage, every account summed.
+    expect(within(codex).getByText('1.23M tokens')).toBeTruthy()
+    const accounts = within(codex).getByRole('group', { name: 'Accounts' })
+    await waitFor(() =>
+      expect(
+        [...accounts.querySelectorAll('.usage-account__name')].map((name) => name.textContent),
+      ).toEqual(['Personal', 'Work']),
+    )
+    expect(
+      within(accounts)
+        .getByRole('progressbar', { name: 'Codex Personal 5 hours left' })
+        .getAttribute('aria-valuenow'),
+    ).toBe('75')
+    expect(within(codex).queryByText(/work-1a2b3c/)).toBeNull()
+    // Work's own limits could not be read; Retry asks for Work alone.
+    fireEvent.click(within(accounts).getByRole('button', { name: 'Retry' }))
+    expect(limits.refresh).toHaveBeenCalledWith('codex', 'retry', 'work-1a2b3c')
   })
 
   it('offers a retry for plan limits that could not be read', async () => {

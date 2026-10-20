@@ -228,12 +228,32 @@ describe('mapGrokBilling', () => {
     expect(mapGrokBilling(undefined)).toEqual([])
   })
 
-  it('reports signed-out billing as unavailable without starting provider ACP', async () => {
+  it('reports signed-out billing as unavailable whatever billing answered', async () => {
     const signIn = vi.fn().mockResolvedValue({ signedIn: false })
+    fake.error = new Error('not signed in')
 
     await expect(grokLimitSource(signIn)).resolves.toEqual({ status: 'unavailable' })
     expect(signIn).toHaveBeenCalledOnce()
-    expect(fake.spawns).toEqual([])
+  })
+
+  it('starts the billing read while the sign-in check still runs', async () => {
+    let finishSignIn: (value: { signedIn: boolean }) => void = () => undefined
+    const signIn = () =>
+      new Promise<{ signedIn: boolean }>((resolve) => {
+        finishSignIn = resolve
+      })
+    fake.billing = {
+      config: { creditUsagePercent: 12, currentPeriod: { type: 'USAGE_PERIOD_TYPE_WEEKLY' } },
+    }
+
+    const source = grokLimitSource(signIn)
+    await vi.waitFor(() => expect(fake.calls.map((call) => call.method)).toContain('_x.ai/billing'))
+    finishSignIn({ signedIn: true })
+
+    await expect(source).resolves.toEqual({
+      status: 'ready',
+      limits: [{ label: 'Weekly', usedPercent: 12 }],
+    })
   })
 
   it('reports a recognized signed-in billing response as ready', async () => {

@@ -249,16 +249,23 @@ export type ProviderRuntime = {
   listModels(agent?: string, read?: ModelListRead): Promise<Model[]>
 }
 
+/**
+ * `accountHome` is the config folder of the provider account the sessions run
+ * as; absent, the default account. Only providers that declare
+ * `multipleAccounts` are ever given one, and never for a custom harness, which
+ * runs with its own sign-in.
+ */
 export function providerRuntime(
   provider: ProviderId,
   onLog: (line: string) => void,
   resolveHarness: (id: string) => CustomHarness | undefined = () => undefined,
+  accountHome?: string,
 ): ProviderRuntime {
   switch (provider) {
     case 'codex':
-      return codexRuntime(onLog, resolveHarness)
+      return codexRuntime(onLog, resolveHarness, accountHome)
     case 'claude-code':
-      return claudeRuntime(onLog, resolveHarness)
+      return claudeRuntime(onLog, resolveHarness, accountHome)
     case 'acp':
       return acpRuntime(onLog, resolveHarness)
     case 'cursor':
@@ -854,9 +861,15 @@ function listOpenCodeModels(harness?: CustomHarness): Promise<Model[]> {
   return listing
 }
 
+/** The default account's adapters get exactly the options they always had. */
+function accountOption(accountHome: string | undefined): { accountHome?: string } {
+  return accountHome === undefined ? {} : { accountHome }
+}
+
 function codexRuntime(
   onLog: (line: string) => void,
   resolveHarness: (id: string) => CustomHarness | undefined,
+  accountHome: string | undefined,
 ): ProviderRuntime {
   const open = async (workspacePath: string, options: StartOptions, threadId?: string) => {
     const harness = harnessFor('codex', options.agent, resolveHarness)
@@ -866,7 +879,9 @@ function codexRuntime(
       ...(options.mcpCredentials ? { mcpCredentials: options.mcpCredentials } : {}),
       // Codex spawns its app-server without a cwd; the wrapper resolves from the project.
       // A wrapper may run another account, whose limit windows are not the default account's.
-      ...(harness ? { spawn: customHarnessSpawn(harness, workspacePath), liveLimits: false } : {}),
+      ...(harness
+        ? { spawn: customHarnessSpawn(harness, workspacePath), liveLimits: false }
+        : accountOption(accountHome)),
     })
     adapter.on('log', onLog)
     return startedSession(adapter, async () => {
@@ -890,7 +905,9 @@ function codexRuntime(
     async listModels(agent) {
       const harness = harnessFor('codex', agent, resolveHarness)
       const { CodexAdapter } = await loadCodexAdapter()
-      const adapter = new CodexAdapter(harness ? { spawn: customHarnessSpawn(harness) } : {})
+      const adapter = new CodexAdapter(
+        harness ? { spawn: customHarnessSpawn(harness) } : accountOption(accountHome),
+      )
       try {
         if (harness) {
           await customHarnessOperation(harness, 'initialize app-server', adapter.start())
@@ -971,6 +988,7 @@ function acpRuntime(
 function claudeRuntime(
   onLog: (line: string) => void,
   resolveHarness: (id: string) => CustomHarness | undefined,
+  accountHome: string | undefined,
 ): ProviderRuntime {
   const adapterFor = async (agent: string | undefined, workspacePath?: string) => {
     const harness = harnessFor('claude-code', agent, resolveHarness)
@@ -984,7 +1002,7 @@ function claudeRuntime(
             spawn: customHarnessSpawn(harness, workspacePath),
             environment: launch!.environment,
           }
-        : {},
+        : accountOption(accountHome),
     )
     adapter.on('log', onLog)
     return adapter

@@ -234,6 +234,8 @@ describe('model lists across launches', () => {
     }
   }
   const snapshot = (lists: unknown[]) => JSON.stringify({ version: 1, lists })
+  /** A clock late enough for lists saved days before it. */
+  const LATER = 30 * 24 * 60 * 60_000
 
   it('answers from the last launch at once and reads the source again after launch work', async () => {
     const launchedAt = Date.now()
@@ -383,6 +385,118 @@ describe('model lists across launches', () => {
       await flush()
       expect(other.list).toHaveBeenCalledOnce()
     }
+  })
+
+  it('saves a provider list with the binary that listed it, never a custom source', async () => {
+    const { saved, store } = memory()
+    const binary = vi.fn(async (provider: ProviderId) => `${provider}.exe\u00001.2.3`)
+    const { cache, reads } = setup({ snapshot: store, binary })
+    const reading = [cache.list('codex'), cache.list('codex', 'work')]
+    await flush()
+    reads[0]!.resolve([model('gpt-6-astra')])
+    reads[1]!.resolve([model('work-row')])
+    await Promise.all(reading)
+    await vi.waitFor(() =>
+      expect(JSON.parse(saved.value!).lists).toEqual([
+        {
+          provider: 'codex',
+          listedAt: 1_000_000,
+          models: [model('gpt-6-astra')],
+          binary: 'codex.exe\u00001.2.3',
+        },
+        { provider: 'codex', agent: 'work', listedAt: 1_000_000, models: [model('work-row')] },
+      ]),
+    )
+    expect(binary).toHaveBeenCalledExactlyOnceWith('codex')
+  })
+
+  it('answers a list older than a day at once while the same binary is installed', async () => {
+    const day = 24 * 60 * 60_000
+    const { store } = memory(
+      snapshot([
+        {
+          provider: 'codex',
+          listedAt: LATER - 3 * day,
+          models: [model('gpt-6-astra')],
+          binary: 'codex.exe\u00001.2.3',
+        },
+      ]),
+    )
+    const { cache, list, reads, onChanged } = setup({
+      snapshot: store,
+      now: () => LATER,
+      binary: async () => 'codex.exe\u00001.2.3',
+      restoredRefreshDelayMs: 0,
+    })
+    await expect(cache.list('codex')).resolves.toEqual([model('gpt-6-astra')])
+    // It is still read again in the background, and a failed read keeps it.
+    await vi.waitFor(() => expect(list).toHaveBeenCalledWith('codex', undefined, { refresh: true }))
+    reads[0]!.reject(new Error('codex app-server did not start'))
+    await flush()
+    await expect(cache.list('codex')).resolves.toEqual([model('gpt-6-astra')])
+    expect(onChanged).not.toHaveBeenCalled()
+  })
+
+  it('reads a list again at once when another binary listed it', async () => {
+    const { store } = memory(
+      snapshot([
+        {
+          provider: 'codex',
+          listedAt: LATER - 60 * 60_000,
+          models: [model('gpt-6-astra')],
+          binary: 'codex.exe\u00001.2.3',
+        },
+        {
+          provider: 'grok',
+          listedAt: LATER - 3 * 24 * 60 * 60_000,
+          models: [model('grok-4.5')],
+          binary: 'grok.exe\u00000.9.0',
+        },
+      ]),
+    )
+    const { cache, list, reads, onChanged } = setup({
+      snapshot: store,
+      now: () => LATER,
+      binary: async (provider) => `${provider}.exe\u00002.0.0`,
+      // Launch work would otherwise hold the refresh for a minute.
+      restoredRefreshDelayMs: 60_000,
+    })
+    // Younger than a day: it answers, and is read again without waiting for launch work.
+    await expect(cache.list('codex')).resolves.toEqual([model('gpt-6-astra')])
+    await vi.waitFor(() => expect(list).toHaveBeenCalledWith('codex', undefined, { refresh: true }))
+    reads[0]!.resolve([model('gpt-6.1-sol')])
+    await vi.waitFor(() => expect(onChanged).toHaveBeenCalledExactlyOnceWith('codex', undefined))
+    await expect(cache.list('codex')).resolves.toEqual([model('gpt-6.1-sol')])
+
+    // Older than a day: it waits for the new binary's list.
+    const grok = cache.list('grok')
+    await vi.waitFor(() => expect(list).toHaveBeenCalledWith('grok', undefined, { refresh: false }))
+    reads[1]!.resolve([model('grok-5')])
+    await expect(grok).resolves.toEqual([model('grok-5')])
+  })
+
+  it('drops a list older than a day whose binary cannot be named', async () => {
+    const { store } = memory(
+      snapshot([
+        {
+          provider: 'codex',
+          listedAt: LATER - 3 * 24 * 60 * 60_000,
+          models: [model('gpt-6-astra')],
+          binary: 'codex.exe\u00001.2.3',
+        },
+      ]),
+    )
+    const { cache, list, reads } = setup({
+      snapshot: store,
+      now: () => LATER,
+      binary: async () => undefined,
+    })
+    const listing = cache.list('codex')
+    await vi.waitFor(() =>
+      expect(list).toHaveBeenCalledWith('codex', undefined, { refresh: false }),
+    )
+    reads[0]!.resolve([model('gpt-6.1-sol')])
+    await expect(listing).resolves.toEqual([model('gpt-6.1-sol')])
   })
 
   it('keeps a very large list for this launch only and forgets a removed agent', async () => {

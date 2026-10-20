@@ -1,0 +1,61 @@
+/* The new-chat account chip is a composer control like Auto-review and
+   Design beside it: the same surface, border, height, type and ink, so it
+   reads as a choice in the row rather than as loose text. It is loaded with
+   the chip, which only a provider with a second account shows. */
+
+.tools .composer__account {
+  min-height: 32px;
+  padding: 4px 11px;
+  background: var(--composer-action-bg);
+  border: 1px solid var(--composer-action-border);
+  border-radius: var(--r-xl);
+  box-shadow: var(--composer-action-shadow);
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+.tools .composer__account .tool {
+  font-size: var(--t-md);
+}
+
+.tools .composer__account .tool,
+.tools .composer__account .tool svg {
+  color: color-mix(in srgb, var(--text) 55%, var(--text-2));
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .tools .composer__account:hover:not(:disabled) {
+    background: var(--composer-action-bg-hover);
+    border-color: var(--composer-action-border-hover);
+    box-shadow: var(--composer-action-shadow-hover);
+  }
+
+  .tools .composer__account:hover:not(:disabled) :is(.tool, .tool svg) {
+    color: var(--text);
+  }
+}
+
+/* Icon-only on narrow panes, as Auto-review and Design are. */
+@container chat-stage (max-width: 620px) {
+  .tools .composer__account {
+    width: var(--composer-control, 32px);
+    justify-content: center;
+    padding-inline: 0;
+  }
+
+  .tools .composer__account .tool > span {
+    display: none;
+  }
+}
+
+@media (max-width: 520px) {
+  .tools .composer__account .tool > span {
+    display: none;
+  }
+
+  .tools .composer__account {
+    min-height: 34px;
+  }
+}

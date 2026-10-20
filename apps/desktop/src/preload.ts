@@ -116,6 +116,16 @@ const api = {
     ipcRenderer.on('harness:browserShortcut', handler)
     return () => ipcRenderer.removeListener('harness:browserShortcut', handler)
   },
+  /** The chats that are not at rest; the shell decides what to notify. */
+  reportChatAttention: (report: unknown): void => ipcRenderer.send('harness:chatAttention', report),
+  /** A chat notification was clicked: open that chat. */
+  onOpenChat: (listener: (chatId: string) => void): (() => void) => {
+    const handler = (_event: IpcRendererEvent, chatId: unknown) => {
+      if (typeof chatId === 'string' && chatId.length > 0 && chatId.length <= 256) listener(chatId)
+    }
+    ipcRenderer.on('harness:openChat', handler)
+    return () => ipcRenderer.removeListener('harness:openChat', handler)
+  },
   onZoomChange: (listener: (factor: number) => void): (() => void) => {
     const handler = (_event: IpcRendererEvent, factor: unknown) => {
       if (isFiniteNumber(factor)) listener(factor)

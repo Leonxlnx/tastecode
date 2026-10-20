@@ -250,6 +250,78 @@ describe('axis ticks', () => {
 })
 
 describe('accounts', () => {
+  const label = (_provider: ProviderId, accountId: string | undefined) =>
+    accountId === 'work-1a2b3c' ? 'Work' : accountId === 'alt-9f9f9f' ? 'Alt' : 'Personal'
+
+  it('sums a split provider into one sheet and lists its accounts, the default first', () => {
+    const history = historyOf({ codex: [30, 70] })
+    const [whole] = history.providers
+    history.providers = [
+      {
+        ...whole!,
+        accountId: 'work-1a2b3c',
+        sessionCount: 2,
+        totals: usageTotals({ processedTokens: 70, estimatedCostUsd: 0.07 }),
+      },
+      {
+        ...whole!,
+        accountId: 'default',
+        sessionCount: 1,
+        totals: usageTotals({ processedTokens: 30, estimatedCostUsd: 0.03 }),
+      },
+    ]
+    const limits = new Map([
+      [
+        'codex/alt-9f9f9f',
+        sheetLimits(ready('codex', [{ label: 'Weekly', usedPercent: 10 }]), NOW)!,
+      ],
+    ])
+    const [sheet] = deriveSheets(history, limits, label).sheets
+
+    expect(sheet).toMatchObject({ provider: 'codex', sessions: 3, tokens: 100 })
+    expect(
+      sheet!.accounts.map(({ key, accountId, label, tokens }) => ({
+        key,
+        accountId,
+        label,
+        tokens,
+      })),
+    ).toEqual([
+      { key: 'codex', accountId: undefined, label: 'Personal', tokens: 30 },
+      { key: 'codex/alt-9f9f9f', accountId: 'alt-9f9f9f', label: 'Alt', tokens: 0 },
+      { key: 'codex/work-1a2b3c', accountId: 'work-1a2b3c', label: 'Work', tokens: 70 },
+    ])
+    expect(sheet!.accounts[1]!.limits.rows).toHaveLength(1)
+  })
+
+  it('lists a further account that reports limits beside the default one', () => {
+    const limits = new Map([
+      ['codex', sheetLimits(ready('codex', [{ label: 'Weekly', usedPercent: 20 }]), NOW)!],
+      [
+        'codex/work-1a2b3c',
+        sheetLimits(ready('codex', [{ label: 'Weekly', usedPercent: 50 }]), NOW)!,
+      ],
+    ])
+    const [sheet] = deriveSheets(historyOf({ codex: [10] }), limits, label).sheets
+
+    expect(sheet!.accounts.map((account) => [account.label, account.tokens])).toEqual([
+      ['Personal', 10],
+      ['Work', 0],
+    ])
+  })
+
+  it('reads a provider on its default account alone as the provider itself', () => {
+    const limits = new Map([
+      ['codex', sheetLimits(ready('codex', [{ label: 'Weekly', usedPercent: 20 }]), NOW)!],
+    ])
+    const [sheet] = deriveSheets(historyOf({ codex: [10] }), limits, label).sheets
+
+    expect(sheet!.accounts).toEqual([
+      expect.objectContaining({ key: 'codex', label: 'Codex', tokens: 10 }),
+    ])
+    expect(sheet!.accounts[0]!.accountId).toBeUndefined()
+  })
+
   it('names the account in a limit alert once a provider has more than one', () => {
     const limits = sheetLimits(ready('codex', [{ label: 'Weekly', usedPercent: 95 }]), NOW)!
     const [sheet] = deriveSheets(historyOf({ codex: [10] }), new Map([['codex', limits]])).sheets

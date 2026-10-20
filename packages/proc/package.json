@@ -12,6 +12,10 @@
       "types": "./dist/desktop-path.d.ts",
       "default": "./dist/desktop-path.js"
     },
+    "./account-home": {
+      "types": "./dist/account-home.d.ts",
+      "default": "./dist/account-home.js"
+    },
     "./cli": {
       "types": "./dist/cli.d.ts",
       "default": "./dist/cli.js"

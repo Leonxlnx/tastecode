@@ -225,15 +225,15 @@
       <div class="topbar-inner">
         <h1>Feature Inventory</h1>
         <span class="total" id="total">0 checked</span>
-        <span class="meta">2026-10-19 nightly · includes main 58d89955 (PR #1909)</span>
+        <span class="meta">2026-10-20 nightly 5da77ebc · includes main 094eac47 (PR #1921)</span>
       </div>
     </div>
 
     <div class="wrap">
       <p class="intro">
         <a href="./CLAUDE-HANDOFF.md">October 9 Claude handoff</a>: current source, branches,
-        references and verification limits. This nightly source includes main through 0ad74ec3,
-        synchronized on 2026-10-16 (PR #1632), and the October 16 improvement round, which landed on
+        references and verification limits. This nightly source includes main through 094eac47,
+        synchronized on 2026-10-20 (PR #1921), and the October 16 improvement round, which landed on
         2026-10-18 through PR #1841 (172 lane PRs in ten lanes: streaming, chat column, models, MCP
         and slash commands, providers, plan limits, usage, Settings, performance, subagents and pull
         requests). Published desktop 0.1.1 and the old 0.1.2 draft are separate from the source
@@ -707,7 +707,8 @@
                   Grok's credential file; successful login retains the exact provider-confirmed
                   email as soon as the CLI reports it; when neither is available Settings reports
                   only Signed in, uses a fixed-width privacy blur, and never asks the user to type
-                  an address</span
+                  an address; the sign-in check and the extension start together, so an account read
+                  waits for the slower of the two Grok processes, not for both in a row</span
                 ></span
               ></label
             >
@@ -719,7 +720,8 @@
                 <span class="d"
                   >weekly/reset, prepaid, and pay-as-you-go rows appear only when reported; signed
                   out is unavailable and provider failures remain errors; a billing JSON-RPC error
-                  reads "Grok Build did not report its credits."</span
+                  reads "Grok Build did not report its credits."; the billing read starts beside the
+                  sign-in check instead of after it</span
                 ></span
               ></label
             >
@@ -1127,9 +1129,45 @@
               ><input type="checkbox" /><span
                 >Multiple accounts per provider
                 <span class="d"
-                  >pending: only the contracts exist (accounts.* methods, account-pinned chats,
-                  account-scoped sign-in, models, limits and usage); server, adapters and UI are not
-                  built yet</span
+                  >nightly, Codex and Claude Code only (providers that declare multipleAccounts;
+                  Grok and the others run as their one account): each account has its own CLI folder
+                  (CODEX_HOME or CLAUDE_CONFIG_DIR). Settings &gt; Providers &gt; Accounts lists a
+                  provider once it has a second account, rows named Codex · Work; Add account makes
+                  a new, empty folder TasteCode manages (nothing is copied from the default account,
+                  whose settings can hold keys and login pins), or uses an existing folder as it is
+                  and asks it once who is signed in there; a folder that is, holds or sits inside
+                  the default folder, another account's folder or TasteCode's data folder is
+                  refused, links resolved; one action per row (Sign in until the account names who
+                  it is, then Set active or Active) after its menu (Rename, Open in Explorer, Set
+                  active for an account not signed in yet, Remove account, which keeps the folder,
+                  and Delete folder for a managed folder, each confirmed). Sign in runs the
+                  provider's sign-in terminal in that folder (Codex · Work login). A chat is pinned
+                  to the account it started on and resumes there after a restart; the new-chat
+                  composer offers a New chat account control once the provider has a second account,
+                  which sets the provider's active account (not shown for a custom harness, which
+                  keeps its own sign-in). A chat's title and commit message are written through its
+                  own account when the background model is its provider's; the model picker lists
+                  the active account's models for a new chat and an open chat's own account's
+                  models; a project's MCP list and MCP sign-in come from a default-account chat
+                  only. Removing an account drops it before its processes stop and deletes a managed
+                  folder last. Plan limits, reset credits, model lists and usage are read per
+                  account: the current provider's active account is read at launch, its other
+                  signed-in accounts when the popup or Usage shows limits; the popup names the
+                  provider once with each account under it, the card's figure is each provider's
+                  active account, and a Usage sheet sums its accounts and lists each one with its
+                  tokens and limits. Profile &gt; Accounts lists further accounts (Codex · Work,
+                  plan or Signed out, never an email). When a turn fails while the chat's account is
+                  at a plan limit (a window at 100% that has not reset) and another account of the
+                  provider is signed in, the error offers Continue on Work (a menu, Continue on
+                  another account, when there are several); never automatic. It starts a new chat
+                  pinned to that account in the same project (an isolated chat's branch as base),
+                  with the failed request in its composer; its first prompt carries the earlier
+                  chat's conversation as untrusted context (the Side chat snapshot, kept in the
+                  provider's own session), the transcript shows only the user's words, and until its
+                  first message the new chat says Continues "title" on Work in a neutral note with
+                  Open. The earlier chat is left as it was; its failed turn's row then reads
+                  Continued on Work and opens the new chat. Not yet: per-account Sign out,
+                  MCP/skills inventory and history import per account</span
                 ></span
               ></label
             >
@@ -1155,7 +1193,9 @@
                   setup, and Send opens after 5 s while an account check is still running, or at
                   once when the provider's last check said signed in; a check that answers signed
                   out turns Send off again; an Enter pressed while Send is still loading is sent
-                  once Send is ready, unless the words or the chat changed meanwhile</span
+                  once Send is ready, unless the words or the chat changed meanwhile; on nightly a
+                  shelf that holds only notes, such as where a chat continues, is drawn neutral with
+                  an info icon instead of red</span
                 ></span
               ></label
             >
@@ -1270,15 +1310,17 @@
                   declares; the server keeps one model list per source, answers from the last launch
                   and refreshes it in the background unless the last launch listed it less than 10
                   minutes ago (older lists are listed again 5 s apart), and a models.changed push
-                  lists a source again, so a CLI model change appears without a restart; a provider
-                  the composer is not on is listed when the picker opens; the catalog is listed
-                  again on window focus or show when the last listing is 6 hours or older, and after
-                  an app-run provider update; the launch snapshot of the catalog is written once per
-                  refresh (one trailing write while sources settle, then the full catalog) and
-                  dropped instead of written when it outgrows its 2,000-row / 2M-character limit;
-                  the first selector on screen loads the picker panel in an idle moment, so the
-                  first open does not load it, and a failed load is tried again by the next
-                  caller</span
+                  lists a source again, so a CLI model change appears without a restart; a
+                  provider's own list is saved with the CLI build that listed it (path and version),
+                  so the same build answers at once for up to 30 days and a CLI update lists it
+                  again at once; a provider the composer is not on is listed when the picker opens;
+                  the catalog is listed again on window focus or show when the last listing is 6
+                  hours or older, and after an app-run provider update; the launch snapshot of the
+                  catalog is written once per refresh (one trailing write while sources settle, then
+                  the full catalog) and dropped instead of written when it outgrows its 2,000-row /
+                  2M-character limit; the first selector on screen loads the picker panel in an idle
+                  moment, so the first open does not load it, and a failed load is tried again by
+                  the next caller</span
                 ></span
               ></label
             >
@@ -2259,8 +2301,9 @@
               ><input type="checkbox" /><span
                 >Two versions switchable in Settings
                 <span class="d"
-                  >Classic and Inbox with auto-settle after N days; new profiles start on Classic
-                  with three-day settling enabled</span
+                  >Classic and Inbox; Inbox settles untouched chats after N days (new profiles start
+                  on Classic with three-day settling enabled), while Classic leaves those chats in
+                  place and moves only the chats the user archives to Archived</span
                 ></span
               ></label
             >
@@ -2293,6 +2336,39 @@
           <li>
             <label
               ><input type="checkbox" /><span
+                >"Needs you" band above Pinned in Classic
+                <span class="d"
+                  >shown only while a chat is blocked on an approval or a question, or failed and
+                  unread; blocked chats first, then failures, each the longest wait first; the open
+                  chat is left out and an entry leaves once answered or read (a failed one also by
+                  its Mark as read check on hover); a finished unread answer stays in the tree. At
+                  most 5 rows, 3 on a window under 800 px tall, then "+N more"; each chat also keeps
+                  its place in the tree, undimmed. Rows use the tree's status dots and show the
+                  project name as a small muted suffix that gives way before the title and hides on
+                  a rail under 220 px</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Archive chats from the Classic sidebar
+                <span class="d"
+                  >Archive is the row's one hover action and takes the time's place, never a spinner
+                  or a status dot; running and waiting chats cannot be archived. Rename, Archive and
+                  Delete (marked destructive) are in the row's menu. Archived chats leave their
+                  project for a folded "Archived N" section at the end of the rail, the most
+                  recently archived first, 10 at a time, each with Restore; they stay in chat
+                  search, open where they are, and come back to their project when the user sends to
+                  them</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
                 >Undo recently deleted chats
                 <span class="d"
                   >sidebar delete actions show a top toast with a white Undo button. The toast
@@ -2313,7 +2389,12 @@
               ><input type="checkbox" /><span
                 >Drag to reorder projects and sessions with matching inset drop lines, with the
                 chosen order restored on reload; undragged projects stay newest first, and chats
-                imported later from another provider slot in by date</span
+                imported later from another provider slot in by date
+                <span class="d"
+                  >in Classic a chat keeps its place when it starts, waits, finishes or is read;
+                  only a new chat (on top), a pin, a drag or archiving moves one, and a drop lands
+                  exactly where it was dropped</span
+                ></span
               ></label
             >
           </li>
@@ -2345,9 +2426,10 @@
                   >Classic rows show a 12 px provider mark before the title and a quiet relative
                   time on the right (5m, 3h, 2w); a working spinner or a green finished, yellow
                   waiting, or red failed dot takes the time's place, independent of the accent;
-                  unread chats get a heavier title, with no extra dot on finished chats; one shared
-                  30-second clock drives every time label and runs only while a row listens and the
-                  window is visible</span
+                  unread chats get a heavier title and never a second dot; a folded project shows
+                  one dot and a count of its chats that need the user; one shared 30-second clock
+                  drives every time label and runs only while a row listens and the window is
+                  visible</span
                 ></span
               ></label
             >
@@ -2602,7 +2684,9 @@
                   >Sidebar, Terminal and Model picker each show their two choices as the window they
                   make, painted in the app's surfaces with the changed part in ink and the chosen
                   one ringed, beside a line on what the setting decides; the terminal starts on the
-                  right until moved. Under Inbox a logarithmic settle scale from 1 to 90 days or
+                  right until moved. On the desktop, Notifications shows Off, Needs me (the default)
+                  and Also finished as the window dimmed behind OS notifications in the sidebar's
+                  amber and green dots. Under Inbox a logarithmic settle scale from 1 to 90 days or
                   never moves the Settled fold in the Inbox picture as it is dragged. The page has
                   the Settings v1 header; setting names and notes use the row type (13.5/500 and
                   12.5), settings sit 36 px apart</span
@@ -2763,7 +2847,10 @@
                   nav label equals its page title, every tab opens scrolled to the top with the same
                   title position and column, and every panel is named by its heading; Settings loads
                   in an idle moment once the project list is ready, so its first open does not load
-                  it, and a failed preload is loaded again on open</span
+                  it, and a failed preload is loaded again on open; once Settings covers the app,
+                  the app's endless loops (a working chat's spinner, the live activity row) pause
+                  until it closes, also when it returns after a sign-in, while one-shot animations
+                  behind it still finish</span
                 ></span
               ></label
             >
@@ -2806,7 +2893,8 @@
                   provider is asked again, and Manage opens Providers; Local activity is a 12-month
                   heatmap from the shared usage store, with month labels from the first full month,
                   an Open Usage link and a refresh icon; the streak and the model breakdown are on
-                  Usage now; multiple accounts per provider are not built yet</span
+                  Usage now; on nightly a provider's further accounts are listed as their own rows
+                  (see Multiple accounts per provider)</span
                 ></span
               ></label
             >
@@ -3016,7 +3104,11 @@
                 denied writes, preserving real download and stream-error checks across platforms
                 (#1394). On macOS, a DMG image that cannot be detached afterwards no longer fails a
                 prepared update, and a refused DMG keeps its real reason and is discarded (#1487,
-                not yet run on a real Mac)</span
+                not yet run on a real Mac). On nightly, installing no longer cuts off running chats:
+                while chats run, the sidebar button (an hourglass with the count) and Restart to
+                update in About read “Installs when 2 chats finish” and install by themselves once
+                the last one ends, after the server confirms nothing still runs; Install now stops
+                them after one confirmation that names how many, and Install later puts it off</span
               ></label
             >
           </li>
@@ -3144,6 +3236,25 @@
                   caption buttons take the colour the app paints beside them, live in light and
                   dark, on tinted backdrops and in Settings, and the next launch opens in the last
                   colours</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Chat notifications and a badge while the window is away
+                <span class="d"
+                  >when the window is not focused, minimized or hidden, a chat that starts waiting
+                  on an approval or a question, or fails, shows one OS notification (chat title,
+                  then Needs your approval, Has a question or Failed; Finished too under Also
+                  finished); never for changes while the window is in front, one per chat state
+                  change, a newer state replaces the old one, a launch or reload repeats nothing;
+                  clicking opens the chat; coming back to the window clears them. The badge counts
+                  chats that started waiting while away: an amber dot with a thin dark ring on the
+                  Windows taskbar button (the count in its tooltip), app.setBadgeCount on macOS and
+                  Linux. No sound of our own; the OS and its do-not-disturb decide. Reads the
+                  sidebar status, so it works for every provider and API connection</span
                 ></span
               ></label
             >

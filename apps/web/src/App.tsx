@@ -9,10 +9,15 @@ import {
   useState,
   useSyncExternalStore,
 } from 'react'
-import type { CSSProperties, TransitionEvent as ReactTransitionEvent } from 'react'
+import type {
+  AnimationEvent as ReactAnimationEvent,
+  CSSProperties,
+  TransitionEvent as ReactTransitionEvent,
+} from 'react'
 import { IconLoader2 as LoaderCircle } from '@tabler/icons-react'
 import type {
   Account,
+  AccountId,
   ApprovalDecision,
   ApprovalMode,
   DomainEvent,
@@ -25,6 +30,7 @@ import type {
   ResultOf,
   SidebarSettings,
 } from '@harness/contracts'
+import { DEFAULT_ACCOUNT_ID } from '@harness/contracts'
 import {
   isDesktop,
   isMacOS,
@@ -49,6 +55,8 @@ import {
 } from './shortcuts.js'
 import { sliceCodeUnits } from './slice-code-units.js'
 import { readTerminalPlacement, subscribeTerminalPlacement } from './terminal-placement.js'
+import { useChatNotifications } from './use-chat-notifications.js'
+import { useAppUpdateInstallGate } from './app-update-install.js'
 import { ProviderUpdateNotice } from './ui/ProviderUpdates.js'
 import { IndeterminateRequestError, Transport } from './transport.js'
 import { OptimisticMutations } from './optimistic-mutations.js'
@@ -104,7 +112,8 @@ import {
 import type { Checkpoint } from './ui/RollbackDialog.js'
 import { SessionSearchHost, type SessionSearchHandle } from './ui/SessionSearchHost.js'
 import type { SettingsSection } from './ui/Settings.js'
-import { Sidebar, type Project } from './ui/Sidebar.js'
+import { Sidebar, type Project, type Session } from './ui/Sidebar.js'
+import { accountAtLimit, continueAccounts, continuedIn, lastRequest } from './continue-account.js'
 import { Skeleton, SkeletonStatus, ThreadSkeleton } from './ui/Skeleton.js'
 import {
   PullRequestsSkeleton,
@@ -125,7 +134,16 @@ import { serverBaseUrl } from './server-url.js'
 import { addDesignBriefing } from './design-agent/briefing.js'
 import { sourceSupportsAttachments } from './attachment-capability.js'
 import { canCaptureVoice, type VoiceRecording } from './voice-capability.js'
-import { UsageLimitsController } from './usage-limits-state.js'
+import { UsageLimitsController, type LimitTarget } from './usage-limits-state.js'
+import { sameAccount } from './usage-summary-state.js'
+import {
+  accountLabelOf,
+  accountsOf,
+  activeAccountOf,
+  useProviderAccounts,
+  type AccountLabel,
+  type ProviderAccountsSnapshot,
+} from './provider-accounts-state.js'
 import {
   agentMark,
   connectionMark,
@@ -604,24 +622,32 @@ export function App() {
   const readUsage = useCallback(() => usageController.snapshot(), [usageController])
   const usageState = useSyncExternalStore(subscribeUsage, readUsage, readUsage)
   const refreshUsage = useCallback(
-    (requestedProvider?: ProviderId) => usageController.refresh(requestedProvider),
+    (requestedProvider?: ProviderId, accountId?: AccountId) =>
+      usageController.refresh(requestedProvider, undefined, accountId),
     [usageController],
   )
   const retryUsage = useCallback(
-    (requestedProvider: ProviderId) => usageController.refresh(requestedProvider, 'retry'),
+    (requestedProvider: ProviderId, accountId?: AccountId) =>
+      usageController.refresh(requestedProvider, 'retry', accountId),
     [usageController],
   )
   const showUsage = useCallback(() => usageController.show(), [usageController])
   const consumeReset = useCallback(
-    async (requestedProvider: ProviderId, idempotencyKey: string, creditId?: string) => {
+    async (
+      requestedProvider: ProviderId,
+      idempotencyKey: string,
+      creditId?: string,
+      accountId?: AccountId,
+    ) => {
       try {
         return await transport.request('usage.consumeReset', {
           provider: requestedProvider,
+          ...(accountId === undefined || accountId === DEFAULT_ACCOUNT_ID ? {} : { accountId }),
           idempotencyKey,
           ...(creditId === undefined ? {} : { creditId }),
         })
       } finally {
-        refreshUsage(requestedProvider)
+        refreshUsage(requestedProvider, accountId)
       }
     },
     [transport, refreshUsage],
@@ -794,6 +820,17 @@ export function App() {
       }
     })
   const [providerStatuses, setProviderStatuses] = useState<ProviderStatus[]>([])
+  // The provider accounts, kept while an installed provider can have more
+  // than one: plan limits are read per account, and the views name them.
+  const { snapshot: providerAccounts } = useProviderAccounts(
+    transport,
+    providerStatuses.some(
+      (status) => status.installed && status.capabilities?.multipleAccounts === true,
+    ),
+  )
+  /** For the model catalog's runs, which outlive a render. */
+  const providerAccountsRef = useRef(providerAccounts)
+  providerAccountsRef.current = providerAccounts
   const [acpAgents, setAcpAgents] = useState<ResultOf<'acp.agents'>['agents']>([])
   const [acpRoster, setAcpRoster] = useState(readAcpRoster)
   // Read by the catalog run, which must not restart when an agent is added.
@@ -1210,13 +1247,63 @@ export function App() {
         })
       : undefined
   }, [activeSession])
-  const selectableModels = useMemo(
-    () =>
-      activeModelSource
-        ? visibleModels.filter((choice) => modelSource(choice) === activeModelSource)
-        : visibleModels,
-    [activeModelSource, visibleModels],
-  )
+  // An open chat runs on its own account. When that is not the account the
+  // catalog lists for its provider, the chat is offered its own account's
+  // models, whose plan may differ; the catalog's stay until they arrive.
+  const chatModelAccount =
+    activeSession &&
+    // A chat still starting runs on the active account, which the catalog lists.
+    !activeSession.id.startsWith('pending:') &&
+    !activeSession.agent &&
+    !activeSession.connectionId &&
+    !sameAccount(
+      activeSession.accountId,
+      modelListAccount(providerAccounts, activeSession.provider),
+    )
+      ? chatAccountKey(activeSession.provider, activeSession.accountId)
+      : undefined
+  const chatModelAccountRef = useRef(chatModelAccount)
+  chatModelAccountRef.current = chatModelAccount
+  const [chatModels, setChatModels] = useState<{ account: string; models: ModelChoice[] }>()
+  const [chatModelsRevision, setChatModelsRevision] = useState(0)
+  useEffect(() => {
+    if (!chatModelAccount) return
+    const [id = '', accountId = DEFAULT_ACCOUNT_ID] = chatModelAccount.split('\u0000')
+    const chatProvider = id as ProviderId
+    let cancelled = false
+    void transport
+      .request('models.list', {
+        provider: chatProvider,
+        ...(accountId === DEFAULT_ACCOUNT_ID ? {} : { accountId }),
+      })
+      .then(
+        (result) => {
+          if (cancelled) return
+          const sourceName = providerName(chatProvider)
+          setChatModels({
+            account: chatModelAccount,
+            models: choicesFor(
+              { provider: chatProvider, sourceName, mark: providerMark(chatProvider) },
+              result.models,
+              false,
+            ),
+          })
+        },
+        // The catalog's list stays offered.
+        () => undefined,
+      )
+    return () => {
+      cancelled = true
+    }
+  }, [chatModelAccount, chatModelsRevision, transport])
+  const selectableModels = useMemo(() => {
+    if (chatModelAccount && chatModels?.account === chatModelAccount && chatModels.models.length) {
+      return chatModels.models.filter((choice) => !hiddenModels.has(choice.key))
+    }
+    return activeModelSource
+      ? visibleModels.filter((choice) => modelSource(choice) === activeModelSource)
+      : visibleModels
+  }, [activeModelSource, visibleModels, chatModelAccount, chatModels, hiddenModels])
   const storedModelChoice = models.find((choice) => choice.key === modelId)
   const sourceHasCatalogModels = useMemo(
     () =>
@@ -1323,6 +1410,13 @@ export function App() {
   const autoReviewSupported = useMemo(
     () =>
       providerStatuses.find((entry) => entry.id === provider)?.capabilities?.autoReview === true,
+    [provider, providerStatuses],
+  )
+  // A new chat with such a provider offers its accounts beside the composer tools.
+  const providerHasAccounts = useMemo(
+    () =>
+      providerStatuses.find((entry) => entry.id === provider)?.capabilities?.multipleAccounts ===
+      true,
     [provider, providerStatuses],
   )
 
@@ -1840,8 +1934,10 @@ export function App() {
       }
 
       if (affectsSessionStatus(event)) {
-        setProjects((current) => {
-          const updated = updateSession(current, threadId, (session) => {
+        // A status change never moves the chat in the sidebar; only a new chat,
+        // a pin or a drag does.
+        setProjects((current) =>
+          updateSession(current, threadId, (session) => {
             const status = statusFor(next, event, threadId !== activeIdRef.current)
             return {
               ...session,
@@ -1853,11 +1949,8 @@ export function App() {
                   }
                 : {}),
             }
-          })
-          return event.type === 'turn.started' && sidebarSettingsRef.current.mode === 'classic'
-            ? promoteSession(updated, threadId)
-            : updated
-        })
+          }),
+        )
         if (event.type === 'turn.completed' && threadId === activeIdRef.current) {
           // Only here for the server's mark-as-read side effect — the live event
           // stream already delivered the turn. afterSeq skips serializing,
@@ -1917,8 +2010,8 @@ export function App() {
       setWorkspaceDesignPreviewRequest({ requestId: request.requestId, url: request.url })
     })
     const offSidebarSettings = transport.on('sidebar.settings', acceptSidebarSettings)
-    const offUsageChanged = transport.on('usage.changed', ({ provider }) => {
-      usageController.changed(provider)
+    const offUsageChanged = transport.on('usage.changed', ({ provider, accountId }) => {
+      usageController.changed(provider, accountId)
     })
     // Live windows reach the bars as the server folds them in, not only after
     // the spaced usage.changed signal and a new request.
@@ -2293,7 +2386,11 @@ export function App() {
           })
         }
         try {
-          const result = await transport.request('models.list', { provider: entry.id })
+          const accountId = modelListAccount(providerAccountsRef.current, entry.id)
+          const result = await transport.request('models.list', {
+            provider: entry.id,
+            ...(accountId ? { accountId } : {}),
+          })
           const models = choicesFor(
             {
               provider: entry.id,
@@ -2675,11 +2772,43 @@ export function App() {
   // restart.
   useEffect(
     () =>
-      transport.on('models.changed', ({ provider, agent }) => {
+      transport.on('models.changed', ({ provider, agent, accountId }) => {
+        // An open chat on another account lists that account's models itself.
+        if (
+          agent === undefined &&
+          chatModelAccountRef.current === chatAccountKey(provider, accountId)
+        ) {
+          setChatModelsRevision((revision) => revision + 1)
+        }
+        // A provider's own list is its active account's; a custom harness keeps its own sign-in.
+        const listed =
+          agent === undefined ? modelListAccount(providerAccountsRef.current, provider) : undefined
+        if (!sameAccount(accountId, listed)) return
         catalogSources.current?.relist(sourceKey({ provider, agentId: agent }))
       }),
     [transport],
   )
+
+  // A provider whose active account changed lists that account's models, so
+  // a new chat is offered what its plan has.
+  const modelListAccounts = useMemo(
+    () =>
+      [...new Set(providerAccounts.accounts.map((account) => account.provider))]
+        .sort()
+        .map((id) => `${id}=${activeAccountOf(providerAccounts, id)}`)
+        .join(','),
+    [providerAccounts],
+  )
+  const listedModelAccounts = useRef(new Map<string, string>())
+  useEffect(() => {
+    for (const entry of modelListAccounts ? modelListAccounts.split(',') : []) {
+      const [id = '', accountId = DEFAULT_ACCOUNT_ID] = entry.split('=')
+      const before = listedModelAccounts.current.get(id) ?? DEFAULT_ACCOUNT_ID
+      listedModelAccounts.current.set(id, accountId)
+      // A provider's own source key is its id.
+      if (before !== accountId) catalogSources.current?.relist(id)
+    }
+  }, [modelListAccounts])
 
   // A window left open for hours lists its models again when it comes back,
   // so a CLI updated outside the app brings its new releases (and retires the
@@ -3218,10 +3347,51 @@ export function App() {
         .map((status) => status.id),
     [provider, providerStatuses],
   )
+  // Each provider account is a limit source of its own. New chats start on a
+  // provider's active account, so that one is read for the current provider;
+  // its other accounts join the other providers, read when a view shows them.
+  const limitTargets = useMemo(() => {
+    const targetsOf = (id: ProviderId): LimitTarget[] => {
+      const listed = accountsOf(providerAccounts, id)
+      if (listed.length < 2) return [{ provider: id }]
+      const active = activeAccountOf(providerAccounts, id)
+      // A further account is read once it has named who it is: before its
+      // first sign-in every read fails, and the views would offer a Retry.
+      const others = listed
+        .filter(
+          (account) =>
+            account.id !== active &&
+            (account.id === DEFAULT_ACCOUNT_ID ||
+              account.email !== undefined ||
+              account.plan !== undefined),
+        )
+        .map((account) => account.id)
+      return [active, ...others].map((accountId) =>
+        accountId === DEFAULT_ACCOUNT_ID ? { provider: id } : { provider: id, accountId },
+      )
+    }
+    const [main = { provider }, ...rest] = targetsOf(provider)
+    return { main, onDemand: [...rest, ...otherUsageProviders.flatMap(targetsOf)] }
+  }, [provider, otherUsageProviders, providerAccounts])
 
   useLayoutEffect(() => {
-    usageController.select([{ provider }], otherUsageProviders)
-  }, [usageController, provider, otherUsageProviders])
+    usageController.select([limitTargets.main], limitTargets.onDemand)
+  }, [usageController, limitTargets])
+
+  // The account card's one figure is about where new chats run: each
+  // provider's active account. The popup lists every account.
+  const cardUsageState = useMemo(
+    () =>
+      usageState.filter((state) =>
+        sameAccount(state.accountId, activeAccountOf(providerAccounts, state.provider)),
+      ),
+    [usageState, providerAccounts],
+  )
+  const accountLabel = useCallback<AccountLabel>(
+    (requestedProvider, accountId) =>
+      accountLabelOf(providerAccounts, requestedProvider, accountId),
+    [providerAccounts],
+  )
 
   // First load, plus the one-time handover from localStorage. Anything found
   // there stays recoverable until the server acknowledges that project.
@@ -4387,6 +4557,15 @@ export function App() {
     }
     const completedProvider = completed.provider
     if (!completedProvider) return
+    if (completed.accountId !== undefined && completed.accountId !== DEFAULT_ACCOUNT_ID) {
+      // A further account: its own check is what the server keeps as who signed
+      // in, and accounts.changed tells every accounts view. The default
+      // account's state is untouched.
+      void transport
+        .request('auth.status', { provider: completedProvider, accountId: completed.accountId })
+        .catch(() => undefined)
+      return
+    }
     setProviderAuthRefreshRevision((revision) => revision + 1)
     void transport
       .request('auth.status', { provider: completedProvider })
@@ -4570,6 +4749,80 @@ export function App() {
     const id = activeIdRef.current
     if (id && !id.startsWith('pending:')) void readOpenedHistory(id, undefined)
   }, [readOpenedHistory])
+
+  /**
+   * "Continue on another account": a new chat pinned to that account carries
+   * the open chat on. The server gives its first prompt this chat's
+   * conversation; the composer starts with the request that failed, so
+   * nothing is sent until the user sends it.
+   */
+  const continueOnAccount = useCallback(
+    async (accountId: AccountId) => {
+      const earlierId = activeIdRef.current
+      const found = findSession(projectsRef.current, earlierId)
+      if (!earlierId || !found) return
+      const { project, session: earlier } = found
+      const choice =
+        selectedModelChoice?.provider === earlier.provider &&
+        !selectedModelChoice.agent &&
+        !selectedModelChoice.connectionId
+          ? selectedModelChoice
+          : undefined
+      setActionError(undefined)
+      try {
+        const { threadId } = await transport.request('thread.start', {
+          provider: earlier.provider,
+          workspacePath: project.path,
+          accountId,
+          continueFrom: earlierId,
+          approval: approval === 'auto-review' && !autoReviewSupported ? 'full' : approval,
+          ...(choice?.model.id ? { model: choice.model.id } : {}),
+          ...(choice && selectedServiceTier ? { serviceTier: selectedServiceTier } : {}),
+          ...(choice && selectedEffort ? { effort: selectedEffort } : {}),
+          // An isolated chat's work is on its branch; the new checkout starts there.
+          ...(earlier.worktreeBranch ? { isolate: true, baseRef: earlier.worktreeBranch } : {}),
+        })
+        const request = lastRequest(threadController.snapshot(earlierId)?.items ?? [])
+        if (request) threadController.editDraft(threadId, { text: request })
+        const now = Date.now()
+        const row: Session = {
+          id: threadId,
+          title: 'New session',
+          provider: earlier.provider,
+          ...(accountId === DEFAULT_ACCOUNT_ID ? {} : { accountId }),
+          continuedFrom: earlierId,
+          createdAt: now,
+          statusSince: now,
+          status: 'idle',
+          lifecycle: { state: 'active', keepActive: false },
+          unread: false,
+        }
+        // Listed at once, so opening it finds its project; the next list reconciles.
+        const next = projectsRef.current.map((entry) =>
+          entry.path !== project.path || entry.sessions.some((each) => each.id === threadId)
+            ? entry
+            : { ...entry, sessions: [row, ...entry.sessions] },
+        )
+        projectsRef.current = next
+        setProjects(next)
+        await selectSession(threadId)
+        void refreshProjects().catch(() => undefined)
+      } catch (error) {
+        reportError(error instanceof Error ? error.message : String(error))
+      }
+    },
+    [
+      transport,
+      selectedModelChoice,
+      selectedServiceTier,
+      selectedEffort,
+      approval,
+      autoReviewSupported,
+      selectSession,
+      refreshProjects,
+      reportError,
+    ],
+  )
 
   const inspectCheckpoint = useCallback(
     async (checkpoint: Checkpoint) => {
@@ -5070,6 +5323,16 @@ export function App() {
     }),
     [hideSession, hideSessions, restoreSession, restoreSessions, keepSessionActive],
   )
+  // Archive is the inbox's settle: the chat leaves its project for the
+  // Archived section and comes back when the user sends to it.
+  const archiveSidebarChat = useCallback(
+    (id: string) => void hideSession(id, 'settle'),
+    [hideSession],
+  )
+  const restoreSidebarChat = useCallback(
+    (id: string) => void restoreSession(id, 'unsettle'),
+    [restoreSession],
+  )
   const closeSidebar = useCallback(() => setCollapsed(true), [])
   const resizeSidebar = useCallback((width: number) => {
     setRailWidth(width)
@@ -5105,6 +5368,18 @@ export function App() {
     [beginSession],
   )
   const selectSidebarSession = useCallback((id: string) => void selectSession(id), [selectSession])
+  // A chat notification was clicked and the shell brought the window up.
+  const openNotifiedChat = useCallback(
+    (id: string) => {
+      if (!findSession(projectsRef.current, id)) return
+      setSettingsOpen(false)
+      void selectSession(id)
+    },
+    [selectSession],
+  )
+  useChatNotifications(projects, projectsStatus === 'ready', openNotifiedChat)
+  // An app update waits for running chats instead of cutting them off.
+  useAppUpdateInstallGate(transport, projects, projectsStatus === 'ready')
   // The pull request the header chip asked the surface to open with.
   const [pullRequestFocus, setPullRequestFocus] = useState<PullRequestTarget>()
   const openPullRequests = useCallback(() => {
@@ -5277,6 +5552,18 @@ export function App() {
     (id: string) => void archiveSession(id),
     [archiveSession],
   )
+  // The server marks a chat read when its history is fetched, as it does for
+  // the open chat after a turn. Asking for nothing past the end keeps that
+  // fetch empty.
+  const markSidebarSessionRead = useCallback(
+    (id: string) => {
+      setProjects((current) => updateSession(current, id, markSessionRead))
+      void transport
+        .request('thread.history', { threadId: id, afterSeq: Number.MAX_SAFE_INTEGER })
+        .catch(() => undefined)
+    },
+    [transport],
+  )
   const archiveSidebarProject = useCallback(
     (sessionIds: string[]) => {
       void (async () => {
@@ -5399,6 +5686,20 @@ export function App() {
     },
   )
   const closeSettings = useCallback(() => setSettingsOpen(false), [])
+  // Settings covers the window with an opaque page. Once its fade-in has
+  // finished, the app behind it cannot be seen, so the app's endless loops (a
+  // working chat's spinner, the live activity row) pause until it closes
+  // instead of drawing a frame every refresh.
+  const shellBody = useRef<HTMLDivElement>(null)
+  const coverShell = useCallback((event: ReactAnimationEvent<HTMLDivElement>) => {
+    if (event.target === event.currentTarget) shellBody.current?.setAttribute('data-covered', '')
+  }, [])
+  useLayoutEffect(() => {
+    if (!settingsOpen) shellBody.current?.removeAttribute('data-covered')
+    // Settings back in place of a login terminal has no fade: it covers the
+    // app from its first frame.
+    else if (settingsReturning) shellBody.current?.setAttribute('data-covered', '')
+  }, [settingsOpen, settingsReturning])
   const forceOnboarding = useCallback(() => {
     setSettingsOpen(false)
     setOnboardingPreview(true)
@@ -5993,6 +6294,34 @@ export function App() {
     ? (settingsType.current ??= resolvedSettings ?? LazySettings)
     : undefined
 
+  // "Continue on another account" is offered on a failed turn while the chat's
+  // own account is at a plan limit and its provider has another signed-in
+  // account. It never starts on its own.
+  const continuedChat = useMemo(
+    () => (activeId ? continuedIn(projects, activeId) : undefined),
+    [activeId, projects],
+  )
+  const continueOptions = useMemo(() => {
+    if (
+      !activeSession ||
+      continuedChat ||
+      activeSession.id.startsWith('pending:') ||
+      activeSession.agent ||
+      activeSession.connectionId ||
+      !accountAtLimit(usageState, activeSession.provider, activeSession.accountId, Date.now())
+    )
+      return []
+    const defaultSignedIn =
+      providerStatuses.find((status) => status.id === activeSession.provider)?.auth ===
+      'authenticated'
+    return continueAccounts(
+      providerAccounts,
+      activeSession.provider,
+      activeSession.accountId,
+      defaultSignedIn,
+    )
+  }, [activeSession, continuedChat, usageState, providerStatuses, providerAccounts])
+
   const offlineError = useMemo<ComposerError | undefined>(
     () =>
       offline
@@ -6056,12 +6385,64 @@ export function App() {
             }),
         }
       : error
+  // Once continued, the failed turn's row leads to the chat that carries it on.
+  const continueOffer: Pick<ComposerError, 'action' | 'choices'> = continuedChat
+    ? {
+        action: {
+          label: `Continued on ${accountLabelOf(providerAccounts, continuedChat.provider, continuedChat.accountId)}`,
+          run: () => void selectSession(continuedChat.id),
+        },
+      }
+    : thread.running || continueOptions.length === 0
+      ? {}
+      : continueOptions.length === 1
+        ? {
+            action: {
+              label: `Continue on ${continueOptions[0]!.label}`,
+              run: () => void continueOnAccount(continueOptions[0]!.id),
+            },
+          }
+        : {
+            choices: {
+              label: 'Continue on another account',
+              options: continueOptions.map((account) => ({
+                id: account.id,
+                label: account.label,
+                detail: account.email ?? account.plan,
+                run: () => void continueOnAccount(account.id),
+              })),
+            },
+          }
+  const earlierChat =
+    // Shown until its first message; not while an opened chat's history is still loading.
+    activeSession?.continuedFrom &&
+    thread.items.length === 0 &&
+    !thread.running &&
+    loadingThreadId !== activeSession.id
+      ? findSession(projects, activeSession.continuedFrom)?.session
+      : undefined
   const composerErrors: ComposerError[] = [
     ...(actionError
       ? [reportable({ ...actionError, dismiss: () => setActionError(undefined) }, 'action')]
       : []),
     ...(thread.error && activeId
-      ? [reportable({ ...thread.error, id: `chat:${activeId}:${thread.error.id}` }, 'turn')]
+      ? [
+          reportable(
+            { ...thread.error, id: `chat:${activeId}:${thread.error.id}`, ...continueOffer },
+            'turn',
+          ),
+        ]
+      : []),
+    ...(earlierChat && activeSession
+      ? [
+          {
+            id: `continues:${activeSession.id}`,
+            role: 'status' as const,
+            tone: 'info' as const,
+            message: `Continues “${earlierChat.title}” on ${accountLabelOf(providerAccounts, activeSession.provider, activeSession.accountId)}. Its conversation goes with your first message.`,
+            action: { label: 'Open', run: () => void selectSession(earlierChat.id) },
+          },
+        ]
       : []),
     ...(currentModelError
       ? [
@@ -6095,7 +6476,7 @@ export function App() {
       ) : null}
       {isDesktop ? <ZoomHud /> : null}
 
-      <div className="shell__body">
+      <div className="shell__body" ref={shellBody}>
         <Sidebar
           projects={archiveProjects}
           projectsLoading={projectsStatus === 'loading'}
@@ -6105,6 +6486,8 @@ export function App() {
           providerName={providerName(provider, sourceAgentName)}
           keybindings={keybindings}
           usageStates={usageState}
+          usageCardStates={cardUsageState}
+          accountLabel={accountLabel}
           onShowUsage={showUsage}
           onRetryUsage={retryUsage}
           onConsumeReset={consumeReset}
@@ -6126,6 +6509,9 @@ export function App() {
           onRenameSession={renameSidebarSession}
           onToggleSessionPin={toggleSidebarSessionPin}
           onDeleteSession={deleteSidebarSession}
+          onMarkSessionRead={markSidebarSessionRead}
+          onArchiveSession={archiveSidebarChat}
+          onRestoreSession={restoreSidebarChat}
           onArchiveProject={archiveSidebarProject}
           onReorderProject={reorderSidebarProject}
           onReorderSession={reorderSidebarSession}
@@ -6223,6 +6609,12 @@ export function App() {
                     projectPath={activePath}
                     projectName={activeProject ? displayName(activeProject) : undefined}
                     threadId={activeId && !activeId.startsWith('pending:') ? activeId : undefined}
+                    accountProvider={
+                      // A custom harness runs on its own sign-in, whatever account is chosen.
+                      !activeId && providerHasAccounts && !selectedModelChoice?.agent
+                        ? provider
+                        : undefined
+                    }
                     projectsLoading={projectsStatus === 'loading'}
                     branch={
                       (!activeId && activePath
@@ -6404,7 +6796,10 @@ export function App() {
       </div>
 
       {SettingsView ? (
-        <div className={`surface-enter${settingsReturning ? ' is-returning' : ''}`}>
+        <div
+          className={`surface-enter${settingsReturning ? ' is-returning' : ''}`}
+          onAnimationEnd={coverShell}
+        >
           <SurfaceErrorBoundary
             name="Settings"
             onClose={closeSettings}
@@ -6707,6 +7102,23 @@ function Empty(props: {
       </div>
     </div>
   )
+}
+
+/** One provider account, as a key; the default account however it is named. */
+function chatAccountKey(provider: ProviderId, accountId: AccountId | undefined): string {
+  return `${provider}\u0000${accountId ?? DEFAULT_ACCOUNT_ID}`
+}
+
+/**
+ * The account a provider's own model list is read as: the one new chats start
+ * on, whose plan may offer other models. Undefined for the default account.
+ */
+function modelListAccount(
+  accounts: ProviderAccountsSnapshot,
+  provider: ProviderId,
+): AccountId | undefined {
+  const active = activeAccountOf(accounts, provider)
+  return active === DEFAULT_ACCOUNT_ID ? undefined : active
 }
 
 function providerName(id: ProviderId, sourceName?: string): string {

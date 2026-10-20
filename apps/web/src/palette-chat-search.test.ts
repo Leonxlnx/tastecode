@@ -66,6 +66,27 @@ describe('deferred palette chat search', () => {
     expect(second(['original'], 100).map(({ id }) => id)).toEqual([])
   })
 
+  it('still finds a chat after it was archived out of the sidebar tree', () => {
+    const select = vi.fn()
+    const archived: Project[] = [
+      {
+        ...projects[1]!,
+        sessions: [
+          {
+            ...projects[1]!.sessions[0]!,
+            lifecycle: { state: 'settled', settledAt: 5, reason: 'manual' },
+          },
+        ],
+      },
+    ]
+    const search = createPaletteChatSearch(archived, (project) => project.name ?? '', select)
+
+    const [result] = search(['polish'], 100)
+    expect(result?.id).toBe('chat-thread-b')
+    result?.run()
+    expect(select).toHaveBeenCalledWith('thread-b')
+  })
+
   it('reads the latest project tree from a stable search function', () => {
     let currentProjects: readonly Project[] = [projects[0]!]
     const search = createPaletteChatSearch(

@@ -5,6 +5,7 @@ export {
   type ClaudeStartOptions,
 } from './adapter.js'
 export { CLAUDE_MCP_CAPABILITIES } from './capabilities.js'
+export { CLAUDE_ACCOUNT_HOME, claudeAccountEnvironment, withClaudeAccount } from './account-home.js'
 export {
   CLAUDE_HIDDEN_COMMANDS,
   CLAUDE_TERMINAL_COMMANDS,

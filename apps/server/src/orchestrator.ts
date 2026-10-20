@@ -12,7 +12,7 @@ import type {
   VisualReview,
 } from '@harness/design-agent'
 import { isDesignBriefAttachment } from '@harness/design-agent/attachment'
-import { JsonValueSchema, PreviewDomAuditSchema } from '@harness/contracts'
+import { DEFAULT_ACCOUNT_ID, JsonValueSchema, PreviewDomAuditSchema } from '@harness/contracts'
 import { z } from 'zod'
 import {
   providerRuntime,
@@ -37,6 +37,14 @@ import {
   checkpointRepository,
   RestoreSnapshotError,
 } from './checkpoint.js'
+import {
+  accountForNewThread,
+  DEFAULT_ACCOUNTS_ONLY,
+  existingAccountHome,
+  sourceAccount,
+  threadAccountHome,
+  type AccountDirectory,
+} from './account-directory.js'
 import { accountRead, type AccountIdentity } from './account-identity.js'
 import { checkpointLabel } from './slice-code-units.js'
 import { canonicalCheckoutRoot, CheckoutAccess } from './checkout-access.js'
@@ -64,7 +72,7 @@ import {
 } from './provider-session.js'
 import { REPLY_STYLE_INSTRUCTIONS } from './reply-style.js'
 import { LOCAL_SKILL_CAPABILITIES, listLocalSkills, mergeSkills } from './skill-inventory.js'
-import type { Store, StoredCheckpoint } from './store.js'
+import type { ProviderAccountSnapshotKind, Store, StoredCheckpoint } from './store.js'
 import {
   createWorktree,
   hasUncommittedChanges,
@@ -75,6 +83,7 @@ import {
 } from './worktree.js'
 import type {
   Account,
+  AccountId,
   ApprovalDecision,
   ApprovalMode,
   BackgroundModelPreference,
@@ -119,7 +128,7 @@ import { TerminalManager } from './terminal.js'
 import { insideSkillFolder, installLocalSkill, sameSkillFolder } from './skill-install.js'
 import type { RunningPreview } from './design-preview-runner.js'
 import { assertPublicWorkspaceFile, existingWorkspacePath } from './api-workspace-paths.js'
-import { sideChatInstructionsFromReplay } from './side-chat.js'
+import { continuationPromptFromReplay, sideChatInstructionsFromReplay } from './side-chat.js'
 import { IDLE_THREAD_RUNTIME_MS, idleThreadRuntimeLimit } from './runtime-retention.js'
 import {
   cleanGeneratedCommitMessage,
@@ -211,6 +220,17 @@ type AttachedThreadRuntime = {
   resumable: boolean
   worktree?: Worktree
 }
+/** One provider account's sign-in, limits, control process and model lists. */
+type AccountScope = {
+  controls: ProviderControls
+  modelLists: ModelListCache
+  /** The account each provider's model lists were read for, to notice a switch made outside the app. */
+  modelListAccounts: Map<ProviderId, AccountIdentity>
+  /** Absent for the default account. */
+  accountId?: AccountId
+}
+const accountScopeKey = (provider: ProviderId, accountId: AccountId) =>
+  `${provider}\u0000${accountId}`
 const userTurnKey = (threadId: string, turnId: string) => JSON.stringify([threadId, turnId])
 const composeInstructions = (instructions?: string): string =>
   instructions?.trim()
@@ -463,6 +483,18 @@ function parseStoredDesignFlow(value: unknown, workspacePath: string): DesignFlo
   }
 }
 
+/** Limits read for another account say whose they are. */
+function withAccount(source: ProviderLimitSource, scope: AccountScope): ProviderLimitSource {
+  return scope.accountId === undefined ? source : { ...source, accountId: scope.accountId }
+}
+
+/** A chat's thread names the account it is pinned to; the default account is left out. */
+function onAccount(thread: Thread, accountId: string | undefined): Thread {
+  return accountId === undefined || accountId === DEFAULT_ACCOUNT_ID
+    ? thread
+    : { ...thread, accountId }
+}
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
@@ -679,6 +711,7 @@ export class Orchestrator {
   #onLogin: (
     provider: ProviderId,
     result: { loginId: string | null; success: boolean; error: string | null },
+    accountId?: AccountId,
   ) => void
   #onMcpOAuth: (
     provider: ProviderId,
@@ -688,8 +721,9 @@ export class Orchestrator {
   #onMcpChanged: (provider: ProviderId, projectPath: string) => void
   #onSkillsChanged: (provider: ProviderId, projectPath: string) => void
   #onCommandsChanged: (provider: ProviderId, projectPath: string) => void
-  #onUsageChanged: (provider: ProviderId) => void
-  #onModelsChanged: (provider: ProviderId, agent: string | undefined) => void
+  #onUsageChanged: (provider: ProviderId, accountId?: AccountId) => void
+  #onLimitsChanged: (source: ProviderLimitSource) => void
+  #onModelsChanged: (provider: ProviderId, agent: string | undefined, accountId?: AccountId) => void
   #onLifecycle: (threadId: string, lifecycle: ThreadLifecycle) => void
   #onLifecycleScheduleChanged: (hint?: LifecycleScheduleHint) => void
   #capturePreview:
@@ -720,16 +754,32 @@ export class Orchestrator {
    * property worth protecting is that sessions do not block or cross-wire each
    * other, and that is about this class, not about any vendor.
    */
-  #runtimeFor: (provider: ProviderId, onLog: (line: string) => void) => ProviderRuntime
+  #runtimeFor: (
+    provider: ProviderId,
+    onLog: (line: string) => void,
+    accountHome?: string,
+  ) => ProviderRuntime
   #runtimeForInjected: boolean
+  /** Which folder each provider account runs in. */
+  #accounts: AccountDirectory
   #maxIdleThreadRuntimes: number
   #idleThreadRuntimeMs: number
   #controls: ProviderControls
   #modelLists: ModelListCache
+  #providerBinary: ((provider: ProviderId) => Promise<string | undefined>) | undefined
   /** The account each provider's model lists were read for, to notice a switch made outside the app. */
   #modelListAccounts = new Map<ProviderId, AccountIdentity>()
+  /** The default account's controls and model lists. */
+  #defaultScope: AccountScope
+  /** Other accounts' controls and model lists, by provider and account, made when first used. */
+  #accountScopes = new Map<string, AccountScope>()
+  /** What every account's controls share with the default account's. */
+  #scopeOptions: Pick<ProviderControlsOptions, 'controlIdleMs' | 'beforeLimitRead' | 'services'>
   /** Install, update and sign-in terminals, by terminal id, and the source they change. */
-  #providerTerminals = new Map<string, { provider: ProviderId; agent?: string | undefined }>()
+  #providerTerminals = new Map<
+    string,
+    { provider: ProviderId; agent?: string | undefined; accountId?: AccountId }
+  >()
 
   constructor(
     store: Store,
@@ -738,9 +788,11 @@ export class Orchestrator {
       onSideEvent?: RecordedEventHandler
       onQueue?: (threadId: string, state: QueueState) => void
       onLog: (line: string) => void
+      /** `accountId` is absent for the default account. */
       onLogin: (
         provider: ProviderId,
         result: { loginId: string | null; success: boolean; error: string | null },
+        accountId?: AccountId,
       ) => void
       onMcpOAuth?: (
         provider: ProviderId,
@@ -750,11 +802,16 @@ export class Orchestrator {
       onMcpChanged?: (provider: ProviderId, projectPath: string) => void
       onSkillsChanged?: (provider: ProviderId, projectPath: string) => void
       onCommandsChanged?: (provider: ProviderId, projectPath: string) => void
-      onUsageChanged?: (provider: ProviderId) => void
+      /** `accountId` is absent for the default account. */
+      onUsageChanged?: (provider: ProviderId, accountId?: AccountId) => void
       /** A provider's held plan limits changed, for example from a live session. */
       onLimitsChanged?: (source: ProviderLimitSource) => void
-      /** A source's model list changed after `models.list` answered. */
-      onModelsChanged?: (provider: ProviderId, agent: string | undefined) => void
+      /** A source's model list changed after `models.list` answered; `accountId` absent for default. */
+      onModelsChanged?: (
+        provider: ProviderId,
+        agent: string | undefined,
+        accountId?: AccountId,
+      ) => void
       onLifecycle?: (threadId: string, lifecycle: ThreadLifecycle) => void
       onLifecycleScheduleChanged?: (hint?: LifecycleScheduleHint) => void
       capturePreview?: (
@@ -771,7 +828,14 @@ export class Orchestrator {
       voiceTranscriber?: VoiceTranscriber
       onTerminalOutput?: (terminalId: string, data: string, outputOffset: number) => void
       onTerminalExit?: (terminalId: string, exitCode: number | null) => void
-      runtimeFor?: (provider: ProviderId, onLog: (line: string) => void) => ProviderRuntime
+      /** `accountHome` is the folder of the provider account the sessions run as; absent, default. */
+      runtimeFor?: (
+        provider: ProviderId,
+        onLog: (line: string) => void,
+        accountHome?: string,
+      ) => ProviderRuntime
+      /** The provider accounts chats can run as. Without it, every provider has its default only. */
+      accounts?: AccountDirectory
       /** Test override for the hardware-scaled warm idle runtime limit. */
       maxIdleThreadRuntimes?: number
       /** Test override for the shared idle runtime expiry window. */
@@ -782,6 +846,9 @@ export class Orchestrator {
       beforeLimitRead?: () => Promise<void>
       /** Test override for the provider services behind settings and inventories. */
       providerServices?: ProviderControlsOptions['services']
+      /** Names the binary a provider's own model lists come from (path and version). */
+      providerBinary?: (provider: ProviderId) => Promise<string | undefined>
+
       /** Where isolated checkouts live. Outside any repository, on purpose. */
       worktreeRoot?: string
     },
@@ -804,6 +871,7 @@ export class Orchestrator {
     this.#onSkillsChanged = handlers.onSkillsChanged ?? (() => {})
     this.#onCommandsChanged = handlers.onCommandsChanged ?? (() => {})
     this.#onUsageChanged = handlers.onUsageChanged ?? (() => {})
+    this.#onLimitsChanged = handlers.onLimitsChanged ?? (() => {})
     this.#onModelsChanged = handlers.onModelsChanged ?? (() => {})
     this.#onLifecycle = handlers.onLifecycle ?? (() => {})
     this.#onLifecycleScheduleChanged = handlers.onLifecycleScheduleChanged ?? (() => {})
@@ -825,9 +893,10 @@ export class Orchestrator {
     })
     this.#runtimeFor =
       handlers.runtimeFor ??
-      ((provider, onLog) =>
-        providerRuntime(provider, onLog, (id) => this.#customHarnesses.find(id)))
+      ((provider, onLog, accountHome) =>
+        providerRuntime(provider, onLog, (id) => this.#customHarnesses.find(id), accountHome))
     this.#runtimeForInjected = handlers.runtimeFor !== undefined
+    this.#accounts = handlers.accounts ?? DEFAULT_ACCOUNTS_ONLY
     this.#maxIdleThreadRuntimes =
       handlers.maxIdleThreadRuntimes === undefined
         ? idleThreadRuntimeLimit(os.totalmem())
@@ -836,6 +905,11 @@ export class Orchestrator {
       0,
       Math.floor(handlers.idleThreadRuntimeMs ?? IDLE_THREAD_RUNTIME_MS),
     )
+    this.#scopeOptions = {
+      ...(handlers.controlIdleMs !== undefined ? { controlIdleMs: handlers.controlIdleMs } : {}),
+      ...(handlers.beforeLimitRead ? { beforeLimitRead: handlers.beforeLimitRead } : {}),
+      ...(handlers.providerServices ? { services: handlers.providerServices } : {}),
+    }
     this.#controls = new ProviderControls({
       listModels: (provider, agent, read) =>
         this.#runtimeFor(provider, this.#onLog).listModels(agent, read),
@@ -856,9 +930,7 @@ export class Orchestrator {
         read: () => this.#store.limitSnapshot(),
         write: (value) => this.#store.setLimitSnapshot(value),
       },
-      ...(handlers.controlIdleMs !== undefined ? { controlIdleMs: handlers.controlIdleMs } : {}),
-      ...(handlers.beforeLimitRead ? { beforeLimitRead: handlers.beforeLimitRead } : {}),
-      ...(handlers.providerServices ? { services: handlers.providerServices } : {}),
+      ...this.#scopeOptions,
     })
     this.#modelLists = new ModelListCache({
       list: (provider, agent, read) => {
@@ -871,7 +943,73 @@ export class Orchestrator {
         read: () => this.#store.modelListSnapshot(),
         write: (value) => this.#store.setModelListSnapshot(value),
       },
+      binary: handlers.providerBinary,
     })
+    this.#providerBinary = handlers.providerBinary
+    this.#defaultScope = {
+      controls: this.#controls,
+      modelLists: this.#modelLists,
+      modelListAccounts: this.#modelListAccounts,
+    }
+  }
+
+  /**
+   * The controls and model lists of the account a request names; absent or
+   * `default`, the default account's. Another account's are made when first
+   * used and serve only its provider, so its sign-in, limits, model lists and
+   * Codex control process never mix with another account's.
+   */
+  #scope(provider: ProviderId, accountId: AccountId | undefined): AccountScope {
+    const accountHome = existingAccountHome(this.#accounts, provider, accountId)
+    if (accountHome === undefined || accountId === undefined) return this.#defaultScope
+    const key = accountScopeKey(provider, accountId)
+    let scope = this.#accountScopes.get(key)
+    if (!scope) {
+      scope = this.#newAccountScope(provider, accountId, accountHome)
+      this.#accountScopes.set(key, scope)
+    }
+    return scope
+  }
+
+  #newAccountScope(provider: ProviderId, accountId: AccountId, accountHome: string): AccountScope {
+    // Its last limits and model lists answer at once after a restart, as the default account's do.
+    const snapshot = (kind: ProviderAccountSnapshotKind) => ({
+      read: () => this.#store.providerAccountSnapshot(provider, accountId, kind),
+      write: (value: string) =>
+        this.#store.setProviderAccountSnapshot(provider, accountId, kind, value),
+    })
+    const controls = new ProviderControls({
+      providers: [provider],
+      accountHome,
+      listModels: (_provider, agent, read) =>
+        this.#runtimeFor(provider, this.#onLog, accountHome).listModels(agent, read),
+      onLog: (_provider, line) => this.#onLog(line),
+      onLogin: (_provider, result) => this.#onLogin(provider, result, accountId),
+      onUsageChanged: () => this.#onUsageChanged(provider, accountId),
+      onLimitsChanged: (_provider, source) => this.#onLimitsChanged({ ...source, accountId }),
+      onAuthChanged: () => modelLists.invalidate(provider),
+      limitSnapshot: snapshot('limits'),
+      ...this.#scopeOptions,
+    })
+    const modelLists = new ModelListCache({
+      list: (_provider, agent, read) =>
+        controls.forProvider(provider).listModels?.(agent, read) ?? Promise.resolve([]),
+      onChanged: (_provider, agent) => this.#onModelsChanged(provider, agent, accountId),
+      onLog: (line) => this.#onLog(line),
+      snapshot: snapshot('models'),
+      // Every account runs the same CLI, so its lists follow the same binary.
+      binary: this.#providerBinary,
+    })
+    return { accountId, controls, modelLists, modelListAccounts: new Map() }
+  }
+
+  /** The scope of the account a chat runs as; none once that account is gone. */
+  #threadScope(thread: Thread): AccountScope | undefined {
+    try {
+      return this.#scope(thread.provider, thread.accountId)
+    } catch {
+      return undefined
+    }
   }
 
   #voiceRequests = new Map<string, AbortController>()
@@ -884,10 +1022,14 @@ export class Orchestrator {
     return this.#controls.forProvider(provider).watch(projectPath, targets)
   }
 
-  /** Every model list is shared: see `ModelListCache` for when it asks the provider again. */
-  async listModels(provider: ProviderId, agent?: string): Promise<Model[]> {
-    if (!this.#controls.forProvider(provider).listModels) return []
-    return this.#modelLists.list(provider, agent)
+  /**
+   * Every model list is shared: see `ModelListCache` for when it asks the provider
+   * again. Each account has lists of its own, since its plan may offer other models.
+   */
+  async listModels(provider: ProviderId, agent?: string, accountId?: AccountId): Promise<Model[]> {
+    const scope = this.#scope(provider, sourceAccount(agent, accountId))
+    if (!scope.controls.forProvider(provider).listModels) return []
+    return scope.modelLists.list(provider, agent)
   }
 
   listCustomHarnesses() {
@@ -996,7 +1138,7 @@ export class Orchestrator {
     if (!before) throw new Error(`no such thread: ${threadId}`)
     if (before.title !== expectedTitle) return { title: before.title, applied: false }
 
-    const output = await this.#runBackgroundTask(titlePrompt(request))
+    const output = await this.#runBackgroundTask(titlePrompt(request), before)
     const title = cleanGeneratedTitle(output, expectedTitle)
     const current = this.#store.thread(threadId)
     const applied = current?.title === expectedTitle
@@ -1004,13 +1146,23 @@ export class Orchestrator {
     return { title: applied ? title : (current?.title ?? expectedTitle), applied }
   }
 
-  async generateBackgroundCommitMessage(diff: SessionDiff): Promise<string> {
+  /** `threadId`: the chat whose checkout the diff is, when the request names one. */
+  async generateBackgroundCommitMessage(diff: SessionDiff, threadId?: string): Promise<string> {
     if (diff.files.length === 0) throw new Error('The working tree is clean.')
-    const output = await this.#runBackgroundTask(commitMessagePrompt(diff))
+    const chat = threadId ? this.#store.thread(threadId) : undefined
+    const output = await this.#runBackgroundTask(commitMessagePrompt(diff), chat)
     return cleanGeneratedCommitMessage(output)
   }
 
-  async #runBackgroundTask(prompt: string): Promise<string> {
+  /**
+   * `chat`: the chat this writing is for. When the background source is that
+   * chat's own provider, the prompt (its first message, its diff) goes through
+   * the chat's account, never through the default one.
+   */
+  async #runBackgroundTask(
+    prompt: string,
+    chat?: { provider: ProviderId; accountId?: AccountId | undefined },
+  ): Promise<string> {
     const preference = this.#store.backgroundModelPreference()
     // Each source read can start vendor processes; read only what this choice needs.
     const failed: Array<Pick<BackgroundModelSourceLoader, 'provider' | 'connectionId' | 'agent'>> =
@@ -1031,7 +1183,14 @@ export class Orchestrator {
       const runtime =
         resolved.provider === 'api'
           ? this.#apiRuntime(resolved.connectionId)
-          : this.#runtimeFor(resolved.provider, this.#onLog)
+          : this.#runtimeFor(
+              resolved.provider,
+              this.#onLog,
+              // A custom harness keeps its own sign-in; another provider has no account of this chat.
+              chat && !resolved.agent && resolved.provider === chat.provider
+                ? threadAccountHome(this.#accounts, chat)
+                : undefined,
+            )
       try {
         return await runBackgroundCompletion({
           runtime,
@@ -1495,6 +1654,12 @@ export class Orchestrator {
     )
   }
 
+  /**
+   * A chat of the project that answers for the project's views (MCP servers,
+   * their sign-in, commands). Those views are the default account's, so only a
+   * chat on the default account qualifies: another account's chat keeps its
+   * own MCP tokens and commands in its own folder.
+   */
   #findProjectRuntime(
     provider: ProviderId,
     projectPath: string,
@@ -1505,7 +1670,7 @@ export class Orchestrator {
     let stale: [string, AttachedThreadRuntime] | undefined
     for (const threadId of threadIds) {
       const entry = this.#threads.get(threadId)
-      if (!entry || (accepts && !accepts(entry))) continue
+      if (!entry || entry.thread.accountId !== undefined || (accepts && !accepts(entry))) continue
       // A runtime still waiting to resume does not know the saved MCP servers.
       if (this.#mcpStaleRuntimes.get(threadId) !== entry.session) return [threadId, entry]
       stale ??= [threadId, entry]
@@ -1537,24 +1702,28 @@ export class Orchestrator {
     return { mcpServers, mcpCredentials }
   }
 
-  async account(provider: ProviderId, agent?: string): Promise<Account> {
-    const account = await this.#controls.forProvider(provider).account(agent)
+  async account(provider: ProviderId, agent?: string, accountId?: AccountId): Promise<Account> {
+    const scope = this.#scope(provider, sourceAccount(agent, accountId))
+    const account = await scope.controls.forProvider(provider).account(agent)
     if (agent === undefined) {
       // A sign-in or switch in the provider's own CLI shows up only here, and
       // another account may offer other models.
-      const { identity, switched } = accountRead(this.#modelListAccounts.get(provider), account)
-      this.#modelListAccounts.set(provider, identity)
-      if (switched) this.#modelLists.invalidate(provider)
+      const { identity, switched } = accountRead(scope.modelListAccounts.get(provider), account)
+      scope.modelListAccounts.set(provider, identity)
+      if (switched) scope.modelLists.invalidate(provider)
     }
     return account
   }
 
+  /** Spends a reset the account earned, in its own folder; absent, the default account's. */
   async consumeRateLimitReset(
     provider: ProviderId,
     idempotencyKey: string,
     creditId?: string,
+    accountId?: AccountId,
   ): Promise<{ outcome: 'reset' | 'nothingToReset' | 'noCredit' | 'alreadyRedeemed' }> {
-    const consume = this.#controls.forProvider(provider).consumeRateLimitReset
+    const { controls } = this.#scope(provider, accountId)
+    const consume = controls.forProvider(provider).consumeRateLimitReset
     if (!consume) throw new Error(`provider "${provider}" cannot consume a rate-limit reset`)
     return consume(idempotencyKey, creditId)
   }
@@ -1562,33 +1731,46 @@ export class Orchestrator {
   async usageLimitSource(
     provider: ProviderId,
     intent?: UsageReadIntent,
+    accountId?: AccountId,
   ): Promise<ProviderLimitSource> {
-    return this.#controls.forProvider(provider).usageLimitSource(intent)
+    const scope = this.#scope(provider, accountId)
+    return withAccount(await scope.controls.forProvider(provider).usageLimitSource(intent), scope)
   }
 
   /** The provider's held limits, without starting a read; see ProviderControl. */
-  heldLimitSource(provider: ProviderId, intent?: UsageReadIntent): ProviderLimitSource | undefined {
-    return this.#controls.forProvider(provider).heldLimitSource(intent)
+  heldLimitSource(
+    provider: ProviderId,
+    intent?: UsageReadIntent,
+    accountId?: AccountId,
+  ): ProviderLimitSource | undefined {
+    const scope = this.#scope(provider, accountId)
+    const held = scope.controls.forProvider(provider).heldLimitSource(intent)
+    return held && withAccount(held, scope)
   }
 
-  async startLogin(provider: ProviderId): Promise<{ loginId: string; authUrl?: string }> {
-    const start = this.#controls.forProvider(provider).startLogin
+  /** Signs in as the account, in its own folder; absent, the default account. */
+  async startLogin(
+    provider: ProviderId,
+    accountId?: AccountId,
+  ): Promise<{ loginId: string; authUrl?: string }> {
+    const start = this.#scope(provider, accountId).controls.forProvider(provider).startLogin
     if (!start) throw new Error(`provider "${provider}" cannot sign in yet`)
     return start()
   }
 
-  async cancelLogin(provider: ProviderId, loginId: string): Promise<void> {
-    await this.#controls.forProvider(provider).cancelLogin?.(loginId)
+  async cancelLogin(provider: ProviderId, loginId: string, accountId?: AccountId): Promise<void> {
+    await this.#scope(provider, accountId).controls.forProvider(provider).cancelLogin?.(loginId)
   }
 
-  async useApiKey(provider: ProviderId, apiKey: string): Promise<Account> {
-    const use = this.#controls.forProvider(provider).useApiKey
+  async useApiKey(provider: ProviderId, apiKey: string, accountId?: AccountId): Promise<Account> {
+    const use = this.#scope(provider, accountId).controls.forProvider(provider).useApiKey
     if (!use) throw new Error(`provider "${provider}" cannot sign in yet`)
     return use(apiKey)
   }
 
-  async signOut(provider: ProviderId, agent?: string): Promise<void> {
-    await this.#controls.forProvider(provider).signOut(agent)
+  async signOut(provider: ProviderId, agent?: string, accountId?: AccountId): Promise<void> {
+    const scope = this.#scope(provider, sourceAccount(agent, accountId))
+    await scope.controls.forProvider(provider).signOut(agent)
   }
 
   async voiceStatus(provider: ProviderId): Promise<{
@@ -1616,10 +1798,18 @@ export class Orchestrator {
     this.#voiceRequests.get(requestId)?.abort()
   }
 
+  /**
+   * `options.accountId` pins the chat to that provider account; absent, the
+   * provider's active one. The chat runs as that account from then on.
+   */
   async startThread(
     provider: ProviderId,
     workspacePath: string,
-    options: StartOptions = {},
+    options: StartOptions & {
+      accountId?: AccountId | undefined
+      /** An earlier chat whose conversation this one carries on. */
+      continueFrom?: string | undefined
+    } = {},
   ): Promise<Thread> {
     const resolved = resolveWorkspacePath(workspacePath)
     if (this.#panicStopping) throw new Error('task start cancelled by panic stop')
@@ -1652,6 +1842,20 @@ export class Orchestrator {
     })
   }
 
+  /**
+   * A chat carries on an earlier one of the same provider, whose conversation
+   * the server still has. It is checked before an agent starts.
+   */
+  #assertContinuable(earlierId: string, provider: ProviderId): void {
+    const earlier = this.#store.thread(earlierId)
+    if (!earlier || earlier.ephemeral) {
+      throw new Error('The chat to continue does not exist any more.')
+    }
+    if (earlier.provider !== provider) {
+      throw new Error('A chat can only be continued with the provider it ran on.')
+    }
+  }
+
   async switchBranch(workspacePath: string, branch: string) {
     const resolved = resolveWorkspacePath(workspacePath)
     return this.#checkoutAccess.exclusive(resolved, () => switchWorkspaceBranch(resolved, branch))
@@ -1665,7 +1869,11 @@ export class Orchestrator {
   async #startThread(
     provider: ProviderId,
     workspacePath: string,
-    options: StartOptions,
+    {
+      accountId: requestedAccount,
+      continueFrom,
+      ...options
+    }: StartOptions & { accountId?: AccountId | undefined; continueFrom?: string | undefined },
     generation: { dispose: number; panic: number; project: number },
   ): Promise<Thread> {
     const cancelled = () =>
@@ -1674,6 +1882,9 @@ export class Orchestrator {
       generation.project !==
         (this.#projectGenerations.get(resolveWorkspacePath(workspacePath)) ?? 0)
     if (cancelled()) throw new Error('task start cancelled by shutdown or panic stop')
+    const accountId = accountForNewThread(this.#accounts, provider, options.agent, requestedAccount)
+    const accountHome = existingAccountHome(this.#accounts, provider, accountId)
+    if (continueFrom !== undefined) this.#assertContinuable(continueFrom, provider)
     // The id has to exist before the worktree, and the worktree before the
     // agent — it is the directory the agent will be spawned in.
     const threadId = `${provider}-${crypto.randomUUID()}`
@@ -1681,7 +1892,7 @@ export class Orchestrator {
     const runtime =
       provider === 'api' && !this.#runtimeForInjected
         ? this.#apiRuntime(options.connectionId)
-        : this.#runtimeFor(provider, this.#onLog)
+        : this.#runtimeFor(provider, this.#onLog, accountHome)
     const runtimeOptions = {
       ...options,
       instructions: composeInstructions(options.instructions),
@@ -1717,7 +1928,8 @@ export class Orchestrator {
       throw error
     }
 
-    const { thread, session } = started
+    const { session } = started
+    const thread = onAccount(started.thread, accountId)
     if (cancelled()) {
       this.#checkoutAccess.retainStopping(directory, thread.id)
       await this.#stopThreadProvider(thread.id, session)
@@ -1736,6 +1948,8 @@ export class Orchestrator {
         ...(thread.connectionId || options.connectionId
           ? { connectionId: thread.connectionId ?? options.connectionId }
           : {}),
+        ...(thread.accountId ? { accountId: thread.accountId } : {}),
+        ...(continueFrom === undefined ? {} : { continuedFrom: continueFrom }),
         title: 'New session',
         createdAt: thread.createdAt,
         ...(worktree
@@ -1830,10 +2044,12 @@ export class Orchestrator {
       this.#threadApprovals.get(parentThreadId) ??
       this.#store.threadApproval(parentThreadId) ??
       'ask'
+    // Side chat runs as the main chat's account.
+    const accountHome = threadAccountHome(this.#accounts, storedParent)
     const runtime =
       provider === 'api' && !this.#runtimeForInjected
         ? this.#apiRuntime(parent.connectionId)
-        : this.#runtimeFor(provider, this.#onLog)
+        : this.#runtimeFor(provider, this.#onLog, accountHome)
     const runtimeOptions: StartOptions = {
       ...options,
       approval,
@@ -1848,7 +2064,8 @@ export class Orchestrator {
     try {
       assertCurrent()
       started = await runtime.start(workspacePath, runtimeOptions)
-      const { thread, session } = started
+      const { session } = started
+      const thread = onAccount(started.thread, storedParent.accountId)
       this.#saveSideHistoryTombstone(thread)
       assertCurrent()
       const currentParent = this.#store.thread(parentThreadId)
@@ -1861,6 +2078,7 @@ export class Orchestrator {
         provider,
         ...(storedParent.agent ? { agent: storedParent.agent } : {}),
         ...(parent.connectionId ? { connectionId: parent.connectionId } : {}),
+        ...(thread.accountId ? { accountId: thread.accountId } : {}),
         title: 'Side chat',
         createdAt: thread.createdAt,
         ephemeral: true,
@@ -1929,7 +2147,12 @@ export class Orchestrator {
       throw new Error('cannot start a turn while restoring a checkpoint')
     }
     const entry = this.#get(threadId)
-    if (this.#store.threadNeedsRestoreContext(threadId) && !submission) {
+    // Only a continued chat asks the store; the cached row says which ones are.
+    const continuation =
+      this.#store.thread(threadId)?.continuedFrom !== undefined &&
+      this.#store.threadNeedsContinueContext(threadId)
+    // The prompt carries more than the user's words; the transcript keeps the words.
+    if ((continuation || this.#store.threadNeedsRestoreContext(threadId)) && !submission) {
       submission = { id: crypto.randomUUID(), text, attachments, createdAt: Date.now() }
     }
     this.#touchThreadRuntime(threadId)
@@ -2058,7 +2281,10 @@ export class Orchestrator {
         : text
       const turnId = await entry.session.sendTurn(
         threadId,
-        this.#promptAfterRestore(threadId, prompt),
+        this.#promptAfterRestore(
+          threadId,
+          continuation ? await this.#promptWithEarlierChat(threadId, prompt) : prompt,
+        ),
         attachments,
         options,
       )
@@ -2074,6 +2300,7 @@ export class Orchestrator {
       }
       this.#acceptTurnStart(threadId, turnId, pendingStart)
       this.#store.clearThreadRestoreContext(threadId)
+      if (continuation) this.#store.clearThreadContinueContext(threadId)
       return turnId
     } catch (error) {
       if (this.#threads.get(threadId) === entry) this.#markIdleRuntimeEligible(threadId)
@@ -2883,12 +3110,22 @@ export class Orchestrator {
    * Run a provider's interactive sign-in CLI in its own terminal session.
    * Keyed by target so a second Sign in click reattaches to the session
    * already going, and rooted in the home directory because signing in to a
-   * global CLI has no business inside any particular project checkout.
+   * global CLI has no business inside any particular project checkout. As
+   * another `account`, the CLI runs with that account's variables and signs
+   * its folder in, in a terminal of its own.
    */
-  launchProviderLogin(target: string, command: string, columns: number, rows: number): string {
+  launchProviderLogin(
+    target: string,
+    command: string,
+    columns: number,
+    rows: number,
+    account?: { id: AccountId; environment: NodeJS.ProcessEnv },
+  ): string {
+    const key = account ? `login:${target}@${account.id}` : `login:${target}`
     return this.#trackProviderTerminal(
       target,
-      this.#terminals.run(`login:${target}`, command, os.homedir(), columns, rows),
+      this.#terminals.run(key, command, os.homedir(), columns, rows, account?.environment),
+      account?.id,
     )
   }
 
@@ -2897,9 +3134,10 @@ export class Orchestrator {
    * `update:provider` terminals. Whatever they changed, the source may list
    * other models once they exit.
    */
-  #trackProviderTerminal(target: string, terminalId: string): string {
+  #trackProviderTerminal(target: string, terminalId: string, accountId?: AccountId): string {
     const source = providerTerminalSource(target)
-    if (source) this.#providerTerminals.set(terminalId, source)
+    if (source)
+      this.#providerTerminals.set(terminalId, accountId ? { ...source, accountId } : source)
     return terminalId
   }
 
@@ -2907,7 +3145,57 @@ export class Orchestrator {
     const source = this.#providerTerminals.get(terminalId)
     if (!source) return
     this.#providerTerminals.delete(terminalId)
-    this.#modelLists.invalidate(source.provider, source.agent)
+    const modelLists = source.accountId
+      ? this.#accountScopes.get(accountScopeKey(source.provider, source.accountId))?.modelLists
+      : this.#modelLists
+    modelLists?.invalidate(source.provider, source.agent)
+  }
+
+  /**
+   * Stops what runs as a provider account before it is removed: its chats'
+   * sessions, its sign-in terminal, its control process and its cached reads.
+   * Windows cannot delete a folder a running CLI still uses, and a removed
+   * account's chats must not go on in it. A chat that is still working keeps
+   * the account until the user stops it. `unregister` runs once nothing
+   * refuses and before anything stops, so nothing new starts as the account
+   * while it is released.
+   */
+  async releaseAccount(
+    provider: ProviderId,
+    accountId: AccountId,
+    unregister?: () => void,
+  ): Promise<void> {
+    const runsAs = (thread: { provider: ProviderId; accountId?: string | undefined } | undefined) =>
+      thread?.provider === provider && thread.accountId === accountId
+    const attached = [...this.#threads]
+      .filter(([, entry]) => runsAs(entry.thread))
+      .map(([threadId]) => threadId)
+    const busy =
+      [...this.#resumingThreads.keys()].some((threadId) => runsAs(this.#store.thread(threadId))) ||
+      attached.some(
+        (threadId) =>
+          this.isTurnRunning(threadId) ||
+          this.#hasQueuedTurns(threadId) ||
+          this.#designFlows.has(threadId),
+      )
+    if (busy) {
+      throw new Error(
+        'A chat on this account is still working. Stop it first, then remove the account.',
+      )
+    }
+    unregister?.()
+    const key = accountScopeKey(provider, accountId)
+    const scope = this.#accountScopes.get(key)
+    this.#accountScopes.delete(key)
+    scope?.modelLists.dispose()
+    const terminals = [...this.#providerTerminals]
+      .filter(([, source]) => runsAs(source))
+      .map(([terminalId]) => terminalId)
+    await Promise.all([
+      ...attached.map((threadId) => this.#disposeThreadRuntime(threadId, 'disconnect')),
+      ...terminals.map((terminalId) => this.#terminals.close(terminalId)),
+      scope?.controls.disposeAll(),
+    ])
   }
 
   writeTerminal(terminalId: string, data: string): void {
@@ -3219,6 +3507,17 @@ export class Orchestrator {
         throw error
       }
     })
+  }
+
+  /**
+   * The first prompt of a chat that continues an earlier one carries that
+   * chat's conversation as it stands now. An earlier chat deleted since leaves
+   * the prompt as it is.
+   */
+  async #promptWithEarlierChat(threadId: string, prompt: string): Promise<string> {
+    const earlierId = this.#store.thread(threadId)?.continuedFrom
+    if (earlierId === undefined || !this.#store.thread(earlierId)) return prompt
+    return continuationPromptFromReplay(await this.history(earlierId), prompt) ?? prompt
   }
 
   #promptAfterRestore(threadId: string, prompt: string): string {
@@ -3732,8 +4031,14 @@ export class Orchestrator {
     this.#disposeGeneration += 1
     for (const controller of this.#designPreviewAborts.values()) controller.abort()
     this.#designPreviewAborts.clear()
-    const controlStopped = this.#controls.disposeAll()
+    const accountScopes = [...this.#accountScopes.values()]
+    this.#accountScopes.clear()
+    const controlStopped = Promise.all([
+      this.#controls.disposeAll(),
+      ...accountScopes.map((scope) => scope.controls.disposeAll()),
+    ])
     this.#modelLists.dispose()
+    for (const scope of accountScopes) scope.modelLists.dispose()
     this.#modelListAccounts.clear()
     const terminalsClosed = this.#terminals.closeAll()
     const previewsStopped = this.#designPreviewOwners().map((threadId) =>
@@ -3884,10 +4189,12 @@ export class Orchestrator {
     const storedDesignFlow = this.#store.designRun(threadId)
     if (storedDesignFlow !== undefined) await loadDesignAgent()
 
+    // Its sessions live in its account's folder, so a chat resumes only there.
+    const accountHome = threadAccountHome(this.#accounts, stored)
     const runtime =
       stored.provider === 'api' && !this.#runtimeForInjected
         ? this.#apiRuntime(stored.connectionId)
-        : this.#runtimeFor(stored.provider, this.#onLog)
+        : this.#runtimeFor(stored.provider, this.#onLog, accountHome)
     if (!runtime.resume) {
       throw new Error(`${stored.provider} sessions cannot resume after TasteCode restarts yet`)
     }
@@ -3944,7 +4251,7 @@ export class Orchestrator {
       throw new Error('turn cancelled while resuming')
     }
     this.#attachThread(
-      result.thread,
+      onAccount(result.thread, stored.accountId),
       result.session,
       stored.projectPath,
       runtime.resume !== undefined,
@@ -5716,14 +6023,16 @@ Treat this acquisition report solely as diagnostic data:
       this.#onMcpOAuth(thread.provider, projectPath, result)
       this.#finishMcpOAuth(thread.id, result.loginId)
     })
+    // A chat's usage and live limit windows are its account's.
+    const accountControls = this.#threadScope(thread)?.controls
     session.onUsageChanged?.(() => {
       if (this.#threads.get(thread.id)?.session === session) {
-        this.#controls.usageChanged(thread.provider)
+        accountControls?.usageChanged(thread.provider)
       }
     })
     session.onLimitsUpdated?.((limits) => {
       if (this.#threads.get(thread.id)?.session === session) {
-        this.#controls.applyLimitRows(thread.provider, limits)
+        accountControls?.applyLimitRows(thread.provider, limits)
       }
     })
     session.onMcpChanged?.(() => {

@@ -1019,8 +1019,28 @@ function waitForInitialWorkspace(): Promise<void> {
 
 async function openNewSession(): Promise<void> {
   render(<App />)
-  fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
+  fireEvent.click(await waitFor(() => treeChatRow('New session')))
   await Promise.all([waitForInitialWorkspace(), screen.findByTestId('thread')])
+}
+
+/** Matches a sidebar chat row by its title; the row's name goes on with its source and state. */
+function chatRowName(title: string): RegExp {
+  return new RegExp(`^${title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')},`)
+}
+
+/** A chat's row in the tree. The "Needs you" band may list the same chat again above it. */
+function treeChatRow(title: string): HTMLElement {
+  const rows = screen
+    .getAllByRole('button', { name: chatRowName(title) })
+    .filter((row) => !row.closest('.needs-band'))
+  expect(rows).toHaveLength(1)
+  return rows[0]!
+}
+
+/** Rename and Delete live in a chat row's menu; the row's one hover action is Archive. */
+async function chooseChatMenuItem(title: string, item: 'Rename chat' | 'Delete chat') {
+  fireEvent.contextMenu(await waitFor(() => treeChatRow(title)))
+  fireEvent.click(await screen.findByRole('menuitem', { name: item }))
 }
 
 function setConnectionState(state: ConnectionState): void {
@@ -2908,7 +2928,7 @@ describe('web client', () => {
       reasoningEfforts: [],
       serviceTiers: [],
     })
-    const announce = (payload: { provider: string; agent?: string }) =>
+    const announce = (payload: { provider: string; agent?: string; accountId?: string }) =>
       act(() => transport.listeners.get('models.changed')?.(payload))
     const settled = () => act(async () => new Promise((resolve) => window.setTimeout(resolve, 0)))
 
@@ -2933,6 +2953,11 @@ describe('web client', () => {
 
       // A source this catalog does not list is not requested.
       announce({ provider: 'acp', agent: 'kimi' })
+      await settled()
+      expect(rpcCount('models.list')).toBe(2)
+
+      // Nor another account's list: the catalog lists the default account.
+      announce({ provider: 'codex', accountId: 'work-1a2b3c' })
       await settled()
       expect(rpcCount('models.list')).toBe(2)
     })
@@ -3522,6 +3547,26 @@ describe('web client', () => {
     },
   )
 
+  it("pauses the app's loops behind Settings once its fade-in has covered it", async () => {
+    render(<App />)
+    await screen.findByRole('button', { name: /^New session,/ })
+    const shellBody = document.querySelector('.shell__body')!
+
+    openSettings()
+    // The first open of a test file compiles the lazy Settings module.
+    const settings = await screen.findByRole('dialog', { name: 'Settings' }, { timeout: 15_000 })
+    const surface = document.querySelector('.surface-enter')!
+    // An animation inside Settings ending is not the cover being complete.
+    fireEvent.animationEnd(within(settings).getByRole('button', { name: 'Back to app' }))
+    expect(shellBody.hasAttribute('data-covered')).toBe(false)
+    fireEvent.animationEnd(surface)
+    expect(shellBody.hasAttribute('data-covered')).toBe(true)
+
+    fireEvent.click(within(settings).getByRole('button', { name: 'Back to app' }))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Settings' })).toBeNull())
+    expect(shellBody.hasAttribute('data-covered')).toBe(false)
+  })
+
   it('returns open Settings to Keybinds when the keybinds shortcut is pressed again', async () => {
     render(<App />)
     await screen.findByRole('button', { name: 'Show workspace tools' })
@@ -3707,6 +3752,59 @@ describe('web client', () => {
         }),
       ),
     )
+  })
+
+  it('offers no account choice for a new chat on a custom harness, which keeps its own sign-in', async () => {
+    const codex = serverProviders[0]!
+    serverProviders = [
+      { ...codex, capabilities: { ...codex.capabilities!, multipleAccounts: true } },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'harnesses.list') {
+        return Promise.resolve({
+          harnesses: [
+            {
+              id: 'codex-fork',
+              displayName: 'Codex Fork',
+              provider: 'codex',
+              command: 'codex-fork',
+              args: [],
+            },
+          ],
+        })
+      }
+      if (method === 'models.list') {
+        const { agent } = methods['models.list'].params.parse(params)
+        const id = agent === 'codex-fork' ? 'fork-model' : 'codex-model'
+        return Promise.resolve({
+          models: [
+            { id, displayName: id, isDefault: true, reasoningEfforts: ['low'], serviceTiers: [] },
+          ],
+        })
+      }
+      return request(method, params)
+    })
+    render(<App />)
+    act(() => composerProps().onModelSelectorOpen?.())
+    await waitFor(() =>
+      expect(composerProps().models.map((choice) => choice.model.id)).toEqual(
+        expect.arrayContaining(['codex-model', 'fork-model']),
+      ),
+    )
+    const pick = (id: string) =>
+      act(() =>
+        composerProps().onModelChange(
+          composerProps().models.find((choice) => choice.model.id === id)!.key,
+        ),
+      )
+
+    // Codex itself runs as the chosen account, so the choice is offered.
+    pick('codex-model')
+    await waitFor(() => expect(composerProps().accountProvider).toBe('codex'))
+    pick('fork-model')
+    await waitFor(() => expect(composerProps().accountProvider).toBeUndefined())
   })
 
   it('discovers a custom Pi source and binds new sessions to its harness id', async () => {
@@ -5264,6 +5362,294 @@ describe('new chats', () => {
     ).toHaveLength(2)
   })
 
+  it('reads the active account at launch and names every account in the popup', async () => {
+    const codex = serverProviders[0]!
+    serverProviders = [
+      { ...codex, capabilities: { ...codex.capabilities!, multipleAccounts: true } },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'accounts.list') {
+        return Promise.resolve({
+          accounts: [
+            { id: 'default', provider: 'codex', label: 'Personal', managed: false },
+            {
+              id: 'work-1a2b3c',
+              provider: 'codex',
+              label: 'Work',
+              home: 'C:\\TasteCode\\accounts\\codex\\work-1a2b3c',
+              managed: true,
+            },
+            {
+              id: 'spare-4d5e6f',
+              provider: 'codex',
+              label: 'Spare',
+              home: 'C:\\TasteCode\\accounts\\codex\\spare-4d5e6f',
+              managed: true,
+            },
+          ],
+          active: { codex: 'work-1a2b3c' },
+        })
+      }
+      if (method === 'usage.summary') {
+        const { accountId } = params as { accountId?: string }
+        return (request(method, params) as Promise<ResultOf<'usage.summary'>>).then((summary) => ({
+          ...summary,
+          limits: [{ label: '5 hours', usedPercent: accountId === 'work-1a2b3c' ? 60 : 25 }],
+        }))
+      }
+      return request(method, params)
+    })
+    render(<App />)
+
+    // New chats start on Work, so Work is the account read at launch.
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('usage.summary', {
+        provider: 'codex',
+        accountId: 'work-1a2b3c',
+        intent: 'background',
+      }),
+    )
+    // The card's figure is about where new chats run.
+    expect(await screen.findByText('40% left')).toBeTruthy()
+    expect(screen.queryByText('75% left')).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Account' }))
+    const personal = await screen.findByRole('region', { name: 'Codex · Personal' })
+    const work = screen.getByRole('region', { name: 'Codex · Work' })
+    expect(within(work).getByText('40% left')).toBeTruthy()
+    expect(await within(personal).findByText('75% left')).toBeTruthy()
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('usage.summary', {
+        provider: 'codex',
+        intent: 'visible',
+      }),
+    )
+    // The active account comes first; the raw id is never shown.
+    const regions = screen.getAllByRole('region', { name: /^Codex/ })
+    expect(regions.map((region) => region.getAttribute('aria-label'))).toEqual([
+      'Codex · Work',
+      'Codex · Personal',
+    ])
+    expect(screen.queryByText(/work-1a2b3c/)).toBeNull()
+    // Spare has not signed in yet, so it is not read and not listed.
+    expect(transport.request).not.toHaveBeenCalledWith(
+      'usage.summary',
+      expect.objectContaining({ accountId: 'spare-4d5e6f' }),
+    )
+  })
+
+  it("offers each account's own models: the active one for new chats, a chat's own for it", async () => {
+    const codex = serverProviders[0]!
+    serverProviders = [
+      { ...codex, capabilities: { ...codex.capabilities!, multipleAccounts: true } },
+    ]
+    serverProjects[0]!.sessions = [
+      { id: 'chat-personal', title: 'Personal chat', provider: 'codex', createdAt: 1 },
+      {
+        id: 'chat-work',
+        title: 'Work chat',
+        provider: 'codex',
+        accountId: 'work-1a2b3c',
+        createdAt: 2,
+      },
+    ]
+    const model = (id: string): Model => ({
+      id,
+      displayName: id,
+      isDefault: true,
+      reasoningEfforts: ['low'],
+      serviceTiers: [],
+    })
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'accounts.list') {
+        return Promise.resolve({
+          accounts: [
+            { id: 'default', provider: 'codex', label: 'Personal', managed: false },
+            {
+              id: 'work-1a2b3c',
+              provider: 'codex',
+              label: 'Work',
+              home: 'C:\\TasteCode\\accounts\\codex\\work-1a2b3c',
+              managed: true,
+            },
+          ],
+          active: { codex: 'work-1a2b3c' },
+        })
+      }
+      if (method === 'models.list') {
+        const { accountId } = methods['models.list'].params.parse(params)
+        return Promise.resolve({
+          models: [model(accountId === 'work-1a2b3c' ? 'work-plan-model' : 'personal-plan-model')],
+        })
+      }
+      return request(method, params)
+    })
+    const offered = () => composerProps().models.map((choice) => choice.model.id)
+    render(<App />)
+
+    // New chats start on Work, so the picker lists what Work's plan has.
+    await waitFor(() => expect(offered()).toEqual(['work-plan-model']))
+    expect(transport.request).toHaveBeenCalledWith('models.list', {
+      provider: 'codex',
+      accountId: 'work-1a2b3c',
+    })
+
+    // A chat pinned to the default account is offered the default account's models.
+    fireEvent.click(await waitFor(() => treeChatRow('Personal chat')))
+    await waitFor(() => expect(offered()).toEqual(['personal-plan-model']))
+    // A chat on the active account uses the catalog's list again.
+    fireEvent.click(await waitFor(() => treeChatRow('Work chat')))
+    await waitFor(() => expect(offered()).toEqual(['work-plan-model']))
+  })
+
+  it('offers to continue a chat at its plan limit on another signed-in account', async () => {
+    const codex = serverProviders[0]!
+    serverProviders = [
+      { ...codex, capabilities: { ...codex.capabilities!, multipleAccounts: true } },
+    ]
+    serverProjects[0]!.sessions = [
+      { id: 'chat-limited', title: 'Webhook retries', provider: 'codex', createdAt: 1 },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    const starts: unknown[] = []
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'accounts.list') {
+        return Promise.resolve({
+          accounts: [
+            { id: 'default', provider: 'codex', label: 'Personal', managed: false },
+            {
+              id: 'work-1a2b3c',
+              provider: 'codex',
+              label: 'Work',
+              home: 'C:\\TasteCode\\accounts\\codex\\work-1a2b3c',
+              managed: true,
+              email: 'work@example.test',
+            },
+            // Not signed in yet: never offered.
+            {
+              id: 'spare-4d5e6f',
+              provider: 'codex',
+              label: 'Spare',
+              home: 'C:\\TasteCode\\accounts\\codex\\spare-4d5e6f',
+              managed: true,
+            },
+          ],
+          active: {},
+        })
+      }
+      if (method === 'usage.summary') {
+        const { accountId } = params as { accountId?: string }
+        return (request(method, params) as Promise<ResultOf<'usage.summary'>>).then((summary) => ({
+          ...summary,
+          limits: [
+            {
+              label: '5 hours',
+              usedPercent: accountId === undefined ? 100 : 30,
+              resetsAt: Date.now() + 3_600_000,
+            },
+          ],
+        }))
+      }
+      if (method === 'thread.history') {
+        const { threadId } = params as { threadId: string }
+        if (threadId !== 'chat-limited') return request(method, params)
+        return Promise.resolve({
+          events: [
+            {
+              seq: 1,
+              event: {
+                type: 'item.completed',
+                item: {
+                  id: 'ask',
+                  turnId: 'turn-1',
+                  type: 'message',
+                  role: 'user',
+                  status: 'completed',
+                  text: 'Fix the webhook retries',
+                  createdAt: 1,
+                },
+              },
+            },
+            {
+              seq: 2,
+              event: { type: 'thread.error', threadId, message: "You've hit your usage limit." },
+            },
+            { seq: 3, event: { type: 'turn.completed', turnId: 'turn-1', status: 'failed' } },
+          ],
+          running: false,
+          approval: 'ask',
+        })
+      }
+      if (method === 'thread.start') {
+        starts.push(params)
+        serverProjects[0]!.sessions = [
+          {
+            id: 'chat-next',
+            title: 'New session',
+            provider: 'codex',
+            accountId: 'work-1a2b3c',
+            continuedFrom: 'chat-limited',
+            createdAt: 2,
+          },
+          ...serverProjects[0]!.sessions,
+        ]
+        return Promise.resolve({ threadId: 'chat-next' })
+      }
+      return request(method, params)
+    })
+    const errors = () => composerProps().errors ?? []
+    render(<App />)
+
+    fireEvent.click(await waitFor(() => treeChatRow('Webhook retries')))
+    const failed = await waitFor(() => {
+      const row = errors().find((error) => error.message === "You've hit your usage limit.")
+      expect(row?.action?.label).toBe('Continue on Work')
+      return row!
+    })
+    // Offered, never started on its own.
+    expect(starts).toEqual([])
+
+    await act(async () => failed.action!.run())
+    await waitFor(() =>
+      expect(starts).toEqual([
+        expect.objectContaining({
+          provider: 'codex',
+          workspacePath: '/work/project',
+          accountId: 'work-1a2b3c',
+          continueFrom: 'chat-limited',
+        }),
+      ]),
+    )
+    // The new chat opens with the request that failed, ready to send.
+    await waitFor(() => expect(composerProps().draftRequest?.text).toBe('Fix the webhook retries'))
+    await waitFor(() =>
+      expect(errors().map((error) => error.message)).toContain(
+        'Continues “Webhook retries” on Work. Its conversation goes with your first message.',
+      ),
+    )
+
+    // The earlier chat's failed turn now leads to it instead of offering a second continuation.
+    fireEvent.click(await waitFor(() => treeChatRow('Webhook retries')))
+    const link = await waitFor(() => {
+      const row = errors().find((error) => error.message === "You've hit your usage limit.")
+      expect(row?.action?.label).toBe('Continued on Work')
+      return row!
+    })
+    expect(link.choices).toBeUndefined()
+    await act(async () => link.action!.run())
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith(
+        'thread.history',
+        expect.objectContaining({ threadId: 'chat-next' }),
+      ),
+    )
+  })
+
   it('keeps plan limits and asks nothing new when switching chats of one provider', async () => {
     serverProjects = [
       {
@@ -5301,6 +5687,33 @@ describe('new chats', () => {
     expect(screen.getByText('75% left')).toBeTruthy()
   })
 
+  it('keeps a chat in its sidebar place when a turn starts in it', async () => {
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'project',
+        pinned: false,
+        createdAt: 0,
+        sessions: [
+          { id: 'thread-a', title: 'First chat', provider: 'codex', createdAt: 1, running: false },
+          { id: 'thread-b', title: 'Second chat', provider: 'codex', createdAt: 0, running: false },
+        ],
+      },
+    ]
+    render(<App />)
+    await screen.findByRole('button', { name: 'Second chat, Codex' })
+    const order = () => sidebarProps().projects[0]!.sessions.map(({ id }) => id)
+    expect(order()).toEqual(['thread-a', 'thread-b'])
+
+    startTurn('thread-b', 'turn-b')
+    await waitFor(() =>
+      expect(sidebarProps().projects[0]!.sessions.find(({ id }) => id === 'thread-b')?.status).toBe(
+        'working',
+      ),
+    )
+    expect(order()).toEqual(['thread-a', 'thread-b'])
+  })
+
   it('shows pushed plan limits without asking again', async () => {
     render(<App />)
     expect(await screen.findByText('75% left')).toBeTruthy()
@@ -5319,6 +5732,31 @@ describe('new chats', () => {
     )
 
     expect(await screen.findByText('60% left')).toBeTruthy()
+    expect(transport.request).not.toHaveBeenCalledWith('usage.summary', expect.anything())
+  })
+
+  it('keeps another account’s pushed limits and changes off the default account', async () => {
+    render(<App />)
+    expect(await screen.findByText('75% left')).toBeTruthy()
+    transport.request.mockClear()
+
+    act(() => {
+      transport.listeners.get('usage.limits')?.({
+        source: {
+          provider: 'codex',
+          accountId: 'work-1a2b3c',
+          status: 'ready',
+          limits: [{ id: 'codex:primary', label: '5 hours', usedPercent: 90 }],
+          checkedAt: Date.now(),
+          origin: 'live',
+        },
+      })
+      transport.listeners.get('usage.changed')?.({ provider: 'codex', accountId: 'work-1a2b3c' })
+    })
+    await act(async () => new Promise((resolve) => window.setTimeout(resolve, 120)))
+
+    expect(screen.getByText('75% left')).toBeTruthy()
+    expect(screen.queryByText('10% left')).toBeNull()
     expect(transport.request).not.toHaveBeenCalledWith('usage.summary', expect.anything())
   })
 
@@ -5967,6 +6405,8 @@ describe('new chats', () => {
       expect(document.querySelector('.surface-enter')?.classList.contains('is-returning')).toBe(
         true,
       )
+      // With no fade to wait for, the app's loops behind it pause at once.
+      expect(document.querySelector('.shell__body')!.hasAttribute('data-covered')).toBe(true)
       await waitFor(() => expect(workspace.classList.contains('is-panel-open')).toBe(false))
       expect(workspace.classList.contains('is-panel-expanded')).toBe(false)
       expect(screen.queryByLabelText('Claude Code login terminal')).toBeNull()
@@ -5993,6 +6433,89 @@ describe('new chats', () => {
       }
     },
   )
+
+  it('signs a further account in through the sign-in terminal and asks that account who it is', async () => {
+    desktopShell.enabled = true
+    serverProjects = []
+    const codex = serverProviders[0]!
+    serverProviders = [
+      { ...codex, capabilities: { ...codex.capabilities!, multipleAccounts: true } },
+    ]
+    let workSignedIn = false
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'accounts.list') {
+        return Promise.resolve({
+          accounts: [
+            {
+              id: 'default',
+              provider: 'codex',
+              label: 'Default',
+              managed: false,
+              email: 'me@x.test',
+            },
+            {
+              id: 'work-1a2b3c',
+              provider: 'codex',
+              label: 'Work',
+              home: 'C:\\TasteCode\\accounts\\codex\\work-1a2b3c',
+              managed: true,
+              ...(workSignedIn ? { email: 'work@x.test' } : {}),
+            },
+          ],
+          active: {},
+        })
+      }
+      if (method === 'auth.status') {
+        const { accountId } = methods['auth.status'].params.parse(params)
+        if (accountId === 'work-1a2b3c') workSignedIn = true
+        return Promise.resolve({ signedIn: true, email: accountId ? 'work@x.test' : 'me@x.test' })
+      }
+      if (method === 'providers.launch') return Promise.resolve({ terminalId: 'term-codex-work' })
+      if (method === 'terminal.close') return Promise.resolve({})
+      return request(method, params)
+    })
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        observe(): void {}
+        unobserve(): void {}
+        disconnect(): void {}
+      },
+    )
+
+    render(<App />)
+    await openProviderSettings()
+    fireEvent.click(await screen.findByRole('button', { name: 'Sign in to Work' }))
+
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Settings' })).toBeNull())
+    expect(await screen.findByLabelText('Codex · Work login terminal')).toBeTruthy()
+    expect(transport.request).toHaveBeenCalledWith('providers.launch', {
+      provider: 'codex',
+      accountId: 'work-1a2b3c',
+      columns: 320,
+      rows: 30,
+    })
+
+    act(() => {
+      transport.listeners.get('terminal.exit')!({ terminalId: 'term-codex-work', exitCode: 0 })
+    })
+    await screen.findByRole('dialog', { name: 'Settings' })
+    expect(screen.queryByLabelText('Codex · Work login terminal')).toBeNull()
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('auth.status', {
+        provider: 'codex',
+        accountId: 'work-1a2b3c',
+      }),
+    )
+    // The server keeps that answer as Work's identity and says the list changed.
+    act(() => {
+      transport.listeners.get('accounts.changed')?.({ provider: 'codex' })
+    })
+    expect(await screen.findByText('work@x.test')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Sign in to Work' })).toBeNull()
+  })
 
   it('shows a running sign-in in its one workspace terminal again from Settings', async () => {
     // Load the lazy Settings dialog, workspace panel and terminal first, so this
@@ -6978,20 +7501,20 @@ describe('new chats', () => {
 
     await openNewSession()
     transport.request.mockClear()
-    fireEvent.click(screen.getByRole('button', { name: 'Delete New session' }))
+    await chooseChatMenuItem('New session', 'Delete chat')
     expect(await screen.findByText('Chat deleted')).toBeTruthy()
     expect(screen.getByText('Chat deleted').closest('.notice--archive')).toBeTruthy()
-    expect(screen.queryByRole('button', { name: 'Delete New session' })).toBeNull()
+    expect(screen.queryByRole('button', { name: chatRowName('New session') })).toBeNull()
     expect(transport.request).not.toHaveBeenCalledWith('thread.delete', expect.anything())
     fireEvent.click(screen.getByRole('button', { name: 'Undo' }))
-    expect(await screen.findByRole('button', { name: 'Delete New session' })).toBeTruthy()
+    expect(await screen.findByRole('button', { name: chatRowName('New session') })).toBeTruthy()
     await act(async () => new Promise((resolve) => nativeTimeout(resolve, 1_050)))
     expect(transport.request).not.toHaveBeenCalledWith('thread.delete', expect.anything())
   })
 
   it('saves a queued delete for the next start until Undo', async () => {
     await openNewSession()
-    fireEvent.click(screen.getByRole('button', { name: 'Delete New session' }))
+    await chooseChatMenuItem('New session', 'Delete chat')
     await screen.findByText('Chat deleted')
     expect(JSON.parse(localStorage.getItem(PENDING_CHAT_DELETES_KEY)!)).toEqual([
       { threadId: 'untouched-thread', checkout: 'keep' },
@@ -7007,7 +7530,7 @@ describe('new chats', () => {
     transport.request.mockImplementation((method, params) =>
       method === 'thread.delete' ? new Promise(() => undefined) : request(method, params),
     )
-    fireEvent.click(screen.getByRole('button', { name: 'Delete New session' }))
+    await chooseChatMenuItem('New session', 'Delete chat')
     await screen.findByText('Chat deleted')
 
     cleanup()
@@ -7016,7 +7539,7 @@ describe('new chats', () => {
     shellRenders.sidebar.mockClear()
     render(<App />)
 
-    await screen.findByRole('button', { name: 'Delete Kept chat' })
+    await screen.findByRole('button', { name: chatRowName('Kept chat') })
     await waitFor(() => expect(localStorage.getItem(PENDING_CHAT_DELETES_KEY)).toBeNull())
     expect(transport.request.mock.calls.filter(([method]) => method === 'thread.delete')).toEqual([
       ['thread.delete', { threadId: 'untouched-thread' }],
@@ -7035,7 +7558,7 @@ describe('new chats', () => {
       JSON.stringify([{ threadId: 'gone-thread', checkout: 'keep' }]),
     )
     render(<App />)
-    await screen.findByRole('button', { name: 'Delete New session' })
+    await screen.findByRole('button', { name: chatRowName('New session') })
     await waitFor(() => expect(localStorage.getItem(PENDING_CHAT_DELETES_KEY)).toBeNull())
     expect(rpcCount('thread.delete')).toBe(0)
   })
@@ -7075,7 +7598,7 @@ describe('new chats', () => {
     )
     render(<App />)
     expect((await screen.findByRole('alert')).textContent).toBe('The chat is still starting.')
-    expect(await screen.findByRole('button', { name: 'Delete New session' })).toBeTruthy()
+    expect(await screen.findByRole('button', { name: chatRowName('New session') })).toBeTruthy()
     expect(localStorage.getItem(PENDING_CHAT_DELETES_KEY)).toBeNull()
   })
 
@@ -7094,9 +7617,9 @@ describe('new chats', () => {
         ? Promise.reject(new Error('The chat is still starting.'))
         : request(method, params),
     )
-    fireEvent.click(screen.getByRole('button', { name: 'Delete New session' }))
+    await chooseChatMenuItem('New session', 'Delete chat')
     expect((await screen.findByRole('alert')).textContent).toBe('The chat is still starting.')
-    expect(await screen.findByRole('button', { name: 'Delete New session' })).toBeTruthy()
+    expect(await screen.findByRole('button', { name: chatRowName('New session') })).toBeTruthy()
     expect(JSON.parse(localStorage.getItem(PENDING_CHAT_DELETES_KEY)!)).toEqual([
       { threadId: 'untouched-thread', checkout: 'keep' },
     ])
@@ -7110,7 +7633,7 @@ describe('new chats', () => {
         ? Promise.reject(new Error('Connection closed.'))
         : request(method, params),
     )
-    fireEvent.click(screen.getByRole('button', { name: 'Delete New session' }))
+    await chooseChatMenuItem('New session', 'Delete chat')
     await screen.findByText('Chat deleted')
 
     cleanup()
@@ -7122,7 +7645,7 @@ describe('new chats', () => {
     transport.request.mockClear()
     render(<App />)
     expect((await screen.findByRole('alert')).textContent).toBe('Connection closed.')
-    expect(await screen.findByRole('button', { name: 'Delete New session' })).toBeTruthy()
+    expect(await screen.findByRole('button', { name: chatRowName('New session') })).toBeTruthy()
     expect(rpcCount('thread.delete')).toBe(1)
     expect(localStorage.getItem(PENDING_CHAT_DELETES_KEY)).toBeNull()
   })
@@ -7139,7 +7662,7 @@ describe('new chats', () => {
     await openNewSession()
     startTurn('untouched-thread', 'active')
     transport.request.mockClear()
-    fireEvent.click(screen.getByRole('button', { name: 'Delete New session' }))
+    await chooseChatMenuItem('New session', 'Delete chat')
     await waitFor(() =>
       expect(transport.request).toHaveBeenCalledWith('thread.delete', {
         threadId: 'untouched-thread',
@@ -7718,7 +8241,7 @@ describe('new chats', () => {
     serverUnsavedWork = { isolated: true, uncommitted: true }
     render(<App />)
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Delete Parallel work' }))
+    await chooseChatMenuItem('Parallel work', 'Delete chat')
     expect(await screen.findByRole('dialog', { name: 'Discard isolated checkout' })).toBeTruthy()
     expect(transport.request).not.toHaveBeenCalledWith('thread.discardWorktree', expect.anything())
 
@@ -7788,7 +8311,7 @@ describe('new chats', () => {
       return Promise.resolve({ isolated: dirty, uncommitted: dirty })
     })
     render(<App />)
-    await screen.findByRole('button', { name: 'Delete Clean chat' })
+    await screen.findByRole('button', { name: chatRowName('Clean chat') })
 
     act(() => sidebarProps().onArchiveProject(['first-dirty', 'clean', 'second-dirty']))
 
@@ -7894,7 +8417,7 @@ describe('new chats', () => {
       } else if (operation.endsWith('pin')) {
         fireEvent.contextMenu(await screen.findByRole('button', { name: /^Saved title,/ }))
         fireEvent.click(await screen.findByRole('menuitem', { name: 'Pin chat' }))
-      } else fireEvent.click(await screen.findByRole('button', { name: 'Rename Saved title' }))
+      } else await chooseChatMenuItem('Saved title', 'Rename chat')
       if (operation.endsWith('rename')) {
         const input = screen.getByDisplayValue(
           operation.startsWith('project') ? 'Project name' : 'Saved title',
@@ -10052,7 +10575,7 @@ describe('sidebar chat ordering', () => {
     })
   })
 
-  it('drops a chat where the rail shows it beside a lifted unread chat', async () => {
+  it('drops a chat exactly where it was dropped beside an unread chat', async () => {
     serverProjects = [
       serverProject('/work/project', 'project', [
         { id: 'thread-b', title: 'B chat' },
@@ -10064,15 +10587,16 @@ describe('sidebar chat ordering', () => {
     render(<App />)
 
     await screen.findByRole('button', { name: /^C chat,/ })
-    expect(sessionTitles()).toEqual(['A chat', 'B chat', 'C chat'])
-    dropChatRow('C chat', 'A chat', 'after')
+    // The unread chat keeps its place in the tree; the band lists it again.
+    expect(sessionTitles()).toEqual(['B chat', 'C chat', 'A chat'])
+    dropChatRow('B chat', 'A chat', 'after')
 
-    expect(sessionTitles()).toEqual(['A chat', 'C chat', 'B chat'])
+    expect(sessionTitles()).toEqual(['C chat', 'A chat', 'B chat'])
     await waitFor(() => {
       const order = SessionOrderSchema.parse(
         JSON.parse(localStorage.getItem('harness.sessionOrder.dragged') ?? '{}'),
       )
-      expect(order['/work/project']).toEqual(['thread-c', 'thread-b', 'thread-a'])
+      expect(order['/work/project']).toEqual(['thread-c', 'thread-a', 'thread-b'])
     })
   })
 
@@ -10096,12 +10620,14 @@ describe('sidebar chat ordering', () => {
     await screen.findByRole('button', { name: /^One pinned,/ })
     act(() => sidebarProps().onSelectSession('one-a'))
     await waitFor(() => expect(sidebarProps().activeSessionId).toBe('one-a'))
-    // The rail reads: Pinned (One pinned), Two (Two A), One (One unread, One A, One B).
+    // The tree reads: Pinned (One pinned), Two (Two A), One (One A, One B, One unread). The
+    // band's second listing of One unread is not a stop.
     await step('ArrowDown', 'one-b')
+    await step('ArrowDown', 'one-unread')
     await step('ArrowDown', 'one-pinned')
     await step('ArrowDown', 'two-a')
     await step('ArrowUp', 'one-pinned')
-    await step('ArrowUp', 'one-b')
+    await step('ArrowUp', 'one-unread')
   })
 
   it('moves to the previous and next chat in the order the inbox shows', async () => {
@@ -11082,7 +11608,7 @@ describe('live sessions', () => {
     fireEvent.change(composer, { target: { value: 'Initial request' } })
     fireEvent.keyDown(composer, { key: 'Enter' })
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Rename Initial request' }))
+    await chooseChatMenuItem('Initial request', 'Rename chat')
     const input = screen.getByDisplayValue('Initial request')
     fireEvent.change(input, { target: { value: 'My custom title' } })
     fireEvent.keyDown(input, { key: 'Enter' })
@@ -11669,7 +12195,7 @@ describe('live sessions', () => {
     expect(screen.queryByLabelText('Queued prompts')).toBeNull()
   })
 
-  it('shows the most recently active session first', async () => {
+  it('keeps a chat in its place when a turn starts in an older one', async () => {
     serverSidebarSettings.mode = 'classic'
     serverProjects = [
       {
@@ -11694,7 +12220,8 @@ describe('live sessions', () => {
       turn: { id: 'turn-1', threadId: 'thread-1', status: 'running', createdAt: 0 },
     })
 
-    expect(sessionTitles()).toEqual(['Older session', 'Newer session'])
+    expect(screen.getByRole('button', { name: 'Older session, Codex, working' })).toBeTruthy()
+    expect(sessionTitles()).toEqual(['Newer session', 'Older session'])
   })
 
   it('folds streamed deltas once per animation frame', async () => {
@@ -12431,7 +12958,7 @@ describe('live sessions', () => {
     expect(answered.querySelector('.sess__spinner')).not.toBeNull()
   })
 
-  it('keeps running chats above newly unread completed chats', async () => {
+  it('keeps chats in place while they run and when they finish unread', async () => {
     serverProjects = [
       {
         path: '/work/project',
@@ -12448,7 +12975,7 @@ describe('live sessions', () => {
 
     render(<App />)
     await screen.findByRole('button', { name: 'Running chat, Codex, working' })
-    expect(sessionTitles()).toEqual(['Running chat', 'Idle chat', 'Background chat'])
+    expect(sessionTitles()).toEqual(['Idle chat', 'Background chat', 'Running chat'])
 
     emitThreadEvent('background-thread', {
       type: 'turn.started',
@@ -12459,14 +12986,21 @@ describe('live sessions', () => {
         createdAt: 0,
       },
     })
-    expect(sessionTitles()).toEqual(['Background chat', 'Running chat', 'Idle chat'])
+    expect(screen.getByRole('button', { name: 'Background chat, Codex, working' })).toBeTruthy()
+    expect(sessionTitles()).toEqual(['Idle chat', 'Background chat', 'Running chat'])
 
     emitThreadEvent('background-thread', {
       type: 'turn.completed',
       turnId: 'background-turn',
       status: 'completed',
     })
-    expect(sessionTitles()).toEqual(['Running chat', 'Background chat', 'Idle chat'])
+    expect(sessionTitles()).toEqual(['Idle chat', 'Background chat', 'Running chat'])
+    expect(
+      screen
+        .getByRole('button', { name: 'Background chat, Codex, ready, unread' })
+        .closest('.sessrow')
+        ?.classList.contains('is-unread'),
+    ).toBe(true)
     expect(
       screen
         .getByRole('button', { name: 'Background chat, Codex, ready, unread' })
@@ -12536,13 +13070,15 @@ function emitQueue(
   })
 }
 
+/** The chat titles of the tree, top to bottom, without the "Needs you" band's second listing. */
 function sessionTitles(): string[] {
-  return Array.from(document.querySelectorAll('.sess__title'), (node) => node.textContent ?? '')
+  return Array.from(document.querySelectorAll('.sess__title'))
+    .filter((node) => !node.closest('.needs-band'))
+    .map((node) => node.textContent ?? '')
 }
 
 function dropChatRow(sourceTitle: string, targetTitle: string, position: 'before' | 'after') {
-  const row = (title: string) =>
-    screen.getByRole('button', { name: new RegExp(`^${title},`) }).closest('li')!
+  const row = (title: string) => treeChatRow(title).closest('li')!
   const source = row(sourceTitle)
   const target = row(targetTitle)
   vi.spyOn(target, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 60, 200, 28))

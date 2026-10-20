@@ -258,6 +258,16 @@ const REAL_SYSTEM: SystemProbe = {
   auth: (provider) => signInChecks.read(provider),
 }
 
+/**
+ * The binary a provider's own model lists come from, so a list saved for one
+ * CLI build is not shown for another. Undefined when it cannot be named.
+ */
+export function providerBinary(provider: ProviderStatus['id']): Promise<string | undefined> {
+  const entry = PROBES.find((probe) => probe.id === provider)
+  if (!entry?.command) return Promise.resolve(undefined)
+  return cliProbe.binary(entry.command, { readsVersion: entry.readsVersion !== false })
+}
+
 /** The sign-in check a provider's probe declares, or `unknown` when it has none. */
 export function installTimeAuth(provider: ProviderStatus['id']): Promise<ProviderStatus['auth']> {
   return PROBES.find((entry) => entry.id === provider)?.auth?.() ?? Promise.resolve('unknown')

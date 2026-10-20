@@ -126,6 +126,23 @@ describe('beginLogin', () => {
     })
   })
 
+  it('signs in as a further account in a terminal of its own', async () => {
+    const transport = fakeTransport()
+    await beginLogin(transport, { provider: 'codex', accountId: 'work' }, () => {})
+    await beginLogin(transport, { provider: 'codex', accountId: 'default' }, () => {})
+    const launches = transport.requests.filter((request) => request.method === 'providers.launch')
+    expect(launches.map((request) => request.params)).toEqual([
+      { provider: 'codex', accountId: 'work', columns: 320, rows: 30 },
+      { provider: 'codex', columns: 320, rows: 30 },
+    ])
+    expect(loginKey({ provider: 'codex', accountId: 'work' })).toBe('login:codex@work')
+    expect(loginKey({ provider: 'codex', accountId: 'default' })).toBe(
+      loginKey({ provider: 'codex' }),
+    )
+    expect(installState('login:codex@work')?.phase).toBe('running')
+    expect(installState(loginKey({ provider: 'codex' }))?.phase).toBe('running')
+  })
+
   it('keeps a login and an install for the same target apart in the store', async () => {
     const transport = fakeTransport()
     const target = { provider: 'opencode' as const }

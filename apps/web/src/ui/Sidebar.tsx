@@ -19,12 +19,18 @@ import {
 } from 'react'
 import type {
   Account,
+  AccountId,
   ProviderId,
   ResultOf,
   ThreadInboxStatus,
   ThreadLifecycle,
 } from '@harness/contracts'
+import type { AccountLabel } from '../provider-accounts-state.js'
 import {
+  IconArchive as Archive,
+  IconArrowBackUp as Restore,
+  IconCheck as Check,
+  IconChevronRight as ChevronRight,
   IconTrash as Trash,
   IconDots as Ellipsis,
   IconFolderOpen as FolderOpen,
@@ -62,7 +68,14 @@ import {
   sessionSourcePresentation,
 } from '../provider-presentation.js'
 import { avatarSeedName, type ProfileIdentityPreferences } from '../profile-preferences.js'
-import { sidebarRail } from '../sidebar-order.js'
+import {
+  needsYouSessions,
+  projectAttention,
+  sidebarRail,
+  type Attention,
+  type NeedsYouEntry,
+  type PinnedSession,
+} from '../sidebar-order.js'
 import {
   DEFAULT_KEYBINDINGS,
   isComposingKey,
@@ -140,6 +153,10 @@ export type Session = {
   provider: ProviderId
   agent?: string | undefined
   connectionId?: string | undefined
+  /** The provider account the chat is pinned to. Absent means default. */
+  accountId?: string | undefined
+  /** The earlier chat this one carries on, such as after a plan limit on another account. */
+  continuedFrom?: string | undefined
   createdAt: number
   /** Client-observed start of the current status, used for elapsed/relative labels. */
   statusSince?: number | undefined
@@ -188,6 +205,9 @@ const REVEAL_COOLDOWN_MS = 1250
 /** Matches the .rail__edge hit strip. */
 const REVEAL_EDGE_WIDTH = 6
 const MAX_RAIL_WIDTH = 420
+/** Below this a rail (an older saved width) keeps a Needs you or Archived row
+ *  to its title: the project name beside it would be cut to a few letters. */
+const NARROW_RAIL_WIDTH = 220
 /** Matches the account menu's own limit bars, which turn red at the same point. */
 const USAGE_LOW_PERCENT = 15
 const INITIAL_PROJECT_RENDER_COUNT = 30
@@ -216,14 +236,19 @@ function SidebarComponent(props: {
   providerName: string
   keybindings?: Keybindings | undefined
   usageStates?: AccountLimitsState[] | undefined
+  /** The sources the card's one figure is taken from; every source by default. */
+  usageCardStates?: AccountLimitsState[] | undefined
+  /** Names a provider account in the popup's plan limits. */
+  accountLabel?: AccountLabel | undefined
   /** The account popup shows plan limits; returns the release for when it closes. */
   onShowUsage?: (() => () => void) | undefined
-  onRetryUsage?: ((provider: ProviderId) => void) | undefined
+  onRetryUsage?: ((provider: ProviderId, accountId?: AccountId) => void) | undefined
   onConsumeReset?:
     | ((
         provider: ProviderId,
         idempotencyKey: string,
         creditId?: string,
+        accountId?: AccountId,
       ) => Promise<ResultOf<'usage.consumeReset'>>)
     | undefined
   mode?: 'classic' | 'inbox'
@@ -242,6 +267,11 @@ function SidebarComponent(props: {
   onRenameSession: (id: string, title: string) => void
   onToggleSessionPin?: (id: string) => void
   onDeleteSession: (id: string) => void
+  /** Moves a chat to Archived without deleting it; sending to it later brings it back. */
+  onArchiveSession?: ((id: string) => void) | undefined
+  onRestoreSession?: ((id: string) => void) | undefined
+  /** Reads a failed chat without opening it, which clears it from Needs you. */
+  onMarkSessionRead?: ((id: string) => void) | undefined
   onArchiveProject: (sessionIds: string[]) => void
   onReorderProject?: (sourcePath: string, targetPath: string, position: DropPosition) => void
   onReorderSession: (
@@ -259,7 +289,8 @@ function SidebarComponent(props: {
 }) {
   const keybindings = props.keybindings ?? DEFAULT_KEYBINDINGS
   const profileDisplayName = props.profileIdentity?.displayName.trim() || 'Local profile'
-  const usageLimit = useMemo(() => tightestUsageLimit(props.usageStates), [props.usageStates])
+  const cardStates = props.usageCardStates ?? props.usageStates
+  const usageLimit = useMemo(() => tightestUsageLimit(cardStates), [cardStates])
   const usageRemaining = usageLimit
     ? Math.round(Math.min(100, Math.max(0, 100 - usageLimit.usedPercent)))
     : undefined
@@ -493,6 +524,12 @@ function SidebarComponent(props: {
     (id: string) => actionsRef.current.onToggleSessionPin?.(id),
     [],
   )
+  const markSessionRead = useCallback(
+    (id: string) => actionsRef.current.onMarkSessionRead?.(id),
+    [],
+  )
+  const archiveSession = useCallback((id: string) => actionsRef.current.onArchiveSession?.(id), [])
+  const restoreSession = useCallback((id: string) => actionsRef.current.onRestoreSession?.(id), [])
   const animateArchive = useArchiveMotion()
   const deleteSession = useCallback(
     (id: string) => {
@@ -534,8 +571,16 @@ function SidebarComponent(props: {
 
   // A status push replaces one project in an otherwise retained tree. Keep
   // every unchanged projection stable so React only reconciles that project.
-  const { orderedProjects, pinnedSessions } = useMemo(
+  const { orderedProjects, pinnedSessions, archivedSessions } = useMemo(
     () => sidebarRail(props.projects),
+    [props.projects],
+  )
+  const needsYou = useMemo(
+    () => needsYouSessions(props.projects, props.activeSessionId),
+    [props.projects, props.activeSessionId],
+  )
+  const projectNames = useMemo(
+    () => new Map(props.projects.map((project) => [project.path, displayName(project)])),
     [props.projects],
   )
   const [draggedProjectPath, setDraggedProjectPath] = useState<string>()
@@ -794,8 +839,17 @@ function SidebarComponent(props: {
 
             <div
               className="rail__body"
+              data-narrow={props.width < NARROW_RAIL_WIDTH ? '' : undefined}
               onScroll={(event) => setBodyScrolled(event.currentTarget.scrollTop > 0)}
             >
+              {needsYou.length > 0 ? (
+                <NeedsYouBand
+                  entries={needsYou}
+                  projectNames={projectNames}
+                  onSelectSession={selectSession}
+                  onMarkSessionRead={props.onMarkSessionRead ? markSessionRead : undefined}
+                />
+              ) : null}
               {pinnedSessions.length > 0 ? (
                 <>
                   <p className="section">Pinned</p>
@@ -872,11 +926,22 @@ function SidebarComponent(props: {
                     onRenameSession={renameSession}
                     onToggleSessionPin={props.onToggleSessionPin ? toggleSessionPin : undefined}
                     onDeleteSession={deleteSession}
+                    onArchiveSession={props.onArchiveSession ? archiveSession : undefined}
                     onArchiveProject={archiveProject}
                     onReorderSession={reorderSession}
                   />
                 ))
               )}
+              {archivedSessions.length > 0 ? (
+                <ArchivedSection
+                  entries={archivedSessions}
+                  projectNames={projectNames}
+                  activeSessionId={props.activeSessionId}
+                  onSelectSession={selectSession}
+                  onRestoreSession={props.onRestoreSession ? restoreSession : undefined}
+                  onDeleteSession={deleteSession}
+                />
+              ) : null}
             </div>
           </>
         )}
@@ -944,6 +1009,7 @@ function SidebarComponent(props: {
                       <Suspense fallback={<AccountLimitsLoading states={props.usageStates} />}>
                         <RenderedAccountLimits
                           states={props.usageStates}
+                          accountLabel={props.accountLabel}
                           onShow={props.onShowUsage}
                           onRetry={props.onRetryUsage ?? noop}
                           onConsumeReset={props.onConsumeReset}
@@ -1262,6 +1328,7 @@ const ProjectRow = memo(function ProjectRow(props: {
   onRenameSession: (id: string, title: string) => void
   onToggleSessionPin: ((id: string) => void) | undefined
   onDeleteSession: (id: string) => void
+  onArchiveSession: ((id: string) => void) | undefined
   onArchiveProject: (sessionIds: string[]) => void
   onReorderSession: (
     projectPath: string,
@@ -1271,6 +1338,7 @@ const ProjectRow = memo(function ProjectRow(props: {
   ) => void
 }) {
   const count = props.project.sessions.length
+  const attention = useMemo(() => projectAttention(props.project), [props.project])
   const [open, setOpen] = useState(props.active)
   const [sessionsMounted, setSessionsMounted] = useState(props.active)
   const [showAllSessions, setShowAllSessions] = useState(false)
@@ -1283,6 +1351,7 @@ const ProjectRow = memo(function ProjectRow(props: {
   const openRef = useRef(props.active)
   const sessionUnmountTimer = useRef<number | undefined>(undefined)
   const expanded = open
+  const folded = expanded ? undefined : attention
 
   const cancelSessionUnmount = useCallback(() => {
     if (sessionUnmountTimer.current === undefined) return
@@ -1365,10 +1434,22 @@ const ProjectRow = memo(function ProjectRow(props: {
                 setProjectOpen(!expanded)
               }}
               aria-expanded={expanded}
+              aria-label={
+                folded
+                  ? `${displayName(props.project)}, ${folded.count} ${folded.count === 1 ? 'needs' : 'need'} you`
+                  : undefined
+              }
               title={props.project.path}
             >
               <span className="proj__mark" aria-hidden />
               <span className="proj__name">{displayName(props.project)}</span>
+              {/* A folded project still says when something inside needs the user. */}
+              {folded ? (
+                <span className="proj__attention" data-attention={folded.attention} aria-hidden>
+                  <span className={`sess__status-dot ${attentionTone(folded.attention)}`} />
+                  {folded.count}
+                </span>
+              ) : null}
             </button>
 
             <Menu
@@ -1494,6 +1575,7 @@ const ProjectRow = memo(function ProjectRow(props: {
             onSelectSession={props.onSelectSession}
             onRenameSession={props.onRenameSession}
             onDeleteSession={props.onDeleteSession}
+            onArchiveSession={props.onArchiveSession}
             onToggleSessionPin={props.onToggleSessionPin}
             onReorderSession={props.onReorderSession}
           />
@@ -1512,6 +1594,7 @@ const ProjectSessions = memo(function ProjectSessions(props: {
   onRenameSession: (id: string, title: string) => void
   onToggleSessionPin: ((id: string) => void) | undefined
   onDeleteSession: (id: string) => void
+  onArchiveSession: ((id: string) => void) | undefined
   onReorderSession: (
     projectPath: string,
     sourceId: string,
@@ -1651,6 +1734,7 @@ const ProjectSessions = memo(function ProjectSessions(props: {
             onSelectSession={props.onSelectSession}
             onRenameSession={props.onRenameSession}
             onDeleteSession={props.onDeleteSession}
+            onArchiveSession={props.onArchiveSession}
             onToggleSessionPin={props.onToggleSessionPin}
             reorderable
             dragging={session.id === draggedSessionId}
@@ -1695,6 +1779,7 @@ const ProjectSessionRow = memo(function ProjectSessionRow(props: {
   onSelectSession: (id: string) => void
   onRenameSession: (id: string, title: string) => void
   onDeleteSession: (id: string) => void
+  onArchiveSession: ((id: string) => void) | undefined
   onToggleSessionPin: ((id: string) => void) | undefined
   reorderable: boolean
   dragging: boolean
@@ -1715,6 +1800,7 @@ const ProjectSessionRow = memo(function ProjectSessionRow(props: {
       onSelect={() => props.onSelectSession(session.id)}
       onRename={(title) => props.onRenameSession(session.id, title)}
       onDelete={() => props.onDeleteSession(session.id)}
+      onArchive={props.onArchiveSession ? () => props.onArchiveSession?.(session.id) : undefined}
       onTogglePin={() => props.onToggleSessionPin?.(session.id)}
       onOpenInExplorer={() => void revealPath(props.projectPath)}
       reorderable={props.reorderable}
@@ -1737,6 +1823,8 @@ function SessionRow(props: {
   onSelect: () => void
   onRename: (title: string) => void
   onDelete: () => void
+  /** Absent where a chat cannot be archived from, such as the Pinned section. */
+  onArchive?: (() => void) | undefined
   onTogglePin: () => void
   onOpenInExplorer: () => void
   standalone?: boolean
@@ -1754,6 +1842,11 @@ function SessionRow(props: {
   const [renaming, setRenaming] = useState(false)
   const contextMenuTarget = useRef<HTMLButtonElement>(null)
   const finishRename = useRenameFocusReturn(renaming, setRenaming, contextMenuTarget)
+  // A running or waiting chat cannot be archived, and its state is never
+  // covered: the hover action only takes the place of a quiet time.
+  const archive =
+    props.onArchive && !isLiveStatus(props.session.status) ? props.onArchive : undefined
+  const archiveOnHover = archive && props.session.status !== 'failed' ? archive : undefined
 
   if (renaming) {
     return (
@@ -1782,7 +1875,9 @@ function SessionRow(props: {
     <li
       className={`sessrow ${props.active ? 'is-active' : ''} ${props.standalone ? 'is-pinned' : ''} ${
         props.reorderable ? 'is-reorderable' : ''
-      } ${props.dragging ? 'is-dragging' : ''} ${props.session.unread ? 'is-unread' : ''}`}
+      } ${props.dragging ? 'is-dragging' : ''} ${props.session.unread ? 'is-unread' : ''} ${
+        archiveOnHover ? 'has-action' : ''
+      }`}
       data-archive-session-id={props.session.id}
       draggable={props.reorderable}
       data-drop-position={props.dropPosition}
@@ -1815,32 +1910,22 @@ function SessionRow(props: {
             status={props.session.status}
             since={props.session.statusSince ?? props.session.createdAt}
           />
-          {props.session.unread && props.session.status !== 'ready' ? (
-            <span className="sess__unread-dot" aria-hidden />
-          ) : null}
         </span>
       </button>
 
-      <span className="sess__actions">
-        <button
-          type="button"
-          className="sess__action"
-          onClick={() => setRenaming(true)}
-          aria-label={`Rename ${props.session.title}`}
-          title="Rename chat"
-        >
-          <Pencil size={13} aria-hidden />
-        </button>
-        <button
-          type="button"
-          className="sess__action"
-          onClick={props.onDelete}
-          aria-label={`Delete ${props.session.title}`}
-          title="Delete chat"
-        >
-          <Trash size={14} aria-hidden />
-        </button>
-      </span>
+      {archiveOnHover ? (
+        <span className="sess__actions">
+          <button
+            type="button"
+            className="sess__action"
+            onClick={archiveOnHover}
+            aria-label={`Archive ${props.session.title}`}
+            title="Archive chat"
+          >
+            <Archive size={14} aria-hidden />
+          </button>
+        </span>
+      ) : null}
 
       <Menu
         drop="down"
@@ -1874,14 +1959,16 @@ function SessionRow(props: {
                 close()
               }}
             />
-            <MenuItem
-              title="Delete chat"
-              icon={<Trash size={14} aria-hidden />}
-              onClick={() => {
-                props.onDelete()
-                close()
-              }}
-            />
+            {archive ? (
+              <MenuItem
+                title="Archive chat"
+                icon={<Archive size={14} aria-hidden />}
+                onClick={() => {
+                  archive()
+                  close()
+                }}
+              />
+            ) : null}
             {isDesktop ? (
               <MenuItem
                 title="Open in Explorer"
@@ -1892,11 +1979,321 @@ function SessionRow(props: {
                 }}
               />
             ) : null}
+            <MenuItem
+              title="Delete chat"
+              icon={<Trash size={14} aria-hidden />}
+              className="menu__item--danger"
+              onClick={() => {
+                props.onDelete()
+                close()
+              }}
+            />
           </>
         )}
       </Menu>
     </li>
   )
+}
+
+/** A chat in one of these states is running or waiting on the user. */
+function isLiveStatus(status: Session['status']): boolean {
+  return (
+    status === 'starting' ||
+    status === 'working' ||
+    status === 'queued' ||
+    status === 'approval' ||
+    status === 'input'
+  )
+}
+
+/** Archived rows mount in batches as the section is read, never all at once. */
+const ARCHIVED_BATCH = 10
+
+/**
+ * Chats that are done but kept: folded at the end of the rail and found by
+ * search. Opening one reads it where it is; sending to it brings it back to
+ * its project.
+ */
+const ArchivedSection = memo(function ArchivedSection(props: {
+  entries: PinnedSession[]
+  projectNames: ReadonlyMap<string, string>
+  activeSessionId: string | undefined
+  onSelectSession: (id: string) => void
+  onRestoreSession: ((id: string) => void) | undefined
+  onDeleteSession: (id: string) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [limit, setLimit] = useState(ARCHIVED_BATCH)
+  const activeIndex = props.entries.findIndex(({ session }) => session.id === props.activeSessionId)
+  // The open chat is never hidden inside a folded section.
+  const expanded = open || activeIndex >= 0
+  const shown = props.entries.slice(0, Math.max(limit, activeIndex + 1))
+  return (
+    <section className="archived" aria-label="Archived">
+      <button
+        type="button"
+        className="section archived__toggle"
+        aria-expanded={expanded}
+        aria-label={`Archived, ${chatCount(props.entries.length)}`}
+        onClick={() => {
+          setOpen(!expanded)
+          setLimit(ARCHIVED_BATCH)
+        }}
+      >
+        <span>Archived</span>
+        <span className="archived__count">{props.entries.length}</span>
+        <ChevronRight className="archived__chevron" size={12} aria-hidden />
+      </button>
+      {expanded ? (
+        <ul className="proj__sessions archived__list">
+          {shown.map(({ projectPath, session }) => (
+            <ArchivedRow
+              key={session.id}
+              session={session}
+              projectPath={projectPath}
+              projectName={props.projectNames.get(projectPath) ?? basename(projectPath)}
+              active={session.id === props.activeSessionId}
+              onSelectSession={props.onSelectSession}
+              onRestoreSession={props.onRestoreSession}
+              onDeleteSession={props.onDeleteSession}
+            />
+          ))}
+          {shown.length < props.entries.length ? (
+            <li className="proj__sessions-toggle-row">
+              <button
+                type="button"
+                className="proj__sessions-toggle"
+                onClick={() => setLimit(shown.length + ARCHIVED_BATCH)}
+              >
+                Show more
+              </button>
+            </li>
+          ) : null}
+        </ul>
+      ) : null}
+    </section>
+  )
+})
+
+const ArchivedRow = memo(function ArchivedRow(props: {
+  session: Session
+  projectPath: string
+  projectName: string
+  active: boolean
+  onSelectSession: (id: string) => void
+  onRestoreSession: ((id: string) => void) | undefined
+  onDeleteSession: (id: string) => void
+}) {
+  const { session } = props
+  const contextMenuTarget = useRef<HTMLButtonElement>(null)
+  const restore = props.onRestoreSession
+  const label = `${sessionLabel(session)}, archived, ${props.projectName}`
+  return (
+    <li
+      className={`sessrow archived__row${props.active ? ' is-active' : ''}${session.unread ? ' is-unread' : ''}${restore ? ' has-action' : ''}`}
+    >
+      {props.active ? <ActiveIndicator /> : null}
+      <button
+        ref={contextMenuTarget}
+        type="button"
+        className={`sess ${props.active ? 'is-active' : ''}`}
+        onClick={() => props.onSelectSession(session.id)}
+        aria-label={label}
+        title={label}
+      >
+        <span className="sess__provider" aria-hidden>
+          <ProviderIcon
+            mark={sessionSourcePresentation(session.provider, session.agent).mark}
+            size={12}
+          />
+        </span>
+        <span className="sess__title">{session.title}</span>
+        <span className="sess__project">
+          <span>{props.projectName}</span>
+        </span>
+      </button>
+      {restore ? (
+        <span className="sess__actions">
+          <button
+            type="button"
+            className="sess__action"
+            onClick={() => restore(session.id)}
+            aria-label={`Restore ${session.title}`}
+            title="Restore to project"
+          >
+            <Restore size={14} aria-hidden />
+          </button>
+        </span>
+      ) : null}
+      <Menu
+        drop="down"
+        align="right"
+        label={`Options for ${session.title}`}
+        panelClassName="menu--sidebar"
+        contextMenuTargetRef={contextMenuTarget}
+        contextMenuOnly
+      >
+        {(close) => (
+          <>
+            {restore ? (
+              <MenuItem
+                title="Restore to project"
+                icon={<Restore size={14} aria-hidden />}
+                onClick={() => {
+                  restore(session.id)
+                  close()
+                }}
+              />
+            ) : null}
+            <MenuItem
+              title="Delete chat"
+              icon={<Trash size={14} aria-hidden />}
+              className="menu__item--danger"
+              onClick={() => {
+                props.onDeleteSession(session.id)
+                close()
+              }}
+            />
+          </>
+        )}
+      </Menu>
+    </li>
+  )
+})
+
+/** Rows the band shows before it folds the rest behind "+N more". A short
+ *  window keeps fewer, so the tree below still has room. */
+const NEEDS_YOU_VISIBLE = 5
+const NEEDS_YOU_VISIBLE_SHORT = 3
+const SHORT_WINDOW = '(max-height: 799px)'
+
+function subscribeShortWindow(onChange: () => void): () => void {
+  const query = window.matchMedia?.(SHORT_WINDOW)
+  query?.addEventListener('change', onChange)
+  return () => query?.removeEventListener('change', onChange)
+}
+
+function readShortWindow(): boolean {
+  return window.matchMedia?.(SHORT_WINDOW).matches ?? false
+}
+
+/**
+ * The chats waiting for the user, above everything else. It lists each one a
+ * second time, beside its place in the tree, so it stays short: an entry
+ * leaves once the chat is answered or read, and with nothing waiting the band
+ * takes no space at all.
+ */
+const NeedsYouBand = memo(function NeedsYouBand(props: {
+  entries: NeedsYouEntry[]
+  projectNames: ReadonlyMap<string, string>
+  onSelectSession: (id: string) => void
+  onMarkSessionRead: ((id: string) => void) | undefined
+}) {
+  const [expanded, setExpanded] = useState(false)
+  const short = useSyncExternalStore(subscribeShortWindow, readShortWindow, () => false)
+  const visible = short ? NEEDS_YOU_VISIBLE_SHORT : NEEDS_YOU_VISIBLE
+  const shown = expanded ? props.entries : props.entries.slice(0, visible)
+  const folded = props.entries.length - shown.length
+  return (
+    <section className="needs-band" aria-label="Needs you">
+      <p className="section" aria-hidden>
+        Needs you
+      </p>
+      <ul className="proj__sessions needs-band__list">
+        {shown.map((entry) => (
+          <NeedsYouRow
+            key={entry.session.id}
+            entry={entry}
+            projectName={props.projectNames.get(entry.projectPath) ?? basename(entry.projectPath)}
+            onSelectSession={props.onSelectSession}
+            onMarkSessionRead={props.onMarkSessionRead}
+          />
+        ))}
+        {folded > 0 || (expanded && props.entries.length > visible) ? (
+          <li className="proj__sessions-toggle-row">
+            <button
+              type="button"
+              className="proj__sessions-toggle"
+              aria-expanded={expanded}
+              onClick={() => setExpanded(!expanded)}
+            >
+              {expanded ? 'Show less' : `+${folded} more`}
+            </button>
+          </li>
+        ) : null}
+      </ul>
+    </section>
+  )
+})
+
+const NeedsYouRow = memo(function NeedsYouRow(props: {
+  entry: NeedsYouEntry
+  projectName: string
+  onSelectSession: (id: string) => void
+  onMarkSessionRead: ((id: string) => void) | undefined
+}) {
+  const { session, attention } = props.entry
+  // Approvals and questions leave only once they are answered, in the chat.
+  const markRead =
+    props.onMarkSessionRead && attention === 'failed' ? props.onMarkSessionRead : undefined
+  const label = `${session.title}, ${attentionLabel(attention)}, ${props.projectName}`
+  return (
+    <li
+      className={`sessrow needs-band__row${session.unread ? ' is-unread' : ''}${markRead ? ' has-action' : ''}`}
+      data-attention={attention}
+    >
+      <button
+        type="button"
+        className="sess"
+        onClick={() => props.onSelectSession(session.id)}
+        aria-label={label}
+        title={label}
+      >
+        <AttentionMark attention={attention} />
+        <span className="sess__title">{session.title}</span>
+        <span className="sess__project">
+          <span>{props.projectName}</span>
+        </span>
+      </button>
+      {markRead ? (
+        <span className="sess__actions">
+          <button
+            type="button"
+            className="sess__action"
+            onClick={() => markRead(session.id)}
+            aria-label={`Mark ${session.title} as read`}
+            title="Mark as read"
+          >
+            <Check size={14} aria-hidden />
+          </button>
+        </span>
+      ) : null}
+    </li>
+  )
+})
+
+/** One dot per reason, in the colour that names it; the same dots the tree uses. */
+function AttentionMark(props: { attention: Attention }) {
+  return (
+    <span className="sess__mark" aria-hidden>
+      <span className={`sess__status-dot ${attentionTone(props.attention)}`} />
+    </span>
+  )
+}
+
+function attentionTone(attention: Attention): string {
+  return attention === 'failed' ? 'is-failed' : 'is-attention'
+}
+
+function attentionLabel(attention: Attention): string {
+  switch (attention) {
+    case 'approval':
+      return 'waiting for approval'
+    case 'input':
+      return 'waiting for an answer'
+    case 'failed':
+      return 'failed'
+  }
 }
 
 type ConfirmCopy = { title: string; body: string; action: string; destructive: boolean }

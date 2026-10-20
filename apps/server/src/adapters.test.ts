@@ -111,6 +111,10 @@ class FakeCodexAdapter extends FakeResumableAdapter {
   constructor(options?: Record<string, unknown>) {
     super('codex', options)
   }
+
+  async listModels() {
+    return []
+  }
 }
 
 class FakeGrokAdapter extends FakeTurnAdapter {
@@ -161,6 +165,10 @@ class FakeClaudeCodeAdapter extends FakeResumableAdapter {
 
   constructor(options?: Record<string, unknown>) {
     super('claude-code', options)
+  }
+
+  async listModels() {
+    return []
   }
 
   override on(event?: string, listener?: (value: string) => void): this {
@@ -318,6 +326,32 @@ describe('resumable provider setup', () => {
     const wrapped = await runtime.start(workspace, { agent: harness.id })
     expect(wrapped.session.onLimitsUpdated).toBeUndefined()
   })
+
+  it.each(['codex', 'claude-code'] as const)(
+    'starts, resumes and lists %s models as the account in its folder',
+    async (provider) => {
+      const home = 'D:\\accounts\\codex-work'
+      const runtime = providerRuntime(
+        provider,
+        () => {},
+        () => undefined,
+        home,
+      )
+      await runtime.start('/repo', {})
+      await runtime.resume!('existing-thread', '/repo', {})
+      await runtime.listModels()
+      expect(turnAdapters.map((adapter) => adapter.launchOptions?.['accountHome'])).toEqual([
+        home,
+        home,
+        home,
+      ])
+
+      // The default account gets exactly the options it always had.
+      turnAdapters.length = 0
+      await providerRuntime(provider, () => {}).start('/repo', {})
+      expect(turnAdapters[0]?.launchOptions).not.toHaveProperty('accountHome')
+    },
+  )
 
   it("forwards the live Claude session's MCP servers and commands", async () => {
     const { thread, session } = await providerRuntime('claude-code', () => {}).start('/repo', {})

@@ -9,6 +9,7 @@ import {
   useRef,
 } from 'react'
 import { useDialogFocus } from './dialog-focus.js'
+import '../styles/sheet.css'
 import '../styles/rollback.css'
 
 export type Checkpoint = {

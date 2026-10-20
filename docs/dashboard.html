@@ -291,12 +291,53 @@
           <a href="./feature-inventory.html">Inventory</a>
           <a href="./CLAUDE-HANDOFF.md">Claude handoff</a>
         </nav>
-        <span class="meta">2026-10-19 nightly · includes main 58d89955 (PR #1909)</span>
+        <span class="meta">2026-10-20 nightly 5da77ebc · includes main 094eac47 (PR #1921)</span>
       </div>
     </div>
 
     <div class="wrap">
       <section id="scope">
+        <p>
+          October 20, overnight on nightly (5da77ebc): what landed, each checked in its own PR with
+          stand-in CLIs only; all four gates passed on 5da77ebc (web 3,026 tests, server 1,721,
+          desktop 487 and every package, no failure). Sidebar direction B (PR #1914): a Needs you
+          band above Pinned for chats waiting on an approval or a question or failed and unread,
+          chats keep their place in the tree, and Archive is the row's hover action with a folded
+          Archived section. Chat notifications (PR #1915): while the window is away, one OS
+          notification per chat that needs the user and a dot on the taskbar button, chosen in
+          General as Off, Needs me or Also finished. An app update waits for running chats (PR
+          #1916): the sidebar button and About read Installs when 2 chats finish, and Install now
+          stops them after one confirmation. Multiple accounts for Codex and Claude Code (PR #1913,
+          below), and at a plan limit a failed turn offers Continue on Work, a new chat on that
+          account that carries the conversation (contracts PR #1917, then PR #1918). Settings pauses
+          only the app's endless loops behind it (PR #1912; with Settings open and a chat working in
+          the sidebar the renderer went from 14.9 to 8.5 % and the GPU from 25.3 to 4.8 % of a
+          core). Grok's sign-in and billing reads start together (PR #1919; Profile accounts ready
+          12.3 to 8.9 s after launch with stand-in delays), and saved model lists follow the CLI
+          build that listed them, so after a CLI update its models reach the open picker about 4 s
+          after the next launch, where they did not within 40 s before (PR #1920). Main's four fixes
+          from the same night (PRs #1884, #1896 to #1898) reach nightly through the sync PR #1921,
+          which changes no file because each already had its nightly counterpart. Not verified yet:
+          real sign-ins, a real update install, the real Windows toast on screen, and macOS.
+        </p>
+        <p>
+          October 20 on nightly (PR #1913, merged on top of 4870f6af): multiple accounts per
+          provider, for Codex and Claude Code, the providers whose adapters declare it. Each account
+          is a CLI folder of its own (CODEX_HOME, CLAUDE_CONFIG_DIR); Settings &gt; Providers &gt;
+          Accounts adds a new, empty folder or brings an existing one, signs each account in in its
+          own folder, and removes or deletes it; a chat is pinned to the account it started on and
+          resumes there; the composer picks the account for a new chat; plan limits, reset credits,
+          model lists and usage are read per account, and the account popup, the Usage sheets and
+          Profile list them by account. An adversarial review found three medium issues, fixed
+          before the merge: a chat's title and commit message went through the default account, the
+          model picker only listed the default account's models, and a project's MCP sign-in could
+          land in another account's folder. Also fixed: a brought folder that is, holds or sits in a
+          folder in use is refused; removal stops resolving the account before its folder goes; new
+          folders no longer copy the default account's settings, which can hold keys and login pins.
+          Checked with the four gates and in the Electron shell with stand-in CLIs only; real
+          sign-ins, macOS and Linux are not verified yet. The chunk PRs #1854 to #1890 show as
+          merged or closed.
+        </p>
         <p>
           October 19, second main into nightly (PR #1909): main 58d89955, the seven commits of PRs
           #1902 to #1907, merged with a merge commit while nightly keeps every provider. Plan limits
@@ -1594,8 +1635,8 @@
                     checks on a copy of real data; next are Leon's own test, an installer from the
                     newest nightly, the remaining nightly refactors so shared code never branches on
                     provider names, version 0.1.3 and its release notes, then the promotion PR that
-                    brings every provider to main; multiple accounts per provider follow (contracts
-                    in PR #1675; server, adapters and UI not built yet)</span
+                    brings every provider to main; multiple accounts per provider are on nightly for
+                    Codex and Claude Code (contracts PR #1675, the rest PR #1913)</span
                   >
                 </span>
               </li>

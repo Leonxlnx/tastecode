@@ -28,6 +28,7 @@ import type {
 } from '@harness/contracts'
 import { JsonRpcValueSchema, killTree, spawnCli } from '@harness/proc'
 import { z } from 'zod'
+import { withClaudeAccount } from './account-home.js'
 import { CLAUDE_CAPABILITIES } from './capabilities.js'
 import { mapClaudeCommands, mapClaudeMcpServers } from './inventory.js'
 import { ClaudeMcpRedactor, prepareClaudeMcpServers } from './mcp.js'
@@ -654,12 +655,17 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
       spawn?: ClaudeSpawn
       environment?: NodeJS.ProcessEnv
       startupTimeoutMs?: number
+      /**
+       * The config folder of the account this adapter runs as. Its sessions,
+       * models and plan are that account's. Absent: the default one.
+       */
+      accountHome?: string | undefined
     } = {},
   ) {
     super()
     this.#createQuery = options.createQuery ?? createClaudeQuery
     this.#spawn = options.spawn ?? spawnCli
-    this.#environment = options.environment ?? process.env
+    this.#environment = withClaudeAccount(options.environment ?? process.env, options.accountHome)
     this.#startupTimeoutMs = options.startupTimeoutMs ?? CLAUDE_STARTUP_TIMEOUT_MS
     if (!Number.isFinite(this.#startupTimeoutMs) || this.#startupTimeoutMs <= 0)
       throw new Error('Claude startup timeout must be a positive number')

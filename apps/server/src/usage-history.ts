@@ -7,16 +7,19 @@ import { GROK_USAGE_HISTORY } from '@harness/adapter-grok'
 import { OPENCODE_USAGE_HISTORY } from '@harness/adapter-opencode'
 import type { UsageArchiveFile, UsageHistorySource } from '@harness/proc/usage-archive'
 import { isUsageCheckpoint, type UsageCheckpoint } from '@harness/proc/usage-log'
-import type {
-  LocalUsageRecord,
-  ProviderId,
-  Usage,
-  UsageHistoryDay,
-  UsageHistoryModel,
-  UsageHistoryProvider,
-  UsageHistoryRange,
-  UsageHistoryResult,
-  UsageHistoryTotals,
+import {
+  AccountIdSchema,
+  DEFAULT_ACCOUNT_ID,
+  type AccountId,
+  type LocalUsageRecord,
+  type ProviderId,
+  type Usage,
+  type UsageHistoryDay,
+  type UsageHistoryModel,
+  type UsageHistoryProvider,
+  type UsageHistoryRange,
+  type UsageHistoryResult,
+  type UsageHistoryTotals,
 } from '@harness/contracts'
 import { modelRate, priceEntry, type ModelRate } from './model-prices.js'
 import type { StoredUsageEvent } from './store.js'
@@ -71,6 +74,8 @@ type TokenCounts = LocalUsageRecord['tokens']
 export type CachedUsageFile = {
   path: string
   provider: ProviderId
+  /** The provider account whose folder holds this file; absent for the default account. */
+  accountId?: AccountId
   mtimeMs: number
   size: number
   entries: LocalUsageRecord[]
@@ -86,10 +91,15 @@ export type UsageCache = {
   warnings: string[]
 }
 
-type UsageFile = UsageArchiveFile<LocalUsageRecord> & { provider: ProviderId }
+type UsageFile = UsageArchiveFile<LocalUsageRecord> & {
+  provider: ProviderId
+  accountId?: AccountId
+}
 
 export type SourceState = {
   provider: ProviderId
+  /** The account whose folder holds this archive; absent for the default account. */
+  accountId?: AccountId
   /** The adapter's name for a local archive; event-only providers have none. */
   label?: string
   available: boolean
@@ -98,7 +108,16 @@ export type SourceState = {
 /** Where one local source's archive lives, resolved once on the main thread. */
 export type UsageSourceRoot = {
   provider: ProviderId
+  /** The account whose folder holds this archive; absent for the default account. */
+  accountId?: AccountId
   root: string
+}
+
+/** A provider account beyond the default one, whose own CLI folder holds its history. */
+export type UsageAccountHome = {
+  provider: ProviderId
+  accountId: AccountId
+  home: string
 }
 
 type MutableBucket = {
@@ -117,7 +136,7 @@ export type UsageScanProgress = {
  */
 export type UsageFileFingerprint = Pick<
   CachedUsageFile,
-  'path' | 'provider' | 'mtimeMs' | 'size' | 'checkpoint'
+  'path' | 'provider' | 'accountId' | 'mtimeMs' | 'size' | 'checkpoint'
 >
 
 export type UsageScanRequest = {
@@ -152,6 +171,11 @@ type UsageHistoryOptions = {
   cacheFile: string
   /** Archive locations by provider in place of each adapter's default; tests use fixtures. */
   sourceRoots?: Partial<Record<ProviderId, string>>
+  /**
+   * The provider accounts beyond the default ones. Asked at the start of every
+   * scan, so an account added or removed meanwhile is read or left out then.
+   */
+  accountHomes?: () => readonly UsageAccountHome[]
   harnessUsage?: () => StoredUsageEvent[]
   now?: () => Date
   scanRunner?: UsageScanRunner
@@ -159,7 +183,13 @@ type UsageHistoryOptions = {
   largeCacheLoader?: UsageCacheLoader
 }
 
-type AttributedUsageRecord = LocalUsageRecord & { provider: ProviderId }
+type AttributedUsageRecord = LocalUsageRecord & { provider: ProviderId; accountId?: AccountId }
+
+/** One provider account, whose usage a request can ask for alone. */
+export type UsageHistoryAccount = { provider: ProviderId; accountId: AccountId }
+
+const accountKey = (provider: ProviderId, accountId: AccountId | undefined) =>
+  `${provider}\u0000${accountId ?? DEFAULT_ACCOUNT_ID}`
 
 /** Everything in a usage.history result that is derived from the indexed records. */
 type UsageHistoryFigures = Omit<UsageHistoryResult, 'generatedAt' | 'scan' | 'warnings'>
@@ -200,6 +230,7 @@ const emptyTotals = (): UsageHistoryTotals => ({
 export class UsageHistoryService {
   readonly #cacheFile: string
   readonly #sourceRoots: UsageSourceRoot[]
+  readonly #accountHomes: () => readonly UsageAccountHome[]
   readonly #harnessUsage: () => StoredUsageEvent[]
   readonly #now: () => Date
   readonly #scanRunner: UsageScanRunner
@@ -220,7 +251,7 @@ export class UsageHistoryService {
   #harnessUsageLoadedAt = 0
   #harnessUsageCache: StoredUsageEvent[] | undefined
   /** Pages poll usage.history every 500 ms while a scan runs; most polls change nothing. */
-  readonly #aggregates = new Map<UsageHistoryRange, AggregateMemo>()
+  readonly #aggregates = new Map<string, AggregateMemo>()
   #sources: SourceState[] = emptySources()
   #scanWarnings: string[] = []
   #scan: UsageHistoryResult['scan'] = {
@@ -235,6 +266,7 @@ export class UsageHistoryService {
       provider: source.provider,
       root: options.sourceRoots?.[source.provider] ?? source.root(),
     }))
+    this.#accountHomes = options.accountHomes ?? (() => [])
     this.#harnessUsage = options.harnessUsage ?? (() => [])
     this.#now = options.now ?? (() => new Date())
     this.#scanRunner = options.scanRunner ?? runUsageScanWorker
@@ -247,7 +279,12 @@ export class UsageHistoryService {
     this.#startRefresh()
   }
 
-  async history(range: UsageHistoryRange, refresh = false): Promise<UsageHistoryResult> {
+  /** Every account's usage, or with `account` that account's alone. */
+  async history(
+    range: UsageHistoryRange,
+    refresh = false,
+    account?: UsageHistoryAccount,
+  ): Promise<UsageHistoryResult> {
     await this.#loadCache()
     const now = this.#now().getTime()
     if (refresh) this.#harnessUsageLoadedAt = 0
@@ -258,7 +295,7 @@ export class UsageHistoryService {
     ) {
       this.#startRefresh()
     }
-    return this.#aggregate(range)
+    return this.#aggregate(range, account)
   }
 
   async waitForRefresh(): Promise<void> {
@@ -335,10 +372,11 @@ export class UsageHistoryService {
     // The worker gets fingerprints only; the entries stay here instead of being
     // re-read from disk by the worker and cloned back after every scan.
     const request: UsageScanRequest = {
-      sources: this.#sourceRoots,
+      sources: this.#roots(),
       indexed: base.files.map((file) => ({
         path: file.path,
         provider: file.provider,
+        ...(file.accountId === undefined ? {} : { accountId: file.accountId }),
         mtimeMs: file.mtimeMs,
         size: file.size,
         ...(file.checkpoint && keepsCheckpoint(file, generatedAt)
@@ -375,6 +413,23 @@ export class UsageHistoryService {
       })
   }
 
+  /** Each provider's own archive, then every other account's archive inside its folder. */
+  #roots(): UsageSourceRoot[] {
+    let homes: readonly UsageAccountHome[]
+    try {
+      homes = this.#accountHomes()
+    } catch {
+      // The default accounts' usage still counts when the account list cannot be read.
+      homes = []
+    }
+    const accountRoots = homes.flatMap(({ provider, accountId, home }) => {
+      const source = LOCAL_USAGE_SOURCES.find((candidate) => candidate.provider === provider)
+      if (!source || accountId === DEFAULT_ACCOUNT_ID) return []
+      return [{ provider, accountId, root: source.root(home) }]
+    })
+    return [...this.#sourceRoots, ...accountRoots]
+  }
+
   /**
    * Folds a scan into the index. A scan that finds nothing new keeps the same
    * index object, so computed figures stay valid, and does not rewrite the file.
@@ -407,11 +462,17 @@ export class UsageHistoryService {
     }
   }
 
-  #aggregate(range: UsageHistoryRange): UsageHistoryResult {
+  #aggregate(
+    range: UsageHistoryRange,
+    account: UsageHistoryAccount | undefined,
+  ): UsageHistoryResult {
     const now = this.#now()
     const endDate = localDateKey(now)
     const harness = this.#cachedHarnessUsage(now.getTime())
-    let memo = this.#aggregates.get(range)
+    const memoKey = account
+      ? `${range}\u0000${accountKey(account.provider, account.accountId)}`
+      : range
+    let memo = this.#aggregates.get(memoKey)
     if (
       !memo ||
       memo.cache !== this.#cache ||
@@ -424,9 +485,9 @@ export class UsageHistoryService {
         harness,
         sources: this.#sources,
         endDate,
-        figures: this.#figures(range, endDate, harness),
+        figures: this.#figures(range, endDate, harness, account),
       }
-      this.#aggregates.set(range, memo)
+      this.#aggregates.set(memoKey, memo)
     }
 
     const { figures } = memo
@@ -451,15 +512,47 @@ export class UsageHistoryService {
     }
   }
 
+  /**
+   * A provider's usage on accounts beyond its default one is split into a row
+   * per account; with `account`, only that account's usage counts.
+   */
   #figures(
     range: UsageHistoryRange,
     endDate: string,
     harness: readonly StoredUsageEvent[],
+    account: UsageHistoryAccount | undefined,
   ): UsageHistoryFigures {
     const files = this.#cache?.files ?? []
-    const richProviders = new Set<ProviderId>()
-    for (const file of files) if (file.entries.length > 0) richProviders.add(file.provider)
-    const harnessEntries = harnessUsageRecords(harness, richProviders)
+    // By provider, so no key string is built for each of thousands of files.
+    const richAccounts = new Map<ProviderId, Set<AccountId>>()
+    for (const file of files) {
+      if (file.entries.length === 0) continue
+      let accounts = richAccounts.get(file.provider)
+      if (!accounts) richAccounts.set(file.provider, (accounts = new Set()))
+      accounts.add(file.accountId ?? DEFAULT_ACCOUNT_ID)
+    }
+    const harnessEntries = harnessUsageRecords(harness, richAccounts)
+    const wanted = account && accountKey(account.provider, account.accountId)
+    const otherAccount = (accountId: AccountId | undefined) =>
+      accountId !== undefined && accountId !== DEFAULT_ACCOUNT_ID
+    /** Providers with usage on another account than the default one, at any date. */
+    const splitProviders = new Set<ProviderId>()
+    if (wanted === undefined) {
+      for (const file of files) {
+        if (file.entries.length > 0 && otherAccount(file.accountId)) {
+          splitProviders.add(file.provider)
+        }
+      }
+      for (const entry of harnessEntries) {
+        if (otherAccount(entry.accountId)) splitProviders.add(entry.provider)
+      }
+    }
+    // Only a split provider's records are counted per account as well: an
+    // account asked for alone is the one provider row there is.
+    const accountBuckets = new Map<
+      string,
+      MutableBucket & { provider: ProviderId; accountId: AccountId }
+    >()
     // 'all' starts at the earliest record, so it only needs the end bound.
     const fixedStartDate = range === 'all' ? undefined : rangeStartDate(range, endDate, undefined)
     let earliestDate: string | undefined
@@ -479,7 +572,11 @@ export class UsageHistoryService {
       MutableBucket & { providers: Map<ProviderId, { tokens: number; estimatedCostUsd: number }> }
     >()
 
-    const addRecord = (providerId: ProviderId, entry: LocalUsageRecord) => {
+    const addRecord = (
+      providerId: ProviderId,
+      accountId: AccountId | undefined,
+      entry: LocalUsageRecord,
+    ) => {
       if (!earliestDate || entry.date < earliestDate) earliestDate = entry.date
       let knownSessions = providerSessions.get(providerId)
       if (!knownSessions) {
@@ -505,6 +602,20 @@ export class UsageHistoryService {
       const provider = getBucket(providerBuckets, providerId)
       addEntry(provider.totals, entry.tokens, priced)
       provider.sessions.add(sessionKey)
+      if (splitProviders.has(providerId)) {
+        const key = accountKey(providerId, accountId)
+        let accountBucket = accountBuckets.get(key)
+        if (!accountBucket) {
+          accountBucket = {
+            ...newBucket(),
+            provider: providerId,
+            accountId: accountId ?? DEFAULT_ACCOUNT_ID,
+          }
+          accountBuckets.set(key, accountBucket)
+        }
+        addEntry(accountBucket.totals, entry.tokens, priced)
+        accountBucket.sessions.add(sessionKey)
+      }
 
       const modelKey = `${providerId}:${entry.model}`
       let model = modelBuckets.get(modelKey)
@@ -539,19 +650,34 @@ export class UsageHistoryService {
           : priced.estimatedCostUsd
       day.providers.set(providerId, providerDay)
     }
+    // The account is the same for every record of a file, so it is compared once.
     for (const file of files) {
-      for (const entry of file.entries) addRecord(file.provider, entry)
+      if (wanted !== undefined && accountKey(file.provider, file.accountId) !== wanted) continue
+      for (const entry of file.entries) addRecord(file.provider, file.accountId, entry)
     }
-    for (const entry of harnessEntries) addRecord(entry.provider, entry)
+    for (const entry of harnessEntries) {
+      if (wanted !== undefined && accountKey(entry.provider, entry.accountId) !== wanted) continue
+      addRecord(entry.provider, entry.accountId, entry)
+    }
     const startDate = fixedStartDate ?? rangeStartDate(range, endDate, earliestDate)
 
-    const providers: UsageHistoryProvider[] = [...providerBuckets.entries()]
-      .map(([provider, bucket]) => ({
-        provider,
+    // An account asked for alone names itself, as does every account of a split provider.
+    const providers: UsageHistoryProvider[] = [
+      ...[...providerBuckets]
+        .filter(([provider]) => !splitProviders.has(provider))
+        .map(([provider, bucket]) => ({
+          provider,
+          ...(account === undefined ? {} : { accountId: account.accountId }),
+          sessionCount: bucket.sessions.size,
+          totals: bucket.totals,
+        })),
+      ...[...accountBuckets.values()].map((bucket) => ({
+        provider: bucket.provider,
+        accountId: bucket.accountId,
         sessionCount: bucket.sessions.size,
         totals: bucket.totals,
-      }))
-      .sort((a, b) => b.totals.estimatedCostUsd - a.totals.estimatedCostUsd)
+      })),
+    ].sort((a, b) => b.totals.estimatedCostUsd - a.totals.estimatedCostUsd)
 
     const models: UsageHistoryModel[] = [...modelBuckets.values()]
       .map((bucket) => ({
@@ -581,18 +707,21 @@ export class UsageHistoryService {
       }
     })
 
+    const sourceStates =
+      wanted === undefined
+        ? this.#sources
+        : this.#sources.filter((source) => accountKey(source.provider, source.accountId) === wanted)
     const sourceProviders = new Set<ProviderId>([
-      ...this.#sources.map((source) => source.provider),
+      ...sourceStates.map((source) => source.provider),
       ...providerSessions.keys(),
     ])
     const sources = [...sourceProviders].map((provider) => {
-      const localSource = this.#sources.find((source) => source.provider === provider)
+      // A provider's history is there when any of its accounts' archives is.
+      const archived = sourceStates.some(
+        (source) => source.provider === provider && source.available,
+      )
       const sessionCount = providerSessions.get(provider)?.size ?? 0
-      return {
-        provider,
-        available: (localSource?.available ?? false) || sessionCount > 0,
-        sessionCount,
-      }
+      return { provider, available: archived || sessionCount > 0, sessionCount }
     })
 
     return {
@@ -633,6 +762,7 @@ export async function runUsageHistoryScan(
     const prior = indexed.get(file.path)
     return !(
       prior?.provider === file.provider &&
+      prior.accountId === file.accountId &&
       prior.mtimeMs === file.mtimeMs &&
       prior.size === file.size
     )
@@ -672,6 +802,7 @@ async function parseUsageFile(
   const fingerprint = {
     path: file.path,
     provider: file.provider,
+    ...(file.accountId === undefined ? {} : { accountId: file.accountId }),
     mtimeMs: file.mtimeMs,
     size: file.size,
   }
@@ -682,7 +813,11 @@ async function parseUsageFile(
       appended: false,
     }
   }
-  const checkpoint = prior?.provider === file.provider ? prior.checkpoint : undefined
+  // A file that now belongs to another account is read again in full.
+  const checkpoint =
+    prior?.provider === file.provider && prior.accountId === file.accountId
+      ? prior.checkpoint
+      : undefined
   const read = await file.readFrom(file.path, checkpoint)
   return {
     ...fingerprint,
@@ -887,6 +1022,7 @@ function isCachedUsageFile(value: unknown): value is CachedUsageFile {
     file &&
     typeof file['path'] === 'string' &&
     LOCAL_USAGE_SOURCES.some((source) => source.provider === file['provider']) &&
+    (file['accountId'] === undefined || AccountIdSchema.safeParse(file['accountId']).success) &&
     nonNegativeNumber(file['mtimeMs']) &&
     nonNegativeNumber(file['size']) &&
     Array.isArray(file['entries']) &&
@@ -1024,11 +1160,19 @@ function emptySources(): SourceState[] {
   })
 }
 
+const sourceKey = (source: Pick<SourceState, 'provider' | 'accountId'>) =>
+  `${source.provider}\u0000${source.accountId ?? DEFAULT_ACCOUNT_ID}`
+
+/** Every reported provider's default source, then each other account's, by provider and account. */
 function mergeSources(sources: readonly SourceState[]): SourceState[] {
-  const merged = new Map(emptySources().map((source) => [source.provider, source]))
+  const merged = new Map(emptySources().map((source) => [sourceKey(source), source]))
   for (const source of sources) {
-    const known = merged.get(source.provider)
-    if (known) merged.set(source.provider, { ...known, ...source })
+    if (source.accountId !== undefined && !AccountIdSchema.safeParse(source.accountId).success) {
+      continue
+    }
+    // Another account's archive is one more archive of a provider already listed.
+    const listed = merged.get(sourceKey({ provider: source.provider }))
+    if (listed) merged.set(sourceKey(source), { ...listed, ...source })
   }
   return [...merged.values()]
 }
@@ -1041,50 +1185,62 @@ async function discoverUsageSources(
   roots: readonly UsageSourceRoot[],
 ): Promise<{ files: UsageFile[]; sources: SourceState[] }> {
   const discovered = await Promise.all(
-    roots.flatMap(({ provider, root }) => {
-      const source = LOCAL_USAGE_SOURCES.find((candidate) => candidate.provider === provider)
+    roots.flatMap((root) => {
+      const source = LOCAL_USAGE_SOURCES.find((candidate) => candidate.provider === root.provider)
       return source ? [discoverSource(source, root)] : []
     }),
   )
+  // A file two archives share, as in one folder inside another, counts once:
+  // for the first archive, the default account's before any other.
+  const seen = new Set<string>()
+  const files = discovered
+    .flatMap((source) => source.files)
+    .filter((file) => {
+      const key = process.platform === 'linux' ? file.path : file.path.toLowerCase()
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
   return {
-    files: discovered.flatMap((source) => source.files),
-    sources: mergeSources(
-      discovered.map((source) => ({
-        provider: source.provider,
-        label: source.label,
-        available: source.available,
-      })),
-    ),
+    files,
+    sources: mergeSources(discovered.map(({ files: _files, ...source }) => source)),
   }
 }
 
 async function discoverSource(
   source: UsageHistorySource<ProviderId, LocalUsageRecord>,
-  root: string,
-): Promise<{ provider: ProviderId; label: string; available: boolean; files: UsageFile[] }> {
+  { root, accountId }: UsageSourceRoot,
+): Promise<SourceState & { label: string; files: UsageFile[] }> {
   const { provider, label } = source
+  const account = accountId === undefined ? {} : { accountId }
   try {
     const archive = await source.discover(root)
     return {
       provider,
+      ...account,
       label,
       available: archive.available,
-      files: archive.files.map((file) => ({ ...file, provider })),
+      files: archive.files.map((file) => ({ ...file, provider, ...account })),
     }
   } catch {
-    return { provider, label, available: false, files: [] }
+    return { provider, ...account, label, available: false, files: [] }
   }
 }
 
+/**
+ * Usage from TasteCode's own events, for each provider account without
+ * records of its own in the local archives, which count more.
+ */
 function harnessUsageRecords(
   events: readonly StoredUsageEvent[],
-  richerLocalProviders: ReadonlySet<ProviderId>,
+  richerLocalAccounts: ReadonlyMap<ProviderId, ReadonlySet<AccountId>>,
 ): AttributedUsageRecord[] {
   const records: AttributedUsageRecord[] = []
   const previous = new Map<string, TokenCounts>()
 
   for (const event of events) {
-    if (richerLocalProviders.has(event.provider)) continue
+    const account = event.accountId ?? DEFAULT_ACCOUNT_ID
+    if (richerLocalAccounts.get(event.provider)?.has(account)) continue
     const sessionKey = `${event.provider}:${event.threadId}`
     const current = usageTokenCounts(event.usage)
     const tokens = event.usage.cumulative
@@ -1100,6 +1256,7 @@ function harnessUsageRecords(
     const model = event.usage.model ?? 'Unknown model'
     records.push({
       provider: event.provider,
+      ...(event.accountId === undefined ? {} : { accountId: event.accountId }),
       date: localDateKey(new Date(event.at)),
       model,
       sessionId: event.threadId,

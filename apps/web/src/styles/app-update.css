@@ -44,3 +44,10 @@
 .account-update:disabled {
   opacity: 1;
 }
+
+/* The waiting button's menu lines up with the button and stays inside the
+   narrowest rail, instead of the shared 260px floor reaching past it. */
+.menu.app-update-menu {
+  min-width: 0;
+  width: min(224px, calc(100vw - 16px));
+}

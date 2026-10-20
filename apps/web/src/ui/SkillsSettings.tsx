@@ -13,6 +13,7 @@ import {
   SettingsNotice,
   SettingsPage,
 } from './settings/SettingsLayout.js'
+import '../styles/switch.css'
 
 type Inventory = ResultOf<'skills.list'>
 type Context = { transport: Transport; provider: ProviderId; projectPath: string | undefined }

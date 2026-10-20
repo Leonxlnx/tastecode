@@ -90,6 +90,82 @@ describe('account limits', () => {
     expect(statusOf(screen.getByRole('region', { name: 'Codex' }))).toBeNull()
   })
 
+  it('names each account of a provider shown more than once, and asks for that account', async () => {
+    const onRetry = vi.fn()
+    const onConsumeReset = vi.fn(async () => ({ outcome: 'reset' as const }))
+    const label = (_provider: string, accountId: string | undefined) =>
+      accountId === 'work-1a2b3c' ? 'Work' : 'Personal'
+    const view = render(
+      <AccountLimits
+        states={[
+          {
+            status: 'ready',
+            provider: 'codex',
+            accountId: 'work-1a2b3c',
+            summary: {
+              ...summary(),
+              limitSource: {
+                provider: 'codex',
+                accountId: 'work-1a2b3c',
+                status: 'ready',
+                limits: [resetLimit],
+              },
+            },
+          },
+          {
+            status: 'error',
+            provider: 'codex',
+            message: 'Codex did not answer.',
+          },
+          {
+            status: 'ready',
+            provider: 'grok',
+            summary: summary([{ label: 'Weekly', usedPercent: 10 }]),
+          },
+        ]}
+        accountLabel={label}
+        onRetry={onRetry}
+        onConsumeReset={onConsumeReset}
+      />,
+    )
+
+    const work = screen.getByRole('region', { name: 'Codex · Work' })
+    const personal = screen.getByRole('region', { name: 'Codex · Personal' })
+    // A provider shown once keeps its own name.
+    expect(screen.getByRole('region', { name: 'Grok' })).toBeTruthy()
+
+    fireEvent.click(within(personal).getByRole('button', { name: 'Retry' }))
+    expect(onRetry).toHaveBeenCalledWith('codex')
+    fireEvent.click(within(work).getByRole('button', { name: 'Use rate limit reset' }))
+    fireEvent.click(within(work).getByRole('button', { name: 'Confirm use rate limit reset' }))
+    await waitFor(() =>
+      expect(onConsumeReset).toHaveBeenCalledWith(
+        'codex',
+        expect.any(String),
+        undefined,
+        'work-1a2b3c',
+      ),
+    )
+
+    // A further account shown alone still says whose limits these are.
+    view.rerender(
+      <AccountLimits
+        states={[
+          {
+            status: 'ready',
+            provider: 'codex',
+            accountId: 'work-1a2b3c',
+            summary: summary([{ label: 'Weekly', usedPercent: 50 }]),
+          },
+        ]}
+        accountLabel={label}
+        onRetry={onRetry}
+      />,
+    )
+    expect(screen.getByRole('region', { name: 'Codex · Work' })).toBeTruthy()
+    expect(screen.queryByText(/work-1a2b3c/)).toBeNull()
+  })
+
   it('says once that the limits are on screen and releases that when it closes', () => {
     const release = vi.fn()
     const onShow = vi.fn(() => release)

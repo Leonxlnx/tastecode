@@ -88,11 +88,14 @@ describe('sidebar theme CSS', () => {
     expect(appCss).not.toContain('.sess__source')
   })
 
-  it('hides the time and status when chat row actions are visible', () => {
+  it('hides the time when the row action shows, never a live state', () => {
+    // Only a row with an action (Archive, Restore, Mark as read) gives way; a
+    // spinner or a waiting dot stays visible on hover and focus.
     expect(appCss).toMatch(
-      /@media \(hover: hover\) and \(pointer: fine\) \{[\s\S]*?\.sessrow:hover \.sess__meta \{[^}]*opacity: 0;/s,
+      /@media \(hover: hover\) and \(pointer: fine\) \{[\s\S]*?\.sessrow\.has-action:hover \.sess__meta \{[^}]*opacity: 0;/s,
     )
-    expect(appCss).toMatch(/\.sessrow:focus-within \.sess__meta \{[^}]*opacity: 0;/s)
+    expect(appCss).toMatch(/\.sessrow\.has-action:focus-within \.sess__meta \{[^}]*opacity: 0;/s)
+    expect(appCss).not.toMatch(/\.sessrow:(hover|focus-within) \.sess__meta/)
     expect(appCss).toMatch(
       /\.sess__time \{[^}]*font-size: var\(--t-xs\);[^}]*font-variant-numeric: tabular-nums;/s,
     )
@@ -192,10 +195,25 @@ describe('sidebar theme CSS', () => {
     expect(sidebarSource).not.toContain('IconChevronUp')
   })
 
-  it('uses the light foreground color for unread chat dots', () => {
+  it('marks an unread chat by a heavier title, not a second dot', () => {
+    // A failed or waiting chat already shows a dot in the row's one slot; an
+    // unread dot beside it made two.
+    expect(appCss).toMatch(/\.sessrow\.is-unread \.sess__title \{[^}]*font-weight: 560;/s)
+    expect(appCss).not.toContain('.sess__unread-dot')
+    // Needs you lists only blocked and failed chats, so it has no dot of its own.
+    expect(appCss).not.toContain('.sess__status-dot.is-done')
+  })
+
+  it("lets a band or Archived row's project name give way before its title", () => {
     expect(appCss).toMatch(
-      /\.sess__unread-dot \{[^}]*width: 6px;[^}]*height: 6px;[^}]*background: var\(--light\);/s,
+      /:is\(\.needs-band__row, \.archived__row\) \.sess__title \{[^}]*flex: 0 1 auto;/s,
     )
+    // Only the room the title leaves; cut to a letter or two, it hides.
+    expect(appCss).toMatch(/\.sess__project \{[^}]*flex: 1 1 0;[^}]*container-type: inline-size;/s)
+    expect(appCss).toMatch(
+      /@container \(max-width: 31px\) \{\s*\.sess__project > span \{\s*visibility: hidden;/s,
+    )
+    expect(appCss).toMatch(/\.rail__body\[data-narrow\] \.sess__project \{\s*display: none;/s)
   })
 
   it('uses semantic colors for finished, failed, and waiting threads in both sidebars', () => {
@@ -224,11 +242,7 @@ describe('sidebar theme CSS', () => {
   })
 
   it('keeps unread chat titles on the shared text line', () => {
-    // An inline dot before the title pushed unread titles right of every
-    // other chat title. The dot trails the title inside the row's meta group.
     expect(appCss).toMatch(/\.sess__meta \{[^}]*display: flex;[^}]*flex: none;/s)
-    expect(appCss).toMatch(/\.sess__unread-dot \{[^}]*width: 6px;[^}]*flex: none;/s)
-    expect(appCss).not.toMatch(/\.sess__unread-dot \{[^}]*position: absolute/s)
   })
 
   it('gives project rows a consistent readable rhythm', () => {

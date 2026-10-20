@@ -11,6 +11,7 @@ import type {
   Model,
   ProviderId,
 } from '@harness/contracts'
+import { AccountNotFoundError, type AccountDirectory } from './account-directory.js'
 import type { AgentSession, ProviderRuntime } from './adapters.js'
 import { CustomHarnessStore } from './custom-harnesses.js'
 import { Store } from './store.js'
@@ -152,6 +153,7 @@ const active: Array<{ orchestrator: InstanceType<typeof Orchestrator>; store: St
 function harness(
   preference: BackgroundModelPreference = { mode: 'automatic' },
   failure?: (provider: ProviderId, agent: string | undefined) => Error | 'turn' | undefined,
+  accounts?: AccountDirectory,
 ) {
   const root = mkdtempSync(path.join(os.tmpdir(), 'tastecode-background-sources-'))
   roots.push(root)
@@ -159,10 +161,20 @@ function harness(
     provider: ProviderId
     model: string | undefined
     agent?: string | undefined
+    accountHome?: string
   }> = []
-  const runtimeFor = (provider: ProviderId): ProviderRuntime => ({
+  const runtimeFor = (
+    provider: ProviderId,
+    _onLog: (line: string) => void,
+    accountHome?: string,
+  ): ProviderRuntime => ({
     async start(workspacePath, options) {
-      started.push({ provider, model: options.model, agent: options.agent })
+      started.push({
+        provider,
+        model: options.model,
+        agent: options.agent,
+        ...(accountHome ? { accountHome } : {}),
+      })
       return {
         thread: { id: 'background-thread', provider, workspacePath, createdAt: 0 },
         session: new TitleSession(failure?.(provider, options.agent)),
@@ -183,13 +195,20 @@ function harness(
     runtimeFor,
     customHarnesses,
     worktreeRoot: path.join(root, 'worktrees'),
+    ...(accounts ? { accounts } : {}),
   })
   active.push({ orchestrator, store })
   let titles = 0
-  const title = async () => {
+  const title = async (chat: { provider?: ProviderId; accountId?: string } = {}) => {
     titles += 1
     const threadId = `thread-${titles}`
-    store.addThread({ id: threadId, projectPath: root, provider: 'codex', title: 'New chat' })
+    store.addThread({
+      id: threadId,
+      projectPath: root,
+      provider: chat.provider ?? 'codex',
+      ...(chat.accountId ? { accountId: chat.accountId } : {}),
+      title: 'New chat',
+    })
     return orchestrator.generateBackgroundTitle(threadId, 'Fix the queue order', 'New chat')
   }
   return { orchestrator, store, customHarnesses, started, title }
@@ -556,5 +575,81 @@ describe('background title source discovery', () => {
       'account:grok',
       'models:grok',
     ])
+  })
+})
+
+describe('background writing for a chat on another account', () => {
+  let workHome = ''
+  const accounts: AccountDirectory = {
+    home: (provider, accountId) => {
+      if (accountId === undefined || accountId === 'default') return undefined
+      if (provider === 'codex' && accountId === 'work') return workHome
+      throw new AccountNotFoundError()
+    },
+    active: () => 'default',
+  }
+
+  beforeEach(() => {
+    signIn('claude-code', [model('claude-haiku-4-5')])
+    signIn('codex', [model('gpt-5.6-luna')], { plan: 'Pro' })
+    signIn('grok', [model('grok-4.6')])
+    workHome = mkdtempSync(path.join(os.tmpdir(), 'tastecode-background-work-'))
+    roots.push(workHome)
+  })
+
+  it("writes a Work chat's title through the Work account", async () => {
+    const { title, started } = harness({ mode: 'automatic' }, undefined, accounts)
+
+    await expect(title({ accountId: 'work' })).resolves.toEqual({
+      title: 'Generated title',
+      applied: true,
+    })
+    await title()
+
+    expect(started).toEqual([
+      { provider: 'codex', model: 'gpt-5.6-luna', accountHome: workHome },
+      { provider: 'codex', model: 'gpt-5.6-luna' },
+    ])
+  })
+
+  it("drafts a Work chat's commit message through the Work account", async () => {
+    const { orchestrator, store, started } = harness({ mode: 'automatic' }, undefined, accounts)
+    store.addThread({
+      id: 'work-chat',
+      projectPath: os.tmpdir(),
+      provider: 'codex',
+      accountId: 'work',
+      title: 'Queue',
+    })
+    const diff = {
+      threadId: 'workspace',
+      version: 'tree',
+      files: [{ path: 'src/queue.ts', status: 'modified' as const, binary: false, hunks: [] }],
+    }
+
+    await orchestrator.generateBackgroundCommitMessage(diff, 'work-chat')
+    // The project's own checkout names no chat, so it stays on the default account.
+    await orchestrator.generateBackgroundCommitMessage(diff)
+
+    expect(started).toEqual([
+      { provider: 'codex', model: 'gpt-5.6-luna', accountHome: workHome },
+      { provider: 'codex', model: 'gpt-5.6-luna' },
+    ])
+  })
+
+  it("keeps another provider's source on that provider's own sign-in", async () => {
+    signIn('codex', [model('gpt-5.6-luna')], { plan: 'API key' })
+    const { title, started } = harness({ mode: 'automatic' }, undefined, accounts)
+
+    await title({ accountId: 'work' })
+
+    expect(started).toEqual([{ provider: 'grok', model: 'grok-4.6' }])
+  })
+
+  it('refuses rather than writing through the default account once the account is removed', async () => {
+    const { title, started } = harness({ mode: 'automatic' }, undefined, accounts)
+
+    await expect(title({ accountId: 'gone' })).rejects.toThrow('The account this chat ran on')
+    expect(started).toEqual([])
   })
 })

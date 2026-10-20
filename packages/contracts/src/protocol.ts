@@ -1579,6 +1579,11 @@ export const methods = {
               connectionId: z.string().min(1).optional(),
               /** The provider account this chat is pinned to. Absent means default. */
               accountId: z.string().min(1).optional(),
+              /**
+               * The earlier chat this one carries on (`thread.start`'s
+               * `continueFrom`), so the earlier chat can link to it.
+               */
+              continuedFrom: z.string().min(1).optional(),
               createdAt: z.number(),
               /** True while the agent is actively working on a turn. */
               running: z.boolean(),

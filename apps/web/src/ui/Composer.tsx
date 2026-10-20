@@ -55,6 +55,7 @@ import {
   type ComposerResourcePickerHandle,
   type ComposerResourceTrigger,
 } from './composer-resource.js'
+import { ComposerAccountChip } from './ComposerAccountChip.js'
 import { Menu, MenuItem } from './Menu.js'
 import { IconMorph } from './IconMorph.js'
 import { LazyMediaViewer as MediaViewer, preloadMediaViewer } from './LazyMediaViewer.js'
@@ -505,6 +506,12 @@ function ComposerComponent(props: {
   newSession: boolean
   isolate: boolean
   designMode: boolean
+  /**
+   * A new chat whose provider can run as more than one account: the provider
+   * whose accounts the account chip offers. Absent for an existing chat, which
+   * stays on the account it started on.
+   */
+  accountProvider?: ProviderId | undefined
   keybindings?: Keybindings | undefined
   focusRequest: number
   draftRequest?:
@@ -581,6 +588,7 @@ function ComposerComponent(props: {
   const [voiceState, setVoiceState] = useState<ComposerVoiceState>('idle')
   const [voiceError, setVoiceError] = useComposerError()
   const [queueError, setQueueError] = useComposerError()
+  const [accountError, setAccountError] = useComposerError()
   const editingQueue = useRef(new Set<string>())
   const [dragging, setDragging] = useState(false)
   const [draggedQueueId, setDraggedQueueId] = useState<string>()
@@ -1521,6 +1529,8 @@ function ComposerComponent(props: {
     unsupportedAttachmentIssue ?? attachmentError,
     voiceError,
     queueError,
+    // Only while the choice is on screen: an open chat keeps its own account.
+    props.accountProvider ? accountError : undefined,
   ].filter((error): error is ComposerError => error !== undefined)
 
   const selectResource = (resource: ComposerResource) => {
@@ -2197,6 +2207,14 @@ function ComposerComponent(props: {
                           <span>Design</span>
                         </button>
                       </DesignBeam>
+
+                      {props.accountProvider ? (
+                        <ComposerAccountChip
+                          transport={props.transport}
+                          provider={props.accountProvider}
+                          onError={setAccountError}
+                        />
+                      ) : null}
                     </div>
                   </div>
                 </div>
