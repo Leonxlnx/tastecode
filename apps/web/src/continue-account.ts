@@ -5,6 +5,7 @@ import {
   type ProviderAccount,
   type ProviderId,
   type ProviderLimit,
+  type ResultOf,
 } from '@harness/contracts'
 import { accountsOf, type ProviderAccountsSnapshot } from './provider-accounts-state.js'
 import { sameAccount, type UsageSummaryState } from './usage-summary-state.js'
@@ -75,6 +76,23 @@ export function continuedIn<Session extends ContinuedSession>(
     }
   }
   return newest
+}
+
+/** Where the uncommitted changes of the chat a new one continues went (`thread.start`). */
+export type EarlierChanges = NonNullable<ResultOf<'thread.start'>['earlierChanges']>
+
+/** The note a chat shows until its first message, when it continues another chat. */
+export function continuationNote(
+  title: string,
+  account: string,
+  changes: EarlierChanges | undefined,
+): string {
+  const note = `Continues “${title}” on ${account}. Its conversation goes with your first message`
+  if (changes === undefined) return `${note}.`
+  if (changes.carried) {
+    return `${note}, and its uncommitted changes are already in this chat's checkout.`
+  }
+  return `${note}. Its uncommitted changes could not be carried over; they are still in ${changes.keptIn}.`
 }
 
 /** The user's last request in a chat, offered again where the chat continues. */
