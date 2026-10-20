@@ -975,17 +975,23 @@ export function startServer(
       }
 
       case 'acp.agents': {
-        const agents = await (await import('@harness/adapter-acp/agents')).detectAgents()
+        const { acpCanSignOut, detectAgents } = await import('@harness/adapter-acp/agents')
+        const agents = await detectAgents()
         return {
-          agents: agents.map(({ id, name, installed, verified, install, setup, problem }) => ({
-            id,
-            name,
-            installed,
-            verified,
-            setup,
-            ...(!(install === undefined) ? { install } : {}),
-            ...(!(problem === undefined) ? { problem } : {}),
-          })),
+          agents: agents.map((agent) => {
+            const { id, name, installed, verified, install, setup, problem, maker } = agent
+            return {
+              id,
+              name,
+              installed,
+              verified,
+              setup,
+              signOut: acpCanSignOut(agent),
+              ...(!(install === undefined) ? { install } : {}),
+              ...(!(problem === undefined) ? { problem } : {}),
+              ...(!(maker === undefined) ? { maker } : {}),
+            }
+          }),
         }
       }
 

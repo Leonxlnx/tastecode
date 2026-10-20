@@ -302,8 +302,9 @@ export async function installCommandFor(
  * The interactive sign-in command for a provider whose login lives in its own
  * CLI (`setup.login === 'provider'`). Same boundary as `installCommandFor`:
  * the renderer names a target and the command comes from these tables only.
- * ACP agents sign in inside their ordinary interactive CLI, so the launch is
- * the bare binary; direct providers name an explicit login command.
+ * An ACP agent signs in through its own login command where it has one, and
+ * otherwise inside its ordinary interactive CLI, so the launch is the bare
+ * binary; direct providers name an explicit login command.
  */
 export async function launchCommandFor(
   provider: ProviderStatus['id'],
@@ -316,7 +317,7 @@ export async function launchCommandFor(
     if (spec.setup.login !== 'provider') {
       throw new Error(`${spec.name} signs in through the app, not its own CLI`)
     }
-    return spec.command
+    return [spec.command, ...(spec.loginArgs ?? [])].join(' ')
   }
   const entry = PROBES.find((candidate) => candidate.id === provider)
   if (!entry) throw new Error(`unknown launch target: ${provider}`)

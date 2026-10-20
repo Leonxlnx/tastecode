@@ -423,6 +423,10 @@ describe('sign-in launch command resolution', () => {
     await expect(launchCommandFor('acp', 'gemini')).resolves.toBe('gemini')
     await expect(launchCommandFor('acp', 'kimi')).resolves.toBe('kimi')
     await expect(launchCommandFor('acp', 'qwen')).resolves.toBe('qwen')
+    // An agent with a login command of its own signs in through it.
+    await expect(launchCommandFor('acp', 'devin')).resolves.toBe('devin auth login')
+    await expect(launchCommandFor('acp', 'vibe')).resolves.toBe('vibe-acp --setup')
+    await expect(launchCommandFor('acp', 'droid')).resolves.toBe('droid')
   })
 
   it('refuses unknown launch targets', async () => {
