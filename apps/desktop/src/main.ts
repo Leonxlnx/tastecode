@@ -298,11 +298,17 @@ const chatNotifier = new ChatNotifier({
   show: showChatNotification,
   setBadge: setAttentionBadge,
   openChat: (chatId) => {
-    showMainWindow()
     const window = mainWindow
-    if (window && !window.isDestroyed()) window.webContents.send('harness:openChat', chatId)
+    const ready = window && !window.isDestroyed() && !window.webContents.isLoading()
+    showMainWindow()
+    // A window that is created or still loading (macOS keeps running without one)
+    // gets the chat with its page's first report, once the page listens.
+    if (ready) window.webContents.send('harness:openChat', chatId)
+    else chatToOpen = chatId
   },
 })
+/** A clicked chat waiting for the page to load. */
+let chatToOpen: string | undefined
 
 // No sound or urgency of our own: the OS decides how a notification sounds
 // and holds it back while do-not-disturb or Focus Assist is on.
@@ -817,6 +823,10 @@ ipcMain.on('harness:menuReady', (event) => {
 ipcMain.on('harness:chatAttention', (event, report: unknown) => {
   if (!isOwnRenderer(event.sender) || event.sender !== mainWindow?.webContents) return
   chatNotifier.report(report)
+  if (chatToOpen) {
+    event.sender.send('harness:openChat', chatToOpen)
+    chatToOpen = undefined
+  }
 })
 
 ipcMain.on('harness:suspendMenuShortcuts', (event, suspended: unknown) => {
