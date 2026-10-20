@@ -74,6 +74,7 @@ import { REPLY_STYLE_INSTRUCTIONS } from './reply-style.js'
 import { LOCAL_SKILL_CAPABILITIES, listLocalSkills, mergeSkills } from './skill-inventory.js'
 import type { ProviderAccountSnapshotKind, Store, StoredCheckpoint } from './store.js'
 import {
+  carryUncommittedChanges,
   createWorktree,
   hasUncommittedChanges,
   pruneWorktrees,
@@ -128,7 +129,11 @@ import { TerminalManager } from './terminal.js'
 import { insideSkillFolder, installLocalSkill, sameSkillFolder } from './skill-install.js'
 import type { RunningPreview } from './design-preview-runner.js'
 import { assertPublicWorkspaceFile, existingWorkspacePath } from './api-workspace-paths.js'
-import { continuationPromptFromReplay, sideChatInstructionsFromReplay } from './side-chat.js'
+import {
+  continuationPromptFromReplay,
+  type EarlierChanges,
+  sideChatInstructionsFromReplay,
+} from './side-chat.js'
 import { IDLE_THREAD_RUNTIME_MS, idleThreadRuntimeLimit } from './runtime-retention.js'
 import {
   cleanGeneratedCommitMessage,
@@ -1856,6 +1861,40 @@ export class Orchestrator {
     }
   }
 
+  /**
+   * A chat that continues an isolated one gets a checkout of its own, made from
+   * the earlier chat's branch; two chats never share one. Whatever the earlier
+   * chat had not committed is copied into it, and the earlier checkout is only
+   * read. Undefined when there was nothing to carry.
+   */
+  async #carryEarlierChanges(
+    earlierId: string,
+    worktree: Worktree,
+  ): Promise<'carried' | 'kept' | undefined> {
+    const earlier = this.#store.thread(earlierId)?.worktreePath
+    if (earlier === undefined) return undefined
+    let result
+    try {
+      result = await carryUncommittedChanges(privateCheckoutPath(earlier), worktree)
+    } catch (error) {
+      result = { carried: false, reason: errorMessage(error) } as const
+    }
+    if (result === undefined) return undefined
+    if (result.carried) return 'carried'
+    this.#onLog(`[continue] uncommitted changes stay in ${earlier}: ${result.reason}`)
+    return 'kept'
+  }
+
+  /** What a continued chat's first prompt says about the earlier chat's uncommitted changes. */
+  #earlierChanges(threadId: string): EarlierChanges | undefined {
+    const thread = this.#store.thread(threadId)
+    if (thread?.continuedChanges === 'carried') return { carried: true }
+    if (thread?.continuedChanges !== 'kept' || thread.continuedFrom === undefined) return undefined
+    const keptIn = this.#store.thread(thread.continuedFrom)?.worktreePath
+    // A checkout discarded since holds nothing any more, so the prompt names none.
+    return keptIn !== undefined && existsSync(keptIn) ? { carried: false, keptIn } : undefined
+  }
+
   async switchBranch(workspacePath: string, branch: string) {
     const resolved = resolveWorkspacePath(workspacePath)
     return this.#checkoutAccess.exclusive(resolved, () => switchWorkspaceBranch(resolved, branch))
@@ -1902,6 +1941,10 @@ export class Orchestrator {
     const worktree = options.isolate
       ? await createWorktree(resolvedWorkspacePath, threadId, this.#worktreeRoot, options.baseRef)
       : undefined
+    const continuedChanges =
+      worktree && continueFrom !== undefined
+        ? await this.#carryEarlierChanges(continueFrom, worktree)
+        : undefined
     const directory = worktree?.workPath ?? worktree?.path ?? resolvedWorkspacePath
     if (cancelled()) {
       if (worktree) await removeWorktree(worktree, true)
@@ -1950,6 +1993,7 @@ export class Orchestrator {
           : {}),
         ...(thread.accountId ? { accountId: thread.accountId } : {}),
         ...(continueFrom === undefined ? {} : { continuedFrom: continueFrom }),
+        ...(continuedChanges === undefined ? {} : { continuedChanges }),
         title: 'New session',
         createdAt: thread.createdAt,
         ...(worktree
@@ -3517,7 +3561,13 @@ export class Orchestrator {
   async #promptWithEarlierChat(threadId: string, prompt: string): Promise<string> {
     const earlierId = this.#store.thread(threadId)?.continuedFrom
     if (earlierId === undefined || !this.#store.thread(earlierId)) return prompt
-    return continuationPromptFromReplay(await this.history(earlierId), prompt) ?? prompt
+    return (
+      continuationPromptFromReplay(
+        await this.history(earlierId),
+        prompt,
+        this.#earlierChanges(threadId),
+      ) ?? prompt
+    )
   }
 
   #promptAfterRestore(threadId: string, prompt: string): string {
