@@ -186,16 +186,17 @@ describe('account limits', () => {
             provider: 'claude-code',
             accountId: 'personal-1a2b3c',
             summary: summary([
-              { label: 'Session', usedPercent: 100 },
-              { label: 'Weekly', usedPercent: 98 },
+              { label: 'Session', usedPercent: 100, windowMinutes: 300 },
+              { label: 'Weekly', usedPercent: 98, windowMinutes: 10_080 },
             ]),
           },
           {
             status: 'ready',
             provider: 'claude-code',
             summary: summary([
-              { label: 'Session', usedPercent: 73 },
-              { label: 'Fable weekly', usedPercent: 0 },
+              { label: 'Session', usedPercent: 73, windowMinutes: 300 },
+              { label: 'Weekly', usedPercent: 40, windowMinutes: 10_080 },
+              { label: 'Fable weekly', usedPercent: 0, windowMinutes: 10_080 },
             ]),
           },
         ]}
@@ -210,10 +211,12 @@ describe('account limits', () => {
     expect(within(personalLimits).getByText('0% left')).toBeTruthy()
     expect(within(personalLimits).getByText('2% left')).toBeTruthy()
 
-    // Closed, an account shows its tightest limit: Session here, not Fable weekly.
-    const other = screen.getByRole('button', { name: 'Default, Session 27% left' })
+    // Closed, an account shows each window once: Session and Weekly, not Fable weekly.
+    const other = screen.getByRole('button', {
+      name: 'Default, Session 27% left, Weekly 60% left',
+    })
     expect(other.getAttribute('aria-expanded')).toBe('false')
-    expect(other.textContent).toBe('Default27% left')
+    expect(other.textContent).toBe('DefaultSession27%Weekly60%')
     expect(screen.queryByRole('region', { name: 'Claude Code · Default' })).toBeNull()
     fireEvent.click(other)
     const defaultLimits = screen.getByRole('region', { name: 'Claude Code · Default' })
@@ -222,7 +225,9 @@ describe('account limits', () => {
     // Either can close again, leaving its own figure on its line.
     fireEvent.click(personal)
     expect(screen.queryByRole('region', { name: 'Claude Code · Personal' })).toBeNull()
-    expect(screen.getByRole('button', { name: 'Personal, Session 0% left' })).toBeTruthy()
+    expect(
+      screen.getByRole('button', { name: 'Personal, Session 0% left, Weekly 2% left' }),
+    ).toBeTruthy()
   })
 
   it('says once that the limits are on screen and releases that when it closes', () => {

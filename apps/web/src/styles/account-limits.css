@@ -346,8 +346,9 @@
 /* A provider with several accounts: a line per account that opens to its
    limits. The chevron hangs where the provider's mark sits, so account names
    start on the provider name's edge and an open account's limits sit under
-   its name. A closed line carries the share left of its tightest limit on a
-   short gauge of the same red-to-green scale as the full bars. */
+   its name. A closed line carries what is left of each window, Session and
+   Weekly, under its name: a row each, on short gauges of the same red-to-green
+   scale as the full bars, set in columns so the gauges line up. */
 .account-menu__account {
   display: grid;
   gap: 8px;
@@ -360,6 +361,11 @@
   gap: 6px;
   min-width: 0;
   min-height: 18px;
+}
+
+/* Retry stays level with the name when the windows add rows under it. */
+.account-menu__account-head:has(.account-menu__account-glance) {
+  align-items: flex-start;
 }
 
 .account-menu__account-line {
@@ -382,6 +388,9 @@
 }
 
 button.account-menu__account-line {
+  /* The windows wrap onto their own rows under the name. */
+  flex-wrap: wrap;
+  row-gap: 4px;
   padding-left: 5px;
   cursor: pointer;
   transition:
@@ -434,28 +443,48 @@ button.account-menu__account-line:focus-visible {
 }
 
 .account-menu__account-glance {
-  display: flex;
-  flex: none;
+  display: grid;
+  flex-basis: 100%;
+  /* Room for "100%", so the gauges line up from one account to the next. */
+  grid-template-columns: minmax(0, 1fr) 36px minmax(2.7em, auto);
   align-items: center;
-  gap: 7px;
-  margin-left: auto;
+  gap: 3px 8px;
+  min-width: 0;
+  /* Under the name, past the chevron's column. */
+  padding-left: 19px;
+}
+
+.account-menu__account-label {
+  grid-column: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-3);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-menu__account-value {
+  grid-column: 3;
+  justify-self: end;
   color: var(--text);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 
-.account-menu__account-glance[data-gauge] {
-  --limit-fill: var(--left);
-  animation: account-limit-fill 820ms var(--ease-overshoot) both;
-  animation-delay: 80ms;
-  transition: --limit-fill var(--dur-slow) var(--ease-out);
+/* A count or balance has no gauge and takes its column too. */
+.account-menu__account-value.is-text {
+  grid-column: 2 / -1;
 }
 
 .account-menu__account-gauge {
-  width: 36px;
+  --limit-fill: var(--left);
+  grid-column: 2;
   height: 4px;
   border-radius: var(--r-pill);
   background: color-mix(in srgb, var(--text) 9%, transparent);
+  animation: account-limit-fill 820ms var(--ease-overshoot) both;
+  animation-delay: calc(80ms + var(--order) * 70ms);
+  transition: --limit-fill var(--dur-slow) var(--ease-out);
 }
 
 .account-menu__account-gauge > span {
@@ -479,7 +508,7 @@ button.account-menu__account-line:focus-visible {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .account-menu__account-glance[data-gauge] {
+  .account-menu__account-gauge {
     animation: none;
     transition: none;
   }

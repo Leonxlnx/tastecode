@@ -5130,7 +5130,7 @@ describe('new chats', () => {
       within(screen.getByRole('group', { name: 'Codex' }))
         .getAllByRole('button')
         .map((line) => line.textContent),
-    ).toEqual(['Work', 'Personal75% left'])
+    ).toEqual(['Work', 'Personal5 hours75%'])
     await waitFor(() =>
       expect(transport.request).toHaveBeenCalledWith('usage.summary', {
         provider: 'codex',

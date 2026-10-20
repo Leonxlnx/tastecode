@@ -1,4 +1,12 @@
-import { type CSSProperties, type ReactNode, useId, useLayoutEffect, useRef, useState } from 'react'
+import {
+  type CSSProperties,
+  Fragment,
+  type ReactNode,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react'
 import {
   DEFAULT_ACCOUNT_ID,
   type AccountId,
@@ -141,8 +149,8 @@ export function AccountLimits(props: {
 /**
  * A provider with several accounts: its name once, then a line per account that
  * opens to that account's full limits. A closed line shows how much is left of
- * the limit that runs out first, as the account card does, so the account with
- * room shows at a glance. The account new chats start on is open to begin with.
+ * each window, Session and Weekly under its name, so the account with room
+ * shows at a glance. The account new chats start on is open to begin with.
  */
 function ProviderAccountLimits(props: {
   provider: ProviderId
@@ -202,9 +210,10 @@ function AccountLine(props: {
   const bodyId = useId()
   const { limits, status, retryable } = sourceView(props.state, props.now)
   const name = `${props.provider} · ${props.account}`
-  const first = firstToRunOut(limits)
-  const left = first && first.valueLabel === undefined ? remaining(first) : undefined
-  const glance = first ? `${first.label} ${first.valueLabel ?? `${left}% left`}` : undefined
+  const glanced = glanceLimits(limits)
+  const glance = glanced
+    .map((limit) => `${limit.label} ${limit.valueLabel ?? `${remaining(limit)}% left`}`)
+    .join(', ')
   const retry = retryable ? (
     <button
       className="account-menu__retry"
@@ -216,7 +225,7 @@ function AccountLine(props: {
     </button>
   ) : null
   // Without limits there is nothing to open: the line says why.
-  if (!first) {
+  if (glanced.length === 0) {
     return (
       <div className="account-menu__account-head">
         <span className="account-menu__account-line" title={status?.detail}>
@@ -246,17 +255,27 @@ function AccountLine(props: {
               <span className="account-menu__account-status">{status.label}</span>
             ) : null
           ) : (
-            <span
-              className="account-menu__account-glance"
-              data-gauge={left === undefined ? undefined : ''}
-              style={left === undefined ? undefined : ({ '--left': left / 100 } as CSSProperties)}
-            >
-              {left === undefined ? null : (
-                <span className="account-menu__account-gauge">
-                  <span />
-                </span>
-              )}
-              {first.valueLabel ?? `${left}% left`}
+            <span className="account-menu__account-glance">
+              {glanced.map((limit, index) => (
+                <Fragment key={`${limit.label}:${index}`}>
+                  <span className="account-menu__account-label">{limit.label}</span>
+                  {limit.valueLabel === undefined ? (
+                    <span
+                      className="account-menu__account-gauge"
+                      style={
+                        { '--left': remaining(limit) / 100, '--order': index } as CSSProperties
+                      }
+                    >
+                      <span />
+                    </span>
+                  ) : null}
+                  <span
+                    className={`account-menu__account-value${limit.valueLabel === undefined ? '' : ' is-text'}`}
+                  >
+                    {limit.valueLabel ?? `${remaining(limit)}%`}
+                  </span>
+                </Fragment>
+              ))}
             </span>
           )}
         </button>
@@ -286,11 +305,23 @@ function accountOf(state: AccountLimitsState): AccountId {
   return state.accountId ?? DEFAULT_ACCOUNT_ID
 }
 
-/** The limit with the least left, or the first one when none is a share. */
-function firstToRunOut(limits: readonly Limit[]): Limit | undefined {
+/**
+ * What a closed account line shows: the first share of each window length, in
+ * the order reported, so Session and Weekly rather than a model's own weekly
+ * limit; two at most, to fit the line. Without shares, the first limit.
+ */
+function glanceLimits(limits: readonly Limit[]): Limit[] {
   const shares = limits.filter((limit) => limit.valueLabel === undefined)
-  if (shares.length === 0) return limits[0]
-  return shares.reduce((least, limit) => (remaining(limit) < remaining(least) ? limit : least))
+  if (shares.length === 0) return limits.slice(0, 1)
+  const windows = new Set<number>()
+  return shares
+    .filter((limit) => {
+      if (limit.windowMinutes === undefined) return true
+      if (windows.has(limit.windowMinutes)) return false
+      windows.add(limit.windowMinutes)
+      return true
+    })
+    .slice(0, 2)
 }
 
 function further(state: AccountLimitsState): boolean {
