@@ -57,7 +57,7 @@ export function handoverBudget({
 /**
  * The first prompt a chat sends after it moved to another provider: the
  * conversation so far as context, what the work looks like now, and the
- * user's request. It goes into the prompt rather than the session
+ * user's request; just the request when the chat has no conversation yet. It goes into the prompt rather than the session
  * instructions so it stays part of the provider's own session after a resume.
  *
  * `conversations` run oldest first: any chats this one continued, then its own
@@ -106,6 +106,8 @@ export function handoverPrompt({
     stepBudget: Math.floor(budget * STEP_SHARE),
     ...(keepAttachment ? { keepAttachment } : {}),
   })
+  // Where the chat moved is no conversation; without one there is nothing to hand over.
+  if (entries.every((entry) => entry.kind === 'moved')) return request
   return (
     [
       `${HANDOVER_CONTEXT_NOTICE}You take over in the same workspace, so its files already hold the earlier agents' work.`,

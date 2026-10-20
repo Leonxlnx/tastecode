@@ -214,6 +214,18 @@ describe('handover prompt', () => {
     expect(entries.at(-1)).toEqual({ kind: 'message', role: 'assistant', text: 'Green' })
   })
 
+  it('sends the request alone when there is no conversation to hand over', () => {
+    expect(handoverPrompt({ conversations: [[]], request: 'Start', budget: 64_000 })).toBe('Start')
+    expect(
+      handoverPrompt({
+        conversations: [[moved]],
+        request: 'Start',
+        budget: 64_000,
+        workspace: { branch: 'main', changes: ['M a.ts'], more: 0 },
+      }),
+    ).toBe('Start')
+  })
+
   it('puts the chats this one continued first', () => {
     const prompt = handoverPrompt({
       conversations: [
