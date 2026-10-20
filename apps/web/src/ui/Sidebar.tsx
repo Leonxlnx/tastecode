@@ -240,6 +240,8 @@ function SidebarComponent(props: {
   usageCardStates?: AccountLimitsState[] | undefined
   /** Names a provider account in the popup's plan limits. */
   accountLabel?: AccountLabel | undefined
+  /** The account a new chat with each provider starts on, marked in the plan limits. */
+  activeAccount?: ((provider: ProviderId) => AccountId) | undefined
   /** The account popup shows plan limits; returns the release for when it closes. */
   onShowUsage?: (() => () => void) | undefined
   onRetryUsage?: ((provider: ProviderId, accountId?: AccountId) => void) | undefined
@@ -1010,6 +1012,7 @@ function SidebarComponent(props: {
                         <RenderedAccountLimits
                           states={props.usageStates}
                           accountLabel={props.accountLabel}
+                          activeAccount={props.activeAccount}
                           onShow={props.onShowUsage}
                           onRetry={props.onRetryUsage ?? noop}
                           onConsumeReset={props.onConsumeReset}

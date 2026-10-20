@@ -3440,6 +3440,10 @@ export function App() {
       accountLabelOf(providerAccounts, requestedProvider, accountId),
     [providerAccounts],
   )
+  const activeAccount = useCallback(
+    (requestedProvider: ProviderId) => activeAccountOf(providerAccounts, requestedProvider),
+    [providerAccounts],
+  )
 
   // First load, plus the one-time handover from localStorage. Anything found
   // there stays recoverable until the server acknowledges that project.
@@ -6575,6 +6579,7 @@ export function App() {
           usageStates={usageState}
           usageCardStates={cardUsageState}
           accountLabel={accountLabel}
+          activeAccount={activeAccount}
           onShowUsage={showUsage}
           onRetryUsage={retryUsage}
           onConsumeReset={consumeReset}

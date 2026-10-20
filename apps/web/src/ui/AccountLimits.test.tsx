@@ -129,15 +129,21 @@ describe('account limits', () => {
       />,
     )
 
-    const work = screen.getByRole('region', { name: 'Codex · Work' })
-    const personal = screen.getByRole('region', { name: 'Codex · Personal' })
+    // Two accounts of one provider sit side by side in one table under its name.
+    const codex = screen.getByRole('group', { name: 'Codex' })
+    const table = within(codex).getByRole('table', { name: 'Codex plan limits' })
+    expect(
+      within(table)
+        .getAllByRole('rowheader')
+        .map((header) => header.textContent),
+    ).toEqual(['Work', 'Personal, where new chats start'])
     // A provider shown once keeps its own name.
     expect(screen.getByRole('region', { name: 'Grok' })).toBeTruthy()
 
-    fireEvent.click(within(personal).getByRole('button', { name: 'Retry' }))
+    fireEvent.click(within(table).getByRole('button', { name: 'Retry Personal' }))
     expect(onRetry).toHaveBeenCalledWith('codex')
-    fireEvent.click(within(work).getByRole('button', { name: 'Use rate limit reset' }))
-    fireEvent.click(within(work).getByRole('button', { name: 'Confirm use rate limit reset' }))
+    fireEvent.click(within(codex).getByRole('button', { name: 'Use rate limit reset' }))
+    fireEvent.click(within(codex).getByRole('button', { name: 'Confirm use rate limit reset' }))
     await waitFor(() =>
       expect(onConsumeReset).toHaveBeenCalledWith(
         'codex',
@@ -164,6 +170,58 @@ describe('account limits', () => {
     )
     expect(screen.getByRole('region', { name: 'Codex · Work' })).toBeTruthy()
     expect(screen.queryByText(/work-1a2b3c/)).toBeNull()
+  })
+
+  it('compares accounts by what each has left, and says when a spent one comes back', () => {
+    const now = Date.now()
+    const hour = 3_600_000
+    render(
+      <AccountLimits
+        states={[
+          {
+            status: 'ready',
+            provider: 'claude-code',
+            accountId: 'personal-1a2b3c',
+            summary: summary([
+              { label: 'Session', usedPercent: 100, resetsAt: now + 3 * hour },
+              { label: 'Weekly', usedPercent: 98 },
+            ]),
+          },
+          {
+            status: 'ready',
+            provider: 'claude-code',
+            summary: summary([
+              { label: 'Session', usedPercent: 73 },
+              { label: 'Fable weekly', usedPercent: 0 },
+            ]),
+          },
+        ]}
+        accountLabel={(_provider, accountId) => (accountId ? 'Personal' : 'Default')}
+        activeAccount={() => 'personal-1a2b3c'}
+        onRetry={() => {}}
+      />,
+    )
+    const table = screen.getByRole('table', { name: 'Claude Code plan limits' })
+    // A column for every limit any account reports, in the order they first appear.
+    expect(
+      within(table)
+        .getAllByRole('columnheader')
+        .map((header) => header.textContent),
+    ).toEqual(["Account, and each limit's % left", 'Session', 'Weekly', 'Fable weekly'])
+    const cells = within(table)
+      .getAllByRole('cell')
+      .map((cell) => cell.textContent)
+    expect(cells).toEqual(['0%', '2%', '—', '27%', '—', '100%'])
+    expect(
+      within(table).getByRole('progressbar', { name: 'Claude Code · Personal Session left' }),
+    ).toBeTruthy()
+    // The account that ran out of a limit says, under its row, when that comes back.
+    expect(table.textContent).toMatch(/Session back /)
+    expect(
+      within(table)
+        .getAllByRole('rowheader')
+        .map((header) => header.textContent),
+    ).toEqual(['Personal, where new chats start', 'Default'])
   })
 
   it('says once that the limits are on screen and releases that when it closes', () => {

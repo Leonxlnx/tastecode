@@ -5437,22 +5437,24 @@ describe('new chats', () => {
     expect(screen.queryByText('75% left')).toBeNull()
 
     fireEvent.click(screen.getByRole('button', { name: 'Account' }))
-    const personal = await screen.findByRole('region', { name: 'Codex · Personal' })
-    const work = screen.getByRole('region', { name: 'Codex · Work' })
-    expect(within(work).getByText('40% left')).toBeTruthy()
-    expect(await within(personal).findByText('75% left')).toBeTruthy()
+    // The accounts share one table, the active one first and marked.
+    const table = await screen.findByRole('table', { name: 'Codex plan limits' })
+    expect(within(table).getByRole('columnheader', { name: '5 hours' })).toBeTruthy()
+    await waitFor(() =>
+      expect(
+        within(table)
+          .getAllByRole('row')
+          .slice(1)
+          .map((row) => row.textContent),
+      ).toEqual(['Work, where new chats start40%', 'Personal75%']),
+    )
     await waitFor(() =>
       expect(transport.request).toHaveBeenCalledWith('usage.summary', {
         provider: 'codex',
         intent: 'visible',
       }),
     )
-    // The active account comes first; the raw id is never shown.
-    const regions = screen.getAllByRole('region', { name: /^Codex/ })
-    expect(regions.map((region) => region.getAttribute('aria-label'))).toEqual([
-      'Codex · Work',
-      'Codex · Personal',
-    ])
+    // The raw id is never shown.
     expect(screen.queryByText(/work-1a2b3c/)).toBeNull()
     // Spare has not signed in yet, so it is not read and not listed.
     expect(transport.request).not.toHaveBeenCalledWith(
