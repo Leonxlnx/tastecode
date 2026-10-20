@@ -1920,6 +1920,28 @@ export const methods = {
     }),
   },
   /**
+   * Move an open chat to another provider, agent or account. The chat keeps
+   * its id, conversation and checkout; a new session starts there, and only
+   * once it is running does the earlier one stop, so a failure leaves the chat
+   * as it was. The next prompt carries the conversation so far as context.
+   * Refused while a turn runs, prompts are queued, or a Design run is active.
+   */
+  'thread.changeProvider': {
+    params: z.object({
+      threadId: z.string(),
+      provider: ProviderIdSchema,
+      /** Which ACP agent or custom harness, when the provider runs several. */
+      agent: z.string().min(1).optional(),
+      /** Absent means the account a new chat with the provider starts on. */
+      accountId: AccountIdSchema.optional(),
+      model: z.string().optional(),
+      serviceTier: z.string().optional(),
+      effort: z.string().optional(),
+      approval: ApprovalModeSchema.optional(),
+    }),
+    result: z.object({}),
+  },
+  /**
    * Points this session can be returned to. One is taken before every turn
    * that could write, so going back is possible without having planned for it.
    */
