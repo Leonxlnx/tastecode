@@ -24,7 +24,6 @@ import {
   openCodeConnectionConfig,
   openCodeConnectionEnvironment,
   openCodeModelId,
-  openCodeProvider,
   writeKeyGuard,
 } from './api-connection-opencode.js'
 import {
@@ -99,9 +98,10 @@ function apiOpenCodeHome(): string {
 /** The last model list each custom endpoint gave, so a chat can switch between them. */
 const customEndpointModels = new Map<string, string[]>()
 
-function vendorModel(connection: StoredModelConnection, model: string): string {
-  const prefix = `${openCodeProvider(connection)}/`
-  return model.startsWith(prefix) ? model.slice(prefix.length) : model
+async function refreshCustomModels(connection: StoredModelConnection, apiKey: string) {
+  const models = await listCustomModels(connection, apiKey)
+  customEndpointModels.set(connection.id, models)
+  return models
 }
 
 function apiLaunchError(error: unknown): never {
@@ -122,11 +122,15 @@ export function apiRuntime(
   apiKey: string,
   onLog: (line: string) => void,
 ): ProviderRuntime {
-  const adapterFor = async (models: readonly string[], options: Partial<StartOptions> = {}) => {
+  const adapterFor = async (
+    models: readonly string[],
+    model?: string,
+    options: Partial<StartOptions> = {},
+  ) => {
     const { OpenCodeAdapter } = await loadOpenCodeAdapter()
     const home = apiOpenCodeHome()
     return new OpenCodeAdapter({
-      config: openCodeConnectionConfig(connection, writeKeyGuard(home), models),
+      config: openCodeConnectionConfig(connection, writeKeyGuard(home), { models, model }),
       environment: openCodeConnectionEnvironment(apiKey, path.join(home, 'sessions.db')),
       ...(options.mcpServers ? { mcpServers: options.mcpServers } : {}),
       ...(options.mcpCredentials ? { mcpCredentials: options.mcpCredentials } : {}),
@@ -138,17 +142,24 @@ export function apiRuntime(
         'This chat ran on the former built-in API runtime and cannot continue. Its history stays readable; start a new chat to keep going.',
       )
     }
-    const model = options.model ?? connection.defaultModel
-    if (!model) throw new Error(`choose a model for "${connection.displayName}"`)
-    const adapter = await adapterFor(
-      [...(customEndpointModels.get(connection.id) ?? []), vendorModel(connection, model)],
-      options,
-    )
+    // A resumed chat may name no model: OpenCode then keeps the one it used.
+    const model = options.model ?? (threadId === undefined ? connection.defaultModel : undefined)
+    if (!model && threadId === undefined) {
+      throw new Error(`choose a model for "${connection.displayName}"`)
+    }
+    // A custom endpoint's models exist only in this config, so a chat
+    // reopened after a restart needs them before OpenCode can run its model.
+    const custom =
+      connection.preset === 'custom'
+        ? (customEndpointModels.get(connection.id) ??
+          (threadId === undefined ? [] : await refreshCustomModels(connection, apiKey)))
+        : []
+    const adapter = await adapterFor(custom, model, options)
     adapter.on('log', onLog)
     return startedSession(adapter, async () => {
       await adapter.start().catch(apiLaunchError)
       const selection = {
-        model: openCodeModelId(connection, model),
+        ...(model ? { model: openCodeModelId(connection, model) } : {}),
         ...(options.effort ? { effort: options.effort } : {}),
         ...(options.approval ? { approval: options.approval } : {}),
         ...(options.instructions ? { instructions: options.instructions } : {}),
@@ -181,11 +192,8 @@ function listConnectionModels(
   const existing = connectionModelListings.get(connection.id)
   if (existing) return existing
   const listing = (async () => {
-    let custom: string[] = []
-    if (connection.preset === 'custom') {
-      custom = await listCustomModels(connection, apiKey)
-      customEndpointModels.set(connection.id, custom)
-    }
+    const custom =
+      connection.preset === 'custom' ? await refreshCustomModels(connection, apiKey) : []
     const adapter = await adapterFor(custom)
     runningListings.add(adapter)
     try {

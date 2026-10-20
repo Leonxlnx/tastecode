@@ -954,10 +954,11 @@ describe('apiRuntime', () => {
       instructions: 'Be brief.',
     })
     const launch = adapter.launchOptions as {
-      config: { enabled_providers: string[]; plugin: string[] }
+      config: { enabled_providers: string[]; plugin: string[]; model?: string }
       environment: Record<string, string>
     }
     expect(launch.config.enabled_providers).toEqual(['openai'])
+    expect(launch.config.model).toBe('openai/gpt-5.6')
     expect(launch.config.plugin[0]).toMatch(/^file:.*opencode-api.*key-guard\.js$/)
     expect(JSON.stringify(launch.config)).not.toContain('sk-test-secret')
     expect(launch.environment).toEqual({
@@ -982,11 +983,36 @@ describe('apiRuntime', () => {
       provider: 'api',
       connectionId: 'openai-1',
     })
+    // No model named: OpenCode keeps the chat's own, the connection's is only the fallback.
+    expect(constructed[0]?.startOptions).not.toHaveProperty('model')
+    expect((constructed[0]?.launchOptions as { config: { model?: string } }).config.model).toBe(
+      'openai/gpt-5.6',
+    )
 
     await expect(runtime.resume!('api-1234', '/repo', {})).rejects.toThrow(
       'former built-in API runtime',
     )
     expect(constructed).toHaveLength(1)
+  })
+
+  it("declares a custom endpoint's models before a reopened chat runs", async () => {
+    const request = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(Response.json({ data: [{ id: 'llama3' }, { id: 'qwen3' }] }))
+    const { defaultModel: _unused, ...withoutDefault } = connection
+    const custom: StoredModelConnection = {
+      ...withoutDefault,
+      id: 'custom-1',
+      preset: 'custom',
+      transport: 'openai-compatible',
+      baseUrl: 'http://127.0.0.1:11434/v1',
+    }
+    await apiRuntime(custom, 'local', () => {}).resume!('opencode-ses_2', '/repo', {})
+
+    expect(request).toHaveBeenCalledWith('http://127.0.0.1:11434/v1/models', expect.anything())
+    const config = (constructed[0]?.launchOptions as { config: Record<string, unknown> }).config
+    expect(config['provider']).toMatchObject({ tastecode: { models: { llama3: {}, qwen3: {} } } })
+    expect(config).not.toHaveProperty('model')
   })
 
   it('says OpenCode is needed when it cannot start, and disposes the adapter', async () => {

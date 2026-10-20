@@ -63,8 +63,9 @@ describe('OpenCode config for a direct API connection', () => {
         defaultModel: 'qwen3',
       }),
       'file:///guard.js',
-      ['llama3', 'qwen3'],
+      { models: ['llama3', 'qwen3'] },
     )
+    expect(config.model).toBe('tastecode/qwen3')
     expect(config.provider).toEqual({
       tastecode: {
         npm: '@ai-sdk/openai-compatible',
@@ -75,12 +76,21 @@ describe('OpenCode config for a direct API connection', () => {
     })
   })
 
-  it('adds the connection model beside the catalog so a new id still runs', () => {
-    const config = openCodeConnectionConfig(
+  it("makes the chat's model OpenCode's default and declares it beside the catalog", () => {
+    const fallback = openCodeConnectionConfig(
       connection({ defaultModel: 'gpt-next' }),
       'file:///guard.js',
     )
-    expect(config.provider['openai']).toMatchObject({ models: { 'gpt-next': {} } })
+    expect(fallback.model).toBe('openai/gpt-next')
+    expect(fallback.provider['openai']).toMatchObject({ models: { 'gpt-next': {} } })
+
+    const chosen = openCodeConnectionConfig(
+      connection({ defaultModel: 'gpt-next' }),
+      'file:///guard.js',
+      { model: 'openai/gpt-5.6-pro' },
+    )
+    expect(chosen.model).toBe('openai/gpt-5.6-pro')
+    expect(chosen.provider['openai']).toMatchObject({ models: { 'gpt-5.6-pro': {} } })
   })
 
   it('never puts the key into the config', () => {

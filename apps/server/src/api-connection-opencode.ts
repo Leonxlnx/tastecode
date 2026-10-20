@@ -56,33 +56,41 @@ export function openCodeModelId(connection: StoredModelConnection, model: string
   return model.startsWith(`${provider}/`) ? model : `${provider}/${model}`
 }
 
+/** The vendor's own id for a model, without OpenCode's provider prefix. */
+export function vendorModelId(connection: StoredModelConnection, model: string): string {
+  const prefix = `${openCodeProvider(connection)}/`
+  return model.startsWith(prefix) ? model.slice(prefix.length) : model
+}
+
 /**
  * Only this connection's provider is enabled, so neither the user's other
  * OpenCode providers nor a key in the server's environment can run the chat.
- * A model the user named is added beside the catalog, where OpenCode would
- * otherwise refuse an id it does not know yet.
+ * The chat's model, or the connection's own, becomes OpenCode's default: a
+ * turn without one would otherwise run on the user's global default. It is
+ * also declared beside the catalog, where OpenCode would refuse an id it
+ * does not know yet.
  */
 export function openCodeConnectionConfig(
   connection: StoredModelConnection,
   keyGuard: string,
-  customModels: readonly string[] = [],
+  options: { models?: readonly string[]; model?: string | undefined } = {},
 ) {
   const provider = openCodeProvider(connection)
+  const model = options.model ?? connection.defaultModel
   const models = [
-    ...new Set([...customModels, ...(connection.defaultModel ? [connection.defaultModel] : [])]),
+    ...new Set([...(options.models ?? []), ...(model ? [vendorModelId(connection, model)] : [])]),
   ]
   return {
     enabled_providers: [provider],
     plugin: [keyGuard],
+    ...(model ? { model: openCodeModelId(connection, model) } : {}),
     provider: {
       [provider]: {
         ...(connection.preset === 'custom'
           ? { npm: CUSTOM_PACKAGES[connection.transport], name: connection.displayName }
           : {}),
         options: { baseURL: connection.baseUrl, apiKey: `{env:${KEY_VARIABLE}}` },
-        ...(models.length > 0
-          ? { models: Object.fromEntries(models.map((model) => [model, {}])) }
-          : {}),
+        ...(models.length > 0 ? { models: Object.fromEntries(models.map((id) => [id, {}])) } : {}),
       },
     },
   }
