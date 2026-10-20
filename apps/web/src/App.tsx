@@ -133,7 +133,7 @@ import { serverBaseUrl } from './server-url.js'
 import { addDesignBriefing } from './design-agent/briefing.js'
 import { sourceSupportsAttachments } from './attachment-capability.js'
 import { canCaptureVoice, type VoiceRecording } from './voice-capability.js'
-import { UsageLimitsController, type LimitTarget } from './usage-limits-state.js'
+import { pollUsageLimits, UsageLimitsController, type LimitTarget } from './usage-limits-state.js'
 import { sameAccount } from './usage-summary-state.js'
 import {
   accountLabelOf,
@@ -632,6 +632,10 @@ export function App() {
   const retryUsage = useCallback(
     (requestedProvider: ProviderId, accountId?: AccountId) =>
       usageController.refresh(requestedProvider, 'retry', accountId),
+    [usageController],
+  )
+  const refreshAllUsage = useCallback(
+    () => usageController.refresh(undefined, 'retry'),
     [usageController],
   )
   const showUsage = useCallback(() => usageController.show(), [usageController])
@@ -3310,6 +3314,8 @@ export function App() {
   useLayoutEffect(() => {
     usageController.select([limitTargets.main], limitTargets.onDemand)
   }, [usageController, limitTargets])
+  // Every source is read again every 15 minutes, so the popup opens on recent values.
+  useEffect(() => pollUsageLimits(usageController), [usageController])
 
   // The account card's one figure is about where new chats run: each
   // provider's active account. The popup lists every account.
@@ -6467,6 +6473,7 @@ export function App() {
           activeAccount={activeAccount}
           onShowUsage={showUsage}
           onRetryUsage={retryUsage}
+          onRefreshUsage={refreshAllUsage}
           onConsumeReset={consumeReset}
           mode={sidebarSettings.mode}
           inbox={sidebarInbox}

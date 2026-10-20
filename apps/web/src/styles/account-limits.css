@@ -146,6 +146,65 @@
   color: var(--text);
 }
 
+.account-menu__provider-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.account-menu__provider-head > .account-menu__provider-name {
+  flex: 1 1 auto;
+}
+
+/* Reads every source again: a quiet icon at the end of the first heading's
+   line, flush with the values below, that turns while the sources read. */
+.account-menu__refresh {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  margin: -1px -4px -1px 0;
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: var(--r-sm);
+  color: var(--text-3);
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+.account-menu__source-head > :is(h3, h4) + .account-menu__refresh {
+  margin-left: auto;
+}
+
+.account-menu__refresh:hover:not([aria-disabled='true']) {
+  background: var(--menu-hover);
+  color: var(--text);
+}
+
+.account-menu__refresh:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.account-menu__refresh[aria-disabled='true'] {
+  cursor: default;
+}
+
+.account-menu__refresh.is-busy svg {
+  animation: account-menu-refresh 1.2s linear infinite;
+}
+
+@keyframes account-menu-refresh {
+  to {
+    rotate: 360deg;
+  }
+}
+
 .account-menu__limit {
   display: grid;
   gap: 5px;

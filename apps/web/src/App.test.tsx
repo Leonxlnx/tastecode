@@ -5001,10 +5001,10 @@ describe('new chats', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Account' }))
     const codexLimits = await screen.findByRole('region', { name: 'Codex' })
     expect(within(codexLimits).getByText('75% left')).toBeTruthy()
-    // Opening asks once, StrictMode's replay included, and says the limits are on screen.
+    // Opening reads afresh once, StrictMode's replay included.
     await waitFor(() =>
       expect(transport.request.mock.calls.filter(([method]) => method === 'usage.summary')).toEqual(
-        [['usage.summary', { provider: 'codex', intent: 'visible' }]],
+        [['usage.summary', { provider: 'codex', intent: 'refresh' }]],
       ),
     )
   })
@@ -5051,20 +5051,25 @@ describe('new chats', () => {
     expect(await screen.findByRole('region', { name: 'Codex' })).toBeTruthy()
     expect(screen.getByRole('region', { name: 'Claude Code' })).toBeTruthy()
     expect(screen.queryByRole('region', { name: 'Grok' })).toBeNull()
-    // Each installed source is asked once now that its limits are on screen.
+    // Each installed source is read afresh now that its limits are on screen; one
+    // not asked yet first takes what the server holds.
     await waitFor(() => {
       expect(transport.request).toHaveBeenCalledWith('usage.summary', {
         provider: 'codex',
-        intent: 'visible',
+        intent: 'refresh',
       })
       expect(transport.request).toHaveBeenCalledWith('usage.summary', {
         provider: 'claude-code',
         intent: 'visible',
       })
+      expect(transport.request).toHaveBeenCalledWith('usage.summary', {
+        provider: 'claude-code',
+        intent: 'refresh',
+      })
     })
     expect(
       transport.request.mock.calls.filter(([method]) => method === 'usage.summary'),
-    ).toHaveLength(2)
+    ).toHaveLength(3)
   })
 
   it('reads the active account at launch and names every account in the popup', async () => {
@@ -5129,12 +5134,13 @@ describe('new chats', () => {
     expect(
       within(screen.getByRole('group', { name: 'Codex' }))
         .getAllByRole('button')
+        .filter((line) => line.hasAttribute('aria-expanded'))
         .map((line) => line.textContent),
     ).toEqual(['Work', 'Personal5 hours75%'])
     await waitFor(() =>
       expect(transport.request).toHaveBeenCalledWith('usage.summary', {
         provider: 'codex',
-        intent: 'visible',
+        intent: 'refresh',
       }),
     )
     // The raw id is never shown.

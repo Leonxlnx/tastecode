@@ -88,6 +88,13 @@ export type UsageSummaryState =
 type LoadSummary = (params: ParamsOf<'usage.summary'>) => Promise<Summary>
 
 const ERROR_MESSAGE_LIMIT = 300
+/** How strong a reason to read is; a stronger one a caller gave survives a weaker one. */
+const INTENT_STRENGTH = {
+  background: 0,
+  visible: 1,
+  refresh: 2,
+  retry: 3,
+} satisfies Record<UsageReadIntent, number>
 const RETRY_DELAYS_MS = [5_000, 15_000, 30_000]
 
 function messageOf(error: Parameters<typeof errorMessage>[0]): string {
@@ -179,8 +186,10 @@ export class UsageSummaryController {
   /** Manual retry, reconnect, and ordinary polling all use the same guarded path. */
   refresh(intent?: UsageReadIntent): void {
     if (this.#disposed || !this.#target) return
-    // A retry is the strongest reason and survives a later, weaker one.
-    if (intent && this.#requestedIntent !== 'retry') this.#requestedIntent = intent
+    const requested = this.#requestedIntent
+    if (intent && (!requested || INTENT_STRENGTH[intent] > INTENT_STRENGTH[requested])) {
+      this.#requestedIntent = intent
+    }
     if (this.#request?.revision === this.#revision) {
       this.#dirty = true
       return

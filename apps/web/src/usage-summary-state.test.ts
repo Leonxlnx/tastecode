@@ -328,6 +328,31 @@ describe('UsageSummaryController', () => {
     ])
   })
 
+  it('keeps a refresh over a weaker reason, and gives way to a retry', async () => {
+    const first = deferred<Summary>()
+    const second = deferred<Summary>()
+    const load = vi
+      .fn((_params: ParamsOf<'usage.summary'>) => Promise.resolve(summary(2)))
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise)
+    const state = new UsageSummaryController(load, 100, () => 'background')
+
+    state.select({ provider: 'claude-code' })
+    state.refresh('refresh')
+    state.refresh('visible')
+    first.resolve(summary(1))
+    await settle()
+    state.refresh('retry')
+    state.refresh('refresh')
+    second.resolve(summary(1))
+    await settle()
+    expect(load.mock.calls.map(([params]) => params)).toEqual([
+      { provider: 'claude-code', intent: 'background' },
+      { provider: 'claude-code', intent: 'refresh' },
+      { provider: 'claude-code', intent: 'retry' },
+    ])
+  })
+
   it('filters provider pushes and coalesces bursts during and after a read', async () => {
     vi.useFakeTimers()
     const first = deferred<Summary>()

@@ -14,6 +14,9 @@ export type LimitTarget = { provider: ProviderId; accountId?: AccountId | undefi
 type Target = LimitTarget & { threadId?: string | undefined }
 type LoadSummary = (params: ParamsOf<'usage.summary'>) => Promise<ResultOf<'usage.summary'>>
 
+/** How often every source is read in the background, so a view opens on recent values. */
+export const USAGE_POLL_MS = 15 * 60_000
+
 type Entry = {
   controller: UsageSummaryController
   unsubscribe: () => void
@@ -142,8 +145,8 @@ export class UsageLimitsController {
   /**
    * A view that shows the limits opened. While any is open, requests say so,
    * which lets the server read sources it otherwise reads only on view; the
-   * opening itself asks once, on-demand sources included. Returns the
-   * release for when the view closes.
+   * opening itself reads every source afresh, on-demand sources included.
+   * Returns the release for when the view closes.
    */
   show(): () => void {
     if (this.#disposed) return () => {}
@@ -153,21 +156,13 @@ export class UsageLimitsController {
     if (this.#shown === 1 && !this.#showRefresh) {
       this.#showRefresh = true
       // Sources not asked yet start now, so the view lists them as checking
-      // from its first paint instead of popping them in later.
-      const joined = new Set<string>()
-      for (const target of this.#onDemand) {
-        const key = keyOf(target)
-        if (this.#entries.has(key)) continue
-        this.#add(target, true).controller.select(target)
-        joined.add(key)
-      }
-      if (joined.size > 0) this.#publish()
+      // from its first paint instead of popping them in later, and show what
+      // the server holds while their fresh read runs.
+      if (this.#join()) this.#publish()
       queueMicrotask(() => {
         this.#showRefresh = false
         if (this.#shown === 0 || this.#disposed) return
-        for (const [key, entry] of this.#entries) {
-          if (!joined.has(key)) entry.controller.refresh()
-        }
+        for (const entry of this.#entries.values()) entry.controller.refresh('refresh')
       })
     }
     let released = false
@@ -176,6 +171,16 @@ export class UsageLimitsController {
       released = true
       this.#shown -= 1
     }
+  }
+
+  /**
+   * The periodic read: every source, on-demand ones included, whether or not
+   * a view shows them, so the next view opens on recent values.
+   */
+  poll(): void {
+    if (this.#disposed) return
+    if (this.#join()) this.#publish()
+    for (const entry of this.#entries.values()) entry.controller.refresh('refresh')
   }
 
   changed(provider: ProviderId, accountId?: AccountId): void {
@@ -211,6 +216,17 @@ export class UsageLimitsController {
     this.#listeners.clear()
   }
 
+  /** Starts every on-demand source not asked yet; says whether there was one. */
+  #join(): boolean {
+    let joined = false
+    for (const target of this.#onDemand) {
+      if (this.#entries.has(keyOf(target))) continue
+      this.#add(target, true).controller.select(target)
+      joined = true
+    }
+    return joined
+  }
+
   #add(target: LimitTarget, onDemand: boolean): Entry {
     const controller = new UsageSummaryController(this.#load, this.#coalesceMs, this.#intent)
     const entry = { controller, unsubscribe: controller.subscribe(() => this.#publish()), onDemand }
@@ -237,4 +253,30 @@ function loadingState(target: LimitTarget): UsageSummaryState {
   return target.accountId === undefined || target.accountId === DEFAULT_ACCOUNT_ID
     ? { status: 'loading', provider: target.provider }
     : { status: 'loading', provider: target.provider, accountId: target.accountId }
+}
+
+/**
+ * Reads every source each `intervalMs` while the window shows. A window that
+ * was hidden past a read catches up when it shows again. Returns the stop.
+ */
+export function pollUsageLimits(
+  controller: UsageLimitsController,
+  intervalMs = USAGE_POLL_MS,
+): () => void {
+  let polledAt = Date.now()
+  const poll = () => {
+    polledAt = Date.now()
+    controller.poll()
+  }
+  const timer = setInterval(() => {
+    if (document.visibilityState !== 'hidden') poll()
+  }, intervalMs)
+  const shown = () => {
+    if (document.visibilityState !== 'hidden' && Date.now() - polledAt >= intervalMs) poll()
+  }
+  document.addEventListener('visibilitychange', shown)
+  return () => {
+    clearInterval(timer)
+    document.removeEventListener('visibilitychange', shown)
+  }
 }

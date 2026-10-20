@@ -245,6 +245,8 @@ function SidebarComponent(props: {
   /** The account popup shows plan limits; returns the release for when it closes. */
   onShowUsage?: (() => () => void) | undefined
   onRetryUsage?: ((provider: ProviderId, accountId?: AccountId) => void) | undefined
+  /** Reads every plan-limit source in the popup again. */
+  onRefreshUsage?: (() => void) | undefined
   onConsumeReset?:
     | ((
         provider: ProviderId,
@@ -1015,6 +1017,7 @@ function SidebarComponent(props: {
                           activeAccount={props.activeAccount}
                           onShow={props.onShowUsage}
                           onRetry={props.onRetryUsage ?? noop}
+                          onRefresh={props.onRefreshUsage}
                           onConsumeReset={props.onConsumeReset}
                         />
                       </Suspense>

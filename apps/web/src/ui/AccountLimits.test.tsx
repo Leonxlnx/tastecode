@@ -254,6 +254,45 @@ describe('account limits', () => {
     expect(release).toHaveBeenCalledOnce()
   })
 
+  it('refreshes every source from the first heading line, and turns while any reads', () => {
+    const onRefresh = vi.fn()
+    const weekly = summary([{ label: 'Weekly', usedPercent: 10 }])
+    const states: AccountLimitsState[] = [
+      { status: 'ready', provider: 'codex', summary: weekly },
+      { status: 'ready', provider: 'codex', accountId: 'work-1a2b3c', summary: weekly },
+      { status: 'ready', provider: 'grok', summary: weekly },
+    ]
+    const view = render(<AccountLimits states={states} onRetry={() => {}} onRefresh={onRefresh} />)
+    const [refresh, ...others] = screen.getAllByRole('button', { name: 'Refresh plan limits' })
+    expect(others).toHaveLength(0)
+    const line = refresh!.closest<HTMLElement>('.account-menu__provider-head')!
+    expect(within(line).getByRole('heading', { name: 'Codex' })).toBeTruthy()
+    fireEvent.click(refresh!)
+    expect(onRefresh).toHaveBeenCalledOnce()
+
+    // While a source reads it turns and asks nothing more, keeping focus.
+    view.rerender(
+      <AccountLimits
+        states={[{ ...states[0]!, status: 'loading' }, states[1]!, states[2]!]}
+        onRetry={() => {}}
+        onRefresh={onRefresh}
+      />,
+    )
+    expect(refresh!.getAttribute('aria-disabled')).toBe('true')
+    expect(refresh!.classList.contains('is-busy')).toBe(true)
+    fireEvent.click(refresh!)
+    expect(onRefresh).toHaveBeenCalledOnce()
+
+    // A provider shown alone carries it at the end of its own heading line.
+    view.rerender(<AccountLimits states={[states[2]!]} onRetry={() => {}} onRefresh={onRefresh} />)
+    const grok = screen.getByRole('region', { name: 'Grok' })
+    const alone = within(grok).getByRole('button', { name: 'Refresh plan limits' })
+    expect(alone.getAttribute('aria-disabled')).toBeNull()
+    // Without a handler there is no refresh.
+    view.rerender(<AccountLimits states={states} onRetry={() => {}} />)
+    expect(screen.queryByRole('button', { name: 'Refresh plan limits' })).toBeNull()
+  })
+
   it('keeps a source that was not read yet in view, as checking while it loads', () => {
     const onRetry = vi.fn()
     const notRead: AccountLimitsState = {

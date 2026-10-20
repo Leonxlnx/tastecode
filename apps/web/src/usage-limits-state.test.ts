@@ -1,6 +1,6 @@
 import type { ParamsOf, ProviderId, ProviderLimitSource, ResultOf } from '@harness/contracts'
 import { describe, expect, it, vi } from 'vitest'
-import { UsageLimitsController } from './usage-limits-state.js'
+import { pollUsageLimits, UsageLimitsController } from './usage-limits-state.js'
 
 type Summary = ResultOf<'usage.summary'>
 
@@ -44,7 +44,7 @@ describe('UsageLimitsController', () => {
     expect(load).toHaveBeenCalledWith({ provider: 'claude-code', intent: 'background' })
   })
 
-  it('asks every source once when a view shows them, and says so while it is open', async () => {
+  it('reads every source afresh when a view opens, and says so while it is open', async () => {
     const load = vi.fn(async (params: ParamsOf<'usage.summary'>) =>
       summary('provider' in params ? params.provider : 'codex'),
     )
@@ -60,8 +60,8 @@ describe('UsageLimitsController', () => {
     controller.show()()
     const release = controller.show()
     await vi.waitFor(() => expect(load).toHaveBeenCalledTimes(2))
-    expect(load).toHaveBeenCalledWith({ provider: 'codex', intent: 'visible' })
-    expect(load).toHaveBeenCalledWith({ provider: 'claude-code', intent: 'visible' })
+    expect(load).toHaveBeenCalledWith({ provider: 'codex', intent: 'refresh' })
+    expect(load).toHaveBeenCalledWith({ provider: 'claude-code', intent: 'refresh' })
     await vi.waitFor(() =>
       expect(controller.snapshot().every((state) => state.status === 'ready')).toBe(true),
     )
@@ -198,10 +198,13 @@ describe('UsageLimitsController', () => {
     await vi.waitFor(() =>
       expect(controller.snapshot().every((state) => state.status === 'ready')).toBe(true),
     )
+    // Sources not asked yet take what the server holds first, then read afresh.
     expect(load.mock.calls.map(([params]) => params)).toEqual([
       { provider: 'claude-code', intent: 'visible' },
       { provider: 'grok', intent: 'visible' },
-      { provider: 'codex', intent: 'visible' },
+      { provider: 'codex', intent: 'refresh' },
+      { provider: 'claude-code', intent: 'refresh' },
+      { provider: 'grok', intent: 'refresh' },
     ])
     release()
     load.mockClear()
@@ -276,11 +279,11 @@ describe('UsageLimitsController', () => {
     // Shown, the account is asked as itself; a change to it re-reads only it.
     const release = controller.show()
     await vi.waitFor(() => expect(load).toHaveBeenCalledTimes(2))
-    expect(load).toHaveBeenCalledWith({ provider: 'codex', intent: 'visible' })
+    expect(load).toHaveBeenCalledWith({ provider: 'codex', intent: 'refresh' })
     expect(load).toHaveBeenCalledWith({
       provider: 'codex',
       accountId: 'work-1a2b3c',
-      intent: 'visible',
+      intent: 'refresh',
     })
     await vi.waitFor(() =>
       expect(controller.snapshot().every((state) => state.status === 'ready')).toBe(true),
@@ -301,6 +304,70 @@ describe('UsageLimitsController', () => {
       intent: 'retry',
     })
     release()
+  })
+
+  it('reads every source when it polls, on-demand ones included', async () => {
+    const load = vi.fn(async (params: ParamsOf<'usage.summary'>) =>
+      summary('provider' in params ? params.provider : 'codex'),
+    )
+    const controller = new UsageLimitsController(load)
+    controller.select([{ provider: 'codex' }], ['claude-code'])
+    await vi.waitFor(() => expect(controller.snapshot()[0]?.status).toBe('ready'))
+    load.mockClear()
+
+    controller.poll()
+    await vi.waitFor(() => expect(load).toHaveBeenCalledTimes(3))
+    expect(load.mock.calls.map(([params]) => params)).toEqual([
+      { provider: 'claude-code', intent: 'background' },
+      { provider: 'codex', intent: 'refresh' },
+      { provider: 'claude-code', intent: 'refresh' },
+    ])
+    expect(controller.snapshot().map((state) => state.provider)).toEqual(['codex', 'claude-code'])
+    // Polled, an on-demand source is still asked only while a view shows it.
+    await vi.waitFor(() =>
+      expect(controller.snapshot().every((state) => state.status === 'ready')).toBe(true),
+    )
+    load.mockClear()
+    controller.refresh()
+    await vi.waitFor(() => expect(load).toHaveBeenCalledOnce())
+    expect(load).toHaveBeenCalledWith({ provider: 'codex', intent: 'background' })
+  })
+
+  it('polls every interval while the window shows, and catches up when it shows again', () => {
+    vi.useFakeTimers()
+    const page = Object.assign(new EventTarget(), {
+      visibilityState: 'visible' as DocumentVisibilityState,
+    })
+    vi.stubGlobal('document', page)
+    const controller = new UsageLimitsController(async () => summary('codex'))
+    const poll = vi.spyOn(controller, 'poll').mockImplementation(() => {})
+    const stop = pollUsageLimits(controller, 1_000)
+    try {
+      vi.advanceTimersByTime(999)
+      expect(poll).not.toHaveBeenCalled()
+      vi.advanceTimersByTime(1)
+      expect(poll).toHaveBeenCalledOnce()
+
+      // Hidden, the window misses a read and makes it up once it shows again.
+      page.visibilityState = 'hidden'
+      vi.advanceTimersByTime(1_500)
+      expect(poll).toHaveBeenCalledOnce()
+      page.visibilityState = 'visible'
+      page.dispatchEvent(new Event('visibilitychange'))
+      expect(poll).toHaveBeenCalledTimes(2)
+      // Showing again soon after a read asks nothing more.
+      page.dispatchEvent(new Event('visibilitychange'))
+      expect(poll).toHaveBeenCalledTimes(2)
+
+      stop()
+      vi.advanceTimersByTime(5_000)
+      page.dispatchEvent(new Event('visibilitychange'))
+      expect(poll).toHaveBeenCalledTimes(2)
+    } finally {
+      stop()
+      vi.unstubAllGlobals()
+      vi.useRealTimers()
+    }
   })
 
   it('switches the active source to another account without showing the old limits', async () => {

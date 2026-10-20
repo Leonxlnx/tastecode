@@ -14,7 +14,7 @@ import {
   type ProviderLimitSource,
   type ResultOf,
 } from '@harness/contracts'
-import { IconChevronRight as ChevronRight } from '@tabler/icons-react'
+import { IconChevronRight as ChevronRight, IconRefresh as RefreshCw } from '@tabler/icons-react'
 import type { AccountLabel } from '../provider-accounts-state.js'
 import { providerDisplayName, providerMark } from '../provider-presentation.js'
 import { limitKey } from '../usage-limits-state.js'
@@ -53,6 +53,8 @@ export function AccountLimits(props: {
   /** Called once while the limits are on screen; returns the release for when they leave. */
   onShow?: (() => () => void) | undefined
   onRetry: (provider: ProviderId, accountId?: AccountId) => void
+  /** Reads every source again; without it the popup offers no refresh. */
+  onRefresh?: (() => void) | undefined
   onConsumeReset?: ConsumeReset | undefined
 }) {
   const panel = useRef<HTMLElement>(null)
@@ -85,24 +87,31 @@ export function AccountLimits(props: {
   // Ages are read when the popup opens and when the values change; nothing
   // ticks while it stays open.
   const now = Date.now()
+  const busy = visibleStates.some((state) => state.status === 'loading')
 
   return (
     <section
       ref={panel}
       className="account-menu__usage"
       aria-label="Plan limits"
-      aria-busy={visibleStates.some((state) => state.status === 'loading')}
+      aria-busy={busy}
       // A scroll container that keyboard users can reach and scroll.
       tabIndex={0}
     >
-      {groupByProvider(visibleStates).map((group) => {
+      {groupByProvider(visibleStates).map((group, index) => {
         const name = providerDisplayName(group.provider)
+        // The refresh sits at the end of the first heading's line.
+        const action =
+          index === 0 && props.onRefresh ? (
+            <RefreshLimits busy={busy} onRefresh={props.onRefresh} />
+          ) : undefined
         const source = (state: AccountLimitsState, account?: string) => (
           <LimitSource
             key={limitKey(state.provider, state.accountId)}
             state={state}
             name={account === undefined ? name : `${name} · ${account}`}
             account={account}
+            action={account === undefined ? action : undefined}
             now={now}
             onRetry={() => retry(state.provider, state.accountId)}
             onConsumeReset={props.onConsumeReset}
@@ -121,10 +130,7 @@ export function AccountLimits(props: {
               role="group"
               aria-label={name}
             >
-              <h3 className="account-menu__provider-name">
-                <ProviderIcon mark={providerMark(group.provider)} size={14} />
-                <span>{name}</span>
-              </h3>
+              <ProviderHeading provider={group.provider} action={action} />
               {source(group.states[0]!, label(group.states[0]!))}
             </div>
           )
@@ -136,6 +142,7 @@ export function AccountLimits(props: {
             states={group.states}
             label={label}
             active={props.activeAccount?.(group.provider)}
+            action={action}
             now={now}
             onRetry={(state) => retry(state.provider, state.accountId)}
             onConsumeReset={props.onConsumeReset}
@@ -143,6 +150,41 @@ export function AccountLimits(props: {
         )
       })}
     </section>
+  )
+}
+
+/** A provider's name over its accounts, with anything else that belongs on its line. */
+function ProviderHeading(props: { provider: ProviderId; action?: ReactNode }) {
+  return (
+    <div className="account-menu__provider-head">
+      <h3 className="account-menu__provider-name">
+        <ProviderIcon mark={providerMark(props.provider)} size={14} />
+        <span>{providerDisplayName(props.provider)}</span>
+      </h3>
+      {props.action}
+    </div>
+  )
+}
+
+/**
+ * Reads every source again. It turns while any of them is still reading, the
+ * reads opening the popup started included, and asks nothing more meanwhile.
+ */
+function RefreshLimits(props: { busy: boolean; onRefresh: () => void }) {
+  return (
+    <button
+      className={`account-menu__refresh${props.busy ? ' is-busy' : ''}`}
+      type="button"
+      aria-label="Refresh plan limits"
+      title="Refresh plan limits"
+      // Not disabled, so focus stays on it while it turns.
+      aria-disabled={props.busy || undefined}
+      onClick={() => {
+        if (!props.busy) props.onRefresh()
+      }}
+    >
+      <RefreshCw size={13} stroke={2} aria-hidden />
+    </button>
   )
 }
 
@@ -157,6 +199,7 @@ function ProviderAccountLimits(props: {
   states: AccountLimitsState[]
   label: (state: AccountLimitsState) => string
   active?: AccountId | undefined
+  action?: ReactNode
   now: number
   onRetry: (state: AccountLimitsState) => void
   onConsumeReset?: ConsumeReset | undefined
@@ -175,10 +218,7 @@ function ProviderAccountLimits(props: {
     })
   return (
     <div className="account-menu__provider" role="group" aria-label={name}>
-      <h3 className="account-menu__provider-name">
-        <ProviderIcon mark={providerMark(props.provider)} size={14} />
-        <span>{name}</span>
-      </h3>
+      <ProviderHeading provider={props.provider} action={props.action} />
       {props.states.map((state) => (
         <AccountLine
           key={limitKey(state.provider, state.accountId)}
@@ -352,6 +392,8 @@ function LimitSource(props: {
   name: string
   /** Set under a provider heading: the source is titled by this account name alone. */
   account?: string | undefined
+  /** Goes at the end of the source's heading line. */
+  action?: ReactNode
   now: number
   onRetry: () => void
   onConsumeReset?: ConsumeReset | undefined
@@ -393,6 +435,7 @@ function LimitSource(props: {
             Retry
           </button>
         ) : null}
+        {props.action}
       </div>
       {limits.map((limit, index) => (
         <LimitRow
