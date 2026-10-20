@@ -86,4 +86,17 @@ describe('ComposerErrors', () => {
     expect(spare).toHaveBeenCalledOnce()
     expect(work).not.toHaveBeenCalled()
   })
+
+  it('draws a shelf of notes neutral and one with an error in the error tint', () => {
+    const note = {
+      id: 'note',
+      message: 'Continues “Webhook retries” on Work.',
+      tone: 'info' as const,
+    }
+    const view = render(<ComposerErrors errors={[note]} />)
+    const shelf = () => screen.getByLabelText('Errors')
+    expect(shelf().classList.contains('composer__provider-shelf--info')).toBe(true)
+    view.rerender(<ComposerErrors errors={[note, { id: 'turn:1', message: 'Request failed' }]} />)
+    expect(shelf().classList.contains('composer__provider-shelf--info')).toBe(false)
+  })
 })

@@ -1,13 +1,20 @@
 .composer__shelf.composer__provider-shelf {
-  --provider-shelf-bg: color-mix(in oklab, var(--error) 12%, var(--bg-shelf));
+  /* Errors tint the shelf; a shelf holding only notes stays neutral. */
+  --provider-shelf-tint: var(--error);
+  --provider-shelf-bg: color-mix(in oklab, var(--provider-shelf-tint) 12%, var(--bg-shelf));
   display: block;
   min-height: 36px;
   padding: 4px 10px 4px 16px;
   background: var(--provider-shelf-bg);
-  color: var(--error);
+  color: var(--provider-shelf-tint);
   font-size: var(--t-sm);
   line-height: 1.4;
   box-shadow: none;
+}
+
+.composer__shelf.composer__provider-shelf--info {
+  --provider-shelf-tint: var(--text-2);
+  --provider-shelf-bg: var(--bg-shelf);
 }
 
 .composer__shelf.composer__provider-shelf::after {
@@ -32,9 +39,9 @@
   gap: 5px;
   min-height: 26px;
   padding: 3px 7px;
-  border: 1px solid color-mix(in oklab, var(--error) 20%, transparent);
+  border: 1px solid color-mix(in oklab, var(--provider-shelf-tint) 20%, transparent);
   border-radius: var(--r-md);
-  background: color-mix(in oklab, var(--error) 7%, transparent);
+  background: color-mix(in oklab, var(--provider-shelf-tint) 7%, transparent);
   color: inherit;
   font: inherit;
   font-weight: 500;
@@ -45,11 +52,28 @@
 }
 
 .composer__provider-action:hover {
-  background: color-mix(in oklab, var(--error) 15%, transparent);
+  background: color-mix(in oklab, var(--provider-shelf-tint) 15%, transparent);
 }
 
 .composer__provider-action:active {
-  background: color-mix(in oklab, var(--error) 20%, transparent);
+  background: color-mix(in oklab, var(--provider-shelf-tint) 20%, transparent);
+}
+
+/* The same action when it opens a menu: the shared trigger resets buttons. */
+.composer__error-row > .menuwrap {
+  flex: none;
+}
+
+.menutrigger.composer__provider-action {
+  gap: 5px;
+  padding: 3px 7px;
+  border: 1px solid color-mix(in oklab, var(--provider-shelf-tint) 20%, transparent);
+  background: color-mix(in oklab, var(--provider-shelf-tint) 7%, transparent);
+  font-weight: 500;
+}
+
+.menutrigger.composer__provider-action:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--provider-shelf-tint) 15%, transparent);
 }
 
 .composer__provider-action:focus-visible {
@@ -67,7 +91,7 @@
 .composer__error-row + .composer__error-row {
   margin-top: 4px;
   padding-top: 4px;
-  border-top: 1px solid color-mix(in oklab, var(--error) 12%, transparent);
+  border-top: 1px solid color-mix(in oklab, var(--provider-shelf-tint) 12%, transparent);
 }
 
 .composer__provider-message {
@@ -92,7 +116,7 @@
 }
 
 .composer__error-report:hover {
-  background: color-mix(in oklab, var(--error) 10%, transparent);
+  background: color-mix(in oklab, var(--provider-shelf-tint) 10%, transparent);
   opacity: 1;
 }
 
@@ -118,7 +142,7 @@
 }
 
 .composer__error-dismiss:hover {
-  background: color-mix(in oklab, var(--error) 10%, transparent);
+  background: color-mix(in oklab, var(--provider-shelf-tint) 10%, transparent);
   opacity: 1;
 }
 

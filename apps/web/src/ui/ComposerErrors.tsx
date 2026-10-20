@@ -1,5 +1,11 @@
 import { useCallback, useState } from 'react'
-import { IconAlertCircle, IconArrowRight, IconChevronDown, IconX } from '@tabler/icons-react'
+import {
+  IconAlertCircle,
+  IconArrowRight,
+  IconChevronDown,
+  IconInfoCircle,
+  IconX,
+} from '@tabler/icons-react'
 import { Menu, MenuItem } from './Menu.js'
 import '../styles/composer-provider-shelf.css'
 
@@ -7,6 +13,8 @@ export type ComposerError = {
   id: string
   message: string
   role?: 'alert' | 'status'
+  /** A note rather than a problem: drawn neutral, never red. */
+  tone?: 'info'
   action?: { label: string; run: () => void }
   /** One action with several places to go, offered as a menu instead of a button. */
   choices?: {
@@ -51,10 +59,17 @@ export function ComposerErrors({
   )
   if (!visible || visibleErrors.length === 0) return null
   return (
-    <div className="composer__shelf composer__provider-shelf" aria-label="Errors">
+    <div
+      className={`composer__shelf composer__provider-shelf${visibleErrors.every((error) => error.tone === 'info') ? ' composer__provider-shelf--info' : ''}`}
+      aria-label="Errors"
+    >
       {visibleErrors.map((error) => (
         <div className="composer__error-row" key={error.id}>
-          <IconAlertCircle size={15} strokeWidth={1.8} aria-hidden />
+          {error.tone === 'info' ? (
+            <IconInfoCircle size={15} strokeWidth={1.8} aria-hidden />
+          ) : (
+            <IconAlertCircle size={15} strokeWidth={1.8} aria-hidden />
+          )}
           <span className="composer__provider-message" role={error.role ?? 'alert'}>
             {error.message}
           </span>
