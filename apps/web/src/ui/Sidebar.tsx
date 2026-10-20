@@ -199,6 +199,9 @@ const REVEAL_COOLDOWN_MS = 1250
 /** Matches the .rail__edge hit strip. */
 const REVEAL_EDGE_WIDTH = 6
 const MAX_RAIL_WIDTH = 420
+/** Below this a rail (an older saved width) keeps a Needs you or Archived row
+ *  to its title: the project name beside it would be cut to a few letters. */
+const NARROW_RAIL_WIDTH = 220
 /** Matches the account menu's own limit bars, which turn red at the same point. */
 const USAGE_LOW_PERCENT = 15
 const INITIAL_PROJECT_RENDER_COUNT = 30
@@ -824,6 +827,7 @@ function SidebarComponent(props: {
 
             <div
               className="rail__body"
+              data-narrow={props.width < NARROW_RAIL_WIDTH ? '' : undefined}
               onScroll={(event) => setBodyScrolled(event.currentTarget.scrollTop > 0)}
             >
               {needsYou.length > 0 ? (
@@ -2091,7 +2095,9 @@ const ArchivedRow = memo(function ArchivedRow(props: {
           />
         </span>
         <span className="sess__title">{session.title}</span>
-        <span className="sess__project">{props.projectName}</span>
+        <span className="sess__project">
+          <span>{props.projectName}</span>
+        </span>
       </button>
       {restore ? (
         <span className="sess__actions">
@@ -2232,7 +2238,9 @@ const NeedsYouRow = memo(function NeedsYouRow(props: {
       >
         <AttentionMark attention={attention} />
         <span className="sess__title">{session.title}</span>
-        <span className="sess__project">{props.projectName}</span>
+        <span className="sess__project">
+          <span>{props.projectName}</span>
+        </span>
       </button>
       {markRead ? (
         <span className="sess__actions">

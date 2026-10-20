@@ -1369,6 +1369,49 @@ describe('Sidebar chat actions', () => {
     ).toBeNull()
   })
 
+  it('keeps band rows to their title on a rail under 220 px', () => {
+    const view = (width: number) => (
+      <Sidebar
+        projects={[
+          {
+            path: '/work/harness',
+            name: 'TasteCode',
+            sessions: [{ ...session('thread-1', 'Run the migration'), status: 'approval' }],
+          },
+        ]}
+        activeProjectPath="/work/harness"
+        activeSessionId={undefined}
+        account={undefined}
+        providerName="Codex"
+        collapsed={false}
+        width={width}
+        onWidthChange={vi.fn()}
+        onClose={vi.fn()}
+        onAddProject={vi.fn()}
+        onNewSession={vi.fn()}
+        onSelectSession={vi.fn()}
+        onRenameProject={vi.fn()}
+        onRemoveProject={vi.fn()}
+        onTogglePin={vi.fn()}
+        onRenameSession={vi.fn()}
+        onDeleteSession={vi.fn()}
+        onArchiveProject={vi.fn()}
+        onReorderSession={vi.fn()}
+        onOpenSearch={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />
+    )
+    const rendered = render(view(256))
+    const band = screen.getByRole('region', { name: 'Needs you' })
+    expect(band.querySelector('.sess__project')?.textContent).toBe('TasteCode')
+    expect(document.querySelector('.rail__body')?.hasAttribute('data-narrow')).toBe(false)
+
+    rendered.rerender(view(219))
+    expect(document.querySelector('.rail__body')?.hasAttribute('data-narrow')).toBe(true)
+    rendered.rerender(view(220))
+    expect(document.querySelector('.rail__body')?.hasAttribute('data-narrow')).toBe(false)
+  })
+
   it('shows five project chats until the list is expanded', () => {
     render(
       <Sidebar
