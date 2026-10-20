@@ -455,6 +455,17 @@ export const ProviderContextSettingsMapSchema = z.partialRecord(
 )
 export type ProviderContextSettingsMap = z.infer<typeof ProviderContextSettingsMapSchema>
 
+/**
+ * A further provider account's own context settings. An account without an
+ * entry, and the default account always, follows its provider's settings.
+ */
+export const AccountContextSettingsSchema = z.object({
+  provider: ProviderIdSchema,
+  accountId: AccountIdSchema,
+  settings: ProviderContextSettingsSchema,
+})
+export type AccountContextSettings = z.infer<typeof AccountContextSettingsSchema>
+
 export const SidebarSettingsSchema = z.object({
   mode: z.enum(['classic', 'inbox']),
   autoSettleDays: z.number().int().min(1).max(90).nullable(),
@@ -937,6 +948,19 @@ export const methods = {
       settings: ProviderContextSettingsSchema,
     }),
     result: ProviderContextSettingsMapSchema,
+  },
+  /** Every further account that has context settings of its own. */
+  'providers.accountContextSettings': {
+    params: z.object({}),
+    result: z.object({ accounts: z.array(AccountContextSettingsSchema) }),
+  },
+  /**
+   * Replaces a further account's own settings; empty settings make it follow
+   * its provider's again. Sessions already running keep theirs.
+   */
+  'providers.updateAccountContextSettings': {
+    params: AccountContextSettingsSchema,
+    result: z.object({ accounts: z.array(AccountContextSettingsSchema) }),
   },
   /** Cached background release checks, separate from startup provider detection. */
   'providers.updates': {

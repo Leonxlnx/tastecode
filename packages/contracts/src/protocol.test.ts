@@ -2132,6 +2132,23 @@ describe('provider account contracts', () => {
     expect(channels['accounts.changed'].safeParse({}).success).toBe(false)
   })
 
+  it('keeps context settings of their own for further accounts', () => {
+    const own = {
+      provider: 'claude-code',
+      accountId: 'personal-1a2b3c',
+      settings: { compactAt: 80 },
+    }
+    expect(methods['providers.accountContextSettings'].params.parse({})).toEqual({})
+    const update = methods['providers.updateAccountContextSettings']
+    expect(update.params.parse(own)).toEqual(own)
+    expect(update.params.parse({ ...own, settings: {} })).toEqual({ ...own, settings: {} })
+    expect(update.result.parse({ accounts: [own] })).toEqual({ accounts: [own] })
+    for (const bad of [{ accountId: '' }, { accountId: 'Not An Id' }, { provider: 'nobody' }]) {
+      expect(update.params.safeParse({ ...own, ...bad }).success).toBe(false)
+    }
+    expect(update.params.safeParse({ ...own, settings: { compactAt: 5 } }).success).toBe(false)
+  })
+
   it('lists config folders found on the machine to offer as accounts', () => {
     const found = {
       provider: 'claude-code',
