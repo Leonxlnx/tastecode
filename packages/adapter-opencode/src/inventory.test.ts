@@ -182,7 +182,8 @@ describe('OpenCode inventory reads', () => {
     await expect(adapter.skills(captured.directory)).resolves.toHaveLength(4)
     await expect(adapter.mcpServers(captured.directory)).resolves.toHaveLength(3)
     const directory = encodeURIComponent(captured.directory)
-    expect(requests.filter((url) => url !== '/api/health')).toEqual([
+    // The protocol probes come first; only the reads after them are asserted.
+    expect(requests.filter((url) => url !== '/path' && url !== '/api/health')).toEqual([
       `/command?directory=${directory}`,
       `/skill?directory=${directory}`,
       `/mcp?directory=${directory}`,

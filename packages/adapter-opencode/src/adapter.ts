@@ -731,7 +731,21 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
       })
   }
 
+  /**
+   * 1.18.31 serves both protocols, and its v2 admits a prompt without ever
+   * running the agent loop (`/wait` answers "not available yet"). So v1 wins
+   * while the server still has it; only a v2-only server gets v2.
+   */
   async #detectProtocol(): Promise<OpenCodeProtocol> {
+    try {
+      const response = await fetch(new URL('/path', this.#baseUrl), {
+        headers: this.#authorization ? { authorization: this.#authorization } : {},
+        signal: AbortSignal.timeout(1500),
+      })
+      if (response.ok) return 'v1'
+    } catch {
+      // Unreachable or slow: the v2 probe below decides.
+    }
     try {
       const response = await fetch(new URL('/api/health', this.#baseUrl), {
         headers: this.#authorization ? { authorization: this.#authorization } : {},

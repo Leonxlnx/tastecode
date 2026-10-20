@@ -761,6 +761,23 @@ describe('OpenCode adapter', () => {
     }
   })
 
+  it('talks v1 to a server that still serves both protocols', async () => {
+    // OpenCode 1.18.31 answers both, and its v2 never runs the agent loop.
+    const mock = await serveCatalog({
+      '/path': { directory: '/repo' },
+      '/config/providers': OPENCODE_CONFIG_PROVIDERS,
+      '/api/model': { data: [] },
+    })
+    const adapter = new OpenCodeAdapter({ baseUrl: mock.baseUrl })
+    try {
+      await adapter.listModels()
+      expect(mock.urls.some((url) => url.startsWith('/api/model'))).toBe(false)
+      expect(mock.urls.some((url) => url.startsWith('/config/providers'))).toBe(true)
+    } finally {
+      await adapter.dispose()
+    }
+  })
+
   it("hands OpenCode's model status to the lineage", async () => {
     const mock = await serveCatalog({
       '/config/providers': {
@@ -1119,6 +1136,11 @@ async function serveOpenCodeV2(
           },
         ],
       })
+    }
+    // A v2-only server: the v1 probe must not find v1.
+    if (request.url === '/path') {
+      response.writeHead(404)
+      return response.end()
     }
     if (request.method === 'GET' && request.url === '/api/session/session-v2') {
       return json(response, { data: session })
