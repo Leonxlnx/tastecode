@@ -1548,6 +1548,10 @@ export const methods = {
            * Mirrors `ProviderStatus.problem`.
            */
           problem: z.string().optional(),
+          /** Who makes the agent, as the vendor names itself. */
+          maker: z.string().optional(),
+          /** True when `auth.signOut` can sign this agent out; otherwise its CLI does. */
+          signOut: z.boolean().optional(),
         }),
       ),
     }),
