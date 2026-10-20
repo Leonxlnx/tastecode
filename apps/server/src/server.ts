@@ -1376,7 +1376,8 @@ export function startServer(
           isolate: p.isolate,
         })
         startedThisRun.add(thread.id)
-        return { threadId: thread.id }
+        const earlierChanges = orchestrator.earlierChanges(thread.id)
+        return { threadId: thread.id, ...(earlierChanges ? { earlierChanges } : {}) }
       }
 
       case 'thread.checkpoints': {

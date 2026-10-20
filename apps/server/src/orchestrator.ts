@@ -1885,8 +1885,11 @@ export class Orchestrator {
     return 'kept'
   }
 
-  /** What a continued chat's first prompt says about the earlier chat's uncommitted changes. */
-  #earlierChanges(threadId: string): EarlierChanges | undefined {
+  /**
+   * Where the uncommitted changes of the chat this one continues went, for its
+   * first prompt and its note. Undefined when there were none to carry.
+   */
+  earlierChanges(threadId: string): EarlierChanges | undefined {
     const thread = this.#store.thread(threadId)
     if (thread?.continuedChanges === 'carried') return { carried: true }
     if (thread?.continuedChanges !== 'kept' || thread.continuedFrom === undefined) return undefined
@@ -3565,7 +3568,7 @@ export class Orchestrator {
       continuationPromptFromReplay(
         await this.history(earlierId),
         prompt,
-        this.#earlierChanges(threadId),
+        this.earlierChanges(threadId),
       ) ?? prompt
     )
   }
