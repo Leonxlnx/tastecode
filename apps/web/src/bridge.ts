@@ -1,4 +1,5 @@
 import type { PreviewCaptureRequest, PreviewCaptureResult } from '@harness/contracts'
+import type { ChatAttentionReport } from './chat-notifications.js'
 import type { KeybindingId, Keybindings, Shortcut } from './shortcuts.js'
 import {
   checkSimulatedAppUpdate,
@@ -64,6 +65,8 @@ type Bridge = {
     listener: (guestId: number, action: BrowserShortcutAction) => void,
   ) => () => void
   onZoomChange: (listener: (factor: number) => void) => () => void
+  reportChatAttention?: (report: ChatAttentionReport) => void
+  onOpenChat?: (listener: (chatId: string) => void) => () => void
   reportStartupMilestone?: (name: RendererStartupMilestone) => void
   isDesktop: true
 }
@@ -325,6 +328,19 @@ export function prepareNativeHaptics(): void {
 
 export function performNativeHaptic(pattern: NativeHapticPattern): void {
   bridge?.performHaptic?.(pattern)
+}
+
+/** Whether the shell can notify about chats while the window is away. */
+export const canNotifyChats = bridge?.reportChatAttention !== undefined
+
+/** The chats that are not at rest; the desktop shell decides what to notify. */
+export function reportChatAttention(report: ChatAttentionReport): void {
+  bridge?.reportChatAttention?.(report)
+}
+
+/** A chat notification was clicked. */
+export function onOpenChatRequest(listener: (chatId: string) => void): () => void {
+  return bridge?.onOpenChat?.(listener) ?? (() => undefined)
 }
 
 export function onAppZoomChange(listener: (factor: number) => void): () => void {
