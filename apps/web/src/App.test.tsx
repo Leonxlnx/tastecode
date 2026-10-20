@@ -7006,7 +7006,7 @@ describe('new chats', () => {
 
   it('saves a queued delete for the next start until Undo', async () => {
     await openNewSession()
-    fireEvent.click(screen.getByRole('button', { name: 'Delete New session' }))
+    await chooseChatMenuItem('New session', 'Delete chat')
     await screen.findByText('Chat deleted')
     expect(JSON.parse(localStorage.getItem(PENDING_CHAT_DELETES_KEY)!)).toEqual([
       { threadId: 'untouched-thread', checkout: 'keep' },
@@ -7022,7 +7022,7 @@ describe('new chats', () => {
     transport.request.mockImplementation((method, params) =>
       method === 'thread.delete' ? new Promise(() => undefined) : request(method, params),
     )
-    fireEvent.click(screen.getByRole('button', { name: 'Delete New session' }))
+    await chooseChatMenuItem('New session', 'Delete chat')
     await screen.findByText('Chat deleted')
 
     cleanup()
@@ -7031,7 +7031,7 @@ describe('new chats', () => {
     shellRenders.sidebar.mockClear()
     render(<App />)
 
-    await screen.findByRole('button', { name: 'Delete Kept chat' })
+    await screen.findByRole('button', { name: chatRowName('Kept chat') })
     await waitFor(() => expect(localStorage.getItem(PENDING_CHAT_DELETES_KEY)).toBeNull())
     expect(transport.request.mock.calls.filter(([method]) => method === 'thread.delete')).toEqual([
       ['thread.delete', { threadId: 'untouched-thread' }],
@@ -7050,7 +7050,7 @@ describe('new chats', () => {
       JSON.stringify([{ threadId: 'gone-thread', checkout: 'keep' }]),
     )
     render(<App />)
-    await screen.findByRole('button', { name: 'Delete New session' })
+    await screen.findByRole('button', { name: chatRowName('New session') })
     await waitFor(() => expect(localStorage.getItem(PENDING_CHAT_DELETES_KEY)).toBeNull())
     expect(rpcCount('thread.delete')).toBe(0)
   })
@@ -7090,7 +7090,7 @@ describe('new chats', () => {
     )
     render(<App />)
     expect((await screen.findByRole('alert')).textContent).toBe('The chat is still starting.')
-    expect(await screen.findByRole('button', { name: 'Delete New session' })).toBeTruthy()
+    expect(await screen.findByRole('button', { name: chatRowName('New session') })).toBeTruthy()
     expect(localStorage.getItem(PENDING_CHAT_DELETES_KEY)).toBeNull()
   })
 
@@ -7109,9 +7109,9 @@ describe('new chats', () => {
         ? Promise.reject(new Error('The chat is still starting.'))
         : request(method, params),
     )
-    fireEvent.click(screen.getByRole('button', { name: 'Delete New session' }))
+    await chooseChatMenuItem('New session', 'Delete chat')
     expect((await screen.findByRole('alert')).textContent).toBe('The chat is still starting.')
-    expect(await screen.findByRole('button', { name: 'Delete New session' })).toBeTruthy()
+    expect(await screen.findByRole('button', { name: chatRowName('New session') })).toBeTruthy()
     expect(JSON.parse(localStorage.getItem(PENDING_CHAT_DELETES_KEY)!)).toEqual([
       { threadId: 'untouched-thread', checkout: 'keep' },
     ])
@@ -7125,7 +7125,7 @@ describe('new chats', () => {
         ? Promise.reject(new Error('Connection closed.'))
         : request(method, params),
     )
-    fireEvent.click(screen.getByRole('button', { name: 'Delete New session' }))
+    await chooseChatMenuItem('New session', 'Delete chat')
     await screen.findByText('Chat deleted')
 
     cleanup()
@@ -7137,7 +7137,7 @@ describe('new chats', () => {
     transport.request.mockClear()
     render(<App />)
     expect((await screen.findByRole('alert')).textContent).toBe('Connection closed.')
-    expect(await screen.findByRole('button', { name: 'Delete New session' })).toBeTruthy()
+    expect(await screen.findByRole('button', { name: chatRowName('New session') })).toBeTruthy()
     expect(rpcCount('thread.delete')).toBe(1)
     expect(localStorage.getItem(PENDING_CHAT_DELETES_KEY)).toBeNull()
   })
