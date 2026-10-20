@@ -1272,15 +1272,17 @@
                   declares; the server keeps one model list per source, answers from the last launch
                   and refreshes it in the background unless the last launch listed it less than 10
                   minutes ago (older lists are listed again 5 s apart), and a models.changed push
-                  lists a source again, so a CLI model change appears without a restart; a provider
-                  the composer is not on is listed when the picker opens; the catalog is listed
-                  again on window focus or show when the last listing is 6 hours or older, and after
-                  an app-run provider update; the launch snapshot of the catalog is written once per
-                  refresh (one trailing write while sources settle, then the full catalog) and
-                  dropped instead of written when it outgrows its 2,000-row / 2M-character limit;
-                  the first selector on screen loads the picker panel in an idle moment, so the
-                  first open does not load it, and a failed load is tried again by the next
-                  caller</span
+                  lists a source again, so a CLI model change appears without a restart; a
+                  provider's own list is saved with the CLI build that listed it (path and version),
+                  so the same build answers at once for up to 30 days and a CLI update lists it
+                  again at once; a provider the composer is not on is listed when the picker opens;
+                  the catalog is listed again on window focus or show when the last listing is 6
+                  hours or older, and after an app-run provider update; the launch snapshot of the
+                  catalog is written once per refresh (one trailing write while sources settle, then
+                  the full catalog) and dropped instead of written when it outgrows its 2,000-row /
+                  2M-character limit; the first selector on screen loads the picker panel in an idle
+                  moment, so the first open does not load it, and a failed load is tried again by
+                  the next caller</span
                 ></span
               ></label
             >
