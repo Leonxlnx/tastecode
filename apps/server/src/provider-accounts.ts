@@ -413,22 +413,24 @@ export class ProviderAccounts implements AccountDirectory {
     if (toDefault === 'same') throw new Error('That folder is the default account.')
     if (toDefault)
       throw new Error(`That folder ${RELATION_WORDS[toDefault]} the default account's folder.`)
-    for (const account of this.#accounts(provider, rows)) {
-      if (account.home === undefined) continue
-      const toAccount = relation(account.home)
-      if (toAccount === 'same') {
-        throw new Error(`The account "${account.label}" already uses that folder.`)
-      }
-      if (toAccount) {
-        throw new Error(
-          `That folder ${RELATION_WORDS[toAccount]} the folder of the account "${account.label}".`,
-        )
-      }
-    }
-    // Every managed folder lives in the data folder, whichever provider it is for.
+    const inUse = this.#accounts(provider, rows).flatMap((account) =>
+      account.home === undefined
+        ? []
+        : [{ label: account.label, relation: relation(account.home) }],
+    )
+    const same = inUse.find((account) => account.relation === 'same')
+    if (same) throw new Error(`The account "${same.label}" already uses that folder.`)
+    // Every managed folder lives in the data folder, whichever provider it is
+    // for; that names the data folder itself better than a managed folder in it.
     const toData = relation(path.dirname(this.#root))
     if (toData)
       throw new Error(`That folder ${RELATION_WORDS[toData]} TasteCode's own data folder.`)
+    const overlapping = inUse.find((account) => account.relation !== undefined)
+    if (overlapping?.relation) {
+      throw new Error(
+        `That folder ${RELATION_WORDS[overlapping.relation]} the folder of the account "${overlapping.label}".`,
+      )
+    }
     return folder
   }
 

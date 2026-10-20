@@ -189,7 +189,15 @@ describe('provider accounts', () => {
     )
     expect(() => create(root)).toThrow("That folder is inside TasteCode's own data folder.")
     expect(() => create(path.dirname(root))).toThrow("That folder is TasteCode's own data folder.")
-    expect(accounts.list('codex').accounts.map((each) => each.label)).toEqual(['Default', 'Second'])
+    // A managed account of the same provider is named only when it is the very folder.
+    const managed = accounts.create('codex', 'Work', { kind: 'managed' })
+    expect(() => create(managed.home!)).toThrow('The account "Work" already uses that folder.')
+    expect(() => create(path.dirname(root))).toThrow("That folder is TasteCode's own data folder.")
+    expect(accounts.list('codex').accounts.map((each) => each.label)).toEqual([
+      'Default',
+      'Second',
+      'Work',
+    ])
   })
 
   it('renames any account, the default one included, to a free label', () => {
