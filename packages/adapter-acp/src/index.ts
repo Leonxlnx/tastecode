@@ -1,6 +1,8 @@
 export {
   AcpAdapter,
   parseAcpThreadId,
+  probeAgentSession,
+  type AcpSessionProbe,
   type AcpLaunchOptions,
   type AcpStartOptions,
   type AcpTurnSettings,
@@ -8,15 +10,16 @@ export {
 export {
   ACP_AGENTS,
   LISTED_AGENTS,
-  acpAccount,
-  acpSignOut,
+  acpCanSignOut,
   detectAgents,
   discoverAgentModels,
   findAgentSpec,
   parseKimiModels,
   type AcpAgentSpec,
 } from './agents.js'
+export { acpAccount, acpSignOut } from './account.js'
 export { ACP_CAPABILITIES } from './capabilities.js'
+export { modelConfigOption, sessionModels } from './session-models.js'
 export { prepareAcpMcpServers, validateAcpMcpServer, type AcpMcpServer } from './mcp.js'
 export { acpCommandName, acpCommandSkillPath, mapAcpCommands } from './commands.js'
 export { optionFor, type PermissionOption } from './approvals.js'

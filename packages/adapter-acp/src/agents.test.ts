@@ -2,11 +2,12 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { acpAccount, acpSignOut } from './account.js'
 import { AcpAdapter, parseAcpThreadId } from './adapter.js'
 import {
+  ACP_AGENTS,
   LISTED_AGENTS,
-  acpAccount,
-  acpSignOut,
+  acpCanSignOut,
   discoverAgentModels,
   findAgentSpec,
   parseKimiModels,
@@ -34,23 +35,75 @@ describe('ACP persisted sessions', () => {
     expect(findAgentSpec('gemini')).toMatchObject({ command: 'gemini', retired: true })
   })
 
-  it('reports Kimi signed in only once the login left its credential file', () => {
+  it('reports Kimi signed in only once the login left its credential file', async () => {
     const home = mkdtempSync(join(tmpdir(), 'acp-home-'))
     try {
-      expect(acpAccount('kimi', home)).toEqual({ signedIn: false })
+      expect(await acpAccount('kimi', home)).toEqual({ signedIn: false })
       mkdirSync(join(home, '.kimi-code', 'credentials'), { recursive: true })
       writeFileSync(join(home, '.kimi-code', 'credentials', 'kimi-code.json'), '{}')
-      expect(acpAccount('kimi', home)).toEqual({ signedIn: true })
-      // No probe declared for Qwen: state is unknown, reported signed-out so
+      expect(await acpAccount('kimi', home)).toEqual({ signedIn: true })
+      // No check declared for Qwen: state is unknown, reported signed-out so
       // the sign-in flow stays reachable.
-      expect(acpAccount('qwen', home)).toEqual({ signedIn: false })
+      expect(await acpAccount('qwen', home)).toEqual({ signedIn: false })
       // Sign-out deletes exactly the file the login left, and nothing else.
-      acpSignOut('kimi', home)
-      expect(acpAccount('kimi', home)).toEqual({ signedIn: false })
-      expect(() => acpSignOut('qwen', home)).toThrow('does not support')
+      await acpSignOut('kimi', home)
+      expect(await acpAccount('kimi', home)).toEqual({ signedIn: false })
+      await expect(acpSignOut('qwen', home)).rejects.toThrow('does not support')
     } finally {
       rmSync(home, { recursive: true, force: true })
     }
+  })
+
+  it('offers sign-out only where a command or credential file can do it', () => {
+    expect(acpCanSignOut(findAgentSpec('kimi')!)).toBe(true)
+    expect(acpCanSignOut(findAgentSpec('devin')!)).toBe(true)
+    expect(acpCanSignOut(findAgentSpec('droid')!)).toBe(false)
+  })
+})
+
+describe('ACP agent library', () => {
+  it('lists each library agent once, with its maker and a way to set it up', () => {
+    const ids = LISTED_AGENTS.map((agent) => agent.id)
+    expect(new Set(ids).size).toBe(ids.length)
+    for (const agent of LISTED_AGENTS) {
+      expect(agent.maker, agent.id).toBeTruthy()
+      expect(agent.setup.installUrl, agent.id).toMatch(/^https:\/\//)
+      expect(agent.setup.login, agent.id).toBe('provider')
+    }
+  })
+
+  it('keeps every thread id prefix unambiguous', () => {
+    // `acp-<id>-<session>` names a chat's agent, and `acp-grok-` is Grok's own.
+    const ids = [...ACP_AGENTS.map((agent) => agent.id), 'grok']
+    for (const id of ids) {
+      for (const other of ids) {
+        if (id !== other) expect(other.startsWith(`${id}-`), `${id} / ${other}`).toBe(false)
+      }
+    }
+    expect(ids.filter((id) => id === 'grok')).toHaveLength(1)
+  })
+
+  it('does not repeat an agent that is already a provider of its own', () => {
+    const providers = ['claude', 'codex', 'grok', 'cursor', 'opencode', 'antigravity', 'agy', 'pi']
+    for (const agent of LISTED_AGENTS) {
+      expect(providers, agent.id).not.toContain(agent.id)
+      expect(providers, agent.id).not.toContain(agent.command)
+    }
+  })
+
+  it('checks a sign-in for every listed agent, so none shows a sign-in it cannot know', () => {
+    for (const agent of LISTED_AGENTS) {
+      expect(
+        Boolean(agent.authStatus ?? agent.credentialProbe ?? agent.sessionModels),
+        agent.id,
+      ).toBe(true)
+    }
+  })
+
+  it('installs from the vendor script on each platform it publishes one for', () => {
+    const devin = findAgentSpec('devin')!
+    expect(devin.setup.installCommand).toContain('bash')
+    expect(findAgentSpec('copilot')!.setup.installCommand).toBe('npm install -g @github/copilot')
   })
 })
 

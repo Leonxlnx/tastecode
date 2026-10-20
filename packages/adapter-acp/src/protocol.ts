@@ -56,6 +56,30 @@ export const InitializeResultSchema = z.object({
     .optional(),
 })
 
+const ConfigOptionValueSchema = z.object({
+  value: z.string().optional(),
+  name: z.string().optional(),
+  description: z.string().nullable().optional(),
+})
+
+export const SessionConfigOptionSchema = z.object({
+  id: z.string().optional(),
+  name: z.string().optional(),
+  /** `model` marks the select that picks the session's model (Devin, Mistral Vibe). */
+  category: z.string().nullable().optional(),
+  type: z.string().optional(),
+  currentValue: z.union([z.string(), z.boolean()]).optional(),
+  /** A select lists its values flat, or in named groups that each hold some. */
+  options: z
+    .array(
+      ConfigOptionValueSchema.extend({
+        group: z.string().optional(),
+        options: z.array(ConfigOptionValueSchema).optional(),
+      }),
+    )
+    .optional(),
+})
+
 export const NewSessionResultSchema = z.object({
   sessionId: z.string().optional(),
   modes: z
@@ -65,23 +89,24 @@ export const NewSessionResultSchema = z.object({
         .array(z.object({ id: z.string().optional(), name: z.string().optional() }))
         .optional(),
     })
+    .nullable()
     .optional(),
-  configOptions: z
-    .array(
-      z.object({
-        id: z.string().optional(),
-        currentValue: z.string().optional(),
-        options: z
-          .array(
-            z.object({
-              value: z.string().optional(),
-              name: z.string().optional(),
-              description: z.string().nullable().optional(),
-            }),
-          )
-          .optional(),
-      }),
-    )
+  configOptions: z.array(SessionConfigOptionSchema).nullable().optional(),
+  /** The draft model list some agents still send beside the config options. */
+  models: z
+    .object({
+      currentModelId: z.string().optional(),
+      availableModels: z
+        .array(
+          z.object({
+            modelId: z.string().optional(),
+            name: z.string().optional(),
+            description: z.string().nullable().optional(),
+          }),
+        )
+        .optional(),
+    })
+    .nullable()
     .optional(),
 })
 
@@ -189,6 +214,7 @@ export const RequestPermissionParamsSchema = z.object({
 export type ContentBlock = z.infer<typeof ContentBlockSchema>
 export type InitializeResult = z.infer<typeof InitializeResultSchema>
 export type NewSessionResult = z.infer<typeof NewSessionResultSchema>
+export type SessionConfigOption = z.infer<typeof SessionConfigOptionSchema>
 export type StopReason = z.infer<typeof StopReasonSchema>
 export type PromptResult = z.infer<typeof PromptResultSchema>
 export type ToolKind = z.infer<typeof ToolKindSchema>

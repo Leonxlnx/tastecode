@@ -1,10 +1,32 @@
-import { existsSync, rmSync } from 'node:fs'
-import { homedir } from 'node:os'
 import { join } from 'node:path'
-import type { Account, Model, ProviderSetup } from '@harness/contracts'
+import type { Model, ProviderSetup } from '@harness/contracts'
 import { isInstalled, spawnCli } from '@harness/proc/cli'
 import { killTree } from '@harness/proc/kill'
+import { vendorInstallCommand } from '@harness/proc/updates'
 import { z } from 'zod'
+
+/** Set up through the agent's own CLI: install with `installCommand`, then sign in there. */
+function cliSetup(
+  installUrl: string,
+  installCommand: string | undefined,
+  loginOpensBrowser?: boolean,
+): ProviderSetup {
+  return {
+    installUrl,
+    ...(installCommand ? { installCommand } : {}),
+    login: 'provider',
+    ...(loginOpensBrowser === undefined ? {} : { loginOpensBrowser }),
+  }
+}
+
+/** The vendor's install script; without a Windows one, Windows gets the setup guide. */
+function scriptInstall(
+  urls: { posix: string; windows?: string },
+  platform: NodeJS.Platform = process.platform,
+): string | undefined {
+  if (platform === 'win32' && !urls.windows) return undefined
+  return vendorInstallCommand({ posix: urls.posix, windows: urls.windows ?? urls.posix }, platform)
+}
 
 const KimiModelsSchema = z.object({
   models: z
@@ -64,6 +86,23 @@ export type AcpAgentSpec = {
    * tell, in which case sign-in state stays unknown.
    */
   credentialProbe?: string
+  /** Who makes the agent, as the vendor names itself. Shown in the library. */
+  maker?: string
+  /** The CLI's own sign-in command; without one, its first interactive run signs in. */
+  loginArgs?: string[]
+  /** The CLI's own sign-out command. */
+  logoutArgs?: string[]
+  /**
+   * A sign-in check from the CLI's public output: `args` runs it and
+   * `signedIn` matches what it prints once someone is signed in.
+   */
+  authStatus?: { args: string[]; signedIn: RegExp }
+  /**
+   * The agent names its models on a new session (session-models.ts), and its
+   * sign-in shows there too: an agent that is not signed in refuses the
+   * session. Used when the CLI has no cheaper check.
+   */
+  sessionModels?: boolean
 }
 
 export const ACP_AGENTS: AcpAgentSpec[] = [
@@ -88,6 +127,208 @@ export const ACP_AGENTS: AcpAgentSpec[] = [
     problem:
       'Google ended individual sign-in (June 2026) — use an organization account or set GEMINI_API_KEY.',
   },
+  // The library: popular agents from the ACP registry
+  // (agentclientprotocol.com/get-started/agents) whose own CLI speaks ACP.
+  // Agents that are already providers of their own (Claude Code, Codex, Grok,
+  // Cursor, OpenCode, Antigravity, Pi) are not repeated here, and neither are
+  // registry entries that wrap another vendor's CLI. Launch arguments follow
+  // the registry; install and sign-in follow each vendor's own docs.
+  {
+    id: 'devin',
+    name: 'Devin',
+    maker: 'Cognition',
+    command: 'devin',
+    args: ['acp'],
+    // Initialize and session/new captured from devin 3000.11.3 on 2026-10-19.
+    verified: true,
+    authStatus: { args: ['auth', 'status'], signedIn: /^Logged in\b/m },
+    loginArgs: ['auth', 'login'],
+    logoutArgs: ['auth', 'logout'],
+    sessionModels: true,
+    setup: cliSetup(
+      'https://docs.devin.ai/cli',
+      scriptInstall({
+        posix: 'https://cli.devin.ai/install.sh',
+        windows: 'https://static.devin.ai/cli/setup.ps1',
+      }),
+      true,
+    ),
+  },
+  {
+    id: 'copilot',
+    name: 'GitHub Copilot',
+    maker: 'GitHub',
+    command: 'copilot',
+    args: ['--acp'],
+    // Initialize captured from copilot 1.0.100 on 2026-10-19; session/new
+    // answered auth_required (-32000) while signed out.
+    verified: true,
+    loginArgs: ['login'],
+    sessionModels: true,
+    setup: cliSetup(
+      'https://docs.github.com/en/copilot/how-tos/set-up/install-copilot-cli',
+      'npm install -g @github/copilot',
+      true,
+    ),
+  },
+  {
+    id: 'droid',
+    name: 'Droid',
+    maker: 'Factory',
+    command: 'droid',
+    args: ['exec', '--output-format', 'acp-daemon'],
+    // Initialize captured from droid 0.233.0 on 2026-10-19; its session/new
+    // answered auth_required (-32000) while signed out, which is the sign-in
+    // check. Its login lives in the keychain, so no file says more.
+    verified: true,
+    sessionModels: true,
+    setup: cliSetup(
+      'https://docs.factory.ai/cli/getting-started/quickstart',
+      scriptInstall({
+        posix: 'https://app.factory.ai/cli',
+        windows: 'https://app.factory.ai/cli/windows',
+      }),
+      true,
+    ),
+  },
+  {
+    id: 'cline',
+    name: 'Cline',
+    maker: 'Cline',
+    command: 'cline',
+    args: ['--acp'],
+    verified: false,
+    loginArgs: ['auth'],
+    sessionModels: true,
+    setup: cliSetup(
+      'https://docs.cline.bot/getting-started/installing-cline',
+      'npm install -g cline',
+      true,
+    ),
+  },
+  {
+    id: 'goose',
+    name: 'goose',
+    maker: 'Block',
+    command: 'goose',
+    args: ['acp'],
+    verified: false,
+    // goose has no account; `configure` picks the model provider and key.
+    loginArgs: ['configure'],
+    sessionModels: true,
+    setup: cliSetup(
+      'https://goose-docs.ai/docs/getting-started/installation',
+      // Windows takes a two-step PowerShell download, so it gets the guide.
+      scriptInstall({
+        posix: 'https://github.com/aaif-goose/goose/releases/download/stable/download_cli.sh',
+      }),
+    ),
+  },
+  {
+    id: 'junie',
+    name: 'Junie',
+    maker: 'JetBrains',
+    command: 'junie',
+    args: ['--acp=true'],
+    verified: false,
+    // No login command: the first interactive run offers the JetBrains login.
+    sessionModels: true,
+    setup: cliSetup(
+      'https://junie.jetbrains.com/docs/junie-cli.html',
+      scriptInstall({
+        posix: 'https://junie.jetbrains.com/install.sh',
+        windows: 'https://junie.jetbrains.com/install.ps1',
+      }),
+      true,
+    ),
+  },
+  {
+    id: 'auggie',
+    name: 'Auggie',
+    maker: 'Augment Code',
+    command: 'auggie',
+    args: ['--acp'],
+    // Initialize captured from auggie 0.36.0 on 2026-10-19; session/new
+    // answered auth_required (-32000) while signed out.
+    verified: true,
+    loginArgs: ['login'],
+    sessionModels: true,
+    setup: cliSetup(
+      'https://docs.augmentcode.com/cli/setup-auggie/install-auggie-cli',
+      'npm install -g @augmentcode/auggie',
+      true,
+    ),
+  },
+  {
+    id: 'vibe',
+    name: 'Mistral Vibe',
+    maker: 'Mistral AI',
+    // `vibe` is the interactive CLI; the same package installs this server.
+    command: 'vibe-acp',
+    args: [],
+    // Initialize and session/new captured from vibe-acp 2.7.2 on 2026-10-19.
+    // It advertises no auth methods: its key lives in the keyring or env.
+    verified: true,
+    // `vibe-acp --setup` runs the same key setup as `vibe --setup`.
+    loginArgs: ['--setup'],
+    sessionModels: true,
+    setup: cliSetup(
+      'https://docs.mistral.ai/vibe/code/cli/install-setup',
+      // Windows installs uv first and then the tool; that is the guide's job.
+      scriptInstall({ posix: 'https://mistral.ai/vibe/install.sh' }),
+    ),
+  },
+  {
+    id: 'kilo',
+    name: 'Kilo',
+    maker: 'Kilo Code',
+    command: 'kilo',
+    args: ['acp'],
+    // Initialize and session/new captured from kilo 7.8.12 on 2026-10-19: it
+    // opens sessions without a login, on its free models. (7.3 never answered
+    // initialize.)
+    verified: true,
+    loginArgs: ['auth', 'login'],
+    sessionModels: true,
+    setup: cliSetup('https://kilo.ai/docs/cli', 'npm install -g @kilocode/cli', true),
+  },
+  {
+    id: 'qoder',
+    name: 'Qoder',
+    maker: 'Qoder',
+    command: 'qoder',
+    args: ['--acp'],
+    // Initialize captured from qoder 1.1.74 on 2026-10-19; session/new
+    // answered auth_required (-32000) while signed out.
+    verified: true,
+    loginArgs: ['login'],
+    sessionModels: true,
+    setup: cliSetup(
+      'https://docs.qoder.com/cli/installation',
+      scriptInstall({
+        posix: 'https://qoder.com/install',
+        windows: 'https://qoder.com/install.ps1',
+      }),
+      true,
+    ),
+  },
+  {
+    id: 'codebuddy',
+    name: 'CodeBuddy',
+    maker: 'Tencent',
+    command: 'codebuddy',
+    args: ['--acp'],
+    // Initialize captured from codebuddy on 2026-10-19 (it names no version);
+    // session/new answered auth_required (-32000) while signed out.
+    verified: true,
+    // No login command: the first interactive run picks a site and signs in.
+    sessionModels: true,
+    setup: cliSetup(
+      'https://www.codebuddy.ai/docs/cli/installation',
+      'npm install -g @tencent-ai/codebuddy-code',
+      true,
+    ),
+  },
   {
     id: 'kimi',
     name: 'Kimi CLI',
@@ -108,6 +349,7 @@ export const ACP_AGENTS: AcpAgentSpec[] = [
       installCommand: 'npm install -g @moonshot-ai/kimi-code',
       login: 'provider',
     },
+    maker: 'Moonshot AI',
   },
   {
     id: 'qwen',
@@ -138,37 +380,15 @@ export function findAgentSpec(id: string): AcpAgentSpec | undefined {
   return ACP_AGENTS.find((agent) => agent.id === id)
 }
 
+/** Whether `acpSignOut` can sign this agent out, so the UI offers it only then. */
+export function acpCanSignOut(spec: AcpAgentSpec): boolean {
+  return Boolean(spec.logoutArgs ?? spec.credentialProbe)
+}
+
 export async function detectAgents(): Promise<Array<AcpAgentSpec & { installed: boolean }>> {
   return Promise.all(
     LISTED_AGENTS.map(async (agent) => ({ ...agent, installed: await isInstalled(agent.command) })),
   )
-}
-
-/**
- * Sign-in state as far as the agent's CLI lets us observe it. Agents declare
- * the file a completed login leaves behind (`credentialProbe`); we check that
- * it exists and nothing more — reading it would cross the credential
- * boundary in rules/security.md. Without a probe the state is unknown and
- * reported as signed-out, which keeps the sign-in flow reachable.
- */
-export function acpAccount(agentId: string, home = homedir()): Account {
-  const spec = findAgentSpec(agentId)
-  if (!spec?.credentialProbe) return { signedIn: false }
-  return { signedIn: existsSync(join(home, spec.credentialProbe)) }
-}
-
-/**
- * Sign out by removing the credential the login left behind — the CLIs
- * offer no logout command, and deleting the file is exactly what one would
- * do. The file is removed, never read. Throws for agents without a probe so
- * the UI knows not to offer the action.
- */
-export function acpSignOut(agentId: string, home = homedir()): void {
-  const spec = findAgentSpec(agentId)
-  if (!spec?.credentialProbe) {
-    throw new Error(`${spec?.name ?? agentId} does not support signing out from here`)
-  }
-  rmSync(join(home, spec.credentialProbe), { force: true })
 }
 
 /**
@@ -244,7 +464,17 @@ export function parseKimiModels(output: string): Model[] {
   })
 }
 
-function captureCli(command: string, args: string[], timeoutMs = 5000): Promise<string> {
+/**
+ * Run a short CLI command and collect what it prints. `anyExit` keeps the
+ * output of a command that reports a state through its exit code too, such
+ * as a status check that exits 1 while signed out.
+ */
+export function captureCli(
+  command: string,
+  args: string[],
+  timeoutMs = 5000,
+  options: { anyExit?: boolean } = {},
+): Promise<string> {
   return new Promise((resolve, reject) => {
     const child = spawnCli(command, args)
     let output = ''
@@ -259,13 +489,13 @@ function captureCli(command: string, args: string[], timeoutMs = 5000): Promise<
       }, reject)
     }
     const timer = setTimeout(() => {
-      finish(new Error(`${command} model discovery timed out`))
+      finish(new Error(`${command} ${args[0]} timed out`))
     }, timeoutMs)
     child.stdout.setEncoding('utf8')
     child.stdout.on('data', (chunk: string) => (output += chunk))
     child.on('error', (error) => finish(error))
     child.on('close', (code) =>
-      finish(code === 0 ? undefined : new Error(`${command} model discovery failed`)),
+      finish(code === 0 || options.anyExit ? undefined : new Error(`${command} ${args[0]} failed`)),
     )
   })
 }

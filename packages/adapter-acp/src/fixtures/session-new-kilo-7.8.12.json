@@ -1,0 +1,78 @@
+{
+  "sessionId": "ses_ea9cc8ac8ffecNdfnNDstEBAeN",
+  "configOptions": [
+    {
+      "id": "model",
+      "name": "Model",
+      "category": "model",
+      "type": "select",
+      "currentValue": "kilo/google/gemini-3-pro-image",
+      "options": [
+        {
+          "value": "kilo/aion-labs/aion-3.5",
+          "name": "Kilo Gateway/AionLabs: Aion 3.5"
+        },
+        {
+          "value": "kilo/aion-labs/aion-3.5-mini",
+          "name": "Kilo Gateway/AionLabs: Aion 3.5 Mini"
+        },
+        {
+          "value": "kilo/aion-labs/aion-2.0",
+          "name": "Kilo Gateway/AionLabs: Aion-2.0"
+        },
+        {
+          "value": "kilo/google/gemini-3-pro-image",
+          "name": "Kilo Gateway/Google: Nano Banana Pro (Gemini 3 Pro Image)"
+        }
+      ]
+    },
+    {
+      "id": "effort",
+      "name": "Effort",
+      "description": "Available effort levels for this model",
+      "category": "thought_level",
+      "type": "select",
+      "currentValue": "thinking",
+      "options": [
+        {
+          "value": "thinking",
+          "name": "Thinking"
+        }
+      ]
+    },
+    {
+      "id": "mode",
+      "name": "Session Mode",
+      "category": "mode",
+      "type": "select",
+      "currentValue": "code",
+      "options": [
+        {
+          "value": "code",
+          "name": "code",
+          "description": "The default agent. Executes tools based on configured permissions."
+        },
+        {
+          "value": "ask",
+          "name": "ask",
+          "description": "Get answers and explanations without making changes to the codebase."
+        },
+        {
+          "value": "debug",
+          "name": "debug",
+          "description": "Diagnose and fix software issues with systematic debugging methodology."
+        },
+        {
+          "value": "orchestrator",
+          "name": "orchestrator",
+          "description": "Coordinate complex tasks by delegating to specialized agents in parallel."
+        },
+        {
+          "value": "plan",
+          "name": "plan",
+          "description": "Plan mode. Can only edit plan files; all other filesystem mutations are denied."
+        }
+      ]
+    }
+  ]
+}

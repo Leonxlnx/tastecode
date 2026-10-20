@@ -1,0 +1,115 @@
+{
+  "sessionId": "mangrove-agenda",
+  "modes": {
+    "currentModeId": "accept-edits",
+    "availableModes": [
+      {
+        "id": "accept-edits",
+        "name": "Code"
+      },
+      {
+        "id": "smart",
+        "name": "Smart"
+      },
+      {
+        "id": "ask",
+        "name": "Ask"
+      },
+      {
+        "id": "plan",
+        "name": "Plan"
+      },
+      {
+        "id": "bypass",
+        "name": "Bypass Permissions"
+      }
+    ]
+  },
+  "configOptions": [
+    {
+      "id": "mode",
+      "name": "Session Mode",
+      "category": "mode",
+      "type": "select",
+      "currentValue": "accept-edits",
+      "options": [
+        {
+          "value": "accept-edits",
+          "name": "Code",
+          "description": "Write and edit code"
+        },
+        {
+          "value": "smart",
+          "name": "Smart",
+          "description": "Auto-approve actions the model judges safe"
+        },
+        {
+          "value": "ask",
+          "name": "Ask",
+          "description": "Answer questions without code changes"
+        },
+        {
+          "value": "plan",
+          "name": "Plan",
+          "description": "Plan changes before implementing"
+        },
+        {
+          "value": "bypass",
+          "name": "Bypass Permissions",
+          "description": "Auto-approve all tool calls unless your organization's policy requires approval"
+        }
+      ]
+    },
+    {
+      "id": "model",
+      "name": "Model",
+      "description": "AI model to use",
+      "category": "model",
+      "type": "select",
+      "currentValue": "gemini-4-argon-medium",
+      "options": [
+        {
+          "value": "adaptive",
+          "name": "Adaptive"
+        },
+        {
+          "value": "swe-2-high",
+          "name": "SWE-2"
+        },
+        {
+          "value": "swe-1-7-lightning-medium",
+          "name": "SWE-1.7 Lightning"
+        },
+        {
+          "value": "claude-fable-5-1-medium",
+          "name": "Claude Fable 5.1"
+        },
+        {
+          "value": "gemini-4-argon-medium",
+          "name": "Gemini 4 Argon"
+        }
+      ]
+    },
+    {
+      "id": "thought_level",
+      "name": "Thinking",
+      "category": "thought_level",
+      "type": "select",
+      "currentValue": "high",
+      "options": [
+        {
+          "value": "low",
+          "name": "Low"
+        },
+        {
+          "value": "medium",
+          "name": "Medium"
+        },
+        {
+          "value": "high",
+          "name": "High"
+        }
+      ]
+    }
+  ]
+}

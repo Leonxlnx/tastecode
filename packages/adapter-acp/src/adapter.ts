@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events'
-import { readFileSync } from 'node:fs'
+import { mkdirSync, readFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import type {
@@ -13,6 +14,7 @@ import type {
   Thread,
 } from '@harness/contracts'
 import {
+  JsonRpcError,
   spawnCli,
   StdioJsonRpc,
   type JsonRpcRequestOptions,
@@ -26,6 +28,7 @@ import { ACP_CAPABILITIES } from './capabilities.js'
 import { mapAcpCommands } from './commands.js'
 import { Streamer } from './events.js'
 import type { AcpMcpServer } from './mcp.js'
+import { modelConfigOption, sessionModels } from './session-models.js'
 import { acpSessionUsage, acpTurnUsage } from './usage.js'
 import {
   PROTOCOL_VERSION,
@@ -111,8 +114,63 @@ export interface AcpRpc {
 
 type AcpLaunchSpec = Pick<
   AcpAgentSpec,
-  'id' | 'name' | 'command' | 'args' | 'supportedVersion' | 'modelArg' | 'modelConfigId'
+  | 'id'
+  | 'name'
+  | 'command'
+  | 'args'
+  | 'supportedVersion'
+  | 'modelArg'
+  | 'modelConfigId'
+  | 'loginArgs'
+  | 'sessionModels'
 >
+
+/** What a session started without a prompt says about the agent. */
+export type AcpSessionProbe = { signedIn: boolean; models: Model[] }
+
+/** Longest wait for an agent to start and open a probe session. */
+const PROBE_TIMEOUT_MS = 30_000
+/**
+ * How long a signed-in probe answers the next sign-in check or model list,
+ * which the app asks for together. A signed-out answer is never reused, so a
+ * sign-in just finished in the agent's terminal shows at the next check.
+ */
+const PROBE_REUSE_MS = 30_000
+const probes = new Map<
+  string,
+  { running: Promise<AcpSessionProbe> } | { at: number; value: AcpSessionProbe }
+>()
+
+/**
+ * Start a session without a prompt and close the agent again: the session
+ * names the models, and an agent that is not signed in refuses it. Runs in a
+ * folder of its own, so no project collects these sessions.
+ */
+export function probeAgentSession(agentId: string): Promise<AcpSessionProbe> {
+  const known = probes.get(agentId)
+  if (known && 'running' in known) return known.running
+  if (known && Date.now() - known.at < PROBE_REUSE_MS) return Promise.resolve(known.value)
+  const running = new AcpAdapter(agentId).probeSession()
+  const entry = { running }
+  probes.set(agentId, entry)
+  void running.then(
+    (value) => {
+      if (probes.get(agentId) !== entry) return
+      if (value.signedIn) probes.set(agentId, { at: Date.now(), value })
+      else probes.delete(agentId)
+    },
+    () => {
+      if (probes.get(agentId) === entry) probes.delete(agentId)
+    },
+  )
+  return running
+}
+
+/** ACP's `auth_required` error, or an older agent that only says so in words. */
+function isAuthRequired(cause: unknown): boolean {
+  if (cause instanceof JsonRpcError && cause.code === -32000) return true
+  return /auth/i.test(cause instanceof Error ? cause.message : String(cause))
+}
 
 const IMAGE_MIME_TYPES = new Map([
   ['.gif', 'image/gif'],
@@ -158,6 +216,8 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
   #sessionId: string | undefined
   #workspacePath = ''
   #model: string | undefined
+  /** The session's model select, read from the session itself where it names one. */
+  #modelConfigId: string | undefined
   #streamer: Streamer | undefined
   #activeTurn: { threadId: string; turnId: string } | undefined
   #turnCounter = 0
@@ -231,17 +291,18 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
         // Agents report an expired or missing login as a bare protocol error.
         // Passing that through gives the user two words and no way forward, so
         // it becomes the one instruction that actually fixes it.
-        const message = cause instanceof Error ? cause.message : String(cause)
-        if (/auth/i.test(message)) {
+        if (isAuthRequired(cause)) {
+          const login = [this.#spec.command, ...(this.#spec.loginArgs ?? [])].join(' ')
           throw new Error(
-            `${this.#spec.name} is not signed in. Run \`${this.#spec.command}\` once in a ` +
-              `terminal and sign in there — we deliberately never handle its credentials.`,
+            `${this.#spec.name} is not signed in. Sign in under Settings › Providers, or run ` +
+              `\`${login}\` in a terminal — we deliberately never handle its credentials.`,
           )
         }
         throw cause
       })
     if (!session.sessionId) throw new Error(`${this.#spec.name} started no session`)
     this.#sessionId = session.sessionId
+    this.#modelConfigId = modelConfigOption(session)?.id ?? this.#spec.modelConfigId
     await this.#selectSessionModel(options.model)
 
     return {
@@ -267,12 +328,16 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
       await this.dispose()
       throw new Error(`${this.#spec.name} does not support session resume`)
     }
-    await rpc.request('session/load', {
+    const loaded = await rpc.request('session/load', {
       sessionId,
       cwd: workspacePath,
       mcpServers: this.#mcpServers,
     })
     this.#sessionId = sessionId
+    const reloaded = NewSessionResultSchema.safeParse(loaded ?? {})
+    this.#modelConfigId =
+      (reloaded.success ? modelConfigOption(reloaded.data)?.id : undefined) ??
+      this.#spec.modelConfigId
     await this.#selectSessionModel(options.model)
     return {
       id: `acp-${this.#spec.id}-${sessionId}`,
@@ -382,7 +447,42 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
   }
 
   async listModels(): Promise<Model[]> {
-    return discoverAgentModels(this.#spec.id)
+    if (!this.#spec.sessionModels) return discoverAgentModels(this.#spec.id)
+    // Not signed in: no models yet. Signing in invalidates the list.
+    return (await probeAgentSession(this.#spec.id)).models
+  }
+
+  /** One session without a prompt, then the agent is closed; see `probeAgentSession`. */
+  async probeSession(): Promise<AcpSessionProbe> {
+    const folder = path.join(tmpdir(), 'tastecode-acp-probe')
+    mkdirSync(folder, { recursive: true })
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const deadline = new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () => reject(new Error(`${this.#spec.name} did not open a session in time`)),
+        PROBE_TIMEOUT_MS,
+      )
+    })
+    const probe = async (): Promise<AcpSessionProbe> => {
+      const rpc = await this.#connect(folder, undefined)
+      try {
+        const session = await rpc.request(
+          'session/new',
+          { cwd: folder, mcpServers: [] },
+          { result: NewSessionResultSchema },
+        )
+        return { signedIn: true, models: sessionModels(session) }
+      } catch (cause) {
+        if (isAuthRequired(cause)) return { signedIn: false, models: [] }
+        throw cause
+      }
+    }
+    try {
+      return await Promise.race([probe(), deadline])
+    } finally {
+      clearTimeout(timer)
+      await this.dispose()
+    }
   }
 
   /** Commands and skills the agent runs itself when a message starts with `/name`. */
@@ -426,6 +526,7 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     this.#initialize = undefined
     this.#sessionId = undefined
     this.#model = undefined
+    this.#modelConfigId = undefined
     this.#loadSession = false
     this.#pendingApprovals.clear()
     this.#commands = []
@@ -439,7 +540,7 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     if (!this.#argsFor) {
       // An agent that selects its model in-session (Kimi) switches without a
       // relaunch; skipping this silently kept every turn on the start model.
-      if (settings.model && settings.model !== this.#model && this.#spec.modelConfigId) {
+      if (settings.model && settings.model !== this.#model && this.#modelConfigId) {
         await this.#selectSessionModel(settings.model)
         this.#model = settings.model
       }
@@ -556,10 +657,10 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
   }
 
   async #selectSessionModel(model: string | undefined): Promise<void> {
-    if (!model || !this.#spec.modelConfigId || !this.#rpc || !this.#sessionId) return
+    if (!model || !this.#modelConfigId || !this.#rpc || !this.#sessionId) return
     await this.#rpc.request('session/set_config_option', {
       sessionId: this.#sessionId,
-      configId: this.#spec.modelConfigId,
+      configId: this.#modelConfigId,
       value: model,
     })
   }
