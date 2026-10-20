@@ -105,6 +105,36 @@ describe('Side chat context', () => {
     expect(snapshotCompactReplayEntries(history)).toEqual(snapshot)
   })
 
+  it('keeps the output of a tool step under its text', () => {
+    const history: Array<{ event: DomainEvent }> = [
+      { event: item('user', 'user', 'Run the tests') },
+      {
+        event: {
+          type: 'item.completed',
+          item: {
+            id: 'command',
+            turnId: 'turn-1',
+            type: 'command',
+            status: 'completed',
+            command: 'pnpm test',
+            text: '3 failed',
+            exitCode: 1,
+            createdAt: 2,
+          },
+        },
+      },
+    ]
+
+    expect(snapshotEntries(history)[1]).toEqual({
+      kind: 'activity',
+      type: 'command',
+      status: 'completed',
+      text: '3 failed',
+      command: 'pnpm test',
+      exitCode: 1,
+    })
+  })
+
   it('falls back to exact projection for a delta-first recovery replay', () => {
     const history: Array<{ event: DomainEvent }> = [
       { event: item('user', 'user', 'Original request') },

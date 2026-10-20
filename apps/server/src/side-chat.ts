@@ -346,7 +346,7 @@ function toSnapshotEntry(item: Item): SideChatSnapshotEntry | undefined {
     kind: 'activity',
     type: item.type,
     status: item.status,
-    ...(text ? { includedValue: boundedText(text) } : {}),
+    ...(text ? { text: boundedText(text) } : {}),
     ...(item.command ? { command: boundedText(item.command) } : {}),
     ...(item.path ? { path: boundedText(item.path) } : {}),
     ...(!(item.exitCode === undefined) ? { exitCode: item.exitCode } : {}),
