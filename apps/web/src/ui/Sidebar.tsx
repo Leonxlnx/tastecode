@@ -256,7 +256,7 @@ function SidebarComponent(props: {
   /** Moves a chat to Archived without deleting it; sending to it later brings it back. */
   onArchiveSession?: ((id: string) => void) | undefined
   onRestoreSession?: ((id: string) => void) | undefined
-  /** Reads a finished or failed chat without opening it, which clears it from Needs you. */
+  /** Reads a failed chat without opening it, which clears it from Needs you. */
   onMarkSessionRead?: ((id: string) => void) | undefined
   onArchiveProject: (sessionIds: string[]) => void
   onReorderProject?: (sourcePath: string, targetPath: string, position: DropPosition) => void
@@ -2201,9 +2201,7 @@ const NeedsYouRow = memo(function NeedsYouRow(props: {
   const { session, attention } = props.entry
   // Approvals and questions leave only once they are answered, in the chat.
   const markRead =
-    props.onMarkSessionRead && (attention === 'failed' || attention === 'done')
-      ? props.onMarkSessionRead
-      : undefined
+    props.onMarkSessionRead && attention === 'failed' ? props.onMarkSessionRead : undefined
   const label = `${session.title}, ${attentionLabel(attention)}, ${props.projectName}`
   return (
     <li
@@ -2248,8 +2246,7 @@ function AttentionMark(props: { attention: Attention }) {
 }
 
 function attentionTone(attention: Attention): string {
-  if (attention === 'failed') return 'is-failed'
-  return attention === 'done' ? 'is-done' : 'is-attention'
+  return attention === 'failed' ? 'is-failed' : 'is-attention'
 }
 
 function attentionLabel(attention: Attention): string {
@@ -2260,8 +2257,6 @@ function attentionLabel(attention: Attention): string {
       return 'waiting for an answer'
     case 'failed':
       return 'failed'
-    case 'done':
-      return 'finished, unread'
   }
 }
 

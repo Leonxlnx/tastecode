@@ -151,7 +151,7 @@ describe('the rail keeps its order', () => {
 })
 
 describe('chats that need you', () => {
-  it('lists blocked agents first, then unread failures and answers, the longest wait first', () => {
+  it('lists blocked agents first, then unread failures, the longest wait first', () => {
     const projects: Project[] = [
       {
         path: '/one',
@@ -160,6 +160,7 @@ describe('chats that need you', () => {
           chat('approval', { status: 'approval', statusSince: 30 }),
           chat('read-failure', { status: 'failed', statusSince: 2 }),
           chat('done', { status: 'ready', unread: true, statusSince: 20 }),
+          chat('older-failure', { status: 'failed', unread: true, statusSince: 3 }),
         ],
       },
       {
@@ -167,8 +168,8 @@ describe('chats that need you', () => {
         sessions: [
           chat('question', { status: 'input', statusSince: 10 }),
           chat('failed', { status: 'failed', unread: true, statusSince: 40 }),
-          chat('archived', { status: 'ready', unread: true, statusSince: 5, ...archived(6) }),
-          chat('idle'),
+          chat('archived', { status: 'failed', unread: true, statusSince: 5, ...archived(6) }),
+          chat('idle', { unread: true }),
         ],
       },
     ]
@@ -181,19 +182,36 @@ describe('chats that need you', () => {
     ).toEqual([
       ['question', 'input'],
       ['approval', 'approval'],
-      ['done', 'done'],
+      ['older-failure', 'failed'],
       ['failed', 'failed'],
     ])
   })
 
-  it('leaves out the open chat and clears an entry once it is read', () => {
-    const done = chat('done', { status: 'ready', unread: true })
-    const projects: Project[] = [{ path: '/one', sessions: [done, chat('other')] }]
+  it('leaves a finished answer in the tree only, unread or not', () => {
+    const projects: Project[] = [
+      {
+        path: '/one',
+        sessions: [
+          chat('ready', { status: 'ready', unread: true }),
+          chat('idle', { status: 'idle', unread: true }),
+        ],
+      },
+    ]
 
-    expect(needsYouSessions(projects, undefined).map(({ session }) => session.id)).toEqual(['done'])
-    expect(needsYouSessions(projects, 'done')).toEqual([])
+    expect(needsYouSessions(projects, undefined)).toEqual([])
+    expect(projectAttention(projects[0]!)).toBeUndefined()
+  })
+
+  it('leaves out the open chat and clears an entry once it is read', () => {
+    const failed = chat('failed', { status: 'failed', unread: true })
+    const projects: Project[] = [{ path: '/one', sessions: [failed, chat('other')] }]
+
+    expect(needsYouSessions(projects, undefined).map(({ session }) => session.id)).toEqual([
+      'failed',
+    ])
+    expect(needsYouSessions(projects, 'failed')).toEqual([])
     const read: Project[] = [
-      { path: '/one', sessions: [{ ...done, status: 'idle', unread: false }, chat('other')] },
+      { path: '/one', sessions: [{ ...failed, unread: false }, chat('other')] },
     ]
     expect(needsYouSessions(read, undefined)).toEqual([])
   })
@@ -208,7 +226,7 @@ describe('chats that need you', () => {
           chat('failed', { status: 'failed', unread: true }),
         ],
       }),
-    ).toEqual({ count: 2, attention: 'failed' })
+    ).toEqual({ count: 1, attention: 'failed' })
     expect(
       projectAttention({
         path: '/waiting',

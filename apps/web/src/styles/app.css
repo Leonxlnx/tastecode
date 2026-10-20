@@ -1117,12 +1117,6 @@
   background: var(--error);
 }
 
-/* An answer nobody has read yet, in the band. The tree shows it as a heavier
-   title only, so a row never carries two dots. */
-.sess__status-dot.is-done {
-  background: var(--light);
-}
-
 /* ---------- needs you ---------- */
 
 /* Chats waiting for the user, above Pinned. Only rendered when one is. */

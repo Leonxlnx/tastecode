@@ -197,10 +197,11 @@ describe('sidebar theme CSS', () => {
 
   it('marks an unread chat by a heavier title, not a second dot', () => {
     // A failed or waiting chat already shows a dot in the row's one slot; an
-    // unread dot beside it made two. The band carries the unread mark instead.
+    // unread dot beside it made two.
     expect(appCss).toMatch(/\.sessrow\.is-unread \.sess__title \{[^}]*font-weight: 560;/s)
     expect(appCss).not.toContain('.sess__unread-dot')
-    expect(appCss).toMatch(/\.sess__status-dot\.is-done \{[^}]*background: var\(--light\);/s)
+    // Needs you lists only blocked and failed chats, so it has no dot of its own.
+    expect(appCss).not.toContain('.sess__status-dot.is-done')
   })
 
   it('uses semantic colors for finished, failed, and waiting threads in both sidebars', () => {
