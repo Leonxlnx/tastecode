@@ -225,15 +225,15 @@
       <div class="topbar-inner">
         <h1>Feature Inventory</h1>
         <span class="total" id="total">0 checked</span>
-        <span class="meta">2026-10-19 nightly · includes main 58d89955 (PR #1909)</span>
+        <span class="meta">2026-10-20 nightly 5da77ebc · includes main 094eac47 (PR #1921)</span>
       </div>
     </div>
 
     <div class="wrap">
       <p class="intro">
         <a href="./CLAUDE-HANDOFF.md">October 9 Claude handoff</a>: current source, branches,
-        references and verification limits. This nightly source includes main through 0ad74ec3,
-        synchronized on 2026-10-16 (PR #1632), and the October 16 improvement round, which landed on
+        references and verification limits. This nightly source includes main through 094eac47,
+        synchronized on 2026-10-20 (PR #1921), and the October 16 improvement round, which landed on
         2026-10-18 through PR #1841 (172 lane PRs in ten lanes: streaming, chat column, models, MCP
         and slash commands, providers, plan limits, usage, Settings, performance, subagents and pull
         requests). Published desktop 0.1.1 and the old 0.1.2 draft are separate from the source
@@ -1159,7 +1159,9 @@
                   setup, and Send opens after 5 s while an account check is still running, or at
                   once when the provider's last check said signed in; a check that answers signed
                   out turns Send off again; an Enter pressed while Send is still loading is sent
-                  once Send is ready, unless the words or the chat changed meanwhile</span
+                  once Send is ready, unless the words or the chat changed meanwhile; on nightly a
+                  shelf that holds only notes, such as where a chat continues, is drawn neutral with
+                  an info icon instead of red</span
                 ></span
               ></label
             >
@@ -2857,7 +2859,8 @@
                   provider is asked again, and Manage opens Providers; Local activity is a 12-month
                   heatmap from the shared usage store, with month labels from the first full month,
                   an Open Usage link and a refresh icon; the streak and the model breakdown are on
-                  Usage now; multiple accounts per provider are not built yet</span
+                  Usage now; on nightly a provider's further accounts are listed as their own rows
+                  (see Multiple accounts per provider)</span
                 ></span
               ></label
             >
