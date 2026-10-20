@@ -1,5 +1,9 @@
 import type { DomainEvent, Item } from '@harness/contracts'
-import { CONTINUE_CONTEXT_NOTICE, CONTINUE_CONTEXT_REQUEST } from './provider-session.js'
+import {
+  CONTINUE_CONTEXT_NOTICE,
+  CONTINUE_CONTEXT_REQUEST,
+  HANDOVER_CONTEXT_NOTICE,
+} from './provider-session.js'
 import { sliceCodeUnits } from './slice-code-units.js'
 
 const MAX_SNAPSHOT_ENTRIES = 80
@@ -82,9 +86,13 @@ function earlierChangesNote(changes: EarlierChanges | undefined): string {
   return `Its uncommitted changes could not be carried over; they are still in ${changes.keptIn}. Check the files there before redoing work.`
 }
 
-/** The user's own words in a continued chat's first prompt; any other text as it is. */
+/**
+ * The user's own words in the first prompt of a continued chat or of a chat
+ * that moved to another provider; any other text as it is.
+ */
 export function withoutContinuationContext(text: string): string {
-  if (!text.startsWith(CONTINUE_CONTEXT_NOTICE)) return text
+  if (!text.startsWith(CONTINUE_CONTEXT_NOTICE) && !text.startsWith(HANDOVER_CONTEXT_NOTICE))
+    return text
   const start = text.indexOf(CONTINUE_CONTEXT_REQUEST)
   return start === -1 ? text : text.slice(start + CONTINUE_CONTEXT_REQUEST.length)
 }

@@ -101,6 +101,53 @@ export async function currentBranch(path: string): Promise<string | undefined> {
   return ref?.startsWith(HEADS) ? ref.slice(HEADS.length) : abbreviated
 }
 
+/** What git reports for a checkout: its branch and changed paths, at most `limit` of them. */
+export type WorkspaceChanges = { branch?: string; changes: string[]; more: number }
+
+/**
+ * The branch and `git status` of a checkout, each change as its two status
+ * letters and path ("M src/a.ts", "?? notes.md", "R new.ts <- old.ts").
+ * Undefined when the folder is no repository or git does not answer.
+ */
+export async function workspaceChanges(
+  path: string,
+  limit = 60,
+): Promise<WorkspaceChanges | undefined> {
+  let status: string
+  try {
+    // Not trimmed: the first entry's status can begin with a space.
+    ;({ stdout: status } = await run(
+      'git',
+      ['status', '--porcelain=v1', '-z', '--untracked-files=normal'],
+      { cwd: path, windowsHide: true, timeout: 8000, maxBuffer: 16 * 1024 * 1024 },
+    ))
+  } catch {
+    return undefined
+  }
+  const records = status.split('\0')
+  const changes: string[] = []
+  let count = 0
+  for (let index = 0; index < records.length; index += 1) {
+    const record = records[index]!
+    if (record.length < 4) continue
+    const code = record.slice(0, 2)
+    let entry = `${code.trim()} ${record.slice(3)}`
+    // A rename or copy names its source in the next record.
+    if (code[0] === 'R' || code[0] === 'C') {
+      index += 1
+      if (records[index]) entry += ` <- ${records[index]}`
+    }
+    count += 1
+    if (changes.length < limit) changes.push(entry)
+  }
+  const branch = await currentBranch(path)
+  return {
+    ...(branch === undefined ? {} : { branch }),
+    changes,
+    more: count - changes.length,
+  }
+}
+
 async function git(cwd: string, args: string[]): Promise<string | undefined> {
   try {
     const { stdout } = await run('git', args, {

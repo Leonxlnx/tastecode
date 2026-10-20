@@ -1,9 +1,14 @@
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, renameSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { listWorkspaceBranches, readWorkspace, switchWorkspaceBranch } from './workspace.js'
+import {
+  listWorkspaceBranches,
+  readWorkspace,
+  switchWorkspaceBranch,
+  workspaceChanges,
+} from './workspace.js'
 
 function git(cwd: string, ...args: string[]): string {
   return execFileSync('git', args, { cwd, encoding: 'utf8' }).trim()
@@ -58,5 +63,36 @@ describe('workspace branches', () => {
   it('rejects revisions that are not local branch names', async () => {
     const repo = repository()
     await expect(switchWorkspaceBranch(repo, 'HEAD~1')).rejects.toThrow('unknown local branch')
+  })
+})
+
+describe('workspace changes', () => {
+  it('lists what git reports as changed, with each status and path intact', async () => {
+    const repo = repository()
+    writeFileSync(path.join(repo, 'second.txt'), 'two\n')
+    git(repo, 'add', 'second.txt')
+    git(repo, 'commit', '-m', 'second')
+    // An unstaged change reads " M": its leading space must not shift the path.
+    writeFileSync(path.join(repo, 'file.txt'), 'changed\n')
+    renameSync(path.join(repo, 'second.txt'), path.join(repo, 'renamed.txt'))
+    git(repo, 'add', '-A', 'second.txt', 'renamed.txt')
+    writeFileSync(path.join(repo, 'new file.md'), 'new\n')
+
+    expect(await workspaceChanges(repo)).toEqual({
+      branch: 'main',
+      changes: ['M file.txt', 'R renamed.txt <- second.txt', '?? new file.md'],
+      more: 0,
+    })
+    expect(await workspaceChanges(repo, 1)).toEqual({
+      branch: 'main',
+      changes: ['M file.txt'],
+      more: 2,
+    })
+  })
+
+  it('says nothing for a folder that is no repository', async () => {
+    expect(await workspaceChanges(mkdtempSync(path.join(tmpdir(), 'harness-plain-')))).toBe(
+      undefined,
+    )
   })
 })
