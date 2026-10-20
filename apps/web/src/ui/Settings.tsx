@@ -202,6 +202,7 @@ import { SettingsMeta, StateLabel } from './SettingsStatus.js'
 import { UsageSettings } from './UsageSettings.js'
 import type { PlanLimitsSource } from './usage/usage-sheets.js'
 import {
+  SettingsBackSlot,
   SettingsEmpty,
   SettingsNotice,
   SettingsPage,
@@ -403,6 +404,8 @@ function SettingsComponent(props: {
   useEffect(() => {
     if (section !== 'providers') setProvidersView(undefined)
   }, [section])
+  // Where a page opened from inside a tab puts its back button.
+  const [backSlot, setBackSlot] = useState<HTMLElement | null>(null)
 
   // Every tab shares one scroller; a tab opens at its top, not at the offset
   // the previous tab was left at. A freshly mounted scroller is already at its
@@ -466,6 +469,7 @@ function SettingsComponent(props: {
       tabIndex={-1}
     >
       <div className="settings__titlebar" aria-hidden />
+      <div className="settings__back-slot" ref={setBackSlot} />
 
       <aside className="settings__sidebar">
         <button className="settings__back" type="button" onClick={props.onClose}>
@@ -553,74 +557,76 @@ function SettingsComponent(props: {
       </aside>
 
       <main className="settings__main" ref={main}>
-        <div className="settings__content">
-          {section === 'profile' ? (
-            <ProfileSettings
-              transport={props.transport}
-              provider={props.provider}
-              account={props.account}
-              accountLoading={props.accountLoading}
-              providerName={props.providerName}
-              providers={props.providersLoading ? undefined : props.providerStatuses}
-              identity={props.profileIdentity}
-              onIdentityChange={props.onProfileIdentityChange}
-              onManageAccounts={() => setSection('providers')}
-              onOpenUsage={() => setSection('usage')}
-            />
-          ) : null}
-          {section === 'providers' ? (
-            <ProviderSettings {...props} providersView={providersView} />
-          ) : null}
-          {section === 'models' ? <ModelSettings {...props} /> : null}
-          {section === 'mcp' ? (
-            <McpSettings
-              {...props}
-              providers={props.providerStatuses.map(({ id, displayName }) => ({
-                provider: id,
-                providerName: displayName,
-              }))}
-            />
-          ) : null}
-          {section === 'skills' ? <SkillsSettings {...props} /> : null}
-          {section === 'workflows' ? <GeneralSettings {...props} /> : null}
-          {section === 'usage' ? (
-            <UsageSettings transport={props.transport} limits={props.usageLimits} />
-          ) : null}
-          {section === 'appearance' ? <AppearanceSettings {...props} /> : null}
-          {section === 'keybinds' ? (
-            <KeybindSettings
-              keybindings={props.keybindings ?? DEFAULT_KEYBINDINGS}
-              macOS={props.macOS ?? false}
-              onChange={props.onKeybindingChange ?? noopKeybindingChange}
-              onReset={props.onKeybindingsReset ?? noop}
-            />
-          ) : null}
-          {section === 'data' ? <DataSettings {...props} /> : null}
-          {section === 'debug' ? (
-            <SettingsPage title="Debug">
-              <SettingsRow name="Onboarding">
-                <button
-                  className="set-button"
-                  type="button"
-                  onClick={props.onForceOnboarding}
-                  disabled={!props.onForceOnboarding}
+        <SettingsBackSlot.Provider value={backSlot}>
+          <div className="settings__content">
+            {section === 'profile' ? (
+              <ProfileSettings
+                transport={props.transport}
+                provider={props.provider}
+                account={props.account}
+                accountLoading={props.accountLoading}
+                providerName={props.providerName}
+                providers={props.providersLoading ? undefined : props.providerStatuses}
+                identity={props.profileIdentity}
+                onIdentityChange={props.onProfileIdentityChange}
+                onManageAccounts={() => setSection('providers')}
+                onOpenUsage={() => setSection('usage')}
+              />
+            ) : null}
+            {section === 'providers' ? (
+              <ProviderSettings {...props} providersView={providersView} />
+            ) : null}
+            {section === 'models' ? <ModelSettings {...props} /> : null}
+            {section === 'mcp' ? (
+              <McpSettings
+                {...props}
+                providers={props.providerStatuses.map(({ id, displayName }) => ({
+                  provider: id,
+                  providerName: displayName,
+                }))}
+              />
+            ) : null}
+            {section === 'skills' ? <SkillsSettings {...props} /> : null}
+            {section === 'workflows' ? <GeneralSettings {...props} /> : null}
+            {section === 'usage' ? (
+              <UsageSettings transport={props.transport} limits={props.usageLimits} />
+            ) : null}
+            {section === 'appearance' ? <AppearanceSettings {...props} /> : null}
+            {section === 'keybinds' ? (
+              <KeybindSettings
+                keybindings={props.keybindings ?? DEFAULT_KEYBINDINGS}
+                macOS={props.macOS ?? false}
+                onChange={props.onKeybindingChange ?? noopKeybindingChange}
+                onReset={props.onKeybindingsReset ?? noop}
+              />
+            ) : null}
+            {section === 'data' ? <DataSettings {...props} /> : null}
+            {section === 'debug' ? (
+              <SettingsPage title="Debug">
+                <SettingsRow name="Onboarding">
+                  <button
+                    className="set-button"
+                    type="button"
+                    onClick={props.onForceOnboarding}
+                    disabled={!props.onForceOnboarding}
+                  >
+                    Force onboarding
+                  </button>
+                </SettingsRow>
+                <UsageHistoryReset transport={props.transport} />
+                <AppUpdateSimulationRow />
+                <ProviderUpdateSimulationRow transport={props.transport} />
+                <SettingsSection
+                  title="Avatar generator"
+                  note="The picture a profile gets from its name when no photo is uploaded. Same name, same picture, on every provider."
                 >
-                  Force onboarding
-                </button>
-              </SettingsRow>
-              <UsageHistoryReset transport={props.transport} />
-              <AppUpdateSimulationRow />
-              <ProviderUpdateSimulationRow transport={props.transport} />
-              <SettingsSection
-                title="Avatar generator"
-                note="The picture a profile gets from its name when no photo is uploaded. Same name, same picture, on every provider."
-              >
-                <GeneratedAvatarLab initialName={props.profileIdentity?.displayName} />
-              </SettingsSection>
-            </SettingsPage>
-          ) : null}
-          {section === 'about' ? <AboutSettings transport={props.transport} /> : null}
-        </div>
+                  <GeneratedAvatarLab initialName={props.profileIdentity?.displayName} />
+                </SettingsSection>
+              </SettingsPage>
+            ) : null}
+            {section === 'about' ? <AboutSettings transport={props.transport} /> : null}
+          </div>
+        </SettingsBackSlot.Provider>
       </main>
     </div>
   )

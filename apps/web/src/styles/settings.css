@@ -23,6 +23,36 @@
   -webkit-app-region: drag;
 }
 
+/* A page opened from inside a tab (Add providers) keeps its way back in the
+   content's top-left corner, where a chat's title sits in its header: the
+   arrow starts 15px in, as that title does after the stage's 1px frame and the
+   header's 14px padding (6px here, the button's 7px, the arrow's own 2px).
+   The strip itself stays a drag region; only the button is not. */
+.settings__back-slot {
+  position: absolute;
+  z-index: 4;
+  top: 0;
+  left: var(--rail-w);
+  display: flex;
+  align-items: center;
+  height: var(--titlebar-h);
+  padding-left: 6px;
+  pointer-events: none;
+}
+
+/* A Mac draws no strip here, so the button sits on the chat header's line, the
+   one the sidebar toggle and panel controls share: under the stage's 1px
+   frame, centred on the header's 41px above its rule. */
+.shell.is-macos .settings__back-slot {
+  top: 1px;
+  height: 41px;
+}
+
+.settings__back-slot > * {
+  pointer-events: auto;
+  -webkit-app-region: no-drag;
+}
+
 /* The same quiet arrow and words as Back to app at the top of the rail. */
 .set-page__back {
   display: inline-flex;
@@ -52,11 +82,9 @@
   outline-offset: var(--focus-ring-inset);
 }
 
-/* A page opened from inside a tab starts with its way back. The arrow hangs in
-   the column's left margin, as the roster's minus and plus do, so the words
-   start on the title's edge: padding 7px, arrow 14px, gap 6px. */
+/* Without the shell's strip, as in a page shown on its own, it sits above the title. */
 .set-page__back-row {
-  margin: 0 0 10px -27px;
+  margin: 0 0 12px -8px;
 }
 
 .settings__sidebar {
@@ -1787,9 +1815,14 @@
     padding: 28px 18px 48px;
   }
 
-  /* No margin to hang the arrow in: it starts on the title's edge. */
-  .set-page__back-row {
-    margin-left: -7px;
+  /* One column: the strip runs the full width, so the way back starts at the
+     window's edge, after the traffic lights on a Mac. */
+  .settings__back-slot {
+    left: 0;
+  }
+
+  .shell.is-macos .settings__back-slot {
+    left: 70px;
   }
 
   /* No margin to borrow at this width: the minus and plus move inside. */

@@ -1,4 +1,13 @@
-import { useId, useLayoutEffect, useRef, type KeyboardEvent, type ReactNode } from 'react'
+import {
+  createContext,
+  useContext,
+  useId,
+  useLayoutEffect,
+  useRef,
+  type KeyboardEvent,
+  type ReactNode,
+} from 'react'
+import { createPortal } from 'react-dom'
 import {
   IconAlertCircle as AlertCircle,
   IconArrowLeft as ArrowLeft,
@@ -17,6 +26,12 @@ function classes(...names: Array<string | false | undefined>): string {
   return names.filter(Boolean).join(' ')
 }
 
+/**
+ * Where a page opened from inside another one shows its way back: the top-left
+ * corner of the content, which the Settings shell owns.
+ */
+export const SettingsBackSlot = createContext<HTMLElement | null>(null)
+
 /** A page opened from inside a tab, and the page it returns to. */
 export type SettingsBack = { label: string; onBack: () => void }
 
@@ -25,9 +40,9 @@ const OWNS_ESCAPE = '[role="menu"], [role="listbox"], [role="dialog"], [role="al
 
 /**
  * The tab itself: its title (the nav label), an optional line under it and
- * actions on its right. A page opened from inside a tab (`back`) has its way
- * back above the title, opens at its top with focus on its title, and goes
- * back on Escape rather than closing Settings.
+ * actions on its right. A page opened from inside a tab (`back`) has a back
+ * button in the content's top-left corner, opens at its top with focus on its
+ * title, and goes back on Escape rather than closing Settings.
  */
 export function SettingsPage(props: {
   title: string
@@ -38,6 +53,7 @@ export function SettingsPage(props: {
   children: ReactNode
 }) {
   const titleId = useId()
+  const slot = useContext(SettingsBackSlot)
   const heading = useRef<HTMLHeadingElement>(null)
   const back = props.back
   const opened = back !== undefined
@@ -56,25 +72,25 @@ export function SettingsPage(props: {
     event.preventDefault()
     back.onBack()
   }
+  const backButton = back ? (
+    <button
+      className="set-page__back"
+      type="button"
+      aria-label={`Back to ${back.label}`}
+      onClick={back.onBack}
+    >
+      <ArrowLeft size={14} aria-hidden />
+      {back.label}
+    </button>
+  ) : null
   return (
     <section
       className={classes('settings__panel set-page', props.className)}
       aria-labelledby={titleId}
       onKeyDown={back ? goBack : undefined}
     >
-      {back ? (
-        <div className="set-page__back-row">
-          <button
-            className="set-page__back"
-            type="button"
-            aria-label={`Back to ${back.label}`}
-            onClick={back.onBack}
-          >
-            <ArrowLeft size={14} aria-hidden />
-            {back.label}
-          </button>
-        </div>
-      ) : null}
+      {backButton && slot ? createPortal(backButton, slot) : null}
+      {backButton && !slot ? <div className="set-page__back-row">{backButton}</div> : null}
       <header className="set-page__head">
         <div className="set-page__heading">
           <h1
