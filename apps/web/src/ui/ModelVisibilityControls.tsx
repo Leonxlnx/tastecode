@@ -1,5 +1,6 @@
 import type { ModelChoice } from '../model-catalog.js'
 import { SettingsRow } from './settings/SettingsLayout.js'
+import '../styles/switch.css'
 
 /**
  * All and None for a run of model rows. Each changes every row that differs
