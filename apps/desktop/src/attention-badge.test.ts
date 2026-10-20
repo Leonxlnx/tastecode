@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { badgeBitmap, badgeDescription, badgeLabel } from './attention-badge.js'
+import { badgeBitmap, badgeDescription } from './attention-badge.js'
 
 function pixel(bitmap: Buffer, size: number, x: number, y: number) {
   const offset = (y * size + x) * 4
@@ -11,24 +11,11 @@ function pixel(bitmap: Buffer, size: number, x: number, y: number) {
   }
 }
 
-describe('badgeLabel', () => {
-  it('counts up to nine and then says 9+', () => {
-    expect(badgeLabel(1)).toBe('1')
-    expect(badgeLabel(9)).toBe('9')
-    expect(badgeLabel(10)).toBe('9+')
-    expect(badgeLabel(250)).toBe('9+')
-  })
-
-  it('says nothing for no chats', () => {
-    expect(badgeLabel(0)).toBe('')
-    expect(badgeLabel(-1)).toBe('')
-    expect(badgeLabel(Number.NaN)).toBe('')
-  })
-})
-
 describe('badgeBitmap', () => {
-  it('draws nothing for zero', () => {
+  it('draws nothing for no chats', () => {
     expect(badgeBitmap(0, 32)).toBeUndefined()
+    expect(badgeBitmap(-1, 32)).toBeUndefined()
+    expect(badgeBitmap(Number.NaN, 32)).toBeUndefined()
   })
 
   it('refuses sizes the taskbar never asks for', () => {
@@ -37,29 +24,25 @@ describe('badgeBitmap', () => {
     expect(badgeBitmap(1, 1_000)).toBeUndefined()
   })
 
-  it('fills a square of BGRA pixels with a disc and transparent corners', () => {
+  it('draws an amber dot with a dark ring and transparent corners', () => {
     const size = 32
     const bitmap = badgeBitmap(3, size)!
     expect(bitmap.byteLength).toBe(size * size * 4)
     expect(pixel(bitmap, size, 0, 0).a).toBe(0)
     expect(pixel(bitmap, size, size - 1, size - 1).a).toBe(0)
-    // Inside the disc, clear of the digit: the needs-you amber, opaque.
-    expect(pixel(bitmap, size, 4, 16)).toEqual({ r: 0xf2, g: 0xc9, b: 0x4c, a: 255 })
+    // The middle of the dot: the needs-you amber, opaque.
+    expect(pixel(bitmap, size, 16, 16)).toEqual({ r: 0xf2, g: 0xc9, b: 0x4c, a: 255 })
+    // Just outside the dot (radius 11.2 px), inside the ring: dark and opaque.
+    const ring = pixel(bitmap, size, 16 + 12, 16)
+    expect(ring.a).toBe(255)
+    expect(ring.r).toBeLessThan(0x30)
   })
 
-  it('draws the digit in dark ink', () => {
-    const size = 32
-    // The stem of the 1 runs down the middle of the disc.
-    const stem = pixel(badgeBitmap(1, size)!, size, 16, 18)
-    expect(stem.a).toBe(255)
-    expect(stem.r).toBeLessThan(0x40)
-  })
-
-  it('draws a different picture for every label', () => {
+  it('draws the same dot for every count, so the taskbar never shows a cramped number', () => {
     const pictures = new Set(
-      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((count) => badgeBitmap(count, 24)!.toString('base64')),
+      [1, 2, 9, 10, 250].map((count) => badgeBitmap(count, 24)!.toString('base64')),
     )
-    expect(pictures.size).toBe(10)
+    expect(pictures.size).toBe(1)
   })
 
   it('keeps colour within alpha, as premultiplied pixels must', () => {
