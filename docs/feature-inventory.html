@@ -1145,6 +1145,38 @@
               ></label
             >
           </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Switch an open chat to another provider: in an open chat the model picker lists the
+                chat's own models first, then every other provider's. Picking one shows "Your next
+                message switches this chat to Claude Code. The conversation so far goes with it."
+                above the composer, with Stay on Codex; only the user's own pick switches a chat (a
+                fallback never leaves its provider, and models the user hid from it still keep the
+                picker away). Sending moves the chat (same id, transcript, checkout, title and
+                sidebar row): a session starts at the new provider first, then the chat's session
+                stops (tried three times) and the move is stored, so a failed move leaves the chat
+                where it was and puts the message back; refused while a turn runs, prompts are
+                queued or a Design run is active, and for a Side chat. The transcript shows
+                "Switched to Claude Code · sonnet" between the turns, and every window that hears it
+                shows the row on the new provider. The first prompt there carries the conversation
+                as untrusted context (any chats it continued, the first request and the latest
+                exchange sharing the budget, other messages newest first, tool steps cut to what
+                they did, where the chat moved, files attached that still exist), then whether the
+                last turn was stopped or failed, the open task list and what git reports as changed;
+                sized at half a character per token of the new engine's declared context window
+                (6,000–96,000 characters, 64,000 without one) and within the command-line limit of
+                Cursor and Antigravity (15,000 characters on Windows, 40,000 on Linux). The
+                transcript keeps only the user's words. A first turn there that ends stopped or
+                failed before any answer, or whose session goes away, sends the handover again with
+                the next prompt; a restart before the first prompt starts the new provider afresh.
+                The sessions a chat left stay its own: provider history neither imports them as
+                chats nor reads them in again. At a plan limit, other signed-in providers are
+                offered beside other accounts (Switch to Claude Code); choosing one sets the chat up
+                to switch with the failed request in the composer and sends nothing</span
+              ></label
+            >
+          </li>
         </ul>
       </section>
 
