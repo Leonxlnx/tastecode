@@ -267,6 +267,7 @@ export function startServer(
     onUsageChanged: (provider, accountId) =>
       push.broadcast('usage.changed', accountId ? { provider, accountId } : { provider }),
     onLimitsChanged: (source) => push.broadcast('usage.limits', { source }),
+    providerBinary: async (provider) => (await providerService).providerBinary(provider),
     onModelsChanged: (provider, agent, accountId) =>
       push.broadcast('models.changed', {
         provider,

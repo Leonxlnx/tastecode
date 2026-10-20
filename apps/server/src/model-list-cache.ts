@@ -38,6 +38,15 @@ export type ModelListCacheOptions = {
   restoredRefreshDelayMs?: number | undefined
   /** How far apart those reads start, so the listing processes do not all run at once. */
   restoredRefreshStaggerMs?: number | undefined
+  /**
+   * Names the binary a provider's own lists come from, such as its resolved
+   * path and version; undefined when that is not known. A saved list is kept
+   * with the binary that listed it: another binary's list is read again at
+   * once, and the same binary's list still answers after `maxStaleMs`, up to
+   * `maxKeptMs`, while it is read again in the background.
+   */
+  binary?: ((provider: ProviderId) => Promise<string | undefined>) | undefined
+  maxKeptMs?: number | undefined
   now?: (() => number) | undefined
 }
 
@@ -56,6 +65,14 @@ type Entry = {
   /** Bumped by every invalidation, so a read that started earlier cannot store its answer. */
   version: number
   failedAt?: number | undefined
+  /** The binary that listed `value`, for a provider's own list. */
+  binary?: string | undefined
+  /** `binary` is the one installed now, so the list may answer for up to `maxKeptMs`. */
+  binaryConfirmed?: boolean | undefined
+  /** Restored from the last launch and older than `maxStaleMs`: answers only once confirmed. */
+  needsBinary?: boolean | undefined
+  /** The comparison of a restored list's binary with the installed one, once per launch. */
+  binaryCheck?: Promise<void> | undefined
 }
 
 export const MODEL_LIST_FRESH_MS = 10 * 60_000
@@ -63,6 +80,8 @@ export const MODEL_LIST_MAX_STALE_MS = 24 * 60 * 60_000
 export const MODEL_LIST_RETRY_MS = 60_000
 export const MODEL_LIST_RESTORED_REFRESH_DELAY_MS = 20_000
 export const MODEL_LIST_RESTORED_REFRESH_STAGGER_MS = 5_000
+/** How long a list still answers while the binary that listed it is the one installed. */
+export const MODEL_LIST_MAX_KEPT_MS = 30 * 24 * 60 * 60_000
 /** Larger lists are kept for this launch only; one would outweigh every other setting. */
 export const MAX_PERSISTED_MODELS = 2_000
 
@@ -76,6 +95,7 @@ const SnapshotListSchema = z.object({
   agent: z.string().min(1).optional(),
   listedAt: z.number().int().nonnegative(),
   models: z.array(ModelSchema).max(MAX_PERSISTED_MODELS),
+  binary: z.string().min(1).max(4_096).optional(),
 })
 
 /**
@@ -90,12 +110,17 @@ const SnapshotListSchema = z.object({
  * lists are kept in `snapshot`, so the next launch answers from them. A saved
  * list is as fresh as its age says: one read minutes before a restart is not
  * read again, and older ones are read again one by one once launch work settled.
+ * A provider's own list is saved with the binary that listed it (`binary`): an
+ * update to another binary reads it again at once, and while the binary stays
+ * the same its list answers past a day, so a launch after a day off does not
+ * wait for every listing process.
  */
 export class ModelListCache {
   readonly #options: ModelListCacheOptions
   readonly #entries = new Map<string, Entry>()
   readonly #freshMs: number
   readonly #maxStaleMs: number
+  readonly #maxKeptMs: number
   readonly #retryMs: number
   readonly #restoredRefreshStaggerMs: number
   readonly #now: () => number
@@ -110,6 +135,10 @@ export class ModelListCache {
       this.#freshMs,
       duration(options.maxStaleMs, MODEL_LIST_MAX_STALE_MS),
     )
+    this.#maxKeptMs = Math.max(
+      this.#maxStaleMs,
+      duration(options.maxKeptMs, MODEL_LIST_MAX_KEPT_MS),
+    )
     this.#retryMs = duration(options.retryMs, MODEL_LIST_RETRY_MS)
     this.#restoredRefreshStaggerMs = duration(
       options.restoredRefreshStaggerMs,
@@ -122,13 +151,19 @@ export class ModelListCache {
 
   list(provider: ProviderId, agent?: string): Promise<Model[]> {
     const entry = this.#entry(provider, agent)
+    if (entry.value !== undefined && entry.restored && entry.binary !== undefined) {
+      entry.binaryCheck ??= this.#checkBinary(entry)
+      // Older than a day, a list answers only for the binary that listed it.
+      if (entry.needsBinary) return entry.binaryCheck.then(() => this.list(provider, agent))
+    }
     if (entry.value !== undefined) {
       const now = this.#now()
       const age = now - entry.listedAt
       // `listedAt` is when the provider answered, in this launch or the last
       // one, so a list read minutes before a restart is still fresh.
       if (age >= 0 && age < this.#freshMs && !entry.stale) return Promise.resolve(entry.value)
-      if (age >= 0 && age < this.#maxStaleMs) {
+      const keptMs = entry.binaryConfirmed ? this.#maxKeptMs : this.#maxStaleMs
+      if (age >= 0 && age < keptMs) {
         this.#refreshInBackground(entry, now)
         return Promise.resolve(entry.value)
       }
@@ -213,8 +248,11 @@ export class ModelListCache {
       const list = SnapshotListSchema.safeParse(candidate)
       if (!list.success) continue
       const { provider, agent, listedAt, models } = list.data
+      // Only a provider's own list names its binary; a custom source keeps the day.
+      const binary =
+        agent === undefined && this.#options.binary !== undefined ? list.data.binary : undefined
       const age = now - listedAt
-      if (age < 0 || age >= this.#maxStaleMs) continue
+      if (age < 0 || age >= (binary === undefined ? this.#maxStaleMs : this.#maxKeptMs)) continue
       this.#entries.set(entryKey(provider, agent), {
         provider,
         agent,
@@ -223,6 +261,7 @@ export class ModelListCache {
         stale: false,
         restored: true,
         version: 0,
+        ...(binary === undefined ? {} : { binary, needsBinary: age >= this.#maxStaleMs }),
       })
     }
   }
@@ -238,6 +277,7 @@ export class ModelListCache {
               ...(entry.agent === undefined ? {} : { agent: entry.agent }),
               listedAt: entry.listedAt,
               models: entry.value,
+              ...(entry.binary === undefined ? {} : { binary: entry.binary }),
             },
           ]
         : [],
@@ -247,6 +287,48 @@ export class ModelListCache {
     } catch (error) {
       this.#options.onLog?.(`Could not save the model lists: ${String(error)}`)
     }
+  }
+
+  /**
+   * Compares a restored list's binary with the one installed now. The same one
+   * keeps the list for up to `maxKeptMs`. Another one (an update) reads the
+   * list again at once; a list older than a day that cannot be confirmed is
+   * dropped, so its next request waits for the provider as it did before.
+   */
+  async #checkBinary(entry: Entry): Promise<void> {
+    const { version } = entry
+    let installed: string | undefined
+    try {
+      installed = await this.#options.binary?.(entry.provider)
+    } catch {
+      installed = undefined
+    }
+    if (this.#entries.get(entryKey(entry.provider, entry.agent)) !== entry) return
+    if (entry.version !== version) return
+    const beyondStale = entry.needsBinary === true
+    entry.needsBinary = false
+    if (installed !== undefined && installed === entry.binary) {
+      entry.binaryConfirmed = true
+      return
+    }
+    if (beyondStale) {
+      entry.value = undefined
+      entry.restored = false
+      return
+    }
+    // Not knowing the binary changes nothing for a list younger than a day.
+    if (installed === undefined) return
+    this.#options.onLog?.(
+      `Reading the ${describe(entry)} model list again: its CLI changed since the last launch.`,
+    )
+    entry.version += 1
+    entry.stale = true
+    entry.restored = false
+    clearTimeout(entry.refreshTimer)
+    entry.refreshTimer = undefined
+    entry.reading = undefined
+    entry.failedAt = undefined
+    this.#refresh(entry)
   }
 
   #refreshInBackground(entry: Entry, now: number): void {
@@ -295,6 +377,13 @@ export class ModelListCache {
     const current = () =>
       this.#entries.get(entryKey(entry.provider, entry.agent)) === entry &&
       entry.version === version
+    // Which binary lists it, read beside the listing so the answer never waits for it.
+    const binary =
+      entry.agent === undefined && this.#options.binary
+        ? Promise.resolve()
+            .then(() => this.#options.binary?.(entry.provider))
+            .catch(() => undefined)
+        : undefined
     const reading = Promise.resolve()
       .then(() =>
         this.#options.list(entry.provider, entry.agent, { refresh: previous !== undefined }),
@@ -307,7 +396,16 @@ export class ModelListCache {
             entry.stale = false
             entry.restored = false
             entry.failedAt = undefined
+            entry.binary = undefined
+            entry.binaryConfirmed = false
+            entry.needsBinary = false
             this.#persist()
+            void binary?.then((listedBy) => {
+              if (!current() || entry.value !== models || listedBy === undefined) return
+              entry.binary = listedBy
+              entry.binaryConfirmed = true
+              this.#persist()
+            })
             if (previous !== undefined && !isDeepStrictEqual(previous, models)) {
               this.#options.onChanged?.(entry.provider, entry.agent)
             }
