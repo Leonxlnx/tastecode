@@ -3026,7 +3026,11 @@
                 denied writes, preserving real download and stream-error checks across platforms
                 (#1394). On macOS, a DMG image that cannot be detached afterwards no longer fails a
                 prepared update, and a refused DMG keeps its real reason and is discarded (#1487,
-                not yet run on a real Mac)</span
+                not yet run on a real Mac). On nightly, installing no longer cuts off running chats:
+                while chats run, the sidebar button (an hourglass with the count) and Restart to
+                update in About read “Installs when 2 chats finish” and install by themselves once
+                the last one ends, after the server confirms nothing still runs; Install now stops
+                them after one confirmation that names how many, and Install later puts it off</span
               ></label
             >
           </li>
