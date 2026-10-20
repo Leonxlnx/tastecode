@@ -4,24 +4,26 @@ import { handoverBudget, handoverPrompt } from './handover.js'
 import { CONTINUE_CONTEXT_REQUEST, HANDOVER_CONTEXT_NOTICE } from './provider-session.js'
 import { withoutContinuationContext } from './side-chat.js'
 
+/** One row of a chat's history, as the builder reads it. */
+type Recorded = { event: DomainEvent }
+
 const said = (
   id: string,
   role: 'user' | 'assistant',
   text: string,
   turnId = 'turn-1',
-): { event: DomainEvent } => ({
+): Recorded => ({
   event: {
     type: 'item.completed',
     item: { id, turnId, type: 'message', role, status: 'completed', text, createdAt: 1 },
   },
 })
 
-const ended = (
-  turnId: string,
-  status: 'completed' | 'interrupted' | 'failed',
-): { event: DomainEvent } => ({ event: { type: 'turn.completed', turnId, status } })
+const ended = (turnId: string, status: 'completed' | 'interrupted' | 'failed'): Recorded => ({
+  event: { type: 'turn.completed', turnId, status },
+})
 
-const moved: { event: DomainEvent } = {
+const moved: Recorded = {
   event: {
     type: 'item.completed',
     item: {
