@@ -707,7 +707,8 @@
                   Grok's credential file; successful login retains the exact provider-confirmed
                   email as soon as the CLI reports it; when neither is available Settings reports
                   only Signed in, uses a fixed-width privacy blur, and never asks the user to type
-                  an address</span
+                  an address; the sign-in check and the extension start together, so an account read
+                  waits for the slower of the two Grok processes, not for both in a row</span
                 ></span
               ></label
             >
@@ -719,7 +720,8 @@
                 <span class="d"
                   >weekly/reset, prepaid, and pay-as-you-go rows appear only when reported; signed
                   out is unavailable and provider failures remain errors; a billing JSON-RPC error
-                  reads "Grok Build did not report its credits."</span
+                  reads "Grok Build did not report its credits."; the billing read starts beside the
+                  sign-in check instead of after it</span
                 ></span
               ></label
             >
