@@ -132,6 +132,8 @@ export type StoredThread = {
   ephemeral: boolean
   /** Main conversation captured when an ephemeral Side chat was created. */
   parentThreadId?: string | undefined
+  /** The earlier chat this one carries on, such as on another account after a usage limit. */
+  continuedFrom?: string | undefined
 }
 
 /** Only the fields sent by `projects.list`; recovery-only metadata stays in SQLite. */
@@ -151,6 +153,7 @@ export type StoredSidebarThread = {
   worktreeBranch?: string | undefined
   lifecycle: ThreadLifecycle
   unread: boolean
+  continuedFrom?: string | undefined
 }
 
 type SidebarThreadUpdate = (thread: StoredSidebarThread) => StoredSidebarThread
@@ -368,6 +371,8 @@ CREATE TABLE IF NOT EXISTS threads (
   last_active_at   INTEGER NOT NULL,
   ephemeral        INTEGER NOT NULL DEFAULT 0,
   parent_thread_id TEXT,
+  continued_from   TEXT,
+  continue_context_pending INTEGER NOT NULL DEFAULT 0,
   restore_context_pending INTEGER NOT NULL DEFAULT 0,
   restored_at             INTEGER,
   history_rewrite_after   INTEGER,
@@ -644,6 +649,12 @@ const ADDED_COLUMNS: Array<{ table: string; column: string; definition: string }
   { table: 'threads', column: 'history_rewrite_after', definition: 'INTEGER' },
   { table: 'threads', column: 'history_rewrite_through', definition: 'INTEGER' },
   { table: 'threads', column: 'restored_at', definition: 'INTEGER' },
+  { table: 'threads', column: 'continued_from', definition: 'TEXT' },
+  {
+    table: 'threads',
+    column: 'continue_context_pending',
+    definition: 'INTEGER NOT NULL DEFAULT 0',
+  },
 ]
 
 type SqliteInteger = number | bigint
@@ -692,6 +703,7 @@ type ThreadRow = {
   last_active_at: SqliteInteger
   ephemeral: SqliteInteger
   parent_thread_id: string | null
+  continued_from: string | null
 }
 type SidebarThreadRow = Pick<
   ThreadRow,
@@ -713,6 +725,7 @@ type SidebarThreadRow = Pick<
   | 'keep_active'
   | 'woke_at'
   | 'unread'
+  | 'continued_from'
 >
 type InactiveThreadCandidateRow = Pick<ThreadRow, 'id' | 'unread'>
 type ThreadIdRow = Pick<ThreadRow, 'id'>
@@ -1225,8 +1238,9 @@ export class Store {
       `INSERT INTO threads
         (id, project_path, provider, agent, connection_id, account_id, provider_session_id, title,
           created_at, worktree_path, worktree_branch,
-          lifecycle_state, keep_active, unread, last_active_at, ephemeral, parent_thread_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 0, 0, ?, ?, ?)`,
+          lifecycle_state, keep_active, unread, last_active_at, ephemeral, parent_thread_id,
+          continued_from, continue_context_pending)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 0, 0, ?, ?, ?, ?, ?)`,
     )
     this.#listProjects = this.#db.prepare(`SELECT * FROM projects ORDER BY created_at`)
     this.#listProjectThreads = this.#db.prepare(
@@ -1239,7 +1253,7 @@ export class Store {
       `SELECT id, project_path, provider, agent, connection_id, account_id, title, pinned, created_at,
               closed_at,
               worktree_branch, lifecycle_state, lifecycle_at, lifecycle_reason, wake_at,
-              keep_active, woke_at, unread
+              keep_active, woke_at, unread, continued_from
        FROM threads WHERE ephemeral = 0 ORDER BY created_at DESC`,
     )
     for (let mask = 0; mask < 4; mask += 1) {
@@ -1607,6 +1621,9 @@ export class Store {
       stored.createdAt,
       ephemeral ? 1 : 0,
       stored.parentThreadId ?? null,
+      stored.continuedFrom ?? null,
+      // The earlier conversation goes with the first prompt; see threadNeedsContinueContext.
+      stored.continuedFrom === undefined ? 0 : 1,
     )
     // A new thread's index covers every row it will ever have.
     if (!this.#threadHasEvents.get(stored.id)) {
@@ -4271,6 +4288,23 @@ export class Store {
     this.#db.prepare('UPDATE threads SET restore_context_pending = 0 WHERE id = ?').run(threadId)
   }
 
+  /**
+   * A chat that continues an earlier one has not yet sent that conversation to
+   * its agent. It goes with the first prompt the agent accepts, so it is part of
+   * the provider's own session and survives a resume.
+   */
+  threadNeedsContinueContext(threadId: string): boolean {
+    return (
+      this.#db
+        .prepare('SELECT 1 FROM threads WHERE id = ? AND continue_context_pending = 1')
+        .get(threadId) !== undefined
+    )
+  }
+
+  clearThreadContinueContext(threadId: string): void {
+    this.#db.prepare('UPDATE threads SET continue_context_pending = 0 WHERE id = ?').run(threadId)
+  }
+
   /** Save and remove the conversation tail so a restore remains reversible. */
   saveRestoreUndo(threadId: string, seq: number, commit: string): string {
     const token = randomUUID()
@@ -5076,6 +5110,7 @@ function toSidebarThread(row: SidebarThreadRow): StoredSidebarThread | undefined
     ...(row.worktree_branch === null ? {} : { worktreeBranch: row.worktree_branch }),
     lifecycle: toThreadLifecycle(row),
     unread: row.unread === 1,
+    ...(row.continued_from === null ? {} : { continuedFrom: row.continued_from }),
   }
 }
 
@@ -5104,6 +5139,7 @@ function toThread(row: ThreadRow): StoredThread | undefined {
     lastActiveAt: Number(row.last_active_at),
     ephemeral: row.ephemeral === 1,
     ...(row.parent_thread_id === null ? {} : { parentThreadId: row.parent_thread_id }),
+    ...(row.continued_from === null ? {} : { continuedFrom: row.continued_from }),
   }
 }
 

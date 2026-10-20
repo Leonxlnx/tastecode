@@ -10,7 +10,7 @@ import type {
   ProviderId,
 } from '@harness/contracts'
 import { Store, type ProviderHistoryListing } from './store.js'
-import { projectHistoryItems } from './side-chat.js'
+import { projectHistoryItems, withoutContinuationContext } from './side-chat.js'
 import { DESIGN_PHASE_NOTICE, RESTORE_CONTEXT_NOTICE } from './provider-session.js'
 
 type Source = { provider: ProviderId; history: ProviderHistorySource }
@@ -571,6 +571,9 @@ function withoutRestoreNotice(text: string | undefined): string | undefined {
 
 function sameUserMessage(left: Item, right: Item): boolean {
   let text = withoutRestoreNotice(right.text)
+  // A continued chat's first prompt carries the earlier conversation before the
+  // user's words; local history keeps only the words.
+  if (text !== undefined) text = withoutContinuationContext(text)
   // Native logs contain our Design follow-up envelope; local history keeps only
   // the user's submission. Unwrap solely for echo matching, never arbitrary prose.
   if (text?.startsWith('This is an ordinary user turn, not an active TasteCode Design phase. ')) {

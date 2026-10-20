@@ -128,7 +128,7 @@ import { TerminalManager } from './terminal.js'
 import { insideSkillFolder, installLocalSkill, sameSkillFolder } from './skill-install.js'
 import type { RunningPreview } from './design-preview-runner.js'
 import { assertPublicWorkspaceFile, existingWorkspacePath } from './api-workspace-paths.js'
-import { sideChatInstructionsFromReplay } from './side-chat.js'
+import { continuationPromptFromReplay, sideChatInstructionsFromReplay } from './side-chat.js'
 import { IDLE_THREAD_RUNTIME_MS, idleThreadRuntimeLimit } from './runtime-retention.js'
 import {
   cleanGeneratedCommitMessage,
@@ -1797,7 +1797,11 @@ export class Orchestrator {
   async startThread(
     provider: ProviderId,
     workspacePath: string,
-    options: StartOptions & { accountId?: AccountId | undefined } = {},
+    options: StartOptions & {
+      accountId?: AccountId | undefined
+      /** An earlier chat whose conversation this one carries on. */
+      continueFrom?: string | undefined
+    } = {},
   ): Promise<Thread> {
     const resolved = resolveWorkspacePath(workspacePath)
     if (this.#panicStopping) throw new Error('task start cancelled by panic stop')
@@ -1830,6 +1834,20 @@ export class Orchestrator {
     })
   }
 
+  /**
+   * A chat carries on an earlier one of the same provider, whose conversation
+   * the server still has. It is checked before an agent starts.
+   */
+  #assertContinuable(earlierId: string, provider: ProviderId): void {
+    const earlier = this.#store.thread(earlierId)
+    if (!earlier || earlier.ephemeral) {
+      throw new Error('The chat to continue does not exist any more.')
+    }
+    if (earlier.provider !== provider) {
+      throw new Error('A chat can only be continued with the provider it ran on.')
+    }
+  }
+
   async switchBranch(workspacePath: string, branch: string) {
     const resolved = resolveWorkspacePath(workspacePath)
     return this.#checkoutAccess.exclusive(resolved, () => switchWorkspaceBranch(resolved, branch))
@@ -1845,8 +1863,9 @@ export class Orchestrator {
     workspacePath: string,
     {
       accountId: requestedAccount,
+      continueFrom,
       ...options
-    }: StartOptions & { accountId?: AccountId | undefined },
+    }: StartOptions & { accountId?: AccountId | undefined; continueFrom?: string | undefined },
     generation: { dispose: number; panic: number; project: number },
   ): Promise<Thread> {
     const cancelled = () =>
@@ -1857,6 +1876,7 @@ export class Orchestrator {
     if (cancelled()) throw new Error('task start cancelled by shutdown or panic stop')
     const accountId = accountForNewThread(this.#accounts, provider, options.agent, requestedAccount)
     const accountHome = existingAccountHome(this.#accounts, provider, accountId)
+    if (continueFrom !== undefined) this.#assertContinuable(continueFrom, provider)
     // The id has to exist before the worktree, and the worktree before the
     // agent — it is the directory the agent will be spawned in.
     const threadId = `${provider}-${crypto.randomUUID()}`
@@ -1921,6 +1941,7 @@ export class Orchestrator {
           ? { connectionId: thread.connectionId ?? options.connectionId }
           : {}),
         ...(thread.accountId ? { accountId: thread.accountId } : {}),
+        ...(continueFrom === undefined ? {} : { continuedFrom: continueFrom }),
         title: 'New session',
         createdAt: thread.createdAt,
         ...(worktree
@@ -2118,7 +2139,12 @@ export class Orchestrator {
       throw new Error('cannot start a turn while restoring a checkpoint')
     }
     const entry = this.#get(threadId)
-    if (this.#store.threadNeedsRestoreContext(threadId) && !submission) {
+    // Only a continued chat asks the store; the cached row says which ones are.
+    const continuation =
+      this.#store.thread(threadId)?.continuedFrom !== undefined &&
+      this.#store.threadNeedsContinueContext(threadId)
+    // The prompt carries more than the user's words; the transcript keeps the words.
+    if ((continuation || this.#store.threadNeedsRestoreContext(threadId)) && !submission) {
       submission = { id: crypto.randomUUID(), text, attachments, createdAt: Date.now() }
     }
     this.#touchThreadRuntime(threadId)
@@ -2247,7 +2273,10 @@ export class Orchestrator {
         : text
       const turnId = await entry.session.sendTurn(
         threadId,
-        this.#promptAfterRestore(threadId, prompt),
+        this.#promptAfterRestore(
+          threadId,
+          continuation ? await this.#promptWithEarlierChat(threadId, prompt) : prompt,
+        ),
         attachments,
         options,
       )
@@ -2263,6 +2292,7 @@ export class Orchestrator {
       }
       this.#acceptTurnStart(threadId, turnId, pendingStart)
       this.#store.clearThreadRestoreContext(threadId)
+      if (continuation) this.#store.clearThreadContinueContext(threadId)
       return turnId
     } catch (error) {
       if (this.#threads.get(threadId) === entry) this.#markIdleRuntimeEligible(threadId)
@@ -3469,6 +3499,17 @@ export class Orchestrator {
         throw error
       }
     })
+  }
+
+  /**
+   * The first prompt of a chat that continues an earlier one carries that
+   * chat's conversation as it stands now. An earlier chat deleted since leaves
+   * the prompt as it is.
+   */
+  async #promptWithEarlierChat(threadId: string, prompt: string): Promise<string> {
+    const earlierId = this.#store.thread(threadId)?.continuedFrom
+    if (earlierId === undefined || !this.#store.thread(earlierId)) return prompt
+    return continuationPromptFromReplay(await this.history(earlierId), prompt) ?? prompt
   }
 
   #promptAfterRestore(threadId: string, prompt: string): string {

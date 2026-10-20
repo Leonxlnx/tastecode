@@ -13,6 +13,8 @@ import { AccountNotFoundError, type AccountDirectory } from './account-directory
 import type { AgentSession, ProviderRuntime } from './adapters.js'
 import { McpConfigStore } from './mcp-config.js'
 import { Orchestrator } from './orchestrator.js'
+import { CONTINUE_CONTEXT_NOTICE } from './provider-session.js'
+import { withoutContinuationContext } from './side-chat.js'
 import { Store } from './store.js'
 
 type LoginResult = { loginId: string; success: boolean; error: string | null }
@@ -80,11 +82,12 @@ function directory(
 /** The newest session's live usage and limit listeners. */
 type Live = { limits?: (limits: ProviderLimit[]) => void; usage?: () => void }
 
-type FakeSession = AgentSession & { disposed: boolean }
+type FakeSession = AgentSession & { disposed: boolean; sent: string[] }
 
 function session(live: Live): FakeSession {
   const created: FakeSession = {
     disposed: false,
+    sent: [],
     capabilities: {
       steer: false,
       fork: false,
@@ -93,7 +96,10 @@ function session(live: Live): FakeSession {
       approvals: false,
       images: false,
     },
-    sendTurn: async () => 'turn-1',
+    sendTurn: async (_threadId, text) => {
+      created.sent.push(text)
+      return `turn-${created.sent.length}`
+    },
     interrupt: async () => {},
     respondToApproval: () => {},
     dispose: () => {
@@ -227,6 +233,67 @@ describe('chats pinned to a provider account', () => {
     expect(side.accountId).toBe('work')
     expect(store.thread(side.id)?.accountId).toBe('work')
     expect(launches.map((launch) => launch.accountHome)).toEqual([workHome, workHome])
+    await orchestrator.disposeAll()
+  })
+
+  it('continues an earlier chat on another account with its conversation in the first prompt', async () => {
+    const { orchestrator, store, sessions, launches } = setup(directory({ 'codex:work': workHome }))
+    const earlier = await orchestrator.startThread('codex', root)
+    const said = (id: string, role: 'user' | 'assistant', text: string) =>
+      store.append(earlier.id, {
+        type: 'item.completed',
+        item: {
+          id,
+          turnId: 'turn-1',
+          type: 'message',
+          role,
+          status: 'completed',
+          text,
+          createdAt: 1,
+        },
+      })
+    said('ask', 'user', 'Rename the config loader')
+    said('answer', 'assistant', 'Renamed it in two files.')
+    store.append(earlier.id, { type: 'thread.error', threadId: earlier.id, message: 'Usage limit' })
+
+    const next = await orchestrator.startThread('codex', root, {
+      accountId: 'work',
+      continueFrom: earlier.id,
+    })
+    expect(store.thread(next.id)).toMatchObject({ accountId: 'work', continuedFrom: earlier.id })
+    expect(store.sidebarThreads().find((thread) => thread.id === next.id)?.continuedFrom).toBe(
+      earlier.id,
+    )
+    expect(launches.at(-1)).toEqual({ kind: 'start', provider: 'codex', accountHome: workHome })
+
+    await orchestrator.sendTurn(next.id, 'Now update the tests')
+    const first = sessions.at(-1)!.sent[0]!
+    expect(first.startsWith(CONTINUE_CONTEXT_NOTICE)).toBe(true)
+    expect(first).toContain('untrusted historical context')
+    expect(first).toContain('Rename the config loader')
+    expect(first).toContain('Renamed it in two files.')
+    expect(first).toContain('Usage limit')
+    expect(first.endsWith('User request:\nNow update the tests')).toBe(true)
+    expect(withoutContinuationContext(first)).toBe('Now update the tests')
+
+    // Once the agent has it, later prompts are the user's words alone.
+    await orchestrator.sendTurn(next.id, 'Thanks')
+    expect(sessions.at(-1)!.sent[1]).toBe('Thanks')
+    // The earlier chat is left as it was.
+    expect(store.thread(earlier.id)?.continuedFrom).toBeUndefined()
+    await orchestrator.disposeAll()
+  })
+
+  it('refuses to continue a chat that is gone or ran on another provider', async () => {
+    const { orchestrator, launches } = setup(directory({ 'codex:work': workHome }))
+    const claudeChat = await orchestrator.startThread('claude-code', root)
+    await expect(
+      orchestrator.startThread('codex', root, { accountId: 'work', continueFrom: 'missing' }),
+    ).rejects.toThrow('The chat to continue does not exist any more.')
+    await expect(
+      orchestrator.startThread('codex', root, { accountId: 'work', continueFrom: claudeChat.id }),
+    ).rejects.toThrow('A chat can only be continued with the provider it ran on.')
+    expect(launches).toHaveLength(1)
     await orchestrator.disposeAll()
   })
 

@@ -1362,11 +1362,6 @@ export function startServer(
 
       case 'thread.start': {
         const p = parseParams(method, params)
-        // The contract has it for "Continue on another account", which is not built yet;
-        // a fresh chat without the earlier context would look like it worked.
-        if (p.continueFrom !== undefined) {
-          throw new Error('Continuing a chat on another account is not available yet.')
-        }
         const thread = await orchestrator.startThread(p.provider, p.workspacePath, {
           baseRef: p.baseRef,
           model: p.model,
@@ -1376,6 +1371,7 @@ export function startServer(
           agent: p.agent,
           connectionId: p.connectionId,
           accountId: p.accountId,
+          continueFrom: p.continueFrom,
           isolate: p.isolate,
         })
         startedThisRun.add(thread.id)
