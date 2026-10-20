@@ -155,9 +155,13 @@ export function sidebarRail(projects: Project[]): SidebarRail {
   }
 }
 
-/** Archived chats leave the tree. A pinned chat stays pinned, archived or not. */
+/**
+ * Chats the user archived leave the tree. The server also settles chats on its
+ * own (Inbox's idle-days rule); this sidebar leaves those where they are. A
+ * pinned chat stays pinned, archived or not.
+ */
 export function isArchived(session: Session): boolean {
-  return session.lifecycle.state === 'settled'
+  return session.lifecycle.state === 'settled' && session.lifecycle.reason === 'manual'
 }
 
 function archivedAt(session: Session): number {
