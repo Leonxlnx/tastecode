@@ -15,6 +15,7 @@ const project = {
       provider: 'codex',
       agent: 'agent',
       accountId: 'work',
+      continuedFrom: 'earlier-thread',
       createdAt: 2,
       running: false,
       pinned: true,
