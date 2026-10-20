@@ -48,6 +48,19 @@
   margin-block: 0;
 }
 
+/* A chat reply shows each line break the model wrote, as claude.ai and
+   ChatGPT do; Markdown alone would join the lines. Every render path keeps
+   the newline in the text. CompletedMarkdown drops the formatting line
+   endings between blocks, which this would show as blank lines. */
+:is(.reply, .activity__message) > .md :is(p, li, blockquote) {
+  white-space: pre-line;
+}
+
+/* Markdown joins the lines of inline code, and the completed reply does. */
+:is(.reply, .activity__message) > .md :not(pre) > code {
+  white-space: normal;
+}
+
 .md > *:first-child {
   margin-top: 0;
 }

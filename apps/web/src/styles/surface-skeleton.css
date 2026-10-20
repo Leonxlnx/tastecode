@@ -611,8 +611,42 @@
   animation: fade-in var(--dur-fast) var(--ease-out);
 }
 
+/* Back in place of the full-window surface that covered it: the layout
+   behind is still settling, so it must not show through a fade. */
+.surface-enter.is-returning {
+  animation: none;
+}
+
 /* [class] lifts this above a surface root's own single-class rule, which loads
    later with the surface's chunk and would otherwise win on order. */
 .surface-enter > [class] {
   animation: none;
+}
+
+/* Settings covers the whole window, and App marks the shell as covered once
+   that is complete. The shell's endless loops (a working chat's spinner, the
+   live activity row) then wait instead of drawing a frame every refresh for
+   nobody. One-shot animations and transitions still play, so nothing is left
+   to finish in front of the user when Settings closes. Every endless
+   animation that can render inside .shell__body is listed here;
+   covered-shell.test.ts fails on one that is not. */
+.shell__body[data-covered] .sess__spinner,
+.shell__body[data-covered] .spinner,
+.shell__body[data-covered] .is-spinning,
+.shell__body[data-covered] .skeleton::after,
+.shell__body[data-covered] .activity__pulse,
+.shell__body[data-covered] .activity--live .activity__label,
+.shell__body[data-covered] .subagent__pulse,
+.shell__body[data-covered] .attachment-preview__loading,
+.shell__body[data-covered] .orb--stop.is-stopping .orb__stop-glyph,
+.shell__body[data-covered] .composer__design:focus-visible > span,
+.shell__body[data-covered] .brief-input__spinner,
+.shell__body[data-covered] .workspace-browser__progress::before {
+  animation-play-state: paused !important;
+}
+
+/* The beam's spin loops; its fade in or out runs once and still plays. */
+.shell__body[data-covered] :is(.composer__design-beam, .composer__design-button-beam)[data-active],
+.shell__body[data-covered] :is(.composer__design-beam, .composer__design-button-beam)[data-fading] {
+  animation-play-state: paused, running !important;
 }

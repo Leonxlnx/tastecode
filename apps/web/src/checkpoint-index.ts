@@ -1,4 +1,5 @@
 import type { Item } from '@harness/contracts'
+import { CHECKPOINT_LABEL_UNITS, checkpointLabel } from './slice-code-units.js'
 
 export type CheckpointEntry = {
   label: string
@@ -7,14 +8,27 @@ export type CheckpointEntry = {
 
 export type CheckpointIndex<T extends CheckpointEntry> = ReadonlyMap<string, readonly T[]>
 
+const SURROGATE_SHORTENED_CUT = CHECKPOINT_LABEL_UNITS - 1
+
+function ellipsisKeyForRawCut(label: string): string | undefined {
+  if (label.length < SURROGATE_SHORTENED_CUT || label.endsWith('…')) return undefined
+  const trimmed = label.trimEnd()
+  return trimmed ? `${trimmed}…` : undefined
+}
+
 export function createCheckpointIndex<T extends CheckpointEntry>(
   checkpoints: readonly T[],
 ): CheckpointIndex<T> {
   const byLabel = new Map<string, T[]>()
   for (const checkpoint of checkpoints) {
-    const matches = byLabel.get(checkpoint.label)
-    if (matches) matches.push(checkpoint)
-    else byLabel.set(checkpoint.label, [checkpoint])
+    const keys = [checkpoint.label]
+    const alias = ellipsisKeyForRawCut(checkpoint.label)
+    if (alias) keys.push(alias)
+    for (const key of keys) {
+      const matches = byLabel.get(key)
+      if (matches) matches.push(checkpoint)
+      else byLabel.set(key, [checkpoint])
+    }
   }
   for (const matches of byLabel.values()) {
     matches.sort((left, right) => left.createdAt - right.createdAt)
@@ -62,7 +76,7 @@ export function checkpointForItem<T extends CheckpointEntry>(
       turns.add(prompt.turnId)
       // Provider-native and imported timestamps do not share submission-time semantics.
       if (!prompt.id.startsWith('local:') || !prompt.text) continue
-      const label = prompt.text.trim().slice(0, 60) || 'Turn'
+      const label = checkpointLabel(prompt.text)
       const group = prompts.get(label) ?? []
       group.push(prompt)
       prompts.set(label, group)

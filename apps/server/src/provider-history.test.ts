@@ -134,6 +134,18 @@ describe('provider history integration', () => {
     await expect(history.scanned('grok')).resolves.toBeUndefined()
   })
 
+  it('tells which chats a scan linked to a saved session', async () => {
+    store.addThread({ id: 'native', projectPath: process.cwd(), provider: 'codex', title: 'Local' })
+    store.addThread({ id: 'fresh', projectPath: process.cwd(), provider: 'codex', title: 'New' })
+    const { history } = setup([metadata('native')])
+    expect(history.hasCopy('native')).toBe(false)
+
+    await history.refresh()
+    expect(history.hasCopy('native')).toBe(true)
+    // A chat whose session the provider has not saved yet has nothing to merge.
+    expect(history.hasCopy('fresh')).toBe(false)
+  })
+
   it('keeps what a source listed across restarts and forgets transcripts it no longer names', async () => {
     const transcripts = new Map([
       ['a.jsonl', 'a1'],
@@ -1375,5 +1387,183 @@ describe('provider history integration', () => {
     vi.mocked(source.read).mockRejectedValueOnce(new Error('temporarily unreadable'))
     await expect(history.load(id)).rejects.toThrow('temporarily unreadable')
     expect(await history.load(id)).toBe(true)
+  })
+})
+
+describe('provider history after a restore', () => {
+  const at = Date.UTC(2026, 9, 16, 12)
+  let session: ProviderHistorySession
+  let native: DomainEvent[]
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(at)
+    session = metadata()
+    native = [started('reply with the word one')]
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  const started = (title: string): DomainEvent => ({
+    type: 'thread.started',
+    thread: { id: 'native', provider: 'codex', workspacePath: process.cwd(), title, createdAt: at },
+  })
+  const turn = (id: string, prompt: string, reply: string, createdAt: number): DomainEvent[] => [
+    { type: 'turn.started', turn: { id, threadId: 'local', status: 'running', createdAt } },
+    {
+      type: 'item.completed',
+      item: {
+        id: `${id}-prompt`,
+        turnId: id,
+        type: 'message',
+        role: 'user',
+        status: 'completed',
+        text: prompt,
+        createdAt,
+      },
+    },
+    {
+      type: 'item.completed',
+      item: {
+        id: `${id}-reply`,
+        turnId: id,
+        type: 'message',
+        role: 'assistant',
+        status: 'completed',
+        text: reply,
+        createdAt: createdAt + 1,
+      },
+    },
+    { type: 'turn.completed', turnId: id, status: 'completed' },
+  ]
+  const chat = (target: Store) =>
+    target.addThread({
+      id: 'local',
+      projectPath: process.cwd(),
+      provider: 'codex',
+      providerSessionId: 'native',
+      title: 'Local',
+    })
+  const provider = (target: Store) => {
+    const history = new ProviderHistory(
+      target,
+      [
+        {
+          provider: 'codex',
+          history: { list: async () => [session], read: async () => [...native] },
+        },
+      ],
+      { isBusy: () => false, changed: () => {}, log: () => {} },
+    )
+    histories.push(history)
+    return history
+  }
+  /** The provider saves more of the session, and the next refresh reads it. */
+  const saved = async (history: ProviderHistory, ...turns: DomainEvent[][]) => {
+    native.push(...turns.flat())
+    session = { ...session, revision: String(Number(session.revision) + 1) }
+    await history.refresh()
+    await history.load('local')
+  }
+  const ran = (target: Store, events: DomainEvent[]) => {
+    for (const event of events) target.append('local', event)
+  }
+  const prompts = () =>
+    messages('local')
+      .filter((item) => item.role === 'user')
+      .map((item) => item.text)
+
+  it.each([
+    ['turn ids', 'local'],
+    ['prompts', 'native'],
+  ])(
+    'keeps a restored turn out of the chat while its provider still has it, matched by %s',
+    async (_match, prefix) => {
+      chat(store)
+      const history = provider(store)
+      ran(store, turn('local-1', 'reply with the word one', 'one', at + 1000))
+      await saved(history, turn(`${prefix}-1`, 'reply with the word one', 'one', at + 1000))
+      const checkpoint = store.lastSeq('local')
+      ran(store, turn('local-2', 'reply with the word two', 'two', at + 2000))
+      await saved(history, turn(`${prefix}-2`, 'reply with the word two', 'two', at + 2000))
+      const before = store.history('local')
+
+      vi.setSystemTime(at + 3000)
+      const undo = store.saveRestoreUndo('local', checkpoint, 'commit')
+      native[0] = started('Replying with single words')
+      await saved(history)
+      expect(store.lastSeq('local')).toBe(checkpoint)
+      expect(prompts()).toEqual(['reply with the word one'])
+
+      store.applyRestoreUndo('local', undo)
+      expect(store.history('local')).toEqual(before)
+      await saved(history)
+      expect(store.history('local')).toEqual(before)
+    },
+  )
+
+  it('imports turns added outside TasteCode after a restore and keeps earlier imports', async () => {
+    chat(store)
+    const history = provider(store)
+    ran(store, turn('local-1', 'reply with the word one', 'one', at + 1000))
+    await saved(history, turn('native-1', 'reply with the word one', 'one', at + 1000))
+    await saved(history, turn('cli-1', 'asked in the terminal', 'yes', at + 1500))
+    const checkpoint = store.lastSeq('local')
+    ran(store, turn('local-2', 'reply with the word two', 'two', at + 2000))
+    await saved(history, turn('native-2', 'reply with the word two', 'two', at + 2000))
+    await saved(history, turn('cli-2', 'asked again in the terminal', 'yes', at + 2500))
+    expect(prompts()).toEqual([
+      'reply with the word one',
+      'asked in the terminal',
+      'reply with the word two',
+      'asked again in the terminal',
+    ])
+
+    vi.setSystemTime(at + 3000)
+    store.saveRestoreUndo('local', checkpoint, 'commit')
+    vi.setSystemTime(at + 4000)
+    await saved(history, turn('cli-3', 'continued in the terminal', 'sure', at + 4000))
+    expect(prompts()).toEqual([
+      'reply with the word one',
+      'asked in the terminal',
+      'continued in the terminal',
+    ])
+  })
+
+  it('keeps a restored turn out after a server restart, and Undo still works', async () => {
+    const directory = mkdtempSync(path.join(tmpdir(), 'harness-restore-history-'))
+    const location = path.join(directory, 'harness.db')
+    try {
+      const first = new Store(location)
+      first.addProject(process.cwd())
+      chat(first)
+      const history = provider(first)
+      ran(first, turn('local-1', 'reply with the word one', 'one', at + 1000))
+      ran(first, turn('local-2', 'reply with the word two', 'two', at + 2000))
+      await saved(
+        history,
+        turn('native-1', 'reply with the word one', 'one', at + 1000),
+        turn('native-2', 'reply with the word two', 'two', at + 2000),
+      )
+      const checkpoint = first
+        .history('local')
+        .find(({ event }) => event.type === 'turn.completed')!.seq
+      vi.setSystemTime(at + 3000)
+      const undo = first.saveRestoreUndo('local', checkpoint, 'commit')
+      await history.close()
+      first.close()
+
+      const second = new Store(location)
+      try {
+        await saved(provider(second))
+        expect(second.lastSeq('local')).toBe(checkpoint)
+        expect(() => second.applyRestoreUndo('local', undo)).not.toThrow()
+      } finally {
+        second.close()
+      }
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
   })
 })

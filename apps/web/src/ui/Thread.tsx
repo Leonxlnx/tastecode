@@ -53,6 +53,7 @@ import {
   revealPath,
 } from '../bridge.js'
 import {
+  FIND_IN_CHAT_SHORTCUT,
   isEditableTarget,
   matchesShortcut,
   NEXT_TURN_SHORTCUT,
@@ -843,15 +844,7 @@ export const Thread = memo(function Thread(props: ThreadProps) {
     if (props.keyboardActive === false) return
     const onKey = (event: KeyboardEvent) => {
       if (isEditableTarget(event.target)) return
-      // Plain Ctrl+F only — Ctrl+Shift+F belongs to the global chat search,
-      // and swallowing it here killed that shortcut whenever a thread was
-      // open.
-      if (
-        (event.ctrlKey || event.metaKey) &&
-        !event.shiftKey &&
-        !event.altKey &&
-        event.key.toLowerCase() === 'f'
-      ) {
+      if (matchesShortcut(event, FIND_IN_CHAT_SHORTCUT)) {
         event.preventDefault()
         setFinding(true)
       }
@@ -2247,6 +2240,7 @@ const Row = memo(function Row({
           streaming={live && item.status === 'started'}
           liveUpdate={liveTextUpdate}
           updateVersion={liveUpdateVersion}
+          literalHtml
         />
         {stoppedByUser ? <TurnStopped /> : null}
         {finalResponse && !notice && !live && item.status === 'completed' && text ? (
@@ -2683,6 +2677,7 @@ function ReasoningDisclosure({
                 streaming={live && item.status === 'started'}
                 liveUpdate={liveTextUpdate}
                 updateVersion={liveUpdateVersion}
+                literalHtml
               />
             </div>
           ) : null}
@@ -2938,7 +2933,7 @@ function ActivityStack({
                 if (item.type === 'message') {
                   return (
                     <div className="activity__message" key={item.id}>
-                      <Markdown text={item.text ?? ''} projectPath={projectPath} />
+                      <Markdown text={item.text ?? ''} projectPath={projectPath} literalHtml />
                     </div>
                   )
                 }

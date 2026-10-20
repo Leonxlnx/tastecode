@@ -45,9 +45,9 @@ function mulberry32(seed: number): () => number {
   }
 }
 
-const started = (id: string): DomainEvent => ({
+const started = (id: string, createdAt = 0): DomainEvent => ({
   type: 'turn.started',
-  turn: { id, threadId: THREAD, status: 'running', createdAt: 0 },
+  turn: { id, threadId: THREAD, status: 'running', createdAt },
 })
 const completed = (turnId: string): DomainEvent => ({
   type: 'turn.completed',
@@ -428,12 +428,18 @@ describe('the indexed newest history page', () => {
     check()
 
     const provider = (key: string, event: DomainEvent) => ({ key, event })
-    store.mergeProviderHistory(THREAD, 'one', [
-      provider('a', started('provider-1')),
-      provider('b', reply('provider-reply', 'provider-1')),
-      provider('c', completed('provider-1')),
-    ])
-    store.mergeProviderHistory(THREAD, 'two', [provider('a', started('provider-1'))])
+    // Saved by the provider after the restore, so the merge imports it.
+    const savedAt = Date.now() + 1
+    expect(
+      store.mergeProviderHistory(THREAD, 'one', [
+        provider('a', started('provider-1', savedAt)),
+        provider('b', reply('provider-reply', 'provider-1')),
+        provider('c', completed('provider-1')),
+      ]),
+    ).toBe(true)
+    expect(
+      store.mergeProviderHistory(THREAD, 'two', [provider('a', started('provider-1', savedAt))]),
+    ).toBe(true)
     for (let index = 100; index < 130; index += 1) {
       store.appendBatchWithSerializedEvents(
         plainTurn(index).map((event) => ({ threadId: THREAD, event })),

@@ -142,6 +142,34 @@ describe('audit integration regressions', () => {
     )
   })
 
+  it('starts on the checkout when its branch already is the base branch', async () => {
+    const { root, repo } = fixture()
+    const { orchestrator, store } = harness(root)
+
+    const started = await orchestrator.startThread('codex', repo, { baseRef: 'main' })
+
+    expect(store.thread(started.id)).toBeDefined()
+    expect(git(repo, 'branch', '--show-current')).toBe('main')
+  })
+
+  it('starts on the checkout instead of switching when git cannot read its branch', async () => {
+    const { root, repo } = fixture()
+    const { orchestrator, store } = harness(root)
+    // A git that cannot read HEAD (here unparsable, in the field timed out on a
+    // busy machine) said nothing about the branch; switching on that guess failed the chat.
+    const head = path.join(repo, '.git', 'HEAD')
+    const saved = readFileSync(head, 'utf8')
+    writeFileSync(head, 'not a ref\n')
+    try {
+      const started = await orchestrator.startThread('codex', repo, { baseRef: 'other' })
+      expect(store.thread(started.id)).toBeDefined()
+    } finally {
+      writeFileSync(head, saved)
+    }
+    expect(git(repo, 'branch', '--show-current')).toBe('main')
+    expect(readFileSync(path.join(repo, 'app.txt'), 'utf8')).toBe('main\n')
+  })
+
   it('keeps a stopping checkout blocked, including failed stops, until retry succeeds', async () => {
     const { root, repo } = fixture()
     const { orchestrator, sessions } = harness(root)
@@ -244,7 +272,6 @@ describe('audit integration regressions', () => {
           threadId,
           seq: 0,
           commit: snapshot.commit,
-          clean: false,
           label: threadId,
         })
         store.recordCheckpointRepository(checkout)

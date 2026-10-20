@@ -106,10 +106,12 @@ const AccountLimits = lazy(loadAccountLimits)
 
 function AccountLimitsLoading(props: { states: AccountLimitsState[] }) {
   const panel = useRef<HTMLElement>(null)
-  const visible = props.states.some(({ summary }) =>
-    summary?.limitSource
-      ? summary.limitSource.status !== 'unavailable'
-      : !summary || summary.limits.length > 0,
+  const visible = props.states.some((state) =>
+    state.status !== 'ready' && state.gaveUp
+      ? false
+      : state.summary?.limitSource
+        ? state.summary.limitSource.status !== 'unavailable'
+        : !state.summary || state.summary.limits.length > 0,
   )
   useLayoutEffect(() => panel.current?.focus(), [])
   if (!visible) return null
@@ -1394,6 +1396,7 @@ const ProjectRow = memo(function ProjectRow(props: {
         {renaming ? (
           <InlineRename
             value={displayName(props.project)}
+            ariaLabel={`Rename ${displayName(props.project)}`}
             onCommit={(name, fromKeyboard) => {
               props.onRenameProject(props.project.path, name)
               finishRename(fromKeyboard)
@@ -2313,7 +2316,13 @@ function ActiveIndicator() {
  *  the news, and how long ago it started is not. */
 function SessionStatus(props: { status: Session['status']; since: number }) {
   if (props.status === 'starting' || props.status === 'working') {
-    return <LoaderCircle className="sess__spinner" size={14} aria-hidden />
+    // The rotation sits on an HTML box, which the compositor can turn on its
+    // own; a rotating <svg> is repainted on the main thread every frame.
+    return (
+      <span className="sess__spinner" aria-hidden>
+        <LoaderCircle size={14} />
+      </span>
+    )
   }
 
   if (props.status === 'approval' || props.status === 'input' || props.status === 'queued') {
@@ -2322,6 +2331,10 @@ function SessionStatus(props: { status: Session['status']; since: number }) {
 
   if (props.status === 'failed') {
     return <span className="sess__status-dot is-failed" aria-hidden />
+  }
+
+  if (props.status === 'ready') {
+    return <span className="sess__status-dot is-success" aria-hidden />
   }
 
   return <SessionTime at={props.since} />
@@ -2403,7 +2416,7 @@ function useRenameFocusReturn(
 function InlineRename(props: {
   value: string
   className?: string
-  ariaLabel?: string
+  ariaLabel: string
   onCommit: (value: string, fromKeyboard: boolean) => void
   onCancel: (fromKeyboard: boolean) => void
 }) {

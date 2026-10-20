@@ -31,11 +31,21 @@ const SESSION_FILE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 const LINE_FEED = 0x0a
 // Rows that set a title or working directory from anywhere in a transcript. A quoted
 // token matches a key or an exact value, never text inside a string: there the quotes
-// are escaped. UTF-8 never encodes another character with these bytes.
-const METADATA_TOKENS = ['"customTitle"', '"aiTitle"', '"relocated"'].map((token) =>
-  Buffer.from(token, 'latin1'),
-)
-const TOKEN_OVERLAP = Math.max(...METADATA_TOKENS.map((token) => token.length)) - 1
+// are escaped. UTF-8 never encodes another character with these bytes. Each token is a
+// head plus the tail searched for: both title keys end in `Title"`, which one pass finds
+// several times faster than either whole key (a transcript is full of `"`, the byte every
+// token starts with), and the bytes before a hit say which key it ends.
+const TOKEN_SEARCHES = [
+  { tail: 'Title"', heads: ['"custom', '"ai'] },
+  { tail: '"relocated"', heads: [''] },
+].map(({ tail, heads }) => ({
+  tail: Buffer.from(tail, 'latin1'),
+  heads: heads.map((head) => Buffer.from(head, 'latin1')),
+}))
+const TOKEN_OVERLAP =
+  Math.max(
+    ...TOKEN_SEARCHES.flatMap(({ tail, heads }) => heads.map((head) => head.length + tail.length)),
+  ) - 1
 // Transcripts are read in positioned chunks: whole files reached hundreds of megabytes
 // and a cold listing read 3 GB, blocking the event loop for seconds. Every chunk is an
 // await, so no synchronous multi-megabyte stretch remains.
@@ -82,6 +92,65 @@ function visible(row: SavedRecord): boolean {
 
 function visibleMessage(row: SavedRecord | undefined): row is SavedRecord {
   return row !== undefined && visible(row) && (row.type === 'user' || row.type === 'assistant')
+}
+
+function claudeProjectsRoot(options: ClaudeHistoryOptions = {}): string {
+  return path.resolve(
+    options.configDir ?? process.env.CLAUDE_CONFIG_DIR ?? path.join(homedir(), '.claude'),
+    'projects',
+  )
+}
+
+async function isClaudeSessionFile(projects: string, locator: string): Promise<boolean> {
+  const relative = path.relative(projects, locator)
+  if (
+    path.isAbsolute(relative) ||
+    relative.startsWith(`..${path.sep}`) ||
+    relative === '..' ||
+    relative.split(path.sep).length !== 2 ||
+    !SESSION_FILE.test(path.basename(locator))
+  )
+    return false
+  const [actualRoot, actualFile] = await Promise.all([realpath(projects), realpath(locator)])
+  const actualRelative = path.relative(actualRoot, actualFile)
+  return (
+    !path.isAbsolute(actualRelative) &&
+    actualRelative !== '..' &&
+    !actualRelative.startsWith(`..${path.sep}`)
+  )
+}
+
+export async function readClaudeSessionRecords(
+  sessionId: string,
+  options: ClaudeHistoryOptions = {},
+): Promise<SavedRecord[]> {
+  if (!SESSION_FILE.test(`${sessionId}.jsonl`)) return []
+  const projects = claudeProjectsRoot(options)
+  try {
+    const directories = await readdir(projects, { withFileTypes: true })
+    let newest: { file: string; mtimeMs: number } | undefined
+    for (const directory of directories) {
+      if (!directory.isDirectory()) continue
+      const file = path.join(projects, directory.name, `${sessionId}.jsonl`)
+      let info
+      try {
+        info = await stat(file)
+      } catch {
+        continue
+      }
+      if (!info.isFile()) continue
+      if (!(await isClaudeSessionFile(projects, file).catch(() => false))) continue
+      if (
+        !newest ||
+        info.mtimeMs > newest.mtimeMs ||
+        (info.mtimeMs === newest.mtimeMs && file < newest.file)
+      )
+        newest = { file, mtimeMs: info.mtimeMs }
+    }
+    return newest ? await records(newest.file) : []
+  } catch {
+    return []
+  }
 }
 
 function parseRecord(line: string): SavedRecord | undefined {
@@ -217,9 +286,17 @@ async function addTokenRows(
         pending = undefined
       }
       const hits: number[] = []
-      for (const token of METADATA_TOKENS)
-        for (let hit = window.indexOf(token); hit !== -1; hit = window.indexOf(token, hit + 1))
-          if (hit + token.length > kept) hits.push(hit)
+      for (const { tail, heads } of TOKEN_SEARCHES)
+        for (let end = window.indexOf(tail); end !== -1; end = window.indexOf(tail, end + 1)) {
+          // A token wholly inside the bytes carried over was counted in the chunk before.
+          if (end + tail.length <= kept) continue
+          for (const head of heads)
+            if (
+              end >= head.length &&
+              window.compare(head, 0, head.length, end - head.length, end) === 0
+            )
+              hits.push(end - head.length)
+        }
       for (const hit of hits.sort((left, right) => left - right)) {
         // Each line is searched once, so a line with many tokens costs no more than one.
         if (pending !== undefined || base + hit < lineEnd) continue
@@ -560,34 +637,14 @@ function eventsFor(rows: SavedRecord[], session: ProviderHistorySession): Domain
 export function createClaudeHistorySource(
   options: ClaudeHistoryOptions = {},
 ): ProviderHistorySource {
-  const projects = path.resolve(
-    options.configDir ?? process.env.CLAUDE_CONFIG_DIR ?? path.join(homedir(), '.claude'),
-    'projects',
-  )
+  const projects = claudeProjectsRoot(options)
   // `key` is the revision the server stores a listing under; `progress` is unset for a
   // listing the server kept from an earlier run.
   const cache = new Map<
     string,
     { key: string; session: ProviderHistorySession | undefined; progress: Progress | undefined }
   >()
-  const validLocator = async (locator: string): Promise<boolean> => {
-    const relative = path.relative(projects, locator)
-    if (
-      path.isAbsolute(relative) ||
-      relative.startsWith(`..${path.sep}`) ||
-      relative === '..' ||
-      relative.split(path.sep).length !== 2 ||
-      !SESSION_FILE.test(path.basename(locator))
-    )
-      return false
-    const [actualRoot, actualFile] = await Promise.all([realpath(projects), realpath(locator)])
-    const actualRelative = path.relative(actualRoot, actualFile)
-    return (
-      !path.isAbsolute(actualRelative) &&
-      actualRelative !== '..' &&
-      !actualRelative.startsWith(`..${path.sep}`)
-    )
-  }
+  const validLocator = (locator: string) => isClaudeSessionFile(projects, locator)
   return {
     resolveSessionId: (threadId) => (threadId.startsWith('claude-') ? threadId.slice(7) : threadId),
     async list(options) {

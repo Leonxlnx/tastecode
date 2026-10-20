@@ -1,127 +1,672 @@
 /* ---------- Usage page ----------
-   The Settings column and page header, with dashboard sections under them.
-   Its own mark is the rung: plan limits and the activity chart are measured
-   in 3 px rungs on the 5 px rhythm of the leader dots every Settings row
-   draws, so the numbers read like the rest of Settings, only denser. */
+   The period's totals under the title and each provider's share of its
+   tokens, then one sheet per provider, read top to bottom: name and totals,
+   a bar chart of its tokens with its own dates, then its plan limits beside a
+   table of its models. Each provider keeps its brand colour (--usage-ink) on
+   its mark, bars and meters. Type follows Providers: 15px provider names,
+   12.5px rows, 11.5px dates and notes. */
 
 .settings .usage-page {
-  --usage-rung-on: var(--text-2);
-  --usage-rung-off: color-mix(in srgb, var(--text) 9%, transparent);
-  --usage-rung-low: var(--error);
+  --usage-base: color-mix(in srgb, var(--text) 14%, transparent);
+  --usage-slot: color-mix(in srgb, var(--text) 5%, transparent);
+  font-family: var(--font-ui);
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
 }
+
+/* Page header: the period and refresh on the title's line, totals under it */
 
 .settings .usage-page .set-page__head {
+  margin-bottom: 32px;
+}
+
+.settings .usage-page .set-page__description {
+  max-width: none;
+  margin-top: 8px;
+  font-size: var(--t-sm);
+  line-height: 18px;
+}
+
+.settings .usage-page__totals {
+  display: flex;
   flex-wrap: wrap;
+  column-gap: 7px;
+  color: var(--text-3);
 }
 
-.settings .usage-page.is-refreshing .usage-page__refresh svg {
-  animation: spin 0.9s linear infinite;
+.settings .usage-page__totals > span {
+  white-space: nowrap;
 }
 
-/* Sections: a 15 px title, then the section's own content. */
+.settings .usage-page__totals > span + span::before {
+  margin-right: 7px;
+  content: '·';
+}
 
-.settings .usage-section {
+.settings .usage-page b {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.settings .usage-page__period {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-2);
+  font-size: var(--t-sm);
+  line-height: 20px;
+  cursor: pointer;
+  transition: color var(--dur-hover) var(--ease-out);
+}
+
+.settings .usage-page__period:hover {
+  color: var(--text);
+}
+
+.settings .usage-page__period-select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  opacity: 0;
+  font: inherit;
+  cursor: pointer;
+}
+
+.settings .usage-page__period:has(.usage-page__period-select:focus-visible) {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+  border-radius: var(--r-xs);
+}
+
+.settings .usage-page__chevron {
+  color: var(--text-3);
+}
+
+.settings .usage-page__refresh {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  margin-right: -5px;
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: var(--r-sm);
+  color: var(--text-3);
+  cursor: pointer;
+  transition: color var(--dur-hover) var(--ease-out);
+}
+
+.settings .usage-page__refresh:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.settings .usage-page__refresh:disabled {
+  cursor: default;
+}
+
+.settings .usage-page__refresh:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 0;
+}
+
+.settings .usage-page__refresh.is-busy svg {
+  animation: usage-spin 1.2s linear infinite;
+}
+
+@keyframes usage-spin {
+  to {
+    rotate: 360deg;
+  }
+}
+
+/* Each provider's share of the period's tokens, named under the bar */
+
+.settings .usage-share {
+  margin: -12px 0 36px;
+}
+
+.settings .usage-share__bar {
+  display: flex;
+  gap: 2px;
+  height: 6px;
+}
+
+.settings .usage-share__part {
+  flex-basis: 0;
+  min-width: 3px;
+  background: var(--usage-ink);
+  border-radius: var(--r-xs);
+}
+
+.settings .usage-share__legend {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: 20px;
+  row-gap: 4px;
+  margin: 10px 0 0;
+  padding: 0;
+  color: var(--text-2);
+  font-size: var(--t-sm);
+  line-height: 18px;
+  list-style: none;
+}
+
+.settings .usage-share__legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+}
+
+.settings .usage-share__swatch {
+  width: 8px;
+  height: 8px;
+  background: var(--usage-ink);
+  border-radius: var(--r-xs);
+}
+
+.settings .usage-share__value {
+  color: var(--text-3);
+}
+
+/* Sentences between the header and the sheets: limits first, then the index */
+
+.settings .usage-page__alert,
+.settings .usage-page__notice {
+  margin: -16px 0 28px;
+  font-size: var(--t-sm);
+  line-height: 18px;
+}
+
+.settings .usage-page__alert {
+  color: var(--error);
+}
+
+.settings .usage-page__alert + .usage-page__notice {
+  margin-top: -24px;
+}
+
+.settings .usage-page__notice {
+  color: var(--text-3);
+}
+
+.settings .usage-page__notice.is-failed {
+  color: var(--text-2);
+}
+
+.settings .usage-page .set-notice {
+  margin-bottom: 28px;
+}
+
+.settings .usage-page__empty {
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--t-sm);
+}
+
+/* One sheet per provider */
+
+.settings .usage-sheet + .usage-sheet {
+  margin-top: 44px;
+}
+
+.settings .usage-sheet__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   min-width: 0;
 }
 
-.settings .usage-section + .usage-section {
-  margin-top: 40px;
+.settings .usage-sheet__mark {
+  flex: none;
+  color: var(--usage-ink);
 }
 
-.settings .usage-section__head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px 16px;
-  margin: 0 0 12px;
-}
-
-.settings .usage-section__title {
+.settings .usage-sheet__name {
+  flex: none;
   margin: 0;
-  color: var(--text);
   font-size: var(--t-lg);
   font-weight: 550;
-  line-height: 1.3;
+  line-height: 22px;
+  letter-spacing: -0.012em;
+  white-space: nowrap;
 }
 
-.settings .usage-section__note {
-  max-width: 90ch;
-  margin: -6px 0 8px;
+.settings .usage-sheet__totals {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  column-gap: 7px;
+  min-width: 0;
+  margin: 0 0 0 auto;
   color: var(--text-3);
   font-size: var(--t-sm);
-  line-height: 1.45;
+  line-height: 18px;
 }
 
-.settings .usage-section__empty {
-  margin: 0;
-  padding-block: 8px;
+.settings .usage-sheet__totals > span {
+  white-space: nowrap;
+}
+
+.settings .usage-sheet__totals > span + span::before {
+  margin-right: 7px;
   color: var(--text-3);
-  font-size: var(--t-md);
+  font-weight: 400;
+  content: '·';
 }
 
-/* While the first answer loads: outlines where the sections will be. */
+.settings .usage-sheet__total {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.settings .usage-sheet.is-empty .usage-sheet__name {
+  color: var(--text-2);
+}
+
+.settings .usage-sheet.is-empty .usage-sheet__mark {
+  opacity: 0.7;
+}
+
+/* The chart: a bar a day (a week on a long period), dates under it, and a
+   tooltip beside the bar being read. */
+
+.settings .usage-chart {
+  position: relative;
+  margin-top: 12px;
+}
+
+.settings .usage-chart__plot {
+  position: relative;
+  height: 72px;
+  outline: none;
+}
+
+.settings .usage-chart__plot:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 4px;
+  border-radius: var(--r-xs);
+}
+
+.settings .usage-chart__plot svg {
+  display: block;
+  overflow: visible;
+}
+
+.settings .usage-chart__base {
+  stroke: var(--usage-base);
+  stroke-width: 1;
+}
+
+.settings .usage-chart__bar {
+  fill: var(--usage-ink);
+  transition: opacity 80ms var(--ease-out);
+}
+
+/* The read bar keeps its colour; the rest step back. */
+.settings .usage-chart.is-reading .usage-chart__bar:not(.is-active) {
+  opacity: 0.35;
+}
+
+.settings .usage-chart__slot {
+  fill: var(--usage-slot);
+}
+
+.settings .usage-chart__peak {
+  fill: var(--text-3);
+  font-family: var(--font-ui);
+  font-size: var(--t-xs);
+  transition: opacity 80ms var(--ease-out);
+}
+
+.settings .usage-chart.is-reading .usage-chart__peak {
+  opacity: 0;
+}
+
+.settings .usage-chart__axis {
+  position: relative;
+  height: 16px;
+  margin-top: 6px;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.settings .usage-chart__axis > span {
+  position: absolute;
+  top: 0;
+}
+
+.settings .usage-chart__axis-start {
+  left: 0;
+}
+
+.settings .usage-chart__axis-end {
+  right: 0;
+}
+
+.settings .usage-chart__axis-tick {
+  translate: -50% 0;
+}
+
+.settings .usage-chart__tip {
+  position: absolute;
+  z-index: 2;
+  display: grid;
+  padding: 6px 9px 7px;
+  background: var(--menu-bg);
+  border: 1px solid var(--menu-line);
+  border-radius: var(--r-sm);
+  box-shadow: var(--shadow-flyout);
+  font-size: var(--t-sm);
+  line-height: 17px;
+  white-space: nowrap;
+  translate: 0 -50%;
+  pointer-events: none;
+}
+
+.settings .usage-chart__tip-date {
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  line-height: 16px;
+}
+
+.settings .usage-chart__tip-tokens {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.settings .usage-chart__tip-value {
+  color: var(--text-2);
+}
+
+/* Under the chart: plan limits beside the models */
+
+.settings .usage-sheet__details {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr);
+  column-gap: 48px;
+  row-gap: 24px;
+  align-items: start;
+  margin-top: 22px;
+}
+
+.settings .usage-sheet.is-empty .usage-sheet__details {
+  margin-top: 14px;
+}
+
+.settings .usage-sheet__group {
+  min-width: 0;
+  font-size: var(--t-sm);
+  line-height: 20px;
+}
+
+.settings .usage-sheet__group-title {
+  margin: 0 0 8px;
+  color: var(--text-3);
+  font-size: var(--t-sm);
+  font-weight: 400;
+  line-height: 20px;
+}
+
+.settings .usage-sheet__line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.settings .usage-sheet__none {
+  margin: 0;
+  color: var(--text-3);
+}
+
+.settings .usage-limit + .usage-limit {
+  margin-top: 12px;
+}
+
+.settings .usage-limit__name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-2);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.settings .usage-limit__note {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-3);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.settings .usage-limit__end {
+  flex: none;
+  margin-left: auto;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.settings .usage-limit__meter {
+  position: relative;
+  display: block;
+  height: 4px;
+  margin-top: 5px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--usage-ink) 16%, transparent);
+  border-radius: var(--r-xs);
+}
+
+.settings .usage-limit__fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--usage-limit-left);
+  background: var(--usage-ink);
+  border-radius: var(--r-xs);
+}
+
+.settings .usage-limit.is-low :is(.usage-limit__name, .usage-limit__note, .usage-limit__end),
+.settings .usage-limit.is-reached :is(.usage-limit__name, .usage-limit__note, .usage-limit__end) {
+  color: var(--error);
+}
+
+.settings .usage-limit.is-low .usage-limit__fill {
+  background: var(--error);
+}
+
+.settings .usage-limit.is-reached .usage-limit__meter {
+  background: color-mix(in srgb, var(--error) 28%, transparent);
+}
+
+/* A provider signed in more than once: each account, its limits under it */
+
+.settings .usage-account + .usage-account {
+  margin-top: 16px;
+}
+
+.settings .usage-account__name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 500;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.settings .usage-account__figures {
+  flex: none;
+  margin-left: auto;
+  color: var(--text-3);
+}
+
+.settings .usage-account .usage-limit {
+  margin-top: 8px;
+  padding-left: 12px;
+}
+
+/* Models: a table, the figures right-aligned under their headings */
+
+.settings .usage-models {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.settings .usage-models th {
+  padding: 0 0 8px;
+  color: var(--text-3);
+  font-weight: 400;
+  text-align: left;
+}
+
+.settings .usage-models td {
+  height: 28px;
+  padding: 0;
+  overflow: hidden;
+  color: var(--text-2);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  vertical-align: top;
+}
+
+.settings .usage-models :is(th, td):nth-child(2) {
+  width: 64px;
+  text-align: right;
+}
+
+.settings .usage-models :is(th, td):nth-child(3) {
+  width: 104px;
+  text-align: right;
+}
+
+.settings .usage-models td:nth-child(3) {
+  color: var(--text);
+}
+
+.settings .usage-models td.is-unpriced {
+  color: var(--text-3);
+}
+
+.settings .usage-sheet__more {
+  padding: 0;
+  background: none;
+  border: 0;
+  color: var(--text-3);
+  font: inherit;
+  cursor: pointer;
+  transition: color var(--dur-hover) var(--ease-out);
+}
+
+.settings .usage-sheet__more:hover {
+  color: var(--text);
+}
+
+.settings .usage-sheet__more:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 2px;
+  border-radius: var(--r-xs);
+}
+
+.settings .usage-page__retry {
+  color: var(--text);
+}
+
+/* A narrow pane stacks the limits over the models. */
+
+@container settings-content (max-width: 640px) {
+  .settings .usage-sheet__details {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Close: what caching saved, then what the figures mean */
+
+.settings .usage-page__close {
+  margin-top: 48px;
+}
+
+.settings .usage-page__saved {
+  margin: 0 0 8px;
+  color: var(--text-2);
+  font-size: var(--t-sm);
+  line-height: 18px;
+}
+
+.settings .usage-page__note {
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  line-height: 17px;
+  text-wrap: pretty;
+}
+
+.settings .usage-page__note + .usage-page__note {
+  margin-top: 4px;
+}
+
+/* While the first answer loads: where the names and charts will be. */
 
 .settings .usage-skeleton {
   display: grid;
-  gap: 14px;
-  margin-top: 40px;
+  gap: 44px;
 }
 
-.settings .usage-skeleton > .skeleton {
+.settings .usage-skeleton__sheet {
+  display: grid;
+  gap: 14px;
+}
+
+.settings .usage-skeleton .skeleton {
   display: block;
   border-radius: var(--r-sm);
 }
 
-.settings .usage-skeleton__title {
-  width: 96px;
-  height: 16px;
-}
-
-.settings .usage-skeleton__stats {
-  width: 100%;
-  height: 48px;
+.settings .usage-skeleton__name {
+  width: 120px;
+  height: 20px;
 }
 
 .settings .usage-skeleton__chart {
-  width: 100%;
-  height: 140px;
+  height: 94px;
 }
 
-/* Where the numbers come from. */
+/* A new period raises each chart from its baseline, one sheet after another */
 
-.settings .usage-footer {
-  margin-top: 40px;
-  padding-top: 14px;
-  border-top: 1px solid var(--line);
-  color: var(--text-3);
-  font-size: var(--t-sm);
-  line-height: 1.5;
+.settings .usage-chart__bars {
+  transform-box: view-box;
+  transform-origin: 0 100%;
+  animation: usage-rise 520ms var(--ease-out) both;
+  animation-delay: calc(var(--usage-sheet-index, 0) * 60ms);
 }
 
-.settings .usage-footer p {
-  margin: 0;
+.settings .usage-chart__peak {
+  animation: usage-fade 240ms var(--ease-out) both;
+  animation-delay: calc(var(--usage-sheet-index, 0) * 60ms + 420ms);
 }
 
-.settings .usage-footer .usage-footer__facts {
-  color: var(--text-2);
-  font-variant-numeric: tabular-nums;
+@keyframes usage-rise {
+  from {
+    scale: 1 0;
+  }
 }
 
-.settings .usage-footer .usage-footer__warning {
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
-  margin-top: 6px;
-}
-
-.settings .usage-footer__warning svg {
-  flex: none;
-  margin-top: 3px;
+@keyframes usage-fade {
+  from {
+    opacity: 0;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .settings .usage-page.is-refreshing .usage-page__refresh svg {
-    animation: none;
+  .settings .usage-page *,
+  .settings .usage-page *::before,
+  .settings .usage-page *::after {
+    animation: none !important;
+    transition: none !important;
   }
 }

@@ -37,6 +37,7 @@
     "electron": "^43.4.0",
     "electron-builder": "26.15.3",
     "esbuild": "^0.28.1",
+    "happy-dom": "^20.11.1",
     "typescript": "^5.9.3",
     "vitest": "^4.1.10"
   },
@@ -63,6 +64,7 @@
       "!node_modules/@harness/*/*.tsbuildinfo",
       "!node_modules/@harness/*/dist/**/*.d.ts",
       "!node_modules/@harness/*/dist/**/*.bench.js",
+      "!node_modules/@harness/*/dist/**/*.profile.js",
       "!node_modules/@harness/*/dist/**/*.test-support.js",
       "!node_modules/@harness/adapter-codex/dist/generated{,/**/*}",
       "!node_modules/@harness/adapter-api/dist/test-server.js",

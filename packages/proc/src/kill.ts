@@ -11,6 +11,11 @@ export type KillableProcess = Pick<ChildProcess, 'exitCode' | 'signalCode' | 'pi
 const groups = new WeakMap<KillableProcess, number>()
 const stopping = new WeakMap<KillableProcess, Promise<void>>()
 
+/** Owned children whose exit this process has not seen, and POSIX groups not yet retired. */
+const unfinished = new Set<ChildProcess>()
+const openGroups = new Set<number>()
+let stopsOwnedTreesAtExit = false
+
 /** Native executable spawn with a private process group on POSIX. */
 export function spawnOwned(
   command: string,
@@ -28,9 +33,11 @@ export function spawnOwned(
   options: SpawnOptions = {},
 ): ChildProcess {
   const child = spawn(command, args, { ...options, detached: process.platform !== 'win32' })
+  if (child.pid) ownUntilExit(child)
   if (process.platform !== 'win32' && child.pid) {
     const group = child.pid
     groups.set(child, group)
+    openGroups.add(group)
     // The leader can exit before a background command. Keep its descendants
     // inside the same owned lifetime, and retire the group before pid reuse.
     child.once('exit', () => {
@@ -42,9 +49,48 @@ export function spawnOwned(
 
 /** Terminate only a tree we own, then wait for bounded TERM/KILL escalation. */
 export function killTree(child: KillableProcess): Promise<void> {
+  return stopTree(child, true)
+}
+
+/**
+ * How long a short command that missed its time limit may go on by itself
+ * before its tree is stopped after all.
+ */
+export const LEFT_RUNNING_LIMIT_MS = 60_000
+
+export type LeftRunningProcess = KillableProcess &
+  Pick<ChildProcess, 'unref' | 'once' | 'stdin' | 'stdout' | 'stderr'>
+
+/**
+ * Stop waiting for a short command without stopping it.
+ *
+ * A version or sign-in probe that misses its limit on a loaded PC is nearly
+ * always slow, not stuck: it answers a few seconds later and exits. Stopping
+ * its tree started `taskkill`, and a second one 5 s later, and every process
+ * start holds this process's event loop for up to seconds under load (33
+ * taskkill runs, 17 s, in one session). The command now finishes by itself and
+ * no longer keeps this process alive. One that is still running after
+ * `limitMs` is stuck: its tree is stopped then, with a single taskkill run.
+ */
+export function leaveRunning(child: LeftRunningProcess, limitMs = LEFT_RUNNING_LIMIT_MS): void {
+  const exited = () => child.exitCode != null || child.signalCode != null
+  if (exited()) return
+  child.unref()
+  for (const stream of [child.stdin, child.stdout, child.stderr]) {
+    // Pipes are sockets; a stream without a handle has nothing to release.
+    ;(stream as { unref?: () => unknown } | null)?.unref?.()
+  }
+  const timer = setTimeout(() => {
+    if (!exited()) void stopTree(child, false).catch(() => undefined)
+  }, limitMs)
+  timer.unref()
+  child.once('exit', () => clearTimeout(timer))
+}
+
+function stopTree(child: KillableProcess, retry: boolean): Promise<void> {
   const existing = stopping.get(child)
   if (existing) return existing
-  const done = terminate(child).catch((error: unknown) => {
+  const done = terminate(child, retry).catch((error: unknown) => {
     stopping.delete(child)
     throw error
   })
@@ -55,7 +101,7 @@ export function killTree(child: KillableProcess): Promise<void> {
   return done
 }
 
-async function terminate(child: KillableProcess): Promise<void> {
+async function terminate(child: KillableProcess, retry: boolean): Promise<void> {
   const group = groups.get(child)
   if (group) {
     // Keep the group after its leader exits: children can still be alive.
@@ -67,6 +113,7 @@ async function terminate(child: KillableProcess): Promise<void> {
       }
     }
     groups.delete(child)
+    openGroups.delete(group)
     return
   }
   if (child.exitCode != null || child.signalCode != null) return
@@ -78,10 +125,14 @@ async function terminate(child: KillableProcess): Promise<void> {
     // call would stop the server's only event loop, and every stream with it.
     // taskkill can finish before Node observes the child's exit event.
     const exited = () => child.exitCode != null || child.signalCode != null
-    const outcome = await stopWindowsTree(child.pid, () => {
-      // Every late run failed, so no taskkill is walking the tree any more.
-      if (!exited()) child.kill()
-    })
+    const outcome = await stopWindowsTree(
+      child.pid,
+      () => {
+        // Every late run failed, so no taskkill is walking the tree any more.
+        if (!exited()) child.kill()
+      },
+      retry,
+    )
     // taskkill still owns this stop. Killing the shim now would orphan the CLI
     // it started, so the stop is left to the run that is still going.
     if (outcome === 'running') return
@@ -96,6 +147,73 @@ async function terminate(child: KillableProcess): Promise<void> {
   if (!(await waitUntil(() => child.exitCode != null || child.signalCode != null, 1_000))) {
     throw new Error('Child process did not exit after forced termination')
   }
+}
+
+/**
+ * A process that exits must not leave the trees it owns running. An orderly
+ * stop ends each tree first, but a launch that was still starting, a read in
+ * flight or a stop that had not finished yet was left behind: Node ends its
+ * direct children on Windows (libuv's job object), so a .cmd shim died with
+ * the server while the CLI behind it ran on, with every MCP server, `rg` and
+ * `git` it had started. Each still-running tree is stopped here, from the
+ * synchronous `exit` event: one `taskkill /T /F` on Windows, waited for while
+ * the shims are still alive; a forced group signal on POSIX.
+ */
+function ownUntilExit(child: ChildProcess): void {
+  unfinished.add(child)
+  child.once('exit', () => unfinished.delete(child))
+  if (stopsOwnedTreesAtExit) return
+  stopsOwnedTreesAtExit = true
+  process.once('exit', () => stopUnfinishedTrees())
+}
+
+/** Pids per taskkill run, well inside the Windows command-line limit. */
+const TASKKILL_PIDS_PER_RUN = 200
+
+/** Stop every owned tree still running. Synchronous; for the `exit` event. */
+export function stopUnfinishedTrees(
+  launch: (args: string[]) => void = runTaskkillBeforeExit,
+): void {
+  if (process.platform === 'win32') {
+    // A pid stays reserved while Node still holds its process handle, which it
+    // does until it sees the exit, so none of these can name another process.
+    const pids = [...unfinished].flatMap((child) => (child.pid ? [child.pid] : []))
+    for (let start = 0; start < pids.length; start += TASKKILL_PIDS_PER_RUN) {
+      const batch = pids.slice(start, start + TASKKILL_PIDS_PER_RUN)
+      launch([...batch.flatMap((pid) => ['/pid', String(pid)]), '/T', '/F'])
+    }
+    return
+  }
+  for (const group of openGroups) {
+    try {
+      process.kill(-group, 'SIGKILL')
+    } catch {
+      // Already gone.
+    }
+  }
+}
+
+/** How long the exit may wait for taskkill; it has needed 30 s on a loaded PC. */
+const EXIT_TASKKILL_TIMEOUT_MS = 10_000
+
+function runTaskkillBeforeExit(args: string[]): void {
+  try {
+    // Waited for on purpose. Once this process is gone, Node's job object ends
+    // the shims at once, and taskkill can only walk a tree from a live root: a
+    // detached run started here found them gone, and the CLIs behind them ran on.
+    spawnSync('taskkill', args, {
+      stdio: 'ignore',
+      windowsHide: true,
+      timeout: EXIT_TASKKILL_TIMEOUT_MS,
+    })
+  } catch {
+    // Nothing else can be done while exiting.
+  }
+}
+
+/** The owned children this process still waits for, for tests. */
+export function unfinishedChildrenForTests(): ReadonlySet<ChildProcess> {
+  return unfinished
 }
 
 /**
@@ -144,7 +262,8 @@ export function setTaskkillLauncherForTests(launcher?: TaskkillLauncher): void {
  * a slow taskkill and then the shim is how dozens of `opencode serve` processes
  * outlived the app. A slow run keeps going while a second one is tried. After
  * the budget the runs are left to finish on their own, and `onLateFailure`
- * runs if every one of them then fails.
+ * runs if every one of them then fails. Without `retry` there is only the
+ * first run.
  *
  * `stopped`: a run exited cleanly. `failed`: every run exited with an error and
  * none is still running. `running`: the budget ran out with taskkill still busy.
@@ -152,11 +271,14 @@ export function setTaskkillLauncherForTests(launcher?: TaskkillLauncher): void {
 async function stopWindowsTree(
   pid: number,
   onLateFailure: () => void,
+  retry: boolean,
 ): Promise<'stopped' | 'failed' | 'running'> {
   const startedAt = Date.now()
   const runs = [launchTaskkill(pid)]
-  if ((await taskkillOutcome(runs, TASKKILL_RETRY_AFTER_MS)) === 'stopped') return 'stopped'
-  runs.push(launchTaskkill(pid))
+  if (retry) {
+    if ((await taskkillOutcome(runs, TASKKILL_RETRY_AFTER_MS)) === 'stopped') return 'stopped'
+    runs.push(launchTaskkill(pid))
+  }
   const outcome = await taskkillOutcome(runs, TASKKILL_BUDGET_MS - (Date.now() - startedAt))
   if (outcome === 'running') {
     for (const run of runs) run.release()

@@ -1,3 +1,5 @@
+import { isMacOS } from './bridge.js'
+
 export type Shortcut = {
   key: string
   primary?: boolean
@@ -245,9 +247,13 @@ export function reservedShortcutLabel(shortcut: Shortcut): string | undefined {
 type ShortcutEvent = Pick<KeyboardEvent, 'key' | 'metaKey' | 'ctrlKey' | 'altKey' | 'shiftKey'> &
   Partial<Pick<KeyboardEvent, 'code' | 'isComposing' | 'getModifierState'>>
 
+/** On macOS, Command is the primary modifier and Ctrl+letter stays a text motion. */
 function isShortcutInput(event: ShortcutEvent): boolean {
   return (
-    !event.isComposing && !event.getModifierState?.('AltGraph') && !(event.metaKey && event.ctrlKey)
+    !event.isComposing &&
+    !event.getModifierState?.('AltGraph') &&
+    !(event.metaKey && event.ctrlKey) &&
+    !(event.ctrlKey && isMacOS())
   )
 }
 

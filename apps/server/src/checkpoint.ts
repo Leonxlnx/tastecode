@@ -63,13 +63,30 @@ export class RestoreSnapshotError extends AggregateError {
  * otherwise stage the user's work as a side effect of us taking a backup, and
  * they would find their own staging area rearranged by something they did not
  * do.
+ *
+ * `retainIn` also keeps the snapshot as a checkpoint of that namespace (see
+ * retainCheckpoint), written in the same git run as the reference that
+ * protects it.
  */
-export async function takeSnapshot(repoPath: string): Promise<Snapshot> {
+export async function takeSnapshot(
+  repoPath: string,
+  options: { retainIn?: string } = {},
+): Promise<Snapshot> {
+  const retainIn = options.retainIn
+  if (retainIn !== undefined && !/^[a-zA-Z0-9-]+$/.test(retainIn))
+    throw new Error('invalid checkpoint namespace')
   const scope = path.relative(canonicalCheckoutRoot(repoPath), realpathSync(repoPath)) || '.'
   repoPath = canonicalCheckoutRoot(repoPath)
-  const base = await snapshotBase(repoPath)
+  // Every turn starts with a snapshot, and building one took about ten git
+  // runs in a row (23 s on a busy Windows machine) before the agent got the
+  // prompt. A checkout that matches HEAD needs only a status.
+  const [base, status] = await Promise.all([snapshotBase(repoPath), cleanStatus(repoPath, scope)])
   // Before the first commit there is no HEAD; snapshots then start from the empty tree.
   const head = base.head
+  if (head && status === '' && (await indexTrustsWorkingTree(repoPath))) {
+    await protectSnapshot(repoPath, head, retainIn)
+    return { commit: head, clean: true }
+  }
 
   const indexDir = await mkdtemp(path.join(os.tmpdir(), 'harness-index-'))
   const indexFile = path.join(indexDir, 'index')
@@ -147,7 +164,7 @@ export async function takeSnapshot(repoPath: string): Promise<Snapshot> {
 
     const clean = tree.trim() === base.tree
     if (clean && head) {
-      await protectSnapshot(repoPath, head)
+      await protectSnapshot(repoPath, head, retainIn)
       return { commit: head, clean: true }
     }
 
@@ -157,7 +174,7 @@ export async function takeSnapshot(repoPath: string): Promise<Snapshot> {
     const cacheKey = `${repoPath}\0${head ?? ''}\0${tree.trim()}`
     const cached = snapshotCommits.get(cacheKey)
     if (cached && (await git(repoPath, ['cat-file', '-e', `${cached}^{commit}`])) !== undefined) {
-      await protectSnapshot(repoPath, cached)
+      await protectSnapshot(repoPath, cached, retainIn)
       return { commit: cached, clean }
     }
 
@@ -173,7 +190,7 @@ export async function takeSnapshot(repoPath: string): Promise<Snapshot> {
       },
     )
     snapshotCommits.set(cacheKey, commit.trim())
-    await protectSnapshot(repoPath, commit.trim())
+    await protectSnapshot(repoPath, commit.trim(), retainIn)
     if (snapshotCommits.size > 64) {
       const oldest = snapshotCommits.keys().next().value
       if (oldest !== undefined) snapshotCommits.delete(oldest)
@@ -236,6 +253,39 @@ async function seedFromCheckoutIndex(
   await rm(indexFile, { force: true }).catch(() => undefined)
   await rm(`${indexFile}.lock`, { force: true }).catch(() => undefined)
   return false
+}
+
+/**
+ * Empty when nothing in `scope` differs from HEAD: no staged or working
+ * change, no untracked file outside the ignore rules, and no submodule change.
+ * Ignored files never enter a snapshot, so they do not count. Undefined when
+ * git could not tell. Without optional locks, so the user's own git commands
+ * never find the index locked by a backup they did not ask for.
+ */
+async function cleanStatus(repoPath: string, scope: string): Promise<string | undefined> {
+  return git(repoPath, [
+    '--no-optional-locks',
+    'status',
+    '--porcelain=v1',
+    '-z',
+    '--untracked-files=all',
+    '--ignore-submodules=none',
+    '--',
+    `:(literal)${scope}`,
+  ])
+}
+
+/**
+ * Whether git compares every tracked file with the working tree. Status skips
+ * files marked assume-unchanged or skip-worktree, so an edit to one of them
+ * would look clean although the full snapshot records it.
+ */
+async function indexTrustsWorkingTree(repoPath: string): Promise<boolean> {
+  const entries = await git(repoPath, ['ls-files', '-v', '-z'])
+  return (
+    entries !== undefined &&
+    entries.split('\0').every((entry) => entry === '' || entry.startsWith('H '))
+  )
 }
 
 /**
@@ -302,8 +352,7 @@ export async function restoreSnapshot(
   commit: string,
   namespace?: string,
 ): Promise<Snapshot> {
-  const replaced = await takeSnapshot(repoPath)
-  if (namespace) await retainCheckpoint(repoPath, namespace, replaced.commit)
+  const replaced = await takeSnapshot(repoPath, namespace ? { retainIn: namespace } : {})
   const scope = path.relative(canonicalCheckoutRoot(repoPath), realpathSync(repoPath)) || '.'
   repoPath = canonicalCheckoutRoot(repoPath)
   assertCommit(commit)
@@ -403,12 +452,21 @@ function assertCommit(commit: string): void {
 }
 
 /** A short cache protects diff-only snapshots; durable metadata uses its own namespace. */
-async function protectSnapshot(repoPath: string, commit: string): Promise<void> {
+async function protectSnapshot(repoPath: string, commit: string, retainIn?: string): Promise<void> {
   assertCommit(commit)
-  await run('git', ['update-ref', `refs/harness/snapshots/${commit}`, commit], {
-    cwd: repoPath,
-    windowsHide: true,
-    timeout: 20_000,
+  const refs = [`refs/harness/snapshots/${commit}`]
+  if (retainIn !== undefined) refs.push(`refs/harness/checkpoints/${retainIn}/${commit}`)
+  // One transaction for both: a turn's checkpoint wrote them in two git runs
+  // in a row, each costing seconds on a busy Windows machine.
+  await new Promise<void>((resolve, reject) => {
+    const child = execFile(
+      'git',
+      ['update-ref', '--stdin'],
+      { cwd: repoPath, windowsHide: true, timeout: 20_000 },
+      (error) => (error ? reject(error) : resolve()),
+    )
+    child.stdin?.on('error', reject)
+    child.stdin?.end(refs.map((ref) => `update ${ref} ${commit}\n`).join(''))
   })
   const key = `${repoPath}\0${commit}`
   protectedSnapshots.delete(key)

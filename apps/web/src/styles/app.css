@@ -404,23 +404,6 @@
   padding-top: 0;
 }
 
-.search {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  margin-top: 6px;
-  padding: 0 8px;
-  background: var(--chrome-recessed);
-  border: 1px solid var(--chrome-border);
-  border-radius: var(--r-md);
-  box-shadow: var(--chrome-inset-shadow);
-  color: var(--text-3);
-}
-
-.search:focus-within {
-  border-color: var(--text-3);
-}
-
 /* Inline rename: a focused field over the label, never mistaken for it. */
 .rename {
   width: 100%;
@@ -648,38 +631,6 @@
 .sheet__section {
   padding: 12px 16px 16px;
   border-top: 1px solid var(--line);
-}
-
-.sheet__label {
-  color: var(--text-3);
-  font-size: var(--t-xs);
-  font-weight: 500;
-  margin: 0 0 10px;
-}
-
-.sheet__note {
-  color: var(--text-3);
-  font-size: var(--t-sm);
-  line-height: 1.6;
-  margin: 10px 0 0;
-}
-
-.row-between {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.row__title {
-  margin: 0;
-  font-size: var(--t-md);
-}
-
-.row__note {
-  margin: 2px 0 0;
-  color: var(--text-3);
-  font-size: var(--t-sm);
 }
 
 .switch {
@@ -1125,13 +1076,19 @@
   color: var(--text);
 }
 
+/* The box turns, not its <svg>, which Chromium repaints every frame. */
 .sess__spinner {
   position: relative;
+  display: block;
   width: 14px;
   height: 14px;
   flex: none;
   color: var(--running);
   animation: spin 800ms linear infinite;
+}
+
+.sess__spinner > svg {
+  display: block;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1149,7 +1106,11 @@
 }
 
 .sess__status-dot.is-attention {
-  background: var(--attention);
+  background: var(--warning);
+}
+
+.sess__status-dot.is-success {
+  background: var(--success);
 }
 
 .sess__status-dot.is-failed {
@@ -1269,10 +1230,8 @@
 
 /* ---------- stage ---------- */
 
-/* The right panel width is written inline on .workspace-layout on every frame
-   of a resize drag, and only that grid reads it. Left inheritable, each write
-   restyled the whole chat and Browser subtree under it (about 9 ms a frame next
-   to a long chat); not inherited, it restyles one element. */
+/* Set inline on .workspace-layout on every frame of a resize drag and read
+   only there. Not inherited, so a write restyles one element, not the chat. */
 @property --workspace-panel-w {
   syntax: '*';
   inherits: false;
@@ -1804,21 +1763,6 @@
   -webkit-app-region: drag;
 }
 
-.picker {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--text);
-  font-size: var(--t-md);
-  font-weight: 520;
-  white-space: nowrap;
-}
-
-.picker svg {
-  color: var(--text-3);
-  flex: none;
-}
-
 /* ---------- composer ---------- */
 
 .composer {
@@ -2325,13 +2269,6 @@
   font-size: var(--t-sm);
 }
 
-/* The project name is the identity; the branch is the detail. When space runs
-   out the branch gives way first. */
-.chip--context .chip__label {
-  flex: none;
-  max-width: 180px;
-}
-
 .chip svg {
   color: var(--text-3);
   flex: none;
@@ -2359,10 +2296,6 @@
 
 .chip--resource > svg {
   color: var(--attention);
-}
-
-.chip--error {
-  color: var(--error);
 }
 
 .attachment-preview {
@@ -2533,10 +2466,6 @@
   white-space: nowrap;
 }
 
-.tool--compact span {
-  text-transform: capitalize;
-}
-
 .composer__dictation-options-content {
   display: flex;
   align-items: center;
@@ -2570,26 +2499,6 @@
 .tool--danger,
 .tool--danger svg {
   color: var(--composer-danger);
-}
-
-.tool__sub {
-  color: var(--text-3);
-}
-
-.tool--full {
-  color: var(--error);
-}
-
-.tool--full svg {
-  color: var(--error);
-}
-
-.tool--quiet {
-  color: var(--text-3);
-  padding: 0 8px;
-  /* Roughly the model selector's width, so the shelf does not shuffle
-     sideways when the real control replaces this on every app start. */
-  min-width: 148px;
 }
 
 .tool--icon {
@@ -2700,6 +2609,32 @@
   color: color-mix(in srgb, var(--text) 55%, var(--text-2));
 }
 
+@property --composer-permission-ink {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: transparent;
+}
+
+/* The access label changes colour on the icon morph's clock instead of
+   snapping ahead of it. The ink moves through a registered property so the
+   hover, which sets `color` directly, stays instant. */
+.tools .composer__permission .tool {
+  --composer-permission-ink: color-mix(in srgb, var(--text) 55%, var(--text-2));
+  transition: --composer-permission-ink var(--dur-slow) var(--ease-in-out);
+}
+
+.tools .composer__permission .tool--review {
+  --composer-permission-ink: var(--composer-review);
+}
+
+.tools .composer__permission .tool--danger {
+  --composer-permission-ink: var(--composer-danger);
+}
+
+.tools .composer__permission .tool > span:not(.icon-morph) {
+  color: var(--composer-permission-ink);
+}
+
 .tools .composer__design.is-active {
   background: var(--composer-design-active-bg);
   border-color: var(--composer-design-border-active);
@@ -2793,6 +2728,12 @@
   gap: 0;
   padding: 3px;
   border-radius: var(--r-lg);
+}
+
+/* Local / Isolated are two short labels. The shared .menu floor is 260px. */
+.menu.menu--mode {
+  min-width: max-content;
+  width: max-content;
 }
 
 .menu--project-picker {
@@ -3321,7 +3262,8 @@
     :is(.composer__add, .composer__permission):hover:not(:disabled)
     :is(
       .tool:not(.tool--review):not(.tool--danger),
-      .tool:not(.tool--review):not(.tool--danger) svg
+      .tool:not(.tool--review):not(.tool--danger) svg,
+      .tool:not(.tool--review):not(.tool--danger) > span:not(.icon-morph)
     ) {
     color: var(--text);
   }
@@ -3687,19 +3629,6 @@
   .titlebar__toggle {
     width: 34px;
     height: 34px;
-  }
-
-  .titlebar__actions {
-    right: max(12px, env(safe-area-inset-right));
-  }
-
-  .titlebar__actions .titlebar__toggle {
-    width: 34px;
-    height: 34px;
-  }
-
-  .titlebar__actions .titlebar__workspace-expand {
-    width: 34px;
   }
 
   .stagehead {

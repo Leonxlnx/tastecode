@@ -95,21 +95,6 @@
   margin-left: auto;
 }
 
-.model-selector__fast-meta {
-  position: absolute;
-  top: 50%;
-  right: 38px;
-  color: var(--text-3);
-  font-size: var(--t-xs);
-  white-space: nowrap;
-  opacity: 0;
-  pointer-events: none;
-  transform: translate(4px, -50%);
-  transition:
-    opacity 150ms var(--ease-out),
-    transform 150ms var(--ease-out);
-}
-
 .model-selector__effort-title {
   display: block;
   flex: none;

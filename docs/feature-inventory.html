@@ -225,7 +225,7 @@
       <div class="topbar-inner">
         <h1>Feature Inventory</h1>
         <span class="total" id="total">0 checked</span>
-        <span class="meta">2026-10-18 nightly 8ed311c9 · includes main 0ad74ec3</span>
+        <span class="meta">2026-10-19 nightly · includes main 58d89955 (PR #1909)</span>
       </div>
     </div>
 
@@ -339,8 +339,9 @@
               ><input type="checkbox" /><span
                 >Rate limit windows in the account popup
                 <span class="d"
-                  >space separates provider groups without splitting their windows; bars use a quiet
-                  fill and turn red only at 15% or less left; 5 hour and weekly reset times; earned
+                  >space separates provider groups without splitting their windows; each bar is a
+                  red-to-green gauge whose tip colour says how much is left, filling from empty when
+                  the popup opens (not with reduced motion); 5 hour and weekly reset times; earned
                   resets show each expiry date, soonest first and red within 24 hours, with a Use
                   control beside each selectable expiry that spends that reset; confirmation keeps
                   the date visible and moves Confirm away from Use so a second click cannot spend
@@ -374,7 +375,8 @@
                   >Codex account dictation beside Send, with a flat idle button, a smooth voice
                   curve, morphing Tabler icons, a starting state, and Escape to cancel. Ask first
                   and Design hide while Plus keeps accepting files. Account credentials stay inside
-                  the adapter</span
+                  the adapter. The button follows the provider's last voice status at once while the
+                  status is read again, instead of a placeholder</span
                 ></span
               ></label
             >
@@ -903,14 +905,15 @@
                   reads until end of input answers instead of timing out. The in-process PATH lookup
                   is cached, needs no where.exe, agrees with launching and never searches the
                   working directory. Versions are read once per binary and shared with update
-                  checks; providers.list waits at most 250 ms for a version, and a late version
-                  shows on the next listing. A CLI installed while the app is open is found without
-                  a restart: the Windows registry PATH is re-read on every scan, the WinGet Links
-                  folder and Cursor's %LOCALAPPDATA%\cursor-agent are on the desktop PATH, and the
-                  caches clear when an install, update or sign-in terminal ends. Providers are
-                  checked again when the window gets focus, at most every 30 s, while one is missing
-                  or an account could not be confirmed. providers.list also declares each provider's
-                  source shape (agent, connection or direct).</span
+                  checks; providers.list waits at most 250 ms for a version or the Codex sign-in
+                  check, and a late answer shows on the next listing. A CLI installed while the app
+                  is open is found without a restart: the Windows registry PATH is re-read on every
+                  scan after the launch listing, the WinGet Links folder and Cursor's
+                  %LOCALAPPDATA%\cursor-agent are on the desktop PATH, and the caches clear when an
+                  install, update or sign-in terminal ends. Providers are checked again when the
+                  window gets focus, at most every 30 s, while one is missing or an account could
+                  not be confirmed. providers.list also declares each provider's source shape
+                  (agent, connection or direct).</span
                 ></span
               ></label
             >
@@ -1039,18 +1042,20 @@
                   one muted word beside the provider (Checking…, Unavailable, Last known, None
                   reported) and the reason in its tooltip instead of an alert colour, shows
                   Checking… and then Unavailable with Retry for a source not read yet, and routes a
-                  small text Retry to the correct provider; focus enters on the limits list and
-                  returns on close. One read in flight is shared; failed reads back off 5, 10 and 20
-                  minutes, then every 30, until a success, sign-in, sign-out or account switch;
-                  reads are at least 15 minutes apart for Claude Code, 5 for Codex and 30 s for
-                  Grok, while a redeemed reset or an account change reads at once. A failed refresh
-                  answers with the held values marked stale, with the reason and the next try; an
-                  account change drops them, while a read that names no email or plan is not a
-                  change and keeps them. Live windows from running chats merge into the held values
-                  by window id, the renderer applies the usage.limits push directly (at most one a
-                  second per provider), and usage.changed follows at most every 30 s; usage.summary
-                  answers a chat's totals with the held limits at once and refreshes them in the
-                  background</span
+                  small text Retry to the correct provider; a request that fails with nothing to
+                  show retries on its own three times (after 5, 15 and 30 s) as Retrying…, without
+                  the Retry button, and then leaves the list until a later read succeeds; focus
+                  enters on the limits list and returns on close. One read in flight is shared;
+                  failed reads back off 5, 10 and 20 minutes, then every 30, until a success,
+                  sign-in, sign-out or account switch; reads are at least 15 minutes apart for
+                  Claude Code, 5 for Codex and 30 s for Grok, while a redeemed reset or an account
+                  change reads at once. A failed refresh answers with the held values marked stale,
+                  with the reason and the next try; an account change drops them, while a read that
+                  names no email or plan is not a change and keeps them. Live windows from running
+                  chats merge into the held values by window id, the renderer applies the
+                  usage.limits push directly (at most one a second per provider), and usage.changed
+                  follows at most every 30 s; usage.summary answers a chat's totals with the held
+                  limits at once and refreshes them in the background</span
                 ></span
               ></label
             >
@@ -1064,7 +1069,10 @@
                   values older than 10 minutes show Updated &lt;age&gt; ago; times are read when the
                   popup opens or the values change, with no ticking timer; the first popup or Usage
                   view after a launch opens on the last session's full read (saved per provider,
-                  never shown to the sidebar figure) until this session's read replaces it</span
+                  never shown to the sidebar figure) until this session's read replaces it; the
+                  newest failed read is saved too, so after a launch a shown view answers at once
+                  with the saved values as Last known, or Unavailable with the reason when there are
+                  none, and the backoff continues from the last session instead of restarting</span
                 ></span
               ></label
             >
@@ -1110,7 +1118,10 @@
                 <span class="d"
                   >Send stays available when an account cannot be confirmed: the notice reads Could
                   not confirm this account, but you can still send, with Retry instead of Check
-                  setup, and Send opens after 5 s while an account check is still running</span
+                  setup, and Send opens after 5 s while an account check is still running, or at
+                  once when the provider's last check said signed in; a check that answers signed
+                  out turns Send off again; an Enter pressed while Send is still loading is sent
+                  once Send is ready, unless the words or the chat changed meanwhile</span
                 ></span
               ></label
             >
@@ -1230,8 +1241,10 @@
                   again on window focus or show when the last listing is 6 hours or older, and after
                   an app-run provider update; the launch snapshot of the catalog is written once per
                   refresh (one trailing write while sources settle, then the full catalog) and
-                  dropped instead of written when it outgrows its 2,000-row / 2M-character
-                  limit</span
+                  dropped instead of written when it outgrows its 2,000-row / 2M-character limit;
+                  the first selector on screen loads the picker panel in an idle moment, so the
+                  first open does not load it, and a failed load is tried again by the next
+                  caller</span
                 ></span
               ></label
             >
@@ -1846,7 +1859,13 @@
                     href="https://github.com/Leonxlnx/tastecode/pull/1404"
                     >#1404</a
                   >); a restore or its undo tells every connected client to reload that chat, and a
-                  reconnect whose cursor saw removed events reads the history from the start</span
+                  reconnect whose cursor saw removed events reads the history from the start. The
+                  Restore dialog lists the chat's prompts with a dotted cut above the chosen one,
+                  recedes everything below it, names the files that go back, and moves the cut with
+                  a click or the Up and Down keys. A checkout that matches HEAD is checkpointed from
+                  one status instead of rebuilding its tree (5 git runs instead of 11 before the
+                  agent gets the turn), and a turn's two checkpoint refs are written in one git
+                  run</span
                 ></span
               ></label
             >
@@ -1884,9 +1903,10 @@
                   keep opening and sending. Local and native chats also open from the store at once
                   while the first provider history scan after a server start is still running; what
                   the scan changes arrives in the background and open chats reload it. Turns and
-                  imported-chat reads wait only for their own provider's first history scan. A
-                  native chat whose provider copy is gone (archived and deleted in the CLI) still
-                  opens with its own transcript.</span
+                  imported-chat reads wait only for their own provider's first history scan, and a
+                  chat started since the launch does not wait for it until a scan has linked it to
+                  its saved session. A native chat whose provider copy is gone (archived and deleted
+                  in the CLI) still opens with its own transcript.</span
                 ></span
               ></label
             >
@@ -2016,7 +2036,10 @@
                   >agent turns refresh them only after the project becomes idle; new chats default
                   to main and remember the last branch picked for each project; workspace branches
                   are listed only for the new-chat shelf and its branch menu and cached for 30 s per
-                  project, so opening a chat no longer lists them</span
+                  project, so opening a chat no longer lists them; a new chat asks the server to
+                  switch only when the shelf names a branch other than the checked-out one, never
+                  waits for the branch list (sent before it arrives, it starts on the checkout), and
+                  starts in place when git cannot read the checkout's branch</span
                 ></span
               ></label
             >
@@ -2241,8 +2264,12 @@
                   >sidebar delete actions show a top toast with a white Undo button. The toast
                   closes after 5 seconds, pausing on hover or focus within the 10-second undo
                   window, and fade and slide visible rows before removal. Deletion is permanent once
-                  the window ends; selecting or sending in a pending chat cancels it. Shift-click
-                  range selection covers only visible rows. Reduced motion skips these effects</span
+                  the window ends; selecting or sending in a pending chat cancels it. A delete still
+                  in its window when the app quits normally finishes on the next start, and the chat
+                  is not shown again. A delete whose request failed is tried once more on the next
+                  start. A crash or hard kill within about 5 seconds of the click can still lose the
+                  delete. Shift-click range selection covers only visible rows. Reduced motion skips
+                  these effects</span
                 ></span
               ></label
             >
@@ -2282,10 +2309,11 @@
                 >Spinner for running sessions, unread markers, elapsed status labels
                 <span class="d"
                   >Classic rows show a 12 px provider mark before the title and a quiet relative
-                  time on the right (5m, 3h, 2w); a working spinner or a waiting or failed dot takes
-                  the time's place; unread chats get a heavier title and a dot after the time; one
-                  shared 30-second clock drives every time label and runs only while a row listens
-                  and the window is visible</span
+                  time on the right (5m, 3h, 2w); a working spinner or a green finished, yellow
+                  waiting, or red failed dot takes the time's place, independent of the accent;
+                  unread chats get a heavier title, with no extra dot on finished chats; one shared
+                  30-second clock drives every time label and runs only while a row listens and the
+                  window is visible</span
                 ></span
               ></label
             >
@@ -2421,13 +2449,14 @@
                   mirror the same actions and current custom accelerators. Cmd+1–9 on macOS and
                   Ctrl+1–9 on Windows/Linux open the nine newest sessions in the first sidebar
                   project. Cmd/Option bindings use Ctrl/Alt on Windows and Linux, with readable key
-                  labels and portable recorded Option keys. Direct workspace tool shortcuts work
-                  before and after the panel opens and respect modal keyboard ownership. The
-                  recorder refuses those, the number keys, find, turn navigation and the debug
-                  chord. The page has the Settings v1 header with a description and Restore
-                  defaults; groups are sections, rows sit on the shared settings leader with tones
-                  for not set, recording and refused, search is the settings text field with Clear,
-                  and no matches shows one empty line</span
+                  labels and portable recorded Option keys. On macOS only Command is the primary
+                  modifier, so Ctrl+letter stays a text-field motion and the recorder refuses Ctrl.
+                  Direct workspace tool shortcuts work before and after the panel opens and respect
+                  modal keyboard ownership. The recorder refuses those, the number keys, find, turn
+                  navigation and the debug chord. The page has the Settings v1 header with a
+                  description and Restore defaults; groups are sections, rows sit on the shared
+                  settings leader with tones for not set, recording and refused, search is the
+                  settings text field with Clear, and no matches shows one empty line</span
                 ></span
               ></label
             >
@@ -2698,7 +2727,12 @@
                   >General, Profile, Appearance, and Keybinds first, then Providers, Models, MCP
                   servers, Skills, Usage, Data &amp; privacy, About; Settings opens on General; each
                   nav label equals its page title, every tab opens scrolled to the top with the same
-                  title position and column, and every panel is named by its heading</span
+                  title position and column, and every panel is named by its heading; Settings loads
+                  in an idle moment once the project list is ready, so its first open does not load
+                  it, and a failed preload is loaded again on open; once Settings covers the app,
+                  the app's endless loops (a working chat's spinner, the live activity row) pause
+                  until it closes, also when it returns after a sign-in, while one-shot animations
+                  behind it still finish</span
                 ></span
               ></label
             >
@@ -2820,12 +2854,26 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Usage: same 744 px column and page header as every tab
+                >Usage: one sheet per provider
                 <span class="d"
-                  >ranges 7 days, 30 days, 90 days, 1 year and All (default 30 days); an icon
-                  refresh; a skeleton while loading; indexing and failure notices, where a refresh
-                  of an existing index is announced only once a later read still finds it running,
-                  so a quick refresh never moves the page</span
+                  >a native period menu drawn as text (7 days, 30 days, 90 days, 1 year and All,
+                  default 30 days) and an icon refresh on the title's line, the period's tokens,
+                  value at API prices, sessions and active days named under the title, and under
+                  them each provider's share of the tokens as one bar with a legend; each provider
+                  keeps its brand colour (Claude orange, Codex in the text colour, Grok violet, any
+                  other provider grey) on its mark, share, bars and limit meters; one sheet per
+                  provider in value order, read top to bottom: its name with its sessions, tokens
+                  and value on the same line, a bar chart of its tokens on its own scale (a bar a
+                  day, a week on 1 year and All), the other bars fading while one is read, with the
+                  busiest bar labelled and its own dates under it at weekdays, Mondays or month
+                  starts, a tooltip beside the hovered or keyboard-read bar with its date, tokens
+                  and value, then its plan limits beside a table of its models, stacked in a narrow
+                  pane; a provider signed in to more than one account lists Accounts instead of Plan
+                  limits, each with its tokens, value and its own limits under it (one account per
+                  provider until provider accounts land); a provider without sessions in the period
+                  keeps its name and its limits; a skeleton of names and charts while loading;
+                  indexing and failure sentences under the totals, where a refresh of an existing
+                  index is announced only once a later read still finds it running</span
                 ></span
               ></label
             >
@@ -2833,11 +2881,14 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Usage › Plan limits first
+                >Usage › Plan limits in each provider's sheet
                 <span class="d"
-                  >every provider's windows with the share left on a rung meter, the reset
-                  countdown, the even-pace tick and freshness (Last known, Updated Xm ago, Checking,
-                  Unavailable with Retry); Limit reached, and a low state under 15%</span
+                  >every window with the share left on a meter and the reset countdown, from the
+                  same owner as the account popup, which opening the page asks to read sources it
+                  reads only on view; Last known with its age, Updated Xm ago, Checking, and
+                  Unavailable with Retry (a source that failed to read stays); Reached, and a low
+                  state at 15% left or less, both in error ink and also named in one sentence under
+                  the totals; the old section's even-pace tick is not drawn in the sheets</span
                 ></span
               ></label
             >
@@ -2845,15 +2896,14 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Usage › Activity, API value and Models
+                >Usage › Models and the close
                 <span class="d"
-                  >Activity: today against the 7-day average, the period total and per active day,
-                  active days and the streak (moved from Profile), and a daily chart (weekly past 3
-                  months) stacked by provider, with a tooltip and a keyboard walk; API value: the
-                  total, per provider and cache savings, with Partial estimate · x% of tokens priced
-                  and muted figures under 95% priced tokens; Models: by tokens with share, value and
-                  approximate or unpriced badges, with Show all; a footer with the last index time,
-                  files, sources and warnings</span
+                  >each sheet's models table lists its top three models by value under Models,
+                  Tokens and At API prices headings, ≈ for a model priced from a sibling, not
+                  priced, and under $0.01, with N more models; the close says what caching saved and
+                  what the tokens would have come to without it, then what the values mean, a
+                  partial-estimate note under 95% priced tokens, the warnings, and when the index
+                  was built from how many files in which histories</span
                 ></span
               ></label
             >
@@ -2983,10 +3033,15 @@
                   the server for about half a second (#1556), and waits for Node to observe exit
                   after taskkill succeeds (#1394); a Windows process stop never orphans the real
                   CLI, because taskkill itself is never killed and the shim is killed only after
-                  taskkill failed; CLI timeout errors name the command and the limit; media access
-                  requires explicit audio-only details from the owning main renderer and main frame,
-                  with malformed, mixed, unknown, camera and subframe requests denied in both
-                  Chromium checks and permission requests</span
+                  taskkill failed; a process that exits stops every tree it still owns first (one
+                  taskkill run, waited for while the shims are alive, so the CLI behind each shim is
+                  reached), and a server that has to be force-stopped at quit is stopped with its
+                  whole tree; a short check (a version or sign-in status) that misses its time limit
+                  is no longer waited for but left to finish by itself, and one still running a
+                  minute later is stopped with a single taskkill run; CLI timeout errors name the
+                  command and the limit; media access requires explicit audio-only details from the
+                  owning main renderer and main frame, with malformed, mixed, unknown, camera and
+                  subframe requests denied in both Chromium checks and permission requests</span
                 ></span
               ></label
             >
@@ -2998,7 +3053,10 @@
                 <span class="d"
                   >127.0.0.1:4311; the renderer transport isolates each connection-state listener,
                   so one that throws cannot stop reconnects, the handshake, or later listeners; a
-                  declared method without a route answers bad_request (unknown method)</span
+                  declared method without a route answers bad_request (unknown method); the health
+                  check on window focus does not ask when a frame arrived in the last 5 s, counts
+                  any frame during its wait as an answer and replaces the socket only after 10 s
+                  without one, so a busy server keeps its socket and the requests in flight</span
                 ></span
               ></label
             >

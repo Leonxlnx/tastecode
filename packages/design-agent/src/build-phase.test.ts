@@ -2,6 +2,9 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
+import type { AssetManifest } from './assets.js'
+import type { BrandSystem } from './brand.js'
+import type { DesignBrief } from './brief.js'
 import {
   DesignSourceQualityError,
   designBuildCorrectionPrompt,
@@ -9,16 +12,16 @@ import {
   designSourceQualityBaseline,
   designSourceQualityCorrectionPrompt,
   designWorkspaceFileBaseline,
-  exactBuildFileBaseline,
   parseBuildPhaseOutput,
   validateDesignSourceQuality,
   validateExactBuildFiles,
 } from './build-phase.js'
+import type { PageBlueprint } from './page.js'
 
 // Dashboards are parked behind DASHBOARD_REFERENCES_ENABLED; these tests keep that path working.
 vi.mock('./dashboard-references.js', () => ({ DASHBOARD_REFERENCES_ENABLED: true }))
 
-const artifacts = [
+const artifacts: [DesignBrief, BrandSystem, PageBlueprint, AssetManifest] = [
   {
     originalRequest: 'Build a page.',
     subject: 'Coffee',
@@ -37,8 +40,28 @@ const artifacts = [
     unresolved: [],
   },
   {
-    version: 1 as const,
-    creativeDirection: { summary: 'Warm.', keywords: [], avoid: [] },
+    version: 1,
+    foundation: {
+      strategy: 'extend',
+      existingAssets: ['public/logo.svg'],
+      assetActions: [
+        { asset: 'public/logo.svg', action: 'protect', reason: 'Supplied official mark.' },
+      ],
+      lockedDecisions: ['Keep the supplied logo.'],
+      assumptions: [],
+    },
+    creativeDirection: {
+      summary: 'Warm.',
+      traits: [{ quality: 'tactile', boundary: 'not rustic' }],
+      productiveTension: 'Warm craft with precise utility.',
+      signatureDevice: {
+        description: 'A cropped circular roast mark.',
+        status: 'existing',
+        invariants: ['Circular silhouette'],
+      },
+      restraint: 'Use the roast mark once per major surface.',
+      avoid: [],
+    },
     colorPalette: [{ name: 'Ink', value: '#111', usage: 'Text' }],
     typefaces: [{ family: 'Geist', source: 'Project', roles: ['UI'], weights: [500] }],
     interfaceDirection: 'Editorial.',
@@ -47,25 +70,38 @@ const artifacts = [
     voice: { summary: 'Direct.', avoid: [] },
   },
   {
-    version: 1 as const,
+    version: 1,
     page: { title: 'Coffee', route: '/', description: 'Fresh coffee.' },
+    architecture: {
+      contract: 'Help home brewers choose a subscription.',
+      mode: 'persuade_convert',
+      novelty: 'medium',
+      grid: 'Reading rail with product breakouts.',
+      signatureRule: 'Product evidence breaks the right edge.',
+      rhythm: 'Explanation alternates with proof.',
+    },
     navigation: [],
     sections: [
       {
         id: 'hero',
         purpose: 'Lead.',
+        userQuestion: 'What can I order?',
+        stage: 'orient',
+        dependencies: [],
+        evidence: [],
         copy: { heading: 'Fresh.', body: [], callsToAction: [] },
         layout: 'Split.',
         componentNeeds: [],
         assetNeeds: [],
+        transformation: { compact: 'Stack.', medium: 'Split.', expanded: 'Split.' },
       },
     ],
     responsive: [],
     interactions: [],
     acceptanceCriteria: [],
   },
-  { version: 1 as const, assets: [] },
-] as const
+  { version: 1, assets: [] },
+]
 
 describe('build phase', () => {
   it('builds dashboard interactions without injecting marketing reveal code', () => {
@@ -444,7 +480,7 @@ describe('build phase', () => {
     }
     try {
       writeFileSync(path.join(workspace, 'README.md'), 'pre-existing user file')
-      const baseline = exactBuildFileBaseline(workspace, brief)
+      const baseline = designWorkspaceFileBaseline(workspace)
       for (const file of [
         'index.html',
         'styles.css',
@@ -478,7 +514,7 @@ describe('build phase', () => {
     try {
       mkdirSync(path.join(workspace, 'src'))
       writeFileSync(path.join(workspace, 'src', 'existing.ts'), 'pre-existing user file')
-      const baseline = exactBuildFileBaseline(workspace, brief)
+      const baseline = designWorkspaceFileBaseline(workspace)
 
       writeFileSync(path.join(workspace, 'index.html'), '<main></main>')
       writeFileSync(path.join(workspace, 'src', 'unexpected.ts'), 'new file')
@@ -502,7 +538,7 @@ describe('build phase', () => {
         mkdirSync(path.join(workspace, directory), { recursive: true })
         writeFileSync(path.join(workspace, directory, 'existing.json'), '{}')
       }
-      const baseline = exactBuildFileBaseline(workspace, brief)
+      const baseline = designWorkspaceFileBaseline(workspace)
 
       writeFileSync(path.join(workspace, 'index.html'), '<main></main>')
       for (const directory of ['.git', '.taste', 'node_modules/package', '.pnpm-store/v3']) {
@@ -546,7 +582,7 @@ describe('build phase', () => {
     }
     try {
       mkdirSync(path.join(workspace, 'src'))
-      const baseline = exactBuildFileBaseline(workspace, brief)
+      const baseline = designWorkspaceFileBaseline(workspace)
 
       writeFileSync(path.join(workspace, 'index.html'), '<main></main>')
       for (const directory of ['.git', '.taste']) {
@@ -570,7 +606,7 @@ describe('build phase', () => {
     }
     try {
       mkdirSync(path.join(workspace, 'src'))
-      const baseline = exactBuildFileBaseline(workspace, brief)
+      const baseline = designWorkspaceFileBaseline(workspace)
       writeFileSync(path.join(workspace, 'src', 'index.ts'), 'export {}')
 
       expect(() => validateExactBuildFiles(workspace, brief, baseline)).not.toThrow()
@@ -622,7 +658,6 @@ describe('build phase', () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-exact-framework-'))
     const brief = { ...artifacts[0], originalRequest }
     try {
-      expect(exactBuildFileBaseline(workspace, brief)).toBeUndefined()
       const [, brand, page, assets] = artifacts
       expect(designBuildPrompt(brief, brand, page, assets)).not.toContain('deliverable boundary')
       mkdirSync(path.join(workspace, 'app'))

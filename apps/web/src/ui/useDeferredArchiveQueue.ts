@@ -68,7 +68,7 @@ export function useDeferredArchiveQueue(delayMs: number) {
     const pending = [...jobs.current.values()].filter((job) => job.state === 'pending')
     for (const job of pending) jobs.current.delete(job.id)
     refresh()
-    return pending.at(-1)?.id
+    return pending.map((job) => job.id)
   }, [refresh])
 
   const { hiddenIds, pendingIds } = snapshot.current

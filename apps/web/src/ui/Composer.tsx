@@ -258,6 +258,7 @@ type ComposerAttachment = {
   previewUrl?: string
   thumbnailUrl?: string
   mediaType?: 'image' | 'video'
+  previewSettled?: boolean
 }
 
 type RunningSubmission = 'queue' | 'steer'
@@ -597,6 +598,16 @@ function ComposerComponent(props: {
   const area = useRef<HTMLTextAreaElement>(null)
   const resourcePicker = useRef<ComposerResourcePickerHandle>(null)
   const sendAvailabilityRef = useRef(props.sendAvailability)
+  /** An Enter pressed while Send was loading, sent once it is ready (see submit). */
+  const heldSubmit = useRef<
+    | {
+        text: string
+        submission: RunningSubmission
+        threadId: string | undefined
+        request: number | undefined
+      }
+    | undefined
+  >(undefined)
   const textRef = useRef('')
   /** The prompt Arrow Up put back, until it is sent, cleared or replaced. */
   const recalledPrompt = useRef<string | undefined>(undefined)
@@ -715,6 +726,23 @@ function ComposerComponent(props: {
   useEffect(() => {
     if (props.attachmentsSupported) setAttachmentError(undefined)
   }, [props.attachmentsSupported])
+
+  useEffect(() => {
+    const held = heldSubmit.current
+    if (!held || props.sendAvailability === 'loading') return
+    heldSubmit.current = undefined
+    // A check that ends in setup or sign-in keeps the draft, and the composer
+    // says why. Changed words or another chat mean the Enter no longer stands.
+    if (
+      props.sendAvailability !== 'ready' ||
+      textRef.current !== held.text ||
+      props.threadId !== held.threadId ||
+      draftRequestRef.current?.request !== held.request
+    )
+      return
+    submit(held.submission)
+    // Runs only when availability changes; submit reads the current render.
+  }, [props.sendAvailability])
 
   useEffect(() => {
     mounted.current = true
@@ -1087,31 +1115,34 @@ function ComposerComponent(props: {
 
   const hydrateAttachmentPreview = (reference: string) => {
     void previewViewedImage(reference).then((preview) => {
-      if (!mounted.current || !preview?.mediaType || !preview.previewUrl) return
-      const { mediaType, name, previewUrl, thumbnailUrl } = preview
+      if (!mounted.current) return
       setAttachments((current) =>
-        current.map((attachment) =>
-          attachment.path === reference
-            ? {
-                ...attachment,
-                name,
-                mediaType,
-                previewUrl,
-                ...(thumbnailUrl ? { thumbnailUrl } : {}),
-              }
-            : attachment,
-        ),
+        current.map((attachment) => {
+          if (attachment.path !== reference) return attachment
+          if (!preview?.mediaType || !preview.previewUrl)
+            return { ...attachment, previewSettled: true }
+          const { mediaType, name, previewUrl, thumbnailUrl } = preview
+          return {
+            ...attachment,
+            name,
+            mediaType,
+            previewUrl,
+            ...(thumbnailUrl ? { thumbnailUrl } : {}),
+          }
+        }),
       )
     })
   }
 
   const addFiles = (files: Array<PickedAttachment | string>) => {
     if (files.length === 0) return
+    const pickedFiles = files.map((file) =>
+      typeof file === 'string' ? { path: file, name: basename(file) } : file,
+    )
     setAttachments((current) => {
       const attached = new Set(current.flatMap((attachment) => attachment.path ?? []))
       const additions: ComposerAttachment[] = []
-      for (const file of files) {
-        const picked = typeof file === 'string' ? { path: file, name: basename(file) } : file
+      for (const picked of pickedFiles) {
         if (attached.has(picked.path)) continue
         attached.add(picked.path)
         const inferredMediaType = previewMediaType('', picked.name)
@@ -1131,8 +1162,12 @@ function ComposerComponent(props: {
       }
       return [...current, ...additions]
     })
-    for (const file of files) {
-      if (typeof file === 'string' && previewMediaType('', file)) hydrateAttachmentPreview(file)
+    const attached = new Set(attachments.flatMap((attachment) => attachment.path ?? []))
+    for (const picked of pickedFiles) {
+      if (attached.has(picked.path)) continue
+      attached.add(picked.path)
+      if (!picked.previewUrl && (picked.mediaType ?? previewMediaType('', picked.name)))
+        hydrateAttachmentPreview(picked.path)
     }
   }
 
@@ -1345,6 +1380,19 @@ function ComposerComponent(props: {
 
   const submit = (submission: RunningSubmission = 'queue') => {
     if (voiceState !== 'idle') return
+    heldSubmit.current = undefined
+    // Send is still loading (the model list or the account check has not
+    // answered): keep the Enter and send once Send is ready, instead of
+    // ignoring it while the words stay in the box.
+    if (sendAvailabilityRef.current === 'loading') {
+      heldSubmit.current = {
+        text: textRef.current,
+        submission,
+        threadId: props.threadId,
+        request: draftRequestRef.current?.request,
+      }
+      return
+    }
     sendContent(textRef.current, submission)
   }
 
@@ -1572,7 +1620,7 @@ function ComposerComponent(props: {
                 label="Workspace mode"
                 drop="down"
                 triggerClassName="shelf-control shelf-control--mode"
-                panelClassName="menu--compact"
+                panelClassName="menu--compact menu--mode"
                 shortcutAria={shortcutAria(keybindings.toggleIsolatedSession)}
                 trigger={() => (
                   <span className="shelf-control__content">
@@ -1818,7 +1866,9 @@ function ComposerComponent(props: {
                         aria-label={
                           attachment.previewUrl
                             ? `Open ${attachment.name}`
-                            : `Loading preview of ${attachment.name}`
+                            : attachment.previewSettled
+                              ? `Preview unavailable for ${attachment.name}`
+                              : `Loading preview of ${attachment.name}`
                         }
                       >
                         <span className="attachment-preview__fallback" aria-hidden>
