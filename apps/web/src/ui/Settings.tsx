@@ -30,7 +30,7 @@ import {
   getNextServiceTierForModel,
   isFastModeEnabled,
 } from './model-selector-utils.js'
-import { BackgroundModelSettingsSchema } from '@harness/contracts'
+import { BackgroundModelSettingsSchema, DEFAULT_ACCOUNT_ID } from '@harness/contracts'
 import '../styles/sheet.css'
 import '../styles/switch.css'
 import '../styles/settings.css'
@@ -170,8 +170,13 @@ import {
 import { AppSelect, type AppSelectOption } from './AppSelect.js'
 import { Menu, MenuItem } from './Menu.js'
 import { AccountEmail } from './AccountEmail.js'
-import { ProviderAccountsSection } from './ProviderAccounts.js'
-import { multiAccountProviders } from '../provider-accounts-state.js'
+import { AddAccountSection, FoundAccountsSection, ProviderAccountRows } from './ProviderAccounts.js'
+import {
+  accountsOf,
+  activeAccountOf,
+  multiAccountProviders,
+  useProviderAccounts,
+} from '../provider-accounts-state.js'
 import { sameAccount } from '../usage-summary-state.js'
 import { ProviderIcon } from './ProviderIcon.js'
 import { McpSettings } from './McpSettings.js'
@@ -979,6 +984,11 @@ export function ProviderSettings(props: {
   })
   // Only added agents are asked about their account: the check starts them.
   const agents = entries.flatMap((entry) => ('agent' in entry ? [entry.agent] : []))
+  // Further accounts sit under their provider; one provider's rows say when the list failed.
+  const accountProviders = multiAccountProviders(
+    entries.flatMap((entry) => ('status' in entry ? [entry.status] : [])),
+  )
+  const providerAccounts = useProviderAccounts(props.transport, accountProviders.length > 0)
   const installedAgentKey = agents
     .filter((agent) => agent.installed)
     .map((agent) => agent.id)
@@ -1153,6 +1163,22 @@ export function ProviderSettings(props: {
     const operation = authOperations[status.id]
     const authError = authErrors[status.id]
     const refreshError = authState.refreshError
+    // The provider row is its default account. With another account active
+    // for new chats, it offers the way back.
+    const further = accountsOf(providerAccounts.snapshot, status.id).length > 1
+    const useDefault: ProviderAction | undefined =
+      further &&
+      account?.signedIn &&
+      activeAccountOf(providerAccounts.snapshot, status.id) !== DEFAULT_ACCOUNT_ID
+        ? {
+            label: 'Set active',
+            ariaLabel: `Use Default for new ${status.displayName} chats`,
+            onClick: () =>
+              void providerAccounts.store
+                .setActive(status.id, DEFAULT_ACCOUNT_ID)
+                .catch(() => undefined),
+          }
+        : undefined
     const operationStatus =
       operation?.kind === 'sign-in'
         ? 'Signing in…'
@@ -1178,6 +1204,7 @@ export function ProviderSettings(props: {
                 ? { message: `Could not refresh this account. ${refreshError}` }
                 : undefined
         }
+        secondary={operation === undefined ? useDefault : undefined}
         primary={
           account?.signedIn
             ? {
@@ -1330,6 +1357,14 @@ export function ProviderSettings(props: {
         ) : null}
         {'agent' in entry ? renderAgentRow(entry.agent) : renderAccountRow(entry.status)}
         {'status' in entry ? renderTuning(entry.status) : null}
+        {'status' in entry && accountProviders.includes(entry.status) ? (
+          <ProviderAccountRows
+            transport={props.transport}
+            provider={entry.status}
+            reportsErrors={accountProviders[0] === entry.status}
+            onOpenTerminal={props.onProviderLoginTerminalOpen}
+          />
+        ) : null}
       </div>
     )
   }
@@ -1338,6 +1373,30 @@ export function ProviderSettings(props: {
   useEffect(() => {
     setPicking(props.providersView === 'add-providers')
   }, [props.providersView, props.sectionRequest])
+
+  // Sign-ins already on the computer that could be accounts here, recommended
+  // beside the plus; asked again when the picker closes or an account comes or goes.
+  const accountCount = providerAccounts.snapshot.accounts.length
+  const [foundAccounts, setFoundAccounts] = useState(0)
+  const detectable = multiAccountProviders(props.providerStatuses)
+    .map((status) => status.id)
+    .join('|')
+  useEffect(() => {
+    if (picking || !editable || !detectable) return
+    let live = true
+    void props.transport
+      .request('accounts.detect', {})
+      .then(({ found }) => {
+        if (live)
+          setFoundAccounts(
+            found.filter((entry) => detectable.split('|').includes(entry.provider)).length,
+          )
+      })
+      .catch(() => undefined)
+    return () => {
+      live = false
+    }
+  }, [props.transport, picking, editable, detectable, accountCount])
 
   if (picking && editable) {
     return (
@@ -1349,13 +1408,13 @@ export function ProviderSettings(props: {
           return state?.phase === 'ready' ? state.account.signedIn : undefined
         }}
         acpAgents={props.acpAgents ?? []}
+        transport={props.transport}
         onAdd={(key) => onRosterChange([...roster, key])}
         onDone={() => setPicking(false)}
       />
     )
   }
 
-  const addedStatuses = entries.flatMap((entry) => ('status' in entry ? [entry.status] : []))
   return (
     <SettingsPage
       title="Providers"
@@ -1382,16 +1441,20 @@ export function ProviderSettings(props: {
           {editable ? (
             <button className="provider-roster__add" type="button" onClick={() => setPicking(true)}>
               <CirclePlus size={17} stroke={1.6} aria-hidden />
-              {entries.length === 0 ? 'Add a provider' : 'Add provider'}
+              <span>
+                {entries.length === 0 ? 'Add a provider' : 'Add provider'}
+                {foundAccounts > 0 ? (
+                  <span className="provider-roster__found">
+                    {foundAccounts === 1
+                      ? 'A sign-in found on this computer'
+                      : `${foundAccounts} sign-ins found on this computer`}
+                  </span>
+                ) : null}
+              </span>
             </button>
           ) : null}
         </div>
       )}
-      <ProviderAccountsSection
-        transport={props.transport}
-        providers={multiAccountProviders(addedStatuses)}
-        onOpenTerminal={props.onProviderLoginTerminalOpen}
-      />
       <SettingsSection title="API connections">
         {(props.modelConnections ?? []).map((connection) => (
           <ConnectionRow
@@ -1548,9 +1611,15 @@ function ProviderPicker(props: {
   /** What an account read said, for a provider this page has read. */
   signedIn: (id: ProviderId) => boolean | undefined
   acpAgents: readonly AcpAgent[]
+  transport: Transport
   onAdd: (key: string) => void
   onDone: () => void
 }) {
+  // An account added here brings its provider along when it was not added yet.
+  const addProviderOf = (provider: ProviderId) => {
+    if (!props.roster.includes(provider)) props.onAdd(provider)
+  }
+  const accountProviders = multiAccountProviders(props.providerStatuses)
   const row = (input: {
     key: string
     provider: ProviderStatus
@@ -1593,6 +1662,11 @@ function ProviderPicker(props: {
         </button>
       }
     >
+      <FoundAccountsSection
+        transport={props.transport}
+        providers={accountProviders}
+        onAdded={addProviderOf}
+      />
       <SettingsSection title="Providers" note="Coding agents with their own integration.">
         {direct.map(({ entry, status }) =>
           row({
@@ -1627,6 +1701,11 @@ function ProviderPicker(props: {
           )}
         </SettingsSection>
       ) : null}
+      <AddAccountSection
+        transport={props.transport}
+        providers={accountProviders}
+        onAdded={addProviderOf}
+      />
     </SettingsPage>
   )
 }

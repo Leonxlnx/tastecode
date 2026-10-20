@@ -12,6 +12,7 @@ import {
 } from 'react'
 import {
   DEFAULT_ACCOUNT_ID,
+  type DetectedAccountHome,
   type ProviderAccount,
   type ProviderAccountHome,
   type ProviderId,
@@ -20,11 +21,11 @@ import {
 import {
   IconCheck as Check,
   IconChevronDown as ChevronDown,
+  IconCircleMinus as CircleMinus,
   IconDots as Ellipsis,
   IconFolderOpen as FolderOpen,
   IconPencil as Pencil,
   IconTrash as Trash,
-  IconUserMinus as UserMinus,
   IconUserPlus as UserPlus,
 } from '@tabler/icons-react'
 import { errorMessage } from '../boundary.js'
@@ -44,7 +45,9 @@ import type { Transport } from '../transport.js'
 import { AccountEmail } from './AccountEmail.js'
 import { Menu, MenuItem } from './Menu.js'
 import { ProviderIcon } from './ProviderIcon.js'
+import { ProviderRow } from './ProviderRow.js'
 import { RowIssue } from './RowIssue.js'
+import { indexedAgo } from './usage/usage-sheets.js'
 import { SettingsSection } from './settings/SettingsLayout.js'
 import { SettingsSegmented } from './settings/SettingsSegmented.js'
 import '../styles/provider-accounts.css'
@@ -61,32 +64,14 @@ function accountKey(account: Pick<ProviderAccount, 'provider' | 'id'>): string {
   return `${account.provider}/${account.id}`
 }
 
-/**
- * Further sign-ins for the providers that can run as more than one account.
- * A provider is listed once it has a second account; until then the section
- * is its note and the add button. Removing an account keeps its folder;
- * deleting a folder TasteCode created is its own, confirmed action.
- */
-export function ProviderAccountsSection(props: {
-  transport: Transport
-  /** Installed providers that declare `multipleAccounts`. */
-  providers: readonly ProviderStatus[]
-  /** Shows a running sign-in in the expanded workspace terminal, as the provider rows do. */
-  onOpenTerminal?: ((target: ProviderLoginTerminalTarget) => void) | undefined
-}) {
-  const { store, snapshot } = useProviderAccounts(props.transport, props.providers.length > 0)
-  const [adding, setAdding] = useState(false)
-  const [renaming, setRenaming] = useState<string>()
-  const [confirm, setConfirm] = useState<Confirm>()
+/** Runs one account action per key at a time and keeps what the server refused. */
+function useAccountActions() {
   const [busy, setBusy] = useState<string>()
   const [issues, setIssues] = useState<Record<string, string | undefined>>({})
-  // Stable, because it ends up in AccountSignIn's effect dependencies.
-  const refresh = useCallback(() => store.refresh(), [store])
-  if (props.providers.length === 0) return null
-
+  const clear = (key: string) => setIssues((current) => ({ ...current, [key]: undefined }))
   const run = async (key: string, action: () => Promise<unknown>): Promise<boolean> => {
     setBusy(key)
-    setIssues((current) => ({ ...current, [key]: undefined }))
+    clear(key)
     try {
       await action()
       return true
@@ -97,55 +82,86 @@ export function ProviderAccountsSection(props: {
       setBusy((current) => (current === key ? undefined : current))
     }
   }
+  return { busy, issues, run, clear }
+}
 
-  const listed = props.providers
-    .map((status) => ({ status, accounts: accountsOf(snapshot, status.id) }))
-    .filter((group) => group.accounts.length > 1)
-  const names = props.providers.map((status) => status.displayName).join(' or ')
+/**
+ * A provider's further sign-ins, under its own row in Settings › Providers,
+ * which is its default account. Each has the roster's minus in the margin;
+ * removing keeps its folder, and deleting a folder TasteCode created is its
+ * own, confirmed action in the row's menu.
+ */
+export function ProviderAccountRows(props: {
+  transport: Transport
+  /** An installed provider that declares `multipleAccounts`. */
+  provider: ProviderStatus
+  /** Says so when the account list could not be read; one provider's rows carry it. */
+  reportsErrors?: boolean | undefined
+  /** Shows a running sign-in in the expanded workspace terminal, as the provider rows do. */
+  onOpenTerminal?: ((target: ProviderLoginTerminalTarget) => void) | undefined
+}) {
+  const { store, snapshot } = useProviderAccounts(props.transport, true)
+  const { busy, issues, run, clear } = useAccountActions()
+  const [renaming, setRenaming] = useState<string>()
+  const [confirm, setConfirm] = useState<Confirm>()
+  // Stable, because it ends up in AccountSignIn's effect dependencies.
+  const refresh = useCallback(() => store.refresh(), [store])
+  const accounts = accountsOf(snapshot, props.provider.id).filter(
+    (account) => account.id !== DEFAULT_ACCOUNT_ID,
+  )
+  const error =
+    props.reportsErrors && snapshot.phase === 'error' ? (
+      <p className="set-form__error provider-accounts__error" role="alert">
+        Could not load accounts. {snapshot.error}
+      </p>
+    ) : null
+  if (accounts.length === 0) return error
 
   return (
-    <SettingsSection
-      title="Accounts"
-      note={`Sign in to ${names} more than once. Each account keeps its own folder, and a chat stays on the account it started on.`}
-    >
-      {snapshot.phase === 'error' ? (
-        <p className="set-form__error provider-accounts__error" role="alert">
-          Could not load accounts. {snapshot.error}
-        </p>
-      ) : null}
-      {listed.flatMap(({ status, accounts }) =>
-        accounts.map((account) => {
-          const key = accountKey(account)
-          if (renaming === key) {
-            return (
-              <RenameAccountForm
-                key={key}
-                account={account}
-                busy={busy === key}
-                error={issues[key]}
-                onCancel={() => setRenaming(undefined)}
-                onSubmit={(label) =>
-                  void run(key, () => store.rename(account.provider, account.id, label)).then(
-                    (done) => {
-                      if (done) setRenaming(undefined)
-                    },
-                  )
-                }
-              />
-            )
-          }
+    <div className="provider-accounts">
+      {error}
+      {accounts.map((account) => {
+        const key = accountKey(account)
+        if (renaming === key) {
           return (
-            <AccountRow
+            <RenameAccountForm
               key={key}
               account={account}
-              provider={status}
-              active={activeAccountOf(snapshot, status.id) === account.id}
+              busy={busy === key}
+              error={issues[key]}
+              onCancel={() => setRenaming(undefined)}
+              onSubmit={(label) =>
+                void run(key, () => store.rename(account.provider, account.id, label)).then(
+                  (done) => {
+                    if (done) setRenaming(undefined)
+                  },
+                )
+              }
+            />
+          )
+        }
+        return (
+          <div className="provider-account-entry" key={key}>
+            <button
+              className="provider-roster__remove"
+              type="button"
+              aria-label={`Remove ${accountName(props.provider, account)}`}
+              title={`Remove ${accountName(props.provider, account)}`}
+              disabled={busy === key}
+              onClick={() => setConfirm({ account, deleteHome: false })}
+            >
+              <CircleMinus size={17} stroke={1.6} aria-hidden />
+            </button>
+            <AccountRow
+              account={account}
+              provider={props.provider}
+              active={activeAccountOf(snapshot, props.provider.id) === account.id}
               busy={busy === key}
               issue={issues[key]}
               signIn={
                 <AccountSignIn
                   account={account}
-                  provider={status}
+                  provider={props.provider}
                   transport={props.transport}
                   onSignedIn={refresh}
                   onOpenTerminal={props.onOpenTerminal}
@@ -153,39 +169,14 @@ export function ProviderAccountsSection(props: {
               }
               onSetActive={() => void run(key, () => store.setActive(account.provider, account.id))}
               onRename={() => {
-                setIssues((current) => ({ ...current, [key]: undefined }))
+                clear(key)
                 setRenaming(key)
               }}
-              onRemove={(deleteHome) => setConfirm({ account, deleteHome })}
+              onDeleteFolder={() => setConfirm({ account, deleteHome: true })}
             />
-          )
-        }),
-      )}
-      {adding ? (
-        <AddAccountForm
-          providers={props.providers}
-          busy={busy === 'add'}
-          error={issues.add}
-          onCancel={() => {
-            setIssues((current) => ({ ...current, add: undefined }))
-            setAdding(false)
-          }}
-          onSubmit={(provider, label, home) =>
-            void run('add', () => store.create(provider, label, home)).then((done) => {
-              if (done) setAdding(false)
-            })
-          }
-        />
-      ) : (
-        <button
-          className="set-button provider-connections__add"
-          type="button"
-          onClick={() => setAdding(true)}
-        >
-          <UserPlus size={15} aria-hidden />
-          Add account
-        </button>
-      )}
+          </div>
+        )
+      })}
       {confirm ? (
         <Suspense fallback={null}>
           <ConfirmDialog
@@ -202,6 +193,150 @@ export function ProviderAccountsSection(props: {
           />
         </Suspense>
       ) : null}
+    </div>
+  )
+}
+
+/** The last part of a folder path, on Windows or POSIX. */
+function folderName(home: string): string {
+  return home.split(/[\\/]/).filter(Boolean).at(-1) ?? home
+}
+
+/**
+ * Sign-ins already on this computer in folders of their own, set up by hand
+ * or by another tool (`accounts.detect`), offered first on Add providers.
+ * Adding one makes it an account that uses the folder as it is, and adds its
+ * provider when it was not added yet.
+ */
+export function FoundAccountsSection(props: {
+  transport: Transport
+  /** Installed providers that declare `multipleAccounts`. */
+  providers: readonly ProviderStatus[]
+  onAdded: (provider: ProviderId) => void
+}) {
+  const { store } = useProviderAccounts(props.transport, props.providers.length > 0)
+  const { busy, issues, run } = useAccountActions()
+  const [found, setFound] = useState<readonly DetectedAccountHome[]>([])
+  const [added, setAdded] = useState<readonly string[]>([])
+  const { transport } = props
+  useEffect(() => {
+    let live = true
+    void transport
+      .request('accounts.detect', {})
+      .then(({ found }) => {
+        if (live) setFound(found)
+      })
+      // A server from before detection, or one that could not look, offers nothing.
+      .catch(() => undefined)
+    return () => {
+      live = false
+    }
+  }, [transport])
+  const offered = found.flatMap((entry) => {
+    const provider = props.providers.find((status) => status.id === entry.provider)
+    return provider ? [{ entry, provider }] : []
+  })
+  if (offered.length === 0) return null
+  const now = Date.now()
+
+  return (
+    <SettingsSection
+      title="Found on this computer"
+      note="Sign-ins kept in folders of their own, by you or another tool. Add one to use it here as a separate account."
+    >
+      {offered.map(({ entry, provider }) => {
+        const name = `${provider.displayName} · ${entry.label}`
+        const done = added.includes(entry.home)
+        const issue = issues[entry.home]
+        return (
+          <ProviderRow
+            key={entry.home}
+            provider={{ ...provider, displayName: name }}
+            status={
+              <span title={entry.home}>
+                Found in {folderName(entry.home)}
+                {entry.lastUsed === undefined ? null : ` · used ${indexedAgo(entry.lastUsed, now)}`}
+              </span>
+            }
+            link={done ? 'connected' : 'open'}
+            live={busy === entry.home}
+            issue={issue ? { message: issue, announce: true } : undefined}
+            primary={
+              done
+                ? { label: 'Added', done: true }
+                : {
+                    label: busy === entry.home ? 'Adding…' : 'Add',
+                    ariaLabel: `Add ${name}`,
+                    disabled: busy !== undefined,
+                    onClick: () =>
+                      void run(entry.home, () =>
+                        store.create(entry.provider, entry.label, {
+                          kind: 'existing',
+                          path: entry.home,
+                        }),
+                      ).then((ok) => {
+                        if (!ok) return
+                        setAdded((current) => [...current, entry.home])
+                        props.onAdded(entry.provider)
+                      }),
+                  }
+            }
+          />
+        )
+      })}
+    </SettingsSection>
+  )
+}
+
+/**
+ * Another sign-in for a provider that can run as more than one account, in a
+ * new folder or one the user has, from Add providers. Adding one adds its
+ * provider when it was not added yet.
+ */
+export function AddAccountSection(props: {
+  transport: Transport
+  /** Installed providers that declare `multipleAccounts`. */
+  providers: readonly ProviderStatus[]
+  onAdded: (provider: ProviderId) => void
+}) {
+  const { store } = useProviderAccounts(props.transport, props.providers.length > 0)
+  const { busy, issues, run, clear } = useAccountActions()
+  const [adding, setAdding] = useState(false)
+  if (props.providers.length === 0) return null
+  const names = props.providers.map((status) => status.displayName).join(' or ')
+
+  return (
+    <SettingsSection
+      title="Accounts"
+      note={`Sign in to ${names} more than once. Each account keeps its own folder, and a chat stays on the account it started on.`}
+    >
+      {adding ? (
+        <AddAccountForm
+          providers={props.providers}
+          busy={busy === 'add'}
+          error={issues.add}
+          onCancel={() => {
+            clear('add')
+            setAdding(false)
+          }}
+          onSubmit={(provider, label, home) =>
+            void run('add', () => store.create(provider, label, home)).then((done) => {
+              if (!done) return
+              setAdding(false)
+              props.onAdded(provider)
+            })
+          }
+        />
+      ) : (
+        <button
+          className="set-button provider-connections__add"
+          type="button"
+          onClick={() => setAdding(true)}
+        >
+          <UserPlus size={15} aria-hidden />
+          Add account
+        </button>
+      )}
     </SettingsSection>
   )
 }
@@ -249,7 +384,8 @@ function AccountRow(props: {
   signIn: ReactNode
   onSetActive: () => void
   onRename: () => void
-  onRemove: (deleteHome: boolean) => void
+  /** Deletes a folder TasteCode created; removing is the roster's minus. */
+  onDeleteFolder: () => void
 }) {
   const { account } = props
   const signedIn = account.email !== undefined || account.plan !== undefined
@@ -317,16 +453,6 @@ function AccountRow(props: {
                   }}
                 />
               ) : null}
-              {account.id !== DEFAULT_ACCOUNT_ID ? (
-                <MenuItem
-                  title="Remove account"
-                  icon={<UserMinus size={14} aria-hidden />}
-                  onClick={() => {
-                    close()
-                    props.onRemove(false)
-                  }}
-                />
-              ) : null}
               {account.managed ? (
                 <MenuItem
                   title="Delete folder"
@@ -334,7 +460,7 @@ function AccountRow(props: {
                   className="menu__item--danger"
                   onClick={() => {
                     close()
-                    props.onRemove(true)
+                    props.onDeleteFolder()
                   }}
                 />
               ) : null}

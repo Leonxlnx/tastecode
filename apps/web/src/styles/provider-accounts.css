@@ -45,3 +45,15 @@
 .settings .provider-accounts__error {
   margin: 0 0 8px;
 }
+
+/* A provider's further accounts follow its row and settings, each with the
+   roster's minus in the same margin as the provider's own. */
+.provider-account-entry {
+  position: relative;
+}
+
+@media (max-width: 700px) {
+  .provider-account-entry > .provider-roster__remove {
+    left: -32px;
+  }
+}

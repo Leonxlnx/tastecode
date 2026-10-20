@@ -2977,6 +2977,85 @@ describe('provider roster', () => {
     expect(screen.getByRole('heading', { name: 'Add providers' })).toBeTruthy()
   })
 
+  it('keeps accounts off the page, recommends found sign-ins and adds them from the picker', async () => {
+    const codex: ProviderStatus = {
+      id: 'codex',
+      displayName: 'Codex',
+      installed: true,
+      auth: 'authenticated',
+      capabilities: {
+        steer: false,
+        fork: false,
+        interrupt: false,
+        reasoningItems: false,
+        approvals: false,
+        images: false,
+        multipleAccounts: true,
+      },
+    }
+    const work = {
+      id: 'work-1a2b3c',
+      provider: 'codex' as const,
+      label: 'Work',
+      home: '/Users/me/.codex-work',
+      managed: false,
+      email: 'work@example.com',
+    }
+    let active = 'work-1a2b3c'
+    const transport = new TestTransport(async (method, params) => {
+      if (method === 'auth.status') return { signedIn: true, email: 'me@example.com' }
+      if (method === 'providers.updates') return { updates: [], checkedAt: 0 }
+      if (method === 'models.list') return { models: [] }
+      if (method === 'providers.contextSettings') return { settings: {} }
+      if (method === 'accounts.list') {
+        return {
+          accounts: [{ id: 'default', provider: 'codex', label: 'Default', managed: false }, work],
+          active: { codex: active },
+        }
+      }
+      if (method === 'accounts.setActive') {
+        active = (params as { accountId: string }).accountId
+        return {}
+      }
+      if (method === 'accounts.detect') {
+        return {
+          found: [{ provider: 'codex', home: '/Users/me/.codex-side', label: 'Side' }],
+        }
+      }
+      throw new Error(`unexpected ${method}`)
+    })
+    renderSettings({
+      initialSection: 'providers',
+      transport,
+      overrides: {
+        providerStatuses: [codex],
+        acpAgents: library,
+        providerRoster: ['codex'],
+        onProviderRosterChange: vi.fn(),
+      },
+    })
+
+    const page = screen.getByRole('region', { name: 'Providers' })
+    expect(within(page).queryByRole('region', { name: 'Accounts' })).toBeNull()
+    // The further account sits under its provider; the provider row is the default one.
+    expect(await within(page).findByText('Codex · Work')).toBeTruthy()
+    expect(within(page).queryByText('Codex · Default')).toBeNull()
+    expect(
+      await within(page).findByRole('button', {
+        name: 'Add provider A sign-in found on this computer',
+      }),
+    ).toBeTruthy()
+    // Work starts new chats, so the default row offers the way back.
+    fireEvent.click(await screen.findByRole('button', { name: 'Use Default for new Codex chats' }))
+    await waitFor(() => expect(active).toBe('default'))
+
+    fireEvent.click(within(page).getByRole('button', { name: /^Add provider/ }))
+    expect(await screen.findByRole('button', { name: 'Add Codex · Side' })).toBeTruthy()
+    expect(
+      [...document.querySelectorAll('.set-section__title')].map((title) => title.textContent),
+    ).toEqual(['Found on this computer', 'Providers', 'ACP agents', 'Accounts'])
+  })
+
   it('offers Install for an added agent that is not on this machine', () => {
     renderSettings({
       initialSection: 'providers',

@@ -1099,6 +1099,17 @@
   color: var(--text);
 }
 
+/* Sign-ins found on the computer are offered beside the plus that adds them. */
+.provider-roster__found {
+  margin-left: 6px;
+  color: var(--text-3);
+  font-weight: 400;
+}
+
+.provider-roster__found::before {
+  content: '· ';
+}
+
 /* The picker offers the same Add on every row, so at rest it is ink alone
    and the row being pointed at draws its outline. */
 .settings .provider-picker .provider-row__primary > .set-button:not(:disabled) {
