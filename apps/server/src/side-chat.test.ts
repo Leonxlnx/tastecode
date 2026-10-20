@@ -136,11 +136,6 @@ describe('continued chat context', () => {
     expect(withoutContinuationContext(prompt)).toBe('Finish it')
   })
 
-  it('carries nothing from an empty chat and leaves other text alone', () => {
-    expect(continuationPromptFromReplay([], 'Hi')).toBeUndefined()
-    expect(withoutContinuationContext('User request:\nHi')).toBe('User request:\nHi')
-  })
-
   it("says where the earlier chat's uncommitted changes are", () => {
     const history = [{ event: item('user', 'user', 'Rename the loader') }]
     const shared = continuationPromptFromReplay(history, 'Go on')!
@@ -166,5 +161,10 @@ describe('continued chat context', () => {
     for (const prompt of [shared, carried, kept]) {
       expect(withoutContinuationContext(prompt)).toBe('Go on')
     }
+  })
+
+  it('carries nothing from an empty chat and leaves other text alone', () => {
+    expect(continuationPromptFromReplay([], 'Hi')).toBeUndefined()
+    expect(withoutContinuationContext('User request:\nHi')).toBe('User request:\nHi')
   })
 })
