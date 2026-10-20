@@ -68,14 +68,11 @@ export class ChatNotifier {
   #show(notification: ChatNotification): void {
     this.#close(notification.chatId)
     const shown = this.#host.show(notification.title, NOTICE_TEXT[notification.notice], () => {
-      this.#forget(notification.chatId, shown)
+      // Windows keeps a clicked notification in its centre unless it is closed.
+      this.#close(notification.chatId)
       this.#host.openChat(notification.chatId)
     })
     if (shown) this.#shown.set(notification.chatId, shown)
-  }
-
-  #forget(chatId: string, shown: ShownNotification | undefined): void {
-    if (shown && this.#shown.get(chatId) === shown) this.#shown.delete(chatId)
   }
 
   #close(chatId: string): void {
