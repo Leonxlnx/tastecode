@@ -30,6 +30,7 @@ import { Menu, MenuItem } from './Menu.js'
 import { getFriendlyEffortLabel } from './model-selector-utils.js'
 import { Skeleton } from './Skeleton.js'
 import { SettingsSegmented } from './settings/SettingsSegmented.js'
+import '../styles/switch.css'
 import '../styles/provider-tuning.css'
 
 /** The contract's floor: compacting earlier than this leaves no room to work. */

@@ -19,6 +19,7 @@ import {
   SettingsPage,
   SettingsSection,
 } from './settings/SettingsLayout.js'
+import '../styles/switch.css'
 
 type Inventory = ResultOf<'mcp.list'>
 type Editor = {
