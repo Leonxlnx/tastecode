@@ -84,6 +84,23 @@ export class CliProbe {
     return options.waitMs === undefined ? read : within(read, options.waitMs)
   }
 
+  /**
+   * Which binary answers for `command`: its path and version, or its path,
+   * size and modification time when its version is not read. Undefined when
+   * it is missing or will not say its version. Waits for a version read that
+   * is under way, which a listing has usually started already.
+   */
+  async binary(
+    command: string,
+    options: { readsVersion?: boolean } = {},
+  ): Promise<string | undefined> {
+    const file = await this.system.locate(command)
+    if (!file) return undefined
+    if (options.readsVersion === false) return this.system.stamp(file)
+    const version = await this.version(command)
+    return version === undefined ? undefined : `${file}\0${version}`
+  }
+
   /** Forget one command, or everything, for example after an install finished. */
   invalidate(command?: string): void {
     const commands = command === undefined ? [...this.#generations.keys()] : [command]

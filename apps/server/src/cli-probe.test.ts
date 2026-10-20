@@ -25,6 +25,19 @@ function machine() {
 }
 
 describe('CLI probe', () => {
+  it('names a binary by its path and version, or by its file when the version is not read', async () => {
+    vi.useFakeTimers()
+    const { state, system, answer, probe } = machine()
+    const named = probe.binary('codex')
+    await vi.advanceTimersByTimeAsync(0)
+    await answer('codex-cli 1.4.0')
+    await expect(named).resolves.toBe('/bin/codex\u0000codex-cli 1.4.0')
+    await expect(probe.binary('agy', { readsVersion: false })).resolves.toBe('v1')
+    expect(system.version).toHaveBeenCalledOnce()
+
+    state.installed = false
+    await expect(probe.binary('grok')).resolves.toBeUndefined()
+  })
   it('starts one version read for concurrent callers', async () => {
     vi.useFakeTimers()
     const { system, answer, probe } = machine()
