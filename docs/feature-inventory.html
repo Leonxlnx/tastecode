@@ -583,6 +583,21 @@
           <li>
             <label
               ><input type="checkbox" /><span
+                >Speaks the protocol the server runs turns on, and answers its questions
+                <span class="d"
+                  >v1 whenever the server answers it (OpenCode 1.18 still answers v2's health check
+                  but never runs a v2 prompt), v2 only for a server without v1; on v1 replies stream
+                  live, Ask-mode permissions surface, a failure shows the provider's reason, and
+                  questions from OpenCode's question tool appear as structured questions whose
+                  answers go back to it; a question answered or rejected in another OpenCode client,
+                  or still open when the turn ends, is settled</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
                 >Disconnected streams release the runtime for a fresh resume
                 <span class="d"
                   >a stream that ends during session opening rejects the start; late disconnect
@@ -1160,20 +1175,23 @@
                 queued or a Design run is active, and for a Side chat. The transcript shows
                 "Switched to Claude Code · sonnet" between the turns, and every window that hears it
                 shows the row on the new provider. The first prompt there carries the conversation
-                as untrusted context (any chats it continued, the first request and the latest
-                exchange sharing the budget, other messages newest first, tool steps cut to what
-                they did, where the chat moved, files attached that still exist), then whether the
-                last turn was stopped or failed, the open task list and what git reports as changed;
-                sized at half a character per token of the new engine's declared context window
+                as context in which the user's earlier requests still hold (any chats it continued,
+                the first request and the latest exchange sharing the budget, other messages newest
+                first, the newest tool steps cut to what they did and kept to a third of the budget,
+                where the chat moved, files attached that still exist), then whether the last turn
+                was stopped or failed, the open task list and what git reports as changed; sized at
+                half a character per token of the model's context window as the engine reports it
+                (OpenCode and Pi per model, waited for at most two seconds) or declares it
                 (6,000–96,000 characters, 64,000 without one) and within the command-line limit of
-                Cursor and Antigravity (15,000 characters on Windows, 40,000 on Linux). The
-                transcript keeps only the user's words. A first turn there that ends stopped or
-                failed before any answer, or whose session goes away, sends the handover again with
-                the next prompt; a restart before the first prompt starts the new provider afresh.
-                The sessions a chat left stay its own: provider history neither imports them as
-                chats nor reads them in again. At a plan limit, other signed-in providers are
-                offered beside other accounts (Switch to Claude Code); choosing one sets the chat up
-                to switch with the failed request in the composer and sends nothing</span
+                Cursor and Antigravity (15,000 characters on Windows, 40,000 on Linux). A chat with
+                no conversation yet sends just the request. The transcript keeps only the user's
+                words. A first turn there that ends stopped or failed before any answer, or whose
+                session goes away, sends the handover again with the next prompt; a restart before
+                the first prompt starts the new provider afresh. The sessions a chat left stay its
+                own: provider history neither imports them as chats nor reads them in again. At a
+                plan limit, other signed-in providers are offered beside other accounts (Switch to
+                Claude Code); choosing one sets the chat up to switch with the failed request in the
+                composer and sends nothing</span
               ></label
             >
           </li>
