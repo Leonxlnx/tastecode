@@ -90,6 +90,35 @@ describe('workspace changes', () => {
     })
   })
 
+  it('reads the branch from the status line, whatever follows it', async () => {
+    const empty = mkdtempSync(path.join(tmpdir(), 'harness-unborn-'))
+    git(empty, 'init', '--initial-branch=feature/first')
+    expect(await workspaceChanges(empty)).toEqual({
+      branch: 'feature/first',
+      changes: [],
+      more: 0,
+    })
+
+    const repo = repository()
+    const upstream = mkdtempSync(path.join(tmpdir(), 'harness-upstream-'))
+    git(upstream, 'init', '--bare')
+    git(repo, 'remote', 'add', 'origin', upstream)
+    git(repo, 'push', '--quiet', '--set-upstream', 'origin', 'main')
+    writeFileSync(path.join(repo, 'ahead.txt'), 'ahead\n')
+    git(repo, 'add', 'ahead.txt')
+    git(repo, 'commit', '-m', 'ahead')
+    // A file named like the branch line is still a change.
+    writeFileSync(path.join(repo, '## main'), 'not a branch\n')
+    expect(await workspaceChanges(repo)).toEqual({
+      branch: 'main',
+      changes: ['?? ## main'],
+      more: 0,
+    })
+
+    git(repo, 'switch', '--quiet', '--detach', 'HEAD')
+    expect(await workspaceChanges(repo)).toEqual({ changes: ['?? ## main'], more: 0 })
+  })
+
   it('says nothing for a folder that is no repository', async () => {
     expect(await workspaceChanges(mkdtempSync(path.join(tmpdir(), 'harness-plain-')))).toBe(
       undefined,

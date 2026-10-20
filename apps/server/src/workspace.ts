@@ -107,7 +107,8 @@ export type WorkspaceChanges = { branch?: string; changes: string[]; more: numbe
 /**
  * The branch and `git status` of a checkout, each change as its two status
  * letters and path ("M src/a.ts", "?? notes.md", "R new.ts <- old.ts").
- * Undefined when the folder is no repository or git does not answer.
+ * The branch is left out when HEAD is detached. Undefined when the folder is
+ * no repository or git does not answer.
  */
 export async function workspaceChanges(
   path: string,
@@ -115,16 +116,28 @@ export async function workspaceChanges(
 ): Promise<WorkspaceChanges | undefined> {
   let status: string
   try {
+    // One process reports the branch and the changes. Without optional locks
+    // a status never holds index.lock, which would fail a commit that another
+    // chat in the same checkout makes at that moment.
     // Not trimmed: the first entry's status can begin with a space.
     ;({ stdout: status } = await run(
       'git',
-      ['status', '--porcelain=v1', '-z', '--untracked-files=normal'],
+      [
+        '--no-optional-locks',
+        'status',
+        '--porcelain=v1',
+        '--branch',
+        '-z',
+        '--untracked-files=normal',
+      ],
       { cwd: path, windowsHide: true, timeout: 8000, maxBuffer: 16 * 1024 * 1024 },
     ))
   } catch {
     return undefined
   }
   const records = status.split('\0')
+  // Porcelain output is never translated, so its branch line can be read.
+  const branch = records[0]?.startsWith('## ') ? statusBranch(records.shift()!.slice(3)) : undefined
   const changes: string[] = []
   let count = 0
   for (let index = 0; index < records.length; index += 1) {
@@ -140,12 +153,22 @@ export async function workspaceChanges(
     count += 1
     if (changes.length < limit) changes.push(entry)
   }
-  const branch = await currentBranch(path)
   return {
     ...(branch === undefined ? {} : { branch }),
     changes,
     more: count - changes.length,
   }
+}
+
+/**
+ * The branch in a status branch line: "main", "main...origin/main [ahead 1]",
+ * "No commits yet on main", or "HEAD (no branch)" when detached. A branch name
+ * holds neither a space nor "..".
+ */
+function statusBranch(line: string): string | undefined {
+  if (line.startsWith('HEAD (no branch)')) return undefined
+  const name = line.replace(/^(?:No commits yet|Initial commit) on /, '')
+  return name.split('...')[0]!.split(' ')[0] || undefined
 }
 
 async function git(cwd: string, args: string[]): Promise<string | undefined> {
