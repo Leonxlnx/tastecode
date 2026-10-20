@@ -45,6 +45,7 @@ describe('OpenCode config for a direct API connection', () => {
     expect(config).toEqual({
       enabled_providers: [id],
       plugin: ['file:///guard.js'],
+      permission: { edit: 'ask', bash: 'ask' },
       provider: {
         [id]: {
           options: { baseURL: 'https://example.com/v1', apiKey: '{env:TASTECODE_API_KEY}' },

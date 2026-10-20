@@ -83,6 +83,9 @@ export function openCodeConnectionConfig(
   return {
     enabled_providers: [provider],
     plugin: [keyGuard],
+    // OpenCode allows everything by default. Asking lets the chat's access
+    // level decide: Full access approves each request, Ask shows it.
+    permission: { edit: 'ask', bash: 'ask' },
     ...(model ? { model: openCodeModelId(connection, model) } : {}),
     provider: {
       [provider]: {
