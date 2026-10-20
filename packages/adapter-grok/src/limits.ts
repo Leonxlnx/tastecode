@@ -215,11 +215,19 @@ function grokBilling(): Promise<GrokBilling> {
   return billingRead
 }
 
-/** Provider-local availability keeps shared code free of Grok auth checks. */
+/**
+ * Provider-local availability keeps shared code free of Grok auth checks.
+ * The sign-in check and the billing read each start a Grok process, so they
+ * start together, as the account read does; billing counts only once the
+ * sign-in says signed in.
+ */
 export async function grokLimitSource(
   signIn: () => Promise<GrokSignIn> = grokSignIn,
 ): Promise<GrokLimitSource> {
+  const billing = grokBilling()
+  // A signed-out answer, or a failed sign-in check, leaves this read unused.
+  billing.catch(() => undefined)
   if (!(await signIn()).signedIn) return { status: 'unavailable' }
-  const body = await grokBilling()
+  const body = await billing
   return { status: 'ready', limits: mapGrokBilling(body) }
 }
