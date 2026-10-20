@@ -161,7 +161,7 @@ function AppUpdateWaiting(props: { running: number; focusOnMount: boolean }) {
     >
       {(close) =>
         confirming ? (
-          <WaitingChoices key="confirm" heading="Install now">
+          <WaitingChoices key="confirm" heading="Install now" focus="last">
             <MenuItem
               className="menu__item--danger"
               icon={<IconSquare size={14} aria-hidden />}
@@ -200,14 +200,20 @@ function AppUpdateWaiting(props: { running: number; focusOnMount: boolean }) {
   )
 }
 
-/** One step of the menu. A step that replaces the clicked item takes the focus it lost. */
-function WaitingChoices(props: { heading: string; children: ReactNode }) {
+/**
+ * One step of the menu. A step that replaces the clicked item takes the focus
+ * it lost; the confirmation gives it to Keep waiting, so a stray Enter stops
+ * nothing.
+ */
+function WaitingChoices(props: { heading: string; focus?: 'first' | 'last'; children: ReactNode }) {
   const heading = useRef<HTMLParagraphElement>(null)
+  const focus = useRef(props.focus ?? 'first')
   useLayoutEffect(() => {
     const panel = heading.current?.parentElement
     if (!panel || panel.contains(document.activeElement)) return
     if (panel.getAttribute('data-popup-state') !== 'open') return
-    panel.querySelector<HTMLElement>('[role="menuitem"]')?.focus()
+    const items = panel.querySelectorAll<HTMLElement>('[role="menuitem"]')
+    items[focus.current === 'last' ? items.length - 1 : 0]?.focus()
   }, [])
   return (
     <>

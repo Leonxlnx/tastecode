@@ -2423,8 +2423,9 @@ function AboutSettings(props: { transport: Transport }) {
   // Install now stops running chats, so it asks once, here in the row.
   const [confirmStop, setConfirmStop] = useState(false)
   // Each step swaps the buttons. A step taken here hands the focus the clicked
-  // button took with it to the next step's main button; a step taken in the
-  // sidebar or by the chats ending leaves focus where it is.
+  // button took with it to the next step's main button (Keep waiting in the
+  // confirmation, so a stray Enter stops nothing); a step taken in the sidebar
+  // or by the chats ending leaves focus where it is.
   const stepAction = useRef<HTMLButtonElement>(null)
   const steppedHere = useRef(false)
   const updateStep =
@@ -2559,6 +2560,7 @@ function AboutSettings(props: { transport: Transport }) {
         {confirming ? (
           <>
             <button
+              ref={stepAction}
               className="set-button set-button--quiet"
               type="button"
               onClick={stepHere(() => setConfirmStop(false))}
@@ -2566,7 +2568,6 @@ function AboutSettings(props: { transport: Transport }) {
               Keep waiting
             </button>
             <button
-              ref={stepAction}
               className="set-button set-button--danger"
               type="button"
               onClick={stepHere(() => {

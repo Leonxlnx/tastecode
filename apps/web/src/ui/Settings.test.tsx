@@ -440,8 +440,9 @@ describe('app update install', () => {
     expect(calls).toEqual([])
 
     fireEvent.click(screen.getByRole('button', { name: 'Install now' }))
-    const stop = screen.getByRole('button', { name: 'Stop 1 chat and install' })
-    expect(document.activeElement).toBe(stop)
+    expect(screen.getByRole('button', { name: 'Stop 1 chat and install' })).toBeTruthy()
+    // The safe choice takes the focus, so a stray Enter stops nothing.
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Keep waiting' }))
     fireEvent.click(screen.getByRole('button', { name: 'Keep waiting' }))
     expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Install now' }))
     expect(calls).toEqual([])
