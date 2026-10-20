@@ -291,7 +291,13 @@ type QueueLayoutSnapshot = {
   reduceMotion: boolean
 }
 
-export type SendAvailability = 'loading' | 'ready' | 'setup-required' | 'unavailable'
+export type SendAvailability =
+  | 'loading'
+  | 'ready'
+  | 'setup-required'
+  | 'unavailable'
+  /** A new chat with no provider added under Settings › Providers. */
+  | 'no-provider'
 
 function QueuedMediaPreview({ attachments }: { attachments: string[] }) {
   const reference = attachments.find((attachment) => previewMediaType('', attachment))
@@ -1505,18 +1511,22 @@ function ComposerComponent(props: {
       id: crypto.randomUUID(),
       role: 'status',
       message:
-        props.sendAvailability === 'unavailable'
-          ? 'Provider unavailable'
-          : props.providerSignInRequired
-            ? 'Sign in to use this provider.'
-            : 'Set up this provider to start chatting.',
+        props.sendAvailability === 'no-provider'
+          ? 'Add a provider to start chatting.'
+          : props.sendAvailability === 'unavailable'
+            ? 'Provider unavailable'
+            : props.providerSignInRequired
+              ? 'Sign in to use this provider.'
+              : 'Set up this provider to start chatting.',
       action: {
         label:
-          props.sendAvailability === 'unavailable'
-            ? 'Check setup'
-            : props.providerSignInRequired
-              ? 'Sign in'
-              : 'Set up provider',
+          props.sendAvailability === 'no-provider'
+            ? 'Add provider'
+            : props.sendAvailability === 'unavailable'
+              ? 'Check setup'
+              : props.providerSignInRequired
+                ? 'Sign in'
+                : 'Set up provider',
       },
     }
   }, [props.provider, props.sendAvailability, props.providerSignInRequired])

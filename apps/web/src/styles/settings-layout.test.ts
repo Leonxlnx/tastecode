@@ -386,7 +386,7 @@ describe('settings viewport CSS', () => {
 
   it('sets API connections as a roster section with the shared form', () => {
     expect(settingsCss).toMatch(
-      /\.settings \.provider-settings__entry \+ \.set-section \{[^}]*margin-top: 36px;/s,
+      /\.settings \.provider-roster \+ \.set-section \{[^}]*margin-top: 36px;/s,
     )
     // The form is the shared one; its old grid, written twice, and the inset heading are gone.
     expect(settingsCss).not.toMatch(

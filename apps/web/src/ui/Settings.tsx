@@ -54,7 +54,8 @@ import {
   IconChartBar as BarChart3,
   IconChevronDown as ChevronDown,
   IconKey as KeyRound,
-  IconPlus as Plus,
+  IconCircleMinus as CircleMinus,
+  IconCirclePlus as CirclePlus,
   IconArrowLeft as ArrowLeft,
   IconUserCircle as CircleUserRound,
   IconBlocks as Blocks,
@@ -83,6 +84,13 @@ import {
   agentPresentation,
   type ProviderPresentation,
 } from '../provider-presentation.js'
+import {
+  DIRECT_PROVIDERS,
+  agentRosterKey,
+  rosterAgent,
+  rosterAllows,
+  type ProviderRoster,
+} from '../provider-roster.js'
 import type { ComposerError } from './ComposerErrors.js'
 import {
   pinnableModels,
@@ -313,9 +321,11 @@ function SettingsComponent(props: {
   onProfileIdentityChange?: ((updates: Partial<ProfileIdentityPreferences>) => void) | undefined
   providerStatuses: ProviderStatus[]
   acpAgents?: ResultOf<'acp.agents'>['agents'] | undefined
-  /** The ACP agents added to Providers, in the order they were added. */
-  acpRoster?: readonly string[] | undefined
-  onAcpRosterChange?: ((roster: readonly string[]) => void) | undefined
+  /** The providers added to Providers, in the order they were added (provider-roster.ts). */
+  providerRoster?: ProviderRoster | undefined
+  onProviderRosterChange?: ((roster: ProviderRoster) => void) | undefined
+  /** Opens Providers on its picker; asked again with every section request. */
+  providersView?: 'add-providers' | undefined
   modelConnections?: ModelConnection[] | undefined
   /** The provider list has not arrived yet. */
   providersLoading?: boolean | undefined
@@ -727,16 +737,10 @@ const CONNECTION_PRESETS = {
 
 type ProviderMap<T> = Partial<Record<ProviderId, T>>
 
-// Nightly exposes every installed CLI; ACP agents and API connections have their own rows.
-const PROVIDER_ROSTER: readonly ProviderId[] = [
-  'claude-code',
-  'codex',
-  'grok',
-  'cursor',
-  'opencode',
-  'antigravity',
-  'pi',
-]
+// Every provider with its own integration, shown as it always was before the roster existed.
+const PROVIDER_ROSTER: readonly ProviderId[] = DIRECT_PROVIDERS.map((entry) => entry.id)
+
+type AcpAgent = ResultOf<'acp.agents'>['agents'][number]
 
 /** What a new chat on each provider starts with. The app shell owns it. */
 export type ProviderDefaultsControls = {
@@ -751,8 +755,10 @@ export function ProviderSettings(props: {
   account: Account | undefined
   providerStatuses: ProviderStatus[]
   acpAgents?: ResultOf<'acp.agents'>['agents'] | undefined
-  acpRoster?: readonly string[] | undefined
-  onAcpRosterChange?: ((roster: readonly string[]) => void) | undefined
+  providerRoster?: ProviderRoster | undefined
+  onProviderRosterChange?: ((roster: ProviderRoster) => void) | undefined
+  providersView?: 'add-providers' | undefined
+  sectionRequest?: number | undefined
   modelConnections?: ModelConnection[] | undefined
   providersLoading?: boolean | undefined
   projectPath?: string | undefined
@@ -881,7 +887,13 @@ export function ProviderSettings(props: {
   )
 
   const authProviderIds = props.providerStatuses
-    .filter((status) => status.installed && status.id !== 'acp' && status.id !== 'api')
+    .filter(
+      (status) =>
+        status.installed &&
+        status.id !== 'acp' &&
+        status.id !== 'api' &&
+        rosterAllows(props.providerRoster, status.id),
+    )
     .map((status) => status.id)
   const authProviderKey = authProviderIds.join('|')
 
@@ -952,11 +964,21 @@ export function ProviderSettings(props: {
     [props.transport],
   )
 
-  const acpRoster = props.acpRoster ?? []
-  // Only agents on the roster are asked about their account: the check starts them.
-  const agents = acpRoster.flatMap((id) =>
-    (props.acpAgents ?? []).filter((agent) => agent.id === id),
-  )
+  const roster = props.providerRoster
+  const onRosterChange = props.onProviderRosterChange
+  // Added providers in the order they were added. Before the roster exists the
+  // page lists every direct provider and no ACP agent, as it always did.
+  const entries = (roster ?? PROVIDER_ROSTER).flatMap((key): RosterEntry[] => {
+    const agentId = rosterAgent(key)
+    if (agentId !== undefined) {
+      const agent = props.acpAgents?.find((entry) => entry.id === agentId)
+      return agent ? [{ key, agent }] : []
+    }
+    const status = props.providerStatuses.find((entry) => entry.id === key)
+    return status ? [{ key, status }] : []
+  })
+  // Only added agents are asked about their account: the check starts them.
+  const agents = entries.flatMap((entry) => ('agent' in entry ? [entry.agent] : []))
   const installedAgentKey = agents
     .filter((agent) => agent.installed)
     .map((agent) => agent.id)
@@ -1174,11 +1196,7 @@ export function ProviderSettings(props: {
     )
   }
 
-  const byId = (id: ProviderId) => props.providerStatuses.filter((status) => status.id === id)
-  const onAcpRosterChange = props.onAcpRosterChange
-  const offeredAgents = (props.acpAgents ?? []).filter((agent) => !acpRoster.includes(agent.id))
-
-  const renderAgentRow = (agent: ResultOf<'acp.agents'>['agents'][number]) => {
+  const renderAgentRow = (agent: AcpAgent) => {
     const provider: ProviderStatus = {
       id: 'acp',
       displayName: agent.name,
@@ -1188,20 +1206,12 @@ export function ProviderSettings(props: {
       ...(agent.problem ? { problem: agent.problem } : {}),
     }
     const mark = agentMark(agent.id)
-    const remove: ProviderAction | undefined = onAcpRosterChange
-      ? {
-          label: 'Remove',
-          ariaLabel: `Remove ${agent.name}`,
-          onClick: () => onAcpRosterChange(acpRoster.filter((id) => id !== agent.id)),
-        }
-      : undefined
     if (!agent.installed) {
       return (
         <InstallableRow
           key={agent.id}
           provider={provider}
           mark={mark}
-          remove={remove}
           target={{ provider: 'acp', agent: agent.id }}
           transport={props.transport}
           onInstalled={props.onConnectionsChanged}
@@ -1219,7 +1229,6 @@ export function ProviderSettings(props: {
           mark={mark}
           status="Checking account…"
           live
-          secondary={remove}
         />
       )
     }
@@ -1232,7 +1241,6 @@ export function ProviderSettings(props: {
             ...(accountError ? { problem: accountError } : {}),
           }}
           mark={mark}
-          remove={remove}
           target={{ provider: 'acp', agent: agent.id }}
           transport={props.transport}
           onSignedIn={() => void refreshAgentAccount(agent.id)}
@@ -1251,7 +1259,6 @@ export function ProviderSettings(props: {
         link="connected"
         live={agentBusy === agent.id}
         issue={accountError ? { message: accountError, announce: true } : undefined}
-        secondary={agentBusy === agent.id ? undefined : remove}
         primary={
           canSignOut
             ? {
@@ -1303,57 +1310,86 @@ export function ProviderSettings(props: {
       />
     )
   }
-  const renderProviderRow = (status: ProviderStatus) => (
-    <div className="provider-settings__entry" key={status.id}>
-      {renderAccountRow(status)}
-      {renderTuning(status)}
-    </div>
-  )
+  const removeFromRoster = (key: string) =>
+    roster && onRosterChange?.(roster.filter((entry) => entry !== key))
+  const editable = roster !== undefined && onRosterChange !== undefined
+  const renderEntry = (entry: RosterEntry) => {
+    const name = 'agent' in entry ? entry.agent.name : entry.status.displayName
+    return (
+      <div className="provider-settings__entry" key={entry.key}>
+        {editable ? (
+          <button
+            className="provider-roster__remove"
+            type="button"
+            aria-label={`Remove ${name}`}
+            title={`Remove ${name}`}
+            onClick={() => removeFromRoster(entry.key)}
+          >
+            <CircleMinus size={17} stroke={1.6} aria-hidden />
+          </button>
+        ) : null}
+        {'agent' in entry ? renderAgentRow(entry.agent) : renderAccountRow(entry.status)}
+        {'status' in entry ? renderTuning(entry.status) : null}
+      </div>
+    )
+  }
 
+  const [picking, setPicking] = useState(props.providersView === 'add-providers')
+  useEffect(() => {
+    setPicking(props.providersView === 'add-providers')
+  }, [props.providersView, props.sectionRequest])
+
+  if (picking && editable) {
+    return (
+      <ProviderPicker
+        roster={roster}
+        providerStatuses={props.providerStatuses}
+        signedIn={(id) => {
+          const state = authStates[id]
+          return state?.phase === 'ready' ? state.account.signedIn : undefined
+        }}
+        acpAgents={props.acpAgents ?? []}
+        onAdd={(key) => onRosterChange([...roster, key])}
+        onDone={() => setPicking(false)}
+      />
+    )
+  }
+
+  const addedStatuses = entries.flatMap((entry) => ('status' in entry ? [entry.status] : []))
   return (
-    <SettingsPage title="Providers">
+    <SettingsPage
+      title="Providers"
+      description={
+        editable && entries.length === 0
+          ? 'Add the coding agents you use. Only added providers appear in chats and the model picker.'
+          : undefined
+      }
+    >
       {props.providersLoading && props.providerStatuses.length === 0 ? (
         <SkeletonStatus label="Loading providers…">
-          {PROVIDER_ROSTER.map((id, index) => (
-            <div className="provider-settings__entry" key={id}>
+          {(roster ?? PROVIDER_ROSTER).map((key, index) => (
+            <div className="provider-settings__entry" key={key}>
               <ProviderRowSkeleton index={index} />
-              {providerDefaults ? <ProviderTuningSkeleton /> : null}
+              {providerDefaults && rosterAgent(key) === undefined ? (
+                <ProviderTuningSkeleton />
+              ) : null}
             </div>
           ))}
         </SkeletonStatus>
       ) : (
-        PROVIDER_ROSTER.flatMap(byId).map(renderProviderRow)
-      )}
-      {props.acpAgents?.length ? (
-        <SettingsSection
-          title="ACP agents"
-          note="Coding agents that speak the Agent Client Protocol."
-          action={
-            agents.some((agent) => !agent.installed) ? (
-              <AcpAgentsCheck
-                transport={props.transport}
-                agents={agents}
-                onChanged={props.onConnectionsChanged}
-              />
-            ) : undefined
-          }
-        >
-          {agents.map((agent) => (
-            <div className="provider-settings__entry" key={agent.id}>
-              {renderAgentRow(agent)}
-            </div>
-          ))}
-          {onAcpRosterChange && offeredAgents.length > 0 ? (
-            <AcpAgentPicker
-              agents={offeredAgents}
-              onAdd={(id) => onAcpRosterChange([...acpRoster, id])}
-            />
+        <div className="provider-roster">
+          {entries.map(renderEntry)}
+          {editable ? (
+            <button className="provider-roster__add" type="button" onClick={() => setPicking(true)}>
+              <CirclePlus size={17} stroke={1.6} aria-hidden />
+              {entries.length === 0 ? 'Add a provider' : 'Add provider'}
+            </button>
           ) : null}
-        </SettingsSection>
-      ) : null}
+        </div>
+      )}
       <ProviderAccountsSection
         transport={props.transport}
-        providers={multiAccountProviders(props.providerStatuses)}
+        providers={multiAccountProviders(addedStatuses)}
         onOpenTerminal={props.onProviderLoginTerminalOpen}
       />
       <SettingsSection title="API connections">
@@ -1487,81 +1523,111 @@ export function ProviderSettings(props: {
   )
 }
 
+type RosterEntry = { key: string; status: ProviderStatus } | { key: string; agent: AcpAgent }
+
 /**
- * The ACP library, offered from the end of the agents' section: each entry
- * names its maker and says so when the agent is already on this machine.
+ * A direct provider's state in a word: the account read for it when there is
+ * one (only added providers are read), else what its CLI reported.
  */
-function AcpAgentPicker(props: {
-  agents: ResultOf<'acp.agents'>['agents']
-  onAdd: (agentId: string) => void
-}) {
-  return (
-    <Menu
-      align="left"
-      drop="down"
-      panelLabel="ACP agents"
-      panelClassName="acp-picker__menu"
-      triggerClassName="set-button provider-connections__add"
-      trigger={() => (
-        <>
-          <Plus size={15} aria-hidden />
-          Add an ACP agent
-        </>
-      )}
-    >
-      {(close) =>
-        props.agents.map((agent) => (
-          <MenuItem
-            key={agent.id}
-            title={agent.name}
-            detail={
-              [agent.maker, agent.installed ? 'Installed' : undefined]
-                .filter(Boolean)
-                .join(' · ') || undefined
-            }
-            icon={<ProviderIcon mark={agentMark(agent.id)} size={16} />}
-            onClick={() => {
-              props.onAdd(agent.id)
-              close()
-            }}
-          />
-        ))
-      }
-    </Menu>
-  )
+function directState(status: ProviderStatus | undefined, signedIn: boolean | undefined): string {
+  if (!status) return 'Checking…'
+  if (!status.installed) return 'Not installed'
+  if (signedIn ?? status.auth === 'authenticated') return 'Signed in'
+  if (signedIn === false || status.auth === 'unauthenticated') return 'Not signed in'
+  return 'Installed'
 }
 
 /**
- * Looks for added agents installed outside the app since the library was
- * listed, once for the section, so each row keeps its place for Remove.
+ * Where providers are added: the ones with their own integration, then the
+ * ACP library. Each row is wired once it is added, so the page shows at a
+ * glance what is already in the app; adding never moves a row.
  */
-function AcpAgentsCheck(props: {
-  transport: Transport
-  agents: ResultOf<'acp.agents'>['agents']
-  onChanged: () => void
+function ProviderPicker(props: {
+  roster: ProviderRoster
+  providerStatuses: ProviderStatus[]
+  /** What an account read said, for a provider this page has read. */
+  signedIn: (id: ProviderId) => boolean | undefined
+  acpAgents: readonly AcpAgent[]
+  onAdd: (key: string) => void
+  onDone: () => void
 }) {
-  const [checking, setChecking] = useState(false)
-  const missing = props.agents.filter((agent) => !agent.installed).map((agent) => agent.id)
-  const { onChanged, transport } = props
-  const check = () => {
-    setChecking(true)
-    void transport
-      .request('acp.agents', {})
-      .then(({ agents }) => {
-        if (agents.some((agent) => agent.installed && missing.includes(agent.id))) onChanged()
-      })
-      .catch(() => undefined)
-      .finally(() => setChecking(false))
+  const row = (input: {
+    key: string
+    provider: ProviderStatus
+    mark: ProviderMark
+    maker: string | undefined
+    state: string
+    installed: boolean
+  }) => {
+    const added = props.roster.includes(input.key)
+    return (
+      <ProviderRow
+        key={input.key}
+        provider={input.provider}
+        mark={input.mark}
+        status={[input.maker, input.state].filter(Boolean).join(' · ')}
+        link={added ? 'connected' : input.installed ? 'open' : 'none'}
+        primary={
+          added
+            ? { label: 'Added', done: true }
+            : {
+                label: 'Add',
+                ariaLabel: `Add ${input.provider.displayName}`,
+                onClick: () => props.onAdd(input.key),
+              }
+        }
+      />
+    )
   }
+  const direct = DIRECT_PROVIDERS.flatMap((entry) => {
+    const status = props.providerStatuses.find((candidate) => candidate.id === entry.id)
+    return status ? [{ entry, status }] : []
+  })
   return (
-    <button
-      className="set-button set-button--quiet"
-      type="button"
-      disabled={checking}
-      onClick={check}
+    <SettingsPage
+      title="Add providers"
+      className="provider-picker"
+      actions={
+        <button className="set-button" type="button" onClick={props.onDone}>
+          Done
+        </button>
+      }
     >
-      {checking ? 'Checking…' : 'Check again'}
-    </button>
+      <SettingsSection title="Providers" note="Coding agents with their own integration.">
+        {direct.map(({ entry, status }) =>
+          row({
+            key: entry.id,
+            provider: status,
+            mark: providerMark(entry.id),
+            maker: entry.maker,
+            state: directState(status, props.signedIn(entry.id)),
+            installed: status.installed,
+          }),
+        )}
+      </SettingsSection>
+      {props.acpAgents.length > 0 ? (
+        <SettingsSection
+          title="ACP agents"
+          note="Coding agents that speak the Agent Client Protocol."
+        >
+          {props.acpAgents.map((agent) =>
+            row({
+              key: agentRosterKey(agent.id),
+              provider: {
+                id: 'acp',
+                displayName: agent.name,
+                installed: agent.installed,
+                auth: 'unknown',
+              },
+              mark: agentMark(agent.id),
+              maker: agent.maker,
+              state: agent.installed ? 'Installed' : 'Not installed',
+              installed: agent.installed,
+            }),
+          )}
+        </SettingsSection>
+      ) : null}
+    </SettingsPage>
   )
 }
 
@@ -2815,8 +2881,6 @@ function InstallableRow(props: {
   onInstalled: () => void
   onOpenExpandedTerminal?: ((target: ProviderLoginTerminalTarget) => void) | undefined
   mark?: ProviderMark | undefined
-  /** Takes Check again's place on an added ACP agent; its section looks again for every row. */
-  remove?: ProviderAction | undefined
 }) {
   const key = installKey(props.target)
   const detailsId = useId()
@@ -2911,11 +2975,7 @@ function InstallableRow(props: {
             controls: detailsId,
             onClick: () => setShowTerminal((visible) => !visible),
           }
-      : (props.remove ?? {
-          label: 'Check again',
-          disabled: recheck.checking,
-          onClick: recheck.check,
-        })
+      : { label: 'Check again', disabled: recheck.checking, onClick: recheck.check }
   const primary: ProviderAction | undefined = !setup?.installCommand
     ? setup
       ? { label: 'Open setup guide', href: setup.installUrl }
@@ -2965,8 +3025,6 @@ function CliSignInRow(props: {
   onSignedIn: () => void
   onOpenExpandedTerminal?: ((target: ProviderLoginTerminalTarget) => void) | undefined
   mark?: ProviderMark | undefined
-  /** Offered while no sign-in is running, where its details would go. */
-  remove?: ProviderAction | undefined
 }) {
   const key = loginKey(props.target)
   const detailsId = useId()
@@ -3111,7 +3169,7 @@ function CliSignInRow(props: {
           disabled: stopping,
           onClick: busy ? cancel : start,
         }}
-        secondary={details ?? (busy || stopping ? undefined : props.remove)}
+        secondary={details}
       />
       {running ? (
         <div className="signin-card">

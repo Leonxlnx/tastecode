@@ -1026,12 +1026,107 @@
 
 /* A signed-in agent whose CLI keeps its own sign-out holds the action's
    place, so its status stays in the column with the others. */
-.settings
-  .provider-row[data-link='connected']
-  .provider-row__secondary:empty
-  + .provider-row__primary:empty {
+.settings .provider-row[data-link='connected'] .provider-row__primary:empty {
   display: block;
   width: 70px;
+}
+
+/* The added providers. Each takes its minus in the margin left of its mark,
+   level with the row, so the roster's columns stay where they were; the
+   list ends on a plus in the same margin, its words where a name would be. */
+.provider-roster {
+  display: grid;
+}
+
+.provider-settings__entry {
+  position: relative;
+}
+
+.provider-roster__remove {
+  position: absolute;
+  top: 16px;
+  left: -35px;
+  display: grid;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  place-items: center;
+  background: none;
+  border: 0;
+  border-radius: var(--r-circle);
+  color: var(--text-3);
+  cursor: pointer;
+  transition: color var(--dur-fast) var(--ease-out);
+}
+
+.provider-roster__remove:hover {
+  color: var(--error);
+}
+
+.provider-roster__remove:focus-visible,
+.provider-roster__add:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.provider-roster__add {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  justify-self: start;
+  min-height: 54px;
+  margin-left: -32.5px;
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: var(--r-md);
+  color: var(--text-2);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--t-sm);
+  font-weight: 500;
+  transition: color var(--dur-fast) var(--ease-out);
+}
+
+.provider-roster__add > svg {
+  flex: none;
+  color: var(--text-3);
+  transition: color var(--dur-fast) var(--ease-out);
+}
+
+.provider-roster__add:hover,
+.provider-roster__add:hover > svg {
+  color: var(--text);
+}
+
+/* The picker offers the same Add on every row, so at rest it is ink alone
+   and the row being pointed at draws its outline. */
+.settings .provider-picker .provider-row__primary > .set-button:not(:disabled) {
+  border-color: transparent;
+  color: var(--text-2);
+}
+
+.settings
+  .provider-picker
+  .provider-row:is(:hover, :focus-within)
+  .provider-row__primary
+  > .set-button:not(:disabled) {
+  border-color: var(--line-strong);
+  color: var(--text);
+}
+
+/* In the picker, an added provider holds the action's place with a settled
+   label the width of the buttons around it. */
+.provider-row__done {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 70px;
+  height: 28px;
+  color: var(--text-2);
+  font-size: var(--t-sm);
+  font-weight: 500;
 }
 
 /* Sign-in and install details hang under the provider's name. */
@@ -1115,25 +1210,21 @@
   .provider-settings__entry :is(.signin-card, .provider-terminal) {
     margin-left: 0;
   }
+
+  /* The row takes two lines here; the minus stays level with its mark. */
+  .provider-roster__remove {
+    top: 20px;
+  }
 }
 
 /* API connections: the roster's rows under a section of their own, then the
    add button or the shared form. Only the form's provider select is its own. */
-.settings .provider-settings__entry + .set-section {
+.settings .provider-roster + .set-section {
   margin-top: 36px;
 }
 
 .settings .provider-connections__add {
   margin-top: 8px;
-}
-
-.acp-picker__menu {
-  width: min(280px, calc(100vw - 16px));
-}
-
-/* The maker reads as part of the name, under it rather than under the mark. */
-.acp-picker__menu .menu__desc {
-  padding-left: 22px;
 }
 
 .set-form__field .menuwrap {
@@ -1570,6 +1661,20 @@
 
   .settings__content {
     padding: 28px 18px 48px;
+  }
+
+  /* No margin to borrow at this width: the minus and plus move inside. */
+  .provider-settings__entry:has(> .provider-roster__remove) {
+    padding-left: 32px;
+  }
+
+  .provider-roster__remove {
+    left: 0;
+  }
+
+  .provider-roster__add {
+    margin-left: 2.5px;
+    gap: 14.5px;
   }
 
   .settings__title {

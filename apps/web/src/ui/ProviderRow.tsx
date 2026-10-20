@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import type { ProviderStatus } from '@harness/contracts'
-import { IconExternalLink as ExternalLink } from '@tabler/icons-react'
+import { IconCheck as Check, IconExternalLink as ExternalLink } from '@tabler/icons-react'
 import { RowIssue } from './RowIssue.js'
 import { providerMark, type ProviderMark } from '../model-catalog.js'
 import { ProviderIcon } from './ProviderIcon.js'
@@ -17,6 +17,8 @@ export type ProviderAction = {
   danger?: boolean | undefined
   expanded?: boolean | undefined
   controls?: string | undefined
+  /** Already done: drawn in the action's place as a settled label, not a button. */
+  done?: boolean | undefined
 }
 
 /**
@@ -100,6 +102,14 @@ function ProviderRowAction(props: {
 }) {
   const action = props.action
   if (!action) return null
+  if (action.done) {
+    return (
+      <span className="provider-row__done">
+        <Check size={13} aria-hidden />
+        {action.label}
+      </span>
+    )
+  }
   // Signing out reads the same in either slot; otherwise the secondary slot is quiet.
   const className = action.danger
     ? 'set-button set-button--danger'

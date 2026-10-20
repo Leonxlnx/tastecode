@@ -1,4 +1,4 @@
-import type { ProviderId, ProviderStatus } from '@harness/contracts'
+import type { ProviderStatus, ResultOf } from '@harness/contracts'
 import {
   IconArrowLeft as ArrowLeft,
   IconCheck as Check,
@@ -20,7 +20,9 @@ import {
 import { flushSync } from 'react-dom'
 import '../styles/onboarding.css'
 import { isDesktop, setDesktopTheme } from '../bridge.js'
-import { providerMark } from '../model-catalog.js'
+import { providerDisplayName, providerMark, type ProviderMark } from '../model-catalog.js'
+import { agentMark } from '../provider-presentation.js'
+import { DIRECT_PROVIDERS, agentRosterKey, type ProviderRoster } from '../provider-roster.js'
 import { DARK_THEME_QUERY, type ThemePreference } from '../theme.js'
 import { GeneratedAvatar } from './GeneratedAvatar.js'
 import { OnboardingPreview, type PreviewAgent, type PreviewHint } from './OnboardingPreview.js'
@@ -36,13 +38,9 @@ const STEPS = [
   { id: 'project', label: 'First project', hint: undefined },
 ] as const satisfies ReadonlyArray<{ id: string; label: string; hint: PreviewHint | undefined }>
 type StepId = (typeof STEPS)[number]['id']
-const PROVIDERS_STEP = STEPS.findIndex((entry) => entry.id === 'providers')
 
-const BETA_PLANS = [
-  { id: 'claude-code', name: 'Claude Code', vendor: 'Anthropic' },
-  { id: 'codex', name: 'Codex', vendor: 'OpenAI' },
-  { id: 'grok', name: 'Grok', vendor: 'xAI' },
-] as const satisfies ReadonlyArray<{ id: ProviderId; name: string; vendor: string }>
+/** One provider or ACP agent the agents page offers, keyed as the roster keys it. */
+type PickEntry = { key: string; name: string; mark: ProviderMark; note: string; ready: boolean }
 
 const THEME_CHOICES = [
   { value: 'system', label: 'System', note: 'Matches your OS' },
@@ -50,10 +48,6 @@ const THEME_CHOICES = [
   { value: 'dark', label: 'Dark', note: 'Dimmed, low glare' },
 ] as const satisfies ReadonlyArray<{ value: ThemePreference; label: string; note: string }>
 
-// A detected agent waits for its row to arrive and draw its check before it
-// flies into the preview; several leave one after another, not as a volley.
-const AGENT_FLIGHT_DELAY = 950
-const AGENT_FLIGHT_GAP = 240
 const PREVIEW = '.onboarding__preview'
 
 type Readiness = { label: string; tone: 'ready' | 'pending' | 'checking' }
@@ -64,7 +58,7 @@ export function providerReadiness(status: ProviderStatus | undefined): Readiness
   if (!status.installed) return { label: 'Not installed', tone: 'pending' }
   if (status.problem) return { label: 'Needs attention', tone: 'pending' }
   if (status.auth === 'unauthenticated') return { label: 'Sign in needed', tone: 'pending' }
-  return { label: status.auth === 'authenticated' ? 'Ready' : 'Installed', tone: 'ready' }
+  return { label: status.auth === 'authenticated' ? 'Signed in' : 'Installed', tone: 'ready' }
 }
 
 const prefersDark = () => window.matchMedia?.(DARK_THEME_QUERY).matches ?? false
@@ -112,8 +106,11 @@ export function Onboarding(props: {
   themePreference: ThemePreference
   onThemePreferenceChange: (theme: ThemePreference) => void
   providerStatuses: ProviderStatus[]
+  acpAgents: ResultOf<'acp.agents'>['agents']
+  /** What is added so far; the agents page adds to it and takes away from it. */
+  providerRoster: ProviderRoster
+  onProviderRosterChange: (roster: ProviderRoster) => void
   onAddProject: () => void
-  onOpenProviders: () => void
   onDismiss: () => void
   /** Kept mounted but hidden while Settings sits on top, so the page survives the round trip. */
   hidden?: boolean | undefined
@@ -138,8 +135,8 @@ export function Onboarding(props: {
   // name page was left, and the agents that have flown into its model picker.
   const [shownName, setShownName] = useState(props.displayName ?? '')
   const [receivingName, setReceivingName] = useState(false)
-  const [landed, setLanded] = useState<readonly ProviderId[]>([])
-  const [arriving, setArriving] = useState<readonly ProviderId[]>([])
+  const [landed, setLanded] = useState<readonly string[]>(props.providerRoster)
+  const [arriving, setArriving] = useState<readonly string[]>([])
   // The theme card just chosen, shown selected while the desktop shell is
   // still letting go of its pinned scheme.
   const [themeChoice, setThemeChoice] = useState<ThemePreference>()
@@ -153,10 +150,6 @@ export function Onboarding(props: {
   const stepRef = useRef<HTMLElement>(null)
   const revealFrom = useRef<{ x: number; y: number }>(undefined)
   const themeRequest = useRef(0)
-  const landedRef = useRef(landed)
-  landedRef.current = landed
-  const inFlight = useRef(new Set<ProviderId>())
-  const agentsShownAt = useRef(0)
   const onDismiss = useRef(props.onDismiss)
   onDismiss.current = props.onDismiss
   const dismiss = () => setClosing(true)
@@ -168,16 +161,35 @@ export function Onboarding(props: {
     focusTarget.current = node
   }
 
-  const readiness = BETA_PLANS.map((plan) => ({
-    plan,
-    ...providerReadiness(props.providerStatuses.find((entry) => entry.id === plan.id)),
+  // Every provider the server reports, or all of them while it has not yet.
+  const direct: PickEntry[] = DIRECT_PROVIDERS.filter(
+    (entry) =>
+      props.providerStatuses.length === 0 ||
+      props.providerStatuses.some((status) => status.id === entry.id),
+  ).map((entry) => {
+    const readiness = providerReadiness(
+      props.providerStatuses.find((status) => status.id === entry.id),
+    )
+    return {
+      key: entry.id,
+      name: providerDisplayName(entry.id),
+      mark: providerMark(entry.id),
+      note: `${entry.maker} · ${readiness.label}`,
+      ready: readiness.tone === 'ready',
+    }
+  })
+  const agents: PickEntry[] = props.acpAgents.map((agent) => ({
+    key: agentRosterKey(agent.id),
+    name: agent.name,
+    mark: agentMark(agent.id),
+    note: [agent.maker, agent.installed ? 'Installed' : 'Not installed']
+      .filter(Boolean)
+      .join(' · '),
+    ready: agent.installed,
   }))
-  const readyIds: readonly ProviderId[] = readiness
-    .filter((entry) => entry.tone === 'ready')
-    .map(({ plan }) => plan.id)
-  const readyKey = readyIds.join(' ')
-  const readyCount = readyIds.length
-  const checking = readiness.some((entry) => entry.tone === 'checking')
+  const offered = [...direct, ...agents]
+  const checking = props.providerStatuses.length === 0
+  const addedCount = props.providerRoster.length
   const profileName = props.displayName?.trim() || 'Local profile'
   const selectedTheme = themeChoice ?? props.themePreference
 
@@ -243,52 +255,34 @@ export function Onboarding(props: {
     return () => window.clearTimeout(timer)
   }, [enterHeld])
 
-  useEffect(() => {
-    agentsShownAt.current = step === 'providers' ? performance.now() : 0
-  }, [step])
-
-  // Each detected agent leaves its row for the preview's model picker. An
-  // agent found later, while the page is open, follows on its own.
-  useEffect(() => {
-    if (step !== 'providers' || leaving) return
-    const queue = readyIds.filter(
-      (id) => !landedRef.current.includes(id) && !inFlight.current.has(id),
-    )
-    const start = Math.max(0, agentsShownAt.current + AGENT_FLIGHT_DELAY - performance.now())
-    const timers = queue.map((id, position) =>
-      window.setTimeout(() => sendAgent(id), start + position * AGENT_FLIGHT_GAP),
-    )
-    return () => timers.forEach((timer) => window.clearTimeout(timer))
-  }, [step, leaving, readyKey])
-
-  // Once the agents page is behind the user, anything still waiting simply
-  // arrives: there is no row left on screen to fly from.
-  useEffect(() => {
-    if (step === 'providers' || reached < PROVIDERS_STEP) return
-    const waiting = readyIds.filter(
-      (id) => !landedRef.current.includes(id) && !inFlight.current.has(id),
-    )
-    if (waiting.length) setLanded((list) => [...list, ...waiting])
-  }, [step, reached, readyKey])
-
-  const sendAgent = (id: ProviderId) => {
+  // An agent added on its page leaves its row for the preview's model
+  // picker; one taken away again simply goes.
+  const sendAgent = (key: string) => {
     const root = dialog.panel.current
-    inFlight.current.add(id)
     // The picker makes room first, so the flight has a place to aim for.
-    flushSync(() => setArriving((list) => [...list, id]))
+    flushSync(() => setArriving((list) => [...list, key]))
     void fly(
       root?.querySelector(
-        `.onboarding__provider[data-plan="${id}"] .onboarding__provider-mark svg`,
+        `.onboarding__provider[data-plan="${key}"] .onboarding__provider-mark svg`,
       ),
-      root?.querySelector(`${PREVIEW} [data-land="agent-${id}"] svg`),
+      root?.querySelector(`${PREVIEW} [data-land="agent-${key}"] svg`),
       root,
       { duration: 820 },
     ).then(() => {
-      inFlight.current.delete(id)
-      setArriving((list) => list.filter((entry) => entry !== id))
-      setLanded((list) => (list.includes(id) ? list : [...list, id]))
+      setArriving((list) => list.filter((entry) => entry !== key))
+      setLanded((list) => (list.includes(key) ? list : [...list, key]))
       catchIn(root?.querySelector(`${PREVIEW} [data-land="model"]`))
     })
+  }
+  const toggleAgent = (key: string) => {
+    if (props.providerRoster.includes(key)) {
+      props.onProviderRosterChange(props.providerRoster.filter((entry) => entry !== key))
+      setLanded((list) => list.filter((entry) => entry !== key))
+      setArriving((list) => list.filter((entry) => entry !== key))
+      return
+    }
+    props.onProviderRosterChange([...props.providerRoster, key])
+    sendAgent(key)
   }
 
   // Leaving the name page forward hands the answer over: the picture and the
@@ -423,12 +417,15 @@ export function Onboarding(props: {
     advance()
   }
 
-  const planName = (id: ProviderId) => BETA_PLANS.find((plan) => plan.id === id)?.name ?? id
+  const previewAgent = (key: string, arriving?: boolean): PreviewAgent[] => {
+    const entry = offered.find((candidate) => candidate.key === key)
+    return entry ? [{ id: key, name: entry.name, mark: entry.mark, arriving }] : []
+  }
   const previewAgents: PreviewAgent[] = [
-    ...landed.filter((id) => readyIds.includes(id)).map((id) => ({ id, name: planName(id) })),
-    ...arriving
-      .filter((id) => !landed.includes(id))
-      .map((id) => ({ id, name: planName(id), arriving: true })),
+    ...landed
+      .filter((key) => props.providerRoster.includes(key))
+      .flatMap((key) => previewAgent(key)),
+    ...arriving.filter((key) => !landed.includes(key)).flatMap((key) => previewAgent(key, true)),
   ]
   const preview = { name: shownName, agents: previewAgents }
 
@@ -607,47 +604,29 @@ export function Onboarding(props: {
             {step === 'providers' ? (
               <>
                 <h1 className="onboarding__title" id={titleId} ref={setFocusTarget} tabIndex={-1}>
-                  Your coding agents
+                  Choose your coding agents
                 </h1>
                 <p className="onboarding__lead" role="status">
                   {checking
                     ? 'Looking for the coding agents installed on this machine…'
-                    : readyCount === BETA_PLANS.length
-                      ? 'All three beta plans are ready. Nothing else to do here.'
-                      : `${readyCount} of ${BETA_PLANS.length} beta plans ready. Set up the rest now, or later in Settings.`}
+                    : addedCount === 0
+                      ? 'Add the ones you use. Nothing is added until you pick it.'
+                      : `${addedCount} added. Change this any time in Settings › Providers.`}
                 </p>
-                <ul className="onboarding__providers" aria-label="Supported beta plans">
-                  {readiness.map(({ plan, label, tone }) => (
-                    <li
-                      className="onboarding__provider"
-                      data-tone={tone}
-                      data-plan={plan.id}
-                      key={plan.id}
-                    >
-                      <span className="onboarding__provider-mark">
-                        <ProviderIcon mark={providerMark(plan.id)} size={18} />
-                      </span>
-                      <span className="onboarding__provider-name">
-                        {plan.name}
-                        <small>{plan.vendor}</small>
-                      </span>
-                      <span className="onboarding__provider-status">
-                        <StatusGlyph tone={tone} />
-                        {label}
-                      </span>
-                      {tone === 'pending' ? (
-                        <button
-                          className="onboarding__provider-action"
-                          type="button"
-                          aria-label={`Set up ${plan.name}`}
-                          onClick={props.onOpenProviders}
-                        >
-                          Set up
-                        </button>
-                      ) : null}
-                    </li>
-                  ))}
-                </ul>
+                <div className="onboarding__pick">
+                  <PickGroup
+                    title="Providers"
+                    entries={direct}
+                    roster={props.providerRoster}
+                    onToggle={toggleAgent}
+                  />
+                  <PickGroup
+                    title="ACP agents"
+                    entries={agents}
+                    roster={props.providerRoster}
+                    onToggle={toggleAgent}
+                  />
+                </div>
                 <StepActions onBack={() => go(index - 1)} onNext={advance} pressed={enterHeld} />
               </>
             ) : null}
@@ -732,10 +711,69 @@ function AvatarMorph(props: { name: string }) {
   )
 }
 
-/** Ready draws a check, checking spins, pending leaves the row to its action. */
-function StatusGlyph(props: { tone: Readiness['tone'] }) {
-  if (props.tone === 'checking') return <span className="onboarding__spinner" aria-hidden />
-  if (props.tone !== 'ready') return null
+/**
+ * One group of the agents page. Each row is a checkbox: picking it adds the
+ * agent, and its Add turns into a drawn check.
+ */
+function PickGroup(props: {
+  title: string
+  entries: readonly PickEntry[]
+  roster: ProviderRoster
+  onToggle: (key: string) => void
+}) {
+  const titleId = useId()
+  if (props.entries.length === 0) return null
+  return (
+    <section className="onboarding__pick-group" aria-labelledby={titleId}>
+      <h2 className="onboarding__pick-title" id={titleId}>
+        {props.title}
+      </h2>
+      <ul className="onboarding__providers">
+        {props.entries.map((entry) => {
+          const added = props.roster.includes(entry.key)
+          return (
+            <li
+              className="onboarding__provider"
+              data-plan={entry.key}
+              data-tone={entry.ready ? 'ready' : 'pending'}
+              data-added={added || undefined}
+              key={entry.key}
+            >
+              <label>
+                <input
+                  className="visually-hidden"
+                  type="checkbox"
+                  checked={added}
+                  onChange={() => props.onToggle(entry.key)}
+                />
+                <span className="onboarding__provider-mark">
+                  <ProviderIcon mark={entry.mark} size={18} />
+                </span>
+                <span className="onboarding__provider-name">
+                  {entry.name}
+                  <small>{entry.note}</small>
+                </span>
+                <span className="onboarding__provider-toggle" aria-hidden>
+                  {added ? (
+                    <>
+                      <AddedCheck />
+                      Added
+                    </>
+                  ) : (
+                    'Add'
+                  )}
+                </span>
+              </label>
+            </li>
+          )
+        })}
+      </ul>
+    </section>
+  )
+}
+
+/** Draws itself in when an agent is added. */
+function AddedCheck() {
   return (
     <svg className="onboarding__check" width="16" height="16" viewBox="0 0 16 16" aria-hidden>
       <circle cx="8" cy="8" r="7" pathLength={1} />

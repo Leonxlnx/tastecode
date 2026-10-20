@@ -1050,6 +1050,96 @@
   outline-offset: var(--focus-ring-offset);
 }
 
+/* The agents page is a pick list: the providers with their own
+   integration, then the ACP library, each a compact row of the list above
+   that is a checkbox. Long enough to scroll on its own, so the preview
+   beside it stays where it is. */
+.onboarding__pick {
+  display: grid;
+  gap: 18px;
+  max-height: clamp(260px, calc(100vh - 360px), 520px);
+  margin: 0 -6px;
+  padding: 0 6px 2px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+
+.onboarding__pick-group {
+  display: grid;
+  gap: 8px;
+}
+
+.onboarding__pick-title {
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  font-weight: 500;
+}
+
+.onboarding__pick .onboarding__provider {
+  display: block;
+  min-height: 0;
+  padding: 0;
+}
+
+.onboarding__pick .onboarding__provider > label {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-height: 50px;
+  padding: 0 12px;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+
+.onboarding__pick .onboarding__provider > label:hover {
+  background: var(--control-hover);
+}
+
+.onboarding__pick .onboarding__provider > label:has(input:focus-visible) {
+  outline: var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.onboarding__pick .onboarding__provider-mark {
+  width: 30px;
+  height: 30px;
+  color: var(--text-2);
+}
+
+.onboarding__pick .onboarding__provider[data-added] .onboarding__provider-mark {
+  color: var(--text);
+}
+
+.onboarding__pick .onboarding__provider-name {
+  font-size: var(--t-sm);
+}
+
+.onboarding__provider-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 64px;
+  min-height: 26px;
+  padding: 3px 10px;
+  border: 1px solid var(--chrome-border);
+  border-radius: var(--r-md);
+  background: var(--control-hover);
+  color: var(--text);
+  font-size: var(--t-xs);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.onboarding__provider[data-added] .onboarding__provider-toggle {
+  border-color: transparent;
+  background: none;
+  color: var(--text-2);
+}
+
 /* ---------- project ---------- */
 
 .onboarding__note {

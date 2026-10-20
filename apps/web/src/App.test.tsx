@@ -2707,7 +2707,10 @@ describe('web client', () => {
   })
 
   it('keeps a choice on an ACP agent row while Grok cannot be listed', async () => {
-    localStorage.setItem('harness.acpRoster.v1', JSON.stringify(['kimi']))
+    localStorage.setItem(
+      'harness.providerRoster.v1',
+      JSON.stringify(['codex', 'claude-code', 'grok', 'acp:kimi']),
+    )
     serverProviders = [
       ...serverProviders,
       claudeCodeServerProvider(),
@@ -3129,7 +3132,7 @@ describe('web client', () => {
 
     it('lists an agent that registers after the picker opened', async () => {
       const kimi = { id: 'kimi', name: 'Kimi CLI' }
-      localStorage.setItem('harness.acpRoster.v1', JSON.stringify(['kimi']))
+      localStorage.setItem('harness.providerRoster.v1', JSON.stringify(['codex', 'acp:kimi']))
       localStorage.setItem(
         'harness.modelCatalog.v1',
         serializeModelCatalogCache([
@@ -4399,7 +4402,7 @@ describe('web client', () => {
   })
 
   it('fetches models only for the ACP agents added to Providers', async () => {
-    localStorage.setItem('harness.acpRoster.v1', JSON.stringify(['kimi']))
+    localStorage.setItem('harness.providerRoster.v1', JSON.stringify(['codex', 'acp:kimi']))
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
     transport.request.mockImplementation((method: string, params: unknown) => {
@@ -4427,7 +4430,20 @@ describe('web client', () => {
     })
   })
 
-  it('starts the ACP roster from the agents that already have chats', async () => {
+  it('starts a first run with nothing added and asks for a provider', async () => {
+    await import('./ui/Settings.js')
+    serverProjects = []
+    render(<App />)
+
+    await waitFor(() => expect(localStorage.getItem('harness.providerRoster.v1')).toBe('[]'))
+    expect(await screen.findByText('Add a provider to start chatting.')).toBeTruthy()
+    expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(true)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add provider' }))
+    expect(await screen.findByRole('heading', { name: 'Add providers' })).toBeTruthy()
+  })
+
+  it('starts the roster from what was in use: installed providers and agents with chats', async () => {
     serverProjects = [
       {
         ...serverProjects[0]!,
@@ -4464,7 +4480,10 @@ describe('web client', () => {
         agent: 'kimi',
       })
     })
-    expect(JSON.parse(localStorage.getItem('harness.acpRoster.v1') ?? 'null')).toEqual(['kimi'])
+    expect(JSON.parse(localStorage.getItem('harness.providerRoster.v1') ?? 'null')).toEqual([
+      'codex',
+      'acp:kimi',
+    ])
     expect(transport.request).not.toHaveBeenCalledWith('models.list', {
       provider: 'acp',
       agent: 'devin',
@@ -5004,6 +5023,8 @@ describe('web client', () => {
 
     it('reloads the catalog when the scan finds the missing provider', async () => {
       vi.useFakeTimers({ toFake: ['Date'] })
+      // Added before it was installed, so finding it lists its models.
+      localStorage.setItem('harness.providerRoster.v1', JSON.stringify(['codex', 'cursor']))
       serverProviders = [...serverProviders, missingCursor]
       render(<App />)
       await waitFor(() => expect(calls('models.list')).toBe(1))
@@ -6228,6 +6249,7 @@ describe('new chats', () => {
 
   it('keeps a draft and asks for a project when sending without one', async () => {
     serverProjects = []
+    localStorage.setItem('harness.providerRoster.v1', JSON.stringify(['codex']))
     render(<App />)
 
     const composer = await screen.findByPlaceholderText('Do anything')
@@ -6243,6 +6265,7 @@ describe('new chats', () => {
 
   it('keeps composer errors until dismissed and shows a later failure again', async () => {
     serverProjects = []
+    localStorage.setItem('harness.providerRoster.v1', JSON.stringify(['codex']))
     render(<App />)
 
     const composer = await screen.findByPlaceholderText('Do anything')
@@ -6324,6 +6347,7 @@ describe('new chats', () => {
     async (outcome) => {
       desktopShell.enabled = true
       serverProjects = []
+      localStorage.setItem('harness.providerRoster.v1', JSON.stringify(['codex', 'claude-code']))
       serverProviders = [
         ...serverProviders,
         {
@@ -6437,6 +6461,7 @@ describe('new chats', () => {
   it('signs a further account in through the sign-in terminal and asks that account who it is', async () => {
     desktopShell.enabled = true
     serverProjects = []
+    localStorage.setItem('harness.providerRoster.v1', JSON.stringify(['codex']))
     const codex = serverProviders[0]!
     serverProviders = [
       { ...codex, capabilities: { ...codex.capabilities!, multipleAccounts: true } },
@@ -6525,6 +6550,7 @@ describe('new chats', () => {
     await import('./ui/InstallTerminal.js')
     desktopShell.enabled = true
     serverProjects = []
+    localStorage.setItem('harness.providerRoster.v1', JSON.stringify(['codex', 'claude-code']))
     serverProviders = [
       ...serverProviders,
       {

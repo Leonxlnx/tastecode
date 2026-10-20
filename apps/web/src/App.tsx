@@ -221,7 +221,15 @@ import {
   writeProfileIdentityPreferences,
   type ProfileIdentityPreferences,
 } from './profile-preferences.js'
-import { acpAgentsInUse, readAcpRoster, writeAcpRoster } from './acp-roster.js'
+import {
+  agentRosterKey,
+  readProviderRoster,
+  rosterAgent,
+  rosterAllows,
+  seedProviderRoster,
+  writeProviderRoster,
+  type ProviderRoster,
+} from './provider-roster.js'
 import {
   ACCENT_KEY,
   applyAccentPreference,
@@ -288,7 +296,7 @@ const MODEL_BY_SOURCE_KEY = 'harness.modelBySource'
 const MODEL_BY_THREAD_PREFIX = 'harness.modelByThread:'
 const COMPOSER_DRAFTS_KEY = 'harness.composerDrafts.v1'
 const EMPTY_PALETTE_COMMANDS: PaletteCommand[] = []
-const EMPTY_ACP_ROSTER: readonly string[] = []
+const EMPTY_PROVIDER_ROSTER: ProviderRoster = []
 /** Only the user's own visibility choices; the defaults follow the catalog. */
 const MODEL_VISIBILITY_KEY = 'harness.modelVisibility.v2'
 /** One complete hidden list, which mixed the defaults of the build that saved it with choices. */
@@ -432,7 +440,12 @@ type AccountCheck = {
 export const ACCOUNT_CHECK_SEND_GRACE_MS = 5_000
 
 /** The counter makes a repeated request for the open section navigate again. */
-type SettingsSectionRequest = { section: SettingsSection; request: number }
+type SettingsSectionRequest = {
+  section: SettingsSection
+  request: number
+  /** Opens Providers on its picker rather than on the added providers. */
+  view?: 'add-providers' | undefined
+}
 
 type WorkspaceIdleProbe = {
   inFlight: Promise<void> | undefined
@@ -475,8 +488,8 @@ function workspaceLayoutStyle(width: number): WorkspaceLayoutStyle {
   return { '--workspace-panel-w': `${width}px` }
 }
 
-function requestSettingsSection(section: SettingsSection) {
-  return (current: SettingsSectionRequest) => ({ section, request: current.request + 1 })
+function requestSettingsSection(section: SettingsSection, view?: SettingsSectionRequest['view']) {
+  return (current: SettingsSectionRequest) => ({ section, view, request: current.request + 1 })
 }
 
 export function resolveSendAvailability(input: {
@@ -832,10 +845,10 @@ export function App() {
   const providerAccountsRef = useRef(providerAccounts)
   providerAccountsRef.current = providerAccounts
   const [acpAgents, setAcpAgents] = useState<ResultOf<'acp.agents'>['agents']>([])
-  const [acpRoster, setAcpRoster] = useState(readAcpRoster)
-  // Read by the catalog run, which must not restart when an agent is added.
-  const acpRosterRef = useRef(acpRoster)
-  acpRosterRef.current = acpRoster
+  const [providerRoster, setProviderRoster] = useState(readProviderRoster)
+  // Read by the catalog run, which must not restart when a provider is added.
+  const providerRosterRef = useRef(providerRoster)
+  providerRosterRef.current = providerRoster
   const [modelConnections, setModelConnections] = useState<ModelConnection[]>([])
   const [catalogRequest, setCatalogRequest] = useState(0)
   /** When the catalog was last listed, however that started. */
@@ -1185,8 +1198,11 @@ export function App() {
   /** The live catalog with user-defined models appended. Everything below
    *  reads this merged list; the cache only ever stores the server catalog. */
   const models = useMemo(
-    () => mergeCustomModels(catalogModels, customModels),
-    [catalogModels, customModels],
+    () =>
+      mergeCustomModels(catalogModels, customModels).filter((choice) =>
+        rosterAllows(providerRoster, modelSource(choice)),
+      ),
+    [catalogModels, customModels, providerRoster],
   )
   const catalogModelsRef = useRef(catalogModels)
   catalogModelsRef.current = catalogModels
@@ -1336,7 +1352,9 @@ export function App() {
   }, [settingsOpen, discoverEveryModelSource])
   const selectableImplicitChoice =
     implicitChoice &&
-    (!activeModelSource || modelSource(implicitChoice) === activeModelSource) &&
+    (activeModelSource
+      ? modelSource(implicitChoice) === activeModelSource
+      : rosterAllows(providerRoster, modelSource(implicitChoice))) &&
     (models.length === 0 ||
       preferredSourcePending ||
       (activeModelSource && !sourceHasCatalogModels))
@@ -1360,19 +1378,23 @@ export function App() {
     selectableModels.find((choice) => choice.model.isDefault) ??
     selectableModels[0] ??
     selectableImplicitChoice
-  const sendAvailability = modelChoicePending
-    ? 'loading'
-    : resolveSendAvailability({
-        catalog: catalogAvailability,
-        serverBoundSession: Boolean(
-          activeSession && activeSession.provider === provider && !implicitChoice,
-        ),
-        activeProvider: activeSession?.provider,
-        selectedChoice: selectedModelChoice,
-        connections: modelConnections,
-        providerStatuses,
-        accountCheck,
-      })
+  // A new chat with nothing added has no provider to start on.
+  const noProviderAdded = !activeSession && providerRoster?.length === 0 && models.length === 0
+  const sendAvailability: SendAvailability = noProviderAdded
+    ? 'no-provider'
+    : modelChoicePending
+      ? 'loading'
+      : resolveSendAvailability({
+          catalog: catalogAvailability,
+          serverBoundSession: Boolean(
+            activeSession && activeSession.provider === provider && !implicitChoice,
+          ),
+          activeProvider: activeSession?.provider,
+          selectedChoice: selectedModelChoice,
+          connections: modelConnections,
+          providerStatuses,
+          accountCheck,
+        })
   // One effective setup drives both the picker and requests. State can briefly
   // contain values from storage or the model that was just hidden; resolving
   // in render prevents that transition from leaking into an immediate send.
@@ -2189,7 +2211,8 @@ export function App() {
             status.installed &&
             status.capabilities &&
             !status.problem &&
-            status.auth !== 'unauthenticated',
+            status.auth !== 'unauthenticated' &&
+            rosterAllows(providerRosterRef.current, status.id),
         )
         if (fallback) {
           setProvider(fallback.id)
@@ -2235,7 +2258,7 @@ export function App() {
       setPendingModelSources(
         new Set([
           ...providers
-            .filter((entry) => entry.installed)
+            .filter((entry) => entry.installed && rosterAllows(providerRosterRef.current, entry.id))
             .map((entry) => sourceKey({ provider: entry.id })),
           ...(sourceAgentRef.current
             ? [sourceKey({ provider: providerRef.current, agentId: sourceAgentRef.current })]
@@ -2416,7 +2439,14 @@ export function App() {
       }
       const directPromise = Promise.all(
         providers
-          .filter((entry) => entry.installed && entry.id !== 'acp' && entry.id !== 'api')
+          .filter(
+            (entry) =>
+              entry.installed &&
+              entry.id !== 'acp' &&
+              entry.id !== 'api' &&
+              // Only added providers start for their models.
+              rosterAllows(providerRosterRef.current, entry.id),
+          )
           .map((entry) =>
             trackSource(sourceKey({ provider: entry.id }), () => discoverProvider(entry)),
           ),
@@ -2467,7 +2497,8 @@ export function App() {
         setAcpAgents(agents)
         // Only agents added under Settings › Providers start for their models.
         const listed = agents.filter(
-          (agent) => agent.installed && acpRosterRef.current?.includes(agent.id),
+          (agent) =>
+            agent.installed && rosterAllows(providerRosterRef.current, agentRosterKey(agent.id)),
         )
         setPendingModelSources(
           (current) =>
@@ -2634,9 +2665,15 @@ export function App() {
         })
       }
       const stored = readSetting(MODEL_KEY)
-      const customPool = customModelsRef.current.map((entry) =>
-        customModelChoice(entry, providerDisplayName(entry.provider), providerMark(entry.provider)),
-      )
+      const customPool = customModelsRef.current
+        .filter((entry) => rosterAllows(providerRosterRef.current, entry.provider))
+        .map((entry) =>
+          customModelChoice(
+            entry,
+            providerDisplayName(entry.provider),
+            providerMark(entry.provider),
+          ),
+        )
       const all = [...catalog, ...customPool]
       // A hidden model cannot remain the internal selection. Otherwise the
       // picker shows no such choice while a turn can still silently use it.
@@ -4493,29 +4530,37 @@ export function App() {
     setCatalogRequest((request) => request + 1)
   }, [])
 
-  const changeAcpRoster = useCallback(
-    (roster: readonly string[]) => {
-      acpRosterRef.current = roster
-      writeAcpRoster(roster)
-      setAcpRoster(roster)
+  const changeProviderRoster = useCallback(
+    (roster: ProviderRoster) => {
+      providerRosterRef.current = roster
+      writeProviderRoster(roster)
+      setProviderRoster(roster)
       refreshCatalog()
     },
     [refreshCatalog],
   )
-  // Agents were listed without being added until the roster existed: the
-  // first one keeps every agent that already has a chat, so those chats keep
-  // their models, and starts empty for everyone else.
+  // The roster is saved the first time the app knows enough to start it: a
+  // first run starts with nothing added and picks in setup, while someone who
+  // used the app before keeps what they saw and every source with a chat.
   useEffect(() => {
-    if (acpRoster !== undefined || projectsStatus !== 'ready') return
-    const inUse = acpAgentsInUse(projects)
-    if (inUse.length > 0) {
-      changeAcpRoster(inUse)
-      return
-    }
-    acpRosterRef.current = inUse
-    writeAcpRoster(inUse)
-    setAcpRoster(inUse)
-  }, [acpRoster, projectsStatus, projects, changeAcpRoster])
+    if (providerRoster !== undefined || projectsStatus === 'loading') return
+    if (catalogAvailability !== 'ready') return
+    const firstRun = projectsStatus === 'ready' && projects.length === 0 && !onboardingDismissed
+    const roster = firstRun ? [] : seedProviderRoster({ providers: providerStatuses, projects })
+    providerRosterRef.current = roster
+    writeProviderRoster(roster)
+    setProviderRoster(roster)
+    // Until now every installed direct provider was listed and no ACP agent.
+    if (roster.some((key) => rosterAgent(key) !== undefined)) refreshCatalog()
+  }, [
+    providerRoster,
+    projectsStatus,
+    projects,
+    catalogAvailability,
+    onboardingDismissed,
+    providerStatuses,
+    refreshCatalog,
+  ])
 
   const handleAccountChange = useCallback(
     (changedProvider: ProviderId, changedAccount: Account) => {
@@ -5643,11 +5688,14 @@ export function App() {
   useEffect(() => {
     setSearchJump((current) => (current && current.threadId !== activeId ? undefined : current))
   }, [activeId])
-  const openSettings = useCallback((section: SettingsSection = 'workflows') => {
-    setSettingsSection(requestSettingsSection(section))
-    setSettingsReturning(false)
-    setSettingsOpen(true)
-  }, [])
+  const openSettings = useCallback(
+    (section: SettingsSection = 'workflows', view?: SettingsSectionRequest['view']) => {
+      setSettingsSection(requestSettingsSection(section, view))
+      setSettingsReturning(false)
+      setSettingsOpen(true)
+    },
+    [],
+  )
   const changeKeybinding = useCallback((action: KeybindingId, shortcut: Shortcut | null) => {
     setKeybindings((current) => {
       const next = { ...current, [action]: shortcut }
@@ -5664,6 +5712,9 @@ export function App() {
     refreshCatalog()
     openSettings('providers')
   }, [refreshCatalog, openSettings])
+  const openProviderPicker = useCallback(() => {
+    openSettings('providers', 'add-providers')
+  }, [openSettings])
   // Settings would run the same read that just failed; asking again is the fix.
   const retryAccountCheck = useCallback(() => setAuthStatusRequest((current) => current + 1), [])
   // A CLI installed or signed in outside the app shows up when the window gets
@@ -6683,7 +6734,9 @@ export function App() {
                     onProjectChange={selectProject}
                     onBranchChange={changeBranch}
                     onProjectRequired={requireProject}
-                    onSetupProvider={openProviderSetup}
+                    onSetupProvider={
+                      sendAvailability === 'no-provider' ? openProviderPicker : openProviderSetup
+                    }
                     onSend={sendTurn}
                     onSteer={steerTurn}
                     onFeedbackCommand={feedback.status.enabled ? openCommandFeedback : undefined}
@@ -6823,8 +6876,9 @@ export function App() {
               onProfileIdentityChange={updateProfileIdentity}
               providerStatuses={providerStatuses}
               acpAgents={acpAgents}
-              acpRoster={acpRoster ?? EMPTY_ACP_ROSTER}
-              onAcpRosterChange={changeAcpRoster}
+              providerRoster={providerRoster}
+              onProviderRosterChange={changeProviderRoster}
+              providersView={settingsSection.view}
               modelConnections={modelConnections}
               providersLoading={catalogAvailability === 'loading'}
               models={models}
@@ -6874,11 +6928,13 @@ export function App() {
             themePreference={themePreference}
             onThemePreferenceChange={setThemePreference}
             providerStatuses={providerStatuses}
+            acpAgents={acpAgents}
+            providerRoster={providerRoster ?? EMPTY_PROVIDER_ROSTER}
+            onProviderRosterChange={changeProviderRoster}
             onAddProject={() => {
               setOnboardingPreview(false)
               void addProject()
             }}
-            onOpenProviders={() => openSettings('providers')}
             onDismiss={() => {
               setOnboardingMounted(false)
               if (onboardingPreview) {
