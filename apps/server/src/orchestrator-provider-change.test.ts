@@ -56,6 +56,8 @@ function setup(
     stopFailures?: number
     /** Context sizes an engine knows per model, as OpenCode lists them. */
     modelWindows?: Partial<Record<ProviderId, Record<string, number>>>
+    /** An engine whose model lookup never answers. */
+    modelWindowHangs?: ProviderId
   } = {},
 ) {
   const launches: Launch[] = []
@@ -82,6 +84,9 @@ function setup(
       ...(behaviour.promptLimit?.[provider] === undefined
         ? {}
         : { promptLimit: behaviour.promptLimit[provider] }),
+      ...(behaviour.modelWindowHangs === provider
+        ? { modelContextWindow: () => new Promise<number | undefined>(() => {}) }
+        : {}),
       ...(behaviour.modelWindows?.[provider] === undefined
         ? {}
         : {
@@ -420,6 +425,32 @@ describe('moving a chat to another provider', () => {
     // Half a character per token of a 16,000-token window.
     expect(sent.indexOf('\n</earlier_conversation>') - open).toBeLessThanOrEqual(8_000)
     expect(sent).toContain('FIRST REQUEST')
+    await orchestrator.disposeAll()
+  })
+
+  it('does not hold the handover for an engine that cannot say its model window', async () => {
+    const repo = repository()
+    const { orchestrator, store, sessions } = setup(undefined, { modelWindowHangs: 'opencode' })
+    const chat = await orchestrator.startThread('codex', repo)
+    store.append(chat.id, {
+      type: 'item.completed',
+      item: {
+        id: 'said',
+        turnId: 'old-turn',
+        type: 'message',
+        role: 'user',
+        status: 'completed',
+        text: 'Remember ZEBRA-1',
+        createdAt: 1,
+      },
+    })
+
+    await orchestrator.changeProvider(chat.id, { provider: 'opencode' })
+    const started = Date.now()
+    await orchestrator.sendTurn(chat.id, 'Continue', [], { model: 'provider/model' })
+
+    expect(Date.now() - started).toBeLessThan(5_000)
+    expect(sessions.at(-1)!.sent[0]).toContain('ZEBRA-1')
     await orchestrator.disposeAll()
   })
 

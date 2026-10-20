@@ -176,6 +176,12 @@ type HistoryRead = { events: HistoryEntry[]; serializedEvents?: string | undefin
 
 /** How far back a continued chat's first prompt follows chats that continued one another. */
 const MAX_CONTINUED_CHATS = 8
+/**
+ * How long a handover waits for its engine to say how large the model's
+ * context is. A lookup is a local call; one that hangs gets the default size
+ * rather than holding the turn.
+ */
+const MODEL_WINDOW_WAIT_MS = 2_000
 
 type DesignAgentModule = typeof import('@harness/design-agent')
 let loadedDesignAgent: DesignAgentModule | undefined
@@ -3881,7 +3887,12 @@ export class Orchestrator {
     const [history, workspace, modelWindow] = await Promise.all([
       this.history(threadId),
       workspaceChanges(this.#repoPath(threadId)).catch(() => undefined),
-      session.modelContextWindow?.(model).catch(() => undefined),
+      session.modelContextWindow
+        ? abortable(
+            session.modelContextWindow(model),
+            AbortSignal.timeout(MODEL_WINDOW_WAIT_MS),
+          ).catch(() => undefined)
+        : undefined,
     ])
     const own = history.filter((entry) => entry.seq <= through)
     const earlier = await this.#earlierChats(threadId, own[0]?.seq)
