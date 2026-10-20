@@ -70,4 +70,37 @@ describe('ComposerAccountChip', () => {
       ),
     )
   })
+
+  it('says why a refused choice snapped back', async () => {
+    const transport = new TestTransport((method) => {
+      if (method === 'accounts.list') return { accounts: [defaultAccount, work], active: {} }
+      if (method === 'accounts.setActive') {
+        return Promise.reject(new Error('That account does not exist any more.'))
+      }
+      throw new Error(`unexpected ${method}`)
+    })
+    const reported: Array<string | undefined> = []
+    render(
+      <ComposerAccountChip
+        transport={transport}
+        provider="codex"
+        onError={(message) => reported.push(message)}
+      />,
+    )
+
+    fireEvent.click(await screen.findByRole('button', { name: 'New chat account' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: /Work/ }))
+
+    await waitFor(() =>
+      expect(reported).toEqual([
+        undefined,
+        'New chats could not switch to Work. That account does not exist any more.',
+      ]),
+    )
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'New chat account' }).textContent).toContain(
+        'Default',
+      ),
+    )
+  })
 })

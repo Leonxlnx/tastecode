@@ -588,6 +588,7 @@ function ComposerComponent(props: {
   const [voiceState, setVoiceState] = useState<ComposerVoiceState>('idle')
   const [voiceError, setVoiceError] = useComposerError()
   const [queueError, setQueueError] = useComposerError()
+  const [accountError, setAccountError] = useComposerError()
   const editingQueue = useRef(new Set<string>())
   const [dragging, setDragging] = useState(false)
   const [draggedQueueId, setDraggedQueueId] = useState<string>()
@@ -1528,6 +1529,8 @@ function ComposerComponent(props: {
     unsupportedAttachmentIssue ?? attachmentError,
     voiceError,
     queueError,
+    // Only while the choice is on screen: an open chat keeps its own account.
+    props.accountProvider ? accountError : undefined,
   ].filter((error): error is ComposerError => error !== undefined)
 
   const selectResource = (resource: ComposerResource) => {
@@ -2209,6 +2212,7 @@ function ComposerComponent(props: {
                         <ComposerAccountChip
                           transport={props.transport}
                           provider={props.accountProvider}
+                          onError={setAccountError}
                         />
                       ) : null}
                     </div>

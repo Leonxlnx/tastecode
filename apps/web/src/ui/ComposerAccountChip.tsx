@@ -1,5 +1,6 @@
 import { DEFAULT_ACCOUNT_ID, type ProviderId } from '@harness/contracts'
 import { IconUserCircle as UserCircle } from '@tabler/icons-react'
+import { errorMessage } from '../boundary.js'
 import { accountsOf, activeAccountOf, useProviderAccounts } from '../provider-accounts-state.js'
 import type { Transport } from '../transport.js'
 import { Menu, MenuItem } from './Menu.js'
@@ -9,9 +10,14 @@ import '../styles/composer-account.css'
  * Which of the provider's accounts a new chat starts on, beside the other
  * composer tools. Shown only once the provider has a second account. Picking
  * one makes it the provider's active account, which is what the server pins a
- * new chat to when the chat names none.
+ * new chat to when the chat names none. A refused choice snaps back and is
+ * reported through `onError`, beside the composer's other errors.
  */
-export function ComposerAccountChip(props: { transport: Transport; provider: ProviderId }) {
+export function ComposerAccountChip(props: {
+  transport: Transport
+  provider: ProviderId
+  onError?: ((message: string | undefined) => void) | undefined
+}) {
   const { store, snapshot } = useProviderAccounts(props.transport, true)
   const accounts = accountsOf(snapshot, props.provider)
   if (accounts.length < 2) return null
@@ -51,7 +57,14 @@ export function ComposerAccountChip(props: { transport: Transport; provider: Pro
             active={account.id === active.id}
             onClick={() => {
               close()
-              void store.setActive(props.provider, account.id).catch(() => undefined)
+              props.onError?.(undefined)
+              void store
+                .setActive(props.provider, account.id)
+                .catch((error: unknown) =>
+                  props.onError?.(
+                    `New chats could not switch to ${account.label}. ${errorMessage(error, 'Try again.')}`,
+                  ),
+                )
             }}
           />
         ))
