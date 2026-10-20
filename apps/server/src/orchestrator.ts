@@ -766,6 +766,7 @@ export class Orchestrator {
   #idleThreadRuntimeMs: number
   #controls: ProviderControls
   #modelLists: ModelListCache
+  #providerBinary: ((provider: ProviderId) => Promise<string | undefined>) | undefined
   /** The account each provider's model lists were read for, to notice a switch made outside the app. */
   #modelListAccounts = new Map<ProviderId, AccountIdentity>()
   /** The default account's controls and model lists. */
@@ -845,6 +846,9 @@ export class Orchestrator {
       beforeLimitRead?: () => Promise<void>
       /** Test override for the provider services behind settings and inventories. */
       providerServices?: ProviderControlsOptions['services']
+      /** Names the binary a provider's own model lists come from (path and version). */
+      providerBinary?: (provider: ProviderId) => Promise<string | undefined>
+
       /** Where isolated checkouts live. Outside any repository, on purpose. */
       worktreeRoot?: string
     },
@@ -939,7 +943,9 @@ export class Orchestrator {
         read: () => this.#store.modelListSnapshot(),
         write: (value) => this.#store.setModelListSnapshot(value),
       },
+      binary: handlers.providerBinary,
     })
+    this.#providerBinary = handlers.providerBinary
     this.#defaultScope = {
       controls: this.#controls,
       modelLists: this.#modelLists,
@@ -991,6 +997,8 @@ export class Orchestrator {
       onChanged: (_provider, agent) => this.#onModelsChanged(provider, agent, accountId),
       onLog: (line) => this.#onLog(line),
       snapshot: snapshot('models'),
+      // Every account runs the same CLI, so its lists follow the same binary.
+      binary: this.#providerBinary,
     })
     return { accountId, controls, modelLists, modelListAccounts: new Map() }
   }
