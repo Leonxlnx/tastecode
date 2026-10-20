@@ -754,17 +754,19 @@
           </li>
         </ul>
 
-        <h3>Kimi CLI (over ACP) <span class="pill-parked">nightly only</span></h3>
+        <h3>ACP agents (one shared adapter) <span class="pill-parked">nightly only</span></h3>
         <ul class="check">
           <li>
             <label
               ><input type="checkbox" /><span
-                >Full agent loop through the shared ACP adapter
+                >Agent library in Settings › Providers
                 <span class="d"
-                  >the adapter declares one Kimi K line, so the newest K version and its variants
-                  (K3, K3-256k) start on and older K versions such as K2.7 start hidden; a model
-                  switch in a running chat is sent through the agent's session config option before
-                  the next turn, and a rejected switch fails before the turn opens</span
+                  >an ACP agents section lists Devin, GitHub Copilot, Droid, Cline, goose, Junie,
+                  Auggie, Mistral Vibe, Kilo, Qoder, CodeBuddy and Kimi CLI in a fixed order, each
+                  with the monochrome mark the ACP registry publishes for it; an installed agent is
+                  wired like the provider roster, one that is not names its maker and installs with
+                  the vendor's own script or npm package in the install terminal; one Check again
+                  looks for agents installed outside the app</span
                 ></span
               ></label
             >
@@ -772,8 +774,38 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Signed-in state via credential existence probe, sign out removes the
-                credential</span
+                >Sign-in state from the agent itself
+                <span class="d"
+                  >the CLI's status command (Devin), the file a login leaves behind (Kimi), or a
+                  session started without a prompt, which an agent that is not signed in refuses
+                  with auth_required; Sign in opens the agent's own login command, and Sign out is
+                  offered only where a logout command or credential file can do it</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Models from the agent's session
+                <span class="d"
+                  >the model select a new session names (or the draft models list) becomes the
+                  picker's list, and a chat applies its model through that select; Kimi keeps its
+                  own catalog, and the adapter declares one Kimi K line, so the newest K version and
+                  its variants start on and older K versions start hidden</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Full agent loop through the shared ACP adapter
+                <span class="d"
+                  >turns, reasoning, tool calls, approvals, usage and commands; a model switch in a
+                  running chat is sent through the agent's session config option before the next
+                  turn, and a rejected switch fails before the turn opens</span
+                ></span
               ></label
             >
           </li>
