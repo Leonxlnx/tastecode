@@ -166,6 +166,10 @@ it('stops the running chats after one confirmation on Install now', async () => 
   expect(gate.stopRunningChats).not.toHaveBeenCalled()
   const stop = screen.getByRole('menuitem', { name: 'Stop 2 chats and install' })
   expect(stop.className).toContain('menu__item--danger')
+  // The safe choice takes the focus the clicked item lost.
+  await waitFor(() =>
+    expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: 'Keep waiting' })),
+  )
   // Keep waiting goes back without stopping anything.
   fireEvent.click(screen.getByRole('menuitem', { name: 'Keep waiting' }))
   expect(gate.stopRunningChats).not.toHaveBeenCalled()
