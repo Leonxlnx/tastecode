@@ -324,6 +324,32 @@ describe('moving a chat to another provider', () => {
     await third.orchestrator.disposeAll()
   })
 
+  it('carries the handover again when the first turn there ends before any answer', async () => {
+    const repo = repository()
+    const { orchestrator, sessions } = setup()
+    const chat = await orchestrator.startThread('codex', repo)
+    await send(orchestrator, chat.id, 'Rename the config loader')
+    await settle()
+    sessions[0]!.finish('Renamed.')
+    await orchestrator.changeProvider(chat.id, { provider: 'cursor' })
+
+    // The CLI could not start, so the turn failed before the agent read anything.
+    await send(orchestrator, chat.id, 'Go on')
+    await settle()
+    sessions[1]!.finish(undefined, 'failed')
+    await send(orchestrator, chat.id, 'Go on, please')
+    expect(sessions[1]!.sent[1]!.startsWith(HANDOVER_CONTEXT_NOTICE)).toBe(true)
+    expect(sessions[1]!.sent[1]).toContain('Rename the config loader')
+    expect(sessions[1]!.sent[1]!.endsWith('User request:\nGo on, please')).toBe(true)
+
+    // This time the agent answered before the turn failed: it has the context.
+    await settle()
+    sessions[1]!.finish('Partly done.', 'failed')
+    await send(orchestrator, chat.id, 'Finish it')
+    expect(sessions[1]!.sent[2]).toBe('Finish it')
+    await orchestrator.disposeAll()
+  })
+
   it('fits the handover into an engine that limits its prompt', async () => {
     const repo = repository()
     const { orchestrator, store, sessions } = setup(undefined, {

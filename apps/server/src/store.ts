@@ -4417,6 +4417,11 @@ export class Store {
     this.#db.prepare('UPDATE threads SET handover_pending = 0 WHERE id = ?').run(threadId)
   }
 
+  /** The handover did not reach the new session after all; the next prompt carries it again. */
+  rearmThreadHandover(threadId: string): void {
+    this.#db.prepare('UPDATE threads SET handover_pending = 1 WHERE id = ?').run(threadId)
+  }
+
   /** Sessions of this provider that chats ran on before they moved elsewhere. */
   leftProviderSessions(provider: ProviderId): string[] {
     return sqliteRows<{ session_id: string }>(

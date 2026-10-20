@@ -701,6 +701,12 @@ export class Orchestrator {
   #resumingThreads = new Map<string, Promise<void>>()
   /** Chats whose provider session is being replaced; nothing may start a turn meanwhile. */
   #changingProvider = new Set<string>()
+  /**
+   * The turn that carried a chat's handover, until it ends. An engine that
+   * runs a process per turn accepts the prompt before it reads it, so a turn
+   * that ends without any answer may never have delivered the handover.
+   */
+  #handoverTurns = new Map<string, { turnId: string; answered: boolean }>()
   #panicGeneration = 0
   #panicStopping = false
   #panicStop: Promise<PanicStopResult> | undefined
@@ -2067,6 +2073,32 @@ export class Orchestrator {
     }
   }
 
+  /**
+   * A handover turn that ends stopped or failed before the agent produced
+   * anything may never have reached it, as when its CLI could not start; the
+   * next prompt then carries the handover again. Context sent twice costs
+   * little, context missing costs the work.
+   */
+  #watchHandoverTurn(threadId: string, event: DomainEvent): void {
+    const watched = this.#handoverTurns.get(threadId)
+    if (!watched) return
+    if (
+      (event.type === 'item.started' || event.type === 'item.completed') &&
+      event.item.turnId === watched.turnId &&
+      event.item.role !== 'user' &&
+      event.item.type !== 'error'
+    ) {
+      watched.answered = true
+    } else if (event.type === 'item.delta' && event.turnId === watched.turnId) {
+      watched.answered = true
+    } else if (event.type === 'turn.completed' && event.turnId === watched.turnId) {
+      this.#handoverTurns.delete(threadId)
+      if (event.status !== 'completed' && !watched.answered && this.#store.thread(threadId)) {
+        this.#store.rearmThreadHandover(threadId)
+      }
+    }
+  }
+
   /** What has to be settled before a chat may move to another provider. */
   #assertCanChangeProvider(threadId: string): void {
     if (this.isTurnRunning(threadId)) {
@@ -2546,7 +2578,10 @@ export class Orchestrator {
       this.#acceptTurnStart(threadId, turnId, pendingStart)
       this.#store.clearThreadRestoreContext(threadId)
       if (continuation) this.#store.clearThreadContinueContext(threadId)
-      if (handover) this.#store.clearThreadHandover(threadId)
+      if (handover) {
+        this.#store.clearThreadHandover(threadId)
+        this.#handoverTurns.set(threadId, { turnId, answered: false })
+      }
       return turnId
     } catch (error) {
       if (this.#threads.get(threadId) === entry) this.#markIdleRuntimeEligible(threadId)
@@ -4242,6 +4277,12 @@ export class Orchestrator {
       this.#runtimeRecency.delete(threadId)
     }
     const providerStopped = this.#stopThreadProvider(threadId, entry?.session)
+    // A session gone before its handover turn ended may never have read it.
+    const handover = this.#handoverTurns.get(threadId)
+    this.#handoverTurns.delete(threadId)
+    if (handover && !handover.answered && this.#store.thread(threadId)) {
+      this.#store.rearmThreadHandover(threadId)
+    }
     this.#idleRuntimeEligible.delete(threadId)
     this.#mcpStaleRuntimes.delete(threadId)
     this.#runtimeOperationCounts.delete(threadId)
@@ -5185,6 +5226,7 @@ ${JSON.stringify(deck, null, 2)}
   }
 
   #handleSessionEvent(threadId: string, event: DomainEvent): void {
+    this.#watchHandoverTurn(threadId, event)
     const designFlow = this.#designFlows.get(threadId)
     // After a not-design classification the turn is ordinary work, and its
     // questions belong to the user.
