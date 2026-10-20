@@ -554,6 +554,22 @@ export const ProviderAccountHomeSchema = z.discriminatedUnion('kind', [
 ])
 export type ProviderAccountHome = z.infer<typeof ProviderAccountHomeSchema>
 
+/**
+ * A config folder on this machine that a provider's CLI has used and that is
+ * not an account here yet, such as a second `~/.claude_work` or
+ * `~/.codex-personal` the user or another tool set up. Found from folder
+ * names and dates alone: nothing inside it is read and no CLI runs in it.
+ */
+export const DetectedAccountHomeSchema = z.object({
+  provider: ProviderIdSchema,
+  home: AbsoluteFolderSchema,
+  /** A name taken from the folder's own, free among the provider's accounts. */
+  label: z.string().trim().min(1).max(80),
+  /** When the CLI last wrote there, in epoch milliseconds. */
+  lastUsed: z.number().int().nonnegative().optional(),
+})
+export type DetectedAccountHome = z.infer<typeof DetectedAccountHomeSchema>
+
 /** Actionable setup information supplied by the provider adapter. */
 export const ProviderSetupSchema = z.object({
   installUrl: z.url(),

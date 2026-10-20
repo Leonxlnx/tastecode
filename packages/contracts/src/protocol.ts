@@ -13,6 +13,7 @@ import {
   BackgroundModelSettingsSchema,
   CustomHarnessSchema,
   CustomHarnessVerificationSchema,
+  DetectedAccountHomeSchema,
   DomainEventSchema,
   ModelSchema,
   ProviderAccountHomeSchema,
@@ -1324,6 +1325,15 @@ export const methods = {
       deleteHome: z.boolean().optional(),
     }),
     result: z.object({}),
+  },
+  /**
+   * Config folders of providers that keep accounts apart by folder which a
+   * CLI has used and which are not accounts yet, to offer as accounts. Add one
+   * with `accounts.create` and an `existing` home.
+   */
+  'accounts.detect': {
+    params: z.object({}),
+    result: z.object({ found: z.array(DetectedAccountHomeSchema) }),
   },
   /** Choose the account new chats with this provider start on. */
   'accounts.setActive': {

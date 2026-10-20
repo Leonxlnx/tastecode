@@ -2132,6 +2132,23 @@ describe('provider account contracts', () => {
     expect(channels['accounts.changed'].safeParse({}).success).toBe(false)
   })
 
+  it('lists config folders found on the machine to offer as accounts', () => {
+    const found = {
+      provider: 'claude-code',
+      home: '/Users/me/.claude_personal',
+      label: 'Personal',
+      lastUsed: 1_790_000_000_000,
+    }
+    const detect = methods['accounts.detect']
+    expect(detect.params.parse({})).toEqual({})
+    expect(detect.result.parse({ found: [found] })).toEqual({ found: [found] })
+    const { lastUsed: _, ...undated } = found
+    expect(detect.result.parse({ found: [undated] })).toEqual({ found: [undated] })
+    for (const bad of [{ home: 'relative/dir' }, { label: '' }, { provider: 'nobody' }]) {
+      expect(detect.result.safeParse({ found: [{ ...found, ...bad }] }).success).toBe(false)
+    }
+  })
+
   it('scopes sign-in, models and limits to an optional account', () => {
     for (const method of [
       'auth.status',
