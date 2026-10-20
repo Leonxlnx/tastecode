@@ -1120,8 +1120,17 @@
                   provider once with each account under it, the card's figure is each provider's
                   active account, and a Usage sheet sums its accounts and lists each one with its
                   tokens and limits. Profile &gt; Accounts lists further accounts (Codex · Work,
-                  plan or Signed out, never an email). Not yet: per-account Sign out, continuing a
-                  chat on another account, MCP/skills inventory and history import per account</span
+                  plan or Signed out, never an email). When a turn fails while the chat's account is
+                  at a plan limit (a window at 100% that has not reset) and another account of the
+                  provider is signed in, the error offers Continue on Work (a menu, Continue on
+                  another account, when there are several); never automatic. It starts a new chat
+                  pinned to that account in the same project (an isolated chat's branch as base),
+                  with the failed request in its composer; its first prompt carries the earlier
+                  chat's conversation as untrusted context (the Side chat snapshot, kept in the
+                  provider's own session), the transcript shows only the user's words, and the
+                  earlier chat is left as it was and shows Continued in a new chat on Work with Open
+                  chat. Not yet: per-account Sign out, MCP/skills inventory and history import per
+                  account</span
                 ></span
               ></label
             >

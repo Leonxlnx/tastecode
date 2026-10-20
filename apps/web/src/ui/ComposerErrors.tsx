@@ -1,5 +1,6 @@
 import { useCallback, useState } from 'react'
-import { IconAlertCircle, IconArrowRight, IconX } from '@tabler/icons-react'
+import { IconAlertCircle, IconArrowRight, IconChevronDown, IconX } from '@tabler/icons-react'
+import { Menu, MenuItem } from './Menu.js'
 import '../styles/composer-provider-shelf.css'
 
 export type ComposerError = {
@@ -7,6 +8,16 @@ export type ComposerError = {
   message: string
   role?: 'alert' | 'status'
   action?: { label: string; run: () => void }
+  /** One action with several places to go, offered as a menu instead of a button. */
+  choices?: {
+    label: string
+    options: ReadonlyArray<{
+      id: string
+      label: string
+      detail?: string | undefined
+      run: () => void
+    }>
+  }
   /** Opens the feedback dialog with this error attached. Never sends anything itself. */
   report?: () => void
   dismiss?: () => void
@@ -52,6 +63,34 @@ export function ComposerErrors({
               {error.action.label}
               <IconArrowRight size={13} aria-hidden />
             </button>
+          ) : error.choices ? (
+            <Menu
+              align="right"
+              drop="up"
+              triggerClassName="composer__provider-action"
+              panelLabel={error.choices.label}
+              trigger={() => (
+                <>
+                  {error.choices!.label}
+                  <IconChevronDown size={13} aria-hidden />
+                </>
+              )}
+            >
+              {(close) =>
+                error.choices!.options.map((option) => (
+                  <MenuItem
+                    key={option.id}
+                    title={option.label}
+                    detail={option.detail}
+                    icon={null}
+                    onClick={() => {
+                      close()
+                      option.run()
+                    }}
+                  />
+                ))
+              }
+            </Menu>
           ) : null}
           {error.report && error.role !== 'status' ? (
             <button

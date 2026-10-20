@@ -155,6 +155,8 @@ export type Session = {
   connectionId?: string | undefined
   /** The provider account the chat is pinned to. Absent means default. */
   accountId?: string | undefined
+  /** The earlier chat this one carries on, such as after a plan limit on another account. */
+  continuedFrom?: string | undefined
   createdAt: number
   /** Client-observed start of the current status, used for elapsed/relative labels. */
   statusSince?: number | undefined
