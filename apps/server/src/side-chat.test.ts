@@ -140,4 +140,31 @@ describe('continued chat context', () => {
     expect(continuationPromptFromReplay([], 'Hi')).toBeUndefined()
     expect(withoutContinuationContext('User request:\nHi')).toBe('User request:\nHi')
   })
+
+  it("says where the earlier chat's uncommitted changes are", () => {
+    const history = [{ event: item('user', 'user', 'Rename the loader') }]
+    const shared = continuationPromptFromReplay(history, 'Go on')!
+    const carried = continuationPromptFromReplay(history, 'Go on', { carried: true })!
+    const kept = continuationPromptFromReplay(history, 'Go on', {
+      carried: false,
+      keptIn: 'D:\\trees\\earlier',
+    })!
+
+    expect(shared).toContain(
+      'The workspace can already hold some of its changes, so check the files before redoing work.',
+    )
+    expect(carried).toContain(
+      'Its uncommitted changes were carried into this workspace, so check the files before redoing work.',
+    )
+    expect(kept).toContain(
+      'Its uncommitted changes could not be carried over; they are still in D:\\trees\\earlier. Check the files there before redoing work.',
+    )
+    expect(carried).not.toContain('The workspace can already hold')
+    expect(kept).not.toContain('The workspace can already hold')
+    // The note is the server's own words, outside the untrusted conversation.
+    expect(kept.indexOf('D:\\trees\\earlier')).toBeLessThan(kept.indexOf('<earlier_conversation>'))
+    for (const prompt of [shared, carried, kept]) {
+      expect(withoutContinuationContext(prompt)).toBe('Go on')
+    }
+  })
 })

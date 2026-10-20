@@ -134,6 +134,12 @@ export type StoredThread = {
   parentThreadId?: string | undefined
   /** The earlier chat this one carries on, such as on another account after a usage limit. */
   continuedFrom?: string | undefined
+  /**
+   * Where the uncommitted changes of the earlier chat's own checkout went when
+   * this chat started: carried into this chat's checkout, or kept where they
+   * were because they could not be. Absent when there were none to carry.
+   */
+  continuedChanges?: 'carried' | 'kept' | undefined
 }
 
 /** Only the fields sent by `projects.list`; recovery-only metadata stays in SQLite. */
@@ -373,6 +379,7 @@ CREATE TABLE IF NOT EXISTS threads (
   parent_thread_id TEXT,
   continued_from   TEXT,
   continue_context_pending INTEGER NOT NULL DEFAULT 0,
+  continued_changes       TEXT,
   restore_context_pending INTEGER NOT NULL DEFAULT 0,
   restored_at             INTEGER,
   history_rewrite_after   INTEGER,
@@ -655,6 +662,7 @@ const ADDED_COLUMNS: Array<{ table: string; column: string; definition: string }
     column: 'continue_context_pending',
     definition: 'INTEGER NOT NULL DEFAULT 0',
   },
+  { table: 'threads', column: 'continued_changes', definition: 'TEXT' },
 ]
 
 type SqliteInteger = number | bigint
@@ -704,6 +712,7 @@ type ThreadRow = {
   ephemeral: SqliteInteger
   parent_thread_id: string | null
   continued_from: string | null
+  continued_changes: string | null
 }
 type SidebarThreadRow = Pick<
   ThreadRow,
@@ -1239,8 +1248,8 @@ export class Store {
         (id, project_path, provider, agent, connection_id, account_id, provider_session_id, title,
           created_at, worktree_path, worktree_branch,
           lifecycle_state, keep_active, unread, last_active_at, ephemeral, parent_thread_id,
-          continued_from, continue_context_pending)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 0, 0, ?, ?, ?, ?, ?)`,
+          continued_from, continue_context_pending, continued_changes)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 0, 0, ?, ?, ?, ?, ?, ?)`,
     )
     this.#listProjects = this.#db.prepare(`SELECT * FROM projects ORDER BY created_at`)
     this.#listProjectThreads = this.#db.prepare(
@@ -1624,6 +1633,7 @@ export class Store {
       stored.continuedFrom ?? null,
       // The earlier conversation goes with the first prompt; see threadNeedsContinueContext.
       stored.continuedFrom === undefined ? 0 : 1,
+      stored.continuedChanges ?? null,
     )
     // A new thread's index covers every row it will ever have.
     if (!this.#threadHasEvents.get(stored.id)) {
@@ -5140,6 +5150,9 @@ function toThread(row: ThreadRow): StoredThread | undefined {
     ephemeral: row.ephemeral === 1,
     ...(row.parent_thread_id === null ? {} : { parentThreadId: row.parent_thread_id }),
     ...(row.continued_from === null ? {} : { continuedFrom: row.continued_from }),
+    ...(row.continued_changes === 'carried' || row.continued_changes === 'kept'
+      ? { continuedChanges: row.continued_changes }
+      : {}),
   }
 }
 

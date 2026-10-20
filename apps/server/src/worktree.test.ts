@@ -1,9 +1,10 @@
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, writeFileSync, existsSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, existsSync, rmSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
+  carryUncommittedChanges,
   createWorktree,
   hasUncommittedChanges,
   isRepository,
@@ -204,6 +205,101 @@ describe('hasUncommittedChanges', () => {
     } finally {
       rmSync(plain, { recursive: true, force: true })
     }
+  })
+})
+
+describe('carryUncommittedChanges', () => {
+  // Bytes no line-ending conversion may touch: a NUL, a lone CR, CRLF, high bytes.
+  const image = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x0d, 0x0a, 0x1a, 0x0a, 0xff, 0x00])
+  const logo = Buffer.from([0x00, 0x01, 0x02, 0xfe, 0xff, 0x0d, 0x00, 0x0a, 0x80])
+  /** Text as git checks it out here; autocrlf may have added CRs. */
+  const text = (file: string) => readFileSync(file, 'utf8').replaceAll('\r\n', '\n')
+
+  beforeEach(() => {
+    writeFileSync(path.join(repo, 'gone.txt'), 'delete me\n')
+    writeFileSync(path.join(repo, 'image.bin'), image)
+    writeFileSync(path.join(repo, '.gitignore'), '*.log\n')
+    git(repo, 'add', '.')
+    git(repo, 'commit', '-m', 'second')
+  })
+
+  it('copies modified, added, deleted, untracked and binary files into the new checkout', async () => {
+    const earlier = await createWorktree(repo, 'thread-earlier-0001', root)
+    writeFileSync(path.join(earlier.path, 'file.txt'), 'edited\n')
+    writeFileSync(path.join(earlier.path, 'staged.txt'), 'staged before the limit\n')
+    git(earlier.path, 'add', 'staged.txt')
+    rmSync(path.join(earlier.path, 'gone.txt'))
+    mkdirSync(path.join(earlier.path, 'notes'))
+    writeFileSync(path.join(earlier.path, 'notes', 'todo.md'), 'not tracked yet\n')
+    writeFileSync(path.join(earlier.path, 'Größe.txt'), 'non-ASCII name\n')
+    writeFileSync(path.join(earlier.path, 'image.bin'), Buffer.concat([image, logo]))
+    writeFileSync(path.join(earlier.path, 'logo.bin'), logo)
+    writeFileSync(path.join(earlier.path, 'debug.log'), 'ignored\n')
+    const earlierStatus = git(earlier.path, 'status', '--porcelain')
+
+    const next = await createWorktree(repo, 'thread-next-0001', root, earlier.branch)
+    expect(await carryUncommittedChanges(earlier.path, next)).toEqual({ carried: true })
+
+    expect(text(path.join(next.path, 'file.txt'))).toBe('edited\n')
+    expect(text(path.join(next.path, 'staged.txt'))).toBe('staged before the limit\n')
+    expect(existsSync(path.join(next.path, 'gone.txt'))).toBe(false)
+    expect(text(path.join(next.path, 'notes', 'todo.md'))).toBe('not tracked yet\n')
+    expect(text(path.join(next.path, 'Größe.txt'))).toBe('non-ASCII name\n')
+    expect(readFileSync(path.join(next.path, 'image.bin'))).toEqual(Buffer.concat([image, logo]))
+    expect(readFileSync(path.join(next.path, 'logo.bin'))).toEqual(logo)
+    // Ignored files are not the chat's work.
+    expect(existsSync(path.join(next.path, 'debug.log'))).toBe(false)
+    // Nothing committed or staged in the new checkout; the branch is where it was.
+    expect(git(next.path, 'rev-parse', 'HEAD')).toBe(git(earlier.path, 'rev-parse', 'HEAD'))
+    expect(git(next.path, 'diff', '--cached', '--name-only')).toBe('')
+    // The earlier checkout is only read.
+    expect(git(earlier.path, 'status', '--porcelain')).toBe(earlierStatus)
+    expect(text(path.join(earlier.path, 'file.txt'))).toBe('edited\n')
+  })
+
+  it('leaves both checkouts as they were when the changes do not apply', async () => {
+    const earlier = await createWorktree(repo, 'thread-earlier-0002', root)
+    // The earlier chat committed on another branch, so its edits sit on a base
+    // the new checkout does not have.
+    git(earlier.path, 'switch', '-c', 'elsewhere')
+    writeFileSync(path.join(earlier.path, 'file.txt'), 'committed elsewhere\n')
+    git(earlier.path, 'commit', '-am', 'elsewhere')
+    writeFileSync(path.join(earlier.path, 'file.txt'), 'edited elsewhere\n')
+    writeFileSync(path.join(earlier.path, 'new.txt'), 'would apply on its own\n')
+    const earlierStatus = git(earlier.path, 'status', '--porcelain')
+
+    const next = await createWorktree(repo, 'thread-next-0002', root, earlier.branch)
+    expect(await carryUncommittedChanges(earlier.path, next)).toMatchObject({ carried: false })
+
+    expect(git(next.path, 'status', '--porcelain')).toBe('')
+    expect(text(path.join(next.path, 'file.txt'))).toBe('original\n')
+    expect(git(earlier.path, 'status', '--porcelain')).toBe(earlierStatus)
+    expect(text(path.join(earlier.path, 'file.txt'))).toBe('edited elsewhere\n')
+  })
+
+  it('leaves changes larger than the limit where they are', async () => {
+    const earlier = await createWorktree(repo, 'thread-earlier-0003', root)
+    writeFileSync(path.join(earlier.path, 'large.txt'), 'x'.repeat(8_192))
+    const next = await createWorktree(repo, 'thread-next-0003', root, earlier.branch)
+
+    expect(await carryUncommittedChanges(earlier.path, next, 1_024)).toEqual({
+      carried: false,
+      reason: 'the changes are larger than 1024 bytes',
+    })
+    expect(git(next.path, 'status', '--porcelain')).toBe('')
+    expect(existsSync(path.join(earlier.path, 'large.txt'))).toBe(true)
+  })
+
+  it('has nothing to carry from a clean checkout or one that is gone', async () => {
+    const clean = await createWorktree(repo, 'thread-earlier-0004', root)
+    const gone = await createWorktree(repo, 'thread-earlier-0005', root)
+    writeFileSync(path.join(gone.path, 'file.txt'), 'lost with its folder\n')
+    rmSync(gone.path, { recursive: true, force: true })
+    const next = await createWorktree(repo, 'thread-next-0004', root)
+
+    expect(await carryUncommittedChanges(clean.path, next)).toBeUndefined()
+    expect(await carryUncommittedChanges(gone.path, next)).toBeUndefined()
+    expect(git(next.path, 'status', '--porcelain')).toBe('')
   })
 })
 
