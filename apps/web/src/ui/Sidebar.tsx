@@ -2142,8 +2142,21 @@ const ArchivedRow = memo(function ArchivedRow(props: {
   )
 })
 
-/** Rows the band shows before it folds the rest behind "+N more". */
+/** Rows the band shows before it folds the rest behind "+N more". A short
+ *  window keeps fewer, so the tree below still has room. */
 const NEEDS_YOU_VISIBLE = 5
+const NEEDS_YOU_VISIBLE_SHORT = 3
+const SHORT_WINDOW = '(max-height: 799px)'
+
+function subscribeShortWindow(onChange: () => void): () => void {
+  const query = window.matchMedia?.(SHORT_WINDOW)
+  query?.addEventListener('change', onChange)
+  return () => query?.removeEventListener('change', onChange)
+}
+
+function readShortWindow(): boolean {
+  return window.matchMedia?.(SHORT_WINDOW).matches ?? false
+}
 
 /**
  * The chats waiting for the user, above everything else. It lists each one a
@@ -2158,7 +2171,9 @@ const NeedsYouBand = memo(function NeedsYouBand(props: {
   onMarkSessionRead: ((id: string) => void) | undefined
 }) {
   const [expanded, setExpanded] = useState(false)
-  const shown = expanded ? props.entries : props.entries.slice(0, NEEDS_YOU_VISIBLE)
+  const short = useSyncExternalStore(subscribeShortWindow, readShortWindow, () => false)
+  const visible = short ? NEEDS_YOU_VISIBLE_SHORT : NEEDS_YOU_VISIBLE
+  const shown = expanded ? props.entries : props.entries.slice(0, visible)
   const folded = props.entries.length - shown.length
   return (
     <section className="needs-band" aria-label="Needs you">
@@ -2175,7 +2190,7 @@ const NeedsYouBand = memo(function NeedsYouBand(props: {
             onMarkSessionRead={props.onMarkSessionRead}
           />
         ))}
-        {folded > 0 || (expanded && props.entries.length > NEEDS_YOU_VISIBLE) ? (
+        {folded > 0 || (expanded && props.entries.length > visible) ? (
           <li className="proj__sessions-toggle-row">
             <button
               type="button"

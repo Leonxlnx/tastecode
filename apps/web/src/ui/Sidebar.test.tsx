@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { Profiler } from 'react'
 import { Sidebar, type Session } from './Sidebar.js'
@@ -1301,7 +1301,15 @@ describe('Sidebar chat actions', () => {
     expect(document.querySelector('.needs-band')).toBeNull()
   })
 
-  it('folds the band after five chats and counts what a folded project holds', () => {
+  it('folds the band after five chats, three on a short window, and counts a folded project', () => {
+    // An earlier test's matchMedia stub must not answer for this one; happy-dom
+    // evaluates the real queries against its page viewport.
+    vi.restoreAllMocks()
+    const page = (window as unknown as { happyDOM: { setViewport(size: object): void } }).happyDOM
+    const height = window.innerHeight
+    const resizeTo = (value: number) => act(() => page.setViewport({ height: value }))
+    resizeTo(900)
+    onTestFinished(() => page.setViewport({ height }))
     const waiting = Array.from({ length: 7 }, (_, index) => ({
       ...session(`thread-${index}`, `Waiting ${index}`),
       status: 'input' as const,
@@ -1343,6 +1351,13 @@ describe('Sidebar chat actions', () => {
     fireEvent.click(within(band).getByRole('button', { name: '+2 more' }))
     expect(band.querySelectorAll('.sessrow')).toHaveLength(7)
     fireEvent.click(within(band).getByRole('button', { name: 'Show less' }))
+    expect(band.querySelectorAll('.sessrow')).toHaveLength(5)
+
+    // Below 800 px of window height the band keeps three rows.
+    resizeTo(799)
+    expect(band.querySelectorAll('.sessrow')).toHaveLength(3)
+    expect(within(band).getByRole('button', { name: '+4 more' })).toBeTruthy()
+    resizeTo(800)
     expect(band.querySelectorAll('.sessrow')).toHaveLength(5)
 
     const folded = screen.getByRole('button', { name: 'Folded project, 7 need you' })
