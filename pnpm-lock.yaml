@@ -97,9 +97,6 @@ importers:
       '@harness/adapter-antigravity':
         specifier: workspace:*
         version: link:../../packages/adapter-antigravity
-      '@harness/adapter-api':
-        specifier: workspace:*
-        version: link:../../packages/adapter-api
       '@harness/adapter-claude-code':
         specifier: workspace:*
         version: link:../../packages/adapter-claude-code
@@ -292,25 +289,6 @@ importers:
       zod:
         specifier: 4.4.3
         version: 4.4.3
-    devDependencies:
-      '@types/node':
-        specifier: ^26.1.1
-        version: 26.1.1
-      typescript:
-        specifier: ^5.9.3
-        version: 5.9.3
-      vitest:
-        specifier: ^4.1.10
-        version: 4.1.10(@types/node@26.1.1)(happy-dom@20.11.1)(vite@8.1.5(@types/node@26.1.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.1))
-
-  packages/adapter-api:
-    dependencies:
-      '@harness/contracts':
-        specifier: workspace:*
-        version: link:../contracts
-      '@harness/proc':
-        specifier: workspace:*
-        version: link:../proc
     devDependencies:
       '@types/node':
         specifier: ^26.1.1

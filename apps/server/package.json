@@ -17,7 +17,6 @@
   "dependencies": {
     "@harness/adapter-acp": "workspace:*",
     "@harness/adapter-antigravity": "workspace:*",
-    "@harness/adapter-api": "workspace:*",
     "@harness/adapter-claude-code": "workspace:*",
     "@harness/adapter-codex": "workspace:*",
     "@harness/adapter-cursor": "workspace:*",
