@@ -349,8 +349,9 @@
                   stay errors; the rolling account/rateLimits/updated values Codex sends during
                   turns merge into the held read without starting a new app-server, so the bars
                   follow a running chat within about a second; full reads happen at most every 5
-                  minutes; background reads skip the reset-credit details, which a shown popup reads
-                  in full</span
+                  minutes, except when the popup opens, on its refresh icon and in the 15-minute
+                  background read; background reads skip the reset-credit details, which a shown
+                  popup reads in full</span
                 ></span
               ></label
             >
@@ -474,12 +475,14 @@
                   non-subscription sessions stay honestly unavailable and malformed responses stay
                   errors; the read skips Claude Code's transcript scan and the IDE auto-connect, IDE
                   extension install and claude.ai connector startup, and times out after 20 s; full
-                  reads happen at most every 15 minutes and only while the account popup or the
-                  Usage page shows the limits; rate_limit_event windows from running chats keep the
-                  session window current in between; two timeouts in a row stop automatic reads
-                  until the account changes, and Retry still reads once more; an answer that says
-                  plan limits apply but carries none is a failed read (Unavailable with Retry and
-                  the last known values), not an account without limits</span
+                  reads happen when the account popup or the Usage page opens, on the popup's
+                  refresh icon and in the 15-minute background read, otherwise at most every 15
+                  minutes and only while the limits are shown; rate_limit_event windows from running
+                  chats keep the session window current in between; two timeouts in a row stop
+                  automatic reads until the account changes, and Retry or the refresh icon still
+                  reads once more; an answer that says plan limits apply but carries none is a
+                  failed read (Unavailable with Retry and the last known values), not an account
+                  without limits</span
                 ></span
               ></label
             >
@@ -998,27 +1001,32 @@
                   keeps them and asks nothing; only the active provider is read at launch, other
                   installed providers when the account popup opens, after which they keep their
                   values and follow pushes; requests carry a read intent (the sidebar figure reads
-                  in the background, an open popup or Usage page reads as visible, Retry as a
-                  retry), a passive figure is answered from held values, and opening the popup asks
-                  each source once and shows held values at once; the dialog keeps every source
-                  separate, distinguishes loading, successful-empty, unavailable, and failure with
-                  one muted word beside the provider (Checking…, Unavailable, Last known, None
-                  reported) and the reason in its tooltip instead of an alert colour, shows
-                  Checking… and then Unavailable with Retry for a source not read yet, and routes a
-                  small text Retry to the correct provider; a request that fails with nothing to
-                  show retries on its own three times (after 5, 15 and 30 s) as Retrying…, without
-                  the Retry button, and then leaves the list until a later read succeeds; focus
-                  enters on the limits list and returns on close. One read in flight is shared;
-                  failed reads back off 5, 10 and 20 minutes, then every 30, until a success,
-                  sign-in, sign-out or account switch; reads are at least 15 minutes apart for
-                  Claude Code, 5 for Codex and 30 s for Grok, while a redeemed reset or an account
-                  change reads at once. A failed refresh answers with the held values marked stale,
-                  with the reason and the next try; an account change drops them, while a read that
-                  names no email or plan is not a change and keeps them. Live windows from running
-                  chats merge into the held values by window id, the renderer applies the
-                  usage.limits push directly (at most one a second per provider), and usage.changed
-                  follows at most every 30 s; usage.summary answers a chat's totals with the held
-                  limits at once and refreshes them in the background</span
+                  in the background, an open popup or Usage page reads as visible, opening one and
+                  the app's background read every 15 minutes while its window shows as a refresh,
+                  Retry and the popup's refresh icon as a retry), a passive figure is answered from
+                  held values, and opening the popup reads each source afresh while it shows held
+                  values at once; the refresh icon ends the first provider's line and turns while
+                  any source reads; the dialog keeps every source separate, distinguishes loading,
+                  successful-empty, unavailable, and failure with one muted word beside the provider
+                  (Checking…, Unavailable, Last known, None reported) and the reason in its tooltip
+                  instead of an alert colour, shows Checking… and then Unavailable with Retry for a
+                  source not read yet, and routes a small text Retry to the correct provider; a
+                  request that fails with nothing to show retries on its own three times (after 5,
+                  15 and 30 s) as Retrying…, without the Retry button, and then leaves the list
+                  until a later read succeeds; focus enters on the limits list and returns on close.
+                  One read in flight is shared; failed reads back off 5, 10 and 20 minutes, then
+                  every 30, until a success, sign-in, sign-out or account switch; reads are at least
+                  15 minutes apart for Claude Code, 5 for Codex and 30 s for Grok, while a redeemed
+                  reset or an account change reads at once; a refresh reads past that spacing but
+                  within the backoff, a retry past both, and either waits for its read when values
+                  were already read, while an answer that an account has no plan limits still holds.
+                  A failed refresh answers with the held values marked stale, with the reason and
+                  the next try; an account change drops them, while a read that names no email or
+                  plan is not a change and keeps them. Live windows from running chats merge into
+                  the held values by window id, the renderer applies the usage.limits push directly
+                  (at most one a second per provider), and usage.changed follows at most every 30 s;
+                  usage.summary answers a chat's totals with the held limits at once and refreshes
+                  them in the background</span
                 ></span
               ></label
             >
