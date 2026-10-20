@@ -19,6 +19,17 @@ export type OpenCodeLegacyLifecycleEvent =
   | { type: 'session.status'; properties: { sessionID: string; status: { type: string } } }
   | { type: 'session.idle'; properties: { sessionID: string } }
 
+/** 1.18.31 streams text as deltas of a part its own update opened; the SDK predates them. */
+const PartDeltaSchema = z.object({
+  type: z.literal('message.part.delta'),
+  properties: z.object({
+    messageID: z.string(),
+    partID: z.string(),
+    field: z.string(),
+    delta: z.string(),
+  }),
+})
+
 export type OpenCodeWireEvent = Event | OpenCodeV2Event | OpenCodeLegacyLifecycleEvent
 
 export class OpenCodeEventMapper {
@@ -39,6 +50,10 @@ export class OpenCodeEventMapper {
   translate(event: OpenCodeWireEvent): DomainEvent[] {
     if ('data' in event) return this.#v2(event)
     if (event.type === 'session.status' || event.type === 'session.idle') return []
+    if ((event.type as string) === 'message.part.delta') {
+      const delta = PartDeltaSchema.safeParse(event)
+      return delta.success ? this.#partDelta(delta.data.properties) : []
+    }
     if (event.type === 'message.part.updated') {
       if (this.#userMessages.has(event.properties.part.messageID)) return []
       return this.#part(event.properties.part, event.properties.delta)
@@ -234,6 +249,15 @@ export class OpenCodeEventMapper {
     if (part.type === 'tool') return this.#tool(part)
     if (part.type === 'step-finish') return [usage(part.tokens, part.cost)]
     return []
+  }
+
+  #partDelta(delta: z.infer<typeof PartDeltaSchema>['properties']): DomainEvent[] {
+    if (delta.field !== 'text' || this.#userMessages.has(delta.messageID)) return []
+    const id = `${this.#turnId}-${delta.partID}`
+    // The part's own update opens it and says whether it is text or reasoning.
+    if (!this.#open.has(id) || this.#completed.has(id) || !delta.delta) return []
+    this.#text.set(id, (this.#text.get(id) ?? '') + delta.delta)
+    return [{ type: 'item.delta', turnId: this.#turnId, itemId: id, textDelta: delta.delta }]
   }
 
   #tool(part: ToolPart): DomainEvent[] {

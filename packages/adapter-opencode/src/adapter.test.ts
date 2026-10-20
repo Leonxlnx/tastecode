@@ -439,6 +439,31 @@ describe('OpenCode adapter', () => {
     }
   })
 
+  it("streams 1.18.31's text deltas as they arrive, once", async () => {
+    const mock = await serveOpenCode()
+    const adapter = new OpenCodeAdapter({ baseUrl: mock.baseUrl })
+    try {
+      const thread = await adapter.startThread('C:\\repo', { model: 'provider-1/model-1' })
+      const deltas: string[] = []
+      let completed = false
+      adapter.on('event', (event) => {
+        if (event.type === 'item.delta') deltas.push(event.textDelta)
+        if (event.type === 'turn.completed') completed = true
+      })
+      await adapter.sendTurn(thread.id, 'USER PROMPT TEXT')
+      const stream = CAPTURED_1_18_31.prompt
+      const split = stream.findIndex((event) => (event.type as string) === 'message.part.delta') + 1
+      // Up to the delta: the part is open with no text yet, and the delta is all there is.
+      for (const event of stream.slice(0, split)) mock.broadcast(event)
+      await expect.poll(() => deltas).toEqual(['done'])
+      for (const event of stream.slice(split)) mock.broadcast(event)
+      await expect.poll(() => completed).toBe(true)
+      expect(deltas).toEqual(['done'])
+    } finally {
+      adapter.dispose()
+    }
+  })
+
   it('resumes, answers permissions, interrupts and lists connected models', async () => {
     const mock = await serveOpenCode()
     const adapter = new OpenCodeAdapter({ baseUrl: mock.baseUrl })
