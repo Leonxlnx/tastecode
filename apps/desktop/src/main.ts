@@ -43,7 +43,7 @@ import {
   type AppUpdateState,
 } from './app-updater.js'
 import { createApplicationMenuTemplate } from './app-menu.js'
-import { badgeBitmap, badgeDescription, badgeLabel } from './attention-badge.js'
+import { badgeBitmap, badgeDescription } from './attention-badge.js'
 import { ChatNotifier, type ShownNotification } from './chat-notifier.js'
 import { clipboardText } from './clipboard-text.js'
 import { droppedFolderPaths, MAX_DROPPED_PROJECT_PATHS } from './dropped-folder-paths.js'
@@ -327,9 +327,12 @@ function showChatNotification(
   return notification
 }
 
-const overlayIcons = new Map<string, Electron.NativeImage>()
+let overlayIcon: Electron.NativeImage | undefined
 
-/** Windows has no badge count, so its taskbar button gets an overlay icon instead. */
+/**
+ * Windows has no badge count, so its taskbar button gets an overlay dot
+ * instead; the count is in the overlay's description (tooltip, screen readers).
+ */
 function setAttentionBadge(count: number): void {
   if (process.platform !== 'win32') {
     app.setBadgeCount(count)
@@ -341,19 +344,17 @@ function setAttentionBadge(count: number): void {
     window.setOverlayIcon(null, '')
     return
   }
-  const label = badgeLabel(count)
-  let icon = overlayIcons.get(label)
-  if (!icon) {
-    icon = nativeImage.createEmpty()
+  if (!overlayIcon) {
+    const icon = nativeImage.createEmpty()
     // The taskbar draws the overlay at 16 px times the display scale.
     for (const scaleFactor of [1, 1.25, 1.5, 2]) {
       const size = Math.round(16 * scaleFactor)
       const buffer = badgeBitmap(count, size)
       if (buffer) icon.addRepresentation({ scaleFactor, width: size, height: size, buffer })
     }
-    overlayIcons.set(label, icon)
+    overlayIcon = icon
   }
-  window.setOverlayIcon(icon, badgeDescription(count))
+  window.setOverlayIcon(overlayIcon, badgeDescription(count))
 }
 
 if (Number.isFinite(startupStartedAt) && startupStartedAt > 0) {
