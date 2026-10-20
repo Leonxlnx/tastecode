@@ -2687,6 +2687,7 @@ describe('web client', () => {
   })
 
   it('keeps a choice on an ACP agent row while Grok cannot be listed', async () => {
+    localStorage.setItem('harness.acpRoster.v1', JSON.stringify(['kimi']))
     serverProviders = [
       ...serverProviders,
       claudeCodeServerProvider(),
@@ -3103,6 +3104,7 @@ describe('web client', () => {
 
     it('lists an agent that registers after the picker opened', async () => {
       const kimi = { id: 'kimi', name: 'Kimi CLI' }
+      localStorage.setItem('harness.acpRoster.v1', JSON.stringify(['kimi']))
       localStorage.setItem(
         'harness.modelCatalog.v1',
         serializeModelCatalogCache([
@@ -4298,13 +4300,17 @@ describe('web client', () => {
     })
   })
 
-  it('fetches models for each installed ACP agent', async () => {
+  it('fetches models only for the ACP agents added to Providers', async () => {
+    localStorage.setItem('harness.acpRoster.v1', JSON.stringify(['kimi']))
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
     transport.request.mockImplementation((method: string, params: unknown) => {
       if (method === 'acp.agents') {
         return Promise.resolve({
-          agents: [{ id: 'kimi', name: 'Kimi CLI', installed: true, verified: true }],
+          agents: [
+            { id: 'kimi', name: 'Kimi CLI', installed: true, verified: true },
+            { id: 'devin', name: 'Devin', installed: true, verified: true },
+          ],
         })
       }
       return request(method, params)
@@ -4316,6 +4322,54 @@ describe('web client', () => {
         provider: 'acp',
         agent: 'kimi',
       })
+    })
+    expect(transport.request).not.toHaveBeenCalledWith('models.list', {
+      provider: 'acp',
+      agent: 'devin',
+    })
+  })
+
+  it('starts the ACP roster from the agents that already have chats', async () => {
+    serverProjects = [
+      {
+        ...serverProjects[0]!,
+        sessions: [
+          {
+            id: 'kimi-thread',
+            title: 'Kimi thread',
+            provider: 'acp',
+            agent: 'kimi',
+            createdAt: 0,
+            running: false,
+          },
+        ],
+      },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'acp.agents') {
+        return Promise.resolve({
+          agents: [
+            { id: 'kimi', name: 'Kimi CLI', installed: true, verified: true },
+            { id: 'devin', name: 'Devin', installed: true, verified: true },
+          ],
+        })
+      }
+      return request(method, params)
+    })
+    render(<App />)
+
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('models.list', {
+        provider: 'acp',
+        agent: 'kimi',
+      })
+    })
+    expect(JSON.parse(localStorage.getItem('harness.acpRoster.v1') ?? 'null')).toEqual(['kimi'])
+    expect(transport.request).not.toHaveBeenCalledWith('models.list', {
+      provider: 'acp',
+      agent: 'devin',
     })
   })
 

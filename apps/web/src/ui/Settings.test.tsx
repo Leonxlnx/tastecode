@@ -1939,6 +1939,7 @@ describe('provider settings', () => {
             setup: { installUrl: 'https://example.test/grok', login: 'provider' },
           },
         ]}
+        acpRoster={['gemini', 'qwen', 'kimi']}
         acpAgents={[
           {
             id: 'gemini',
@@ -2236,6 +2237,7 @@ describe('provider settings', () => {
             },
           },
         ]}
+        acpRoster={['kimi']}
         acpAgents={[
           {
             id: 'kimi',
@@ -2783,55 +2785,120 @@ describe('ACP agent library', () => {
     if (!found) throw new Error(`${name} row missing`)
     return found
   }
-
-  it('lists every agent in its own section, each drawn with its own mark', async () => {
-    const transport = new TestTransport(async (method, params) => {
-      if (method === 'auth.status')
-        return { signedIn: (params as { agent?: string }).agent !== 'junie' }
+  const rowNames = (section: HTMLElement) =>
+    [...section.querySelectorAll('.provider-row .set-entity__name')].map((name) => name.textContent)
+  const accounts = (signedIn: (agent: string | undefined) => boolean, asked: string[] = []) =>
+    new TestTransport(async (method, params) => {
+      if (method === 'auth.status') {
+        const agent = (params as { agent?: string }).agent
+        if (agent) asked.push(agent)
+        return { signedIn: signedIn(agent) }
+      }
       if (method === 'providers.updates') return { updates: [], checkedAt: 0 }
       throw new Error(`unexpected ${method}`)
     })
-    renderSettings({ initialSection: 'providers', transport, overrides: { acpAgents: library } })
+
+  it('shows only the agents added to Providers, in the order they were added', async () => {
+    const asked: string[] = []
+    // Installed, but nobody added it.
+    const kilo = { ...library[0]!, id: 'kilo', name: 'Kilo', maker: 'Kilo Code' }
+    renderSettings({
+      initialSection: 'providers',
+      transport: accounts(() => true, asked),
+      overrides: {
+        acpAgents: [...library, kilo],
+        acpRoster: ['droid', 'devin'],
+        onAcpRosterChange: vi.fn(),
+      },
+    })
 
     const section = screen.getByRole('region', { name: 'ACP agents' })
-    expect(
-      [...section.querySelectorAll('.provider-row .set-entity__name')].map(
-        (name) => name.textContent,
-      ),
-    ).toEqual(['Devin', 'Droid', 'Junie'])
+    expect(rowNames(section)).toEqual(['Droid', 'Devin'])
     // Each agent is drawn with its registry mark, not the generic ACP one.
     const viewBoxes = [...section.querySelectorAll('.provider-row__mark svg')].map((svg) =>
       svg.getAttribute('viewBox'),
     )
-    expect(new Set(viewBoxes).size).toBe(3)
+    expect(new Set(viewBoxes).size).toBe(2)
     expect(viewBoxes).not.toContain('0 0 24 24')
 
     await waitFor(() => expect(row('Devin').dataset['link']).toBe('connected'))
     expect(within(row('Devin')).getByRole('button', { name: 'Sign out' })).toBeTruthy()
-    // Droid keeps its login in the keychain: signed in, but nothing here signs it out.
+    expect(within(row('Devin')).getByRole('button', { name: 'Remove Devin' })).toBeTruthy()
+    // Droid keeps its login in the keychain: signed in, and only Remove is offered here.
     await waitFor(() => expect(row('Droid').dataset['link']).toBe('connected'))
-    expect(within(row('Droid')).queryByRole('button')).toBeNull()
+    expect(
+      within(row('Droid'))
+        .getAllByRole('button')
+        .map((button) => button.getAttribute('aria-label')),
+    ).toEqual(['Remove Droid'])
+    // Every added agent is installed, so there is nothing to look for again.
+    expect(within(section).queryByRole('button', { name: 'Check again' })).toBeNull()
+    // An agent nobody added is never started to ask about its account.
+    expect(new Set(asked)).toEqual(new Set(['droid', 'devin']))
   })
 
-  it('offers an agent that is not installed by its maker, with Install and no per-row check', () => {
+  it('adds an agent from the library, which names each maker and what is installed', () => {
+    const onAcpRosterChange = vi.fn()
     renderSettings({
       initialSection: 'providers',
-      transport: new TestTransport(async (method) => {
-        if (method === 'auth.status') return { signedIn: false }
-        if (method === 'providers.updates') return { updates: [], checkedAt: 0 }
-        throw new Error(`unexpected ${method}`)
-      }),
-      overrides: { acpAgents: library },
+      transport: accounts(() => true),
+      overrides: { acpAgents: library, acpRoster: ['droid'], onAcpRosterChange },
     })
-    const junie = row('Junie')
-    expect(junie.dataset['library']).toBe('true')
-    expect(junie.textContent).toContain('JetBrains')
-    expect(junie.textContent).not.toContain('Not installed')
-    expect(within(junie).getByRole('button', { name: 'Install' })).toBeTruthy()
-    expect(within(junie).queryByRole('button', { name: 'Check again' })).toBeNull()
+    const section = screen.getByRole('region', { name: 'ACP agents' })
+
+    fireEvent.click(within(section).getByRole('button', { name: 'Add an ACP agent' }))
+    const menu = screen.getByRole('menu', { name: 'ACP agents' })
+    expect(
+      within(menu)
+        .getAllByRole('menuitem')
+        .map((item) => item.textContent),
+    ).toEqual(['DevinCognition · Installed', 'JunieJetBrains'])
+
+    fireEvent.click(within(menu).getByRole('menuitem', { name: /Junie/ }))
+    expect(onAcpRosterChange).toHaveBeenCalledWith(['droid', 'junie'])
   })
 
-  it('looks for agents installed outside the app once for the whole library', async () => {
+  it('starts empty and offers no menu once every agent is added', () => {
+    const { unmount } = renderSettings({
+      initialSection: 'providers',
+      transport: accounts(() => false),
+      overrides: { acpAgents: library, acpRoster: [], onAcpRosterChange: vi.fn() },
+    })
+    const empty = screen.getByRole('region', { name: 'ACP agents' })
+    expect(rowNames(empty)).toEqual([])
+    expect(within(empty).getByRole('button', { name: 'Add an ACP agent' })).toBeTruthy()
+    unmount()
+
+    renderSettings({
+      initialSection: 'providers',
+      transport: accounts(() => false),
+      overrides: {
+        acpAgents: library,
+        acpRoster: ['devin', 'droid', 'junie'],
+        onAcpRosterChange: vi.fn(),
+      },
+    })
+    const full = screen.getByRole('region', { name: 'ACP agents' })
+    expect(within(full).queryByRole('button', { name: 'Add an ACP agent' })).toBeNull()
+  })
+
+  it('offers Install and Remove for an added agent that is not installed', () => {
+    const onAcpRosterChange = vi.fn()
+    renderSettings({
+      initialSection: 'providers',
+      transport: accounts(() => false),
+      overrides: { acpAgents: library, acpRoster: ['devin', 'junie'], onAcpRosterChange },
+    })
+    const junie = row('Junie')
+    expect(junie.textContent).toContain('Not installed')
+    expect(within(junie).getByRole('button', { name: 'Install' })).toBeTruthy()
+    expect(within(junie).queryByRole('button', { name: 'Check again' })).toBeNull()
+
+    fireEvent.click(within(junie).getByRole('button', { name: 'Remove Junie' }))
+    expect(onAcpRosterChange).toHaveBeenCalledWith(['devin'])
+  })
+
+  it('looks once for added agents installed outside the app', async () => {
     let installed = false
     const onConnectionsChanged = vi.fn()
     const transport = new TestTransport(async (method) => {
@@ -2847,7 +2914,12 @@ describe('ACP agent library', () => {
     renderSettings({
       initialSection: 'providers',
       transport,
-      overrides: { acpAgents: library, onConnectionsChanged },
+      overrides: {
+        acpAgents: library,
+        acpRoster: ['devin', 'junie'],
+        onAcpRosterChange: vi.fn(),
+        onConnectionsChanged,
+      },
     })
     const section = screen.getByRole('region', { name: 'ACP agents' })
     const check = within(section).getByRole('button', { name: 'Check again' })

@@ -1024,33 +1024,12 @@
   min-width: 70px;
 }
 
-/* The ACP library: agents not on this machine yet. Every row offers the
-   same Install, so at rest it is ink alone and the row being pointed at
-   draws its outline; the name steps up from the roster's absent grey. */
-.settings .provider-row[data-library] .provider-row__primary > .set-button:not(:disabled) {
-  border-color: transparent;
-  color: var(--text-2);
-}
-
-.settings
-  .provider-row[data-library]:is(:hover, :focus-within)
-  .provider-row__primary
-  > .set-button:not(:disabled) {
-  border-color: var(--line-strong);
-  color: var(--text);
-}
-
-.settings .provider-row[data-library]:is(:hover, :focus-within) .set-entity__name {
-  color: var(--text-2);
-}
-
-.settings .provider-row[data-library]:is(:hover, :focus-within) .provider-row__mark {
-  color: var(--text-2);
-}
-
 /* A signed-in agent whose CLI keeps its own sign-out holds the action's
    place, so its status stays in the column with the others. */
-.settings .provider-row[data-link='connected'] .provider-row__primary:empty {
+.settings
+  .provider-row[data-link='connected']
+  .provider-row__secondary:empty
+  + .provider-row__primary:empty {
   display: block;
   width: 70px;
 }
@@ -1146,6 +1125,15 @@
 
 .settings .provider-connections__add {
   margin-top: 8px;
+}
+
+.acp-picker__menu {
+  width: min(280px, calc(100vw - 16px));
+}
+
+/* The maker reads as part of the name, under it rather than under the mark. */
+.acp-picker__menu .menu__desc {
+  padding-left: 22px;
 }
 
 .set-form__field .menuwrap {

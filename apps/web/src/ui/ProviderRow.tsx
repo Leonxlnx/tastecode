@@ -9,6 +9,8 @@ import { Skeleton } from './Skeleton.js'
 export type ProviderIssue = { message: string; announce?: boolean | undefined }
 export type ProviderAction = {
   label: string
+  /** Names the action with its subject, where several rows offer the same label. */
+  ariaLabel?: string | undefined
   onClick?: (() => void) | undefined
   href?: string | undefined
   disabled?: boolean | undefined
@@ -32,8 +34,6 @@ export function ProviderRow(props: {
   mark?: ProviderMark | undefined
   status: ReactNode
   link?: ProviderLink | undefined
-  /** An agent offered in the ACP library rather than one on this machine. */
-  library?: boolean | undefined
   live?: boolean
   issue?: ProviderIssue | undefined
   primary?: ProviderAction | undefined
@@ -43,7 +43,6 @@ export function ProviderRow(props: {
     <div
       className="provider-row"
       data-link={props.link ?? 'open'}
-      data-library={props.library || undefined}
       data-live={props.live || undefined}
       data-fault={props.issue?.announce || undefined}
     >
@@ -108,7 +107,13 @@ function ProviderRowAction(props: {
       ? 'set-button set-button--quiet'
       : 'set-button'
   return action.href ? (
-    <a className={className} href={action.href} target="_blank" rel="noopener noreferrer">
+    <a
+      className={className}
+      href={action.href}
+      target="_blank"
+      rel="noopener noreferrer"
+      aria-label={action.ariaLabel}
+    >
       {action.label}
       <ExternalLink size={12} aria-hidden />
     </a>
@@ -117,6 +122,7 @@ function ProviderRowAction(props: {
       className={className}
       type="button"
       disabled={action.disabled}
+      aria-label={action.ariaLabel}
       aria-expanded={action.expanded}
       aria-controls={action.controls}
       onClick={action.onClick}

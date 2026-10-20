@@ -203,6 +203,7 @@ import {
   writeProfileIdentityPreferences,
   type ProfileIdentityPreferences,
 } from './profile-preferences.js'
+import { acpAgentsInUse, readAcpRoster, writeAcpRoster } from './acp-roster.js'
 import {
   ACCENT_KEY,
   applyAccentPreference,
@@ -269,6 +270,7 @@ const MODEL_BY_SOURCE_KEY = 'harness.modelBySource'
 const MODEL_BY_THREAD_PREFIX = 'harness.modelByThread:'
 const COMPOSER_DRAFTS_KEY = 'harness.composerDrafts.v1'
 const EMPTY_PALETTE_COMMANDS: PaletteCommand[] = []
+const EMPTY_ACP_ROSTER: readonly string[] = []
 /** Only the user's own visibility choices; the defaults follow the catalog. */
 const MODEL_VISIBILITY_KEY = 'harness.modelVisibility.v2'
 /** One complete hidden list, which mixed the defaults of the build that saved it with choices. */
@@ -793,6 +795,10 @@ export function App() {
     })
   const [providerStatuses, setProviderStatuses] = useState<ProviderStatus[]>([])
   const [acpAgents, setAcpAgents] = useState<ResultOf<'acp.agents'>['agents']>([])
+  const [acpRoster, setAcpRoster] = useState(readAcpRoster)
+  // Read by the catalog run, which must not restart when an agent is added.
+  const acpRosterRef = useRef(acpRoster)
+  acpRosterRef.current = acpRoster
   const [modelConnections, setModelConnections] = useState<ModelConnection[]>([])
   const [catalogRequest, setCatalogRequest] = useState(0)
   /** When the catalog was last listed, however that started. */
@@ -2362,23 +2368,23 @@ export function App() {
         if (cancelled) return []
         const agents = result?.agents ?? []
         setAcpAgents(agents)
+        // Only agents added under Settings › Providers start for their models.
+        const listed = agents.filter(
+          (agent) => agent.installed && acpRosterRef.current?.includes(agent.id),
+        )
         setPendingModelSources(
           (current) =>
             new Set([
               ...current,
-              ...agents
-                .filter((agent) => agent.installed)
-                .map((agent) => sourceKey({ provider: 'acp', agentId: agent.id })),
+              ...listed.map((agent) => sourceKey({ provider: 'acp', agentId: agent.id })),
             ]),
         )
         return Promise.all(
-          agents
-            .filter((agent) => agent.installed)
-            .map((agent) =>
-              trackSource(sourceKey({ provider: 'acp', agentId: agent.id }), () =>
-                discoverAgent(agent),
-              ),
+          listed.map((agent) =>
+            trackSource(sourceKey({ provider: 'acp', agentId: agent.id }), () =>
+              discoverAgent(agent),
             ),
+          ),
         )
       })
       const apiPromise = connectionsCatalog.then(async (result) => {
@@ -4316,6 +4322,30 @@ export function App() {
   const refreshCatalog = useCallback(() => {
     setCatalogRequest((request) => request + 1)
   }, [])
+
+  const changeAcpRoster = useCallback(
+    (roster: readonly string[]) => {
+      acpRosterRef.current = roster
+      writeAcpRoster(roster)
+      setAcpRoster(roster)
+      refreshCatalog()
+    },
+    [refreshCatalog],
+  )
+  // Agents were listed without being added until the roster existed: the
+  // first one keeps every agent that already has a chat, so those chats keep
+  // their models, and starts empty for everyone else.
+  useEffect(() => {
+    if (acpRoster !== undefined || projectsStatus !== 'ready') return
+    const inUse = acpAgentsInUse(projects)
+    if (inUse.length > 0) {
+      changeAcpRoster(inUse)
+      return
+    }
+    acpRosterRef.current = inUse
+    writeAcpRoster(inUse)
+    setAcpRoster(inUse)
+  }, [acpRoster, projectsStatus, projects, changeAcpRoster])
 
   const handleAccountChange = useCallback(
     (changedProvider: ProviderId, changedAccount: Account) => {
@@ -6398,6 +6428,8 @@ export function App() {
               onProfileIdentityChange={updateProfileIdentity}
               providerStatuses={providerStatuses}
               acpAgents={acpAgents}
+              acpRoster={acpRoster ?? EMPTY_ACP_ROSTER}
+              onAcpRosterChange={changeAcpRoster}
               modelConnections={modelConnections}
               providersLoading={catalogAvailability === 'loading'}
               models={models}

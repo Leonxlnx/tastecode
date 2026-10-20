@@ -53,6 +53,7 @@ import {
   IconChartBar as BarChart3,
   IconChevronDown as ChevronDown,
   IconKey as KeyRound,
+  IconPlus as Plus,
   IconArrowLeft as ArrowLeft,
   IconUserCircle as CircleUserRound,
   IconBlocks as Blocks,
@@ -301,6 +302,9 @@ function SettingsComponent(props: {
   onProfileIdentityChange?: ((updates: Partial<ProfileIdentityPreferences>) => void) | undefined
   providerStatuses: ProviderStatus[]
   acpAgents?: ResultOf<'acp.agents'>['agents'] | undefined
+  /** The ACP agents added to Providers, in the order they were added. */
+  acpRoster?: readonly string[] | undefined
+  onAcpRosterChange?: ((roster: readonly string[]) => void) | undefined
   modelConnections?: ModelConnection[] | undefined
   /** The provider list has not arrived yet. */
   providersLoading?: boolean | undefined
@@ -736,6 +740,8 @@ export function ProviderSettings(props: {
   account: Account | undefined
   providerStatuses: ProviderStatus[]
   acpAgents?: ResultOf<'acp.agents'>['agents'] | undefined
+  acpRoster?: readonly string[] | undefined
+  onAcpRosterChange?: ((roster: readonly string[]) => void) | undefined
   modelConnections?: ModelConnection[] | undefined
   providersLoading?: boolean | undefined
   projectPath?: string | undefined
@@ -934,7 +940,12 @@ export function ProviderSettings(props: {
     [props.transport],
   )
 
-  const installedAgentKey = (props.acpAgents ?? [])
+  const acpRoster = props.acpRoster ?? []
+  // Only agents on the roster are asked about their account: the check starts them.
+  const agents = acpRoster.flatMap((id) =>
+    (props.acpAgents ?? []).filter((agent) => agent.id === id),
+  )
+  const installedAgentKey = agents
     .filter((agent) => agent.installed)
     .map((agent) => agent.id)
     .join('|')
@@ -1152,9 +1163,8 @@ export function ProviderSettings(props: {
   }
 
   const byId = (id: ProviderId) => props.providerStatuses.filter((status) => status.id === id)
-  // The server lists agents in the library's own order, and they keep it
-  // whether installed or not, so an install never moves a row.
-  const agents = props.acpAgents ?? []
+  const onAcpRosterChange = props.onAcpRosterChange
+  const offeredAgents = (props.acpAgents ?? []).filter((agent) => !acpRoster.includes(agent.id))
 
   const renderAgentRow = (agent: ResultOf<'acp.agents'>['agents'][number]) => {
     const provider: ProviderStatus = {
@@ -1166,13 +1176,20 @@ export function ProviderSettings(props: {
       ...(agent.problem ? { problem: agent.problem } : {}),
     }
     const mark = agentMark(agent.id)
+    const remove: ProviderAction | undefined = onAcpRosterChange
+      ? {
+          label: 'Remove',
+          ariaLabel: `Remove ${agent.name}`,
+          onClick: () => onAcpRosterChange(acpRoster.filter((id) => id !== agent.id)),
+        }
+      : undefined
     if (!agent.installed) {
       return (
         <InstallableRow
           key={agent.id}
           provider={provider}
           mark={mark}
-          library={{ maker: agent.maker }}
+          remove={remove}
           target={{ provider: 'acp', agent: agent.id }}
           transport={props.transport}
           onInstalled={props.onConnectionsChanged}
@@ -1190,6 +1207,7 @@ export function ProviderSettings(props: {
           mark={mark}
           status="Checking account…"
           live
+          secondary={remove}
         />
       )
     }
@@ -1202,6 +1220,7 @@ export function ProviderSettings(props: {
             ...(accountError ? { problem: accountError } : {}),
           }}
           mark={mark}
+          remove={remove}
           target={{ provider: 'acp', agent: agent.id }}
           transport={props.transport}
           onSignedIn={() => void refreshAgentAccount(agent.id)}
@@ -1220,6 +1239,7 @@ export function ProviderSettings(props: {
         link="connected"
         live={agentBusy === agent.id}
         issue={accountError ? { message: accountError, announce: true } : undefined}
+        secondary={agentBusy === agent.id ? undefined : remove}
         primary={
           canSignOut
             ? {
@@ -1292,16 +1312,18 @@ export function ProviderSettings(props: {
       ) : (
         PROVIDER_ROSTER.flatMap(byId).map(renderProviderRow)
       )}
-      {agents.length > 0 ? (
+      {props.acpAgents?.length ? (
         <SettingsSection
           title="ACP agents"
           note="Coding agents that speak the Agent Client Protocol."
           action={
-            <AcpLibraryCheck
-              transport={props.transport}
-              agents={agents}
-              onChanged={props.onConnectionsChanged}
-            />
+            agents.some((agent) => !agent.installed) ? (
+              <AcpAgentsCheck
+                transport={props.transport}
+                agents={agents}
+                onChanged={props.onConnectionsChanged}
+              />
+            ) : undefined
           }
         >
           {agents.map((agent) => (
@@ -1309,6 +1331,12 @@ export function ProviderSettings(props: {
               {renderAgentRow(agent)}
             </div>
           ))}
+          {onAcpRosterChange && offeredAgents.length > 0 ? (
+            <AcpAgentPicker
+              agents={offeredAgents}
+              onAdd={(id) => onAcpRosterChange([...acpRoster, id])}
+            />
+          ) : null}
         </SettingsSection>
       ) : null}
       <SettingsSection title="API connections">
@@ -1443,30 +1471,67 @@ export function ProviderSettings(props: {
 }
 
 /**
- * Looks for agents installed outside the app since the library was listed,
- * once for the whole library rather than a Check again on every row.
+ * The ACP library, offered from the end of the agents' section: each entry
+ * names its maker and says so when the agent is already on this machine.
  */
-function AcpLibraryCheck(props: {
+function AcpAgentPicker(props: {
+  agents: ResultOf<'acp.agents'>['agents']
+  onAdd: (agentId: string) => void
+}) {
+  return (
+    <Menu
+      align="left"
+      drop="down"
+      panelLabel="ACP agents"
+      panelClassName="acp-picker__menu"
+      triggerClassName="set-button provider-connections__add"
+      trigger={() => (
+        <>
+          <Plus size={15} aria-hidden />
+          Add an ACP agent
+        </>
+      )}
+    >
+      {(close) =>
+        props.agents.map((agent) => (
+          <MenuItem
+            key={agent.id}
+            title={agent.name}
+            detail={
+              [agent.maker, agent.installed ? 'Installed' : undefined]
+                .filter(Boolean)
+                .join(' · ') || undefined
+            }
+            icon={<ProviderIcon mark={agentMark(agent.id)} size={16} />}
+            onClick={() => {
+              props.onAdd(agent.id)
+              close()
+            }}
+          />
+        ))
+      }
+    </Menu>
+  )
+}
+
+/**
+ * Looks for added agents installed outside the app since the library was
+ * listed, once for the section, so each row keeps its place for Remove.
+ */
+function AcpAgentsCheck(props: {
   transport: Transport
   agents: ResultOf<'acp.agents'>['agents']
   onChanged: () => void
 }) {
   const [checking, setChecking] = useState(false)
-  const installed = props.agents
-    .filter((agent) => agent.installed)
-    .map((agent) => agent.id)
-    .join('|')
+  const missing = props.agents.filter((agent) => !agent.installed).map((agent) => agent.id)
   const { onChanged, transport } = props
   const check = () => {
     setChecking(true)
     void transport
       .request('acp.agents', {})
       .then(({ agents }) => {
-        const now = agents
-          .filter((agent) => agent.installed)
-          .map((agent) => agent.id)
-          .join('|')
-        if (now !== installed) onChanged()
+        if (agents.some((agent) => agent.installed && missing.includes(agent.id))) onChanged()
       })
       .catch(() => undefined)
       .finally(() => setChecking(false))
@@ -2632,11 +2697,8 @@ function InstallableRow(props: {
   onInstalled: () => void
   onOpenExpandedTerminal?: ((target: ProviderLoginTerminalTarget) => void) | undefined
   mark?: ProviderMark | undefined
-  /**
-   * An entry in the ACP library: it names its maker where the roster says
-   * "Not installed", and the section's own Check again stands for every row.
-   */
-  library?: { maker?: string | undefined } | undefined
+  /** Takes Check again's place on an added ACP agent; its section looks again for every row. */
+  remove?: ProviderAction | undefined
 }) {
   const key = installKey(props.target)
   const detailsId = useId()
@@ -2702,9 +2764,7 @@ function InstallableRow(props: {
           ? 'Install failed'
           : recheck.checking
             ? 'Checking…'
-            : props.library
-              ? (props.library.maker ?? '')
-              : 'Not installed'
+            : 'Not installed'
   const issue =
     install?.phase === 'failed'
       ? {
@@ -2733,9 +2793,11 @@ function InstallableRow(props: {
             controls: detailsId,
             onClick: () => setShowTerminal((visible) => !visible),
           }
-      : props.library
-        ? undefined
-        : { label: 'Check again', disabled: recheck.checking, onClick: recheck.check }
+      : (props.remove ?? {
+          label: 'Check again',
+          disabled: recheck.checking,
+          onClick: recheck.check,
+        })
   const primary: ProviderAction | undefined = !setup?.installCommand
     ? setup
       ? { label: 'Open setup guide', href: setup.installUrl }
@@ -2756,7 +2818,6 @@ function InstallableRow(props: {
         mark={props.mark}
         status={status}
         link="none"
-        library={props.library !== undefined}
         live={install?.phase === 'running' || install?.phase === 'succeeded' || recheck.checking}
         issue={issue}
         primary={primary}
@@ -2786,6 +2847,8 @@ function CliSignInRow(props: {
   onSignedIn: () => void
   onOpenExpandedTerminal?: ((target: ProviderLoginTerminalTarget) => void) | undefined
   mark?: ProviderMark | undefined
+  /** Offered while no sign-in is running, where its details would go. */
+  remove?: ProviderAction | undefined
 }) {
   const key = loginKey(props.target)
   const detailsId = useId()
@@ -2930,7 +2993,7 @@ function CliSignInRow(props: {
           disabled: stopping,
           onClick: busy ? cancel : start,
         }}
-        secondary={details}
+        secondary={details ?? (busy || stopping ? undefined : props.remove)}
       />
       {running ? (
         <div className="signin-card">
