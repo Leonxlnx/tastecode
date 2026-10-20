@@ -259,6 +259,30 @@ describe('chats pinned to a provider account', () => {
     await orchestrator.disposeAll()
   })
 
+  it("signs in to a project MCP server only in a default account's chat", async () => {
+    const { orchestrator, sessions } = setup(directory({ 'codex:work': workHome }))
+    const signIns: string[] = []
+    const answers = (account: string) => async () => {
+      signIns.push(account)
+      return { loginId: `${account}-login`, authUrl: `https://${account}.example.test/` }
+    }
+    await orchestrator.startThread('codex', root, { accountId: 'work' })
+    sessions[0]!.startMcpOAuth = answers('work')
+
+    // The MCP view is the default account's: a Work chat must not take its sign-in.
+    await expect(orchestrator.startMcpOAuth('codex', root, 'docs')).rejects.toThrow(
+      'start a compatible session for this project before signing in to an MCP server',
+    )
+    await orchestrator.startThread('codex', root)
+    sessions[1]!.startMcpOAuth = answers('default')
+    await expect(orchestrator.startMcpOAuth('codex', root, 'docs')).resolves.toMatchObject({
+      loginId: 'default-login',
+    })
+
+    expect(signIns).toEqual(['default'])
+    await orchestrator.disposeAll()
+  })
+
   it('says why a chat on a removed account cannot continue', async () => {
     const first = setup(directory({ 'codex:work': workHome }))
     const thread = await first.orchestrator.startThread('codex', root, { accountId: 'work' })

@@ -1646,6 +1646,12 @@ export class Orchestrator {
     )
   }
 
+  /**
+   * A chat of the project that answers for the project's views (MCP servers,
+   * their sign-in, commands). Those views are the default account's, so only a
+   * chat on the default account qualifies: another account's chat keeps its
+   * own MCP tokens and commands in its own folder.
+   */
   #findProjectRuntime(
     provider: ProviderId,
     projectPath: string,
@@ -1656,7 +1662,7 @@ export class Orchestrator {
     let stale: [string, AttachedThreadRuntime] | undefined
     for (const threadId of threadIds) {
       const entry = this.#threads.get(threadId)
-      if (!entry || (accepts && !accepts(entry))) continue
+      if (!entry || entry.thread.accountId !== undefined || (accepts && !accepts(entry))) continue
       // A runtime still waiting to resume does not know the saved MCP servers.
       if (this.#mcpStaleRuntimes.get(threadId) !== entry.session) return [threadId, entry]
       stale ??= [threadId, entry]
