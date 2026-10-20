@@ -1,5 +1,21 @@
 import type { ModelConnectionPreset, ProviderId } from '@harness/contracts'
 
+/** ACP agents drawn with the mark the ACP registry publishes for them (ui/agent-marks.ts). */
+export const AGENT_MARK_IDS = [
+  'devin',
+  'copilot',
+  'droid',
+  'cline',
+  'goose',
+  'junie',
+  'auggie',
+  'vibe',
+  'kilo',
+  'qoder',
+  'codebuddy',
+] as const
+export type AgentMark = (typeof AGENT_MARK_IDS)[number]
+
 export type ProviderMark =
   | 'openai'
   | 'anthropic'
@@ -15,6 +31,7 @@ export type ProviderMark =
   | 'pi'
   | 'acp'
   | 'custom'
+  | AgentMark
 
 export type ProviderPresentation = {
   label: string
@@ -37,6 +54,17 @@ const ACP_AGENTS = {
   gemini: { label: 'Gemini CLI', mark: 'gemini' },
   kimi: { label: 'Kimi CLI', mark: 'kimi' },
   qwen: { label: 'Qwen Code', mark: 'qwen' },
+  devin: { label: 'Devin', mark: 'devin' },
+  copilot: { label: 'GitHub Copilot', mark: 'copilot' },
+  droid: { label: 'Droid', mark: 'droid' },
+  cline: { label: 'Cline', mark: 'cline' },
+  goose: { label: 'goose', mark: 'goose' },
+  junie: { label: 'Junie', mark: 'junie' },
+  auggie: { label: 'Auggie', mark: 'auggie' },
+  vibe: { label: 'Mistral Vibe', mark: 'vibe' },
+  kilo: { label: 'Kilo', mark: 'kilo' },
+  qoder: { label: 'Qoder', mark: 'qoder' },
+  codebuddy: { label: 'CodeBuddy', mark: 'codebuddy' },
 } satisfies Record<string, ProviderPresentation>
 
 /**
@@ -95,6 +123,7 @@ export function connectionMark(preset: ModelConnectionPreset): ProviderMark {
 
 export function agentMark(agentId: string): ProviderMark {
   if (agentId === 'gemini' || agentId === 'kimi' || agentId === 'qwen') return agentId
+  if ((AGENT_MARK_IDS as readonly string[]).includes(agentId)) return agentId as AgentMark
   return 'acp'
 }
 

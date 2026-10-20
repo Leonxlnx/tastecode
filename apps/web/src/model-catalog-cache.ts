@@ -1,6 +1,6 @@
 import type { Model, ProviderId } from '@harness/contracts'
 import { modelChoiceKey, sourceKey, type ModelChoice } from './model-catalog.js'
-import type { ProviderMark } from './provider-presentation.js'
+import { AGENT_MARK_IDS, type ProviderMark } from './provider-presentation.js'
 
 const CACHE_VERSION = 2
 export const MAX_CACHE_CHARACTERS = 2_000_000
@@ -21,6 +21,7 @@ const PROVIDER_MARKS = new Set<ProviderMark>([
   'pi',
   'acp',
   'custom',
+  ...AGENT_MARK_IDS,
 ])
 
 export type ModelCatalogCache = {

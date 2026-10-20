@@ -18,6 +18,7 @@ const MARKS = [
   'zai',
   'acp',
   'custom',
+  'devin',
 ] as const satisfies readonly ProviderMark[]
 
 describe('provider icon lookup', () => {
