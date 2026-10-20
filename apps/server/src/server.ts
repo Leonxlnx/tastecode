@@ -933,7 +933,17 @@ export function startServer(
 
       case 'accounts.create': {
         const p = parseParams(method, params)
-        return { account: accounts.create(p.provider, p.label, p.home) }
+        const account = accounts.create(p.provider, p.label, p.home)
+        // A folder the user brought may already hold a sign-in. Ask it once who
+        // that is, as after a sign-in, so the account does not read as signed
+        // out until someone signs in there again. A new folder holds none.
+        if (!account.managed) {
+          void orchestrator
+            .account(p.provider, undefined, account.id)
+            .then((read) => accounts.recordIdentity(p.provider, account.id, read))
+            .catch(() => undefined)
+        }
+        return { account }
       }
 
       case 'accounts.rename': {

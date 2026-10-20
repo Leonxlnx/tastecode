@@ -204,9 +204,10 @@ vi.mock('./provider-accounts.js', () => ({
       state.accountCalls.push(['list', provider])
       return { accounts: state.accountList, active: {} }
     }
-    create(provider: string, label: string, home: unknown) {
+    create(provider: string, label: string, home: { kind: string; path?: string }) {
       state.accountCalls.push(['create', provider, label, home])
-      return { id: 'work-1a2b3c', provider, label, home: path.resolve('w'), managed: true }
+      const managed = home.kind === 'managed'
+      return { id: 'work-1a2b3c', provider, label, home: home.path ?? path.resolve('w'), managed }
     }
     rename(provider: string, accountId: string, label: string) {
       state.accountCalls.push(['rename', provider, accountId, label])
@@ -720,6 +721,34 @@ describe('provider accounts', () => {
           }),
         ),
       )
+      // A new folder holds no sign-in, so nobody is asked who is signed in there.
+      expect(state.handled).toEqual([])
+    } finally {
+      client.terminate()
+    }
+  })
+
+  it('asks a folder the user brought who is signed in there once it is added', async () => {
+    const { port } = await listen()
+    const { client, ask } = await connect(port)
+    try {
+      const brought = path.resolve('brought')
+      expect(
+        await ask('accounts.create', {
+          provider: 'codex',
+          label: 'Old laptop',
+          home: { kind: 'existing', path: brought },
+        }),
+      ).toMatchObject({ result: { account: { id: 'work-1a2b3c', managed: false } } })
+      await vi.waitFor(() =>
+        expect(state.accountCalls).toContainEqual([
+          'recordIdentity',
+          'codex',
+          'work-1a2b3c',
+          { signedIn: false },
+        ]),
+      )
+      expect(state.handled).toEqual(['auth.status(codex, work-1a2b3c)'])
     } finally {
       client.terminate()
     }
