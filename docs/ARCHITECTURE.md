@@ -354,16 +354,16 @@ The side event channel and transcript are independent, the row stays out of proj
 and search, and closing the panel disposes and deletes it. A provider may expose native fork,
 but shared Side chat semantics cannot depend on that optional capability.
 
-**Direct model APIs run on OpenCode (2026-10-20).** OpenAI, Anthropic and OpenAI-compatible
-endpoints provide inference and tool calls, not a complete coding-agent session. Until
-2026-10-20 a small TasteCode-owned loop supplied one, with four workspace tools and a 64 KiB
-request budget, and a key-backed chat was a far weaker agent than any CLI. An API connection
-now starts an OpenCode session on the connection's provider, base URL and key; OpenCode
-supplies the loop, tools, context management and approvals through the existing OpenCode
-adapter. The session is kept apart from the user's own OpenCode setup (sign-ins, config,
-history), and the key never reaches a file or the agent's shell commands. OpenCode must be
-installed for an API connection to run, so "only an API key" now means an API key plus
-OpenCode. The transport matrix and isolation details live in [PROVIDERS.md](./PROVIDERS.md).
+**Direct model API connections were removed (2026-10-20).** TasteCode no longer stores API
+keys or runs chats on them itself. Its own small agent loop (four workspace tools, a 64 KiB
+request budget) made a key-backed chat a far weaker agent than any CLI, and the OpenCode-backed
+replacement tried the same day was dropped before it shipped. To use their own key, users sign
+in to OpenCode with it and chat through the OpenCode provider. The `api` provider id and the
+`connections.*` methods remain in `packages/contracts` until a contracts change removes them;
+the server answers those methods as unknown, and a saved API chat stays readable but cannot
+start again. The principle above, and the matching hard rule in `AGENTS.md`, named the direct
+API provider as the one every shared feature is checked against; which provider takes that
+place is Leon's decision.
 
 _Rejected:_ ACP-only (gives up Codex's richest-in-class surface) · native-only (caps us at
 4 engines) · a TasteCode agent loop as the only integration path (throws away richer vendor
@@ -602,8 +602,7 @@ most disposable process) · whole-DB encryption (the DB holds no credentials by 
 
 ### Direct API request retention
 
-Removed with the TasteCode-owned API loop on 2026-10-20. API connections run on OpenCode,
-which manages its own context and compacts long sessions against each model's real window.
+Removed with API connections on 2026-10-20.
 
 ## Long threads must feel instant
 
@@ -740,8 +739,6 @@ A site, one-pager or Webseite about an app classifies as a website.
 
 Reference-driven Design requires the session's declared image input capability. Unsupported
 sessions reject before inference or persisted Design state; ordinary coding remains available.
-Direct API sessions run on OpenCode, whose adapter declares `images: false`, so visual Design is
-unsupported there.
 The workflow never substitutes an unannounced text-only build for the requested image copying.
 
 Fresh [Windows verification](https://github.com/Leonxlnx/tastecode/actions/runs/37228489532)
@@ -823,7 +820,7 @@ registry entry, which is deliberately a good first outside contribution.
 
 | Date       | Change                                                                                                                                                                         |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 2026-10-20 | Ran direct API connections on OpenCode with the user's key and removed the TasteCode-owned API loop; OpenCode must be installed for them.                                      |
+| 2026-10-20 | Removed direct API connections; a user's own key runs through OpenCode's sign-in.                                                                                              |
 | 2026-10-16 | Sent user-initiated feedback to the team's Trecko inbox through the local server; the inbox key stays in the server process and out of git.                                    |
 | 2026-10-16 | Parked dashboard references behind `DASHBOARD_REFERENCES_ENABLED`; dashboard requests build as websites and the 42 MB dashboard set left the package.                          |
 | 2026-10-14 | Read cold newest history pages from the end of the event log, checked against a derived per-thread index of first turn and item rows (#957).                                   |

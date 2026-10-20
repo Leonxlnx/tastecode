@@ -67,8 +67,8 @@ the complete v1 provider list. Provider completion runs alongside M4 and M5 with
 reopening the finished milestone:
 
 - direct API connections for OpenAI, Anthropic, OpenRouter, Kimi, GLM / Z.ai and custom
-  OpenAI-compatible endpoints, which since 2026-10-20 run as OpenCode sessions on the user's
-  key instead of a TasteCode-owned loop,
+  OpenAI-compatible endpoints (removed 2026-10-20; a user's own key now runs through
+  OpenCode's sign-in),
 - native OpenCode and Cursor adapters, and
 - Kimi Code and GLM coding-plan support through ACP or captured structured CLI surfaces.
 

@@ -298,19 +298,17 @@
     <div class="wrap">
       <section id="scope">
         <p>
-          October 20 on nightly (local commits, not pushed yet): API connections run on OpenCode. A
-          key added in Settings now starts an OpenCode session on that provider and key, in place of
-          TasteCode's own loop (four tools, a 64 KB request budget), which is removed. OpenCode has
-          to be installed. The key reaches OpenCode only through its environment; the user's
-          OpenCode sign-ins, global config and history stay out, and the agent's shell commands see
-          the key blanked. Edits and commands ask under Ask. Chats from the old loop stay readable
-          but cannot continue. Five OpenCode adapter fixes for OpenCode 1.18.31 came with it and
-          help the OpenCode provider too: v1 is preferred because 1.18.31's v2 never runs a turn,
-          resumed chats keep their model, the user's prompt no longer repeats as a reply, replies
-          stream again, and v1 permission asks reach the user instead of hanging the turn. Checked
-          on macOS with the real OpenCode 1.18.31 and TasteCode server against a stub endpoint (read
-          tool, an approved command, a restart and resume). Not verified yet: a real provider key,
-          Windows, and the flow through the Settings UI.
+          October 20 on nightly (local commits, not pushed yet): API connections are removed.
+          Settings › Providers has no API connections section, the model picker offers no connection
+          models, and the server no longer stores keys or runs chats on them; a user's own key goes
+          into OpenCode's sign-in and runs as an OpenCode chat. Chats saved under an API connection
+          stay readable but cannot start again. TasteCode's own API loop went first, and an
+          OpenCode-backed replacement built the same day went with the feature. Five OpenCode
+          adapter fixes for OpenCode 1.18.31 from that work stay and help the OpenCode provider: v1
+          is preferred because 1.18.31's v2 never runs a turn, resumed chats keep their model, the
+          user's prompt no longer repeats as a reply, replies stream again, and v1 permission asks
+          reach the user instead of hanging the turn. The api provider id and the connection methods
+          remain in the contracts until a contracts change removes them.
         </p>
         <p>
           October 20, overnight on nightly (5da77ebc): what landed, each checked in its own PR with
@@ -1370,13 +1368,13 @@
                     keeps the short catalog lists search-free while every model and its switch
                     remain picker inclusion; the flat list is the first-run layout; Claude Code,
                     Codex and Grok groups keep that order while models load, followed on nightly by
-                    the other CLIs, ACP agents and API connections, and new users start on Claude
-                    Code; both catalogs list the newest generation of each tier first (Astra, Sol,
-                    Terra, Luna; Fable, Opus, Sonnet, Haiku), and every row older than its family's
-                    newest generation starts hidden by one rule, also when a saved profile meets it
-                    for the first time; visibility updates move each row once from the first paint,
-                    so later choices stay even while a source fails discovery, and a new profile's
-                    first choice is kept; long model names no longer clip the picker; Claude account
+                    the other CLIs and ACP agents, and new users start on Claude Code; both catalogs
+                    list the newest generation of each tier first (Astra, Sol, Terra, Luna; Fable,
+                    Opus, Sonnet, Haiku), and every row older than its family's newest generation
+                    starts hidden by one rule, also when a saved profile meets it for the first
+                    time; visibility updates move each row once from the first paint, so later
+                    choices stay even while a source fails discovery, and a new profile's first
+                    choice is kept; long model names no longer clip the picker; Claude account
                     labels include the available Max multiplier, and Grok 4.5 and 4.6 remain
                     discoverable, provider readiness stays silent during new-chat source changes,
                     and saved custom ids remain usable while their management UI is parked</span
@@ -1465,10 +1463,9 @@
                 <span
                   >Provider stream lifecycles
                   <span class="d"
-                    >Claude Code, Grok, and direct API sessions settle every partial message,
-                    reasoning block, and tool before the turn terminal; streamed text survives
-                    failures, stops, process exits, replacements, and closes without a permanently
-                    live row</span
+                    >Claude Code and Grok sessions settle every partial message, reasoning block,
+                    and tool before the turn terminal; streamed text survives failures, stops,
+                    process exits, replacements, and closes without a permanently live row</span
                   >
                 </span>
               </li>
@@ -1672,22 +1669,22 @@
                     functional filters, sorting, tabs, navigation, drawers and charts, including
                     keyboard access, focus restoration and reduced motion. Native charts and visibly
                     identified demo values avoid website-only validation blockers. Image capability
-                    is checked before inference; unsupported sessions, including direct API sessions
-                    with images: false, retain ordinary coding. The 172 shipped website references
-                    and 316 WebPs are unchanged; the combined bundle has 372 references, 344 paired,
-                    and 716 WebPs. Default-bundle selection, saved-deck, attachment and hash checks
-                    passed for all 200 dashboard groups and 400 distinct WebPs. The catalog is
-                    deeply JSON-equal to the private import after formatting; the other 401 files
-                    are byte-identical. Fresh Windows CI at edc92ea9 passed all four gates with
-                    4,445 tests passed, 18 existing skips and zero failures. Historical local gates
-                    at 0ccdb67d passed with 4,432 tests and 18 skips. Thirty-six focused cases
-                    across nine provider IDs cover 18 synthetic-vision flows and 18 capability
-                    rejections/ordinary follow-ups. The isolated browser/API smoke at a02c6ab3 used
-                    a synthetic endpoint: two unsupported Design attempts added no inference
-                    requests or persisted Design runs; ordinary follow-ups retained both API
-                    identities, models and tool context across an owned restart, with no browser
-                    exceptions or queued work left. Live image-capable dashboard generation,
-                    packaged Electron, macOS and real-keyring acceptance remain unverified</span
+                    is checked before inference; unsupported sessions retain ordinary coding. The
+                    172 shipped website references and 316 WebPs are unchanged; the combined bundle
+                    has 372 references, 344 paired, and 716 WebPs. Default-bundle selection,
+                    saved-deck, attachment and hash checks passed for all 200 dashboard groups and
+                    400 distinct WebPs. The catalog is deeply JSON-equal to the private import after
+                    formatting; the other 401 files are byte-identical. Fresh Windows CI at edc92ea9
+                    passed all four gates with 4,445 tests passed, 18 existing skips and zero
+                    failures. Historical local gates at 0ccdb67d passed with 4,432 tests and 18
+                    skips. Thirty-six focused cases across nine provider IDs cover 18
+                    synthetic-vision flows and 18 capability rejections/ordinary follow-ups. The
+                    isolated browser/API smoke at a02c6ab3 used a synthetic endpoint: two
+                    unsupported Design attempts added no inference requests or persisted Design
+                    runs; ordinary follow-ups retained both API identities, models and tool context
+                    across an owned restart, with no browser exceptions or queued work left. Live
+                    image-capable dashboard generation, packaged Electron, macOS and real-keyring
+                    acceptance remain unverified</span
                   >
                 </span>
               </li>
@@ -1822,7 +1819,6 @@
           <span>Antigravity adapter</span>
           <span>Pi over RPC</span>
           <span>ACP agent library, 12 agents</span>
-          <span>API connections, 6 presets</span>
           <span>GLM and Z.ai coding plans</span>
         </div>
       </section>

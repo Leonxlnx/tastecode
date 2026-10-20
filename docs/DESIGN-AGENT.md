@@ -151,7 +151,8 @@ Implemented mechanics:
 - one correction attempt for malformed phase output;
 - persisted in-progress flow state and restart recovery;
 - phase-specific activity items and human labels;
-- direct API sessions (OpenCode since 2026-10-20) with the key kept out of their shell commands;
+- direct API workspace tools with path and credential boundaries (removed with API connections
+  on 2026-10-20);
 - an allowlisted local preview runner;
 - one dedicated sidebar Browser tab that opens on capture and reloads for repair passes;
 - a serialized, capability-negotiated Electron screenshot bridge that waits within fixed deadlines
@@ -590,7 +591,6 @@ The current product surface is provider-neutral for briefing but capability-gate
 | Native OpenCode  | Available         | Skipped                   | Does not declare image input.                                                  |
 | Antigravity CLI  | Available         | Skipped                   | Does not declare image input.                                                  |
 | Pi RPC           | Available         | Skipped                   | Does not declare image input.                                                  |
-| Direct API       | Available         | Skipped                   | Runs on OpenCode, which does not declare image input.                          |
 | ACP              | Available         | Available when negotiated | Sends ACP image blocks only when the agent advertised image prompt capability. |
 
 Autonomous Design briefing uses ordinary text turns and does not require structured-input support.
@@ -607,12 +607,8 @@ of done.
 
 ## Direct API sessions
 
-OpenAI, Anthropic, and compatible model endpoints do not provide a complete coding-agent runtime.
-Until 2026-10-20 TasteCode supplied its own bounded workspace tools for them. Since then a direct
-API connection runs as an OpenCode session on the user's key, so Design phases use OpenCode's
-tools and its approvals, with edits and shell commands asking under the chat's access level.
-OpenCode does not declare image input, so these sessions can build but cannot yet perform the
-screenshot Review phase. See [PROVIDERS.md](./PROVIDERS.md#api-connections-run-on-opencode).
+Removed with API connections on 2026-10-20. A user's own key now runs through OpenCode's
+sign-in, so such a session is a native OpenCode session above.
 
 ## Preview and screenshot safety
 
@@ -787,7 +783,7 @@ judgment rules, and UI design.
 
 ### 1. Finish provider verification
 
-- add real Design fixtures for a direct API (OpenCode) session and non-Codex adapters;
+- add real Design fixtures for non-Codex adapters;
 - capture one negotiated ACP image-review run against a real ACP agent;
 - add image attachments to another adapter only after its real protocol is captured;
 - verify that a future adapter works through capabilities without a provider-name branch.
@@ -866,7 +862,6 @@ The implementation should not silently decide these product questions:
 | Activity presentation                                   | `apps/web/src/ui/Thread.tsx`                                                             |
 | Client capture relay                                    | `apps/web/src/bridge.ts`, `apps/web/src/transport.ts`                                    |
 | ACP screenshot prompt blocks                            | `packages/adapter-acp/src/`                                                              |
-| Direct API sessions on OpenCode                         | `apps/server/src/api-connection-opencode.ts`                                             |
 | Durable product scope                                   | `docs/ROADMAP.md`, `docs/FEATURES.md`, this document                                     |
 
 Tests are colocated with each package or application. Important coverage includes artifact parser

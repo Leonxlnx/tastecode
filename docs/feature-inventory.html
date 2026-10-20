@@ -820,84 +820,6 @@
           </li>
         </ul>
 
-        <h3>
-          Direct API connections (run on OpenCode)
-          <span class="pill-parked">nightly only</span>
-        </h3>
-        <ul class="check">
-          <li>
-            <label
-              ><input type="checkbox" /><span
-                >Six presets
-                <span class="d"
-                  >OpenAI API, Anthropic API, OpenRouter, Kimi API, Z.ai API, custom endpoint; an
-                  invalid providers.json entry is skipped, logged by id and field name only, and
-                  kept on save, so the other connections keep working and the bad one can be
-                  removed; an unreadable file lists no connections and is backed up before the first
-                  save</span
-                ></span
-              ></label
-            >
-          </li>
-          <li>
-            <label
-              ><input type="checkbox" /><span
-                >Each chat is an OpenCode session on the connection's provider and key
-                <span class="d"
-                  >OpenCode supplies the agent: its tools, context management and approvals; each
-                  preset uses OpenCode's own provider id and catalog (openai, anthropic, openrouter,
-                  moonshotai, zai), a custom endpoint lists its models from its own /models; only
-                  that provider is enabled; the user's OpenCode sign-ins, global config and session
-                  history stay out; edits and shell commands ask under Ask and are approved under
-                  Full access; OpenCode must be installed, and without it the chat says so</span
-                ></span
-              ></label
-            >
-          </li>
-          <li>
-            <label
-              ><input type="checkbox" /><span
-                >API keys stored only in the OS credential store, renderer never sees values
-                <span class="d"
-                  >OpenCode gets the key through its environment only, never a config file, and the
-                  agent's shell commands see it blanked</span
-                ></span
-              ></label
-            >
-          </li>
-          <li>
-            <label
-              ><input type="checkbox" /><span
-                >Custom endpoints require HTTPS unless loopback</span
-              ></label
-            >
-          </li>
-          <li>
-            <label
-              ><input type="checkbox" /><span
-                >Chats continue across restart on the model they used
-                <span class="d"
-                  >OpenCode keeps the session in TasteCode's own database; a reopened chat stays on
-                  its last model, and a custom endpoint's models are read again first; chats saved
-                  by the former TasteCode loop stay readable but cannot continue</span
-                ></span
-              ></label
-            >
-          </li>
-          <li>
-            <label
-              ><input type="checkbox" /><span
-                >API connections section in Settings › Providers
-                <span class="d"
-                  >a section at the column edge; each connection is a roster row (mark, name, a
-                  solid wire with a key stored, an open leader and Key missing without one, Remove);
-                  the add form is the shared settings form card</span
-                ></span
-              ></label
-            >
-          </li>
-        </ul>
-
         <h3>Provider management</h3>
         <ul class="check">
           <li>
@@ -1305,21 +1227,21 @@
                 model's default, a hover ghost thumb named in the header, a press that focuses it
                 for arrow, Home and End keys, aligned pointer stops and a direction-aware 75% drag
                 threshold; groups keep one order (Claude Code, Codex, Grok, Cursor, OpenCode,
-                Antigravity, Pi, then ACP agents, API connections and custom harnesses) while models
-                load, and a first launch without a stored provider starts on Claude Code; the flat
-                list is the first-run layout, while both layouts share full-catalog search,
-                arrow-key entry into filtered results, and selection preservation; the button and
-                the checked row name exactly the model a send will use, and while the preferred
-                source is still listing its models the picker shows its loading state and Send waits
-                with the draft kept; new-chat source changes keep readiness checks silent; default
-                visibility hides, within each source, every row older than its family's newest
-                generation, read from the lab, family and generation the adapter declares or else
-                from the display name (GPT-5.5 and older untiered ids stay on a fixed list), so
-                GPT-5.6 Sol hides once GPT-6 Sol is listed and every Claude generation older than
-                Fable 5.1, Opus 5.5, Sonnet 5.5 and Haiku 5.5 hides; adapters can also mark models
-                recommended or deprecated; GPT 6.1 Sol, Astra, Luna, Daybreak, Fable 5.1 and the
-                Claude 5.5 lineup including Haiku 5.5 stay enabled when discovered; new models start
-                enabled unless they are an older generation
+                Antigravity, Pi, then ACP agents and custom harnesses) while models load, and a
+                first launch without a stored provider starts on Claude Code; the flat list is the
+                first-run layout, while both layouts share full-catalog search, arrow-key entry into
+                filtered results, and selection preservation; the button and the checked row name
+                exactly the model a send will use, and while the preferred source is still listing
+                its models the picker shows its loading state and Send waits with the draft kept;
+                new-chat source changes keep readiness checks silent; default visibility hides,
+                within each source, every row older than its family's newest generation, read from
+                the lab, family and generation the adapter declares or else from the display name
+                (GPT-5.5 and older untiered ids stay on a fixed list), so GPT-5.6 Sol hides once
+                GPT-6 Sol is listed and every Claude generation older than Fable 5.1, Opus 5.5,
+                Sonnet 5.5 and Haiku 5.5 hides; adapters can also mark models recommended or
+                deprecated; GPT 6.1 Sol, Astra, Luna, Daybreak, Fable 5.1 and the Claude 5.5 lineup
+                including Haiku 5.5 stay enabled when discovered; new models start enabled unless
+                they are an older generation
                 <span class="d"
                   >visibility stores only explicit choices (harness.modelVisibility.v2): defaults
                   follow the catalog, a newer generation hides the older one per source in the same
@@ -1574,9 +1496,8 @@
         Dashboard plans use operate_monitor with working filters, sorting, tabs, navigation, drawers
         and charts, keyboard access, focus restoration and reduced motion. Native chart SVG and
         visibly labeled demo values avoid website-only blockers; asserted product claims still
-        require evidence. Image capability is checked before inference; direct API sessions
-        currently declare images: false and cannot run visual Design, while ordinary coding remains
-        available. This work in
+        require evidence. Image capability is checked before inference; sessions without image input
+        cannot run visual Design, while ordinary coding remains available. This work in
         <a href="https://github.com/Leonxlnx/tastecode/pull/1393">PR #1393</a>
         is integrated on nightly after merged
         <a href="https://github.com/Leonxlnx/tastecode/pull/1392">PR #1392</a>. The 172 shipped
@@ -2928,10 +2849,10 @@
                   >setting rows 13.5/500, entity rows 15/550, sub-rows 12.5/400, with provider names
                   aligned beside their icons; one 28 px button set (default, primary for form
                   submit, danger, quiet, square icon), one 30x18 switch on every tab and in the
-                  provider context panel, one 28 px text field (API connections, MCP editor, avatar
-                  lab), two select looks (boxed for forms and headers, inline for leader rows), and
-                  a segmented control for the provider context window and the model list's All and
-                  None; page actions wrap inside a narrow column</span
+                  provider context panel, one 28 px text field (MCP editor, avatar lab), two select
+                  looks (boxed for forms and headers, inline for leader rows), and a segmented
+                  control for the provider context window and the model list's All and None; page
+                  actions wrap inside a narrow column</span
                 ></span
               ></label
             >
@@ -2983,10 +2904,10 @@
                 <span class="d"
                   >without Claude Code, Luna at medium with a connected Codex subscription, then
                   Grok 4.6 at low when Grok is connected, otherwise the newest cost-oriented model
-                  at its lowest advertised effort across connected subscription, custom harness, and
-                  direct API providers; Models settings exposes an explicit model and effort
-                  override, plus Standard/Fast speed for models that support Fast, including Codex;
-                  its note names no providers or models</span
+                  at its lowest advertised effort across connected subscription and custom harness
+                  providers; Models settings exposes an explicit model and effort override, plus
+                  Standard/Fast speed for models that support Fast, including Codex; its note names
+                  no providers or models</span
                 ></span
               ></label
             >
@@ -3274,7 +3195,7 @@
                   chats that started waiting while away: an amber dot with a thin dark ring on the
                   Windows taskbar button (the count in its tooltip), app.setBadgeCount on macOS and
                   Linux. No sound of our own; the OS and its do-not-disturb decide. Reads the
-                  sidebar status, so it works for every provider and API connection</span
+                  sidebar status, so it works for every provider</span
                 ></span
               ></label
             >
