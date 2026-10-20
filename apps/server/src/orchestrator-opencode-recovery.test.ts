@@ -8,7 +8,6 @@ import { describe, expect, it, vi } from 'vitest'
 import { providerRuntime } from './adapters.js'
 import { CustomHarnessStore } from './custom-harnesses.js'
 import { McpConfigStore } from './mcp-config.js'
-import { ModelConnectionStore } from './model-connections.js'
 import { Orchestrator } from './orchestrator.js'
 import { Store } from './store.js'
 
@@ -145,7 +144,6 @@ describe.each(['v1', 'v2'] as const)('OpenCode %s connection recovery', (protoco
         runtimeFor: providerRuntime,
         worktreeRoot: path.join(root, 'worktrees'),
         mcpConfig: new McpConfigStore(path.join(root, 'mcp.json')),
-        modelConnections: new ModelConnectionStore(path.join(root, 'models.json')),
         customHarnesses: new CustomHarnessStore(path.join(root, 'harnesses.json')),
       })
       try {
@@ -204,7 +202,6 @@ describe('OpenCode opening stream recovery', () => {
           runtimeFor: providerRuntime,
           worktreeRoot: path.join(root, 'worktrees'),
           mcpConfig: new McpConfigStore(path.join(root, 'mcp.json')),
-          modelConnections: new ModelConnectionStore(path.join(root, 'models.json')),
           customHarnesses: new CustomHarnessStore(path.join(root, 'harnesses.json')),
         })
       let orchestrator = createOrchestrator()

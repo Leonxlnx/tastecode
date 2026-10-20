@@ -16,7 +16,6 @@ import { DEFAULT_ACCOUNT_ID, JsonValueSchema, PreviewDomAuditSchema } from '@har
 import { z } from 'zod'
 import {
   providerRuntime,
-  apiRuntime,
   verifyCustomHarness as verifyCustomHarnessCompatibility,
   type AgentSession,
   type ProviderRuntime,
@@ -123,7 +122,6 @@ import {
 } from './diff-review.js'
 import { McpConfigStore } from './mcp-config.js'
 import { readCredential } from './credentials.js'
-import { ModelConnectionStore } from './model-connections.js'
 import { CustomHarnessStore } from './custom-harnesses.js'
 import { TerminalManager } from './terminal.js'
 import { insideSkillFolder, installLocalSkill, sameSkillFolder } from './skill-install.js'
@@ -741,7 +739,6 @@ export class Orchestrator {
   #sidebarStatusRevision = 0
   #sidebarStatusChanges: Array<{ revision: number; threadId: string }> = []
   #mcpConfig: McpConfigStore
-  #modelConnections: ModelConnectionStore
   #customHarnesses: CustomHarnessStore
   /** Keyed by source id. */
   #backgroundSources = new Map<string, BackgroundSourceEntry>()
@@ -760,7 +757,6 @@ export class Orchestrator {
     onLog: (line: string) => void,
     accountHome?: string,
   ) => ProviderRuntime
-  #runtimeForInjected: boolean
   /** Which folder each provider account runs in. */
   #accounts: AccountDirectory
   #maxIdleThreadRuntimes: number
@@ -823,7 +819,6 @@ export class Orchestrator {
       /** Ports a Design preview must never serve on: the app's own. */
       reservedPreviewPorts?: ReadonlySet<number>
       mcpConfig?: McpConfigStore
-      modelConnections?: ModelConnectionStore
       customHarnesses?: CustomHarnessStore
       readCredential?: (reference: string) => string
       voiceTranscriber?: VoiceTranscriber
@@ -879,7 +874,6 @@ export class Orchestrator {
     this.#capturePreview = handlers.capturePreview
     this.#reservedPreviewPorts = handlers.reservedPreviewPorts ?? new Set()
     this.#mcpConfig = handlers.mcpConfig ?? new McpConfigStore()
-    this.#modelConnections = handlers.modelConnections ?? new ModelConnectionStore()
     this.#customHarnesses = handlers.customHarnesses ?? new CustomHarnessStore()
     this.#readCredential = handlers.readCredential ?? readCredential
     this.#voice = new VoiceService(handlers.voiceTranscriber)
@@ -896,7 +890,6 @@ export class Orchestrator {
       handlers.runtimeFor ??
       ((provider, onLog, accountHome) =>
         providerRuntime(provider, onLog, (id) => this.#customHarnesses.find(id), accountHome))
-    this.#runtimeForInjected = handlers.runtimeFor !== undefined
     this.#accounts = handlers.accounts ?? DEFAULT_ACCOUNTS_ONLY
     this.#maxIdleThreadRuntimes =
       handlers.maxIdleThreadRuntimes === undefined
@@ -1035,32 +1028,6 @@ export class Orchestrator {
 
   listCustomHarnesses() {
     return this.#customHarnesses.list()
-  }
-
-  listModelConnections() {
-    return this.#modelConnections.list()
-  }
-
-  upsertModelConnection(connection: Parameters<ModelConnectionStore['upsert']>[0]) {
-    const saved = this.#modelConnections.upsert(connection)
-    this.#invalidateBackgroundSources()
-    return saved
-  }
-
-  setModelConnectionCredential(connectionId: string, apiKey: string): void {
-    this.#modelConnections.setCredential(connectionId, apiKey)
-    this.#invalidateBackgroundSources()
-  }
-
-  removeModelConnection(connectionId: string): void {
-    this.#modelConnections.remove(connectionId)
-    this.#invalidateBackgroundSources()
-  }
-
-  async listConnectionModels(connectionId: string): Promise<Model[]> {
-    const connection = this.#modelConnections.get(connectionId)
-    const apiKey = this.#readCredential(connection.credentialRef)
-    return apiRuntime(connection, apiKey, this.#onLog).listModels()
   }
 
   upsertCustomHarness(harness: Parameters<CustomHarnessStore['upsert']>[0]) {
@@ -1210,17 +1177,14 @@ export class Orchestrator {
       )
       const resolved = await resolveBackgroundModelFrom(preference, loaders)
       if (!resolved) break
-      const runtime =
-        resolved.provider === 'api'
-          ? this.#apiRuntime(resolved.connectionId)
-          : this.#runtimeFor(
-              resolved.provider,
-              this.#onLog,
-              // A custom harness keeps its own sign-in; another provider has no account of this chat.
-              chat && !resolved.agent && resolved.provider === chat.provider
-                ? threadAccountHome(this.#accounts, chat)
-                : undefined,
-            )
+      const runtime = this.#runtimeFor(
+        resolved.provider,
+        this.#onLog,
+        // A custom harness keeps its own sign-in; another provider has no account of this chat.
+        chat && !resolved.agent && resolved.provider === chat.provider
+          ? threadAccountHome(this.#accounts, chat)
+          : undefined,
+      )
       try {
         return await runBackgroundCompletion({
           runtime,
@@ -1261,18 +1225,7 @@ export class Orchestrator {
           this.#discoverHarnessSource(harness),
         ),
     }))
-    const connections = this.#modelConnections
-      .list()
-      .filter((connection) => connection.enabled && connection.credentialConfigured)
-      .map((connection) => ({
-        provider: 'api' as const,
-        connectionId: connection.id,
-        load: () =>
-          this.#backgroundSource(`api:${connection.id}`, () =>
-            this.#discoverConnectionSource(connection),
-          ),
-      }))
-    return [...builtIns, ...custom, ...connections]
+    return [...builtIns, ...custom]
   }
 
   /** One read per source serves concurrent callers and, for a minute, later ones. */
@@ -1346,44 +1299,6 @@ export class Orchestrator {
     } catch {
       return undefined
     }
-  }
-
-  async #discoverConnectionSource(
-    connection: ReturnType<ModelConnectionStore['list']>[number],
-  ): Promise<AvailableBackgroundModelSource | undefined> {
-    let stored: ReturnType<ModelConnectionStore['get']>
-    let apiKey: string
-    try {
-      stored = this.#modelConnections.get(connection.id)
-      apiKey = this.#readCredential(stored.credentialRef)
-    } catch {
-      return undefined
-    }
-    let models: Model[] = []
-    try {
-      models = await apiRuntime(stored, apiKey, this.#onLog).listModels()
-    } catch {
-      // Compatible endpoints may omit discovery; their explicit default stays runnable.
-    }
-    if (models.length === 0 && connection.defaultModel) {
-      models = [
-        {
-          id: connection.defaultModel,
-          displayName: connection.defaultModel,
-          isDefault: true,
-          reasoningEfforts: [],
-          serviceTiers: [],
-        },
-      ]
-    }
-    if (models.length === 0) return undefined
-    return {
-      id: `api:${connection.id}`,
-      displayName: connection.displayName,
-      provider: 'api',
-      connectionId: connection.id,
-      models,
-    } satisfies AvailableBackgroundModelSource
   }
 
   #invalidateBackgroundSources(): void {
@@ -1919,10 +1834,7 @@ export class Orchestrator {
     // agent — it is the directory the agent will be spawned in.
     const threadId = `${provider}-${crypto.randomUUID()}`
     const resolvedWorkspacePath = resolveWorkspacePath(workspacePath)
-    const runtime =
-      provider === 'api' && !this.#runtimeForInjected
-        ? this.#apiRuntime(options.connectionId)
-        : this.#runtimeFor(provider, this.#onLog, accountHome)
+    const runtime = this.#runtimeFor(provider, this.#onLog, accountHome)
     const runtimeOptions = {
       ...options,
       instructions: composeInstructions(options.instructions),
@@ -1975,9 +1887,6 @@ export class Orchestrator {
         projectPath: workspacePath,
         provider,
         ...(options.agent ? { agent: options.agent } : {}),
-        ...(thread.connectionId || options.connectionId
-          ? { connectionId: thread.connectionId ?? options.connectionId }
-          : {}),
         ...(thread.accountId ? { accountId: thread.accountId } : {}),
         ...(continueFrom === undefined ? {} : { continuedFrom: continueFrom }),
         title: 'New session',
@@ -2076,15 +1985,11 @@ export class Orchestrator {
       'ask'
     // Side chat runs as the main chat's account.
     const accountHome = threadAccountHome(this.#accounts, storedParent)
-    const runtime =
-      provider === 'api' && !this.#runtimeForInjected
-        ? this.#apiRuntime(parent.connectionId)
-        : this.#runtimeFor(provider, this.#onLog, accountHome)
+    const runtime = this.#runtimeFor(provider, this.#onLog, accountHome)
     const runtimeOptions: StartOptions = {
       ...options,
       approval,
       ...(storedParent.agent ? { agent: storedParent.agent } : {}),
-      ...(parent.connectionId ? { connectionId: parent.connectionId } : {}),
       instructions: composeInstructions(sideChatInstructionsFromReplay(parentHistory)),
       ...this.#mcpRuntimeOptions(provider, storedParent.projectPath),
       ...this.#contextRuntimeOptions(provider, storedParent.agent, storedParent.accountId),
@@ -2107,7 +2012,6 @@ export class Orchestrator {
         projectPath: storedParent.projectPath,
         provider,
         ...(storedParent.agent ? { agent: storedParent.agent } : {}),
-        ...(parent.connectionId ? { connectionId: parent.connectionId } : {}),
         ...(thread.accountId ? { accountId: thread.accountId } : {}),
         title: 'Side chat',
         createdAt: thread.createdAt,
@@ -2148,14 +2052,6 @@ export class Orchestrator {
       }
       throw error
     }
-  }
-
-  #apiRuntime(connectionId: string | undefined): ProviderRuntime {
-    if (!connectionId) throw new Error('connectionId is required for direct API sessions')
-    const connection = this.#modelConnections.get(connectionId)
-    if (!connection.enabled) throw new Error(`model connection "${connectionId}" is disabled`)
-    const apiKey = this.#readCredential(connection.credentialRef)
-    return apiRuntime(connection, apiKey, this.#onLog)
   }
 
   async sendTurn(
@@ -4221,10 +4117,7 @@ export class Orchestrator {
 
     // Its sessions live in its account's folder, so a chat resumes only there.
     const accountHome = threadAccountHome(this.#accounts, stored)
-    const runtime =
-      stored.provider === 'api' && !this.#runtimeForInjected
-        ? this.#apiRuntime(stored.connectionId)
-        : this.#runtimeFor(stored.provider, this.#onLog, accountHome)
+    const runtime = this.#runtimeFor(stored.provider, this.#onLog, accountHome)
     if (!runtime.resume) {
       throw new Error(`${stored.provider} sessions cannot resume after TasteCode restarts yet`)
     }

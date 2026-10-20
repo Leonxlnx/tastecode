@@ -7,7 +7,6 @@ import type { AgentSession, ProviderRuntime } from './adapters.js'
 import { Orchestrator } from './orchestrator.js'
 import { Store } from './store.js'
 import { McpConfigStore } from './mcp-config.js'
-import { ModelConnectionStore } from './model-connections.js'
 import { CustomHarnessStore } from './custom-harnesses.js'
 import { checkpointRepository, retainCheckpoint, takeSnapshot } from './checkpoint.js'
 import { runHistoryCli } from './history-cli.js'
@@ -106,7 +105,6 @@ function harness(
     runtimeFor: () => runtime,
     worktreeRoot: path.join(root, 'worktrees'),
     mcpConfig: new McpConfigStore(path.join(root, 'mcp.json')),
-    modelConnections: new ModelConnectionStore(path.join(root, 'models.json')),
     customHarnesses: new CustomHarnessStore(path.join(root, 'harnesses.json')),
   })
   active.push({ orchestrator, store })

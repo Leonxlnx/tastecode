@@ -1545,12 +1545,6 @@ describe('provider-neutral Side chat', () => {
         effort: 'high',
         approval: 'auto',
       })
-      if (provider === 'api') {
-        expect(startedOptions[1]?.connectionId).toBe(parent.connectionId)
-        expect(side.connectionId).toBe(parent.connectionId)
-        expect(store.thread(parent.id)?.connectionId).toBe(parent.connectionId)
-        expect(store.thread(side.id)?.connectionId).toBe(parent.connectionId)
-      }
       expect(startedOptions[1]?.instructions).toContain('temporary Side chat')
       expect(startedOptions[1]?.instructions).toContain('Explain this failure.')
 

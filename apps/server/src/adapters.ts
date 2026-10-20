@@ -1,4 +1,3 @@
-import path from 'node:path'
 import type { ClaudeCodeAdapter } from '@harness/adapter-claude-code'
 import type { GrokAdapter } from '@harness/adapter-grok'
 import type {
@@ -16,16 +15,8 @@ import type {
   ProviderContextSettings,
   ProviderId,
   ProviderLimit,
-  StoredModelConnection,
   Thread,
 } from '@harness/contracts'
-import {
-  listCustomModels,
-  openCodeConnectionConfig,
-  openCodeConnectionEnvironment,
-  openCodeModelId,
-  writeShellGuard,
-} from './api-connection-opencode.js'
 import {
   actionableLaunchError,
   customHarnessRun,
@@ -33,7 +24,6 @@ import {
   resolveCustomHarnessLaunch,
   runCustomHarness,
 } from './custom-harness-launch.js'
-import { storeLocation } from './data-location.js'
 import type { ModelListRead } from './model-list-cache.js'
 import { retryableLazy } from './retryable-lazy.js'
 import { mapProviderSession, StartupCleanupError } from './provider-session.js'
@@ -63,8 +53,6 @@ export type StartOptions = {
   approval?: ApprovalMode | undefined
   /** Built-in ACP agent or user-owned harness source to launch. */
   agent?: string | undefined
-  /** Server-owned direct API connection. Required only by the API runtime. */
-  connectionId?: string | undefined
   /** Provider-owned history should not retain product-internal background work. */
   ephemeral?: boolean | undefined
   /**
@@ -85,134 +73,6 @@ export type StartOptions = {
   providerSessionId?: string | undefined
   /** Opaque local state, validated only by the adapter that owns it. */
   resumeState?: unknown
-}
-
-/** Chats from before API connections ran on OpenCode; their state belonged to the old runtime. */
-const LEGACY_API_THREAD = /^api-/
-
-/** TasteCode's OpenCode folder for API chats: sessions, config and the shell guard. */
-function apiOpenCodeHome(): string {
-  return path.join(path.dirname(storeLocation()), 'opencode-api')
-}
-
-/** The last model list each custom endpoint gave, so a chat can switch between them. */
-const customEndpointModels = new Map<string, string[]>()
-
-async function refreshCustomModels(connection: StoredModelConnection, apiKey: string) {
-  const models = await listCustomModels(connection, apiKey)
-  customEndpointModels.set(connection.id, models)
-  return models
-}
-
-function apiLaunchError(error: unknown): never {
-  if (error instanceof Error && error.message.startsWith('OpenCode is unavailable')) {
-    throw new Error(
-      'API key connections run in OpenCode, which is not available. Install OpenCode to use this connection.',
-    )
-  }
-  throw error
-}
-
-/**
- * A direct API connection is an OpenCode session that runs on the user's
- * key: OpenCode is the agent, the connection only chooses its provider.
- */
-export function apiRuntime(
-  connection: StoredModelConnection,
-  apiKey: string,
-  onLog: (line: string) => void,
-): ProviderRuntime {
-  const adapterFor = async (
-    models: readonly string[],
-    model?: string,
-    options: Partial<StartOptions> = {},
-  ) => {
-    const { OpenCodeAdapter } = await loadOpenCodeAdapter()
-    const home = apiOpenCodeHome()
-    return new OpenCodeAdapter({
-      config: openCodeConnectionConfig(connection, writeShellGuard(home), { models, model }),
-      environment: openCodeConnectionEnvironment(apiKey, home),
-      ...(options.mcpServers ? { mcpServers: options.mcpServers } : {}),
-      ...(options.mcpCredentials ? { mcpCredentials: options.mcpCredentials } : {}),
-    })
-  }
-  const open = async (workspacePath: string, options: StartOptions, threadId?: string) => {
-    if (threadId !== undefined && LEGACY_API_THREAD.test(threadId)) {
-      throw new Error(
-        'This chat ran on the former built-in API runtime and cannot continue. Its history stays readable; start a new chat to keep going.',
-      )
-    }
-    // A resumed chat may name no model: OpenCode then keeps the one it used.
-    const model = options.model ?? (threadId === undefined ? connection.defaultModel : undefined)
-    if (!model && threadId === undefined) {
-      throw new Error(`choose a model for "${connection.displayName}"`)
-    }
-    // A custom endpoint's models exist only in this config, so a chat
-    // reopened after a restart needs them before OpenCode can run its model.
-    const custom =
-      connection.preset === 'custom'
-        ? (customEndpointModels.get(connection.id) ??
-          (threadId === undefined ? [] : await refreshCustomModels(connection, apiKey)))
-        : []
-    const adapter = await adapterFor(custom, model, options)
-    adapter.on('log', onLog)
-    return startedSession(adapter, async () => {
-      await adapter.start().catch(apiLaunchError)
-      const selection = {
-        ...(model ? { model: openCodeModelId(connection, model) } : {}),
-        ...(options.effort ? { effort: options.effort } : {}),
-        ...(options.approval ? { approval: options.approval } : {}),
-        ...(options.instructions ? { instructions: options.instructions } : {}),
-      }
-      const thread =
-        threadId === undefined
-          ? await adapter.startThread(workspacePath, selection)
-          : await adapter.resumeThread(threadId, workspacePath, selection)
-      return { ...thread, provider: 'api' as const, connectionId: connection.id }
-    })
-  }
-  return {
-    start: open,
-    resume: (threadId, workspacePath, options) => open(workspacePath, options, threadId),
-    listModels: () => listConnectionModels(connection, apiKey, adapterFor),
-  }
-}
-
-/** One listing per connection at a time; each one runs its own `opencode serve`. */
-const connectionModelListings = new Map<string, Promise<Model[]>>()
-
-function listConnectionModels(
-  connection: StoredModelConnection,
-  apiKey: string,
-  adapterFor: (models: readonly string[]) => Promise<{
-    listModels(): Promise<Model[]>
-    dispose(): Promise<void>
-  }>,
-): Promise<Model[]> {
-  const existing = connectionModelListings.get(connection.id)
-  if (existing) return existing
-  const listing = (async () => {
-    const custom =
-      connection.preset === 'custom' ? await refreshCustomModels(connection, apiKey) : []
-    const adapter = await adapterFor(custom)
-    runningListings.add(adapter)
-    try {
-      const models = await adapter.listModels().catch(apiLaunchError)
-      const preferred = connection.defaultModel
-        ? openCodeModelId(connection, connection.defaultModel)
-        : undefined
-      return preferred
-        ? models.map((model) => ({ ...model, isDefault: model.id === preferred }))
-        : models
-    } finally {
-      runningListings.delete(adapter)
-      await adapter.dispose()
-    }
-  })().finally(() => {
-    connectionModelListings.delete(connection.id)
-  })
-  connectionModelListings.set(connection.id, listing)
-  return listing
 }
 
 export type TurnOptions = Pick<StartOptions, 'model' | 'serviceTier' | 'effort'>

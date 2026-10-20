@@ -1,9 +1,4 @@
-import type {
-  CustomHarness,
-  CustomHarnessVerification,
-  ProviderId,
-  StoredModelConnection,
-} from '@harness/contracts'
+import type { CustomHarness, CustomHarnessVerification, ProviderId } from '@harness/contracts'
 import type { AgentSession, ProviderRuntime, StartOptions, TurnOptions } from './adapters.js'
 import { retryableLazy } from './retryable-lazy.js'
 import { PROVIDER_CAPABILITIES } from './provider-capabilities.js'
@@ -52,24 +47,15 @@ export function providerRuntime(
   accountHome?: string,
 ): ProviderRuntime {
   if (provider === 'api') {
-    throw new Error(`provider "${provider}" is not implemented yet`)
+    throw new Error(
+      'API key connections were removed from TasteCode. This chat stays readable; to use your own key, sign in to OpenCode with it.',
+    )
   }
   const supportsResume = PROVIDER_CAPABILITIES[provider].resume
   return deferredRuntime(
     async () =>
       (await loadAdapters()).providerRuntime(provider, onLog, resolveHarness, accountHome),
     supportsResume,
-  )
-}
-
-export function apiRuntime(
-  connection: StoredModelConnection,
-  apiKey: string,
-  onLog: (line: string) => void,
-): ProviderRuntime {
-  return deferredRuntime(
-    async () => (await loadAdapters()).apiRuntime(connection, apiKey, onLog),
-    true,
   )
 }
 

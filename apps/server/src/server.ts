@@ -813,31 +813,6 @@ export function startServer(
         }
       }
 
-      case 'connections.list':
-        return { connections: orchestrator.listModelConnections() }
-
-      case 'connections.upsert':
-        return {
-          connection: orchestrator.upsertModelConnection(parseParams(method, params)),
-        }
-
-      case 'connections.setCredential': {
-        const p = parseParams(method, params)
-        orchestrator.setModelConnectionCredential(p.connectionId, p.apiKey)
-        return { credentialConfigured: true }
-      }
-
-      case 'connections.remove': {
-        const p = parseParams(method, params)
-        orchestrator.removeModelConnection(p.connectionId)
-        return {}
-      }
-
-      case 'connections.models': {
-        const p = parseParams(method, params)
-        return { models: await orchestrator.listConnectionModels(p.connectionId) }
-      }
-
       case 'mcp.list': {
         const p = parseParams(method, params)
         return orchestrator.listMcpServers(p.provider, p.projectPath)
@@ -1389,7 +1364,6 @@ export function startServer(
           effort: p.effort,
           approval: p.approval,
           agent: p.agent,
-          connectionId: p.connectionId,
           accountId: p.accountId,
           continueFrom: p.continueFrom,
           isolate: p.isolate,
