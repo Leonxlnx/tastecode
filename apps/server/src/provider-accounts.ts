@@ -4,6 +4,7 @@ import {
   copyFileSync,
   existsSync,
   mkdirSync,
+  readdirSync,
   realpathSync,
   rmSync,
   statSync,
@@ -20,6 +21,7 @@ import {
   type Account,
   type AccountId,
   type Capabilities,
+  type DetectedAccountHome,
   type ProviderAccount,
   type ProviderAccountHome,
   type ProviderId,
@@ -252,6 +254,51 @@ export class ProviderAccounts implements AccountDirectory {
     }
   }
 
+  /**
+   * Config folders beside each provider's default one that its CLI has used
+   * and that are no account yet: `~/.claude_work` beside `~/.claude`, or
+   * `~/.codex-personal` beside `~/.codex`, as the user or another tool set
+   * them up. Found from names and dates alone; nothing in them is opened and
+   * no CLI runs there. Backup copies and folders already in use are left out.
+   */
+  detect(): DetectedAccountHome[] {
+    const found: DetectedAccountHome[] = []
+    for (const provider of Object.keys(this.#homes) as ProviderId[]) {
+      const source = this.#source(provider)
+      const markers = source.markers ?? []
+      if (markers.length === 0) continue
+      const defaultHome = source.defaultHome(this.#environment)
+      const parent = path.dirname(defaultHome)
+      const base = path.basename(defaultHome)
+      let names: string[]
+      try {
+        names = readdirSync(parent)
+      } catch {
+        continue
+      }
+      const rows = this.#rows.providerAccounts(provider)
+      const labels = new Set(
+        this.#accounts(provider, rows).map((account) => account.label.toLocaleLowerCase()),
+      )
+      for (const name of names.sort()) {
+        const suffix = siblingSuffix(base, name)
+        if (suffix === undefined) continue
+        const folder = path.join(parent, name)
+        const lastUsed = lastWritten(folder, markers)
+        if (lastUsed === undefined) continue
+        try {
+          this.#existingFolder(provider, source, rows, folder)
+        } catch {
+          continue
+        }
+        const label = freeLabel(labels, labelFrom(suffix), name)
+        labels.add(label.toLocaleLowerCase())
+        found.push({ provider, home: folder, label, lastUsed })
+      }
+    }
+    return found
+  }
+
   setActive(provider: ProviderId, accountId: AccountId): void {
     this.#require(provider, accountId)
     if (this.active(provider) === accountId) return
@@ -448,6 +495,63 @@ export class ProviderAccounts implements AccountDirectory {
         `The account is removed, but its folder could not be deleted (${errorCode(error)}). It is still at ${folder}.`,
       )
     }
+  }
+}
+
+/** The longest account label the contract takes. */
+const LABEL_LIMIT = 80
+
+/** Folder names that are a copy kept aside, not an account in use. */
+const SET_ASIDE = /(?:^|[-_.])(?:bak|backup|old|orig|copy|tmp|temp)\d*$/i
+
+/**
+ * What follows the default folder's name in a sibling's, `personal` for
+ * `.claude_personal` beside `.claude`; none for anything else or a copy kept
+ * aside.
+ */
+function siblingSuffix(base: string, name: string): string | undefined {
+  if (!name.startsWith(base)) return undefined
+  const rest = name.slice(base.length)
+  if (!/^[-_.]./.test(rest) || SET_ASIDE.test(rest)) return undefined
+  return rest.slice(1)
+}
+
+/**
+ * When the CLI last wrote any of the entries only a folder it used holds;
+ * undefined when the folder is not a folder or holds none of them.
+ */
+function lastWritten(folder: string, markers: readonly string[]): number | undefined {
+  try {
+    if (!statSync(folder).isDirectory()) return undefined
+  } catch {
+    return undefined
+  }
+  let latest: number | undefined
+  for (const marker of markers) {
+    try {
+      const written = Math.trunc(statSync(path.join(folder, marker)).mtimeMs)
+      latest = Math.max(latest ?? 0, written)
+    } catch {
+      // Not there: a CLI that never wrote this entry.
+    }
+  }
+  return latest
+}
+
+/** `Personal` for `personal`, `Work laptop` for `work-laptop`. */
+function labelFrom(suffix: string): string {
+  const words = suffix.replace(/[-_.]+/g, ' ').trim()
+  return words.charAt(0).toLocaleUpperCase() + words.slice(1)
+}
+
+/** The wanted label, else the folder's own name, numbered once both are taken. */
+function freeLabel(taken: ReadonlySet<string>, wanted: string, folderName: string): string {
+  for (const candidate of [wanted, folderName].map((each) => each.slice(0, LABEL_LIMIT))) {
+    if (candidate && !taken.has(candidate.toLocaleLowerCase())) return candidate
+  }
+  for (let number = 2; ; number += 1) {
+    const candidate = `${(wanted || folderName).slice(0, LABEL_LIMIT - 4)} ${number}`
+    if (!taken.has(candidate.toLocaleLowerCase())) return candidate
   }
 }
 

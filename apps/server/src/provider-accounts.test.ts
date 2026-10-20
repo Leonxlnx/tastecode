@@ -321,3 +321,88 @@ describe('provider accounts', () => {
     expect(changed).toEqual(['codex', 'codex', 'codex'])
   })
 })
+
+describe('finding further accounts on the machine', () => {
+  /** A home folder holding the CLI's own `.cli` folder and whatever siblings a test makes. */
+  function machine() {
+    const home = temporaryFolder()
+    const cliHome = path.join(home, '.cli')
+    const folder = (name: string, entries: readonly string[] = []) => {
+      const at = path.join(home, name)
+      mkdirSync(at, { recursive: true })
+      for (const entry of entries) {
+        if (entry.endsWith('/')) mkdirSync(path.join(at, entry), { recursive: true })
+        else writeFileSync(path.join(at, entry), '{}\n')
+      }
+      return at
+    }
+    folder('.cli', ['config.toml'])
+    const source: AccountHomeSource = {
+      defaultHome: () => cliHome,
+      environment: (at) => ({ FAKE_CLI_HOME: at }),
+      seedFiles: [],
+      markers: ['config.toml', 'sessions'],
+    }
+    const store = new Store(':memory:')
+    cleanup.push(() => store.close())
+    const accounts = new ProviderAccounts(store, {
+      root: path.join(home, 'data', 'accounts'),
+      homes: { codex: source },
+      environment: {},
+    })
+    return { home, folder, accounts }
+  }
+
+  it('offers a used folder beside the default one, named after it', () => {
+    const { folder, accounts } = machine()
+    const personal = folder('.cli_personal', ['sessions/'])
+    const laptop = folder('.cli-work-laptop', ['config.toml'])
+    const found = accounts.detect()
+    expect(found.map(({ home, label }) => ({ home, label }))).toEqual([
+      { home: laptop, label: 'Work laptop' },
+      { home: personal, label: 'Personal' },
+    ])
+    expect(found.every((entry) => entry.provider === 'codex' && entry.lastUsed! > 0)).toBe(true)
+  })
+
+  it('leaves out folders no CLI used, copies kept aside, files and other names', () => {
+    const { home, folder, accounts } = machine()
+    folder('.cli-router', ['settings.json'])
+    folder('.cli.bak', ['config.toml'])
+    folder('.cli-backup', ['config.toml'])
+    folder('.cli_old2', ['config.toml'])
+    folder('.client', ['config.toml'])
+    folder('.cli-', ['config.toml'])
+    writeFileSync(path.join(home, '.cli.json'), '{}\n')
+    expect(accounts.detect()).toEqual([])
+  })
+
+  it('leaves out a folder that is an account already and avoids a taken name', () => {
+    const { folder, accounts } = machine()
+    const work = folder('.cli-work', ['config.toml'])
+    const other = folder('.cli_personal', ['config.toml'])
+    accounts.create('codex', 'Personal', { kind: 'existing', path: work })
+    expect(accounts.detect()).toEqual([
+      expect.objectContaining({ home: other, label: '.cli_personal' }),
+    ])
+  })
+
+  it('finds nothing for a provider whose adapter names no markers', () => {
+    const { folder } = machine()
+    folder('.cli-personal', ['config.toml'])
+    const store = new Store(':memory:')
+    cleanup.push(() => store.close())
+    const unmarked = new ProviderAccounts(store, {
+      root: temporaryFolder(),
+      homes: {
+        codex: {
+          defaultHome: () => path.join(os.homedir(), '.nothing-here'),
+          environment: () => ({}),
+          seedFiles: [],
+        },
+      },
+      environment: {},
+    })
+    expect(unmarked.detect()).toEqual([])
+  })
+})

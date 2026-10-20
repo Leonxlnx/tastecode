@@ -15,6 +15,7 @@ export const CLAUDE_ACCOUNT_HOME: AccountHomeSource = {
     environment['CLAUDE_CONFIG_DIR'] ?? path.join(os.homedir(), '.claude'),
   environment: (home) => ({ CLAUDE_CONFIG_DIR: home }),
   seedFiles: [],
+  markers: ['.claude.json', 'projects', 'history.jsonl'],
 }
 
 /** The variables a process for this account needs; none for the default account. */

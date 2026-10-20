@@ -14,6 +14,7 @@ export const CODEX_ACCOUNT_HOME: AccountHomeSource = {
     environment['CODEX_HOME'] ?? path.join(os.homedir(), '.codex'),
   environment: (home) => ({ CODEX_HOME: home }),
   seedFiles: [],
+  markers: ['config.toml', 'auth.json', 'sessions', 'history.jsonl'],
 }
 
 /** The variables a process for this account needs; none for the default account. */

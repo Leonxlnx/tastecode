@@ -932,6 +932,10 @@ export function startServer(
       case 'accounts.list':
         return accounts.list(parseParams(method, params).provider)
 
+      case 'accounts.detect':
+        parseParams(method, params)
+        return { found: accounts.detect() }
+
       case 'accounts.create': {
         const p = parseParams(method, params)
         const account = accounts.create(p.provider, p.label, p.home)

@@ -18,4 +18,10 @@ export type AccountHomeSource = {
    * default folder. Only non-secret configuration, never a sign-in or token file.
    */
   seedFiles: readonly string[]
+  /**
+   * Entries only a folder this CLI has used holds, relative to it. Checked for
+   * existence alone, never opened, to offer folders already on the machine as
+   * further accounts.
+   */
+  markers?: readonly string[]
 }
