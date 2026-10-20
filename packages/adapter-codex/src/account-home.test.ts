@@ -33,8 +33,8 @@ describe('Codex account homes', () => {
     expect(CODEX_ACCOUNT_HOME.defaultHome({})).toBe(path.join(os.homedir(), '.codex'))
   })
 
-  it('seeds a new folder with settings only', () => {
-    expect(CODEX_ACCOUNT_HOME.seedFiles).toEqual(['config.toml'])
+  it("starts a new folder empty, without the default account's keys or login pins", () => {
+    expect(CODEX_ACCOUNT_HOME.seedFiles).toEqual([])
   })
 
   it("starts the app-server in the account's folder, next to its MCP variables", async () => {

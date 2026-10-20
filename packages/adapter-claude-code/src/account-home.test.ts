@@ -72,10 +72,11 @@ describe('Claude account homes', () => {
     expect(withClaudeAccount(base, home)).toEqual({ PATH: 'bin', CLAUDE_CONFIG_DIR: home })
   })
 
-  it("names the CLI's own folder as the default one and seeds settings only", () => {
+  it("names the CLI's own folder as the default one and starts a new folder empty", () => {
     expect(CLAUDE_ACCOUNT_HOME.defaultHome({ CLAUDE_CONFIG_DIR: home })).toBe(home)
     expect(CLAUDE_ACCOUNT_HOME.defaultHome({})).toBe(path.join(os.homedir(), '.claude'))
-    expect(CLAUDE_ACCOUNT_HOME.seedFiles).toEqual(['settings.json'])
+    // Its settings.json can hold the default account's API key or login pin.
+    expect(CLAUDE_ACCOUNT_HOME.seedFiles).toEqual([])
   })
 
   it("checks the account's sign-in and reads its plan tier from its own folder", async () => {

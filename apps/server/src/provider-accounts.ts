@@ -96,7 +96,8 @@ export type ProviderAccountsOptions = {
  * its own, which the provider's adapter points its CLI at; the default
  * account is the CLI's own folder and is never removed. A managed folder is
  * created under the TasteCode data folder and starts with copies of the
- * default account's non-secret settings only, never its sign-in. Nothing
+ * files its adapter seeds, never the sign-in; Codex and Claude Code seed
+ * none, since their settings can hold the default account's keys. Nothing
  * here opens a file inside an account's folder.
  */
 export class ProviderAccounts implements AccountDirectory {

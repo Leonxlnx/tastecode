@@ -641,7 +641,7 @@ function AddAccountForm(props: {
       ) : null}
       <p className="set-form__note">
         {kind === 'managed'
-          ? `TasteCode makes a folder for this account and copies your ${chosen.displayName} settings into it, never your sign-in. Sign in once it is added.`
+          ? `TasteCode makes a new, empty folder for this account, so ${chosen.displayName} starts there with its default settings. Sign in once it is added.`
           : `A folder that already holds a ${chosen.displayName} sign-in. TasteCode uses it as it is and never deletes it.`}
       </p>
       {props.error ? (

@@ -213,7 +213,9 @@ describe('Provider accounts in Settings', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Add account' }))
     const form = screen.getByRole('form', { name: 'Add account' })
     expect(
-      within(form).getByText(/copies your Codex settings into it, never your sign-in/),
+      within(form).getByText(
+        'TasteCode makes a new, empty folder for this account, so Codex starts there with its default settings. Sign in once it is added.',
+      ),
     ).toBeTruthy()
     fireEvent.change(within(form).getByRole('textbox', { name: 'Name' }), {
       target: { value: '  Work  ' },

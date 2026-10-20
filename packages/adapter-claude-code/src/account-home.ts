@@ -5,14 +5,16 @@ import type { AccountHomeSource } from '@harness/proc/account-home'
 /**
  * Claude Code keeps its settings, sign-in, global config and transcripts in
  * CLAUDE_CONFIG_DIR, which is `~/.claude` unless set. Another account is
- * another such folder; HOME stays the user's own. A new folder starts with the
- * default folder's `settings.json`; the sign-in stays where Claude wrote it.
+ * another such folder; HOME stays the user's own. A new folder starts empty:
+ * the default folder's `settings.json` can hold an API key (`env`,
+ * `apiKeyHelper`) or a login pin (`forceLoginOrgUUID`) that belongs to the
+ * default account and would run the new one as it.
  */
 export const CLAUDE_ACCOUNT_HOME: AccountHomeSource = {
   defaultHome: (environment = process.env) =>
     environment['CLAUDE_CONFIG_DIR'] ?? path.join(os.homedir(), '.claude'),
   environment: (home) => ({ CLAUDE_CONFIG_DIR: home }),
-  seedFiles: ['settings.json'],
+  seedFiles: [],
 }
 
 /** The variables a process for this account needs; none for the default account. */
