@@ -23,6 +23,60 @@
   -webkit-app-region: drag;
 }
 
+/* A page opened from inside a tab (Add providers) keeps its way back in the
+   window strip, over the content's top-left corner, beside where the rail
+   ends. The strip itself stays a drag region; only the button is not. */
+.settings__back-slot {
+  position: absolute;
+  z-index: 4;
+  top: 0;
+  left: var(--rail-w);
+  display: flex;
+  align-items: center;
+  height: var(--titlebar-h);
+  padding-left: 10px;
+  pointer-events: none;
+}
+
+.settings__back-slot > * {
+  pointer-events: auto;
+  -webkit-app-region: no-drag;
+}
+
+/* The same quiet arrow and words as Back to app at the top of the rail. */
+.set-page__back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 26px;
+  padding: 3px 8px 3px 7px;
+  background: none;
+  border: 0;
+  border-radius: var(--r-md);
+  color: var(--text-2);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--t-sm);
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+.set-page__back:is(:hover, :focus-visible) {
+  background: var(--control-hover);
+  color: var(--text);
+}
+
+.set-page__back:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-inset);
+}
+
+/* Without the shell's strip, as in a page shown on its own, it sits above the title. */
+.set-page__back-row {
+  margin: 0 0 12px -8px;
+}
+
 .settings__sidebar {
   position: relative;
   z-index: 2;
@@ -1754,6 +1808,16 @@
 
   .settings__content {
     padding: 28px 18px 48px;
+  }
+
+  /* One column: the strip runs the full width, so the way back starts at the
+     window's edge, after the traffic lights on a Mac. */
+  .settings__back-slot {
+    left: 0;
+  }
+
+  .shell.is-macos .settings__back-slot {
+    left: 70px;
   }
 
   /* No margin to borrow at this width: the minus and plus move inside. */

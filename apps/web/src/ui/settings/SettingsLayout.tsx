@@ -1,6 +1,16 @@
-import { useId, type ReactNode } from 'react'
+import {
+  createContext,
+  useContext,
+  useId,
+  useLayoutEffect,
+  useRef,
+  type KeyboardEvent,
+  type ReactNode,
+} from 'react'
+import { createPortal } from 'react-dom'
 import {
   IconAlertCircle as AlertCircle,
+  IconArrowLeft as ArrowLeft,
   IconInfoCircle as Info,
   IconLoader2 as LoaderCircle,
 } from '@tabler/icons-react'
@@ -16,23 +26,79 @@ function classes(...names: Array<string | false | undefined>): string {
   return names.filter(Boolean).join(' ')
 }
 
-/** The tab itself: its title (the nav label), an optional line under it and actions on its right. */
+/**
+ * Where a page opened from inside another one shows its way back: the window
+ * strip above the content's top-left corner, which the Settings shell owns.
+ */
+export const SettingsBackSlot = createContext<HTMLElement | null>(null)
+
+/** A page opened from inside a tab, and the page it returns to. */
+export type SettingsBack = { label: string; onBack: () => void }
+
+/** Elements that answer Escape themselves before a page may go back. */
+const OWNS_ESCAPE = '[role="menu"], [role="listbox"], [role="dialog"], [role="alertdialog"], form'
+
+/**
+ * The tab itself: its title (the nav label), an optional line under it and
+ * actions on its right. A page opened from inside a tab (`back`) has a back
+ * button at the content's top-left, opens at its top with focus on its title,
+ * and goes back on Escape rather than closing Settings.
+ */
 export function SettingsPage(props: {
   title: string
   description?: ReactNode
   actions?: ReactNode
   className?: string | undefined
+  back?: SettingsBack | undefined
   children: ReactNode
 }) {
   const titleId = useId()
+  const slot = useContext(SettingsBackSlot)
+  const heading = useRef<HTMLHeadingElement>(null)
+  const back = props.back
+  const opened = back !== undefined
+  useLayoutEffect(() => {
+    if (!opened) return
+    const scroller = heading.current?.closest<HTMLElement>('.settings__main')
+    if (scroller) scroller.scrollTop = 0
+    heading.current?.focus({ preventScroll: true })
+  }, [opened])
+  const goBack = (event: KeyboardEvent<HTMLElement>) => {
+    if (!back || event.key !== 'Escape' || event.defaultPrevented) return
+    if (event.nativeEvent.isComposing) return
+    // A menu, form or dialog inside the page answers first; Settings itself, around it, does not.
+    const owner = event.target instanceof Element ? event.target.closest(OWNS_ESCAPE) : null
+    if (owner && !owner.contains(event.currentTarget)) return
+    event.preventDefault()
+    back.onBack()
+  }
+  const backButton = back ? (
+    <button
+      className="set-page__back"
+      type="button"
+      aria-label={`Back to ${back.label}`}
+      onClick={back.onBack}
+    >
+      <ArrowLeft size={14} aria-hidden />
+      {back.label}
+    </button>
+  ) : null
   return (
     <section
       className={classes('settings__panel set-page', props.className)}
       aria-labelledby={titleId}
+      onKeyDown={back ? goBack : undefined}
     >
+      {backButton && slot ? createPortal(backButton, slot) : null}
+      {backButton && !slot ? <div className="set-page__back-row">{backButton}</div> : null}
       <header className="set-page__head">
         <div className="set-page__heading">
-          <h1 className="settings__title" id={titleId}>
+          <h1
+            className="settings__title"
+            id={titleId}
+            ref={heading}
+            tabIndex={opened ? -1 : undefined}
+          >
             {props.title}
           </h1>
           {props.description ? <p className="set-page__description">{props.description}</p> : null}

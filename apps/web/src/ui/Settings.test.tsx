@@ -2961,7 +2961,7 @@ describe('provider roster', () => {
     fireEvent.click(within(agents).getByRole('button', { name: 'Add Devin' }))
     expect(onProviderRosterChange).toHaveBeenCalledWith(['codex', 'acp:devin'])
 
-    fireEvent.click(screen.getByRole('button', { name: 'Done' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Back to Providers' }))
     expect(screen.getByRole('heading', { name: 'Providers' })).toBeTruthy()
   })
 
@@ -2978,6 +2978,24 @@ describe('provider roster', () => {
       },
     })
     expect(screen.getByRole('heading', { name: 'Add providers' })).toBeTruthy()
+    // Its way back sits in the window strip at the content's top-left.
+    const back = screen.getByRole('button', { name: 'Back to Providers' })
+    expect(back.closest('.settings__back-slot')).toBeTruthy()
+    fireEvent.click(back)
+    expect(screen.getByRole('heading', { name: 'Providers' })).toBeTruthy()
+
+    // Opened from Providers, it takes focus, and Escape goes back rather than closing Settings.
+    fireEvent.click(screen.getByRole('button', { name: 'Add a provider' }))
+    const picker = screen.getByRole('heading', { name: 'Add providers' })
+    expect(document.activeElement).toBe(picker)
+    fireEvent.keyDown(picker, { key: 'Escape' })
+    expect(screen.getByRole('heading', { name: 'Providers' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Back to Providers' })).toBeNull()
+
+    // Leaving Providers and coming back shows the list, not the picker it was asked for once.
+    fireEvent.click(screen.getByRole('button', { name: 'General' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Providers' }))
+    expect(screen.getByRole('heading', { name: 'Providers' })).toBeTruthy()
   })
 
   it('keeps accounts off the page, recommends found sign-ins and adds them from the picker', async () => {
@@ -3061,7 +3079,7 @@ describe('provider roster', () => {
     // Ignored, it leaves the top for a folded list at the foot, and the count by the plus.
     fireEvent.click(screen.getByRole('button', { name: 'Ignore Codex · Side' }))
     expect(titles()).toEqual(['Providers', 'ACP agents', 'Accounts', 'Ignored1'])
-    fireEvent.click(screen.getByRole('button', { name: 'Done' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Back to Providers' }))
     expect(
       await screen.findByRole('button', { name: 'Add provider' }, { timeout: 2000 }),
     ).toBeTruthy()
