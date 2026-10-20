@@ -1449,6 +1449,44 @@ describe('threads', () => {
     expect(manual.mode === 'manual' && Object.isFrozen(manual.target)).toBe(true)
   })
 
+  it('keeps further accounts’ own context settings across a restart and forgets a cleared one', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-account-context-'))
+    const file = path.join(dir, 'context.db')
+    const persistent = new Store(file)
+    expect(persistent.accountContextSettings()).toEqual([])
+    persistent.updateAccountContextSettings({
+      provider: 'claude-code',
+      accountId: 'work-1a2b3c',
+      settings: { compactAt: 60 },
+    })
+    const saved = persistent.updateAccountContextSettings({
+      provider: 'codex',
+      accountId: 'side-4d5e6f',
+      settings: { compactAt: 'off' },
+    })
+    expect(Object.isFrozen(saved)).toBe(true)
+    expect(persistent.accountContextSettings()).toBe(saved)
+    persistent.close()
+
+    const reopened = new Store(file)
+    try {
+      expect(reopened.accountContextSettings()).toEqual([
+        { provider: 'claude-code', accountId: 'work-1a2b3c', settings: { compactAt: 60 } },
+        { provider: 'codex', accountId: 'side-4d5e6f', settings: { compactAt: 'off' } },
+      ])
+      expect(
+        reopened.updateAccountContextSettings({
+          provider: 'claude-code',
+          accountId: 'work-1a2b3c',
+          settings: {},
+        }),
+      ).toEqual([{ provider: 'codex', accountId: 'side-4d5e6f', settings: { compactAt: 'off' } }])
+    } finally {
+      reopened.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('keeps provider context settings across a restart and forgets a cleared provider', () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-context-'))
     const file = path.join(dir, 'context.db')

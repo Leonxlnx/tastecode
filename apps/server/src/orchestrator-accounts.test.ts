@@ -128,6 +128,8 @@ function setup(accounts: AccountDirectory, store = new Store(':memory:')) {
   const sessions: FakeSession[] = []
   /** Each model list read, by the folder it ran in. */
   const listed: Array<string | undefined> = []
+  /** The context settings each start was given. */
+  const contexts: unknown[] = []
   const opened = () => {
     const created = session(live)
     sessions.push(created)
@@ -144,8 +146,9 @@ function setup(accounts: AccountDirectory, store = new Store(':memory:')) {
     _onLog: (line: string) => void,
     accountHome?: string,
   ): ProviderRuntime => ({
-    async start(workspacePath) {
+    async start(workspacePath, options) {
       launches.push({ kind: 'start', provider, accountHome })
+      contexts.push(options?.context)
       started += 1
       return {
         thread: { id: `${provider}-${started}`, provider, workspacePath, createdAt: Date.now() },
@@ -175,7 +178,7 @@ function setup(accounts: AccountDirectory, store = new Store(':memory:')) {
     accounts,
     mcpConfig: new McpConfigStore(path.join(root, 'mcp.json')),
   })
-  return { orchestrator, launches, store, live, pushed, sessions, listed }
+  return { orchestrator, launches, store, live, pushed, sessions, listed, contexts }
 }
 
 describe('chats pinned to a provider account', () => {
@@ -195,6 +198,41 @@ describe('chats pinned to a provider account', () => {
     await second.orchestrator.setThreadApproval(thread.id, 'ask')
     expect(second.launches).toEqual([{ kind: 'resume', provider: 'codex', accountHome: workHome }])
     await second.orchestrator.disposeAll()
+  })
+
+  it("starts a further account's chat with its own context settings, else its provider's", async () => {
+    const accounts = directory({ 'claude-code:work': claudeHome, 'codex:work': workHome })
+    const { orchestrator, contexts } = setup(accounts)
+    orchestrator.updateContextSettings('claude-code', { compactAt: 70 })
+    orchestrator.updateAccountContextSettings({
+      provider: 'claude-code',
+      accountId: 'work',
+      settings: { compactAt: 40 },
+    })
+
+    await orchestrator.startThread('claude-code', root, { accountId: 'work' })
+    await orchestrator.startThread('claude-code', root)
+    expect(contexts).toEqual([{ compactAt: 40 }, { compactAt: 70 }])
+
+    // Cleared, the account follows its provider again.
+    orchestrator.updateAccountContextSettings({
+      provider: 'claude-code',
+      accountId: 'work',
+      settings: {},
+    })
+    await orchestrator.startThread('claude-code', root, { accountId: 'work' })
+    expect(contexts.at(-1)).toEqual({ compactAt: 70 })
+    expect(orchestrator.accountContextSettings()).toEqual([])
+
+    // The default account has no settings apart from its provider's, and a gone account none.
+    const own = { provider: 'claude-code', settings: { compactAt: 40 } } as const
+    expect(() =>
+      orchestrator.updateAccountContextSettings({ ...own, accountId: 'default' }),
+    ).toThrow("The default account uses its provider's context settings.")
+    expect(() => orchestrator.updateAccountContextSettings({ ...own, accountId: 'gone' })).toThrow(
+      AccountNotFoundError,
+    )
+    await orchestrator.disposeAll()
   })
 
   it("pins a chat without a chosen account to the provider's active one", async () => {

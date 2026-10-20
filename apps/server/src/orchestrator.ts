@@ -99,6 +99,7 @@ import type {
   Item,
   PanicStopResult,
   ParamsOf,
+  AccountContextSettings,
   ProviderContextSettings,
   ProviderContextSettingsMap,
   ProviderId,
@@ -1094,12 +1095,41 @@ export class Orchestrator {
     return this.#store.updateProviderContextSettings(provider, settings)
   }
 
-  /** Custom harnesses configure their own engine, so only the provider's own CLI is tuned. */
-  #contextRuntimeOptions(provider: ProviderId, agent: string | undefined): StartOptions {
+  accountContextSettings(): readonly AccountContextSettings[] {
+    return this.#store.accountContextSettings()
+  }
+
+  /** A further account's own settings; the default account always uses its provider's. */
+  updateAccountContextSettings(entry: AccountContextSettings): readonly AccountContextSettings[] {
+    if (entry.accountId === DEFAULT_ACCOUNT_ID) {
+      throw new Error("The default account uses its provider's context settings.")
+    }
+    validateContextSettings(providerContextControl(entry.provider), entry.settings)
+    // Throws for an account that is gone or one this provider cannot have.
+    this.#accounts.home(entry.provider, entry.accountId)
+    return this.#store.updateAccountContextSettings(entry)
+  }
+
+  /**
+   * Custom harnesses configure their own engine, so only the provider's own
+   * CLI is tuned. A further account's own settings come first; without any it
+   * runs with its provider's.
+   */
+  #contextRuntimeOptions(
+    provider: ProviderId,
+    agent: string | undefined,
+    accountId: string | undefined,
+  ): StartOptions {
     if (agent) return {}
+    const own =
+      accountId === undefined || accountId === DEFAULT_ACCOUNT_ID
+        ? undefined
+        : this.#store
+            .accountContextSettings()
+            .find((entry) => entry.provider === provider && entry.accountId === accountId)
     const context = contextForLaunch(
       providerContextControl(provider),
-      this.#store.providerContextSettings()[provider],
+      own?.settings ?? this.#store.providerContextSettings()[provider],
     )
     return context ? { context } : {}
   }
@@ -1897,7 +1927,7 @@ export class Orchestrator {
       ...options,
       instructions: composeInstructions(options.instructions),
       ...this.#mcpRuntimeOptions(provider, workspacePath),
-      ...this.#contextRuntimeOptions(provider, options.agent),
+      ...this.#contextRuntimeOptions(provider, options.agent, accountId),
     }
     const worktree = options.isolate
       ? await createWorktree(resolvedWorkspacePath, threadId, this.#worktreeRoot, options.baseRef)
@@ -2057,7 +2087,7 @@ export class Orchestrator {
       ...(parent.connectionId ? { connectionId: parent.connectionId } : {}),
       instructions: composeInstructions(sideChatInstructionsFromReplay(parentHistory)),
       ...this.#mcpRuntimeOptions(provider, storedParent.projectPath),
-      ...this.#contextRuntimeOptions(provider, storedParent.agent),
+      ...this.#contextRuntimeOptions(provider, storedParent.agent, storedParent.accountId),
     }
 
     let started: Awaited<ReturnType<ProviderRuntime['start']>> | undefined
@@ -4214,7 +4244,7 @@ export class Orchestrator {
         ...(approval ? { approval } : {}),
         instructions: REPLY_STYLE_INSTRUCTIONS,
         ...this.#mcpRuntimeOptions(stored.provider, stored.projectPath),
-        ...this.#contextRuntimeOptions(stored.provider, stored.agent),
+        ...this.#contextRuntimeOptions(stored.provider, stored.agent, stored.accountId),
       })
       .catch((error: unknown) => {
         if (!(error instanceof StartupCleanupError)) throw error

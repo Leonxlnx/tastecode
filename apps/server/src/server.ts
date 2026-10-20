@@ -737,6 +737,15 @@ export function startServer(
         return orchestrator.updateContextSettings(p.provider, p.settings)
       }
 
+      case 'providers.accountContextSettings':
+        parseParams(method, params)
+        return { accounts: [...orchestrator.accountContextSettings()] }
+
+      case 'providers.updateAccountContextSettings':
+        return {
+          accounts: [...orchestrator.updateAccountContextSettings(parseParams(method, params))],
+        }
+
       case 'providers.updates':
         return {
           updates: await (await providerUpdates()).list(parseParams(method, params).refresh),

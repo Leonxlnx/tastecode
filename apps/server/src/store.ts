@@ -11,6 +11,7 @@ import {
 } from 'node:fs'
 import path from 'node:path'
 import {
+  AccountContextSettingsSchema,
   ApprovalModeSchema,
   BackgroundModelPreferenceSchema,
   DEFAULT_ACCOUNT_ID,
@@ -21,6 +22,7 @@ import {
   SidebarSettingsSchema,
 } from '@harness/contracts'
 import type {
+  AccountContextSettings,
   ApprovalMode,
   BackgroundModelPreference,
   DiffDecision,
@@ -54,6 +56,8 @@ import {
 
 const BACKGROUND_MODEL_SETTING = 'background-model'
 const PROVIDER_CONTEXT_SETTING = 'provider-context'
+/** Further accounts' own context settings; the rest follow their provider's. */
+const ACCOUNT_CONTEXT_SETTING = 'provider-account-context'
 const FEEDBACK_LEDGER_SETTING = 'feedback-ledger'
 const MODEL_LISTS_SETTING = 'model-lists'
 const LIMIT_SNAPSHOT_SETTING = 'limit-snapshot'
@@ -957,6 +961,7 @@ export class Store {
   #sidebarSettingsCache: SidebarSettings | undefined
   #backgroundModelPreferenceCache: BackgroundModelPreference | undefined
   #providerContextSettingsCache: ProviderContextSettingsMap | undefined
+  #accountContextSettingsCache: readonly AccountContextSettings[] | undefined
   /**
    * Compact replays by thread. `tail` is false once an event lands after the
    * snapshot: the entry still serves as a base and for older history pages.
@@ -2315,6 +2320,34 @@ export class Store {
     this.#writeAppSetting.run(PROVIDER_CONTEXT_SETTING, JSON.stringify(next))
     this.#providerContextSettingsCache = Object.freeze(next)
     return this.#providerContextSettingsCache
+  }
+
+  accountContextSettings(): readonly AccountContextSettings[] {
+    if (this.#accountContextSettingsCache) return this.#accountContextSettingsCache
+    const row = sqliteRow<StringValueRow>(this.#readAppSetting, ACCOUNT_CONTEXT_SETTING)
+    let settings: AccountContextSettings[] = []
+    if (row) {
+      try {
+        settings = z.array(AccountContextSettingsSchema).parse(JSON.parse(row.value))
+      } catch {
+        // A shape a newer build wrote leaves every account on its provider's settings.
+        console.warn('[store] unreadable account context settings, using provider settings')
+      }
+    }
+    this.#accountContextSettingsCache = Object.freeze(settings)
+    return this.#accountContextSettingsCache
+  }
+
+  /** Empty settings drop the account's own, so it follows its provider's again. */
+  updateAccountContextSettings(entry: AccountContextSettings): readonly AccountContextSettings[] {
+    const others = this.accountContextSettings().filter(
+      (each) => each.provider !== entry.provider || each.accountId !== entry.accountId,
+    )
+    const empty = entry.settings.window === undefined && entry.settings.compactAt === undefined
+    const next = Object.freeze(empty ? others : [...others, Object.freeze({ ...entry })])
+    this.#writeAppSetting.run(ACCOUNT_CONTEXT_SETTING, JSON.stringify(next))
+    this.#accountContextSettingsCache = next
+    return next
   }
 
   /** Send timestamps and short hashes only; feedback text is never stored. */
