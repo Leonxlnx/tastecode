@@ -1134,16 +1134,22 @@
                 <span class="d"
                   >nightly, Codex and Claude Code only (providers that declare multipleAccounts;
                   Grok and the others run as their one account): each account has its own CLI folder
-                  (CODEX_HOME or CLAUDE_CONFIG_DIR). Settings &gt; Providers &gt; Accounts lists a
-                  provider once it has a second account, rows named Codex · Work; Add account makes
-                  a new, empty folder TasteCode manages (nothing is copied from the default account,
-                  whose settings can hold keys and login pins), or uses an existing folder as it is
-                  and asks it once who is signed in there; a folder that is, holds or sits inside
-                  the default folder, another account's folder or TasteCode's data folder is
-                  refused, links resolved; one action per row (Sign in until the account names who
-                  it is, then Set active or Active) after its menu (Rename, Open in Explorer, Set
-                  active for an account not signed in yet, Remove account, which keeps the folder,
-                  and Delete folder for a managed folder, each confirmed). Sign in runs the
+                  (CODEX_HOME or CLAUDE_CONFIG_DIR). Settings &gt; Providers lists a provider's
+                  further accounts under its own row (which is the default account, with Set active
+                  to return to it), rows named Codex · Work, each with the roster's minus to remove
+                  it; Add providers opens on Found on this computer, which offers sibling folders a
+                  CLI has used and no account has yet (~/.claude_personal beside ~/.claude,
+                  ~/.codex-deepseek beside ~/.codex; names and dates only, no file opened and no CLI
+                  run, copies kept aside skipped), and the Providers page names how many were found
+                  beside its plus; Add account at the foot of Add providers makes a new, empty
+                  folder TasteCode manages (nothing is copied from the default account, whose
+                  settings can hold keys and login pins), or uses an existing folder as it is and
+                  asks it once who is signed in there; a folder that is, holds or sits inside the
+                  default folder, another account's folder or TasteCode's data folder is refused,
+                  links resolved; one action per row (Sign in until the account names who it is,
+                  then Set active or Active) after its menu (Rename, Open in Explorer, Set active
+                  for an account not signed in yet, and Delete folder for a managed folder; the
+                  minus removes an account and keeps its folder, each confirmed). Sign in runs the
                   provider's sign-in terminal in that folder (Codex · Work login). A chat is pinned
                   to the account it started on and resumes there after a restart; the new-chat
                   composer offers a New chat account control once the provider has a second account,
