@@ -160,8 +160,9 @@ vi.mock('./orchestrator.js', () => ({
       state.handled.push(`providers.launch(${target}, ${command}, ${JSON.stringify(account)})`)
       return 'login-terminal'
     }
-    async releaseAccount(provider: string, accountId: string) {
+    async releaseAccount(provider: string, accountId: string, unregister: () => void) {
       state.accountCalls.push(['release', provider, accountId])
+      unregister()
     }
     async startThread(provider: string, workspacePath: string, options: { accountId?: string }) {
       const id = `${provider}-started`
@@ -213,8 +214,14 @@ vi.mock('./provider-accounts.js', () => ({
       state.accountCalls.push(['rename', provider, accountId, label])
       return { id: accountId, provider, label, managed: false }
     }
-    async remove(provider: string, accountId: string, deleteHome: boolean) {
-      state.accountCalls.push(['remove', provider, accountId, deleteHome])
+    removal(provider: string, accountId: string, deleteHome: boolean) {
+      state.accountCalls.push(['removal', provider, accountId, deleteHome])
+      return {
+        unregister: () => state.accountCalls.push(['unregister', provider, accountId]),
+        deleteFolder: async () => {
+          state.accountCalls.push(['deleteFolder', provider, accountId])
+        },
+      }
     }
     setActive(provider: string, accountId: string) {
       state.accountCalls.push(['setActive', provider, accountId])
@@ -705,11 +712,16 @@ describe('provider accounts', () => {
         ['create', 'codex', 'Work', { kind: 'managed' }],
         ['rename', 'codex', 'default', 'Mine'],
         ['setActive', 'codex', 'work-1a2b3c'],
-        // What runs as the account stops before it is removed.
+        // Refusals come first; the account stops resolving before what runs
+        // as it stops, and its folder goes last.
+        ['removal', 'codex', 'work-1a2b3c', false],
         ['release', 'codex', 'work-1a2b3c'],
-        ['remove', 'codex', 'work-1a2b3c', false],
+        ['unregister', 'codex', 'work-1a2b3c'],
+        ['deleteFolder', 'codex', 'work-1a2b3c'],
+        ['removal', 'codex', 'work-1a2b3c', true],
         ['release', 'codex', 'work-1a2b3c'],
-        ['remove', 'codex', 'work-1a2b3c', true],
+        ['unregister', 'codex', 'work-1a2b3c'],
+        ['deleteFolder', 'codex', 'work-1a2b3c'],
       ])
 
       state.accountsChanged('claude-code')

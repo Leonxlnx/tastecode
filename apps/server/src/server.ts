@@ -953,11 +953,13 @@ export function startServer(
 
       case 'accounts.remove': {
         const p = parseParams(method, params)
-        // Nothing may still run as the account, and Windows would not let its folder go.
-        if (p.accountId !== DEFAULT_ACCOUNT_ID) {
-          await orchestrator.releaseAccount(p.provider, p.accountId)
-        }
-        await accounts.remove(p.provider, p.accountId, p.deleteHome ?? false)
+        // Refused before anything stops: the default account, a gone one, a brought folder to delete.
+        const removal = accounts.removal(p.provider, p.accountId, p.deleteHome ?? false)
+        // Refused while a chat on it works. Otherwise the account stops resolving
+        // first, so nothing new starts in its folder; then what runs as it stops
+        // (Windows would not let the folder go), and the folder is deleted last.
+        await orchestrator.releaseAccount(p.provider, p.accountId, removal.unregister)
+        await removal.deleteFolder()
         return {}
       }
 

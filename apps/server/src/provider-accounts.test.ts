@@ -1,4 +1,5 @@
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -258,6 +259,36 @@ describe('provider accounts', () => {
       'That account does not exist any more.',
     )
     expect(accounts.list('codex').accounts.map((each) => each.id)).toEqual(['default', existing.id])
+  })
+
+  it('refuses a removal before anything changes and drops the account before its folder', async () => {
+    const { accounts, base, changed } = setup()
+    const work = accounts.create('codex', 'Work', { kind: 'managed' })
+    const brought = path.join(base, 'brought')
+    mkdirSync(brought)
+    const existing = accounts.create('codex', 'Brought', { kind: 'existing', path: brought })
+    changed.length = 0
+
+    expect(() => accounts.removal('codex', existing.id, true)).toThrow(
+      'TasteCode deletes only folders it created. This folder stays as it is.',
+    )
+    expect(() => accounts.removal('codex', 'default')).toThrow(
+      'The default account cannot be removed.',
+    )
+    expect(accounts.home('codex', existing.id)).toBe(brought)
+
+    const removal = accounts.removal('codex', work.id, true)
+    expect(accounts.home('codex', work.id)).toBe(work.home)
+    removal.unregister()
+    // From here nothing starts as the account, while its folder is still there.
+    expect(() => accounts.home('codex', work.id)).toThrow('That account does not exist any more.')
+    expect(() => accounts.environment('codex', work.id)).toThrow(
+      'That account does not exist any more.',
+    )
+    expect(existsSync(work.home!)).toBe(true)
+    await removal.deleteFolder()
+    expect(existsSync(work.home!)).toBe(false)
+    expect(changed).toEqual(['codex'])
   })
 
   it('remembers the last identity each account named', () => {

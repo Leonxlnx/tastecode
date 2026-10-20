@@ -418,7 +418,12 @@ describe('removing an account', () => {
     const thread = await orchestrator.startThread('claude-code', root, { accountId: 'work' })
     await orchestrator.account('claude-code', undefined, 'work')
 
-    await orchestrator.releaseAccount('claude-code', 'work')
+    // The account stops resolving before anything that runs as it stops.
+    const disposedAtUnregister: boolean[] = []
+    await orchestrator.releaseAccount('claude-code', 'work', () =>
+      disposedAtUnregister.push(sessions[0]!.disposed),
+    )
+    expect(disposedAtUnregister).toEqual([false])
     expect(sessions[0]?.disposed).toBe(true)
     // Nothing the account had read was kept.
     await orchestrator.account('claude-code', undefined, 'work')
@@ -448,9 +453,11 @@ describe('removing an account', () => {
       channel: 'main',
     })
 
-    await expect(orchestrator.releaseAccount('claude-code', 'work')).rejects.toThrow(
+    const unregister = vi.fn()
+    await expect(orchestrator.releaseAccount('claude-code', 'work', unregister)).rejects.toThrow(
       'A chat on this account is still working. Stop it first, then remove the account.',
     )
+    expect(unregister).not.toHaveBeenCalled()
     expect(sessions[0]?.disposed).toBe(false)
     await orchestrator.disposeAll()
   })

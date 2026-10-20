@@ -3118,9 +3118,15 @@ export class Orchestrator {
    * sessions, its sign-in terminal, its control process and its cached reads.
    * Windows cannot delete a folder a running CLI still uses, and a removed
    * account's chats must not go on in it. A chat that is still working keeps
-   * the account until the user stops it.
+   * the account until the user stops it. `unregister` runs once nothing
+   * refuses and before anything stops, so nothing new starts as the account
+   * while it is released.
    */
-  async releaseAccount(provider: ProviderId, accountId: AccountId): Promise<void> {
+  async releaseAccount(
+    provider: ProviderId,
+    accountId: AccountId,
+    unregister?: () => void,
+  ): Promise<void> {
     const runsAs = (thread: { provider: ProviderId; accountId?: string | undefined } | undefined) =>
       thread?.provider === provider && thread.accountId === accountId
     const attached = [...this.#threads]
@@ -3139,6 +3145,7 @@ export class Orchestrator {
         'A chat on this account is still working. Stop it first, then remove the account.',
       )
     }
+    unregister?.()
     const key = accountScopeKey(provider, accountId)
     const scope = this.#accountScopes.get(key)
     this.#accountScopes.delete(key)

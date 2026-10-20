@@ -36,6 +36,14 @@ import type { Store, StoredProviderAccount } from './store.js'
 
 export type AccountHomes = Readonly<Partial<Record<ProviderId, AccountHomeSource>>>
 
+/** An account's removal, once nothing refused it: see ProviderAccounts.removal. */
+export type AccountRemoval = {
+  /** Drops the account, so nothing resolves it any more. */
+  unregister: () => void
+  /** Deletes its managed folder when that was asked for; nothing otherwise. */
+  deleteFolder: () => Promise<void>
+}
+
 function declared(
   entries: ReadonlyArray<readonly [ProviderId, Capabilities, AccountHomeSource]>,
 ): AccountHomes {
@@ -208,19 +216,39 @@ export class ProviderAccounts implements AccountDirectory {
    * local sessions. A folder the user brought is never deleted.
    */
   async remove(provider: ProviderId, accountId: AccountId, deleteHome = false): Promise<void> {
+    const removal = this.removal(provider, accountId, deleteHome)
+    removal.unregister()
+    await removal.deleteFolder()
+  }
+
+  /**
+   * `remove` in two steps, refused before either when the account cannot go.
+   * `unregister` drops the account at once, so nothing resolves it any more
+   * (a chat, a limit read) while what ran as it stops; `deleteFolder` then
+   * deletes the managed folder when asked, last.
+   */
+  removal(provider: ProviderId, accountId: AccountId, deleteHome = false): AccountRemoval {
     if (accountId === DEFAULT_ACCOUNT_ID) {
       this.#source(provider)
       throw new Error('The default account cannot be removed.')
     }
     const account = this.#require(provider, accountId)
-    if (deleteHome) {
-      if (!account.managed || account.home === undefined) {
-        throw new Error('TasteCode deletes only folders it created. This folder stays as it is.')
-      }
-      await this.#deleteManagedHome(account.home)
+    const folder = deleteHome ? account.home : undefined
+    if (deleteHome && (!account.managed || folder === undefined || !this.#isManagedHome(folder))) {
+      throw new Error('TasteCode deletes only folders it created. This folder stays as it is.')
     }
-    this.#rows.removeProviderAccount(provider, accountId)
-    this.#onChanged(provider)
+    let unregistered = false
+    return {
+      unregister: () => {
+        if (unregistered) return
+        unregistered = true
+        this.#rows.removeProviderAccount(provider, accountId)
+        this.#onChanged(provider)
+      },
+      deleteFolder: async () => {
+        if (folder !== undefined) await this.#deleteManagedHome(folder)
+      },
+    }
   }
 
   setActive(provider: ProviderId, accountId: AccountId): void {
@@ -403,16 +431,18 @@ export class ProviderAccounts implements AccountDirectory {
     return folder
   }
 
-  async #deleteManagedHome(folder: string): Promise<void> {
+  #isManagedHome(folder: string): boolean {
     const relative = path.relative(this.#root, folder)
-    if (relative === '' || relative.startsWith('..') || path.isAbsolute(relative)) {
-      throw new Error('TasteCode deletes only folders it created. This folder stays as it is.')
-    }
+    return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative)
+  }
+
+  /** Runs once the account is gone, so a failure leaves only the folder behind. */
+  async #deleteManagedHome(folder: string): Promise<void> {
     try {
       await rm(folder, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 })
     } catch (error) {
       throw new Error(
-        `Could not delete the account folder; close what uses it and try again (${errorCode(error)}).`,
+        `The account is removed, but its folder could not be deleted (${errorCode(error)}). It is still at ${folder}.`,
       )
     }
   }
