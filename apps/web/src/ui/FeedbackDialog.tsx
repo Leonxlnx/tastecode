@@ -10,6 +10,8 @@ import { IconChevronRight, IconLoader2, IconX } from '@tabler/icons-react'
 import type { FeedbackRequest, FeedbackState } from '../feedback-state.js'
 import { IndeterminateRequestError, type Transport } from '../transport.js'
 import { useDialogFocus } from './dialog-focus.js'
+import '../styles/sheet.css'
+import '../styles/switch.css'
 import '../styles/feedback.css'
 
 const KINDS: ReadonlyArray<{ id: FeedbackKind; label: string }> = [
