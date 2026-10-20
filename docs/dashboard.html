@@ -298,6 +298,21 @@
     <div class="wrap">
       <section id="scope">
         <p>
+          October 20 on nightly (local commits, not pushed yet): API connections run on OpenCode. A
+          key added in Settings now starts an OpenCode session on that provider and key, in place of
+          TasteCode's own loop (four tools, a 64 KB request budget), which is removed. OpenCode has
+          to be installed. The key reaches OpenCode only through its environment; the user's
+          OpenCode sign-ins, global config and history stay out, and the agent's shell commands see
+          the key blanked. Edits and commands ask under Ask. Chats from the old loop stay readable
+          but cannot continue. Five OpenCode adapter fixes for OpenCode 1.18.31 came with it and
+          help the OpenCode provider too: v1 is preferred because 1.18.31's v2 never runs a turn,
+          resumed chats keep their model, the user's prompt no longer repeats as a reply, replies
+          stream again, and v1 permission asks reach the user instead of hanging the turn. Checked
+          on macOS with the real OpenCode 1.18.31 and TasteCode server against a stub endpoint (read
+          tool, an approved command, a restart and resume). Not verified yet: a real provider key,
+          Windows, and the flow through the Settings UI.
+        </p>
+        <p>
           October 20, overnight on nightly (5da77ebc): what landed, each checked in its own PR with
           stand-in CLIs only; all four gates passed on 5da77ebc (web 3,026 tests, server 1,721,
           desktop 487 and every package, no failure). Sidebar direction B (PR #1914): a Needs you

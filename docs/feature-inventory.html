@@ -821,7 +821,7 @@
         </ul>
 
         <h3>
-          Direct API connections (TasteCode-owned agent loop)
+          Direct API connections (run on OpenCode)
           <span class="pill-parked">nightly only</span>
         </h3>
         <ul class="check">
@@ -842,15 +842,14 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >One shared OpenAI-compatible transport, Anthropic native Messages API
+                >Each chat is an OpenCode session on the connection's provider and key
                 <span class="d"
-                  >partial text, reasoning, and tool items settle before completed, failed, or
-                  interrupted turn terminals; a tool call whose arguments fail review in ask or auto
-                  mode, such as an absolute or .env path, gets the same tool error as in full access
-                  instead of failing the turn; Stop also stops the remaining tool calls of a batch
-                  and answers them as interrupted; router-prefixed ids and current families
-                  (claude-*, o1 to o9, Kimi K2, GLM 4.x) get the 64 KB context budget, while unknown
-                  ids keep 8 KB</span
+                  >OpenCode supplies the agent: its tools, context management and approvals; each
+                  preset uses OpenCode's own provider id and catalog (openai, anthropic, openrouter,
+                  moonshotai, zai), a custom endpoint lists its models from its own /models; only
+                  that provider is enabled; the user's OpenCode sign-ins, global config and session
+                  history stay out; edits and shell commands ask under Ask and are approved under
+                  Full access; OpenCode must be installed, and without it the chat says so</span
                 ></span
               ></label
             >
@@ -858,7 +857,11 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >API keys stored only in the OS credential store, renderer never sees values</span
+                >API keys stored only in the OS credential store, renderer never sees values
+                <span class="d"
+                  >OpenCode gets the key through its environment only, never a config file, and the
+                  agent's shell commands see it blanked</span
+                ></span
               ></label
             >
           </li>
@@ -872,15 +875,11 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >New chats retain their connection, selected model, and full tool context across
-                restart
+                >Chats continue across restart on the model they used
                 <span class="d"
-                  >state is saved at turn boundaries, included in history exports, and excludes
-                  configured credentials; legacy chats without saved provider context report that
-                  they cannot resume rather than silently starting an empty conversation; a model
-                  switch runs from the next turn and is the model the saved state keeps; saved state
-                  redacts keys of at least four characters, so a shorter placeholder key such as 1
-                  leaves saved history intact</span
+                  >OpenCode keeps the session in TasteCode's own database; a reopened chat stays on
+                  its last model, and a custom endpoint's models are read again first; chats saved
+                  by the former TasteCode loop stay readable but cannot continue</span
                 ></span
               ></label
             >
