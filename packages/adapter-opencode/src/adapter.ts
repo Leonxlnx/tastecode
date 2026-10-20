@@ -217,6 +217,24 @@ const PermissionAskedDataSchema = z.object({
   resources: z.array(z.string()).optional(),
 })
 const PermissionRepliedDataSchema = z.object({ requestID: z.string() })
+/**
+ * 1.18.31's v1 stream asks with `permission.asked`, not `permission.updated`:
+ * the permission names the tool's class (bash, edit, external_directory) and
+ * the metadata carries the command or file.
+ */
+const V1PermissionAskedSchema = z.object({
+  type: z.literal('permission.asked'),
+  properties: z.object({
+    id: z.string(),
+    permission: z.string(),
+    patterns: z.array(z.string()).optional(),
+    metadata: z.record(z.string(), JsonRpcValueSchema).optional(),
+  }),
+})
+const V1PermissionRepliedSchema = z.object({
+  type: z.literal('permission.replied'),
+  properties: PermissionRepliedDataSchema,
+})
 const SessionDataSchema = z.object({ sessionID: z.string().optional() })
 const LegacySessionPropertiesSchema = z.object({
   sessionID: z.string().optional(),
@@ -912,6 +930,38 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
     if (sessionId(event) !== undefined && sessionId(event) !== this.#sessionId) return
     if ('data' in event) {
       this.#onV2Event(event)
+      return
+    }
+    const asked = V1PermissionAskedSchema.safeParse(event)
+    if (asked.success) {
+      const { id, permission, patterns = [], metadata = {} } = asked.data.properties
+      const command = /bash|shell|command|execute/i.test(permission)
+      const named = (key: string) => (typeof metadata[key] === 'string' ? metadata[key] : '')
+      const request: ApprovalRequest = {
+        id,
+        kind: command ? 'command' : 'file_change',
+        ...(command
+          ? { command: named('command') || patterns.join(' ') || permission }
+          : { path: named('filepath') || patterns[0] || permission }),
+        createdAt: Date.now(),
+      }
+      const autoReply = this.#approval === 'full' || (this.#approval === 'auto' && !command)
+      this.#pendingApprovals.set(id, { request, surfaced: !autoReply })
+      if (autoReply) {
+        // Session grants are reserved for an explicit user approval.
+        this.respondToApproval(id, 'approve')
+        return
+      }
+      this.emit('event', { type: 'approval.requested', request })
+      return
+    }
+    const replied = V1PermissionRepliedSchema.safeParse(event)
+    if (replied.success) {
+      // Answered elsewhere, or by a rule the user saved with "always".
+      const approvalId = replied.data.properties.requestID
+      if (this.#pendingApprovals.delete(approvalId)) {
+        this.emit('event', { type: 'approval.resolved', id: approvalId })
+      }
       return
     }
     if (event.type === 'permission.updated') {

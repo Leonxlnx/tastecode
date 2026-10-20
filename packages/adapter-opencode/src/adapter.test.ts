@@ -464,6 +464,46 @@ describe('OpenCode adapter', () => {
     }
   })
 
+  it("asks for 1.18.31's v1 permission requests with their command or file", async () => {
+    const mock = await serveOpenCode()
+    const adapter = new OpenCodeAdapter({ baseUrl: mock.baseUrl })
+    try {
+      const thread = await adapter.startThread('C:\\repo', {
+        model: 'provider-1/model-1',
+        approval: 'ask',
+      })
+      const events: DomainEvent[] = []
+      adapter.on('event', (event) => events.push(event))
+      await adapter.sendTurn(thread.id, 'Run it')
+      const ask = (type: string) =>
+        [...CAPTURED_1_18_31.prompt, ...CAPTURED_1_18_31.writePermissions].filter(
+          (event) => event.type === (type as OpenCodeWireEvent['type']),
+        )
+      for (const event of ask('permission.asked')) mock.broadcast(event)
+      await expect
+        .poll(() => events.filter((event) => event.type === 'approval.requested').length)
+        .toBe(3)
+      const requests = events.flatMap((event) =>
+        event.type === 'approval.requested'
+          ? [{ kind: event.request.kind, command: event.request.command, path: event.request.path }]
+          : [],
+      )
+      expect(requests).toEqual([
+        { kind: 'command', command: 'echo hi', path: undefined },
+        { kind: 'file_change', command: undefined, path: '/tmp/oc-exp/written.txt' },
+        { kind: 'file_change', command: undefined, path: '/tmp/oc-exp/written.txt' },
+      ])
+
+      const [bash] = ask('permission.asked') as Array<{ properties: { id: string } }>
+      adapter.respondToApproval(bash!.properties.id, 'approve')
+      const reply = await mock.waitFor(`/session/session-1/permissions/${bash!.properties.id}`)
+      expect(reply.body).toEqual({ response: 'once' })
+      await expect.poll(() => events.some((event) => event.type === 'approval.resolved')).toBe(true)
+    } finally {
+      adapter.dispose()
+    }
+  })
+
   it('resumes, answers permissions, interrupts and lists connected models', async () => {
     const mock = await serveOpenCode()
     const adapter = new OpenCodeAdapter({ baseUrl: mock.baseUrl })
