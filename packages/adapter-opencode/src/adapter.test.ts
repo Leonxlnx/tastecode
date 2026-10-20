@@ -307,6 +307,42 @@ describe('OpenCode adapter', () => {
     adapter.dispose()
   })
 
+  it('keeps a resumed chat on its own model when the turn names none', async () => {
+    const mock = await serveOpenCode(undefined, [
+      { info: { role: 'user', model: { providerID: 'provider-1', modelID: 'model-old' } } },
+      { info: { role: 'assistant', providerID: 'provider-1', modelID: 'model-old' } },
+      { info: { role: 'user', model: { providerID: 'provider-1', modelID: 'model-1' } } },
+    ])
+    const adapter = new OpenCodeAdapter({ baseUrl: mock.baseUrl })
+    try {
+      const thread = await adapter.resumeThread('opencode-session-1', 'C:\\repo')
+      await adapter.sendTurn(thread.id, 'Carry on')
+      const prompt = await mock.waitFor('/session/session-1/prompt_async')
+      expect(prompt.body).toMatchObject({ model: { providerID: 'provider-1', modelID: 'model-1' } })
+      expect(mock.requests.some((request) => request.url.includes('/message?limit=20'))).toBe(true)
+    } finally {
+      adapter.dispose()
+    }
+  })
+
+  it('lets the resuming caller choose the model over the last one used', async () => {
+    const mock = await serveOpenCode(undefined, [
+      { info: { role: 'user', model: { providerID: 'provider-1', modelID: 'model-old' } } },
+    ])
+    const adapter = new OpenCodeAdapter({ baseUrl: mock.baseUrl })
+    try {
+      const thread = await adapter.resumeThread('opencode-session-1', 'C:\\repo', {
+        model: 'provider-1/model-1',
+      })
+      await adapter.sendTurn(thread.id, 'Carry on')
+      const prompt = await mock.waitFor('/session/session-1/prompt_async')
+      expect(prompt.body).toMatchObject({ model: { providerID: 'provider-1', modelID: 'model-1' } })
+      expect(mock.requests.some((request) => request.url.includes('/message?'))).toBe(false)
+    } finally {
+      adapter.dispose()
+    }
+  })
+
   it('rejects a model without a provider before the turn opens', async () => {
     const mock = await serveOpenCode()
     const adapter = new OpenCodeAdapter({ baseUrl: mock.baseUrl })
@@ -946,7 +982,10 @@ function serverPort(server: Server): number {
   return address.port
 }
 
-async function serveOpenCode(beforeSessionResponse?: () => Promise<void>): Promise<{
+async function serveOpenCode(
+  beforeSessionResponse?: () => Promise<void>,
+  messages: unknown[] = [],
+): Promise<{
   baseUrl: string
   requests: RequestRecord[]
   broadcast(event: OpenCodeWireEvent): void
@@ -1006,6 +1045,9 @@ async function serveOpenCode(beforeSessionResponse?: () => Promise<void>): Promi
         ],
         default: { 'provider-1': 'model-1' },
       })
+    }
+    if (request.method === 'GET' && request.url?.startsWith('/session/session-1/message')) {
+      return json(response, messages)
     }
     if (request.method === 'GET' && request.url?.startsWith('/session/session-1')) {
       await beforeSessionResponse?.()

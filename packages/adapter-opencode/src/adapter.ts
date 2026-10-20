@@ -434,6 +434,9 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
     if (this.#streamFailure) throw this.#streamFailure
     this.#sessionId = session.id
     this.#threadId = `opencode-${session.id}`
+    // A turn without a model runs on the user's global OpenCode default, not
+    // on the model this chat used; keep the chat's own.
+    this.#model ??= await this.#lastV1Model(session.id)
     return {
       id: this.#threadId,
       provider: 'opencode',
@@ -729,6 +732,25 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
         this.#disconnected = true
         this.emit('disconnected')
       })
+  }
+
+  /** The newest model a v1 session ran on; a failed read leaves the model unset. */
+  async #lastV1Model(sessionId: string): Promise<string | undefined> {
+    try {
+      const { data } = await this.#client!.session.messages({
+        path: { id: sessionId },
+        query: { limit: 20 },
+        throwOnError: true,
+      })
+      if (!Array.isArray(data)) return undefined
+      for (const { info } of [...data].reverse()) {
+        if (info.role === 'user') return `${info.model.providerID}/${info.model.modelID}`
+        if (info.role === 'assistant') return `${info.providerID}/${info.modelID}`
+      }
+    } catch {
+      // The turn still names its own model when the user picks one.
+    }
+    return undefined
   }
 
   /**
