@@ -14,8 +14,8 @@ export type SidebarRail = {
   /** Archived chats of every project, the most recently archived first. */
   archivedSessions: PinnedSession[]
 }
-/** Why a chat is waiting for the user: a request it cannot pass, or an answer not yet read. */
-export type Attention = 'approval' | 'input' | 'failed' | 'done'
+/** Why a chat is waiting for the user: a request it cannot pass, or a failure not yet read. */
+export type Attention = 'approval' | 'input' | 'failed'
 export type NeedsYouEntry = PinnedSession & { attention: Attention }
 export type ProjectAttention = { count: number; attention: Attention }
 
@@ -226,15 +226,14 @@ function projectSidebarProjection(source: Project): ProjectSidebarProjection {
 
 /**
  * What a chat is waiting for, if anything. An approval or a question blocks
- * the agent until it is answered. A failed or finished turn waits only until
- * it is read, so opening the chat clears it.
+ * the agent until it is answered. A failed turn waits only until it is read,
+ * so opening the chat clears it. A finished answer does not need the user:
+ * the tree shows it unread, with a heavier title, where it already is.
  */
 export function sessionAttention(session: Session): Attention | undefined {
   if (session.status === 'approval') return 'approval'
   if (session.status === 'input') return 'input'
-  if (!session.unread || isArchived(session)) return undefined
-  if (session.status === 'failed') return 'failed'
-  if (session.status === 'ready' || session.status === 'idle') return 'done'
+  if (session.status === 'failed' && session.unread && !isArchived(session)) return 'failed'
   return undefined
 }
 
@@ -254,10 +253,10 @@ function projectEntries(project: Project): NeedsYouEntry[] {
 
 /**
  * The chats waiting for the user. Agents blocked on an approval or a question
- * come first, then failed or finished answers nobody has read; within each,
- * the longest wait first, so a new arrival joins the end of its group. The
- * open chat is left out: it is already in front of the user, and opening an
- * answer is what reads it.
+ * come first, then failures nobody has read; within each, the longest wait
+ * first, so a new arrival joins the end of its group. The open chat is left
+ * out: it is already in front of the user, and opening a failure is what
+ * reads it.
  */
 export function needsYouSessions(
   projects: readonly Project[],
@@ -284,13 +283,13 @@ function waitingSince(session: Session): number {
   return session.statusSince ?? session.createdAt
 }
 
-const ATTENTION_ORDER: readonly Attention[] = ['approval', 'input', 'failed', 'done']
+const ATTENTION_ORDER: readonly Attention[] = ['approval', 'input', 'failed']
 
 /** How many chats in a project need the user, and the most urgent reason. */
 export function projectAttention(project: Project): ProjectAttention | undefined {
   const entries = projectEntries(project)
   if (entries.length === 0) return undefined
-  let attention: Attention = 'done'
+  let attention: Attention = 'failed'
   for (const entry of entries) {
     if (ATTENTION_ORDER.indexOf(entry.attention) < ATTENTION_ORDER.indexOf(attention)) {
       attention = entry.attention

@@ -1213,11 +1213,18 @@ describe('Sidebar chat actions', () => {
       status: 'approval' as const,
       statusSince: 1,
     }
+    const failed = {
+      ...session('thread-failed', 'Build the release'),
+      status: 'failed' as const,
+      unread: true,
+      statusSince: 2,
+    }
+    // A finished answer stays in the tree only.
     const done = {
       ...session('thread-done', 'Answer is ready'),
       status: 'ready' as const,
       unread: true,
-      statusSince: 2,
+      statusSince: 3,
     }
     const tree = (sessions: Session[]) => [{ path: '/work/harness', name: 'TasteCode', sessions }]
     const view = (projects: ReturnType<typeof tree>, active?: string) => (
@@ -1246,7 +1253,7 @@ describe('Sidebar chat actions', () => {
         onOpenSettings={vi.fn()}
       />
     )
-    const waiting = tree([session('thread-quiet', 'Quiet chat'), approval, done])
+    const waiting = tree([session('thread-quiet', 'Quiet chat'), approval, failed, done])
     const rendered = render(view(waiting))
 
     const band = screen.getByRole('region', { name: 'Needs you' })
@@ -1256,18 +1263,18 @@ describe('Sidebar chat actions', () => {
         .map((button) => button.getAttribute('aria-label')),
     ).toEqual([
       'Run the migration, waiting for approval, TasteCode',
-      'Answer is ready, finished, unread, TasteCode',
-      'Mark Answer is ready as read',
+      'Build the release, failed, TasteCode',
+      'Mark Build the release as read',
     ])
     // The tree below keeps its own order and lists each chat once more.
     expect(
       [...document.querySelectorAll('.proj__drawer .sess__title')].map(
         (title) => title.textContent,
       ),
-    ).toEqual(['Quiet chat', 'Run the migration', 'Answer is ready'])
+    ).toEqual(['Quiet chat', 'Run the migration', 'Build the release', 'Answer is ready'])
 
-    fireEvent.click(within(band).getByRole('button', { name: 'Mark Answer is ready as read' }))
-    expect(onMarkSessionRead).toHaveBeenCalledWith('thread-done')
+    fireEvent.click(within(band).getByRole('button', { name: 'Mark Build the release as read' }))
+    expect(onMarkSessionRead).toHaveBeenCalledWith('thread-failed')
     fireEvent.click(within(band).getByRole('button', { name: /^Run the migration,/ }))
     expect(onSelectSession).toHaveBeenCalledWith('thread-approval')
 
@@ -1285,7 +1292,8 @@ describe('Sidebar chat actions', () => {
         tree([
           session('thread-quiet', 'Quiet chat'),
           { ...approval, status: 'idle' },
-          { ...done, status: 'idle', unread: false },
+          { ...failed, unread: false },
+          done,
         ]),
       ),
     )
