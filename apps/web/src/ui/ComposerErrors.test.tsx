@@ -59,4 +59,31 @@ describe('ComposerErrors', () => {
     fireEvent.click(buttons[0]!)
     expect(report).toHaveBeenCalledOnce()
   })
+
+  it('offers several places to go as a menu and runs the one chosen', async () => {
+    const work = vi.fn()
+    const spare = vi.fn()
+    render(
+      <ComposerErrors
+        errors={[
+          {
+            id: 'turn:1',
+            message: "You've hit your usage limit.",
+            choices: {
+              label: 'Continue on another account',
+              options: [
+                { id: 'work', label: 'Work', detail: 'work@example.test', run: work },
+                { id: 'spare', label: 'Spare', run: spare },
+              ],
+            },
+          },
+        ]}
+      />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Continue on another account' }))
+    expect(await screen.findByText('work@example.test')).toBeTruthy()
+    fireEvent.click(await screen.findByRole('menuitem', { name: /Spare/ }))
+    expect(spare).toHaveBeenCalledOnce()
+    expect(work).not.toHaveBeenCalled()
+  })
 })

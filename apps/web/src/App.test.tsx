@@ -5452,6 +5452,152 @@ describe('new chats', () => {
     await waitFor(() => expect(offered()).toEqual(['work-plan-model']))
   })
 
+  it('offers to continue a chat at its plan limit on another signed-in account', async () => {
+    const codex = serverProviders[0]!
+    serverProviders = [
+      { ...codex, capabilities: { ...codex.capabilities!, multipleAccounts: true } },
+    ]
+    serverProjects[0]!.sessions = [
+      { id: 'chat-limited', title: 'Webhook retries', provider: 'codex', createdAt: 1 },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    const starts: unknown[] = []
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'accounts.list') {
+        return Promise.resolve({
+          accounts: [
+            { id: 'default', provider: 'codex', label: 'Personal', managed: false },
+            {
+              id: 'work-1a2b3c',
+              provider: 'codex',
+              label: 'Work',
+              home: 'C:\\TasteCode\\accounts\\codex\\work-1a2b3c',
+              managed: true,
+              email: 'work@example.test',
+            },
+            // Not signed in yet: never offered.
+            {
+              id: 'spare-4d5e6f',
+              provider: 'codex',
+              label: 'Spare',
+              home: 'C:\\TasteCode\\accounts\\codex\\spare-4d5e6f',
+              managed: true,
+            },
+          ],
+          active: {},
+        })
+      }
+      if (method === 'usage.summary') {
+        const { accountId } = params as { accountId?: string }
+        return (request(method, params) as Promise<ResultOf<'usage.summary'>>).then((summary) => ({
+          ...summary,
+          limits: [
+            {
+              label: '5 hours',
+              usedPercent: accountId === undefined ? 100 : 30,
+              resetsAt: Date.now() + 3_600_000,
+            },
+          ],
+        }))
+      }
+      if (method === 'thread.history') {
+        const { threadId } = params as { threadId: string }
+        if (threadId !== 'chat-limited') return request(method, params)
+        return Promise.resolve({
+          events: [
+            {
+              seq: 1,
+              event: {
+                type: 'item.completed',
+                item: {
+                  id: 'ask',
+                  turnId: 'turn-1',
+                  type: 'message',
+                  role: 'user',
+                  status: 'completed',
+                  text: 'Fix the webhook retries',
+                  createdAt: 1,
+                },
+              },
+            },
+            {
+              seq: 2,
+              event: { type: 'thread.error', threadId, message: "You've hit your usage limit." },
+            },
+            { seq: 3, event: { type: 'turn.completed', turnId: 'turn-1', status: 'failed' } },
+          ],
+          running: false,
+          approval: 'ask',
+        })
+      }
+      if (method === 'thread.start') {
+        starts.push(params)
+        serverProjects[0]!.sessions = [
+          {
+            id: 'chat-next',
+            title: 'New session',
+            provider: 'codex',
+            accountId: 'work-1a2b3c',
+            continuedFrom: 'chat-limited',
+            createdAt: 2,
+          },
+          ...serverProjects[0]!.sessions,
+        ]
+        return Promise.resolve({ threadId: 'chat-next' })
+      }
+      return request(method, params)
+    })
+    const errors = () => composerProps().errors ?? []
+    render(<App />)
+
+    fireEvent.click(await waitFor(() => treeChatRow('Webhook retries')))
+    const failed = await waitFor(() => {
+      const row = errors().find((error) => error.message === "You've hit your usage limit.")
+      expect(row?.action?.label).toBe('Continue on Work')
+      return row!
+    })
+    // Offered, never started on its own.
+    expect(starts).toEqual([])
+
+    await act(async () => failed.action!.run())
+    await waitFor(() =>
+      expect(starts).toEqual([
+        expect.objectContaining({
+          provider: 'codex',
+          workspacePath: '/work/project',
+          accountId: 'work-1a2b3c',
+          continueFrom: 'chat-limited',
+        }),
+      ]),
+    )
+    // The new chat opens with the request that failed, ready to send.
+    await waitFor(() => expect(composerProps().draftRequest?.text).toBe('Fix the webhook retries'))
+    await waitFor(() =>
+      expect(errors().map((error) => error.message)).toContain(
+        'Continues “Webhook retries”. Its conversation goes with your first message.',
+      ),
+    )
+
+    // The earlier chat links to it and offers no second continuation.
+    fireEvent.click(await waitFor(() => treeChatRow('Webhook retries')))
+    const link = await waitFor(() => {
+      const row = errors().find((error) => error.message === 'Continued in a new chat on Work.')
+      expect(row).toBeTruthy()
+      return row!
+    })
+    expect(
+      errors().find((error) => error.message === "You've hit your usage limit.")?.action,
+    ).toBeUndefined()
+    await act(async () => link.action!.run())
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith(
+        'thread.history',
+        expect.objectContaining({ threadId: 'chat-next' }),
+      ),
+    )
+  })
+
   it('keeps plan limits and asks nothing new when switching chats of one provider', async () => {
     serverProjects = [
       {

@@ -112,7 +112,8 @@ import {
 import type { Checkpoint } from './ui/RollbackDialog.js'
 import { SessionSearchHost, type SessionSearchHandle } from './ui/SessionSearchHost.js'
 import type { SettingsSection } from './ui/Settings.js'
-import { Sidebar, type Project } from './ui/Sidebar.js'
+import { Sidebar, type Project, type Session } from './ui/Sidebar.js'
+import { accountAtLimit, continueAccounts, continuedIn, lastRequest } from './continue-account.js'
 import { Skeleton, SkeletonStatus, ThreadSkeleton } from './ui/Skeleton.js'
 import {
   PullRequestsSkeleton,
@@ -4719,6 +4720,80 @@ export function App() {
     if (id && !id.startsWith('pending:')) void readOpenedHistory(id, undefined)
   }, [readOpenedHistory])
 
+  /**
+   * "Continue on another account": a new chat pinned to that account carries
+   * the open chat on. The server gives its first prompt this chat's
+   * conversation; the composer starts with the request that failed, so
+   * nothing is sent until the user sends it.
+   */
+  const continueOnAccount = useCallback(
+    async (accountId: AccountId) => {
+      const earlierId = activeIdRef.current
+      const found = findSession(projectsRef.current, earlierId)
+      if (!earlierId || !found) return
+      const { project, session: earlier } = found
+      const choice =
+        selectedModelChoice?.provider === earlier.provider &&
+        !selectedModelChoice.agent &&
+        !selectedModelChoice.connectionId
+          ? selectedModelChoice
+          : undefined
+      setActionError(undefined)
+      try {
+        const { threadId } = await transport.request('thread.start', {
+          provider: earlier.provider,
+          workspacePath: project.path,
+          accountId,
+          continueFrom: earlierId,
+          approval: approval === 'auto-review' && !autoReviewSupported ? 'full' : approval,
+          ...(choice?.model.id ? { model: choice.model.id } : {}),
+          ...(choice && selectedServiceTier ? { serviceTier: selectedServiceTier } : {}),
+          ...(choice && selectedEffort ? { effort: selectedEffort } : {}),
+          // An isolated chat's work is on its branch; the new checkout starts there.
+          ...(earlier.worktreeBranch ? { isolate: true, baseRef: earlier.worktreeBranch } : {}),
+        })
+        const request = lastRequest(threadController.snapshot(earlierId)?.items ?? [])
+        if (request) threadController.editDraft(threadId, { text: request })
+        const now = Date.now()
+        const row: Session = {
+          id: threadId,
+          title: 'New session',
+          provider: earlier.provider,
+          ...(accountId === DEFAULT_ACCOUNT_ID ? {} : { accountId }),
+          continuedFrom: earlierId,
+          createdAt: now,
+          statusSince: now,
+          status: 'idle',
+          lifecycle: { state: 'active', keepActive: false },
+          unread: false,
+        }
+        // Listed at once, so opening it finds its project; the next list reconciles.
+        const next = projectsRef.current.map((entry) =>
+          entry.path !== project.path || entry.sessions.some((each) => each.id === threadId)
+            ? entry
+            : { ...entry, sessions: [row, ...entry.sessions] },
+        )
+        projectsRef.current = next
+        setProjects(next)
+        await selectSession(threadId)
+        void refreshProjects().catch(() => undefined)
+      } catch (error) {
+        reportError(error instanceof Error ? error.message : String(error))
+      }
+    },
+    [
+      transport,
+      selectedModelChoice,
+      selectedServiceTier,
+      selectedEffort,
+      approval,
+      autoReviewSupported,
+      selectSession,
+      refreshProjects,
+      reportError,
+    ],
+  )
+
   const inspectCheckpoint = useCallback(
     async (checkpoint: Checkpoint) => {
       if (!activeId) return
@@ -6189,6 +6264,34 @@ export function App() {
     ? (settingsType.current ??= resolvedSettings ?? LazySettings)
     : undefined
 
+  // "Continue on another account" is offered on a failed turn while the chat's
+  // own account is at a plan limit and its provider has another signed-in
+  // account. It never starts on its own.
+  const continuedChat = useMemo(
+    () => (activeId ? continuedIn(projects, activeId) : undefined),
+    [activeId, projects],
+  )
+  const continueOptions = useMemo(() => {
+    if (
+      !activeSession ||
+      continuedChat ||
+      activeSession.id.startsWith('pending:') ||
+      activeSession.agent ||
+      activeSession.connectionId ||
+      !accountAtLimit(usageState, activeSession.provider, activeSession.accountId, Date.now())
+    )
+      return []
+    const defaultSignedIn =
+      providerStatuses.find((status) => status.id === activeSession.provider)?.auth ===
+      'authenticated'
+    return continueAccounts(
+      providerAccounts,
+      activeSession.provider,
+      activeSession.accountId,
+      defaultSignedIn,
+    )
+  }, [activeSession, continuedChat, usageState, providerStatuses, providerAccounts])
+
   const offlineError = useMemo<ComposerError | undefined>(
     () =>
       offline
@@ -6252,12 +6355,62 @@ export function App() {
             }),
         }
       : error
+  const continueOffer: Pick<ComposerError, 'action' | 'choices'> =
+    thread.running || continueOptions.length === 0
+      ? {}
+      : continueOptions.length === 1
+        ? {
+            action: {
+              label: `Continue on ${continueOptions[0]!.label}`,
+              run: () => void continueOnAccount(continueOptions[0]!.id),
+            },
+          }
+        : {
+            choices: {
+              label: 'Continue on another account',
+              options: continueOptions.map((account) => ({
+                id: account.id,
+                label: account.label,
+                detail: account.email ?? account.plan,
+                run: () => void continueOnAccount(account.id),
+              })),
+            },
+          }
+  const earlierChat =
+    activeSession?.continuedFrom && thread.items.length === 0 && !thread.running
+      ? findSession(projects, activeSession.continuedFrom)?.session
+      : undefined
   const composerErrors: ComposerError[] = [
     ...(actionError
       ? [reportable({ ...actionError, dismiss: () => setActionError(undefined) }, 'action')]
       : []),
     ...(thread.error && activeId
-      ? [reportable({ ...thread.error, id: `chat:${activeId}:${thread.error.id}` }, 'turn')]
+      ? [
+          reportable(
+            { ...thread.error, id: `chat:${activeId}:${thread.error.id}`, ...continueOffer },
+            'turn',
+          ),
+        ]
+      : []),
+    ...(continuedChat && activeSession
+      ? [
+          {
+            id: `continued:${activeSession.id}:${continuedChat.id}`,
+            role: 'status' as const,
+            message: `Continued in a new chat on ${accountLabelOf(providerAccounts, continuedChat.provider, continuedChat.accountId)}.`,
+            action: { label: 'Open chat', run: () => void selectSession(continuedChat.id) },
+          },
+        ]
+      : []),
+    ...(earlierChat && activeSession
+      ? [
+          {
+            id: `continues:${activeSession.id}`,
+            role: 'status' as const,
+            message: `Continues “${earlierChat.title}”. Its conversation goes with your first message.`,
+            action: { label: 'Open', run: () => void selectSession(earlierChat.id) },
+          },
+        ]
       : []),
     ...(currentModelError
       ? [
