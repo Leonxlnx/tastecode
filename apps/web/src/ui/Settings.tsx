@@ -95,7 +95,6 @@ import { listInstalledFontFamilies, readInstalledFontFamilies } from '../local-f
 import {
   appUpdateState,
   checkForAppUpdates,
-  installAppUpdate,
   isDesktop,
   localDiagnosticsEnabled,
   onAppUpdateState,
@@ -105,6 +104,15 @@ import {
   writeClipboardText,
   type AppUpdateState,
 } from '../bridge.js'
+import {
+  appUpdateInstallState,
+  cancelAppUpdateInstall,
+  chatCount,
+  requestAppUpdateInstall,
+  stopChatsAndInstall,
+  subscribeAppUpdateInstall,
+  waitingLabel,
+} from '../app-update-install.js'
 import {
   onSimulatedAppUpdate,
   simulatedAppUpdate,
@@ -2414,6 +2422,33 @@ function AboutSettings(props: { transport: Transport }) {
   const [checking, setChecking] = useState(false)
   const [result, setResult] = useState<ResultOf<'system.updateCheck'>>()
   const [nativeUpdate, setNativeUpdate] = useState<AppUpdateState>()
+  const install = useSyncExternalStore(
+    subscribeAppUpdateInstall,
+    appUpdateInstallState,
+    appUpdateInstallState,
+  )
+  // Install now stops running chats, so it asks once, here in the row.
+  const [confirmStop, setConfirmStop] = useState(false)
+  // Each step swaps the buttons. A step taken here hands the focus the clicked
+  // button took with it to the next step's main button (Keep waiting in the
+  // confirmation, so a stray Enter stops nothing); a step taken in the sidebar
+  // or by the chats ending leaves focus where it is.
+  const stepAction = useRef<HTMLButtonElement>(null)
+  const steppedHere = useRef(false)
+  const updateStep =
+    install.phase === 'waiting' ? (confirmStop ? 'confirm' : 'wait') : install.phase
+  const stepHere = (action: () => void) => () => {
+    steppedHere.current = true
+    action()
+  }
+  useEffect(() => {
+    if (install.phase !== 'waiting') setConfirmStop(false)
+  }, [install.phase])
+  useLayoutEffect(() => {
+    if (!steppedHere.current) return
+    steppedHere.current = false
+    stepAction.current?.focus()
+  }, [updateStep])
 
   useEffect(() => {
     void appUpdateState().then(setNativeUpdate)
@@ -2441,6 +2476,10 @@ function AboutSettings(props: { transport: Transport }) {
   const nativeDownloading = nativeUpdate?.status === 'downloading'
   const nativePreparing = nativeUpdate?.status === 'preparing'
   const nativeReady = nativeUpdate?.status === 'ready'
+  const waiting = nativeReady && install.phase === 'waiting'
+  const stopping = nativeReady && install.phase === 'stopping'
+  const restarting = nativeReady && (install.phase === 'checking' || install.phase === 'installing')
+  const confirming = waiting && confirmStop
   // Verdicts stay on the row's one line; a failure goes behind the red dot.
   const updateStatus = !result
     ? undefined
@@ -2479,7 +2518,12 @@ function AboutSettings(props: { transport: Transport }) {
           : nativeReady
             ? {
                 state: 'ready' as const,
-                detail: `${nativeUpdate.version ?? 'Update'} ready`,
+                detail:
+                  install.phase === 'waiting'
+                    ? waitingLabel(install.running)
+                    : install.phase === 'stopping'
+                      ? `Stopping ${chatCount(install.running)}`
+                      : `${nativeUpdate.version ?? 'Update'} ready`,
               }
             : undefined
 
@@ -2502,6 +2546,11 @@ function AboutSettings(props: { transport: Transport }) {
           />
         ) : result?.error ? (
           <RowIssue message={result.error} tip="Check your network or GitHub access, then retry." />
+        ) : nativeReady && install.phase === 'idle' && install.failed ? (
+          <RowIssue
+            message="The update could not be installed."
+            tip="Try Restart to update again."
+          />
         ) : null}
         {checking || nativeChecking ? <StateLabel state="checking" live /> : null}
         {!checking && nativeUpdate === undefined ? (
@@ -2515,23 +2564,83 @@ function AboutSettings(props: { transport: Transport }) {
         {!checking && !nativeChecking && !nativeStatus && updateStatus ? (
           <StateLabel {...updateStatus} live />
         ) : null}
-        <button
-          className="set-button"
-          type="button"
-          disabled={checking || nativeChecking || nativeDownloading || nativePreparing}
-          onClick={() => void (nativeReady ? installAppUpdate() : check())}
-        >
-          <Refresh size={13} aria-hidden />
-          {nativeReady
-            ? 'Restart to update'
-            : nativeDownloading
-              ? 'Downloading…'
-              : nativePreparing
-                ? 'Preparing…'
-                : checking || nativeChecking
-                  ? 'Checking…'
-                  : 'Check for updates'}
-        </button>
+        {confirming ? (
+          <>
+            <button
+              ref={stepAction}
+              className="set-button set-button--quiet"
+              type="button"
+              onClick={stepHere(() => setConfirmStop(false))}
+            >
+              Keep waiting
+            </button>
+            <button
+              className="set-button set-button--danger"
+              type="button"
+              onClick={stepHere(() => {
+                setConfirmStop(false)
+                void stopChatsAndInstall()
+              })}
+            >
+              {`Stop ${chatCount(install.running)} and install`}
+            </button>
+          </>
+        ) : waiting ? (
+          <>
+            <button
+              className="set-button set-button--quiet"
+              type="button"
+              onClick={stepHere(cancelAppUpdateInstall)}
+            >
+              Install later
+            </button>
+            <button
+              ref={stepAction}
+              className="set-button"
+              type="button"
+              onClick={stepHere(() => setConfirmStop(true))}
+            >
+              Install now
+            </button>
+          </>
+        ) : (
+          <button
+            ref={stepAction}
+            className="set-button"
+            type="button"
+            disabled={
+              checking ||
+              nativeChecking ||
+              nativeDownloading ||
+              nativePreparing ||
+              stopping ||
+              restarting
+            }
+            onClick={
+              nativeReady
+                ? stepHere(() => {
+                    setConfirmStop(false)
+                    void requestAppUpdateInstall()
+                  })
+                : () => void check()
+            }
+          >
+            <Refresh size={13} aria-hidden />
+            {stopping
+              ? 'Stopping chats…'
+              : restarting
+                ? 'Restarting…'
+                : nativeReady
+                  ? 'Restart to update'
+                  : nativeDownloading
+                    ? 'Downloading…'
+                    : nativePreparing
+                      ? 'Preparing…'
+                      : checking || nativeChecking
+                        ? 'Checking…'
+                        : 'Check for updates'}
+          </button>
+        )}
       </SettingsRow>
       <SettingsRow name="Source">
         <button

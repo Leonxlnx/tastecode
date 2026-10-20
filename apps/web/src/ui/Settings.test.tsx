@@ -8,6 +8,12 @@ import { MODEL_PICKER_LAYOUT_KEY, writeModelPickerLayout } from '../model-picker
 import { resetInstalls } from '../provider-install.js'
 import { providerUpdatesStore } from '../provider-updates.js'
 import { SIMULATED_CHECK_MS, stopAppUpdateSimulation } from '../app-update-simulation.js'
+import {
+  INSTALL_SETTLE_MS,
+  reportRunningChats,
+  resetAppUpdateInstallForTests,
+  setAppUpdateInstallGate,
+} from '../app-update-install.js'
 import { HAPTICS_KEY, writeAppHaptics } from '../haptics.js'
 import { TERMINAL_PLACEMENT_KEY, writeTerminalPlacement } from '../terminal-placement.js'
 import type { Transport } from '../transport.js'
@@ -394,6 +400,79 @@ describe('app update simulation', () => {
     await act(async () => stopAppUpdateSimulation())
     expect(screen.getByRole('button', { name: 'Check for updates' })).toBeTruthy()
     expect(screen.queryByRole('status', { name: /Checking/ })).toBeNull()
+  })
+})
+
+describe('app update install', () => {
+  afterEach(() => resetAppUpdateInstallForTests())
+  const ready: bridge.AppUpdateState = {
+    status: 'ready',
+    currentVersion: '1.0.0',
+    version: '1.0.1',
+  }
+
+  function serverGate(calls: string[]) {
+    const gate = {
+      runningChats: vi.fn(async () => 0),
+      stopRunningChats: vi.fn(async () => {
+        calls.push('stop')
+      }),
+    }
+    setAppUpdateInstallGate(gate)
+    vi.spyOn(bridge, 'installAppUpdate').mockImplementation(async () => {
+      calls.push('install')
+      return true
+    })
+    return gate
+  }
+
+  it('waits in About while chats run and stops them after one confirmation', async () => {
+    settingsLoading.desktop = true
+    vi.spyOn(bridge, 'appUpdateState').mockResolvedValue(ready)
+    const calls: string[] = []
+    serverGate(calls)
+    reportRunningChats(1)
+    renderSettings({ initialSection: 'about' })
+    fireEvent.click(await screen.findByRole('button', { name: 'Restart to update' }))
+    expect(
+      await screen.findByRole('status', { name: 'Ready · Installs when 1 chat finishes' }),
+    ).toBeTruthy()
+    expect(calls).toEqual([])
+
+    fireEvent.click(screen.getByRole('button', { name: 'Install now' }))
+    expect(screen.getByRole('button', { name: 'Stop 1 chat and install' })).toBeTruthy()
+    // The safe choice takes the focus, so a stray Enter stops nothing.
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Keep waiting' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Keep waiting' }))
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Install now' }))
+    expect(calls).toEqual([])
+
+    fireEvent.click(screen.getByRole('button', { name: 'Install now' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Stop 1 chat and install' }))
+    await waitFor(() => expect(calls).toEqual(['stop', 'install']))
+  })
+
+  it('installs from About once the last chat ends, and not after Install later', async () => {
+    settingsLoading.desktop = true
+    vi.spyOn(bridge, 'appUpdateState').mockResolvedValue(ready)
+    const calls: string[] = []
+    const gate = serverGate(calls)
+    reportRunningChats(2)
+    renderSettings({ initialSection: 'about' })
+    fireEvent.click(await screen.findByRole('button', { name: 'Restart to update' }))
+    expect(
+      await screen.findByRole('status', { name: 'Ready · Installs when 2 chats finish' }),
+    ).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Install later' }))
+    expect(screen.getByRole('status', { name: 'Ready · 1.0.1 ready' })).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Restart to update' }))
+    vi.useFakeTimers()
+    act(() => reportRunningChats(0))
+    await act(async () => vi.advanceTimersByTimeAsync(INSTALL_SETTLE_MS))
+    expect(gate.runningChats).toHaveBeenCalledOnce()
+    expect(calls).toEqual(['install'])
+    expect(screen.getByRole('button', { name: 'Restarting…' }).hasAttribute('disabled')).toBe(true)
   })
 })
 
