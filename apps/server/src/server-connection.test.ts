@@ -786,6 +786,17 @@ describe('provider accounts', () => {
           await ask('thread.start', { provider: 'codex', accountId, workspacePath: 'C:\\x' }),
         ).toMatchObject({ result: { threadId: 'codex-started' } })
       }
+      // Carrying a chat on to another account is not built yet: refused, not dropped.
+      expect(
+        await ask('thread.start', {
+          provider: 'codex',
+          accountId: 'work',
+          continueFrom: 'codex-earlier',
+          workspacePath: 'C:\\x',
+        }),
+      ).toMatchObject({
+        error: { message: 'Continuing a chat on another account is not available yet.' },
+      })
       expect(state.handled.filter((entry) => entry.startsWith('thread.'))).toEqual([
         'thread.start(codex, work)',
         'thread.start(codex, active)',
