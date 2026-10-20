@@ -49,6 +49,10 @@ describe('ChatNotifier', () => {
     notifier.report({ mode: 'needs-you', chats: [waiting('a', 'input')] })
     shown[0]!.click()
     expect(host.openChat).toHaveBeenCalledWith('a')
+    // A clicked notification leaves the centre; coming back does not close it twice.
+    expect(shown[0]!.close).toHaveBeenCalledTimes(1)
+    notifier.windowFocused()
+    expect(shown[0]!.close).toHaveBeenCalledTimes(1)
   })
 
   it('replaces a chat notification when the chat moves on', () => {
