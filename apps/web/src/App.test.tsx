@@ -5121,17 +5121,16 @@ describe('new chats', () => {
     expect(screen.queryByText('75% left')).toBeNull()
 
     fireEvent.click(screen.getByRole('button', { name: 'Account' }))
-    // The accounts share one table, the active one first and marked.
-    const table = await screen.findByRole('table', { name: 'Codex plan limits' })
-    expect(within(table).getByRole('columnheader', { name: '5 hours' })).toBeTruthy()
-    await waitFor(() =>
-      expect(
-        within(table)
-          .getAllByRole('row')
-          .slice(1)
-          .map((row) => row.textContent),
-      ).toEqual(['Work, where new chats start40%', 'Personal75%']),
-    )
+    // The active account comes first and open; the other shows what it has left.
+    const work = await screen.findByRole('region', { name: 'Codex · Work' })
+    expect(within(work).getByText('40% left')).toBeTruthy()
+    const personal = await screen.findByRole('button', { name: 'Personal, 5 hours 75% left' })
+    expect(personal.getAttribute('aria-expanded')).toBe('false')
+    expect(
+      within(screen.getByRole('group', { name: 'Codex' }))
+        .getAllByRole('button')
+        .map((line) => line.textContent),
+    ).toEqual(['Work', 'Personal75% left'])
     await waitFor(() =>
       expect(transport.request).toHaveBeenCalledWith('usage.summary', {
         provider: 'codex',

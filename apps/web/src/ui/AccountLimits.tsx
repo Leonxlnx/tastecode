@@ -1,12 +1,4 @@
-import {
-  type CSSProperties,
-  Fragment,
-  type ReactNode,
-  useId,
-  useLayoutEffect,
-  useRef,
-  useState,
-} from 'react'
+import { type CSSProperties, type ReactNode, useId, useLayoutEffect, useRef, useState } from 'react'
 import {
   DEFAULT_ACCOUNT_ID,
   type AccountId,
@@ -14,6 +6,7 @@ import {
   type ProviderLimitSource,
   type ResultOf,
 } from '@harness/contracts'
+import { IconChevronRight as ChevronRight } from '@tabler/icons-react'
 import type { AccountLabel } from '../provider-accounts-state.js'
 import { providerDisplayName, providerMark } from '../provider-presentation.js'
 import { limitKey } from '../usage-limits-state.js'
@@ -47,7 +40,7 @@ export function AccountLimits(props: {
   states: AccountLimitsState[]
   /** Names a provider account; without it a further account reads as "Account". */
   accountLabel?: AccountLabel | undefined
-  /** The account a new chat with the provider starts on; marked where accounts sit side by side. */
+  /** The account a new chat with the provider starts on; open first where a provider has several. */
   activeAccount?: ((provider: ProviderId) => AccountId) | undefined
   /** Called once while the limits are on screen; returns the release for when they leave. */
   onShow?: (() => () => void) | undefined
@@ -111,7 +104,7 @@ export function AccountLimits(props: {
         const label = (state: AccountLimitsState) =>
           props.accountLabel?.(state.provider, state.accountId) ??
           (further(state) ? 'Account' : 'Default')
-        // One account under its provider keeps the full rows; more sit side by side.
+        // One account under its provider keeps the full rows; more open one at a time.
         if (group.states.length === 1) {
           return (
             <div
@@ -129,7 +122,7 @@ export function AccountLimits(props: {
           )
         }
         return (
-          <AccountTable
+          <ProviderAccountLimits
             key={group.provider}
             provider={group.provider}
             states={group.states}
@@ -146,13 +139,12 @@ export function AccountLimits(props: {
 }
 
 /**
- * A provider's accounts side by side: a row each and a column per limit, every
- * cell the share left over a short gauge, so the account with room shows at a
- * glance. The reset time and even pace sit on each cell's hover; an account
- * that ran out of one says under its row when it comes back. The account new
- * chats start on reads in full ink.
+ * A provider with several accounts: its name once, then a line per account that
+ * opens to that account's full limits. A closed line shows how much is left of
+ * the limit that runs out first, as the account card does, so the account with
+ * room shows at a glance. The account new chats start on is open to begin with.
  */
-function AccountTable(props: {
+function ProviderAccountLimits(props: {
   provider: ProviderId
   states: AccountLimitsState[]
   label: (state: AccountLimitsState) => string
@@ -162,189 +154,143 @@ function AccountTable(props: {
   onConsumeReset?: ConsumeReset | undefined
 }) {
   const name = providerDisplayName(props.provider)
-  const rows = props.states.map((state) => {
-    const source = limitSource(state)
-    return { state, source, limits: source?.status === 'ready' ? source.limits : [] }
+  const [open, setOpen] = useState<ReadonlySet<AccountId>>(() => {
+    const active = props.active ?? DEFAULT_ACCOUNT_ID
+    const first = accountOf(props.states[0]!)
+    return new Set([props.states.some((state) => accountOf(state) === active) ? active : first])
   })
-  // Every limit any account reports, in the order they first appear.
-  const columns = [...new Set(rows.flatMap((row) => row.limits.map((limit) => limit.label)))]
-  const active = props.active ?? DEFAULT_ACCOUNT_ID
+  const toggle = (account: AccountId) =>
+    setOpen((current) => {
+      const next = new Set(current)
+      if (!next.delete(account)) next.add(account)
+      return next
+    })
   return (
-    <div
-      className="account-menu__provider account-table"
-      role="group"
-      aria-label={name}
-      aria-busy={props.states.some((state) => state.status === 'loading')}
-      style={{ '--columns': Math.max(1, columns.length) } as CSSProperties}
-    >
+    <div className="account-menu__provider" role="group" aria-label={name}>
       <h3 className="account-menu__provider-name">
         <ProviderIcon mark={providerMark(props.provider)} size={14} />
         <span>{name}</span>
       </h3>
-      <div className="account-table__grid" role="table" aria-label={`${name} plan limits`}>
-        <div className="account-table__row account-table__head" role="row">
-          <span role="columnheader" className="account-table__corner">
-            <span className="visually-hidden">Account, and each limit's </span>% left
-          </span>
-          {columns.map((column) => (
-            <span role="columnheader" key={column} title={column}>
-              {column}
-            </span>
-          ))}
-        </div>
-        {rows.map(({ state, source, limits }, order) => {
-          const account = props.label(state)
-          const isActive = (state.accountId ?? DEFAULT_ACCOUNT_ID) === active
-          const status = sourceStatus(state, source, limits.length > 0, props.now)
-          const retrying = state.status !== 'ready' && state.retry !== undefined
-          const retryable =
-            !retrying &&
-            (state.status === 'error' ||
-              (state.status === 'ready' && source?.status === 'unavailable'))
-          // The soonest a limit that ran out comes back.
-          const spent = limits
-            .filter((limit) => limit.valueLabel === undefined && remaining(limit) === 0)
-            .filter((limit) => limit.resetsAt !== undefined)
-            .sort((a, b) => a.resetsAt! - b.resetsAt!)[0]
-          const consumable = limits.filter(
-            (limit) =>
-              (limit.action === 'consume-reset' && props.onConsumeReset !== undefined) ||
-              limit.resetCredits?.length,
-          )
-          return (
-            <Fragment key={limitKey(state.provider, state.accountId)}>
-              <div
-                className="account-table__row"
-                role="row"
-                data-active={isActive || undefined}
-                aria-busy={state.status === 'loading'}
-              >
-                <span
-                  role="rowheader"
-                  className="account-table__account"
-                  title={isActive ? `${account}, where new chats start` : account}
-                >
-                  {account}
-                  {isActive ? (
-                    <span className="visually-hidden">, where new chats start</span>
-                  ) : null}
-                </span>
-                {limits.length === 0 ? (
-                  <span role="cell" className="account-table__status" title={status?.detail}>
-                    {status?.label ?? 'None reported'}
-                    {retryable ? (
-                      <button
-                        className="account-menu__retry"
-                        type="button"
-                        aria-label={`Retry ${account}`}
-                        onClick={() => props.onRetry(state)}
-                      >
-                        Retry
-                      </button>
-                    ) : null}
-                  </span>
-                ) : (
-                  columns.map((column) => (
-                    <LimitCell
-                      key={column}
-                      name={`${name} · ${account}`}
-                      limit={limits.find((limit) => limit.label === column)}
-                      now={props.now}
-                      order={order}
-                    />
-                  ))
-                )}
-              </div>
-              {limits.length > 0 && status ? (
-                <p className="account-table__note" title={status.detail}>
-                  {status.label}
-                </p>
-              ) : null}
-              {spent ? (
-                <p className="account-table__note">
-                  {spent.label} back{' '}
-                  {resetLabel(spent.resetsAt!, props.now).replace(/^Resets /, '')}
-                </p>
-              ) : null}
-              {consumable.map((limit, index) => (
-                <div className="account-table__credits" key={`${limit.label}:${index}`}>
-                  {limit.resetCredits?.length ? (
-                    <ResetCreditExpiries
-                      credits={limit.resetCredits}
-                      provider={state.provider}
-                      accountId={state.accountId}
-                      now={props.now}
-                      onConsumeReset={
-                        limit.action === 'consume-reset' ? props.onConsumeReset : undefined
-                      }
-                    />
-                  ) : (
-                    <ResetCreditRow
-                      provider={state.provider}
-                      accountId={state.accountId}
-                      onConsumeReset={props.onConsumeReset}
-                    >
-                      Next available reset
-                    </ResetCreditRow>
-                  )}
-                </div>
-              ))}
-            </Fragment>
-          )
-        })}
-      </div>
+      {props.states.map((state) => (
+        <AccountLine
+          key={limitKey(state.provider, state.accountId)}
+          state={state}
+          provider={name}
+          account={props.label(state)}
+          open={open.has(accountOf(state))}
+          now={props.now}
+          onToggle={() => toggle(accountOf(state))}
+          onRetry={() => props.onRetry(state)}
+          onConsumeReset={props.onConsumeReset}
+        />
+      ))}
     </div>
   )
 }
 
-/** One account's share of one limit: the number, and a short gauge under it. */
-function LimitCell(props: { name: string; limit: Limit | undefined; now: number; order: number }) {
-  const limit = props.limit
-  if (!limit) {
+/** One account under its provider: a line that opens to its limits. */
+function AccountLine(props: {
+  state: AccountLimitsState
+  provider: string
+  account: string
+  open: boolean
+  now: number
+  onToggle: () => void
+  onRetry: () => void
+  onConsumeReset?: ConsumeReset | undefined
+}) {
+  const bodyId = useId()
+  const { limits, status, retryable } = sourceView(props.state, props.now)
+  const name = `${props.provider} · ${props.account}`
+  const first = firstToRunOut(limits)
+  const left = first && first.valueLabel === undefined ? remaining(first) : undefined
+  const glance = first ? `${first.label} ${first.valueLabel ?? `${left}% left`}` : undefined
+  const retry = retryable ? (
+    <button
+      className="account-menu__retry"
+      type="button"
+      aria-label={`Retry ${props.account}`}
+      onClick={props.onRetry}
+    >
+      Retry
+    </button>
+  ) : null
+  // Without limits there is nothing to open: the line says why.
+  if (!first) {
     return (
-      <span role="cell" className="account-table__cell is-empty" aria-label="Not reported">
-        —
-      </span>
+      <div className="account-menu__account-head">
+        <span className="account-menu__account-line" title={status?.detail}>
+          <span className="account-menu__account-name">{props.account}</span>
+          <span className="account-menu__account-status">{status?.label}</span>
+        </span>
+        {retry}
+      </div>
     )
   }
-  const left = remaining(limit)
-  const gauge = limit.valueLabel === undefined
-  const pace = evenPace(limit, props.now)
-  const detail = [
-    `${limit.label}: ${limit.valueLabel ?? `${left}% left`}`,
-    limit.resetsAt === undefined ? undefined : resetLabel(limit.resetsAt, props.now),
-    pace === undefined ? undefined : `At an even pace, ${Math.round(pace)}% would be left now.`,
-  ]
-    .filter(Boolean)
-    .join('\n')
   return (
-    <span
-      role="cell"
-      className="account-table__cell"
-      data-gauge={gauge ? '' : undefined}
-      title={detail}
-      style={
-        gauge ? ({ '--left': left / 100, '--order': props.order } as CSSProperties) : undefined
-      }
-    >
-      <span className="account-table__value">{gauge ? `${left}%` : limit.valueLabel}</span>
-      {gauge ? (
-        <span
-          className="account-table__bar"
-          role="progressbar"
-          aria-label={`${props.name} ${limit.label} left`}
-          aria-valuenow={left}
-          aria-valuemin={0}
-          aria-valuemax={100}
+    <div className="account-menu__account">
+      <div className="account-menu__account-head">
+        <button
+          className="account-menu__account-line"
+          type="button"
+          aria-expanded={props.open}
+          aria-controls={props.open ? bodyId : undefined}
+          aria-label={props.open ? props.account : `${props.account}, ${glance}`}
+          title={props.open ? status?.detail : glance}
+          onClick={props.onToggle}
         >
-          <span />
-          {pace === undefined ? null : (
-            <span className="account-table__pace" style={{ left: `${pace}%` }} />
+          <ChevronRight size={12} aria-hidden />
+          <span className="account-menu__account-name">{props.account}</span>
+          {props.open ? (
+            status ? (
+              <span className="account-menu__account-status">{status.label}</span>
+            ) : null
+          ) : (
+            <span
+              className="account-menu__account-glance"
+              data-gauge={left === undefined ? undefined : ''}
+              style={left === undefined ? undefined : ({ '--left': left / 100 } as CSSProperties)}
+            >
+              {left === undefined ? null : (
+                <span className="account-menu__account-gauge">
+                  <span />
+                </span>
+              )}
+              {first.valueLabel ?? `${left}% left`}
+            </span>
           )}
-        </span>
+        </button>
+        {retry}
+      </div>
+      {props.open ? (
+        <section className="account-menu__account-body" id={bodyId} aria-label={name}>
+          {limits.map((limit, index) => (
+            <LimitRow
+              key={`${limit.label}:${index}`}
+              name={name}
+              provider={props.state.provider}
+              accountId={props.state.accountId}
+              limit={limit}
+              now={props.now}
+              order={index}
+              onConsumeReset={props.onConsumeReset}
+            />
+          ))}
+        </section>
       ) : null}
-    </span>
+    </div>
   )
+}
+
+function accountOf(state: AccountLimitsState): AccountId {
+  return state.accountId ?? DEFAULT_ACCOUNT_ID
+}
+
+/** The limit with the least left, or the first one when none is a share. */
+function firstToRunOut(limits: readonly Limit[]): Limit | undefined {
+  const shares = limits.filter((limit) => limit.valueLabel === undefined)
+  if (shares.length === 0) return limits[0]
+  return shares.reduce((least, limit) => (remaining(limit) < remaining(least) ? limit : least))
 }
 
 function further(state: AccountLimitsState): boolean {
@@ -381,16 +327,8 @@ function LimitSource(props: {
 }) {
   const titleId = useId()
   const statusId = useId()
-  const source = limitSource(props.state)
-  const limits = source?.status === 'ready' ? source.limits : []
+  const { limits, status, retryable } = sourceView(props.state, props.now)
   const name = props.name
-  const status = sourceStatus(props.state, source, limits.length > 0, props.now)
-  // Automatic retries run on their own; the button returns once they stop.
-  const retrying = props.state.status !== 'ready' && props.state.retry !== undefined
-  const retryable =
-    !retrying &&
-    (props.state.status === 'error' ||
-      (props.state.status === 'ready' && source?.status === 'unavailable'))
   return (
     <section
       className={`account-menu__source${props.account === undefined ? '' : ' is-account'}`}
@@ -439,6 +377,19 @@ function LimitSource(props: {
       ))}
     </section>
   )
+}
+
+/** A source's limits, the phrase that goes beside its name, and whether it can be retried. */
+function sourceView(state: AccountLimitsState, now: number) {
+  const source = limitSource(state)
+  const limits = source?.status === 'ready' ? source.limits : []
+  const status = sourceStatus(state, source, limits.length > 0, now)
+  // Automatic retries run on their own; the button returns once they stop.
+  const retrying = state.status !== 'ready' && state.retry !== undefined
+  const retryable =
+    !retrying &&
+    (state.status === 'error' || (state.status === 'ready' && source?.status === 'unavailable'))
+  return { limits, status, retryable }
 }
 
 /**

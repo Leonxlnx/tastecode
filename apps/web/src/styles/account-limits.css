@@ -343,88 +343,122 @@
   color: var(--error);
 }
 
-/* A provider with several accounts sets them side by side: a row each, a
-   column per limit, each cell its share left over a short gauge on the same
-   red-to-green scale as the full bars. The account new chats start on reads
-   in full ink; notes about a row (an old value, a limit that ran out) tuck
-   under it across the whole width. */
-.account-table__grid {
+/* A provider with several accounts: a line per account that opens to its
+   limits. The chevron hangs where the provider's mark sits, so account names
+   start on the provider name's edge and an open account's limits sit under
+   its name. A closed line carries the share left of its tightest limit on a
+   short gauge of the same red-to-green scale as the full bars. */
+.account-menu__account {
   display: grid;
-  grid-template-columns: minmax(44px, 1.15fr) repeat(var(--columns), minmax(0, 1fr));
-  align-items: end;
-  column-gap: 10px;
-  row-gap: 7px;
+  gap: 8px;
   min-width: 0;
 }
 
-.account-table__row {
-  display: contents;
+.account-menu__account-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  min-height: 18px;
 }
 
-.account-table__head > span {
-  /* A long name ("Fable weekly") takes a second line rather than an ellipsis. */
-  display: -webkit-box;
+.account-menu__account-line {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 7px;
   min-width: 0;
-  overflow: hidden;
-  color: var(--text-3);
-  overflow-wrap: anywhere;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-}
-
-.account-table__account {
-  align-self: center;
-  min-width: 0;
-  overflow: hidden;
+  /* The hover wash reaches past the text without moving it. */
+  margin: -3px -5px;
+  padding: 3px 5px 3px 0;
+  /* Room for the chevron's column when the line cannot open. */
+  padding-left: 24px;
+  background: none;
+  border: 0;
+  border-radius: var(--r-sm);
   color: var(--text-2);
+  font: inherit;
+  text-align: left;
+}
+
+button.account-menu__account-line {
+  padding-left: 5px;
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+button.account-menu__account-line:hover {
+  background: var(--menu-hover);
+  color: var(--text);
+}
+
+button.account-menu__account-line:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.account-menu__account-line > svg {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  color: var(--text-3);
+  transition: rotate var(--dur-fast) var(--ease-out);
+}
+
+.account-menu__account-line[aria-expanded='true'] > svg {
+  rotate: 90deg;
+}
+
+.account-menu__account-name {
+  min-width: 0;
+  overflow: hidden;
   font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.account-table__row[data-active] .account-table__account {
+.account-menu__account-line[aria-expanded='true'] .account-menu__account-name {
   color: var(--text);
-  font-weight: 560;
 }
 
-.account-table__cell {
-  display: grid;
-  gap: 4px;
+.account-menu__account-status {
+  flex: 0 1 auto;
   min-width: 0;
-  font-variant-numeric: tabular-nums;
-}
-
-.account-table__value {
+  margin-left: auto;
   overflow: hidden;
-  color: var(--text-2);
+  color: var(--text-3);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.account-table__row[data-active] .account-table__value {
+.account-menu__account-glance {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 7px;
+  margin-left: auto;
   color: var(--text);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
-.account-table__cell.is-empty {
-  align-self: center;
-  color: var(--text-3);
-}
-
-.account-table__cell[data-gauge] {
+.account-menu__account-glance[data-gauge] {
   --limit-fill: var(--left);
   animation: account-limit-fill 820ms var(--ease-overshoot) both;
-  animation-delay: calc(80ms + var(--order) * 70ms);
+  animation-delay: 80ms;
   transition: --limit-fill var(--dur-slow) var(--ease-out);
 }
 
-.account-table__bar {
-  position: relative;
+.account-menu__account-gauge {
+  width: 36px;
   height: 4px;
   border-radius: var(--r-pill);
   background: color-mix(in srgb, var(--text) 9%, transparent);
 }
 
-.account-table__bar > span:first-child {
+.account-menu__account-gauge > span {
   display: block;
   height: 100%;
   border-radius: inherit;
@@ -437,39 +471,20 @@
   clip-path: inset(0 calc((1 - var(--limit-fill)) * 100%) 0 0 round var(--r-pill));
 }
 
-.account-table__pace {
-  position: absolute;
-  top: -2px;
-  bottom: -2px;
-  width: 1px;
-  border-radius: var(--r-pill);
-  background: color-mix(in srgb, var(--text) 62%, transparent);
-  translate: -0.5px 0;
-  pointer-events: none;
-}
-
-.account-table__status {
-  display: flex;
-  grid-column: 2 / -1;
-  align-items: center;
-  align-self: center;
-  gap: 6px;
+.account-menu__account-body {
+  display: grid;
+  gap: 8px;
   min-width: 0;
-  color: var(--text-3);
-}
-
-.account-table__note {
-  grid-column: 1 / -1;
-  margin: -3px 0 0;
-  color: var(--text-3);
-}
-
-.account-table__credits {
-  grid-column: 1 / -1;
+  padding-left: 19px;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .account-table__cell[data-gauge] {
+  .account-menu__account-glance[data-gauge] {
     animation: none;
+    transition: none;
+  }
+
+  .account-menu__account-line > svg {
+    transition: none;
   }
 }
