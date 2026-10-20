@@ -1844,10 +1844,17 @@ export class Store {
     })
   }
 
-  /** Include temporary tasks so provider discovery cannot publish their internal prompts. */
+  /**
+   * Include temporary tasks so provider discovery cannot publish their internal prompts.
+   * An imported chat that moved to another provider runs a session of its own
+   * since, so it counts as native too.
+   */
   nativeProviderThreads(provider: ProviderId): StoredThread[] {
     return sqliteRows<ThreadRow>(
-      this.#db.prepare("SELECT * FROM threads WHERE provider = ? AND id NOT LIKE 'external:%'"),
+      this.#db.prepare(
+        `SELECT * FROM threads WHERE provider = ? AND (id NOT LIKE 'external:%'
+           OR id IN (SELECT thread_id FROM left_provider_sessions))`,
+      ),
       provider,
     ).flatMap((row) => {
       const thread = toThread(row)

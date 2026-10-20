@@ -1324,6 +1324,66 @@ describe('provider history integration', () => {
     ])
   })
 
+  it('keeps the session a chat left when it moved to another provider as its own', async () => {
+    store.addThread({
+      id: 'local',
+      provider: 'codex',
+      providerSessionId: 'native',
+      projectPath: process.cwd(),
+      title: 'Existing',
+    })
+    for (const event of transcript('native')) store.append('local', event)
+    const sessions = [metadata()]
+    const { history, source } = setup(sessions)
+    await history.refresh()
+    await history.load('local')
+    expect(source.read).toHaveBeenCalledTimes(1)
+
+    store.moveThreadToProvider('local', { provider: 'claude-code', providerSessionId: 'claude' })
+    // The Codex copy goes on changing, for example when someone resumes it in the CLI.
+    sessions[0] = { ...metadata(), revision: '2', updatedAt: 3000 }
+    await history.refresh()
+
+    expect(store.threads().map((thread) => thread.id)).toEqual(['local'])
+    await expect(history.load('local')).resolves.toBe(false)
+    expect(source.read).toHaveBeenCalledTimes(1)
+    expect(history.hasCopy('local')).toBe(false)
+  })
+
+  it('links an imported chat that moved to the session it runs on now', async () => {
+    const codex: ProviderHistorySource = {
+      list: vi.fn(async () => [metadata('orig')]),
+      read: vi.fn(async (session) => transcript(session.id)),
+    }
+    const claudeSessions: ProviderHistorySession[] = []
+    const claude: ProviderHistorySource = {
+      list: vi.fn(async () => claudeSessions),
+      read: vi.fn(async (session) => transcript(session.id)),
+    }
+    const history = new ProviderHistory(
+      store,
+      [
+        { provider: 'codex', history: codex },
+        { provider: 'claude-code', history: claude },
+      ],
+      { isBusy: () => false, changed: vi.fn(), log: vi.fn() },
+    )
+    histories.push(history)
+    await history.refresh()
+    expect(store.threads().map((thread) => thread.id)).toEqual(['external:codex:orig'])
+
+    store.moveThreadToProvider('external:codex:orig', {
+      provider: 'claude-code',
+      providerSessionId: 'claude-new',
+    })
+    history.forget('external:codex:orig')
+    claudeSessions.push(metadata('claude-new'))
+    await history.refresh()
+
+    expect(store.threads().map((thread) => thread.id)).toEqual(['external:codex:orig'])
+    expect(history.hasCopy('external:codex:orig')).toBe(true)
+  })
+
   it('opens a native chat whose provider copy is gone, and reads the copy again once it changes', async () => {
     store.addThread({
       id: 'local',
