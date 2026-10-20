@@ -6355,8 +6355,15 @@ export function App() {
             }),
         }
       : error
-  const continueOffer: Pick<ComposerError, 'action' | 'choices'> =
-    thread.running || continueOptions.length === 0
+  // Once continued, the failed turn's row leads to the chat that carries it on.
+  const continueOffer: Pick<ComposerError, 'action' | 'choices'> = continuedChat
+    ? {
+        action: {
+          label: `Continued on ${accountLabelOf(providerAccounts, continuedChat.provider, continuedChat.accountId)}`,
+          run: () => void selectSession(continuedChat.id),
+        },
+      }
+    : thread.running || continueOptions.length === 0
       ? {}
       : continueOptions.length === 1
         ? {
@@ -6392,22 +6399,13 @@ export function App() {
           ),
         ]
       : []),
-    ...(continuedChat && activeSession
-      ? [
-          {
-            id: `continued:${activeSession.id}:${continuedChat.id}`,
-            role: 'status' as const,
-            message: `Continued in a new chat on ${accountLabelOf(providerAccounts, continuedChat.provider, continuedChat.accountId)}.`,
-            action: { label: 'Open chat', run: () => void selectSession(continuedChat.id) },
-          },
-        ]
-      : []),
     ...(earlierChat && activeSession
       ? [
           {
             id: `continues:${activeSession.id}`,
             role: 'status' as const,
-            message: `Continues “${earlierChat.title}”. Its conversation goes with your first message.`,
+            tone: 'info' as const,
+            message: `Continues “${earlierChat.title}” on ${accountLabelOf(providerAccounts, activeSession.provider, activeSession.accountId)}. Its conversation goes with your first message.`,
             action: { label: 'Open', run: () => void selectSession(earlierChat.id) },
           },
         ]
