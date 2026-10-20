@@ -716,11 +716,14 @@ export type ProviderLimitSource = z.infer<typeof ProviderLimitSourceSchema>
  * Why a client asks for limits, so the server can keep expensive vendor reads
  * to moments someone is looking. `background`: a passive figure; answer from
  * held values. `visible`: the limits view is open; a full read is fine when
- * held values are older than the provider's minimum interval. `retry`: the
- * user asked again; skip the failure backoff once. Absent keeps the older
- * behaviour, which servers treat like `visible`.
+ * held values are older than the provider's minimum interval. `refresh`: the
+ * view just opened, or the client's periodic read; read now even when held
+ * values are recent, but not inside the failure backoff. `retry`: the user
+ * asked again; read now, inside the failure backoff too. A refresh or retry of
+ * values already read waits for its read. Absent keeps the older behaviour,
+ * which servers treat like `visible`.
  */
-export const UsageReadIntentSchema = z.enum(['background', 'visible', 'retry'])
+export const UsageReadIntentSchema = z.enum(['background', 'visible', 'refresh', 'retry'])
 export type UsageReadIntent = z.infer<typeof UsageReadIntentSchema>
 
 const UsageSummaryResultSchema = z
