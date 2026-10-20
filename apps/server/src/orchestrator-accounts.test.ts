@@ -3,6 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import type {
   AccountId,
+  Item,
   Model,
   ProviderId,
   ProviderLimit,
@@ -13,7 +14,7 @@ import { AccountNotFoundError, type AccountDirectory } from './account-directory
 import type { AgentSession, ProviderRuntime } from './adapters.js'
 import { McpConfigStore } from './mcp-config.js'
 import { Orchestrator } from './orchestrator.js'
-import { CONTINUE_CONTEXT_NOTICE } from './provider-session.js'
+import { CONTINUE_CONTEXT_NOTICE, CONTINUE_CONTEXT_REQUEST } from './provider-session.js'
 import { withoutContinuationContext } from './side-chat.js'
 import { Store } from './store.js'
 
@@ -281,6 +282,69 @@ describe('chats pinned to a provider account', () => {
     expect(sessions.at(-1)!.sent[1]).toBe('Thanks')
     // The earlier chat is left as it was.
     expect(store.thread(earlier.id)?.continuedFrom).toBeUndefined()
+    await orchestrator.disposeAll()
+  })
+
+  it('keeps an early constraint of a long working chat in the first prompt', async () => {
+    const { orchestrator, store, sessions } = setup(directory({ 'codex:work': workHome }))
+    const earlier = await orchestrator.startThread('codex', root)
+    const append = (item: Partial<Item> & Pick<Item, 'id' | 'type'>) =>
+      store.append(earlier.id, {
+        type: 'item.completed',
+        item: { turnId: 'turn-1', status: 'completed', createdAt: 1, ...item },
+      })
+    append({
+      id: 'ask',
+      type: 'message',
+      role: 'user',
+      text: 'Build the importer. Constraint BRAVO-3: never touch legacy/.',
+    })
+    append({
+      id: 'plan',
+      type: 'message',
+      role: 'assistant',
+      text: 'Plan: three steps, keeping BRAVO-3.',
+    })
+    // A working turn: test runs with long output, then many small commands.
+    for (let index = 0; index < 4; index += 1) {
+      append({
+        id: `test-${index}`,
+        type: 'command',
+        command: 'pnpm test',
+        text: `TEST OUTPUT ${'x'.repeat(30_000)}`,
+        exitCode: 1,
+      })
+    }
+    append({ id: 'again', type: 'message', role: 'user', text: 'Fix the failing tests' })
+    for (let index = 0; index < 90; index += 1) {
+      append({ id: `search-${index}`, type: 'command', command: `rg -n thing src/file${index}.ts` })
+    }
+    store.append(earlier.id, { type: 'thread.error', threadId: earlier.id, message: 'Usage limit' })
+
+    const next = await orchestrator.startThread('codex', root, {
+      accountId: 'work',
+      continueFrom: earlier.id,
+    })
+    await orchestrator.sendTurn(next.id, 'Fix the failing tests')
+    const first = sessions.at(-1)!.sent[0]!
+    const context = first.slice(
+      first.indexOf('<earlier_conversation>\n') + '<earlier_conversation>\n'.length,
+      first.indexOf(CONTINUE_CONTEXT_REQUEST),
+    )
+    expect(context).toContain('Constraint BRAVO-3')
+    expect(context.length).toBeLessThanOrEqual(64_000)
+    expect(context).not.toContain('TEST OUTPUT')
+    const order = [
+      'Constraint BRAVO-3',
+      'Plan: three steps',
+      '"command":"pnpm test"',
+      'Fix the failing tests',
+      'src/file0.ts',
+      'src/file89.ts',
+      'Usage limit',
+    ].map((text) => context.indexOf(text))
+    expect(order.every((position) => position >= 0)).toBe(true)
+    expect(order).toEqual([...order].sort((a, b) => a - b))
     await orchestrator.disposeAll()
   })
 

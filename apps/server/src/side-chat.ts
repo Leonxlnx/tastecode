@@ -1,5 +1,6 @@
 import type { DomainEvent, Item } from '@harness/contracts'
 import { CONTINUE_CONTEXT_NOTICE, CONTINUE_CONTEXT_REQUEST } from './provider-session.js'
+import { sliceCodeUnits } from './slice-code-units.js'
 
 const MAX_SNAPSHOT_ENTRIES = 80
 const MAX_SNAPSHOT_CHARACTERS = 64_000
@@ -36,7 +37,7 @@ export function continuationPromptFromReplay(
   history: ReadonlyArray<{ event: DomainEvent }>,
   prompt: string,
 ): string | undefined {
-  const entries = snapshotCompactReplayEntries(history)
+  const entries = continuationSnapshotEntries([history])
   if (entries.length === 0) return undefined
   return (
     [
@@ -337,4 +338,203 @@ function boundedText(text: string): string {
   return text.length <= MAX_ENTRY_CHARACTERS
     ? text
     : `[earlier content truncated]\n${text.slice(-MAX_ENTRY_CHARACTERS)}`
+}
+
+/** A command keeps its command line up to this length, and never its output. */
+const CONTINUATION_COMMAND_CHARACTERS = 2_000
+/** An error or a plan says where the work stood, so it keeps more of its text. */
+const CONTINUATION_STATUS_CHARACTERS = 2_000
+/** Any other tool step keeps only the start of its text, which names the tool. */
+const CONTINUATION_TOOL_CHARACTERS = 300
+const CONTINUATION_PATHS = 50
+/** A message shortened to fit keeps at least this much of its text, or is left out. */
+const CONTINUATION_MIN_MESSAGE_CHARACTERS = 400
+/** Room kept for the note that says what was left out. */
+const CONTINUATION_NOTE_RESERVE = 300
+
+type ContinuationEntry =
+  | { kind: 'note'; text: string }
+  | { kind: 'message'; role: 'user' | 'assistant'; text: string }
+  | {
+      kind: 'activity'
+      type: Exclude<Item['type'], 'message' | 'reasoning'>
+      /** Absent when the step completed. */
+      status?: Item['status']
+      command?: string
+      exitCode?: number
+      paths?: string[]
+      linesAdded?: number
+      linesRemoved?: number
+      text?: string
+    }
+
+/**
+ * The context a continued chat starts from. A Side chat needs only the recent
+ * tail; a chat that carries on someone's work needs the conversation itself.
+ * So messages come first: the first request, the latest request and answer,
+ * then every other user message and the assistant's messages, newest first.
+ * Tool steps are reduced to what they did (a command line and its exit code,
+ * the paths a change touched) and fill only what the messages leave of the
+ * budget, newest first. The entries come back in the order they happened.
+ * `conversations` run oldest first, each one a chat's own replay.
+ */
+export function continuationSnapshotEntries(
+  conversations: ReadonlyArray<ReadonlyArray<{ event: DomainEvent }>>,
+): ContinuationEntry[] {
+  const entries: ContinuationEntry[] = []
+  for (const history of conversations) {
+    for (const item of projectHistoryItems(history)) {
+      const entry = toContinuationEntry(item)
+      if (entry) entries.push(entry)
+    }
+  }
+  if (entries.length === 0) return []
+
+  // The array's brackets and the note's room come off the budget first.
+  let left = MAX_SNAPSHOT_CHARACTERS - 2 - CONTINUATION_NOTE_RESERVE
+  const chosen = new Map<number, ContinuationEntry>()
+  const take = (index: number): boolean => {
+    const entry = entries[index]!
+    const fitted =
+      entryCost(entry) <= left
+        ? entry
+        : entry.kind === 'message'
+          ? messageWithin(entry, left)
+          : undefined
+    if (!fitted) return false
+    chosen.set(index, fitted)
+    left -= entryCost(fitted)
+    return true
+  }
+
+  const users: number[] = []
+  const answers: number[] = []
+  entries.forEach((entry, index) => {
+    if (entry.kind !== 'message') return
+    if (entry.role === 'user') users.push(index)
+    else answers.push(index)
+  })
+  const messageOrder = [
+    users[0],
+    users.at(-1),
+    answers.at(-1),
+    ...users.slice(1, -1).reverse(),
+    ...answers.slice(0, -1).reverse(),
+  ]
+  for (const index of new Set(messageOrder)) {
+    if (index !== undefined) take(index)
+  }
+
+  let steps = 0
+  let stepsLeftOut = 0
+  let full = false
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    if (entries[index]!.kind !== 'activity') continue
+    steps += 1
+    if (full || !take(index)) {
+      full = true
+      stepsLeftOut += 1
+    }
+  }
+
+  const kept = [...chosen.keys()].sort((a, b) => a - b).map((index) => chosen.get(index)!)
+  const messagesLeftOut = users.length + answers.length - (chosen.size - (steps - stepsLeftOut))
+  const note = [
+    steps > 0
+      ? 'Tool steps are shortened: commands show their command line and exit code, file changes their paths.'
+      : '',
+    notShown(stepsLeftOut, 'earlier tool step'),
+    notShown(messagesLeftOut, 'earlier message'),
+  ]
+    .filter(Boolean)
+    .join(' ')
+  return note ? [{ kind: 'note', text: note }, ...kept] : kept
+}
+
+function notShown(count: number, what: string): string {
+  if (count === 0) return ''
+  return count === 1 ? `1 ${what} is not shown.` : `${count} ${what}s are not shown.`
+}
+
+function entryCost(entry: ContinuationEntry): number {
+  // Its comma in the array.
+  return JSON.stringify(entry).length + 1
+}
+
+/** The message cut to fit in `left`, or undefined when too little would be left of it. */
+function messageWithin(
+  entry: Extract<ContinuationEntry, { kind: 'message' }>,
+  left: number,
+): ContinuationEntry | undefined {
+  let room = left - entryCost({ ...entry, text: '' })
+  // JSON escaping can make the cut text longer than its length; take that off and retry.
+  for (let attempt = 0; attempt < 4 && room >= CONTINUATION_MIN_MESSAGE_CHARACTERS; attempt += 1) {
+    const fitted = { ...entry, text: cappedText(entry.text, room) }
+    const over = entryCost(fitted) - left
+    if (over <= 0) return fitted
+    room -= over
+  }
+  return undefined
+}
+
+function toContinuationEntry(item: Item): ContinuationEntry | undefined {
+  if (item.type === 'reasoning') return undefined
+  if (item.type === 'message') {
+    const text = item.text?.trim()
+    if (!item.role || !text) return undefined
+    return { kind: 'message', role: item.role, text: cappedText(text, MAX_ENTRY_CHARACTERS) }
+  }
+
+  const text = item.text?.trim()
+  const command = item.type === 'command' ? item.command?.trim() : undefined
+  const paths = item.type === 'file_change' ? changedPaths(item) : []
+  const shownText =
+    item.type === 'error' || item.type === 'plan'
+      ? text && shortText(text, CONTINUATION_STATUS_CHARACTERS)
+      : // A command or a file change says what it did without its output or diff.
+        !command && paths.length === 0
+        ? text && shortText(text, CONTINUATION_TOOL_CHARACTERS)
+        : undefined
+  if (!shownText && !command && paths.length === 0) return undefined
+  return {
+    kind: 'activity',
+    type: item.type,
+    ...(item.status === 'completed' ? {} : { status: item.status }),
+    ...(command ? { command: shortText(command, CONTINUATION_COMMAND_CHARACTERS) } : {}),
+    ...(item.exitCode === undefined ? {} : { exitCode: item.exitCode }),
+    ...(paths.length > 0 ? { paths } : {}),
+    ...(item.linesAdded === undefined ? {} : { linesAdded: item.linesAdded }),
+    ...(item.linesRemoved === undefined ? {} : { linesRemoved: item.linesRemoved }),
+    ...(shownText ? { text: shownText } : {}),
+  }
+}
+
+/** The item's path and every file its unified diff names, without the diff. */
+function changedPaths(item: Item): string[] {
+  const paths = new Set<string>()
+  const add = (path: string | undefined) => {
+    const trimmed = path?.trim()
+    if (trimmed) paths.add(shortText(trimmed, CONTINUATION_TOOL_CHARACTERS))
+  }
+  add(item.path)
+  for (const match of item.text?.matchAll(/^(?:---|\+\+\+) [ab]\/(.+)$/gm) ?? []) add(match[1])
+  const all = [...paths]
+  if (all.length <= CONTINUATION_PATHS) return all
+  return [...all.slice(0, CONTINUATION_PATHS), `… and ${all.length - CONTINUATION_PATHS} more`]
+}
+
+function shortText(text: string, limit: number): string {
+  return text.length <= limit ? text : `${sliceCodeUnits(text, limit).trimEnd()} […]`
+}
+
+/** Keeps the start and the end of a long text, where a request or an answer says most. */
+function cappedText(text: string, limit: number): string {
+  if (text.length <= limit) return text
+  const marker = '\n[…shortened…]\n'
+  const keep = Math.max(0, limit - marker.length)
+  const head = sliceCodeUnits(text, Math.ceil((keep * 2) / 3))
+  let tail = text.slice(text.length - (keep - head.length))
+  // A cut must not start on a low surrogate either.
+  if (/^[\uDC00-\uDFFF]/.test(tail)) tail = tail.slice(1)
+  return `${head}${marker}${tail}`
 }
