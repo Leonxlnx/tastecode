@@ -63,6 +63,11 @@ async function mockOpenCode(protocol: 'v1' | 'v2', directory: string) {
       response.end(JSON.stringify({ healthy: protocol === 'v2' }))
       return
     }
+    // The v2 server is v2-only: a server that still has v1 is spoken to in v1.
+    if (url === '/path' && protocol === 'v2') {
+      response.writeHead(404).end()
+      return
+    }
     const sessionRoot = protocol === 'v2' ? '/api/session' : '/session'
     if (url === sessionRoot && request.method === 'POST') creations += 1
     if (url === `${sessionRoot}/${session.id}` && request.method === 'GET') resumes += 1
