@@ -304,6 +304,41 @@ describe('resumable provider setup', () => {
     },
   )
 
+  it.each([
+    ['cursor', {}],
+    ['opencode', {}],
+    ['acp', { agent: 'gemini' }],
+  ] as const)(
+    'resumes a %s chat that moved here by its own session, under the chat id',
+    async (provider, options) => {
+      const runtime = providerRuntime(provider, () => {})
+      const moved = await runtime.resume!('codex-chat', '/repo', {
+        ...options,
+        providerSessionId: `${provider}-native`,
+      })
+      expect(moved.thread.id).toBe('codex-chat')
+      expect(turnAdapters.at(-1)!.acpResume).toEqual({
+        threadId: `${provider}-native`,
+        workspacePath: '/repo',
+      })
+
+      // A chat that started here resumes by its own id, as before.
+      const own = await runtime.resume!(`${provider}-chat`, '/repo', options)
+      expect(own.thread.id).toBe(`${provider}-chat`)
+      expect(turnAdapters.at(-1)!.acpResume?.threadId).toBe(`${provider}-chat`)
+    },
+  )
+
+  it('resumes an MCP-enabled Grok session a chat moved to, under the chat id', async () => {
+    const runtime = providerRuntime('grok', () => {})
+    const { thread } = await runtime.resume!('codex-chat', '/repo', {
+      providerSessionId: 'acp-grok-native-session',
+    })
+    expect(thread.id).toBe('codex-chat')
+    expect(turnAdapters.at(-1)).toBeInstanceOf(FakeAcpAdapter)
+    expect(turnAdapters.at(-1)!.acpResume?.threadId).toBe('acp-grok-native-session')
+  })
+
   it('reports live limit windows only from a Claude session on the default account', async () => {
     const harness: CustomHarness = {
       id: 'claude-wrapper',

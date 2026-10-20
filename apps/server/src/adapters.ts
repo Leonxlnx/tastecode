@@ -646,22 +646,27 @@ function grokRuntime(
     },
     async resume(threadId, workspacePath, options) {
       const harness = harnessFor('grok', options.agent, resolveHarness)
-      // MCP-enabled Grok runs over ACP. Its provider session id is already
-      // encoded in the stable `acp-grok-*` thread id, and AcpAdapter performs
+      // MCP-enabled Grok runs over ACP. Its provider session id is encoded in
+      // the `acp-grok-*` thread id it started with, which is the chat's own id
+      // unless the chat moved here from another provider; AcpAdapter performs
       // the protocol capability check before loading it.
-      if (threadId.startsWith('acp-grok-')) {
+      const acpThreadId = options.providerSessionId ?? threadId
+      if (acpThreadId.startsWith('acp-grok-')) {
         const adapter = await acpAdapterFor(harness, options)
         adapter.on('log', onLog)
-        return startedSession(adapter, async () => {
-          const resuming = adapter.resumeThread(threadId, workspacePath, {
-            model: options.model,
-            approval: options.approval,
-            instructions: options.instructions,
-          })
-          return harness
-            ? await customHarnessOperation(harness, 'resume an MCP-enabled ACP session', resuming)
-            : await resuming
-        })
+        return mapProviderSession(
+          threadId,
+          await startedSession(adapter, async () => {
+            const resuming = adapter.resumeThread(acpThreadId, workspacePath, {
+              model: options.model,
+              approval: options.approval,
+              instructions: options.instructions,
+            })
+            return harness
+              ? await customHarnessOperation(harness, 'resume an MCP-enabled ACP session', resuming)
+              : await resuming
+          }),
+        )
       }
       if (!options.providerSessionId) {
         throw new Error(
@@ -761,7 +766,11 @@ function cursorRuntime(
   }
   return {
     start: open,
-    resume: (threadId, workspacePath, options) => open(workspacePath, options, threadId),
+    resume: async (threadId, workspacePath, options) =>
+      mapProviderSession(
+        threadId,
+        await open(workspacePath, options, options.providerSessionId ?? threadId),
+      ),
     async listModels(agent) {
       const harness = harnessFor('cursor', agent, resolveHarness)
       const { CursorAdapter } = await loadCursorAdapter()
@@ -812,7 +821,11 @@ function openCodeRuntime(
   }
   return {
     start: open,
-    resume: (threadId, workspacePath, options) => open(workspacePath, options, threadId),
+    resume: async (threadId, workspacePath, options) =>
+      mapProviderSession(
+        threadId,
+        await open(workspacePath, options, options.providerSessionId ?? threadId),
+      ),
     async listModels(agent) {
       return listOpenCodeModels(harnessFor('opencode', agent, resolveHarness))
     },
@@ -965,7 +978,11 @@ function acpRuntime(
   }
   return {
     start: open,
-    resume: (threadId, workspacePath, options) => open(workspacePath, options, threadId),
+    resume: async (threadId, workspacePath, options) =>
+      mapProviderSession(
+        threadId,
+        await open(workspacePath, options, options.providerSessionId ?? threadId),
+      ),
     async listModels(agent) {
       if (!agent) return []
       const harness = harnessFor('acp', agent, resolveHarness)
