@@ -241,6 +241,35 @@ export function sessionAttention(session: Session): Attention | undefined {
   return undefined
 }
 
+/**
+ * The chats a project lists while it is folded to its first `limit` rows: those
+ * rows, then every later chat that is working, needs the user, is unread or is
+ * open, each at its own place in the order. Nothing moves; only quiet chats
+ * below the fold stay hidden, so the fold never hides a chat with news.
+ */
+export function foldedProjectSessions(
+  sessions: readonly Session[],
+  activeSessionId: string | undefined,
+  limit: number,
+): Session[] {
+  const listed = sessions.slice(0, limit)
+  for (let index = limit; index < sessions.length; index += 1) {
+    const session = sessions[index]!
+    if (session.id === activeSessionId || hasNews(session)) listed.push(session)
+  }
+  return listed
+}
+
+/** A queued prompt with no turn behind it is not running, so it does not count. */
+function hasNews(session: Session): boolean {
+  return (
+    session.status === 'starting' ||
+    session.status === 'working' ||
+    session.unread ||
+    sessionAttention(session) !== undefined
+  )
+}
+
 const projectNeedsYou = new WeakMap<Project, NeedsYouEntry[]>()
 
 function projectEntries(project: Project): NeedsYouEntry[] {

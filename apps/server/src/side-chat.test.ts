@@ -138,6 +138,32 @@ describe('continued chat context', () => {
     expect(withoutContinuationContext(prompt)).toBe('Finish it')
   })
 
+  it("says where the earlier chat's uncommitted changes are", () => {
+    const history = [{ event: item('user', 'user', 'Rename the loader') }]
+    const shared = continuationPromptFromReplay(history, 'Go on')!
+    const carried = continuationPromptFromReplay(history, 'Go on', { changes: { carried: true } })!
+    const kept = continuationPromptFromReplay(history, 'Go on', {
+      changes: { carried: false, keptIn: 'D:\\trees\\earlier' },
+    })!
+
+    expect(shared).toContain(
+      'The workspace can already hold some of its changes, so check the files before redoing work.',
+    )
+    expect(carried).toContain(
+      'Its uncommitted changes were carried into this workspace, so check the files before redoing work.',
+    )
+    expect(kept).toContain(
+      'Its uncommitted changes could not be carried over; they are still in D:\\trees\\earlier. Check the files there before redoing work.',
+    )
+    expect(carried).not.toContain('The workspace can already hold')
+    expect(kept).not.toContain('The workspace can already hold')
+    // The note is the server's own words, outside the untrusted conversation.
+    expect(kept.indexOf('D:\\trees\\earlier')).toBeLessThan(kept.indexOf('<earlier_conversation>'))
+    for (const prompt of [shared, carried, kept]) {
+      expect(withoutContinuationContext(prompt)).toBe('Go on')
+    }
+  })
+
   it('carries nothing from an empty chat and leaves other text alone', () => {
     expect(continuationPromptFromReplay([], 'Hi')).toBeUndefined()
     expect(withoutContinuationContext('User request:\nHi')).toBe('User request:\nHi')
@@ -248,7 +274,7 @@ describe('continued chat context', () => {
     const prompt = continuationPromptFromReplay(
       [{ event: item('item-1', 'user', 'Second chat request') }],
       'Go on',
-      [[{ event: item('item-1', 'user', 'First chat request: ALPHA-7') }]],
+      { earlier: [[{ event: item('item-1', 'user', 'First chat request: ALPHA-7') }]] },
     )!
     const context = earlierConversation(prompt)
     expect(JSON.parse(context)).toEqual([

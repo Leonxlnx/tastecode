@@ -113,7 +113,14 @@ import type { Checkpoint } from './ui/RollbackDialog.js'
 import { SessionSearchHost, type SessionSearchHandle } from './ui/SessionSearchHost.js'
 import type { SettingsSection } from './ui/Settings.js'
 import { Sidebar, type Project, type Session } from './ui/Sidebar.js'
-import { accountAtLimit, continueAccounts, continuedIn, lastRequest } from './continue-account.js'
+import {
+  accountAtLimit,
+  continueAccounts,
+  continuationNote,
+  continuedIn,
+  type EarlierChanges,
+  lastRequest,
+} from './continue-account.js'
 import { Skeleton, SkeletonStatus, ThreadSkeleton } from './ui/Skeleton.js'
 import {
   PullRequestsSkeleton,
@@ -4720,6 +4727,9 @@ export function App() {
     if (id && !id.startsWith('pending:')) void readOpenedHistory(id, undefined)
   }, [readOpenedHistory])
 
+  /** Where a continuation's earlier uncommitted changes went, by new chat, as its start said. */
+  const [earlierChanges, setEarlierChanges] = useState<Record<string, EarlierChanges>>({})
+
   /**
    * "Continue on another account": a new chat pinned to that account carries
    * the open chat on. The server gives its first prompt this chat's
@@ -4740,7 +4750,7 @@ export function App() {
           : undefined
       setActionError(undefined)
       try {
-        const { threadId } = await transport.request('thread.start', {
+        const { threadId, earlierChanges: changes } = await transport.request('thread.start', {
           provider: earlier.provider,
           workspacePath: project.path,
           accountId,
@@ -4752,6 +4762,7 @@ export function App() {
           // An isolated chat's work is on its branch; the new checkout starts there.
           ...(earlier.worktreeBranch ? { isolate: true, baseRef: earlier.worktreeBranch } : {}),
         })
+        if (changes) setEarlierChanges((current) => ({ ...current, [threadId]: changes }))
         const request = lastRequest(threadController.snapshot(earlierId)?.items ?? [])
         if (request) threadController.editDraft(threadId, { text: request })
         const now = Date.now()
@@ -6409,7 +6420,11 @@ export function App() {
             id: `continues:${activeSession.id}`,
             role: 'status' as const,
             tone: 'info' as const,
-            message: `Continues “${earlierChat.title}” on ${accountLabelOf(providerAccounts, activeSession.provider, activeSession.accountId)}. Its conversation goes with your first message.`,
+            message: continuationNote(
+              earlierChat.title,
+              accountLabelOf(providerAccounts, activeSession.provider, activeSession.accountId),
+              earlierChanges[activeSession.id],
+            ),
             action: { label: 'Open', run: () => void selectSession(earlierChat.id) },
           },
         ]
