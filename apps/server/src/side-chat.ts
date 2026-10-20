@@ -491,15 +491,19 @@ function messageWithin(
   entry: Extract<ContinuationEntry, { kind: 'message' }>,
   left: number,
 ): ContinuationEntry | undefined {
-  let room = left - entryCost({ ...entry, text: '' })
-  // JSON escaping can make the cut text longer than its length; take that off and retry.
-  for (let attempt = 0; attempt < 4 && room >= CONTINUATION_MIN_MESSAGE_CHARACTERS; attempt += 1) {
-    const fitted = { ...entry, text: cappedText(entry.text, room) }
-    const over = entryCost(fitted) - left
-    if (over <= 0) return fitted
-    room -= over
+  const cut = (limit: number) => ({ ...entry, text: cappedText(entry.text, limit) })
+  // JSON escaping makes a cut cost more than its length, by a factor that
+  // depends on the text: a quote doubles, a control character becomes six.
+  // So the longest cut that fits is searched for rather than computed.
+  let fitting = CONTINUATION_MIN_MESSAGE_CHARACTERS
+  if (entryCost(cut(fitting)) > left) return undefined
+  let tooLong = Math.min(entry.text.length, left) + 1
+  while (tooLong - fitting > 1) {
+    const middle = Math.floor((fitting + tooLong) / 2)
+    if (entryCost(cut(middle)) <= left) fitting = middle
+    else tooLong = middle
   }
-  return undefined
+  return cut(fitting)
 }
 
 function toContinuationEntry(item: Item): ContinuationEntry | undefined {

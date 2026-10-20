@@ -299,6 +299,26 @@ describe('continued chat context', () => {
     expect(entries[0]).toEqual({ kind: 'note', text: '6 earlier messages are not shown.' })
   })
 
+  it('shortens an answer full of escaped characters instead of leaving it out', () => {
+    // Each control character costs six in JSON, so one subtraction of the
+    // overage used to leave no room at all and drop the answer.
+    const escaped = `OLDER ${'\u0007'.repeat(30_000)} END-OLDER`
+    const history = [
+      { event: item('ask', 'user', 'Start') },
+      { event: item('older', 'assistant', escaped) },
+      { event: item('latest', 'assistant', `LATEST ${'y'.repeat(30_000)}`) },
+    ]
+
+    const entries = continuationSnapshotEntries([history])
+    const context = JSON.stringify(entries)
+    expect(context.length).toBeLessThanOrEqual(64_000)
+    expect(context).toContain('OLDER ')
+    expect(context).toContain('END-OLDER')
+    expect(context).toContain('LATEST y')
+    // Nothing is cut more than it has to be: the budget is nearly used up.
+    expect(context.length).toBeGreaterThan(62_000)
+  })
+
   it('puts the chats a continued chat carried on first, without merging their items', () => {
     // Item ids are only unique within one chat.
     const prompt = continuationPromptFromReplay(
