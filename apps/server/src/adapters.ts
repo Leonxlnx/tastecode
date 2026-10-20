@@ -24,7 +24,7 @@ import {
   openCodeConnectionConfig,
   openCodeConnectionEnvironment,
   openCodeModelId,
-  writeKeyGuard,
+  writeShellGuard,
 } from './api-connection-opencode.js'
 import {
   actionableLaunchError,
@@ -90,7 +90,7 @@ export type StartOptions = {
 /** Chats from before API connections ran on OpenCode; their state belonged to the old runtime. */
 const LEGACY_API_THREAD = /^api-/
 
-/** Where API connections keep their OpenCode sessions and the key guard. */
+/** TasteCode's OpenCode folder for API chats: sessions, config and the shell guard. */
 function apiOpenCodeHome(): string {
   return path.join(path.dirname(storeLocation()), 'opencode-api')
 }
@@ -130,8 +130,8 @@ export function apiRuntime(
     const { OpenCodeAdapter } = await loadOpenCodeAdapter()
     const home = apiOpenCodeHome()
     return new OpenCodeAdapter({
-      config: openCodeConnectionConfig(connection, writeKeyGuard(home), { models, model }),
-      environment: openCodeConnectionEnvironment(apiKey, path.join(home, 'sessions.db')),
+      config: openCodeConnectionConfig(connection, writeShellGuard(home), { models, model }),
+      environment: openCodeConnectionEnvironment(apiKey, home),
       ...(options.mcpServers ? { mcpServers: options.mcpServers } : {}),
       ...(options.mcpCredentials ? { mcpCredentials: options.mcpCredentials } : {}),
     })

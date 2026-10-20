@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs'
+import { mkdtempSync, rmSync, statSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -9,7 +9,7 @@ import {
   openCodeConnectionConfig,
   openCodeConnectionEnvironment,
   openCodeModelId,
-  writeKeyGuard,
+  writeShellGuard,
 } from './api-connection-opencode.js'
 
 function connection(overrides: Partial<StoredModelConnection> = {}): StoredModelConnection {
@@ -96,13 +96,22 @@ describe('OpenCode config for a direct API connection', () => {
 
   it('never puts the key into the config', () => {
     const config = openCodeConnectionConfig(connection(), 'file:///guard.js')
-    const environment = openCodeConnectionEnvironment('sk-test-secret', '/data/sessions.db')
     expect(JSON.stringify(config)).not.toContain('sk-test-secret')
-    expect(environment).toEqual({
-      TASTECODE_API_KEY: 'sk-test-secret',
-      OPENCODE_AUTH_CONTENT: '{}',
-      OPENCODE_DB: '/data/sessions.db',
-    })
+  })
+
+  it("keeps the user's OpenCode sign-ins, config and history out of the chat", () => {
+    vi.stubEnv('XDG_CONFIG_HOME', '/home/me/.config')
+    try {
+      expect(openCodeConnectionEnvironment('sk-test-secret', path.join('/data', 'oc'))).toEqual({
+        TASTECODE_API_KEY: 'sk-test-secret',
+        OPENCODE_AUTH_CONTENT: '{}',
+        OPENCODE_DB: path.join('/data', 'oc', 'sessions.db'),
+        XDG_CONFIG_HOME: path.join('/data', 'oc', 'config'),
+        TASTECODE_XDG_CONFIG_HOME: '/home/me/.config',
+      })
+    } finally {
+      vi.unstubAllEnvs()
+    }
   })
 
   it('names models the way OpenCode does, without doubling the provider', () => {
@@ -114,18 +123,31 @@ describe('OpenCode config for a direct API connection', () => {
   })
 })
 
-describe('key guard plugin', () => {
-  it('blanks the key variable for shell commands and is written once', () => {
-    const directory = mkdtempSync(path.join(os.tmpdir(), 'tastecode-key-guard-'))
+describe('shell guard plugin', () => {
+  it('blanks the key and restores the config folder for shell commands', async () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), 'tastecode-shell-guard-'))
     directories.push(directory)
-    const url = writeKeyGuard(directory)
+    const url = writeShellGuard(directory)
     const file = fileURLToPath(url)
-    const source = readFileSync(file, 'utf8')
-    expect(source).toContain("'shell.env'")
-    expect(source).toContain("output.env.TASTECODE_API_KEY = ''")
     const written = statSync(file).mtimeMs
-    expect(writeKeyGuard(directory)).toBe(url)
+    expect(writeShellGuard(directory)).toBe(url)
     expect(statSync(file).mtimeMs).toBe(written)
+
+    // Run the hook the way OpenCode does, over an environment the shell would inherit.
+    const plugin = (await import(url)) as {
+      TasteCodeShellGuard: () => Promise<{
+        'shell.env': (input: unknown, output: { env: Record<string, string> }) => Promise<void>
+      }>
+    }
+    const hooks = await plugin.TasteCodeShellGuard()
+    vi.stubEnv('TASTECODE_XDG_CONFIG_HOME', '/home/me/.config')
+    try {
+      const output = { env: {} as Record<string, string> }
+      await hooks['shell.env']({ cwd: '/repo' }, output)
+      expect(output.env).toEqual({ TASTECODE_API_KEY: '', XDG_CONFIG_HOME: '/home/me/.config' })
+    } finally {
+      vi.unstubAllEnvs()
+    }
   })
 })
 

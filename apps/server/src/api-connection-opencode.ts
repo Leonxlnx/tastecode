@@ -33,15 +33,22 @@ const KEY_VARIABLE = 'TASTECODE_API_KEY'
 
 const DISCOVERY_TIMEOUT_MS = 10_000
 
+/** The user's own config folder, for the shell commands the agent runs. */
+const ORIGINAL_CONFIG_VARIABLE = 'TASTECODE_XDG_CONFIG_HOME'
+
 /**
- * OpenCode passes its own environment to every shell command the agent runs,
- * which would hand the key to the model on request. The `shell.env` hook
- * cannot remove a variable, but a value it sets replaces the inherited one.
+ * OpenCode passes its own environment to every shell command the agent runs.
+ * That would hand the key to the model on request, and point git, gh and
+ * the like at OpenCode's private config folder. The `shell.env` hook cannot
+ * remove a variable, but a value it sets replaces the inherited one, and an
+ * empty XDG_CONFIG_HOME means "unset" to the tools that read it.
  */
-const KEY_GUARD_SOURCE = `// Written by TasteCode. Keeps the API key out of the agent's shell commands.
-export const TasteCodeKeyGuard = async () => ({
+const SHELL_GUARD_SOURCE = `// Written by TasteCode for API key chats: keeps the key out of the agent's
+// shell commands and gives them the user's own config folder back.
+export const TasteCodeShellGuard = async () => ({
   'shell.env': async (_input, output) => {
     output.env.${KEY_VARIABLE} = ''
+    output.env.XDG_CONFIG_HOME = process.env.${ORIGINAL_CONFIG_VARIABLE} ?? ''
   },
 })
 `
@@ -72,7 +79,7 @@ export function vendorModelId(connection: StoredModelConnection, model: string):
  */
 export function openCodeConnectionConfig(
   connection: StoredModelConnection,
-  keyGuard: string,
+  shellGuard: string,
   options: { models?: readonly string[]; model?: string | undefined } = {},
 ) {
   const provider = openCodeProvider(connection)
@@ -82,7 +89,7 @@ export function openCodeConnectionConfig(
   ]
   return {
     enabled_providers: [provider],
-    plugin: [keyGuard],
+    plugin: [shellGuard],
     // OpenCode allows everything by default. Asking lets the chat's access
     // level decide: Full access approves each request, Ask shows it.
     permission: { edit: 'ask', bash: 'ask' },
@@ -99,29 +106,35 @@ export function openCodeConnectionConfig(
   }
 }
 
-export function openCodeConnectionEnvironment(apiKey: string, sessionsDatabase: string) {
+/**
+ * `home` is TasteCode's OpenCode folder for API chats. The user's own OpenCode
+ * setup stays out of them: its sign-ins (a ChatGPT login on the same provider
+ * id would otherwise run, and bill, the chat instead of the key), its config
+ * (an agent pinned to another provider's model fails every turn) and its
+ * session history.
+ */
+export function openCodeConnectionEnvironment(apiKey: string, home: string) {
   return {
     [KEY_VARIABLE]: apiKey,
-    // The user's own OpenCode sign-ins stay out: a ChatGPT login on the same
-    // provider id would otherwise run, and bill, the chat instead of the key.
     OPENCODE_AUTH_CONTENT: '{}',
-    // API chats keep their sessions apart from the user's OpenCode history.
-    OPENCODE_DB: sessionsDatabase,
+    OPENCODE_DB: path.join(home, 'sessions.db'),
+    XDG_CONFIG_HOME: path.join(home, 'config'),
+    [ORIGINAL_CONFIG_VARIABLE]: process.env['XDG_CONFIG_HOME'] ?? '',
   }
 }
 
-/** Writes the guard plugin when it is missing or stale and returns its file URL. */
-export function writeKeyGuard(directory: string): string {
-  const file = path.join(directory, 'key-guard.js')
+/** Writes the shell guard plugin when it is missing or stale and returns its file URL. */
+export function writeShellGuard(directory: string): string {
+  const file = path.join(directory, 'shell-guard.js')
   let current: string | undefined
   try {
     current = readFileSync(file, 'utf8')
   } catch {
     current = undefined
   }
-  if (current !== KEY_GUARD_SOURCE) {
+  if (current !== SHELL_GUARD_SOURCE) {
     mkdirSync(directory, { recursive: true })
-    writeFileSync(file, KEY_GUARD_SOURCE)
+    writeFileSync(file, SHELL_GUARD_SOURCE)
   }
   return pathToFileURL(file).href
 }

@@ -959,12 +959,13 @@ describe('apiRuntime', () => {
     }
     expect(launch.config.enabled_providers).toEqual(['openai'])
     expect(launch.config.model).toBe('openai/gpt-5.6')
-    expect(launch.config.plugin[0]).toMatch(/^file:.*opencode-api.*key-guard\.js$/)
+    expect(launch.config.plugin[0]).toMatch(/^file:.*opencode-api.*shell-guard\.js$/)
     expect(JSON.stringify(launch.config)).not.toContain('sk-test-secret')
-    expect(launch.environment).toEqual({
+    expect(launch.environment).toMatchObject({
       TASTECODE_API_KEY: 'sk-test-secret',
       OPENCODE_AUTH_CONTENT: '{}',
       OPENCODE_DB: path.join(dataDir, 'opencode-api', 'sessions.db'),
+      XDG_CONFIG_HOME: path.join(dataDir, 'opencode-api', 'config'),
     })
   })
 
