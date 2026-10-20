@@ -76,8 +76,13 @@ import {
   providerMark,
   sourceKey,
   type ModelChoice,
+  type ProviderMark,
 } from '../model-catalog.js'
-import { agentPresentation, type ProviderPresentation } from '../provider-presentation.js'
+import {
+  agentMark,
+  agentPresentation,
+  type ProviderPresentation,
+} from '../provider-presentation.js'
 import type { ComposerError } from './ComposerErrors.js'
 import {
   pinnableModels,
@@ -1147,11 +1152,9 @@ export function ProviderSettings(props: {
   }
 
   const byId = (id: ProviderId) => props.providerStatuses.filter((status) => status.id === id)
-  const knownAgentIds = new Set(['gemini', 'kimi', 'qwen'])
-  const agents = [
-    ...(props.acpAgents ?? []).filter((agent) => knownAgentIds.has(agent.id)),
-    ...(props.acpAgents ?? []).filter((agent) => !knownAgentIds.has(agent.id)),
-  ]
+  // The server lists agents in the library's own order, and they keep it
+  // whether installed or not, so an install never moves a row.
+  const agents = props.acpAgents ?? []
 
   const renderAgentRow = (agent: ResultOf<'acp.agents'>['agents'][number]) => {
     const provider: ProviderStatus = {
@@ -1162,11 +1165,14 @@ export function ProviderSettings(props: {
       setup: agent.setup,
       ...(agent.problem ? { problem: agent.problem } : {}),
     }
+    const mark = agentMark(agent.id)
     if (!agent.installed) {
       return (
         <InstallableRow
           key={agent.id}
           provider={provider}
+          mark={mark}
+          library={{ maker: agent.maker }}
           target={{ provider: 'acp', agent: agent.id }}
           transport={props.transport}
           onInstalled={props.onConnectionsChanged}
@@ -1177,7 +1183,15 @@ export function ProviderSettings(props: {
     const account = agentAccounts[agent.id]
     const accountError = agentAccountErrors[agent.id]
     if (!account && !accountError) {
-      return <ProviderRow key={agent.id} provider={provider} status="Checking account…" live />
+      return (
+        <ProviderRow
+          key={agent.id}
+          provider={provider}
+          mark={mark}
+          status="Checking account…"
+          live
+        />
+      )
     }
     if (!account?.signedIn) {
       return (
@@ -1187,6 +1201,7 @@ export function ProviderSettings(props: {
             ...provider,
             ...(accountError ? { problem: accountError } : {}),
           }}
+          mark={mark}
           target={{ provider: 'acp', agent: agent.id }}
           transport={props.transport}
           onSignedIn={() => void refreshAgentAccount(agent.id)}
@@ -1194,18 +1209,27 @@ export function ProviderSettings(props: {
         />
       )
     }
+    // An agent whose CLI keeps its login to itself signs out there, not here.
+    const canSignOut = agent.signOut !== false
     return (
       <ProviderRow
         key={agent.id}
         provider={provider}
-        status="Signed in"
+        mark={mark}
+        status={agentBusy === agent.id ? 'Signing out…' : 'Signed in'}
+        link="connected"
+        live={agentBusy === agent.id}
         issue={accountError ? { message: accountError, announce: true } : undefined}
-        primary={{
-          label: agentBusy === agent.id ? 'Signing out…' : 'Sign out',
-          disabled: agentBusy === agent.id,
-          danger: true,
-          onClick: () => void signOutAgent(agent.id),
-        }}
+        primary={
+          canSignOut
+            ? {
+                label: agentBusy === agent.id ? 'Signing out…' : 'Sign out',
+                disabled: agentBusy === agent.id,
+                danger: true,
+                onClick: () => void signOutAgent(agent.id),
+              }
+            : undefined
+        }
       />
     )
   }
@@ -1268,11 +1292,25 @@ export function ProviderSettings(props: {
       ) : (
         PROVIDER_ROSTER.flatMap(byId).map(renderProviderRow)
       )}
-      {agents.map((agent) => (
-        <div className="provider-settings__entry" key={agent.id}>
-          {renderAgentRow(agent)}
-        </div>
-      ))}
+      {agents.length > 0 ? (
+        <SettingsSection
+          title="ACP agents"
+          note="Coding agents that speak the Agent Client Protocol."
+          action={
+            <AcpLibraryCheck
+              transport={props.transport}
+              agents={agents}
+              onChanged={props.onConnectionsChanged}
+            />
+          }
+        >
+          {agents.map((agent) => (
+            <div className="provider-settings__entry" key={agent.id}>
+              {renderAgentRow(agent)}
+            </div>
+          ))}
+        </SettingsSection>
+      ) : null}
       <SettingsSection title="API connections">
         {(props.modelConnections ?? []).map((connection) => (
           <ConnectionRow
@@ -1401,6 +1439,47 @@ export function ProviderSettings(props: {
       </SettingsSection>
       <ProviderUpdateCheck transport={props.transport} />
     </SettingsPage>
+  )
+}
+
+/**
+ * Looks for agents installed outside the app since the library was listed,
+ * once for the whole library rather than a Check again on every row.
+ */
+function AcpLibraryCheck(props: {
+  transport: Transport
+  agents: ResultOf<'acp.agents'>['agents']
+  onChanged: () => void
+}) {
+  const [checking, setChecking] = useState(false)
+  const installed = props.agents
+    .filter((agent) => agent.installed)
+    .map((agent) => agent.id)
+    .join('|')
+  const { onChanged, transport } = props
+  const check = () => {
+    setChecking(true)
+    void transport
+      .request('acp.agents', {})
+      .then(({ agents }) => {
+        const now = agents
+          .filter((agent) => agent.installed)
+          .map((agent) => agent.id)
+          .join('|')
+        if (now !== installed) onChanged()
+      })
+      .catch(() => undefined)
+      .finally(() => setChecking(false))
+  }
+  return (
+    <button
+      className="set-button set-button--quiet"
+      type="button"
+      disabled={checking}
+      onClick={check}
+    >
+      {checking ? 'Checking…' : 'Check again'}
+    </button>
   )
 }
 
@@ -2552,6 +2631,12 @@ function InstallableRow(props: {
   transport: Transport
   onInstalled: () => void
   onOpenExpandedTerminal?: ((target: ProviderLoginTerminalTarget) => void) | undefined
+  mark?: ProviderMark | undefined
+  /**
+   * An entry in the ACP library: it names its maker where the roster says
+   * "Not installed", and the section's own Check again stands for every row.
+   */
+  library?: { maker?: string | undefined } | undefined
 }) {
   const key = installKey(props.target)
   const detailsId = useId()
@@ -2617,7 +2702,9 @@ function InstallableRow(props: {
           ? 'Install failed'
           : recheck.checking
             ? 'Checking…'
-            : 'Not installed'
+            : props.library
+              ? (props.library.maker ?? '')
+              : 'Not installed'
   const issue =
     install?.phase === 'failed'
       ? {
@@ -2646,7 +2733,9 @@ function InstallableRow(props: {
             controls: detailsId,
             onClick: () => setShowTerminal((visible) => !visible),
           }
-      : { label: 'Check again', disabled: recheck.checking, onClick: recheck.check }
+      : props.library
+        ? undefined
+        : { label: 'Check again', disabled: recheck.checking, onClick: recheck.check }
   const primary: ProviderAction | undefined = !setup?.installCommand
     ? setup
       ? { label: 'Open setup guide', href: setup.installUrl }
@@ -2664,8 +2753,10 @@ function InstallableRow(props: {
     <>
       <ProviderRow
         provider={props.provider}
+        mark={props.mark}
         status={status}
         link="none"
+        library={props.library !== undefined}
         live={install?.phase === 'running' || install?.phase === 'succeeded' || recheck.checking}
         issue={issue}
         primary={primary}
@@ -2694,6 +2785,7 @@ function CliSignInRow(props: {
   transport: Transport
   onSignedIn: () => void
   onOpenExpandedTerminal?: ((target: ProviderLoginTerminalTarget) => void) | undefined
+  mark?: ProviderMark | undefined
 }) {
   const key = loginKey(props.target)
   const detailsId = useId()
@@ -2823,6 +2915,7 @@ function CliSignInRow(props: {
     <>
       <ProviderRow
         provider={props.provider}
+        mark={props.mark}
         status={status}
         live={busy}
         issue={issue}

@@ -2742,3 +2742,122 @@ describe('provider defaults', () => {
     expect(await screen.findByRole('group', { name: 'Codex defaults' })).toBeTruthy()
   })
 })
+
+describe('ACP agent library', () => {
+  const setup = (installCommand?: string) => ({
+    installUrl: 'https://example.test/agent',
+    ...(installCommand ? { installCommand } : {}),
+    login: 'provider' as const,
+  })
+  const library: ResultOf<'acp.agents'>['agents'] = [
+    {
+      id: 'devin',
+      name: 'Devin',
+      maker: 'Cognition',
+      installed: true,
+      verified: true,
+      signOut: true,
+      setup: setup(),
+    },
+    {
+      id: 'droid',
+      name: 'Droid',
+      maker: 'Factory',
+      installed: true,
+      verified: true,
+      signOut: false,
+      setup: setup(),
+    },
+    {
+      id: 'junie',
+      name: 'Junie',
+      maker: 'JetBrains',
+      installed: false,
+      verified: false,
+      signOut: false,
+      setup: setup('install junie'),
+    },
+  ]
+  const row = (name: string) => {
+    const found = screen.getByText(name).closest<HTMLElement>('.provider-row')
+    if (!found) throw new Error(`${name} row missing`)
+    return found
+  }
+
+  it('lists every agent in its own section, each drawn with its own mark', async () => {
+    const transport = new TestTransport(async (method, params) => {
+      if (method === 'auth.status')
+        return { signedIn: (params as { agent?: string }).agent !== 'junie' }
+      if (method === 'providers.updates') return { updates: [], checkedAt: 0 }
+      throw new Error(`unexpected ${method}`)
+    })
+    renderSettings({ initialSection: 'providers', transport, overrides: { acpAgents: library } })
+
+    const section = screen.getByRole('region', { name: 'ACP agents' })
+    expect(
+      [...section.querySelectorAll('.provider-row .set-entity__name')].map(
+        (name) => name.textContent,
+      ),
+    ).toEqual(['Devin', 'Droid', 'Junie'])
+    // Each agent is drawn with its registry mark, not the generic ACP one.
+    const viewBoxes = [...section.querySelectorAll('.provider-row__mark svg')].map((svg) =>
+      svg.getAttribute('viewBox'),
+    )
+    expect(new Set(viewBoxes).size).toBe(3)
+    expect(viewBoxes).not.toContain('0 0 24 24')
+
+    await waitFor(() => expect(row('Devin').dataset['link']).toBe('connected'))
+    expect(within(row('Devin')).getByRole('button', { name: 'Sign out' })).toBeTruthy()
+    // Droid keeps its login in the keychain: signed in, but nothing here signs it out.
+    await waitFor(() => expect(row('Droid').dataset['link']).toBe('connected'))
+    expect(within(row('Droid')).queryByRole('button')).toBeNull()
+  })
+
+  it('offers an agent that is not installed by its maker, with Install and no per-row check', () => {
+    renderSettings({
+      initialSection: 'providers',
+      transport: new TestTransport(async (method) => {
+        if (method === 'auth.status') return { signedIn: false }
+        if (method === 'providers.updates') return { updates: [], checkedAt: 0 }
+        throw new Error(`unexpected ${method}`)
+      }),
+      overrides: { acpAgents: library },
+    })
+    const junie = row('Junie')
+    expect(junie.dataset['library']).toBe('true')
+    expect(junie.textContent).toContain('JetBrains')
+    expect(junie.textContent).not.toContain('Not installed')
+    expect(within(junie).getByRole('button', { name: 'Install' })).toBeTruthy()
+    expect(within(junie).queryByRole('button', { name: 'Check again' })).toBeNull()
+  })
+
+  it('looks for agents installed outside the app once for the whole library', async () => {
+    let installed = false
+    const onConnectionsChanged = vi.fn()
+    const transport = new TestTransport(async (method) => {
+      if (method === 'auth.status') return { signedIn: true }
+      if (method === 'providers.updates') return { updates: [], checkedAt: 0 }
+      if (method === 'acp.agents') {
+        return {
+          agents: library.map((agent) => (agent.id === 'junie' ? { ...agent, installed } : agent)),
+        }
+      }
+      throw new Error(`unexpected ${method}`)
+    })
+    renderSettings({
+      initialSection: 'providers',
+      transport,
+      overrides: { acpAgents: library, onConnectionsChanged },
+    })
+    const section = screen.getByRole('region', { name: 'ACP agents' })
+    const check = within(section).getByRole('button', { name: 'Check again' })
+
+    fireEvent.click(check)
+    await waitFor(() => expect(check.textContent).toBe('Check again'))
+    expect(onConnectionsChanged).not.toHaveBeenCalled()
+
+    installed = true
+    fireEvent.click(check)
+    await waitFor(() => expect(onConnectionsChanged).toHaveBeenCalledTimes(1))
+  })
+})

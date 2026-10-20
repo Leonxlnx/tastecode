@@ -2,7 +2,7 @@ import type { ReactNode } from 'react'
 import type { ProviderStatus } from '@harness/contracts'
 import { IconExternalLink as ExternalLink } from '@tabler/icons-react'
 import { RowIssue } from './RowIssue.js'
-import { providerMark } from '../model-catalog.js'
+import { providerMark, type ProviderMark } from '../model-catalog.js'
 import { ProviderIcon } from './ProviderIcon.js'
 import { Skeleton } from './Skeleton.js'
 
@@ -28,8 +28,12 @@ export type ProviderLink = 'connected' | 'open' | 'none'
 /** A settings entity row: the provider's mark and name, its wire, status and actions. */
 export function ProviderRow(props: {
   provider: ProviderStatus
+  /** Overrides the provider's own mark, for an ACP agent drawn as itself. */
+  mark?: ProviderMark | undefined
   status: ReactNode
   link?: ProviderLink | undefined
+  /** An agent offered in the ACP library rather than one on this machine. */
+  library?: boolean | undefined
   live?: boolean
   issue?: ProviderIssue | undefined
   primary?: ProviderAction | undefined
@@ -39,11 +43,12 @@ export function ProviderRow(props: {
     <div
       className="provider-row"
       data-link={props.link ?? 'open'}
+      data-library={props.library || undefined}
       data-live={props.live || undefined}
       data-fault={props.issue?.announce || undefined}
     >
       <div className="provider-row__mark" title={props.provider.version}>
-        <ProviderIcon mark={providerMark(props.provider.id)} size={18} />
+        <ProviderIcon mark={props.mark ?? providerMark(props.provider.id)} size={18} />
       </div>
       <div className="provider-row__identity">
         <p className="set-entity__name">{props.provider.displayName}</p>
