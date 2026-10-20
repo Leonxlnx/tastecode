@@ -1,0 +1,1262 @@
+{
+  "text": [
+    {
+      "id": "evt_15b6476a9001zgA3w7XdfGS9rh",
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "session-1",
+        "info": {
+          "id": "msg_15b6476a6001PmOsJRruMZL87I",
+          "role": "user",
+          "sessionID": "session-1",
+          "time": {
+            "created": 1792534673062
+          },
+          "agent": "build",
+          "model": {
+            "providerID": "stub",
+            "modelID": "stub-model"
+          }
+        }
+      }
+    },
+    {
+      "id": "evt_15b64779e001j83oXBKwoFXndP",
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "session-1",
+        "part": {
+          "type": "text",
+          "text": "Reply with only OK",
+          "messageID": "msg_15b6476a6001PmOsJRruMZL87I",
+          "sessionID": "session-1",
+          "id": "prt_15b6476a9001dr2mdCwpDuWyww"
+        },
+        "time": 1792534673310
+      }
+    },
+    {
+      "id": "evt_15b6477a2001jtvCVL3g1S1mUs",
+      "type": "session.status",
+      "properties": {
+        "sessionID": "session-1",
+        "status": {
+          "type": "busy"
+        }
+      }
+    },
+    {
+      "id": "evt_15b6477a40014ywkgwA3JIxUU6",
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "session-1",
+        "info": {
+          "id": "msg_15b6477a4001YNrUuRQ6Nb0nAH",
+          "parentID": "msg_15b6476a6001PmOsJRruMZL87I",
+          "role": "assistant",
+          "mode": "build",
+          "agent": "build",
+          "path": {
+            "cwd": "/repo",
+            "root": "/"
+          },
+          "cost": 0,
+          "tokens": {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache": {
+              "read": 0,
+              "write": 0
+            }
+          },
+          "modelID": "stub-model",
+          "providerID": "stub",
+          "time": {
+            "created": 1792534673316
+          },
+          "sessionID": "session-1"
+        }
+      }
+    },
+    {
+      "id": "evt_15b6477c0001PKGs6sAJy5PHAa",
+      "type": "session.diff",
+      "properties": {
+        "sessionID": "session-1",
+        "diff": []
+      }
+    },
+    {
+      "id": "evt_15b6477c10017XoZA0qnhu521d",
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "session-1",
+        "info": {
+          "role": "user",
+          "time": {
+            "created": 1792534673062
+          },
+          "agent": "build",
+          "model": {
+            "providerID": "stub",
+            "modelID": "stub-model"
+          },
+          "id": "msg_15b6476a6001PmOsJRruMZL87I",
+          "sessionID": "session-1",
+          "summary": {
+            "diffs": []
+          }
+        }
+      }
+    },
+    {
+      "id": "evt_15b647b00001SG5v976k46G1NG",
+      "type": "session.status",
+      "properties": {
+        "sessionID": "session-1",
+        "status": {
+          "type": "busy"
+        }
+      }
+    },
+    {
+      "id": "evt_15b647b15001lDMSjgLWJoDeSp",
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "session-1",
+        "part": {
+          "id": "prt_15b647b15001VRj2fosJXQO3Ba",
+          "messageID": "msg_15b6477a4001YNrUuRQ6Nb0nAH",
+          "sessionID": "session-1",
+          "type": "step-start"
+        },
+        "time": 1792534674197
+      }
+    },
+    {
+      "id": "evt_15b647b17001kua4UhpgNW0Xay",
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "session-1",
+        "part": {
+          "id": "prt_15b647b17001aYysHRMuPRKpQi",
+          "messageID": "msg_15b6477a4001YNrUuRQ6Nb0nAH",
+          "sessionID": "session-1",
+          "type": "text",
+          "text": "",
+          "time": {
+            "start": 1792534674199
+          }
+        },
+        "time": 1792534674199
+      }
+    },
+    {
+      "id": "evt_15b647b17002Z9T3IjztfSmpJ0",
+      "type": "message.part.delta",
+      "properties": {
+        "sessionID": "session-1",
+        "messageID": "msg_15b6477a4001YNrUuRQ6Nb0nAH",
+        "partID": "prt_15b647b17001aYysHRMuPRKpQi",
+        "field": "text",
+        "delta": "OK"
+      }
+    },
+    {
+      "id": "evt_15b647b180011mAgHzJFudr7FT",
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "session-1",
+        "part": {
+          "id": "prt_15b647b17001aYysHRMuPRKpQi",
+          "messageID": "msg_15b6477a4001YNrUuRQ6Nb0nAH",
+          "sessionID": "session-1",
+          "type": "text",
+          "text": "OK",
+          "time": {
+            "start": 1792534674199,
+            "end": 1792534674200
+          }
+        },
+        "time": 1792534674200
+      }
+    },
+    {
+      "id": "evt_15b647b1a001fWjBcgcB8YeX86",
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "session-1",
+        "part": {
+          "id": "prt_15b647b1a001q2f9rE2MecrGe3",
+          "reason": "stop",
+          "messageID": "msg_15b6477a4001YNrUuRQ6Nb0nAH",
+          "sessionID": "session-1",
+          "type": "step-finish",
+          "tokens": {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache": {
+              "write": 0,
+              "read": 0
+            }
+          },
+          "cost": 0
+        },
+        "time": 1792534674202
+      }
+    },
+    {
+      "id": "evt_15b647b1c0017vfquAg1eqUjBf",
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "session-1",
+        "info": {
+          "id": "msg_15b6477a4001YNrUuRQ6Nb0nAH",
+          "parentID": "msg_15b6476a6001PmOsJRruMZL87I",
+          "role": "assistant",
+          "mode": "build",
+          "agent": "build",
+          "path": {
+            "cwd": "/repo",
+            "root": "/"
+          },
+          "cost": 0,
+          "tokens": {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache": {
+              "write": 0,
+              "read": 0
+            }
+          },
+          "modelID": "stub-model",
+          "providerID": "stub",
+          "time": {
+            "created": 1792534673316,
+            "completed": 1792534674205
+          },
+          "sessionID": "session-1",
+          "finish": "stop"
+        }
+      }
+    },
+    {
+      "id": "evt_15b647b1d001TYB56PSOHBf6UO",
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "session-1",
+        "info": {
+          "id": "msg_15b6477a4001YNrUuRQ6Nb0nAH",
+          "parentID": "msg_15b6476a6001PmOsJRruMZL87I",
+          "role": "assistant",
+          "mode": "build",
+          "agent": "build",
+          "path": {
+            "cwd": "/repo",
+            "root": "/"
+          },
+          "cost": 0,
+          "tokens": {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache": {
+              "write": 0,
+              "read": 0
+            }
+          },
+          "modelID": "stub-model",
+          "providerID": "stub",
+          "time": {
+            "created": 1792534673316,
+            "completed": 1792534674205
+          },
+          "sessionID": "session-1",
+          "finish": "stop"
+        }
+      }
+    },
+    {
+      "id": "evt_15b647b1e001SIoq6U5IGBS3dT",
+      "type": "session.status",
+      "properties": {
+        "sessionID": "session-1",
+        "status": {
+          "type": "busy"
+        }
+      }
+    },
+    {
+      "id": "evt_15b647b1f0018VXA1NSxYH4nL5",
+      "type": "session.status",
+      "properties": {
+        "sessionID": "session-1",
+        "status": {
+          "type": "idle"
+        }
+      }
+    },
+    {
+      "id": "evt_15b647b1f002Bxa6LLlRevB43D",
+      "type": "session.idle",
+      "properties": {
+        "sessionID": "session-1"
+      }
+    },
+    {
+      "id": "evt_15b647b20001Q4h8otqQEIw5WJ",
+      "type": "session.diff",
+      "properties": {
+        "sessionID": "session-1",
+        "diff": []
+      }
+    },
+    {
+      "id": "evt_15b647b20002Mo9XfyttS5JxN5",
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "session-1",
+        "info": {
+          "role": "user",
+          "time": {
+            "created": 1792534673062
+          },
+          "agent": "build",
+          "model": {
+            "providerID": "stub",
+            "modelID": "stub-model"
+          },
+          "summary": {
+            "diffs": []
+          },
+          "id": "msg_15b6476a6001PmOsJRruMZL87I",
+          "sessionID": "session-1"
+        }
+      }
+    }
+  ],
+  "tool": [
+    {
+      "id": "evt_15b647f3c001QIxoepIEcebvL9",
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "session-1",
+        "info": {
+          "id": "msg_15b647f3b001OfCUbzblJnWITq",
+          "role": "user",
+          "sessionID": "session-1",
+          "time": {
+            "created": 1792534675259
+          },
+          "agent": "build",
+          "model": {
+            "providerID": "stub",
+            "modelID": "stub-model"
+          }
+        }
+      }
+    },
+    {
+      "id": "evt_15b647f3d001ALO9cjRbD3241e",
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "session-1",
+        "part": {
+          "type": "text",
+          "text": "RUN_TOOL please",
+          "messageID": "msg_15b647f3b001OfCUbzblJnWITq",
+          "sessionID": "session-1",
+          "id": "prt_15b647f3c0016A5mvjkzV8pO8p"
+        },
+        "time": 1792534675261
+      }
+    },
+    {
+      "id": "evt_15b647f3f001xJoOu4ZSgMvpTT",
+      "type": "session.status",
+      "properties": {
+        "sessionID": "session-1",
+        "status": {
+          "type": "busy"
+        }
+      }
+    },
+    {
+      "id": "evt_15b647f40001ZiAc47TK97RWSY",
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "session-1",
+        "info": {
+          "id": "msg_15b647f40001FVArKR4d4w5DHb",
+          "parentID": "msg_15b647f3b001OfCUbzblJnWITq",
+          "role": "assistant",
+          "mode": "build",
+          "agent": "build",
+          "path": {
+            "cwd": "/repo",
+            "root": "/"
+          },
+          "cost": 0,
+          "tokens": {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache": {
+              "read": 0,
+              "write": 0
+            }
+          },
+          "modelID": "stub-model",
+          "providerID": "stub",
+          "time": {
+            "created": 1792534675264
+          },
+          "sessionID": "session-1"
+        }
+      }
+    },
+    {
+      "id": "evt_15b647f430013wjQABguLdLg4D",
+      "type": "session.diff",
+      "properties": {
+        "sessionID": "session-1",
+        "diff": []
+      }
+    },
+    {
+      "id": "evt_15b647f44001VP04seAAqrB3XL",
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "session-1",
+        "info": {
+          "role": "user",
+          "time": {
+            "created": 1792534675259
+          },
+          "agent": "build",
+          "model": {
+            "providerID": "stub",
+            "modelID": "stub-model"
+          },
+          "id": "msg_15b647f3b001OfCUbzblJnWITq",
+          "sessionID": "session-1",
+          "summary": {
+            "diffs": []
+          }
+        }
+      }
+    },
+    {
+      "id": "evt_15b647f45001JI5mMff5f3RNNg",
+      "type": "session.status",
+      "properties": {
+        "sessionID": "session-1",
+        "status": {
+          "type": "busy"
+        }
+      }
+    },
+    {
+      "id": "evt_15b647f4a001YuAccMylU218RE",
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "session-1",
+        "part": {
+          "id": "prt_15b647f4a0014OjvPkRtGxHIMh",
+          "messageID": "msg_15b647f40001FVArKR4d4w5DHb",
+          "sessionID": "session-1",
+          "type": "step-start"
+        },
+        "time": 1792534675274
+      }
+    },
+    {
+      "id": "evt_15b647f4c001AbZBau82TY7ury",
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "session-1",
+        "part": {
+          "id": "prt_15b647f4c001IU1o0ziEbRKfje",
+          "messageID": "msg_15b647f40001FVArKR4d4w5DHb",
+          "sessionID": "session-1",
+          "type": "tool",
+          "tool": "bash",
+          "callID": "call_stub_1",
+          "state": {
+            "status": "pending",
+            "input": {},
+            "raw": ""
+          }
+        },
+        "time": 1792534675276
+      }
+    },
+    {
+      "id": "evt_15b647f4f001OrnTi2x6woLGUZ",
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "session-1",
+        "part": {
+          "type": "tool",
+          "tool": "bash",
+          "callID": "call_stub_1",
+          "state": {
+            "status": "running",
+            "input": {
+              "command": "echo stub-ran",
+              "description": "Print a marker"
+            },
+            "time": {
+              "start": 1792534675279
+            }
+          },
+          "id": "prt_15b647f4c001IU1o0ziEbRKfje",
+          "sessionID": "session-1",
+          "messageID": "msg_15b647f40001FVArKR4d4w5DHb"
+        },
+        "time": 1792534675279
+      }
+    },
+    {
+      "id": "evt_15b647f69001Q85298jb4ddZBc",
+      "type": "permission.asked",
+      "properties": {
+        "id": "per_15b647f68001I3qLL3qttLid2a",
+        "sessionID": "session-1",
+        "permission": "bash",
+        "patterns": ["echo stub-ran"],
+        "metadata": {
+          "command": "echo stub-ran"
+        },
+        "always": ["echo *"],
+        "tool": {
+          "messageID": "msg_15b647f40001FVArKR4d4w5DHb",
+          "callID": "call_stub_1"
+        }
+      }
+    },
+    {
+      "id": "evt_15b647f6f001dF6YpxbUj6Sl4t",
+      "type": "permission.replied",
+      "properties": {
+        "sessionID": "session-1",
+        "requestID": "per_15b647f68001I3qLL3qttLid2a",
+        "reply": "once"
+      }
+    },
+    {
+      "id": "evt_15b647f700016srBwm19MXU0bD",
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "session-1",
+        "part": {
+          "type": "tool",
+          "tool": "bash",
+          "callID": "call_stub_1",
+          "state": {
+            "metadata": {
+              "output": ""
+            },
+            "status": "running",
+            "input": {
+              "command": "echo stub-ran",
+              "description": "Print a marker"
+            },
+            "time": {
+              "start": 1792534675279
+            }
+          },
+          "id": "prt_15b647f4c001IU1o0ziEbRKfje",
+          "sessionID": "session-1",
+          "messageID": "msg_15b647f40001FVArKR4d4w5DHb"
+        },
+        "time": 1792534675312
+      }
+    },
+    {
+      "id": "evt_15b647f78001IIZwwbmcAjC4Aq",
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "session-1",
+        "part": {
+          "type": "tool",
+          "tool": "bash",
+          "callID": "call_stub_1",
+          "state": {
+            "metadata": {
+              "output": "stub-ran\n"
+            },
+            "status": "running",
+            "input": {
+              "command": "echo stub-ran",
+              "description": "Print a marker"
+            },
+            "time": {
+              "start": 1792534675279
+            }
+          },
+          "id": "prt_15b647f4c001IU1o0ziEbRKfje",
+          "sessionID": "session-1",
+          "messageID": "msg_15b647f40001FVArKR4d4w5DHb"
+        },
+        "time": 1792534675320
+      }
+    },
+    {
+      "id": "evt_15b647f7c001dYi5nsgQUn3QE7",
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "session-1",
+        "part": {
+          "type": "tool",
+          "tool": "bash",
+          "callID": "call_stub_1",
+          "state": {
+            "status": "completed",
+            "input": {
+              "command": "echo stub-ran",
+              "description": "Print a marker"
+            },
+            "output": "stub-ran\n",
+            "metadata": {
+              "output": "stub-ran\n",
+              "exit": 0,
+              "truncated": false
+            },
+            "title": "echo stub-ran",
+            "time": {
+              "start": 1792534675279,
+              "end": 1792534675324
+            }
+          },
+          "id": "prt_15b647f4c001IU1o0ziEbRKfje",
+          "sessionID": "session-1",
+          "messageID": "msg_15b647f40001FVArKR4d4w5DHb"
+        },
+        "time": 1792534675324
+      }
+    },
+    {
+      "id": "evt_15b647f7d001JMiLoLC2cD3Ug4",
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "session-1",
+        "part": {
+          "id": "prt_15b647f7d001thw0csEXe7m4o9",
+          "reason": "tool-calls",
+          "messageID": "msg_15b647f40001FVArKR4d4w5DHb",
+          "sessionID": "session-1",
+          "type": "step-finish",
+          "tokens": {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache": {
+              "write": 0,
+              "read": 0
+            }
+          },
+          "cost": 0
+        },
+        "time": 1792534675325
+      }
+    },
+    {
+      "id": "evt_15b647f7d002YN6y6NtQLBy3Wq",
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "session-1",
+        "info": {
+          "id": "msg_15b647f40001FVArKR4d4w5DHb",
+          "parentID": "msg_15b647f3b001OfCUbzblJnWITq",
+          "role": "assistant",
+          "mode": "build",
+          "agent": "build",
+          "path": {
+            "cwd": "/repo",
+            "root": "/"
+          },
+          "cost": 0,
+          "tokens": {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache": {
+              "write": 0,
+              "read": 0
+            }
+          },
+          "modelID": "stub-model",
+          "providerID": "stub",
+          "time": {
+            "created": 1792534675264,
+            "completed": 1792534675326
+          },
+          "sessionID": "session-1",
+          "finish": "tool-calls"
+        }
+      }
+    },
+    {
+      "id": "evt_15b647f7e001eHGvNgrsQw2V4v",
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "session-1",
+        "info": {
+          "id": "msg_15b647f40001FVArKR4d4w5DHb",
+          "parentID": "msg_15b647f3b001OfCUbzblJnWITq",
+          "role": "assistant",
+          "mode": "build",
+          "agent": "build",
+          "path": {
+            "cwd": "/repo",
+            "root": "/"
+          },
+          "cost": 0,
+          "tokens": {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache": {
+              "write": 0,
+              "read": 0
+            }
+          },
+          "modelID": "stub-model",
+          "providerID": "stub",
+          "time": {
+            "created": 1792534675264,
+            "completed": 1792534675326
+          },
+          "sessionID": "session-1",
+          "finish": "tool-calls"
+        }
+      }
+    },
+    {
+      "id": "evt_15b647f7e002N4t9f6fIoy3O50",
+      "type": "session.status",
+      "properties": {
+        "sessionID": "session-1",
+        "status": {
+          "type": "busy"
+        }
+      }
+    },
+    {
+      "id": "evt_15b647f7f001awWiqLMd66P51M",
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "session-1",
+        "info": {
+          "id": "msg_15b647f7f001Nf45ptnY94qEey",
+          "parentID": "msg_15b647f3b001OfCUbzblJnWITq",
+          "role": "assistant",
+          "mode": "build",
+          "agent": "build",
+          "path": {
+            "cwd": "/repo",
+            "root": "/"
+          },
+          "cost": 0,
+          "tokens": {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache": {
+              "read": 0,
+              "write": 0
+            }
+          },
+          "modelID": "stub-model",
+          "providerID": "stub",
+          "time": {
+            "created": 1792534675327
+          },
+          "sessionID": "session-1"
+        }
+      }
+    },
+    {
+      "id": "evt_15b647f820017DsErPEaej0Ahy",
+      "type": "session.diff",
+      "properties": {
+        "sessionID": "session-1",
+        "diff": []
+      }
+    },
+    {
+      "id": "evt_15b647f82002yJYcHT5sypJAYz",
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "session-1",
+        "info": {
+          "role": "user",
+          "time": {
+            "created": 1792534675259
+          },
+          "agent": "build",
+          "model": {
+            "providerID": "stub",
+            "modelID": "stub-model"
+          },
+          "summary": {
+            "diffs": []
+          },
+          "id": "msg_15b647f3b001OfCUbzblJnWITq",
+          "sessionID": "session-1"
+        }
+      }
+    },
+    {
+      "id": "evt_15b647f89001vPJ3JnBVJEMX5j",
+      "type": "session.status",
+      "properties": {
+        "sessionID": "session-1",
+        "status": {
+          "type": "busy"
+        }
+      }
+    },
+    {
+      "id": "evt_15b647f8e001xwkRJdLVRp65An",
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "session-1",
+        "part": {
+          "id": "prt_15b647f8e001MGLcnfbmttyIHa",
+          "messageID": "msg_15b647f7f001Nf45ptnY94qEey",
+          "sessionID": "session-1",
+          "type": "step-start"
+        },
+        "time": 1792534675342
+      }
+    },
+    {
+      "id": "evt_15b647f8f001cMaevUugJT8ZbJ",
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "session-1",
+        "part": {
+          "id": "prt_15b647f8f001qYKGmPrHAuRwwS",
+          "messageID": "msg_15b647f7f001Nf45ptnY94qEey",
+          "sessionID": "session-1",
+          "type": "text",
+          "text": "",
+          "time": {
+            "start": 1792534675343
+          }
+        },
+        "time": 1792534675343
+      }
+    },
+    {
+      "id": "evt_15b647f8f002xkSHqx5WzzydpD",
+      "type": "message.part.delta",
+      "properties": {
+        "sessionID": "session-1",
+        "messageID": "msg_15b647f7f001Nf45ptnY94qEey",
+        "partID": "prt_15b647f8f001qYKGmPrHAuRwwS",
+        "field": "text",
+        "delta": "The command printed stub-ran."
+      }
+    },
+    {
+      "id": "evt_15b647f8f003oIMb53QF8YWmbK",
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "session-1",
+        "part": {
+          "id": "prt_15b647f8f001qYKGmPrHAuRwwS",
+          "messageID": "msg_15b647f7f001Nf45ptnY94qEey",
+          "sessionID": "session-1",
+          "type": "text",
+          "text": "The command printed stub-ran.",
+          "time": {
+            "start": 1792534675343,
+            "end": 1792534675343
+          }
+        },
+        "time": 1792534675343
+      }
+    },
+    {
+      "id": "evt_15b647f900019Kg1xMjVcgpQJy",
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "session-1",
+        "part": {
+          "id": "prt_15b647f90001q1RDO58ztEWK1C",
+          "reason": "stop",
+          "messageID": "msg_15b647f7f001Nf45ptnY94qEey",
+          "sessionID": "session-1",
+          "type": "step-finish",
+          "tokens": {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache": {
+              "write": 0,
+              "read": 0
+            }
+          },
+          "cost": 0
+        },
+        "time": 1792534675344
+      }
+    },
+    {
+      "id": "evt_15b647f90002cllar6uwtmtfnW",
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "session-1",
+        "info": {
+          "id": "msg_15b647f7f001Nf45ptnY94qEey",
+          "parentID": "msg_15b647f3b001OfCUbzblJnWITq",
+          "role": "assistant",
+          "mode": "build",
+          "agent": "build",
+          "path": {
+            "cwd": "/repo",
+            "root": "/"
+          },
+          "cost": 0,
+          "tokens": {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache": {
+              "write": 0,
+              "read": 0
+            }
+          },
+          "modelID": "stub-model",
+          "providerID": "stub",
+          "time": {
+            "created": 1792534675327,
+            "completed": 1792534675345
+          },
+          "sessionID": "session-1",
+          "finish": "stop"
+        }
+      }
+    },
+    {
+      "id": "evt_15b647f91001T5BAY0komdwcgh",
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "session-1",
+        "info": {
+          "id": "msg_15b647f7f001Nf45ptnY94qEey",
+          "parentID": "msg_15b647f3b001OfCUbzblJnWITq",
+          "role": "assistant",
+          "mode": "build",
+          "agent": "build",
+          "path": {
+            "cwd": "/repo",
+            "root": "/"
+          },
+          "cost": 0,
+          "tokens": {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache": {
+              "write": 0,
+              "read": 0
+            }
+          },
+          "modelID": "stub-model",
+          "providerID": "stub",
+          "time": {
+            "created": 1792534675327,
+            "completed": 1792534675345
+          },
+          "sessionID": "session-1",
+          "finish": "stop"
+        }
+      }
+    },
+    {
+      "id": "evt_15b647f92001DJLTuHc1Oy1X5C",
+      "type": "session.status",
+      "properties": {
+        "sessionID": "session-1",
+        "status": {
+          "type": "busy"
+        }
+      }
+    },
+    {
+      "id": "evt_15b647f93001UAk9bX3xH08bs4",
+      "type": "session.status",
+      "properties": {
+        "sessionID": "session-1",
+        "status": {
+          "type": "idle"
+        }
+      }
+    },
+    {
+      "id": "evt_15b647f93002S74a7leyMY3yI3",
+      "type": "session.idle",
+      "properties": {
+        "sessionID": "session-1"
+      }
+    },
+    {
+      "id": "evt_15b647f94001FWzvYj6AvFtM1n",
+      "type": "session.diff",
+      "properties": {
+        "sessionID": "session-1",
+        "diff": []
+      }
+    },
+    {
+      "id": "evt_15b647f94002tAabELkwldW173",
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "session-1",
+        "info": {
+          "role": "user",
+          "time": {
+            "created": 1792534675259
+          },
+          "agent": "build",
+          "model": {
+            "providerID": "stub",
+            "modelID": "stub-model"
+          },
+          "summary": {
+            "diffs": []
+          },
+          "id": "msg_15b647f3b001OfCUbzblJnWITq",
+          "sessionID": "session-1"
+        }
+      }
+    }
+  ],
+  "failure": [
+    {
+      "id": "evt_15b64be54001Crlx44lfCY3AAU",
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "session-1",
+        "info": {
+          "id": "msg_15b64be5400197Zg2L3NRF4yM4",
+          "role": "user",
+          "sessionID": "session-1",
+          "time": {
+            "created": 1792534691412
+          },
+          "agent": "build",
+          "model": {
+            "providerID": "stub",
+            "modelID": "stub-model"
+          }
+        }
+      }
+    },
+    {
+      "id": "evt_15b64be55001cdb54f44zhiKFg",
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "session-1",
+        "part": {
+          "type": "text",
+          "text": "FAIL please",
+          "messageID": "msg_15b64be5400197Zg2L3NRF4yM4",
+          "sessionID": "session-1",
+          "id": "prt_15b64be54002NUR40Vp6ojcqIW"
+        },
+        "time": 1792534691413
+      }
+    },
+    {
+      "id": "evt_15b64be57001cesu5uYo5oW13U",
+      "type": "session.status",
+      "properties": {
+        "sessionID": "session-1",
+        "status": {
+          "type": "busy"
+        }
+      }
+    },
+    {
+      "id": "evt_15b64be580012JYhhw6nn4DbIn",
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "session-1",
+        "info": {
+          "id": "msg_15b64be58001njqch0meRBF2ea",
+          "parentID": "msg_15b64be5400197Zg2L3NRF4yM4",
+          "role": "assistant",
+          "mode": "build",
+          "agent": "build",
+          "path": {
+            "cwd": "/repo",
+            "root": "/"
+          },
+          "cost": 0,
+          "tokens": {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache": {
+              "read": 0,
+              "write": 0
+            }
+          },
+          "modelID": "stub-model",
+          "providerID": "stub",
+          "time": {
+            "created": 1792534691416
+          },
+          "sessionID": "session-1"
+        }
+      }
+    },
+    {
+      "id": "evt_15b64be5c002RzByLKb2idkwrm",
+      "type": "session.diff",
+      "properties": {
+        "sessionID": "session-1",
+        "diff": []
+      }
+    },
+    {
+      "id": "evt_15b64be5d00103l7hrkHxvFuQe",
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "session-1",
+        "info": {
+          "role": "user",
+          "time": {
+            "created": 1792534691412
+          },
+          "agent": "build",
+          "model": {
+            "providerID": "stub",
+            "modelID": "stub-model"
+          },
+          "id": "msg_15b64be5400197Zg2L3NRF4yM4",
+          "sessionID": "session-1",
+          "summary": {
+            "diffs": []
+          }
+        }
+      }
+    },
+    {
+      "id": "evt_15b64be5f001utu7KobPBhpW2e",
+      "type": "session.status",
+      "properties": {
+        "sessionID": "session-1",
+        "status": {
+          "type": "busy"
+        }
+      }
+    },
+    {
+      "id": "evt_15b64be67001xH2fNg1ThZD49M",
+      "type": "session.error",
+      "properties": {
+        "sessionID": "session-1",
+        "error": {
+          "name": "APIError",
+          "data": {
+            "message": "stub refused the request",
+            "statusCode": 400,
+            "isRetryable": false,
+            "metadata": {
+              "url": "http://127.0.0.1:4417/v1/chat/completions"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "evt_15b64be67002K3QJqhTRao21qs",
+      "type": "session.status",
+      "properties": {
+        "sessionID": "session-1",
+        "status": {
+          "type": "idle"
+        }
+      }
+    },
+    {
+      "id": "evt_15b64be6700372sk39ECU0qAlm",
+      "type": "session.idle",
+      "properties": {
+        "sessionID": "session-1"
+      }
+    },
+    {
+      "id": "evt_15b64be67004BptMZAOVyQ3Zad",
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "session-1",
+        "info": {
+          "id": "msg_15b64be58001njqch0meRBF2ea",
+          "parentID": "msg_15b64be5400197Zg2L3NRF4yM4",
+          "role": "assistant",
+          "mode": "build",
+          "agent": "build",
+          "path": {
+            "cwd": "/repo",
+            "root": "/"
+          },
+          "cost": 0,
+          "tokens": {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache": {
+              "read": 0,
+              "write": 0
+            }
+          },
+          "modelID": "stub-model",
+          "providerID": "stub",
+          "time": {
+            "created": 1792534691416,
+            "completed": 1792534691431
+          },
+          "sessionID": "session-1",
+          "error": {
+            "name": "APIError",
+            "data": {
+              "message": "stub refused the request",
+              "statusCode": 400,
+              "isRetryable": false,
+              "metadata": {
+                "url": "http://127.0.0.1:4417/v1/chat/completions"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "evt_15b64be68001bdv3qMQ2VzcWWO",
+      "type": "session.status",
+      "properties": {
+        "sessionID": "session-1",
+        "status": {
+          "type": "idle"
+        }
+      }
+    },
+    {
+      "id": "evt_15b64be68002eM27NLBh4BKCDl",
+      "type": "session.idle",
+      "properties": {
+        "sessionID": "session-1"
+      }
+    }
+  ]
+}

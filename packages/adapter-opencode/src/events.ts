@@ -19,7 +19,26 @@ export type OpenCodeLegacyLifecycleEvent =
   | { type: 'session.status'; properties: { sessionID: string; status: { type: string } } }
   | { type: 'session.idle'; properties: { sessionID: string } }
 
-export type OpenCodeWireEvent = Event | OpenCodeV2Event | OpenCodeLegacyLifecycleEvent
+/**
+ * v1 stream events newer than the SDK this adapter builds against, captured
+ * from opencode 1.18.31: a part's text arrives as deltas, and a permission is
+ * asked by the tool's permission name with the patterns it covers.
+ */
+export type OpenCodeV1NewerEvent =
+  | {
+      type: 'message.part.delta'
+      properties: {
+        sessionID: string
+        messageID: string
+        partID: string
+        field: string
+        delta: string
+      }
+    }
+  | { type: 'permission.asked'; properties: Record<string, JsonRpcValue> }
+
+export type OpenCodeWireEvent =
+  Event | OpenCodeV2Event | OpenCodeLegacyLifecycleEvent | OpenCodeV1NewerEvent
 
 export class OpenCodeEventMapper {
   readonly #turnId: string
@@ -28,6 +47,8 @@ export class OpenCodeEventMapper {
   readonly #text = new Map<string, string>()
   readonly #completed = new Set<string>()
   readonly #v2Tools = new Map<string, { name: string; input?: Record<string, JsonRpcValue> }>()
+  /** The user's own messages: their parts repeat the prompt and are no answer. */
+  readonly #userMessages = new Set<string>()
 
   constructor(turnId: string, model?: string) {
     this.#turnId = turnId
@@ -37,10 +58,18 @@ export class OpenCodeEventMapper {
   translate(event: OpenCodeWireEvent): DomainEvent[] {
     if ('data' in event) return this.#v2(event)
     if (event.type === 'session.status' || event.type === 'session.idle') return []
-    if (event.type === 'message.part.updated')
+    if (event.type === 'permission.asked') return []
+    if (event.type === 'message.part.delta') return this.#partDelta(event.properties)
+    if (event.type === 'message.part.updated') {
+      if (this.#userMessages.has(event.properties.part.messageID)) return []
       return this.#part(event.properties.part, event.properties.delta)
+    }
     if (event.type === 'message.updated') {
       const info = event.properties.info
+      if (info.role === 'user') {
+        this.#userMessages.add(info.id)
+        return []
+      }
       if (info.role === 'assistant' && info.time.completed) {
         return [usage(info.tokens, info.cost, `${info.providerID}/${info.modelID}`)]
       }
@@ -190,6 +219,21 @@ export class OpenCodeEventMapper {
       }))
     for (const event of events) this.#completed.add(event.item.id)
     return events
+  }
+
+  /** A delta of a text or reasoning part the stream has already opened. */
+  #partDelta(delta: {
+    messageID: string
+    partID: string
+    field: string
+    delta: string
+  }): DomainEvent[] {
+    if (delta.field !== 'text' || !delta.delta || this.#userMessages.has(delta.messageID)) return []
+    const id = `${this.#turnId}-${delta.partID}`
+    // A part not seen yet says what it is when it arrives, with its whole text.
+    if (!this.#open.has(id) || this.#completed.has(id)) return []
+    this.#text.set(id, (this.#text.get(id) ?? '') + delta.delta)
+    return [{ type: 'item.delta', turnId: this.#turnId, itemId: id, textDelta: delta.delta }]
   }
 
   #part(part: Part, delta?: string): DomainEvent[] {

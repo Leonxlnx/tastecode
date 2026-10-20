@@ -217,6 +217,26 @@ const PermissionAskedDataSchema = z.object({
   resources: z.array(z.string()).optional(),
 })
 const PermissionRepliedDataSchema = z.object({ requestID: z.string() })
+/** opencode 1.18.31's v1 stream: the tool's permission name and the patterns it covers. */
+const V1PermissionAskedSchema = z.object({
+  id: z.string(),
+  permission: z.string(),
+  patterns: z.array(z.string()).optional(),
+  metadata: z.record(z.string(), JsonRpcValueSchema).optional(),
+})
+/** 1.18.31 names the request and its reply; the SDK's older shape names the permission. */
+const V1PermissionRepliedSchema = z.union([
+  z.object({ requestID: z.string() }),
+  z.object({ permissionID: z.string() }),
+])
+const SessionErrorSchema = z.object({
+  error: z
+    .object({
+      name: z.string().optional(),
+      data: z.object({ message: z.string().optional() }).optional(),
+    })
+    .optional(),
+})
 const SessionDataSchema = z.object({ sessionID: z.string().optional() })
 const LegacySessionPropertiesSchema = z.object({
   sessionID: z.string().optional(),
@@ -720,10 +740,28 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
       })
   }
 
+  /**
+   * v1 whenever the server still answers it: that is what OpenCode's own
+   * clients drive. opencode 1.18.31 also answers v2's health check, but its v2
+   * session engine admits a prompt without ever running it ("Session wait is
+   * not available yet") and its v2 catalog lists no models, so v2 is only for
+   * a server that has dropped v1.
+   */
   async #detectProtocol(): Promise<OpenCodeProtocol> {
+    const headers = this.#authorization ? { authorization: this.#authorization } : {}
+    try {
+      const v1 = await fetch(new URL('/session/status', this.#baseUrl), {
+        headers,
+        signal: AbortSignal.timeout(1500),
+      })
+      await v1.body?.cancel()
+      if (v1.ok) return 'v1'
+    } catch {
+      // A server that does not answer at all is asked about v2 next.
+    }
     try {
       const response = await fetch(new URL('/api/health', this.#baseUrl), {
-        headers: this.#authorization ? { authorization: this.#authorization } : {},
+        headers,
         signal: AbortSignal.timeout(1500),
       })
       if (!response.ok) return 'v1'
@@ -889,8 +927,51 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
       })
       return
     }
+    if (event.type === 'permission.asked') {
+      const asked = V1PermissionAskedSchema.safeParse(event.properties)
+      if (!asked.success) return
+      const { id, permission, patterns = [], metadata = {} } = asked.data
+      const command = /bash|shell|command/i.test(permission)
+      const text = (value: JsonRpcValue | undefined) => (typeof value === 'string' ? value : '')
+      const request: ApprovalRequest = {
+        id,
+        kind: command ? 'command' : 'file_change',
+        ...(command
+          ? { command: text(metadata['command']) || patterns.join(' ') || permission }
+          : {
+              path:
+                text(metadata['filepath']) ||
+                text(metadata['filePath']) ||
+                text(metadata['path']) ||
+                patterns[0] ||
+                permission,
+            }),
+        createdAt: Date.now(),
+      }
+      const autoReply = this.#approval === 'full' || (this.#approval === 'auto' && !command)
+      this.#pendingApprovals.set(id, { request, surfaced: !autoReply })
+      if (autoReply) {
+        this.respondToApproval(id, 'approve')
+        return
+      }
+      this.emit('event', { type: 'approval.requested', request })
+      return
+    }
+    if (event.type === 'permission.replied') {
+      const replied = V1PermissionRepliedSchema.safeParse(event.properties)
+      if (!replied.success) return
+      const id = 'requestID' in replied.data ? replied.data.requestID : replied.data.permissionID
+      // Answered here or by another OpenCode client; either way nothing waits any more.
+      if (!this.#replyingApprovals.has(id) && this.#pendingApprovals.delete(id))
+        this.emit('event', { type: 'approval.resolved', id })
+      return
+    }
     if (event.type === 'session.error') {
-      this.#failTurn()
+      const failure = SessionErrorSchema.safeParse(event.properties)
+      const error = failure.success ? failure.data.error : undefined
+      // Stopping a turn from another OpenCode client aborts it; it did not fail.
+      if (error?.name === 'MessageAbortedError') this.#finishTurn('interrupted')
+      else this.#failTurn(undefined, error?.data?.message)
       return
     }
     if (
@@ -931,7 +1012,7 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
 
   /** When `turnId` is given, no-op unless it is still the live turn — a late
    *  rejection from a finished turn must not fail whatever runs now. */
-  #failTurn(turnId?: string): void {
+  #failTurn(turnId?: string, reason?: string): void {
     if (turnId !== undefined && this.#turnId !== turnId) return
     if (!this.#turnId || !this.#threadId) return
     const failedTurnId = this.#turnId
@@ -949,7 +1030,7 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
     this.emit('event', {
       type: 'thread.error',
       threadId,
-      message: 'The OpenCode request failed.',
+      message: reason ? `The OpenCode request failed: ${reason}` : 'The OpenCode request failed.',
     })
     this.emit('event', { type: 'turn.completed', turnId: failedTurnId, status: 'failed' })
   }
