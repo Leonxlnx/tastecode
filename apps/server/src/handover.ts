@@ -57,8 +57,9 @@ export function handoverBudget({
 /**
  * The first prompt a chat sends after it moved to another provider: the
  * conversation so far as context, what the work looks like now, and the
- * user's request; just the request when the chat has no conversation yet. It goes into the prompt rather than the session
- * instructions so it stays part of the provider's own session after a resume.
+ * user's request; just the request when the chat has no conversation yet. It
+ * goes into the prompt rather than the session instructions so it stays part
+ * of the provider's own session after a resume.
  *
  * `conversations` run oldest first: any chats this one continued, then its own
  * history before this prompt.
