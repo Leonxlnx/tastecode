@@ -61,15 +61,17 @@ import {
   providerContextControl,
   validateContextSettings,
 } from './provider-context.js'
-import { currentBranch, switchWorkspaceBranch } from './workspace.js'
+import { currentBranch, switchWorkspaceBranch, workspaceChanges } from './workspace.js'
 import { compactHistoryReplay } from './history-replay.js'
 import { decodeHistoryCursor, readHistoryPage, type HistoryPage } from './history-page.js'
 import { readIndexedNewestHistoryPage } from './history-tail.js'
 import {
   DESIGN_PHASE_NOTICE,
+  mapProviderSession,
   RESTORE_CONTEXT_NOTICE,
   StartupCleanupError,
 } from './provider-session.js'
+import { handoverBudget, handoverPrompt } from './handover.js'
 import { REPLY_STYLE_INSTRUCTIONS } from './reply-style.js'
 import { LOCAL_SKILL_CAPABILITIES, listLocalSkills, mergeSkills } from './skill-inventory.js'
 import type { ProviderAccountSnapshotKind, Store, StoredCheckpoint } from './store.js'
@@ -697,6 +699,8 @@ export class Orchestrator {
   #stoppingPreviewHandles = new WeakSet<RunningPreview>()
   #unstoppedDesignPreviews = new Map<string, RunningPreview[]>()
   #resumingThreads = new Map<string, Promise<void>>()
+  /** Chats whose provider session is being replaced; nothing may start a turn meanwhile. */
+  #changingProvider = new Set<string>()
   #panicGeneration = 0
   #panicStopping = false
   #panicStop: Promise<PanicStopResult> | undefined
@@ -1901,6 +1905,184 @@ export class Orchestrator {
     return keptIn !== undefined && existsSync(keptIn) ? { carried: false, keptIn } : undefined
   }
 
+  /**
+   * Moves an open chat to another provider, agent or account. The chat keeps
+   * its id, conversation and checkout. A session starts at the new place
+   * first; only once it runs does the chat's own session stop, so a chat
+   * whose move fails stays where it was. The conversation goes to the new
+   * session with the next prompt (see `#handoverPrompt`), and a notice in the
+   * transcript marks the move.
+   */
+  async changeProvider(
+    threadId: string,
+    target: {
+      provider: ProviderId
+      agent?: string | undefined
+      accountId?: AccountId | undefined
+      model?: string | undefined
+      serviceTier?: string | undefined
+      effort?: string | undefined
+      approval?: ApprovalMode | undefined
+    },
+  ): Promise<Thread> {
+    if (this.#panicStopping) throw new Error('The move was cancelled by panic stop.')
+    const stored = this.#store.thread(threadId)
+    if (!stored || stored.closedAt !== undefined) throw new Error(`no such thread: ${threadId}`)
+    if (stored.ephemeral || this.#sideParents.has(threadId)) {
+      throw new Error('A Side chat stays with the provider of its chat.')
+    }
+    if (target.provider === 'api') {
+      throw new Error('A chat cannot move to an API connection.')
+    }
+    const accountId = accountForNewThread(
+      this.#accounts,
+      target.provider,
+      target.agent,
+      target.accountId,
+    )
+    if (
+      stored.provider === target.provider &&
+      stored.agent === target.agent &&
+      (stored.accountId ?? DEFAULT_ACCOUNT_ID) === accountId
+    ) {
+      throw new Error('The chat already runs there.')
+    }
+    if (this.#changingProvider.has(threadId)) {
+      throw new Error('This chat is already moving to another provider.')
+    }
+    this.#assertCanChangeProvider(threadId)
+    const approvalChange = this.#approvalChanges.get(threadId)
+    if (approvalChange) await approvalChange.catch(() => undefined)
+
+    this.#changingProvider.add(threadId)
+    const panicGeneration = this.#panicGeneration
+    const disposeGeneration = this.#disposeGeneration
+    try {
+      // A resume already under way would attach the session the chat leaves.
+      await this.#resumingThreads.get(threadId)?.catch(() => undefined)
+      if (stored.worktreePath && !existsSync(stored.worktreePath)) {
+        throw new Error(
+          'The private checkout for this chat is missing. Restore the checkout or start a new chat.',
+        )
+      }
+      const workspacePath = stored.worktreePath ?? resolveWorkspacePath(stored.projectPath)
+      const runtime = this.#runtimeFor(
+        target.provider,
+        this.#onLog,
+        existingAccountHome(this.#accounts, target.provider, accountId),
+      )
+      const approval =
+        target.approval ??
+        this.#threadApprovals.get(threadId) ??
+        this.#store.threadApproval(threadId)
+      let started
+      try {
+        started = await runtime.start(workspacePath, {
+          ...(target.agent ? { agent: target.agent } : {}),
+          ...(target.model ? { model: target.model } : {}),
+          ...(target.effort ? { effort: target.effort } : {}),
+          ...(target.serviceTier ? { serviceTier: target.serviceTier } : {}),
+          ...(approval ? { approval } : {}),
+          instructions: composeInstructions(),
+          ...this.#mcpRuntimeOptions(target.provider, stored.projectPath),
+          ...this.#contextRuntimeOptions(target.provider, target.agent),
+        })
+      } catch (error) {
+        if (!(error instanceof StartupCleanupError)) throw error
+        void this.#stopFailedStartup(threadId, workspacePath, error).catch((stopError: unknown) =>
+          this.#onLog(`[startup] agent still not stopped: ${errorMessage(stopError)}`),
+        )
+        throw error.startError
+      }
+      const nativeId = started.thread.id
+      const moved = mapProviderSession(threadId, started)
+      const stopStarted = async (reason: string) => {
+        await this.#disposeSession(moved.session).catch((error: unknown) =>
+          this.#onLog(`Could not stop the session a chat did not move to: ${errorMessage(error)}`),
+        )
+        throw new Error(reason)
+      }
+      if (panicGeneration !== this.#panicGeneration || this.#panicStopping) {
+        return await stopStarted('The move was cancelled by panic stop.')
+      }
+      const current = this.#store.thread(threadId)
+      if (
+        disposeGeneration !== this.#disposeGeneration ||
+        !current ||
+        current.closedAt !== undefined
+      ) {
+        return await stopStarted('The chat was closed while it moved.')
+      }
+      try {
+        this.#assertCanChangeProvider(threadId)
+      } catch (error) {
+        return await stopStarted(errorMessage(error))
+      }
+      // Stop the session the chat leaves before the new one is attached, so
+      // two agents never answer for one chat.
+      try {
+        await this.#disposeThreadRuntime(threadId, 'disconnect')
+      } catch (error) {
+        return await stopStarted(
+          `The current agent did not stop, so the chat stays where it is: ${errorMessage(error)}`,
+        )
+      }
+      try {
+        this.#store.moveThreadToProvider(threadId, {
+          provider: target.provider,
+          ...(target.agent ? { agent: target.agent } : {}),
+          ...(accountId === DEFAULT_ACCOUNT_ID ? {} : { accountId }),
+          providerSessionId: nativeId,
+        })
+      } catch (error) {
+        return await stopStarted(errorMessage(error))
+      }
+      const thread = onAccount(moved.thread, accountId)
+      this.#attachThread(thread, moved.session, stored.projectPath, runtime.resume !== undefined)
+      if (approval) {
+        this.#threadApprovals.set(threadId, approval)
+        this.#store.setThreadApproval(threadId, approval)
+      }
+      this.#markIdleRuntimeEligible(threadId)
+      this.#record(threadId, {
+        type: 'item.completed',
+        item: {
+          id: `notice-${crypto.randomUUID()}`,
+          turnId: '',
+          type: 'notice',
+          status: 'completed',
+          notice: {
+            kind: 'provider',
+            provider: target.provider,
+            ...(target.agent ? { agent: target.agent } : {}),
+            ...(accountId === DEFAULT_ACCOUNT_ID ? {} : { accountId }),
+            ...(target.model ? { model: target.model } : {}),
+          },
+          createdAt: Date.now(),
+        },
+      })
+      return thread
+    } finally {
+      this.#changingProvider.delete(threadId)
+    }
+  }
+
+  /** What has to be settled before a chat may move to another provider. */
+  #assertCanChangeProvider(threadId: string): void {
+    if (this.isTurnRunning(threadId)) {
+      throw new Error('Wait for the current turn to finish, or stop it, before the chat moves.')
+    }
+    if (this.#hasQueuedTurns(threadId)) {
+      throw new Error('Send or remove the queued prompts before the chat moves.')
+    }
+    if (this.#restoringThreads.has(threadId) || this.#reviewingDiffs.has(threadId)) {
+      throw new Error('Wait for the restore or the change review to finish before the chat moves.')
+    }
+    if (this.#designFlows.has(threadId)) {
+      throw new Error('Stop the Design run before the chat moves to another provider.')
+    }
+  }
+
   async switchBranch(workspacePath: string, branch: string) {
     const resolved = resolveWorkspacePath(workspacePath)
     return this.#checkoutAccess.exclusive(resolved, () => switchWorkspaceBranch(resolved, branch))
@@ -2196,15 +2378,26 @@ export class Orchestrator {
     if (this.#restoringThreads.has(threadId)) {
       throw new Error('cannot start a turn while restoring a checkpoint')
     }
+    if (this.#changingProvider.has(threadId)) {
+      throw new Error('This chat is moving to another provider. Send again once it has moved.')
+    }
     const entry = this.#get(threadId)
+    // A chat that moved carries everything, a continuation and a restore included.
+    const handover = this.#store.threadNeedsHandover(threadId)
     // Only a continued chat asks the store; the cached row says which ones are.
     const continuation =
+      !handover &&
       this.#store.thread(threadId)?.continuedFrom !== undefined &&
       this.#store.threadNeedsContinueContext(threadId)
     // The prompt carries more than the user's words; the transcript keeps the words.
-    if ((continuation || this.#store.threadNeedsRestoreContext(threadId)) && !submission) {
+    if (
+      (handover || continuation || this.#store.threadNeedsRestoreContext(threadId)) &&
+      !submission
+    ) {
       submission = { id: crypto.randomUUID(), text, attachments, createdAt: Date.now() }
     }
+    // The conversation the handover carries ends before this prompt is recorded.
+    const handoverThrough = handover ? this.#store.lastSeq(threadId) : 0
     this.#touchThreadRuntime(threadId)
     if (!this.#sideParents.has(threadId)) this.#wakeForActivity(threadId)
     const panicGeneration = this.#panicGeneration
@@ -2331,10 +2524,12 @@ export class Orchestrator {
         : text
       const turnId = await entry.session.sendTurn(
         threadId,
-        this.#promptAfterRestore(
-          threadId,
-          continuation ? await this.#promptWithEarlierChat(threadId, prompt) : prompt,
-        ),
+        handover
+          ? await this.#handoverPrompt(threadId, prompt, handoverThrough, entry.session)
+          : this.#promptAfterRestore(
+              threadId,
+              continuation ? await this.#promptWithEarlierChat(threadId, prompt) : prompt,
+            ),
         attachments,
         options,
       )
@@ -2351,6 +2546,7 @@ export class Orchestrator {
       this.#acceptTurnStart(threadId, turnId, pendingStart)
       this.#store.clearThreadRestoreContext(threadId)
       if (continuation) this.#store.clearThreadContinueContext(threadId)
+      if (handover) this.#store.clearThreadHandover(threadId)
       return turnId
     } catch (error) {
       if (this.#threads.get(threadId) === entry) this.#markIdleRuntimeEligible(threadId)
@@ -2386,11 +2582,17 @@ export class Orchestrator {
     const panicGeneration = this.#panicGeneration
     const disposeGeneration = this.#disposeGeneration
     if (this.#panicStopping) throw new Error('turn cancelled by panic stop')
+    if (this.#changingProvider.has(threadId)) {
+      throw new Error('This chat is moving to another provider. Send again once it has moved.')
+    }
     const approvalChange = this.#approvalChanges.get(threadId)
     if (approvalChange) await approvalChange.catch(() => undefined)
     await this.#ensureThread(threadId, options)
     if (panicGeneration !== this.#panicGeneration || disposeGeneration !== this.#disposeGeneration)
       throw new Error('turn cancelled by panic stop or shutdown')
+    if (this.#changingProvider.has(threadId)) {
+      throw new Error('This chat is moving to another provider. Send again once it has moved.')
+    }
     if (clientSubmissionId) this.#assertFreshSubmissionId(threadId, clientSubmissionId)
     const submittedAt = Date.now()
     const submission = clientSubmissionId
@@ -3569,11 +3771,30 @@ export class Orchestrator {
    * prompt stays as it is.
    */
   async #promptWithEarlierChat(threadId: string, prompt: string): Promise<string> {
+    const chats = await this.#earlierChats(threadId)
+    const continued = chats.pop()
+    if (!continued) return prompt
+    return (
+      continuationPromptFromReplay(continued, prompt, {
+        earlier: chats,
+        changes: this.earlierChanges(threadId),
+      }) ?? prompt
+    )
+  }
+
+  /**
+   * The chats this one carries on, oldest first, each as far as it went
+   * before the next one took over. Events share one sequence across chats, so
+   * a chat's first event marks where it left the one it continued; what that
+   * one did later is another branch. `laterStart` cuts the chat this one
+   * continued; without it that chat counts as it stands now.
+   */
+  async #earlierChats(
+    threadId: string,
+    laterStart = Number.POSITIVE_INFINITY,
+  ): Promise<HistoryEntry[][]> {
     const chats: HistoryEntry[][] = []
     const seen = new Set([threadId])
-    // Events share one sequence across chats, so a chat's first event marks
-    // where it left the one it continued; what that one did later is another branch.
-    let laterStart = Number.POSITIVE_INFINITY
     let earlierId = this.#store.thread(threadId)?.continuedFrom
     while (
       earlierId !== undefined &&
@@ -3587,14 +3808,38 @@ export class Orchestrator {
       for (const entry of history) laterStart = Math.min(laterStart, entry.seq)
       earlierId = this.#store.thread(earlierId)?.continuedFrom
     }
-    const continued = chats.pop()
-    if (!continued) return prompt
-    return (
-      continuationPromptFromReplay(continued, prompt, {
-        earlier: chats,
-        changes: this.earlierChanges(threadId),
-      }) ?? prompt
-    )
+    return chats
+  }
+
+  /**
+   * The first prompt a chat sends after it moved to another provider: its
+   * conversation up to `through`, any chats it carried on before that, and
+   * where the work stands, sized for the session that gets it.
+   */
+  async #handoverPrompt(
+    threadId: string,
+    request: string,
+    through: number,
+    session: AgentSession,
+  ): Promise<string> {
+    const stored = this.#store.thread(threadId)
+    const own = (await this.history(threadId)).filter((entry) => entry.seq <= through)
+    const earlier = await this.#earlierChats(threadId, own[0]?.seq)
+    const workspace = await workspaceChanges(this.#repoPath(threadId)).catch(() => undefined)
+    const context = stored
+      ? this.#contextRuntimeOptions(stored.provider, stored.agent).context
+      : undefined
+    return handoverPrompt({
+      conversations: [...earlier, own],
+      request,
+      budget: handoverBudget({
+        contextWindow: context?.window ?? session.capabilities.context?.windows[0],
+        promptLimit: session.promptLimit,
+        request,
+      }),
+      workspace,
+      keepAttachment: (file) => existsSync(file),
+    })
   }
 
   #promptAfterRestore(threadId: string, prompt: string): string {
@@ -4272,34 +4517,50 @@ export class Orchestrator {
       stored.provider === 'api' && !this.#runtimeForInjected
         ? this.#apiRuntime(stored.connectionId)
         : this.#runtimeFor(stored.provider, this.#onLog, accountHome)
-    if (!runtime.resume) {
+    // A chat that moved and has sent nothing there yet left no conversation in
+    // its new session. Some engines create theirs only at the first turn, so
+    // there may be nothing to resume; a fresh session loses nothing.
+    const fresh = this.#store.threadNeedsHandover(threadId)
+    const resume = runtime.resume
+    if (!fresh && !resume) {
       throw new Error(`${stored.provider} sessions cannot resume after TasteCode restarts yet`)
     }
     const workspacePath = stored.worktreePath ?? resolveWorkspacePath(stored.projectPath)
     const approval = this.#threadApprovals.get(threadId) ?? this.#store.threadApproval(threadId)
     const resumeState = this.#store.threadRuntimeState(threadId)
-    const result = await runtime
-      .resume(threadId, workspacePath, {
-        // Opening without the turn's model options would make an engine that
-        // applies them at launch (Claude effort) restart right after resuming.
-        ...(turnOptions.model ? { model: turnOptions.model } : {}),
-        ...(turnOptions.effort ? { effort: turnOptions.effort } : {}),
-        ...(turnOptions.serviceTier ? { serviceTier: turnOptions.serviceTier } : {}),
-        ...(stored.agent ? { agent: stored.agent } : {}),
-        ...(stored.providerSessionId ? { providerSessionId: stored.providerSessionId } : {}),
-        ...(resumeState === undefined ? {} : { resumeState }),
-        ...(approval ? { approval } : {}),
-        instructions: REPLY_STYLE_INSTRUCTIONS,
-        ...this.#mcpRuntimeOptions(stored.provider, stored.projectPath),
-        ...this.#contextRuntimeOptions(stored.provider, stored.agent),
-      })
-      .catch((error: unknown) => {
-        if (!(error instanceof StartupCleanupError)) throw error
-        void this.#stopFailedStartup(threadId, workspacePath, error).catch((stopError: unknown) =>
-          this.#onLog(`[startup] agent still not stopped: ${errorMessage(stopError)}`),
-        )
-        throw error.startError
-      })
+    const options: StartOptions = {
+      // Opening without the turn's model options would make an engine that
+      // applies them at launch (Claude effort) restart right after resuming.
+      ...(turnOptions.model ? { model: turnOptions.model } : {}),
+      ...(turnOptions.effort ? { effort: turnOptions.effort } : {}),
+      ...(turnOptions.serviceTier ? { serviceTier: turnOptions.serviceTier } : {}),
+      ...(stored.agent ? { agent: stored.agent } : {}),
+      ...(approval ? { approval } : {}),
+      ...this.#mcpRuntimeOptions(stored.provider, stored.projectPath),
+      ...this.#contextRuntimeOptions(stored.provider, stored.agent),
+    }
+    let freshSessionId: string | undefined
+    const result = await (
+      fresh || !resume
+        ? runtime
+            .start(workspacePath, { ...options, instructions: composeInstructions() })
+            .then((started) => {
+              freshSessionId = started.thread.id
+              return mapProviderSession(threadId, started)
+            })
+        : resume(threadId, workspacePath, {
+            ...options,
+            ...(stored.providerSessionId ? { providerSessionId: stored.providerSessionId } : {}),
+            ...(resumeState === undefined ? {} : { resumeState }),
+            instructions: REPLY_STYLE_INSTRUCTIONS,
+          })
+    ).catch((error: unknown) => {
+      if (!(error instanceof StartupCleanupError)) throw error
+      void this.#stopFailedStartup(threadId, workspacePath, error).catch((stopError: unknown) =>
+        this.#onLog(`[startup] agent still not stopped: ${errorMessage(stopError)}`),
+      )
+      throw error.startError
+    })
     if (result.thread.id !== threadId) {
       this.#checkoutAccess.retainStopping(workspacePath, threadId)
       await this.#stopThreadProvider(threadId, result.session)
@@ -4326,6 +4587,15 @@ export class Orchestrator {
       this.#checkoutAccess.retainStopping(workspacePath, threadId)
       await this.#stopThreadProvider(threadId, result.session)
       throw new Error('turn cancelled while resuming')
+    }
+    if (freshSessionId !== undefined) {
+      // The session it replaces never ran a turn; it stays the chat's own.
+      this.#store.moveThreadToProvider(threadId, {
+        provider: stored.provider,
+        ...(stored.agent ? { agent: stored.agent } : {}),
+        ...(stored.accountId ? { accountId: stored.accountId } : {}),
+        providerSessionId: freshSessionId,
+      })
     }
     this.#attachThread(
       onAccount(result.thread, stored.accountId),

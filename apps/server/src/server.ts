@@ -1380,6 +1380,25 @@ export function startServer(
         return { threadId: thread.id, ...(earlierChanges ? { earlierChanges } : {}) }
       }
 
+      case 'thread.changeProvider': {
+        const p = parseParams(method, params)
+        await orchestrator.changeProvider(p.threadId, {
+          provider: p.provider,
+          agent: p.agent,
+          accountId: p.accountId,
+          model: p.model,
+          serviceTier: p.serviceTier,
+          effort: p.effort,
+          approval: p.approval,
+        })
+        // The saved copy of the session the chat left stays its own; the new
+        // session's copy is linked by the next scan.
+        providerHistoryReady?.forget(p.threadId)
+        startedThisRun.add(p.threadId)
+        refreshProviderHistory()
+        return {}
+      }
+
       case 'thread.checkpoints': {
         const p = parseParams(method, params)
         return {
