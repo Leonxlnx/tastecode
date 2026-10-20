@@ -2952,7 +2952,9 @@ describe('provider roster', () => {
     expect(rowNames(agents)).toEqual(['Devin', 'Droid', 'Junie'])
     expect(row('Codex').textContent).toContain('OpenAI · Signed in')
     expect(row('Codex').textContent).toContain('Added')
-    expect(within(row('Codex')).queryByRole('button')).toBeNull()
+    // Added takes the provider off again from here, as the list's minus does.
+    fireEvent.click(within(row('Codex')).getByRole('button', { name: 'Remove Codex' }))
+    expect(onProviderRosterChange).toHaveBeenLastCalledWith([])
     expect(row('Grok').textContent).toContain('xAI · Not installed')
     expect(row('Junie').textContent).toContain('JetBrains · Not installed')
 

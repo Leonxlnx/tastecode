@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ProviderRow } from './ProviderRow.js'
 
 afterEach(cleanup)
@@ -141,5 +141,84 @@ describe('provider row grammar', () => {
       />,
     )
     expect(row().dataset['fault']).toBe('true')
+  })
+})
+
+const codex = { id: 'codex', displayName: 'Codex', installed: true, auth: 'unknown' } as const
+
+describe('a done action that undoes itself', () => {
+  it('waits for the pointer that just did it to leave before undoing', () => {
+    const undo = vi.fn()
+    render(
+      <ProviderRow
+        provider={codex}
+        status="OpenAI · Signed in"
+        primary={{
+          label: 'Added',
+          done: true,
+          undo: 'Remove',
+          ariaLabel: 'Remove Codex',
+          fresh: true,
+          onClick: undo,
+        }}
+      />,
+    )
+    const button = screen.getByRole('button', { name: 'Remove Codex' })
+    expect(button.dataset['fresh']).toBe('true')
+    // The second click of a double click lands here and does nothing.
+    fireEvent.click(button)
+    expect(undo).not.toHaveBeenCalled()
+
+    fireEvent.pointerLeave(button)
+    expect(button.dataset['fresh']).toBeUndefined()
+    fireEvent.click(button)
+    expect(undo).toHaveBeenCalledOnce()
+  })
+
+  it('undoes at once when it was done before, and from the keyboard', () => {
+    const undo = vi.fn()
+    render(
+      <ProviderRow
+        provider={codex}
+        status="OpenAI"
+        primary={{
+          label: 'Added',
+          done: true,
+          undo: 'Remove',
+          ariaLabel: 'Remove Codex',
+          onClick: undo,
+        }}
+      />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Codex' }))
+    expect(undo).toHaveBeenCalledOnce()
+
+    cleanup()
+    render(
+      <ProviderRow
+        provider={codex}
+        status="OpenAI"
+        primary={{
+          label: 'Added',
+          done: true,
+          undo: 'Remove',
+          ariaLabel: 'Remove Codex',
+          fresh: true,
+          onClick: undo,
+        }}
+      />,
+    )
+    const fresh = screen.getByRole('button', { name: 'Remove Codex' })
+    fireEvent.keyDown(fresh, { key: 'Enter' })
+    fireEvent.click(fresh)
+    expect(undo).toHaveBeenCalledTimes(2)
+  })
+
+  it('stays a plain label with nothing to undo', () => {
+    render(
+      <ProviderRow provider={codex} status="OpenAI" primary={{ label: 'Added', done: true }} />,
+    )
+    expect(screen.queryByRole('button')).toBeNull()
+    expect(screen.getByText('Added')).toBeTruthy()
   })
 })

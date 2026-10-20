@@ -1410,6 +1410,7 @@ export function ProviderSettings(props: {
         acpAgents={props.acpAgents ?? []}
         transport={props.transport}
         onAdd={(key) => onRosterChange([...roster, key])}
+        onRemove={(key) => removeFromRoster(key)}
         onDone={() => setPicking(false)}
       />
     )
@@ -1613,8 +1614,11 @@ function ProviderPicker(props: {
   acpAgents: readonly AcpAgent[]
   transport: Transport
   onAdd: (key: string) => void
+  onRemove: (key: string) => void
   onDone: () => void
 }) {
+  // Rows just added under the pointer, whose Added waits for it to leave before offering Remove.
+  const [justAdded, setJustAdded] = useState<readonly string[]>([])
   // An account added here brings its provider along when it was not added yet.
   const addProviderOf = (provider: ProviderId) => {
     if (!props.roster.includes(provider)) props.onAdd(provider)
@@ -1641,11 +1645,24 @@ function ProviderPicker(props: {
         link={added ? 'connected' : input.installed ? 'open' : 'none'}
         primary={
           added
-            ? { label: 'Added', done: true }
+            ? {
+                label: 'Added',
+                done: true,
+                undo: 'Remove',
+                ariaLabel: `Remove ${input.provider.displayName}`,
+                fresh: justAdded.includes(input.key),
+                onClick: () => {
+                  setJustAdded((current) => current.filter((key) => key !== input.key))
+                  props.onRemove(input.key)
+                },
+              }
             : {
                 label: 'Add',
                 ariaLabel: `Add ${input.provider.displayName}`,
-                onClick: () => props.onAdd(input.key),
+                onClick: () => {
+                  setJustAdded((current) => [...current, input.key])
+                  props.onAdd(input.key)
+                },
               }
         }
       />

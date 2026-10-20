@@ -1169,17 +1169,57 @@
 }
 
 /* In the picker, an added provider holds the action's place with a settled
-   label the width of the buttons around it. */
+   label the width of the buttons around it. Pointed at or focused, the label
+   offers to take the provider off again, in the colour of removing. */
 .provider-row__done {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 5px;
   min-width: 70px;
   height: 28px;
   color: var(--text-2);
   font-size: var(--t-sm);
   font-weight: 500;
+}
+
+.provider-row__done-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.provider-row__done--undo {
+  padding: 0 10px;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  cursor: pointer;
+  font-family: inherit;
+  transition:
+    color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
+}
+
+.provider-row__undo-label {
+  display: none;
+}
+
+.provider-row__done--undo:not([data-fresh]):is(:hover, :focus-visible) {
+  border-color: color-mix(in srgb, var(--error) 40%, transparent);
+  color: var(--error);
+}
+
+.provider-row__done--undo:not([data-fresh]):is(:hover, :focus-visible) > .provider-row__done-label {
+  display: none;
+}
+
+.provider-row__done--undo:not([data-fresh]):is(:hover, :focus-visible) > .provider-row__undo-label {
+  display: inline;
+}
+
+.provider-row__done--undo:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
 }
 
 /* Sign-in and install details hang under the provider's name. */

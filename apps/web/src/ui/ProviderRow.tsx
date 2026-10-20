@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import type { ProviderStatus } from '@harness/contracts'
 import { IconCheck as Check, IconExternalLink as ExternalLink } from '@tabler/icons-react'
 import { RowIssue } from './RowIssue.js'
@@ -17,8 +17,15 @@ export type ProviderAction = {
   danger?: boolean | undefined
   expanded?: boolean | undefined
   controls?: string | undefined
-  /** Already done: drawn in the action's place as a settled label, not a button. */
+  /**
+   * Already done: drawn in the action's place as a settled label. With
+   * `onClick` it undoes itself, saying so while pointed at or focused.
+   */
   done?: boolean | undefined
+  /** What the done label says while it offers to undo itself. */
+  undo?: string | undefined
+  /** Just done by a click, so it sits under that pointer until it leaves. */
+  fresh?: boolean | undefined
 }
 
 /**
@@ -96,6 +103,35 @@ export function ProviderRowSkeleton(props: { index: number }) {
   )
 }
 
+/**
+ * A done action that undoes itself. Just done by a click, it sits under the
+ * pointer that clicked, so it waits for that pointer to leave (or for the
+ * keyboard) before it offers to undo: a double click must not add and
+ * remove at once.
+ */
+function UndoButton(props: { action: ProviderAction; settled: ReactNode }) {
+  const [fresh, setFresh] = useState(props.action.fresh === true)
+  return (
+    <button
+      className="provider-row__done provider-row__done--undo"
+      type="button"
+      data-fresh={fresh || undefined}
+      aria-label={props.action.ariaLabel}
+      disabled={props.action.disabled}
+      onPointerLeave={() => setFresh(false)}
+      onKeyDown={() => setFresh(false)}
+      onClick={() => {
+        if (!fresh) props.action.onClick?.()
+      }}
+    >
+      {props.settled}
+      <span className="provider-row__undo-label" aria-hidden>
+        {props.action.undo}
+      </span>
+    </button>
+  )
+}
+
 function ProviderRowAction(props: {
   action: ProviderAction | undefined
   tone: 'primary' | 'secondary'
@@ -103,12 +139,14 @@ function ProviderRowAction(props: {
   const action = props.action
   if (!action) return null
   if (action.done) {
-    return (
-      <span className="provider-row__done">
+    const settled = (
+      <span className="provider-row__done-label">
         <Check size={13} aria-hidden />
         {action.label}
       </span>
     )
+    if (!action.onClick) return <span className="provider-row__done">{settled}</span>
+    return <UndoButton action={action} settled={settled} />
   }
   // Signing out reads the same in either slot; otherwise the secondary slot is quiet.
   const className = action.danger
