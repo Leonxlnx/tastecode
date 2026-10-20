@@ -153,6 +153,7 @@ const isSession = objectValidator<Project['sessions'][number]>({
   agent: optional(isString),
   connectionId: optional(isString),
   accountId: optional(isNonEmptyString),
+  continuedFrom: optional(isNonEmptyString),
   createdAt: isFiniteNumber,
   running: isBoolean,
   pinned: optional(isBoolean),
