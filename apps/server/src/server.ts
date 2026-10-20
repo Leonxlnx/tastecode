@@ -1040,7 +1040,7 @@ export function startServer(
       case 'backgroundModel.generateCommitMessage': {
         const p = parseParams(method, params)
         const diff = await readWorkspaceDiff(workspaceForRequest(store, p))
-        return { message: await orchestrator.generateBackgroundCommitMessage(diff) }
+        return { message: await orchestrator.generateBackgroundCommitMessage(diff, p.threadId) }
       }
 
       case 'voice.status': {

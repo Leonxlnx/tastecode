@@ -1130,7 +1130,7 @@ export class Orchestrator {
     if (!before) throw new Error(`no such thread: ${threadId}`)
     if (before.title !== expectedTitle) return { title: before.title, applied: false }
 
-    const output = await this.#runBackgroundTask(titlePrompt(request))
+    const output = await this.#runBackgroundTask(titlePrompt(request), before)
     const title = cleanGeneratedTitle(output, expectedTitle)
     const current = this.#store.thread(threadId)
     const applied = current?.title === expectedTitle
@@ -1138,13 +1138,23 @@ export class Orchestrator {
     return { title: applied ? title : (current?.title ?? expectedTitle), applied }
   }
 
-  async generateBackgroundCommitMessage(diff: SessionDiff): Promise<string> {
+  /** `threadId`: the chat whose checkout the diff is, when the request names one. */
+  async generateBackgroundCommitMessage(diff: SessionDiff, threadId?: string): Promise<string> {
     if (diff.files.length === 0) throw new Error('The working tree is clean.')
-    const output = await this.#runBackgroundTask(commitMessagePrompt(diff))
+    const chat = threadId ? this.#store.thread(threadId) : undefined
+    const output = await this.#runBackgroundTask(commitMessagePrompt(diff), chat)
     return cleanGeneratedCommitMessage(output)
   }
 
-  async #runBackgroundTask(prompt: string): Promise<string> {
+  /**
+   * `chat`: the chat this writing is for. When the background source is that
+   * chat's own provider, the prompt (its first message, its diff) goes through
+   * the chat's account, never through the default one.
+   */
+  async #runBackgroundTask(
+    prompt: string,
+    chat?: { provider: ProviderId; accountId?: AccountId | undefined },
+  ): Promise<string> {
     const preference = this.#store.backgroundModelPreference()
     // Each source read can start vendor processes; read only what this choice needs.
     const failed: Array<Pick<BackgroundModelSourceLoader, 'provider' | 'connectionId' | 'agent'>> =
@@ -1165,7 +1175,14 @@ export class Orchestrator {
       const runtime =
         resolved.provider === 'api'
           ? this.#apiRuntime(resolved.connectionId)
-          : this.#runtimeFor(resolved.provider, this.#onLog)
+          : this.#runtimeFor(
+              resolved.provider,
+              this.#onLog,
+              // A custom harness keeps its own sign-in; another provider has no account of this chat.
+              chat && !resolved.agent && resolved.provider === chat.provider
+                ? threadAccountHome(this.#accounts, chat)
+                : undefined,
+            )
       try {
         return await runBackgroundCompletion({
           runtime,
