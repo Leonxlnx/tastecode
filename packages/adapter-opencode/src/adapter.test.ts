@@ -29,10 +29,11 @@ const CAPTURED = JSON.parse(
 
 // SAFETY: Frames captured from opencode 1.18.31's v1 /event stream against a
 // scripted model (session id normalised to the mock's): a plain answer, a bash
-// call that asks permission, and a provider error.
+// call that asks permission, a provider error, and a question answered and one
+// rejected.
 const CAPTURED_1_18_31 = JSON.parse(
   readFileSync(new URL('./fixtures/opencode-1.18.31-v1-turns.json', import.meta.url), 'utf8'),
-) as Record<'text' | 'tool' | 'failure', OpenCodeWireEvent[]>
+) as Record<'text' | 'tool' | 'failure' | 'question' | 'rejectedQuestion', OpenCodeWireEvent[]>
 
 function fixtureText(name: string): string {
   return readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8')
@@ -486,6 +487,96 @@ describe('OpenCode adapter', () => {
               : [],
           ),
         ).toEqual(['The command printed stub-ran.'])
+      } finally {
+        await adapter.dispose()
+      }
+    })
+
+    it('asks a captured question and sends the answer back', async () => {
+      const { mock, adapter, events, thread, completed } = await capturedTurn()
+      try {
+        await adapter.sendTurn(thread.id, 'ASK_QUESTION please')
+        await mock.waitFor('/session/session-1/prompt_async')
+        const frames = CAPTURED_1_18_31.question
+        const asked = frames.findIndex((event) => event.type === 'question.asked')
+        for (const event of frames.slice(0, asked + 1)) mock.broadcast(event)
+        const request = await vi.waitFor(() => {
+          const found = events.find((event) => event.type === 'user_input.requested')
+          if (!found || found.type !== 'user_input.requested') throw new Error('not asked yet')
+          return found.request
+        })
+        expect(request.questions).toEqual([
+          {
+            id: '0',
+            header: 'Color',
+            question: 'Which color should the button be?',
+            allowOther: true,
+            secret: false,
+            options: [
+              { label: 'Red', description: 'Warm and loud' },
+              { label: 'Blue', description: 'Calm' },
+            ],
+          },
+        ])
+
+        adapter.respondToUserInput(request.id, { '0': ['Blue'] })
+        const reply = await mock.waitFor(`/question/${request.id}/reply`)
+        expect(reply.body).toEqual({ answers: [['Blue']] })
+        for (const event of frames.slice(asked + 1)) mock.broadcast(event)
+
+        expect(await completed).toMatchObject({ status: 'completed' })
+        expect(events.filter((event) => event.type === 'user_input.resolved')).toEqual([
+          { type: 'user_input.resolved', id: request.id },
+        ])
+        expect(
+          events.flatMap((event) =>
+            event.type === 'item.completed' && event.item.type === 'message'
+              ? [event.item.text]
+              : [],
+          ),
+        ).toEqual([
+          'Tool said: User has answered your questions: "Which color should the button be?"="Blue". You can now continue with the user\'s answers in mind.',
+        ])
+      } finally {
+        await adapter.dispose()
+      }
+    })
+
+    it('settles a question rejected from another OpenCode client', async () => {
+      const { mock, adapter, events, thread, completed } = await capturedTurn()
+      try {
+        await adapter.sendTurn(thread.id, 'ASK_QUESTION again')
+        await mock.waitFor('/session/session-1/prompt_async')
+        for (const event of CAPTURED_1_18_31.rejectedQuestion) mock.broadcast(event)
+
+        expect(await completed).toMatchObject({ status: 'completed' })
+        const asked = events.find((event) => event.type === 'user_input.requested')
+        expect(asked).toBeDefined()
+        expect(events.filter((event) => event.type === 'user_input.resolved')).toHaveLength(1)
+      } finally {
+        await adapter.dispose()
+      }
+    })
+
+    it('settles a question the turn still waits on when the turn is stopped', async () => {
+      const { mock, adapter, events, thread } = await capturedTurn()
+      try {
+        await adapter.sendTurn(thread.id, 'ASK_QUESTION please')
+        await mock.waitFor('/session/session-1/prompt_async')
+        const frames = CAPTURED_1_18_31.question
+        for (const event of frames.slice(
+          0,
+          frames.findIndex((e) => e.type === 'question.asked') + 1,
+        ))
+          mock.broadcast(event)
+        await vi.waitFor(() =>
+          expect(events.some((event) => event.type === 'user_input.requested')).toBe(true),
+        )
+
+        await adapter.interrupt(thread.id)
+
+        expect(events.filter((event) => event.type === 'user_input.resolved')).toHaveLength(1)
+        expect(events.at(-1)).toMatchObject({ type: 'turn.completed', status: 'interrupted' })
       } finally {
         await adapter.dispose()
       }

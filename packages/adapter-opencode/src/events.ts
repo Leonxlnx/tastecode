@@ -36,6 +36,10 @@ export type OpenCodeV1NewerEvent =
       }
     }
   | { type: 'permission.asked'; properties: Record<string, JsonRpcValue> }
+  | {
+      type: 'question.asked' | 'question.replied' | 'question.rejected'
+      properties: Record<string, JsonRpcValue>
+    }
 
 export type OpenCodeWireEvent =
   Event | OpenCodeV2Event | OpenCodeLegacyLifecycleEvent | OpenCodeV1NewerEvent
@@ -58,7 +62,7 @@ export class OpenCodeEventMapper {
   translate(event: OpenCodeWireEvent): DomainEvent[] {
     if ('data' in event) return this.#v2(event)
     if (event.type === 'session.status' || event.type === 'session.idle') return []
-    if (event.type === 'permission.asked') return []
+    if (event.type === 'permission.asked' || event.type.startsWith('question.')) return []
     if (event.type === 'message.part.delta') return this.#partDelta(event.properties)
     if (event.type === 'message.part.updated') {
       if (this.#userMessages.has(event.properties.part.messageID)) return []

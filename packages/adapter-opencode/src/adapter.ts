@@ -12,6 +12,7 @@ import type {
   ProviderCommand,
   Skill,
   Thread,
+  UserInputQuestion,
 } from '@harness/contracts'
 import { createOpencodeClient, type Event, type OpencodeClient } from '@opencode-ai/sdk'
 import {
@@ -38,6 +39,8 @@ export const OPENCODE_CAPABILITIES: Capabilities = {
   interrupt: true,
   reasoningItems: true,
   approvals: true,
+  // opencode's `question` tool, answered through its v1 question routes.
+  userInput: true,
   images: false,
 }
 
@@ -231,6 +234,22 @@ const V1PermissionRepliedSchema = z.union([
   z.object({ requestID: z.string() }),
   z.object({ permissionID: z.string() }),
 ])
+/** opencode 1.18.31's `question` tool: one or more questions the turn waits on. */
+const QuestionAskedSchema = z.object({
+  id: z.string(),
+  questions: z
+    .array(
+      z.object({
+        question: z.string(),
+        header: z.string().optional(),
+        options: z.array(z.object({ label: z.string(), description: z.string().optional() })),
+        multiple: z.boolean().optional(),
+        custom: z.boolean().optional(),
+      }),
+    )
+    .min(1),
+})
+const QuestionSettledSchema = z.object({ requestID: z.string() })
 const SessionErrorSchema = z.object({
   error: z
     .object({
@@ -282,6 +301,8 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
   #approval: ApprovalMode = 'ask'
   #pendingApprovals = new Map<string, { request: ApprovalRequest; surfaced: boolean }>()
   #replyingApprovals = new Map<string, Promise<void>>()
+  /** Questions the turn waits on, with how many each asks. */
+  #pendingQuestions = new Map<string, number>()
   #model: string | undefined
   #effort: string | undefined
   #instructions: string | undefined
@@ -578,6 +599,31 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
     }
   }
 
+  /** Answers an OpenCode question; each question gets the labels or text chosen for it. */
+  respondToUserInput(requestId: string, answers: Record<string, string[]>): void {
+    const count = this.#pendingQuestions.get(requestId)
+    if (count === undefined || !this.#baseUrl) return
+    const directory = encodeURIComponent(this.#workspacePath)
+    void this.#v2Request(
+      `/question/${encodeURIComponent(requestId)}/reply?directory=${directory}`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          answers: Array.from({ length: count }, (_, index) => answers[String(index)] ?? []),
+        }),
+      },
+    ).then(
+      () => this.#settleQuestion(requestId),
+      () => this.emit('log', 'OpenCode question answer failed'),
+    )
+  }
+
+  #settleQuestion(requestId: string): void {
+    if (this.#pendingQuestions.delete(requestId)) {
+      this.emit('event', { type: 'user_input.resolved', id: requestId })
+    }
+  }
+
   /** Live access-level change; read again for every permission request. */
   setApproval(approval: ApprovalMode): void {
     this.#validateApproval(approval)
@@ -681,6 +727,7 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
     this.#instructionsPending = false
     this.#pendingApprovals.clear()
     this.#replyingApprovals.clear()
+    this.#pendingQuestions.clear()
     this.#processStop = stopped
     return stopped
   }
@@ -986,6 +1033,43 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
         this.emit('event', { type: 'approval.resolved', id })
       return
     }
+    if (event.type === 'question.asked') {
+      const asked = QuestionAskedSchema.safeParse(event.properties)
+      if (!asked.success || !this.#turnId) return
+      const { id, questions } = asked.data
+      this.#pendingQuestions.set(id, questions.length)
+      this.emit('event', {
+        type: 'user_input.requested',
+        request: {
+          id,
+          turnId: this.#turnId,
+          questions: questions.map((question, index): UserInputQuestion => ({
+            id: String(index),
+            header: question.header?.trim() || 'Question',
+            question: question.question.trim() || question.header?.trim() || 'Question',
+            allowOther: question.custom !== false,
+            secret: false,
+            options:
+              question.options.length > 0
+                ? question.options.map((option) => ({
+                    label: option.label.trim() || 'Option',
+                    description: option.description?.trim() || option.label.trim() || 'Option',
+                  }))
+                : null,
+            ...(question.multiple ? { multiSelect: true } : {}),
+          })),
+          autoResolutionMs: null,
+          createdAt: Date.now(),
+        },
+      })
+      return
+    }
+    if (event.type === 'question.replied' || event.type === 'question.rejected') {
+      const settled = QuestionSettledSchema.safeParse(event.properties)
+      // Answered here or by another OpenCode client; either way nothing waits any more.
+      if (settled.success) this.#settleQuestion(settled.data.requestID)
+      return
+    }
     if (event.type === 'session.error') {
       const failure = SessionErrorSchema.safeParse(event.properties)
       const error = failure.success ? failure.data.error : undefined
@@ -1019,6 +1103,8 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
     const finishEvents = this.#mapper?.finish() ?? []
     const approvals = [...this.#pendingApprovals.keys()]
     this.#pendingApprovals.clear()
+    const questions = [...this.#pendingQuestions.keys()]
+    this.#pendingQuestions.clear()
     // Live-turn state clears before any emit: the orchestrator reacts to
     // `turn.completed` synchronously inside the emit (the design flow sends
     // the next phase prompt right there), and that sendTurn must not be
@@ -1027,6 +1113,7 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
     this.#mapper = undefined
     for (const event of finishEvents) this.emit('event', event)
     for (const id of approvals) this.emit('event', { type: 'approval.resolved', id })
+    for (const id of questions) this.emit('event', { type: 'user_input.resolved', id })
     this.emit('event', { type: 'turn.completed', turnId, status })
   }
 
@@ -1040,12 +1127,15 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
     const finishEvents = this.#mapper?.finish('failed') ?? []
     const approvals = [...this.#pendingApprovals.keys()]
     this.#pendingApprovals.clear()
+    const questions = [...this.#pendingQuestions.keys()]
+    this.#pendingQuestions.clear()
     // Same ordering as #finishTurn: listeners may start the next turn inside
     // these emits, so the live-turn state must already be gone.
     this.#turnId = undefined
     this.#mapper = undefined
     for (const event of finishEvents) this.emit('event', event)
     for (const id of approvals) this.emit('event', { type: 'approval.resolved', id })
+    for (const id of questions) this.emit('event', { type: 'user_input.resolved', id })
     this.emit('log', 'OpenCode request failed')
     this.emit('event', {
       type: 'thread.error',

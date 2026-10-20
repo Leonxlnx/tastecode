@@ -1258,5 +1258,1105 @@
         "sessionID": "session-1"
       }
     }
+  ],
+  "question": [
+    {
+      "id": "evt_15b7a30e1001LP4WrEDKvG1I9a",
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "session-1",
+        "info": {
+          "id": "msg_15b7a30e0001cO4lc2UqMF2XT7",
+          "role": "user",
+          "sessionID": "session-1",
+          "time": {
+            "created": 1792536096992
+          },
+          "agent": "build",
+          "model": {
+            "providerID": "stub",
+            "modelID": "stub-model"
+          }
+        }
+      }
+    },
+    {
+      "id": "evt_15b7a30e10022XL2fJ2cKGxjwO",
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "session-1",
+        "part": {
+          "type": "text",
+          "text": "ASK_QUESTION please",
+          "messageID": "msg_15b7a30e0001cO4lc2UqMF2XT7",
+          "sessionID": "session-1",
+          "id": "prt_15b7a30e0002QMIVE1XfSMFK79"
+        },
+        "time": 1792536096993
+      }
+    },
+    {
+      "id": "evt_15b7a30e4001GGoE5iPy1WPTJ9",
+      "type": "session.status",
+      "properties": {
+        "sessionID": "session-1",
+        "status": {
+          "type": "busy"
+        }
+      }
+    },
+    {
+      "id": "evt_15b7a30e4002ilf0Cb7kHTic6C",
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "session-1",
+        "info": {
+          "id": "msg_15b7a30e4001kGSf4uNIrOdjdW",
+          "parentID": "msg_15b7a30e0001cO4lc2UqMF2XT7",
+          "role": "assistant",
+          "mode": "build",
+          "agent": "build",
+          "path": {
+            "cwd": "/repo",
+            "root": "/"
+          },
+          "cost": 0,
+          "tokens": {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache": {
+              "read": 0,
+              "write": 0
+            }
+          },
+          "modelID": "stub-model",
+          "providerID": "stub",
+          "time": {
+            "created": 1792536096996
+          },
+          "sessionID": "session-1"
+        }
+      }
+    },
+    {
+      "id": "evt_15b7a30e8001AExCqgIURRIJcO",
+      "type": "session.diff",
+      "properties": {
+        "sessionID": "session-1",
+        "diff": []
+      }
+    },
+    {
+      "id": "evt_15b7a30e8002ydZQS7ql3e84K4",
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "session-1",
+        "info": {
+          "role": "user",
+          "time": {
+            "created": 1792536096992
+          },
+          "agent": "build",
+          "model": {
+            "providerID": "stub",
+            "modelID": "stub-model"
+          },
+          "id": "msg_15b7a30e0001cO4lc2UqMF2XT7",
+          "sessionID": "session-1",
+          "summary": {
+            "diffs": []
+          }
+        }
+      }
+    },
+    {
+      "id": "evt_15b7a30ea001vdJFZz1W1aL7S1",
+      "type": "session.status",
+      "properties": {
+        "sessionID": "session-1",
+        "status": {
+          "type": "busy"
+        }
+      }
+    },
+    {
+      "id": "evt_15b7a30ee001prmEFWyKhfW25i",
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "session-1",
+        "part": {
+          "id": "prt_15b7a30ee001vxlAMklThXh4JT",
+          "messageID": "msg_15b7a30e4001kGSf4uNIrOdjdW",
+          "sessionID": "session-1",
+          "type": "step-start"
+        },
+        "time": 1792536097006
+      }
+    },
+    {
+      "id": "evt_15b7a30ef001JdtMx1QWTbSJ3u",
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "session-1",
+        "part": {
+          "id": "prt_15b7a30ef001hksmgbv3KXJQ95",
+          "messageID": "msg_15b7a30e4001kGSf4uNIrOdjdW",
+          "sessionID": "session-1",
+          "type": "tool",
+          "tool": "question",
+          "callID": "call_stub_q",
+          "state": {
+            "status": "pending",
+            "input": {},
+            "raw": ""
+          }
+        },
+        "time": 1792536097007
+      }
+    },
+    {
+      "id": "evt_15b7a30f0002ZI2TouzD68EpPk",
+      "type": "question.asked",
+      "properties": {
+        "id": "que_15b7a30f0001A5VkeLPlzOLnRJ",
+        "sessionID": "session-1",
+        "questions": [
+          {
+            "question": "Which color should the button be?",
+            "header": "Color",
+            "options": [
+              {
+                "label": "Red",
+                "description": "Warm and loud"
+              },
+              {
+                "label": "Blue",
+                "description": "Calm"
+              }
+            ]
+          }
+        ],
+        "tool": {
+          "messageID": "msg_15b7a30e4001kGSf4uNIrOdjdW",
+          "callID": "call_stub_q"
+        }
+      }
+    },
+    {
+      "id": "evt_15b7a30f10011at2tN4RdGw075",
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "session-1",
+        "part": {
+          "type": "tool",
+          "tool": "question",
+          "callID": "call_stub_q",
+          "state": {
+            "status": "running",
+            "input": {
+              "questions": [
+                {
+                  "question": "Which color should the button be?",
+                  "header": "Color",
+                  "options": [
+                    {
+                      "label": "Red",
+                      "description": "Warm and loud"
+                    },
+                    {
+                      "label": "Blue",
+                      "description": "Calm"
+                    }
+                  ]
+                }
+              ]
+            },
+            "time": {
+              "start": 1792536097009
+            }
+          },
+          "id": "prt_15b7a30ef001hksmgbv3KXJQ95",
+          "sessionID": "session-1",
+          "messageID": "msg_15b7a30e4001kGSf4uNIrOdjdW"
+        },
+        "time": 1792536097009
+      }
+    },
+    {
+      "id": "evt_15b7a30f3001TmgvWVLMohgUHC",
+      "type": "question.replied",
+      "properties": {
+        "sessionID": "session-1",
+        "requestID": "que_15b7a30f0001A5VkeLPlzOLnRJ",
+        "answers": [["Blue"]]
+      }
+    },
+    {
+      "id": "evt_15b7a30f5001MoPoEa0MxMzhh7",
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "session-1",
+        "part": {
+          "type": "tool",
+          "tool": "question",
+          "callID": "call_stub_q",
+          "state": {
+            "status": "completed",
+            "input": {
+              "questions": [
+                {
+                  "question": "Which color should the button be?",
+                  "header": "Color",
+                  "options": [
+                    {
+                      "label": "Red",
+                      "description": "Warm and loud"
+                    },
+                    {
+                      "label": "Blue",
+                      "description": "Calm"
+                    }
+                  ]
+                }
+              ]
+            },
+            "output": "User has answered your questions: \"Which color should the button be?\"=\"Blue\". You can now continue with the user's answers in mind.",
+            "metadata": {
+              "answers": [["Blue"]],
+              "truncated": false
+            },
+            "title": "Asked 1 question",
+            "time": {
+              "start": 1792536097009,
+              "end": 1792536097013
+            }
+          },
+          "id": "prt_15b7a30ef001hksmgbv3KXJQ95",
+          "sessionID": "session-1",
+          "messageID": "msg_15b7a30e4001kGSf4uNIrOdjdW"
+        },
+        "time": 1792536097013
+      }
+    },
+    {
+      "id": "evt_15b7a30f6001yP4jBCke3P9B4A",
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "session-1",
+        "part": {
+          "id": "prt_15b7a30f60018mA2IRBPxbyp3R",
+          "reason": "tool-calls",
+          "messageID": "msg_15b7a30e4001kGSf4uNIrOdjdW",
+          "sessionID": "session-1",
+          "type": "step-finish",
+          "tokens": {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache": {
+              "write": 0,
+              "read": 0
+            }
+          },
+          "cost": 0
+        },
+        "time": 1792536097014
+      }
+    },
+    {
+      "id": "evt_15b7a30f6002AxpohfRfJ6aO5j",
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "session-1",
+        "info": {
+          "id": "msg_15b7a30e4001kGSf4uNIrOdjdW",
+          "parentID": "msg_15b7a30e0001cO4lc2UqMF2XT7",
+          "role": "assistant",
+          "mode": "build",
+          "agent": "build",
+          "path": {
+            "cwd": "/repo",
+            "root": "/"
+          },
+          "cost": 0,
+          "tokens": {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache": {
+              "write": 0,
+              "read": 0
+            }
+          },
+          "modelID": "stub-model",
+          "providerID": "stub",
+          "time": {
+            "created": 1792536096996,
+            "completed": 1792536097015
+          },
+          "sessionID": "session-1",
+          "finish": "tool-calls"
+        }
+      }
+    },
+    {
+      "id": "evt_15b7a30f7001Vh6qKHkhOrAPVA",
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "session-1",
+        "info": {
+          "id": "msg_15b7a30e4001kGSf4uNIrOdjdW",
+          "parentID": "msg_15b7a30e0001cO4lc2UqMF2XT7",
+          "role": "assistant",
+          "mode": "build",
+          "agent": "build",
+          "path": {
+            "cwd": "/repo",
+            "root": "/"
+          },
+          "cost": 0,
+          "tokens": {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache": {
+              "write": 0,
+              "read": 0
+            }
+          },
+          "modelID": "stub-model",
+          "providerID": "stub",
+          "time": {
+            "created": 1792536096996,
+            "completed": 1792536097015
+          },
+          "sessionID": "session-1",
+          "finish": "tool-calls"
+        }
+      }
+    },
+    {
+      "id": "evt_15b7a30f7002H6Y59M8XootTex",
+      "type": "session.status",
+      "properties": {
+        "sessionID": "session-1",
+        "status": {
+          "type": "busy"
+        }
+      }
+    },
+    {
+      "id": "evt_15b7a30f8001Plw8bGdf1KZrho",
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "session-1",
+        "info": {
+          "id": "msg_15b7a30f80017pHvYzQEpIpskC",
+          "parentID": "msg_15b7a30e0001cO4lc2UqMF2XT7",
+          "role": "assistant",
+          "mode": "build",
+          "agent": "build",
+          "path": {
+            "cwd": "/repo",
+            "root": "/"
+          },
+          "cost": 0,
+          "tokens": {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache": {
+              "read": 0,
+              "write": 0
+            }
+          },
+          "modelID": "stub-model",
+          "providerID": "stub",
+          "time": {
+            "created": 1792536097016
+          },
+          "sessionID": "session-1"
+        }
+      }
+    },
+    {
+      "id": "evt_15b7a3100001Udf058Yb0I4Z3l",
+      "type": "session.diff",
+      "properties": {
+        "sessionID": "session-1",
+        "diff": []
+      }
+    },
+    {
+      "id": "evt_15b7a31000029Qi8INAv8sfT5j",
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "session-1",
+        "info": {
+          "role": "user",
+          "time": {
+            "created": 1792536096992
+          },
+          "agent": "build",
+          "model": {
+            "providerID": "stub",
+            "modelID": "stub-model"
+          },
+          "summary": {
+            "diffs": []
+          },
+          "id": "msg_15b7a30e0001cO4lc2UqMF2XT7",
+          "sessionID": "session-1"
+        }
+      }
+    },
+    {
+      "id": "evt_15b7a3107001rUqTRLLRAk0vfT",
+      "type": "session.status",
+      "properties": {
+        "sessionID": "session-1",
+        "status": {
+          "type": "busy"
+        }
+      }
+    },
+    {
+      "id": "evt_15b7a310b001q4eEdJ0YQQnf9j",
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "session-1",
+        "part": {
+          "id": "prt_15b7a310b0011rPaksei1fO0sM",
+          "messageID": "msg_15b7a30f80017pHvYzQEpIpskC",
+          "sessionID": "session-1",
+          "type": "step-start"
+        },
+        "time": 1792536097035
+      }
+    },
+    {
+      "id": "evt_15b7a310c0013xC8oXtblBaj3W",
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "session-1",
+        "part": {
+          "id": "prt_15b7a310c0014of1Kw5fqoHair",
+          "messageID": "msg_15b7a30f80017pHvYzQEpIpskC",
+          "sessionID": "session-1",
+          "type": "text",
+          "text": "",
+          "time": {
+            "start": 1792536097036
+          }
+        },
+        "time": 1792536097036
+      }
+    },
+    {
+      "id": "evt_15b7a310c002U3khTUrFEF6rRG",
+      "type": "message.part.delta",
+      "properties": {
+        "sessionID": "session-1",
+        "messageID": "msg_15b7a30f80017pHvYzQEpIpskC",
+        "partID": "prt_15b7a310c0014of1Kw5fqoHair",
+        "field": "text",
+        "delta": "Tool said: User has answered your questions: \"Which color should the button be?\"=\"Blue\". You can now continue with the user's answers in mind."
+      }
+    },
+    {
+      "id": "evt_15b7a310c0034iIpSFbjuRHEU2",
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "session-1",
+        "part": {
+          "id": "prt_15b7a310c0014of1Kw5fqoHair",
+          "messageID": "msg_15b7a30f80017pHvYzQEpIpskC",
+          "sessionID": "session-1",
+          "type": "text",
+          "text": "Tool said: User has answered your questions: \"Which color should the button be?\"=\"Blue\". You can now continue with the user's answers in mind.",
+          "time": {
+            "start": 1792536097036,
+            "end": 1792536097036
+          }
+        },
+        "time": 1792536097036
+      }
+    },
+    {
+      "id": "evt_15b7a310d001IY715AnQuElYnV",
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "session-1",
+        "part": {
+          "id": "prt_15b7a310d0019iAUhCOr8DtTDm",
+          "reason": "stop",
+          "messageID": "msg_15b7a30f80017pHvYzQEpIpskC",
+          "sessionID": "session-1",
+          "type": "step-finish",
+          "tokens": {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache": {
+              "write": 0,
+              "read": 0
+            }
+          },
+          "cost": 0
+        },
+        "time": 1792536097037
+      }
+    },
+    {
+      "id": "evt_15b7a310e0012bFy6cRDsGA26s",
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "session-1",
+        "info": {
+          "id": "msg_15b7a30f80017pHvYzQEpIpskC",
+          "parentID": "msg_15b7a30e0001cO4lc2UqMF2XT7",
+          "role": "assistant",
+          "mode": "build",
+          "agent": "build",
+          "path": {
+            "cwd": "/repo",
+            "root": "/"
+          },
+          "cost": 0,
+          "tokens": {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache": {
+              "write": 0,
+              "read": 0
+            }
+          },
+          "modelID": "stub-model",
+          "providerID": "stub",
+          "time": {
+            "created": 1792536097016,
+            "completed": 1792536097038
+          },
+          "sessionID": "session-1",
+          "finish": "stop"
+        }
+      }
+    },
+    {
+      "id": "evt_15b7a310e002p9P4fzLfDNWXYS",
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "session-1",
+        "info": {
+          "id": "msg_15b7a30f80017pHvYzQEpIpskC",
+          "parentID": "msg_15b7a30e0001cO4lc2UqMF2XT7",
+          "role": "assistant",
+          "mode": "build",
+          "agent": "build",
+          "path": {
+            "cwd": "/repo",
+            "root": "/"
+          },
+          "cost": 0,
+          "tokens": {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache": {
+              "write": 0,
+              "read": 0
+            }
+          },
+          "modelID": "stub-model",
+          "providerID": "stub",
+          "time": {
+            "created": 1792536097016,
+            "completed": 1792536097038
+          },
+          "sessionID": "session-1",
+          "finish": "stop"
+        }
+      }
+    },
+    {
+      "id": "evt_15b7a310f001Q51oKFPFKby493",
+      "type": "session.status",
+      "properties": {
+        "sessionID": "session-1",
+        "status": {
+          "type": "busy"
+        }
+      }
+    },
+    {
+      "id": "evt_15b7a310f0020wTdyNFfCSxBBP",
+      "type": "session.status",
+      "properties": {
+        "sessionID": "session-1",
+        "status": {
+          "type": "idle"
+        }
+      }
+    },
+    {
+      "id": "evt_15b7a310f003VLX6wEUsxITdt9",
+      "type": "session.idle",
+      "properties": {
+        "sessionID": "session-1"
+      }
+    },
+    {
+      "id": "evt_15b7a3110002A75Ny4jXYeJGfN",
+      "type": "session.diff",
+      "properties": {
+        "sessionID": "session-1",
+        "diff": []
+      }
+    },
+    {
+      "id": "evt_15b7a3110003zFWZCpjofCmaW5",
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "session-1",
+        "info": {
+          "role": "user",
+          "time": {
+            "created": 1792536096992
+          },
+          "agent": "build",
+          "model": {
+            "providerID": "stub",
+            "modelID": "stub-model"
+          },
+          "summary": {
+            "diffs": []
+          },
+          "id": "msg_15b7a30e0001cO4lc2UqMF2XT7",
+          "sessionID": "session-1"
+        }
+      }
+    }
+  ],
+  "rejectedQuestion": [
+    {
+      "id": "evt_15b7a330a001jPyh8k55K6Krse",
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "session-1",
+        "info": {
+          "id": "msg_15b7a3309001TmQrburiynVA5J",
+          "role": "user",
+          "sessionID": "session-1",
+          "time": {
+            "created": 1792536097545
+          },
+          "agent": "build",
+          "model": {
+            "providerID": "stub",
+            "modelID": "stub-model"
+          }
+        }
+      }
+    },
+    {
+      "id": "evt_15b7a330b001jBBd4glDcWPw0D",
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "session-1",
+        "part": {
+          "type": "text",
+          "text": "ASK_QUESTION again",
+          "messageID": "msg_15b7a3309001TmQrburiynVA5J",
+          "sessionID": "session-1",
+          "id": "prt_15b7a330a0012rgxOGu7Pi0d4x"
+        },
+        "time": 1792536097547
+      }
+    },
+    {
+      "id": "evt_15b7a330d001huXC7tPUmJas0x",
+      "type": "session.status",
+      "properties": {
+        "sessionID": "session-1",
+        "status": {
+          "type": "busy"
+        }
+      }
+    },
+    {
+      "id": "evt_15b7a330e001SYeXTVNJ3L2L2A",
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "session-1",
+        "info": {
+          "id": "msg_15b7a330e0014KzPie1NjwjHGh",
+          "parentID": "msg_15b7a3309001TmQrburiynVA5J",
+          "role": "assistant",
+          "mode": "build",
+          "agent": "build",
+          "path": {
+            "cwd": "/repo",
+            "root": "/"
+          },
+          "cost": 0,
+          "tokens": {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache": {
+              "read": 0,
+              "write": 0
+            }
+          },
+          "modelID": "stub-model",
+          "providerID": "stub",
+          "time": {
+            "created": 1792536097550
+          },
+          "sessionID": "session-1"
+        }
+      }
+    },
+    {
+      "id": "evt_15b7a3311002eOuPtgwkRRjRYx",
+      "type": "session.diff",
+      "properties": {
+        "sessionID": "session-1",
+        "diff": []
+      }
+    },
+    {
+      "id": "evt_15b7a3312001pjBDRQfZI1GHX2",
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "session-1",
+        "info": {
+          "role": "user",
+          "time": {
+            "created": 1792536097545
+          },
+          "agent": "build",
+          "model": {
+            "providerID": "stub",
+            "modelID": "stub-model"
+          },
+          "id": "msg_15b7a3309001TmQrburiynVA5J",
+          "sessionID": "session-1",
+          "summary": {
+            "diffs": []
+          }
+        }
+      }
+    },
+    {
+      "id": "evt_15b7a3313001TKB9PLh1loghOn",
+      "type": "session.status",
+      "properties": {
+        "sessionID": "session-1",
+        "status": {
+          "type": "busy"
+        }
+      }
+    },
+    {
+      "id": "evt_15b7a3318001U6X4hKKHupwoNT",
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "session-1",
+        "part": {
+          "id": "prt_15b7a3318001euRS5W7p1TcXtI",
+          "messageID": "msg_15b7a330e0014KzPie1NjwjHGh",
+          "sessionID": "session-1",
+          "type": "step-start"
+        },
+        "time": 1792536097560
+      }
+    },
+    {
+      "id": "evt_15b7a3319001pZmJu5F62IHpNa",
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "session-1",
+        "part": {
+          "id": "prt_15b7a3319001ihW28UQ91TJx7O",
+          "messageID": "msg_15b7a330e0014KzPie1NjwjHGh",
+          "sessionID": "session-1",
+          "type": "tool",
+          "tool": "question",
+          "callID": "call_stub_q",
+          "state": {
+            "status": "pending",
+            "input": {},
+            "raw": ""
+          }
+        },
+        "time": 1792536097561
+      }
+    },
+    {
+      "id": "evt_15b7a331a002fhh2qM8HCOW2pc",
+      "type": "question.asked",
+      "properties": {
+        "id": "que_15b7a331a001ee456iaD7zQmKv",
+        "sessionID": "session-1",
+        "questions": [
+          {
+            "question": "Which color should the button be?",
+            "header": "Color",
+            "options": [
+              {
+                "label": "Red",
+                "description": "Warm and loud"
+              },
+              {
+                "label": "Blue",
+                "description": "Calm"
+              }
+            ]
+          }
+        ],
+        "tool": {
+          "messageID": "msg_15b7a330e0014KzPie1NjwjHGh",
+          "callID": "call_stub_q"
+        }
+      }
+    },
+    {
+      "id": "evt_15b7a331a003dD40OCB3E3ld0q",
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "session-1",
+        "part": {
+          "type": "tool",
+          "tool": "question",
+          "callID": "call_stub_q",
+          "state": {
+            "status": "running",
+            "input": {
+              "questions": [
+                {
+                  "question": "Which color should the button be?",
+                  "header": "Color",
+                  "options": [
+                    {
+                      "label": "Red",
+                      "description": "Warm and loud"
+                    },
+                    {
+                      "label": "Blue",
+                      "description": "Calm"
+                    }
+                  ]
+                }
+              ]
+            },
+            "time": {
+              "start": 1792536097562
+            }
+          },
+          "id": "prt_15b7a3319001ihW28UQ91TJx7O",
+          "sessionID": "session-1",
+          "messageID": "msg_15b7a330e0014KzPie1NjwjHGh"
+        },
+        "time": 1792536097562
+      }
+    },
+    {
+      "id": "evt_15b7a331d0013wYBIB577dKi7i",
+      "type": "question.rejected",
+      "properties": {
+        "sessionID": "session-1",
+        "requestID": "que_15b7a331a001ee456iaD7zQmKv"
+      }
+    },
+    {
+      "id": "evt_15b7a331e001KRWcgMRcZDd09C",
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "session-1",
+        "part": {
+          "type": "tool",
+          "tool": "question",
+          "callID": "call_stub_q",
+          "state": {
+            "status": "error",
+            "input": {
+              "questions": [
+                {
+                  "question": "Which color should the button be?",
+                  "header": "Color",
+                  "options": [
+                    {
+                      "label": "Red",
+                      "description": "Warm and loud"
+                    },
+                    {
+                      "label": "Blue",
+                      "description": "Calm"
+                    }
+                  ]
+                }
+              ]
+            },
+            "error": "The user dismissed this question",
+            "time": {
+              "start": 1792536097562,
+              "end": 1792536097566
+            }
+          },
+          "id": "prt_15b7a3319001ihW28UQ91TJx7O",
+          "sessionID": "session-1",
+          "messageID": "msg_15b7a330e0014KzPie1NjwjHGh"
+        },
+        "time": 1792536097566
+      }
+    },
+    {
+      "id": "evt_15b7a331f001pLfxiJ3CBP2ORu",
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "session-1",
+        "part": {
+          "id": "prt_15b7a331f001EuAYs0BgIerRKW",
+          "reason": "tool-calls",
+          "messageID": "msg_15b7a330e0014KzPie1NjwjHGh",
+          "sessionID": "session-1",
+          "type": "step-finish",
+          "tokens": {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache": {
+              "write": 0,
+              "read": 0
+            }
+          },
+          "cost": 0
+        },
+        "time": 1792536097567
+      }
+    },
+    {
+      "id": "evt_15b7a331f002bqXMxOy8Ooqo86",
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "session-1",
+        "info": {
+          "id": "msg_15b7a330e0014KzPie1NjwjHGh",
+          "parentID": "msg_15b7a3309001TmQrburiynVA5J",
+          "role": "assistant",
+          "mode": "build",
+          "agent": "build",
+          "path": {
+            "cwd": "/repo",
+            "root": "/"
+          },
+          "cost": 0,
+          "tokens": {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache": {
+              "write": 0,
+              "read": 0
+            }
+          },
+          "modelID": "stub-model",
+          "providerID": "stub",
+          "time": {
+            "created": 1792536097550,
+            "completed": 1792536097568
+          },
+          "sessionID": "session-1",
+          "finish": "tool-calls"
+        }
+      }
+    },
+    {
+      "id": "evt_15b7a3320001zkYwLPFOchna2V",
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "session-1",
+        "info": {
+          "id": "msg_15b7a330e0014KzPie1NjwjHGh",
+          "parentID": "msg_15b7a3309001TmQrburiynVA5J",
+          "role": "assistant",
+          "mode": "build",
+          "agent": "build",
+          "path": {
+            "cwd": "/repo",
+            "root": "/"
+          },
+          "cost": 0,
+          "tokens": {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache": {
+              "write": 0,
+              "read": 0
+            }
+          },
+          "modelID": "stub-model",
+          "providerID": "stub",
+          "time": {
+            "created": 1792536097550,
+            "completed": 1792536097568
+          },
+          "sessionID": "session-1",
+          "finish": "tool-calls"
+        }
+      }
+    },
+    {
+      "id": "evt_15b7a3321001uq6jyAoPiSdK1l",
+      "type": "session.status",
+      "properties": {
+        "sessionID": "session-1",
+        "status": {
+          "type": "idle"
+        }
+      }
+    },
+    {
+      "id": "evt_15b7a3321002sUpAHqIbmBlqb6",
+      "type": "session.idle",
+      "properties": {
+        "sessionID": "session-1"
+      }
+    },
+    {
+      "id": "evt_15b7a3322001UHHiy3iazlMd1y",
+      "type": "session.diff",
+      "properties": {
+        "sessionID": "session-1",
+        "diff": []
+      }
+    },
+    {
+      "id": "evt_15b7a3322002mgCRLUTS0MAO5e",
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "session-1",
+        "info": {
+          "role": "user",
+          "time": {
+            "created": 1792536097545
+          },
+          "agent": "build",
+          "model": {
+            "providerID": "stub",
+            "modelID": "stub-model"
+          },
+          "summary": {
+            "diffs": []
+          },
+          "id": "msg_15b7a3309001TmQrburiynVA5J",
+          "sessionID": "session-1"
+        }
+      }
+    }
   ]
 }
