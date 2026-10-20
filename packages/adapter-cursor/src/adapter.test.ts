@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { PassThrough } from 'node:stream'
 import type { DomainEvent } from '@harness/contracts'
+import { argumentPromptLimit } from '@harness/proc'
 import { spawnOwned } from '@harness/proc/kill'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { CursorAdapter, CURSOR_CAPABILITIES } from './adapter.js'
@@ -110,6 +111,12 @@ describe('Cursor adapter', () => {
     } finally {
       resumed.dispose()
     }
+  })
+
+  it('says how long a prompt its command line can carry', () => {
+    const limit = new CursorAdapter().promptLimit
+    expect(limit).toBeGreaterThan(0)
+    if (process.platform !== 'win32') expect(limit).toBe(argumentPromptLimit())
   })
 
   it('starts and maps the documented stream-json wire format', async () => {

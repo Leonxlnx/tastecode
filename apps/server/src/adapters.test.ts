@@ -154,6 +154,8 @@ class FakeAcpAdapter extends FakeResumableAdapter {
 }
 
 class FakeAntigravityAdapter extends FakeTurnAdapter {
+  readonly promptLimit = 15_000
+
   constructor(options?: Record<string, unknown>) {
     super('antigravity', options)
   }
@@ -328,6 +330,13 @@ describe('resumable provider setup', () => {
       expect(turnAdapters.at(-1)!.acpResume?.threadId).toBe(`${provider}-chat`)
     },
   )
+
+  it('passes on how long a prompt a command-line engine can take', async () => {
+    const { session } = await providerRuntime('antigravity', () => {}).start('/repo', {})
+    expect(session.promptLimit).toBe(15_000)
+    const codex = await providerRuntime('codex', () => {}).start('/repo', {})
+    expect(codex.session.promptLimit).toBeUndefined()
+  })
 
   it('resumes an MCP-enabled Grok session a chat moved to, under the chat id', async () => {
     const runtime = providerRuntime('grok', () => {})

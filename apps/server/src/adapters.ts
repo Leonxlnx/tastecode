@@ -175,6 +175,12 @@ export interface AgentSession {
   /** Credential-free adapter state persisted at completed-turn boundaries, never per delta. */
   snapshot?(): unknown
   readonly capabilities: Capabilities
+  /**
+   * The longest prompt, in UTF-16 code units, one turn can carry. Set by an
+   * engine that passes its prompt on a command line, which the system limits;
+   * absent when the prompt travels where length does not matter.
+   */
+  readonly promptLimit?: number
   sendTurn(
     threadId: string,
     text: string,
@@ -719,6 +725,7 @@ function antigravityRuntime(
         thread,
         session: {
           capabilities: adapter.capabilities,
+          promptLimit: adapter.promptLimit,
           sendTurn: (threadId, text, attachments, turnOptions) =>
             adapter.sendTurn(threadId, text, attachments, turnOptions),
           interrupt: () => adapter.interrupt(),

@@ -1,7 +1,13 @@
 import { EventEmitter } from 'node:events'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import type { ApprovalMode, Capabilities, DomainEvent, Model, Thread } from '@harness/contracts'
-import { killTree, ProtocolFrameError, spawnOwned, readNdjson } from '@harness/proc'
+import {
+  argumentPromptLimit,
+  killTree,
+  ProtocolFrameError,
+  spawnOwned,
+  readNdjson,
+} from '@harness/proc'
 import { z } from 'zod'
 import { antigravityCommand } from './command.js'
 import {
@@ -162,6 +168,11 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
   constructor(options: { spawn?: SpawnFn } = {}) {
     super()
     this.#spawn = options.spawn ?? spawnOwned
+  }
+
+  /** The prompt is an argument of every turn's command line. */
+  get promptLimit(): number {
+    return argumentPromptLimit()
   }
 
   get capabilities(): Capabilities {

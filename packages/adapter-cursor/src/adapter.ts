@@ -1,10 +1,17 @@
 import { EventEmitter } from 'node:events'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import type { ApprovalMode, Capabilities, DomainEvent, Model, Thread } from '@harness/contracts'
-import { killTree, ProtocolFrameError, readNdjson, type runCli, type spawnCli } from '@harness/proc'
+import {
+  argumentPromptLimit,
+  killTree,
+  ProtocolFrameError,
+  readNdjson,
+  type runCli,
+  type spawnCli,
+} from '@harness/proc'
 import { CURSOR_SIGN_IN_REQUIRED, cursorNeedsSignIn } from './auth.js'
 import { CursorEventMapper, CursorEventSchema, type CursorEvent } from './events.js'
-import { runCursorAgent, spawnCursorAgent } from './launch.js'
+import { findCursorWindowsLauncher, runCursorAgent, spawnCursorAgent } from './launch.js'
 import { readCursorModels } from './listing.js'
 import {
   collapseCursorModels,
@@ -76,6 +83,17 @@ export class CursorAdapter extends EventEmitter<Events> {
 
   get capabilities(): Capabilities {
     return CURSOR_CAPABILITIES
+  }
+
+  /**
+   * The prompt is the last argument of every turn's command line. Without
+   * its bundled node.exe, Windows runs the CLI through a batch shim, whose
+   * cmd.exe line holds 8,191 characters.
+   */
+  get promptLimit(): number {
+    return process.platform === 'win32' && !findCursorWindowsLauncher()
+      ? 7_000
+      : argumentPromptLimit()
   }
 
   /**
