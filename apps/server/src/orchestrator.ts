@@ -2569,7 +2569,13 @@ export class Orchestrator {
       const turnId = await entry.session.sendTurn(
         threadId,
         handover
-          ? await this.#handoverPrompt(threadId, prompt, handoverThrough, entry.session)
+          ? await this.#handoverPrompt(
+              threadId,
+              prompt,
+              handoverThrough,
+              entry.session,
+              options.model,
+            )
           : this.#promptAfterRestore(
               threadId,
               continuation ? await this.#promptWithEarlierChat(threadId, prompt) : prompt,
@@ -3868,6 +3874,7 @@ export class Orchestrator {
     request: string,
     through: number,
     session: AgentSession,
+    model: string | undefined,
   ): Promise<string> {
     const stored = this.#store.thread(threadId)
     const own = (await this.history(threadId)).filter((entry) => entry.seq <= through)
@@ -3876,11 +3883,14 @@ export class Orchestrator {
     const context = stored
       ? this.#contextRuntimeOptions(stored.provider, stored.agent).context
       : undefined
+    // The user's chosen window first, then what the engine knows of this model,
+    // then the engine's default.
+    const modelWindow = await session.modelContextWindow?.(model).catch(() => undefined)
     return handoverPrompt({
       conversations: [...earlier, own],
       request,
       budget: handoverBudget({
-        contextWindow: context?.window ?? session.capabilities.context?.windows[0],
+        contextWindow: context?.window ?? modelWindow ?? session.capabilities.context?.windows[0],
         promptLimit: session.promptLimit,
         request,
       }),

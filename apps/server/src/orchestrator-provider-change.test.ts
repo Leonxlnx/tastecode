@@ -54,6 +54,8 @@ function setup(
     startGate?: Promise<void>
     /** How many times the first session refuses to stop before it does. */
     stopFailures?: number
+    /** Context sizes an engine knows per model, as OpenCode lists them. */
+    modelWindows?: Partial<Record<ProviderId, Record<string, number>>>
   } = {},
 ) {
   const launches: Launch[] = []
@@ -80,6 +82,12 @@ function setup(
       ...(behaviour.promptLimit?.[provider] === undefined
         ? {}
         : { promptLimit: behaviour.promptLimit[provider] }),
+      ...(behaviour.modelWindows?.[provider] === undefined
+        ? {}
+        : {
+            modelContextWindow: async (model: string | undefined) =>
+              model === undefined ? undefined : behaviour.modelWindows![provider]![model],
+          }),
       sendTurn: async (threadId, text) => {
         created.sent.push(text)
         running = `${provider}-turn-${created.sent.length}`
@@ -380,6 +388,38 @@ describe('moving a chat to another provider', () => {
     sessions[1]!.finish('Partly done.', 'failed')
     await send(orchestrator, chat.id, 'Finish it')
     expect(sessions[1]!.sent[2]).toBe('Finish it')
+    await orchestrator.disposeAll()
+  })
+
+  it("sizes the handover for the model's own context window when the engine knows it", async () => {
+    const repo = repository()
+    const { orchestrator, store, sessions } = setup(undefined, {
+      modelWindows: { opencode: { 'provider/small-model': 16_000 } },
+    })
+    const chat = await orchestrator.startThread('codex', repo)
+    for (let index = 0; index < 6; index += 1) {
+      store.append(chat.id, {
+        type: 'item.completed',
+        item: {
+          id: `said-${index}`,
+          turnId: 'old-turn',
+          type: 'message',
+          role: index % 2 ? 'assistant' : 'user',
+          status: 'completed',
+          text: `${index === 0 ? 'FIRST REQUEST ' : ''}${'word '.repeat(4_000)}`,
+          createdAt: 1,
+        },
+      })
+    }
+
+    await orchestrator.changeProvider(chat.id, { provider: 'opencode' })
+    await orchestrator.sendTurn(chat.id, 'Continue', [], { model: 'provider/small-model' })
+
+    const sent = sessions.at(-1)!.sent[0]!
+    const open = sent.indexOf('<earlier_conversation>\n') + '<earlier_conversation>\n'.length
+    // Half a character per token of a 16,000-token window.
+    expect(sent.indexOf('\n</earlier_conversation>') - open).toBeLessThanOrEqual(8_000)
+    expect(sent).toContain('FIRST REQUEST')
     await orchestrator.disposeAll()
   })
 

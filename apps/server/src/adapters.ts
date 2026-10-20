@@ -181,6 +181,11 @@ export interface AgentSession {
    * absent when the prompt travels where length does not matter.
    */
   readonly promptLimit?: number
+  /**
+   * How many tokens a model's context holds, for an engine that knows it per
+   * model rather than declaring one window in its capabilities.
+   */
+  modelContextWindow?(model: string | undefined): Promise<number | undefined>
   sendTurn(
     threadId: string,
     text: string,

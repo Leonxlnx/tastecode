@@ -401,6 +401,22 @@ describe('OpenCode adapter', () => {
       return { mock, adapter, events, thread, completed }
     }
 
+    it("reads a model's context size once, as OpenCode lists it", async () => {
+      const { mock, adapter } = await capturedTurn()
+      try {
+        await expect(adapter.modelContextWindow('provider-1/model-1')).resolves.toBe(32_000)
+        await expect(adapter.modelContextWindow('provider-1/model-1')).resolves.toBe(32_000)
+        await expect(adapter.modelContextWindow('provider-1/unknown')).resolves.toBeUndefined()
+        await expect(adapter.modelContextWindow('no-provider')).resolves.toBeUndefined()
+        await expect(adapter.modelContextWindow(undefined)).resolves.toBeUndefined()
+        expect(
+          mock.requests.filter((request) => request.url.startsWith('/config/providers')),
+        ).toHaveLength(2)
+      } finally {
+        await adapter.dispose()
+      }
+    })
+
     it('speaks v1 to a server that also answers v2', async () => {
       const { mock, adapter } = await capturedTurn()
       try {
@@ -1133,6 +1149,7 @@ async function serveOpenCode(beforeSessionResponse?: () => Promise<void>): Promi
                 id: 'model-1',
                 name: 'Model One',
                 variants: { low: {}, high: {} },
+                limit: { context: 32_000, output: 8_000 },
               },
               'model-retired': { id: 'model-retired', name: 'Retired', status: 'deprecated' },
             },

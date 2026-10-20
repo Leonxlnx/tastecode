@@ -191,6 +191,8 @@ const ConnectedModelSchema = z.object({
   status: z.string().optional(),
   release_date: z.string().optional(),
   variants: JsonRpcValueSchema.optional(),
+  /** opencode 1.18.31 names it for nearly every model; 1.18.13's capture had none. */
+  limit: z.object({ context: z.number().positive().optional() }).optional(),
 })
 const ConnectedProvidersSchema = z.object({
   providers: z.array(
@@ -257,6 +259,8 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
   readonly #mcpServers: McpServerConfig[]
   readonly #mcpCredentials: Record<string, string>
   #baseUrl: string | undefined
+  /** Context sizes read for this server, by `provider/model`. */
+  readonly #contextWindows = new Map<string, number | undefined>()
   #server: { close(): Promise<void> } | undefined
   #starting: Promise<void> | undefined
   /** Stops a serve that has not printed its URL yet; #server cannot reach it. */
@@ -585,6 +589,22 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
     // The stream may end between opening the session and its owner attaching.
     if (this.#disconnected) listener()
     return () => this.off('disconnected', listener)
+  }
+
+  /**
+   * How many tokens a model's context holds, as OpenCode lists it for the
+   * session's folder; undefined when it does not say. Read once per model.
+   */
+  async modelContextWindow(model = this.#model): Promise<number | undefined> {
+    const slash = model?.indexOf('/') ?? -1
+    if (!model || slash <= 0) return undefined
+    if (this.#contextWindows.has(model)) return this.#contextWindows.get(model)
+    await this.start()
+    const connected = await this.#readConnectedProviders(this.#workspacePath || process.cwd())
+    const context = connected.providers.find((provider) => provider.id === model.slice(0, slash))
+      ?.models[model.slice(slash + 1)]?.limit?.context
+    this.#contextWindows.set(model, context)
+    return context
   }
 
   /**
