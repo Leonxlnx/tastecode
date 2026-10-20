@@ -167,6 +167,9 @@ type RecordedEventHandler = (
 type HistoryEntry = { seq: number; event: DomainEvent }
 type HistoryRead = { events: HistoryEntry[]; serializedEvents?: string | undefined }
 
+/** How far back a continued chat's first prompt follows chats that continued one another. */
+const MAX_CONTINUED_CHATS = 8
+
 type DesignAgentModule = typeof import('@harness/design-agent')
 let loadedDesignAgent: DesignAgentModule | undefined
 // The full design package owns every phase's prompt tables and validators. Loading it at
@@ -3511,13 +3514,35 @@ export class Orchestrator {
 
   /**
    * The first prompt of a chat that continues an earlier one carries that
-   * chat's conversation as it stands now. An earlier chat deleted since leaves
-   * the prompt as it is.
+   * chat's conversation as it stands now. A chat's own transcript keeps only
+   * the user's words of its first prompt, so when the earlier chat continued
+   * another one itself, that one's conversation up to where it was continued
+   * comes first; otherwise a second continuation loses the original request.
+   * An earlier chat deleted since ends the chain there, and with none left the
+   * prompt stays as it is.
    */
   async #promptWithEarlierChat(threadId: string, prompt: string): Promise<string> {
-    const earlierId = this.#store.thread(threadId)?.continuedFrom
-    if (earlierId === undefined || !this.#store.thread(earlierId)) return prompt
-    return continuationPromptFromReplay(await this.history(earlierId), prompt) ?? prompt
+    const chats: HistoryEntry[][] = []
+    const seen = new Set([threadId])
+    // Events share one sequence across chats, so a chat's first event marks
+    // where it left the one it continued; what that one did later is another branch.
+    let laterStart = Number.POSITIVE_INFINITY
+    let earlierId = this.#store.thread(threadId)?.continuedFrom
+    while (
+      earlierId !== undefined &&
+      !seen.has(earlierId) &&
+      chats.length < MAX_CONTINUED_CHATS &&
+      this.#store.thread(earlierId)
+    ) {
+      seen.add(earlierId)
+      const history = (await this.history(earlierId)).filter((entry) => entry.seq < laterStart)
+      chats.unshift(history)
+      for (const entry of history) laterStart = Math.min(laterStart, entry.seq)
+      earlierId = this.#store.thread(earlierId)?.continuedFrom
+    }
+    const continued = chats.pop()
+    if (!continued) return prompt
+    return continuationPromptFromReplay(continued, prompt, chats) ?? prompt
   }
 
   #promptAfterRestore(threadId: string, prompt: string): string {

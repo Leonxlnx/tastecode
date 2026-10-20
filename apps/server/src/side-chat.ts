@@ -36,8 +36,10 @@ export function sideChatInstructionsFromReplay(
 export function continuationPromptFromReplay(
   history: ReadonlyArray<{ event: DomainEvent }>,
   prompt: string,
+  /** The chats `history` itself carried on, oldest first. */
+  earlier: ReadonlyArray<ReadonlyArray<{ event: DomainEvent }>> = [],
 ): string | undefined {
-  const entries = continuationSnapshotEntries([history])
+  const entries = continuationSnapshotEntries([...earlier, history])
   if (entries.length === 0) return undefined
   return (
     [

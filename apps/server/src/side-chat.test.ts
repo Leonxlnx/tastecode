@@ -243,6 +243,20 @@ describe('continued chat context', () => {
     expect(entries[0]).toEqual({ kind: 'note', text: '6 earlier messages are not shown.' })
   })
 
+  it('puts the chats a continued chat carried on first, without merging their items', () => {
+    // Item ids are only unique within one chat.
+    const prompt = continuationPromptFromReplay(
+      [{ event: item('item-1', 'user', 'Second chat request') }],
+      'Go on',
+      [[{ event: item('item-1', 'user', 'First chat request: ALPHA-7') }]],
+    )!
+    const context = earlierConversation(prompt)
+    expect(JSON.parse(context)).toEqual([
+      { kind: 'message', role: 'user', text: 'First chat request: ALPHA-7' },
+      { kind: 'message', role: 'user', text: 'Second chat request' },
+    ])
+  })
+
   it('names the files a change touched without its diff', () => {
     const entries = continuationSnapshotEntries([
       [

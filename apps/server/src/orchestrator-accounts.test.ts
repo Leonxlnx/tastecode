@@ -348,6 +348,54 @@ describe('chats pinned to a provider account', () => {
     await orchestrator.disposeAll()
   })
 
+  it('keeps the first chat when a continued chat is continued again', async () => {
+    const { orchestrator, store, sessions } = setup(directory({ 'codex:work': workHome }))
+    const said = (threadId: string, id: string, role: 'user' | 'assistant', text: string) =>
+      store.append(threadId, {
+        type: 'item.completed',
+        item: {
+          id,
+          turnId: 'turn-1',
+          type: 'message',
+          role,
+          status: 'completed',
+          text,
+          createdAt: 1,
+        },
+      })
+    const first = await orchestrator.startThread('codex', root)
+    said(first.id, 'ask', 'user', 'Original task: keep constraint ALPHA-7 everywhere')
+    said(first.id, 'answer', 'assistant', 'Working on it with ALPHA-7.')
+    store.append(first.id, { type: 'thread.error', threadId: first.id, message: 'Usage limit' })
+
+    const second = await orchestrator.startThread('codex', root, {
+      accountId: 'work',
+      continueFrom: first.id,
+    })
+    await orchestrator.sendTurn(second.id, 'Go on please')
+    said(second.id, 'second-answer', 'assistant', 'Second chat: two files left.')
+    store.append(second.id, { type: 'thread.error', threadId: second.id, message: 'Usage limit' })
+    // The first chat went on after its limit reset; the second chat never saw that.
+    said(first.id, 'later', 'user', 'A later branch: LATER-IN-FIRST')
+
+    const third = await orchestrator.startThread('codex', root, { continueFrom: second.id })
+    await orchestrator.sendTurn(third.id, 'Finish it')
+    const prompt = sessions.at(-1)!.sent[0]!
+    expect(prompt).toContain('ALPHA-7')
+    expect(prompt).toContain('Second chat: two files left.')
+    expect(prompt).not.toContain('LATER-IN-FIRST')
+    const order = [
+      'Original task',
+      'Working on it with ALPHA-7.',
+      'Go on please',
+      'Second chat: two files left.',
+    ].map((text) => prompt.indexOf(text))
+    expect(order.every((position) => position >= 0)).toBe(true)
+    expect(order).toEqual([...order].sort((a, b) => a - b))
+    expect(withoutContinuationContext(prompt)).toBe('Finish it')
+    await orchestrator.disposeAll()
+  })
+
   it('refuses to continue a chat that is gone or ran on another provider', async () => {
     const { orchestrator, launches } = setup(directory({ 'codex:work': workHome }))
     const claudeChat = await orchestrator.startThread('claude-code', root)
