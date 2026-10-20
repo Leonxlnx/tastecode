@@ -27,6 +27,22 @@ const CAPTURED = JSON.parse(
   readFileSync(new URL('./fixtures/events.json', import.meta.url), 'utf8'),
 ) as Event[]
 
+/**
+ * Captured from `opencode serve` 1.18.31 over v1 `/event`: a prompt whose reply
+ * runs bash after a permission ask and then answers "done", plus the edit and
+ * external_directory asks of a write tool. Its session id is the mock's.
+ */
+const CAPTURED_1_18_31 = (() => {
+  const raw = readFileSync(
+    new URL('./fixtures/opencode-1.18.31-v1-events.json', import.meta.url),
+    'utf8',
+  )
+  const sessions = [...new Set(raw.match(/ses_[A-Za-z0-9]+/g) ?? [])]
+  const text = sessions.reduce((value, id) => value.replaceAll(id, 'session-1'), raw)
+  // SAFETY: a direct capture of the wire; the tests read only the fields they assert on.
+  return JSON.parse(text) as { prompt: OpenCodeWireEvent[]; writePermissions: OpenCodeWireEvent[] }
+})()
+
 function fixtureText(name: string): string {
   return readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8')
 }
@@ -402,6 +418,25 @@ describe('OpenCode adapter', () => {
     await expect.poll(() => completions).toHaveLength(2)
     expect(completions[1]).not.toBe(completions[0])
     adapter.dispose()
+  })
+
+  it("leaves 1.18.31's echo of the user's prompt out of the reply", async () => {
+    const mock = await serveOpenCode()
+    const adapter = new OpenCodeAdapter({ baseUrl: mock.baseUrl })
+    try {
+      const thread = await adapter.startThread('C:\\repo', { model: 'provider-1/model-1' })
+      const events: DomainEvent[] = []
+      adapter.on('event', (event) => events.push(event))
+      await adapter.sendTurn(thread.id, 'USER PROMPT TEXT')
+      for (const event of CAPTURED_1_18_31.prompt) mock.broadcast(event)
+      await expect.poll(() => events.some((event) => event.type === 'turn.completed')).toBe(true)
+      const replies = events.flatMap((event) =>
+        event.type === 'item.completed' && event.item.type === 'message' ? [event.item.text] : [],
+      )
+      expect(replies).toEqual(['done'])
+    } finally {
+      adapter.dispose()
+    }
   })
 
   it('resumes, answers permissions, interrupts and lists connected models', async () => {

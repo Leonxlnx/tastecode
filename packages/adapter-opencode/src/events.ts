@@ -27,6 +27,8 @@ export class OpenCodeEventMapper {
   readonly #open = new Map<string, Item>()
   readonly #text = new Map<string, string>()
   readonly #completed = new Set<string>()
+  /** 1.18.31 streams the user's own prompt as parts too; its message comes first. */
+  readonly #userMessages = new Set<string>()
   readonly #v2Tools = new Map<string, { name: string; input?: Record<string, JsonRpcValue> }>()
 
   constructor(turnId: string, model?: string) {
@@ -37,10 +39,13 @@ export class OpenCodeEventMapper {
   translate(event: OpenCodeWireEvent): DomainEvent[] {
     if ('data' in event) return this.#v2(event)
     if (event.type === 'session.status' || event.type === 'session.idle') return []
-    if (event.type === 'message.part.updated')
+    if (event.type === 'message.part.updated') {
+      if (this.#userMessages.has(event.properties.part.messageID)) return []
       return this.#part(event.properties.part, event.properties.delta)
+    }
     if (event.type === 'message.updated') {
       const info = event.properties.info
+      if (info.role === 'user') this.#userMessages.add(info.id)
       if (info.role === 'assistant' && info.time.completed) {
         return [usage(info.tokens, info.cost, `${info.providerID}/${info.modelID}`)]
       }
