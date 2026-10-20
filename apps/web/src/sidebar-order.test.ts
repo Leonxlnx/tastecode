@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   applyProjectOrder,
   applySessionOrder,
+  foldedProjectSessions,
   isArchived,
   moveRailSession,
   needsYouSessions,
@@ -279,5 +280,48 @@ describe('dropping a chat in the rail', () => {
     expect(moveRailSession(saved, 'Z', 'R', 'before')).toBe(saved)
     expect(moveRailSession(saved, 'missing', 'X', 'before')).toBe(saved)
     expect(moveRailSession(saved, 'X', 'X', 'after')).toBe(saved)
+  })
+})
+
+describe('a folded project', () => {
+  const quiet = ['A', 'B', 'C', 'D', 'E'].map((id) => chat(id))
+  const folded = (sessions: Session[], activeSessionId?: string) =>
+    ids(foldedProjectSessions(sessions, activeSessionId, 5)).join('')
+
+  it('lists its first rows, then each later chat with news at its own place', () => {
+    const sessions = [
+      ...quiet,
+      chat('F'),
+      chat('G', { status: 'working' }),
+      chat('H', { status: 'ready', unread: true }),
+      chat('I'),
+    ]
+
+    expect(folded(sessions, 'A')).toBe('ABCDEGH')
+    expect(folded(sessions, 'I')).toBe('ABCDEGHI')
+    expect(folded(quiet.slice(0, 3))).toBe('ABC')
+  })
+
+  it('keeps a chat in sight while it starts, works or needs the user, not once it is quiet', () => {
+    for (const changes of [
+      { status: 'starting' },
+      { status: 'working' },
+      { status: 'approval' },
+      { status: 'input' },
+      { status: 'failed', unread: true },
+      { status: 'ready', unread: true },
+      { status: 'idle', unread: true },
+    ] as const) {
+      expect(folded([...quiet, chat('F', changes)])).toBe('ABCDEF')
+    }
+    for (const changes of [
+      { status: 'idle' },
+      { status: 'ready' },
+      { status: 'failed' },
+      // A queued prompt with no turn behind it is not running.
+      { status: 'queued' },
+    ] as const) {
+      expect(folded([...quiet, chat('F', changes)])).toBe('ABCDE')
+    }
   })
 })

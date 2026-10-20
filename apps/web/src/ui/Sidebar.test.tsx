@@ -1450,16 +1450,210 @@ describe('Sidebar chat actions', () => {
     expect(screen.getByRole('button', { name: 'Chat 5, Codex' })).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Chat 6, Codex' })).toBeNull()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Show more' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Show 2 more' }))
     expect(screen.getByRole('button', { name: 'Chat 7, Codex' })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Show less' }))
     expect(screen.queryByRole('button', { name: 'Chat 6, Codex' })).toBeNull()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Show more' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Show 2 more' }))
     fireEvent.click(screen.getByRole('button', { name: 'TasteCode' }))
     fireEvent.click(screen.getByRole('button', { name: 'TasteCode' }))
     expect(screen.queryByRole('button', { name: 'Chat 6, Codex' })).toBeNull()
-    expect(screen.getByRole('button', { name: 'Show more' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Show 2 more' })).toBeTruthy()
+  })
+
+  it('keeps a working, unread or open chat below the fold in sight, at its own place', () => {
+    const chats: Session[] = Array.from({ length: 9 }, (_, index) =>
+      session(`thread-${index + 1}`, `Chat ${index + 1}`),
+    )
+    chats[6] = { ...chats[6]!, status: 'working' }
+    chats[7] = { ...chats[7]!, status: 'ready', unread: true }
+    const content = (activeSessionId: string) => (
+      <Sidebar
+        projects={[{ path: '/work/harness', name: 'TasteCode', sessions: chats }]}
+        activeProjectPath="/work/harness"
+        activeSessionId={activeSessionId}
+        account={undefined}
+        providerName="Codex"
+        collapsed={false}
+        width={248}
+        onWidthChange={vi.fn()}
+        onClose={vi.fn()}
+        onAddProject={vi.fn()}
+        onNewSession={vi.fn()}
+        onSelectSession={vi.fn()}
+        onRenameProject={vi.fn()}
+        onRemoveProject={vi.fn()}
+        onTogglePin={vi.fn()}
+        onRenameSession={vi.fn()}
+        onDeleteSession={vi.fn()}
+        onArchiveProject={vi.fn()}
+        onReorderSession={vi.fn()}
+        onOpenSearch={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />
+    )
+    const titles = () =>
+      [...document.querySelectorAll('.proj__drawer .sess__title')].map((title) => title.textContent)
+    const firstFive = ['Chat 1', 'Chat 2', 'Chat 3', 'Chat 4', 'Chat 5']
+    const view = render(content('thread-1'))
+
+    // Rows 7 and 8 keep their places; the quiet rows 6 and 9 stay folded.
+    expect(titles()).toEqual([...firstFive, 'Chat 7', 'Chat 8'])
+    const working = screen.getByRole('button', { name: 'Chat 7, Codex, working' })
+    expect(working.querySelector('.sess__spinner')).not.toBeNull()
+    const unread = screen.getByRole('button', { name: 'Chat 8, Codex, ready, unread' })
+    expect(unread.closest('.sessrow')?.classList.contains('is-unread')).toBe(true)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show 2 more' }))
+    expect(titles()).toEqual([...firstFive, 'Chat 6', 'Chat 7', 'Chat 8', 'Chat 9'])
+    fireEvent.click(screen.getByRole('button', { name: 'Show less' }))
+    expect(titles()).toEqual([...firstFive, 'Chat 7', 'Chat 8'])
+
+    // The open chat shows where it stands, with the active pill, until another chat opens.
+    view.rerender(content('thread-9'))
+    expect(titles()).toEqual([...firstFive, 'Chat 7', 'Chat 8', 'Chat 9'])
+    const open = screen.getByRole('button', { name: 'Chat 9, Codex' }).closest('.sessrow')
+    expect(open?.querySelector('.sessrow__indicator')).not.toBeNull()
+    expect(screen.getByRole('button', { name: 'Show 1 more' })).toBeTruthy()
+
+    view.rerender(content('thread-2'))
+    expect(titles()).toEqual([...firstFive, 'Chat 7', 'Chat 8'])
+    expect(screen.getByRole('button', { name: 'Show 2 more' })).toBeTruthy()
+  })
+
+  it('drops the fold toggle once every chat below the fold is in sight', () => {
+    const chats: Session[] = Array.from({ length: 6 }, (_, index) =>
+      session(`thread-${index + 1}`, `Chat ${index + 1}`),
+    )
+    chats[5] = { ...chats[5]!, status: 'approval' }
+    render(
+      <Sidebar
+        projects={[{ path: '/work/harness', name: 'TasteCode', sessions: chats }]}
+        activeProjectPath="/work/harness"
+        activeSessionId="thread-1"
+        account={undefined}
+        providerName="Codex"
+        collapsed={false}
+        width={248}
+        onWidthChange={vi.fn()}
+        onClose={vi.fn()}
+        onAddProject={vi.fn()}
+        onNewSession={vi.fn()}
+        onSelectSession={vi.fn()}
+        onRenameProject={vi.fn()}
+        onRemoveProject={vi.fn()}
+        onTogglePin={vi.fn()}
+        onRenameSession={vi.fn()}
+        onDeleteSession={vi.fn()}
+        onArchiveProject={vi.fn()}
+        onReorderSession={vi.fn()}
+        onOpenSearch={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />,
+    )
+
+    const drawer = document.querySelector<HTMLElement>('.proj__drawer')!
+    expect(
+      within(drawer).getByRole('button', { name: 'Chat 6, Codex, waiting for approval' }),
+    ).toBeTruthy()
+    expect(drawer.querySelector('.proj__sessions-toggle')).toBeNull()
+  })
+
+  it('reorders a chat that shows below the fold', () => {
+    const onReorderSession = vi.fn()
+    const chats: Session[] = Array.from({ length: 8 }, (_, index) =>
+      session(`thread-${index + 1}`, `Chat ${index + 1}`),
+    )
+    chats[6] = { ...chats[6]!, status: 'working' }
+    render(
+      <Sidebar
+        projects={[{ path: '/work/harness', name: 'TasteCode', sessions: chats }]}
+        activeProjectPath="/work/harness"
+        activeSessionId="thread-1"
+        account={undefined}
+        providerName="Codex"
+        collapsed={false}
+        width={248}
+        onWidthChange={vi.fn()}
+        onClose={vi.fn()}
+        onAddProject={vi.fn()}
+        onNewSession={vi.fn()}
+        onSelectSession={vi.fn()}
+        onRenameProject={vi.fn()}
+        onRemoveProject={vi.fn()}
+        onTogglePin={vi.fn()}
+        onRenameSession={vi.fn()}
+        onDeleteSession={vi.fn()}
+        onArchiveProject={vi.fn()}
+        onReorderSession={onReorderSession}
+        onOpenSearch={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />,
+    )
+
+    const source = screen.getByRole('button', { name: 'Chat 7, Codex, working' }).closest('li')!
+    const target = screen.getByRole('button', { name: 'Chat 2, Codex' }).closest('li')!
+    vi.spyOn(target, 'getBoundingClientRect').mockReturnValue({
+      bottom: 90,
+      height: 30,
+      left: 0,
+      right: 200,
+      top: 60,
+      width: 200,
+      x: 0,
+      y: 60,
+      toJSON: () => ({}),
+    })
+    const dataTransfer = { dropEffect: 'none', effectAllowed: 'none', setData: vi.fn() }
+
+    fireEvent.dragStart(source, { dataTransfer })
+    fireEvent.dragOver(target, { clientY: 80, dataTransfer })
+    fireEvent.drop(target, { clientY: 80, dataTransfer })
+
+    expect(onReorderSession).toHaveBeenCalledWith('/work/harness', 'thread-7', 'thread-2', 'after')
+  })
+
+  it('keeps a folded project bounded when many chats below the fold are unread', () => {
+    const chats: Session[] = Array.from({ length: 100 }, (_, index) => ({
+      ...session(`thread-${index + 1}`, `Chat ${index + 1}`),
+      ...(index >= 5 && index < 90 ? { status: 'ready' as const, unread: true } : {}),
+    }))
+    render(
+      <Sidebar
+        projects={[{ path: '/work/large', name: 'Large project', sessions: chats }]}
+        activeProjectPath="/work/large"
+        activeSessionId="thread-1"
+        account={undefined}
+        providerName="Codex"
+        collapsed={false}
+        width={248}
+        onWidthChange={vi.fn()}
+        onClose={vi.fn()}
+        onAddProject={vi.fn()}
+        onNewSession={vi.fn()}
+        onSelectSession={vi.fn()}
+        onRenameProject={vi.fn()}
+        onRemoveProject={vi.fn()}
+        onTogglePin={vi.fn()}
+        onRenameSession={vi.fn()}
+        onDeleteSession={vi.fn()}
+        onArchiveProject={vi.fn()}
+        onReorderSession={vi.fn()}
+        onOpenSearch={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />,
+    )
+
+    const list = screen.getByRole('list', { name: 'Large project chats' })
+    expect(list.querySelectorAll('.sessrow').length).toBeLessThanOrEqual(28)
+    list.scrollTop = 90 * 30
+    fireEvent.scroll(list)
+    const last = screen.getByRole('button', { name: 'Chat 90, Codex, ready, unread' }).closest('li')
+    expect(last?.getAttribute('aria-posinset')).toBe('90')
+    expect(last?.getAttribute('aria-setsize')).toBe('90')
+    expect(screen.queryByRole('button', { name: 'Chat 91, Codex' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Show 10 more' })).toBeTruthy()
   })
 
   it.each([65, 10_000])(
@@ -1502,7 +1696,7 @@ describe('Sidebar chat actions', () => {
         </Profiler>,
       )
 
-      fireEvent.click(screen.getByRole('button', { name: 'Show more' }))
+      fireEvent.click(screen.getByRole('button', { name: `Show ${sessionCount - 5} more` }))
       const list = screen.getByRole('list', { name: 'Large project chats' })
       expect(list.getAttribute('tabindex')).toBe('0')
       expect(list.querySelectorAll('.sessrow').length).toBeLessThanOrEqual(28)
@@ -1559,7 +1753,7 @@ describe('Sidebar chat actions', () => {
       />
     )
     const view = render(content(sessions, 'thread-1'))
-    fireEvent.click(screen.getByRole('button', { name: 'Show more' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Show 65 more' }))
     const list = screen.getByRole('list', { name: 'Large project chats' })
     list.scrollTop = 60 * 30
     fireEvent.scroll(list)
