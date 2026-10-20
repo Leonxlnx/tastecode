@@ -6384,7 +6384,11 @@ export function App() {
             },
           }
   const earlierChat =
-    activeSession?.continuedFrom && thread.items.length === 0 && !thread.running
+    // Shown until its first message; not while an opened chat's history is still loading.
+    activeSession?.continuedFrom &&
+    thread.items.length === 0 &&
+    !thread.running &&
+    loadingThreadId !== activeSession.id
       ? findSession(projects, activeSession.continuedFrom)?.session
       : undefined
   const composerErrors: ComposerError[] = [
