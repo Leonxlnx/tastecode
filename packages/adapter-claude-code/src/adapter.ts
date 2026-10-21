@@ -28,7 +28,7 @@ import type {
 } from '@harness/contracts'
 import { JsonRpcValueSchema, killTree, spawnCli } from '@harness/proc'
 import { z } from 'zod'
-import { withClaudeAccount } from './account-home.js'
+import { CLAUDE_ACCOUNT_HOME, withClaudeAccount } from './account-home.js'
 import { CLAUDE_CAPABILITIES } from './capabilities.js'
 import { mapClaudeCommands, mapClaudeMcpServers } from './inventory.js'
 import { ClaudeMcpRedactor, prepareClaudeMcpServers } from './mcp.js'
@@ -251,10 +251,13 @@ function claudeTranscriptEvent(row: SavedRecord): ClaudeEvent | undefined {
   return parsed.success ? parsed.data : undefined
 }
 
-async function tasksFromClaudeTranscript(sessionId: string): Promise<ClaudeTask[]> {
+async function tasksFromClaudeTranscript(
+  sessionId: string,
+  configDir: string,
+): Promise<ClaudeTask[]> {
   const pending = new Map<string, PendingTaskTool>()
   let tasks: ClaudeTask[] = []
-  for (const row of await readClaudeSessionRecords(sessionId)) {
+  for (const row of await readClaudeSessionRecords(sessionId, { configDir })) {
     const event = claudeTranscriptEvent(row)
     if (!event) continue
     if (event.type === 'assistant') noteClaudeTaskTools(pending, event)
@@ -593,6 +596,8 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
   readonly #createQuery: ClaudeQueryFactory
   readonly #spawn: ClaudeSpawn
   readonly #environment: NodeJS.ProcessEnv
+  /** The config folder the CLI runs in, where its sessions are saved. */
+  readonly #configDir: string
   readonly #startupTimeoutMs: number
   #workspacePath = ''
   #threadId = ''
@@ -666,6 +671,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     this.#createQuery = options.createQuery ?? createClaudeQuery
     this.#spawn = options.spawn ?? spawnCli
     this.#environment = withClaudeAccount(options.environment ?? process.env, options.accountHome)
+    this.#configDir = CLAUDE_ACCOUNT_HOME.defaultHome(this.#environment)
     this.#startupTimeoutMs = options.startupTimeoutMs ?? CLAUDE_STARTUP_TIMEOUT_MS
     if (!Number.isFinite(this.#startupTimeoutMs) || this.#startupTimeoutMs <= 0)
       throw new Error('Claude startup timeout must be a positive number')
@@ -1046,7 +1052,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
   ): Promise<void> {
     if (this.#query || this.#promptQueue || this.#starting)
       throw new Error('Claude adapter already has a session')
-    this.#tasks = resume ? await tasksFromClaudeTranscript(sessionId) : []
+    this.#tasks = resume ? await tasksFromClaudeTranscript(sessionId, this.#configDir) : []
     this.#pendingTaskTools.clear()
     this.#disposed = false
     this.#sessionGeneration += 1

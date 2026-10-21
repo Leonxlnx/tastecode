@@ -2337,6 +2337,46 @@ describe('Claude task plan', () => {
     })
   })
 
+  it("reads a resumed session's tasks from the folder of the account it runs as", async () => {
+    const sessionId = '33333333-3333-4333-8333-333333333333'
+    await withClaudeConfig(async () => {
+      const accountHome = mkdtempSync(path.join(tmpdir(), 'harness-claude-account-'))
+      const project = path.join(accountHome, 'projects', '-repo')
+      mkdirSync(project, { recursive: true })
+      writeFileSync(
+        path.join(project, `${sessionId}.jsonl`),
+        sessionFileTaskCreate('toolu_a', '1', 'Write the note').join('\n') + '\n',
+      )
+      const fake = harness()
+      const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery, accountHome })
+      const events: DomainEvent[] = []
+      adapter.on('event', (event) => events.push(event))
+      try {
+        const thread = await adapter.resumeThread(`claude-${sessionId}`, '/repo')
+        const turnId = await adapter.sendTurn(thread.id, 'Finish the task')
+        const query = fake.queries.at(-1)!
+        query.emitMessage(
+          taskToolUse('toolu_done', 'TaskUpdate', { taskId: '1', status: 'completed' }),
+        )
+        query.emitMessage(
+          taskToolResult('toolu_done', 'Updated task #1 status', {
+            success: true,
+            taskId: '1',
+            updatedFields: ['status'],
+            statusChange: { from: 'pending', to: 'completed' },
+          }),
+        )
+        await tick()
+        expect(events.filter((event) => event.type === 'plan.updated')).toEqual([
+          { type: 'plan.updated', turnId, steps: [{ text: 'Write the note', status: 'done' }] },
+        ])
+      } finally {
+        await adapter.dispose()
+        rmSync(accountHome, { recursive: true, force: true })
+      }
+    })
+  })
+
   it('keeps an empty plan when a resumed session has no transcript', async () => {
     const sessionId = '22222222-2222-4222-8222-222222222222'
     await withClaudeConfig(async () => {
