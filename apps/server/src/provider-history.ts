@@ -389,7 +389,15 @@ export class ProviderHistory {
         // A turn that finished during the read is local too; its echo must still be dropped.
         if (this.store.lastSeq(threadId) !== seq)
           local = this.store.localHistory(threadId).map(({ event }) => event)
-        const entries = importedEvents(events, threadId, local)
+        // A chat that continues another starts as a copy of that chat's saved
+        // session. The turns from before it existed are the earlier chat's.
+        const entries = importedEvents(
+          thread.continuedFrom === undefined || duplicateId === threadId
+            ? events
+            : turnsSince(events, thread.createdAt),
+          threadId,
+          local,
+        )
         const duplicate =
           duplicateId !== threadId &&
           this.store.thread(duplicateId) !== undefined &&
@@ -451,6 +459,19 @@ function folderIdentity(folder: string): string | undefined {
 
 function startedTurnIds(events: DomainEvent[]): Set<string> {
   return new Set(events.flatMap((event) => (event.type === 'turn.started' ? [event.turn.id] : [])))
+}
+
+/** The events of turns that started at `since` or later, and those of no turn. */
+function turnsSince(events: DomainEvent[], since: number): DomainEvent[] {
+  const earlier = new Set(
+    events.flatMap((event) =>
+      event.type === 'turn.started' && event.turn.createdAt < since ? [event.turn.id] : [],
+    ),
+  )
+  return events.filter((event) => {
+    const id = turnId(event)
+    return id === undefined || !earlier.has(id)
+  })
 }
 
 function turnId(event: DomainEvent): string | undefined {

@@ -4343,6 +4343,8 @@ export class Store {
    * The conversation so far has not reached the new session yet; it goes with
    * the first prompt that session accepts (`threadNeedsHandover`), which also
    * covers an earlier chat this one continues and makes a restore notice moot.
+   * A `carried` session started as a copy of the one the chat leaves and
+   * already holds all of that.
    */
   moveThreadToProvider(
     threadId: string,
@@ -4351,6 +4353,7 @@ export class Store {
       agent?: string | undefined
       accountId?: string | undefined
       providerSessionId: string
+      carried?: boolean | undefined
     },
   ): void {
     const current = this.thread(threadId)
@@ -4368,7 +4371,7 @@ export class Store {
       this.#db
         .prepare(
           `UPDATE threads SET provider = ?, agent = ?, connection_id = NULL, account_id = ?,
-             provider_session_id = ?, handover_pending = 1, continue_context_pending = 0,
+             provider_session_id = ?, handover_pending = ?, continue_context_pending = 0,
              restore_context_pending = 0
            WHERE id = ?`,
         )
@@ -4377,6 +4380,7 @@ export class Store {
           next.agent ?? null,
           next.accountId ?? null,
           next.providerSessionId,
+          next.carried ? 0 : 1,
           threadId,
         )
       this.#db.prepare('DELETE FROM thread_runtime_state WHERE thread_id = ?').run(threadId)

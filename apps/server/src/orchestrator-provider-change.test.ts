@@ -5,11 +5,11 @@ import path from 'node:path'
 import type { DomainEvent, ProviderId } from '@harness/contracts'
 import { afterAll, describe, expect, it } from 'vitest'
 import type { AccountDirectory } from './account-directory.js'
-import type { AgentSession, ProviderRuntime, StartOptions } from './adapters.js'
+import type { AgentSession, ProviderRuntime, SavedSession, StartOptions } from './adapters.js'
 import { compactHistoryReplay } from './history-replay.js'
 import { McpConfigStore } from './mcp-config.js'
 import { Orchestrator } from './orchestrator.js'
-import { HANDOVER_CONTEXT_NOTICE } from './provider-session.js'
+import { CONTINUE_CONTEXT_NOTICE, HANDOVER_CONTEXT_NOTICE } from './provider-session.js'
 import { withoutContinuationContext } from './side-chat.js'
 import { Store } from './store.js'
 
@@ -28,8 +28,6 @@ function repository(): string {
   return repo
 }
 
-const accounts: AccountDirectory = { home: () => undefined, active: () => 'default' }
-
 type FakeSession = AgentSession & {
   provider: ProviderId
   disposed: boolean
@@ -39,11 +37,13 @@ type FakeSession = AgentSession & {
 }
 
 type Launch = {
-  kind: 'start' | 'resume'
+  kind: 'start' | 'resume' | 'fork'
   provider: ProviderId
   workspacePath: string
   options: StartOptions
   threadId?: string
+  accountHome?: string | undefined
+  from?: SavedSession
 }
 
 function setup(
@@ -58,6 +58,11 @@ function setup(
     modelWindows?: Partial<Record<ProviderId, Record<string, number>>>
     /** An engine whose model lookup never answers. */
     modelWindowHangs?: ProviderId
+    /** Account folders by account id; the default account has none. */
+    accountHomes?: Record<string, string>
+    /** Engines that carry a saved session on, and whether that fails. */
+    forks?: ProviderId[]
+    failFork?: boolean
   } = {},
 ) {
   const launches: Launch[] = []
@@ -140,9 +145,31 @@ function setup(
     sessions.push(created)
     return created
   }
-  const runtimeFor = (provider: ProviderId): ProviderRuntime => ({
+  const runtimeFor = (
+    provider: ProviderId,
+    _onLog: (line: string) => void,
+    accountHome?: string,
+  ): ProviderRuntime => ({
+    ...(behaviour.forks?.includes(provider)
+      ? {
+          async fork(workspacePath: string, from: SavedSession, options: StartOptions) {
+            launches.push({ kind: 'fork', provider, workspacePath, options, accountHome, from })
+            if (behaviour.failFork) throw new Error('no saved conversation to carry on')
+            opened += 1
+            return {
+              thread: {
+                id: `${provider}-native-${opened}`,
+                provider,
+                workspacePath,
+                createdAt: Date.now(),
+              },
+              session: open(provider),
+            }
+          },
+        }
+      : {}),
     async start(workspacePath, options) {
-      launches.push({ kind: 'start', provider, workspacePath, options })
+      launches.push({ kind: 'start', provider, workspacePath, options, accountHome })
       await behaviour.startGate
       if (behaviour.failStart === provider) throw new Error(`${provider} is not signed in`)
       opened += 1
@@ -157,7 +184,7 @@ function setup(
       }
     },
     async resume(threadId, workspacePath, options) {
-      launches.push({ kind: 'resume', provider, workspacePath, options, threadId })
+      launches.push({ kind: 'resume', provider, workspacePath, options, threadId, accountHome })
       return {
         thread: { id: threadId, provider, workspacePath, createdAt: Date.now() },
         session: open(provider),
@@ -167,6 +194,13 @@ function setup(
       return []
     },
   })
+  const accounts: AccountDirectory = {
+    home: (_provider, accountId) =>
+      accountId === undefined || accountId === 'default'
+        ? undefined
+        : behaviour.accountHomes?.[accountId],
+    active: () => 'default',
+  }
   const orchestrator = new Orchestrator(store, {
     onEvent: () => {},
     onLog: () => {},
@@ -482,6 +516,150 @@ describe('moving a chat to another provider', () => {
     expect(sent.length).toBeLessThanOrEqual(14_000)
     expect(sent).toContain('FIRST REQUEST')
     expect(sent.endsWith('User request:\nContinue')).toBe(true)
+    await orchestrator.disposeAll()
+  })
+})
+
+describe('another account of the same provider', () => {
+  /** A chat on the default Codex account whose first turn is done. */
+  async function chatWithAnswer(behaviour: Parameters<typeof setup>[1]) {
+    const repo = repository()
+    const work = mkdtempSync(path.join(root, 'account-'))
+    const setUp = setup(undefined, { accountHomes: { work }, ...behaviour })
+    const chat = await setUp.orchestrator.startThread('codex', repo)
+    await send(setUp.orchestrator, chat.id, 'Rename the config loader')
+    await settle()
+    setUp.sessions[0]!.finish('Renamed it in loader.ts.')
+    return { ...setUp, repo, work, chat }
+  }
+
+  it("moves the chat by carrying the provider's own session on there", async () => {
+    const { orchestrator, store, launches, sessions, repo, work, chat } = await chatWithAnswer({
+      forks: ['codex'],
+    })
+
+    await orchestrator.changeProvider(chat.id, { provider: 'codex', accountId: 'work' })
+
+    expect(launches.at(-1)).toMatchObject({
+      kind: 'fork',
+      provider: 'codex',
+      workspacePath: repo,
+      accountHome: work,
+    })
+    // The chat ran on the default account, whose folder needs no name.
+    expect(launches.at(-1)!.from).toEqual({ providerSessionId: chat.id })
+    expect(sessions[0]!.disposed).toBe(true)
+    expect(store.thread(chat.id)).toMatchObject({
+      provider: 'codex',
+      accountId: 'work',
+      providerSessionId: 'codex-native-2',
+    })
+    expect(store.threadNeedsHandover(chat.id)).toBe(false)
+    expect(store.leftProviderSessions('codex')).toEqual([chat.id])
+
+    await send(orchestrator, chat.id, 'Now update the tests')
+    expect(sessions[1]!.sent).toEqual(['Now update the tests'])
+    await orchestrator.disposeAll()
+  })
+
+  it('hands the conversation over when the provider cannot carry its session on', async () => {
+    const { orchestrator, store, launches, sessions, chat } = await chatWithAnswer({
+      forks: ['codex'],
+      failFork: true,
+    })
+
+    await orchestrator.changeProvider(chat.id, { provider: 'codex', accountId: 'work' })
+
+    expect(launches.slice(-2).map((launch) => launch.kind)).toEqual(['fork', 'start'])
+    expect(store.threadNeedsHandover(chat.id)).toBe(true)
+    await send(orchestrator, chat.id, 'Now update the tests')
+    const handover = sessions[1]!.sent[0]!
+    expect(handover.startsWith(HANDOVER_CONTEXT_NOTICE)).toBe(true)
+    expect(handover).toContain('Renamed it in loader.ts.')
+    await orchestrator.disposeAll()
+  })
+
+  it('replaces a carried session that fails its first turn by a fresh one with the handover', async () => {
+    const { orchestrator, store, launches, sessions, work, chat } = await chatWithAnswer({
+      forks: ['codex'],
+    })
+    await orchestrator.changeProvider(chat.id, { provider: 'codex', accountId: 'work' })
+    await send(orchestrator, chat.id, 'Now update the tests')
+    await settle()
+    // As Codex does when another account's encrypted reasoning cannot be read.
+    sessions[1]!.finish(undefined, 'failed')
+
+    await send(orchestrator, chat.id, 'Try again')
+
+    expect(sessions[1]!.disposed).toBe(true)
+    expect(launches.at(-1)).toMatchObject({ kind: 'start', provider: 'codex', accountHome: work })
+    const handover = sessions[2]!.sent[0]!
+    expect(handover.startsWith(HANDOVER_CONTEXT_NOTICE)).toBe(true)
+    expect(handover).toContain('Renamed it in loader.ts.')
+    expect(withoutContinuationContext(handover)).toBe('Try again')
+    expect(store.thread(chat.id)?.providerSessionId).toBe('codex-native-3')
+    await orchestrator.disposeAll()
+  })
+
+  it('keeps a carried session whose first turn the user stopped', async () => {
+    const { orchestrator, store, sessions, chat } = await chatWithAnswer({ forks: ['codex'] })
+    await orchestrator.changeProvider(chat.id, { provider: 'codex', accountId: 'work' })
+    await send(orchestrator, chat.id, 'Now update the tests')
+    await settle()
+    sessions[1]!.finish(undefined, 'interrupted')
+
+    await send(orchestrator, chat.id, 'Go on')
+
+    expect(store.threadNeedsHandover(chat.id)).toBe(false)
+    expect(sessions[1]!.sent).toEqual(['Now update the tests', 'Go on'])
+    await orchestrator.disposeAll()
+  })
+
+  it("continues a chat there in a copy of the provider's session", async () => {
+    const { orchestrator, launches, sessions, repo, work, chat } = await chatWithAnswer({
+      forks: ['codex'],
+    })
+
+    const later = await orchestrator.startThread('codex', repo, {
+      accountId: 'work',
+      continueFrom: chat.id,
+    })
+    await send(orchestrator, later.id, 'Go on')
+
+    expect(launches.at(-1)).toMatchObject({ kind: 'fork', accountHome: work })
+    expect(launches.at(-1)!.from).toEqual({ providerSessionId: chat.id })
+    expect(sessions[1]!.sent).toEqual(['Go on'])
+    await orchestrator.disposeAll()
+  })
+
+  it('continues a chat with its conversation as text when the session cannot be carried on', async () => {
+    const { orchestrator, launches, sessions, repo, chat } = await chatWithAnswer({
+      forks: ['codex'],
+      failFork: true,
+    })
+
+    const later = await orchestrator.startThread('codex', repo, {
+      accountId: 'work',
+      continueFrom: chat.id,
+    })
+    await send(orchestrator, later.id, 'Go on')
+
+    expect(launches.slice(-2).map((launch) => launch.kind)).toEqual(['fork', 'start'])
+    const first = sessions[1]!.sent[0]!
+    expect(first.startsWith(CONTINUE_CONTEXT_NOTICE)).toBe(true)
+    expect(first).toContain('Renamed it in loader.ts.')
+    expect(withoutContinuationContext(first)).toBe('Go on')
+    await orchestrator.disposeAll()
+  })
+
+  it('does not carry on a session that lacks part of the conversation', async () => {
+    const { orchestrator, store, launches, chat } = await chatWithAnswer({ forks: ['codex'] })
+    // The chat moved here and has sent nothing since: its session is empty.
+    await orchestrator.changeProvider(chat.id, { provider: 'claude-code' })
+    await orchestrator.changeProvider(chat.id, { provider: 'codex', accountId: 'work' })
+
+    expect(launches.at(-1)?.kind).toBe('start')
+    expect(store.threadNeedsHandover(chat.id)).toBe(true)
     await orchestrator.disposeAll()
   })
 })

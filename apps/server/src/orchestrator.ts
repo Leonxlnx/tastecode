@@ -20,6 +20,7 @@ import {
   verifyCustomHarness as verifyCustomHarnessCompatibility,
   type AgentSession,
   type ProviderRuntime,
+  type SavedSession,
   type StartOptions,
   type TurnOptions,
 } from './runtime-loader.js'
@@ -712,7 +713,15 @@ export class Orchestrator {
    * runs a process per turn accepts the prompt before it reads it, so a turn
    * that ends without any answer may never have delivered the handover.
    */
-  #handoverTurns = new Map<string, { turnId: string; answered: boolean }>()
+  #handoverTurns = new Map<string, { turnId: string; answered: boolean; carried?: true }>()
+  /**
+   * Chats whose session carries on a saved provider session, until their
+   * first turn there starts. That turn is watched as `carried` in
+   * `#handoverTurns`: a provider may refuse what another account saved.
+   */
+  #carriedThreads = new Set<string>()
+  /** Chats whose carried session failed its first turn; the next turn replaces it. */
+  #failedCarries = new Set<string>()
   #panicGeneration = 0
   #panicStopping = false
   #panicStop: Promise<PanicStopResult> | undefined
@@ -1881,6 +1890,57 @@ export class Orchestrator {
   }
 
   /**
+   * The provider session a chat's conversation can be carried on from, where
+   * its provider saved it: undefined while the session lacks part of the
+   * conversation (a handover, a continuation or a restore not sent yet) or a
+   * turn is still writing to it.
+   */
+  #savedSession(threadId: string): SavedSession | undefined {
+    const stored = this.#store.thread(threadId)
+    if (
+      !stored ||
+      stored.ephemeral ||
+      this.#sideParents.has(threadId) ||
+      this.isTurnRunning(threadId) ||
+      this.#store.threadNeedsHandover(threadId) ||
+      this.#store.threadNeedsContinueContext(threadId) ||
+      this.#store.threadNeedsRestoreContext(threadId)
+    )
+      return undefined
+    try {
+      const accountHome = threadAccountHome(this.#accounts, stored)
+      return {
+        providerSessionId: stored.providerSessionId ?? stored.id,
+        ...(accountHome === undefined ? {} : { accountHome }),
+      }
+    } catch {
+      // Its account was removed: nothing is left to carry on.
+      return undefined
+    }
+  }
+
+  /**
+   * A session that starts with the conversation of a saved one, or undefined
+   * when the provider cannot carry that session on; the conversation then
+   * goes as text with the first prompt.
+   */
+  async #carryOn(
+    runtime: ProviderRuntime,
+    workspacePath: string,
+    saved: SavedSession | undefined,
+    options: StartOptions,
+  ): Promise<{ thread: Thread; session: AgentSession } | undefined> {
+    if (!saved || !runtime.fork) return undefined
+    try {
+      return await runtime.fork(workspacePath, saved, options)
+    } catch (error) {
+      if (error instanceof StartupCleanupError) throw error
+      this.#onLog(`[carry] the conversation goes as text instead: ${errorMessage(error)}`)
+      return undefined
+    }
+  }
+
+  /**
    * A chat that continues an isolated one gets a checkout of its own, made from
    * the earlier chat's branch; two chats never share one. Whatever the earlier
    * chat had not committed is copied into it, and the earlier checkout is only
@@ -1921,9 +1981,10 @@ export class Orchestrator {
    * Moves an open chat to another provider, agent or account. The chat keeps
    * its id, conversation and checkout. A session starts at the new place
    * first; only once it runs does the chat's own session stop, so a chat
-   * whose move fails stays where it was. The conversation goes to the new
-   * session with the next prompt (see `#handoverPrompt`), and a notice in the
-   * transcript marks the move.
+   * whose move fails stays where it was. A move to another account of the
+   * same provider carries the provider's own session on there; any other move
+   * sends the conversation with the next prompt (see `#handoverPrompt`). A
+   * notice in the transcript marks the move.
    */
   async changeProvider(
     threadId: string,
@@ -1987,18 +2048,27 @@ export class Orchestrator {
         target.approval ??
         this.#threadApprovals.get(threadId) ??
         this.#store.threadApproval(threadId)
+      const startOptions: StartOptions = {
+        ...(target.agent ? { agent: target.agent } : {}),
+        ...(target.model ? { model: target.model } : {}),
+        ...(target.effort ? { effort: target.effort } : {}),
+        ...(target.serviceTier ? { serviceTier: target.serviceTier } : {}),
+        ...(approval ? { approval } : {}),
+        instructions: composeInstructions(),
+        ...this.#mcpRuntimeOptions(target.provider, stored.projectPath),
+        ...this.#contextRuntimeOptions(target.provider, target.agent),
+      }
+      // Another account of the same provider can take the session itself.
+      const saved =
+        stored.provider === target.provider && stored.agent === target.agent
+          ? this.#savedSession(threadId)
+          : undefined
       let started
+      let carried = false
       try {
-        started = await runtime.start(workspacePath, {
-          ...(target.agent ? { agent: target.agent } : {}),
-          ...(target.model ? { model: target.model } : {}),
-          ...(target.effort ? { effort: target.effort } : {}),
-          ...(target.serviceTier ? { serviceTier: target.serviceTier } : {}),
-          ...(approval ? { approval } : {}),
-          instructions: composeInstructions(),
-          ...this.#mcpRuntimeOptions(target.provider, stored.projectPath),
-          ...this.#contextRuntimeOptions(target.provider, target.agent),
-        })
+        started = await this.#carryOn(runtime, workspacePath, saved, startOptions)
+        carried = started !== undefined
+        started ??= await runtime.start(workspacePath, startOptions)
       } catch (error) {
         if (!(error instanceof StartupCleanupError)) throw error
         void this.#stopFailedStartup(threadId, workspacePath, error).catch((stopError: unknown) =>
@@ -2057,10 +2127,12 @@ export class Orchestrator {
           ...(target.agent ? { agent: target.agent } : {}),
           ...(accountId === DEFAULT_ACCOUNT_ID ? {} : { accountId }),
           providerSessionId: nativeId,
+          carried,
         })
       } catch (error) {
         return await stopStarted(errorMessage(error))
       }
+      if (carried) this.#carriedThreads.add(threadId)
       const thread = onAccount(moved.thread, accountId)
       this.#attachThread(thread, moved.session, stored.projectPath, runtime.resume !== undefined)
       if (approval) {
@@ -2111,8 +2183,15 @@ export class Orchestrator {
       watched.answered = true
     } else if (event.type === 'turn.completed' && event.turnId === watched.turnId) {
       this.#handoverTurns.delete(threadId)
-      if (event.status !== 'completed' && !watched.answered && this.#store.thread(threadId)) {
+      if (event.status === 'completed' || watched.answered || !this.#store.thread(threadId)) return
+      if (!watched.carried) {
         this.#store.rearmThreadHandover(threadId)
+      } else if (event.status === 'failed') {
+        // The provider would not take on what another account saved, as when
+        // Codex cannot read reasoning another account encrypted. A fresh
+        // session gets the conversation as a handover instead.
+        this.#store.rearmThreadHandover(threadId)
+        this.#failedCarries.add(threadId)
       }
     }
   }
@@ -2189,9 +2268,17 @@ export class Orchestrator {
       throw new Error('task start cancelled by shutdown or panic stop')
     }
 
+    // A chat that continues another of the same provider carries its session on.
+    const saved =
+      continueFrom !== undefined && options.agent === undefined
+        ? this.#savedSession(continueFrom)
+        : undefined
     let started
+    let carried = false
     try {
-      started = await runtime.start(directory, runtimeOptions)
+      started = await this.#carryOn(runtime, directory, saved, runtimeOptions)
+      carried = started !== undefined
+      started ??= await runtime.start(directory, runtimeOptions)
     } catch (error) {
       if (error instanceof StartupCleanupError) {
         // The agent may still be running in the new checkout. Keep the session
@@ -2255,6 +2342,11 @@ export class Orchestrator {
     // Attach before any further storage read so a failure there leaves the
     // session owned by the thread rather than by nobody.
     this.#attachThread(thread, session, workspacePath, runtime.resume !== undefined, worktree)
+    if (carried) {
+      // Its session already holds the earlier conversation.
+      this.#store.clearThreadContinueContext(thread.id)
+      this.#carriedThreads.add(thread.id)
+    }
     const autoSettleDays = this.#store.sidebarSettings().autoSettleDays
     this.#onLifecycleScheduleChanged(
       autoSettleDays === null ? 'later' : thread.createdAt + autoSettleDays * 24 * 60 * 60 * 1_000,
@@ -2431,6 +2523,11 @@ export class Orchestrator {
     if (this.#changingProvider.has(threadId)) {
       throw new Error('This chat is moving to another provider. Send again once it has moved.')
     }
+    if (this.#failedCarries.has(threadId) && !this.isTurnRunning(threadId)) {
+      // Stopping it starts a fresh session, which the handover reaches.
+      await this.#disposeThreadRuntime(threadId, 'disconnect')
+      await this.#ensureThread(threadId, options)
+    }
     const entry = this.#get(threadId)
     // A chat that moved carries everything, a continuation and a restore included.
     const handover = this.#store.threadNeedsHandover(threadId)
@@ -2605,6 +2702,8 @@ export class Orchestrator {
       if (handover) {
         this.#store.clearThreadHandover(threadId)
         this.#handoverTurns.set(threadId, { turnId, answered: false })
+      } else if (this.#carriedThreads.delete(threadId)) {
+        this.#handoverTurns.set(threadId, { turnId, answered: false, carried: true })
       }
       return turnId
     } catch (error) {
@@ -4317,9 +4416,10 @@ export class Orchestrator {
     // A session gone before its handover turn ended may never have read it.
     const handover = this.#handoverTurns.get(threadId)
     this.#handoverTurns.delete(threadId)
-    if (handover && !handover.answered && this.#store.thread(threadId)) {
+    if (handover && !handover.answered && !handover.carried && this.#store.thread(threadId)) {
       this.#store.rearmThreadHandover(threadId)
     }
+    this.#failedCarries.delete(threadId)
     this.#idleRuntimeEligible.delete(threadId)
     this.#mcpStaleRuntimes.delete(threadId)
     this.#runtimeOperationCounts.delete(threadId)

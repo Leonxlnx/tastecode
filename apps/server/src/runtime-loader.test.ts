@@ -66,6 +66,17 @@ describe('provider runtime loading', () => {
     }
   })
 
+  it('offers to carry a saved session on only for providers that can', () => {
+    adapters.providerRuntime.mockReturnValue(fakeRuntime())
+
+    for (const provider of ['codex', 'claude-code'] as const) {
+      expect(providerRuntime(provider, () => {}).fork).toEqual(expect.any(Function))
+    }
+    for (const provider of ['grok', 'cursor', 'opencode', 'acp', 'pi', 'antigravity'] as const) {
+      expect(providerRuntime(provider, () => {}).fork).toBeUndefined()
+    }
+  })
+
   it('defers API connections and forwards restart resume state to their runtime', async () => {
     const loaded = fakeRuntime()
     const resume = vi.spyOn(loaded, 'resume').mockRejectedValue(new Error('resume reached'))

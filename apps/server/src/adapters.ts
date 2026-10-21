@@ -246,6 +246,13 @@ export interface AgentSession {
   on(event: 'log', listener: (line: string) => void): void
 }
 
+/** A provider session as the provider saved it, in the folder of the account it ran as. */
+export type SavedSession = {
+  providerSessionId: string
+  /** That account's folder; absent for the default account. */
+  accountHome?: string | undefined
+}
+
 export type ProviderRuntime = {
   start(
     workspacePath: string,
@@ -254,6 +261,15 @@ export type ProviderRuntime = {
   resume?(
     threadId: string,
     workspacePath: string,
+    options: StartOptions,
+  ): Promise<{ thread: Thread; session: AgentSession }>
+  /**
+   * Starts a new session that already holds the conversation of a saved one
+   * of this provider. Absent where the provider cannot carry a session on.
+   */
+  fork?(
+    workspacePath: string,
+    from: SavedSession,
     options: StartOptions,
   ): Promise<{ thread: Thread; session: AgentSession }>
   /** `read.refresh`: the caller keeps an earlier list if this read fails. */
@@ -896,8 +912,15 @@ function codexRuntime(
   resolveHarness: (id: string) => CustomHarness | undefined,
   accountHome: string | undefined,
 ): ProviderRuntime {
-  const open = async (workspacePath: string, options: StartOptions, threadId?: string) => {
+  const open = async (
+    workspacePath: string,
+    options: StartOptions,
+    threadId?: string,
+    from?: SavedSession,
+  ) => {
     const harness = harnessFor('codex', options.agent, resolveHarness)
+    // A harness runs with a sign-in of its own, apart from the account folders.
+    if (harness && from) throw new Error(`${harness.displayName} cannot carry a session on.`)
     const { CodexAdapter } = await loadCodexAdapter()
     const adapter = new CodexAdapter({
       ...(options.mcpServers ? { mcpServers: options.mcpServers } : {}),
@@ -915,6 +938,13 @@ function codexRuntime(
       } else {
         await adapter.start()
       }
+      if (from) {
+        return adapter.forkThread(
+          workspacePath,
+          { threadId: from.providerSessionId, accountHome: from.accountHome },
+          options,
+        )
+      }
       if (threadId === undefined) return adapter.startThread(workspacePath, options)
       return adapter.resumeThread(options.providerSessionId ?? threadId, workspacePath, {
         ...(options.instructions ? { instructions: options.instructions } : {}),
@@ -927,6 +957,7 @@ function codexRuntime(
     start: open,
     resume: async (threadId, workspacePath, options) =>
       mapProviderSession(threadId, await open(workspacePath, options, threadId)),
+    fork: (workspacePath, from, options) => open(workspacePath, options, undefined, from),
     async listModels(agent) {
       const harness = harnessFor('codex', agent, resolveHarness)
       const { CodexAdapter } = await loadCodexAdapter()
@@ -1078,6 +1109,27 @@ function claudeRuntime(
           mcpCredentials: options.mcpCredentials,
           context: options.context,
         }),
+      )
+    },
+    async fork(workspacePath, from, options) {
+      // A harness runs with a sign-in of its own, apart from the account folders.
+      const harness = harnessFor('claude-code', options.agent, resolveHarness)
+      if (harness) throw new Error(`${harness.displayName} cannot carry a session on.`)
+      const adapter = await adapterFor(undefined, workspacePath)
+      return startedSession(sessionFor(adapter, undefined), () =>
+        adapter.forkThread(
+          workspacePath,
+          { threadId: from.providerSessionId, accountHome: from.accountHome },
+          {
+            model: options.model,
+            effort: options.effort,
+            approval: options.approval,
+            instructions: options.instructions,
+            mcpServers: options.mcpServers,
+            mcpCredentials: options.mcpCredentials,
+            context: options.context,
+          },
+        ),
       )
     },
     async resume(threadId, workspacePath, options) {
