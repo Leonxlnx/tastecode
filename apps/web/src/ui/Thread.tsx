@@ -1,4 +1,5 @@
 import {
+  useContext,
   Fragment,
   lazy,
   memo,
@@ -25,6 +26,7 @@ import {
 } from '@tanstack/react-virtual'
 import type { ApprovalDecision, Item, ProviderNotice } from '@harness/contracts'
 import { agentMark, providerDisplayName, providerMark } from '../provider-presentation.js'
+import { AccountLabelContext, type AccountLabel } from '../provider-accounts-state.js'
 import { ProviderIcon } from './ProviderIcon.js'
 import {
   IconArrowBarToDown as ArrowDownToLine,
@@ -2290,9 +2292,10 @@ const Row = memo(function Row({
 
 /** Where the chat moved to another provider; the turns after it ran there. */
 function NoticeRow({ item }: { item: Item }) {
+  const accountLabel = useContext(AccountLabelContext)
   const notice = item.notice
   if (notice?.kind !== 'provider') return null
-  const label = providerNoticeLabel(notice)
+  const label = providerNoticeLabel(notice, accountLabel)
   return (
     <div className="aux aux--notice" role="note">
       <div className="aux__row" title={label}>
@@ -2312,9 +2315,14 @@ function NoticeRow({ item }: { item: Item }) {
   )
 }
 
-export function providerNoticeLabel(notice: ProviderNotice): string {
-  const name =
+export function providerNoticeLabel(notice: ProviderNotice, accountLabel?: AccountLabel): string {
+  const provider =
     notice.provider === 'acp' && notice.agent ? notice.agent : providerDisplayName(notice.provider)
+  // Another account of a provider is named, so a move between two accounts says where.
+  const name =
+    notice.accountId && accountLabel
+      ? `${provider} (${accountLabel(notice.provider, notice.accountId)})`
+      : provider
   return notice.model ? `Switched to ${name} · ${notice.model}` : `Switched to ${name}`
 }
 

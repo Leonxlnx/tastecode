@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useSyncExternalStore } from 'react'
+import { createContext, useEffect, useMemo, useSyncExternalStore } from 'react'
 import {
   DEFAULT_ACCOUNT_ID,
   type AccountId,
@@ -206,6 +206,9 @@ export function activeAccountOf(
 
 /** Names a provider account where limits or usage are listed by account. */
 export type AccountLabel = (provider: ProviderId, accountId: AccountId | undefined) => string
+
+/** Names accounts where the app shows them deep in a view, such as a chat moving to one. */
+export const AccountLabelContext = createContext<AccountLabel | undefined>(undefined)
 
 /**
  * The account's own label, never its id. Usage can outlive an account, so an

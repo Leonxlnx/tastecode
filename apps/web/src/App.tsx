@@ -145,6 +145,7 @@ import { canCaptureVoice, type VoiceRecording } from './voice-capability.js'
 import { pollUsageLimits, UsageLimitsController, type LimitTarget } from './usage-limits-state.js'
 import { sameAccount } from './usage-summary-state.js'
 import {
+  AccountLabelContext,
   accountLabelOf,
   accountsOf,
   activeAccountOf,
@@ -6871,33 +6872,37 @@ export function App() {
               {surface === 'chat' ? (
                 <div className={`stage__conversation${activeId ? '' : ' is-new-session'}`}>
                   {activeId ? (
-                    <Suspense fallback={<ThreadSkeleton />}>
-                      <LazyThread
-                        key={threadEntryKey}
-                        frameStore={threadFrameStore}
-                        errorsInComposer
-                        stopping={stopping}
-                        loading={loadingThreadId === activeId}
-                        loadFailure={
-                          historyFailure?.threadId === activeId ? historyFailure.message : undefined
-                        }
-                        onRetryLoad={retryOpenedHistory}
-                        projectPath={activePath}
-                        threadId={activeId}
-                        transport={transport}
-                        searchJump={searchJump?.threadId === activeId ? searchJump : undefined}
-                        onSearchJumpDone={finishSearchJump}
-                        revealRequest={threadRevealRequest}
-                        checkpoints={checkpoints}
-                        onDecide={decideApproval}
-                        onAnswerUserInput={answerUserInput}
-                        onEditMessage={editMessage}
-                        onRevertCheckpoint={revertCheckpoint}
-                        onUndoChanges={undoTurnChanges}
-                        onLoadOlderHistory={loadOlderHistory}
-                        onLoadCompleteHistory={loadCompleteHistory}
-                      />
-                    </Suspense>
+                    <AccountLabelContext.Provider value={accountLabel}>
+                      <Suspense fallback={<ThreadSkeleton />}>
+                        <LazyThread
+                          key={threadEntryKey}
+                          frameStore={threadFrameStore}
+                          errorsInComposer
+                          stopping={stopping}
+                          loading={loadingThreadId === activeId}
+                          loadFailure={
+                            historyFailure?.threadId === activeId
+                              ? historyFailure.message
+                              : undefined
+                          }
+                          onRetryLoad={retryOpenedHistory}
+                          projectPath={activePath}
+                          threadId={activeId}
+                          transport={transport}
+                          searchJump={searchJump?.threadId === activeId ? searchJump : undefined}
+                          onSearchJumpDone={finishSearchJump}
+                          revealRequest={threadRevealRequest}
+                          checkpoints={checkpoints}
+                          onDecide={decideApproval}
+                          onAnswerUserInput={answerUserInput}
+                          onEditMessage={editMessage}
+                          onRevertCheckpoint={revertCheckpoint}
+                          onUndoChanges={undoTurnChanges}
+                          onLoadOlderHistory={loadOlderHistory}
+                          onLoadCompleteHistory={loadCompleteHistory}
+                        />
+                      </Suspense>
+                    </AccountLabelContext.Provider>
                   ) : (
                     <Empty
                       projects={projects}

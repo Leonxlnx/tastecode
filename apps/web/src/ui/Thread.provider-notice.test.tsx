@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { Item } from '@harness/contracts'
+import type { Item, ProviderNotice } from '@harness/contracts'
 import { ThreadFrameStore } from '../thread-frame-store.js'
 import { emptyThread } from '../thread-store.js'
 
@@ -82,5 +82,18 @@ describe('a chat that switched provider', () => {
     expect(providerNoticeLabel({ kind: 'provider', provider: 'acp', agent: 'gemini' })).toBe(
       'Switched to gemini',
     )
+  })
+
+  it("names the account a chat moved to, once the app knows the account's name", () => {
+    const moved: ProviderNotice = {
+      kind: 'provider',
+      provider: 'codex',
+      accountId: 'team-9z8y7x',
+      model: 'gpt-6.1',
+    }
+    expect(providerNoticeLabel(moved, (_provider, accountId) => `Team ${accountId}`)).toBe(
+      'Switched to Codex (Team team-9z8y7x) · gpt-6.1',
+    )
+    expect(providerNoticeLabel(moved)).toBe('Switched to Codex · gpt-6.1')
   })
 })
