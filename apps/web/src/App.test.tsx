@@ -5362,6 +5362,366 @@ describe('new chats', () => {
     )
   })
 
+  it('switches an open chat to another provider with its next message', async () => {
+    // The chat's own provider has not said whether it is signed in; the
+    // provider the message goes to has.
+    serverProviders = [{ ...serverProviders[0]!, auth: 'unknown' }, claudeCodeServerProvider()]
+    serverProjects[0]!.sessions = [
+      { id: 'chat-1', title: 'Webhook retries', provider: 'codex', createdAt: 1 },
+    ]
+    const listed = (id: string) => ({
+      id,
+      displayName: id,
+      isDefault: true,
+      reasoningEfforts: [],
+      serviceTiers: [],
+    })
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    const order: string[] = []
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'models.list') {
+        const { provider } = methods['models.list'].params.parse(params)
+        return Promise.resolve({
+          models: [listed(provider === 'claude-code' ? 'opus' : 'gpt-6.1')],
+        })
+      }
+      if (method === 'thread.changeProvider') {
+        order.push(method)
+        serverProjects[0]!.sessions = [
+          { id: 'chat-1', title: 'Webhook retries', provider: 'claude-code', createdAt: 1 },
+        ]
+        return Promise.resolve({})
+      }
+      if (method === 'thread.sendTurn') {
+        order.push(method)
+        return Promise.resolve({ queued: false, turnId: 'turn-2' })
+      }
+      return request(method, params)
+    })
+    const offered = () => composerProps().models.map((choice) => choice.key)
+    const note = () =>
+      (composerProps().errors ?? []).find((error) =>
+        error.message.startsWith('Your next message switches'),
+      )
+    render(<App />)
+
+    fireEvent.click(await waitFor(() => treeChatRow('Webhook retries')))
+    // The chat's own models come first; the others move it.
+    await waitFor(() => expect(offered()).toEqual(['codex:gpt-6.1', 'claude-code:opus']))
+    expect(composerProps().modelId).toBe('codex:gpt-6.1')
+    expect(note()).toBeUndefined()
+
+    act(() => composerProps().onModelChange('claude-code:opus'))
+    await waitFor(() =>
+      expect(note()?.message).toBe(
+        'Your next message switches this chat to Claude Code. The conversation so far goes with it.',
+      ),
+    )
+    // Changing one's mind takes the chat's own model back.
+    expect(note()?.action?.label).toBe('Stay on Codex')
+    act(() => note()!.action!.run())
+    await waitFor(() => expect(composerProps().modelId).toBe('codex:gpt-6.1'))
+    expect(note()).toBeUndefined()
+
+    act(() => composerProps().onModelChange('claude-code:opus'))
+    await waitFor(() => expect(note()).toBeDefined())
+    await waitFor(() => expect(composerProps().sendAvailability).toBe('ready'))
+    await act(async () => composerProps().onSend('Now update the tests', []))
+
+    await waitFor(() => expect(order).toEqual(['thread.changeProvider', 'thread.sendTurn']))
+    expect(transport.request).toHaveBeenCalledWith(
+      'thread.changeProvider',
+      expect.objectContaining({ threadId: 'chat-1', provider: 'claude-code', model: 'opus' }),
+    )
+    expect(transport.request).toHaveBeenCalledWith(
+      'thread.sendTurn',
+      expect.objectContaining({ threadId: 'chat-1', text: 'Now update the tests', model: 'opus' }),
+    )
+    // The chat is on Claude Code now: its own models lead and nothing is pending.
+    await waitFor(() => expect(offered()).toEqual(['claude-code:opus', 'codex:gpt-6.1']))
+    expect(note()).toBeUndefined()
+  })
+
+  it('keeps the message and the chat where they were when a switch fails', async () => {
+    serverProviders = [...serverProviders, claudeCodeServerProvider()]
+    serverProjects[0]!.sessions = [
+      { id: 'chat-1', title: 'Webhook retries', provider: 'codex', createdAt: 1 },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'models.list') {
+        const { provider } = methods['models.list'].params.parse(params)
+        return Promise.resolve({
+          models: [
+            {
+              id: provider === 'claude-code' ? 'opus' : 'gpt-6.1',
+              displayName: provider,
+              isDefault: true,
+              reasoningEfforts: [],
+              serviceTiers: [],
+            },
+          ],
+        })
+      }
+      if (method === 'thread.changeProvider')
+        return Promise.reject(new Error('Claude Code is not signed in'))
+      return request(method, params)
+    })
+    render(<App />)
+
+    fireEvent.click(await waitFor(() => treeChatRow('Webhook retries')))
+    await waitFor(() => expect(composerProps().models.length).toBe(2))
+    act(() => composerProps().onModelChange('claude-code:opus'))
+    await act(async () => composerProps().onSend('Now update the tests', []))
+
+    await waitFor(() =>
+      expect((composerProps().errors ?? []).map((error) => error.message)).toContain(
+        'Claude Code is not signed in',
+      ),
+    )
+    expect(transport.request).not.toHaveBeenCalledWith('thread.sendTurn', expect.anything())
+    await waitFor(() => expect(composerProps().draftRequest?.text).toBe('Now update the tests'))
+    expect(composerProps().models[0]?.key).toBe('codex:gpt-6.1')
+  })
+
+  it('shows a chat on its new provider as soon as any window hears it switched', async () => {
+    serverProviders = [...serverProviders, claudeCodeServerProvider()]
+    serverProjects[0]!.sessions = [
+      { id: 'chat-1', title: 'Webhook retries', provider: 'codex', createdAt: 1 },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'models.list') {
+        const { provider } = methods['models.list'].params.parse(params)
+        return Promise.resolve({
+          models: [
+            {
+              id: provider === 'claude-code' ? 'opus' : 'gpt-6.1',
+              displayName: provider,
+              isDefault: true,
+              reasoningEfforts: [],
+              serviceTiers: [],
+            },
+          ],
+        })
+      }
+      return request(method, params)
+    })
+    render(<App />)
+
+    fireEvent.click(await waitFor(() => treeChatRow('Webhook retries')))
+    await waitFor(() => expect(composerProps().models[0]?.key).toBe('codex:gpt-6.1'))
+    // Another window switched the chat; this one only hears the notice.
+    emitThreadEvent(
+      'chat-1',
+      {
+        type: 'item.completed',
+        item: {
+          id: 'notice-1',
+          turnId: '',
+          type: 'notice',
+          status: 'completed',
+          notice: { kind: 'provider', provider: 'claude-code', model: 'opus' },
+          createdAt: 2,
+        },
+      },
+      10,
+    )
+
+    await waitFor(() => expect(composerProps().models[0]?.key).toBe('claude-code:opus'))
+  })
+
+  it('offers another signed-in provider at a plan limit and sends nothing on its own', async () => {
+    serverProviders = [...serverProviders, claudeCodeServerProvider()]
+    serverProjects[0]!.sessions = [
+      { id: 'chat-limited', title: 'Webhook retries', provider: 'codex', createdAt: 1 },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'models.list') {
+        const { provider } = methods['models.list'].params.parse(params)
+        return Promise.resolve({
+          models: [
+            {
+              id: provider === 'claude-code' ? 'opus' : 'gpt-6.1',
+              displayName: provider === 'claude-code' ? 'Opus' : 'GPT',
+              isDefault: true,
+              reasoningEfforts: [],
+              serviceTiers: [],
+            },
+          ],
+        })
+      }
+      if (method === 'usage.summary') {
+        const { provider } = params as { provider: string }
+        return (request(method, params) as Promise<ResultOf<'usage.summary'>>).then((summary) => ({
+          ...summary,
+          limits:
+            provider === 'codex'
+              ? [{ label: '5 hours', usedPercent: 100, resetsAt: Date.now() + 3_600_000 }]
+              : [],
+        }))
+      }
+      if (method === 'thread.history') {
+        const { threadId } = params as { threadId: string }
+        if (threadId !== 'chat-limited') return request(method, params)
+        return Promise.resolve({
+          events: [
+            {
+              seq: 1,
+              event: {
+                type: 'item.completed',
+                item: {
+                  id: 'ask',
+                  turnId: 'turn-1',
+                  type: 'message',
+                  role: 'user',
+                  status: 'completed',
+                  text: 'Fix the webhook retries',
+                  createdAt: 1,
+                },
+              },
+            },
+            {
+              seq: 2,
+              event: { type: 'thread.error', threadId, message: "You've hit your usage limit." },
+            },
+            { seq: 3, event: { type: 'turn.completed', turnId: 'turn-1', status: 'failed' } },
+          ],
+          running: false,
+          approval: 'ask',
+        })
+      }
+      return request(method, params)
+    })
+    const errors = () => composerProps().errors ?? []
+    render(<App />)
+
+    fireEvent.click(await waitFor(() => treeChatRow('Webhook retries')))
+    const failed = await waitFor(() => {
+      const row = errors().find((error) => error.message === "You've hit your usage limit.")
+      expect(row?.action?.label).toBe('Switch to Claude Code')
+      return row!
+    })
+
+    await act(async () => failed.action!.run())
+    // The chat is set up to switch, with the request that failed ready to send.
+    await waitFor(() => expect(composerProps().modelId).toBe('claude-code:opus'))
+    await waitFor(() => expect(composerProps().draftRequest?.text).toBe('Fix the webhook retries'))
+    expect(transport.request).not.toHaveBeenCalledWith('thread.changeProvider', expect.anything())
+    expect(transport.request).not.toHaveBeenCalledWith('thread.sendTurn', expect.anything())
+  })
+
+  it("names the isolated chat's checkout when its uncommitted changes stayed there", async () => {
+    const codex = serverProviders[0]!
+    serverProviders = [
+      { ...codex, capabilities: { ...codex.capabilities!, multipleAccounts: true } },
+    ]
+    serverProjects[0]!.sessions = [
+      {
+        id: 'chat-limited',
+        title: 'Webhook retries',
+        provider: 'codex',
+        createdAt: 1,
+        worktreeBranch: 'harness/limited',
+      },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    const starts: unknown[] = []
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'accounts.list') {
+        return Promise.resolve({
+          accounts: [
+            { id: 'default', provider: 'codex', label: 'Personal', managed: false },
+            {
+              id: 'work-1a2b3c',
+              provider: 'codex',
+              label: 'Work',
+              managed: true,
+              email: 'work@example.test',
+            },
+          ],
+          active: {},
+        })
+      }
+      if (method === 'usage.summary') {
+        const { accountId } = params as { accountId?: string }
+        return (request(method, params) as Promise<ResultOf<'usage.summary'>>).then((summary) => ({
+          ...summary,
+          limits: [
+            {
+              label: '5 hours',
+              usedPercent: accountId === undefined ? 100 : 30,
+              resetsAt: Date.now() + 3_600_000,
+            },
+          ],
+        }))
+      }
+      if (method === 'thread.history') {
+        const { threadId } = params as { threadId: string }
+        if (threadId !== 'chat-limited') return request(method, params)
+        return Promise.resolve({
+          events: [
+            {
+              seq: 1,
+              event: { type: 'thread.error', threadId, message: "You've hit your usage limit." },
+            },
+          ],
+          running: false,
+          approval: 'ask',
+        })
+      }
+      if (method === 'thread.start') {
+        starts.push(params)
+        serverProjects[0]!.sessions = [
+          {
+            id: 'chat-next',
+            title: 'New session',
+            provider: 'codex',
+            accountId: 'work-1a2b3c',
+            continuedFrom: 'chat-limited',
+            createdAt: 2,
+            worktreeBranch: 'harness/next',
+          },
+          ...serverProjects[0]!.sessions,
+        ]
+        return Promise.resolve({
+          threadId: 'chat-next',
+          earlierChanges: { carried: false, keptIn: 'C:\\TasteCode\\trees\\limited' },
+        })
+      }
+      return request(method, params)
+    })
+    const errors = () => composerProps().errors ?? []
+    render(<App />)
+
+    fireEvent.click(await waitFor(() => treeChatRow('Webhook retries')))
+    const failed = await waitFor(() => {
+      const row = errors().find((error) => error.message === "You've hit your usage limit.")
+      expect(row?.action?.label).toBe('Continue on Work')
+      return row!
+    })
+    await act(async () => failed.action!.run())
+
+    expect(starts).toEqual([
+      expect.objectContaining({
+        continueFrom: 'chat-limited',
+        isolate: true,
+        baseRef: 'harness/limited',
+      }),
+    ])
+    await waitFor(() =>
+      expect(errors().map((error) => error.message)).toContain(
+        'Continues “Webhook retries” on Work. Its conversation goes with your first message. Its uncommitted changes could not be carried over; they are still in C:\\TasteCode\\trees\\limited.',
+      ),
+    )
+  })
+
   it('keeps plan limits and asks nothing new when switching chats of one provider', async () => {
     serverProjects = [
       {

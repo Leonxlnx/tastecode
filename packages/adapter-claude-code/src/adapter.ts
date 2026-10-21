@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events'
 import { readFileSync } from 'node:fs'
+import { rm } from 'node:fs/promises'
 import path from 'node:path'
 import type {
   CanUseTool,
@@ -28,7 +29,7 @@ import type {
 } from '@harness/contracts'
 import { JsonRpcValueSchema, killTree, spawnCli } from '@harness/proc'
 import { z } from 'zod'
-import { withClaudeAccount } from './account-home.js'
+import { CLAUDE_ACCOUNT_HOME, withClaudeAccount } from './account-home.js'
 import { CLAUDE_CAPABILITIES } from './capabilities.js'
 import { mapClaudeCommands, mapClaudeMcpServers } from './inventory.js'
 import { ClaudeMcpRedactor, prepareClaudeMcpServers } from './mcp.js'
@@ -45,6 +46,7 @@ import {
 } from './events.js'
 import { readClaudeSessionRecords } from './history.js'
 import type { SavedRecord } from './history-items.js'
+import { copyClaudeSession } from './session-copy.js'
 import {
   claudeSdkSpawner,
   createClaudeQuery,
@@ -251,10 +253,13 @@ function claudeTranscriptEvent(row: SavedRecord): ClaudeEvent | undefined {
   return parsed.success ? parsed.data : undefined
 }
 
-async function tasksFromClaudeTranscript(sessionId: string): Promise<ClaudeTask[]> {
+async function tasksFromClaudeTranscript(
+  sessionId: string,
+  configDir: string,
+): Promise<ClaudeTask[]> {
   const pending = new Map<string, PendingTaskTool>()
   let tasks: ClaudeTask[] = []
-  for (const row of await readClaudeSessionRecords(sessionId)) {
+  for (const row of await readClaudeSessionRecords(sessionId, { configDir })) {
     const event = claudeTranscriptEvent(row)
     if (!event) continue
     if (event.type === 'assistant') noteClaudeTaskTools(pending, event)
@@ -593,6 +598,8 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
   readonly #createQuery: ClaudeQueryFactory
   readonly #spawn: ClaudeSpawn
   readonly #environment: NodeJS.ProcessEnv
+  /** The config folder the CLI runs in, where its sessions are saved. */
+  readonly #configDir: string
   readonly #startupTimeoutMs: number
   #workspacePath = ''
   #threadId = ''
@@ -666,6 +673,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     this.#createQuery = options.createQuery ?? createClaudeQuery
     this.#spawn = options.spawn ?? spawnCli
     this.#environment = withClaudeAccount(options.environment ?? process.env, options.accountHome)
+    this.#configDir = CLAUDE_ACCOUNT_HOME.defaultHome(this.#environment)
     this.#startupTimeoutMs = options.startupTimeoutMs ?? CLAUDE_STARTUP_TIMEOUT_MS
     if (!Number.isFinite(this.#startupTimeoutMs) || this.#startupTimeoutMs <= 0)
       throw new Error('Claude startup timeout must be a positive number')
@@ -699,6 +707,43 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
   ): Promise<Thread> {
     const sessionId = threadId.startsWith('claude-') ? threadId.slice('claude-'.length) : threadId
     await this.#openSession(threadId, sessionId, workspacePath, options, true)
+    return {
+      id: threadId,
+      provider: 'claude-code',
+      workspacePath,
+      createdAt: Date.now(),
+    }
+  }
+
+  /**
+   * Starts a new session that already holds the conversation of a saved one.
+   * The saved session may belong to another account: `from.accountHome` is
+   * that account's config folder, absent for the default one. It stays as it
+   * was; the new session is a copy of it in this account's folder.
+   */
+  async forkThread(
+    workspacePath: string,
+    from: { threadId: string; accountHome?: string | undefined },
+    options: ClaudeStartOptions = {},
+  ): Promise<Thread> {
+    const sessionId = crypto.randomUUID()
+    const threadId = `claude-${sessionId}`
+    const source = from.threadId.startsWith('claude-')
+      ? from.threadId.slice('claude-'.length)
+      : from.threadId
+    const copy = await copyClaudeSession(
+      source,
+      from.accountHome ?? CLAUDE_ACCOUNT_HOME.defaultHome(),
+      { configDir: this.#configDir, sessionId, cwd: workspacePath },
+    )
+    if (!copy) throw new Error('Claude Code has no saved conversation to carry on.')
+    try {
+      await this.#openSession(threadId, sessionId, workspacePath, options, 'fork')
+    } catch (error) {
+      // Claude Code would list a copy that no chat runs on among its sessions.
+      await rm(copy, { force: true }).catch(() => undefined)
+      throw error
+    }
     return {
       id: threadId,
       provider: 'claude-code',
@@ -1042,23 +1087,24 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     sessionId: string,
     workspacePath: string,
     options: ClaudeStartOptions,
-    resume: boolean,
+    /** `fork`: a copy just made, whose conversation a new empty session must not replace. */
+    resume: boolean | 'fork',
   ): Promise<void> {
     if (this.#query || this.#promptQueue || this.#starting)
       throw new Error('Claude adapter already has a session')
-    this.#tasks = resume ? await tasksFromClaudeTranscript(sessionId) : []
+    this.#tasks = resume ? await tasksFromClaudeTranscript(sessionId, this.#configDir) : []
     this.#pendingTaskTools.clear()
     this.#disposed = false
     this.#sessionGeneration += 1
     this.#threadId = threadId
     this.#sessionId = sessionId
-    this.#resumeOnRestart = resume
+    this.#resumeOnRestart = resume !== false
     this.#workspacePath = workspacePath
     this.#options = options
     this.#reportedModel = options.model
     const starting = this.#startQuery(resume ? sessionId : undefined)
       .catch(async (error: unknown) => {
-        if (!resume || this.#disposed || !isMissingClaudeConversation(error)) throw error
+        if (resume !== true || this.#disposed || !isMissingClaudeConversation(error)) throw error
         // A session whose first prompt never reached the CLI has no transcript,
         // so --resume can never succeed. Create it under the same id instead.
         this.#log(`Claude session ${sessionId} has no transcript yet; creating it`)

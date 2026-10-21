@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import type {
@@ -23,6 +23,7 @@ import {
 } from './adapter.js'
 import type { ClaudeQueryFactory, ClaudeQueryRuntime } from './sdk-runtime.js'
 import { createClaudeMcpBootstrap } from './mcp-bootstrap.js'
+import { claudeProjectFolder } from './session-copy.js'
 import { Store } from '../../../apps/server/src/store.js'
 import { reduce, emptyThread } from '../../../apps/web/src/thread-store.js'
 import { projectThreadItems } from '../../../apps/web/src/ui/turns.js'
@@ -801,6 +802,87 @@ describe('Claude Agent SDK session', () => {
     } finally {
       await adapter.dispose()
     }
+  })
+
+  describe('a session carried on from a saved one', () => {
+    const SAVED = '44444444-4444-4444-8444-444444444444'
+    const savedIn = () => {
+      const folder = mkdtempSync(path.join(tmpdir(), 'harness-claude-saved-'))
+      mkdirSync(path.join(folder, 'projects', '-elsewhere'), { recursive: true })
+      writeFileSync(
+        path.join(folder, 'projects', '-elsewhere', `${SAVED}.jsonl`),
+        `${JSON.stringify({ type: 'user', uuid: 'u1', sessionId: SAVED, message: { role: 'user', content: 'PLUM-42' } })}\n`,
+      )
+      return folder
+    }
+
+    it("resumes a copy of another account's session in its own folder", async () => {
+      const from = savedIn()
+      const accountHome = mkdtempSync(path.join(tmpdir(), 'harness-claude-account-'))
+      const fake = harness()
+      const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery, accountHome })
+      try {
+        const thread = await adapter.forkThread(
+          '/repo',
+          { threadId: `claude-${SAVED}`, accountHome: from },
+          { model: 'opus' },
+        )
+
+        const sessionId = thread.id.slice('claude-'.length)
+        expect(sessionId).not.toBe(SAVED)
+        expect(fake.inputs.map(({ options }) => [options.resume, options.sessionId])).toEqual([
+          [sessionId, undefined],
+        ])
+        expect(fake.inputs[0]!.options.model).toBe('opus')
+        const copy = path.join(
+          accountHome,
+          'projects',
+          claudeProjectFolder('/repo')!,
+          `${sessionId}.jsonl`,
+        )
+        expect(JSON.parse(readFileSync(copy, 'utf8'))).toMatchObject({ uuid: 'u1', sessionId })
+      } finally {
+        await adapter.dispose()
+      }
+    })
+
+    it('fails, rather than start empty, when the copy cannot be resumed, and removes it', async () => {
+      const from = savedIn()
+      const accountHome = mkdtempSync(path.join(tmpdir(), 'harness-claude-account-'))
+      const fake = harness()
+      const adapter = new ClaudeCodeAdapter({
+        accountHome,
+        createQuery: (input) => {
+          const query = fake.createQuery(input) as FakeQuery
+          vi.spyOn(query, 'initializationResult').mockRejectedValue(
+            new Error(
+              `Claude Code returned an error result: No conversation found with session ID: ${input.options.resume}`,
+            ),
+          )
+          return query
+        },
+      })
+
+      await expect(
+        adapter.forkThread('/repo', { threadId: `claude-${SAVED}`, accountHome: from }),
+      ).rejects.toThrow('No conversation found')
+      expect(fake.inputs).toHaveLength(1)
+      expect(
+        readdirSync(path.join(accountHome, 'projects', claudeProjectFolder('/repo')!)),
+      ).toEqual([])
+    })
+
+    it('starts nothing when the other folder holds no transcript of the session', async () => {
+      const fake = harness()
+      const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
+      await expect(
+        adapter.forkThread('/repo', {
+          threadId: `claude-${SAVED}`,
+          accountHome: mkdtempSync(path.join(tmpdir(), 'harness-claude-empty-')),
+        }),
+      ).rejects.toThrow('Claude Code has no saved conversation to carry on.')
+      expect(fake.inputs).toEqual([])
+    })
   })
 
   it('does not reuse a turn identity when a new instance resumes the session', async () => {
@@ -2333,6 +2415,46 @@ describe('Claude task plan', () => {
         ])
       } finally {
         await adapter.dispose()
+      }
+    })
+  })
+
+  it("reads a resumed session's tasks from the folder of the account it runs as", async () => {
+    const sessionId = '33333333-3333-4333-8333-333333333333'
+    await withClaudeConfig(async () => {
+      const accountHome = mkdtempSync(path.join(tmpdir(), 'harness-claude-account-'))
+      const project = path.join(accountHome, 'projects', '-repo')
+      mkdirSync(project, { recursive: true })
+      writeFileSync(
+        path.join(project, `${sessionId}.jsonl`),
+        sessionFileTaskCreate('toolu_a', '1', 'Write the note').join('\n') + '\n',
+      )
+      const fake = harness()
+      const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery, accountHome })
+      const events: DomainEvent[] = []
+      adapter.on('event', (event) => events.push(event))
+      try {
+        const thread = await adapter.resumeThread(`claude-${sessionId}`, '/repo')
+        const turnId = await adapter.sendTurn(thread.id, 'Finish the task')
+        const query = fake.queries.at(-1)!
+        query.emitMessage(
+          taskToolUse('toolu_done', 'TaskUpdate', { taskId: '1', status: 'completed' }),
+        )
+        query.emitMessage(
+          taskToolResult('toolu_done', 'Updated task #1 status', {
+            success: true,
+            taskId: '1',
+            updatedFields: ['status'],
+            statusChange: { from: 'pending', to: 'completed' },
+          }),
+        )
+        await tick()
+        expect(events.filter((event) => event.type === 'plan.updated')).toEqual([
+          { type: 'plan.updated', turnId, steps: [{ text: 'Write the note', status: 'done' }] },
+        ])
+      } finally {
+        await adapter.dispose()
+        rmSync(accountHome, { recursive: true, force: true })
       }
     })
   })

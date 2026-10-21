@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import type { Item, ProviderAccount } from '@harness/contracts'
-import { accountAtLimit, continueAccounts, continuedIn, lastRequest } from './continue-account.js'
+import {
+  accountAtLimit,
+  continueAccounts,
+  continuationNote,
+  continuedIn,
+  lastRequest,
+} from './continue-account.js'
 import type { ProviderAccountsSnapshot } from './provider-accounts-state.js'
 import type { UsageSummaryState } from './usage-summary-state.js'
 
@@ -101,5 +107,24 @@ describe('continue on another account', () => {
       ]),
     ).toBe('Second')
     expect(lastRequest([message('assistant', 'Only an answer')])).toBeUndefined()
+  })
+})
+
+describe('the note in a chat that continues another', () => {
+  it("says where the earlier chat's uncommitted changes are", () => {
+    expect(continuationNote('Webhook retries', 'Work', undefined)).toBe(
+      'Continues “Webhook retries” on Work. Its conversation goes with your first message.',
+    )
+    expect(continuationNote('Webhook retries', 'Work', { carried: true })).toBe(
+      "Continues “Webhook retries” on Work. Its conversation goes with your first message, and its uncommitted changes are already in this chat's checkout.",
+    )
+    expect(
+      continuationNote('Webhook retries', 'Work', {
+        carried: false,
+        keptIn: 'C:\\TasteCode\\trees\\a1b2c3',
+      }),
+    ).toBe(
+      'Continues “Webhook retries” on Work. Its conversation goes with your first message. Its uncommitted changes could not be carried over; they are still in C:\\TasteCode\\trees\\a1b2c3.',
+    )
   })
 })

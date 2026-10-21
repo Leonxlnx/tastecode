@@ -53,6 +53,20 @@ export function spawnCli(
   return spawnOwned(command, args, spawnOptions)
 }
 
+/**
+ * How long a prompt an engine may pass as one command-line argument, in
+ * UTF-16 code units, leaving room for its other arguments. Windows caps a
+ * whole command line at 32,767 characters and quoting can double a prompt
+ * full of quotes; Linux caps one argument at 128 KiB, which three-byte
+ * characters reach at about 43,000; macOS shares about 1 MiB between all
+ * arguments and the environment.
+ */
+export function argumentPromptLimit(platform: NodeJS.Platform = process.platform): number {
+  if (platform === 'win32') return 15_000
+  if (platform === 'darwin') return 250_000
+  return 40_000
+}
+
 const CMD_META = /([()[\]%!^"`<>&|;, *?\t\v\f])/g
 
 function escapeCmdToken(value: string): string {

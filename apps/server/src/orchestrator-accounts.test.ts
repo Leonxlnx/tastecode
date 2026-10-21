@@ -1,8 +1,10 @@
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import type {
   AccountId,
+  Item,
   Model,
   ProviderId,
   ProviderLimit,
@@ -13,7 +15,7 @@ import { AccountNotFoundError, type AccountDirectory } from './account-directory
 import type { AgentSession, ProviderRuntime } from './adapters.js'
 import { McpConfigStore } from './mcp-config.js'
 import { Orchestrator } from './orchestrator.js'
-import { CONTINUE_CONTEXT_NOTICE } from './provider-session.js'
+import { CONTINUE_CONTEXT_NOTICE, CONTINUE_CONTEXT_REQUEST } from './provider-session.js'
 import { withoutContinuationContext } from './side-chat.js'
 import { Store } from './store.js'
 
@@ -122,7 +124,11 @@ function model(id: string): Model {
 
 type Launch = { kind: 'start' | 'resume'; provider: ProviderId; accountHome: string | undefined }
 
-function setup(accounts: AccountDirectory, store = new Store(':memory:')) {
+function setup(
+  accounts: AccountDirectory,
+  store = new Store(':memory:'),
+  worktreeRoot = path.join(root, 'trees'),
+) {
   const launches: Launch[] = []
   const live: Live = {}
   const sessions: FakeSession[] = []
@@ -177,6 +183,7 @@ function setup(accounts: AccountDirectory, store = new Store(':memory:')) {
     runtimeFor,
     accounts,
     mcpConfig: new McpConfigStore(path.join(root, 'mcp.json')),
+    worktreeRoot,
   })
   return { orchestrator, launches, store, live, pushed, sessions, listed, contexts }
 }
@@ -322,6 +329,117 @@ describe('chats pinned to a provider account', () => {
     await orchestrator.disposeAll()
   })
 
+  it('keeps an early constraint of a long working chat in the first prompt', async () => {
+    const { orchestrator, store, sessions } = setup(directory({ 'codex:work': workHome }))
+    const earlier = await orchestrator.startThread('codex', root)
+    const append = (item: Partial<Item> & Pick<Item, 'id' | 'type'>) =>
+      store.append(earlier.id, {
+        type: 'item.completed',
+        item: { turnId: 'turn-1', status: 'completed', createdAt: 1, ...item },
+      })
+    append({
+      id: 'ask',
+      type: 'message',
+      role: 'user',
+      text: 'Build the importer. Constraint BRAVO-3: never touch legacy/.',
+    })
+    append({
+      id: 'plan',
+      type: 'message',
+      role: 'assistant',
+      text: 'Plan: three steps, keeping BRAVO-3.',
+    })
+    // A working turn: test runs with long output, then many small commands.
+    for (let index = 0; index < 4; index += 1) {
+      append({
+        id: `test-${index}`,
+        type: 'command',
+        command: 'pnpm test',
+        text: `TEST OUTPUT ${'x'.repeat(30_000)}`,
+        exitCode: 1,
+      })
+    }
+    append({ id: 'again', type: 'message', role: 'user', text: 'Fix the failing tests' })
+    for (let index = 0; index < 90; index += 1) {
+      append({ id: `search-${index}`, type: 'command', command: `rg -n thing src/file${index}.ts` })
+    }
+    store.append(earlier.id, { type: 'thread.error', threadId: earlier.id, message: 'Usage limit' })
+
+    const next = await orchestrator.startThread('codex', root, {
+      accountId: 'work',
+      continueFrom: earlier.id,
+    })
+    await orchestrator.sendTurn(next.id, 'Fix the failing tests')
+    const first = sessions.at(-1)!.sent[0]!
+    const context = first.slice(
+      first.indexOf('<earlier_conversation>\n') + '<earlier_conversation>\n'.length,
+      first.indexOf(CONTINUE_CONTEXT_REQUEST),
+    )
+    expect(context).toContain('Constraint BRAVO-3')
+    expect(context.length).toBeLessThanOrEqual(64_000)
+    expect(context).not.toContain('TEST OUTPUT')
+    const order = [
+      'Constraint BRAVO-3',
+      'Plan: three steps',
+      '"command":"pnpm test"',
+      'Fix the failing tests',
+      'src/file0.ts',
+      'src/file89.ts',
+      'Usage limit',
+    ].map((text) => context.indexOf(text))
+    expect(order.every((position) => position >= 0)).toBe(true)
+    expect(order).toEqual([...order].sort((a, b) => a - b))
+    await orchestrator.disposeAll()
+  })
+
+  it('keeps the first chat when a continued chat is continued again', async () => {
+    const { orchestrator, store, sessions } = setup(directory({ 'codex:work': workHome }))
+    const said = (threadId: string, id: string, role: 'user' | 'assistant', text: string) =>
+      store.append(threadId, {
+        type: 'item.completed',
+        item: {
+          id,
+          turnId: 'turn-1',
+          type: 'message',
+          role,
+          status: 'completed',
+          text,
+          createdAt: 1,
+        },
+      })
+    const first = await orchestrator.startThread('codex', root)
+    said(first.id, 'ask', 'user', 'Original task: keep constraint ALPHA-7 everywhere')
+    said(first.id, 'answer', 'assistant', 'Working on it with ALPHA-7.')
+    store.append(first.id, { type: 'thread.error', threadId: first.id, message: 'Usage limit' })
+
+    const second = await orchestrator.startThread('codex', root, {
+      accountId: 'work',
+      continueFrom: first.id,
+    })
+    await orchestrator.sendTurn(second.id, 'Go on please')
+    said(second.id, 'second-answer', 'assistant', 'Second chat: two files left.')
+    store.append(second.id, { type: 'thread.error', threadId: second.id, message: 'Usage limit' })
+    // The first chat went on after its limit reset; the second chat never saw that.
+    said(first.id, 'later', 'user', 'A later branch: LATER-IN-FIRST')
+
+    const third = await orchestrator.startThread('codex', root, { continueFrom: second.id })
+    await orchestrator.sendTurn(third.id, 'Finish it')
+    const prompt = sessions.at(-1)!.sent[0]!
+    expect(prompt).toContain('ALPHA-7')
+    expect(prompt).toContain('Second chat: two files left.')
+    expect(prompt).not.toContain('LATER-IN-FIRST')
+    const order = [
+      'Original task',
+      'Working on it with ALPHA-7.',
+      'Go on please',
+      'Second chat: two files left.',
+    ].map((text) => prompt.indexOf(text))
+    expect(order.every((position) => position >= 0)).toBe(true)
+    expect(order).toEqual([...order].sort((a, b) => a - b))
+    expect(withoutContinuationContext(prompt)).toBe('Finish it')
+    await orchestrator.disposeAll()
+  })
+
   it('refuses to continue a chat that is gone or ran on another provider', async () => {
     const { orchestrator, launches } = setup(directory({ 'codex:work': workHome }))
     const claudeChat = await orchestrator.startThread('claude-code', root)
@@ -399,6 +517,153 @@ describe('chats pinned to a provider account', () => {
     )
     expect(second.launches).toEqual([])
     await second.orchestrator.disposeAll()
+  })
+})
+
+describe('continuing an isolated chat', () => {
+  const git = (cwd: string, ...args: string[]) =>
+    execFileSync('git', args, { cwd, windowsHide: true }).toString()
+  /** Text as git checks it out here; autocrlf may have added CRs. */
+  const text = (file: string) => readFileSync(file, 'utf8').replaceAll('\r\n', '\n')
+
+  /** A chat in its own checkout that edited files and reached its limit before committing. */
+  async function isolatedChatWithWork() {
+    const repo = mkdtempSync(path.join(root, 'repo-'))
+    git(repo, 'init', '-b', 'main')
+    git(repo, 'config', 'user.email', 'test@example.com')
+    git(repo, 'config', 'user.name', 'Test')
+    writeFileSync(path.join(repo, 'app.ts'), 'export const value = 1\n')
+    git(repo, 'add', '.')
+    git(repo, 'commit', '-m', 'first')
+    const harness = setup(
+      directory({ 'codex:work': workHome }),
+      new Store(':memory:'),
+      `${repo}-trees`,
+    )
+    const earlier = await harness.orchestrator.startThread('codex', repo, { isolate: true })
+    harness.store.append(earlier.id, {
+      type: 'item.completed',
+      item: {
+        id: 'ask',
+        turnId: 'turn-1',
+        type: 'message',
+        role: 'user',
+        status: 'completed',
+        text: 'Raise the value and add a helper',
+        createdAt: 1,
+      },
+    })
+    const checkout = harness.store.thread(earlier.id)!.worktreePath!
+    writeFileSync(path.join(checkout, 'app.ts'), 'export const value = 2\n')
+    writeFileSync(path.join(checkout, 'helper.ts'), 'export const helper = true\n')
+    // As "Continue on another account" asks for it.
+    const continueOn = () =>
+      harness.orchestrator.startThread('codex', repo, {
+        accountId: 'work',
+        continueFrom: earlier.id,
+        isolate: true,
+        baseRef: harness.store.thread(earlier.id)!.worktreeBranch,
+      })
+    return { ...harness, repo, earlier, checkout, continueOn }
+  }
+
+  it('carries its uncommitted changes into a checkout of its own', async () => {
+    const { orchestrator, store, sessions, earlier, checkout, continueOn } =
+      await isolatedChatWithWork()
+    const next = await continueOn()
+    const nextCheckout = store.thread(next.id)!.worktreePath!
+
+    expect(nextCheckout).not.toBe(checkout)
+    expect(text(path.join(nextCheckout, 'app.ts'))).toBe('export const value = 2\n')
+    expect(text(path.join(nextCheckout, 'helper.ts'))).toBe('export const helper = true\n')
+    // The earlier chat and its checkout stay as they were.
+    expect(store.thread(earlier.id)?.worktreePath).toBe(checkout)
+    expect(text(path.join(checkout, 'app.ts'))).toBe('export const value = 2\n')
+    expect(git(checkout, 'status', '--porcelain').split('\n').filter(Boolean).sort()).toEqual([
+      ' M app.ts',
+      '?? helper.ts',
+    ])
+
+    await orchestrator.sendTurn(next.id, 'Go on')
+    const first = sessions.at(-1)!.sent[0]!
+    expect(first).toContain('Its uncommitted changes were carried into this workspace')
+    expect(first).not.toContain('The workspace can already hold')
+    expect(withoutContinuationContext(first)).toBe('Go on')
+    await orchestrator.disposeAll()
+  })
+
+  it('names the earlier checkout when its changes cannot be carried, also after a restart', async () => {
+    const { orchestrator, store, earlier, checkout, continueOn } = await isolatedChatWithWork()
+    // The earlier chat committed on a branch of its own, so its edits sit on a
+    // base the continuation's checkout does not have.
+    git(checkout, 'switch', '-c', 'elsewhere')
+    writeFileSync(path.join(checkout, 'app.ts'), 'export const value = 5\n')
+    git(checkout, 'commit', '-am', 'elsewhere')
+    writeFileSync(path.join(checkout, 'app.ts'), 'export const value = 6\n')
+    const earlierStatus = git(checkout, 'status', '--porcelain')
+
+    const next = await continueOn()
+    const nextCheckout = store.thread(next.id)!.worktreePath!
+    expect(text(path.join(nextCheckout, 'app.ts'))).toBe('export const value = 1\n')
+    expect(existsSync(path.join(nextCheckout, 'helper.ts'))).toBe(false)
+    expect(git(checkout, 'status', '--porcelain')).toBe(earlierStatus)
+    expect(store.thread(earlier.id)?.worktreePath).toBe(checkout)
+    await orchestrator.disposeAll()
+
+    // The first prompt is sent later, by a server started again in between.
+    const again = setup(directory({ 'codex:work': workHome }), store, path.join(root, 'unused'))
+    await again.orchestrator.submitTurn(next.id, 'Go on')
+    const first = again.sessions.at(-1)!.sent[0]!
+    expect(first).toContain(
+      `Its uncommitted changes could not be carried over; they are still in ${checkout}.`,
+    )
+    expect(first).not.toContain('The workspace can already hold')
+    await again.orchestrator.disposeAll()
+  })
+
+  it('leaves a continuation in the project folder as it was', async () => {
+    const repo = mkdtempSync(path.join(root, 'shared-'))
+    git(repo, 'init', '-b', 'main')
+    git(repo, 'config', 'user.email', 'test@example.com')
+    git(repo, 'config', 'user.name', 'Test')
+    writeFileSync(path.join(repo, 'app.ts'), 'export const value = 1\n')
+    git(repo, 'add', '.')
+    git(repo, 'commit', '-m', 'first')
+    const { orchestrator, store, sessions } = setup(
+      directory({ 'codex:work': workHome }),
+      new Store(':memory:'),
+      `${repo}-trees`,
+    )
+    const earlier = await orchestrator.startThread('codex', repo)
+    store.append(earlier.id, {
+      type: 'item.completed',
+      item: {
+        id: 'ask',
+        turnId: 'turn-1',
+        type: 'message',
+        role: 'user',
+        status: 'completed',
+        text: 'Raise the value',
+        createdAt: 1,
+      },
+    })
+    writeFileSync(path.join(repo, 'app.ts'), 'export const value = 2\n')
+
+    const next = await orchestrator.startThread('codex', repo, {
+      accountId: 'work',
+      continueFrom: earlier.id,
+    })
+    expect(store.thread(next.id)?.worktreePath).toBeUndefined()
+    expect(existsSync(`${repo}-trees`)).toBe(false)
+    expect(git(repo, 'status', '--porcelain')).toBe(' M app.ts\n')
+
+    await orchestrator.sendTurn(next.id, 'Go on')
+    const first = sessions.at(-1)!.sent[0]!
+    expect(first).toContain(
+      'The workspace can already hold some of its changes, so check the files before redoing work.',
+    )
+    expect(first).not.toContain('uncommitted changes')
+    await orchestrator.disposeAll()
   })
 })
 

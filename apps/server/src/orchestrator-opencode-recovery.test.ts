@@ -62,9 +62,10 @@ async function mockOpenCode(protocol: 'v1' | 'v2', directory: string) {
       response.end(JSON.stringify({ healthy: protocol === 'v2' }))
       return
     }
-    // The v2 server is v2-only: a server that still has v1 is spoken to in v1.
-    if (url === '/path' && protocol === 'v2') {
-      response.writeHead(404).end()
+    // A v2 server here has dropped v1; the adapter speaks v1 wherever it can.
+    if (url === '/session/status' && protocol === 'v2') {
+      response.statusCode = 404
+      response.end()
       return
     }
     const sessionRoot = protocol === 'v2' ? '/api/session' : '/session'

@@ -1,4 +1,4 @@
-import type { ResultOf } from '@harness/contracts'
+import type { ProviderId, ResultOf } from '@harness/contracts'
 import { applyProjectOrder, applySessionOrder, type SessionOrder } from './sidebar-order.js'
 import type { Project } from './ui/Sidebar.js'
 
@@ -216,6 +216,27 @@ export function updateSession(
     recordSessionChange(projects, next, location)
   }
   return next
+}
+
+/** A chat's sidebar row once the chat moved to another provider, agent or account. */
+export function sessionOnProvider(
+  session: Session,
+  place: { provider: ProviderId; agent?: string | undefined; accountId?: string | undefined },
+): Session {
+  if (
+    session.provider === place.provider &&
+    session.agent === place.agent &&
+    session.accountId === place.accountId &&
+    session.connectionId === undefined
+  )
+    return session
+  const { agent: _agent, accountId: _accountId, connectionId: _connectionId, ...rest } = session
+  return {
+    ...rest,
+    provider: place.provider,
+    ...(place.agent ? { agent: place.agent } : {}),
+    ...(place.accountId ? { accountId: place.accountId } : {}),
+  }
 }
 
 /** Update a known set of chats without scanning every sidebar row. */

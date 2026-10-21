@@ -70,9 +70,10 @@ function createSidebarFixture() {
   }
 }
 
+const SHOW_MORE = `Show ${sessions.length - 5} more`
 const toggleFixture = createSidebarFixture()
 const scrollFixture = createSidebarFixture()
-scrollFixture.clickToggle('Show more')
+scrollFixture.clickToggle(SHOW_MORE)
 const virtualList = scrollFixture.container.querySelector<HTMLUListElement>(
   '.proj__sessions--virtual',
 )!
@@ -97,7 +98,7 @@ describe('large expanded project', () => {
   bench(
     'expands and collapses a 10,000-chat project',
     () => {
-      toggleFixture.clickToggle('Show more')
+      toggleFixture.clickToggle(SHOW_MORE)
       toggleFixture.clickToggle('Show less')
     },
     OPTIONS,

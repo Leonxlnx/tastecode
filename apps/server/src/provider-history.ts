@@ -70,6 +70,19 @@ export class ProviderHistory {
     return entry !== undefined && !entry.session.internal
   }
 
+  /**
+   * Drops what links a chat to a provider's saved session, after the chat
+   * moved to another provider. That session stays the chat's own (the store
+   * keeps it as one the chat left), so a later scan neither imports nor reads it.
+   */
+  forget(threadId: string): void {
+    const entry = this.#byThread.get(threadId)
+    if (!entry) return
+    this.#byThread.delete(threadId)
+    const key = `${entry.provider}:${entry.session.id}`
+    if (this.#entries.get(key)?.threadId === threadId) this.#entries.delete(key)
+  }
+
   #remember(entry: Imported): void {
     const previous = this.#entries.get(`${entry.provider}:${entry.session.id}`)
     if (previous && previous.threadId !== entry.threadId) this.#byThread.delete(previous.threadId)
@@ -165,6 +178,12 @@ export class ProviderHistory {
               return [history.resolveSessionId?.(id) ?? id, thread]
             }),
           )
+          // Sessions chats ran on before they moved to another provider.
+          const left = new Set(
+            this.store
+              .leftProviderSessions(provider)
+              .map((id) => history.resolveSessionId?.(id) ?? id),
+          )
           const changed: string[] = []
           const imported: Imported[] = []
           const repair = new Set<string>()
@@ -214,7 +233,7 @@ export class ProviderHistory {
               return project
             }
             for (const session of sessions) {
-              if (session.internal || !session.id) continue
+              if (session.internal || !session.id || left.has(session.id)) continue
               if (!path.isAbsolute(session.workspacePath) || !Number.isFinite(session.createdAt))
                 continue
               const native = nativeThreads.get(session.id)
@@ -318,10 +337,16 @@ export class ProviderHistory {
     const pending = this.#reading.get(threadId)
     if (pending) return pending
     let entry = this.#byThread.get(threadId)
+    const thread = this.store.thread(threadId)
+    // A session the chat has left since: its turns are already the chat's own.
+    if (entry && thread && entry.provider !== thread.provider) {
+      this.forget(threadId)
+      return false
+    }
     if (
       !entry ||
       entry.session.internal ||
-      !this.store.thread(threadId) ||
+      !thread ||
       entry.loadedRevision === entry.session.revision
     )
       return false
@@ -364,7 +389,15 @@ export class ProviderHistory {
         // A turn that finished during the read is local too; its echo must still be dropped.
         if (this.store.lastSeq(threadId) !== seq)
           local = this.store.localHistory(threadId).map(({ event }) => event)
-        const entries = importedEvents(events, threadId, local)
+        // A chat that continues another starts as a copy of that chat's saved
+        // session. The turns from before it existed are the earlier chat's.
+        const entries = importedEvents(
+          thread.continuedFrom === undefined || duplicateId === threadId
+            ? events
+            : turnsSince(events, thread.createdAt),
+          threadId,
+          local,
+        )
         const duplicate =
           duplicateId !== threadId &&
           this.store.thread(duplicateId) !== undefined &&
@@ -426,6 +459,19 @@ function folderIdentity(folder: string): string | undefined {
 
 function startedTurnIds(events: DomainEvent[]): Set<string> {
   return new Set(events.flatMap((event) => (event.type === 'turn.started' ? [event.turn.id] : [])))
+}
+
+/** The events of turns that started at `since` or later, and those of no turn. */
+function turnsSince(events: DomainEvent[], since: number): DomainEvent[] {
+  const earlier = new Set(
+    events.flatMap((event) =>
+      event.type === 'turn.started' && event.turn.createdAt < since ? [event.turn.id] : [],
+    ),
+  )
+  return events.filter((event) => {
+    const id = turnId(event)
+    return id === undefined || !earlier.has(id)
+  })
 }
 
 function turnId(event: DomainEvent): string | undefined {

@@ -69,6 +69,7 @@ import {
 } from '../provider-presentation.js'
 import { avatarSeedName, type ProfileIdentityPreferences } from '../profile-preferences.js'
 import {
+  foldedProjectSessions,
   needsYouSessions,
   projectAttention,
   sidebarRail,
@@ -1617,28 +1618,37 @@ const ProjectSessions = memo(function ProjectSessions(props: {
   const draggedSessionIdRef = useRef<string | undefined>(undefined)
   const dropTargetRef = useRef<{ id: string; position: DropPosition } | undefined>(undefined)
   const virtualSessionList = useRef<HTMLUListElement>(null)
-  const virtualized = props.showAll && count > VIRTUALIZED_PROJECT_SESSION_COUNT
-  const [virtualRange, setVirtualRange] = useState(() =>
-    virtualSessionRange(0, props.project.sessions.length),
+  // Folded to its first rows, a project still lists each later chat with news.
+  const foldedSessions = useMemo(
+    () =>
+      foldedProjectSessions(
+        props.project.sessions,
+        props.activeSessionId,
+        COLLAPSED_PROJECT_SESSION_COUNT,
+      ),
+    [props.activeSessionId, props.project.sessions],
   )
+  const hiddenCount = count - foldedSessions.length
+  const listedSessions = props.showAll ? props.project.sessions : foldedSessions
+  const listedCount = listedSessions.length
+  const virtualized = listedCount > VIRTUALIZED_PROJECT_SESSION_COUNT
+  const [virtualRange, setVirtualRange] = useState(() => virtualSessionRange(0, listedCount))
   const virtualRangeRef = useRef(virtualRange)
   const updateVirtualRange = useCallback(
     (scrollTop: number) => {
-      const next = virtualSessionRange(scrollTop, count)
+      const next = virtualSessionRange(scrollTop, listedCount)
       const current = virtualRangeRef.current
       if (current.start === next.start && current.end === next.end) return
       virtualRangeRef.current = next
       setVirtualRange(next)
     },
-    [count],
+    [listedCount],
   )
   const visibleStart = virtualized ? virtualRange.start : 0
-  const visibleSessions = props.showAll
-    ? virtualized
-      ? props.project.sessions.slice(virtualRange.start, virtualRange.end)
-      : props.project.sessions
-    : props.project.sessions.slice(0, COLLAPSED_PROJECT_SESSION_COUNT)
-  const virtualHeight = (count + 1) * VIRTUAL_SESSION_ROW_HEIGHT
+  const visibleSessions = virtualized
+    ? listedSessions.slice(virtualRange.start, virtualRange.end)
+    : listedSessions
+  const virtualHeight = (listedCount + 1) * VIRTUAL_SESSION_ROW_HEIGHT
   const virtualListStyle = virtualized
     ? ({
         '--virtual-session-height': `${virtualHeight}px`,
@@ -1659,7 +1669,7 @@ const ProjectSessions = memo(function ProjectSessions(props: {
     if (centredSessionId.current !== props.activeSessionId) {
       centredSessionId.current = props.activeSessionId
       const activeIndex = props.activeSessionId
-        ? props.project.sessions.findIndex((session) => session.id === props.activeSessionId)
+        ? listedSessions.findIndex((session) => session.id === props.activeSessionId)
         : -1
       const target = Math.max(
         0,
@@ -1751,16 +1761,16 @@ const ProjectSessions = memo(function ProjectSessions(props: {
             onDragEnd={endDrag}
             virtualTop={virtualized ? sessionIndex * VIRTUAL_SESSION_ROW_HEIGHT : undefined}
             virtualPosition={virtualized ? sessionIndex + 1 : undefined}
-            virtualSetSize={virtualized ? count : undefined}
+            virtualSetSize={virtualized ? listedCount : undefined}
           />
         )
       })}
-      {count > COLLAPSED_PROJECT_SESSION_COUNT ? (
+      {hiddenCount > 0 ? (
         <li
           className="proj__sessions-toggle-row"
           style={
             virtualized
-              ? { transform: `translateY(${count * VIRTUAL_SESSION_ROW_HEIGHT}px)` }
+              ? { transform: `translateY(${listedCount * VIRTUAL_SESSION_ROW_HEIGHT}px)` }
               : undefined
           }
         >
@@ -1770,7 +1780,7 @@ const ProjectSessions = memo(function ProjectSessions(props: {
             aria-expanded={props.showAll}
             onClick={() => props.onShowAllChange(!props.showAll)}
           >
-            {props.showAll ? 'Show less' : 'Show more'}
+            {props.showAll ? 'Show less' : `Show ${hiddenCount} more`}
           </button>
         </li>
       ) : null}

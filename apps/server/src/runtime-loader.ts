@@ -1,5 +1,11 @@
 import type { CustomHarness, CustomHarnessVerification, ProviderId } from '@harness/contracts'
-import type { AgentSession, ProviderRuntime, StartOptions, TurnOptions } from './adapters.js'
+import type {
+  AgentSession,
+  ProviderRuntime,
+  SavedSession,
+  StartOptions,
+  TurnOptions,
+} from './adapters.js'
 import { retryableLazy } from './retryable-lazy.js'
 import { PROVIDER_CAPABILITIES } from './provider-capabilities.js'
 
@@ -20,6 +26,7 @@ export async function stopModelListings(): Promise<void> {
 function deferredRuntime(
   load: () => Promise<ProviderRuntime>,
   supportsResume: boolean,
+  supportsFork = false,
 ): ProviderRuntime {
   const resolve = retryableLazy(load)
   const deferred: ProviderRuntime = {
@@ -37,6 +44,13 @@ function deferredRuntime(
       return loaded.resume(threadId, workspacePath, options)
     }
   }
+  if (supportsFork) {
+    deferred.fork = async (workspacePath, from, options) => {
+      const loaded = await resolve()
+      if (!loaded.fork) throw new Error('provider runtime cannot carry a session on')
+      return loaded.fork(workspacePath, from, options)
+    }
+  }
   return deferred
 }
 
@@ -51,11 +65,12 @@ export function providerRuntime(
       'API key connections were removed from TasteCode. This chat stays readable; to use your own key, sign in to OpenCode with it.',
     )
   }
-  const supportsResume = PROVIDER_CAPABILITIES[provider].resume
+  const { resume, forkSession } = PROVIDER_CAPABILITIES[provider]
   return deferredRuntime(
     async () =>
       (await loadAdapters()).providerRuntime(provider, onLog, resolveHarness, accountHome),
-    supportsResume,
+    resume,
+    forkSession,
   )
 }
 
@@ -67,4 +82,4 @@ export async function verifyCustomHarness(
   return (await loadAdapters()).verifyCustomHarness(harness, workspacePath, onLog)
 }
 
-export type { AgentSession, ProviderRuntime, StartOptions, TurnOptions }
+export type { AgentSession, ProviderRuntime, SavedSession, StartOptions, TurnOptions }

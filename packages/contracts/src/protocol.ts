@@ -1944,7 +1944,43 @@ export const methods = {
           })
         }
       }),
-    result: z.object({ threadId: z.string() }),
+    result: z.object({
+      threadId: z.string(),
+      /**
+       * Set when `continueFrom` names a chat with a checkout of its own that
+       * held uncommitted changes: they were copied into the new chat's
+       * checkout, or could not be and are still in `keptIn`, the earlier
+       * chat's checkout. That checkout is left as it was either way.
+       */
+      earlierChanges: z
+        .discriminatedUnion('carried', [
+          z.object({ carried: z.literal(true) }),
+          z.object({ carried: z.literal(false), keptIn: z.string().min(1) }),
+        ])
+        .optional(),
+    }),
+  },
+  /**
+   * Move an open chat to another provider, agent or account. The chat keeps
+   * its id, conversation and checkout; a new session starts there, and only
+   * once it is running does the earlier one stop, so a failure leaves the chat
+   * as it was. The next prompt carries the conversation so far as context.
+   * Refused while a turn runs, prompts are queued, or a Design run is active.
+   */
+  'thread.changeProvider': {
+    params: z.object({
+      threadId: z.string(),
+      provider: ProviderIdSchema,
+      /** Which ACP agent or custom harness, when the provider runs several. */
+      agent: z.string().min(1).optional(),
+      /** Absent means the account a new chat with the provider starts on. */
+      accountId: AccountIdSchema.optional(),
+      model: z.string().optional(),
+      serviceTier: z.string().optional(),
+      effort: z.string().optional(),
+      approval: ApprovalModeSchema.optional(),
+    }),
+    result: z.object({}),
   },
   /**
    * Points this session can be returned to. One is taken before every turn

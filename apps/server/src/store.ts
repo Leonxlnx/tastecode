@@ -138,6 +138,12 @@ export type StoredThread = {
   parentThreadId?: string | undefined
   /** The earlier chat this one carries on, such as on another account after a usage limit. */
   continuedFrom?: string | undefined
+  /**
+   * Where the uncommitted changes of the earlier chat's own checkout went when
+   * this chat started: carried into this chat's checkout, or kept where they
+   * were because they could not be. Absent when there were none to carry.
+   */
+  continuedChanges?: 'carried' | 'kept' | undefined
 }
 
 /** Only the fields sent by `projects.list`; recovery-only metadata stays in SQLite. */
@@ -377,6 +383,8 @@ CREATE TABLE IF NOT EXISTS threads (
   parent_thread_id TEXT,
   continued_from   TEXT,
   continue_context_pending INTEGER NOT NULL DEFAULT 0,
+  continued_changes       TEXT,
+  handover_pending        INTEGER NOT NULL DEFAULT 0,
   restore_context_pending INTEGER NOT NULL DEFAULT 0,
   restored_at             INTEGER,
   history_rewrite_after   INTEGER,
@@ -534,6 +542,18 @@ CREATE TABLE IF NOT EXISTS thread_runtime_state (
   payload   TEXT NOT NULL
 );
 
+-- Provider sessions a chat ran on before it moved to another provider. They
+-- stay the chat's own: provider history neither imports them as chats of
+-- their own nor reads them into the chat again. Kept after the chat is
+-- deleted, like any deleted chat's saved session.
+CREATE TABLE IF NOT EXISTS left_provider_sessions (
+  provider   TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  thread_id  TEXT NOT NULL,
+  left_at    INTEGER NOT NULL,
+  PRIMARY KEY (provider, session_id)
+) WITHOUT ROWID;
+
 CREATE TABLE IF NOT EXISTS history_keys (
   thread_id TEXT NOT NULL,
   key       TEXT NOT NULL,
@@ -659,6 +679,8 @@ const ADDED_COLUMNS: Array<{ table: string; column: string; definition: string }
     column: 'continue_context_pending',
     definition: 'INTEGER NOT NULL DEFAULT 0',
   },
+  { table: 'threads', column: 'continued_changes', definition: 'TEXT' },
+  { table: 'threads', column: 'handover_pending', definition: 'INTEGER NOT NULL DEFAULT 0' },
 ]
 
 type SqliteInteger = number | bigint
@@ -708,6 +730,7 @@ type ThreadRow = {
   ephemeral: SqliteInteger
   parent_thread_id: string | null
   continued_from: string | null
+  continued_changes: string | null
 }
 type SidebarThreadRow = Pick<
   ThreadRow,
@@ -1244,8 +1267,8 @@ export class Store {
         (id, project_path, provider, agent, connection_id, account_id, provider_session_id, title,
           created_at, worktree_path, worktree_branch,
           lifecycle_state, keep_active, unread, last_active_at, ephemeral, parent_thread_id,
-          continued_from, continue_context_pending)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 0, 0, ?, ?, ?, ?, ?)`,
+          continued_from, continue_context_pending, continued_changes)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 0, 0, ?, ?, ?, ?, ?, ?)`,
     )
     this.#listProjects = this.#db.prepare(`SELECT * FROM projects ORDER BY created_at`)
     this.#listProjectThreads = this.#db.prepare(
@@ -1629,6 +1652,7 @@ export class Store {
       stored.continuedFrom ?? null,
       // The earlier conversation goes with the first prompt; see threadNeedsContinueContext.
       stored.continuedFrom === undefined ? 0 : 1,
+      stored.continuedChanges ?? null,
     )
     // A new thread's index covers every row it will ever have.
     if (!this.#threadHasEvents.get(stored.id)) {
@@ -1825,10 +1849,17 @@ export class Store {
     })
   }
 
-  /** Include temporary tasks so provider discovery cannot publish their internal prompts. */
+  /**
+   * Include temporary tasks so provider discovery cannot publish their internal prompts.
+   * An imported chat that moved to another provider runs a session of its own
+   * since, so it counts as native too.
+   */
   nativeProviderThreads(provider: ProviderId): StoredThread[] {
     return sqliteRows<ThreadRow>(
-      this.#db.prepare("SELECT * FROM threads WHERE provider = ? AND id NOT LIKE 'external:%'"),
+      this.#db.prepare(
+        `SELECT * FROM threads WHERE provider = ? AND (id NOT LIKE 'external:%'
+           OR id IN (SELECT thread_id FROM left_provider_sessions))`,
+      ),
       provider,
     ).flatMap((row) => {
       const thread = toThread(row)
@@ -4338,6 +4369,104 @@ export class Store {
     this.#db.prepare('UPDATE threads SET continue_context_pending = 0 WHERE id = ?').run(threadId)
   }
 
+  /**
+   * Moves a chat to another provider's session. Everything that belongs to
+   * the session it leaves goes: its resume identity and state, and its link to
+   * the provider's saved copy, which stays the chat's own as a left session.
+   * The conversation so far has not reached the new session yet; it goes with
+   * the first prompt that session accepts (`threadNeedsHandover`), which also
+   * covers an earlier chat this one continues and makes a restore notice moot.
+   * A `carried` session started as a copy of the one the chat leaves and
+   * already holds all of that.
+   */
+  moveThreadToProvider(
+    threadId: string,
+    next: {
+      provider: ProviderId
+      agent?: string | undefined
+      accountId?: string | undefined
+      providerSessionId: string
+      carried?: boolean | undefined
+    },
+  ): void {
+    const current = this.thread(threadId)
+    if (!current) throw new Error('thread not found')
+    this.#transaction(() => {
+      const left = current.providerSessionId ?? current.id
+      if (left !== next.providerSessionId || current.provider !== next.provider) {
+        this.#db
+          .prepare(
+            `INSERT INTO left_provider_sessions (provider, session_id, thread_id, left_at)
+             VALUES (?, ?, ?, ?) ON CONFLICT(provider, session_id) DO NOTHING`,
+          )
+          .run(current.provider, left, threadId, Date.now())
+      }
+      this.#db
+        .prepare(
+          `UPDATE threads SET provider = ?, agent = ?, connection_id = NULL, account_id = ?,
+             provider_session_id = ?, handover_pending = ?, continue_context_pending = 0,
+             restore_context_pending = 0
+           WHERE id = ?`,
+        )
+        .run(
+          next.provider,
+          next.agent ?? null,
+          next.accountId ?? null,
+          next.providerSessionId,
+          next.carried ? 0 : 1,
+          threadId,
+        )
+      this.#db.prepare('DELETE FROM thread_runtime_state WHERE thread_id = ?').run(threadId)
+      this.#db.prepare('DELETE FROM provider_history WHERE thread_id = ?').run(threadId)
+    })
+    const moved = (thread: StoredThread): StoredThread => {
+      const { agent: _agent, connectionId: _connectionId, accountId: _accountId, ...rest } = thread
+      return {
+        ...rest,
+        provider: next.provider,
+        ...(next.agent === undefined ? {} : { agent: next.agent }),
+        ...(next.accountId === undefined ? {} : { accountId: next.accountId }),
+        providerSessionId: next.providerSessionId,
+      }
+    }
+    this.#updateCachedThread(threadId, moved)
+    this.#updateSidebarThread(threadId, (thread) => {
+      const { agent: _agent, connectionId: _connectionId, accountId: _accountId, ...rest } = thread
+      return {
+        ...rest,
+        provider: next.provider,
+        ...(next.agent === undefined ? {} : { agent: next.agent }),
+        ...(next.accountId === undefined ? {} : { accountId: next.accountId }),
+      }
+    })
+  }
+
+  /** The chat moved to another provider and its conversation has not gone there yet. */
+  threadNeedsHandover(threadId: string): boolean {
+    return (
+      this.#db
+        .prepare('SELECT 1 FROM threads WHERE id = ? AND handover_pending = 1')
+        .get(threadId) !== undefined
+    )
+  }
+
+  clearThreadHandover(threadId: string): void {
+    this.#db.prepare('UPDATE threads SET handover_pending = 0 WHERE id = ?').run(threadId)
+  }
+
+  /** The handover did not reach the new session after all; the next prompt carries it again. */
+  rearmThreadHandover(threadId: string): void {
+    this.#db.prepare('UPDATE threads SET handover_pending = 1 WHERE id = ?').run(threadId)
+  }
+
+  /** Sessions of this provider that chats ran on before they moved elsewhere. */
+  leftProviderSessions(provider: ProviderId): string[] {
+    return sqliteRows<{ session_id: string }>(
+      this.#db.prepare('SELECT session_id FROM left_provider_sessions WHERE provider = ?'),
+      provider,
+    ).map((row) => row.session_id)
+  }
+
   /** Save and remove the conversation tail so a restore remains reversible. */
   saveRestoreUndo(threadId: string, seq: number, commit: string): string {
     const token = randomUUID()
@@ -5173,6 +5302,9 @@ function toThread(row: ThreadRow): StoredThread | undefined {
     ephemeral: row.ephemeral === 1,
     ...(row.parent_thread_id === null ? {} : { parentThreadId: row.parent_thread_id }),
     ...(row.continued_from === null ? {} : { continuedFrom: row.continued_from }),
+    ...(row.continued_changes === 'carried' || row.continued_changes === 'kept'
+      ? { continuedChanges: row.continued_changes }
+      : {}),
   }
 }
 

@@ -35,6 +35,11 @@ export const ItemTypeSchema = z.enum([
   'error',
   /** An event an adapter did not recognise. Rendered as raw text, never dropped. */
   'unknown',
+  /**
+   * A line TasteCode adds to the conversation between turns, such as the chat
+   * moving to another provider. Adapters never produce it; it belongs to no turn.
+   */
+  'notice',
 ])
 export type ItemType = z.infer<typeof ItemTypeSchema>
 
@@ -75,6 +80,25 @@ export const SubagentSchema = z.object({
 })
 export type Subagent = z.infer<typeof SubagentSchema>
 
+/**
+ * The chat moved to another provider, agent or account; the turns after it run
+ * there. The conversation before it went along as context.
+ */
+export const ProviderNoticeSchema = z.object({
+  kind: z.literal('provider'),
+  provider: ProviderIdSchema,
+  /** The ACP agent or custom harness, when the provider runs several. */
+  agent: z.string().min(1).optional(),
+  /** The account the chat now runs as. Absent means the default account. */
+  accountId: z.string().min(1).optional(),
+  /** The model chosen for the first turn there, as the provider names it. */
+  model: z.string().min(1).optional(),
+})
+export type ProviderNotice = z.infer<typeof ProviderNoticeSchema>
+
+export const NoticeSchema = z.discriminatedUnion('kind', [ProviderNoticeSchema])
+export type Notice = z.infer<typeof NoticeSchema>
+
 export const ItemSchema = z.object({
   /**
    * Stable identity for exactly one started -> deltas -> completed lifecycle.
@@ -106,6 +130,8 @@ export const ItemSchema = z.object({
    * only report subagents as plain tool calls.
    */
   subagent: SubagentSchema.optional(),
+  /** Present on `notice`: what happened, for the renderer to word and mark. */
+  notice: NoticeSchema.optional(),
   createdAt: z.number(),
 })
 export type Item = z.infer<typeof ItemSchema>

@@ -60,6 +60,26 @@ describe('durable history ownership', () => {
     expect(reopened.thread('thread')?.connectionId).toBeUndefined()
   })
 
+  it("remembers where a continued chat's earlier uncommitted changes went", () => {
+    const { store, root, location } = setup()
+    for (const continuedChanges of ['carried', 'kept'] as const) {
+      store.addThread({
+        id: continuedChanges,
+        projectPath: root,
+        provider: 'codex',
+        title: 'Continued',
+        continuedFrom: 'thread',
+        continuedChanges,
+      })
+    }
+    const reopened = new Store(location)
+    stores.push(reopened)
+
+    expect(reopened.thread('carried')?.continuedChanges).toBe('carried')
+    expect(reopened.thread('kept')?.continuedChanges).toBe('kept')
+    expect(reopened.thread('thread')?.continuedChanges).toBeUndefined()
+  })
+
   it('keeps nightly usage history available through the indexed event log', () => {
     const { store, root, location } = setup()
     store.addThread({

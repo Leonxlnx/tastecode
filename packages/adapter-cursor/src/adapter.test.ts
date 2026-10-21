@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { PassThrough } from 'node:stream'
 import type { DomainEvent } from '@harness/contracts'
+import { argumentPromptLimit } from '@harness/proc'
 import { spawnOwned } from '@harness/proc/kill'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { CursorAdapter, CURSOR_CAPABILITIES } from './adapter.js'
@@ -73,6 +74,49 @@ describe('Cursor adapter', () => {
       first.dispose()
       resumed.dispose()
     }
+  })
+
+  it('reports the chat id the CLI names, so a restart resumes that chat', async () => {
+    const child = new FakeChild()
+    const resumeArgs: string[][] = []
+    const adapter = new CursorAdapter({ spawn: () => child })
+    const reported: string[] = []
+    const thread = await adapter.startThread('/repo')
+    adapter.onProviderSessionId((id) => reported.push(id))
+    const completed = new Promise<void>((resolve) => {
+      adapter.on('event', (event) => {
+        if (event.type === 'turn.completed') resolve()
+      })
+    })
+    await adapter.sendTurn(thread.id, 'Update README')
+    child.stdout.end(readFileSync(new URL('./fixtures/stream.jsonl', import.meta.url), 'utf8'))
+    await completed
+    adapter.dispose()
+
+    expect(reported).toEqual(['session-1'])
+    expect(adapter.providerSessionId).toBe('session-1')
+    const resumed = new CursorAdapter({
+      spawn: (_command, args) => {
+        resumeArgs.push(args)
+        return new FakeChild()
+      },
+    })
+    try {
+      const again = await resumed.resumeThread(reported[0]!, '/repo')
+      const late: string[] = []
+      resumed.onProviderSessionId((id) => late.push(id))
+      await resumed.sendTurn(again.id, 'Go on')
+      expect(late).toEqual(['session-1'])
+      expect(resumeArgs[0]).toEqual(expect.arrayContaining(['--resume', 'session-1']))
+    } finally {
+      resumed.dispose()
+    }
+  })
+
+  it('says how long a prompt its command line can carry', () => {
+    const limit = new CursorAdapter().promptLimit
+    expect(limit).toBeGreaterThan(0)
+    if (process.platform !== 'win32') expect(limit).toBe(argumentPromptLimit())
   })
 
   it('starts and maps the documented stream-json wire format', async () => {

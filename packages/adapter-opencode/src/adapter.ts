@@ -12,6 +12,7 @@ import type {
   ProviderCommand,
   Skill,
   Thread,
+  UserInputQuestion,
 } from '@harness/contracts'
 import { createOpencodeClient, type Event, type OpencodeClient } from '@opencode-ai/sdk'
 import {
@@ -38,6 +39,8 @@ export const OPENCODE_CAPABILITIES: Capabilities = {
   interrupt: true,
   reasoningItems: true,
   approvals: true,
+  // opencode's `question` tool, answered through its v1 question routes.
+  userInput: true,
   images: false,
 }
 
@@ -191,6 +194,8 @@ const ConnectedModelSchema = z.object({
   status: z.string().optional(),
   release_date: z.string().optional(),
   variants: JsonRpcValueSchema.optional(),
+  /** opencode 1.18.31 names it for nearly every model; 1.18.13's capture had none. */
+  limit: z.object({ context: z.number().positive().optional() }).optional(),
 })
 const ConnectedProvidersSchema = z.object({
   providers: z.array(
@@ -217,23 +222,41 @@ const PermissionAskedDataSchema = z.object({
   resources: z.array(z.string()).optional(),
 })
 const PermissionRepliedDataSchema = z.object({ requestID: z.string() })
-/**
- * 1.18.31's v1 stream asks with `permission.asked`, not `permission.updated`:
- * the permission names the tool's class (bash, edit, external_directory) and
- * the metadata carries the command or file.
- */
+/** opencode 1.18.31's v1 stream: the tool's permission name and the patterns it covers. */
 const V1PermissionAskedSchema = z.object({
-  type: z.literal('permission.asked'),
-  properties: z.object({
-    id: z.string(),
-    permission: z.string(),
-    patterns: z.array(z.string()).optional(),
-    metadata: z.record(z.string(), JsonRpcValueSchema).optional(),
-  }),
+  id: z.string(),
+  permission: z.string(),
+  patterns: z.array(z.string()).optional(),
+  metadata: z.record(z.string(), JsonRpcValueSchema).optional(),
 })
-const V1PermissionRepliedSchema = z.object({
-  type: z.literal('permission.replied'),
-  properties: PermissionRepliedDataSchema,
+/** 1.18.31 names the request and its reply; the SDK's older shape names the permission. */
+const V1PermissionRepliedSchema = z.union([
+  z.object({ requestID: z.string() }),
+  z.object({ permissionID: z.string() }),
+])
+/** opencode 1.18.31's `question` tool: one or more questions the turn waits on. */
+const QuestionAskedSchema = z.object({
+  id: z.string(),
+  questions: z
+    .array(
+      z.object({
+        question: z.string(),
+        header: z.string().optional(),
+        options: z.array(z.object({ label: z.string(), description: z.string().optional() })),
+        multiple: z.boolean().optional(),
+        custom: z.boolean().optional(),
+      }),
+    )
+    .min(1),
+})
+const QuestionSettledSchema = z.object({ requestID: z.string() })
+const SessionErrorSchema = z.object({
+  error: z
+    .object({
+      name: z.string().optional(),
+      data: z.object({ message: z.string().optional() }).optional(),
+    })
+    .optional(),
 })
 const SessionDataSchema = z.object({ sessionID: z.string().optional() })
 const LegacySessionPropertiesSchema = z.object({
@@ -255,6 +278,8 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
   readonly #mcpServers: McpServerConfig[]
   readonly #mcpCredentials: Record<string, string>
   #baseUrl: string | undefined
+  /** Context sizes read for this server, by `provider/model`. */
+  readonly #contextWindows = new Map<string, number | undefined>()
   #server: { close(): Promise<void> } | undefined
   #starting: Promise<void> | undefined
   /** Stops a serve that has not printed its URL yet; #server cannot reach it. */
@@ -276,6 +301,8 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
   #approval: ApprovalMode = 'ask'
   #pendingApprovals = new Map<string, { request: ApprovalRequest; surfaced: boolean }>()
   #replyingApprovals = new Map<string, Promise<void>>()
+  /** Questions the turn waits on, with how many each asks. */
+  #pendingQuestions = new Map<string, number>()
   #model: string | undefined
   #effort: string | undefined
   #instructions: string | undefined
@@ -575,6 +602,31 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
     }
   }
 
+  /** Answers an OpenCode question; each question gets the labels or text chosen for it. */
+  respondToUserInput(requestId: string, answers: Record<string, string[]>): void {
+    const count = this.#pendingQuestions.get(requestId)
+    if (count === undefined || !this.#baseUrl) return
+    const directory = encodeURIComponent(this.#workspacePath)
+    void this.#v2Request(
+      `/question/${encodeURIComponent(requestId)}/reply?directory=${directory}`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          answers: Array.from({ length: count }, (_, index) => answers[String(index)] ?? []),
+        }),
+      },
+    ).then(
+      () => this.#settleQuestion(requestId),
+      () => this.emit('log', 'OpenCode question answer failed'),
+    )
+  }
+
+  #settleQuestion(requestId: string): void {
+    if (this.#pendingQuestions.delete(requestId)) {
+      this.emit('event', { type: 'user_input.resolved', id: requestId })
+    }
+  }
+
   /** Live access-level change; read again for every permission request. */
   setApproval(approval: ApprovalMode): void {
     this.#validateApproval(approval)
@@ -586,6 +638,22 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
     // The stream may end between opening the session and its owner attaching.
     if (this.#disconnected) listener()
     return () => this.off('disconnected', listener)
+  }
+
+  /**
+   * How many tokens a model's context holds, as OpenCode lists it for the
+   * session's folder; undefined when it does not say. Read once per model.
+   */
+  async modelContextWindow(model = this.#model): Promise<number | undefined> {
+    const slash = model?.indexOf('/') ?? -1
+    if (!model || slash <= 0) return undefined
+    if (this.#contextWindows.has(model)) return this.#contextWindows.get(model)
+    await this.start()
+    const connected = await this.#readConnectedProviders(this.#workspacePath || process.cwd())
+    const context = connected.providers.find((provider) => provider.id === model.slice(0, slash))
+      ?.models[model.slice(slash + 1)]?.limit?.context
+    this.#contextWindows.set(model, context)
+    return context
   }
 
   /**
@@ -662,6 +730,7 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
     this.#instructionsPending = false
     this.#pendingApprovals.clear()
     this.#replyingApprovals.clear()
+    this.#pendingQuestions.clear()
     this.#processStop = stopped
     return stopped
   }
@@ -761,23 +830,27 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
   }
 
   /**
-   * 1.18.31 serves both protocols, and its v2 admits a prompt without ever
-   * running the agent loop (`/wait` answers "not available yet"). So v1 wins
-   * while the server still has it; only a v2-only server gets v2.
+   * v1 whenever the server still answers it: that is what OpenCode's own
+   * clients drive. opencode 1.18.31 also answers v2's health check, but its v2
+   * session engine admits a prompt without ever running it ("Session wait is
+   * not available yet") and its v2 catalog lists no models, so v2 is only for
+   * a server that has dropped v1.
    */
   async #detectProtocol(): Promise<OpenCodeProtocol> {
+    const headers = this.#authorization ? { authorization: this.#authorization } : {}
     try {
-      const response = await fetch(new URL('/path', this.#baseUrl), {
-        headers: this.#authorization ? { authorization: this.#authorization } : {},
+      const v1 = await fetch(new URL('/session/status', this.#baseUrl), {
+        headers,
         signal: AbortSignal.timeout(1500),
       })
-      if (response.ok) return 'v1'
+      await v1.body?.cancel()
+      if (v1.ok) return 'v1'
     } catch {
-      // Unreachable or slow: the v2 probe below decides.
+      // A server that does not answer at all is asked about v2 next.
     }
     try {
       const response = await fetch(new URL('/api/health', this.#baseUrl), {
-        headers: this.#authorization ? { authorization: this.#authorization } : {},
+        headers,
         signal: AbortSignal.timeout(1500),
       })
       if (!response.ok) return 'v1'
@@ -921,38 +994,6 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
       this.#onV2Event(event)
       return
     }
-    const asked = V1PermissionAskedSchema.safeParse(event)
-    if (asked.success) {
-      const { id, permission, patterns = [], metadata = {} } = asked.data.properties
-      const command = /bash|shell|command|execute/i.test(permission)
-      const named = (key: string) => (typeof metadata[key] === 'string' ? metadata[key] : '')
-      const request: ApprovalRequest = {
-        id,
-        kind: command ? 'command' : 'file_change',
-        ...(command
-          ? { command: named('command') || patterns.join(' ') || permission }
-          : { path: named('filepath') || patterns[0] || permission }),
-        createdAt: Date.now(),
-      }
-      const autoReply = this.#approval === 'full' || (this.#approval === 'auto' && !command)
-      this.#pendingApprovals.set(id, { request, surfaced: !autoReply })
-      if (autoReply) {
-        // Session grants are reserved for an explicit user approval.
-        this.respondToApproval(id, 'approve')
-        return
-      }
-      this.emit('event', { type: 'approval.requested', request })
-      return
-    }
-    const replied = V1PermissionRepliedSchema.safeParse(event)
-    if (replied.success) {
-      // Answered elsewhere, or by a rule the user saved with "always".
-      const approvalId = replied.data.properties.requestID
-      if (this.#pendingApprovals.delete(approvalId)) {
-        this.emit('event', { type: 'approval.resolved', id: approvalId })
-      }
-      return
-    }
     if (event.type === 'permission.updated') {
       const permission = event.properties
       const command = /bash|shell|command/i.test(permission.type)
@@ -975,8 +1016,88 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
       })
       return
     }
+    if (event.type === 'permission.asked') {
+      const asked = V1PermissionAskedSchema.safeParse(event.properties)
+      if (!asked.success) return
+      const { id, permission, patterns = [], metadata = {} } = asked.data
+      const command = /bash|shell|command/i.test(permission)
+      const text = (value: JsonRpcValue | undefined) => (typeof value === 'string' ? value : '')
+      const request: ApprovalRequest = {
+        id,
+        kind: command ? 'command' : 'file_change',
+        ...(command
+          ? { command: text(metadata['command']) || patterns.join(' ') || permission }
+          : {
+              path:
+                text(metadata['filepath']) ||
+                text(metadata['filePath']) ||
+                text(metadata['path']) ||
+                patterns[0] ||
+                permission,
+            }),
+        createdAt: Date.now(),
+      }
+      const autoReply = this.#approval === 'full' || (this.#approval === 'auto' && !command)
+      this.#pendingApprovals.set(id, { request, surfaced: !autoReply })
+      if (autoReply) {
+        this.respondToApproval(id, 'approve')
+        return
+      }
+      this.emit('event', { type: 'approval.requested', request })
+      return
+    }
+    if (event.type === 'permission.replied') {
+      const replied = V1PermissionRepliedSchema.safeParse(event.properties)
+      if (!replied.success) return
+      const id = 'requestID' in replied.data ? replied.data.requestID : replied.data.permissionID
+      // Answered here or by another OpenCode client; either way nothing waits any more.
+      if (!this.#replyingApprovals.has(id) && this.#pendingApprovals.delete(id))
+        this.emit('event', { type: 'approval.resolved', id })
+      return
+    }
+    if (event.type === 'question.asked') {
+      const asked = QuestionAskedSchema.safeParse(event.properties)
+      if (!asked.success || !this.#turnId) return
+      const { id, questions } = asked.data
+      this.#pendingQuestions.set(id, questions.length)
+      this.emit('event', {
+        type: 'user_input.requested',
+        request: {
+          id,
+          turnId: this.#turnId,
+          questions: questions.map((question, index): UserInputQuestion => ({
+            id: String(index),
+            header: question.header?.trim() || 'Question',
+            question: question.question.trim() || question.header?.trim() || 'Question',
+            allowOther: question.custom !== false,
+            secret: false,
+            options:
+              question.options.length > 0
+                ? question.options.map((option) => ({
+                    label: option.label.trim() || 'Option',
+                    description: option.description?.trim() || option.label.trim() || 'Option',
+                  }))
+                : null,
+            ...(question.multiple ? { multiSelect: true } : {}),
+          })),
+          autoResolutionMs: null,
+          createdAt: Date.now(),
+        },
+      })
+      return
+    }
+    if (event.type === 'question.replied' || event.type === 'question.rejected') {
+      const settled = QuestionSettledSchema.safeParse(event.properties)
+      // Answered here or by another OpenCode client; either way nothing waits any more.
+      if (settled.success) this.#settleQuestion(settled.data.requestID)
+      return
+    }
     if (event.type === 'session.error') {
-      this.#failTurn()
+      const failure = SessionErrorSchema.safeParse(event.properties)
+      const error = failure.success ? failure.data.error : undefined
+      // Stopping a turn from another OpenCode client aborts it; it did not fail.
+      if (error?.name === 'MessageAbortedError') this.#finishTurn('interrupted')
+      else this.#failTurn(undefined, error?.data?.message)
       return
     }
     if (
@@ -1004,6 +1125,8 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
     const finishEvents = this.#mapper?.finish() ?? []
     const approvals = [...this.#pendingApprovals.keys()]
     this.#pendingApprovals.clear()
+    const questions = [...this.#pendingQuestions.keys()]
+    this.#pendingQuestions.clear()
     // Live-turn state clears before any emit: the orchestrator reacts to
     // `turn.completed` synchronously inside the emit (the design flow sends
     // the next phase prompt right there), and that sendTurn must not be
@@ -1012,12 +1135,13 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
     this.#mapper = undefined
     for (const event of finishEvents) this.emit('event', event)
     for (const id of approvals) this.emit('event', { type: 'approval.resolved', id })
+    for (const id of questions) this.emit('event', { type: 'user_input.resolved', id })
     this.emit('event', { type: 'turn.completed', turnId, status })
   }
 
   /** When `turnId` is given, no-op unless it is still the live turn — a late
    *  rejection from a finished turn must not fail whatever runs now. */
-  #failTurn(turnId?: string): void {
+  #failTurn(turnId?: string, reason?: string): void {
     if (turnId !== undefined && this.#turnId !== turnId) return
     if (!this.#turnId || !this.#threadId) return
     const failedTurnId = this.#turnId
@@ -1025,17 +1149,20 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
     const finishEvents = this.#mapper?.finish('failed') ?? []
     const approvals = [...this.#pendingApprovals.keys()]
     this.#pendingApprovals.clear()
+    const questions = [...this.#pendingQuestions.keys()]
+    this.#pendingQuestions.clear()
     // Same ordering as #finishTurn: listeners may start the next turn inside
     // these emits, so the live-turn state must already be gone.
     this.#turnId = undefined
     this.#mapper = undefined
     for (const event of finishEvents) this.emit('event', event)
     for (const id of approvals) this.emit('event', { type: 'approval.resolved', id })
+    for (const id of questions) this.emit('event', { type: 'user_input.resolved', id })
     this.emit('log', 'OpenCode request failed')
     this.emit('event', {
       type: 'thread.error',
       threadId,
-      message: 'The OpenCode request failed.',
+      message: reason ? `The OpenCode request failed: ${reason}` : 'The OpenCode request failed.',
     })
     this.emit('event', { type: 'turn.completed', turnId: failedTurnId, status: 'failed' })
   }

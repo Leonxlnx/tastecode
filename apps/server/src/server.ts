@@ -1369,7 +1369,29 @@ export function startServer(
           isolate: p.isolate,
         })
         startedThisRun.add(thread.id)
-        return { threadId: thread.id }
+        const earlierChanges = orchestrator.earlierChanges(thread.id)
+        return { threadId: thread.id, ...(earlierChanges ? { earlierChanges } : {}) }
+      }
+
+      case 'thread.changeProvider': {
+        const p = parseParams(method, params)
+        await orchestrator.changeProvider(p.threadId, {
+          provider: p.provider,
+          agent: p.agent,
+          accountId: p.accountId,
+          model: p.model,
+          serviceTier: p.serviceTier,
+          effort: p.effort,
+          approval: p.approval,
+        })
+        // The saved copy of the session the chat left stays its own; the new
+        // session's copy is linked by the next scan. That scan is scheduled,
+        // not run now: it reads every saved session, and the first turn on
+        // the new provider is about to start.
+        providerHistoryReady?.forget(p.threadId)
+        startedThisRun.add(p.threadId)
+        historySchedule.activity()
+        return {}
       }
 
       case 'thread.checkpoints': {

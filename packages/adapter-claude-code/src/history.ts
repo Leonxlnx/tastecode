@@ -124,7 +124,20 @@ export async function readClaudeSessionRecords(
   sessionId: string,
   options: ClaudeHistoryOptions = {},
 ): Promise<SavedRecord[]> {
-  if (!SESSION_FILE.test(`${sessionId}.jsonl`)) return []
+  const file = await findClaudeSessionFile(sessionId, options)
+  try {
+    return file ? await records(file) : []
+  } catch {
+    return []
+  }
+}
+
+/** A session's transcript, the newest when several project folders hold one. */
+export async function findClaudeSessionFile(
+  sessionId: string,
+  options: ClaudeHistoryOptions = {},
+): Promise<string | undefined> {
+  if (!SESSION_FILE.test(`${sessionId}.jsonl`)) return undefined
   const projects = claudeProjectsRoot(options)
   try {
     const directories = await readdir(projects, { withFileTypes: true })
@@ -147,9 +160,9 @@ export async function readClaudeSessionRecords(
       )
         newest = { file, mtimeMs: info.mtimeMs }
     }
-    return newest ? await records(newest.file) : []
+    return newest?.file
   } catch {
-    return []
+    return undefined
   }
 }
 
