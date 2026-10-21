@@ -1213,6 +1213,65 @@ describe('threads', () => {
     expect(() => store.setProviderSessionId('missing', 'grok-native')).toThrow('thread not found')
   })
 
+  it('moves a chat to another provider and keeps the session it left as its own', () => {
+    store.addProject('/repo')
+    store.addThread({
+      id: 'claude-chat',
+      projectPath: '/repo',
+      provider: 'claude-code',
+      accountId: 'work',
+      title: 'One',
+    })
+    store.setProviderSessionId('claude-chat', 'claude-session')
+    store.saveThreadRuntimeState('claude-chat', { claude: true })
+    store.saveProviderHistory('claude-code', 'claude-chat', {
+      id: 'claude-session',
+      title: 'One',
+      workspacePath: '/repo',
+      createdAt: 1,
+      updatedAt: 2,
+      revision: 'r1',
+    })
+    // The sidebar row is cached before the move, as it is in a running app.
+    expect(store.sidebarThreads().find((thread) => thread.id === 'claude-chat')).toMatchObject({
+      provider: 'claude-code',
+      accountId: 'work',
+    })
+
+    store.moveThreadToProvider('claude-chat', {
+      provider: 'acp',
+      agent: 'gemini',
+      providerSessionId: 'acp-gemini-session',
+    })
+
+    expect(store.thread('claude-chat')).toMatchObject({
+      id: 'claude-chat',
+      provider: 'acp',
+      agent: 'gemini',
+      providerSessionId: 'acp-gemini-session',
+      title: 'One',
+    })
+    expect(store.thread('claude-chat')?.accountId).toBeUndefined()
+    const row = store.sidebarThreads().find((thread) => thread.id === 'claude-chat')
+    expect(row).toMatchObject({ provider: 'acp', agent: 'gemini' })
+    expect(row?.accountId).toBeUndefined()
+    expect(store.threadNeedsHandover('claude-chat')).toBe(true)
+    expect(store.threadRuntimeState('claude-chat')).toBeUndefined()
+    expect(store.providerHistories()).toEqual([])
+    expect(store.leftProviderSessions('claude-code')).toEqual(['claude-session'])
+    expect(store.leftProviderSessions('acp')).toEqual([])
+    store.clearThreadHandover('claude-chat')
+    expect(store.threadNeedsHandover('claude-chat')).toBe(false)
+
+    // A chat that never reported a session of its own left the one its id names.
+    store.addThread({ id: 'codex-chat', projectPath: '/repo', provider: 'codex', title: 'Two' })
+    store.moveThreadToProvider('codex-chat', {
+      provider: 'claude-code',
+      providerSessionId: 'claude-two',
+    })
+    expect(store.leftProviderSessions('codex')).toEqual(['codex-chat'])
+  })
+
   it('refuses to delete an isolated checkout before it is discarded', () => {
     store.addThread({
       id: 'isolated',

@@ -23,7 +23,9 @@ import {
   type VirtualizerOptions,
   type Virtualizer,
 } from '@tanstack/react-virtual'
-import type { ApprovalDecision, Item } from '@harness/contracts'
+import type { ApprovalDecision, Item, ProviderNotice } from '@harness/contracts'
+import { agentMark, providerDisplayName, providerMark } from '../provider-presentation.js'
+import { ProviderIcon } from './ProviderIcon.js'
 import {
   IconArrowBarToDown as ArrowDownToLine,
   IconBook2 as BookOpen,
@@ -2120,7 +2122,7 @@ function useSettledTurnId(running: boolean, activeTurnId: string | undefined): s
 }
 
 function isActivity(item: Item): boolean {
-  return item.type !== 'message' && item.type !== 'error'
+  return item.type !== 'message' && item.type !== 'error' && item.type !== 'notice'
 }
 
 const Row = memo(function Row({
@@ -2281,8 +2283,40 @@ const Row = memo(function Row({
     )
   }
 
+  if (item.type === 'notice') return <NoticeRow item={item} />
+
   return <ActivityRow item={item} live={live} />
 })
+
+/** Where the chat moved to another provider; the turns after it ran there. */
+function NoticeRow({ item }: { item: Item }) {
+  const notice = item.notice
+  if (notice?.kind !== 'provider') return null
+  const label = providerNoticeLabel(notice)
+  return (
+    <div className="aux aux--notice" role="note">
+      <div className="aux__row" title={label}>
+        <span className="aux__glyph" aria-hidden>
+          <ProviderIcon
+            mark={
+              notice.provider === 'acp' && notice.agent
+                ? agentMark(notice.agent)
+                : providerMark(notice.provider)
+            }
+            size={14}
+          />
+        </span>
+        <span className="aux__label">{label}</span>
+      </div>
+    </div>
+  )
+}
+
+export function providerNoticeLabel(notice: ProviderNotice): string {
+  const name =
+    notice.provider === 'acp' && notice.agent ? notice.agent : providerDisplayName(notice.provider)
+  return notice.model ? `Switched to ${name} · ${notice.model}` : `Switched to ${name}`
+}
 
 /** A call that started a subagent draws as that subagent; anything else as a plain row. */
 function ActivityRow({ item, live }: { item: Item; live: boolean }) {

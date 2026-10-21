@@ -175,6 +175,17 @@ export interface AgentSession {
   /** Credential-free adapter state persisted at completed-turn boundaries, never per delta. */
   snapshot?(): unknown
   readonly capabilities: Capabilities
+  /**
+   * The longest prompt, in UTF-16 code units, one turn can carry. Set by an
+   * engine that passes its prompt on a command line, which the system limits;
+   * absent when the prompt travels where length does not matter.
+   */
+  readonly promptLimit?: number
+  /**
+   * How many tokens a model's context holds, for an engine that knows it per
+   * model rather than declaring one window in its capabilities.
+   */
+  modelContextWindow?(model: string | undefined): Promise<number | undefined>
   sendTurn(
     threadId: string,
     text: string,
@@ -235,6 +246,13 @@ export interface AgentSession {
   on(event: 'log', listener: (line: string) => void): void
 }
 
+/** A provider session as the provider saved it, in the folder of the account it ran as. */
+export type SavedSession = {
+  providerSessionId: string
+  /** That account's folder; absent for the default account. */
+  accountHome?: string | undefined
+}
+
 export type ProviderRuntime = {
   start(
     workspacePath: string,
@@ -243,6 +261,15 @@ export type ProviderRuntime = {
   resume?(
     threadId: string,
     workspacePath: string,
+    options: StartOptions,
+  ): Promise<{ thread: Thread; session: AgentSession }>
+  /**
+   * Starts a new session that already holds the conversation of a saved one
+   * of this provider. Absent where the provider cannot carry a session on.
+   */
+  fork?(
+    workspacePath: string,
+    from: SavedSession,
     options: StartOptions,
   ): Promise<{ thread: Thread; session: AgentSession }>
   /** `read.refresh`: the caller keeps an earlier list if this read fails. */
@@ -646,22 +673,27 @@ function grokRuntime(
     },
     async resume(threadId, workspacePath, options) {
       const harness = harnessFor('grok', options.agent, resolveHarness)
-      // MCP-enabled Grok runs over ACP. Its provider session id is already
-      // encoded in the stable `acp-grok-*` thread id, and AcpAdapter performs
+      // MCP-enabled Grok runs over ACP. Its provider session id is encoded in
+      // the `acp-grok-*` thread id it started with, which is the chat's own id
+      // unless the chat moved here from another provider; AcpAdapter performs
       // the protocol capability check before loading it.
-      if (threadId.startsWith('acp-grok-')) {
+      const acpThreadId = options.providerSessionId ?? threadId
+      if (acpThreadId.startsWith('acp-grok-')) {
         const adapter = await acpAdapterFor(harness, options)
         adapter.on('log', onLog)
-        return startedSession(adapter, async () => {
-          const resuming = adapter.resumeThread(threadId, workspacePath, {
-            model: options.model,
-            approval: options.approval,
-            instructions: options.instructions,
-          })
-          return harness
-            ? await customHarnessOperation(harness, 'resume an MCP-enabled ACP session', resuming)
-            : await resuming
-        })
+        return mapProviderSession(
+          threadId,
+          await startedSession(adapter, async () => {
+            const resuming = adapter.resumeThread(acpThreadId, workspacePath, {
+              model: options.model,
+              approval: options.approval,
+              instructions: options.instructions,
+            })
+            return harness
+              ? await customHarnessOperation(harness, 'resume an MCP-enabled ACP session', resuming)
+              : await resuming
+          }),
+        )
       }
       if (!options.providerSessionId) {
         throw new Error(
@@ -714,6 +746,7 @@ function antigravityRuntime(
         thread,
         session: {
           capabilities: adapter.capabilities,
+          promptLimit: adapter.promptLimit,
           sendTurn: (threadId, text, attachments, turnOptions) =>
             adapter.sendTurn(threadId, text, attachments, turnOptions),
           interrupt: () => adapter.interrupt(),
@@ -761,7 +794,11 @@ function cursorRuntime(
   }
   return {
     start: open,
-    resume: (threadId, workspacePath, options) => open(workspacePath, options, threadId),
+    resume: async (threadId, workspacePath, options) =>
+      mapProviderSession(
+        threadId,
+        await open(workspacePath, options, options.providerSessionId ?? threadId),
+      ),
     async listModels(agent) {
       const harness = harnessFor('cursor', agent, resolveHarness)
       const { CursorAdapter } = await loadCursorAdapter()
@@ -812,7 +849,11 @@ function openCodeRuntime(
   }
   return {
     start: open,
-    resume: (threadId, workspacePath, options) => open(workspacePath, options, threadId),
+    resume: async (threadId, workspacePath, options) =>
+      mapProviderSession(
+        threadId,
+        await open(workspacePath, options, options.providerSessionId ?? threadId),
+      ),
     async listModels(agent) {
       return listOpenCodeModels(harnessFor('opencode', agent, resolveHarness))
     },
@@ -871,8 +912,15 @@ function codexRuntime(
   resolveHarness: (id: string) => CustomHarness | undefined,
   accountHome: string | undefined,
 ): ProviderRuntime {
-  const open = async (workspacePath: string, options: StartOptions, threadId?: string) => {
+  const open = async (
+    workspacePath: string,
+    options: StartOptions,
+    threadId?: string,
+    from?: SavedSession,
+  ) => {
     const harness = harnessFor('codex', options.agent, resolveHarness)
+    // A harness runs with a sign-in of its own, apart from the account folders.
+    if (harness && from) throw new Error(`${harness.displayName} cannot carry a session on.`)
     const { CodexAdapter } = await loadCodexAdapter()
     const adapter = new CodexAdapter({
       ...(options.mcpServers ? { mcpServers: options.mcpServers } : {}),
@@ -890,6 +938,13 @@ function codexRuntime(
       } else {
         await adapter.start()
       }
+      if (from) {
+        return adapter.forkThread(
+          workspacePath,
+          { threadId: from.providerSessionId, accountHome: from.accountHome },
+          options,
+        )
+      }
       if (threadId === undefined) return adapter.startThread(workspacePath, options)
       return adapter.resumeThread(options.providerSessionId ?? threadId, workspacePath, {
         ...(options.instructions ? { instructions: options.instructions } : {}),
@@ -902,6 +957,7 @@ function codexRuntime(
     start: open,
     resume: async (threadId, workspacePath, options) =>
       mapProviderSession(threadId, await open(workspacePath, options, threadId)),
+    fork: (workspacePath, from, options) => open(workspacePath, options, undefined, from),
     async listModels(agent) {
       const harness = harnessFor('codex', agent, resolveHarness)
       const { CodexAdapter } = await loadCodexAdapter()
@@ -965,7 +1021,11 @@ function acpRuntime(
   }
   return {
     start: open,
-    resume: (threadId, workspacePath, options) => open(workspacePath, options, threadId),
+    resume: async (threadId, workspacePath, options) =>
+      mapProviderSession(
+        threadId,
+        await open(workspacePath, options, options.providerSessionId ?? threadId),
+      ),
     async listModels(agent) {
       if (!agent) return []
       const harness = harnessFor('acp', agent, resolveHarness)
@@ -1049,6 +1109,27 @@ function claudeRuntime(
           mcpCredentials: options.mcpCredentials,
           context: options.context,
         }),
+      )
+    },
+    async fork(workspacePath, from, options) {
+      // A harness runs with a sign-in of its own, apart from the account folders.
+      const harness = harnessFor('claude-code', options.agent, resolveHarness)
+      if (harness) throw new Error(`${harness.displayName} cannot carry a session on.`)
+      const adapter = await adapterFor(undefined, workspacePath)
+      return startedSession(sessionFor(adapter, undefined), () =>
+        adapter.forkThread(
+          workspacePath,
+          { threadId: from.providerSessionId, accountHome: from.accountHome },
+          {
+            model: options.model,
+            effort: options.effort,
+            approval: options.approval,
+            instructions: options.instructions,
+            mcpServers: options.mcpServers,
+            mcpCredentials: options.mcpCredentials,
+            context: options.context,
+          },
+        ),
       )
     },
     async resume(threadId, workspacePath, options) {

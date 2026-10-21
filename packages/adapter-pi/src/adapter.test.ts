@@ -49,7 +49,7 @@ function attachRpc(child: FakeChild): PiCommand[] {
         command.type === 'get_state'
           ? {
               sessionId: 'session-1',
-              model: { provider: 'openrouter', id: 'deepseek-v3.2' },
+              model: { provider: 'openrouter', id: 'deepseek-v3.2', contextWindow: 163_840 },
               thinkingLevel: 'high',
             }
           : command.type === 'get_available_models'
@@ -60,6 +60,7 @@ function attachRpc(child: FakeChild): PiCommand[] {
                     id: 'deepseek-v3.2',
                     name: 'DeepSeek V3.2',
                     reasoning: true,
+                    contextWindow: 163_840,
                   },
                 ],
               }
@@ -239,6 +240,21 @@ describe('Pi adapter', () => {
       }),
       expect.objectContaining({ type: 'set_thinking_level', level: 'high' }),
     ])
+    adapter.dispose()
+  })
+
+  it('reads the context window Pi lists for the model a turn runs', async () => {
+    const child = new FakeChild()
+    const commands = attachRpc(child)
+    const adapter = new PiAdapter({ spawn: () => child })
+    await expect(adapter.modelContextWindow()).resolves.toBeUndefined()
+    await adapter.startThread('/repo')
+
+    await expect(adapter.modelContextWindow()).resolves.toBe(163_840)
+    await expect(adapter.modelContextWindow('openrouter/deepseek-v3.2')).resolves.toBe(163_840)
+    await expect(adapter.modelContextWindow('openrouter/deepseek-v3.2')).resolves.toBe(163_840)
+    expect(commands.filter((command) => command.type === 'get_available_models')).toHaveLength(1)
+    await expect(adapter.modelContextWindow('openrouter/unlisted')).resolves.toBeUndefined()
     adapter.dispose()
   })
 })

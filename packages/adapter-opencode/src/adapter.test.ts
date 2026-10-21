@@ -27,6 +27,14 @@ const CAPTURED = JSON.parse(
   readFileSync(new URL('./fixtures/events.json', import.meta.url), 'utf8'),
 ) as Event[]
 
+// SAFETY: Frames captured from opencode 1.18.31's v1 /event stream against a
+// scripted model (session id normalised to the mock's): a plain answer, a bash
+// call that asks permission, a provider error, and a question answered and one
+// rejected.
+const CAPTURED_1_18_31 = JSON.parse(
+  readFileSync(new URL('./fixtures/opencode-1.18.31-v1-turns.json', import.meta.url), 'utf8'),
+) as Record<'text' | 'tool' | 'failure' | 'question' | 'rejectedQuestion', OpenCodeWireEvent[]>
+
 function fixtureText(name: string): string {
   return readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8')
 }
@@ -202,7 +210,18 @@ describe('OpenCode adapter', () => {
           () => undefined,
           (error: unknown) => error,
         )
-        await mock.waitFor(operation === 'start' ? '/session' : '/session/session-1')
+        // The session request itself, not the protocol probe of /session/status.
+        if (operation === 'start') {
+          await expect
+            .poll(() =>
+              mock.requests.some(
+                (request) =>
+                  request.method === 'POST' &&
+                  new URL(request.url, 'http://mock').pathname === '/session',
+              ),
+            )
+            .toBe(true)
+        } else await mock.waitFor('/session/session-1')
         mock.endStreams()
         await expect.poll(() => logs).toContain('OpenCode event stream disconnected')
         releaseSession()
@@ -366,6 +385,243 @@ describe('OpenCode adapter', () => {
     await expect.poll(() => completions).toHaveLength(2)
     expect(completions[1]).not.toBe(completions[0])
     adapter.dispose()
+  })
+
+  describe('opencode 1.18.31', () => {
+    async function capturedTurn(approval: 'ask' | 'full' = 'ask') {
+      const mock = await serveOpenCode()
+      const adapter = new OpenCodeAdapter({ baseUrl: mock.baseUrl })
+      const events: DomainEvent[] = []
+      adapter.on('event', (event) => events.push(event))
+      const thread = await adapter.startThread('/repo', { approval })
+      const completed = new Promise<DomainEvent>((resolve) => {
+        adapter.on('event', (event) => {
+          if (event.type === 'turn.completed') resolve(event)
+        })
+      })
+      return { mock, adapter, events, thread, completed }
+    }
+
+    it("reads a model's context size once, as OpenCode lists it", async () => {
+      const { mock, adapter } = await capturedTurn()
+      try {
+        await expect(adapter.modelContextWindow('provider-1/model-1')).resolves.toBe(32_000)
+        await expect(adapter.modelContextWindow('provider-1/model-1')).resolves.toBe(32_000)
+        await expect(adapter.modelContextWindow('provider-1/unknown')).resolves.toBeUndefined()
+        await expect(adapter.modelContextWindow('no-provider')).resolves.toBeUndefined()
+        await expect(adapter.modelContextWindow(undefined)).resolves.toBeUndefined()
+        expect(
+          mock.requests.filter((request) => request.url.startsWith('/config/providers')),
+        ).toHaveLength(2)
+      } finally {
+        await adapter.dispose()
+      }
+    })
+
+    it('speaks v1 to a server that also answers v2', async () => {
+      const { mock, adapter } = await capturedTurn()
+      try {
+        expect(
+          mock.requests.some(
+            (request) =>
+              request.method === 'POST' &&
+              new URL(request.url, 'http://mock').pathname === '/session',
+          ),
+        ).toBe(true)
+        expect(mock.requests.some((request) => request.url.startsWith('/api/session'))).toBe(false)
+      } finally {
+        await adapter.dispose()
+      }
+    })
+
+    it('streams the answer of a captured turn without echoing the prompt as one', async () => {
+      const { mock, adapter, events, thread, completed } = await capturedTurn()
+      try {
+        await adapter.sendTurn(thread.id, 'Reply with only OK')
+        await mock.waitFor('/session/session-1/prompt_async')
+        for (const event of CAPTURED_1_18_31.text) mock.broadcast(event)
+
+        expect(await completed).toMatchObject({ status: 'completed' })
+        const messages = events.flatMap((event) =>
+          event.type === 'item.completed' && event.item.type === 'message' ? [event.item] : [],
+        )
+        expect(messages.map((item) => [item.role, item.text])).toEqual([['assistant', 'OK']])
+        // The answer streamed as it arrived, not only once it was complete.
+        expect(events).toContainEqual(
+          expect.objectContaining({ type: 'item.delta', textDelta: 'OK' }),
+        )
+      } finally {
+        await adapter.dispose()
+      }
+    })
+
+    it('asks a captured permission and resolves it once', async () => {
+      const { mock, adapter, events, thread, completed } = await capturedTurn('ask')
+      try {
+        await adapter.sendTurn(thread.id, 'RUN_TOOL please')
+        await mock.waitFor('/session/session-1/prompt_async')
+        const frames = CAPTURED_1_18_31.tool
+        const asked = frames.findIndex((event) => event.type === 'permission.asked')
+        for (const event of frames.slice(0, asked + 1)) mock.broadcast(event)
+        const request = await vi.waitFor(() => {
+          const found = events.find((event) => event.type === 'approval.requested')
+          if (!found || found.type !== 'approval.requested') throw new Error('not asked yet')
+          return found.request
+        })
+        expect(request).toMatchObject({ kind: 'command', command: 'echo stub-ran' })
+
+        adapter.respondToApproval(request.id, 'approve')
+        const reply = await mock.waitFor(`/session/session-1/permissions/${request.id}`)
+        expect(reply.body).toEqual({ response: 'once' })
+        for (const event of frames.slice(asked + 1)) mock.broadcast(event)
+
+        expect(await completed).toMatchObject({ status: 'completed' })
+        expect(events.filter((event) => event.type === 'approval.resolved')).toHaveLength(1)
+        expect(
+          events.find((event) => event.type === 'item.completed' && event.item.type === 'command'),
+        ).toMatchObject({ item: { command: 'echo stub-ran', status: 'completed' } })
+        expect(
+          events.flatMap((event) =>
+            event.type === 'item.completed' && event.item.type === 'message'
+              ? [event.item.text]
+              : [],
+          ),
+        ).toEqual(['The command printed stub-ran.'])
+      } finally {
+        await adapter.dispose()
+      }
+    })
+
+    it('asks a captured question and sends the answer back', async () => {
+      const { mock, adapter, events, thread, completed } = await capturedTurn()
+      try {
+        await adapter.sendTurn(thread.id, 'ASK_QUESTION please')
+        await mock.waitFor('/session/session-1/prompt_async')
+        const frames = CAPTURED_1_18_31.question
+        const asked = frames.findIndex((event) => event.type === 'question.asked')
+        for (const event of frames.slice(0, asked + 1)) mock.broadcast(event)
+        const request = await vi.waitFor(() => {
+          const found = events.find((event) => event.type === 'user_input.requested')
+          if (!found || found.type !== 'user_input.requested') throw new Error('not asked yet')
+          return found.request
+        })
+        expect(request.questions).toEqual([
+          {
+            id: '0',
+            header: 'Color',
+            question: 'Which color should the button be?',
+            allowOther: true,
+            secret: false,
+            options: [
+              { label: 'Red', description: 'Warm and loud' },
+              { label: 'Blue', description: 'Calm' },
+            ],
+          },
+        ])
+
+        adapter.respondToUserInput(request.id, { '0': ['Blue'] })
+        const reply = await mock.waitFor(`/question/${request.id}/reply`)
+        expect(reply.body).toEqual({ answers: [['Blue']] })
+        for (const event of frames.slice(asked + 1)) mock.broadcast(event)
+
+        expect(await completed).toMatchObject({ status: 'completed' })
+        expect(events.filter((event) => event.type === 'user_input.resolved')).toEqual([
+          { type: 'user_input.resolved', id: request.id },
+        ])
+        expect(
+          events.flatMap((event) =>
+            event.type === 'item.completed' && event.item.type === 'message'
+              ? [event.item.text]
+              : [],
+          ),
+        ).toEqual([
+          'Tool said: User has answered your questions: "Which color should the button be?"="Blue". You can now continue with the user\'s answers in mind.',
+        ])
+      } finally {
+        await adapter.dispose()
+      }
+    })
+
+    it('settles a question rejected from another OpenCode client', async () => {
+      const { mock, adapter, events, thread, completed } = await capturedTurn()
+      try {
+        await adapter.sendTurn(thread.id, 'ASK_QUESTION again')
+        await mock.waitFor('/session/session-1/prompt_async')
+        for (const event of CAPTURED_1_18_31.rejectedQuestion) mock.broadcast(event)
+
+        expect(await completed).toMatchObject({ status: 'completed' })
+        const asked = events.find((event) => event.type === 'user_input.requested')
+        expect(asked).toBeDefined()
+        expect(events.filter((event) => event.type === 'user_input.resolved')).toHaveLength(1)
+      } finally {
+        await adapter.dispose()
+      }
+    })
+
+    it('settles a question the turn still waits on when the turn is stopped', async () => {
+      const { mock, adapter, events, thread } = await capturedTurn()
+      try {
+        await adapter.sendTurn(thread.id, 'ASK_QUESTION please')
+        await mock.waitFor('/session/session-1/prompt_async')
+        const frames = CAPTURED_1_18_31.question
+        for (const event of frames.slice(
+          0,
+          frames.findIndex((e) => e.type === 'question.asked') + 1,
+        ))
+          mock.broadcast(event)
+        await vi.waitFor(() =>
+          expect(events.some((event) => event.type === 'user_input.requested')).toBe(true),
+        )
+
+        await adapter.interrupt(thread.id)
+
+        expect(events.filter((event) => event.type === 'user_input.resolved')).toHaveLength(1)
+        expect(events.at(-1)).toMatchObject({ type: 'turn.completed', status: 'interrupted' })
+      } finally {
+        await adapter.dispose()
+      }
+    })
+
+    it("names the provider's reason when a captured turn fails", async () => {
+      const { mock, adapter, events, thread, completed } = await capturedTurn()
+      try {
+        await adapter.sendTurn(thread.id, 'FAIL please')
+        await mock.waitFor('/session/session-1/prompt_async')
+        for (const event of CAPTURED_1_18_31.failure) mock.broadcast(event)
+
+        expect(await completed).toMatchObject({ status: 'failed' })
+        expect(events).toContainEqual(
+          expect.objectContaining({
+            type: 'thread.error',
+            message: 'The OpenCode request failed: stub refused the request',
+          }),
+        )
+      } finally {
+        await adapter.dispose()
+      }
+    })
+
+    it('ends a turn stopped from another OpenCode client as interrupted', async () => {
+      const { mock, adapter, events, thread, completed } = await capturedTurn()
+      try {
+        await adapter.sendTurn(thread.id, 'SLOW please')
+        await mock.waitFor('/session/session-1/prompt_async')
+        // The prompt's own frames first, so the turn has seen session activity.
+        for (const event of CAPTURED_1_18_31.text.slice(0, 3)) mock.broadcast(event)
+        mock.broadcast({
+          type: 'session.error',
+          properties: {
+            sessionID: 'session-1',
+            error: { name: 'MessageAbortedError', data: { message: 'Aborted' } },
+          },
+        } as OpenCodeWireEvent)
+
+        expect(await completed).toMatchObject({ status: 'interrupted' })
+        expect(events.some((event) => event.type === 'thread.error')).toBe(false)
+      } finally {
+        await adapter.dispose()
+      }
+    })
   })
 
   it('resumes, answers permissions, interrupts and lists connected models', async () => {
@@ -970,6 +1226,8 @@ async function serveOpenCode(beforeSessionResponse?: () => Promise<void>): Promi
       waiters.splice(waiters.indexOf(waiter), 1)
       waiter.resolve(record)
     }
+    // opencode 1.18.31 answers v2's health check beside v1.
+    if (request.url === '/api/health') return json(response, { healthy: true })
     if (request.url?.startsWith('/config/providers')) {
       return json(response, {
         providers: [
@@ -982,6 +1240,7 @@ async function serveOpenCode(beforeSessionResponse?: () => Promise<void>): Promi
                 id: 'model-1',
                 name: 'Model One',
                 variants: { low: {}, high: {} },
+                limit: { context: 32_000, output: 8_000 },
               },
               'model-retired': { id: 'model-retired', name: 'Retired', status: 'deprecated' },
             },
@@ -1072,6 +1331,11 @@ async function serveOpenCodeV2(
     if (waiter) {
       waiters.splice(waiters.indexOf(waiter), 1)
       waiter.resolve(record)
+    }
+    // A server that has dropped v1, so the adapter speaks v2 to it.
+    if (request.url?.startsWith('/session/status')) {
+      response.writeHead(404)
+      return response.end()
     }
     if (request.url === '/api/health') return json(response, { healthy: true })
     if (request.url?.startsWith('/config/providers')) {

@@ -154,6 +154,7 @@ export class PiAdapter extends EventEmitter<Events> {
   #model: string | undefined
   #effort: string | undefined
   #intentionalStop = false
+  readonly #contextWindows = new Map<string, number | undefined>()
 
   constructor(options: PiAdapterOptions) {
     super()
@@ -245,6 +246,30 @@ export class PiAdapter extends EventEmitter<Events> {
   }
 
   respondToApproval(_approvalId: string, _decision: ApprovalDecision): void {}
+
+  /**
+   * How many tokens a model's context holds, as Pi lists it; without a model,
+   * the one the session runs now. A listed model is read once.
+   */
+  async modelContextWindow(model = this.#model): Promise<number | undefined> {
+    if (!this.#child) return undefined
+    if (!model)
+      return (await this.#requestParsed('get_state', {}, PiStateSchema)).model?.contextWindow
+    if (!this.#contextWindows.has(model)) {
+      const { models = [] } = await this.#requestParsed(
+        'get_available_models',
+        {},
+        PiAvailableModelsSchema,
+      )
+      for (const listed of models) {
+        if (listed.provider && listed.id) {
+          this.#contextWindows.set(`${listed.provider}/${listed.id}`, listed.contextWindow)
+        }
+      }
+      if (!this.#contextWindows.has(model)) this.#contextWindows.set(model, undefined)
+    }
+    return this.#contextWindows.get(model)
+  }
 
   async listModels(): Promise<Model[]> {
     // Discovery should not create an empty Pi session file every time the

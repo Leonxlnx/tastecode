@@ -11,6 +11,14 @@ export const RESTORE_CONTEXT_NOTICE =
 export const CONTINUE_CONTEXT_NOTICE =
   'TasteCode started this chat to carry on an earlier conversation, for example one that stopped at a plan limit on another account. '
 
+/**
+ * Opens the first prompt a chat sends after it moved to another provider.
+ * The conversation so far follows, then CONTINUE_CONTEXT_REQUEST and the
+ * user's own words.
+ */
+export const HANDOVER_CONTEXT_NOTICE =
+  'TasteCode moved this conversation to you from another agent. '
+
 /** Ends the earlier conversation in a continued chat's first prompt; the user's request follows. */
 export const CONTINUE_CONTEXT_REQUEST = '\n</earlier_conversation>\n\nUser request:\n'
 

@@ -7,6 +7,7 @@ import {
   promoteSession,
   reconcileProjectList,
   removeSession,
+  sessionOnProvider,
   takeProjectSessionChanges,
   updateSession,
   updateSessions,
@@ -400,5 +401,18 @@ describe('marking a session read', () => {
       status: 'idle',
       lifecycle: { state: 'active', keepActive: true },
     })
+  })
+})
+
+describe('a chat that moved to another provider', () => {
+  it('takes the new provider, agent and account, and drops what belonged to the old one', () => {
+    const before: Session = { ...session('chat'), accountId: 'work', connectionId: 'nan-1' }
+    expect(sessionOnProvider(before, { provider: 'acp', agent: 'gemini' })).toEqual({
+      ...session('chat'),
+      provider: 'acp',
+      agent: 'gemini',
+    })
+    const same = session('chat')
+    expect(sessionOnProvider(same, { provider: 'codex' })).toBe(same)
   })
 })

@@ -3,6 +3,11 @@ import type { ProviderId } from '@harness/contracts'
 /** Settings and lifecycle capabilities; importing this table never loads a vendor SDK. */
 export type ProviderControlCapabilities = Readonly<{
   resume: boolean
+  /**
+   * The provider can start a session as a copy of a saved one, also of one
+   * saved in another account's folder (server-internal).
+   */
+  forkSession: boolean
   managedMcp: boolean
   inheritedMcp: boolean
   /** The provider can list the MCP servers its own settings load (server-internal). */
@@ -41,6 +46,7 @@ export type ProviderControlCapabilities = Readonly<{
 
 const unsupported: ProviderControlCapabilities = {
   resume: false,
+  forkSession: false,
   managedMcp: false,
   inheritedMcp: false,
   mcpInventory: false,
@@ -72,6 +78,7 @@ export const PROVIDER_CAPABILITIES = {
   'claude-code': {
     ...unsupported,
     resume: true,
+    forkSession: true,
     managedMcp: true,
     mcpInventory: true,
     nativeModels: true,
@@ -89,6 +96,7 @@ export const PROVIDER_CAPABILITIES = {
   },
   codex: {
     resume: true,
+    forkSession: true,
     managedMcp: true,
     inheritedMcp: true,
     mcpInventory: true,

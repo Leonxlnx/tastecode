@@ -6,6 +6,7 @@ export { applyDesktopPath, desktopPath } from './desktop-path.js'
 export type { DesktopPathOptions } from './desktop-path.js'
 export { killTree, spawnOwned } from './kill.js'
 export {
+  argumentPromptLimit,
   commandVersion,
   invalidateCommandCache,
   isInstalled,
