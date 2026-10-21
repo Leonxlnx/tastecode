@@ -91,6 +91,7 @@ export function modelSourceKey(entry: ModelChoice): string {
     provider: entry.provider,
     connectionId: entry.connectionId,
     agentId: entry.agent?.id,
+    accountId: entry.accountId,
   })
 }
 

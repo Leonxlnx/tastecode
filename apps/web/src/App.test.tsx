@@ -5203,19 +5203,25 @@ describe('new chats', () => {
     const offered = () => composerProps().models.map((choice) => choice.model.id)
     render(<App />)
 
-    // New chats start on Work, so the picker lists what Work's plan has.
-    await waitFor(() => expect(offered()).toEqual(['work-plan-model']))
+    // New chats start on Work, so the picker lists what Work's plan has first,
+    // then the signed-in default account's, each under its account's name.
+    await waitFor(() => expect(offered()).toEqual(['work-plan-model', 'personal-plan-model']))
+    expect(composerProps().models.map((choice) => choice.sourceName)).toEqual([
+      'Codex (Work)',
+      'Codex (Personal)',
+    ])
     expect(transport.request).toHaveBeenCalledWith('models.list', {
       provider: 'codex',
       accountId: 'work-1a2b3c',
     })
 
-    // A chat pinned to the default account is offered the default account's models.
+    // A chat pinned to the default account is offered the default account's
+    // models; Work has not said who is signed in there, so it is not offered.
     fireEvent.click(await waitFor(() => treeChatRow('Personal chat')))
     await waitFor(() => expect(offered()).toEqual(['personal-plan-model']))
     // A chat on the active account uses the catalog's list again.
     fireEvent.click(await waitFor(() => treeChatRow('Work chat')))
-    await waitFor(() => expect(offered()).toEqual(['work-plan-model']))
+    await waitFor(() => expect(offered()).toEqual(['work-plan-model', 'personal-plan-model']))
   })
 
   it('offers to continue a chat at its plan limit on another signed-in account', async () => {
@@ -5440,6 +5446,130 @@ describe('new chats', () => {
     )
     // The chat is on Claude Code now: its own models lead and nothing is pending.
     await waitFor(() => expect(offered()).toEqual(['claude-code:opus', 'codex:gpt-6.1']))
+    expect(note()).toBeUndefined()
+  })
+
+  it("offers a provider's other signed-in account as a source a chat can switch to", async () => {
+    const codex = serverProviders[0]!
+    serverProviders = [
+      { ...codex, capabilities: { ...codex.capabilities!, multipleAccounts: true } },
+    ]
+    serverProjects[0]!.sessions = [
+      { id: 'chat-1', title: 'Webhook retries', provider: 'codex', createdAt: 1 },
+    ]
+    const listed = (id: string): Model => ({
+      id,
+      displayName: id,
+      isDefault: true,
+      reasoningEfforts: [],
+      serviceTiers: [],
+    })
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'accounts.list') {
+        return Promise.resolve({
+          accounts: [
+            { id: 'default', provider: 'codex', label: 'Personal', managed: false },
+            {
+              id: 'team-9z8y7x',
+              provider: 'codex',
+              label: 'Team',
+              home: 'C:\\TasteCode\\accounts\\codex\\team-9z8y7x',
+              managed: true,
+              email: 'team@example.test',
+            },
+          ],
+          active: {},
+        })
+      }
+      if (method === 'models.list') {
+        const { accountId } = methods['models.list'].params.parse(params)
+        return Promise.resolve({
+          models: [listed(accountId === 'team-9z8y7x' ? 'gpt-6.1-team' : 'gpt-6.1')],
+        })
+      }
+      if (method === 'thread.changeProvider') {
+        serverProjects[0]!.sessions = [
+          {
+            id: 'chat-1',
+            title: 'Webhook retries',
+            provider: 'codex',
+            accountId: 'team-9z8y7x',
+            createdAt: 1,
+          },
+        ]
+        return Promise.resolve({})
+      }
+      if (method === 'thread.sendTurn') return Promise.resolve({ queued: false, turnId: 'turn-2' })
+      return request(method, params)
+    })
+    const offered = () =>
+      composerProps().models.map((choice) => `${choice.sourceName}: ${choice.key}`)
+    const note = () =>
+      (composerProps().errors ?? []).find((error) =>
+        error.message.startsWith('Your next message switches'),
+      )
+    render(<App />)
+
+    // A new chat offers both accounts; picking Team's model makes Team the one
+    // new chats start on, as the account chip does.
+    await waitFor(() =>
+      expect(offered()).toEqual([
+        'Codex (Personal): codex:gpt-6.1',
+        'Codex (Team): codex@team-9z8y7x:gpt-6.1-team',
+      ]),
+    )
+    act(() => composerProps().onModelChange('codex@team-9z8y7x:gpt-6.1-team'))
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('accounts.setActive', {
+        provider: 'codex',
+        accountId: 'team-9z8y7x',
+      }),
+    )
+    await waitFor(() => expect(composerProps().modelId).toBe('codex:gpt-6.1-team'))
+
+    // An open chat on Personal lists its own account first; Team moves it.
+    fireEvent.click(await waitFor(() => treeChatRow('Webhook retries')))
+    await waitFor(() =>
+      expect(offered()).toEqual([
+        'Codex (Personal): codex:gpt-6.1',
+        'Codex (Team): codex@team-9z8y7x:gpt-6.1-team',
+      ]),
+    )
+    act(() => composerProps().onModelChange('codex@team-9z8y7x:gpt-6.1-team'))
+    await waitFor(() =>
+      expect(note()?.message).toBe(
+        'Your next message switches this chat to Codex (Team). The conversation so far goes with it.',
+      ),
+    )
+    expect(note()?.action?.label).toBe('Stay on Codex (Personal)')
+    await waitFor(() => expect(composerProps().sendAvailability).toBe('ready'))
+    await act(async () => composerProps().onSend('Keep going', []))
+
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith(
+        'thread.changeProvider',
+        expect.objectContaining({
+          threadId: 'chat-1',
+          provider: 'codex',
+          accountId: 'team-9z8y7x',
+          model: 'gpt-6.1-team',
+        }),
+      ),
+    )
+    expect(transport.request).toHaveBeenCalledWith(
+      'thread.sendTurn',
+      expect.objectContaining({ threadId: 'chat-1', text: 'Keep going', model: 'gpt-6.1-team' }),
+    )
+    // Team is the chat's own account now: it leads, Personal is the other one.
+    await waitFor(() =>
+      expect(offered()).toEqual([
+        'Codex (Team): codex:gpt-6.1-team',
+        'Codex (Personal): codex@default:gpt-6.1',
+      ]),
+    )
+    expect(composerProps().modelId).toBe('codex:gpt-6.1-team')
     expect(note()).toBeUndefined()
   })
 

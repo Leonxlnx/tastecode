@@ -21,6 +21,7 @@ import type {
   ApprovalDecision,
   ApprovalMode,
   DomainEvent,
+  Model,
   ProviderId,
   ProviderStatus,
   PullRequestListItem,
@@ -597,6 +598,7 @@ function modelSource(choice: ModelChoice): string {
     provider: choice.provider,
     connectionId: choice.connectionId,
     agentId: choice.agent?.id,
+    accountId: choice.accountId,
   })
 }
 
@@ -837,7 +839,7 @@ export function App() {
   const [providerStatuses, setProviderStatuses] = useState<ProviderStatus[]>([])
   // The provider accounts, kept while an installed provider can have more
   // than one: plan limits are read per account, and the views name them.
-  const { snapshot: providerAccounts } = useProviderAccounts(
+  const { store: providerAccountsStore, snapshot: providerAccounts } = useProviderAccounts(
     transport,
     providerStatuses.some(
       (status) => status.installed && status.capabilities?.multipleAccounts === true,
@@ -1331,21 +1333,113 @@ export function App() {
     activeModelSource !== undefined &&
     !activeSession.id.startsWith('pending:')
   /**
-   * What the picker offers: the chat's own models, then every other provider's.
-   * Models the user hid from the chat's own source keep the picker away, as
-   * before; a source that lists none at all still lets the chat move on.
+   * A provider's other signed-in accounts, each offered as a source of its
+   * own: an open chat moves to the account picked, a new chat starts on it.
+   * The provider's own entry stands for an open chat's account, else for the
+   * account new chats start on.
+   */
+  const otherAccountSources = useMemo(() => {
+    const sources: Array<{ provider: ProviderId; accountId: AccountId; primary: AccountId }> = []
+    if (activeSession && !movableChat) return sources
+    for (const status of providerStatuses) {
+      if (status.capabilities?.multipleAccounts !== true) continue
+      if (!rosterAllows(providerRoster, sourceKey({ provider: status.id }))) continue
+      const primary =
+        activeSession?.provider === status.id && !activeSession.agent && !activeSession.connectionId
+          ? ((activeSession.accountId as AccountId | undefined) ?? DEFAULT_ACCOUNT_ID)
+          : activeAccountOf(providerAccounts, status.id)
+      const signedIn = status.auth === 'authenticated'
+      for (const account of continueAccounts(providerAccounts, status.id, primary, signedIn)) {
+        sources.push({ provider: status.id, accountId: account.id, primary })
+      }
+    }
+    return sources
+  }, [activeSession, movableChat, providerStatuses, providerRoster, providerAccounts])
+  const otherAccountKeys = otherAccountSources
+    .map(({ provider: id, accountId }) => chatAccountKey(id, accountId))
+    .join('\u0001')
+  const otherAccountKeysRef = useRef(otherAccountKeys)
+  otherAccountKeysRef.current = otherAccountKeys
+  const [otherAccountModels, setOtherAccountModels] = useState<ReadonlyMap<string, Model[]>>(
+    () => new Map(),
+  )
+  const [otherAccountModelsRevision, setOtherAccountModelsRevision] = useState(0)
+  useEffect(() => {
+    if (!otherAccountKeys) return
+    let cancelled = false
+    for (const key of otherAccountKeys.split('\u0001')) {
+      const [id = '', accountId = DEFAULT_ACCOUNT_ID] = key.split('\u0000')
+      void transport
+        .request('models.list', {
+          provider: id as ProviderId,
+          ...(accountId === DEFAULT_ACCOUNT_ID ? {} : { accountId }),
+        })
+        .then(
+          (result) => {
+            if (!cancelled)
+              setOtherAccountModels((current) => new Map(current).set(key, result.models))
+          },
+          // The account is offered once its list arrives.
+          () => undefined,
+        )
+    }
+    return () => {
+      cancelled = true
+    }
+  }, [otherAccountKeys, otherAccountModelsRevision, transport])
+  const otherAccountChoices = useMemo(
+    () =>
+      otherAccountSources.flatMap(({ provider: id, accountId }) =>
+        choicesFor(
+          { provider: id, accountId, sourceName: providerName(id), mark: providerMark(id) },
+          otherAccountModels.get(chatAccountKey(id, accountId)) ?? [],
+          false,
+        ).filter((choice) => !hiddenModels.has(modelChoiceKey(id, choice.model.id))),
+      ),
+    [otherAccountSources, otherAccountModels, hiddenModels],
+  )
+  /** "Claude Code (Team)", once a provider offers more than one of its accounts. */
+  const withAccountName = useCallback(
+    (choice: ModelChoice): ModelChoice => {
+      if (choice.agent || choice.connectionId) return choice
+      const offered = otherAccountSources.find((entry) => entry.provider === choice.provider)
+      if (!offered) return choice
+      const account = accountLabelOf(
+        providerAccounts,
+        choice.provider,
+        choice.accountId ?? offered.primary,
+      )
+      return { ...choice, sourceName: `${choice.sourceName} (${account})` }
+    },
+    [otherAccountSources, providerAccounts],
+  )
+  /**
+   * What the picker offers: the chat's own models, then every other provider's,
+   * and every other signed-in account's. Models the user hid from the chat's
+   * own source keep the picker away, as before; a source that lists none at
+   * all still lets the chat move on.
    */
   const pickerModels = useMemo(
     () =>
-      movableChat && (selectableModels.length > 0 || !sourceHasCatalogModels)
+      (movableChat && (selectableModels.length > 0 || !sourceHasCatalogModels)
         ? [
             ...selectableModels,
             ...visibleModels.filter(
               (choice) => modelSource(choice) !== activeModelSource && choice.provider !== 'api',
             ),
+            ...otherAccountChoices,
           ]
-        : selectableModels,
-    [movableChat, selectableModels, sourceHasCatalogModels, visibleModels, activeModelSource],
+        : [...selectableModels, ...otherAccountChoices]
+      ).map(withAccountName),
+    [
+      movableChat,
+      selectableModels,
+      sourceHasCatalogModels,
+      visibleModels,
+      activeModelSource,
+      otherAccountChoices,
+      withAccountName,
+    ],
   )
   // Only the user's own pick moves a chat; a fallback never leaves its provider.
   const moveChoice = movableChat
@@ -1394,11 +1488,12 @@ export function App() {
     ) ??
     selectableModels.find((choice) => modelSource(choice) === preferredModelSource)
   /** The model the chat would use on its own provider, for undoing a pick that moves it. */
-  const chatOwnChoice = moveChoice
+  const chatOwnModel = moveChoice
     ? (selectableModels.find((choice) => choice.key === preferredModelKey) ??
       selectableModels.find((choice) => choice.model.isDefault) ??
       selectableModels[0])
     : undefined
+  const chatOwnChoice = chatOwnModel && withAccountName(chatOwnModel)
   // The preferred source has not listed its models yet, so the model a send
   // would use is not known. The placeholder below keeps that source, but it is
   // only the provider default: the picker waits and Send stays off instead of
@@ -2770,6 +2865,13 @@ export function App() {
         ) {
           setChatModelsRevision((revision) => revision + 1)
         }
+        // So does every other account the picker offers.
+        if (
+          agent === undefined &&
+          otherAccountKeysRef.current.split('\u0001').includes(chatAccountKey(provider, accountId))
+        ) {
+          setOtherAccountModelsRevision((revision) => revision + 1)
+        }
         // A provider's own list is its active account's; a custom harness keeps its own sign-in.
         const listed =
           agent === undefined ? modelListAccount(providerAccountsRef.current, provider) : undefined
@@ -3705,12 +3807,35 @@ export function App() {
 
   const selectModel = useCallback(
     (id: string) => {
-      const selected = models.find((model) => model.key === id)
+      const selected =
+        models.find((model) => model.key === id) ??
+        otherAccountChoices.find((choice) => choice.key === id)
       if (!selected) return
       pendingThreadModelSave.current = activeIdRef.current
+      if (selected.accountId !== undefined && !activeIdRef.current) {
+        // A new chat starts on its provider's active account, so another
+        // account's model makes that account the active one, as its chip does.
+        const own = modelChoiceKey(selected.provider, selected.model.id)
+        void providerAccountsStore
+          .setActive(selected.provider, selected.accountId)
+          .catch((error: unknown) =>
+            setActionError({
+              id: crypto.randomUUID(),
+              message: error instanceof Error ? error.message : String(error),
+            }),
+          )
+        commitModelChoice(
+          models.find((model) => model.key === own) ?? {
+            ...selected,
+            accountId: undefined,
+            key: own,
+          },
+        )
+        return
+      }
       commitModelChoice(selected)
     },
-    [models, commitModelChoice],
+    [models, otherAccountChoices, commitModelChoice, providerAccountsStore],
   )
 
   const changeEffort = useCallback((value: string | undefined) => {
@@ -4350,6 +4475,7 @@ export function App() {
               threadId: movingThreadId,
               provider: moving.provider,
               ...(moving.agent ? { agent: moving.agent.id } : {}),
+              ...(moving.accountId ? { accountId: moving.accountId } : {}),
               ...(moving.model.id ? { model: moving.model.id } : {}),
               ...(selectedEffort ? { effort: selectedEffort } : {}),
               ...(selectedServiceTier ? { serviceTier: selectedServiceTier } : {}),
@@ -4369,9 +4495,21 @@ export function App() {
               sessionOnProvider(session, {
                 provider: moving.provider,
                 agent: moving.agent?.id,
+                ...(moving.accountId && moving.accountId !== DEFAULT_ACCOUNT_ID
+                  ? { accountId: moving.accountId }
+                  : {}),
               }),
             ),
           )
+          // The account it moved to is the chat's own now, which the
+          // provider's own entry stands for.
+          if (moving.accountId !== undefined) {
+            commitModelChoiceRef.current({
+              ...moving,
+              accountId: undefined,
+              key: modelChoiceKey(moving.provider, moving.model.id),
+            })
+          }
           void refreshProjects().catch(() => undefined)
         }
         const turnRequest = transport.request('thread.sendTurn', {

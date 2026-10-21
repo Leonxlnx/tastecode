@@ -1,4 +1,4 @@
-import type { Model, ProviderId } from '@harness/contracts'
+import type { AccountId, Model, ProviderId } from '@harness/contracts'
 import type { ProviderMark } from './provider-presentation.js'
 import { providerPresentation, sourcePresentation } from './provider-presentation.js'
 
@@ -12,6 +12,12 @@ export type ModelChoice = {
   mark: ProviderMark
   connectionId?: string | undefined
   agent?: { id: string; name: string } | undefined
+  /**
+   * The provider account the model runs as, for a provider's other signed-in
+   * accounts. Absent: the account the provider's own list stands for, which is
+   * an open chat's own account or else the one new chats start on.
+   */
+  accountId?: AccountId | undefined
   model: Model
 }
 
@@ -392,10 +398,11 @@ export function sourceKey(input: {
   provider: ProviderId
   connectionId?: string | undefined
   agentId?: string | undefined
+  accountId?: AccountId | undefined
 }): string {
   if (input.connectionId) return `api:${input.connectionId}`
   if (input.agentId) return `${input.provider}:${input.agentId}`
-  return input.provider
+  return input.accountId ? `${input.provider}@${input.accountId}` : input.provider
 }
 
 export function modelChoiceKey(source: string, modelId: string): string {
@@ -469,6 +476,7 @@ export function choicesFor(
     provider: input.provider,
     connectionId: input.connectionId,
     agentId: input.agent?.id,
+    accountId: input.accountId,
   })
   return (models.length > 0 ? models : fallback ? [automaticModel()] : []).map((model) => ({
     ...input,
