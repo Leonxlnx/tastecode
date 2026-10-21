@@ -1140,6 +1140,17 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
   }
 
   async startThread(workspacePath: string, options: StartOptions = {}): Promise<Thread> {
+    const response = await this.#callParsed(
+      'thread/start',
+      this.#newThreadParams(workspacePath, options),
+      ThreadStartResponseSchema,
+      THREAD_START_TIMEOUT_MS,
+    )
+    return this.#adoptNewThread(response, workspacePath, options)
+  }
+
+  /** The settings a new thread starts with. */
+  #newThreadParams(workspacePath: string, options: StartOptions) {
     const approval = options.approval ? CODEX_APPROVAL[options.approval] : undefined
     const config = {
       ...codexContextConfig(options.context),
@@ -1155,28 +1166,30 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
         : {}),
       ...this.#mcpShellConfig,
     }
-    const response = await this.#callParsed(
-      'thread/start',
-      {
-        cwd: workspacePath,
-        ...(options.model ? { model: options.model } : {}),
-        ...(options.serviceTier ? { serviceTier: options.serviceTier } : {}),
-        ...(options.instructions
-          ? {
-              developerInstructions: options.instructions,
-            }
-          : {}),
-        ...(options.ephemeral !== undefined
-          ? {
-              ephemeral: options.ephemeral,
-            }
-          : {}),
-        ...(Object.keys(config).length ? { config } : {}),
-        ...approval,
-      },
-      ThreadStartResponseSchema,
-      THREAD_START_TIMEOUT_MS,
-    )
+    return {
+      cwd: workspacePath,
+      ...(options.model ? { model: options.model } : {}),
+      ...(options.serviceTier ? { serviceTier: options.serviceTier } : {}),
+      ...(options.instructions
+        ? {
+            developerInstructions: options.instructions,
+          }
+        : {}),
+      ...(options.ephemeral !== undefined
+        ? {
+            ephemeral: options.ephemeral,
+          }
+        : {}),
+      ...(Object.keys(config).length ? { config } : {}),
+      ...approval,
+    }
+  }
+
+  #adoptNewThread(
+    response: z.infer<typeof ThreadStartResponseSchema>,
+    workspacePath: string,
+    options: StartOptions,
+  ): Thread {
     this.#ownThreads.add(response.thread.id)
     this.#threadModels.set(response.thread.id, response.model)
     if (options.approval) this.#threadApprovals.set(response.thread.id, options.approval)
