@@ -128,6 +128,31 @@ describe('Codex fork of a saved thread', () => {
     }
   })
 
+  it('forks a thread of its own home without opening what it descends from', async () => {
+    const same = home()
+    saveRollout(same, '2026/10/20', PARENT)
+    saveRollout(same, '2026/10/21', CHILD, PARENT)
+    // Captured from Codex 0.163: another chat's process still holds the parent.
+    const rpc = new FakeCodexRpc((method) => {
+      if (method === 'thread/resume')
+        throw new Error(`thread-store conflict: thread ${PARENT} already has an active writer`)
+      if (method === 'thread/fork') return { thread: { id: 'forked' }, model: 'gpt-6-luna' }
+      return {}
+    })
+    peers.queued.push(rpc)
+    const adapter = new CodexAdapter({ accountHome: same })
+    try {
+      await adapter.start()
+      await adapter.forkThread('/repo', { threadId: CHILD, accountHome: same })
+
+      expect(
+        rpc.calls.filter((call) => call.method.startsWith('thread/')).map((call) => call.method),
+      ).toEqual(['thread/fork'])
+    } finally {
+      await adapter.dispose()
+    }
+  })
+
   it('refuses a thread the other home has no rollout of', async () => {
     peers.queued.push(new FakeCodexRpc())
     const adapter = new CodexAdapter({ accountHome: home() })

@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events'
+import path from 'node:path'
 import type {
   Account,
   ApprovalDecision,
@@ -1164,16 +1165,17 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     from: { threadId: string; accountHome?: string | undefined },
     options: StartOptions = {},
   ): Promise<Thread> {
-    const lineage = await copyCodexThread(
-      from.threadId,
-      from.accountHome ?? CODEX_ACCOUNT_HOME.defaultHome(),
-      this.#home,
-    )
+    const fromHome = path.resolve(from.accountHome ?? CODEX_ACCOUNT_HOME.defaultHome())
+    const lineage = await copyCodexThread(from.threadId, fromHome, this.#home)
     if (!lineage) throw new Error('Codex has no saved conversation to carry on.')
     // Codex 0.163 reads a fork's earlier turns through the thread it was forked
     // from only once that thread was opened in this home; until then a fork of
-    // a fork silently starts without them. Opening is enough.
-    for (const ancestor of lineage.slice(1).reverse()) {
+    // a fork silently starts without them. Opening is enough, and needed only
+    // for copies: in their own home those threads ran already, and one that
+    // another chat holds open refuses to open twice ("already has an active
+    // writer").
+    const copied = fromHome !== path.resolve(this.#home)
+    for (const ancestor of copied ? lineage.slice(1).reverse() : []) {
       await this.#callParsed(
         'thread/resume',
         { threadId: ancestor, cwd: workspacePath, excludeTurns: true },
