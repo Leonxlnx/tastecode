@@ -35,7 +35,7 @@ import { z, ZodError } from 'zod'
 import type { JsonValue } from './generated/serde_json/JsonValue.js'
 import type { McpServerElicitationAction } from './generated/v2/McpServerElicitationAction.js'
 import type { RequestId } from './generated/RequestId.js'
-import { codexAccountEnvironment } from './account-home.js'
+import { CODEX_ACCOUNT_HOME, codexAccountEnvironment } from './account-home.js'
 import { CODEX_CAPABILITIES } from './capabilities.js'
 import {
   configuredMcpInventory,
@@ -45,6 +45,7 @@ import {
   mcpShellEnvironmentConfig,
   prepareMcpConfig,
 } from './mcp.js'
+import { copyCodexThread } from './session-copy.js'
 import { mapSkillList } from './skills.js'
 import { CodexSubagents } from './subagents.js'
 import {
@@ -633,6 +634,8 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
   #mcpServers: Record<string, JsonValue>
   #mcpEnvironment: NodeJS.ProcessEnv
   readonly #accountEnvironment: NodeJS.ProcessEnv
+  /** The Codex home this process runs in, where its threads are saved. */
+  readonly #home: string
   #mcpShellConfig: Record<string, JsonValue>
   #mcpLogins = new Map<string, string>()
   /**
@@ -678,6 +681,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     this.#mcpServers = prepared.servers
     this.#mcpEnvironment = prepared.environment
     this.#accountEnvironment = codexAccountEnvironment(options.accountHome)
+    this.#home = options.accountHome ?? CODEX_ACCOUNT_HOME.defaultHome()
     this.#mcpShellConfig = mcpShellEnvironmentConfig(prepared.environment)
   }
 
@@ -1143,6 +1147,43 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     const response = await this.#callParsed(
       'thread/start',
       this.#newThreadParams(workspacePath, options),
+      ThreadStartResponseSchema,
+      THREAD_START_TIMEOUT_MS,
+    )
+    return this.#adoptNewThread(response, workspacePath, options)
+  }
+
+  /**
+   * Starts a new thread that already holds the conversation of a saved one.
+   * The saved thread may belong to another account: `from.accountHome` is that
+   * account's Codex home, absent for the default one. It stays as it was; its
+   * rollout is copied into this account's home and forked there.
+   */
+  async forkThread(
+    workspacePath: string,
+    from: { threadId: string; accountHome?: string | undefined },
+    options: StartOptions = {},
+  ): Promise<Thread> {
+    const lineage = await copyCodexThread(
+      from.threadId,
+      from.accountHome ?? CODEX_ACCOUNT_HOME.defaultHome(),
+      this.#home,
+    )
+    if (!lineage) throw new Error('Codex has no saved conversation to carry on.')
+    // Codex 0.163 reads a fork's earlier turns through the thread it was forked
+    // from only once that thread was opened in this home; until then a fork of
+    // a fork silently starts without them. Opening is enough.
+    for (const ancestor of lineage.slice(1).reverse()) {
+      await this.#callParsed(
+        'thread/resume',
+        { threadId: ancestor, cwd: workspacePath, excludeTurns: true },
+        ThreadResumeResponseSchema,
+      )
+      await this.#call('thread/unsubscribe', { threadId: ancestor })
+    }
+    const response = await this.#callParsed(
+      'thread/fork',
+      { ...this.#newThreadParams(workspacePath, options), threadId: from.threadId },
       ThreadStartResponseSchema,
       THREAD_START_TIMEOUT_MS,
     )
