@@ -5,6 +5,12 @@ import type { PhoneAccessStatus } from '@harness/contracts'
 import type { Transport } from '../transport.js'
 import { PhoneSettings } from './PhoneSettings.js'
 
+const { writeClipboardText } = vi.hoisted(() => ({
+  writeClipboardText: vi.fn(async (_text: string): Promise<void> => undefined),
+}))
+
+vi.mock('../bridge.js', () => ({ writeClipboardText }))
+
 afterEach(() => {
   cleanup()
   vi.clearAllMocks()
@@ -86,6 +92,28 @@ describe('Phone settings', () => {
     expect(screen.queryByRole('img', { name: /Pairing code/ })).toBeNull()
     expect(screen.getByRole('status').textContent).toBe('Paired with Karol’s iPhone')
     expect(screen.getByText('Connected')).toBeTruthy()
+  })
+
+  it('copies the pairing link for a phone that cannot scan', async () => {
+    const { transport } = client(async (method) => {
+      if (method === 'phone.status') return on
+      if (method === 'phone.startPairing') {
+        return {
+          status: { ...on, pairingExpiresAt: Date.now() + 600_000 },
+          pairing: { uri: 'tastecode://pair?p=abc', expiresAt: Date.now() + 600_000 },
+        }
+      }
+      throw new Error(`unexpected ${method}`)
+    })
+    render(<PhoneSettings transport={transport} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Show pairing code' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Copy link' }))
+    expect(await screen.findByRole('button', { name: 'Copied' })).toBeTruthy()
+    expect(writeClipboardText).toHaveBeenCalledWith('tastecode://pair?p=abc')
+
+    writeClipboardText.mockRejectedValueOnce(new Error('denied'))
+    fireEvent.click(screen.getByRole('button', { name: 'Copied' }))
+    expect((await screen.findByRole('alert')).textContent).toBe('Copy failed')
   })
 
   it('removes a paired phone', async () => {

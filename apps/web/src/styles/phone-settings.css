@@ -84,6 +84,17 @@
   font-variant-numeric: tabular-nums;
 }
 
+.settings .phone-code__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings .phone-code__issue {
+  color: var(--error);
+  font-size: var(--t-sm);
+}
+
 .settings .set-entity__status[data-connected] {
   color: var(--success);
 }

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import qrcode from 'qrcode-generator'
 import type { PhoneAccessStatus, PhoneAddress, PhonePairing } from '@harness/contracts'
+import { writeClipboardText } from '../bridge.js'
 import type { Transport } from '../transport.js'
 import { RowIssue } from './RowIssue.js'
 import { Skeleton, SkeletonStatus } from './Skeleton.js'
@@ -146,7 +147,7 @@ export function PhoneSettings(props: { transport: Transport }) {
             note={
               pairing
                 ? undefined
-                : 'Open TasteCode on your iPhone, choose Scan Pairing Code and point it at the code shown here. One code pairs one phone.'
+                : 'Open TasteCode on your iPhone and scan the code shown here, or copy its link and paste it in the app. One code pairs one phone.'
             }
           >
             {pairing ? (
@@ -231,6 +232,20 @@ function PairingCode(props: {
     const timer = window.setInterval(() => setNow(Date.now()), 1_000)
     return () => window.clearInterval(timer)
   }, [])
+  const [copy, setCopy] = useState<'idle' | 'copied' | 'failed'>('idle')
+  useEffect(() => {
+    if (copy !== 'copied') return
+    const timer = window.setTimeout(() => setCopy('idle'), COPIED_MS)
+    return () => window.clearTimeout(timer)
+  }, [copy])
+  const copyLink = async () => {
+    try {
+      await writeClipboardText(props.pairing.uri)
+      setCopy('copied')
+    } catch {
+      setCopy('failed')
+    }
+  }
   const left = Math.max(0, props.pairing.expiresAt - now)
   const minutes = Math.floor(left / 60_000)
   const seconds = Math.floor((left % 60_000) / 1_000)
@@ -249,24 +264,44 @@ function PairingCode(props: {
       <div className="phone-code__copy">
         <p className="phone-code__title">Scan with TasteCode on your iPhone</p>
         <p className="phone-code__note">
-          The phone pairs with <strong>{props.serverName}</strong> and remembers it. Anyone who sees
-          this code in the next minutes can pair, so keep it to yourself.
+          The phone pairs with <strong>{props.serverName}</strong> and remembers it. No camera at
+          hand? Copy the link and paste it in the app; Universal Clipboard or AirDrop take it to the
+          phone. Anyone who gets the code or the link in the next minutes can pair, so keep both to
+          yourself.
         </p>
         <p className="phone-code__expiry">
           Expires in {minutes}:{String(seconds).padStart(2, '0')}
         </p>
-        <button
-          className="set-button set-button--quiet"
-          type="button"
-          disabled={props.busy}
-          onClick={props.onCancel}
-        >
-          Cancel
-        </button>
+        <div className="phone-code__actions">
+          <button
+            className="set-button"
+            type="button"
+            disabled={props.busy}
+            onClick={() => void copyLink()}
+          >
+            {copy === 'copied' ? 'Copied' : 'Copy link'}
+          </button>
+          <button
+            className="set-button set-button--quiet"
+            type="button"
+            disabled={props.busy}
+            onClick={props.onCancel}
+          >
+            Cancel
+          </button>
+          {copy === 'failed' ? (
+            <span className="phone-code__issue" role="alert">
+              Copy failed
+            </span>
+          ) : null}
+        </div>
       </div>
     </div>
   )
 }
+
+/** How long "Copied" stays before the button reads "Copy link" again. */
+const COPIED_MS = 1600
 
 const QR_MARGIN = 2
 
