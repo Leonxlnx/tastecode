@@ -31,6 +31,7 @@ import { ProviderAccounts } from './provider-accounts.js'
 import { DEFAULT_PORT } from './server-config.js'
 import { Store } from './store.js'
 import { createProjectListProjector, type ProjectListState } from './project-list.js'
+import { browseFolders } from './project-browser.js'
 import type { PushSocket } from './push-bus.js'
 import { imageFileName, materializeAttachment } from './uploaded-attachment.js'
 import type { UsageHistoryService } from './usage-history.js'
@@ -1096,6 +1097,13 @@ export function startServer(
         const serialized = serializeProjectList(projected)
         reportStartupMilestone('server-projects-serialized')
         return serialized
+      }
+
+      case 'projects.browse': {
+        const p = parseParams(method, params)
+        return browseFolders(p.path, {
+          projects: new Set(store.projects().map((project) => project.path)),
+        })
       }
 
       case 'projects.add': {
