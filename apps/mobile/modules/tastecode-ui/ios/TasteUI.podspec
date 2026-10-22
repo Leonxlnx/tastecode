@@ -2,7 +2,7 @@ Pod::Spec.new do |s|
   s.name           = 'TasteUI'
   s.version        = '0.1.0'
   s.summary        = 'SwiftUI views of the TasteCode phone app'
-  s.description    = 'Markdown replies, the chat scaffold and the pairing scanner, for Expo UI.'
+  s.description    = 'Every screen of the phone app in SwiftUI, hosted by Expo UI.'
   s.license        = 'Apache-2.0'
   s.author         = 'TasteCode'
   s.homepage       = 'https://github.com/Leonxlnx/tastecode'

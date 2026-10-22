@@ -1,58 +1,24 @@
-import type { ReactNode } from 'react'
-import { requireNativeView } from 'expo'
+import { requireNativeModule, requireNativeView } from 'expo'
+import type { EventSubscription } from 'expo-modules-core'
 import type { CommonViewModifierProps } from '@expo/ui/swift-ui'
-import {
-  createModifier,
-  createViewModifierEventListener,
-  type ModifierConfig,
-} from '@expo/ui/swift-ui/modifiers'
 
-type NativeProps = CommonViewModifierProps & Record<string, unknown>
+/** A request from the screens: `id` is empty unless they wait for `resolve`. */
+export type ActionEvent = { id: string; action: string }
 
-const MarkdownTextNative = requireNativeView<NativeProps>('TasteUI', 'MarkdownTextView')
-const ChatScaffoldNative = requireNativeView<NativeProps>('TasteUI', 'ChatScaffoldView')
-const ChatBarNative = requireNativeView<{ children?: ReactNode }>('TasteUI', 'ChatBarView')
-const QRScannerNative = requireNativeView<NativeProps>('TasteUI', 'QRScannerView')
-
-function withModifierEvents(modifiers: ModifierConfig[] | undefined) {
-  return modifiers ? createViewModifierEventListener(modifiers) : undefined
+type TasteUIModule = {
+  /** Replaces one piece of what the screens show, as JSON. */
+  update(key: string, json: string): void
+  /** Answers a request the screens made: a JSON result or an error sentence. */
+  resolve(id: string, json: string | null, error: string | null): void
+  addListener(event: 'onAction', listener: (event: ActionEvent) => void): EventSubscription
 }
 
-/** An agent's reply, rendered natively from Markdown. Must sit inside a `Host`. */
-export function MarkdownText(props: { markdown: string } & CommonViewModifierProps) {
-  return <MarkdownTextNative {...props} {...withModifierEvents(props.modifiers)} />
+/** The SwiftUI screens (Swift on iOS). They render what `update` sends and ask through `onAction`. */
+export const TasteUI = requireNativeModule<TasteUIModule>('TasteUI')
+
+const TasteAppNative = requireNativeView<CommonViewModifierProps>('TasteUI', 'TasteAppView')
+
+/** The whole app's interface. Must sit inside a `Host` that fills the screen. */
+export function TasteApp(props: CommonViewModifierProps) {
+  return <TasteAppNative {...props} />
 }
-
-/** A chat screen: its children fill it, and `ChatBar` floats over the bottom edge. */
-export function ChatScaffold(props: { children: ReactNode } & CommonViewModifierProps) {
-  return <ChatScaffoldNative {...props} {...withModifierEvents(props.modifiers)} />
-}
-
-export function ChatBar(props: { children: ReactNode }) {
-  return <ChatBarNative>{props.children}</ChatBarNative>
-}
-
-export function QRScanner(
-  props: {
-    onCode: (value: string) => void
-    onUnavailable?: (reason: 'denied' | 'no_camera') => void
-  } & CommonViewModifierProps,
-) {
-  const { onCode, onUnavailable, ...rest } = props
-  return (
-    <QRScannerNative
-      {...rest}
-      {...withModifierEvents(rest.modifiers)}
-      onCode={(event: { nativeEvent: { value: string } }) => onCode(event.nativeEvent.value)}
-      onUnavailable={(event: { nativeEvent: { reason: 'denied' | 'no_camera' } }) =>
-        onUnavailable?.(event.nativeEvent.reason)
-      }
-    />
-  )
-}
-
-/** The line under a navigation title (iOS 26). */
-export const navigationSubtitle = (text: string) => createModifier('navigationSubtitle', { text })
-
-/** Hides the tab bar on a pushed screen, such as a chat. */
-export const hideTabBar = () => createModifier('hideTabBar')

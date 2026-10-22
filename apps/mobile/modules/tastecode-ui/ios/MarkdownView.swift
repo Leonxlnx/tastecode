@@ -1,25 +1,15 @@
-import ExpoModulesCore
-import ExpoUI
 import SwiftUI
 import UIKit
-
-final class MarkdownTextProps: UIBaseViewProps {
-  @Field var markdown: String = ""
-}
 
 /// An agent's reply as the desktop shows it: paragraphs, headings, lists, quotes,
 /// tables and code blocks, with inline emphasis, code and links. Selectable, and
 /// every code block has its own copy button.
-struct MarkdownTextView: ExpoSwiftUI.View {
-  @ObservedObject var props: MarkdownTextProps
-
-  init(props: MarkdownTextProps) {
-    self.props = props
-  }
+struct MarkdownView: View {
+  let markdown: String
 
   var body: some View {
-    let blocks = MarkdownBlock.parse(props.markdown)
-    VStack(alignment: .leading, spacing: 12) {
+    let blocks = MarkdownBlock.parse(markdown)
+    VStack(alignment: .leading, spacing: 14) {
       ForEach(blocks) { block in
         MarkdownBlockView(block: block)
       }
@@ -208,13 +198,22 @@ struct MarkdownBlock: Identifiable {
 }
 
 /// Inline Markdown (emphasis, code, links, strikethrough) as SwiftUI text.
-func inlineMarkdown(_ text: String) -> AttributedString {
+func inlineMarkdown(
+  _ text: String, code codeFont: Font = .system(.subheadline, design: .monospaced)
+) -> AttributedString {
   let options = AttributedString.MarkdownParsingOptions(
     allowsExtendedAttributes: false,
     interpretedSyntax: .inlineOnlyPreservingWhitespace,
     failurePolicy: .returnPartiallyParsedIfPossible
   )
-  return (try? AttributedString(markdown: text, options: options)) ?? AttributedString(text)
+  var parsed = (try? AttributedString(markdown: text, options: options)) ?? AttributedString(text)
+  // Inline code reads as a word set in another face, not a shout: a size down, on a faint fill.
+  let code = parsed.runs.filter { $0.inlinePresentationIntent?.contains(.code) == true }.map(\.range)
+  for range in code {
+    parsed[range].font = codeFont
+    parsed[range].backgroundColor = Color(.tertiarySystemFill)
+  }
+  return parsed
 }
 
 struct MarkdownBlockView: View {
@@ -281,42 +280,37 @@ struct CodeBlockView: View {
   @State private var copied = false
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 0) {
-      HStack {
-        Text(language.isEmpty ? "code" : language)
-          .font(.caption.weight(.medium))
-          .foregroundStyle(.secondary)
-        Spacer()
-        Button {
-          UIPasteboard.general.string = code
-          UIImpactFeedbackGenerator(style: .light).impactOccurred()
-          withAnimation(.snappy) { copied = true }
-          DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
-            withAnimation(.snappy) { copied = false }
-          }
-        } label: {
-          Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
-            .labelStyle(.titleAndIcon)
-            .font(.caption.weight(.medium))
-            .contentTransition(.symbolEffect(.replace))
-        }
-        .buttonStyle(.borderless)
-        .foregroundStyle(.secondary)
-      }
-      .padding(.horizontal, 14)
-      .padding(.top, 10)
-      .padding(.bottom, 6)
+    HStack(alignment: .top, spacing: 0) {
       ScrollView(.horizontal, showsIndicators: false) {
         Text(code)
           .font(.system(.footnote, design: .monospaced))
-          .lineSpacing(2)
+          .lineSpacing(3)
           .fixedSize(horizontal: true, vertical: true)
           .textSelection(.enabled)
-          .padding(.horizontal, 14)
-          .padding(.bottom, 12)
+          .padding(.leading, 14)
+          .padding(.trailing, 8)
+          .padding(.vertical, 12)
       }
+      Button {
+        UIPasteboard.general.string = code
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        withAnimation(.snappy) { copied = true }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
+          withAnimation(.snappy) { copied = false }
+        }
+      } label: {
+        Image(systemName: copied ? "checkmark" : "square.on.square")
+          .font(.footnote)
+          .foregroundStyle(.tertiary)
+          .contentTransition(.symbolEffect(.replace))
+          .frame(width: 40, height: 40)
+          .contentShape(.rect)
+      }
+      .buttonStyle(.plain)
+      .accessibilityLabel(copied ? "Copied" : "Copy \(language.isEmpty ? "code" : language)")
     }
-    .background(.fill.tertiary, in: .rect(cornerRadius: 16, style: .continuous))
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .background(.fill.quaternary, in: .rect(cornerRadius: 14, style: .continuous))
   }
 }
 
@@ -343,6 +337,6 @@ struct MarkdownTableView: View {
       }
       .padding(14)
     }
-    .background(.fill.quaternary, in: .rect(cornerRadius: 16, style: .continuous))
+    .background(.fill.quaternary, in: .rect(cornerRadius: 14, style: .continuous))
   }
 }

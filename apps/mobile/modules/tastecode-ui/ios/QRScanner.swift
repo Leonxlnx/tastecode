@@ -1,32 +1,10 @@
 import AVFoundation
-import ExpoModulesCore
-import ExpoUI
 import SwiftUI
 import UIKit
 
-final class QRScannerProps: UIBaseViewProps {
-  var onCode = EventDispatcher()
-  var onUnavailable = EventDispatcher()
-}
-
-/// The camera, looking for the pairing code. Reports each new code once.
-struct QRScannerView: ExpoSwiftUI.View {
-  @ObservedObject var props: QRScannerProps
-
-  init(props: QRScannerProps) {
-    self.props = props
-  }
-
-  var body: some View {
-    CameraPreview(
-      onCode: { props.onCode(["value": $0]) },
-      onUnavailable: { props.onUnavailable(["reason": $0]) }
-    )
-    .ignoresSafeArea()
-  }
-}
-
-private struct CameraPreview: UIViewRepresentable {
+/// The camera, looking for the pairing code. Reports each new code once, and
+/// "denied" or "no_camera" when it cannot look.
+struct CameraPreview: UIViewRepresentable {
   let onCode: (String) -> Void
   let onUnavailable: (String) -> Void
 

@@ -5,7 +5,6 @@ import type {
   ProviderId,
   ProviderStatus,
 } from '@harness/contracts'
-import type { SFSymbol } from 'sf-symbols-typescript'
 import { TasteLink } from '../../modules/tastecode-link'
 import type { Connection } from '../link/connection'
 import { Store } from '../store'
@@ -216,27 +215,23 @@ export const ACCESS_LEVELS: ReadonlyArray<{
   mode: ApprovalMode
   title: string
   detail: string
-  symbol: SFSymbol
 }> = [
   {
     mode: 'ask',
     title: 'Ask first',
     detail: 'Approve each edit and command',
-    symbol: 'hand.raised',
   },
   {
     mode: 'auto',
     title: 'Auto-approve',
     detail: 'Edits and commands in this folder',
-    symbol: 'checkmark.shield',
   },
   {
     mode: 'auto-review',
     title: 'Auto-review',
     detail: 'A reviewer checks elevated actions',
-    symbol: 'eye.circle',
   },
-  { mode: 'full', title: 'Full access', detail: 'No sandbox or prompts', symbol: 'lock.open' },
+  { mode: 'full', title: 'Full access', detail: 'No sandbox or prompts' },
 ]
 
 export function accessLevels(capabilities: Capabilities | undefined): typeof ACCESS_LEVELS {
