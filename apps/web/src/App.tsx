@@ -29,6 +29,7 @@ import type {
   QueuedTurn,
   ResultOf,
   SidebarSettings,
+  ThreadSettings,
 } from '@harness/contracts'
 import { DEFAULT_ACCOUNT_ID } from '@harness/contracts'
 import {
@@ -228,6 +229,7 @@ import {
 } from './ui/workspace/workspace-panel-width.js'
 import { useWindowChrome } from './window-chrome.js'
 import { backdropColorScheme } from './theme-colors.js'
+import { adoptedSelection, sharedSetup } from './thread-settings.js'
 import {
   readProfileIdentityPreferences,
   writeProfileIdentityPreferences,
@@ -2162,6 +2164,9 @@ export function App() {
       setQueuedTurns(items)
       setCanSteerQueue(canSteer)
     })
+    const offSettings = transport.on('thread.settings', ({ threadId, settings }) =>
+      adoptThreadSettingsRef.current(threadId, settings),
+    )
     const offLifecycle = transport.on('thread.lifecycle', ({ threadId, lifecycle }) => {
       pendingLifecycles.set(threadId, lifecycle)
       if (lifecycleFlush !== undefined) return
@@ -2245,6 +2250,7 @@ export function App() {
       probe.inFlight = probe.pendingPath = probe.idlePath = probe.blockedPath = undefined
       offEvents()
       offQueue()
+      offSettings()
       offLifecycle()
       offPreviewCapture()
       offSidebarSettings()
@@ -3589,14 +3595,31 @@ export function App() {
       selectedModelChoice.key !== modelId
     )
       return
-    writeThreadModelSelection(activeId, {
+    const selection = {
       modelKey: selectedModelChoice.key,
       designMode,
       ...(selectedEffort ? { effort: selectedEffort } : {}),
       ...(selectedServiceTier ? { serviceTier: selectedServiceTier } : {}),
-    })
+    }
+    // A chat opened here for the first time saves this window's fallback; the
+    // server's setup, read on opening, replaces it. Only a change to a setup
+    // this window already had is one the other clients should follow.
+    const firstSetup = readThreadModelSelection(activeId) === undefined
+    writeThreadModelSelection(activeId, selection)
     pendingThreadModelSave.current = undefined
-  }, [activeId, modelId, selectedModelChoice, selectedEffort, selectedServiceTier, designMode])
+    if (firstSetup) return
+    void transport
+      .request('thread.setSettings', { threadId: activeId, ...sharedSetup(selection) })
+      .catch(() => undefined)
+  }, [
+    activeId,
+    modelId,
+    selectedModelChoice,
+    selectedEffort,
+    selectedServiceTier,
+    designMode,
+    transport,
+  ])
 
   // Remember the active source's exact setup, so returning to a provider
   // restores what was last used there instead of a best-guess translation.
@@ -3713,6 +3736,45 @@ export function App() {
   )
   const commitModelChoiceRef = useRef(commitModelChoice)
   commitModelChoiceRef.current = commitModelChoice
+
+  // A chat's setup as the server keeps it: chosen on another client, or read
+  // on opening the chat. Mirrored here, and applied at once to the open chat.
+  const adoptThreadSettingsRef = useRef((_threadId: string, _settings: ThreadSettings) => {})
+  adoptThreadSettingsRef.current = (threadId, settings) => {
+    const open = threadId === activeIdRef.current
+    if (settings.approval) {
+      threadApprovals.current.set(threadId, settings.approval)
+      if (open) setActiveThreadApproval(settings.approval)
+    }
+    const next = adoptedSelection(
+      settings,
+      readThreadModelSelection(threadId),
+      findSession(projectsRef.current, threadId)?.session,
+      visibleModelsRef.current,
+    )
+    if (!next) return
+    writeThreadModelSelection(threadId, next)
+    const choice = open
+      ? visibleModelsRef.current.find((candidate) => candidate.key === next.modelKey)
+      : undefined
+    if (choice) commitModelChoiceRef.current(choice, next)
+  }
+  const readSharedSettings = useCallback(
+    (threadId: string, local: ReturnType<typeof readThreadModelSelection>) => {
+      void transport
+        .request('thread.settings', { threadId })
+        .then((settings) => {
+          // A chat set up before the server kept setups shares this window's choice.
+          if (settings.model === undefined && local) {
+            return transport.request('thread.setSettings', { threadId, ...sharedSetup(local) })
+          }
+          adoptThreadSettingsRef.current(threadId, settings)
+          return undefined
+        })
+        .catch(() => undefined)
+    },
+    [transport],
+  )
 
   useEffect(() => writeProviderDefaults(providerDefaults), [providerDefaults])
 
@@ -4931,6 +4993,7 @@ export function App() {
       setRollbackOpen(false)
       activeIdRef.current = id
       setActiveThreadApproval(threadApprovals.current.get(id))
+      if (!id.startsWith('pending:')) readSharedSettings(id, threadSelection)
       setHistoryFailure(undefined)
       setActiveId(id)
       setComposerFocusRequest((request) => request + 1)

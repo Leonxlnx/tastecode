@@ -10238,6 +10238,70 @@ describe('new chats', () => {
     await waitFor(() => expect(savedTier()).not.toBe('priority'))
   })
 
+  it('follows a chat setup another client chose and shares its own changes', async () => {
+    const mini = {
+      ...cachedCodexChoice().model,
+      id: 'gpt-5.6-mini',
+      displayName: 'GPT-5.6 Mini',
+      isDefault: false,
+    }
+    localStorage.setItem(
+      'harness.modelByThread:untouched-thread',
+      JSON.stringify({ modelKey: 'codex:gpt-5.6-mini', effort: 'high' }),
+    )
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method, params) => {
+      if (method === 'models.list')
+        return Promise.resolve({ models: [cachedCodexChoice().model, mini] })
+      if (method === 'thread.settings')
+        return Promise.resolve({ model: 'gpt-5.6-mini', effort: 'high', approval: 'ask' })
+      if (method === 'thread.setSettings') return Promise.resolve({})
+      return request(method, params)
+    })
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Model and reasoning' }, { timeout: 10_000 }),
+    )
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Model and reasoning' }).textContent).toContain(
+        '5.6 Mini',
+      ),
+    )
+
+    // The phone moves the open chat to another model, a lower effort and auto access.
+    act(() =>
+      transport.listeners.get('thread.settings')?.({
+        threadId: 'untouched-thread',
+        settings: { model: 'gpt-6.1-sol', effort: 'low', approval: 'auto' },
+      }),
+    )
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Model and reasoning' }).textContent).toContain(
+        '5.6 Sol',
+      )
+      expect(document.querySelector('.model-selector__effort-title')?.textContent).toBe(
+        'Effort: Low',
+      )
+      expect(screen.getByRole('button', { name: 'Permissions' }).textContent).toContain('Auto')
+    })
+    expect(JSON.parse(localStorage.getItem('harness.modelByThread:untouched-thread')!)).toEqual({
+      modelKey: 'codex:gpt-6.1-sol',
+      effort: 'low',
+    })
+    expect(transport.request).not.toHaveBeenCalledWith('thread.setSettings', expect.anything())
+
+    // The desktop raises the effort; the server, and through it the phone, hears it.
+    fireEvent.keyDown(screen.getByRole('slider', { name: 'Reasoning effort' }), { key: 'End' })
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('thread.setSettings', {
+        threadId: 'untouched-thread',
+        model: 'gpt-6.1-sol',
+        effort: 'high',
+      }),
+    )
+  })
+
   it('opens a chat saved on a model Codex no longer ships and continues on the default', async () => {
     localStorage.setItem('harness.model', 'codex:gpt-5.4')
     serverProjects[0]!.sessions = [
