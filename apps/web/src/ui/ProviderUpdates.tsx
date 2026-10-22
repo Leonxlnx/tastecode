@@ -136,6 +136,11 @@ export function ProviderUpdateNotice(props: {
   const waiting = entries.filter(
     (entry) => state.operations[entry.provider]?.phase !== 'succeeded',
   ).length
+  // The releases whose own row still offers Update or Retry.
+  const startable = entries.filter((entry) => {
+    const operation = state.operations[entry.provider]
+    return entry.canUpdate && !isBusy(operation) && operation?.phase !== 'succeeded'
+  })
   return (
     <NoticePresence
       className="notice notice--provider-update"
@@ -162,14 +167,27 @@ export function ProviderUpdateNotice(props: {
           ) : (
             <span>Up to date</span>
           )}
-          <button
-            className="ghost icon-button"
-            type="button"
-            aria-label="Dismiss provider updates"
-            onClick={dismiss}
-          >
-            <X size={13} aria-hidden />
-          </button>
+          <span className="update-slip__head-actions">
+            {startable.length > 1 ? (
+              <button
+                className="update-slip__button"
+                type="button"
+                onClick={() => {
+                  for (const entry of startable) void store.start(entry.provider)
+                }}
+              >
+                Update all
+              </button>
+            ) : null}
+            <button
+              className="ghost icon-button"
+              type="button"
+              aria-label="Dismiss provider updates"
+              onClick={dismiss}
+            >
+              <X size={13} aria-hidden />
+            </button>
+          </span>
         </div>
         {entries.map((entry, index) => (
           <ProviderUpdateItem

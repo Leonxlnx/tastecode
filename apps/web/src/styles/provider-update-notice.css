@@ -48,7 +48,13 @@
   line-height: var(--reel-line);
 }
 
-.update-slip__head > button {
+.update-slip__head-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.update-slip__head .icon-button {
   display: grid;
   place-items: center;
   width: 28px;

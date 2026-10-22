@@ -24,7 +24,7 @@ describe('hit targets', () => {
 
   it('gives the provider update dismiss button a 28px target', () => {
     expect(updateCss).toMatch(
-      /\.update-slip__head > button \{[^}]*width: 28px;[^}]*height: 28px;[^}]*margin-right: -2px;/s,
+      /\.update-slip__head \.icon-button \{[^}]*width: 28px;[^}]*height: 28px;[^}]*margin-right: -2px;/s,
     )
   })
 })

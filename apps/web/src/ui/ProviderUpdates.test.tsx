@@ -291,6 +291,53 @@ describe('provider update toast', () => {
     ).toBeTruthy()
   })
 
+  it('starts every release that can still update from one header action', async () => {
+    const transport = new TestTransport((method, params) =>
+      method === 'providers.update'
+        ? { terminalId: `${(params as { provider: string }).provider}-update` }
+        : {
+            updates: [
+              available,
+              { ...available, provider: 'grok', displayName: 'Grok' },
+              {
+                ...available,
+                provider: 'claude-code',
+                displayName: 'Claude Code',
+                canUpdate: false,
+              },
+            ],
+          },
+    )
+    render(<ProviderUpdateNotice transport={transport} onUpdated={() => {}} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Update all' }))
+    expect(
+      await within(screen.getByLabelText('Codex update')).findByText('Updating to 0.11.0…'),
+    ).toBeTruthy()
+    expect(
+      await within(screen.getByLabelText('Grok update')).findByText('Updating to 0.11.0…'),
+    ).toBeTruthy()
+    expect(
+      transport.requests
+        .filter((request) => request.method === 'providers.update')
+        .map((request) => (request.params as { provider: string }).provider)
+        .sort(),
+    ).toEqual(['codex', 'grok'])
+    expect(screen.getByRole('link', { name: 'Update guide' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Update all' })).toBeNull()
+  })
+
+  it('leaves out the header action when only one release can update', async () => {
+    const transport = new TestTransport(() => ({
+      updates: [
+        available,
+        { ...available, provider: 'grok', displayName: 'Grok', canUpdate: false },
+      ],
+    }))
+    render(<ProviderUpdateNotice transport={transport} onUpdated={() => {}} />)
+    expect(await screen.findByRole('button', { name: 'Update' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Update all' })).toBeNull()
+  })
+
   it('remembers a dismissed release and reopens it from the compact Providers footer', async () => {
     const transport = new TestTransport(() => ({ updates: [available] }))
     const first = render(<ProviderUpdateNotice transport={transport} onUpdated={() => {}} />)
