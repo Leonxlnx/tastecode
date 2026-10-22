@@ -25,6 +25,7 @@ import {
   ProviderUpdateSchema,
   UsageSchema,
 } from './domain.js'
+import { PhoneAccessStatusSchema, PhonePairingSchema, ProjectBrowseResultSchema } from './phone.js'
 import {
   CheckoutPullRequestResultSchema,
   GitHubRepositoryNameSchema,
@@ -1640,6 +1641,15 @@ export const methods = {
       ),
     }),
   },
+  /**
+   * List the folders inside one folder on this computer, so a client without
+   * a native folder picker (a paired phone) can choose a project. Hidden
+   * folders and files are left out. Absent `path` starts at the home folder.
+   */
+  'projects.browse': {
+    params: z.object({ path: z.string().min(1).max(4096).optional() }),
+    result: ProjectBrowseResultSchema,
+  },
   'projects.add': {
     params: z.object({ path: z.string(), name: z.string().optional() }),
     result: z.object({
@@ -2112,6 +2122,33 @@ export const methods = {
     params: z.object({}),
     result: SidebarSettingsSchema,
   },
+  /** Whether phones may connect, where they can reach this computer, and the paired phones. */
+  'phone.status': {
+    params: z.object({}),
+    result: PhoneAccessStatusSchema,
+  },
+  /** Turning access off closes every phone link; paired phones stay paired. */
+  'phone.setEnabled': {
+    params: z.object({ enabled: z.boolean() }),
+    result: PhoneAccessStatusSchema,
+  },
+  /**
+   * Open a one-time pairing code, turning access on when it is off. A new
+   * code replaces an open one; the first phone that pairs closes it.
+   */
+  'phone.startPairing': {
+    params: z.object({}),
+    result: z.object({ status: PhoneAccessStatusSchema, pairing: PhonePairingSchema }),
+  },
+  'phone.cancelPairing': {
+    params: z.object({}),
+    result: PhoneAccessStatusSchema,
+  },
+  /** Forget a phone and close its links. It has to pair again to reconnect. */
+  'phone.removeDevice': {
+    params: z.object({ deviceId: z.string().min(1) }),
+    result: PhoneAccessStatusSchema,
+  },
   'sidebar.updateSettings': {
     params: SidebarSettingsSchema.partial(),
     result: SidebarSettingsSchema,
@@ -2233,6 +2270,15 @@ export const channels = {
     lifecycle: ThreadLifecycleSchema,
   }),
   'sidebar.settings': SidebarSettingsSchema,
+  /**
+   * The project or chat list changed in a way no other push describes: a chat
+   * was started, renamed, pinned, moved or deleted, or a project was added,
+   * renamed, pinned or removed, possibly by another client. Clients call
+   * `projects.list` again; older clients ignore it.
+   */
+  'projects.changed': z.object({}),
+  /** Phone access changed: turned on or off, a phone paired, connected or left. */
+  'phone.changed': PhoneAccessStatusSchema,
   'terminal.output': z.object({
     terminalId: TerminalIdSchema,
     data: z.string(),
