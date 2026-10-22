@@ -2,6 +2,7 @@ import type { ApprovalMode, Model } from '@harness/contracts'
 import {
   accessLevels,
   defaultModel,
+  desktopChoiceKey,
   effortFor,
   effortLabel,
   visibleModels,
@@ -11,8 +12,15 @@ import {
 } from '../state/catalog'
 import type { CatalogView, SetupView, SourceView } from './types'
 
-function sourceView(source: Source): SourceView {
-  const { main, more } = visibleModels(source.models)
+/**
+ * A source's models as the menus offer them. When the desktop told which
+ * models its picker hides, the phone offers exactly the others, in one list
+ * as the desktop does; otherwise the source's curated set comes first.
+ */
+function sourceView(source: Source, hidden: ReadonlySet<string>): SourceView {
+  const shown = source.models.filter((model) => !hidden.has(desktopChoiceKey(source, model.id)))
+  const { main, more } =
+    hidden.size > 0 ? { main: shown, more: [] as Model[] } : visibleModels(source.models)
   const model = (entry: Model, extra: boolean) => ({
     id: entry.id,
     name: entry.displayName,
@@ -37,8 +45,14 @@ function sourceView(source: Source): SourceView {
   }
 }
 
-export function catalogView(state: CatalogState): CatalogView {
-  return { status: state.status, sources: state.sources.map(sourceView) }
+export function catalogView(
+  state: CatalogState,
+  hidden: ReadonlySet<string> = new Set(),
+): CatalogView {
+  return {
+    status: state.status,
+    sources: state.sources.map((source) => sourceView(source, hidden)),
+  }
 }
 
 /** The model a choice names, when its source still offers it; else the source's default. */
@@ -52,6 +66,17 @@ export function resolveModel(
     if (found) return found
   }
   return defaultModel(models)
+}
+
+/** A model known only by its id, kept as it is with the effort it was chosen with. */
+export function unlistedModel(id: string, effort: string | undefined): Model {
+  return {
+    id,
+    displayName: id,
+    isDefault: false,
+    reasoningEfforts: effort ? [effort] : [],
+    serviceTiers: [],
+  }
 }
 
 export function setupView(

@@ -50,6 +50,7 @@ export function pairWith(link: string): Pairing {
   sessions.clear()
   projects.state.set({ status: 'idle', error: undefined, projects: [], activity: {} })
   catalog.state.set({ status: 'idle', sources: [] })
+  catalog.hidden.set(new Set())
   savePairing(next)
   pairing.set(next)
   connection.start(next)
@@ -64,4 +65,5 @@ export function forgetComputer(): void {
   pairing.set(undefined)
   projects.state.set({ status: 'idle', error: undefined, projects: [], activity: {} })
   catalog.state.set({ status: 'idle', sources: [] })
+  catalog.hidden.set(new Set())
 }

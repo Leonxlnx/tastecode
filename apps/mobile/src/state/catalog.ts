@@ -46,12 +46,16 @@ export function sourceKey(source: SourceRef): string {
  */
 export class Catalog {
   readonly state = new Store<CatalogState>({ status: 'idle', sources: [] })
+  /** The desktop picker's hidden choice keys; this phone offers only the rest. */
+  readonly hidden = new Store<ReadonlySet<string>>(new Set())
   #loading: Promise<void> | undefined
 
   constructor(private readonly connection: Connection) {
     connection.onOpen(() => {
       if (this.state.get().status !== 'ready') void this.load()
+      void this.#readHidden()
     })
+    connection.on('models.hidden', ({ keys }) => this.hidden.set(new Set(keys)))
     connection.on('models.changed', ({ provider, agent }) => {
       for (const source of this.state.get().sources) {
         if (source.provider === provider && source.agent === agent) void this.#loadModels(source)
@@ -148,6 +152,15 @@ export class Catalog {
     }
   }
 
+  async #readHidden(): Promise<void> {
+    try {
+      const { keys } = await this.connection.request('models.hidden', {})
+      this.hidden.set(new Set(keys))
+    } catch {
+      // A computer without the list offers every model, as before.
+    }
+  }
+
   /** The source a chat runs on, adding it (for another account, say) when the list lacks it. */
   ensure(ref: SourceRef): Source {
     const key = sourceKey(ref)
@@ -180,6 +193,19 @@ function isDirectSource(provider: ProviderStatus): boolean {
   const shape = provider.source
   if (!shape) return provider.id !== 'acp' && provider.id !== 'api'
   return shape.direct && !shape.connection && shape.agent !== 'required'
+}
+
+/**
+ * A model's key in the desktop's picker (`model-catalog.ts` there): the
+ * source, then the URI-encoded model id. Accounts share their provider's keys.
+ */
+export function desktopChoiceKey(source: SourceRef, modelId: string): string {
+  const base = source.connectionId
+    ? `api:${source.connectionId}`
+    : source.agent
+      ? `${source.provider}:${source.agent}`
+      : source.provider
+  return `${base}:${encodeURIComponent(modelId || 'automatic')}`
 }
 
 /** Models shown first, and the rest behind "More Models". */

@@ -183,8 +183,10 @@ export function startBridge(): void {
   const pushChats = () => update('chats', chatsView(projects.state.get()))
   projects.state.subscribe(pushChats)
   pushChats()
-  const pushCatalog = () => update('catalog', catalogView(catalog.state.get()))
+  const pushCatalog = () =>
+    update('catalog', catalogView(catalog.state.get(), catalog.hidden.get()))
   catalog.state.subscribe(pushCatalog)
+  catalog.hidden.subscribe(pushCatalog)
   pushCatalog()
   newChat = new NewChat((view) => update('newChat', view))
   newChat.flush()

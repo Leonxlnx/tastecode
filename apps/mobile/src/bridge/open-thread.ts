@@ -9,7 +9,7 @@ import { catalog, connection, projects, sessions } from '../state/app'
 import { effortFor, sourceKey, type Source } from '../state/catalog'
 import { findSession } from '../state/projects'
 import type { ThreadSession } from '../state/thread-session'
-import { resolveModel, setupView } from '../view/catalog'
+import { resolveModel, setupView, unlistedModel } from '../view/catalog'
 import { approvalView, buildRows, questionsView, rowView, sameRow, type Row } from '../view/thread'
 import type { ChangesView, RowView, ThreadMetaView, ThreadPatch } from '../view/types'
 
@@ -92,11 +92,14 @@ export class OpenThread {
   }
 
   #current(): ResolvedSetup {
-    const model = resolveModel(
-      this.source(),
-      this.#settings.model,
-      this.session.state.get().view.model,
-    )
+    const source = this.source()
+    const wanted = this.#settings.model
+    // A model the source does not list, such as one the desktop added by hand,
+    // stays the chat's model; falling back would send the next turn elsewhere.
+    const model =
+      (wanted ? source?.models.find((entry) => entry.id === wanted) : undefined) ??
+      (wanted ? unlistedModel(wanted, this.#settings.effort) : undefined) ??
+      resolveModel(source, undefined, this.session.state.get().view.model)
     const effort = effortFor(model, this.#settings.effort)
     const serviceTier = tierFor(model, this.#settings.serviceTier)
     return {

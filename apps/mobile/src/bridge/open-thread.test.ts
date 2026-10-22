@@ -171,6 +171,21 @@ describe('an open chat on the screens', () => {
       access: 'full',
     })
 
+    // A model the source does not list, as a desktop's own custom model, stays the chat's model.
+    link.listeners.get('thread.settings')?.({
+      threadId: 't',
+      settings: { model: 'my-custom', effort: 'low', approval: 'full' },
+    })
+    expect(patches.at(-1)?.meta.setup).toMatchObject({
+      model: 'my-custom',
+      modelName: 'my-custom',
+      effort: 'low',
+    })
+    link.listeners.get('thread.settings')?.({
+      threadId: 't',
+      settings: { model: 'b', effort: 'low', serviceTier: 'fast', approval: 'full' },
+    })
+
     // The phone changes the effort; the whole setup goes to the computer.
     await thread.setEffort('high')
     expect(written.at(-1)).toEqual({
