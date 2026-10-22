@@ -57,6 +57,7 @@ export const PHONE_METHODS: ReadonlySet<MethodName> = new Set<MethodName>([
   'projects.browse',
   'projects.pin',
   'workspace.info',
+  'workspace.diff',
   'attachments.saveImage',
   'backgroundModel.generateTitle',
   'thread.history',
