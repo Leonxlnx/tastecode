@@ -15,6 +15,9 @@ import type { ChangesView, RowView, ThreadMetaView, ThreadPatch } from '../view/
 
 type Setup = Pick<ThreadSettings, 'model' | 'effort' | 'serviceTier'>
 
+/** The model the chat's setup resolves to in its source, and the setup its next turn sends. */
+type ResolvedSetup = { model: Model | undefined; setup: Setup }
+
 /** Where chats this phone just started run, until the computer's list names them. */
 export const startedSources = new Map<string, string>()
 
@@ -88,7 +91,7 @@ export class OpenThread {
     }
   }
 
-  #current(): { model: Model | undefined; setup: Setup } {
+  #current(): ResolvedSetup {
     const model = resolveModel(
       this.source(),
       this.#settings.model,
