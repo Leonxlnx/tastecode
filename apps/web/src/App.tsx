@@ -3156,6 +3156,20 @@ export function App() {
     [transport, refreshProviderThreadHistory, refreshProjects],
   )
 
+  // Another client (a paired phone, a second window) started, renamed or moved
+  // a chat. A burst of changes reloads the list once.
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const off = transport.on('projects.changed', () => {
+      clearTimeout(timer)
+      timer = setTimeout(() => void refreshProjects().catch(() => undefined), 150)
+    })
+    return () => {
+      off()
+      clearTimeout(timer)
+    }
+  }, [transport, refreshProjects])
+
   const loadHistory = useCallback(
     async (threadId: string, afterSeq?: number) => {
       try {
