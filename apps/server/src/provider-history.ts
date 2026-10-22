@@ -629,6 +629,14 @@ function sameUserMessage(left: Item, right: Item): boolean {
   }
   return (
     (left.text === right.text || left.text === text) &&
-    JSON.stringify(left.attachments ?? []) === JSON.stringify(right.attachments ?? [])
+    sameAttachments(left.attachments ?? [], right.attachments ?? [])
+  )
+}
+
+/** A provider such as Claude saves an attached picture's bytes, not the path it came from. */
+function sameAttachments(local: readonly string[], native: readonly string[]): boolean {
+  return (
+    local.length === native.length &&
+    local.every((path, index) => path === native[index] || native[index]?.startsWith('data:'))
   )
 }

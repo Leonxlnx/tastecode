@@ -438,6 +438,35 @@ describe('provider history integration', () => {
     ).toEqual(['Hello'])
   })
 
+  it('recognizes the echo of a prompt whose picture the provider saved inline', async () => {
+    store.addThread({
+      id: 'local',
+      projectPath: process.cwd(),
+      provider: 'codex',
+      providerSessionId: 'native',
+      title: 'Local',
+    })
+    const withPicture = (events: DomainEvent[], attachment: string) =>
+      events.map((event) =>
+        event.type === 'item.completed' && event.item.role === 'user'
+          ? { ...event, item: { ...event.item, attachments: [attachment] } }
+          : event,
+      )
+    for (const event of withPicture(transcript('local', 'Answer'), '/tmp/attachments/a-image.jpg'))
+      store.append('local', event)
+    const { history, source } = setup()
+    vi.mocked(source.read).mockResolvedValue(
+      withPicture(transcript('native', 'Answer'), 'data:image/jpeg;base64,/9j/4AAQ'),
+    )
+    await history.refresh()
+    await history.load('local')
+    expect(
+      messages('local')
+        .filter((item) => item.role === 'user')
+        .map((item) => item.attachments),
+    ).toEqual([['/tmp/attachments/a-image.jpg']])
+  })
+
   it('recognizes a steer that the provider saved as a turn of its own', async () => {
     store.addThread({
       id: 'local',
