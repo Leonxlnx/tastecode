@@ -1226,6 +1226,18 @@ export function App() {
     () => models.filter((choice) => !hiddenModels.has(choice.key)),
     [models, hiddenModels],
   )
+  // The phone offers the models this picker offers, so neither moves a chat
+  // to a model the other hides. Compared as text: the set is rebuilt often.
+  const hiddenModelList = useMemo(() => JSON.stringify([...hiddenModels].sort()), [hiddenModels])
+  useEffect(() => {
+    if (!modelsLoaded) return
+    const timer = window.setTimeout(() => {
+      void transport
+        .request('models.setHidden', { keys: JSON.parse(hiddenModelList) as string[] })
+        .catch(() => undefined)
+    }, 500)
+    return () => window.clearTimeout(timer)
+  }, [hiddenModelList, modelsLoaded, transport])
   const visibleModelsRef = useRef(visibleModels)
   visibleModelsRef.current = visibleModels
   // Memoised for identity: while the catalog is empty this is the selected

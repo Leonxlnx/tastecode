@@ -10238,6 +10238,42 @@ describe('new chats', () => {
     await waitFor(() => expect(savedTier()).not.toBe('priority'))
   })
 
+  it('tells the server which models the picker hides, for the phone', async () => {
+    localStorage.setItem(
+      'harness.modelVisibility.v2',
+      JSON.stringify({
+        overrides: { 'codex:gpt-5.6-mini': { visible: false, at: 1 } },
+        firstSeen: {},
+      }),
+    )
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method, params) => {
+      if (method === 'models.list') {
+        return Promise.resolve({
+          models: [
+            cachedCodexChoice().model,
+            {
+              ...cachedCodexChoice().model,
+              id: 'gpt-5.6-mini',
+              displayName: 'GPT-5.6 Mini',
+              isDefault: false,
+            },
+          ],
+        })
+      }
+      if (method === 'models.setHidden') return Promise.resolve({})
+      return request(method, params)
+    })
+    render(<App />)
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('models.setHidden', {
+        keys: expect.arrayContaining(['codex:gpt-5.6-mini']),
+      }),
+    )
+    const sent = transport.request.mock.calls.filter(([method]) => method === 'models.setHidden')
+    expect(sent.at(-1)?.[1]).not.toEqual({ keys: expect.arrayContaining(['codex:gpt-6.1-sol']) })
+  })
+
   it('follows a chat setup another client chose and shares its own changes', async () => {
     const mini = {
       ...cachedCodexChoice().model,
