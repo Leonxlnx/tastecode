@@ -46,6 +46,8 @@ const state = vi.hoisted(() => ({
   accountsChanged: (_provider: string) => {},
   credentials: new Map<string, string>(),
   renamed: [] as string[],
+  settings: new Map<string, { model?: string; effort?: string; serviceTier?: string }>(),
+  approvals: new Map<string, string>(),
 }))
 const temporary: string[] = []
 
@@ -85,8 +87,25 @@ vi.mock('./store.js', () => ({
     }
     recoverInterruptedThreads() {}
     nextLifecycleRefreshAt() {}
-    threadApproval() {
-      return undefined
+    threadApproval(threadId: string) {
+      return state.approvals.get(threadId)
+    }
+    threadSettings(threadId: string) {
+      const approval = state.approvals.get(threadId)
+      return { ...state.settings.get(threadId), ...(approval ? { approval } : {}) }
+    }
+    setThreadSettings(
+      threadId: string,
+      settings: { model?: string; effort?: string; serviceTier?: string },
+    ) {
+      state.settings.set(
+        threadId,
+        Object.fromEntries(
+          (['model', 'effort', 'serviceTier'] as const).flatMap((key) =>
+            settings[key] === undefined ? [] : [[key, settings[key]]],
+          ),
+        ),
+      )
     }
     providerHistoryChangedAfter() {
       return false
@@ -149,6 +168,9 @@ vi.mock('./orchestrator.js', () => ({
     }
     async submitTurn() {
       return { queued: false, turnId: 'turn' }
+    }
+    async setThreadApproval(threadId: string, approval: string) {
+      state.approvals.set(threadId, approval)
     }
     account(provider: string, _agent?: string, accountId?: string) {
       state.handled.push(`auth.status(${provider}${accountId ? `, ${accountId}` : ''})`)
@@ -380,6 +402,8 @@ afterEach(async () => {
   state.usageHistoryCalls.length = 0
   state.credentials.clear()
   state.renamed.length = 0
+  state.settings.clear()
+  state.approvals.clear()
   vi.unstubAllEnvs()
   await Promise.all(
     temporary.splice(0).map((directory) => rm(directory, { recursive: true, maxRetries: 5 })),
@@ -1748,6 +1772,90 @@ describe('phone links', () => {
         ),
       )
       expect(phone.frames.some((frame) => frame['channel'] === 'phone.changed')).toBe(false)
+      phone.socket.terminate()
+    } finally {
+      desktop.client.terminate()
+    }
+  })
+
+  it('keeps one setup per chat that the phone and the desktop both follow', async () => {
+    vi.stubEnv('HARNESS_PHONE_PORT', '0')
+    state.threads.set('t', { projectPath: '/p', provider: 'codex' })
+    const { port } = await listen()
+    const desktop = await desktopClient(port)
+    try {
+      desktop.client.send(JSON.stringify({ id: 'pair', method: 'phone.startPairing', params: {} }))
+      await vi.waitFor(() =>
+        expect(desktop.messages.find((message) => message['id'] === 'pair')).toBeDefined(),
+      )
+      const reply = desktop.messages.find((message) => message['id'] === 'pair') as {
+        result: { status: { port: number }; pairing: { uri: string } }
+      }
+      const encoded = new URL(reply.result.pairing.uri).searchParams.get('p') ?? ''
+      const payload = JSON.parse(Buffer.from(encoded, 'base64url').toString()) as {
+        key: string
+        secret: string
+      }
+      const phone = await phoneLink(reply.result.status.port, payload.key, {
+        v: 1,
+        name: 'iPhone',
+        pair: payload.secret,
+      })
+      await vi.waitFor(() => expect(phone.frames[0]).toMatchObject({ channel: 'server.welcome' }))
+      const pushes = (messages: Array<Record<string, unknown>>) =>
+        messages.filter((message) => message['channel'] === 'thread.settings')
+
+      // The phone picks a model; the desktop is told.
+      send(phone, {
+        id: 'set',
+        method: 'thread.setSettings',
+        params: { threadId: 't', model: 'gpt-5.5', effort: 'high' },
+      })
+      await vi.waitFor(() =>
+        expect(pushes(desktop.messages).at(-1)).toMatchObject({
+          data: { threadId: 't', settings: { model: 'gpt-5.5', effort: 'high' } },
+        }),
+      )
+      // The desktop changes the access level; the phone is told.
+      desktop.client.send(
+        JSON.stringify({
+          id: 'access',
+          method: 'thread.setApproval',
+          params: { threadId: 't', approval: 'auto' },
+        }),
+      )
+      await vi.waitFor(() =>
+        expect(pushes(phone.frames).at(-1)).toMatchObject({
+          data: { threadId: 't', settings: { model: 'gpt-5.5', effort: 'high', approval: 'auto' } },
+        }),
+      )
+      // A turn sent with another setup moves the shared one; the same setup again says nothing.
+      const before = pushes(phone.frames).length
+      desktop.client.send(
+        JSON.stringify({
+          id: 'turn',
+          method: 'thread.sendTurn',
+          params: { threadId: 't', text: 'hi', model: 'gpt-5.5-mini' },
+        }),
+      )
+      await vi.waitFor(() =>
+        expect(pushes(phone.frames).at(-1)).toMatchObject({
+          data: { settings: { model: 'gpt-5.5-mini', approval: 'auto' } },
+        }),
+      )
+      expect(pushes(phone.frames).at(-1)?.['data']).not.toHaveProperty('settings.effort')
+      send(phone, {
+        id: 'again',
+        method: 'thread.sendTurn',
+        params: { threadId: 't', text: 'again', model: 'gpt-5.5-mini' },
+      })
+      send(phone, { id: 'read', method: 'thread.settings', params: { threadId: 't' } })
+      await vi.waitFor(() =>
+        expect(phone.frames.find((frame) => frame['id'] === 'read')).toMatchObject({
+          result: { model: 'gpt-5.5-mini', approval: 'auto' },
+        }),
+      )
+      expect(pushes(phone.frames)).toHaveLength(before + 1)
       phone.socket.terminate()
     } finally {
       desktop.client.terminate()

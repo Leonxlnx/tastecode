@@ -34,6 +34,7 @@ import type {
   SidebarSettings,
   SessionSearchResult,
   ThreadLifecycle,
+  ThreadSettings,
   Usage,
 } from '@harness/contracts'
 import { z } from 'zod'
@@ -590,6 +591,14 @@ CREATE TABLE IF NOT EXISTS design_runs (
 CREATE TABLE IF NOT EXISTS thread_approvals (
   thread_id TEXT PRIMARY KEY REFERENCES threads(id) ON DELETE CASCADE,
   mode TEXT NOT NULL
+);
+
+-- What a chat's next turn runs with, shared by every client. NULL is the source's default.
+CREATE TABLE IF NOT EXISTS thread_settings (
+  thread_id    TEXT PRIMARY KEY REFERENCES threads(id) ON DELETE CASCADE,
+  model        TEXT,
+  effort       TEXT,
+  service_tier TEXT
 );
 
 CREATE TABLE IF NOT EXISTS app_settings (
@@ -2296,6 +2305,38 @@ export class Store {
       ON CONFLICT(thread_id) DO UPDATE SET mode = excluded.mode`,
       )
       .run(threadId, mode)
+  }
+
+  /** The chat's setup with its access level; empty when no client has chosen one. */
+  threadSettings(threadId: string): ThreadSettings {
+    const row = this.#db
+      .prepare('SELECT model, effort, service_tier FROM thread_settings WHERE thread_id = ?')
+      .get(threadId)
+    const approval = this.threadApproval(threadId)
+    const text = (value: unknown) => (typeof value === 'string' ? value : undefined)
+    const model = text(row?.['model'])
+    const effort = text(row?.['effort'])
+    const serviceTier = text(row?.['service_tier'])
+    return {
+      ...(model !== undefined ? { model } : {}),
+      ...(effort ? { effort } : {}),
+      ...(serviceTier ? { serviceTier } : {}),
+      ...(approval ? { approval } : {}),
+    }
+  }
+
+  /** Replaces the model, effort and tier together; the access level is kept apart. */
+  setThreadSettings(
+    threadId: string,
+    settings: Pick<ThreadSettings, 'model' | 'effort' | 'serviceTier'>,
+  ): void {
+    this.#db
+      .prepare(
+        `INSERT INTO thread_settings (thread_id, model, effort, service_tier) VALUES (?, ?, ?, ?)
+      ON CONFLICT(thread_id) DO UPDATE SET
+        model = excluded.model, effort = excluded.effort, service_tier = excluded.service_tier`,
+      )
+      .run(threadId, settings.model ?? null, settings.effort ?? null, settings.serviceTier ?? null)
   }
 
   backgroundModelPreference(): BackgroundModelPreference {

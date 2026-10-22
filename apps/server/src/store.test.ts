@@ -357,6 +357,30 @@ describe('retained thread metadata', () => {
   })
 })
 
+describe('chat settings', () => {
+  it('keeps one setup per chat beside its access level, and drops it with the chat', () => {
+    store.addProject('/repo')
+    store.addThread({ id: 'main', projectPath: '/repo', provider: 'codex', title: 'Main' })
+    expect(store.threadSettings('main')).toEqual({})
+
+    store.setThreadSettings('main', { model: 'gpt-5.5', effort: 'high', serviceTier: 'fast' })
+    store.setThreadApproval('main', 'auto')
+    expect(store.threadSettings('main')).toEqual({
+      model: 'gpt-5.5',
+      effort: 'high',
+      serviceTier: 'fast',
+      approval: 'auto',
+    })
+
+    // A new setup replaces the old one whole: no effort means the model's default.
+    store.setThreadSettings('main', { model: '' })
+    expect(store.threadSettings('main')).toEqual({ model: '', approval: 'auto' })
+
+    store.deleteThread('main')
+    expect(store.threadSettings('main')).toEqual({})
+  })
+})
+
 describe('durable queued turns', () => {
   const queued = (id: string, text = 'Repeat this.') => ({
     id,

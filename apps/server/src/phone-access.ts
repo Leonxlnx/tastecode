@@ -71,6 +71,8 @@ export const PHONE_METHODS: ReadonlySet<MethodName> = new Set<MethodName>([
   'thread.respondToApproval',
   'thread.respondToUserInput',
   'thread.setApproval',
+  'thread.settings',
+  'thread.setSettings',
   'thread.changeProvider',
   'thread.rename',
   'thread.pin',

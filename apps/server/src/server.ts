@@ -11,6 +11,7 @@ import {
   type ProviderHistorySource,
   type ProviderId,
   type ProviderStatus,
+  type ThreadSettings,
 } from '@harness/contracts'
 import { applyDesktopPath } from '@harness/proc/desktop-path'
 import { cliProbe, invalidateCliProbes } from './cli-probe.js'
@@ -600,6 +601,29 @@ export function startServer(
       listChange = undefined
       push.broadcast('projects.changed', {})
     }, 50)
+  }
+
+  /** Tells every client a chat's setup, after any change to it. */
+  function announceSettings(threadId: string): ThreadSettings {
+    const settings = store.threadSettings(threadId)
+    push.broadcast('thread.settings', { threadId, settings })
+    return settings
+  }
+
+  /** Keeps the shared setup on what a turn actually ran with, announcing only a change. */
+  function adoptTurnSettings(
+    threadId: string,
+    turn: Pick<ThreadSettings, 'model' | 'effort' | 'serviceTier'>,
+  ): void {
+    const current = store.threadSettings(threadId)
+    if (
+      current.model === turn.model &&
+      current.effort === turn.effort &&
+      current.serviceTier === turn.serviceTier
+    )
+      return
+    store.setThreadSettings(threadId, turn)
+    announceSettings(threadId)
   }
 
   function acceptConnection(
@@ -1458,6 +1482,7 @@ export function startServer(
           isolate: p.isolate,
         })
         startedThisRun.add(thread.id)
+        store.setThreadSettings(thread.id, p)
         const earlierChanges = orchestrator.earlierChanges(thread.id)
         return { threadId: thread.id, ...(earlierChanges ? { earlierChanges } : {}) }
       }
@@ -1480,6 +1505,8 @@ export function startServer(
         providerHistoryReady?.forget(p.threadId)
         startedThisRun.add(p.threadId)
         historySchedule.activity()
+        store.setThreadSettings(p.threadId, p)
+        announceSettings(p.threadId)
         return {}
       }
 
@@ -1533,19 +1560,20 @@ export function startServer(
       case 'thread.sendTurn': {
         const p = parseParams(method, params)
         await loadProviderHistory(p.threadId)
-        return {
-          ...(await orchestrator.submitTurn(
-            p.threadId,
-            p.text,
-            p.attachments,
-            {
-              model: p.model,
-              effort: p.effort,
-              serviceTier: p.serviceTier,
-            },
-            p.clientSubmissionId,
-          )),
-        }
+        const result = await orchestrator.submitTurn(
+          p.threadId,
+          p.text,
+          p.attachments,
+          {
+            model: p.model,
+            effort: p.effort,
+            serviceTier: p.serviceTier,
+          },
+          p.clientSubmissionId,
+        )
+        // A client that names its model sent with that setup; the others follow it.
+        if (p.model !== undefined) adoptTurnSettings(p.threadId, p)
+        return result
       }
 
       case 'thread.queue': {
@@ -1592,7 +1620,20 @@ export function startServer(
       case 'thread.setApproval': {
         const p = parseParams(method, params)
         await orchestrator.setThreadApproval(p.threadId, p.approval)
+        announceSettings(p.threadId)
         return {}
+      }
+
+      case 'thread.settings': {
+        const p = parseParams(method, params)
+        return store.threadSettings(p.threadId)
+      }
+
+      case 'thread.setSettings': {
+        const p = parseParams(method, params)
+        if (!store.thread(p.threadId)) throw new Error(`Unknown chat: ${p.threadId}`)
+        store.setThreadSettings(p.threadId, p)
+        return announceSettings(p.threadId)
       }
 
       case 'thread.close': {
