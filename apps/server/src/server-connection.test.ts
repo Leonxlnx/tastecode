@@ -1739,6 +1739,12 @@ describe('phone links', () => {
       expect(answers['pair']).toMatchObject({ error: { code: 'forbidden' } })
       expect(answers['rename']).toMatchObject({ result: {} })
       expect(state.renamed).toEqual(['t'])
+      // The desktop's list follows what the phone changed.
+      await vi.waitFor(() =>
+        expect(desktop.messages).toContainEqual(
+          expect.objectContaining({ channel: 'projects.changed', data: {} }),
+        ),
+      )
       expect(phone.frames.some((frame) => frame['channel'] === 'phone.changed')).toBe(false)
       phone.socket.terminate()
     } finally {

@@ -85,6 +85,22 @@ const PROVIDER_READS: ReadonlySet<MethodName> = new Set<MethodName>([
   'usage.summary',
   'voice.status',
 ])
+/**
+ * Requests that change the project or chat list in a way no other push
+ * carries. Every client hears `projects.changed` after one succeeds, so a chat
+ * started on a phone shows up on the desktop and the other way round.
+ */
+const LIST_CHANGES: ReadonlySet<MethodName> = new Set<MethodName>([
+  'thread.start',
+  'thread.rename',
+  'thread.pin',
+  'thread.delete',
+  'thread.changeProvider',
+  'projects.add',
+  'projects.pin',
+  'projects.rename',
+  'projects.remove',
+])
 /** A connection the server answers: a renderer's WebSocket or a paired phone's link. */
 type ClientSocket = PushSocket
 export { DEFAULT_PORT } from './server-config.js'
@@ -575,6 +591,15 @@ export function startServer(
     void phoneAccess.resume().catch(() => undefined)
   })
 
+  let listChange: ReturnType<typeof setTimeout> | undefined
+  /** Coalesces a burst (a new chat is started, renamed and titled within moments). */
+  function announceListChange(): void {
+    listChange ??= setTimeout(() => {
+      listChange = undefined
+      push.broadcast('projects.changed', {})
+    }, 50)
+  }
+
   function acceptConnection(
     socket: ClientSocket,
     listen: (message: (raw: string) => void, closed: () => void) => void,
@@ -633,6 +658,7 @@ export function startServer(
     if (createsSession) historySessionStarts += 1
     try {
       const result = await route(socket, method, params)
+      if (LIST_CHANGES.has(method) || titleApplied(method, result)) announceListChange()
       if (socket.readyState === socket.OPEN) {
         push.reply(socket, serializeSuccessResponse(id, result))
         if (method === 'projects.list') reportStartupMilestone('server-projects-sent')
@@ -1644,6 +1670,7 @@ export function startServer(
       usageHistoryClosing = true
       await usageHistory?.then((service) => service.dispose()).catch(() => undefined)
       const orchestratorClosed = orchestrator.disposeAll()
+      clearTimeout(listChange)
       await phoneAccess.close().catch(() => undefined)
       for (const socket of wss.clients) socket.terminate()
       const results = await Promise.allSettled([
@@ -1666,6 +1693,16 @@ export function startServer(
 }
 
 const PHONE_KEY_CREDENTIAL = 'phone-link.server-key'
+
+function titleApplied(method: MethodName, result: unknown): boolean {
+  return (
+    method === 'backgroundModel.generateTitle' &&
+    typeof result === 'object' &&
+    result !== null &&
+    'applied' in result &&
+    result.applied === true
+  )
+}
 
 /**
  * Which pages may open a socket to us.
