@@ -13,9 +13,8 @@
       "supportsTablet": true,
       "deploymentTarget": "26.0",
       "infoPlist": {
-        "NSCameraUsageDescription": "TasteCode uses the camera to scan the pairing code your computer shows.",
-        "NSLocalNetworkUsageDescription": "TasteCode connects to TasteCode on your computer over your local network.",
-        "NSPhotoLibraryUsageDescription": "Attach photos to a message for the agent."
+        "NSCameraUsageDescription": "TasteCode uses the camera to scan the pairing code your computer shows, and to take photos you attach to a message.",
+        "NSLocalNetworkUsageDescription": "TasteCode connects to TasteCode on your computer over your local network."
       }
     },
     "plugins": [
