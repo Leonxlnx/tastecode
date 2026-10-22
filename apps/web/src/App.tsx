@@ -3758,10 +3758,33 @@ export function App() {
       threadApprovals.current.set(threadId, settings.approval)
       if (open) setActiveThreadApproval(settings.approval)
     }
+    const session = findSession(projectsRef.current, threadId)?.session
+    if (open && settings.model !== undefined && session && modelsLoaded && selectedModelChoice) {
+      const source = sourceKey({
+        provider: session.provider,
+        connectionId: session.connectionId,
+        agentId: session.agent,
+      })
+      if (hiddenModels.has(modelChoiceKey(source, settings.model))) {
+        // This picker hides that model and never runs a chat on one it hides,
+        // so the chat stays on the model shown here, for every client.
+        void transport
+          .request('thread.setSettings', {
+            threadId,
+            ...sharedSetup({
+              modelKey: selectedModelChoice.key,
+              ...(selectedEffort ? { effort: selectedEffort } : {}),
+              ...(selectedServiceTier ? { serviceTier: selectedServiceTier } : {}),
+            }),
+          })
+          .catch(() => undefined)
+        return
+      }
+    }
     const next = adoptedSelection(
       settings,
       readThreadModelSelection(threadId),
-      findSession(projectsRef.current, threadId)?.session,
+      session,
       visibleModelsRef.current,
     )
     if (!next) return

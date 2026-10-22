@@ -10274,6 +10274,50 @@ describe('new chats', () => {
     expect(sent.at(-1)?.[1]).not.toEqual({ keys: expect.arrayContaining(['codex:gpt-6.1-sol']) })
   })
 
+  it('keeps a chat on a shown model when the server names one the picker hides', async () => {
+    localStorage.setItem(
+      'harness.modelVisibility.v2',
+      JSON.stringify({
+        overrides: { 'codex:gpt-5.6-mini': { visible: false, at: 1 } },
+        firstSeen: {},
+      }),
+    )
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method, params) => {
+      if (method === 'models.list') {
+        return Promise.resolve({
+          models: [
+            cachedCodexChoice().model,
+            {
+              ...cachedCodexChoice().model,
+              id: 'gpt-5.6-mini',
+              displayName: 'GPT-5.6 Mini',
+              isDefault: false,
+            },
+          ],
+        })
+      }
+      if (method === 'thread.settings')
+        return Promise.resolve({ model: 'gpt-5.6-mini', effort: 'high' })
+      if (method === 'thread.setSettings' || method === 'models.setHidden')
+        return Promise.resolve({})
+      return request(method, params)
+    })
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('thread.setSettings', {
+        threadId: 'untouched-thread',
+        model: 'gpt-6.1-sol',
+        effort: 'low',
+      }),
+    )
+    expect(
+      (await screen.findByRole('button', { name: 'Model and reasoning' }, { timeout: 10_000 }))
+        .textContent,
+    ).toContain('5.6 Sol')
+  })
+
   it('follows a chat setup another client chose and shares its own changes', async () => {
     const mini = {
       ...cachedCodexChoice().model,
