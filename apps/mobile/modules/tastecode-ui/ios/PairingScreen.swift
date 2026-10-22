@@ -42,14 +42,16 @@ struct PairingScreen: View {
       } else {
         PasteButton(payloadType: String.self) { strings in
           guard let text = strings.first else { return }
-          Task { @MainActor in pair(text) }
+          Task { @MainActor in pair(text, pasted: true) }
         }
         .buttonBorderShape(.capsule)
         .labelStyle(.titleAndIcon)
         .padding(.bottom, 12)
-        Text("Or copy the pairing link on the computer and paste it.")
+        Text("No camera? Choose Copy Link on the computer, then Paste here.")
           .font(.footnote)
           .foregroundStyle(.tertiary)
+          .multilineTextAlignment(.center)
+          .padding(.horizontal, 32)
           .padding(.bottom, 8)
       }
     }
@@ -62,7 +64,7 @@ struct PairingScreen: View {
 
   private var instructions: String {
     if link.pairing { return "Waiting for the computer to answer." }
-    return "In TasteCode on your computer, open Settings › Phone and show the pairing code."
+    return "In TasteCode on your computer, open Settings › Phone and show the pairing code, then scan it."
   }
 
   private var failure: String? {
@@ -79,7 +81,7 @@ struct PairingScreen: View {
       } else {
         switch camera {
         case .authorized:
-          CameraPreview(onCode: pair, onUnavailable: { reason in
+          CameraPreview(onCode: { pair($0) }, onUnavailable: { reason in
             camera = reason == "denied" ? .denied : .unavailable
           })
           .clipShape(shape)
@@ -115,11 +117,13 @@ struct PairingScreen: View {
     }
   }
 
-  private func pair(_ text: String) {
+  private func pair(_ text: String, pasted: Bool = false) {
     problem = nil
     Task {
       do {
-        _ = try await model.request(["type": "pair", "link": text.trimmingCharacters(in: .whitespacesAndNewlines)])
+        _ = try await model.request(["type": "pair", "link": text])
+        // The link pairs once; it should not wait in the clipboard for the next paste.
+        if pasted { UIPasteboard.general.items = [] }
         UINotificationFeedbackGenerator().notificationOccurred(.success)
       } catch {
         problem = error.localizedDescription

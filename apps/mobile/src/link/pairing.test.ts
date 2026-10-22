@@ -39,6 +39,12 @@ describe('pairing links', () => {
     })
   })
 
+  it('finds a pasted link inside the message it was sent in', () => {
+    const pasted = `Pair my phone:\n${link(payload)}\nThanks`
+    expect(parsePairingLink(pasted, 1_000).key).toBe(key)
+    expect(parsePairingLink(`  ${link(payload)}\n`, 1_000).name).toBe('Karol’s Mac')
+  })
+
   it('refuses anything else with a sentence the screen can show', () => {
     expect(() => parsePairingLink('https://example.com', 1_000)).toThrow(PairingLinkError)
     expect(() => parsePairingLink(link({ ...payload, v: 2 }), 1_000)).toThrow(/newer TasteCode/)

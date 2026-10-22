@@ -24,11 +24,11 @@ export class PairingLinkError extends Error {
 
 /**
  * Reads a `tastecode://pair?p=…` link (from the QR code, a pasted link or the
- * system camera). Fails with a sentence the pairing screen can show.
+ * system camera). A pasted link may arrive inside a message sent to oneself, so
+ * it is found anywhere in the text. Fails with a sentence the pairing screen can show.
  */
 export function parsePairingLink(text: string, now = Date.now()): Pairing {
-  const trimmed = text.trim()
-  const match = /^tastecode:\/\/pair\?(?:.*&)?p=([A-Za-z0-9_-]+)/.exec(trimmed)
+  const match = /tastecode:\/\/pair\?(?:[^\s&]*&)*p=([A-Za-z0-9_-]+)/.exec(text)
   if (!match?.[1]) throw new PairingLinkError('That is not a TasteCode pairing code.')
   let payload: Partial<PhonePairingPayload>
   try {
