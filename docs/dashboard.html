@@ -298,6 +298,21 @@
     <div class="wrap">
       <section id="scope">
         <p>
+          October 22 on nightly (local commits, not pushed yet): phone access and the iPhone app.
+          Settings › Phone turns on a second listener that speaks only a Noise IK handshake, pinned
+          to a key in the OS credential store, and shows a one-time pairing code; a paired phone is
+          one more client of the same protocol, limited to reading and driving chats, and a new
+          projects.changed push puts a chat started on either device in both lists. The app
+          (apps/mobile, Expo with SwiftUI and Liquid Glass, its own npm install) pairs, lists and
+          continues every chat, starts new ones with project, model, reasoning and access chips,
+          answers approvals and questions, attaches photos, browses folders to add projects and
+          shows a chat's changes. Verified on the iOS 27 simulator against a private server with
+          Claude Code: pairing from the desktop's QR code, a desktop-sent turn streaming on the
+          phone, a phone-approved file write, reconnect after a server restart. Not verified yet: a
+          real iPhone (camera scan, Local Network prompt, a phone on Wi-Fi or Tailscale) and
+          Windows.
+        </p>
+        <p>
           October 20, evening on nightly (3adcd24a): all four gates passed on 3de247b3 (web 3,028
           tests, server 1,721, desktop 484 and every package, no failure). The Windows taskbar
           button shows the sidebar's amber needs-you dot with a thin dark ring instead of a drawn
@@ -1837,6 +1852,7 @@
           <span>Pi over RPC</span>
           <span>ACP agent library, 12 agents</span>
           <span>GLM and Z.ai coding plans</span>
+          <span>Phone access and the iPhone app</span>
         </div>
       </section>
 

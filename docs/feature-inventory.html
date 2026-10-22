@@ -258,6 +258,7 @@
         <a href="#extensions">MCP, Skills, Workflows</a>
         <a href="#appearance">Appearance</a>
         <a href="#settings">Settings</a>
+        <a href="#phone">Phone</a>
         <a href="#shell">Desktop shell and security</a>
       </div>
 
@@ -3158,6 +3159,114 @@
         </ul>
       </section>
 
+      <section id="phone">
+        <header>
+          <h2>Phone (nightly only)</h2>
+          <span class="count"></span>
+        </header>
+        <ul class="check">
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Pair a phone from Settings › Phone with a one-time code
+                <span class="d"
+                  >the code is a tastecode://pair link drawn as a QR code: the computer's X25519
+                  key, port, local name, Wi-Fi and Tailscale addresses and a secret that expires
+                  after ten minutes; the first phone to present it pairs and the code closes; phone
+                  access is off until turned on, and turning it off closes every link while phones
+                  stay paired</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >End-to-end encrypted link on the local network or a tailnet
+                <span class="d"
+                  >Noise IK (X25519, ChaCha20-Poly1305, SHA-256) pinned to the computer's key, which
+                  lives in the OS credential store per data folder; the listener answers only
+                  private, link-local, loopback and 100.64.0.0/10 peers, refuses anything carrying
+                  an Origin header, throttles failed handshakes, and drops a link whose frame fails
+                  authentication; Node and CryptoKit both reproduce the published cacophony
+                  vector</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Paired phones listed with live state, removable
+                <span class="d"
+                  >name, paired date, Connected or last seen; Remove forgets the phone's key and
+                  closes its links</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >A phone may only read and drive chats
+                <span class="d"
+                  >phones get a method allowlist: chats, models, access levels, folders, images,
+                  change review; terminals, installs, credentials, MCP and pairing stay on the
+                  desktop, and phones never receive pairing or preview pushes</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Chats started, renamed or moved anywhere show up everywhere
+                <span class="d"
+                  >projects.changed tells every client after a list change; the desktop reloads its
+                  sidebar once per burst</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >iPhone app: chats, live status, search, archive and pin
+                <span class="d"
+                  >Expo with SwiftUI through @expo/ui and Liquid Glass; Needs you, Working, Pinned
+                  and Recent sections; swipe and context-menu actions; reconnects on its own after
+                  sleep, network changes and server restarts</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >iPhone app: continue any chat and start new ones
+                <span class="d"
+                  >native Markdown replies with copyable code blocks, collapsible step groups, plan,
+                  approvals, questions, queue with Send Now, Stop; chips for project, provider and
+                  model, reasoning level and access level; private checkout option; photo
+                  attachments; generated titles as on the desktop</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >iPhone app: add projects from the computer's folders, review changes
+                <span class="d"
+                  >browses the home folder, other drives and mounted volumes without hidden folders,
+                  files or links; marks git repositories; Changes shows the chat checkout's
+                  uncommitted diff</span
+                ></span
+              ></label
+            >
+          </li>
+        </ul>
+      </section>
       <section id="shell">
         <header>
           <h2>Desktop shell and security</h2>

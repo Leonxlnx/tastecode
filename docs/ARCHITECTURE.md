@@ -12,8 +12,8 @@ add a change-log row.
 typed WebSocket protocol.**
 
 ```
-desktop renderer · web                   thin clients
-        │  WebSocket, typed contracts
+desktop renderer · web     phone (Expo + SwiftUI)     thin clients
+        │  WebSocket, typed contracts   │ same protocol, end-to-end encrypted link
         │  req/res { id, method, params } · push { channel, sequence, data }
    core server (Node, local, long-lived)
         │  orchestration · adapters · SQLite event log · checkpoints · worktrees · PTY
@@ -105,6 +105,46 @@ in Trecko.
 _Rejected:_ a renderer `fetch` to Trecko (widens the CSP and puts the key in the renderer).
 Leaving the key in the server's environment (every child process would inherit it). Compiling
 the key into desktop main (main never needs it).
+
+### Phones connect over an end-to-end encrypted link
+
+**A paired phone is one more client of the same protocol, reached directly over the local
+network or a tailnet, with every frame encrypted end to end.** Phone access is off until the
+user turns it on in Settings › Phone. Then a second listener (`HARNESS_PHONE_PORT`, default 4317) accepts WebSockets on `/link` from private, link-local, loopback and tailnet
+(100.64.0.0/10) addresses only, refuses any request carrying an `Origin` header (no page can
+reach it), and speaks nothing but a **Noise IK** handshake (`Noise_IK_25519_ChaChaPoly_SHA256`,
+prologue `tastecode-link/1`) until the phone has proved its key. The pairing code is a
+`tastecode://pair` link holding the computer's static X25519 key, its port, its addresses (local
+name, Wi-Fi, Tailscale) and a one-time secret that expires after ten minutes; the first phone to
+present it is registered by its public key, and the code closes. The phone pins the computer's
+key, so no address in the code has to be trusted and nothing can stand in the middle. After the
+handshake each WebSocket message is one ChaCha20-Poly1305 frame, larger than Noise's own 64 KiB
+limit when a history page needs it; a frame that fails authentication closes the link. Both
+implementations (Node's crypto in `apps/server/src/phone-noise.ts`, CryptoKit in
+`apps/mobile/modules/tastecode-link`) reproduce the published cacophony vector byte for byte.
+
+The server's private key lives in the OS credential store, one per data folder; paired phones
+are stored as public keys in `app_settings`. A phone may call only `PHONE_METHODS`: reading and
+driving chats, choosing models and access levels, browsing folders to add a project, attaching
+images. Terminals, installs, credentials, MCP and further pairing stay on the desktop, and
+phone links never receive `phone.*` or preview pushes. A paired phone sees every push the
+desktop sees, so a turn started on either streams on both; `projects.changed` tells every client
+when another one started, renamed or moved a chat.
+
+The phone app is Expo with SwiftUI: its screens are SwiftUI views described in React through
+`@expo/ui`, with Liquid Glass from iOS 26, plus two local Expo modules in Swift (the link itself,
+on Network.framework and CryptoKit with keys in the Keychain, and a few views Expo UI lacks:
+Markdown replies, the chat scaffold's glass bar, the QR scanner). Protocol logic, reconnects and
+state are TypeScript and import the shared contracts' types, so an Android build replaces only
+the native modules and the view layer. The phone app has its own npm install, outside the pnpm
+workspace.
+
+_Rejected:_ the earlier phone design's bearer tokens in a plaintext WebSocket URL (safe only on
+Tailscale, readable by anyone on a café Wi-Fi). TLS with a pinned self-signed certificate
+(React Native's WebSocket cannot pin, and Node needs a certificate generator). A relay server
+(traffic and metadata would leave the user's machines; a relay can come later, carrying the same
+encrypted frames). A fully native Swift app (Android would share nothing; Expo UI renders real
+SwiftUI anyway).
 
 ---
 
@@ -874,3 +914,4 @@ registry entry, which is deliberately a good first outside contribution.
 | 2026-10-11 | Ended a closed terminal's foreground job after a grace period, and a shell ignoring SIGHUP; background jobs stay.                                                              |
 | 2026-10-14 | Background writing reads only the model sources its choice needs, caches each source separately, and reuses Grok's sign-in `grok models` output for its model list.            |
 | 2026-10-19 | Made Claude Code's newest Haiku at medium the automatic background model, ahead of Codex Luna, which moved from low to medium effort.                                          |
+| 2026-10-22 | Added phone access: a Noise IK link on the LAN or a tailnet, one-time pairing codes, a phone method allowlist, `projects.changed`, and the Expo + SwiftUI phone app.           |

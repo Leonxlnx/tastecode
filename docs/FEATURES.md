@@ -116,6 +116,20 @@ Implementation lanes and release criteria: [PROVIDERS.md](./PROVIDERS.md).
 - [ ] `v1` Opt-in crash reporting
 - [ ] `v2` Desktop notifications when a turn completes
 
+## Phone — `nightly`
+
+- [x] Pair by scanning a code in Settings › Phone; end-to-end encrypted link pinned to the computer
+- [x] Reach the computer over Wi-Fi or Tailscale, reconnecting on its own
+- [x] Every chat from the desktop, with live status (working, needs you) and search
+- [x] Continue any chat; turns from either device stream on both
+- [x] Start a chat: project, provider and model, reasoning level, access level, private checkout
+- [x] Approve or deny, answer the agent's questions, queue and steer prompts, stop a turn
+- [x] Add a project by browsing the computer's folders
+- [x] Attach photos
+- [x] Review a chat's uncommitted changes
+- [ ] Push notifications when a turn needs you or finishes
+- [ ] Android
+
 ## Not doing
 
 Cloud execution of your code · team/multi-user features · reselling tokens · a full IDE ·
