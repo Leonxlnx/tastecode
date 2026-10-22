@@ -129,7 +129,12 @@ driving chats, choosing models and access levels, browsing folders to add a proj
 images. Terminals, installs, credentials, MCP and further pairing stay on the desktop, and
 phone links never receive `phone.*` or preview pushes. A paired phone sees every push the
 desktop sees, so a turn started on either streams on both; `projects.changed` tells every client
-when another one started, renamed or moved a chat.
+when another one started, renamed or moved a chat. A chat's setup (model, reasoning effort,
+service tier, access level) is kept by the server, not by each client: `thread.settings` reads
+it, `thread.setSettings` and `thread.setApproval` change it, and the `thread.settings` push
+carries every change, so a pick on one device shows on the other at once. The desktop publishes
+the choice keys its picker hides (`models.hidden`) and the phone offers only the rest, because
+the desktop never runs a chat on a hidden model.
 
 The phone app is Expo with its interface written in Swift: one SwiftUI view hierarchy (iOS 26,
 Liquid Glass) inside an `@expo/ui` host, in the local `tastecode-ui` module, beside the
@@ -920,3 +925,4 @@ registry entry, which is deliberately a good first outside contribution.
 | 2026-10-19 | Made Claude Code's newest Haiku at medium the automatic background model, ahead of Codex Luna, which moved from low to medium effort.                                          |
 | 2026-10-22 | Added phone access: a Noise IK link on the LAN or a tailnet, one-time pairing codes, a phone method allowlist, `projects.changed`, and the Expo + SwiftUI phone app.           |
 | 2026-10-22 | Phone app screens moved from React-composed Expo UI to one SwiftUI hierarchy in Swift; TypeScript words the content and sends changed rows only.                               |
+| 2026-10-23 | Each chat's setup moved from every client's own storage to the server (`thread.settings`); the desktop shares its hidden models.                                               |

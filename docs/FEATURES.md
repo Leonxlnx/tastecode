@@ -122,6 +122,7 @@ Implementation lanes and release criteria: [PROVIDERS.md](./PROVIDERS.md).
 - [x] Reach the computer over Wi-Fi or Tailscale, reconnecting on its own
 - [x] Every chat from the desktop, with live status (working, needs you) and search
 - [x] Continue any chat; turns from either device stream on both
+- [x] One setup per chat on both devices: model, reasoning, speed (Fast) and access level, and the same queued prompts, reorderable from either
 - [x] Start a chat: project, provider and model, reasoning level, access level, private checkout
 - [x] Approve or deny, answer the agent's questions, queue and steer prompts, stop a turn
 - [x] Add a project by browsing the computer's folders

@@ -298,6 +298,16 @@
     <div class="wrap">
       <section id="scope">
         <p>
+          October 23 on nightly (local commits, not pushed yet): a chat's setup is the same on every
+          device. Model, reasoning effort, service tier and access level are kept by the server
+          (thread.settings, pushed to every client), the desktop shares which models its picker
+          hides so the phone offers the same ones, and a pairing link can be copied on the computer
+          and pasted on the phone when the code cannot be scanned. Checked live with the desktop
+          renderer and the phone on one chat: each change on one side showed on the other, a prompt
+          queued on the desktop showed on the phone, and prompts reordered and removed on the phone
+          changed on the desktop too.
+        </p>
+        <p>
           October 22 on nightly (local commits, not pushed yet): phone access and the iPhone app.
           Settings › Phone turns on a second listener that speaks only a Noise IK handshake, pinned
           to a key in the OS credential store, and shows a one-time pairing code; a paired phone is
