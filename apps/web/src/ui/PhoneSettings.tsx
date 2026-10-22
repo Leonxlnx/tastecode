@@ -13,11 +13,11 @@ import {
 } from './settings/SettingsLayout.js'
 import '../styles/phone-settings.css'
 
-const ADDRESS_LABELS: Record<PhoneAddress['kind'], string> = {
+const ADDRESS_LABELS = {
   hostname: 'Local name',
   lan: 'Wi-Fi',
   tailscale: 'Tailscale',
-}
+} as const satisfies Record<PhoneAddress['kind'], string>
 
 /**
  * Pairing a phone and the phones already paired. The pairing code is the page:
