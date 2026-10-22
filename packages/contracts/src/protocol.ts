@@ -1520,6 +1520,21 @@ export const methods = {
     }),
     result: z.object({ models: z.array(ModelSchema) }),
   },
+  /**
+   * The models the user hid from the model picker, as the desktop resolves its
+   * visibility settings: choice keys (`<source>:<URI-encoded model id>`, the
+   * source being `provider`, `provider:agent`, `api:connection` or
+   * `custom:provider`). Other clients offer only the models not listed, so a
+   * chat never moves to a model the desktop would refuse to run.
+   */
+  'models.hidden': {
+    params: z.object({}),
+    result: z.object({ keys: z.array(z.string()) }),
+  },
+  'models.setHidden': {
+    params: z.object({ keys: z.array(z.string()).max(10_000) }),
+    result: z.object({}),
+  },
   /** Model policy for short product-owned writing tasks. */
   'backgroundModel.settings': {
     params: z.object({}),
@@ -2297,6 +2312,8 @@ export const channels = {
     items: z.array(QueuedTurnSchema),
     canSteer: z.boolean(),
   }),
+  /** The desktop hid or showed models in its picker. */
+  'models.hidden': z.object({ keys: z.array(z.string()) }),
   /** A chat's setup changed on some client, or a turn or provider change moved it. */
   'thread.settings': z.object({ threadId: z.string(), settings: ThreadSettingsSchema }),
   'thread.lifecycle': z.object({

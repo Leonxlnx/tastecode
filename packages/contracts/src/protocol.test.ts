@@ -254,6 +254,12 @@ describe('thread settings', () => {
     ).toEqual({ threadId: 't', settings: { approval: 'auto' } })
     expect(() => ThreadSettingsSchema.parse({ approval: 'sometimes' })).toThrow()
   })
+
+  it('shares the models the desktop hides by their choice keys', () => {
+    const keys = ['claude-code:claude-sonnet-5', 'acp:kimi:kimi-k3', 'api:openrouter:x%2Fy']
+    expect(methods['models.setHidden'].params.parse({ keys })).toEqual({ keys })
+    expect(channels['models.hidden'].parse({ keys: [] })).toEqual({ keys: [] })
+  })
 })
 
 describe('protocol envelopes', () => {
