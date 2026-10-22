@@ -1706,7 +1706,9 @@ describe('phone links', () => {
         key: string
         secret: string
       }
-      expect(state.credentials.get('phone-link.server-key')).toBeDefined()
+      expect([...state.credentials.keys()]).toEqual([
+        expect.stringMatching(/^phone-link\.server-key\.[0-9a-f]{12}$/),
+      ])
 
       const phone = await phoneLink(reply.result.status.port, payload.key, {
         v: 1,

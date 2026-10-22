@@ -1,5 +1,5 @@
 import path from 'node:path'
-import { timingSafeEqual } from 'node:crypto'
+import { createHash, timingSafeEqual } from 'node:crypto'
 import { isIPv4 } from 'node:net'
 import { WebSocketServer } from 'ws'
 import {
@@ -565,17 +565,19 @@ export function startServer(
 
   /** Phone links may call only `PHONE_METHODS`. */
   const phoneLinks = new WeakSet<ClientSocket>()
+  // One identity per data folder: a second profile pairs its own phones.
+  const phoneKeyCredential = `phone-link.server-key.${createHash('sha256').update(databasePath).digest('hex').slice(0, 12)}`
   const phoneAccess = new PhoneAccess({
     store,
     keys: {
       read: () => {
         try {
-          return readCredential(PHONE_KEY_CREDENTIAL)
+          return readCredential(phoneKeyCredential)
         } catch {
           return undefined
         }
       },
-      write: (value) => writeCredential(PHONE_KEY_CREDENTIAL, value),
+      write: (value) => writeCredential(phoneKeyCredential, value),
     },
     port: Number(process.env['HARNESS_PHONE_PORT'] ?? DEFAULT_PHONE_PORT),
     onConnection: (link: PhoneLinkSocket) => {
@@ -1691,8 +1693,6 @@ export function startServer(
     },
   }
 }
-
-const PHONE_KEY_CREDENTIAL = 'phone-link.server-key'
 
 function titleApplied(method: MethodName, result: unknown): boolean {
   return (
