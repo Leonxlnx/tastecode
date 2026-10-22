@@ -18,7 +18,7 @@ struct PairingScreen: View {
         .aspectRatio(1, contentMode: .fit)
         .padding(.horizontal, 28)
       VStack(spacing: 10) {
-        Text(link.pairing ? "Pairing with \(link.computerName ?? "your computer")" : "Pair with your computer")
+        Text(waiting ? "Pairing with \(link.computerName ?? "your computer")" : "Pair with your computer")
           .font(.title2.weight(.bold))
         Text(instructions)
           .font(.body)
@@ -34,7 +34,7 @@ struct PairingScreen: View {
       .padding(.horizontal, 32)
       .padding(.top, 36)
       Spacer()
-      if link.pairing {
+      if waiting {
         Button("Cancel") { model.send(["type": "forget"]) }
           .buttonStyle(.glass)
           .controlSize(.large)
@@ -62,8 +62,12 @@ struct PairingScreen: View {
     }
   }
 
+  /// A code was read and the computer has not answered yet. Once it refuses the
+  /// code, the screen offers the camera and Paste again for a new one.
+  private var waiting: Bool { link.pairing && link.phase != .refused }
+
   private var instructions: String {
-    if link.pairing { return "Waiting for the computer to answer." }
+    if waiting { return "Waiting for the computer to answer." }
     return "In TasteCode on your computer, open Settings › Phone and show the pairing code, then scan it."
   }
 
@@ -75,7 +79,7 @@ struct PairingScreen: View {
     let shape = RoundedRectangle(cornerRadius: 36, style: .continuous)
     ZStack {
       shape.fill(Color(.secondarySystemBackground))
-      if link.pairing {
+      if waiting {
         ProgressView()
           .controlSize(.large)
       } else {
