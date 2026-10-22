@@ -1,0 +1,95 @@
+/* ---------- Settings › Phone ----------
+   The pairing code is printed on its own white square, because a camera reads
+   dark-on-light most reliably whatever the theme. Everything else is the
+   settings system's open rows. */
+
+.settings .phone-addresses {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px 12px;
+  color: var(--text);
+  font-size: var(--t-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.settings .phone-pair {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-height: 40px;
+}
+
+.settings .phone-pair__done {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--t-sm);
+}
+
+.settings .phone-pair__done strong {
+  color: var(--text);
+  font-weight: 550;
+}
+
+.settings .phone-code {
+  display: grid;
+  grid-template-columns: 196px minmax(0, 1fr);
+  align-items: start;
+  gap: 24px;
+  padding-block: 8px;
+}
+
+.settings .phone-code__qr {
+  display: block;
+  width: 196px;
+  height: 196px;
+  border-radius: var(--r-md);
+  box-shadow: 0 0 0 1px var(--line);
+}
+
+.settings .phone-code__copy {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+  padding-top: 4px;
+}
+
+.settings .phone-code__title {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--t-lg);
+  font-weight: 550;
+  letter-spacing: -0.012em;
+}
+
+.settings .phone-code__note {
+  max-width: 46ch;
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--t-sm);
+  line-height: 1.45;
+}
+
+.settings .phone-code__note strong {
+  color: var(--text-2);
+  font-weight: 550;
+}
+
+.settings .phone-code__expiry {
+  margin: 4px 0 0;
+  color: var(--text-2);
+  font-size: var(--t-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.settings .set-entity__status[data-connected] {
+  color: var(--success);
+}
+
+@media (width < 640px) {
+  .settings .phone-code {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

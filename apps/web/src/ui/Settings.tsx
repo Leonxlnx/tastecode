@@ -59,6 +59,7 @@ import {
   IconBlocks as Blocks,
   IconBug as Bug,
   IconDatabase as Database,
+  IconDeviceMobile as Smartphone,
   IconInfoCircle as Info,
   IconPackages as Boxes,
   IconKeyboard as Keyboard,
@@ -222,6 +223,12 @@ import { ProviderUpdateCheck } from './ProviderUpdates.js'
 import { useProviderUpdates, type ProviderUpdateSimulation } from '../provider-updates.js'
 import { useInstallCheck } from '../provider-recheck.js'
 
+const PhoneSettings = lazy(() =>
+  import('./PhoneSettings.js')
+    .then((module) => ({ default: module.PhoneSettings }))
+    .catch(surfaceLoadFailed),
+)
+
 const InstallTerminal = lazy(() =>
   import('./InstallTerminal.js')
     .then((module) => ({ default: module.InstallTerminal }))
@@ -236,6 +243,7 @@ export type SettingsSection =
   | 'skills'
   | 'workflows'
   | 'usage'
+  | 'phone'
   | 'appearance'
   | 'keybinds'
   | 'data'
@@ -534,6 +542,12 @@ function SettingsComponent(props: {
             onClick={() => setSection('usage')}
           />
           <SettingsNavItem
+            active={section === 'phone'}
+            icon={<Smartphone size={15} aria-hidden />}
+            label="Phone"
+            onClick={() => setSection('phone')}
+          />
+          <SettingsNavItem
             active={section === 'data'}
             icon={<Database size={15} aria-hidden />}
             label="Data & privacy"
@@ -590,6 +604,17 @@ function SettingsComponent(props: {
             {section === 'workflows' ? <GeneralSettings {...props} /> : null}
             {section === 'usage' ? (
               <UsageSettings transport={props.transport} limits={props.usageLimits} />
+            ) : null}
+            {section === 'phone' ? (
+              <Suspense
+                fallback={
+                  <SkeletonStatus label="Loading phone access…">
+                    <Skeleton width={260} height={11} />
+                  </SkeletonStatus>
+                }
+              >
+                <PhoneSettings transport={props.transport} />
+              </Suspense>
             ) : null}
             {section === 'appearance' ? <AppearanceSettings {...props} /> : null}
             {section === 'keybinds' ? (
