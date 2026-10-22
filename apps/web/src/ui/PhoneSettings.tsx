@@ -146,7 +146,7 @@ export function PhoneSettings(props: { transport: Transport }) {
             note={
               pairing
                 ? undefined
-                : 'Open TasteCode on your iPhone and choose Pair, then scan the code shown here. One code pairs one phone.'
+                : 'Open TasteCode on your iPhone, choose Scan Pairing Code and point it at the code shown here. One code pairs one phone.'
             }
           >
             {pairing ? (
@@ -274,7 +274,8 @@ type QrPath = { d: string; size: number }
 
 /** One path of unit squares, so the code stays sharp at any size. */
 function qrPath(text: string): QrPath {
-  const code = qrcode(0, 'M')
+  // A screen is never smudged; the lowest correction keeps the code sparse enough to scan quickly.
+  const code = qrcode(0, 'L')
   code.addData(text)
   code.make()
   const count = code.getModuleCount()

@@ -33,7 +33,7 @@
 
 .settings .phone-code {
   display: grid;
-  grid-template-columns: 196px minmax(0, 1fr);
+  grid-template-columns: 220px minmax(0, 1fr);
   align-items: start;
   gap: 24px;
   padding-block: 8px;
@@ -41,8 +41,8 @@
 
 .settings .phone-code__qr {
   display: block;
-  width: 196px;
-  height: 196px;
+  width: 220px;
+  height: 220px;
   border-radius: var(--r-md);
   box-shadow: 0 0 0 1px var(--line);
 }
