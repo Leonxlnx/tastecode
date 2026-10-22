@@ -1624,6 +1624,19 @@ export function startServer(
         return {}
       }
 
+      case 'models.hidden':
+        return { keys: store.hiddenModels() }
+
+      case 'models.setHidden': {
+        const p = parseParams(method, params)
+        const keys = [...new Set(p.keys)].sort()
+        if (JSON.stringify(keys) !== JSON.stringify(store.hiddenModels())) {
+          store.setHiddenModels(keys)
+          push.broadcast('models.hidden', { keys })
+        }
+        return {}
+      }
+
       case 'thread.settings': {
         const p = parseParams(method, params)
         return store.threadSettings(p.threadId)

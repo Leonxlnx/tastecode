@@ -48,6 +48,7 @@ const state = vi.hoisted(() => ({
   renamed: [] as string[],
   settings: new Map<string, { model?: string; effort?: string; serviceTier?: string }>(),
   approvals: new Map<string, string>(),
+  hiddenModels: [] as string[],
 }))
 const temporary: string[] = []
 
@@ -89,6 +90,12 @@ vi.mock('./store.js', () => ({
     nextLifecycleRefreshAt() {}
     threadApproval(threadId: string) {
       return state.approvals.get(threadId)
+    }
+    hiddenModels() {
+      return state.hiddenModels
+    }
+    setHiddenModels(keys: string[]) {
+      state.hiddenModels = keys
     }
     threadSettings(threadId: string) {
       const approval = state.approvals.get(threadId)
@@ -404,6 +411,7 @@ afterEach(async () => {
   state.renamed.length = 0
   state.settings.clear()
   state.approvals.clear()
+  state.hiddenModels = []
   vi.unstubAllEnvs()
   await Promise.all(
     temporary.splice(0).map((directory) => rm(directory, { recursive: true, maxRetries: 5 })),
@@ -1856,6 +1864,30 @@ describe('phone links', () => {
         }),
       )
       expect(pushes(phone.frames)).toHaveLength(before + 1)
+
+      // The desktop's hidden models reach the phone, which may read but not change them.
+      desktop.client.send(
+        JSON.stringify({
+          id: 'hide',
+          method: 'models.setHidden',
+          params: { keys: ['codex:gpt-5.4', 'codex:gpt-5.4'] },
+        }),
+      )
+      await vi.waitFor(() =>
+        expect(phone.frames).toContainEqual(
+          expect.objectContaining({ channel: 'models.hidden', data: { keys: ['codex:gpt-5.4'] } }),
+        ),
+      )
+      send(phone, { id: 'unhide', method: 'models.setHidden', params: { keys: [] } })
+      send(phone, { id: 'hidden', method: 'models.hidden', params: {} })
+      await vi.waitFor(() =>
+        expect(phone.frames.find((frame) => frame['id'] === 'hidden')).toMatchObject({
+          result: { keys: ['codex:gpt-5.4'] },
+        }),
+      )
+      expect(phone.frames.find((frame) => frame['id'] === 'unhide')).toMatchObject({
+        error: { code: 'forbidden' },
+      })
       phone.socket.terminate()
     } finally {
       desktop.client.terminate()

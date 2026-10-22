@@ -381,6 +381,16 @@ describe('chat settings', () => {
   })
 })
 
+describe('hidden models', () => {
+  it('keeps the picker’s hidden choice keys and survives a damaged record', () => {
+    expect(store.hiddenModels()).toEqual([])
+    store.setHiddenModels(['claude-code:claude-sonnet-5', 'codex:gpt-5.4'])
+    expect(store.hiddenModels()).toEqual(['claude-code:claude-sonnet-5', 'codex:gpt-5.4'])
+    store.setHiddenModels([])
+    expect(store.hiddenModels()).toEqual([])
+  })
+})
+
 describe('durable queued turns', () => {
   const queued = (id: string, text = 'Repeat this.') => ({
     id,

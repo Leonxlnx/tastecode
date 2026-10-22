@@ -62,6 +62,8 @@ const ACCOUNT_CONTEXT_SETTING = 'provider-account-context'
 const FEEDBACK_LEDGER_SETTING = 'feedback-ledger'
 const MODEL_LISTS_SETTING = 'model-lists'
 const PHONE_ACCESS_SETTING = 'phone-access'
+/** The model picker's hidden choice keys, as the desktop resolves them. */
+const HIDDEN_MODELS_SETTING = 'hidden-models'
 const LIMIT_SNAPSHOT_SETTING = 'limit-snapshot'
 const AUTOMATIC_BACKGROUND_MODEL_PREFERENCE: BackgroundModelPreference = Object.freeze({
   mode: 'automatic',
@@ -2439,6 +2441,20 @@ export class Store {
 
   setPhoneAccessState(value: string): void {
     this.#writeAppSetting.run(PHONE_ACCESS_SETTING, value)
+  }
+
+  hiddenModels(): string[] {
+    const value = sqliteRow<StringValueRow>(this.#readAppSetting, HIDDEN_MODELS_SETTING)?.value
+    if (value === undefined) return []
+    try {
+      return z.array(z.string()).catch([]).parse(JSON.parse(value))
+    } catch {
+      return []
+    }
+  }
+
+  setHiddenModels(keys: readonly string[]): void {
+    this.#writeAppSetting.run(HIDDEN_MODELS_SETTING, JSON.stringify(keys))
   }
 
   /** The last good model list per source, as `ModelListCache` serialized it. */
