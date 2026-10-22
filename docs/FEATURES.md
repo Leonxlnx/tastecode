@@ -118,7 +118,7 @@ Implementation lanes and release criteria: [PROVIDERS.md](./PROVIDERS.md).
 
 ## Phone — `nightly`
 
-- [x] Pair by scanning a code in Settings › Phone; end-to-end encrypted link pinned to the computer
+- [x] Pair by scanning a code in Settings › Phone, or by pasting its link; end-to-end encrypted link pinned to the computer
 - [x] Reach the computer over Wi-Fi or Tailscale, reconnecting on its own
 - [x] Every chat from the desktop, with live status (working, needs you) and search
 - [x] Continue any chat; turns from either device stream on both
