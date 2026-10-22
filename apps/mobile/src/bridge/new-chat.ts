@@ -1,6 +1,7 @@
 import type { ApprovalMode } from '@harness/contracts'
 import { catalog, projects } from '../state/app'
 import { effortFor, sourceKey, type Source } from '../state/catalog'
+import { startedSources } from './open-thread'
 import { readNewChatChoice, startChat } from '../state/new-chat'
 import { resolveModel, setupView } from '../view/catalog'
 import type { NewChatView } from '../view/types'
@@ -11,6 +12,7 @@ type Draft = {
   sourceKey: string | undefined
   model: string | undefined
   effort: string | undefined
+  tier: string | undefined
   access: ApprovalMode
 }
 
@@ -26,6 +28,7 @@ export class NewChat {
       sourceKey: saved.source ? sourceKey(saved.source) : undefined,
       model: saved.model,
       effort: saved.effort,
+      tier: saved.serviceTier,
       access: saved.approval ?? 'ask',
     }
     projects.state.subscribe(() => this.flush())
@@ -38,7 +41,12 @@ export class NewChat {
     this.flush()
   }
 
-  set(patch: Partial<Draft>): void {
+  set(patch: Partial<Omit<Draft, 'tier'>> & { tier?: string | null }): void {
+    const { tier, ...rest } = patch
+    this.#set({ ...rest, ...(tier !== undefined ? { tier: tier ?? undefined } : {}) })
+  }
+
+  #set(patch: Partial<Draft>): void {
     const next = { ...this.#draft, ...patch }
     if (patch.sourceKey && patch.sourceKey !== this.#draft.sourceKey && !patch.model) {
       next.model = undefined
@@ -69,12 +77,23 @@ export class NewChat {
       projectPath: project?.path ?? null,
       projectName: project?.name ?? null,
       isolate: this.#draft.isolate,
-      setup: setupView(source, model, { effort: this.#draft.effort }, this.#draft.access, true),
+      setup: setupView(
+        source,
+        model,
+        { effort: this.#draft.effort, serviceTier: this.#tier(model) },
+        this.#draft.access,
+        true,
+      ),
     }
   }
 
   flush(): void {
     this.push(this.view())
+  }
+
+  #tier(model: ReturnType<typeof resolveModel>): string | undefined {
+    const tier = this.#draft.tier
+    return tier && model?.serviceTiers.some((entry) => entry.id === tier) ? tier : undefined
   }
 
   async start(text: string, attachments: string[]): Promise<{ threadId: string }> {
@@ -94,12 +113,14 @@ export class NewChat {
         },
         model: model?.id,
         effort: effortFor(model, this.#draft.effort),
+        serviceTier: this.#tier(model),
         approval: this.#draft.access,
         isolate: this.#draft.isolate,
       },
       text,
       attachments,
     )
+    startedSources.set(threadId, source.key)
     return { threadId }
   }
 }

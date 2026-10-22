@@ -284,6 +284,14 @@ export class ThreadSession {
     })
   }
 
+  async moveQueued(queuedTurnId: string, direction: 'up' | 'down'): Promise<void> {
+    await this.connection.request('thread.moveQueuedTurn', {
+      threadId: this.threadId,
+      queuedTurnId,
+      direction,
+    })
+  }
+
   async deleteQueued(queuedTurnId: string): Promise<void> {
     await this.connection.request('thread.deleteQueuedTurn', {
       threadId: this.threadId,

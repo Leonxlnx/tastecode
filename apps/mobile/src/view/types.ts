@@ -57,7 +57,11 @@ export type ModelView = {
   /** Listed under "More Models" rather than with the source's curated set. */
   more: boolean
   efforts: EffortView[]
+  /** Faster routings the provider offers for this model, such as Fast. */
+  tiers: TierView[]
 }
+
+export type TierView = { id: string; name: string }
 
 export type AccessView = { mode: ApprovalMode; title: string; detail: string }
 
@@ -83,6 +87,9 @@ export type SetupView = {
   modelName: string | null
   effort: string | null
   effortLabel: string | null
+  /** The faster routing chosen; null is the standard one. */
+  tier: string | null
+  tierName: string | null
   access: ApprovalMode
   accessTitle: string
   images: boolean
@@ -212,6 +219,8 @@ export type Action =
   | { type: 'thread.setAccess'; threadId: string; access: ApprovalMode }
   | { type: 'thread.setModel'; threadId: string; sourceKey: string; model: string }
   | { type: 'thread.setEffort'; threadId: string; effort: string }
+  | { type: 'thread.setTier'; threadId: string; tier: string | null }
+  | { type: 'thread.moveQueued'; threadId: string; queuedId: string; direction: 'up' | 'down' }
   | { type: 'thread.pin'; threadId: string; pinned: boolean }
   | { type: 'thread.archive'; threadId: string }
   | { type: 'thread.restore'; threadId: string }
@@ -225,6 +234,7 @@ export type Action =
       sourceKey?: string
       model?: string
       effort?: string
+      tier?: string | null
       access?: ApprovalMode
     }
   | { type: 'newChat.start'; text: string; attachments: string[] }

@@ -1,13 +1,27 @@
-import type { ApprovalDecision, ApprovalMode, SessionDiff } from '@harness/contracts'
+import type {
+  ApprovalDecision,
+  ApprovalMode,
+  Model,
+  SessionDiff,
+  ThreadSettings,
+} from '@harness/contracts'
 import { catalog, connection, projects, sessions } from '../state/app'
-import { effortFor, preferences, sourceKey, type Choice, type Source } from '../state/catalog'
+import { effortFor, sourceKey, type Source } from '../state/catalog'
 import { findSession } from '../state/projects'
 import type { ThreadSession } from '../state/thread-session'
 import { resolveModel, setupView } from '../view/catalog'
 import { approvalView, buildRows, questionsView, rowView, sameRow, type Row } from '../view/thread'
 import type { ChangesView, RowView, ThreadMetaView, ThreadPatch } from '../view/types'
 
-type Saved = Choice & { source?: string | undefined }
+type Setup = Pick<ThreadSettings, 'model' | 'effort' | 'serviceTier'>
+
+/** Where chats this phone just started run, until the computer's list names them. */
+export const startedSources = new Map<string, string>()
+
+/** The tier to keep when the model changes: only one the new model offers. */
+function tierFor(model: Model | undefined, chosen: string | undefined): string | undefined {
+  return chosen && model?.serviceTiers.some((tier) => tier.id === chosen) ? chosen : undefined
+}
 
 /**
  * A chat the screens show. Each update carries only the rows that changed, so
@@ -18,7 +32,8 @@ export class OpenThread {
   #rows = new Map<string, { row: Row; view: RowView }>()
   #order: string[] = []
   #sent = false
-  #choice: Saved
+  /** The chat's setup as the computer keeps it, shared with every other client. */
+  #settings: ThreadSettings = {}
   #changes: ChangesView | null = null
   #wasRunning = false
   #unsubscribe: Array<() => void>
@@ -29,15 +44,66 @@ export class OpenThread {
     private readonly push: (patch: ThreadPatch) => void,
   ) {
     this.session = sessions.acquire(threadId)
-    this.#choice = preferences.read<Saved>(`thread:${threadId}`) ?? {}
     this.#unsubscribe = [
       this.session.state.subscribe(() => this.flush()),
       projects.state.subscribe(() => this.schedule()),
       catalog.state.subscribe(() => this.schedule()),
+      connection.on('thread.settings', ({ threadId: changed, settings }) => {
+        if (changed === this.threadId) this.#adopt(settings)
+      }),
+      connection.onOpen(() => void this.readSettings()),
     ]
     this.#wasRunning = this.session.state.get().view.running
     this.flush()
+    void this.readSettings()
     void this.readChanges()
+  }
+
+  async readSettings(): Promise<void> {
+    try {
+      this.#adopt(await connection.request('thread.settings', { threadId: this.threadId }))
+    } catch {
+      // The next reconnect reads it again; until then the chat shows its defaults.
+    }
+  }
+
+  #adopt(settings: ThreadSettings): void {
+    if (JSON.stringify(settings) === JSON.stringify(this.#settings)) return
+    this.#settings = settings
+    this.flush()
+  }
+
+  /** Changes the setup here at once and on the computer, which tells every other client. */
+  async #write(setup: Setup): Promise<void> {
+    const previous = this.#settings
+    const next = { ...setup, ...(previous.approval ? { approval: previous.approval } : {}) }
+    this.#adopt(next)
+    try {
+      this.#adopt(
+        await connection.request('thread.setSettings', { threadId: this.threadId, ...setup }),
+      )
+    } catch (error) {
+      this.#adopt(previous)
+      throw error
+    }
+  }
+
+  #current(): { model: Model | undefined; setup: Setup } {
+    const model = resolveModel(
+      this.source(),
+      this.#settings.model,
+      this.session.state.get().view.model,
+    )
+    const effort = effortFor(model, this.#settings.effort)
+    const serviceTier = tierFor(model, this.#settings.serviceTier)
+    return {
+      model,
+      setup: {
+        ...(model ? { model: model.id } : {}),
+        ...(effort ? { effort } : {}),
+        ...(serviceTier ? { serviceTier } : {}),
+      },
+    }
   }
 
   close(): void {
@@ -112,7 +178,7 @@ export class OpenThread {
       if (known) return known
       return catalog.state.get().status === 'ready' ? catalog.ensure(ref) : undefined
     }
-    return sources.find((entry) => entry.key === this.#choice.source)
+    return sources.find((entry) => entry.key === startedSources.get(this.threadId))
   }
 
   meta(): ThreadMetaView {
@@ -120,7 +186,7 @@ export class OpenThread {
     const { view } = screen
     const found = findSession(projects.state.get().projects, this.threadId)
     const source = this.source()
-    const model = resolveModel(source, this.#choice.model, view.model)
+    const { model, setup } = this.#current()
     const rows = this.#order
     const last = rows.length > 0 ? this.#rows.get(rows[rows.length - 1]!)?.view : undefined
     const streaming = last?.kind === 'assistant' && last.streaming
@@ -143,8 +209,8 @@ export class OpenThread {
       setup: setupView(
         source,
         model,
-        this.#choice,
-        screen.approval,
+        setup,
+        this.#settings.approval ?? screen.approval,
         !view.running && screen.queue.length === 0,
       ),
       approval: approval ? approvalView(approval, projectPath) : null,
@@ -161,11 +227,7 @@ export class OpenThread {
 
   async send(text: string, attachments: string[]): Promise<void> {
     projects.touch(this.threadId)
-    const meta = this.meta()
-    await this.session.send(text, attachments, {
-      ...(meta.setup.model ? { model: meta.setup.model } : {}),
-      ...(meta.setup.effort ? { effort: meta.setup.effort } : {}),
-    })
+    await this.session.send(text, attachments, this.#current().setup)
   }
 
   decide(approvalId: string, decision: ApprovalDecision): Promise<void> {
@@ -173,11 +235,24 @@ export class OpenThread {
   }
 
   async setAccess(access: ApprovalMode): Promise<void> {
-    await this.session.setApproval(access)
+    const previous = this.#settings
+    this.#adopt({ ...previous, approval: access })
+    try {
+      await this.session.setApproval(access)
+    } catch (error) {
+      this.#adopt(previous)
+      throw error
+    }
   }
 
-  setEffort(effort: string): void {
-    this.#remember({ ...this.#choice, effort })
+  setEffort(effort: string): Promise<void> {
+    return this.#write({ ...this.#current().setup, effort })
+  }
+
+  /** A provider's faster routing, such as Codex's Fast tier; absent is the standard one. */
+  setTier(tier: string | null): Promise<void> {
+    const { serviceTier: _previous, ...rest } = this.#current().setup
+    return this.#write(tier ? { ...rest, serviceTier: tier } : rest)
   }
 
   /** Picks a model; one from another source moves the chat there, once its turn is done. */
@@ -187,10 +262,13 @@ export class OpenThread {
     const picked = target?.models.find((model) => model.id === modelId)
     if (!target || !picked) throw new Error('That model is no longer offered.')
     if (target.key === current?.key) {
-      this.#remember({
-        ...this.#choice,
+      const { setup } = this.#current()
+      const effort = effortFor(picked, setup.effort)
+      const serviceTier = tierFor(picked, setup.serviceTier)
+      await this.#write({
         model: picked.id,
-        effort: effortFor(picked, this.#choice.effort),
+        ...(effort ? { effort } : {}),
+        ...(serviceTier ? { serviceTier } : {}),
       })
       return
     }
@@ -206,16 +284,9 @@ export class OpenThread {
       ...(target.accountId ? { accountId: target.accountId } : {}),
       model: picked.id,
       ...(effort ? { effort } : {}),
-      approval: screen.approval,
+      approval: this.#settings.approval ?? screen.approval,
     })
-    this.#remember({ source: target.key, model: picked.id, effort })
-    await projects.refresh()
-  }
-
-  #remember(choice: Saved): void {
-    this.#choice = choice
-    preferences.write(`thread:${this.threadId}`, choice)
-    this.flush()
+    await Promise.all([projects.refresh(), this.readSettings()])
   }
 
   async diff(): Promise<SessionDiff> {

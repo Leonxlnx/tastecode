@@ -137,6 +137,11 @@ private struct ChatBar: View {
         effort: { effort in
           model.perform(["type": "thread.setEffort", "threadId": threadId, "effort": effort]) { problem = $0 }
         },
+        tier: { tier in
+          model.perform(["type": "thread.setTier", "threadId": threadId, "tier": tier.map { $0 as Any } ?? NSNull()]) {
+            problem = $0
+          }
+        },
         access: { mode in
           model.perform(["type": "thread.setAccess", "threadId": threadId, "access": mode]) { problem = $0 }
         }
@@ -155,6 +160,11 @@ private struct ChatBar: View {
       },
       onUnqueue: { id in
         model.perform(["type": "thread.unqueue", "threadId": threadId, "queuedId": id]) { problem = $0 }
+      },
+      onMove: { id, up in
+        model.perform([
+          "type": "thread.moveQueued", "threadId": threadId, "queuedId": id, "direction": up ? "up" : "down",
+        ]) { problem = $0 }
       }
     )
   }
@@ -211,6 +221,7 @@ struct NewChatScreen: View {
         actions: SetupActions(
           model: { source, picked in model.send(["type": "newChat.set", "sourceKey": source, "model": picked]) },
           effort: { effort in model.send(["type": "newChat.set", "effort": effort]) },
+          tier: { tier in model.send(["type": "newChat.set", "tier": tier.map { $0 as Any } ?? NSNull()]) },
           access: { mode in model.send(["type": "newChat.set", "access": mode]) }
         ),
         onSend: { text, attachments in

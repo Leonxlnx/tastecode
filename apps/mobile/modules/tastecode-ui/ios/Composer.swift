@@ -6,6 +6,8 @@ import UIKit
 struct SetupActions {
   var model: (_ sourceKey: String, _ model: String) -> Void
   var effort: (_ effort: String) -> Void
+  /// A faster routing the model offers, or nil for the standard one.
+  var tier: (_ tier: String?) -> Void
   var access: (_ mode: String) -> Void
 }
 
@@ -34,6 +36,7 @@ struct Composer: View {
   var onStop: () -> Void = {}
   var onSteer: (String) -> Void = { _ in }
   var onUnqueue: (String) -> Void = { _ in }
+  var onMove: (String, _ up: Bool) -> Void = { _, _ in }
 
   @State private var text = ""
   @State private var images: [PendingImage] = []
@@ -54,7 +57,7 @@ struct Composer: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
       if !queue.isEmpty {
-        QueueLines(items: queue, canSteer: canSteer, onSteer: onSteer, onUnqueue: onUnqueue)
+        QueueLines(items: queue, canSteer: canSteer, onSteer: onSteer, onUnqueue: onUnqueue, onMove: onMove)
           .padding(.horizontal, 16)
           .padding(.top, 12)
       }
@@ -224,6 +227,20 @@ struct SetupMenu: View {
         }
         .pickerStyle(.menu)
       }
+      if let tiers = source?.models.first(where: { $0.id == setup.model })?.tiers, !tiers.isEmpty {
+        Picker(
+          selection: Binding(get: { setup.tier ?? "" }, set: { actions.tier($0.isEmpty ? nil : $0) })
+        ) {
+          Text("Standard").tag("")
+          ForEach(tiers) { tier in
+            Text(tier.name).tag(tier.id)
+          }
+        } label: {
+          Label("Speed", systemImage: "hare")
+          Text(setup.tierName ?? "Standard")
+        }
+        .pickerStyle(.menu)
+      }
       if setup.switchable && !others.isEmpty {
         Section("Other Providers") {
           ForEach(others) { other in
@@ -242,8 +259,7 @@ struct SetupMenu: View {
 
   private var label: String {
     guard let name = setup.modelName ?? setup.sourceName else { return "Model" }
-    guard let effort = setup.effortLabel else { return name }
-    return "\(name) · \(effort)"
+    return ([name] + [setup.effortLabel, setup.tierName].compactMap { $0 }).joined(separator: " · ")
   }
 }
 
@@ -338,6 +354,7 @@ private struct QueueLines: View {
   let canSteer: Bool
   let onSteer: (String) -> Void
   let onUnqueue: (String) -> Void
+  let onMove: (String, _ up: Bool) -> Void
 
   var body: some View {
     VStack(alignment: .leading, spacing: 10) {
@@ -367,6 +384,19 @@ private struct QueueLines: View {
           }
           .buttonStyle(.plain)
           .accessibilityLabel("Remove from the queue")
+        }
+        .contentShape(.rect)
+        .contextMenu {
+          if canSteer {
+            Button("Send Now", systemImage: "arrow.up.circle") { onSteer(item.id) }
+          }
+          if item.id != items.first?.id {
+            Button("Move Up", systemImage: "arrow.up") { onMove(item.id, true) }
+          }
+          if item.id != items.last?.id {
+            Button("Move Down", systemImage: "arrow.down") { onMove(item.id, false) }
+          }
+          Button("Remove", systemImage: "trash", role: .destructive) { onUnqueue(item.id) }
         }
       }
     }

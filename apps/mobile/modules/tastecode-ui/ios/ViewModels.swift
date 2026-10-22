@@ -63,11 +63,17 @@ struct EffortView: Decodable, Equatable, Identifiable {
   var label: String
 }
 
+struct TierView: Decodable, Equatable, Identifiable {
+  var id: String
+  var name: String
+}
+
 struct ModelView: Decodable, Equatable, Identifiable {
   var id: String
   var name: String
   var more: Bool
   var efforts: [EffortView]
+  var tiers: [TierView]
 }
 
 struct AccessView: Decodable, Equatable, Identifiable {
@@ -109,6 +115,8 @@ struct SetupView: Decodable, Equatable {
   var modelName: String?
   var effort: String?
   var effortLabel: String?
+  var tier: String?
+  var tierName: String?
   var access: String
   var accessTitle: String
   var images: Bool
@@ -116,7 +124,7 @@ struct SetupView: Decodable, Equatable {
 
   static let empty = SetupView(
     sourceKey: nil, sourceName: nil, model: nil, modelName: nil, effort: nil, effortLabel: nil,
-    access: "ask", accessTitle: "Ask first", images: true, switchable: true)
+    tier: nil, tierName: nil, access: "ask", accessTitle: "Ask first", images: true, switchable: true)
 }
 
 struct StepView: Decodable, Equatable, Identifiable {

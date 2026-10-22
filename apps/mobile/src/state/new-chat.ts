@@ -1,6 +1,6 @@
 import type { ApprovalMode } from '@harness/contracts'
 import { connection, projects, sessions } from './app'
-import { preferences, sourceKey, type SourceRef } from './catalog'
+import { preferences, type SourceRef } from './catalog'
 import type { ThreadSession } from './thread-session'
 
 export type NewChatChoice = {
@@ -8,6 +8,8 @@ export type NewChatChoice = {
   source: SourceRef
   model: string | undefined
   effort: string | undefined
+  /** A faster routing the model offers, such as Fast; absent is the standard one. */
+  serviceTier?: string | undefined
   approval: ApprovalMode
   /** Work in a private git checkout instead of the project folder itself. */
   isolate: boolean
@@ -49,14 +51,11 @@ export async function startChat(
     ...(source.accountId ? { accountId: source.accountId } : {}),
     ...(choice.model ? { model: choice.model } : {}),
     ...(choice.effort ? { effort: choice.effort } : {}),
+    ...(choice.serviceTier ? { serviceTier: choice.serviceTier } : {}),
     ...(choice.isolate ? { isolate: true } : {}),
   })
+  // The computer keeps the chat's setup from here on; this only seeds the next new chat.
   rememberNewChatChoice(choice)
-  preferences.write(`thread:${threadId}`, {
-    source: sourceKey(source),
-    model: choice.model,
-    effort: choice.effort,
-  })
   projects.touch(threadId)
   const session = sessions.acquire(threadId)
   const localId = session.addLocalMessage(text, attachments)
@@ -73,7 +72,16 @@ export async function startChat(
     .then(() => projects.refreshSoon())
     .catch(() => undefined)
   try {
-    await session.send(text, attachments, { model: choice.model, effort: choice.effort }, localId)
+    await session.send(
+      text,
+      attachments,
+      {
+        ...(choice.model ? { model: choice.model } : {}),
+        ...(choice.effort ? { effort: choice.effort } : {}),
+        ...(choice.serviceTier ? { serviceTier: choice.serviceTier } : {}),
+      },
+      localId,
+    )
   } finally {
     sessions.release(threadId)
   }

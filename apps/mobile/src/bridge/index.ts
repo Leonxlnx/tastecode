@@ -107,7 +107,13 @@ async function perform(action: Action): Promise<unknown> {
       await thread(action.threadId).setModel(action.sourceKey, action.model)
       return null
     case 'thread.setEffort':
-      thread(action.threadId).setEffort(action.effort)
+      await thread(action.threadId).setEffort(action.effort)
+      return null
+    case 'thread.setTier':
+      await thread(action.threadId).setTier(action.tier)
+      return null
+    case 'thread.moveQueued':
+      await thread(action.threadId).session.moveQueued(action.queuedId, action.direction)
       return null
     case 'thread.pin':
       await projects.pinChat(action.threadId, action.pinned)

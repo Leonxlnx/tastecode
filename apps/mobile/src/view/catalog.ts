@@ -18,6 +18,7 @@ function sourceView(source: Source): SourceView {
     name: entry.displayName,
     more: extra,
     efforts: entry.reasoningEfforts.map((id) => ({ id, label: effortLabel(id) })),
+    tiers: entry.serviceTiers.map(({ id, name }) => ({ id, name })),
   })
   return {
     key: source.key,
@@ -56,12 +57,13 @@ export function resolveModel(
 export function setupView(
   source: Source | undefined,
   model: Model | undefined,
-  choice: Choice,
+  choice: Choice & { serviceTier?: string | undefined },
   access: ApprovalMode,
   switchable: boolean,
 ): SetupView {
   const effort = effortFor(model, choice.effort)
   const levels = accessLevels(source?.capabilities)
+  const tier = model?.serviceTiers.find((entry) => entry.id === choice.serviceTier)
   return {
     sourceKey: source?.key ?? null,
     sourceName: source?.name ?? null,
@@ -69,6 +71,8 @@ export function setupView(
     modelName: model?.displayName ?? null,
     effort: effort ?? null,
     effortLabel: effort ? effortLabel(effort) : null,
+    tier: tier?.id ?? null,
+    tierName: tier?.name ?? null,
     access,
     accessTitle: levels.find((level) => level.mode === access)?.title ?? 'Ask first',
     images: source?.capabilities?.images ?? true,

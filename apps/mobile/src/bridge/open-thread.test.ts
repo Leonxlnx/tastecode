@@ -30,11 +30,27 @@ vi.mock('../state/app', async () => {
       state: new AppStore({ status: 'ready', error: undefined, activity: {}, projects: [] }),
     },
     catalog: { state: new AppStore({ status: 'ready', sources: [] }), ensure: vi.fn() },
-    connection: { request: vi.fn(async () => ({ threadId: 't', version: '1', files: [] })) },
+    connection: {
+      request: vi.fn(async (method: string, params: Record<string, unknown>) =>
+        link.answer(method, params),
+      ),
+      on: (channel: string, listener: (data: unknown) => void) => {
+        link.listeners.set(channel, listener)
+        return () => link.listeners.delete(channel)
+      },
+      onOpen: () => () => undefined,
+    },
   }
 })
 
+const link = vi.hoisted(() => ({
+  listeners: new Map<string, (data: unknown) => void>(),
+  answer: async (method: string, _params: Record<string, unknown>): Promise<unknown> =>
+    method === 'thread.settings' ? {} : { threadId: 't', version: '1', files: [] },
+}))
+
 const { OpenThread } = await import('./open-thread')
+const app = await import('../state/app')
 
 function apply(event: DomainEvent): void {
   model.apply(event)
@@ -87,6 +103,82 @@ describe('an open chat on the screens', () => {
     const fresh = new ThreadModel()
     screen.set((current) => ({ ...current, view: fresh.view() }))
     expect(patches.at(-1)).toMatchObject({ rows: [], order: [] })
+    thread.close()
+  })
+
+  it('shows the setup the computer keeps and follows a change from another client', async () => {
+    const reasoning = (id: string) => ({
+      id,
+      displayName: id,
+      reasoningEfforts: ['low', 'high'],
+      serviceTiers: [{ id: 'fast', name: 'Fast', description: '' }],
+    })
+    app.projects.state.set({
+      status: 'ready',
+      error: undefined,
+      activity: {},
+      projects: [
+        {
+          path: '/p',
+          name: 'p',
+          pinned: false,
+          createdAt: 1,
+          sessions: [{ id: 't', title: 'T', provider: 'codex', createdAt: 1, running: false }],
+        },
+      ],
+    })
+    app.catalog.state.set({
+      status: 'ready',
+      sources: [
+        {
+          provider: 'codex',
+          key: 'codex',
+          name: 'Codex',
+          capabilities: undefined,
+          status: 'ready',
+          models: [reasoning('a'), reasoning('b')],
+        },
+      ],
+    } as never)
+    const written: Array<Record<string, unknown>> = []
+    link.answer = async (method, params) => {
+      if (method === 'thread.settings') return { model: 'b', effort: 'low', approval: 'auto' }
+      if (method === 'thread.setSettings') {
+        written.push(params)
+        const { threadId: _threadId, ...setup } = params
+        return { ...setup, approval: 'auto' }
+      }
+      return { threadId: 't', version: '1', files: [] }
+    }
+    const patches: ThreadPatch[] = []
+    const thread = new OpenThread('t', (patch) => patches.push(patch))
+    await vi.waitFor(() =>
+      expect(patches.at(-1)?.meta.setup).toMatchObject({
+        model: 'b',
+        effort: 'low',
+        access: 'auto',
+      }),
+    )
+
+    // The desktop picks Fast and full access; the phone shows it without asking.
+    link.listeners.get('thread.settings')?.({
+      threadId: 't',
+      settings: { model: 'b', effort: 'low', serviceTier: 'fast', approval: 'full' },
+    })
+    expect(patches.at(-1)?.meta.setup).toMatchObject({
+      tier: 'fast',
+      tierName: 'Fast',
+      access: 'full',
+    })
+
+    // The phone changes the effort; the whole setup goes to the computer.
+    await thread.setEffort('high')
+    expect(written.at(-1)).toEqual({
+      threadId: 't',
+      model: 'b',
+      effort: 'high',
+      serviceTier: 'fast',
+    })
     thread.close()
   })
 })
