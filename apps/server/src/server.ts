@@ -1,7 +1,7 @@
 import path from 'node:path'
 import { timingSafeEqual } from 'node:crypto'
 import { isIPv4 } from 'node:net'
-import { WebSocketServer, type WebSocket } from 'ws'
+import { WebSocketServer } from 'ws'
 import {
   DEFAULT_ACCOUNT_ID,
   ErrorCode,
@@ -31,6 +31,7 @@ import { ProviderAccounts } from './provider-accounts.js'
 import { DEFAULT_PORT } from './server-config.js'
 import { Store } from './store.js'
 import { createProjectListProjector, type ProjectListState } from './project-list.js'
+import type { PushSocket } from './push-bus.js'
 import { imageFileName, materializeAttachment } from './uploaded-attachment.js'
 import type { UsageHistoryService } from './usage-history.js'
 import { usageSummaryWithLimits } from './usage-summary.js'
@@ -76,6 +77,8 @@ const PROVIDER_READS: ReadonlySet<MethodName> = new Set<MethodName>([
   'usage.summary',
   'voice.status',
 ])
+/** A connection the server answers: a renderer's WebSocket or a paired phone's link. */
+type ClientSocket = PushSocket
 export { DEFAULT_PORT } from './server-config.js'
 
 const startupStartedAt = Number(process.env['HARNESS_STARTUP_STARTED_AT'])
@@ -132,7 +135,7 @@ export function startServer(
     }
     throw error
   }
-  const push = new PushBus()
+  const push = new PushBus<ClientSocket>()
   const accounts = new ProviderAccounts(store, {
     root: path.join(path.dirname(databasePath), 'accounts'),
     onChanged: (provider) => push.broadcast('accounts.changed', { provider }),
@@ -150,7 +153,7 @@ export function startServer(
     (updatesService ??= import('./provider-updates.js').then(
       ({ ProviderUpdateService }) => new ProviderUpdateService(),
     ))
-  const previewCapture = new PreviewCaptureCoordinator(
+  const previewCapture = new PreviewCaptureCoordinator<ClientSocket>(
     (socket, request) => push.send(socket, 'preview.captureRequested', request),
     35_000,
     (socket, requestId) => push.send(socket, 'preview.captureCancelled', { requestId }),
@@ -529,10 +532,17 @@ export function startServer(
       socket.close(1008, 'Access denied')
       return
     }
-    acceptConnection(socket)
+    acceptConnection(socket, (message, closed) => {
+      socket.on('message', (raw) => message(raw.toString()))
+      socket.on('close', closed)
+      socket.on('error', closed)
+    })
   })
 
-  function acceptConnection(socket: WebSocket): void {
+  function acceptConnection(
+    socket: ClientSocket,
+    listen: (message: (raw: string) => void, closed: () => void) => void,
+  ): void {
     const welcome = {
       serverVersion: SERVER_VERSION,
       protocolVersion: PROTOCOL_VERSION,
@@ -541,20 +551,20 @@ export function startServer(
     push.add(socket)
     push.send(socket, 'server.welcome', welcome)
 
-    socket.on('message', (raw) =>
-      handleMessage(socket, raw.toString()).catch((error) =>
-        console.error(`[server] request handling failed: ${String(error)}`),
-      ),
-    )
     const removeSocket = () => {
       previewCapture.remove(socket)
       push.remove(socket)
     }
-    socket.on('close', removeSocket)
-    socket.on('error', removeSocket)
+    listen(
+      (raw) =>
+        void handleMessage(socket, raw).catch((error) =>
+          console.error(`[server] request handling failed: ${String(error)}`),
+        ),
+      removeSocket,
+    )
   }
 
-  async function handleMessage(socket: WebSocket, raw: string): Promise<void> {
+  async function handleMessage(socket: ClientSocket, raw: string): Promise<void> {
     let parsed: unknown
     try {
       parsed = JSON.parse(raw)
@@ -613,7 +623,11 @@ export function startServer(
     }
   }
 
-  async function route(socket: WebSocket, method: MethodName, params: unknown): Promise<unknown> {
+  async function route(
+    socket: ClientSocket,
+    method: MethodName,
+    params: unknown,
+  ): Promise<unknown> {
     switch (method) {
       case 'client.capabilities':
         previewCapture.setCapability(socket, parseParams(method, params).previewCapture)
@@ -1535,7 +1549,7 @@ export function startServer(
   }
 
   function respondError(
-    socket: WebSocket,
+    socket: ClientSocket,
     id: string,
     code: string,
     message: string,

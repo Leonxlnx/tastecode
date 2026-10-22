@@ -1,8 +1,14 @@
 import type { WebSocket } from 'ws'
 import type { ChannelName, DataOf } from '@harness/contracts'
 
-export type PushSocket = Pick<WebSocket, 'OPEN' | 'readyState' | 'send' | 'terminate'> &
-  Partial<Pick<WebSocket, 'bufferedAmount'>>
+/** What the bus needs of a client connection: a `ws` socket or an encrypted phone link. */
+export type PushSocket = {
+  readonly OPEN: number
+  readonly readyState: number
+  send(frame: string, callback?: (error?: Error) => void): void
+  terminate(): void
+  readonly bufferedAmount?: number
+}
 export const MAX_PUSH_BUFFER_BYTES = 8 * 1024 * 1024
 export const MAX_REPLY_FRAME_BYTES = 128 * 1024 * 1024
 type PushSocketState = {
