@@ -131,20 +131,24 @@ phone links never receive `phone.*` or preview pushes. A paired phone sees every
 desktop sees, so a turn started on either streams on both; `projects.changed` tells every client
 when another one started, renamed or moved a chat.
 
-The phone app is Expo with SwiftUI: its screens are SwiftUI views described in React through
-`@expo/ui`, with Liquid Glass from iOS 26, plus two local Expo modules in Swift (the link itself,
-on Network.framework and CryptoKit with keys in the Keychain, and a few views Expo UI lacks:
-Markdown replies, the chat scaffold's glass bar, the QR scanner). Protocol logic, reconnects and
-state are TypeScript and import the shared contracts' types, so an Android build replaces only
-the native modules and the view layer. The phone app has its own npm install, outside the pnpm
-workspace.
+The phone app is Expo with its interface written in Swift: one SwiftUI view hierarchy (iOS 26,
+Liquid Glass) inside an `@expo/ui` host, in the local `tastecode-ui` module, beside the
+`tastecode-link` module (Network.framework and CryptoKit, keys in the Keychain). Protocol logic,
+reconnects and state are TypeScript and import the shared contracts' types. TypeScript also
+words what the screens show (`src/view`: chat rows, step summaries, approval subjects) and sends
+it to Swift as JSON; an open chat sends only the rows that changed, so a streaming reply carries
+its own text and nothing else. Swift draws and asks back through one action event. An Android
+build replaces the two native modules with Kotlin and Compose and keeps everything else. The
+phone app has its own npm install, outside the pnpm workspace.
 
 _Rejected:_ the earlier phone design's bearer tokens in a plaintext WebSocket URL (safe only on
 Tailscale, readable by anyone on a café Wi-Fi). TLS with a pinned self-signed certificate
 (React Native's WebSocket cannot pin, and Node needs a certificate generator). A relay server
 (traffic and metadata would leave the user's machines; a relay can come later, carrying the same
-encrypted frames). A fully native Swift app (Android would share nothing; Expo UI renders real
-SwiftUI anyway).
+encrypted frames). A fully native Swift app (Android would share nothing). Screens composed in
+React from `@expo/ui`'s SwiftUI components (the first version): menus, toolbars, the composer's
+glass and scrolling could not be shaped as iOS draws them, and every streamed delta re-rendered
+React.
 
 ---
 
@@ -915,3 +919,4 @@ registry entry, which is deliberately a good first outside contribution.
 | 2026-10-14 | Background writing reads only the model sources its choice needs, caches each source separately, and reuses Grok's sign-in `grok models` output for its model list.            |
 | 2026-10-19 | Made Claude Code's newest Haiku at medium the automatic background model, ahead of Codex Luna, which moved from low to medium effort.                                          |
 | 2026-10-22 | Added phone access: a Noise IK link on the LAN or a tailnet, one-time pairing codes, a phone method allowlist, `projects.changed`, and the Expo + SwiftUI phone app.           |
+| 2026-10-22 | Phone app screens moved from React-composed Expo UI to one SwiftUI hierarchy in Swift; TypeScript words the content and sends changed rows only.                               |

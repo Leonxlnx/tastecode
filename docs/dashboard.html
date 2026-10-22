@@ -303,14 +303,19 @@
           to a key in the OS credential store, and shows a one-time pairing code; a paired phone is
           one more client of the same protocol, limited to reading and driving chats, and a new
           projects.changed push puts a chat started on either device in both lists. The app
-          (apps/mobile, Expo with SwiftUI and Liquid Glass, its own npm install) pairs, lists and
-          continues every chat, starts new ones with project, model, reasoning and access chips,
-          answers approvals and questions, attaches photos, browses folders to add projects and
-          shows a chat's changes. Verified on the iOS 27 simulator against a private server with
-          Claude Code: pairing from the desktop's QR code, a desktop-sent turn streaming on the
-          phone, a phone-approved file write, reconnect after a server restart. Not verified yet: a
-          real iPhone (camera scan, Local Network prompt, a phone on Wi-Fi or Tailscale) and
-          Windows.
+          (apps/mobile, Expo with every screen in SwiftUI written in Swift, Liquid Glass, its own
+          npm install) pairs, lists and continues every chat, starts new ones with a project, model,
+          reasoning level and access level, answers approvals and questions, attaches photos,
+          browses folders to add projects and shows a chat's changes. Verified on the iOS 27
+          simulator against a private server with Claude Code: pairing from the desktop's QR code, a
+          desktop-sent turn streaming on the phone, a phone-approved file write, reconnect after a
+          server restart. Not verified yet: a real iPhone (camera scan, Local Network prompt, a
+          phone on Wi-Fi or Tailscale) and Windows. Later the same day every screen was redrawn as
+          native SwiftUI in Swift (one list instead of three tabs, approvals and questions in place
+          of the composer) and checked again on the simulator: pairing by paste, an approval and two
+          agent questions answered on the phone, the queue, a photo, Changes and dark mode. Two
+          server bugs found on the way are fixed: generated titles kept the model's Markdown
+          asterisks, and a prompt with a picture showed twice once Claude's own history was read.
         </p>
         <p>
           October 20, evening on nightly (3adcd24a): all four gates passed on 3de247b3 (web 3,028
