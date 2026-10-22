@@ -93,6 +93,19 @@ export const QueuedTurnSchema = z.object({
 })
 export type QueuedTurn = z.infer<typeof QueuedTurnSchema>
 
+/**
+ * A chat's setup: what its next turn runs with. The server keeps it so every
+ * client shows the same choice, and pushes `thread.settings` when one client
+ * changes it. Absent fields mean the source's default.
+ */
+export const ThreadSettingsSchema = z.object({
+  model: z.string().optional(),
+  effort: z.string().min(1).optional(),
+  serviceTier: z.string().min(1).optional(),
+  approval: ApprovalModeSchema.optional(),
+})
+export type ThreadSettings = z.infer<typeof ThreadSettingsSchema>
+
 export const PanicStopSessionResultSchema = z.discriminatedUnion('status', [
   z.object({ threadId: z.string(), status: z.literal('interrupted') }),
   z.object({ threadId: z.string(), status: z.literal('failed'), error: z.string().min(1) }),
@@ -2114,6 +2127,25 @@ export const methods = {
     }),
     result: z.object({}),
   },
+  /** The chat's setup as the server keeps it. */
+  'thread.settings': {
+    params: z.object({ threadId: z.string() }),
+    result: ThreadSettingsSchema,
+  },
+  /**
+   * Replace the model, reasoning effort and service tier the chat's next turn
+   * runs with; absent fields go back to the source's default. The access level
+   * stays with `thread.setApproval`, which also reaches the live session.
+   */
+  'thread.setSettings': {
+    params: z.object({
+      threadId: z.string(),
+      model: z.string().optional(),
+      effort: z.string().min(1).optional(),
+      serviceTier: z.string().min(1).optional(),
+    }),
+    result: ThreadSettingsSchema,
+  },
   'thread.close': {
     params: z.object({ threadId: z.string() }),
     result: z.object({}),
@@ -2265,6 +2297,8 @@ export const channels = {
     items: z.array(QueuedTurnSchema),
     canSteer: z.boolean(),
   }),
+  /** A chat's setup changed on some client, or a turn or provider change moved it. */
+  'thread.settings': z.object({ threadId: z.string(), settings: ThreadSettingsSchema }),
   'thread.lifecycle': z.object({
     threadId: z.string().min(1),
     lifecycle: ThreadLifecycleSchema,

@@ -20,6 +20,7 @@ import {
   SkillCapabilitiesSchema,
   SkillSchema,
   ThreadLifecycleSchema,
+  ThreadSettingsSchema,
   UsageHistoryProviderSchema,
   UsageHistoryResultSchema,
   type ProviderLimit,
@@ -231,6 +232,27 @@ describe('domain events', () => {
       type: 'user_input.resolved',
       id: request.id,
     })
+  })
+})
+
+describe('thread settings', () => {
+  it('keeps one setup per chat that every client reads and changes the same way', () => {
+    expect(
+      methods['thread.setSettings'].params.parse({
+        threadId: 't',
+        model: 'gpt-5.5',
+        effort: 'high',
+      }),
+    ).toEqual({ threadId: 't', model: 'gpt-5.5', effort: 'high' })
+    // A provider without a model list runs its own default under the empty id.
+    expect(ThreadSettingsSchema.parse({ model: '' })).toEqual({ model: '' })
+    expect(() =>
+      methods['thread.setSettings'].params.parse({ threadId: 't', effort: '' }),
+    ).toThrow()
+    expect(
+      channels['thread.settings'].parse({ threadId: 't', settings: { approval: 'auto' } }),
+    ).toEqual({ threadId: 't', settings: { approval: 'auto' } })
+    expect(() => ThreadSettingsSchema.parse({ approval: 'sometimes' })).toThrow()
   })
 })
 
