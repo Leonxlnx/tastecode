@@ -7,6 +7,7 @@ import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { WebSocket, type ServerOptions, type WebSocketServer } from 'ws'
 import { InvalidHistoryCursorError } from './history-page.js'
+import { generateNoiseKeyPair, NoiseInitiator, type NoiseSession } from './phone-noise.js'
 import { startServer } from './server.js'
 
 const state = vi.hoisted(() => ({
@@ -43,12 +44,25 @@ const state = vi.hoisted(() => ({
   earlierChanges: new Map<string, unknown>(),
   accountsRoot: '',
   accountsChanged: (_provider: string) => {},
+  credentials: new Map<string, string>(),
+  renamed: [] as string[],
 }))
 const temporary: string[] = []
 
 // Exercise the real listener without opening user data or starting providers.
 vi.mock('./data-location.js', () => ({ storeLocation: () => ':memory:' }))
 vi.mock('./data-lease.js', () => ({ acquireDataLease: () => () => undefined }))
+// The phone link key belongs in the system keychain, never in a test run's.
+vi.mock('./credentials.js', () => ({
+  readCredential: (reference: string) => {
+    const value = state.credentials.get(reference)
+    if (value === undefined) throw new Error('missing')
+    return value
+  },
+  writeCredential: (reference: string, value: string) => state.credentials.set(reference, value),
+  hasCredential: (reference: string) => state.credentials.has(reference),
+  removeCredential: (reference: string) => state.credentials.delete(reference),
+}))
 vi.mock('@harness/proc/desktop-path', () => ({ applyDesktopPath: () => undefined }))
 vi.mock('./store.js', () => ({
   Store: class {
@@ -84,6 +98,13 @@ vi.mock('./store.js', () => ({
       return undefined
     }
     setFeedbackLedger() {}
+    phoneAccessState() {
+      return undefined
+    }
+    setPhoneAccessState() {}
+    renameThread(threadId: string) {
+      state.renamed.push(threadId)
+    }
     close() {}
   },
 }))
@@ -357,6 +378,8 @@ afterEach(async () => {
   state.accountList = []
   state.usageHistory = undefined
   state.usageHistoryCalls.length = 0
+  state.credentials.clear()
+  state.renamed.length = 0
   vi.unstubAllEnvs()
   await Promise.all(
     temporary.splice(0).map((directory) => rm(directory, { recursive: true, maxRetries: 5 })),
@@ -1624,5 +1647,102 @@ describe('feedback routes', () => {
     expect(
       await ask(address.port, 'feedback.preview', { ...draft, message: 'x'.repeat(4001) }),
     ).toMatchObject({ error: { code: 'bad_request' } })
+  })
+})
+
+describe('phone links', () => {
+  async function desktopClient(port: number) {
+    const client = new WebSocket(`ws://127.0.0.1:${port}`)
+    const messages: Array<Record<string, unknown>> = []
+    client.on('message', (message) => messages.push(JSON.parse(String(message))))
+    await once(client, 'message')
+    return { client, messages }
+  }
+
+  async function phoneLink(port: number, serverKey: string, hello: Record<string, unknown>) {
+    const socket = new WebSocket(`ws://127.0.0.1:${port}/link`)
+    await once(socket, 'open')
+    const initiator = new NoiseInitiator({
+      staticKey: generateNoiseKeyPair(),
+      remoteStaticKey: Buffer.from(serverKey, 'base64url'),
+    })
+    const frames: Array<Record<string, unknown>> = []
+    // The welcome frame follows the handshake reply at once, so one listener reads both.
+    const handshake = new Promise<{ payload: Buffer; session: NoiseSession }>((resolve) => {
+      let session: NoiseSession | undefined
+      socket.on('message', (data: Buffer) => {
+        if (session) {
+          frames.push(JSON.parse(session.receive.decrypt(data).toString()))
+          return
+        }
+        const read = initiator.readMessage2(data)
+        session = read.session
+        resolve(read)
+      })
+    })
+    socket.send(initiator.writeMessage1(Buffer.from(JSON.stringify(hello))))
+    const { payload, session } = await handshake
+    return { answer: JSON.parse(payload.toString()), socket, session, frames }
+  }
+
+  function send(link: { socket: WebSocket; session: NoiseSession }, frame: unknown) {
+    link.socket.send(link.session.send.encrypt(Buffer.from(JSON.stringify(frame))))
+  }
+
+  it('serves a paired phone the desktop protocol, limited to what a phone may do', async () => {
+    vi.stubEnv('HARNESS_PHONE_PORT', '0')
+    const { port } = await listen()
+    const desktop = await desktopClient(port)
+    try {
+      desktop.client.send(JSON.stringify({ id: 'pair', method: 'phone.startPairing', params: {} }))
+      await vi.waitFor(() =>
+        expect(desktop.messages.find((message) => message['id'] === 'pair')).toBeDefined(),
+      )
+      const reply = desktop.messages.find((message) => message['id'] === 'pair') as {
+        result: { status: { port: number }; pairing: { uri: string } }
+      }
+      const encoded = new URL(reply.result.pairing.uri).searchParams.get('p') ?? ''
+      const payload = JSON.parse(Buffer.from(encoded, 'base64url').toString()) as {
+        key: string
+        secret: string
+      }
+      expect(state.credentials.get('phone-link.server-key')).toBeDefined()
+
+      const phone = await phoneLink(reply.result.status.port, payload.key, {
+        v: 1,
+        name: 'iPhone',
+        pair: payload.secret,
+      })
+      expect(phone.answer).toMatchObject({ ok: true })
+      await vi.waitFor(() => expect(phone.frames[0]).toMatchObject({ channel: 'server.welcome' }))
+      await vi.waitFor(() =>
+        expect(desktop.messages).toContainEqual(
+          expect.objectContaining({
+            channel: 'phone.changed',
+            data: expect.objectContaining({
+              devices: [expect.objectContaining({ name: 'iPhone', connected: true })],
+            }),
+          }),
+        ),
+      )
+
+      send(phone, { id: 'info', method: 'system.info', params: {} })
+      send(phone, { id: 'shell', method: 'terminal.close', params: { terminalId: 't' } })
+      send(phone, { id: 'pair', method: 'phone.startPairing', params: {} })
+      send(phone, { id: 'rename', method: 'thread.rename', params: { threadId: 't', title: 'x' } })
+      await vi.waitFor(() => expect(phone.frames.filter((frame) => 'id' in frame)).toHaveLength(4))
+      const answers = Object.fromEntries(
+        phone.frames.filter((frame) => 'id' in frame).map((frame) => [frame['id'], frame]),
+      )
+      expect(answers['info']).toMatchObject({ result: { protocolVersion: expect.any(Number) } })
+      expect(answers['shell']).toMatchObject({ error: { code: 'forbidden' } })
+      expect(answers['pair']).toMatchObject({ error: { code: 'forbidden' } })
+      expect(answers['rename']).toMatchObject({ result: {} })
+      expect(state.renamed).toEqual(['t'])
+      expect(phone.frames.some((frame) => frame['channel'] === 'phone.changed')).toBe(false)
+      phone.socket.terminate()
+    } finally {
+      desktop.client.terminate()
+    }
   })
 })

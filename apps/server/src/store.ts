@@ -60,6 +60,7 @@ const PROVIDER_CONTEXT_SETTING = 'provider-context'
 const ACCOUNT_CONTEXT_SETTING = 'provider-account-context'
 const FEEDBACK_LEDGER_SETTING = 'feedback-ledger'
 const MODEL_LISTS_SETTING = 'model-lists'
+const PHONE_ACCESS_SETTING = 'phone-access'
 const LIMIT_SNAPSHOT_SETTING = 'limit-snapshot'
 const AUTOMATIC_BACKGROUND_MODEL_PREFERENCE: BackgroundModelPreference = Object.freeze({
   mode: 'automatic',
@@ -2388,6 +2389,15 @@ export class Store {
 
   setFeedbackLedger(value: string): void {
     this.#writeAppSetting.run(FEEDBACK_LEDGER_SETTING, value)
+  }
+
+  /** Whether phones may connect, and the paired phones' public keys, as `PhoneAccess` serialized them. */
+  phoneAccessState(): string | undefined {
+    return sqliteRow<StringValueRow>(this.#readAppSetting, PHONE_ACCESS_SETTING)?.value
+  }
+
+  setPhoneAccessState(value: string): void {
+    this.#writeAppSetting.run(PHONE_ACCESS_SETTING, value)
   }
 
   /** The last good model list per source, as `ModelListCache` serialized it. */

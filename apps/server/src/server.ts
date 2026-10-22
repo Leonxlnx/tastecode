@@ -32,6 +32,13 @@ import { DEFAULT_PORT } from './server-config.js'
 import { Store } from './store.js'
 import { createProjectListProjector, type ProjectListState } from './project-list.js'
 import { browseFolders } from './project-browser.js'
+import {
+  DEFAULT_PHONE_PORT,
+  PHONE_METHODS,
+  PhoneAccess,
+  type PhoneLinkSocket,
+} from './phone-access.js'
+import { readCredential, writeCredential } from './credentials.js'
 import type { PushSocket } from './push-bus.js'
 import { imageFileName, materializeAttachment } from './uploaded-attachment.js'
 import type { UsageHistoryService } from './usage-history.js'
@@ -540,6 +547,34 @@ export function startServer(
     })
   })
 
+  /** Phone links may call only `PHONE_METHODS`. */
+  const phoneLinks = new WeakSet<ClientSocket>()
+  const phoneAccess = new PhoneAccess({
+    store,
+    keys: {
+      read: () => {
+        try {
+          return readCredential(PHONE_KEY_CREDENTIAL)
+        } catch {
+          return undefined
+        }
+      },
+      write: (value) => writeCredential(PHONE_KEY_CREDENTIAL, value),
+    },
+    port: Number(process.env['HARNESS_PHONE_PORT'] ?? DEFAULT_PHONE_PORT),
+    onConnection: (link: PhoneLinkSocket) => {
+      phoneLinks.add(link)
+      acceptConnection(link, (message, closed) => {
+        link.onMessage(message)
+        link.onClose(closed)
+      })
+    },
+    onChanged: (status) => push.broadcast('phone.changed', status),
+  })
+  wss.once('listening', () => {
+    void phoneAccess.resume().catch(() => undefined)
+  })
+
   function acceptConnection(
     socket: ClientSocket,
     listen: (message: (raw: string) => void, closed: () => void) => void,
@@ -586,6 +621,10 @@ export function startServer(
     // client's call hangs until the socket closes.
     if (!isMethodName(method)) {
       respondError(socket, id, ErrorCode.BAD_REQUEST, `unknown method: ${method}`)
+      return
+    }
+    if (phoneLinks.has(socket) && !PHONE_METHODS.has(method)) {
+      respondError(socket, id, ErrorCode.FORBIDDEN, `${method} is not available from a phone`)
       return
     }
     // Store reads that arrived in the same batch answer first; see PROVIDER_READS.
@@ -1537,6 +1576,21 @@ export function startServer(
       case 'sidebar.settings':
         return store.sidebarSettings()
 
+      case 'phone.status':
+        return phoneAccess.status()
+
+      case 'phone.setEnabled':
+        return phoneAccess.setEnabled(parseParams(method, params).enabled)
+
+      case 'phone.startPairing':
+        return phoneAccess.startPairing()
+
+      case 'phone.cancelPairing':
+        return phoneAccess.cancelPairing()
+
+      case 'phone.removeDevice':
+        return phoneAccess.removeDevice(parseParams(method, params).deviceId)
+
       case 'sidebar.updateSettings': {
         const update = parseParams(method, params)
         const settings = store.updateSidebarSettings({
@@ -1590,6 +1644,7 @@ export function startServer(
       usageHistoryClosing = true
       await usageHistory?.then((service) => service.dispose()).catch(() => undefined)
       const orchestratorClosed = orchestrator.disposeAll()
+      await phoneAccess.close().catch(() => undefined)
       for (const socket of wss.clients) socket.terminate()
       const results = await Promise.allSettled([
         orchestratorClosed,
@@ -1609,6 +1664,8 @@ export function startServer(
     },
   }
 }
+
+const PHONE_KEY_CREDENTIAL = 'phone-link.server-key'
 
 /**
  * Which pages may open a socket to us.
