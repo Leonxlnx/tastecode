@@ -113,7 +113,7 @@ private struct FolderList: View {
         ForEach(matching(listing)) { entry in
           NavigationLink(value: entry.path) {
             HStack(spacing: 12) {
-              Image(systemName: entry.repository ? "arrow.triangle.branch" : "folder")
+              Image(systemName: "folder")
                 .font(.body)
                 .foregroundStyle(.secondary)
                 .frame(width: 22)
