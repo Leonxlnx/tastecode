@@ -59,7 +59,8 @@ struct Composer: View {
       if !queue.isEmpty {
         QueueLines(items: queue, canSteer: canSteer, onSteer: onSteer, onUnqueue: onUnqueue, onMove: onMove)
           .padding(.horizontal, 16)
-          .padding(.top, 12)
+          .padding(.top, 14)
+          .transition(.opacity.combined(with: .move(edge: .bottom)))
       }
       if !images.isEmpty {
         ImageStrip(images: $images)
@@ -87,6 +88,7 @@ struct Composer: View {
       .padding(.trailing, 8)
       .padding(.bottom, 8)
     }
+    .animation(.smooth(duration: 0.32), value: queue.isEmpty)
     .glassEffect(.regular, in: .rect(cornerRadius: 26, style: .continuous))
     .onAppear { text = model.drafts[draftKey] ?? "" }
     .onChange(of: text) { model.drafts[draftKey] = text }
@@ -376,6 +378,8 @@ private struct MenuLabel: View {
   }
 }
 
+/// What waits behind the running turn, in the order it will run: numbered,
+/// each with Send Now and remove, and long-press to reorder.
 private struct QueueLines: View {
   let items: [QueuedView]
   let canSteer: Bool
@@ -384,48 +388,97 @@ private struct QueueLines: View {
   let onMove: (String, _ up: Bool) -> Void
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 10) {
-      ForEach(items) { item in
-        HStack(spacing: 10) {
-          Image(systemName: "arrow.turn.down.right")
-            .font(.footnote)
-            .foregroundStyle(.tertiary)
-          Text(item.text)
-            .font(.subheadline)
-            .foregroundStyle(.secondary)
-            .lineLimit(1)
-          Spacer(minLength: 8)
-          if canSteer {
-            Button("Send Now") { onSteer(item.id) }
-              .font(.subheadline.weight(.medium))
-              .buttonStyle(.plain)
-          }
-          Button {
-            onUnqueue(item.id)
-          } label: {
-            Image(systemName: "xmark")
-              .font(.caption.weight(.semibold))
-              .foregroundStyle(.secondary)
-              .frame(width: 24, height: 24)
-              .contentShape(.rect)
-          }
-          .buttonStyle(.plain)
-          .accessibilityLabel("Remove from the queue")
-        }
-        .contentShape(.rect)
-        .contextMenu {
-          if canSteer {
-            Button("Send Now", systemImage: "arrow.up.circle") { onSteer(item.id) }
-          }
-          if item.id != items.first?.id {
-            Button("Move Up", systemImage: "arrow.up") { onMove(item.id, true) }
-          }
-          if item.id != items.last?.id {
-            Button("Move Down", systemImage: "arrow.down") { onMove(item.id, false) }
-          }
-          Button("Remove", systemImage: "trash", role: .destructive) { onUnqueue(item.id) }
+    VStack(alignment: .leading, spacing: 0) {
+      Text(items.count == 1 ? "Up next" : "Up next · \(items.count)")
+        .font(.caption.weight(.semibold))
+        .foregroundStyle(.secondary)
+        .padding(.bottom, 8)
+      VStack(alignment: .leading, spacing: 2) {
+        ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+          row(item, number: index + 1)
+            .transition(
+              .asymmetric(
+                insertion: .opacity.combined(with: .offset(y: 10)),
+                removal: .opacity.combined(with: .scale(scale: 0.96, anchor: .leading))))
         }
       }
+      Divider()
+        .padding(.top, 10)
+    }
+    .animation(.smooth(duration: 0.32), value: items)
+  }
+
+  private func row(_ item: QueuedView, number: Int) -> some View {
+    HStack(alignment: .firstTextBaseline, spacing: 10) {
+      Text("\(number)")
+        .font(.footnote.monospacedDigit().weight(.medium))
+        .foregroundStyle(.tertiary)
+        .frame(width: 14, alignment: .leading)
+      VStack(alignment: .leading, spacing: 3) {
+        if !item.text.isEmpty {
+          Text(item.text)
+            .font(.subheadline)
+            .lineLimit(2)
+        }
+        if item.images > 0 {
+          Label(item.images == 1 ? "1 picture" : "\(item.images) pictures", systemImage: "photo")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+      }
+      .frame(maxWidth: .infinity, alignment: .leading)
+      if canSteer && !item.pending {
+        Button {
+          onSteer(item.id)
+        } label: {
+          Image(systemName: "arrow.up.circle")
+            .font(.body)
+            .frame(width: 30, height: 30)
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.secondary)
+        .accessibilityLabel("Send now")
+      }
+      Button {
+        onUnqueue(item.id)
+      } label: {
+        Image(systemName: "xmark")
+          .font(.caption.weight(.semibold))
+          .frame(width: 30, height: 30)
+          .contentShape(.rect)
+      }
+      .buttonStyle(.plain)
+      .foregroundStyle(.tertiary)
+      .disabled(item.pending)
+      .accessibilityLabel("Remove from the queue")
+    }
+    .opacity(item.pending ? 0.5 : 1)
+    .contentShape(.rect)
+    .contextMenu {
+      if canSteer && !item.pending {
+        Button("Send Now", systemImage: "arrow.up.circle") { onSteer(item.id) }
+      }
+      if item.id != items.first?.id && !item.pending {
+        Button("Move Up", systemImage: "arrow.up") { onMove(item.id, true) }
+      }
+      if item.id != items.last?.id && !item.pending {
+        Button("Move Down", systemImage: "arrow.down") { onMove(item.id, false) }
+      }
+      Button("Remove", systemImage: "trash", role: .destructive) { onUnqueue(item.id) }
+        .disabled(item.pending)
+    } preview: {
+      // The row lives on the composer's glass; lifted alone it needs its own ground.
+      VStack(alignment: .leading, spacing: 4) {
+        Text("Queued \(number) of \(items.count)")
+          .font(.caption.weight(.semibold))
+          .foregroundStyle(.secondary)
+        Text(item.text.isEmpty ? "Pictures only" : item.text)
+          .font(.subheadline)
+      }
+      .padding(16)
+      .frame(width: 300, alignment: .leading)
+      .background(Color(.systemBackground))
     }
   }
 }
