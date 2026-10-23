@@ -1663,6 +1663,11 @@ export const methods = {
               closedAt: z.number().optional(),
               /** The private checkout branch, when this session is isolated. */
               worktreeBranch: z.string().optional(),
+              /**
+               * The model of the chat's shared setup (`thread.settings`), so a
+               * list can show or filter by it. Absent until a client chose one.
+               */
+              model: z.string().min(1).optional(),
             }),
           ),
         }),

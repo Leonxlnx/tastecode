@@ -2298,6 +2298,16 @@ describe('provider account contracts', () => {
       methods['projects.list'].result.parse({ projects: [project] }).projects[0]?.sessions[0]
         ?.accountId,
     ).toBe('work')
+    expect(
+      methods['projects.list'].result.parse({
+        projects: [{ ...project, sessions: [{ ...session, model: 'gpt-5.5' }] }],
+      }).projects[0]?.sessions[0]?.model,
+    ).toBe('gpt-5.5')
+    expect(
+      methods['projects.list'].result.safeParse({
+        projects: [{ ...project, sessions: [{ ...session, model: '' }] }],
+      }).success,
+    ).toBe(false)
     const continued = { ...session, id: 'th3', continuedFrom: 'th2' }
     expect(
       methods['projects.list'].result.parse({ projects: [{ ...project, sessions: [continued] }] })
