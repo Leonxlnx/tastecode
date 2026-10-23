@@ -21,6 +21,13 @@ struct SettingsSheet: View {
             }
           }
         }
+        Section("Interface") {
+          NavigationLink {
+            AppearanceSettings()
+          } label: {
+            SettingsLabel("Appearance", systemImage: "textformat.size")
+          }
+        }
         Section("App") {
           NavigationLink {
             AboutSettings()

@@ -32,6 +32,7 @@ struct RootView: View {
         Color(.systemBackground)
       }
     }
+    .modifier(AppearanceModifier())
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .tint(.primary)
     .environment(model)
