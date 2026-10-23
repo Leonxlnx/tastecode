@@ -61,7 +61,6 @@ struct Transcript: View {
         .padding(.horizontal, 20)
         .padding(.top, 14)
         .padding(.bottom, 24)
-        .scrollTargetLayout()
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { stackHeight = $0 }
         Color.clear
           .frame(height: filler)
@@ -128,7 +127,10 @@ struct Transcript: View {
         Task {
           // One layout pass first, so the room under the message exists to scroll into.
           try? await Task.sleep(for: .milliseconds(60))
-          withAnimation(.smooth(duration: 0.45)) { position.scrollTo(id: lastUser, anchor: .top) }
+          // By offset, not by id: an id target makes the stack a scroll target
+          // layout, which shifted the column sideways whenever a row resized.
+          guard let top = rowTops[lastUser] else { return }
+          withAnimation(.smooth(duration: 0.45)) { position.scrollTo(y: max(0, top - 8)) }
         }
       } else if let pinned, !store.order.contains(pinned) {
         // The sent message came back from the computer under its own id.
