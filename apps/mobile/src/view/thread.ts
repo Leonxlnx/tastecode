@@ -236,12 +236,22 @@ export function stepRuns(items: readonly Item[]): StepRunView[] {
     if (item.type === 'message') {
       flush()
       runs.push({ id: `run:${item.id}`, summary: null, steps: [stepView(item)] })
+    } else if (item.type === 'reasoning') {
+      // A thought is a line of its own, worded as the desktop words it.
+      flush()
+      runs.push({ id: `run:${item.id}`, summary: thoughtLabel(item), steps: [stepView(item)] })
     } else {
       calls.push(item)
     }
   }
   flush()
   return runs
+}
+
+/** "Thought", or "Thought for 12s" once it took a second or more, as on the desktop. */
+function thoughtLabel(item: Item): string {
+  if (item.durationMs === undefined || item.durationMs < 1000) return 'Thought'
+  return `Thought for ${duration(item.durationMs)}`
 }
 
 /** A turn's length as the desktop writes it: "3m 18s", "1h 2m 5s". */

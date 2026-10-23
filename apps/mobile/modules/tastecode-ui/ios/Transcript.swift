@@ -314,7 +314,7 @@ struct StepsRow: View {
       if built {
         // The steps open to their measured height, so the rows below move with
         // them instead of jumping, and each step settles in after the one above.
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 14) {
           ForEach(Array(runs.enumerated()), id: \.element.id) { index, run in
             Group {
               if let summary = run.summary {
@@ -338,7 +338,6 @@ struct StepsRow: View {
           }
         }
         .padding(.top, 12)
-        .padding(.leading, 4)
         .fixedSize(horizontal: false, vertical: true)
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { contentHeight = $0 }
         .animation(.smooth(duration: 0.3), value: steps.count)
@@ -369,20 +368,30 @@ private struct StepBatch: View {
             .foregroundStyle(steps.contains(where: \.failed) ? AnyShapeStyle(.red) : AnyShapeStyle(.tertiary))
             .frame(width: 18)
           Text(summary)
-            .font(.footnote)
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+          Spacer(minLength: 8)
           Image(systemName: "chevron.right")
-            .font(.system(size: 9, weight: .bold))
+            .font(.system(size: 10, weight: .semibold))
             .foregroundStyle(.tertiary)
             .rotationEffect(.degrees(open ? 90 : 0))
-          Spacer(minLength: 0)
         }
         .contentShape(.rect)
       }
       .buttonStyle(.plain)
       if open {
         VStack(alignment: .leading, spacing: 10) {
-          ForEach(steps) { step in
-            StepLine(step: step)
+          if steps.count == 1, let thought = steps.first, thought.kind == .thinking {
+            // A thought opens to what it thought.
+            Text(inlineMarkdown(thought.detail ?? "", code: .system(.footnote, design: .monospaced)))
+              .font(.subheadline)
+              .foregroundStyle(.secondary)
+              .textSelection(.enabled)
+          } else {
+            ForEach(steps) { step in
+              StepLine(step: step)
+            }
           }
         }
         .padding(.top, 10)
@@ -398,12 +407,8 @@ private struct StepLine: View {
 
   var body: some View {
     if step.kind == .note {
-      // What the agent wrote on the way reads as prose, as on the desktop.
-      Text(inlineMarkdown(step.title, code: .system(.footnote, design: .monospaced)))
-        .font(.subheadline)
-        .foregroundStyle(.secondary)
-        .lineSpacing(2)
-        .textSelection(.enabled)
+      // What the agent wrote on the way reads exactly like its reply.
+      MarkdownView(markdown: step.title)
         .frame(maxWidth: .infinity, alignment: .leading)
     } else {
       line

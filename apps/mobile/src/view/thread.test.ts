@@ -121,11 +121,13 @@ describe('thread rows', () => {
       step({ id: 'a', type: 'command', command: 'ls' }),
       step({ id: 'b', type: 'command', command: 'pwd' }),
       step({ id: 'n', type: 'message', role: 'assistant', text: 'Looked around.' }),
+      step({ id: 't', type: 'reasoning', text: 'Which file?', durationMs: 12_000 }),
       step({ id: 'c', type: 'file_change', path: 'a.ts' }),
     ])
     expect(runs.map((run) => [run.summary, run.steps.map((entry) => entry.id)])).toEqual([
       ['Ran 2 commands', ['a', 'b']],
       [null, ['n']],
+      ['Thought for 12s', ['t']],
       [null, ['c']],
     ])
   })
