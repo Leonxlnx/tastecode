@@ -1,13 +1,6 @@
 import type { ApprovalRequest, Item, ProviderId, UserInputRequest } from '@harness/contracts'
 import type { ThreadView } from '../state/thread-model'
-import type {
-  ApprovalView,
-  QuestionsView,
-  RowView,
-  StepKind,
-  StepRunView,
-  StepView,
-} from './types'
+import type { ApprovalView, QuestionsView, RowView, StepKind, StepRunView, StepView } from './types'
 
 /**
  * A transcript row before wording: messages alone, steps of work together.
