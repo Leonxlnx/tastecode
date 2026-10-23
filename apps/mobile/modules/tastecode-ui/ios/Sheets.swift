@@ -10,9 +10,27 @@ struct SettingsSheet: View {
   var body: some View {
     NavigationStack {
       Form {
-        Section {
-          NavigationLink("Devices") { DevicesSettings { dismiss() } }
-          NavigationLink("About") { AboutSettings() }
+        Section("Connections") {
+          NavigationLink {
+            DevicesSettings { dismiss() }
+          } label: {
+            LabeledContent {
+              Text(model.link == nil ? "" : "1")
+            } label: {
+              SettingsLabel("Devices", systemImage: "laptopcomputer")
+            }
+          }
+        }
+        Section("App") {
+          NavigationLink {
+            AboutSettings()
+          } label: {
+            LabeledContent {
+              Text(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "")
+            } label: {
+              SettingsLabel("About", systemImage: "info.circle")
+            }
+          }
         }
       }
       .navigationTitle("Settings")
@@ -54,6 +72,25 @@ private struct DevicesSettings: View {
     }
     .navigationTitle("Devices")
     .navigationBarTitleDisplayMode(.inline)
+  }
+}
+
+/// A settings row's name with its symbol in the text's colour, not the tint.
+private struct SettingsLabel: View {
+  let title: String
+  let systemImage: String
+
+  init(_ title: String, systemImage: String) {
+    self.title = title
+    self.systemImage = systemImage
+  }
+
+  var body: some View {
+    Label {
+      Text(title)
+    } icon: {
+      Image(systemName: systemImage).foregroundStyle(.primary)
+    }
   }
 }
 
