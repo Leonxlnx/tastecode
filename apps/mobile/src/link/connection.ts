@@ -27,6 +27,8 @@ type Pending = {
 const MAX_RETRY_MS = 15_000
 const HEALTH_INTERVAL_MS = 20_000
 const QUIET_BEFORE_CHECK_MS = 25_000
+/** How long an attempt someone sees stays on screen, so an instant refusal does not flash. */
+const SHOWN_ATTEMPT_MS = 600
 const REFUSALS = new Set(['not_paired', 'pairing_expired'])
 
 /**
@@ -50,13 +52,18 @@ export class Connection {
   #retryDelay = 0
   #healthTimer: ReturnType<typeof setInterval> | undefined
   #appState: string = AppState.currentState ?? 'active'
+  #network: string | undefined
   #onPairingChange: (pairing: Pairing) => void = () => {}
 
   constructor() {
     TasteLink.addListener('onLinkState', (event) => this.#onState(event))
     TasteLink.addListener('onLinkFrames', (event) => this.#onFrames(event))
     TasteLink.addListener('onPathChange', (event) => {
-      if (event.satisfied && this.status.get().phase !== 'open') this.reconnectNow()
+      // The first report is the network the link started on; a repeat of it changes nothing.
+      const network = `${event.satisfied} ${event.wifi} ${event.expensive}`
+      const changed = this.#network !== undefined && network !== this.#network
+      this.#network = network
+      if (changed && event.satisfied && this.status.get().phase !== 'open') this.#retry(false)
     })
     AppState.addEventListener('change', (state) => this.#onAppState(state))
   }
@@ -87,10 +94,9 @@ export class Connection {
     this.status.set({ phase: 'idle' })
   }
 
+  /** Tries again now, as Try Again asks; the screens show the attempt. */
   reconnectNow(): void {
-    if (!this.#pairing || this.status.get().phase === 'refused') return
-    this.#retryDelay = 0
-    this.#connect()
+    this.#retry(true)
   }
 
   request<M extends MethodName>(
@@ -154,16 +160,31 @@ export class Connection {
     this.#queue.push({ id, frame })
   }
 
-  #connect(): void {
+  #retry(shown: boolean): void {
+    if (!this.#pairing || this.status.get().phase === 'refused') return
+    this.#retryDelay = 0
+    this.#connect(shown)
+  }
+
+  /**
+   * Starts an attempt. One in the background leaves a failure on screen until
+   * it opens or fails differently, so the screens do not flicker on every try.
+   */
+  #connect(shown = false): void {
     const pairing = this.#pairing
     if (!pairing) return
     clearTimeout(this.#retryTimer)
     const previous = this.status.get()
-    this.status.set({
-      phase: 'connecting',
-      since: Date.now(),
-      error: previous.phase === 'waiting' ? previous.error : undefined,
-    })
+    if (shown || previous.phase !== 'waiting') {
+      this.status.set({
+        phase: 'connecting',
+        since: previous.phase === 'connecting' ? previous.since : Date.now(),
+        error:
+          previous.phase === 'waiting' || previous.phase === 'connecting'
+            ? previous.error
+            : undefined,
+      })
+    }
     const hello = JSON.stringify({
       v: 1,
       name: phoneName(),
@@ -192,21 +213,33 @@ export class Connection {
       return
     }
     clearInterval(this.#healthTimer)
-    const wasOpen = this.status.get().phase === 'open'
+    const previous = this.status.get()
     this.#rejectSent()
     if (REFUSALS.has(event.code) && (event.code === 'not_paired' || this.#pairing?.secret)) {
       this.status.set({ phase: 'refused', error: event.error, code: event.code })
       return
     }
-    // A link that dropped while open usually comes straight back.
-    const delay = wasOpen ? 300 : this.#nextDelay(event.code)
-    this.status.set({
-      phase: 'waiting',
-      error: event.error,
-      code: event.code,
-      retryAt: Date.now() + delay,
-    })
-    this.#retryTimer = setTimeout(() => this.#connect(), delay)
+    if (previous.phase === 'open') {
+      // A link that dropped while open usually comes straight back.
+      this.status.set({ phase: 'connecting', since: Date.now(), error: event.error })
+      this.#retryTimer = setTimeout(() => this.#connect(), 300)
+      return
+    }
+    const delay = this.#nextDelay(event.code)
+    const shownFor =
+      previous.phase === 'connecting' ? Date.now() - previous.since : SHOWN_ATTEMPT_MS
+    this.#retryTimer = setTimeout(
+      () => {
+        this.status.set({
+          phase: 'waiting',
+          error: event.error,
+          code: event.code,
+          retryAt: Date.now() + delay,
+        })
+        this.#retryTimer = setTimeout(() => this.#connect(), delay)
+      },
+      Math.max(0, SHOWN_ATTEMPT_MS - shownFor),
+    )
   }
 
   #opened(host: string, deviceId: string, serverName: string): void {
@@ -322,7 +355,7 @@ export class Connection {
     if (Date.now() - this.#lastFrameAt < QUIET_BEFORE_CHECK_MS) return
     const attempt = this.#attempt
     this.request('system.info', {}, 8_000).catch(() => {
-      if (attempt === this.#attempt && this.status.get().phase === 'open') this.reconnectNow()
+      if (attempt === this.#attempt && this.status.get().phase === 'open') this.#retry(false)
     })
   }
 
@@ -335,7 +368,7 @@ export class Connection {
       this.#lastFrameAt = 0
       this.#checkHealth()
     } else {
-      this.reconnectNow()
+      this.#retry(false)
     }
   }
 }
