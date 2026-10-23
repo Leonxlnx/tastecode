@@ -1763,6 +1763,15 @@ export const methods = {
     }),
     result: z.object({ path: z.string() }),
   },
+  /**
+   * An image one of a chat's messages attached, for a client that cannot read
+   * this computer's files (a paired phone). Only a path the chat's messages
+   * name is readable, and only as an image.
+   */
+  'attachments.read': {
+    params: z.object({ threadId: z.string().min(1), path: z.string().min(1).max(4096) }),
+    result: z.object({ mimeType: z.string(), data: z.string() }),
+  },
   'thread.rename': {
     params: z.object({ threadId: z.string(), title: z.string() }),
     result: z.object({}),

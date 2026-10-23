@@ -2381,3 +2381,16 @@ describe('provider account contracts', () => {
     )
   })
 })
+
+describe('attachments.read', () => {
+  it('names one chat and one path', () => {
+    const read = methods['attachments.read']
+    expect(read.params.safeParse({ threadId: 't', path: '/tmp/a.png' }).success).toBe(true)
+    expect(read.params.safeParse({ threadId: '', path: '/tmp/a.png' }).success).toBe(false)
+    expect(read.params.safeParse({ threadId: 't', path: '' }).success).toBe(false)
+    expect(read.result.parse({ mimeType: 'image/png', data: 'AAAA' })).toEqual({
+      mimeType: 'image/png',
+      data: 'AAAA',
+    })
+  })
+})
