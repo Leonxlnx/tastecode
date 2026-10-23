@@ -2,10 +2,13 @@ import type { ApprovalRequest, Item, ProviderId, UserInputRequest } from '@harne
 import type { ThreadView } from '../state/thread-model'
 import type { ApprovalView, QuestionsView, RowView, StepKind, StepView } from './types'
 
-/** A transcript row before wording: messages alone, consecutive steps of work together. */
+/**
+ * A transcript row before wording: messages alone, steps of work together.
+ * A settled turn's work is one group, with its notes inside, above its answer.
+ */
 export type Row =
   | { key: string; kind: 'user' | 'assistant' | 'notice' | 'error'; item: Item }
-  | { key: string; kind: 'steps'; items: Item[]; live: boolean; turnId: string }
+  | { key: string; kind: 'steps'; items: Item[]; live: boolean; settled: boolean; turnId: string }
 
 const STEP_TYPES = new Set<Item['type']>([
   'command',
@@ -16,7 +19,35 @@ const STEP_TYPES = new Set<Item['type']>([
   'unknown',
 ])
 
-export function buildRows(view: ThreadView): Row[] {
+function messageRow(item: Item): Row {
+  const kind =
+    item.type === 'message'
+      ? item.role === 'user'
+        ? 'user'
+        : 'assistant'
+      : item.type === 'notice'
+        ? 'notice'
+        : 'error'
+  return { key: item.id, kind, item }
+}
+
+const isAnswer = (item: Item) =>
+  item.type === 'message' && item.role === 'assistant' && item.status === 'completed'
+
+/**
+ * The reply a settled turn ends on, as the desktop picks it: the last one
+ * marked as the final answer, else the last one with no phase at all.
+ */
+function finalAnswer(items: readonly Item[]): Item | undefined {
+  const answers = items.filter(isAnswer)
+  return (
+    answers.findLast((item) => item.phase === 'final_answer') ??
+    answers.findLast((item) => item.phase === undefined)
+  )
+}
+
+/** A turn while it works: its steps in batches between the messages, as they come. */
+function liveRows(items: readonly Item[], live: boolean): Row[] {
   const rows: Row[] = []
   let steps: Item[] = []
   const flush = () => {
@@ -27,30 +58,77 @@ export function buildRows(view: ThreadView): Row[] {
         kind: 'steps',
         items: steps,
         live: false,
+        settled: false,
         turnId: first.turnId,
       })
     }
     steps = []
   }
-  for (const item of view.items) {
-    if (STEP_TYPES.has(item.type)) {
-      steps.push(item)
-      continue
+  for (const item of items) {
+    if (STEP_TYPES.has(item.type)) steps.push(item)
+    else {
+      flush()
+      rows.push(messageRow(item))
     }
-    flush()
-    const kind =
-      item.type === 'message'
-        ? item.role === 'user'
-          ? 'user'
-          : 'assistant'
-        : item.type === 'notice'
-          ? 'notice'
-          : 'error'
-    rows.push({ key: item.id, kind, item })
   }
   flush()
   const last = rows.at(-1)
-  if (view.running && last?.kind === 'steps') rows[rows.length - 1] = { ...last, live: true }
+  if (live && last?.kind === 'steps') rows[rows.length - 1] = { ...last, live: true }
+  return rows
+}
+
+/**
+ * A settled turn the desktop way: the prompt, then one group holding every
+ * step and every note the agent wrote on the way, then the answer it ended on.
+ */
+function settledRows(items: readonly Item[]): Row[] {
+  const answer = finalAnswer(items)
+  const work = items.filter(
+    (item) =>
+      item !== answer &&
+      // Reasoning with nothing written has nothing to read; the desktop leaves it out too.
+      !(item.type === 'reasoning' && !item.text?.trim()) &&
+      (STEP_TYPES.has(item.type) || (item.type === 'message' && item.role === 'assistant')),
+  )
+  // Without an answer the turn has nothing to end on; the desktop leaves its batches in place too.
+  if (!answer || !work.some((item) => STEP_TYPES.has(item.type))) return liveRows(items, false)
+  const rows: Row[] = []
+  let placed = false
+  for (const item of items) {
+    if (STEP_TYPES.has(item.type) && !work.includes(item)) continue
+    if (item === answer || !work.includes(item)) {
+      rows.push(messageRow(item))
+    } else if (!placed) {
+      placed = true
+      rows.push({
+        key: `work:${item.turnId}`,
+        kind: 'steps',
+        items: work,
+        live: false,
+        settled: true,
+        turnId: item.turnId,
+      })
+    }
+  }
+  return rows
+}
+
+export function buildRows(view: ThreadView): Row[] {
+  const rows: Row[] = []
+  let turn: Item[] = []
+  const flush = () => {
+    const first = turn[0]
+    if (!first) return
+    const working = view.running && first.turnId === view.activeTurnId
+    const settled = !working && view.turnEnded[first.turnId] !== undefined
+    rows.push(...(settled ? settledRows(turn) : liveRows(turn, working)))
+    turn = []
+  }
+  for (const item of view.items) {
+    if (turn[0] && turn[0].turnId !== item.turnId) flush()
+    turn.push(item)
+  }
+  flush()
   return rows
 }
 
@@ -60,6 +138,7 @@ export function sameRow(left: Row, right: Row): boolean {
   if (left.kind === 'steps' && right.kind === 'steps') {
     return (
       left.live === right.live &&
+      left.settled === right.settled &&
       left.items.length === right.items.length &&
       left.items.every((item, index) => item === right.items[index])
     )
@@ -75,9 +154,14 @@ export function rowView(row: Row, view: ThreadView): RowView {
       key: row.key,
       kind: 'steps',
       live: row.live,
-      summary: row.live ? liveSummary(row.items) : summarize(row.items),
+      settled: row.settled,
+      summary: row.settled
+        ? `Worked for ${workedFor(row.items, from, to)}`
+        : row.live
+          ? liveSummary(row.items)
+          : summarize(row.items),
       duration:
-        !row.live && from !== undefined && to !== undefined && to > from
+        !row.settled && !row.live && from !== undefined && to !== undefined && to > from
           ? duration(to - from)
           : null,
       failed: row.items.some(failed),
@@ -132,7 +216,46 @@ function stepKind(item: Item): StepKind {
 }
 
 /** One step the agent took, worded the way the desktop's activity rows word it. */
+/** A turn's length as the desktop writes it: "3m 18s", "1h 2m 5s". */
+function workedFor(
+  items: readonly Item[],
+  from: number | undefined,
+  to: number | undefined,
+): string {
+  const ms =
+    from !== undefined && to !== undefined
+      ? to - from
+      : Math.max(...items.map((item) => item.createdAt)) -
+        Math.min(...items.map((item) => item.createdAt))
+  let remaining = Math.max(1, Math.round(ms / 1000))
+  const parts: string[] = []
+  for (const [unit, seconds] of [
+    ['d', 86_400],
+    ['h', 3_600],
+    ['m', 60],
+    ['s', 1],
+  ] as const) {
+    const value = Math.floor(remaining / seconds)
+    remaining %= seconds
+    if (value > 0) parts.push(`${value}${unit}`)
+  }
+  return parts.join(' ')
+}
+
 export function stepView(item: Item): StepView {
+  if (item.type === 'message') {
+    // A note the agent wrote on the way, kept with the work it explains.
+    return {
+      id: item.id,
+      kind: 'note',
+      title: item.text?.trim() ?? '',
+      detail: null,
+      added: null,
+      removed: null,
+      running: false,
+      failed: false,
+    }
+  }
   const kind = stepKind(item)
   let title: string
   let detail: string | null = null

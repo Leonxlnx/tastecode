@@ -104,7 +104,8 @@ export type SetupView = {
   switchable: boolean
 }
 
-export type StepKind = 'command' | 'file' | 'tool' | 'agent' | 'thinking' | 'plan' | 'other'
+export type StepKind =
+  'command' | 'file' | 'tool' | 'agent' | 'thinking' | 'plan' | 'note' | 'other'
 
 export type StepView = {
   id: string
@@ -124,6 +125,8 @@ export type RowView =
       key: string
       kind: 'steps'
       live: boolean
+      /** A settled turn's whole work, folded above its answer as "Worked for …". */
+      settled: boolean
       summary: string
       /** How long the turn took, once it ended. */
       duration: string | null

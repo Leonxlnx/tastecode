@@ -75,6 +75,46 @@ describe('thread rows', () => {
     })
   })
 
+  it('folds a settled turn into one Worked for group above its answer, notes inside', () => {
+    const model = new ThreadModel()
+    const say = (id: string, text: string, createdAt: number) =>
+      step({ id, type: 'message', role: 'assistant', text, createdAt })
+    model.apply({
+      type: 'turn.started',
+      turn: { id: 't1', threadId: 'x', status: 'running', createdAt: 1_000 },
+    })
+    model.apply({
+      type: 'item.completed',
+      item: step({ id: 'u', type: 'message', role: 'user', text: 'Fix it' }),
+    })
+    model.apply({ type: 'item.completed', item: step({ id: 'r', type: 'reasoning', text: '' }) })
+    model.apply({ type: 'item.completed', item: step({ id: 'a', type: 'command', command: 'ls' }) })
+    model.apply({ type: 'item.completed', item: say('n', 'Found it, fixing now.', 2_000) })
+    model.apply({
+      type: 'item.completed',
+      item: step({ id: 'b', type: 'file_change', path: 'a.ts' }),
+    })
+    model.apply({ type: 'item.completed', item: say('f', 'Fixed.', 3_000) })
+    // While it works, the note sits between the batches as it came.
+    const live = model.view()
+    expect(
+      buildRows({ ...live, running: true, activeTurnId: 't1' }).map((row) => row.kind),
+    ).toEqual(['user', 'steps', 'assistant', 'steps', 'assistant'])
+    model.apply({ type: 'turn.completed', turnId: 't1', status: 'completed', completedAt: 199_000 })
+    const view = model.view()
+    const rows = buildRows(view)
+    expect(rows.map((row) => row.key)).toEqual(['u', 'work:t1', 'f'])
+    expect(rowView(rows[1]!, view)).toMatchObject({
+      summary: 'Worked for 3m 18s',
+      duration: null,
+      steps: [
+        { kind: 'command' },
+        { kind: 'note', title: 'Found it, fixing now.' },
+        { kind: 'file' },
+      ],
+    })
+  })
+
   it('summarizes steps of every kind in reading order', () => {
     expect(
       summarize([
