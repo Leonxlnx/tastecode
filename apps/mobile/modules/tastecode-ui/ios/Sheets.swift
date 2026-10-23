@@ -1,31 +1,17 @@
 import SwiftUI
 import UIKit
 
-/// Settings, as a list of pages like the system's: the paired computer
+/// Settings, as a list of pages like the system's: the paired devices
 /// first, then the app itself.
 struct SettingsSheet: View {
   @Environment(AppModel.self) private var model
   @Environment(\.dismiss) private var dismiss
 
   var body: some View {
-    let link = model.link
     NavigationStack {
       Form {
         Section {
-          NavigationLink {
-            ComputerSettings { dismiss() }
-          } label: {
-            VStack(alignment: .leading, spacing: 2) {
-              Text(link?.computerName ?? "Computer")
-                .font(.headline)
-              Text(computerStatus(link))
-                .font(.subheadline)
-                .foregroundStyle(link?.phase == .refused ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
-            }
-            .padding(.vertical, 2)
-          }
-        }
-        Section {
+          NavigationLink("Devices") { DevicesSettings { dismiss() } }
           NavigationLink("About") { AboutSettings() }
         }
       }
@@ -38,6 +24,36 @@ struct SettingsSheet: View {
       }
     }
     .presentationDetents([.height(560), .large])
+  }
+}
+
+/// The computers this phone is paired with, one row each. A phone pairs
+/// with one computer today; the list is ready for more.
+private struct DevicesSettings: View {
+  @Environment(AppModel.self) private var model
+  let onForget: () -> Void
+
+  var body: some View {
+    let link = model.link
+    Form {
+      Section {
+        ForEach(link.map { [$0] } ?? [], id: \.phoneKey) { device in
+          NavigationLink {
+            ComputerSettings(onForget: onForget)
+          } label: {
+            VStack(alignment: .leading, spacing: 2) {
+              Text(device.computerName ?? "Computer")
+              Text(computerStatus(device))
+                .font(.subheadline)
+                .foregroundStyle(device.phase == .refused ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
+            }
+            .padding(.vertical, 2)
+          }
+        }
+      }
+    }
+    .navigationTitle("Devices")
+    .navigationBarTitleDisplayMode(.inline)
   }
 }
 
