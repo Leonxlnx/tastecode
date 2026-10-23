@@ -36,7 +36,9 @@ struct Composer: View {
   var onStop: () -> Void = {}
   var onSteer: (String) -> Void = { _ in }
   var onUnqueue: (String) -> Void = { _ in }
-  var onMove: (String, _ up: Bool) -> Void = { _, _ in }
+  var onReorder: (String, _ index: Int) -> Void = { _, _ in }
+  /// Takes a queued prompt out of the queue, for the composer to hold again.
+  var onEdit: ((String) async throws -> TakenPrompt)?
 
   @State private var text = ""
   @State private var images: [PendingImage] = []
@@ -52,12 +54,33 @@ struct Composer: View {
   private var canSend: Bool {
     enabled && !sending && !uploading && (!trimmed.isEmpty || images.contains { $0.path != nil })
   }
+  /// Brings a queued prompt back into the input, ahead of anything typed since.
+  private func edit(_ id: String) {
+    guard let onEdit else { return }
+    Task {
+      do {
+        let taken = try await onEdit(id)
+        let typed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        text = typed.isEmpty ? taken.text : "\(taken.text)\n\n\(text)"
+        let placeholder = UIImage(systemName: "photo") ?? UIImage()
+        for path in taken.attachments where !images.contains(where: { $0.path == path }) {
+          images.append(PendingImage(image: model.images[path] ?? placeholder, path: path))
+        }
+        focused = true
+      } catch {
+        problem = error.localizedDescription
+      }
+    }
+  }
+
   private var showsStop: Bool { running && trimmed.isEmpty && images.isEmpty }
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
       if !queue.isEmpty {
-        QueueLines(items: queue, canSteer: canSteer, onSteer: onSteer, onUnqueue: onUnqueue, onMove: onMove)
+        QueueLines(
+          items: queue, canSteer: canSteer, canEdit: onEdit != nil, onSteer: onSteer, onUnqueue: onUnqueue,
+          onReorder: onReorder, onEdit: edit)
           .padding(.horizontal, 16)
           .padding(.top, 14)
           .transition(.opacity.combined(with: .move(edge: .bottom)))
@@ -378,24 +401,44 @@ private struct MenuLabel: View {
   }
 }
 
-/// What waits behind the running turn, in the order it will run: numbered,
-/// each with Send Now and remove, and long-press to reorder.
+/// What waits behind the running turn, in the order it will run. Drag a
+/// prompt by its handle to reorder, tap it to edit, long-press for the rest.
 private struct QueueLines: View {
   let items: [QueuedView]
   let canSteer: Bool
+  let canEdit: Bool
   let onSteer: (String) -> Void
   let onUnqueue: (String) -> Void
-  let onMove: (String, _ up: Bool) -> Void
+  let onReorder: (String, _ index: Int) -> Void
+  let onEdit: (String) -> Void
+
+  @State private var dragging: String?
+  @State private var dragOffset: CGFloat = 0
+  @State private var heights: [String: CGFloat] = [:]
+  /// The order a drop chose, shown until the queue itself arrives in it.
+  @State private var dropped: [String]?
+  private let spacing: CGFloat = 2
+
+  private var shown: [QueuedView] {
+    guard let dropped else { return items }
+    let byId = Dictionary(uniqueKeysWithValues: items.map { ($0.id, $0) })
+    let ordered = dropped.compactMap { byId[$0] }
+    return ordered.count == items.count ? ordered : items
+  }
 
   var body: some View {
+    let rows = shown
     VStack(alignment: .leading, spacing: 0) {
-      Text(items.count == 1 ? "Up next" : "Up next · \(items.count)")
+      Text(rows.count == 1 ? "Up next" : "Up next · \(rows.count)")
         .font(.caption.weight(.semibold))
         .foregroundStyle(.secondary)
-        .padding(.bottom, 8)
-      VStack(alignment: .leading, spacing: 2) {
-        ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
-          row(item, number: index + 1)
+        .padding(.bottom, 6)
+      VStack(alignment: .leading, spacing: spacing) {
+        ForEach(rows) { item in
+          row(item, in: rows)
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { heights[item.id] = $0 }
+            .offset(y: offset(of: item.id, in: rows))
+            .zIndex(dragging == item.id ? 1 : 0)
             .transition(
               .asymmetric(
                 insertion: .opacity.combined(with: .offset(y: 10)),
@@ -406,27 +449,42 @@ private struct QueueLines: View {
         .padding(.top, 10)
     }
     .animation(.smooth(duration: 0.32), value: items)
+    .onChange(of: items.map(\.id)) { dropped = nil }
   }
 
-  private func row(_ item: QueuedView, number: Int) -> some View {
-    HStack(alignment: .firstTextBaseline, spacing: 10) {
-      Text("\(number)")
-        .font(.footnote.monospacedDigit().weight(.medium))
+  private func row(_ item: QueuedView, in rows: [QueuedView]) -> some View {
+    let lifted = dragging == item.id
+    return HStack(alignment: .center, spacing: 6) {
+      Image(systemName: "line.3.horizontal")
+        .font(.footnote.weight(.medium))
         .foregroundStyle(.tertiary)
-        .frame(width: 14, alignment: .leading)
-      VStack(alignment: .leading, spacing: 3) {
-        if !item.text.isEmpty {
-          Text(item.text)
-            .font(.subheadline)
-            .lineLimit(2)
+        .frame(width: 28, height: 36)
+        .contentShape(.rect)
+        .gesture(item.pending || rows.count < 2 ? nil : drag(item, in: rows))
+        .accessibilityLabel("Reorder")
+      Button {
+        onEdit(item.id)
+      } label: {
+        VStack(alignment: .leading, spacing: 3) {
+          if !item.text.isEmpty {
+            Text(item.text)
+              .font(.subheadline)
+              .foregroundStyle(.primary)
+              .lineLimit(2)
+              .multilineTextAlignment(.leading)
+          }
+          if item.images > 0 {
+            Label(item.images == 1 ? "1 picture" : "\(item.images) pictures", systemImage: "photo")
+              .font(.caption)
+              .foregroundStyle(.secondary)
+          }
         }
-        if item.images > 0 {
-          Label(item.images == 1 ? "1 picture" : "\(item.images) pictures", systemImage: "photo")
-            .font(.caption)
-            .foregroundStyle(.secondary)
-        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(.rect)
       }
-      .frame(maxWidth: .infinity, alignment: .leading)
+      .buttonStyle(.plain)
+      .disabled(!canEdit || item.pending)
+      .accessibilityHint("Edit")
       if canSteer && !item.pending {
         Button {
           onSteer(item.id)
@@ -453,24 +511,33 @@ private struct QueueLines: View {
       .disabled(item.pending)
       .accessibilityLabel("Remove from the queue")
     }
+    .padding(.vertical, 2)
+    .padding(.trailing, 4)
+    .background {
+      RoundedRectangle(cornerRadius: 12, style: .continuous)
+        .fill(Color(.systemBackground))
+        .shadow(color: .black.opacity(0.12), radius: 10, y: 4)
+        .opacity(lifted ? 1 : 0)
+    }
+    .scaleEffect(lifted ? 1.02 : 1)
     .opacity(item.pending ? 0.5 : 1)
     .contentShape(.rect)
     .contextMenu {
+      if canEdit && !item.pending {
+        Button("Edit", systemImage: "pencil") { onEdit(item.id) }
+      }
       if canSteer && !item.pending {
         Button("Send Now", systemImage: "arrow.up.circle") { onSteer(item.id) }
       }
-      if item.id != items.first?.id && !item.pending {
-        Button("Move Up", systemImage: "arrow.up") { onMove(item.id, true) }
-      }
-      if item.id != items.last?.id && !item.pending {
-        Button("Move Down", systemImage: "arrow.down") { onMove(item.id, false) }
+      if item.id != rows.first?.id && !item.pending {
+        Button("Move to Top", systemImage: "arrow.up.to.line") { reorder(item.id, to: 0, in: rows) }
       }
       Button("Remove", systemImage: "trash", role: .destructive) { onUnqueue(item.id) }
         .disabled(item.pending)
     } preview: {
       // The row lives on the composer's glass; lifted alone it needs its own ground.
       VStack(alignment: .leading, spacing: 4) {
-        Text("Queued \(number) of \(items.count)")
+        Text("Queued \((rows.firstIndex(of: item) ?? 0) + 1) of \(rows.count)")
           .font(.caption.weight(.semibold))
           .foregroundStyle(.secondary)
         Text(item.text.isEmpty ? "Pictures only" : item.text)
@@ -480,6 +547,76 @@ private struct QueueLines: View {
       .frame(width: 300, alignment: .leading)
       .background(Color(.systemBackground))
     }
+  }
+
+  private func drag(_ item: QueuedView, in rows: [QueuedView]) -> some Gesture {
+    // Measured on the screen: the handle moves with the finger, so its own space would halve the drag.
+    DragGesture(minimumDistance: 2, coordinateSpace: .global)
+      .onChanged { value in
+        if dragging == nil {
+          withAnimation(.smooth(duration: 0.2)) { dragging = item.id }
+          UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        }
+        let before = target(of: item.id, in: rows)
+        dragOffset = value.translation.height
+        if target(of: item.id, in: rows) != before {
+          UISelectionFeedbackGenerator().selectionChanged()
+        }
+      }
+      .onEnded { _ in
+        let to = target(of: item.id, in: rows)
+        withAnimation(.smooth(duration: 0.28)) {
+          if to != rows.firstIndex(of: item) {
+            reorder(item.id, to: to, in: rows)
+          }
+          dragging = nil
+          dragOffset = 0
+        }
+      }
+  }
+
+  private func reorder(_ id: String, to index: Int, in rows: [QueuedView]) {
+    var order = rows.map(\.id)
+    guard let from = order.firstIndex(of: id) else { return }
+    order.remove(at: from)
+    order.insert(id, at: min(index, order.count))
+    dropped = order
+    onReorder(id, index)
+  }
+
+  /// Where the dragged prompt would land: past every neighbour it has moved halfway over.
+  private func target(of id: String, in rows: [QueuedView]) -> Int {
+    guard let from = rows.firstIndex(where: { $0.id == id }) else { return 0 }
+    var index = from
+    var left = dragOffset
+    if left > 0 {
+      while index + 1 < rows.count {
+        let next = (heights[rows[index + 1].id] ?? 40) + spacing
+        guard left > next / 2 else { break }
+        left -= next
+        index += 1
+      }
+    } else {
+      while index > 0 {
+        let previous = (heights[rows[index - 1].id] ?? 40) + spacing
+        guard -left > previous / 2 else { break }
+        left += previous
+        index -= 1
+      }
+    }
+    return index
+  }
+
+  /// The dragged prompt follows the finger; the ones it passes step aside.
+  private func offset(of id: String, in rows: [QueuedView]) -> CGFloat {
+    guard let dragging, let from = rows.firstIndex(where: { $0.id == dragging }) else { return 0 }
+    if id == dragging { return dragOffset }
+    guard let index = rows.firstIndex(where: { $0.id == id }) else { return 0 }
+    let to = target(of: dragging, in: rows)
+    let gap = (heights[dragging] ?? 40) + spacing
+    if from < index && index <= to { return -gap }
+    if to <= index && index < from { return gap }
+    return 0
   }
 }
 

@@ -307,6 +307,12 @@ struct SessionDiff: Decodable, Equatable {
   var files: [DiffFile]
 }
 
+/// A queued prompt taken back to edit: its words and the pictures' paths.
+struct TakenPrompt: Decodable {
+  var text: String
+  var attachments: [String]
+}
+
 struct SavedImage: Decodable {
   var path: String
 }

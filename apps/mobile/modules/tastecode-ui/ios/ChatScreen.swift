@@ -161,10 +161,14 @@ private struct ChatBar: View {
       onUnqueue: { id in
         model.perform(["type": "thread.unqueue", "threadId": threadId, "queuedId": id]) { problem = $0 }
       },
-      onMove: { id, up in
+      onReorder: { id, index in
         model.perform([
-          "type": "thread.moveQueued", "threadId": threadId, "queuedId": id, "direction": up ? "up" : "down",
+          "type": "thread.reorderQueued", "threadId": threadId, "queuedId": id, "index": index,
         ]) { problem = $0 }
+      },
+      onEdit: { id in
+        try await model.request(
+          TakenPrompt.self, ["type": "thread.editQueued", "threadId": threadId, "queuedId": id])
       }
     )
   }
