@@ -6,6 +6,7 @@ import UIKit
 struct SettingsSheet: View {
   @Environment(AppModel.self) private var model
   @Environment(\.dismiss) private var dismiss
+  @State private var detent: PresentationDetent = .height(560)
 
   var body: some View {
     NavigationStack {
@@ -23,7 +24,9 @@ struct SettingsSheet: View {
         }
         Section("Interface") {
           NavigationLink {
+            // Its preview and controls need the whole height.
             AppearanceSettings()
+              .onAppear { withAnimation(.smooth) { detent = .large } }
           } label: {
             SettingsLabel("Appearance", systemImage: "textformat.size")
           }
@@ -48,7 +51,7 @@ struct SettingsSheet: View {
         }
       }
     }
-    .presentationDetents([.height(560), .large])
+    .presentationDetents([.height(560), .large], selection: $detent)
   }
 }
 
