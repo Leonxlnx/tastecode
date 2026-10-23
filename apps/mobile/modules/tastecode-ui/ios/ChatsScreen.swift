@@ -14,7 +14,7 @@ struct ChatsScreen: View {
   @State private var query = ""
   @State private var project: String?
   @State private var showArchived = false
-  @State private var showComputer = false
+  @State private var showSettings = false
   @State private var addingProject = false
   @State private var problem: String?
 
@@ -35,8 +35,8 @@ struct ChatsScreen: View {
           }
         }
     }
-    .sheet(isPresented: $showComputer) {
-      ComputerSheet()
+    .sheet(isPresented: $showSettings) {
+      SettingsSheet()
     }
     .sheet(isPresented: $addingProject) {
       FolderBrowser { path in
@@ -138,11 +138,11 @@ struct ChatsScreen: View {
   @ToolbarContentBuilder private var toolbar: some ToolbarContent {
     ToolbarItem(placement: .topBarLeading) {
       Button {
-        showComputer = true
+        showSettings = true
       } label: {
-        Image(systemName: model.link?.phase == .open ? "laptopcomputer" : "laptopcomputer.slash")
+        Image(systemName: "gearshape")
       }
-      .accessibilityLabel("Computer")
+      .accessibilityLabel("Settings")
     }
     ToolbarItem(placement: .topBarTrailing) {
       Menu {

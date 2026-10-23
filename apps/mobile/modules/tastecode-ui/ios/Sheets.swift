@@ -1,9 +1,9 @@
 import SwiftUI
 import UIKit
 
-/// The paired computer: whether it answers, the keys that prove it is the one
-/// you paired, and the way to forget it.
-struct ComputerSheet: View {
+/// Settings, the paired computer first: whether it answers, the keys that
+/// prove it is the one you paired, and the way to forget it.
+struct SettingsSheet: View {
   @Environment(AppModel.self) private var model
   @Environment(\.dismiss) private var dismiss
   @State private var forgetting = false
@@ -30,6 +30,8 @@ struct ComputerSheet: View {
           if link?.phase == .waiting {
             Button("Try Again") { model.send(["type": "reconnect"]) }
           }
+        } header: {
+          Text("Computer")
         }
         Section {
           if let key = link?.computerKey {
@@ -60,7 +62,7 @@ struct ComputerSheet: View {
           Text("TasteCode \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "")")
         }
       }
-      .navigationTitle("Computer")
+      .navigationTitle("Settings")
       .navigationBarTitleDisplayMode(.inline)
       .toolbar {
         ToolbarItem(placement: .topBarTrailing) {
