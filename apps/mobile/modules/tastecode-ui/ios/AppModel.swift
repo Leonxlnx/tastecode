@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import SwiftUI
 import UIKit
 
 struct ActionError: LocalizedError {
@@ -186,7 +187,15 @@ final class ThreadStore {
     if let next = patch.order {
       let keep = Set(next)
       rows = rows.filter { keep.contains($0.key) }
-      if order != next { order = next }
+      // Rows only go away when a turn folds its work under "Worked for"; that change is animated.
+      let folding = !patch.reset && order.contains { !keep.contains($0) }
+      if order != next {
+        if folding {
+          withAnimation(.smooth(duration: 0.42)) { order = next }
+        } else {
+          order = next
+        }
+      }
     }
     if meta != patch.meta { meta = patch.meta }
   }

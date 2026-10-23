@@ -131,7 +131,7 @@ struct SetupView: Decodable, Equatable {
 }
 
 struct StepView: Decodable, Equatable, Identifiable {
-  enum Kind: String, Decodable { case command, file, tool, agent, thinking, plan, other }
+  enum Kind: String, Decodable { case command, file, tool, agent, thinking, plan, note, other }
 
   var id: String
   var kind: Kind
@@ -152,6 +152,7 @@ struct RowView: Decodable, Equatable, Identifiable {
   var attachments: [String]?
   var streaming: Bool?
   var live: Bool?
+  var settled: Bool?
   var summary: String?
   var duration: String?
   var failed: Bool?

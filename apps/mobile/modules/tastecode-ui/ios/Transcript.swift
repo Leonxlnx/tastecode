@@ -229,15 +229,21 @@ struct StepsRow: View {
           if live {
             ProgressView()
               .controlSize(.mini)
-          } else if row.failed == true {
+          } else if row.failed == true && row.settled != true {
             Image(systemName: "exclamationmark.circle")
               .font(.footnote)
               .foregroundStyle(.red)
           }
+          // The live label slides to the next step, as the desktop's does.
           Text(row.summary ?? "")
             .font(.subheadline)
             .foregroundStyle(expanded ? .primary : .secondary)
             .lineLimit(1)
+            .id(row.summary ?? "")
+            .transition(
+              .asymmetric(
+                insertion: .offset(y: 8).combined(with: .opacity),
+                removal: .offset(y: -8).combined(with: .opacity)))
           if let duration = row.duration {
             Text(duration)
               .font(.subheadline)
@@ -249,6 +255,7 @@ struct StepsRow: View {
             .foregroundStyle(.tertiary)
             .rotationEffect(.degrees(expanded ? 90 : 0))
         }
+        .animation(.smooth(duration: 0.3), value: row.summary)
         .contentShape(.rect)
       }
       .buttonStyle(.plain)
@@ -289,6 +296,20 @@ private struct StepLine: View {
   let step: StepView
 
   var body: some View {
+    if step.kind == .note {
+      // What the agent wrote on the way reads as prose, as on the desktop.
+      Text(inlineMarkdown(step.title, code: .system(.footnote, design: .monospaced)))
+        .font(.subheadline)
+        .foregroundStyle(.secondary)
+        .lineSpacing(2)
+        .textSelection(.enabled)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    } else {
+      line
+    }
+  }
+
+  private var line: some View {
     HStack(alignment: .firstTextBaseline, spacing: 10) {
       Image(systemName: symbol)
         .font(.footnote)
@@ -324,6 +345,7 @@ private struct StepLine: View {
     case .agent: return "person.2"
     case .thinking: return "brain"
     case .plan: return "list.bullet"
+    case .note: return "text.alignleft"
     case .other: return "circle.dashed"
     }
   }
