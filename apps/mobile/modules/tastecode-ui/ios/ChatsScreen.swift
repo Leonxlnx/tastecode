@@ -22,7 +22,7 @@ struct ChatsScreen: View {
     NavigationStack(path: $path) {
       list
         .navigationTitle(title)
-        .navigationSubtitle(computerLine)
+        .navigationBarTitleDisplayMode(.inline)
         .toolbar { toolbar }
         .searchable(text: $query, prompt: "Search chats")
         .searchPresentationToolbarBehavior(.avoidHidingContent)
@@ -51,18 +51,7 @@ struct ChatsScreen: View {
     if let project, let found = model.chats.projects.first(where: { $0.path == project }) {
       return found.name
     }
-    return "Chats"
-  }
-
-  private var computerLine: String {
-    guard let link = model.link else { return "" }
-    let name = link.computerName ?? "your computer"
-    switch link.phase {
-    case .open: return name
-    case .connecting, .idle: return "Connecting to \(name)…"
-    case .waiting: return "\(name) is not reachable"
-    case .refused: return "\(name) needs pairing again"
-    }
+    return ""
   }
 
   private var matching: [ChatView] {
@@ -197,18 +186,18 @@ struct ChatRow: View {
   var body: some View {
     NavigationLink(value: Route.chat(chat.id)) {
       HStack(alignment: .firstTextBaseline, spacing: 12) {
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: 2) {
           Text(chat.title)
-            .font(.body.weight(chat.unread ? .semibold : .regular))
+            .font(.subheadline.weight(chat.unread ? .semibold : .regular))
             .lineLimit(1)
           detail
-            .font(.subheadline)
+            .font(.footnote)
             .lineLimit(1)
         }
         Spacer(minLength: 8)
         trailing
       }
-      .padding(.vertical, 5)
+      .padding(.vertical, 1)
     }
     .navigationLinkIndicatorVisibility(.hidden)
     .swipeActions(edge: .leading) {
@@ -263,7 +252,7 @@ struct ChatRow: View {
         }
         TimelineView(.periodic(from: .now, by: 60)) { context in
           Text(shortTime(chat.date, now: context.date))
-            .font(.subheadline)
+            .font(.footnote)
             .monospacedDigit()
             .foregroundStyle(chat.unread ? .primary : .tertiary)
         }
