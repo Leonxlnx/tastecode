@@ -262,6 +262,11 @@ struct BrowseRoot: Decodable, Equatable, Identifiable {
   var id: String { path }
 }
 
+struct AttachedImage: Decodable {
+  var mimeType: String
+  var data: String
+}
+
 struct BrowseResult: Decodable, Equatable {
   var path: String
   var parent: String?

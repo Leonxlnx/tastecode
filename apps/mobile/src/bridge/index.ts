@@ -144,6 +144,11 @@ async function perform(action: Action): Promise<unknown> {
     case 'newChat.start':
       if (!newChat) throw new Error('The app is still starting.')
       return newChat.start(action.text, action.attachments)
+    case 'attachment.read':
+      return connection.request('attachments.read', {
+        threadId: action.threadId,
+        path: action.path,
+      })
     case 'project.browse':
       return connection.request('projects.browse', action.path ? { path: action.path } : {})
     case 'project.add':

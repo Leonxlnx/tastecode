@@ -27,8 +27,12 @@ final class AppModel {
   @ObservationIgnored private var nextRequest = 0
   /// What was typed but not sent, per chat, while the app runs.
   @ObservationIgnored var drafts: [String: String] = [:]
-  /// Pictures this phone attached, by the path the computer saved them under.
-  @ObservationIgnored var images: [String: UIImage] = [:]
+  /// Pictures in chats, by the path the computer keeps them under: the ones
+  /// this phone attached, and the ones read from the computer to show.
+  var images: [String: UIImage] = [:]
+  @ObservationIgnored private var loadingImages: Set<String> = []
+  /// Paths the computer could not give, so a row does not ask again and again.
+  private(set) var missingImages: Set<String> = []
 
   private let decoder = JSONDecoder()
 
@@ -107,6 +111,24 @@ final class AppModel {
 
   func request<T: Decodable>(_ type: T.Type, _ action: [String: Any]) async throws -> T {
     try decoder.decode(T.self, from: try await request(action))
+  }
+
+  /// Reads a picture a chat's message attached from the computer, once.
+  func loadImage(threadId: String, path: String) async {
+    guard images[path] == nil, !missingImages.contains(path), !loadingImages.contains(path) else { return }
+    loadingImages.insert(path)
+    defer { loadingImages.remove(path) }
+    do {
+      let read = try await request(
+        AttachedImage.self, ["type": "attachment.read", "threadId": threadId, "path": path])
+      guard let data = Data(base64Encoded: read.data), let image = UIImage(data: data) else {
+        missingImages.insert(path)
+        return
+      }
+      images[path] = image.scaledForUpload()
+    } catch {
+      missingImages.insert(path)
+    }
   }
 
   /// Fire-and-report: runs a request and hands any failure to `onError`.

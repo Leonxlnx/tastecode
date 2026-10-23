@@ -208,6 +208,7 @@ export type Action =
   | { type: 'pair'; link: string }
   | { type: 'forget' }
   | { type: 'reconnect' }
+  | { type: 'attachment.read'; threadId: string; path: string }
   | { type: 'computer.rename'; name: string }
   | { type: 'refresh' }
   | { type: 'thread.open'; threadId: string }

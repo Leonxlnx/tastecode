@@ -43,6 +43,7 @@ struct Transcript: View {
       .padding(.top, 14)
       .padding(.bottom, 24)
     }
+    .environment(\.threadId, store.id)
     .scrollPosition($position)
     // The title bar fades the messages under it rather than cutting them off.
     .scrollEdgeEffectHidden(true, for: .top)
@@ -174,9 +175,13 @@ struct RowCell: View {
   }
 }
 
+extension EnvironmentValues {
+  /// The chat a transcript row belongs to, for reading what its messages attached.
+  @Entry var threadId: String = ""
+}
+
 /// What you sent: right-aligned on a quiet fill, with the pictures above it.
 struct UserMessage: View {
-  @Environment(AppModel.self) private var model
   let text: String
   let attachments: [String]
 
@@ -185,19 +190,7 @@ struct UserMessage: View {
       if !attachments.isEmpty {
         HStack(spacing: 6) {
           ForEach(attachments, id: \.self) { path in
-            if let image = model.images[path] {
-              Image(uiImage: image)
-                .resizable()
-                .scaledToFill()
-                .frame(width: 88, height: 88)
-                .clipShape(.rect(cornerRadius: 16, style: .continuous))
-            }
-          }
-          let missing = attachments.filter { model.images[$0] == nil }.count
-          if missing > 0 {
-            Label(missing == 1 ? "1 image" : "\(missing) images", systemImage: "photo")
-              .font(.footnote)
-              .foregroundStyle(.secondary)
+            AttachedThumbnail(path: path)
           }
         }
       }
@@ -413,5 +406,89 @@ private struct TopFade: View {
     }
     .frame(height: height)
     .frame(maxWidth: .infinity)
+  }
+}
+
+/// One attached picture, read from the computer the first time it shows; a
+/// tap opens it whole.
+private struct AttachedThumbnail: View {
+  @Environment(AppModel.self) private var model
+  @Environment(\.threadId) private var threadId
+  let path: String
+  @State private var viewing = false
+
+  var body: some View {
+    let image = model.images[path]
+    Button {
+      viewing = true
+    } label: {
+      ZStack {
+        RoundedRectangle(cornerRadius: 16, style: .continuous)
+          .fill(Color(.secondarySystemBackground))
+        if let image {
+          Image(uiImage: image)
+            .resizable()
+            .scaledToFill()
+            .transition(.opacity)
+        } else if model.missingImages.contains(path) {
+          Image(systemName: "photo")
+            .font(.title3)
+            .foregroundStyle(.tertiary)
+        } else {
+          ProgressView()
+            .controlSize(.small)
+        }
+      }
+      .frame(width: 88, height: 88)
+      .clipShape(.rect(cornerRadius: 16, style: .continuous))
+      .animation(.smooth(duration: 0.25), value: image != nil)
+    }
+    .buttonStyle(.plain)
+    .disabled(image == nil)
+    .accessibilityLabel("Attached picture")
+    .task(id: path) { await model.loadImage(threadId: threadId, path: path) }
+    .fullScreenCover(isPresented: $viewing) {
+      if let image {
+        ImageViewer(image: image)
+      }
+    }
+  }
+}
+
+/// A picture on black, fitted to the screen, pinch to zoom.
+private struct ImageViewer: View {
+  @Environment(\.dismiss) private var dismiss
+  let image: UIImage
+  @State private var scale: CGFloat = 1
+  @GestureState private var pinch: CGFloat = 1
+
+  var body: some View {
+    NavigationStack {
+      Image(uiImage: image)
+        .resizable()
+        .scaledToFit()
+        .scaleEffect(max(1, scale * pinch))
+        .gesture(
+          MagnifyGesture()
+            .updating($pinch) { value, state, _ in state = value.magnification }
+            .onEnded { value in
+              withAnimation(.smooth) { scale = min(4, max(1, scale * value.magnification)) }
+            }
+        )
+        .onTapGesture(count: 2) {
+          withAnimation(.smooth) { scale = scale > 1 ? 1 : 2 }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(.black)
+        .toolbar {
+          ToolbarItem(placement: .topBarLeading) {
+            Button(role: .close) { dismiss() }
+          }
+          ToolbarItem(placement: .topBarTrailing) {
+            ShareLink(item: Image(uiImage: image), preview: SharePreview("Picture", image: Image(uiImage: image)))
+          }
+        }
+        .toolbarColorScheme(.dark, for: .navigationBar)
+    }
   }
 }
