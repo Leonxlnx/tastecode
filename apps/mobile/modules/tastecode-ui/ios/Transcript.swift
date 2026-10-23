@@ -220,12 +220,17 @@ struct UserMessage: View {
 struct StepsRow: View {
   let row: RowView
   @State private var expanded = false
+  /// Set on the first opening; the steps stay built after it so closing can animate.
+  @State private var built = false
+  @State private var contentHeight: CGFloat = 0
 
   var body: some View {
     let live = row.live == true
+    let steps = row.steps ?? []
     VStack(alignment: .leading, spacing: 0) {
       Button {
-        withAnimation(.snappy(duration: 0.28)) { expanded.toggle() }
+        if !built { built = true }
+        withAnimation(.smooth(duration: expanded ? 0.26 : 0.38)) { expanded.toggle() }
       } label: {
         HStack(spacing: 8) {
           if live {
@@ -238,7 +243,7 @@ struct StepsRow: View {
           }
           Text(row.summary ?? "")
             .font(.subheadline)
-            .foregroundStyle(.secondary)
+            .foregroundStyle(expanded ? .primary : .secondary)
             .lineLimit(1)
           if let duration = row.duration {
             Text(duration)
@@ -254,15 +259,33 @@ struct StepsRow: View {
         .contentShape(.rect)
       }
       .buttonStyle(.plain)
-      if expanded {
+      if built {
+        // The steps open to their measured height, so the rows below move with
+        // them instead of jumping, and each step settles in after the one above.
         VStack(alignment: .leading, spacing: 12) {
-          ForEach(row.steps ?? []) { step in
+          ForEach(Array(steps.enumerated()), id: \.element.id) { index, step in
             StepLine(step: step)
+              .opacity(expanded ? 1 : 0)
+              .offset(y: expanded ? 0 : -8)
+              .blur(radius: expanded ? 0 : 3)
+              .animation(
+                expanded
+                  ? .smooth(duration: 0.34).delay(0.04 + Double(min(index, 10)) * 0.035)
+                  : .smooth(duration: 0.18),
+                value: expanded
+              )
+              .transition(.opacity.combined(with: .offset(y: -6)))
           }
         }
         .padding(.top, 12)
         .padding(.leading, 4)
-        .transition(.opacity.combined(with: .move(edge: .top)))
+        .fixedSize(horizontal: false, vertical: true)
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { contentHeight = $0 }
+        .animation(.smooth(duration: 0.3), value: steps.count)
+        .frame(height: expanded ? contentHeight : 0, alignment: .top)
+        .clipped()
+        .allowsHitTesting(expanded)
+        .accessibilityHidden(!expanded)
       }
     }
     .frame(maxWidth: .infinity, alignment: .leading)
