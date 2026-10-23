@@ -1126,6 +1126,24 @@ describe('provider history integration', () => {
     await history.load('local')
     expect(store.usageSummary('local', 0).session.totalTokens).toBe(200)
   })
+  it('gives an imported chat the access level its session ran with, and keeps one it has', async () => {
+    const sessions: ProviderHistorySession[] = [
+      { ...metadata(), approval: 'full' },
+      metadata('unknown'),
+    ]
+    const { history } = setup(sessions)
+    await history.refresh()
+    expect(store.threadApproval('external:codex:native')).toBe('full')
+    expect(store.threadApproval('external:codex:unknown')).toBeUndefined()
+
+    store.setThreadApproval('external:codex:native', 'ask')
+    sessions[0] = { ...metadata(), approval: 'auto', revision: '2', updatedAt: 3000 }
+    sessions[1] = { ...metadata('unknown'), approval: 'auto', revision: '2', updatedAt: 3000 }
+    await history.refresh()
+    expect(store.threadApproval('external:codex:native')).toBe('ask')
+    expect(store.threadApproval('external:codex:unknown')).toBe('auto')
+  })
+
   it('imports archived chats in the same metadata batch with their native activity time', async () => {
     const { history } = setup([
       metadata(),

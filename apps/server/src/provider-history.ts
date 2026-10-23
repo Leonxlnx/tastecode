@@ -291,6 +291,10 @@ export class ProviderHistory {
               ) {
                 this.store.renameThread(threadId, session.title)
               }
+              // A session run outside TasteCode keeps the access level it last ran with
+              // there, until the chat has one of its own.
+              if (session.approval && this.store.threadApproval(threadId) === undefined)
+                this.store.setThreadApproval(threadId, session.approval)
               // An archived chat is imported closed, because its provider will
               // not resume it. Once unarchived there, it can be continued again.
               if (

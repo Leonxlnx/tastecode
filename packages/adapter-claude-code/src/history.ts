@@ -6,6 +6,7 @@ import path from 'node:path'
 import { createInterface } from 'node:readline'
 import { getSessionMessages } from '@anthropic-ai/claude-agent-sdk'
 import type {
+  ApprovalMode,
   DomainEvent,
   Item,
   ProviderHistorySession,
@@ -21,6 +22,7 @@ import {
   type SavedRecord,
 } from './history-items.js'
 import { toUsage } from './events.js'
+import { approvalFor } from './permission-mode.js'
 
 export type ClaudeHistoryOptions = {
   /** Claude Code's config directory, containing projects/. Never reads credentials. */
@@ -29,6 +31,8 @@ export type ClaudeHistoryOptions = {
 
 const SESSION_FILE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.jsonl$/i
 const LINE_FEED = 0x0a
+// Inside a JSON string a quote is escaped, so these bytes are only ever the key.
+const PERMISSION_MODE_KEY = Buffer.from('"permissionMode"', 'latin1')
 // Rows that set a title or working directory from anywhere in a transcript. A quoted
 // token matches a key or an exact value, never text inside a string: there the quotes
 // are escaped. UTF-8 never encodes another character with these bytes. Each token is a
@@ -399,12 +403,20 @@ async function readTranscript(
     if (headEnd !== undefined) {
       const start = Math.max(headEnd, from)
       // Rows a digest ignores are remembered as parsed but not kept: the walk back can
-      // pass megabytes of subagent rows after the last visible message.
+      // pass megabytes of subagent rows after the last visible message. Past that
+      // message it parses only rows that name a permission mode, until it reaches the
+      // last one that sets an access level, usually on the last prompt.
       const later = new Map<number, SavedRecord | undefined>()
+      let message = false
+      let access = false
       for await (const line of linesBackward(handle, start, complete)) {
-        const row = parseLine(line.bytes)
-        later.set(line.start, row && visible(row) ? row : undefined)
-        if (visibleMessage(row)) break
+        if (message && !line.bytes.includes(PERMISSION_MODE_KEY)) continue
+        const parsed = parseLine(line.bytes)
+        const row = parsed && visible(parsed) ? parsed : undefined
+        later.set(line.start, row)
+        message ||= visibleMessage(row)
+        access ||= approvalFor(row?.permissionMode) !== undefined
+        if (message && access) break
       }
       await addTokenRows(handle, start, complete, later)
       for (const [, row] of [...later].sort(([left], [right]) => left - right))
@@ -509,6 +521,7 @@ type Digest = {
   relocatedCwd?: unknown
   customTitle?: string
   aiTitle?: string
+  approval?: ApprovalMode
 }
 
 function titleText(text: string): string {
@@ -532,6 +545,10 @@ function observe(digest: Digest, row: SavedRecord): void {
   if (row.type === 'relocated') digest.relocatedCwd = row.relocatedCwd
   if (typeof row.customTitle === 'string') digest.customTitle = row.customTitle
   if (typeof row.aiTitle === 'string') digest.aiTitle = row.aiTitle
+  // Each prompt saves the mode it was sent in, and a CLI saves a change of mode as a
+  // row of its own. Plan mode is not an access level, so the one before it stays.
+  const approval = approvalFor(row.permissionMode)
+  if (approval) digest.approval = approval
 }
 
 function metadata(
@@ -557,6 +574,7 @@ function metadata(
       'Claude Code conversation',
     createdAt: timestamp(digest.firstAt) ?? timestamp(index.created) ?? mtime,
     updatedAt: Math.max(mtime, timestamp(digest.lastAt) ?? 0),
+    ...(digest.approval ? { approval: digest.approval } : {}),
   }
 }
 
@@ -699,8 +717,8 @@ export function createClaudeHistorySource(
           if (!info) continue
           try {
             // Reimport saved transcripts that previously exposed machine notifications
-            // or Stop markers.
-            const revision = `3:${info.size}:${info.mtimeMs}:${info.ctimeMs}`
+            // or Stop markers, or were listed without their access level.
+            const revision = `4:${info.size}:${info.mtimeMs}:${info.ctimeMs}`
             const id = path.basename(locator).slice(0, -6)
             const index = byId.get(id)
             // A sessions index entry can name a session without its transcript changing.

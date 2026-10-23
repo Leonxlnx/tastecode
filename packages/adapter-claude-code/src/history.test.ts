@@ -14,6 +14,7 @@ import os from 'node:os'
 import path from 'node:path'
 import {
   DomainEventSchema,
+  type ApprovalMode,
   type DomainEvent,
   type ProviderHistoryListOptions,
   type ProviderHistorySession,
@@ -66,6 +67,14 @@ function items(events: DomainEvent[]) {
   return events.flatMap((event) => (event.type === 'item.completed' ? [event.item] : []))
 }
 
+const MODE_ACCESS = Object.entries({
+  default: 'ask',
+  acceptEdits: 'auto',
+  auto: 'auto-review',
+  bypassPermissions: 'full',
+  plan: undefined,
+} satisfies Record<string, ApprovalMode | undefined>)
+
 function seeded(seed: number): () => number {
   return () => {
     seed = (seed + 0x6d2b79f5) | 0
@@ -83,7 +92,10 @@ function transcript(random: () => number) {
   const start = AT + 9e12
   const later = (step: number) => new Date(start + step * 1000).toISOString()
   const first = row('first', 'user', 'Generated prompt', null, { timestamp: later(0) })
-  const expected = {
+  const expected: Pick<
+    ProviderHistorySession,
+    'title' | 'workspacePath' | 'createdAt' | 'updatedAt' | 'approval'
+  > = {
     title: 'Generated prompt',
     workspacePath: first.cwd,
     createdAt: start,
@@ -99,7 +111,7 @@ function transcript(random: () => number) {
       const big = random() < 0.1
       const pad = 'x'.repeat(Math.floor(random() * (big ? 1_200_000 : 2_000)) + (big ? 100_000 : 0))
       const hidden = random() < 0.3 ? { isSidechain: true } : {}
-      const kind = Math.floor(random() * 7)
+      const kind = Math.floor(random() * 8)
       if (kind === 0) {
         rows.push(row(`a${step}`, 'assistant', pad, null, { timestamp: later(step) }))
         expected.updatedAt = start + step * 1000
@@ -121,8 +133,24 @@ function transcript(random: () => number) {
         rows.push(
           row(`side${step}`, 'user', pad, null, { isSidechain: true, timestamp: later(1e6) }),
         )
-      } else {
+      } else if (kind === 6) {
         rows.push({ type: 'system', subtype: 'informational', content: pad })
+      } else {
+        const [permissionMode, approval] = MODE_ACCESS[Math.floor(random() * MODE_ACCESS.length)]!
+        const prompt = random() < 0.5
+        rows.push(
+          prompt
+            ? row(`p${step}`, 'user', pad, null, {
+                permissionMode,
+                timestamp: later(step),
+                ...hidden,
+              })
+            : { type: 'permission-mode', permissionMode, sessionId: SESSION, ...hidden },
+        )
+        if (!('isSidechain' in hidden)) {
+          if (prompt) expected.updatedAt = start + step * 1000
+          if (approval) expected.approval = approval
+        }
       }
       expected.title = customTitle ?? aiTitle ?? 'Generated prompt'
     }
@@ -260,6 +288,49 @@ describe('Claude Code saved history', () => {
     const [session] = await f.source.list()
 
     expect(session?.title).toBe('First prompt')
+  })
+
+  it('lists the access level the session last ran with', async () => {
+    const mode = (permissionMode: string) => ({
+      type: 'permission-mode',
+      permissionMode,
+      sessionId: SESSION,
+    })
+    const prompt = (uuid: string, permissionMode: string, extra: Record<string, unknown> = {}) =>
+      row(uuid, 'user', `Prompt ${uuid}`, null, { permissionMode, ...extra })
+    const lines = (rows: unknown[]) => rows.map((item) => JSON.stringify(item) + '\n').join('')
+    const f = await fixture([mode('bypassPermissions'), prompt('u1', 'bypassPermissions')])
+    const fresh = () => createClaudeHistorySource({ configDir: f.configDir }).list()
+    const approval = async () => {
+      const [session] = await f.source.list()
+      expect([session]).toEqual(await fresh())
+      return session?.approval
+    }
+    expect(await approval()).toBe('full')
+
+    // A later prompt counts, not a subagent's own prompt after it.
+    await appendFile(
+      f.file,
+      lines([
+        prompt('u2', 'acceptEdits'),
+        row('a2', 'assistant', 'x'.repeat(200_000)),
+        prompt('side', 'default', { isSidechain: true }),
+        row('a3', 'assistant', 'Still working'),
+      ]),
+    )
+    expect(await approval()).toBe('auto')
+
+    // Plan mode is no access level; a change of mode after the last answer is.
+    await appendFile(f.file, lines([prompt('u3', 'plan'), row('a4', 'assistant', 'Planned')]))
+    expect(await approval()).toBe('auto')
+    await appendFile(f.file, lines([mode('auto')]))
+    expect(await approval()).toBe('auto-review')
+
+    const unknown = await fixture([
+      row('u1', 'user', 'No mode saved'),
+      row('a1', 'assistant', 'Hi'),
+    ])
+    expect((await unknown.source.list())[0]).not.toHaveProperty('approval')
   })
 
   it('lists generated transcripts as their rows say', async () => {
