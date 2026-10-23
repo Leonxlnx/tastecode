@@ -78,6 +78,7 @@ struct Composer: View {
           attachMenu
         }
         SetupMenu(setup: setup, actions: actions)
+        EffortMenu(setup: setup, actions: actions)
         AccessMenu(setup: setup, actions: actions)
         Spacer(minLength: 4)
         sendButton
@@ -214,19 +215,6 @@ struct SetupMenu: View {
       if let source {
         ModelPicker(source: source, selected: setup.model, actions: actions)
       }
-      if let efforts = source?.models.first(where: { $0.id == setup.model })?.efforts, !efforts.isEmpty {
-        Picker(
-          selection: Binding(get: { setup.effort ?? "" }, set: { actions.effort($0) })
-        ) {
-          ForEach(efforts) { effort in
-            Text(effort.label).tag(effort.id)
-          }
-        } label: {
-          Label("Reasoning", systemImage: "brain")
-          Text(setup.effortLabel ?? "")
-        }
-        .pickerStyle(.menu)
-      }
       if let tiers = source?.models.first(where: { $0.id == setup.model })?.tiers, !tiers.isEmpty {
         Picker(
           selection: Binding(get: { setup.tier ?? "" }, set: { actions.tier($0.isEmpty ? nil : $0) })
@@ -259,7 +247,31 @@ struct SetupMenu: View {
 
   private var label: String {
     guard let name = setup.modelName ?? setup.sourceName else { return "Model" }
-    return ([name] + [setup.effortLabel, setup.tierName].compactMap { $0 }).joined(separator: " · ")
+    return ([name] + [setup.tierName].compactMap { $0 }).joined(separator: " · ")
+  }
+}
+
+/// How hard the model thinks, beside the model; absent when the model has no levels.
+struct EffortMenu: View {
+  @Environment(AppModel.self) private var model
+  let setup: SetupView
+  let actions: SetupActions
+
+  var body: some View {
+    let efforts = model.catalog.source(setup.sourceKey)?.models.first(where: { $0.id == setup.model })?.efforts ?? []
+    if !efforts.isEmpty {
+      Menu {
+        Picker("Reasoning", selection: Binding(get: { setup.effort ?? "" }, set: { actions.effort($0) })) {
+          ForEach(efforts) { effort in
+            Text(effort.label).tag(effort.id)
+          }
+        }
+        .pickerStyle(.inline)
+      } label: {
+        MenuLabel(text: setup.effortLabel ?? "Effort", symbol: nil)
+      }
+      .menuOrder(.fixed)
+    }
   }
 }
 
@@ -317,9 +329,24 @@ struct AccessMenu: View {
         }
       }
     } label: {
-      MenuLabel(text: setup.accessTitle, symbol: setup.access == "full" ? "exclamationmark.shield" : nil)
+      Image(systemName: symbol)
+        .font(.subheadline.weight(.medium))
+        .foregroundStyle(setup.access == "full" ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
+        .frame(width: 36, height: 36)
+        .contentShape(.rect)
     }
     .menuOrder(.fixed)
+    .accessibilityLabel("Access: \(setup.accessTitle)")
+  }
+
+  /// One symbol per level, so the level reads without its name.
+  private var symbol: String {
+    switch setup.access {
+    case "ask": return "hand.raised"
+    case "auto", "auto-review": return "checkmark.shield"
+    case "full": return "exclamationmark.shield"
+    default: return "shield"
+    }
   }
 }
 
