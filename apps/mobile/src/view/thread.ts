@@ -1,6 +1,13 @@
 import type { ApprovalRequest, Item, ProviderId, UserInputRequest } from '@harness/contracts'
 import type { ThreadView } from '../state/thread-model'
-import type { ApprovalView, QuestionsView, RowView, StepKind, StepView } from './types'
+import type {
+  ApprovalView,
+  QuestionsView,
+  RowView,
+  StepKind,
+  StepRunView,
+  StepView,
+} from './types'
 
 /**
  * A transcript row before wording: messages alone, steps of work together.
@@ -166,6 +173,7 @@ export function rowView(row: Row, view: ThreadView): RowView {
           : null,
       failed: row.items.some(failed),
       steps: row.items.map(stepView),
+      runs: row.settled ? stepRuns(row.items) : null,
     }
   }
   const { item } = row
@@ -216,6 +224,33 @@ function stepKind(item: Item): StepKind {
 }
 
 /** One step the agent took, worded the way the desktop's activity rows word it. */
+/** A settled group's steps in runs: notes break them, two or more calls share a summary. */
+export function stepRuns(items: readonly Item[]): StepRunView[] {
+  const runs: StepRunView[] = []
+  let calls: Item[] = []
+  const flush = () => {
+    const first = calls[0]
+    if (first) {
+      runs.push({
+        id: `run:${first.id}`,
+        summary: calls.length > 1 ? summarize(calls) : null,
+        steps: calls.map(stepView),
+      })
+    }
+    calls = []
+  }
+  for (const item of items) {
+    if (item.type === 'message') {
+      flush()
+      runs.push({ id: `run:${item.id}`, summary: null, steps: [stepView(item)] })
+    } else {
+      calls.push(item)
+    }
+  }
+  flush()
+  return runs
+}
+
 /** A turn's length as the desktop writes it: "3m 18s", "1h 2m 5s". */
 function workedFor(
   items: readonly Item[],

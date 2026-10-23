@@ -118,6 +118,13 @@ export type StepView = {
   failed: boolean
 }
 
+export type StepRunView = {
+  id: string
+  /** "Ran 3 commands" for a batch; null for a note or a single call. */
+  summary: string | null
+  steps: StepView[]
+}
+
 export type RowView =
   | { key: string; kind: 'user'; text: string; attachments: string[] }
   | { key: string; kind: 'assistant'; text: string; streaming: boolean }
@@ -132,6 +139,11 @@ export type RowView =
       duration: string | null
       failed: boolean
       steps: StepView[]
+      /**
+       * A settled group's steps in runs: a note alone, one call alone, and two
+       * or more calls in a row under one summary, as the desktop batches them.
+       */
+      runs: StepRunView[] | null
     }
   | { key: string; kind: 'notice'; text: string }
   | { key: string; kind: 'error'; text: string }

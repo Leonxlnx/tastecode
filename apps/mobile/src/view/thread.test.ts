@@ -6,6 +6,7 @@ import {
   buildRows,
   relative,
   rowView,
+  stepRuns,
   summarize,
   toolName,
   toolTitle,
@@ -113,6 +114,20 @@ describe('thread rows', () => {
         { kind: 'file' },
       ],
     })
+  })
+
+  it('batches calls in a row under one summary, with notes between them', () => {
+    const runs = stepRuns([
+      step({ id: 'a', type: 'command', command: 'ls' }),
+      step({ id: 'b', type: 'command', command: 'pwd' }),
+      step({ id: 'n', type: 'message', role: 'assistant', text: 'Looked around.' }),
+      step({ id: 'c', type: 'file_change', path: 'a.ts' }),
+    ])
+    expect(runs.map((run) => [run.summary, run.steps.map((entry) => entry.id)])).toEqual([
+      ['Ran 2 commands', ['a', 'b']],
+      [null, ['n']],
+      [null, ['c']],
+    ])
   })
 
   it('summarizes steps of every kind in reading order', () => {
