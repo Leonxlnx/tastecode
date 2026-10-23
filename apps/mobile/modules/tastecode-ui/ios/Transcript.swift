@@ -44,6 +44,15 @@ struct Transcript: View {
       .padding(.bottom, 24)
     }
     .scrollPosition($position)
+    // The title bar fades the messages under it rather than cutting them off.
+    .scrollEdgeEffectHidden(true, for: .top)
+    .overlay(alignment: .top) {
+      GeometryReader { geometry in
+        TopFade(height: geometry.safeAreaInsets.top + 36)
+          .ignoresSafeArea(edges: .top)
+      }
+      .allowsHitTesting(false)
+    }
     .defaultScrollAnchor(.top, for: .alignment)
     .defaultScrollAnchor(.bottom, for: .initialOffset)
     .defaultScrollAnchor(atBottom || prepending ? .bottom : .top, for: .sizeChanges)
@@ -356,5 +365,30 @@ struct PlanList: View {
         }
       }
     }
+  }
+}
+
+/// A progressive blur under the title bar: strongest at the top, gone at its foot.
+private struct TopFade: View {
+  let height: CGFloat
+
+  var body: some View {
+    ZStack {
+      Rectangle()
+        .fill(.ultraThinMaterial)
+        .mask(
+          LinearGradient(
+            stops: [.init(color: .black, location: 0), .init(color: .black, location: 0.7), .init(color: .clear, location: 1)],
+            startPoint: .top, endPoint: .bottom))
+      LinearGradient(
+        stops: [
+          .init(color: Color(.systemBackground).opacity(0.94), location: 0),
+          .init(color: Color(.systemBackground).opacity(0.86), location: 0.68),
+          .init(color: Color(.systemBackground).opacity(0), location: 1),
+        ],
+        startPoint: .top, endPoint: .bottom)
+    }
+    .frame(height: height)
+    .frame(maxWidth: .infinity)
   }
 }
