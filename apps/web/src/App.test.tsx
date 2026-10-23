@@ -3741,59 +3741,6 @@ describe('web client', () => {
     )
   })
 
-  it('offers no account choice for a new chat on a custom harness, which keeps its own sign-in', async () => {
-    const codex = serverProviders[0]!
-    serverProviders = [
-      { ...codex, capabilities: { ...codex.capabilities!, multipleAccounts: true } },
-    ]
-    const request = transport.request.getMockImplementation()
-    if (!request) throw new Error('missing request mock')
-    transport.request.mockImplementation((method: string, params: unknown) => {
-      if (method === 'harnesses.list') {
-        return Promise.resolve({
-          harnesses: [
-            {
-              id: 'codex-fork',
-              displayName: 'Codex Fork',
-              provider: 'codex',
-              command: 'codex-fork',
-              args: [],
-            },
-          ],
-        })
-      }
-      if (method === 'models.list') {
-        const { agent } = methods['models.list'].params.parse(params)
-        const id = agent === 'codex-fork' ? 'fork-model' : 'codex-model'
-        return Promise.resolve({
-          models: [
-            { id, displayName: id, isDefault: true, reasoningEfforts: ['low'], serviceTiers: [] },
-          ],
-        })
-      }
-      return request(method, params)
-    })
-    render(<App />)
-    act(() => composerProps().onModelSelectorOpen?.())
-    await waitFor(() =>
-      expect(composerProps().models.map((choice) => choice.model.id)).toEqual(
-        expect.arrayContaining(['codex-model', 'fork-model']),
-      ),
-    )
-    const pick = (id: string) =>
-      act(() =>
-        composerProps().onModelChange(
-          composerProps().models.find((choice) => choice.model.id === id)!.key,
-        ),
-      )
-
-    // Codex itself runs as the chosen account, so the choice is offered.
-    pick('codex-model')
-    await waitFor(() => expect(composerProps().accountProvider).toBe('codex'))
-    pick('fork-model')
-    await waitFor(() => expect(composerProps().accountProvider).toBeUndefined())
-  })
-
   it('discovers a custom Pi source and binds new sessions to its harness id', async () => {
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
@@ -5513,7 +5460,7 @@ describe('new chats', () => {
     render(<App />)
 
     // A new chat offers both accounts; picking Team's model makes Team the one
-    // new chats start on, as the account chip does.
+    // new chats start on.
     await waitFor(() =>
       expect(offered()).toEqual([
         'Codex (Personal): codex:gpt-6.1',

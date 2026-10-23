@@ -1575,7 +1575,7 @@ export function App() {
       providerStatuses.find((entry) => entry.id === provider)?.capabilities?.autoReview === true,
     [provider, providerStatuses],
   )
-  // A new chat with such a provider offers its accounts beside the composer tools.
+  // A new chat with such a provider runs as one of its accounts.
   const providerHasAccounts = useMemo(
     () =>
       providerStatuses.find((entry) => entry.id === provider)?.capabilities?.multipleAccounts ===
@@ -3926,7 +3926,7 @@ export function App() {
       pendingThreadModelSave.current = activeIdRef.current
       if (selected.accountId !== undefined && !activeIdRef.current) {
         // A new chat starts on its provider's active account, so another
-        // account's model makes that account the active one, as its chip does.
+        // account's model makes that account the active one.
         const own = modelChoiceKey(selected.provider, selected.model.id)
         void providerAccountsStore
           .setActive(selected.provider, selected.accountId)
@@ -7033,12 +7033,6 @@ export function App() {
                     projectPath={activePath}
                     projectName={activeProject ? displayName(activeProject) : undefined}
                     threadId={activeId && !activeId.startsWith('pending:') ? activeId : undefined}
-                    accountProvider={
-                      // A custom harness runs on its own sign-in, whatever account is chosen.
-                      !activeId && providerHasAccounts && !selectedModelChoice?.agent
-                        ? provider
-                        : undefined
-                    }
                     projectsLoading={projectsStatus === 'loading'}
                     branch={
                       (!activeId && activePath

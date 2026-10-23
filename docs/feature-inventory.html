@@ -1106,49 +1106,47 @@
                   provider's until changed (Model and Access kept as provider@account in
                   localStorage, Context on the server); a new chat starts with the active account's.
                   Sign in runs the provider's sign-in terminal in that folder (Codex · Work login).
-                  A chat is pinned to the account it started on and resumes there after a restart;
-                  the new-chat composer offers a New chat account control once the provider has a
-                  second account, which sets the provider's active account (not shown for a custom
-                  harness, which keeps its own sign-in). A chat's title and commit message are
-                  written through its own account when the background model is its provider's; the
-                  model picker lists the active account's models for a new chat and an open chat's
-                  own account's models; a project's MCP list and MCP sign-in come from a
-                  default-account chat only. Removing an account drops it before its processes stop
-                  and deletes a managed folder last. Plan limits, reset credits, model lists and
-                  usage are read per account: the current provider's active account is read at
-                  launch, its other signed-in accounts when the popup or Usage shows limits; the
-                  popup names the provider once and gives each account a line that opens to its full
-                  limits (the account new chats start on first and open; a closed line shows the %
-                  left of each window, such as Session and Weekly, a row each on a short gauge under
-                  the account name; a failed read says Unavailable with Retry on its line, one still
-                  loading says Checking…), the card's figure is each provider's active account, and
-                  a Usage sheet sums its accounts and lists each one with its tokens and limits.
-                  Profile &gt; Accounts lists further accounts (Codex · Work, plan or Signed out,
-                  never an email). When a turn fails while the chat's account is at a plan limit (a
-                  window at 100% that has not reset) and another account of the provider is signed
-                  in, the error offers Continue on Work (a menu, Continue on another account, when
-                  there are several); never automatic. It starts a new chat pinned to that account
-                  in the same project (an isolated chat's branch as base, in a checkout of its own
-                  that gets the earlier checkout's uncommitted changes copied in; when they cannot
-                  be copied, the first prompt and the new chat's note say which folder still holds
-                  them), with the failed request in its composer. Claude Code and Codex carry the
-                  earlier chat's own session on in the new account's folder (Claude Code a copy of
-                  its transcript under a new id, Codex a fork of its rollout copied with the
-                  rollouts it was forked from), so tool results and reasoning come along and the
-                  first prompt is just the request; a carried session whose first turn fails before
-                  any answer gives way to a fresh one that gets the conversation as a handover.
-                  Where the session cannot be carried on, or lacks part of the conversation, the
-                  first prompt carries the earlier chat's conversation as untrusted context (its
-                  first request, the latest exchange, every other user message and the assistant's
-                  messages newest first, then tool steps cut to their command line, exit code or
-                  file paths in what is left of 64,000 characters, preceded by any chat it continued
-                  itself up to where it was continued; kept in the provider's own session), the
-                  transcript shows only the user's words, and until its first message the new chat
-                  says Continues "title" on Work in a neutral note with Open (for an isolated chat,
-                  also that its uncommitted changes are already in this chat's checkout, or where
-                  they still are). The earlier chat is left as it was; its failed turn's row then
-                  reads Continued on Work and opens the new chat. Not yet: per-account Sign out,
-                  MCP/skills inventory and history import per account</span
+                  A chat is pinned to the account it started on and resumes there after a restart; a
+                  new chat's account is picked in the model picker. A chat's title and commit
+                  message are written through its own account when the background model is its
+                  provider's; the model picker lists the active account's models for a new chat and
+                  an open chat's own account's models; a project's MCP list and MCP sign-in come
+                  from a default-account chat only. Removing an account drops it before its
+                  processes stop and deletes a managed folder last. Plan limits, reset credits,
+                  model lists and usage are read per account: the current provider's active account
+                  is read at launch, its other signed-in accounts when the popup or Usage shows
+                  limits; the popup names the provider once and gives each account a line that opens
+                  to its full limits (the account new chats start on first and open; a closed line
+                  shows the % left of each window, such as Session and Weekly, a row each on a short
+                  gauge under the account name; a failed read says Unavailable with Retry on its
+                  line, one still loading says Checking…), the card's figure is each provider's
+                  active account, and a Usage sheet sums its accounts and lists each one with its
+                  tokens and limits. Profile &gt; Accounts lists further accounts (Codex · Work,
+                  plan or Signed out, never an email). When a turn fails while the chat's account is
+                  at a plan limit (a window at 100% that has not reset) and another account of the
+                  provider is signed in, the error offers Continue on Work (a menu, Continue on
+                  another account, when there are several); never automatic. It starts a new chat
+                  pinned to that account in the same project (an isolated chat's branch as base, in
+                  a checkout of its own that gets the earlier checkout's uncommitted changes copied
+                  in; when they cannot be copied, the first prompt and the new chat's note say which
+                  folder still holds them), with the failed request in its composer. Claude Code and
+                  Codex carry the earlier chat's own session on in the new account's folder (Claude
+                  Code a copy of its transcript under a new id, Codex a fork of its rollout copied
+                  with the rollouts it was forked from), so tool results and reasoning come along
+                  and the first prompt is just the request; a carried session whose first turn fails
+                  before any answer gives way to a fresh one that gets the conversation as a
+                  handover. Where the session cannot be carried on, or lacks part of the
+                  conversation, the first prompt carries the earlier chat's conversation as
+                  untrusted context (its first request, the latest exchange, every other user
+                  message and the assistant's messages newest first, then tool steps cut to their
+                  command line, exit code or file paths in what is left of 64,000 characters,
+                  preceded by any chat it continued itself up to where it was continued; kept in the
+                  provider's own session), the transcript shows only the user's words, and until its
+                  first message the new chat says Continues "title" on Work in a neutral note with
+                  Open (for an isolated chat, also that its uncommitted changes are already in this
+                  chat's checkout, or where they still are). The earlier chat is left as it was; its
+                  failed turn's row then reads Continued on Work and opens the new chat. Not yet:
+                  per-account Sign out, MCP/skills inventory and history import per account</span
                 ></span
               ></label
             >
@@ -1160,37 +1158,37 @@
                 chat's own models first, then every other provider's, then every other signed-in
                 account of a provider as a source of its own, named after the account (Claude Code
                 (Team), with the chat's own then reading Claude Code (Personal)); picked in a new
-                chat, another account's model makes that account the one new chats start on, as the
-                account chip does. Picking one shows "Your next message switches this chat to Claude
-                Code. The conversation so far goes with it." above the composer, with Stay on Codex;
-                only the user's own pick switches a chat (a fallback never leaves its provider, and
-                models the user hid from it still keep the picker away). Sending moves the chat
-                (same id, transcript, checkout, title and sidebar row): a session starts at the new
-                provider first, then the chat's session stops (tried three times) and the move is
-                stored, so a failed move leaves the chat where it was and puts the message back;
-                refused while a turn runs, prompts are queued or a Design run is active, and for a
-                Side chat. The transcript shows "Switched to Claude Code · sonnet" between the turns
-                (with the account's name after a move to another account, Switched to Codex (Team)),
-                and every window that hears it shows the row on the new provider. A move to another
-                account of the same provider carries the provider's own session on there, as
-                Continue on another account does. Otherwise the first prompt there carries the
-                conversation as context in which the user's earlier requests still hold (any chats
-                it continued, the first request and the latest exchange sharing the budget, other
-                messages newest first, the newest tool steps cut to what they did and kept to a
-                third of the budget, where the chat moved, files attached that still exist), then
-                whether the last turn was stopped or failed, the open task list and what git reports
-                as changed; sized at half a character per token of the model's context window as the
-                engine reports it (OpenCode and Pi per model, waited for at most two seconds) or
-                declares it (6,000–96,000 characters, 64,000 without one) and within the
-                command-line limit of Cursor and Antigravity (15,000 characters on Windows, 40,000
-                on Linux). A chat with no conversation yet sends just the request. The transcript
-                keeps only the user's words. A first turn there that ends stopped or failed before
-                any answer, or whose session goes away, sends the handover again with the next
-                prompt; a restart before the first prompt starts the new provider afresh. The
-                sessions a chat left stay its own: provider history neither imports them as chats
-                nor reads them in again. At a plan limit, other signed-in providers are offered
-                beside other accounts (Switch to Claude Code); choosing one sets the chat up to
-                switch with the failed request in the composer and sends nothing</span
+                chat, another account's model makes that account the one new chats start on. Picking
+                one shows "Your next message switches this chat to Claude Code. The conversation so
+                far goes with it." above the composer, with Stay on Codex; only the user's own pick
+                switches a chat (a fallback never leaves its provider, and models the user hid from
+                it still keep the picker away). Sending moves the chat (same id, transcript,
+                checkout, title and sidebar row): a session starts at the new provider first, then
+                the chat's session stops (tried three times) and the move is stored, so a failed
+                move leaves the chat where it was and puts the message back; refused while a turn
+                runs, prompts are queued or a Design run is active, and for a Side chat. The
+                transcript shows "Switched to Claude Code · sonnet" between the turns (with the
+                account's name after a move to another account, Switched to Codex (Team)), and every
+                window that hears it shows the row on the new provider. A move to another account of
+                the same provider carries the provider's own session on there, as Continue on
+                another account does. Otherwise the first prompt there carries the conversation as
+                context in which the user's earlier requests still hold (any chats it continued, the
+                first request and the latest exchange sharing the budget, other messages newest
+                first, the newest tool steps cut to what they did and kept to a third of the budget,
+                where the chat moved, files attached that still exist), then whether the last turn
+                was stopped or failed, the open task list and what git reports as changed; sized at
+                half a character per token of the model's context window as the engine reports it
+                (OpenCode and Pi per model, waited for at most two seconds) or declares it
+                (6,000–96,000 characters, 64,000 without one) and within the command-line limit of
+                Cursor and Antigravity (15,000 characters on Windows, 40,000 on Linux). A chat with
+                no conversation yet sends just the request. The transcript keeps only the user's
+                words. A first turn there that ends stopped or failed before any answer, or whose
+                session goes away, sends the handover again with the next prompt; a restart before
+                the first prompt starts the new provider afresh. The sessions a chat left stay its
+                own: provider history neither imports them as chats nor reads them in again. At a
+                plan limit, other signed-in providers are offered beside other accounts (Switch to
+                Claude Code); choosing one sets the chat up to switch with the failed request in the
+                composer and sends nothing</span
               ></label
             >
           </li>

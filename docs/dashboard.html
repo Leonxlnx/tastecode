@@ -386,17 +386,17 @@
           is a CLI folder of its own (CODEX_HOME, CLAUDE_CONFIG_DIR); Settings &gt; Providers &gt;
           Accounts adds a new, empty folder or brings an existing one, signs each account in in its
           own folder, and removes or deletes it; a chat is pinned to the account it started on and
-          resumes there; the composer picks the account for a new chat; plan limits, reset credits,
-          model lists and usage are read per account, and the account popup, the Usage sheets and
-          Profile list them by account. An adversarial review found three medium issues, fixed
-          before the merge: a chat's title and commit message went through the default account, the
-          model picker only listed the default account's models, and a project's MCP sign-in could
-          land in another account's folder. Also fixed: a brought folder that is, holds or sits in a
-          folder in use is refused; removal stops resolving the account before its folder goes; new
-          folders no longer copy the default account's settings, which can hold keys and login pins.
-          Checked with the four gates and in the Electron shell with stand-in CLIs only; real
-          sign-ins, macOS and Linux are not verified yet. The chunk PRs #1854 to #1890 show as
-          merged or closed.
+          resumes there; the model picker picks the account for a new chat; plan limits, reset
+          credits, model lists and usage are read per account, and the account popup, the Usage
+          sheets and Profile list them by account. An adversarial review found three medium issues,
+          fixed before the merge: a chat's title and commit message went through the default
+          account, the model picker only listed the default account's models, and a project's MCP
+          sign-in could land in another account's folder. Also fixed: a brought folder that is,
+          holds or sits in a folder in use is refused; removal stops resolving the account before
+          its folder goes; new folders no longer copy the default account's settings, which can hold
+          keys and login pins. Checked with the four gates and in the Electron shell with stand-in
+          CLIs only; real sign-ins, macOS and Linux are not verified yet. The chunk PRs #1854 to
+          #1890 show as merged or closed.
         </p>
         <p>
           October 19, second main into nightly (PR #1909): main 58d89955, the seven commits of PRs
