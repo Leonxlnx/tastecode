@@ -6,7 +6,6 @@ import type {
   CanUseTool,
   ModelInfo,
   Options as ClaudeQueryOptions,
-  PermissionMode,
   PermissionResult,
   SDKMessage,
   SDKUserMessage,
@@ -56,6 +55,7 @@ import {
   type ClaudeSpawn,
 } from './sdk-runtime.js'
 import { mapClaudeRateLimitEvent, type ProviderLimit } from './limits.js'
+import { PERMISSION_MODE } from './permission-mode.js'
 import { ClaudeSubagents } from './subagents.js'
 
 export { CLAUDE_CAPABILITIES } from './capabilities.js'
@@ -399,13 +399,6 @@ async function readClaudeAppliedSettings(
   const parsed = ClaudeAppliedSettingsSchema.safeParse(await query.getSettings())
   return parsed.success ? parsed.data.applied : undefined
 }
-
-const PERMISSION_MODE = {
-  ask: 'default',
-  auto: 'acceptEdits',
-  'auto-review': 'auto',
-  full: 'bypassPermissions',
-} satisfies Record<ApprovalMode, PermissionMode>
 
 export type ClaudeAdapterEvents = {
   event: [DomainEvent]
