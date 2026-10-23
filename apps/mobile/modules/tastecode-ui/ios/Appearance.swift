@@ -37,29 +37,19 @@ let textSizeSteps: [DynamicTypeSize] = [.xSmall, .small, .medium, .large, .xLarg
 private let defaultSizeStep = 3
 
 /// Applies the chosen text size, typeface and weight to everything below it.
+/// One unbranched chain: a branch would make a change rebuild the screens and close any open sheet.
 struct AppearanceModifier: ViewModifier {
   @AppStorage(AppearanceKey.followSystemSize) private var followSystem = true
   @AppStorage(AppearanceKey.sizeStep) private var step = defaultSizeStep
   @AppStorage(AppearanceKey.font) private var font = FontChoice.standard
   @AppStorage(AppearanceKey.bold) private var bold = false
+  @Environment(\.dynamicTypeSize) private var systemSize
 
   func body(content: Content) -> some View {
     content
       .fontDesign(font.design)
       .environment(\.legibilityWeight, bold ? .bold : nil)
-      .modifier(SizeModifier(size: followSystem ? nil : textSizeSteps[clamped(step)]))
-  }
-}
-
-private struct SizeModifier: ViewModifier {
-  let size: DynamicTypeSize?
-
-  func body(content: Content) -> some View {
-    if let size {
-      content.dynamicTypeSize(size)
-    } else {
-      content
-    }
+      .dynamicTypeSize(followSystem ? systemSize : textSizeSteps[clamped(step)])
   }
 }
 
