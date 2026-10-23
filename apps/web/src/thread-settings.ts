@@ -82,3 +82,30 @@ export function adoptedSelection(
     ...(saved?.designMode !== undefined ? { designMode: saved.designMode } : {}),
   }
 }
+
+type ListedChat = { id: string; model?: string | undefined }
+
+/**
+ * Shares the setups this window kept for chats the server names no model for,
+ * so a chat set up before the server kept setups shows and filters by its
+ * model on every client. All go at once, so the server's list notices for
+ * them arrive as one. Returns how many were shared.
+ */
+export async function shareSavedSetups(
+  chats: readonly ListedChat[],
+  saved: (threadId: string) => LocalThreadSelection | undefined,
+  share: (threadId: string, setup: SharedSetup) => Promise<unknown>,
+): Promise<number> {
+  const pending: Array<Promise<unknown>> = []
+  for (const chat of chats) {
+    if (chat.model !== undefined) continue
+    const selection = saved(chat.id)
+    if (!selection) continue
+    const setup = sharedSetup(selection)
+    // The provider's own default names no model; the chat shares it when opened.
+    if (!setup.model) continue
+    pending.push(share(chat.id, setup))
+  }
+  const results = await Promise.allSettled(pending)
+  return results.filter((result) => result.status === 'fulfilled').length
+}

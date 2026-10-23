@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import type { Model } from '@harness/contracts'
 import { modelChoiceKey, type ModelChoice } from './model-catalog.js'
-import { adoptedSelection, modelIdFromKey, sharedSetup } from './thread-settings.js'
+import {
+  adoptedSelection,
+  modelIdFromKey,
+  shareSavedSetups,
+  sharedSetup,
+  type LocalThreadSelection,
+} from './thread-settings.js'
 
 const model = (id: string): Model => ({
   id,
@@ -54,5 +60,33 @@ describe('a chat setup shared through the server', () => {
     expect(
       adoptedSelection({ model: 'kimi-k3' }, undefined, { provider: 'acp', agent: 'kimi' }, []),
     ).toEqual({ modelKey: 'acp:kimi:kimi-k3' })
+  })
+})
+
+describe('shareSavedSetups', () => {
+  it('shares only chats the server names no model for, skipping the default', async () => {
+    const saved: Record<string, LocalThreadSelection> = {
+      old: { modelKey: 'codex:gpt-5.5', effort: 'high' },
+      named: { modelKey: 'codex:gpt-5.4' },
+      automatic: { modelKey: 'codex:automatic' },
+      failing: { modelKey: 'claude-code:claude-opus-5-5' },
+    }
+    const shared: Array<[string, unknown]> = []
+    const count = await shareSavedSetups(
+      [
+        { id: 'old' },
+        { id: 'named', model: 'gpt-5.4' },
+        { id: 'automatic' },
+        { id: 'unknown' },
+        { id: 'failing' },
+      ],
+      (id) => saved[id],
+      async (id, setup) => {
+        if (id === 'failing') throw new Error('gone')
+        shared.push([id, setup])
+      },
+    )
+    expect(shared).toEqual([['old', { model: 'gpt-5.5', effort: 'high' }]])
+    expect(count).toBe(1)
   })
 })

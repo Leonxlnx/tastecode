@@ -229,7 +229,7 @@ import {
 } from './ui/workspace/workspace-panel-width.js'
 import { useWindowChrome } from './window-chrome.js'
 import { backdropColorScheme } from './theme-colors.js'
-import { adoptedSelection, sharedSetup } from './thread-settings.js'
+import { adoptedSelection, shareSavedSetups, sharedSetup } from './thread-settings.js'
 import {
   readProfileIdentityPreferences,
   writeProfileIdentityPreferences,
@@ -3126,6 +3126,8 @@ export function App() {
     authStatusRequest,
   ])
 
+  // Once per window: chats set up before the server kept setups share theirs.
+  const savedSetupsShared = useRef(false)
   const refreshProjects = useCallback(async () => {
     if (!startupMilestones.current.projectsRequested) {
       startupMilestones.current.projectsRequested = true
@@ -3133,6 +3135,14 @@ export function App() {
     }
     const result = await transport.request('projects.list', {})
     const list = result.projects.filter((project) => !removedProjectPaths.current.has(project.path))
+    if (!savedSetupsShared.current) {
+      savedSetupsShared.current = true
+      void shareSavedSetups(
+        list.flatMap((project) => project.sessions),
+        readThreadModelSelection,
+        (threadId, setup) => transport.request('thread.setSettings', { threadId, ...setup }),
+      )
+    }
     if (!startupMilestones.current.projectsReceived) {
       startupMilestones.current.projectsReceived = true
       reportStartupMilestone('projects-received')

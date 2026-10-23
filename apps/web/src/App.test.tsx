@@ -10297,6 +10297,9 @@ describe('new chats', () => {
     )
 
     // The phone moves the open chat to another model, a lower effort and auto access.
+    const sharedBefore = transport.request.mock.calls.filter(
+      ([method]) => method === 'thread.setSettings',
+    ).length
     act(() =>
       transport.listeners.get('thread.settings')?.({
         threadId: 'untouched-thread',
@@ -10316,7 +10319,10 @@ describe('new chats', () => {
       modelKey: 'codex:gpt-6.1-sol',
       effort: 'low',
     })
-    expect(transport.request).not.toHaveBeenCalledWith('thread.setSettings', expect.anything())
+    // Following a push never echoes it back.
+    expect(
+      transport.request.mock.calls.filter(([method]) => method === 'thread.setSettings'),
+    ).toHaveLength(sharedBefore)
 
     // The desktop raises the effort; the server, and through it the phone, hears it.
     fireEvent.keyDown(screen.getByRole('slider', { name: 'Reasoning effort' }), { key: 'End' })
