@@ -1,65 +1,32 @@
 import SwiftUI
 import UIKit
 
-/// Settings, the paired computer first: whether it answers, the keys that
-/// prove it is the one you paired, and the way to forget it.
+/// Settings, as a list of pages like the system's: the paired computer
+/// first, then the app itself.
 struct SettingsSheet: View {
   @Environment(AppModel.self) private var model
   @Environment(\.dismiss) private var dismiss
-  @State private var forgetting = false
 
   var body: some View {
     let link = model.link
-    let name = link?.computerName ?? "Computer"
     NavigationStack {
       Form {
         Section {
-          VStack(alignment: .leading, spacing: 4) {
-            Text(name)
-              .font(.title3.weight(.semibold))
-            Text(status(link))
-              .font(.subheadline)
-              .foregroundStyle(link?.phase == .refused ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
+          NavigationLink {
+            ComputerSettings { dismiss() }
+          } label: {
+            VStack(alignment: .leading, spacing: 2) {
+              Text(link?.computerName ?? "Computer")
+                .font(.headline)
+              Text(computerStatus(link))
+                .font(.subheadline)
+                .foregroundStyle(link?.phase == .refused ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
+            }
+            .padding(.vertical, 2)
           }
-          .padding(.vertical, 4)
-          if let error = link?.error, link?.phase != .open {
-            Text(error)
-              .font(.footnote)
-              .foregroundStyle(.secondary)
-          }
-          if link?.phase == .waiting {
-            Button("Try Again") { model.send(["type": "reconnect"]) }
-          }
-        } header: {
-          Text("Computer")
         }
         Section {
-          if let key = link?.computerKey {
-            LabeledContent("Computer") {
-              Text(key).font(.system(.subheadline, design: .monospaced))
-            }
-          }
-          LabeledContent("This phone") {
-            Text(link?.phoneKey ?? "").font(.system(.subheadline, design: .monospaced))
-          }
-        } header: {
-          Text("Keys")
-        } footer: {
-          Text("The link is encrypted end to end and only this computer's key can answer it, over Wi‑Fi or Tailscale. Nothing passes through a server.")
-        }
-        Section {
-          Button("Forget This Computer", role: .destructive) { forgetting = true }
-            .alert("Forget \(name)?", isPresented: $forgetting) {
-              Button("Cancel", role: .cancel) {}
-              Button("Forget", role: .destructive) {
-                dismiss()
-                model.send(["type": "forget"])
-              }
-            } message: {
-              Text("This phone stops connecting and has to be paired again from the computer.")
-            }
-        } footer: {
-          Text("TasteCode \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "")")
+          NavigationLink("About") { AboutSettings() }
         }
       }
       .navigationTitle("Settings")
@@ -72,14 +39,82 @@ struct SettingsSheet: View {
     }
     .presentationDetents([.height(560), .large])
   }
+}
 
-  private func status(_ link: LinkView?) -> String {
-    switch link?.phase {
-    case .open: return link?.host.map { "Connected · \($0)" } ?? "Connected"
-    case .connecting, .idle, nil: return "Connecting…"
-    case .waiting: return "Not reachable"
-    case .refused: return "Needs pairing again"
+private func computerStatus(_ link: LinkView?) -> String {
+  switch link?.phase {
+  case .open: return link?.host.map { "Connected · \($0)" } ?? "Connected"
+  case .connecting, .idle, nil: return "Connecting…"
+  case .waiting: return "Not reachable"
+  case .refused: return "Needs pairing again"
+  }
+}
+
+/// The paired computer: whether it answers, the keys that prove it is the one
+/// you paired, and the way to forget it.
+private struct ComputerSettings: View {
+  @Environment(AppModel.self) private var model
+  let onForget: () -> Void
+  @State private var forgetting = false
+
+  var body: some View {
+    let link = model.link
+    let name = link?.computerName ?? "Computer"
+    Form {
+      Section {
+        LabeledContent("Status", value: link?.phase == .open ? "Connected" : computerStatus(link))
+        if let host = link?.host, link?.phase == .open {
+          LabeledContent("Address", value: host)
+        }
+        if let error = link?.error, link?.phase != .open {
+          Text(error)
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+        }
+        if link?.phase == .waiting {
+          Button("Try Again") { model.send(["type": "reconnect"]) }
+        }
+      }
+      Section {
+        if let key = link?.computerKey {
+          LabeledContent("Computer") {
+            Text(key).font(.system(.subheadline, design: .monospaced))
+          }
+        }
+        LabeledContent("This phone") {
+          Text(link?.phoneKey ?? "").font(.system(.subheadline, design: .monospaced))
+        }
+      } header: {
+        Text("Keys")
+      } footer: {
+        Text("The link is encrypted end to end and only this computer's key can answer it, over Wi‑Fi or Tailscale. Nothing passes through a server.")
+      }
+      Section {
+        Button("Forget This Computer", role: .destructive) { forgetting = true }
+          .alert("Forget \(name)?", isPresented: $forgetting) {
+            Button("Cancel", role: .cancel) {}
+            Button("Forget", role: .destructive) {
+              onForget()
+              model.send(["type": "forget"])
+            }
+          } message: {
+            Text("This phone stops connecting and has to be paired again from the computer.")
+          }
+      }
     }
+    .navigationTitle(name)
+    .navigationBarTitleDisplayMode(.inline)
+  }
+}
+
+private struct AboutSettings: View {
+  var body: some View {
+    Form {
+      LabeledContent("Version", value: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "")
+      LabeledContent("Build", value: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "")
+    }
+    .navigationTitle("About")
+    .navigationBarTitleDisplayMode(.inline)
   }
 }
 
