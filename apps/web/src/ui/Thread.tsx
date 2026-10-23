@@ -2950,7 +2950,7 @@ function ActivityStack({
       >
         {disclosure.contentMounted ? (
           <div className="activity__reveal-clip">
-            <div className="activity__body">
+            <div className={`activity__body${activity.complete ? ' activity__body--work' : ''}`}>
               {(visibleActivity ? groupToolRuns(visibleActivity) : []).map((item) => {
                 if (Array.isArray(item)) {
                   return item[0]!.subagent ? (
