@@ -115,6 +115,13 @@ private struct ComputerSettings: View {
     let name = link?.computerName ?? "Computer"
     Form {
       Section {
+        NavigationLink {
+          ComputerName()
+        } label: {
+          LabeledContent("Name", value: name)
+        }
+      }
+      Section {
         LabeledContent("Status", value: link?.phase == .open ? "Connected" : computerStatus(link))
         if let host = link?.host, link?.phase == .open {
           LabeledContent("Address", value: host)
@@ -157,6 +164,40 @@ private struct ComputerSettings: View {
     }
     .navigationTitle(name)
     .navigationBarTitleDisplayMode(.inline)
+  }
+}
+
+/// Renames the computer on this phone only; an empty name goes back to the computer's own.
+private struct ComputerName: View {
+  @Environment(AppModel.self) private var model
+  @Environment(\.dismiss) private var dismiss
+  @State private var draft = ""
+  @FocusState private var focused: Bool
+
+  var body: some View {
+    Form {
+      Section {
+        TextField(model.link?.defaultName ?? "Name", text: $draft)
+          .focused($focused)
+          .submitLabel(.done)
+          .onSubmit { dismiss() }
+      } footer: {
+        if let own = model.link?.defaultName {
+          Text("Only this phone uses this name. Leave it empty to use \(own).")
+        }
+      }
+    }
+    .navigationTitle("Name")
+    .navigationBarTitleDisplayMode(.inline)
+    .onAppear {
+      draft = model.link?.computerName ?? ""
+      focused = true
+    }
+    .onDisappear {
+      let name = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+      guard name != model.link?.computerName else { return }
+      model.send(["type": "computer.rename", "name": name == model.link?.defaultName ? "" : name])
+    }
   }
 }
 

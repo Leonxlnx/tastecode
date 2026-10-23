@@ -126,3 +126,24 @@ describe('the link while the computer refuses it', () => {
     connection.stop()
   })
 })
+
+describe('a name chosen for the computer', () => {
+  it('stays when the computer reports its own name, and goes with an empty one', () => {
+    const connection = new Connection()
+    const saved: Array<Record<string, unknown>> = []
+    connection.onPairingChange((next) => saved.push(next))
+    connection.start(pairing)
+    connection.relabel('Desk')
+    native.emit('onLinkState', {
+      attempt: native.attempts.length,
+      state: 'open',
+      host: '192.168.1.2',
+      deviceId: 'd',
+      serverName: 'Mac Studio',
+    })
+    expect(saved.at(-1)).toMatchObject({ label: 'Desk', name: 'Mac Studio' })
+    connection.relabel(undefined)
+    expect(saved.at(-1)).not.toHaveProperty('label')
+    connection.stop()
+  })
+})

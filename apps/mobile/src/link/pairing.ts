@@ -4,6 +4,8 @@ import { TasteLink } from '../../modules/tastecode-link'
 /** The computer this phone is paired with, as kept in the Keychain. */
 export type Pairing = {
   name: string
+  /** The name this phone shows instead, when the person chose one. */
+  label?: string
   /** The computer's static key, base64url. Every link is pinned to it. */
   key: string
   port: number

@@ -13,7 +13,10 @@ export type LinkView = {
   paired: boolean
   /** A pairing code was read and its first handshake is still under way. */
   pairing: boolean
+  /** The name the person chose for the computer, or its own. */
   computerName: string | null
+  /** The computer's own name, shown again when the chosen one is cleared. */
+  defaultName: string | null
   phase: LinkPhase
   host: string | null
   error: string | null
@@ -201,6 +204,7 @@ export type Action =
   | { type: 'pair'; link: string }
   | { type: 'forget' }
   | { type: 'reconnect' }
+  | { type: 'computer.rename'; name: string }
   | { type: 'refresh' }
   | { type: 'thread.open'; threadId: string }
   | { type: 'thread.close'; threadId: string }

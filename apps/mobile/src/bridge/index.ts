@@ -19,7 +19,8 @@ function linkView(): LinkView {
   return {
     paired: current !== undefined && current.secret === undefined,
     pairing: current?.secret !== undefined,
-    computerName: current?.name ?? null,
+    computerName: current?.label ?? current?.name ?? null,
+    defaultName: current?.name ?? null,
     phase: status.phase,
     host: status.phase === 'open' ? status.host : null,
     error: status.phase === 'waiting' || status.phase === 'refused' ? status.error : null,
@@ -68,6 +69,9 @@ async function perform(action: Action): Promise<unknown> {
       return null
     case 'reconnect':
       connection.reconnectNow()
+      return null
+    case 'computer.rename':
+      connection.relabel(action.name.trim() || undefined)
       return null
     case 'refresh':
       await projects.refresh()

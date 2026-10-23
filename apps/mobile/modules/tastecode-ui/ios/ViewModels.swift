@@ -9,6 +9,7 @@ struct LinkView: Decodable, Equatable {
   var paired: Bool
   var pairing: Bool
   var computerName: String?
+  var defaultName: String?
   var phase: Phase
   var host: String?
   var error: String?

@@ -95,6 +95,18 @@ export class Connection {
   }
 
   /** Tries again now, as Try Again asks; the screens show the attempt. */
+  /** Keeps a name the person chose for the computer, or goes back to its own with none. */
+  relabel(label: string | undefined): void {
+    const pairing = this.#pairing
+    if (!pairing) return
+    const next: Pairing = { ...pairing }
+    if (label) next.label = label
+    else delete next.label
+    this.#pairing = next
+    savePairing(next)
+    this.#onPairingChange(next)
+  }
+
   reconnectNow(): void {
     this.#retry(true)
   }
