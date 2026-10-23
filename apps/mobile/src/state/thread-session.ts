@@ -305,25 +305,42 @@ export class ThreadSession {
     })
   }
 
-  /** Moves at once; the computer's answer or list puts it right if it disagrees. */
-  async moveQueued(queuedTurnId: string, direction: 'up' | 'down'): Promise<void> {
+  /**
+   * Puts a queued prompt at another place, at once. The computer moves a
+   * prompt one place at a time, so the steps follow one after another.
+   */
+  async reorderQueued(queuedTurnId: string, index: number): Promise<void> {
     const queue = [...this.state.get().queue]
     const from = queue.findIndex((entry) => entry.id === queuedTurnId)
-    const to = from + (direction === 'up' ? -1 : 1)
-    if (from >= 0 && to >= 0 && to < queue.length) {
-      ;[queue[from], queue[to]] = [queue[to]!, queue[from]!]
-      this.#patch({ queue })
-    }
+    const to = Math.max(0, Math.min(index, queue.length - 1))
+    if (from < 0 || from === to) return
+    const [entry] = queue.splice(from, 1)
+    queue.splice(to, 0, entry!)
+    this.#patch({ queue })
+    const direction = to < from ? 'up' : 'down'
     try {
-      await this.connection.request('thread.moveQueuedTurn', {
-        threadId: this.threadId,
-        queuedTurnId,
-        direction,
-      })
+      for (let step = 0; step < Math.abs(to - from); step += 1) {
+        await this.connection.request('thread.moveQueuedTurn', {
+          threadId: this.threadId,
+          queuedTurnId,
+          direction,
+        })
+      }
     } catch (error) {
       void this.#readQueue()
       throw error
     }
+  }
+
+  /**
+   * Takes a prompt out of the queue to edit it, and gives back its text and
+   * pictures; nothing comes back when the computer had already started it.
+   */
+  async takeQueued(queuedTurnId: string): Promise<{ text: string; attachments: string[] }> {
+    const entry = this.state.get().queue.find((item) => item.id === queuedTurnId)
+    if (!entry) throw new Error('That prompt is no longer queued.')
+    await this.deleteQueued(queuedTurnId)
+    return { text: entry.text, attachments: [...entry.attachments] }
   }
 
   /** Removes at once; a refusal brings the computer's list back. */

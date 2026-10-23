@@ -213,12 +213,44 @@ describe('thread session', () => {
     await sending
     expect(session.state.get().unconfirmed.size).toBe(0)
 
-    // Removing is instant; a refused move comes back as the computer's order.
-    void session.deleteQueued('a')
-    expect(ids()).not.toContain('a')
-    await expect(session.moveQueued('b', 'down')).rejects.toThrow('No longer queued')
+    // A refused move comes back as the computer's order; removing is instant.
+    await expect(session.reorderQueued('a', 1)).rejects.toThrow('No longer queued')
     await settle()
     expect(ids()).toEqual(['a', 'b'])
+    void session.deleteQueued('a')
+    expect(ids()).toEqual(['b'])
+    session.dispose()
+  })
+
+  it('drags a prompt several places in single steps and takes one back to edit', async () => {
+    const listed = ['a', 'b', 'c', 'd'].map((id, index) => ({
+      id,
+      text: `prompt ${id}`,
+      attachments: id === 'b' ? ['/tmp/b.png'] : [],
+      createdAt: index,
+    }))
+    const fake = fakeConnection(async (method) => {
+      if (method === 'thread.history') return { events: [], running: false }
+      if (method === 'thread.queue') return { items: listed, canSteer: false }
+      if (method === 'thread.moveQueuedTurn' || method === 'thread.deleteQueuedTurn') return {}
+      throw new Error(method)
+    })
+    const session = new ThreadSession('t', fake.connection)
+    await session.load()
+    await settle()
+    const ids = () => session.state.get().queue.map((entry) => entry.id)
+
+    const moving = session.reorderQueued('d', 1)
+    expect(ids()).toEqual(['a', 'd', 'b', 'c'])
+    await moving
+    const moves = fake.requests.filter((request) => request.method === 'thread.moveQueuedTurn')
+    expect(moves.map((request) => request.params['direction'])).toEqual(['up', 'up'])
+
+    await expect(session.takeQueued('b')).resolves.toEqual({
+      text: 'prompt b',
+      attachments: ['/tmp/b.png'],
+    })
+    expect(ids()).toEqual(['a', 'd', 'c'])
     session.dispose()
   })
 

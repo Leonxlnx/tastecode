@@ -236,7 +236,8 @@ export type Action =
   | { type: 'thread.setModel'; threadId: string; sourceKey: string; model: string }
   | { type: 'thread.setEffort'; threadId: string; effort: string }
   | { type: 'thread.setTier'; threadId: string; tier: string | null }
-  | { type: 'thread.moveQueued'; threadId: string; queuedId: string; direction: 'up' | 'down' }
+  | { type: 'thread.reorderQueued'; threadId: string; queuedId: string; index: number }
+  | { type: 'thread.editQueued'; threadId: string; queuedId: string }
   | { type: 'thread.pin'; threadId: string; pinned: boolean }
   | { type: 'thread.archive'; threadId: string }
   | { type: 'thread.restore'; threadId: string }

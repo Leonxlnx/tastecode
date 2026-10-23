@@ -116,9 +116,11 @@ async function perform(action: Action): Promise<unknown> {
     case 'thread.setTier':
       await thread(action.threadId).setTier(action.tier)
       return null
-    case 'thread.moveQueued':
-      await thread(action.threadId).session.moveQueued(action.queuedId, action.direction)
+    case 'thread.reorderQueued':
+      await thread(action.threadId).session.reorderQueued(action.queuedId, action.index)
       return null
+    case 'thread.editQueued':
+      return thread(action.threadId).session.takeQueued(action.queuedId)
     case 'thread.pin':
       await projects.pinChat(action.threadId, action.pinned)
       return null
