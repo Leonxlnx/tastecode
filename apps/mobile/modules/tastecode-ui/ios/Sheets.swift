@@ -105,11 +105,12 @@ private struct FolderList: View {
   @State private var listing: BrowseResult?
   @State private var error: String?
   @State private var adding: String?
+  @State private var query = ""
 
   var body: some View {
     List {
       if let listing {
-        ForEach(listing.folders) { entry in
+        ForEach(matching(listing)) { entry in
           NavigationLink(value: entry.path) {
             HStack(spacing: 12) {
               Image(systemName: entry.repository ? "arrow.triangle.branch" : "folder")
@@ -147,8 +148,14 @@ private struct FolderList: View {
         ProgressView()
       } else if listing?.folders.isEmpty == true {
         ContentUnavailableView("No Folders Inside", systemImage: "folder")
+      } else if let listing, matching(listing).isEmpty {
+        ContentUnavailableView.search(text: query)
       }
     }
+    .searchable(text: $query, prompt: "Search folders")
+    .searchPresentationToolbarBehavior(.avoidHidingContent)
+    // Beside the Add button a full field would be cut to a few letters.
+    .searchToolbarBehavior(canAdd ? .minimize : .automatic)
     .navigationTitle(title)
     .navigationBarTitleDisplayMode(.inline)
     .navigationSubtitle(listing?.path ?? "")
@@ -169,7 +176,11 @@ private struct FolderList: View {
           }
         }
       }
-      if let listing, listing.path != listing.home, !model.chats.projects.contains(where: { $0.path == listing.path }) {
+      if listing?.folders.isEmpty == false {
+        DefaultToolbarItem(kind: .search, placement: .bottomBar)
+      }
+      if canAdd, let listing {
+        ToolbarSpacer(.fixed, placement: .bottomBar)
         ToolbarItem(placement: .bottomBar) {
           Button {
             add(listing.path)
@@ -194,10 +205,22 @@ private struct FolderList: View {
     }
   }
 
+  /// The open folder is neither home nor already a project.
+  private var canAdd: Bool {
+    guard let listing else { return false }
+    return listing.path != listing.home && !model.chats.projects.contains(where: { $0.path == listing.path })
+  }
+
   private var title: String {
     guard let listing else { return "Folders" }
     if listing.path == listing.home { return "Home" }
     return listing.path.split(whereSeparator: { $0 == "/" || $0 == "\\" }).last.map(String.init) ?? listing.path
+  }
+
+  private func matching(_ listing: BrowseResult) -> [BrowsedFolder] {
+    let needle = query.trimmingCharacters(in: .whitespaces)
+    if needle.isEmpty { return listing.folders }
+    return listing.folders.filter { $0.name.localizedStandardContains(needle) }
   }
 
   private func add(_ path: String) {
