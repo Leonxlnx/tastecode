@@ -157,8 +157,16 @@ struct RowView: Decodable, Equatable, Identifiable {
   var duration: String?
   var failed: Bool?
   var steps: [StepView]?
+  var runs: [StepRunView]?
 
   var id: String { key }
+}
+
+/// A settled group's steps in one run: a note, one call, or calls under a summary.
+struct StepRunView: Decodable, Equatable, Identifiable {
+  var id: String
+  var summary: String?
+  var steps: [StepView]
 }
 
 struct ApprovalView: Decodable, Equatable, Identifiable {

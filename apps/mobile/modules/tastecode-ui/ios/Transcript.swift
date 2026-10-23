@@ -13,35 +13,60 @@ struct Transcript: View {
   @State private var prepending = false
   /// The first rows arrive after the screen appears; they open at the newest message.
   @State private var placed = false
+  /// After sending, the new message is held at the top with its reply below, as on the desktop.
+  @State private var pinned: String?
+  @State private var awaitingPin = false
+  /// Where each row starts in the transcript, for the pinned one's room below.
+  @State private var rowTops: [String: CGFloat] = [:]
+  @State private var stackHeight: CGFloat = 0
+  @State private var viewport: CGFloat = 0
+
+  /// Room under a pinned message's turn, so the message can reach the top while the reply is short.
+  private var filler: CGFloat {
+    guard let pinned, let top = rowTops[pinned] else { return 0 }
+    return max(0, viewport - (stackHeight - top))
+  }
 
   var body: some View {
     let meta = store.meta
     ScrollView {
-      LazyVStack(alignment: .leading, spacing: 22) {
-        if meta?.hasOlder == true {
-          OlderMessages(loading: meta?.loadingOlder == true)
-            .onAppear(perform: loadOlder)
-        }
-        ForEach(store.order, id: \.self) { key in
-          if let row = store.rows[key] {
-            RowCell(model: row)
+      VStack(spacing: 0) {
+        LazyVStack(alignment: .leading, spacing: 22) {
+          if meta?.hasOlder == true {
+            OlderMessages(loading: meta?.loadingOlder == true)
+              .onAppear(perform: loadOlder)
+          }
+          ForEach(store.order, id: \.self) { key in
+            if let row = store.rows[key] {
+              RowCell(model: row)
+                .onGeometryChange(for: CGFloat.self) { geometry in
+                  geometry.frame(in: .named("transcript")).minY
+                } action: { top in
+                  rowTops[key] = top
+                }
+            }
+          }
+          if let meta {
+            if meta.waiting {
+              WorkingLine(text: "Working")
+            }
+            if !meta.plan.isEmpty {
+              PlanList(steps: meta.plan)
+            }
+            if store.order.isEmpty {
+              placeholder(meta)
+            }
           }
         }
-        if let meta {
-          if meta.waiting {
-            WorkingLine(text: "Working")
-          }
-          if !meta.plan.isEmpty {
-            PlanList(steps: meta.plan)
-          }
-          if store.order.isEmpty {
-            placeholder(meta)
-          }
-        }
+        .padding(.horizontal, 20)
+        .padding(.top, 14)
+        .padding(.bottom, 24)
+        .scrollTargetLayout()
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { stackHeight = $0 }
+        Color.clear
+          .frame(height: filler)
       }
-      .padding(.horizontal, 20)
-      .padding(.top, 14)
-      .padding(.bottom, 24)
+      .coordinateSpace(.named("transcript"))
     }
     .environment(\.threadId, store.id)
     .scrollPosition($position)
@@ -56,7 +81,11 @@ struct Transcript: View {
     }
     .defaultScrollAnchor(.top, for: .alignment)
     .defaultScrollAnchor(.bottom, for: .initialOffset)
-    .defaultScrollAnchor(atBottom || prepending ? .bottom : .top, for: .sizeChanges)
+    // A pinned message stays where it is while its reply grows below it.
+    .defaultScrollAnchor((atBottom && pinned == nil) || prepending ? .bottom : .top, for: .sizeChanges)
+    .onScrollGeometryChange(for: CGFloat.self) { $0.containerSize.height } action: { _, height in
+      viewport = height
+    }
     .onScrollGeometryChange(for: Bool.self) { geometry in
       // The bottom of what is readable: the visible rect less the composer over it.
       geometry.visibleRect.maxY - geometry.contentInsets.bottom >= geometry.contentSize.height - 48
@@ -67,6 +96,7 @@ struct Transcript: View {
     .overlay(alignment: .bottom) {
       if !atBottom && !store.order.isEmpty {
         Button {
+          pinned = nil
           withAnimation(.smooth) { position.scrollTo(edge: .bottom) }
         } label: {
           Image(systemName: "arrow.down")
@@ -82,10 +112,28 @@ struct Transcript: View {
     }
     .animation(.smooth(duration: 0.25), value: atBottom)
     .onChange(of: jumpToken) {
-      withAnimation(.smooth) { position.scrollTo(edge: .bottom) }
+      // The message just sent arrives as a new row; it is pinned when it does.
+      awaitingPin = true
+      Task {
+        try? await Task.sleep(for: .seconds(4))
+        awaitingPin = false
+      }
     }
     .onAppear { placed = !store.order.isEmpty }
     .onChange(of: store.order) {
+      let lastUser = store.order.last { store.rows[$0]?.row.kind == .user }
+      if awaitingPin, let lastUser, lastUser != pinned {
+        awaitingPin = false
+        pinned = lastUser
+        Task {
+          // One layout pass first, so the room under the message exists to scroll into.
+          try? await Task.sleep(for: .milliseconds(60))
+          withAnimation(.smooth(duration: 0.45)) { position.scrollTo(id: lastUser, anchor: .top) }
+        }
+      } else if let pinned, !store.order.contains(pinned) {
+        // The sent message came back from the computer under its own id.
+        self.pinned = lastUser
+      }
       if !placed && !store.order.isEmpty {
         placed = true
         atBottom = true
@@ -220,6 +268,8 @@ struct StepsRow: View {
   var body: some View {
     let live = row.live == true
     let steps = row.steps ?? []
+    // A settled group comes in runs; a live one lists each step as it comes.
+    let runs = row.runs ?? steps.map { StepRunView(id: $0.id, summary: nil, steps: [$0]) }
     VStack(alignment: .leading, spacing: 0) {
       Button {
         if !built { built = true }
@@ -263,8 +313,16 @@ struct StepsRow: View {
         // The steps open to their measured height, so the rows below move with
         // them instead of jumping, and each step settles in after the one above.
         VStack(alignment: .leading, spacing: 12) {
-          ForEach(Array(steps.enumerated()), id: \.element.id) { index, step in
-            StepLine(step: step)
+          ForEach(Array(runs.enumerated()), id: \.element.id) { index, run in
+            Group {
+              if let summary = run.summary {
+                StepBatch(summary: summary, steps: run.steps)
+              } else {
+                ForEach(run.steps) { step in
+                  StepLine(step: step)
+                }
+              }
+            }
               .opacity(expanded ? 1 : 0)
               .offset(y: expanded ? 0 : -8)
               .blur(radius: expanded ? 0 : 3)
@@ -289,6 +347,47 @@ struct StepsRow: View {
       }
     }
     .frame(maxWidth: .infinity, alignment: .leading)
+  }
+}
+
+/// Calls in a row under one line, "Ran 3 commands", opening to list them.
+private struct StepBatch: View {
+  let summary: String
+  let steps: [StepView]
+  @State private var open = false
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 0) {
+      Button {
+        withAnimation(.smooth(duration: open ? 0.22 : 0.32)) { open.toggle() }
+      } label: {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+          Image(systemName: StepLine.symbol(for: steps.first?.kind ?? .other))
+            .font(.footnote)
+            .foregroundStyle(steps.contains(where: \.failed) ? AnyShapeStyle(.red) : AnyShapeStyle(.tertiary))
+            .frame(width: 18)
+          Text(summary)
+            .font(.footnote)
+          Image(systemName: "chevron.right")
+            .font(.system(size: 9, weight: .bold))
+            .foregroundStyle(.tertiary)
+            .rotationEffect(.degrees(open ? 90 : 0))
+          Spacer(minLength: 0)
+        }
+        .contentShape(.rect)
+      }
+      .buttonStyle(.plain)
+      if open {
+        VStack(alignment: .leading, spacing: 10) {
+          ForEach(steps) { step in
+            StepLine(step: step)
+          }
+        }
+        .padding(.top, 10)
+        .padding(.leading, 28)
+        .transition(.opacity.combined(with: .offset(y: -6)))
+      }
+    }
   }
 }
 
@@ -337,8 +436,10 @@ private struct StepLine: View {
     }
   }
 
-  private var symbol: String {
-    switch step.kind {
+  private var symbol: String { Self.symbol(for: step.kind) }
+
+  static func symbol(for kind: StepView.Kind) -> String {
+    switch kind {
     case .command: return "terminal"
     case .file: return "pencil"
     case .tool: return "wrench.adjustable"
