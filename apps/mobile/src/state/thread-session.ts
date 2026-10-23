@@ -26,6 +26,8 @@ export type ThreadScreenState = {
   olderCursor: string | undefined
   loadingOlder: boolean
   queue: readonly QueuedTurn[]
+  /** Queued prompts the computer has not confirmed yet; they show but cannot be acted on. */
+  unconfirmed: ReadonlySet<string>
   canSteer: boolean
 }
 
@@ -46,6 +48,8 @@ export type TurnOptions = { model?: string; effort?: string; serviceTier?: strin
 export class ThreadSession {
   readonly state: Store<ThreadScreenState>
   #model = new ThreadModel()
+  /** Prompts queued from here whose `thread.sendTurn` has not answered yet. */
+  #sending = new Map<string, QueuedTurn>()
   #lastSeq = 0
   /** Live events that arrive while a full read is in flight. */
   #buffer: HistoryEntry[] | undefined
@@ -65,6 +69,7 @@ export class ThreadSession {
       olderCursor: undefined,
       loadingOlder: false,
       queue: [],
+      unconfirmed: new Set(),
       canSteer: false,
     })
     this.#subscriptions.push(
@@ -72,7 +77,7 @@ export class ThreadSession {
         if (threadId === this.threadId) this.#receive(event, seq)
       }),
       connection.on('thread.queue', ({ threadId, items, canSteer }) => {
-        if (threadId === this.threadId) this.#patch({ queue: items, canSteer })
+        if (threadId === this.threadId) this.#listQueue(items, canSteer)
       }),
       connection.on('providerHistory.changed', ({ threadIds }) => {
         if (threadIds.includes(this.threadId)) void this.load()
@@ -222,6 +227,16 @@ export class ThreadSession {
       (queued
         ? `${LOCAL_PREFIX}${Date.now().toString(36)}`
         : this.addLocalMessage(text, attachments))
+    // Queued behind the running turn: it shows in the queue at once, and the
+    // computer's list replaces it when that arrives.
+    if (queued) {
+      const entry: QueuedTurn = { id, text, attachments, createdAt: Date.now() }
+      this.#sending.set(id, entry)
+      this.#patch({
+        queue: [...this.state.get().queue, entry],
+        unconfirmed: new Set(this.#sending.keys()),
+      })
+    }
     try {
       const result = await this.connection.request('thread.sendTurn', {
         threadId: this.threadId,
@@ -232,14 +247,20 @@ export class ThreadSession {
         ...(options.effort ? { effort: options.effort } : {}),
         ...(options.serviceTier ? { serviceTier: options.serviceTier } : {}),
       })
+      if (this.#sending.delete(id)) this.#patch({ unconfirmed: new Set(this.#sending.keys()) })
       if (result.queued) {
         this.#model.removeLocalMessage(id)
         this.#patch({ view: this.#model.view() })
         void this.#readQueue()
+      } else if (queued) {
+        // The turn ended meanwhile, so the prompt ran instead of waiting.
+        this.#dropQueued(id)
       }
     } catch (error) {
+      if (this.#sending.delete(id)) this.#patch({ unconfirmed: new Set(this.#sending.keys()) })
       if (!(error instanceof IndeterminateError)) {
         this.#model.removeLocalMessage(id)
+        this.#dropQueued(id)
         this.#patch({ view: this.#model.view() })
       }
       throw error
@@ -284,19 +305,53 @@ export class ThreadSession {
     })
   }
 
+  /** Moves at once; the computer's answer or list puts it right if it disagrees. */
   async moveQueued(queuedTurnId: string, direction: 'up' | 'down'): Promise<void> {
-    await this.connection.request('thread.moveQueuedTurn', {
-      threadId: this.threadId,
-      queuedTurnId,
-      direction,
-    })
+    const queue = [...this.state.get().queue]
+    const from = queue.findIndex((entry) => entry.id === queuedTurnId)
+    const to = from + (direction === 'up' ? -1 : 1)
+    if (from >= 0 && to >= 0 && to < queue.length) {
+      ;[queue[from], queue[to]] = [queue[to]!, queue[from]!]
+      this.#patch({ queue })
+    }
+    try {
+      await this.connection.request('thread.moveQueuedTurn', {
+        threadId: this.threadId,
+        queuedTurnId,
+        direction,
+      })
+    } catch (error) {
+      void this.#readQueue()
+      throw error
+    }
   }
 
+  /** Removes at once; a refusal brings the computer's list back. */
   async deleteQueued(queuedTurnId: string): Promise<void> {
-    await this.connection.request('thread.deleteQueuedTurn', {
-      threadId: this.threadId,
-      queuedTurnId,
-    })
+    this.#dropQueued(queuedTurnId)
+    try {
+      await this.connection.request('thread.deleteQueuedTurn', {
+        threadId: this.threadId,
+        queuedTurnId,
+      })
+    } catch (error) {
+      void this.#readQueue()
+      throw error
+    }
+  }
+
+  /** The computer's list, with prompts still on their way kept at its end. */
+  #listQueue(items: readonly QueuedTurn[], canSteer: boolean): void {
+    const listed = new Set(items.map((entry) => entry.id))
+    const waiting = [...this.#sending.values()].filter((entry) => !listed.has(entry.id))
+    this.#patch({ queue: [...items, ...waiting], canSteer })
+  }
+
+  #dropQueued(queuedTurnId: string): void {
+    const queue = this.state.get().queue
+    if (queue.some((entry) => entry.id === queuedTurnId)) {
+      this.#patch({ queue: queue.filter((entry) => entry.id !== queuedTurnId) })
+    }
   }
 
   async #readQueue(): Promise<void> {
@@ -304,7 +359,7 @@ export class ThreadSession {
       const { items, canSteer } = await this.connection.request('thread.queue', {
         threadId: this.threadId,
       })
-      this.#patch({ queue: items, canSteer })
+      this.#listQueue(items, canSteer)
     } catch {
       // Queue pushes keep it current from here on.
     }

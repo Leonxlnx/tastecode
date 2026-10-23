@@ -191,6 +191,8 @@ struct QuestionsView: Decodable, Equatable, Identifiable {
 struct QueuedView: Decodable, Equatable, Identifiable {
   var id: String
   var text: String
+  var images: Int
+  var pending: Bool
 }
 
 struct PlanView: Decodable, Equatable, Hashable {

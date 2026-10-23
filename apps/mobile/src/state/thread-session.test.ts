@@ -167,6 +167,61 @@ describe('thread session', () => {
     session.dispose()
   })
 
+  it('shows queue changes at once and puts them right when the computer refuses', async () => {
+    const running = {
+      events: [
+        {
+          seq: 1,
+          event: {
+            type: 'turn.started',
+            turn: { id: 'turn-1', threadId: 't', status: 'running', createdAt: 1 },
+          },
+        },
+      ],
+      running: true,
+    }
+    const listed = [
+      { id: 'a', text: 'first', attachments: [], createdAt: 1 },
+      { id: 'b', text: 'second', attachments: [], createdAt: 2 },
+    ]
+    const sent = deferred<unknown>()
+    const fake = fakeConnection(async (method) => {
+      if (method === 'thread.history') return running
+      if (method === 'thread.queue') return { items: listed, canSteer: true }
+      if (method === 'thread.sendTurn') return sent.promise
+      if (method === 'thread.moveQueuedTurn') throw new Error('No longer queued')
+      if (method === 'thread.deleteQueuedTurn') return {}
+      throw new Error(method)
+    })
+    const session = new ThreadSession('t', fake.connection)
+    await session.load()
+    await settle()
+    const ids = () => session.state.get().queue.map((entry) => entry.id)
+
+    // A prompt sent during the turn is in the queue before the computer answers.
+    const sending = session.send('third', [], {})
+    expect(session.state.get().queue.at(-1)).toMatchObject({ text: 'third' })
+    const local = ids().at(-1)!
+    expect(session.state.get().unconfirmed.has(local)).toBe(true)
+    // A list the computer sends meanwhile keeps the prompt still on its way.
+    fake.push('thread.queue', { threadId: 't', items: listed, canSteer: true })
+    expect(ids()).toEqual(['a', 'b', local])
+    sent.resolve({
+      queued: true,
+      queuedTurn: { id: 'c', text: 'third', attachments: [], createdAt: 3 },
+    })
+    await sending
+    expect(session.state.get().unconfirmed.size).toBe(0)
+
+    // Removing is instant; a refused move comes back as the computer's order.
+    void session.deleteQueued('a')
+    expect(ids()).not.toContain('a')
+    await expect(session.moveQueued('b', 'down')).rejects.toThrow('No longer queued')
+    await settle()
+    expect(ids()).toEqual(['a', 'b'])
+    session.dispose()
+  })
+
   it('takes back a refused prompt but keeps one that may have arrived', async () => {
     let failure: Error = new Error('refused')
     const fake = fakeConnection(async (method) => {

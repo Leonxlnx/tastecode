@@ -223,7 +223,9 @@ export class OpenThread {
       questions: question ? questionsView(question) : null,
       queue: screen.queue.map((entry) => ({
         id: entry.id,
-        text: entry.text.trim() || (entry.attachments.length > 0 ? 'Image' : ''),
+        text: entry.text.trim(),
+        images: entry.attachments.length,
+        pending: screen.unconfirmed.has(entry.id),
       })),
       canSteer: screen.canSteer,
       plan: view.running ? view.plan.map((step) => ({ text: step.text, status: step.status })) : [],

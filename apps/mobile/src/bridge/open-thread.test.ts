@@ -18,6 +18,7 @@ const screen = new Store<ThreadScreenState>({
   olderCursor: undefined,
   loadingOlder: false,
   queue: [],
+  unconfirmed: new Set(),
   canSteer: false,
 })
 const session = { state: screen }

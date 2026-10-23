@@ -155,7 +155,14 @@ export type QuestionView = {
 
 export type QuestionsView = { id: string; questions: QuestionView[] }
 
-export type QueuedView = { id: string; text: string }
+export type QueuedView = {
+  id: string
+  text: string
+  /** Pictures sent with it. */
+  images: number
+  /** Shown before the computer confirmed it; it cannot be moved or sent yet. */
+  pending: boolean
+}
 
 export type PlanView = { text: string; status: 'pending' | 'running' | 'done' }
 
