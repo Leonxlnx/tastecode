@@ -168,6 +168,8 @@ export type StoredSidebarThread = {
   lifecycle: ThreadLifecycle
   unread: boolean
   continuedFrom?: string | undefined
+  /** The model of the chat's shared setup, from `thread_settings`. */
+  model?: string | undefined
 }
 
 type SidebarThreadUpdate = (thread: StoredSidebarThread) => StoredSidebarThread
@@ -765,7 +767,7 @@ type SidebarThreadRow = Pick<
   | 'woke_at'
   | 'unread'
   | 'continued_from'
->
+> & { settings_model: string | null }
 type InactiveThreadCandidateRow = Pick<ThreadRow, 'id' | 'unread'>
 type ThreadIdRow = Pick<ThreadRow, 'id'>
 type ThreadLifecycleRow = Pick<
@@ -1290,11 +1292,12 @@ export class Store {
       `SELECT * FROM threads WHERE ephemeral = 0 ORDER BY created_at DESC`,
     )
     this.#listSidebarThreads = this.#db.prepare(
-      `SELECT id, project_path, provider, agent, connection_id, account_id, title, pinned, created_at,
-              closed_at,
-              worktree_branch, lifecycle_state, lifecycle_at, lifecycle_reason, wake_at,
-              keep_active, woke_at, unread, continued_from
-       FROM threads WHERE ephemeral = 0 ORDER BY created_at DESC`,
+      `SELECT t.id, t.project_path, t.provider, t.agent, t.connection_id, t.account_id, t.title,
+              t.pinned, t.created_at, t.closed_at,
+              t.worktree_branch, t.lifecycle_state, t.lifecycle_at, t.lifecycle_reason, t.wake_at,
+              t.keep_active, t.woke_at, t.unread, t.continued_from, s.model AS settings_model
+       FROM threads t LEFT JOIN thread_settings s ON s.thread_id = t.id
+       WHERE t.ephemeral = 0 ORDER BY t.created_at DESC`,
     )
     for (let mask = 0; mask < 4; mask += 1) {
       const clauses = ['session_search MATCH ?']
@@ -2339,6 +2342,8 @@ export class Store {
         model = excluded.model, effort = excluded.effort, service_tier = excluded.service_tier`,
       )
       .run(threadId, settings.model ?? null, settings.effort ?? null, settings.serviceTier ?? null)
+    // The project list names each chat's model.
+    this.#invalidateSidebarThreads()
   }
 
   backgroundModelPreference(): BackgroundModelPreference {
@@ -5340,6 +5345,7 @@ function toSidebarThread(row: SidebarThreadRow): StoredSidebarThread | undefined
     lifecycle: toThreadLifecycle(row),
     unread: row.unread === 1,
     ...(row.continued_from === null ? {} : { continuedFrom: row.continued_from }),
+    ...(row.settings_model ? { model: row.settings_model } : {}),
   }
 }
 

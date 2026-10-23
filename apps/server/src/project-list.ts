@@ -238,5 +238,6 @@ function projectSession(
   }
   if (thread.worktreeBranch !== undefined) session.worktreeBranch = thread.worktreeBranch
   if (thread.closedAt !== undefined) session.closedAt = thread.closedAt
+  if (thread.model !== undefined) session.model = thread.model
   return session
 }

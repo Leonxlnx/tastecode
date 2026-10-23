@@ -607,6 +607,8 @@ export function startServer(
   function announceSettings(threadId: string): ThreadSettings {
     const settings = store.threadSettings(threadId)
     push.broadcast('thread.settings', { threadId, settings })
+    // The project list names each chat's model, so lists filtered by it follow.
+    announceListChange()
     return settings
   }
 

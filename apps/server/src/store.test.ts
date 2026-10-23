@@ -381,6 +381,21 @@ describe('chat settings', () => {
   })
 })
 
+it("names each chat's model in the sidebar list and follows a change", () => {
+  store.addProject('/repo')
+  store.addThread({ id: 'main', projectPath: '/repo', provider: 'codex', title: 'Main' })
+  store.addThread({ id: 'other', projectPath: '/repo', provider: 'codex', title: 'Other' })
+  expect(store.sidebarThreads().find((thread) => thread.id === 'main')).not.toHaveProperty('model')
+  store.setThreadSettings('main', { model: 'gpt-5.5' })
+  expect(store.sidebarThreads().find((thread) => thread.id === 'main')?.model).toBe('gpt-5.5')
+  store.setThreadSettings('main', { model: 'gpt-5.4-mini' })
+  expect(store.sidebarThreads().find((thread) => thread.id === 'main')?.model).toBe('gpt-5.4-mini')
+  // An empty model is the provider's own default; the list names none.
+  store.setThreadSettings('main', { model: '' })
+  expect(store.sidebarThreads().find((thread) => thread.id === 'main')).not.toHaveProperty('model')
+  expect(store.sidebarThreads().find((thread) => thread.id === 'other')).not.toHaveProperty('model')
+})
+
 describe('hidden models', () => {
   it('keeps the picker’s hidden choice keys and survives a damaged record', () => {
     expect(store.hiddenModels()).toEqual([])
