@@ -18,6 +18,7 @@ const state = vi.hoisted(() => ({
     { projectPath: string; worktreePath?: string; provider?: string; accountId?: string }
   >(),
   historyPage: vi.fn(),
+  historyEvents: [] as unknown[],
   read: [] as string[],
   reservedPreviewPorts: [] as Array<ReadonlySet<number> | undefined>,
   shutdown: [] as string[],
@@ -151,6 +152,9 @@ vi.mock('./orchestrator.js', () => ({
     async disposeAll() {}
     historyPage(threadId: string, page: unknown) {
       return state.historyPage(threadId, page) as unknown
+    }
+    async history() {
+      return state.historyEvents
     }
     async historyForResponse(_threadId: string, afterSeq: number) {
       state.historyReads.push(afterSeq)
@@ -384,6 +388,7 @@ afterEach(async () => {
   state.projects.length = 0
   state.threads.clear()
   state.historyPage.mockReset()
+  state.historyEvents.length = 0
   state.read.length = 0
   state.reservedPreviewPorts.length = 0
   state.shutdown.length = 0
@@ -1138,6 +1143,56 @@ describe('server shutdown', () => {
     await running!.close()
     running = undefined
     expect(state.shutdown).toContain('listings')
+  })
+})
+
+describe('attached images', () => {
+  async function read(port: number, params: unknown) {
+    const client = new WebSocket(`ws://127.0.0.1:${port}`)
+    try {
+      await once(client, 'message')
+      const reply = once(client, 'message')
+      client.send(JSON.stringify({ id: 'image', method: 'attachments.read', params }))
+      const [message] = await reply
+      return JSON.parse(String(message)) as { result?: unknown; error?: { message: string } }
+    } finally {
+      client.terminate()
+    }
+  }
+
+  it('reads an image the chat attached and nothing else', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'attached-'))
+    try {
+      const attached = path.join(directory, 'shot.png')
+      const other = path.join(directory, 'other.png')
+      await writeFile(attached, Buffer.from('png bytes'))
+      await writeFile(other, Buffer.from('secret'))
+      state.historyEvents.push({
+        seq: 1,
+        event: {
+          type: 'item.completed',
+          item: {
+            id: 'u',
+            turnId: 't1',
+            type: 'message',
+            role: 'user',
+            status: 'completed',
+            createdAt: 1,
+            text: 'look',
+            attachments: [attached],
+          },
+        },
+      })
+      const { port } = await listen()
+      expect(await read(port, { threadId: 't', path: attached })).toMatchObject({
+        result: { mimeType: 'image/png', data: Buffer.from('png bytes').toString('base64') },
+      })
+      expect((await read(port, { threadId: 't', path: other })).error?.message).toContain(
+        'no such image',
+      )
+    } finally {
+      await rm(directory, { recursive: true })
+    }
   })
 })
 

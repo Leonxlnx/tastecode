@@ -41,7 +41,7 @@ import {
 } from './phone-access.js'
 import { readCredential, writeCredential } from './credentials.js'
 import type { PushSocket } from './push-bus.js'
-import { imageFileName, materializeAttachment } from './uploaded-attachment.js'
+import { imageFileName, materializeAttachment, readAttachmentImage } from './uploaded-attachment.js'
 import type { UsageHistoryService } from './usage-history.js'
 import { usageSummaryWithLimits } from './usage-summary.js'
 import { listWorkspaceBranches, readWorkspace } from './workspace.js'
@@ -1285,6 +1285,20 @@ export function startServer(
         return {
           path: await materializeAttachment({ name: imageFileName(p.mimeType), data: p.data }),
         }
+      }
+
+      case 'attachments.read': {
+        const p = parseParams(method, params)
+        // Only a path this chat's messages attached; never any file by name.
+        await loadProviderHistoryForRead(p.threadId)
+        const history = await orchestrator.history(p.threadId)
+        const attached = history.some(
+          ({ event }) =>
+            (event.type === 'item.started' || event.type === 'item.completed') &&
+            event.item.attachments?.includes(p.path) === true,
+        )
+        if (!attached) throw new Error('This chat has no such image.')
+        return readAttachmentImage(p.path)
       }
 
       case 'thread.rename': {

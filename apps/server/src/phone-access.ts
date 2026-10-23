@@ -60,6 +60,7 @@ export const PHONE_METHODS: ReadonlySet<MethodName> = new Set<MethodName>([
   'workspace.info',
   'workspace.diff',
   'attachments.saveImage',
+  'attachments.read',
   'backgroundModel.generateTitle',
   'thread.history',
   'thread.start',
