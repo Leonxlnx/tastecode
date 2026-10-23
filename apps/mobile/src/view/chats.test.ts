@@ -1,6 +1,10 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+import type { Source } from '../state/catalog'
 import type { Session } from '../state/projects'
-import { chatsView } from './chats'
+
+vi.mock('../../modules/tastecode-link', () => ({ TasteLink: {} }))
+
+const { chatsView } = await import('./chats')
 
 const session = (id: string, patch: Partial<Session> = {}): Session => ({
   id,
@@ -61,5 +65,49 @@ describe('chat list', () => {
       ],
     })
     expect(view.chats[0]).toMatchObject({ state: 'working', title: 'New chat' })
+  })
+})
+
+describe('what a chat runs on', () => {
+  it('names the agent and the model, as the picker does', () => {
+    const sources = [
+      {
+        provider: 'claude-code',
+        key: 'claude-code',
+        name: 'Claude Code',
+        capabilities: undefined,
+        status: 'ready',
+        models: [{ id: 'claude-opus-5-5', displayName: 'Opus 5.5' }],
+      },
+    ] as unknown as Source[]
+    const view = chatsView(
+      {
+        status: 'ready',
+        error: undefined,
+        activity: {},
+        projects: [
+          {
+            path: '/p',
+            name: 'p',
+            pinned: false,
+            createdAt: 1,
+            sessions: [
+              session('listed', { provider: 'claude-code', model: 'claude-opus-5-5' }),
+              session('own', { provider: 'claude-code', model: 'my-model', accountId: 'work' }),
+              session('default', { provider: 'codex' }),
+            ],
+          },
+        ],
+      },
+      sources,
+    )
+    const named = Object.fromEntries(
+      view.chats.map((chat) => [chat.id, [chat.sourceName, chat.modelName]]),
+    )
+    expect(named).toEqual({
+      listed: ['Claude Code', 'Opus 5.5'],
+      own: ['Claude Code', 'my-model'],
+      default: ['codex', null],
+    })
   })
 })

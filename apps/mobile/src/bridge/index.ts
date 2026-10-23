@@ -184,8 +184,10 @@ export function startBridge(): void {
   connection.status.subscribe(pushLink)
   pairing.subscribe(pushLink)
   pushLink()
-  const pushChats = () => update('chats', chatsView(projects.state.get()))
+  const pushChats = () =>
+    update('chats', chatsView(projects.state.get(), catalog.state.get().sources))
   projects.state.subscribe(pushChats)
+  catalog.state.subscribe(pushChats)
   pushChats()
   const pushCatalog = () =>
     update('catalog', catalogView(catalog.state.get(), catalog.hidden.get()))

@@ -1,3 +1,4 @@
+import { sourceKey, type Source } from '../state/catalog'
 import type { ProjectsState, Session } from '../state/projects'
 import { isArchived, lastActivity } from '../state/projects'
 import type { ChatState, ChatsView, ChatView } from './types'
@@ -21,15 +22,30 @@ export function chatState(session: Session): ChatState {
   }
 }
 
+/** The source a chat runs on, matched with its account first and without it second. */
+function sourceOf(session: Session, sources: readonly Source[]): Source | undefined {
+  const exact = sourceKey(session)
+  const shared = sourceKey({ ...session, accountId: undefined })
+  return (
+    sources.find((source) => source.key === exact) ??
+    sources.find((source) => sourceKey({ ...source, accountId: undefined }) === shared)
+  )
+}
+
 /**
  * Every chat on the computer, needs-you first and then by last activity, so
  * the list answers "what is waiting for me" before "what happened lately".
+ * Sources name each chat's agent and model, for filtering.
  */
-export function chatsView(state: ProjectsState): ChatsView {
+export function chatsView(state: ProjectsState, sources: readonly Source[] = []): ChatsView {
   const chats: ChatView[] = []
   for (const project of state.projects) {
     for (const session of project.sessions) {
       if (session.lifecycle?.state === 'snoozed') continue
+      const source = sourceOf(session, sources)
+      const model = session.model
+        ? (source?.models.find((entry) => entry.id === session.model)?.displayName ?? session.model)
+        : null
       chats.push({
         id: session.id,
         title: session.title.trim() || 'New chat',
@@ -41,6 +57,8 @@ export function chatsView(state: ProjectsState): ChatsView {
         archived: isArchived(session),
         at: lastActivity(session, state.activity),
         branch: session.worktreeBranch ?? null,
+        sourceName: source?.name ?? session.provider,
+        modelName: model,
       })
     }
   }

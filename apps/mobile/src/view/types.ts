@@ -40,6 +40,10 @@ export type ChatView = {
   at: number
   /** The private checkout's branch, when the chat has one. */
   branch: string | null
+  /** The agent the chat runs on, as the model picker names it. */
+  sourceName: string
+  /** The model of the chat's setup; null while it uses the agent's default. */
+  modelName: string | null
 }
 
 export type ProjectView = { path: string; name: string; pinned: boolean; chats: number }

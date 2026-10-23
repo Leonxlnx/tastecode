@@ -13,6 +13,10 @@ struct ChatsScreen: View {
   @State private var path: [Route] = []
   @State private var query = ""
   @State private var project: String?
+  @State private var device: String?
+  @State private var source: String?
+  @State private var modelName: String?
+  @State private var status: StatusFilter = .all
   @State private var showArchived = false
   @State private var showSettings = false
   @State private var addingProject = false
@@ -54,10 +58,32 @@ struct ChatsScreen: View {
     return ""
   }
 
+  private var filtering: Bool {
+    project != nil || device != nil || source != nil || modelName != nil || status != .all
+  }
+
+  private func clearFilters() {
+    project = nil
+    device = nil
+    source = nil
+    modelName = nil
+    status = .all
+  }
+
+  /// The values the chats carry for one field, each once, in name order.
+  private func distinct(_ field: (ChatView) -> String?) -> [String] {
+    Set(model.chats.chats.compactMap(field)).sorted {
+      $0.localizedStandardCompare($1) == .orderedAscending
+    }
+  }
+
   private var matching: [ChatView] {
     let needle = query.trimmingCharacters(in: .whitespaces).lowercased()
     return model.chats.chats.filter { chat in
       (project == nil || chat.projectPath == project)
+        && (source == nil || chat.sourceName == source)
+        && (modelName == nil || chat.modelName == modelName)
+        && status.includes(chat)
         && (needle.isEmpty || chat.title.lowercased().contains(needle)
           || chat.projectName.lowercased().contains(needle))
     }
@@ -146,23 +172,54 @@ struct ChatsScreen: View {
     }
     ToolbarItem(placement: .topBarTrailing) {
       Menu {
-        Picker("Project", selection: $project) {
-          Text("All Projects").tag(String?.none)
-          ForEach(model.chats.projects) { entry in
-            Text(entry.name).tag(Optional(entry.path))
+        Section {
+          Picker("Project", systemImage: "folder", selection: $project) {
+            Text("All Projects").tag(String?.none)
+            ForEach(model.chats.projects) { entry in
+              Text(entry.name).tag(Optional(entry.path))
+            }
+          }
+          // One computer today; the list is ready for more.
+          Picker("Device", systemImage: "laptopcomputer", selection: $device) {
+            Text("All Devices").tag(String?.none)
+            if let name = model.link?.computerName {
+              Text(name).tag(Optional(name))
+            }
+          }
+          Picker("Agent", systemImage: "terminal", selection: $source) {
+            Text("All Agents").tag(String?.none)
+            ForEach(distinct { $0.sourceName }, id: \.self) { name in
+              Text(name).tag(Optional(name))
+            }
+          }
+          Picker("Model", systemImage: "cpu", selection: $modelName) {
+            Text("All Models").tag(String?.none)
+            ForEach(distinct { $0.modelName }, id: \.self) { name in
+              Text(name).tag(Optional(name))
+            }
+          }
+          Picker("Status", systemImage: "circle.dashed", selection: $status) {
+            ForEach(StatusFilter.allCases, id: \.self) { filter in
+              Text(filter.title).tag(filter)
+            }
           }
         }
-        .pickerStyle(.inline)
+        .pickerStyle(.menu)
+        Section {
+          Toggle("Show Archived", systemImage: "archivebox", isOn: $showArchived)
+          if filtering {
+            Button("Clear Filters", systemImage: "xmark") { clearFilters() }
+          }
+        }
         Section {
           Button("Add Project…", systemImage: "folder.badge.plus") { addingProject = true }
-          Toggle("Show Archived", systemImage: "archivebox", isOn: $showArchived)
         }
       } label: {
-        Image(systemName: "folder")
-          .symbolVariant(project == nil ? .none : .fill)
+        Image(systemName: "line.3.horizontal.decrease")
+          .foregroundStyle(filtering ? AnyShapeStyle(.tint) : AnyShapeStyle(.primary))
       }
       .menuOrder(.fixed)
-      .accessibilityLabel("Projects")
+      .accessibilityLabel("Filter")
     }
     DefaultToolbarItem(kind: .search, placement: .bottomBar)
     ToolbarSpacer(.fixed, placement: .bottomBar)
@@ -257,6 +314,29 @@ struct ChatRow: View {
             .foregroundStyle(chat.unread ? .primary : .tertiary)
         }
       }
+    }
+  }
+}
+
+/// Which chats the list shows by what they are doing.
+enum StatusFilter: CaseIterable {
+  case all, needsYou, working, unread
+
+  var title: String {
+    switch self {
+    case .all: return "Any Status"
+    case .needsYou: return "Needs You"
+    case .working: return "Working"
+    case .unread: return "Unread"
+    }
+  }
+
+  func includes(_ chat: ChatView) -> Bool {
+    switch self {
+    case .all: return true
+    case .needsYou: return chat.state.waitsForYou
+    case .working: return chat.state.isWorking
+    case .unread: return chat.unread
     }
   }
 }
