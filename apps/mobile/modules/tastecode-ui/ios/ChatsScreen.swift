@@ -140,6 +140,15 @@ struct ChatsScreen: View {
       }
     } else if status == .idle || status == .loading {
       ProgressView()
+    } else if filtering {
+      ContentUnavailableView {
+        Text("No matching chats")
+      } description: {
+        Text("No chat matches these filters.")
+      } actions: {
+        Button("Clear Filters") { clearFilters() }
+          .buttonStyle(.glass)
+      }
     } else if model.chats.projects.isEmpty {
       ContentUnavailableView {
         Text("No projects yet")
@@ -215,8 +224,7 @@ struct ChatsScreen: View {
           Button("Add Project…", systemImage: "folder.badge.plus") { addingProject = true }
         }
       } label: {
-        Image(systemName: "line.3.horizontal.decrease")
-          .foregroundStyle(filtering ? AnyShapeStyle(.tint) : AnyShapeStyle(.primary))
+        Image(systemName: filtering ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease")
       }
       .menuOrder(.fixed)
       .accessibilityLabel("Filter")
