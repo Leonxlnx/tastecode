@@ -249,6 +249,7 @@ describe('sidebar thread snapshots', () => {
         pinned: true,
         unread: true,
         worktreeBranch: 'feature/work',
+        lastActiveAt: 10,
       }),
     ])
     expect(store.sidebarThreads()).not.toBe(initial)

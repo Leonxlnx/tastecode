@@ -170,6 +170,7 @@ export type StoredSidebarThread = {
   continuedFrom?: string | undefined
   /** The model of the chat's shared setup, from `thread_settings`. */
   model?: string | undefined
+  lastActiveAt: number
 }
 
 type SidebarThreadUpdate = (thread: StoredSidebarThread) => StoredSidebarThread
@@ -767,6 +768,7 @@ type SidebarThreadRow = Pick<
   | 'woke_at'
   | 'unread'
   | 'continued_from'
+  | 'last_active_at'
 > & { settings_model: string | null }
 type InactiveThreadCandidateRow = Pick<ThreadRow, 'id' | 'unread'>
 type ThreadIdRow = Pick<ThreadRow, 'id'>
@@ -1295,7 +1297,8 @@ export class Store {
       `SELECT t.id, t.project_path, t.provider, t.agent, t.connection_id, t.account_id, t.title,
               t.pinned, t.created_at, t.closed_at,
               t.worktree_branch, t.lifecycle_state, t.lifecycle_at, t.lifecycle_reason, t.wake_at,
-              t.keep_active, t.woke_at, t.unread, t.continued_from, s.model AS settings_model
+              t.keep_active, t.woke_at, t.unread, t.continued_from, t.last_active_at,
+              s.model AS settings_model
        FROM threads t LEFT JOIN thread_settings s ON s.thread_id = t.id
        WHERE t.ephemeral = 0 ORDER BY t.created_at DESC`,
     )
@@ -2197,9 +2200,11 @@ export class Store {
     }))
     this.#updateSidebarThread(id, (thread) => {
       const nextUnread = thread.unread || unread
-      return thread.lifecycle === lifecycle && thread.unread === nextUnread
+      return thread.lifecycle === lifecycle &&
+        thread.unread === nextUnread &&
+        thread.lastActiveAt === at
         ? thread
-        : { ...thread, lifecycle, unread: nextUnread }
+        : { ...thread, lifecycle, unread: nextUnread, lastActiveAt: at }
     })
     return lifecycle
   }
@@ -5346,6 +5351,7 @@ function toSidebarThread(row: SidebarThreadRow): StoredSidebarThread | undefined
     unread: row.unread === 1,
     ...(row.continued_from === null ? {} : { continuedFrom: row.continued_from }),
     ...(row.settings_model ? { model: row.settings_model } : {}),
+    lastActiveAt: Number(row.last_active_at),
   }
 }
 
