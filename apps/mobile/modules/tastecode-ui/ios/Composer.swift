@@ -473,9 +473,10 @@ private struct LevelName: View {
 }
 
 /// How hard the model thinks, drawn like the desktop's slider but bigger: a
-/// pill track with a dot per level, filled up to a round thumb. Held, the
-/// thumb lifts into Liquid Glass and follows the finger, stretching as it
-/// moves fast; let go, it settles on the nearest level and turns solid again.
+/// pill track with a dot per level, filled up to a round thumb. Like iOS's
+/// own slider, the thumb is Liquid Glass whenever it moves: held and following
+/// the finger, stretching as it moves fast, gliding to a tap elsewhere on the
+/// track or to a level the computer picked. It turns solid once it has landed.
 private struct EffortSlider: View {
   let efforts: [EffortView]
   let selected: String?
@@ -493,18 +494,23 @@ private struct EffortSlider: View {
   @State private var glide = Date.distantPast
   /// How fast the thumb moves, which stretches the glass along the track.
   @State private var stretch: CGFloat = 0
+  /// Whether the let-go thumb is still gliding onto its level.
+  @State private var moving = false
+  /// Counts glides, so only the latest one's landing turns the thumb solid.
+  @State private var glides = 0
   @State private var beyond = false
+  @State private var clicks = 0
   @State private var bumps = 0
 
-  private let thumb: CGFloat = 34
-  private let inset: CGFloat = 4
+  private let thumb: CGFloat = 40
+  private let inset: CGFloat = 3
 
   var body: some View {
     GeometryReader { geometry in
       track(width: geometry.size.width)
     }
     .frame(height: thumb + inset * 2)
-    .sensoryFeedback(.selection, trigger: level) { _, _ in held != nil }
+    .sensoryFeedback(.selection, trigger: clicks)
     .sensoryFeedback(.impact(weight: .light, intensity: 0.7), trigger: bumps)
     .disabled(efforts.count < 2)
     .accessibilityElement()
@@ -513,15 +519,18 @@ private struct EffortSlider: View {
     .accessibilityAdjustableAction { direction in
       let next = direction == .increment ? level + 1 : level - 1
       guard efforts.indices.contains(next) else { return }
-      withAnimation(.spring(duration: 0.3, bounce: 0.2)) { level = next }
-      onLevel(label)
+      settle { level = next }
       pick()
     }
     .onAppear {
       level = chosen
       onLevel(label)
     }
-    .onChange(of: selected) { if held == nil { level = chosen } }
+    .onChange(of: level) { onLevel(label) }
+    .onChange(of: selected) {
+      let next = chosen
+      if held == nil && next != level { settle { level = next } }
+    }
     .onChange(of: efforts) { level = chosen }
   }
 
@@ -536,7 +545,7 @@ private struct EffortSlider: View {
       colors: SliderColors(scheme))
     return ZStack(alignment: .leading) {
       face
-      Knob(held: held != nil, stretch: stretch, face: face, width: width)
+      Knob(glass: held != nil || moving, stretch: stretch, face: face, width: width)
         .position(x: center, y: inset + thumb / 2)
     }
     .frame(width: width, height: thumb + inset * 2)
@@ -567,20 +576,34 @@ private struct EffortSlider: View {
         let next = nearest(share)
         if next != level {
           level = next
-          onLevel(label)
+          clicks += 1
         }
         let past = raw < 0 || raw > 1
         if past && !beyond { bumps += 1 }
         beyond = past
       }
       .onEnded { _ in
-        withAnimation(.spring(duration: 0.36, bounce: 0.2)) {
+        settle {
           held = nil
           stretch = 0
         }
         beyond = false
         pick()
       }
+  }
+
+  /// Glides the thumb on a spring as glass, and turns it solid as it lands.
+  /// Timed rather than told by the animation's completion: a quick tap's touch
+  /// and release arrive in one update, and that completion came at once.
+  private func settle(_ change: () -> Void) {
+    moving = true
+    glides += 1
+    let glide = glides
+    withAnimation(.spring(duration: 0.36, bounce: 0.2), change)
+    Task {
+      try? await Task.sleep(for: .milliseconds(300))
+      if glides == glide { moving = false }
+    }
   }
 
   private func pick() {
@@ -633,11 +656,11 @@ private struct TrackFace: View {
   }
 }
 
-/// The thumb: solid with a dot in its middle at rest. Held, it grows into a
-/// glass lens: the track shows through it sharp and a little magnified, and
-/// the glass bends it at the rim.
+/// The thumb: plain and solid at rest. Moving, it grows into a glass lens:
+/// the track shows through it sharp and a little magnified, and the glass
+/// bends it at the rim.
 private struct Knob: View {
-  let held: Bool
+  let glass: Bool
   let stretch: CGFloat
   let face: TrackFace
   /// The whole track's width, to line the lens's copy of it up with the track.
@@ -645,29 +668,23 @@ private struct Knob: View {
 
   var body: some View {
     let size = face.thumb
-    let grow: CGFloat = held ? 1.4 : 1
+    let grow: CGFloat = glass ? 1.35 : 1
     // Each animation reaches only its own modifiers: the lens's copy of the
     // track must move exactly with the track, never on a spring of its own.
-    // The solid gives way to the glass before it has grown, so no half-faded
-    // dot rides along.
+    // The solid gives way to the glass before it has grown.
     ZStack {
       lens(size: size, grow: grow)
-        .animation(.easeOut(duration: 0.12)) { $0.opacity(held ? 1 : 0) }
-      ZStack {
-        Circle()
-          .fill(face.colors.thumb)
-          .shadow(color: .black.opacity(0.28), radius: 1.5, y: 1)
-        Circle()
-          .fill(face.colors.thumbDot)
-          .frame(width: 8, height: 8)
-      }
-      .animation(.easeOut(duration: 0.12)) { $0.opacity(held ? 0 : 1) }
+        .animation(.easeOut(duration: 0.12)) { $0.opacity(glass ? 1 : 0) }
+      Circle()
+        .fill(face.colors.thumb)
+        .shadow(color: .black.opacity(0.24), radius: 3, y: 1.5)
+        .animation(.easeOut(duration: 0.12)) { $0.opacity(glass ? 0 : 1) }
     }
     .frame(width: size, height: size)
     .glassEffect(.clear, in: .circle)
     .animation(Self.grow) { content in
       content
-        .shadow(color: .black.opacity(held ? 0.3 : 0), radius: 8, y: 3)
+        .shadow(color: .black.opacity(glass ? 0.3 : 0), radius: 8, y: 3)
         .scaleEffect(grow)
     }
     .animation(.interactiveSpring(duration: 0.2)) { content in
@@ -720,7 +737,6 @@ private struct SliderColors {
   let dot: Color
   let lit: Color
   let thumb: Color
-  let thumbDot: Color
 
   init(_ scheme: ColorScheme) {
     let ink = Color(red: 0.153, green: 0.153, blue: 0.165)
@@ -730,8 +746,7 @@ private struct SliderColors {
       fill = .white.opacity(0.22)
       dot = .white.opacity(0.28)
       lit = .white.opacity(0.8)
-      thumb = Color(white: 0.93)
-      thumbDot = Color(white: 0.1)
+      thumb = .white
     } else {
       track = ink.opacity(0.08)
       line = ink.opacity(0.1)
@@ -739,7 +754,6 @@ private struct SliderColors {
       dot = ink.opacity(0.4)
       lit = .white.opacity(0.78)
       thumb = .white
-      thumbDot = ink
     }
   }
 }
