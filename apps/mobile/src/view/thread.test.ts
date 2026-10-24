@@ -7,6 +7,7 @@ import {
   relative,
   rowView,
   stepRuns,
+  stepView,
   summarize,
   toolName,
   toolTitle,
@@ -134,6 +135,18 @@ describe('thread rows', () => {
       [null, ['m']],
       ['Edited 1 file', ['c']],
     ])
+  })
+
+  it('names a thought by its first line and a file read as a read', () => {
+    const thought = '**Checking the list**\nThe second entry is stale.'
+    expect(stepView(step({ id: 't', type: 'reasoning', text: thought }))).toMatchObject({
+      kind: 'thinking',
+      title: 'Checking the list',
+      detail: thought,
+    })
+    expect(
+      stepView(step({ id: 'r', type: 'tool_call', text: 'Read\n{"file_path":"/x/a.ts"}' })),
+    ).toMatchObject({ kind: 'read', title: 'Read a.ts' })
   })
 
   it('summarizes steps of every kind in reading order', () => {

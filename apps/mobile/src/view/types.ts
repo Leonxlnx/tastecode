@@ -105,7 +105,7 @@ export type SetupView = {
 }
 
 export type StepKind =
-  'command' | 'file' | 'tool' | 'agent' | 'thinking' | 'plan' | 'note' | 'other'
+  'command' | 'file' | 'read' | 'tool' | 'agent' | 'thinking' | 'plan' | 'note' | 'other'
 
 export type StepView = {
   id: string

@@ -324,10 +324,10 @@ struct StepsRow: View {
           ForEach(Array(runs.enumerated()), id: \.element.id) { index, run in
             Group {
               if let summary = run.summary {
-                StepBatch(summary: summary, steps: run.steps, open: openBinding(run.id))
+                StepBatch(summary: summary, steps: run.steps, open: openBinding(run.id), stepOpen: openBinding)
               } else {
                 ForEach(run.steps) { step in
-                  StepLine(step: step)
+                  StepLine(step: step, open: openBinding("step:\(step.id)"))
                 }
               }
             }
@@ -368,11 +368,13 @@ struct StepsRow: View {
   }
 }
 
-/// Calls in a row under one line, "Ran 3 commands", opening to list them.
+/// Everything between two notes under one line, "Ran 3 commands and read
+/// 1 file", opening to one line per step under the same icon column.
 private struct StepBatch: View {
   let summary: String
   let steps: [StepView]
   @Binding var open: Bool
+  let stepOpen: (String) -> Binding<Bool>
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
@@ -398,21 +400,21 @@ private struct StepBatch: View {
       }
       .buttonStyle(.plain)
       if open {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
           if steps.count == 1, let thought = steps.first, thought.kind == .thinking {
-            // A thought opens to what it thought.
+            // A thought on its own opens to what it thought.
             Text(inlineMarkdown(thought.detail ?? "", code: .system(.footnote, design: .monospaced)))
               .font(.subheadline)
               .foregroundStyle(.secondary)
               .textSelection(.enabled)
+              .padding(.leading, 28)
           } else {
             ForEach(steps) { step in
-              StepLine(step: step)
+              StepLine(step: step, open: stepOpen("step:\(step.id)"))
             }
           }
         }
-        .padding(.top, 10)
-        .padding(.leading, 28)
+        .padding(.top, 8)
         .transition(.opacity.combined(with: .offset(y: -6)))
       }
     }
@@ -426,8 +428,11 @@ private struct StepBatch: View {
   }
 }
 
+/// One step on one line: its icon, what it did, and a chevron at the edge
+/// when there is more to read, which opens under the line.
 private struct StepLine: View {
   let step: StepView
+  @Binding var open: Bool
 
   var body: some View {
     if step.kind == .note {
@@ -435,7 +440,23 @@ private struct StepLine: View {
       MarkdownView(markdown: step.title)
         .frame(maxWidth: .infinity, alignment: .leading)
     } else {
-      line
+      VStack(alignment: .leading, spacing: 6) {
+        if opens {
+          Button {
+            withAnimation(.smooth(duration: open ? 0.2 : 0.28)) { open.toggle() }
+          } label: {
+            line
+          }
+          .buttonStyle(.plain)
+        } else {
+          line
+        }
+        if open && opens {
+          more
+            .padding(.leading, 28)
+            .transition(.opacity.combined(with: .offset(y: -4)))
+        }
+      }
     }
   }
 
@@ -445,17 +466,10 @@ private struct StepLine: View {
         .font(.footnote)
         .foregroundStyle(step.failed ? AnyShapeStyle(.red) : AnyShapeStyle(.tertiary))
         .frame(width: 18)
-      VStack(alignment: .leading, spacing: 3) {
-        Text(step.title)
-          .font(step.kind == .command ? .system(.footnote, design: .monospaced) : .footnote)
-          .lineLimit(step.kind == .command ? 3 : 2)
-        if let detail = step.detail {
-          Text(detail)
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            .lineLimit(step.kind == .thinking ? 12 : 3)
-        }
-      }
+      Text(step.title)
+        .font(.subheadline)
+        .foregroundStyle(.secondary)
+        .lineLimit(1)
       Spacer(minLength: 8)
       if step.running {
         ProgressView()
@@ -464,7 +478,40 @@ private struct StepLine: View {
         LineCounts(added: step.added ?? 0, removed: step.removed ?? 0)
           .font(.caption)
       }
+      if opens {
+        Image(systemName: "chevron.right")
+          .font(.system(size: 10, weight: .semibold))
+          .foregroundStyle(.tertiary)
+          .rotationEffect(.degrees(open ? 90 : 0))
+      }
     }
+    .contentShape(.rect)
+  }
+
+  /// The rest: a thought's whole text, a command in full and how it ended.
+  @ViewBuilder private var more: some View {
+    VStack(alignment: .leading, spacing: 4) {
+      if step.kind == .thinking, let detail = step.detail {
+        Text(inlineMarkdown(detail, code: .system(.footnote, design: .monospaced)))
+          .font(.footnote)
+      } else {
+        Text(step.title)
+          .font(step.kind == .command ? .system(.footnote, design: .monospaced) : .footnote)
+        if let detail = step.detail {
+          Text(detail)
+            .font(.caption)
+            .foregroundStyle(.tertiary)
+        }
+      }
+    }
+    .foregroundStyle(.secondary)
+    .textSelection(.enabled)
+    .frame(maxWidth: .infinity, alignment: .leading)
+  }
+
+  /// A line that already says everything has nothing to open.
+  private var opens: Bool {
+    step.detail != nil || step.title.count > 36 || step.title.contains("\n")
   }
 
   private var symbol: String { Self.symbol(for: step.kind) }
@@ -473,6 +520,7 @@ private struct StepLine: View {
     switch kind {
     case .command: return "terminal"
     case .file: return "pencil"
+    case .read: return "eye"
     case .tool: return "wrench.adjustable"
     case .agent: return "person.2"
     case .thinking: return "brain"

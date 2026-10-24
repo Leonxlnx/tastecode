@@ -206,7 +206,7 @@ function stepKind(item: Item): StepKind {
     case 'file_change':
       return 'file'
     case 'tool_call':
-      return item.subagent ? 'agent' : 'tool'
+      return item.subagent ? 'agent' : isRead(item.text) ? 'read' : 'tool'
     case 'reasoning':
       return 'thinking'
     case 'plan':
@@ -230,7 +230,11 @@ export function stepRuns(items: readonly Item[]): StepRunView[] {
       runs.push({
         id: `run:${first.id}`,
         summary:
-          acted.length > 0 ? summarize(acted) : calls.length === 1 ? thoughtLabel(first) : 'Thought',
+          acted.length > 0
+            ? summarize(acted)
+            : calls.length === 1
+              ? thoughtLabel(first)
+              : 'Thought',
         steps: calls.map(stepView),
       })
     }
@@ -299,7 +303,8 @@ export function stepView(item: Item): StepView {
   let detail: string | null = null
   switch (kind) {
     case 'command':
-      title = firstLine(item.command ?? item.text ?? 'Command')
+      // One line until the step opens; then the whole command.
+      title = (item.command ?? item.text ?? 'Command').trim()
       if (item.durationMs !== undefined) {
         detail = `${item.exitCode === undefined || item.exitCode === 0 ? 'Ran' : `Exit ${item.exitCode}`} in ${duration(item.durationMs)}`
       }
@@ -312,7 +317,8 @@ export function stepView(item: Item): StepView {
       detail = item.subagent?.summary?.trim() || null
       break
     case 'thinking':
-      title = 'Thinking'
+      // Named by its first line, as the desktop names a thought among calls.
+      title = thoughtHeadline(item.text) || 'Thinking'
       detail = item.text?.trim() || null
       break
     case 'plan':
@@ -343,7 +349,8 @@ export function summarize(items: readonly Item[]): string {
   for (const item of items) {
     if (item.type === 'command') commands += 1
     else if (item.type === 'file_change') files.add(item.path ?? item.id)
-    else if (item.type === 'tool_call' && isRead(item.text)) read.add(toolTitle(item.text) ?? item.id)
+    else if (item.type === 'tool_call' && isRead(item.text))
+      read.add(toolTitle(item.text) ?? item.id)
     else if (item.type === 'tool_call') tools += 1
     else if (item.type === 'reasoning') thoughts += 1
   }
@@ -357,6 +364,16 @@ export function summarize(items: readonly Item[]): string {
   const last = parts.pop()
   const sentence = parts.length > 0 ? `${parts.join(', ')} and ${last}` : (last ?? '')
   return sentence.charAt(0).toUpperCase() + sentence.slice(1)
+}
+
+/** A thought's first line as plain text, its Markdown marks dropped. */
+function thoughtHeadline(text: string | undefined): string {
+  const line = text?.split('\n').find((entry) => entry.trim()) ?? ''
+  return line
+    .replace(/^#+\s*/, '')
+    .replace(/[*_`]+/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
 }
 
 /** A tool that reads one file: `Read`, `read_file`, `view_file`. */
