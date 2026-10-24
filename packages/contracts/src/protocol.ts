@@ -1535,6 +1535,20 @@ export const methods = {
     params: z.object({ keys: z.array(z.string()).max(10_000) }),
     result: z.object({}),
   },
+  /**
+   * The providers the user added on the desktop, which are the only ones it
+   * shows or starts: a direct provider by its id (`codex`), an ACP agent by
+   * `acp:<agent>`. API connections and custom models are not part of it.
+   * `null` until a desktop saved one; other clients then offer every source.
+   */
+  'providers.roster': {
+    params: z.object({}),
+    result: z.object({ keys: z.array(z.string()).nullable() }),
+  },
+  'providers.setRoster': {
+    params: z.object({ keys: z.array(z.string().min(1).max(200)).max(1_000) }),
+    result: z.object({}),
+  },
   /** Model policy for short product-owned writing tasks. */
   'backgroundModel.settings': {
     params: z.object({}),
@@ -2334,6 +2348,8 @@ export const channels = {
   }),
   /** The desktop hid or showed models in its picker. */
   'models.hidden': z.object({ keys: z.array(z.string()) }),
+  /** The desktop added or removed a provider. */
+  'providers.roster': z.object({ keys: z.array(z.string()) }),
   /** A chat's setup changed on some client, or a turn or provider change moved it. */
   'thread.settings': z.object({ threadId: z.string(), settings: ThreadSettingsSchema }),
   'thread.lifecycle': z.object({

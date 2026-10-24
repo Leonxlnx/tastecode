@@ -260,6 +260,14 @@ describe('thread settings', () => {
     expect(methods['models.setHidden'].params.parse({ keys })).toEqual({ keys })
     expect(channels['models.hidden'].parse({ keys: [] })).toEqual({ keys: [] })
   })
+
+  it('shares the providers the desktop added, and none until it saved them', () => {
+    const keys = ['codex', 'acp:kimi']
+    expect(methods['providers.setRoster'].params.parse({ keys })).toEqual({ keys })
+    expect(methods['providers.roster'].result.parse({ keys: null })).toEqual({ keys: null })
+    expect(channels['providers.roster'].parse({ keys })).toEqual({ keys })
+    expect(() => methods['providers.setRoster'].params.parse({ keys: [''] })).toThrow()
+  })
 })
 
 describe('protocol envelopes', () => {
