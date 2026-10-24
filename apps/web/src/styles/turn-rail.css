@@ -1,17 +1,9 @@
 /* ---------- turn rail ---------- */
 
-/* One tick per prompt down the chat pane's left edge, in the sidebar's terms:
-   the ticks hang off a hairline guide the way a project's chats do, and the
-   sidebar's pill marks the exchanges on screen. Outside the scroller like the
-   jump button, so it stays put while the transcript moves, and in the gutter
-   beside the chat column, so it never covers a line of it. */
+/* One tick per prompt down the chat pane's left edge. Outside the scroller
+   like the jump button, so it stays put while the transcript moves, and in the
+   gutter beside the chat column, so it never covers a line of it. */
 .turn-rail {
-  /* The guide's hairline, as strong as the sidebar's project guide. */
-  --turn-rail-guide: color-mix(in srgb, var(--text) 12%, transparent);
-  --turn-rail-tick: color-mix(in srgb, var(--text) 28%, transparent);
-  /* The guide's centre: the pill and the ticks line up on it. */
-  --turn-rail-x: 13px;
-
   position: absolute;
   top: 0;
   bottom: 0;
@@ -52,39 +44,25 @@
   cursor: pointer;
 }
 
-/* Each tick carries its stretch of the guide, so the guide runs from the
-   first tick to the last however closely they are packed. */
-.turn-rail__tick::after {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: var(--turn-rail-x);
-  width: 1px;
-  background: var(--turn-rail-guide);
-  content: '';
-}
-
-.turn-rail__tick:first-child::after {
-  top: 50%;
-}
-
-.turn-rail__tick:nth-last-child(2)::after {
-  bottom: 50%;
-}
-
 .turn-rail__tick::before {
   position: absolute;
   top: 50%;
-  left: calc(var(--turn-rail-x) + 3px);
+  left: 12px;
   width: 6px;
   height: 1px;
-  background: var(--turn-rail-tick);
+  background: color-mix(in srgb, var(--text) 28%, transparent);
   border-radius: var(--r-pill);
   content: '';
   transform: translateY(-50%);
   transition:
     width var(--dur-hover) var(--ease-out),
     background-color var(--dur-hover) var(--ease-out);
+}
+
+/* The exchanges on screen: where the reader is. */
+.turn-rail__tick[data-in-view]::before {
+  width: 9px;
+  background: var(--text-2);
 }
 
 /* The tick reaches out toward its card. Keyboard focus draws the same tick,
@@ -103,24 +81,6 @@
     width: 12px;
     background: var(--text);
   }
-}
-
-/* The sidebar's active-chat pill, on the guide over the exchanges on screen.
-   TurnRail places it; it glides from there on the sidebar's own curve. */
-.turn-rail__pill {
-  position: absolute;
-  top: 0;
-  left: calc(var(--turn-rail-x) - 1px);
-  width: 3px;
-  background: var(--text-2);
-  border-radius: var(--r-pill);
-  pointer-events: none;
-}
-
-.turn-rail__pill.is-placed {
-  transition:
-    transform var(--dur-slow) var(--ease-rail),
-    height var(--dur-slow) var(--ease-rail);
 }
 
 /* Built like the app's other hover cards: the menu surface, the prompt as a
@@ -183,8 +143,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .turn-rail__tick::before,
-  .turn-rail__pill.is-placed {
+  .turn-rail__tick::before {
     transition: none;
   }
 

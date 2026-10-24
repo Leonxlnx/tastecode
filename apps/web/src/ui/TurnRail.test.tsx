@@ -48,10 +48,10 @@ const card = () => {
 }
 
 describe('TurnRail', () => {
-  it('leaves the pill out before anything is on screen', () => {
+  it('marks nothing before anything is on screen', () => {
     renderRail({ visibleRows: () => undefined })
 
-    expect((document.querySelector('.turn-rail__pill') as HTMLElement).hidden).toBe(true)
+    expect(document.querySelectorAll('[data-in-view]')).toHaveLength(0)
   })
 
   it('shows nothing for a chat with one turn', () => {
@@ -70,8 +70,6 @@ describe('TurnRail', () => {
     expect(tick('Now the tests').hasAttribute('data-in-view')).toBe(true)
     expect(tick('Now the tests').getAttribute('aria-current')).toBe('location')
     expect(tick('Ship it').hasAttribute('data-in-view')).toBe(true)
-    // The pill marks them, as the sidebar marks the open chat.
-    expect((document.querySelector('.turn-rail__pill') as HTMLElement).hidden).toBe(false)
     // One stop in the tab order: the exchange being read.
     expect(tick('Now the tests').tabIndex).toBe(0)
     expect(tick('Ship it').tabIndex).toBe(-1)

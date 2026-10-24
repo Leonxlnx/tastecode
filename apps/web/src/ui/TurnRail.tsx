@@ -16,8 +16,6 @@ import '../styles/turn-rail.css'
 
 /** A pointer crossing the rail on its way elsewhere opens nothing. */
 const PREVIEW_DELAY_MS = 90
-/** How far the pill reaches past the first and last tick it marks: 14px for one, as in the sidebar. */
-const PILL_REACH = 7
 const TIME = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' })
 const DAY_AND_TIME = new Intl.DateTimeFormat(undefined, {
   month: 'short',
@@ -43,9 +41,9 @@ export interface TurnRailProps {
 type Preview = { turnId: string; via: 'pointer' | 'focus' }
 
 /**
- * One tick per prompt down the chat's left edge, hung off a guide the way the
- * sidebar hangs a project's chats. The sidebar's pill marks the exchanges on
- * screen; hovering a tick shows that exchange, and clicking it goes there.
+ * One tick per prompt down the chat's left edge. The ticks of the exchanges on
+ * screen stand out; hovering a tick shows that exchange, and clicking it goes
+ * there.
  */
 export const TurnRail = memo(function TurnRail({
   entries,
@@ -59,7 +57,6 @@ export const TurnRail = memo(function TurnRail({
   const rootRef = useRef<HTMLElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
   const cardRef = useRef<HTMLDivElement>(null)
-  const pillRef = useRef<HTMLSpanElement>(null)
   const [inView, setInView] = useState<{ from: number; to: number } | undefined>()
   const [preview, setPreview] = useState<Preview | undefined>()
   const [focused, setFocused] = useState<string | undefined>()
@@ -100,49 +97,32 @@ export const TurnRail = memo(function TurnRail({
     }
   }, [entries, scroller, visibleRows])
 
+  // A rail with more ticks than fit keeps the ones on screen in view.
   const inViewRef = useRef(inView)
   inViewRef.current = inView
-  /** Brings the exchanges on screen into the rail's view and puts the pill over them. */
-  const follow = useCallback(() => {
+  const keepInView = useCallback(() => {
     const list = listRef.current
-    const pill = pillRef.current
     const range = inViewRef.current
-    if (!list || !pill) return
-    const first = range && (list.children[range.from] as HTMLElement | undefined)
-    const last = range && (list.children[range.to] as HTMLElement | undefined)
-    if (!first || !last) {
-      pill.hidden = true
-      return
-    }
-    // A rail with more ticks than fit scrolls itself.
-    if (list.scrollHeight > list.clientHeight) {
-      const margin = first.offsetHeight * 4
-      if (first.offsetTop - margin < list.scrollTop) list.scrollTop = first.offsetTop - margin
-      else if (last.offsetTop + last.offsetHeight + margin > list.scrollTop + list.clientHeight) {
-        list.scrollTop = last.offsetTop + last.offsetHeight + margin - list.clientHeight
-      }
-    }
-    const top = first.offsetTop + first.offsetHeight / 2 - PILL_REACH
-    const bottom = last.offsetTop + last.offsetHeight / 2 + PILL_REACH
-    pill.hidden = false
-    pill.style.transform = `translateY(${top}px)`
-    pill.style.height = `${bottom - top}px`
-    // Placed once where it belongs; from then on it glides like the sidebar's.
-    if (!pill.classList.contains('is-placed')) {
-      pill.getBoundingClientRect()
-      pill.classList.add('is-placed')
+    if (!list || !range || list.scrollHeight <= list.clientHeight) return
+    const first = list.children[range.from] as HTMLElement | undefined
+    const last = list.children[range.to] as HTMLElement | undefined
+    if (!first || !last) return
+    const margin = first.offsetHeight * 4
+    if (first.offsetTop - margin < list.scrollTop) list.scrollTop = first.offsetTop - margin
+    else if (last.offsetTop + last.offsetHeight + margin > list.scrollTop + list.clientHeight) {
+      list.scrollTop = last.offsetTop + last.offsetHeight + margin - list.clientHeight
     }
   }, [])
-  useLayoutEffect(follow, [inView, entries, follow])
-  // A window made shorter packs the ticks closer, under the pill too.
+  useLayoutEffect(keepInView, [inView, entries, keepInView])
+  // So does a rail the window just made shorter.
   const shown = entries.length >= 2
   useEffect(() => {
     const list = listRef.current
     if (!shown || !list) return
-    const observer = new ResizeObserver(follow)
+    const observer = new ResizeObserver(keepInView)
     observer.observe(list)
     return () => observer.disconnect()
-  }, [shown, follow])
+  }, [shown, keepInView])
 
   const previewed = preview ? entries.findIndex((entry) => entry.turnId === preview.turnId) : -1
   const previewEntry = previewed >= 0 ? entries[previewed] : undefined
@@ -283,7 +263,6 @@ export const TurnRail = memo(function TurnRail({
             onClick={() => jump(entry)}
           />
         ))}
-        <span className="turn-rail__pill" ref={pillRef} aria-hidden />
       </div>
       {previewEntry ? (
         <div className="turn-rail__preview" ref={cardRef} aria-hidden>
