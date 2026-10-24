@@ -2,8 +2,10 @@ import type {
   ApprovalMode,
   Capabilities,
   Model,
+  ProviderAccount,
   ProviderId,
   ProviderStatus,
+  ResultOf,
 } from '@harness/contracts'
 import { TasteLink } from '../../modules/tastecode-link'
 import type { Connection } from '../link/connection'
@@ -33,8 +35,13 @@ export type CatalogState = {
 /** A model, effort and access level chosen for a source; remembered per source. */
 export type Choice = { model?: string | undefined; effort?: string | undefined }
 
+/** The contracts' `DEFAULT_ACCOUNT_ID`; the phone imports only types from there. */
+const DEFAULT_ACCOUNT_ID = 'default'
+
+/** A chat on the default account names no account, so both share one key. */
 export function sourceKey(source: SourceRef): string {
-  return [source.provider, source.agent ?? source.connectionId ?? '', source.accountId ?? '']
+  const account = source.accountId === DEFAULT_ACCOUNT_ID ? '' : (source.accountId ?? '')
+  return [source.provider, source.agent ?? source.connectionId ?? '', account]
     .join(':')
     .replace(/:+$/, '')
 }
@@ -48,14 +55,22 @@ export class Catalog {
   readonly state = new Store<CatalogState>({ status: 'idle', sources: [] })
   /** The desktop picker's hidden choice keys; this phone offers only the rest. */
   readonly hidden = new Store<ReadonlySet<string>>(new Set())
+  /** The providers added on the desktop; null while it has not said, and then every one. */
+  #roster: readonly string[] | null = null
   #loading: Promise<void> | undefined
+  #again = false
 
   constructor(private readonly connection: Connection) {
     connection.onOpen(() => {
-      if (this.state.get().status !== 'ready') void this.load()
+      void this.load()
       void this.#readHidden()
     })
     connection.on('models.hidden', ({ keys }) => this.hidden.set(new Set(keys)))
+    connection.on('providers.roster', ({ keys }) => {
+      this.#roster = keys
+      void this.load()
+    })
+    connection.on('accounts.changed', () => void this.load())
     connection.on('models.changed', ({ provider, agent }) => {
       for (const source of this.state.get().sources) {
         if (source.provider === provider && source.agent === agent) void this.#loadModels(source)
@@ -63,9 +78,18 @@ export class Catalog {
     })
   }
 
+  /** Reads the list again; a call while a read runs starts one more after it. */
   load(): Promise<void> {
-    this.#loading ??= this.#load().finally(() => {
+    if (this.#loading) {
+      this.#again = true
+      return this.#loading
+    }
+    this.#loading = this.#load().finally(() => {
       this.#loading = undefined
+      if (this.#again) {
+        this.#again = false
+        void this.load()
+      }
     })
     return this.#loading
   }
@@ -76,13 +100,16 @@ export class Catalog {
       status: current.status === 'ready' ? 'ready' : 'loading',
     }))
     try {
-      const { providers } = await this.connection.request('providers.list', {})
+      const [{ providers }, roster, accounts] = await Promise.all([
+        this.connection.request('providers.list', {}),
+        this.#readRoster(),
+        this.#readAccounts(),
+      ])
+      this.#roster = roster
       const sources = [
         ...providers
-          .filter(isDirectSource)
-          .map((provider) =>
-            source({ provider: provider.id }, provider.displayName, provider.capabilities),
-          ),
+          .filter((provider) => isDirectSource(provider) && this.#allows(provider.id))
+          .flatMap((provider) => accountSources(provider, accounts)),
         ...(await this.#agentSources(providers)),
         ...(await this.#connectionSources(providers)),
       ]
@@ -111,7 +138,7 @@ export class Catalog {
     try {
       const { agents } = await this.connection.request('acp.agents', {})
       return agents
-        .filter((agent) => agent.installed)
+        .filter((agent) => agent.installed && this.#allows(`acp:${agent.id}`))
         .map((agent) => source({ provider: 'acp', agent: agent.id }, agent.name, acp.capabilities))
     } catch {
       return []
@@ -144,11 +171,35 @@ export class Catalog {
         : await this.connection.request('models.list', {
             provider: entry.provider,
             ...(entry.agent ? { agent: entry.agent } : {}),
-            ...(entry.accountId ? { accountId: entry.accountId } : {}),
+            ...(entry.accountId && entry.accountId !== DEFAULT_ACCOUNT_ID
+              ? { accountId: entry.accountId }
+              : {}),
           })
       this.#update(entry.key, { models, status: 'ready' })
     } catch {
       this.#update(entry.key, { status: 'error' })
+    }
+  }
+
+  /** Whether the desktop added this provider (`codex`) or ACP agent (`acp:kimi`). */
+  #allows(key: string): boolean {
+    return this.#roster === null || this.#roster.includes(key)
+  }
+
+  async #readRoster(): Promise<readonly string[] | null> {
+    try {
+      return (await this.connection.request('providers.roster', {})).keys
+    } catch {
+      // A computer without the roster offers every provider, as before.
+      return this.#roster
+    }
+  }
+
+  async #readAccounts(): Promise<ResultOf<'accounts.list'> | undefined> {
+    try {
+      return await this.connection.request('accounts.list', {})
+    } catch {
+      return undefined
     }
   }
 
@@ -181,6 +232,39 @@ export class Catalog {
       sources: current.sources.map((entry) => (entry.key === key ? { ...entry, ...patch } : entry)),
     }))
   }
+}
+
+/**
+ * A provider's sources: itself, or once more than one of its accounts is
+ * signed in, one per account named as the desktop's picker names them
+ * ("Claude Code (Team)"), the account new chats start on first.
+ */
+export function accountSources(
+  provider: ProviderStatus,
+  listing: ResultOf<'accounts.list'> | undefined,
+): Source[] {
+  const plain = [source({ provider: provider.id }, provider.displayName, provider.capabilities)]
+  if (!listing || provider.capabilities?.multipleAccounts !== true) return plain
+  const usable = listing.accounts.filter(
+    (account) =>
+      account.provider === provider.id &&
+      (account.email !== undefined ||
+        account.plan !== undefined ||
+        (account.id === DEFAULT_ACCOUNT_ID && provider.auth === 'authenticated')),
+  )
+  if (usable.length < 2) return plain
+  const active = listing.active[provider.id] ?? DEFAULT_ACCOUNT_ID
+  const ordered = [
+    ...usable.filter((account) => account.id === active),
+    ...usable.filter((account) => account.id !== active),
+  ]
+  return ordered.map((account: ProviderAccount) =>
+    source(
+      { provider: provider.id, accountId: account.id },
+      `${provider.displayName} (${account.label})`,
+      provider.capabilities,
+    ),
+  )
 }
 
 function source(ref: SourceRef, name: string, capabilities: Capabilities | undefined): Source {
