@@ -874,6 +874,42 @@ button.thread__older:hover {
   margin-bottom: 0;
 }
 
+/* A batch is one line until it opens; its chevron stays out of the way until
+   then, as the lone rows' do. In a turn's work it is set like the notes. */
+.activity--batch > .activity__summary > .activity__chevron {
+  opacity: 0;
+  transition:
+    opacity var(--dur-fast) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out);
+}
+
+.activity--batch > .activity__summary:is(:hover, :focus-visible) > .activity__chevron,
+.activity--batch[data-expanded='true'] > .activity__summary > .activity__chevron {
+  opacity: 1;
+}
+
+.activity__body--work > .activity--batch > .activity__summary {
+  font-size: var(--t-md);
+}
+
+/* Open, it lists one line per step under its own icon column: no rule, no
+   indent, and each step's chevron at the edge to open what it did. */
+.activity__body--batch {
+  gap: 0;
+  margin: 0 0 4px;
+  padding-left: 0;
+  border-left: 0;
+}
+
+.activity__body--batch .aux__row {
+  min-height: 24px;
+}
+
+.activity__body--batch > .aux > .aux__row > :is(.aux__chevron, .activity__chevron) {
+  margin-left: auto;
+  opacity: 1;
+}
+
 /* Inside a batch the output reads as a card under its own row, indented to
    the label so the icon column stays clean. */
 .activity__body .aux__out {
