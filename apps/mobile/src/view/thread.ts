@@ -216,17 +216,21 @@ function stepKind(item: Item): StepKind {
   }
 }
 
-/** One step the agent took, worded the way the desktop's activity rows word it. */
-/** A settled group's steps in runs: notes break them, two or more calls share a summary. */
+/**
+ * A settled group's steps in runs: each note stands alone, and everything the
+ * agent did between two notes, thoughts included, folds under one summary.
+ */
 export function stepRuns(items: readonly Item[]): StepRunView[] {
   const runs: StepRunView[] = []
   let calls: Item[] = []
   const flush = () => {
     const first = calls[0]
     if (first) {
+      const acted = calls.filter((item) => item.type !== 'reasoning')
       runs.push({
         id: `run:${first.id}`,
-        summary: calls.length > 1 ? summarize(calls) : null,
+        summary:
+          acted.length > 0 ? summarize(acted) : calls.length === 1 ? thoughtLabel(first) : 'Thought',
         steps: calls.map(stepView),
       })
     }
@@ -236,10 +240,6 @@ export function stepRuns(items: readonly Item[]): StepRunView[] {
     if (item.type === 'message') {
       flush()
       runs.push({ id: `run:${item.id}`, summary: null, steps: [stepView(item)] })
-    } else if (item.type === 'reasoning') {
-      // A thought is a line of its own, worded as the desktop words it.
-      flush()
-      runs.push({ id: `run:${item.id}`, summary: thoughtLabel(item), steps: [stepView(item)] })
     } else {
       calls.push(item)
     }
@@ -336,24 +336,33 @@ export function stepView(item: Item): StepView {
 /** What finished work did, in one sentence: "Edited 2 files and ran 3 commands". */
 export function summarize(items: readonly Item[]): string {
   const files = new Set<string>()
+  const read = new Set<string>()
   let commands = 0
   let tools = 0
   let thoughts = 0
   for (const item of items) {
     if (item.type === 'command') commands += 1
     else if (item.type === 'file_change') files.add(item.path ?? item.id)
+    else if (item.type === 'tool_call' && isRead(item.text)) read.add(toolTitle(item.text) ?? item.id)
     else if (item.type === 'tool_call') tools += 1
     else if (item.type === 'reasoning') thoughts += 1
   }
   const parts = [
     files.size ? `edited ${count(files.size, 'file')}` : '',
     commands ? `ran ${count(commands, 'command')}` : '',
+    read.size ? `read ${count(read.size, 'file')}` : '',
     tools ? `used ${count(tools, 'tool')}` : '',
   ].filter(Boolean)
   if (parts.length === 0) return thoughts ? 'Thought it through' : count(items.length, 'step')
   const last = parts.pop()
   const sentence = parts.length > 0 ? `${parts.join(', ')} and ${last}` : (last ?? '')
   return sentence.charAt(0).toUpperCase() + sentence.slice(1)
+}
+
+/** A tool that reads one file: `Read`, `read_file`, `view_file`. */
+function isRead(text: string | undefined): boolean {
+  const head = text?.trim().split('\n', 1)[0]?.trim() ?? ''
+  return /^(?:read|read[_ ]?file|view[_ ]?file)$/i.test(head)
 }
 
 /** Work under way names its latest step: "Running npm test", "Editing App.tsx". */

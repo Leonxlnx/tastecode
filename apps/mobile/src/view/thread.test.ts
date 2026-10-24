@@ -116,19 +116,23 @@ describe('thread rows', () => {
     })
   })
 
-  it('batches calls in a row under one summary, with notes between them', () => {
+  it('folds everything between two notes under one summary', () => {
     const runs = stepRuns([
       step({ id: 'a', type: 'command', command: 'ls' }),
+      step({ id: 'r', type: 'reasoning', text: 'Hm.' }),
       step({ id: 'b', type: 'command', command: 'pwd' }),
+      step({ id: 'd', type: 'tool_call', text: 'Read\n{"file_path":"/x/a.ts"}' }),
       step({ id: 'n', type: 'message', role: 'assistant', text: 'Looked around.' }),
       step({ id: 't', type: 'reasoning', text: 'Which file?', durationMs: 12_000 }),
+      step({ id: 'm', type: 'message', role: 'assistant', text: 'This one.' }),
       step({ id: 'c', type: 'file_change', path: 'a.ts' }),
     ])
     expect(runs.map((run) => [run.summary, run.steps.map((entry) => entry.id)])).toEqual([
-      ['Ran 2 commands', ['a', 'b']],
+      ['Ran 2 commands and read 1 file', ['a', 'r', 'b', 'd']],
       [null, ['n']],
       ['Thought for 12s', ['t']],
-      [null, ['c']],
+      [null, ['m']],
+      ['Edited 1 file', ['c']],
     ])
   })
 

@@ -290,7 +290,7 @@ struct StepsRow: View {
           // The live label slides to the next step, as the desktop's does.
           Text(row.summary ?? "")
             .font(.subheadline)
-            .foregroundStyle(expanded ? .primary : .secondary)
+            .foregroundStyle(.secondary)
             .lineLimit(1)
             .id(row.summary ?? "")
             .transition(
@@ -312,6 +312,11 @@ struct StepsRow: View {
         .contentShape(.rect)
       }
       .buttonStyle(.plain)
+      if row.settled == true {
+        // A hairline under "Worked for" sets the work apart from the answer.
+        Divider()
+          .padding(.top, 12)
+      }
       if built || expanded {
         // The steps open to their measured height, so the rows below move with
         // them instead of jumping, and each step settles in after the one above.
@@ -373,7 +378,7 @@ private struct StepBatch: View {
         withAnimation(.smooth(duration: open ? 0.22 : 0.32)) { open.toggle() }
       } label: {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
-          Image(systemName: StepLine.symbol(for: steps.first?.kind ?? .other))
+          Image(systemName: symbol)
             .font(.footnote)
             .foregroundStyle(steps.contains(where: \.failed) ? AnyShapeStyle(.red) : AnyShapeStyle(.tertiary))
             .frame(width: 18)
@@ -382,10 +387,10 @@ private struct StepBatch: View {
             .foregroundStyle(.secondary)
             .lineLimit(1)
           Spacer(minLength: 8)
-          Image(systemName: "chevron.right")
+          Image(systemName: "chevron.down")
             .font(.system(size: 10, weight: .semibold))
             .foregroundStyle(.tertiary)
-            .rotationEffect(.degrees(open ? 90 : 0))
+            .rotationEffect(.degrees(open ? 180 : 0))
         }
         .contentShape(.rect)
       }
@@ -409,6 +414,13 @@ private struct StepBatch: View {
         .transition(.opacity.combined(with: .offset(y: -6)))
       }
     }
+  }
+
+  /// The kind of call it holds, or a hammer for a mix; thoughts don't count.
+  private var symbol: String {
+    let kinds = Set(steps.map(\.kind).filter { $0 != .thinking })
+    if kinds.count > 1 { return "hammer" }
+    return StepLine.symbol(for: kinds.first ?? steps.first?.kind ?? .other)
   }
 }
 
