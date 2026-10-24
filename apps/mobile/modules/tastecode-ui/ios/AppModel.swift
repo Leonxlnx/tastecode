@@ -170,41 +170,46 @@ final class AppModel {
   }
 }
 
-/// One open chat: its setup and state, and its rows, each observed on its own
-/// so a streaming reply redraws only itself.
+/// One open chat: its setup and state, and its rows. The transcript hears
+/// exactly which rows changed, so a streaming reply lays out only itself.
 @MainActor @Observable
 final class ThreadStore {
   let id: String
   var meta: ThreadMetaView?
   var order: [String] = []
   @ObservationIgnored private(set) var rows: [String: RowModel] = [:]
+  @ObservationIgnored var onChange: ((ThreadChange) -> Void)?
 
   init(id: String) {
     self.id = id
   }
 
   func apply(_ patch: ThreadPatch) {
+    var change = ThreadChange(reset: patch.reset)
     for row in patch.rows {
       if let existing = rows[row.key] {
-        if existing.row != row { existing.row = row }
+        guard existing.row != row else { continue }
+        existing.row = row
       } else {
         rows[row.key] = RowModel(row: row)
       }
+      change.rows.insert(row.key)
     }
     if let next = patch.order {
       let keep = Set(next)
       rows = rows.filter { keep.contains($0.key) }
       // Rows only go away when a turn folds its work under "Worked for"; that change is animated.
-      let folding = !patch.reset && order.contains { !keep.contains($0) }
+      change.folding = !patch.reset && order.contains { !keep.contains($0) }
       if order != next {
-        if folding {
-          withAnimation(.smooth(duration: 0.42)) { order = next }
-        } else {
-          order = next
-        }
+        order = next
+        change.orderChanged = true
       }
     }
-    if meta != patch.meta { meta = patch.meta }
+    if meta != patch.meta {
+      meta = patch.meta
+      change.metaChanged = true
+    }
+    onChange?(change)
   }
 }
 

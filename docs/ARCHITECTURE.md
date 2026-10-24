@@ -142,7 +142,10 @@ Liquid Glass) inside an `@expo/ui` host, in the local `tastecode-ui` module, bes
 reconnects and state are TypeScript and import the shared contracts' types. TypeScript also
 words what the screens show (`src/view`: chat rows, step summaries, approval subjects) and sends
 it to Swift as JSON; an open chat sends only the rows that changed, so a streaming reply carries
-its own text and nothing else. Swift draws and asks back through one action event. An Android
+its own text and nothing else. Swift draws and asks back through one action event. The chat
+transcript is UIKit, not SwiftUI: a collection view whose layout knows every row's exact height,
+rows laid out on a background queue from Markdown blocks measured once and cached, text drawn
+straight from attributed strings, and in a long reply only the blocks near the screen built. An Android
 build replaces the two native modules with Kotlin and Compose and keeps everything else. The
 phone app has its own npm install, outside the pnpm workspace.
 
@@ -153,7 +156,9 @@ Tailscale, readable by anyone on a café Wi-Fi). TLS with a pinned self-signed c
 encrypted frames). A fully native Swift app (Android would share nothing). Screens composed in
 React from `@expo/ui`'s SwiftUI components (the first version): menus, toolbars, the composer's
 glass and scrolling could not be shaped as iOS draws them, and every streamed delta re-rendered
-React.
+React. The transcript in SwiftUI (a lazy stack of `Text`): every streamed delta parsed and laid out
+the whole reply again on the main thread: streaming the same reply in a simulator, it used about
+three times the main thread's time the UIKit transcript does.
 
 ---
 

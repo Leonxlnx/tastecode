@@ -17,6 +17,8 @@ private struct ChatContent: View {
   @Environment(AppModel.self) private var model
   let store: ThreadStore
   @State private var jumpToken = 0
+  /// The composer's height: the transcript scrolls under it, and stops short of hiding behind it.
+  @State private var barHeight: CGFloat = 0
   @State private var showChanges = false
   @State private var renaming = false
   @State private var draftTitle = ""
@@ -24,9 +26,11 @@ private struct ChatContent: View {
 
   var body: some View {
     let meta = store.meta
-    Transcript(store: store, jumpToken: jumpToken)
+    TranscriptView(store: store, jumpToken: jumpToken, bottomBar: barHeight)
+      .ignoresSafeArea(.container)
       .safeAreaBar(edge: .bottom) {
         ChatBar(store: store, problem: $problem) { jumpToken += 1 }
+          .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { barHeight = $0 }
       }
       .navigationTitle(meta?.title ?? "")
       .navigationBarTitleDisplayMode(.inline)
@@ -201,7 +205,7 @@ struct NewChatScreen: View {
       if let pending {
         ScrollView {
           VStack(alignment: .leading, spacing: 22) {
-            UserMessage(text: pending, attachments: [])
+            UserMessage(text: pending)
             WorkingLine(text: "Starting")
           }
           .padding(.horizontal, 20)
