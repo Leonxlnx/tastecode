@@ -4,6 +4,7 @@ import {
   lazy,
   memo,
   Suspense,
+  type ContextType,
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
@@ -112,6 +113,8 @@ import { createFollowGlide, type FollowGlide } from './scroll-follow.js'
 import { useVirtualItemKey } from './use-virtual-item-key.js'
 import { nearOlderHistoryEdge, prependedRowCount } from './older-history.js'
 import { shiftPendingScrollIndex } from './pending-scroll.js'
+import { ChatImageContext } from './MarkdownImage.js'
+import { resolveChatImage } from './chat-image-source.js'
 import { useOlderHistory } from './use-older-history.js'
 import { UserInput } from '../design-agent/UserInput.js'
 import type { Checkpoint } from './RollbackDialog.js'
@@ -195,6 +198,14 @@ export const Thread = memo(function Thread(props: ThreadProps) {
     props.frameStore.getStructureSnapshot,
   )
   const running = thread.running && !props.stopping
+  const { transport, threadId } = props
+  const chatImages = useMemo(
+    () =>
+      transport && threadId
+        ? (source: string) => resolveChatImage(transport, threadId, source)
+        : undefined,
+    [transport, threadId],
+  )
   const activeActivityIndices = useMemo(
     () => activeTurnActivityIndices(thread.items, thread.activeTurn?.id, thread.liveStart),
     [thread.items, thread.activeTurn?.id, thread.liveStart],
@@ -1333,7 +1344,7 @@ export const Thread = memo(function Thread(props: ThreadProps) {
     // of a scroll container scrolls away with the content — Ctrl+F used to
     // yank the transcript to the top just to show the find bar, and "Jump to
     // latest" rendered below the viewport exactly when it was needed.
-    <RowMeasureContext.Provider value={measureRow}>
+    <ThreadContexts measureRow={measureRow} chatImages={chatImages}>
       <div className="thread-shell">
         {finding ? (
           <Suspense fallback={<FindBarSkeleton />}>
@@ -1546,9 +1557,26 @@ export const Thread = memo(function Thread(props: ThreadProps) {
           </button>
         ) : null}
       </div>
-    </RowMeasureContext.Provider>
+    </ThreadContexts>
   )
 })
+
+/** What every row of a transcript reads: how to measure itself and how to load its pictures. */
+function ThreadContexts({
+  measureRow,
+  chatImages,
+  children,
+}: {
+  measureRow: ContextType<typeof RowMeasureContext>
+  chatImages: ContextType<typeof ChatImageContext>
+  children: ReactNode
+}) {
+  return (
+    <ChatImageContext.Provider value={chatImages}>
+      <RowMeasureContext.Provider value={measureRow}>{children}</RowMeasureContext.Provider>
+    </ChatImageContext.Provider>
+  )
+}
 
 /**
  * Follow-scroll needs every text frame, but the virtual list does not. Keep
