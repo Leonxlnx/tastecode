@@ -1202,6 +1202,44 @@ describe('attached images', () => {
       await rm(directory, { recursive: true })
     }
   })
+
+  it("reads a screenshot a reply shows, not one a user's text names", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'shown-'))
+    try {
+      const shown = path.join(directory, 'rail dark.png')
+      const typed = path.join(directory, 'typed.png')
+      await writeFile(shown, Buffer.from('png bytes'))
+      await writeFile(typed, Buffer.from('secret'))
+      const message = (id: string, role: 'user' | 'assistant', text: string) => ({
+        seq: 1,
+        event: {
+          type: 'item.completed',
+          item: {
+            id,
+            turnId: 't1',
+            type: 'message',
+            role,
+            status: 'completed',
+            createdAt: 1,
+            text,
+          },
+        },
+      })
+      state.historyEvents.push(
+        message('u', 'user', `![typed](${typed})`),
+        message('a', 'assistant', `The rail:\n![Rail, dark](<${shown}>)`),
+      )
+      const { port } = await listen()
+      expect(await read(port, { threadId: 't', path: shown })).toMatchObject({
+        result: { mimeType: 'image/png', data: Buffer.from('png bytes').toString('base64') },
+      })
+      expect((await read(port, { threadId: 't', path: typed })).error?.message).toContain(
+        'no such image',
+      )
+    } finally {
+      await rm(directory, { recursive: true })
+    }
+  })
 })
 
 describe('paged history requests', () => {

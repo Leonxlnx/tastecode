@@ -41,6 +41,7 @@ import {
 } from './phone-access.js'
 import { readCredential, writeCredential } from './credentials.js'
 import type { PushSocket } from './push-bus.js'
+import { showsImage } from './markdown-images.js'
 import { imageFileName, materializeAttachment, readAttachmentImage } from './uploaded-attachment.js'
 import type { UsageHistoryService } from './usage-history.js'
 import { usageSummaryWithLimits } from './usage-summary.js'
@@ -1289,15 +1290,23 @@ export function startServer(
 
       case 'attachments.read': {
         const p = parseParams(method, params)
-        // Only a path this chat's messages attached; never any file by name.
+        // Only a picture this chat's messages attached, or one its replies
+        // show as a Markdown image (agents show screenshots that way); never
+        // any file by name.
         await loadProviderHistoryForRead(p.threadId)
         const history = await orchestrator.history(p.threadId)
-        const attached = history.some(
-          ({ event }) =>
-            (event.type === 'item.started' || event.type === 'item.completed') &&
-            event.item.attachments?.includes(p.path) === true,
-        )
-        if (!attached) throw new Error('This chat has no such image.')
+        const named = history.some(({ event }) => {
+          if (event.type !== 'item.started' && event.type !== 'item.completed') return false
+          const { item } = event
+          if (item.attachments?.includes(p.path)) return true
+          return (
+            event.type === 'item.completed' &&
+            item.type === 'message' &&
+            item.role === 'assistant' &&
+            showsImage(item.text ?? '', p.path)
+          )
+        })
+        if (!named) throw new Error('This chat has no such image.')
         return readAttachmentImage(p.path)
       }
 
