@@ -7,6 +7,8 @@ export type TurnRailEntry = {
   index: number
   /** The prompt on one line, cut to what a one-line label can show. */
   prompt: string
+  /** When the prompt was sent. */
+  at: number
 }
 
 /** More than one line of the preview card can hold; the card ellipsizes the rest. */
@@ -34,6 +36,7 @@ export function turnRailEntries(
       turnId: turn.turnId,
       index: turn.index,
       prompt: oneLine(prompt.text ?? '', PROMPT_LABEL_CHARS) || 'Attachment',
+      at: prompt.createdAt,
     })
   }
   const unchanged =
@@ -43,7 +46,8 @@ export function turnRailEntries(
       return (
         before.turnId === entry.turnId &&
         before.index === entry.index &&
-        before.prompt === entry.prompt
+        before.prompt === entry.prompt &&
+        before.at === entry.at
       )
     })
   return unchanged ? previous : entries

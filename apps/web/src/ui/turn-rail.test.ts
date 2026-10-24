@@ -28,8 +28,8 @@ describe('turn rail entries', () => {
     ])
 
     expect(entries).toEqual([
-      { turnId: 't1', index: 0, prompt: 'Fix the login bug' },
-      { turnId: 't2', index: 2, prompt: 'Now the tests' },
+      { turnId: 't1', index: 0, prompt: 'Fix the login bug', at: 0 },
+      { turnId: 't2', index: 2, prompt: 'Now the tests', at: 0 },
     ])
   })
 
@@ -67,9 +67,9 @@ describe('turn rail entries', () => {
 
 describe('turn rail positions', () => {
   const entries = [
-    { turnId: 'a', index: 2, prompt: 'a' },
-    { turnId: 'b', index: 5, prompt: 'b' },
-    { turnId: 'c', index: 9, prompt: 'c' },
+    { turnId: 'a', index: 2, prompt: 'a', at: 0 },
+    { turnId: 'b', index: 5, prompt: 'b', at: 0 },
+    { turnId: 'c', index: 9, prompt: 'c', at: 0 },
   ]
 
   it('finds the turn a row belongs to', () => {
