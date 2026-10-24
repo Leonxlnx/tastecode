@@ -237,8 +237,6 @@ struct SetupChip: View {
   /// Puts the keyboard away before the panel covers it.
   var onOpen: () -> Void = {}
   @State private var open = false
-  /// Where the chip is, for the panel to grow out of and back into.
-  @State private var frame: CGRect = .zero
 
   var body: some View {
     let efforts = model.catalog.source(setup.sourceKey)?.models.first(where: { $0.id == setup.model })?.efforts ?? []
@@ -266,7 +264,6 @@ struct SetupChip: View {
       .frame(height: 32)
       .background(.fill.tertiary, in: .capsule)
       .contentShape(.capsule)
-      .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame = $0 }
     }
     .buttonStyle(.plain)
     .padding(.horizontal, 4)
@@ -275,7 +272,7 @@ struct SetupChip: View {
     .accessibilityLabel([name, setup.effortLabel].compactMap { $0 }.joined(separator: ", "))
     .accessibilityHint("Changes the model and how hard it thinks")
     .fullScreenCover(isPresented: $open) {
-      SetupPanel(setup: setup, actions: actions, origin: frame) { present(false) }
+      SetupPanel(setup: setup, actions: actions) { present(false) }
         .presentationBackground(.clear)
     }
   }
@@ -310,46 +307,57 @@ private struct EffortMeter: View {
   }
 }
 
-/// The desktop's model picker as a card in the middle of the blurred chat:
-/// the model on top, which opens every model and provider, and under it the
-/// effort slider. The X, a tap on the blur or a swipe down puts it away.
+/// Over the blurred chat, in its middle: the model's name, which opens every
+/// model, speed and provider, and right under it the reasoning slider and the
+/// level's name. The X, a tap on the blur or a swipe down puts it away.
 private struct SetupPanel: View {
   @Environment(AppModel.self) private var model
   let setup: SetupView
   let actions: SetupActions
-  /// The chip it opened from, in global coordinates.
-  let origin: CGRect
   let onClose: () -> Void
   @State private var shown = false
   @State private var closing = false
-  @State private var bounds: CGRect = .zero
+  /// The level under the thumb, named while it is dragged.
+  @State private var level: String?
 
   var body: some View {
     let current = model.catalog.source(setup.sourceKey)?.models.first { $0.id == setup.model }
-    let start = start
+    let efforts = current?.efforts ?? []
     ZStack {
       Rectangle()
         .fill(.ultraThinMaterial)
         .ignoresSafeArea()
         .opacity(shown ? 1 : 0)
-        .animation(.easeOut(duration: shown ? 0.3 : 0.24), value: shown)
+        // On the way out the blur lifts after the panel has gone.
+        .animation(shown ? .easeOut(duration: 0.28) : .easeInOut(duration: 0.28), value: shown)
         .onTapGesture(perform: close)
         .gesture(
           DragGesture(minimumDistance: 24).onEnded { value in
             if value.translation.height > 60 { close() }
           })
         .accessibilityHidden(true)
-      // It grows out of the chip and settles in the middle, and goes back into it.
-      SetupCard(setup: setup, actions: actions, efforts: current?.efforts ?? [], tiers: current?.tiers ?? [])
-        .padding(.horizontal, 20)
-        .scaleEffect(shown ? 1 : start.scale)
-        .offset(shown ? .zero : start.offset)
-        .animation(shown ? .spring(duration: 0.52, bounce: 0.2) : .spring(duration: 0.34, bounce: 0), value: shown)
-        .blur(radius: shown ? 0 : 6)
-        .opacity(shown ? 1 : 0)
-        .animation(shown ? .easeOut(duration: 0.2) : .easeIn(duration: 0.24), value: shown)
+      VStack(spacing: 12) {
+        ModelTitle(setup: setup, actions: actions, tiers: current?.tiers ?? [])
+        if efforts.isEmpty {
+          Text("This model has no reasoning levels.")
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
+        } else {
+          VStack(spacing: 12) {
+            EffortSlider(efforts: efforts, selected: setup.effort, onPick: actions.effort) { level = $0 }
+            LevelName(label: level ?? setup.effortLabel ?? "")
+          }
+        }
+      }
+      .frame(maxWidth: 360)
+      .padding(.horizontal, 32)
+      // It rises into place out of a soft blur, and sinks back into it.
+      .scaleEffect(shown ? 1 : 0.92)
+      .offset(y: shown ? 0 : 18)
+      .blur(radius: shown ? 0 : 8)
+      .opacity(shown ? 1 : 0)
+      .animation(shown ? .spring(duration: 0.46, bounce: 0.2) : .easeIn(duration: 0.18), value: shown)
     }
-    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { bounds = $0 }
     .overlay(alignment: .topLeading) {
       Button(action: close) {
         Image(systemName: "xmark")
@@ -366,20 +374,10 @@ private struct SetupPanel: View {
       .accessibilityLabel("Close")
     }
     .task {
-      // One frame first, so the card starts where the chip is.
+      // One frame on screen first, so the entrance animates from its start.
       try? await Task.sleep(for: .milliseconds(16))
       shown = true
     }
-  }
-
-  /// The chip's place and size relative to the card's resting one.
-  private var start: (offset: CGSize, scale: CGFloat) {
-    guard origin.width > 0, bounds.width > 0 else { return (CGSize(width: 0, height: 24), 0.9) }
-    let card = min(380, bounds.width - 40)
-    return (
-      CGSize(width: origin.midX - bounds.midX, height: origin.midY - bounds.midY),
-      max(0.35, min(1, origin.width / card))
-    )
   }
 
   private func close() {
@@ -393,65 +391,12 @@ private struct SetupPanel: View {
   }
 }
 
-/// The card itself: the model, a hairline, then the effort and the fast lane.
-private struct SetupCard: View {
-  @Environment(AppModel.self) private var model
-  @Environment(\.colorScheme) private var scheme
-  let setup: SetupView
-  let actions: SetupActions
-  let efforts: [EffortView]
-  let tiers: [TierView]
-  /// The level under the thumb, named while it is dragged as the desktop does.
-  @State private var level: String?
-
-  var body: some View {
-    let fast = tiers.first { tier in
-      let id = tier.id.lowercased()
-      return id == "priority" || id == "fast" || tier.name.lowercased() == "fast"
-    }
-    VStack(alignment: .leading, spacing: 0) {
-      ModelRow(setup: setup, actions: actions, tiers: fast == nil ? tiers : [])
-      if !efforts.isEmpty || fast != nil {
-        Divider()
-        VStack(alignment: .leading, spacing: 12) {
-          HStack(spacing: 8) {
-            if !efforts.isEmpty {
-              EffortTitle(label: level ?? setup.effortLabel ?? "")
-            }
-            Spacer(minLength: 8)
-            if let fast {
-              FastToggle(on: setup.tier == fast.id) { on in actions.tier(on ? fast.id : nil) }
-            }
-          }
-          .frame(minHeight: 30)
-          if !efforts.isEmpty {
-            EffortSlider(efforts: efforts, selected: setup.effort, onPick: actions.effort) { level = $0 }
-          }
-        }
-        .padding(.horizontal, 16)
-        .padding(.top, 12)
-        .padding(.bottom, 16)
-      }
-    }
-    .frame(maxWidth: 380)
-    .background(
-      scheme == .dark ? Color(.secondarySystemBackground) : Color(.systemBackground),
-      in: .rect(cornerRadius: 26, style: .continuous))
-    .overlay {
-      RoundedRectangle(cornerRadius: 26, style: .continuous)
-        .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
-    }
-    .shadow(color: .black.opacity(0.28), radius: 30, y: 14)
-  }
-}
-
-/// The model and the provider it runs on; it opens that provider's models and
-/// the other providers, as the desktop's list does.
-private struct ModelRow: View {
+/// The model's name over the provider it runs on; it opens that provider's
+/// models, the model's speeds, and the other providers.
+private struct ModelTitle: View {
   @Environment(AppModel.self) private var model
   let setup: SetupView
   let actions: SetupActions
-  /// Speeds to offer here when none of them is the fast lane the card toggles.
   let tiers: [TierView]
 
   var body: some View {
@@ -485,24 +430,24 @@ private struct ModelRow: View {
         }
       }
     } label: {
-      HStack(spacing: 10) {
-        VStack(alignment: .leading, spacing: 2) {
-          Text(setup.sourceName ?? "Model")
-            .font(.footnote.weight(.medium))
-            .foregroundStyle(.secondary)
+      VStack(spacing: 3) {
+        HStack(spacing: 6) {
           Text(setup.modelName ?? "Choose a Model")
-            .font(.title3.weight(.semibold))
+            .font(.title2.weight(.semibold))
             .foregroundStyle(.primary)
             .lineLimit(1)
             .contentTransition(.opacity)
+          Image(systemName: "chevron.up.chevron.down")
+            .font(.footnote.weight(.semibold))
+            .foregroundStyle(.tertiary)
         }
-        Spacer(minLength: 8)
-        Image(systemName: "chevron.up.chevron.down")
-          .font(.footnote.weight(.semibold))
-          .foregroundStyle(.tertiary)
+        Text([setup.sourceName, setup.tierName].compactMap { $0 }.joined(separator: " · "))
+          .font(.subheadline)
+          .foregroundStyle(.secondary)
+          .lineLimit(1)
       }
       .padding(.horizontal, 16)
-      .padding(.vertical, 14)
+      .padding(.vertical, 6)
       .contentShape(.rect)
     }
     .menuOrder(.fixed)
@@ -510,48 +455,20 @@ private struct ModelRow: View {
   }
 }
 
-/// "Effort: High", the level's name in the reply's ink, sliding as it changes.
-private struct EffortTitle: View {
+/// The level's name under the slider, sliding as it changes.
+private struct LevelName: View {
   let label: String
 
   var body: some View {
-    HStack(spacing: 5) {
-      Text("Effort:")
-        .font(.subheadline.weight(.medium))
-        .foregroundStyle(.secondary)
-      Text(label)
-        .font(.body.weight(.semibold))
-        .foregroundStyle(.primary)
-        .id(label)
-        .transition(.asymmetric(
-          insertion: .offset(y: 7).combined(with: .opacity),
-          removal: .offset(y: -7).combined(with: .opacity)))
-    }
-    .animation(.snappy(duration: 0.2), value: label)
-  }
-}
-
-/// The fast lane, a bolt that fills when it is on.
-private struct FastToggle: View {
-  let on: Bool
-  let onChange: (Bool) -> Void
-
-  var body: some View {
-    Button {
-      onChange(!on)
-    } label: {
-      Image(systemName: on ? "bolt.fill" : "bolt")
-        .font(.system(size: 15, weight: .medium))
-        .foregroundStyle(on ? .primary : .tertiary)
-        .contentTransition(.symbolEffect(.replace))
-        .frame(width: 34, height: 30)
-        .background(on ? Color.primary.opacity(0.1) : .clear, in: .rect(cornerRadius: 9, style: .continuous))
-        .contentShape(.rect)
-    }
-    .buttonStyle(.plain)
-    .sensoryFeedback(.impact(weight: .light, intensity: 0.7), trigger: on)
-    .animation(.snappy(duration: 0.2), value: on)
-    .accessibilityLabel(on ? "Turn off fast mode" : "Turn on fast mode")
+    Text(label)
+      .font(.subheadline.weight(.semibold))
+      .foregroundStyle(.secondary)
+      .id(label)
+      .transition(.asymmetric(
+        insertion: .offset(y: 6).combined(with: .opacity),
+        removal: .offset(y: -6).combined(with: .opacity)))
+      .animation(.snappy(duration: 0.2), value: label)
+      .accessibilityHidden(true)
   }
 }
 
@@ -574,7 +491,7 @@ private struct EffortSlider: View {
   @State private var bumps = 0
   @State private var landings = 0
 
-  private let thumb: CGFloat = 30
+  private let thumb: CGFloat = 34
   private let inset: CGFloat = 4
 
   var body: some View {
