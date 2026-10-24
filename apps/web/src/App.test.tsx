@@ -5396,6 +5396,102 @@ describe('new chats', () => {
     expect(note()).toBeUndefined()
   })
 
+  it("brings back a model's last effort on another provider, not on another account", async () => {
+    const claude = claudeCodeServerProvider()
+    serverProviders = [
+      serverProviders[0]!,
+      { ...claude, capabilities: { ...claude.capabilities!, multipleAccounts: true } },
+    ]
+    serverProjects[0]!.sessions = [
+      { id: 'chat-1', title: 'Webhook retries', provider: 'claude-code', createdAt: 1 },
+    ]
+    const listed = (id: string, isDefault = false): Model => ({
+      id,
+      displayName: id,
+      isDefault,
+      reasoningEfforts: ['low', 'medium', 'high', 'xhigh'],
+      defaultReasoningEffort: 'medium',
+      serviceTiers: [],
+    })
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'accounts.list') {
+        return Promise.resolve({
+          accounts: [
+            { id: 'default', provider: 'claude-code', label: 'Personal', managed: false },
+            {
+              id: 'team-9z8y7x',
+              provider: 'claude-code',
+              label: 'Team',
+              home: 'C:\\TasteCode\\accounts\\claude-code\\team-9z8y7x',
+              managed: true,
+              email: 'team@example.test',
+            },
+          ],
+          active: {},
+        })
+      }
+      if (method === 'models.list') {
+        const { provider, accountId } = methods['models.list'].params.parse(params)
+        return Promise.resolve({
+          models:
+            provider === 'codex'
+              ? [listed('luna', true), listed('sol')]
+              : accountId === 'team-9z8y7x'
+                ? [listed('sonnet', true)]
+                : [listed('opus', true)],
+        })
+      }
+      return request(method, params)
+    })
+    // Codex was last used on Luna, but Sol last ran at high.
+    localStorage.setItem(
+      'harness.modelBySource',
+      JSON.stringify({
+        codex: { modelKey: 'codex:luna', effort: 'low' },
+        'claude-code': { modelKey: 'claude-code:opus', effort: 'xhigh' },
+      }),
+    )
+    localStorage.setItem(
+      'harness.effortByModel',
+      JSON.stringify({
+        'codex:luna': 'low',
+        'codex:sol': 'high',
+        'claude-code:opus': 'xhigh',
+        'claude-code:sonnet': 'low',
+      }),
+    )
+    const note = () =>
+      (composerProps().errors ?? []).find((error) =>
+        error.message.startsWith('Your next message switches'),
+      )
+    render(<App />)
+
+    fireEvent.click(await waitFor(() => treeChatRow('Webhook retries')))
+    await waitFor(() => expect(composerProps().modelId).toBe('claude-code:opus'))
+    expect(composerProps().effort).toBe('xhigh')
+
+    act(() => composerProps().onModelChange('codex:sol'))
+    await waitFor(() => expect(composerProps().modelId).toBe('codex:sol'))
+    expect(composerProps().effort).toBe('high')
+
+    await waitFor(() => expect(note()?.action?.label).toBe('Stay on Claude Code (Personal)'))
+    act(() => note()!.action!.run())
+    await waitFor(() => expect(composerProps().modelId).toBe('claude-code:opus'))
+    expect(composerProps().effort).toBe('xhigh')
+
+    // Another account of the same provider keeps the effort the chat is on.
+    await waitFor(() =>
+      expect(composerProps().models.map((choice) => choice.key)).toContain(
+        'claude-code@team-9z8y7x:sonnet',
+      ),
+    )
+    act(() => composerProps().onModelChange('claude-code@team-9z8y7x:sonnet'))
+    await waitFor(() => expect(composerProps().modelId).toBe('claude-code@team-9z8y7x:sonnet'))
+    expect(composerProps().effort).toBe('xhigh')
+  })
+
   it("offers a provider's other signed-in account as a source a chat can switch to", async () => {
     const codex = serverProviders[0]!
     serverProviders = [

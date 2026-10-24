@@ -307,6 +307,8 @@ const CUSTOM_MODELS_KEY = 'harness.customModels.v1'
 /** Last model/effort/tier used per source, so returning to a provider
  *  restores the exact working setup instead of a best-guess translation. */
 const MODEL_BY_SOURCE_KEY = 'harness.modelBySource'
+/** Last effort used per model of a source, whichever of its accounts ran it. */
+const EFFORT_BY_MODEL_KEY = 'harness.effortByModel'
 const MODEL_BY_THREAD_PREFIX = 'harness.modelByThread:'
 const COMPOSER_DRAFTS_KEY = 'harness.composerDrafts.v1'
 const EMPTY_PALETTE_COMMANDS: PaletteCommand[] = []
@@ -602,6 +604,15 @@ function modelSource(choice: ModelChoice): string {
     connectionId: choice.connectionId,
     agentId: choice.agent?.id,
     accountId: choice.accountId,
+  })
+}
+
+/** A choice's source without its account: every account of a provider is the same provider. */
+function providerSource(choice: ModelChoice): string {
+  return sourceKey({
+    provider: choice.provider,
+    connectionId: choice.connectionId,
+    agentId: choice.agent?.id,
   })
 }
 
@@ -3665,6 +3676,14 @@ export function App() {
       connectionId: selectedModelChoice.connectionId,
       agentId: selectedModelChoice.agent?.id,
     })
+    if (selectedEffort) {
+      const efforts = readModelEfforts()
+      const key = modelChoiceKey(source, selectedModelChoice.model.id)
+      if (efforts[key] !== selectedEffort) {
+        efforts[key] = selectedEffort
+        writeSetting(EFFORT_BY_MODEL_KEY, JSON.stringify(efforts))
+      }
+    }
     const selections = readSourceSelections()
     const entry: SourceSelection = {
       modelKey: selectedModelChoice.key,
@@ -3734,12 +3753,22 @@ export function App() {
         )
         return
       }
+      // A model on another provider comes back at the effort it was last
+      // used with. Another model or account of the same provider carries the
+      // current effort over.
+      const leaving = storedModelChoice ?? selectedModelChoice
+      const lastEffort =
+        leaving && providerSource(leaving) !== providerSource(selected)
+          ? readModelEfforts()[modelChoiceKey(providerSource(selected), selected.model.id)]
+          : undefined
       setEffort((current) =>
-        resolveReasoningEffort({
-          currentEffort: current,
-          currentModel: storedModelChoice?.model ?? selectedModelChoice?.model,
-          nextModel: selected.model,
-        }),
+        lastEffort && selected.model.reasoningEfforts.includes(lastEffort)
+          ? lastEffort
+          : resolveReasoningEffort({
+              currentEffort: current,
+              currentModel: storedModelChoice?.model ?? selectedModelChoice?.model,
+              nextModel: selected.model,
+            }),
       )
       // Not a bare id check: fast tiers are named differently per provider
       // (Codex 'priority', Cursor 'fast'), and fast intent must survive the
@@ -7811,6 +7840,20 @@ function readSourceSelections(): Record<string, SourceSelection> {
       ])
     }
     return Object.fromEntries(selections)
+  } catch {
+    return {}
+  }
+}
+
+function readModelEfforts(): Record<string, string> {
+  try {
+    const stored: unknown = JSON.parse(readSetting(EFFORT_BY_MODEL_KEY) ?? '{}')
+    if (!isRecord(stored)) return {}
+    return Object.fromEntries(
+      Object.entries(stored).filter(
+        (entry): entry is [string, string] => typeof entry[1] === 'string',
+      ),
+    )
   } catch {
     return {}
   }
