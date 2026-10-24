@@ -204,6 +204,10 @@ final class ThreadStore {
 @MainActor @Observable
 final class RowModel {
   var row: RowView
+  /// Which of its folds are open: kept here, since the transcript drops rows
+  /// scrolled out of view and would close them on the way back.
+  var expanded = false
+  var openRuns: Set<String> = []
 
   init(row: RowView) {
     self.row = row

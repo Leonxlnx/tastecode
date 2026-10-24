@@ -206,7 +206,7 @@ struct RowCell: View {
     case .assistant:
       MarkdownView(markdown: row.text ?? "")
     case .steps:
-      StepsRow(row: row)
+      StepsRow(model: model)
     case .notice:
       Text(row.text ?? "")
         .font(.footnote)
@@ -261,13 +261,14 @@ struct UserMessage: View {
 
 /// The agent's work between messages, folded into one line until you open it.
 struct StepsRow: View {
-  let row: RowView
-  @State private var expanded = false
+  let model: RowModel
   /// Set on the first opening; the steps stay built after it so closing can animate.
   @State private var built = false
   @State private var contentHeight: CGFloat = 0
 
   var body: some View {
+    let row = model.row
+    let expanded = model.expanded
     let live = row.live == true
     let steps = row.steps ?? []
     // A settled group comes in runs; a live one lists each step as it comes.
@@ -275,7 +276,7 @@ struct StepsRow: View {
     VStack(alignment: .leading, spacing: 0) {
       Button {
         if !built { built = true }
-        withAnimation(.smooth(duration: expanded ? 0.26 : 0.38)) { expanded.toggle() }
+        withAnimation(.smooth(duration: expanded ? 0.26 : 0.38)) { model.expanded.toggle() }
       } label: {
         HStack(spacing: 8) {
           if live {
@@ -311,14 +312,14 @@ struct StepsRow: View {
         .contentShape(.rect)
       }
       .buttonStyle(.plain)
-      if built {
+      if built || expanded {
         // The steps open to their measured height, so the rows below move with
         // them instead of jumping, and each step settles in after the one above.
         VStack(alignment: .leading, spacing: 14) {
           ForEach(Array(runs.enumerated()), id: \.element.id) { index, run in
             Group {
               if let summary = run.summary {
-                StepBatch(summary: summary, steps: run.steps)
+                StepBatch(summary: summary, steps: run.steps, open: openBinding(run.id))
               } else {
                 ForEach(run.steps) { step in
                   StepLine(step: step)
@@ -341,7 +342,8 @@ struct StepsRow: View {
         .fixedSize(horizontal: false, vertical: true)
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { contentHeight = $0 }
         .animation(.smooth(duration: 0.3), value: steps.count)
-        .frame(height: expanded ? contentHeight : 0, alignment: .top)
+        // Until measured, an open fold (one scrolled back into view) takes its own height.
+        .frame(height: expanded ? (contentHeight > 0 ? contentHeight : nil) : 0, alignment: .top)
         .clipped()
         .allowsHitTesting(expanded)
         .accessibilityHidden(!expanded)
@@ -349,13 +351,21 @@ struct StepsRow: View {
     }
     .frame(maxWidth: .infinity, alignment: .leading)
   }
+
+  private func openBinding(_ run: String) -> Binding<Bool> {
+    Binding {
+      model.openRuns.contains(run)
+    } set: { open in
+      if open { model.openRuns.insert(run) } else { model.openRuns.remove(run) }
+    }
+  }
 }
 
 /// Calls in a row under one line, "Ran 3 commands", opening to list them.
 private struct StepBatch: View {
   let summary: String
   let steps: [StepView]
-  @State private var open = false
+  @Binding var open: Bool
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
