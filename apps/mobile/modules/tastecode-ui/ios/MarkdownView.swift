@@ -27,6 +27,7 @@ struct MarkdownBlock: Identifiable {
     case code(language: String, code: String)
     case table(header: [String], rows: [[String]])
     case rule
+    case image(alt: String, source: String)
   }
 
   struct ListItem: Hashable {
@@ -134,6 +135,13 @@ struct MarkdownBlock: Identifiable {
         continue
       }
 
+      if let shown = images(trimmed) {
+        // Agents show their screenshots on lines of their own.
+        flush()
+        blocks.append(contentsOf: shown)
+        continue
+      }
+
       if !list.isEmpty || !quote.isEmpty { flush() }
       paragraph.append(line)
     }
@@ -143,6 +151,18 @@ struct MarkdownBlock: Identifiable {
     }
     flush()
     return blocks.enumerated().map { MarkdownBlock(id: $0.offset, kind: $0.element) }
+  }
+
+  // `![alt](destination "title")`, with the destination bare or in angle brackets.
+  private static let imagePattern = /!\[((?:[^\]\\]|\\.)*)\]\(\s*(?:<([^>\n]+)>|([^\s)]+))(?:\s+"[^"]*")?\s*\)/
+
+  /// A line that is nothing but images, as one image block each.
+  private static func images(_ line: String) -> [Kind]? {
+    let matches = line.matches(of: imagePattern)
+    guard !matches.isEmpty, line.replacing(imagePattern, with: "").allSatisfy(\.isWhitespace) else { return nil }
+    return matches.map { match in
+      .image(alt: String(match.output.1), source: String(match.output.2 ?? match.output.3 ?? ""))
+    }
   }
 
   private static func headingLevel(_ line: String) -> Int? {
@@ -270,8 +290,110 @@ struct MarkdownBlockView: View {
       MarkdownTableView(header: header, rows: rows)
     case .rule:
       Divider().padding(.vertical, 4)
+    case .image(let alt, let source):
+      MarkdownImage(alt: alt, source: source)
     }
   }
+}
+
+/// A picture a reply shows. A screenshot on the computer is read through the
+/// link the first time it shows, as attached pictures are; a web image loads
+/// from the web. A tap opens it whole.
+struct MarkdownImage: View {
+  @Environment(AppModel.self) private var model
+  @Environment(\.threadId) private var threadId
+  let alt: String
+  let source: String
+  @State private var viewing = false
+
+  var body: some View {
+    Group {
+      if let path = localImagePath(source) {
+        local(path)
+      } else if let url = URL(string: source), ["http", "https"].contains(url.scheme?.lowercased()) {
+        AsyncImage(url: url) { phase in
+          if let image = phase.image {
+            frame(image.resizable())
+          } else if phase.error != nil {
+            unavailable
+          } else {
+            loading
+          }
+        }
+      } else {
+        unavailable
+      }
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .accessibilityLabel(alt.isEmpty ? "Picture" : alt)
+    .fullScreenCover(isPresented: $viewing) {
+      if let path = localImagePath(source), let image = model.images[path] {
+        ImageViewer(image: image)
+      }
+    }
+  }
+
+  @ViewBuilder
+  private func local(_ path: String) -> some View {
+    Group {
+      if let image = model.images[path] {
+        Button {
+          viewing = true
+        } label: {
+          frame(Image(uiImage: image).resizable())
+        }
+        .buttonStyle(.plain)
+        .transition(.opacity)
+      } else if model.missingImages.contains(path) {
+        unavailable
+      } else {
+        loading
+      }
+    }
+    .animation(.smooth(duration: 0.25), value: model.images[path] != nil)
+    .task(id: path) { await model.loadImage(threadId: threadId, path: path) }
+  }
+
+  /// Fitted to the column and kept from towering over the reply, on a hairline.
+  private func frame(_ image: Image) -> some View {
+    image
+      .scaledToFit()
+      .frame(maxHeight: 440)
+      .clipShape(.rect(cornerRadius: 14, style: .continuous))
+      .overlay {
+        RoundedRectangle(cornerRadius: 14, style: .continuous)
+          .strokeBorder(.quaternary, lineWidth: 0.5)
+      }
+  }
+
+  private var loading: some View {
+    RoundedRectangle(cornerRadius: 14, style: .continuous)
+      .fill(Color(.secondarySystemBackground))
+      .aspectRatio(16 / 10, contentMode: .fit)
+      .frame(maxWidth: 320)
+      .overlay { ProgressView().controlSize(.small) }
+  }
+
+  private var unavailable: some View {
+    Label(alt.isEmpty ? "Image unavailable" : "\(alt): Image unavailable", systemImage: "photo")
+      .font(.subheadline)
+      .foregroundStyle(.secondary)
+  }
+}
+
+/// A Markdown image source as a path on the computer the chat runs on, or nil
+/// for a web address: `/tmp/shot.png`, `C:\Shots\a.png` or a `file:` URL.
+func localImagePath(_ source: String) -> String? {
+  if source.lowercased().hasPrefix("file:") {
+    guard let url = URL(string: source), [nil, "", "localhost"].contains(url.host) else { return nil }
+    let path = url.path(percentEncoded: false)
+    // file:///C:/Shots/a.png names C:/Shots/a.png.
+    return path.wholeMatch(of: /\/[A-Za-z]:\/.*/) != nil ? String(path.dropFirst()) : path
+  }
+  let decoded = source.removingPercentEncoding ?? source
+  if decoded.hasPrefix("//") { return nil }
+  if decoded.hasPrefix("/") || decoded.prefixMatch(of: /[A-Za-z]:[\\\/]/) != nil { return decoded }
+  return nil
 }
 
 struct CodeBlockView: View {

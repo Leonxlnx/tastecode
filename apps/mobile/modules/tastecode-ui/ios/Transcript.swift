@@ -658,7 +658,7 @@ private struct AttachedThumbnail: View {
 }
 
 /// A picture on black, fitted to the screen, pinch to zoom.
-private struct ImageViewer: View {
+struct ImageViewer: View {
   @Environment(\.dismiss) private var dismiss
   let image: UIImage
   @State private var scale: CGFloat = 1
