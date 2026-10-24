@@ -64,6 +64,7 @@ const MODEL_LISTS_SETTING = 'model-lists'
 const PHONE_ACCESS_SETTING = 'phone-access'
 /** The model picker's hidden choice keys, as the desktop resolves them. */
 const HIDDEN_MODELS_SETTING = 'hidden-models'
+const PROVIDER_ROSTER_SETTING = 'provider-roster'
 const LIMIT_SNAPSHOT_SETTING = 'limit-snapshot'
 const AUTOMATIC_BACKGROUND_MODEL_PREFERENCE: BackgroundModelPreference = Object.freeze({
   mode: 'automatic',
@@ -2465,6 +2466,21 @@ export class Store {
 
   setHiddenModels(keys: readonly string[]): void {
     this.#writeAppSetting.run(HIDDEN_MODELS_SETTING, JSON.stringify(keys))
+  }
+
+  /** The desktop's provider roster; null until a desktop saved one. */
+  providerRoster(): string[] | null {
+    const value = sqliteRow<StringValueRow>(this.#readAppSetting, PROVIDER_ROSTER_SETTING)?.value
+    if (value === undefined) return null
+    try {
+      return z.array(z.string()).nullable().catch(null).parse(JSON.parse(value))
+    } catch {
+      return null
+    }
+  }
+
+  setProviderRoster(keys: readonly string[]): void {
+    this.#writeAppSetting.run(PROVIDER_ROSTER_SETTING, JSON.stringify(keys))
   }
 
   /** The last good model list per source, as `ModelListCache` serialized it. */

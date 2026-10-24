@@ -407,6 +407,16 @@ describe('hidden models', () => {
   })
 })
 
+describe('provider roster', () => {
+  it('is null until a desktop saves one, and keeps an empty one', () => {
+    expect(store.providerRoster()).toBeNull()
+    store.setProviderRoster(['codex', 'acp:kimi'])
+    expect(store.providerRoster()).toEqual(['codex', 'acp:kimi'])
+    store.setProviderRoster([])
+    expect(store.providerRoster()).toEqual([])
+  })
+})
+
 describe('durable queued turns', () => {
   const queued = (id: string, text = 'Repeat this.') => ({
     id,

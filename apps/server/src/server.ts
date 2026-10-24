@@ -1653,6 +1653,19 @@ export function startServer(
         return {}
       }
 
+      case 'providers.roster':
+        return { keys: store.providerRoster() }
+
+      case 'providers.setRoster': {
+        const p = parseParams(method, params)
+        const keys = [...new Set(p.keys)]
+        if (JSON.stringify(keys) !== JSON.stringify(store.providerRoster())) {
+          store.setProviderRoster(keys)
+          push.broadcast('providers.roster', { keys })
+        }
+        return {}
+      }
+
       case 'thread.settings': {
         const p = parseParams(method, params)
         return store.threadSettings(p.threadId)

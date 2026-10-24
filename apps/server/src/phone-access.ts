@@ -45,6 +45,7 @@ export const PHONE_METHODS: ReadonlySet<MethodName> = new Set<MethodName>([
   'providers.list',
   'models.list',
   'models.hidden',
+  'providers.roster',
   'connections.list',
   'connections.models',
   'acp.agents',

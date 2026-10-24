@@ -50,6 +50,7 @@ const state = vi.hoisted(() => ({
   settings: new Map<string, { model?: string; effort?: string; serviceTier?: string }>(),
   approvals: new Map<string, string>(),
   hiddenModels: [] as string[],
+  providerRoster: null as string[] | null,
 }))
 const temporary: string[] = []
 
@@ -97,6 +98,12 @@ vi.mock('./store.js', () => ({
     }
     setHiddenModels(keys: string[]) {
       state.hiddenModels = keys
+    }
+    providerRoster() {
+      return state.providerRoster
+    }
+    setProviderRoster(keys: string[]) {
+      state.providerRoster = keys
     }
     threadSettings(threadId: string) {
       const approval = state.approvals.get(threadId)
@@ -417,6 +424,7 @@ afterEach(async () => {
   state.settings.clear()
   state.approvals.clear()
   state.hiddenModels = []
+  state.providerRoster = null
   vi.unstubAllEnvs()
   await Promise.all(
     temporary.splice(0).map((directory) => rm(directory, { recursive: true, maxRetries: 5 })),
@@ -1943,6 +1951,35 @@ describe('phone links', () => {
       expect(phone.frames.find((frame) => frame['id'] === 'unhide')).toMatchObject({
         error: { code: 'forbidden' },
       })
+
+      // So do the providers the desktop added; the phone reads them, never sets them.
+      send(phone, { id: 'no-roster', method: 'providers.roster', params: {} })
+      await vi.waitFor(() =>
+        expect(phone.frames.find((frame) => frame['id'] === 'no-roster')).toMatchObject({
+          result: { keys: null },
+        }),
+      )
+      desktop.client.send(
+        JSON.stringify({
+          id: 'roster',
+          method: 'providers.setRoster',
+          params: { keys: ['codex', 'acp:kimi', 'codex'] },
+        }),
+      )
+      await vi.waitFor(() =>
+        expect(phone.frames).toContainEqual(
+          expect.objectContaining({
+            channel: 'providers.roster',
+            data: { keys: ['codex', 'acp:kimi'] },
+          }),
+        ),
+      )
+      send(phone, { id: 'set-roster', method: 'providers.setRoster', params: { keys: [] } })
+      await vi.waitFor(() =>
+        expect(phone.frames.find((frame) => frame['id'] === 'set-roster')).toMatchObject({
+          error: { code: 'forbidden' },
+        }),
+      )
       phone.socket.terminate()
     } finally {
       desktop.client.terminate()
