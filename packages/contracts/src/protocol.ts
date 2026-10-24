@@ -1668,6 +1668,12 @@ export const methods = {
                * list can show or filter by it. Absent until a client chose one.
                */
               model: z.string().min(1).optional(),
+              /**
+               * When the chat last had activity: a prompt, a turn starting or
+               * ending, a request for the user. Lets a list order chats by
+               * recency. Absent from servers that predate it.
+               */
+              lastActiveAt: z.number().optional(),
             }),
           ),
         }),
