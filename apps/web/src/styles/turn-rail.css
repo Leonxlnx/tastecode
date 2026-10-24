@@ -1,0 +1,136 @@
+/* ---------- turn rail ---------- */
+
+/* One tick per prompt down the chat pane's left edge. Outside the scroller
+   like the jump button, so it stays put while the transcript moves, and in
+   the gutter beside the chat column, so it never covers a line of it. */
+.turn-rail {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  width: 36px;
+  padding: 20px 0;
+  pointer-events: none;
+}
+
+/* The floating composer covers the bottom of the transcript; the rail ends above it. */
+.stage__conversation:not(.is-new-session) .turn-rail {
+  bottom: var(--composer-overlay-height);
+}
+
+/* A long chat packs its ticks closer, down to 4px apart; past that the rail
+   scrolls on its own to keep the exchanges on screen in view (TurnRail). */
+.turn-rail__ticks {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  max-height: 100%;
+  overflow-y: hidden;
+  pointer-events: auto;
+}
+
+.turn-rail__tick {
+  position: relative;
+  flex: 0 1 8px;
+  min-height: 4px;
+  width: 100%;
+  padding: 0;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.turn-rail__tick::before {
+  position: absolute;
+  top: 50%;
+  left: 12px;
+  width: 8px;
+  height: 1.5px;
+  background: color-mix(in srgb, var(--text-3) 50%, transparent);
+  border-radius: var(--r-xs);
+  content: '';
+  transform: translateY(-50%);
+  transition:
+    width var(--dur-hover) var(--ease-out),
+    background-color var(--dur-hover) var(--ease-out);
+}
+
+/* The exchanges on screen: where the reader is. */
+.turn-rail__tick[data-in-view]::before {
+  background: var(--text-2);
+}
+
+/* The tick reaches out toward its preview. Keyboard focus draws the same
+   tick, which with the card beside it is the focus indicator. */
+.turn-rail__tick:is(:hover, [data-previewed], :focus-visible)::before {
+  width: 20px;
+  background: var(--text);
+}
+
+.turn-rail__tick:focus-visible {
+  outline: none;
+}
+
+.turn-rail__preview {
+  position: absolute;
+  top: 0;
+  left: 40px;
+  width: max-content;
+  max-width: min(340px, calc(100cqi - 88px));
+  padding: 9px 12px 10px;
+  background: var(--menu-bg);
+  border: 1px solid var(--menu-line);
+  border-radius: var(--r-popup);
+  box-shadow: var(--shadow-flyout);
+  font-size: var(--t-md);
+  line-height: 1.45;
+  pointer-events: none;
+  /* translate, not transform: TurnRail places the card with transform. */
+  animation: turn-rail-preview-in var(--dur-fast) var(--ease-out) both;
+}
+
+@keyframes turn-rail-preview-in {
+  from {
+    opacity: 0;
+    translate: -4px 0;
+  }
+}
+
+.turn-rail__prompt {
+  overflow: hidden;
+  color: var(--text);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.turn-rail__reply {
+  display: -webkit-box;
+  margin-top: 2px;
+  overflow: hidden;
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+/* The gutter beside the column is too narrow here to hold the ticks. */
+@container chat-stage (max-width: 480px) {
+  .turn-rail {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .turn-rail__tick::before {
+    transition: none;
+  }
+
+  .turn-rail__preview {
+    animation: none;
+  }
+}

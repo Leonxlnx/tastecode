@@ -7066,6 +7066,7 @@ export function App() {
                           onUndoChanges={undoTurnChanges}
                           onLoadOlderHistory={loadOlderHistory}
                           onLoadCompleteHistory={loadCompleteHistory}
+                          turnRail
                         />
                       </Suspense>
                     </AccountLabelContext.Provider>

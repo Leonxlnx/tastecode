@@ -89,6 +89,8 @@ import {
   waitingSubagentsLabel,
 } from './SubagentRow.js'
 import { FindBarSkeleton } from './SurfaceSkeletons.js'
+import { TurnRail, type VisibleRows } from './TurnRail.js'
+import { replyPreview, rowAtOffset, turnRailEntries, type TurnRailEntry } from './turn-rail.js'
 import {
   activityGroupAt,
   createThreadProjector,
@@ -134,6 +136,7 @@ const ThreadSearch = lazy(() =>
 
 const EMPTY_LIVE_ITEMS: ReadonlyMap<number, LiveItemUpdate> = new Map()
 const EMPTY_CHECKPOINTS: readonly Checkpoint[] = []
+const EMPTY_RAIL_ENTRIES: readonly TurnRailEntry[] = []
 
 /** Space kept between a disclosure's summary and the viewport edge it moves toward. */
 const HEADER_MARGIN = 12
@@ -181,6 +184,8 @@ export interface ThreadProps {
   onAnswerUserInput: (id: string, answers: Record<string, string[]>) => void | Promise<void>
   /** Keep agent questions inside this thread instead of the main composer. */
   inlineUserInput?: boolean | undefined
+  /** Mark each prompt on a rail at the pane's left edge; the main chat has the room. */
+  turnRail?: boolean | undefined
 }
 
 export const Thread = memo(function Thread(props: ThreadProps) {
@@ -454,6 +459,20 @@ export const Thread = memo(function Thread(props: ThreadProps) {
     thread.activeTurn?.id,
   )
   const activePresentation = thread.activeTurn ? presentations.get(thread.activeTurn.id) : undefined
+  const railEntries = useRef<readonly TurnRailEntry[]>([])
+  railEntries.current = useMemo(
+    () =>
+      props.turnRail
+        ? turnRailEntries(turns, presentations, railEntries.current)
+        : EMPTY_RAIL_ENTRIES,
+    [props.turnRail, turns, presentations],
+  )
+  const presentationsRef = useRef(presentations)
+  presentationsRef.current = presentations
+  const replyOf = useCallback(
+    (turnId: string) => replyPreview(presentationsRef.current.get(turnId)?.responseText ?? ''),
+    [],
+  )
   const showWorkingRail = running && thread.activeTurn !== undefined
   const railIndex = showWorkingRail ? activePresentation?.firstResponseIndex : undefined
   // Until the turn's first response row exists, the working rail sits at the
@@ -863,6 +882,46 @@ export const Thread = memo(function Thread(props: ThreadProps) {
       virtualizer.scrollToIndex(index, { align: 'center' })
     },
     [virtualizer],
+  )
+
+  // The turn rail goes to a turn's start the way Alt+Up/Down does.
+  const jumpToTurn = useCallback(
+    (index: number) => {
+      stopJump()
+      setMode('free')
+      virtualizer.scrollToIndex(index, { align: 'start' })
+    },
+    [stopJump, virtualizer],
+  )
+  /** The rows between the top of the transcript and the composer floating over its end. */
+  const visibleRows = useCallback((): VisibleRows | undefined => {
+    const element = scroller.current
+    const runway = runwayRef.current
+    const list = virtualizerRef.current
+    if (!element || !runway || !list) return undefined
+    const top = element.getBoundingClientRect().top - runway.getBoundingClientRect().top
+    const covered = parseFloat(getComputedStyle(element).paddingBottom) || 0
+    const height = Math.max(1, element.clientHeight - covered)
+    list.getTotalSize()
+    const rows = list.measurementsCache
+    if (rows.length === 0) return undefined
+    return { first: rowAtOffset(rows, top), last: rowAtOffset(rows, top + height - 1) }
+  }, [])
+  // The rail sits beside the scroller, not in it, so a wheel over it would
+  // scroll nothing. It moves the transcript as a wheel over it would.
+  const wheelFromRail = useCallback(
+    (event: ReactWheelEvent) => {
+      const element = scroller.current
+      if (!element || event.deltaY === 0) return
+      onWheel(event)
+      const unit =
+        event.deltaMode === 1 ? LINE_PX : event.deltaMode === 2 ? element.clientHeight : 1
+      element.scrollBy({
+        top: event.deltaY * unit,
+        behavior: event.deltaMode === 0 ? 'auto' : 'smooth',
+      })
+    },
+    [onWheel],
   )
 
   const projectRepeatedDesignRows = useMemo(createRepeatedDesignRowProjector, [props.threadId])
@@ -1416,6 +1475,17 @@ export const Thread = memo(function Thread(props: ThreadProps) {
           {/* Blank room below a pinned prompt's answer; see applyRoom. */}
           <div className="thread__turn-room" ref={roomRef} aria-hidden />
         </div>
+
+        {props.turnRail ? (
+          <TurnRail
+            entries={railEntries.current}
+            scroller={scroller}
+            visibleRows={visibleRows}
+            replyOf={replyOf}
+            onJump={jumpToTurn}
+            onWheel={wheelFromRail}
+          />
+        ) : null}
 
         {/* Mount after the scroller so its ref is set before the layout effect. */}
         <FrameScrollFollower
