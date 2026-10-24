@@ -315,12 +315,12 @@ struct StepsRow: View {
       if row.settled == true {
         // A hairline under "Worked for" sets the work apart from the answer.
         Divider()
-          .padding(.top, 12)
+          .padding(.top, 8)
       }
       if built || expanded {
         // The steps open to their measured height, so the rows below move with
         // them instead of jumping, and each step settles in after the one above.
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 6) {
           ForEach(Array(runs.enumerated()), id: \.element.id) { index, run in
             Group {
               if let summary = run.summary {
@@ -343,7 +343,7 @@ struct StepsRow: View {
               .transition(.opacity.combined(with: .offset(y: -6)))
           }
         }
-        .padding(.top, 12)
+        .padding(.top, 8)
         .fixedSize(horizontal: false, vertical: true)
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { contentHeight = $0 }
         .animation(.smooth(duration: 0.3), value: steps.count)
@@ -355,6 +355,8 @@ struct StepsRow: View {
       }
     }
     .frame(maxWidth: .infinity, alignment: .leading)
+    // The answer follows its work closely, not at the gap between messages.
+    .padding(.bottom, row.settled == true ? -18 : 0)
   }
 
   private func openBinding(_ run: String) -> Binding<Bool> {
