@@ -310,6 +310,9 @@ private struct EffortMeter: View {
 /// Over the blurred chat, in its middle: the model's name, which opens every
 /// model, speed and provider, and right under it the reasoning slider and the
 /// level's name. The X, a tap on the blur or a swipe down puts it away.
+///
+/// The chat goes out of focus as the panel rises into it, sharp all the way;
+/// putting it away reverses both at once.
 private struct SetupPanel: View {
   @Environment(AppModel.self) private var model
   let setup: SetupView
@@ -324,12 +327,9 @@ private struct SetupPanel: View {
     let current = model.catalog.source(setup.sourceKey)?.models.first { $0.id == setup.model }
     let efforts = current?.efforts ?? []
     ZStack {
-      Rectangle()
-        .fill(.ultraThinMaterial)
+      FocusBlur(shown: shown)
         .ignoresSafeArea()
-        .opacity(shown ? 1 : 0)
-        // On the way out the blur lifts after the panel has gone.
-        .animation(shown ? .easeOut(duration: 0.28) : .easeInOut(duration: 0.28), value: shown)
+        .contentShape(.rect)
         .onTapGesture(perform: close)
         .gesture(
           DragGesture(minimumDistance: 24).onEnded { value in
@@ -338,25 +338,25 @@ private struct SetupPanel: View {
         .accessibilityHidden(true)
       VStack(spacing: 12) {
         ModelTitle(setup: setup, actions: actions, tiers: current?.tiers ?? [])
+          .modifier(Rise(shown: shown, order: 0))
         if efforts.isEmpty {
           Text("This model has no reasoning levels.")
             .font(.subheadline)
             .foregroundStyle(.secondary)
+            .modifier(Rise(shown: shown, order: 1))
         } else {
           VStack(spacing: 12) {
             EffortSlider(efforts: efforts, selected: setup.effort, onPick: actions.effort) { level = $0 }
+              .modifier(Rise(shown: shown, order: 1))
             LevelName(label: level ?? setup.effortLabel ?? "")
+              .modifier(Rise(shown: shown, order: 2))
           }
         }
       }
       .frame(maxWidth: 360)
       .padding(.horizontal, 32)
-      // It rises into place out of a soft blur, and sinks back into it.
-      .scaleEffect(shown ? 1 : 0.92)
-      .offset(y: shown ? 0 : 18)
-      .blur(radius: shown ? 0 : 8)
-      .opacity(shown ? 1 : 0)
-      .animation(shown ? .spring(duration: 0.46, bounce: 0.2) : .easeIn(duration: 0.18), value: shown)
+      .scaleEffect(shown ? 1 : 0.96)
+      .animation(shown ? .spring(duration: 0.44, bounce: 0.16) : .easeIn(duration: 0.16), value: shown)
     }
     .overlay(alignment: .topLeading) {
       Button(action: close) {
@@ -368,9 +368,9 @@ private struct SetupPanel: View {
       .buttonBorderShape(.circle)
       .padding(.leading, 16)
       .padding(.top, 6)
-      .scaleEffect(shown ? 1 : 0.6)
+      .scaleEffect(shown ? 1 : 0.85)
       .opacity(shown ? 1 : 0)
-      .animation(shown ? .spring(duration: 0.4, bounce: 0.3).delay(0.05) : .easeIn(duration: 0.14), value: shown)
+      .animation(shown ? .spring(duration: 0.44, bounce: 0.16).delay(0.06) : .easeIn(duration: 0.14), value: shown)
       .accessibilityLabel("Close")
     }
     .task {
@@ -385,8 +385,44 @@ private struct SetupPanel: View {
     closing = true
     shown = false
     Task {
-      try? await Task.sleep(for: .milliseconds(300))
+      try? await Task.sleep(for: .milliseconds(320))
       onClose()
+    }
+  }
+}
+
+/// A row of the panel rising into place a beat after the one above it; all
+/// of them leave together.
+private struct Rise: ViewModifier {
+  let shown: Bool
+  let order: Int
+
+  func body(content: Content) -> some View {
+    content
+      .offset(y: shown ? 0 : 12)
+      .opacity(shown ? 1 : 0)
+      .animation(
+        shown ? .spring(duration: 0.44, bounce: 0.16).delay(0.04 * Double(order)) : .easeIn(duration: 0.14),
+        value: shown)
+  }
+}
+
+/// A blur over whatever is under it whose strength grows in and fades out,
+/// as iOS blurs behind its own panels. Fading a finished blur in instead
+/// shows the sharp chat and its blurred copy at once, half over each other.
+private struct FocusBlur: UIViewRepresentable {
+  let shown: Bool
+
+  func makeUIView(context: Context) -> UIVisualEffectView {
+    UIVisualEffectView(effect: nil)
+  }
+
+  func updateUIView(_ view: UIVisualEffectView, context: Context) {
+    guard shown != (view.effect != nil) else { return }
+    UIView.animate(
+      withDuration: shown ? 0.4 : 0.3, delay: 0, options: [.curveEaseOut, .beginFromCurrentState]
+    ) {
+      view.effect = shown ? UIBlurEffect(style: .systemUltraThinMaterial) : nil
     }
   }
 }
