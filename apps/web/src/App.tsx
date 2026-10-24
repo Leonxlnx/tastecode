@@ -1249,6 +1249,21 @@ export function App() {
     }, 500)
     return () => window.clearTimeout(timer)
   }, [hiddenModelList, modelsLoaded, transport])
+  // The phone offers only the providers added here, so it never shows one
+  // this app removed. Nothing is shared before the roster is first saved.
+  // Shared again on every connection: one closed before the request left
+  // drops it, and the server keeps only what last arrived.
+  useEffect(() => {
+    if (providerRoster === undefined) return
+    const share = () =>
+      void transport
+        .request('providers.setRoster', { keys: [...providerRoster] })
+        .catch(() => undefined)
+    if (transport.state === 'open') share()
+    return transport.onState((state) => {
+      if (state === 'open') share()
+    })
+  }, [providerRoster, transport])
   const visibleModelsRef = useRef(visibleModels)
   visibleModelsRef.current = visibleModels
   // Memoised for identity: while the catalog is empty this is the selected
