@@ -113,24 +113,56 @@ export class Projects {
     return this.state.get().projects.find((project) => project.path === added.path)
   }
 
-  async pinChat(threadId: string, pinned: boolean): Promise<void> {
-    await this.connection.request('thread.pin', { threadId, pinned })
-    await this.refresh()
+  pinChat(threadId: string, pinned: boolean): Promise<void> {
+    return this.#change(threadId, { pinned }, () =>
+      this.connection.request('thread.pin', { threadId, pinned }),
+    )
   }
 
-  async archiveChat(threadId: string): Promise<void> {
-    await this.connection.request('thread.settle', { threadId })
-    await this.refresh()
+  archiveChat(threadId: string): Promise<void> {
+    const lifecycle = { state: 'settled', settledAt: Date.now(), reason: 'manual' } as const
+    return this.#change(threadId, { lifecycle }, () =>
+      this.connection.request('thread.settle', { threadId }),
+    )
   }
 
-  async restoreChat(threadId: string): Promise<void> {
-    await this.connection.request('thread.unsettle', { threadId })
-    await this.refresh()
+  restoreChat(threadId: string): Promise<void> {
+    const lifecycle = { state: 'active', keepActive: false } as const
+    return this.#change(threadId, { lifecycle }, () =>
+      this.connection.request('thread.unsettle', { threadId }),
+    )
   }
 
-  async renameChat(threadId: string, title: string): Promise<void> {
-    await this.connection.request('thread.rename', { threadId, title })
-    await this.refresh()
+  renameChat(threadId: string, title: string): Promise<void> {
+    return this.#change(threadId, { title }, () =>
+      this.connection.request('thread.rename', { threadId, title }),
+    )
+  }
+
+  /**
+   * Shows a change to one chat at once, then asks the computer for it. The
+   * read after it brings back the computer's version, which also undoes the
+   * change when the request failed.
+   */
+  async #change(threadId: string, patch: Partial<Session>, request: () => Promise<unknown>) {
+    this.state.set((current) => ({
+      ...current,
+      projects: current.projects.map((project) =>
+        project.sessions.some((session) => session.id === threadId)
+          ? {
+              ...project,
+              sessions: project.sessions.map((session) =>
+                session.id === threadId ? { ...session, ...patch } : session,
+              ),
+            }
+          : project,
+      ),
+    }))
+    try {
+      await request()
+    } finally {
+      await this.refresh()
+    }
   }
 }
 
@@ -148,6 +180,7 @@ export function findSession(
 export function lastActivity(session: Session, activity: Readonly<Record<string, number>>): number {
   return Math.max(
     activity[session.id] ?? 0,
+    session.lastActiveAt ?? 0,
     session.lifecycle?.state === 'active' && session.lifecycle.wokeAt
       ? session.lifecycle.wokeAt
       : 0,

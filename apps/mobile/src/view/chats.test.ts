@@ -49,6 +49,38 @@ describe('chat list', () => {
     expect(view.projects).toEqual([{ path: '/p', name: 'p', pinned: false, chats: 4 }])
   })
 
+  it('puts pinned chats first, then waiting, working and the most recent within each', () => {
+    const view = chatsView({
+      status: 'ready',
+      error: undefined,
+      activity: {},
+      projects: [
+        {
+          path: '/p',
+          name: 'p',
+          pinned: false,
+          createdAt: 1,
+          sessions: [
+            session('quiet'),
+            session('desktop', { lastActiveAt: 8_000 }),
+            session('works', { running: true }),
+            session('asks', { status: 'input' }),
+            session('pinned-old', { pinned: true }),
+            session('pinned-works', { pinned: true, status: 'working' }),
+          ],
+        },
+      ],
+    })
+    expect(view.chats.map((chat) => chat.id)).toEqual([
+      'pinned-works',
+      'pinned-old',
+      'asks',
+      'works',
+      'desktop',
+      'quiet',
+    ])
+  })
+
   it('reads a running chat without an inbox status as working', () => {
     const view = chatsView({
       status: 'ready',

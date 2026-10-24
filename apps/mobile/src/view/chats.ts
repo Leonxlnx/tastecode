@@ -3,8 +3,19 @@ import type { ProjectsState, Session } from '../state/projects'
 import { isArchived, lastActivity } from '../state/projects'
 import type { ChatState, ChatsView, ChatView } from './types'
 
-function waitsForYou(chat: ChatView): boolean {
-  return chat.state === 'approval' || chat.state === 'input'
+/** Waiting for you, then working, then the rest: what each chat's place in the list starts from. */
+function urgency(chat: ChatView): number {
+  switch (chat.state) {
+    case 'approval':
+    case 'input':
+      return 2
+    case 'starting':
+    case 'working':
+    case 'queued':
+      return 1
+    default:
+      return 0
+  }
 }
 
 /** The server's inbox status, folded into what a chat row says. */
@@ -33,7 +44,8 @@ function sourceOf(session: Session, sources: readonly Source[]): Source | undefi
 }
 
 /**
- * Every chat on the computer, needs-you first and then by last activity, so
+ * Every chat on the computer: pinned ones first, then within each group the
+ * chats waiting for you, the ones working, and the rest by last activity, so
  * the list answers "what is waiting for me" before "what happened lately".
  * Sources name each chat's agent and model, for filtering.
  */
@@ -62,10 +74,12 @@ export function chatsView(state: ProjectsState, sources: readonly Source[] = [])
       })
     }
   }
-  chats.sort((left, right) => {
-    const urgency = Number(waitsForYou(right)) - Number(waitsForYou(left))
-    return urgency || right.at - left.at
-  })
+  chats.sort(
+    (left, right) =>
+      Number(right.pinned) - Number(left.pinned) ||
+      urgency(right) - urgency(left) ||
+      right.at - left.at,
+  )
   return {
     status: state.status,
     error: state.error ?? null,

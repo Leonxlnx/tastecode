@@ -21,6 +21,8 @@ struct ChatsScreen: View {
   @State private var showSettings = false
   @State private var addingProject = false
   @State private var problem: String?
+  @State private var renaming: ChatView?
+  @State private var newTitle = ""
 
   var body: some View {
     NavigationStack(path: $path) {
@@ -49,6 +51,24 @@ struct ChatsScreen: View {
       }
     }
     .problemAlert($problem)
+    .alert("Rename Chat", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
+      TextField("Title", text: $newTitle)
+        .submitLabel(.done)
+      Button("Cancel", role: .cancel) {}
+      Button("Rename") { rename() }
+        .disabled(newTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+    }
+  }
+
+  private func startRenaming(_ chat: ChatView) {
+    newTitle = chat.title
+    renaming = chat
+  }
+
+  private func rename() {
+    let title = newTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard let chat = renaming, !title.isEmpty, title != chat.title else { return }
+    model.perform(["type": "thread.rename", "threadId": chat.id, "title": title]) { problem = $0 }
   }
 
   private var title: String {
@@ -92,18 +112,29 @@ struct ChatsScreen: View {
   @ViewBuilder private var list: some View {
     let chats = matching
     let active = chats.filter { !$0.archived }
+    let pinned = active.filter(\.pinned)
+    let others = active.filter { !$0.pinned }
     let archived = chats.filter(\.archived)
     List {
-      Section {
-        ForEach(active) { chat in
-          ChatRow(chat: chat, problem: $problem)
+      if !pinned.isEmpty {
+        Section("Pinned") {
+          ForEach(pinned) { chat in
+            ChatRow(chat: chat, problem: $problem, onRename: startRenaming)
+          }
         }
+      }
+      Section {
+        ForEach(others) { chat in
+          ChatRow(chat: chat, problem: $problem, onRename: startRenaming)
+        }
+      } header: {
+        if !pinned.isEmpty { Text("Chats") }
       }
       .listSectionSeparator(.hidden, edges: .top)
       if showArchived && !archived.isEmpty {
         Section("Archived") {
           ForEach(archived) { chat in
-            ChatRow(chat: chat, problem: $problem)
+            ChatRow(chat: chat, problem: $problem, onRename: startRenaming)
           }
         }
       }
@@ -247,6 +278,7 @@ struct ChatRow: View {
   @Environment(AppModel.self) private var model
   let chat: ChatView
   @Binding var problem: String?
+  let onRename: (ChatView) -> Void
 
   var body: some View {
     NavigationLink(value: Route.chat(chat.id)) {
@@ -267,25 +299,43 @@ struct ChatRow: View {
     .navigationLinkIndicatorVisibility(.hidden)
     .swipeActions(edge: .leading) {
       Button(chat.pinned ? "Unpin" : "Pin", systemImage: chat.pinned ? "pin.slash.fill" : "pin.fill") {
-        model.perform(["type": "thread.pin", "threadId": chat.id, "pinned": !chat.pinned]) {
-          problem = $0
-        }
+        togglePin()
       }
       .tint(.orange)
     }
-    .swipeActions(edge: .trailing) {
+    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
       if chat.archived {
-        Button("Restore", systemImage: "tray.and.arrow.up.fill") {
-          model.perform(["type": "thread.restore", "threadId": chat.id]) { problem = $0 }
-        }
-        .tint(.indigo)
+        Button("Restore", systemImage: "tray.and.arrow.up.fill") { restore() }
+          .tint(.indigo)
       } else {
-        Button("Archive", systemImage: "archivebox.fill") {
-          model.perform(["type": "thread.archive", "threadId": chat.id]) { problem = $0 }
-        }
-        .tint(.indigo)
+        Button("Archive", systemImage: "archivebox.fill") { archive() }
+          .tint(.indigo)
       }
     }
+    .contextMenu {
+      Button(chat.pinned ? "Unpin" : "Pin", systemImage: chat.pinned ? "pin.slash" : "pin") {
+        togglePin()
+      }
+      Button("Rename", systemImage: "pencil") { onRename(chat) }
+      if chat.archived {
+        Button("Restore", systemImage: "tray.and.arrow.up") { restore() }
+      } else {
+        Button("Archive", systemImage: "archivebox") { archive() }
+      }
+    }
+    .sensoryFeedback(.selection, trigger: chat.pinned)
+  }
+
+  private func togglePin() {
+    model.perform(["type": "thread.pin", "threadId": chat.id, "pinned": !chat.pinned]) { problem = $0 }
+  }
+
+  private func archive() {
+    model.perform(["type": "thread.archive", "threadId": chat.id]) { problem = $0 }
+  }
+
+  private func restore() {
+    model.perform(["type": "thread.restore", "threadId": chat.id]) { problem = $0 }
   }
 
   private var detail: Text {
