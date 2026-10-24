@@ -122,11 +122,18 @@ final class AppModel {
     do {
       let read = try await request(
         AttachedImage.self, ["type": "attachment.read", "threadId": threadId, "path": path])
-      guard let data = Data(base64Encoded: read.data), let image = UIImage(data: data) else {
+      // Decoded off the main thread and ready to draw, so the frame that first
+      // shows it does not stop to unpack it.
+      let decoded = await Task.detached(priority: .userInitiated) { () -> UIImage? in
+        guard let data = Data(base64Encoded: read.data), let image = UIImage(data: data) else { return nil }
+        let scaled = image.scaledForUpload()
+        return scaled.preparingForDisplay() ?? scaled
+      }.value
+      guard let decoded else {
         missingImages.insert(path)
         return
       }
-      images[path] = image.scaledForUpload()
+      images[path] = decoded
     } catch {
       missingImages.insert(path)
     }
