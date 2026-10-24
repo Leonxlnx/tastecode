@@ -227,8 +227,9 @@ struct Composer: View {
   }
 }
 
-/// The model and how hard it thinks, as one chip: the model's name and a
-/// meter of the reasoning level. It opens the panel that changes both.
+/// The model and how hard it thinks, as one chip like the desktop's: the
+/// model's name, a meter of the reasoning level and its name. It opens the
+/// panel that changes both.
 struct SetupChip: View {
   @Environment(AppModel.self) private var model
   let setup: SetupView
@@ -236,6 +237,8 @@ struct SetupChip: View {
   /// Puts the keyboard away before the panel covers it.
   var onOpen: () -> Void = {}
   @State private var open = false
+  /// Where the chip is, for the panel to grow out of and back into.
+  @State private var frame: CGRect = .zero
 
   var body: some View {
     let efforts = model.catalog.source(setup.sourceKey)?.models.first(where: { $0.id == setup.model })?.efforts ?? []
@@ -247,8 +250,14 @@ struct SetupChip: View {
       HStack(spacing: 7) {
         Text(name)
           .lineLimit(1)
+          .foregroundStyle(.primary)
         if !efforts.isEmpty {
           EffortMeter(count: efforts.count, level: level ?? 0)
+          if let effort = setup.effortLabel {
+            Text(effort)
+              .lineLimit(1)
+              .fixedSize()
+          }
         }
       }
       .font(.subheadline.weight(.medium))
@@ -257,6 +266,7 @@ struct SetupChip: View {
       .frame(height: 32)
       .background(.fill.tertiary, in: .capsule)
       .contentShape(.capsule)
+      .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame = $0 }
     }
     .buttonStyle(.plain)
     .padding(.horizontal, 4)
@@ -265,7 +275,7 @@ struct SetupChip: View {
     .accessibilityLabel([name, setup.effortLabel].compactMap { $0 }.joined(separator: ", "))
     .accessibilityHint("Changes the model and how hard it thinks")
     .fullScreenCover(isPresented: $open) {
-      SetupPanel(setup: setup, actions: actions) { present(false) }
+      SetupPanel(setup: setup, actions: actions, origin: frame) { present(false) }
         .presentationBackground(.clear)
     }
   }
@@ -300,66 +310,149 @@ private struct EffortMeter: View {
   }
 }
 
-/// Over the blurred chat: the model's name, which opens every model and
-/// provider, and under it the reasoning slider. A tap on the blur, or a swipe
-/// down, puts it away.
+/// The desktop's model picker as a card in the middle of the blurred chat:
+/// the model on top, which opens every model and provider, and under it the
+/// effort slider. The X, a tap on the blur or a swipe down puts it away.
 private struct SetupPanel: View {
   @Environment(AppModel.self) private var model
   let setup: SetupView
   let actions: SetupActions
+  /// The chip it opened from, in global coordinates.
+  let origin: CGRect
   let onClose: () -> Void
   @State private var shown = false
+  @State private var closing = false
+  @State private var bounds: CGRect = .zero
 
   var body: some View {
-    let efforts = model.catalog.source(setup.sourceKey)?.models.first(where: { $0.id == setup.model })?.efforts ?? []
-    ZStack(alignment: .bottom) {
+    let current = model.catalog.source(setup.sourceKey)?.models.first { $0.id == setup.model }
+    let start = start
+    ZStack {
       Rectangle()
         .fill(.ultraThinMaterial)
         .ignoresSafeArea()
         .opacity(shown ? 1 : 0)
+        .animation(.easeOut(duration: shown ? 0.3 : 0.24), value: shown)
         .onTapGesture(perform: close)
         .gesture(
           DragGesture(minimumDistance: 24).onEnded { value in
             if value.translation.height > 60 { close() }
           })
-        .accessibilityAddTraits(.isButton)
-        .accessibilityLabel("Close")
-      VStack(spacing: 36) {
-        ModelTitle(setup: setup, actions: actions)
-        if efforts.isEmpty {
-          Text("This model has no reasoning levels.")
-            .font(.subheadline)
-            .foregroundStyle(.secondary)
-        } else {
-          EffortSlider(efforts: efforts, selected: setup.effort, onPick: actions.effort)
-        }
-      }
-      .padding(.horizontal, 28)
-      .padding(.bottom, 44)
-      .opacity(shown ? 1 : 0)
-      .offset(y: shown ? 0 : 36)
-      .scaleEffect(shown ? 1 : 0.94, anchor: .bottom)
+        .accessibilityHidden(true)
+      // It grows out of the chip and settles in the middle, and goes back into it.
+      SetupCard(setup: setup, actions: actions, efforts: current?.efforts ?? [], tiers: current?.tiers ?? [])
+        .padding(.horizontal, 20)
+        .scaleEffect(shown ? 1 : start.scale)
+        .offset(shown ? .zero : start.offset)
+        .animation(shown ? .spring(duration: 0.52, bounce: 0.2) : .spring(duration: 0.34, bounce: 0), value: shown)
+        .blur(radius: shown ? 0 : 6)
+        .opacity(shown ? 1 : 0)
+        .animation(shown ? .easeOut(duration: 0.2) : .easeIn(duration: 0.24), value: shown)
     }
-    .onAppear {
-      withAnimation(.spring(response: 0.42, dampingFraction: 0.82)) { shown = true }
+    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { bounds = $0 }
+    .overlay(alignment: .topLeading) {
+      Button(action: close) {
+        Image(systemName: "xmark")
+          .font(.system(size: 15, weight: .semibold))
+          .frame(width: 30, height: 30)
+      }
+      .buttonStyle(.glass)
+      .buttonBorderShape(.circle)
+      .padding(.leading, 16)
+      .padding(.top, 6)
+      .scaleEffect(shown ? 1 : 0.6)
+      .opacity(shown ? 1 : 0)
+      .animation(shown ? .spring(duration: 0.4, bounce: 0.3).delay(0.05) : .easeIn(duration: 0.14), value: shown)
+      .accessibilityLabel("Close")
+    }
+    .task {
+      // One frame first, so the card starts where the chip is.
+      try? await Task.sleep(for: .milliseconds(16))
+      shown = true
     }
   }
 
+  /// The chip's place and size relative to the card's resting one.
+  private var start: (offset: CGSize, scale: CGFloat) {
+    guard origin.width > 0, bounds.width > 0 else { return (CGSize(width: 0, height: 24), 0.9) }
+    let card = min(380, bounds.width - 40)
+    return (
+      CGSize(width: origin.midX - bounds.midX, height: origin.midY - bounds.midY),
+      max(0.35, min(1, origin.width / card))
+    )
+  }
+
   private func close() {
-    withAnimation(.smooth(duration: 0.22)) {
-      shown = false
-    } completion: {
+    guard !closing else { return }
+    closing = true
+    shown = false
+    Task {
+      try? await Task.sleep(for: .milliseconds(300))
       onClose()
     }
   }
 }
 
-/// The model's name, large, over the provider it runs on; it opens the models
-/// of that provider, its speeds, and the other providers.
-private struct ModelTitle: View {
+/// The card itself: the model, a hairline, then the effort and the fast lane.
+private struct SetupCard: View {
+  @Environment(AppModel.self) private var model
+  @Environment(\.colorScheme) private var scheme
+  let setup: SetupView
+  let actions: SetupActions
+  let efforts: [EffortView]
+  let tiers: [TierView]
+  /// The level under the thumb, named while it is dragged as the desktop does.
+  @State private var level: String?
+
+  var body: some View {
+    let fast = tiers.first { tier in
+      let id = tier.id.lowercased()
+      return id == "priority" || id == "fast" || tier.name.lowercased() == "fast"
+    }
+    VStack(alignment: .leading, spacing: 0) {
+      ModelRow(setup: setup, actions: actions, tiers: fast == nil ? tiers : [])
+      if !efforts.isEmpty || fast != nil {
+        Divider()
+        VStack(alignment: .leading, spacing: 12) {
+          HStack(spacing: 8) {
+            if !efforts.isEmpty {
+              EffortTitle(label: level ?? setup.effortLabel ?? "")
+            }
+            Spacer(minLength: 8)
+            if let fast {
+              FastToggle(on: setup.tier == fast.id) { on in actions.tier(on ? fast.id : nil) }
+            }
+          }
+          .frame(minHeight: 30)
+          if !efforts.isEmpty {
+            EffortSlider(efforts: efforts, selected: setup.effort, onPick: actions.effort) { level = $0 }
+          }
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 12)
+        .padding(.bottom, 16)
+      }
+    }
+    .frame(maxWidth: 380)
+    .background(
+      scheme == .dark ? Color(.secondarySystemBackground) : Color(.systemBackground),
+      in: .rect(cornerRadius: 26, style: .continuous))
+    .overlay {
+      RoundedRectangle(cornerRadius: 26, style: .continuous)
+        .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
+    }
+    .shadow(color: .black.opacity(0.28), radius: 30, y: 14)
+  }
+}
+
+/// The model and the provider it runs on; it opens that provider's models and
+/// the other providers, as the desktop's list does.
+private struct ModelRow: View {
   @Environment(AppModel.self) private var model
   let setup: SetupView
   let actions: SetupActions
+  /// Speeds to offer here when none of them is the fast lane the card toggles.
+  let tiers: [TierView]
 
   var body: some View {
     let source = model.catalog.source(setup.sourceKey)
@@ -368,7 +461,7 @@ private struct ModelTitle: View {
       if let source {
         ModelPicker(source: source, selected: setup.model, actions: actions)
       }
-      if let tiers = source?.models.first(where: { $0.id == setup.model })?.tiers, !tiers.isEmpty {
+      if !tiers.isEmpty {
         Picker(
           selection: Binding(get: { setup.tier ?? "" }, set: { actions.tier($0.isEmpty ? nil : $0) })
         ) {
@@ -392,22 +485,24 @@ private struct ModelTitle: View {
         }
       }
     } label: {
-      VStack(spacing: 4) {
-        HStack(spacing: 6) {
+      HStack(spacing: 10) {
+        VStack(alignment: .leading, spacing: 2) {
+          Text(setup.sourceName ?? "Model")
+            .font(.footnote.weight(.medium))
+            .foregroundStyle(.secondary)
           Text(setup.modelName ?? "Choose a Model")
-            .font(.title2.weight(.semibold))
+            .font(.title3.weight(.semibold))
             .foregroundStyle(.primary)
+            .lineLimit(1)
             .contentTransition(.opacity)
-          Image(systemName: "chevron.up.chevron.down")
-            .font(.footnote.weight(.semibold))
-            .foregroundStyle(.tertiary)
         }
-        Text([setup.sourceName, setup.tierName].compactMap { $0 }.joined(separator: " · "))
-          .font(.subheadline)
-          .foregroundStyle(.secondary)
+        Spacer(minLength: 8)
+        Image(systemName: "chevron.up.chevron.down")
+          .font(.footnote.weight(.semibold))
+          .foregroundStyle(.tertiary)
       }
       .padding(.horizontal, 16)
-      .padding(.vertical, 8)
+      .padding(.vertical, 14)
       .contentShape(.rect)
     }
     .menuOrder(.fixed)
@@ -415,52 +510,90 @@ private struct ModelTitle: View {
   }
 }
 
-/// How hard the model thinks, as a wide capsule filled up to the chosen
-/// level. It follows the finger, ticks at every level it passes, stretches
-/// and bumps at either end, and springs onto the nearest level when let go.
+/// "Effort: High", the level's name in the reply's ink, sliding as it changes.
+private struct EffortTitle: View {
+  let label: String
+
+  var body: some View {
+    HStack(spacing: 5) {
+      Text("Effort:")
+        .font(.subheadline.weight(.medium))
+        .foregroundStyle(.secondary)
+      Text(label)
+        .font(.body.weight(.semibold))
+        .foregroundStyle(.primary)
+        .id(label)
+        .transition(.asymmetric(
+          insertion: .offset(y: 7).combined(with: .opacity),
+          removal: .offset(y: -7).combined(with: .opacity)))
+    }
+    .animation(.snappy(duration: 0.2), value: label)
+  }
+}
+
+/// The fast lane, a bolt that fills when it is on.
+private struct FastToggle: View {
+  let on: Bool
+  let onChange: (Bool) -> Void
+
+  var body: some View {
+    Button {
+      onChange(!on)
+    } label: {
+      Image(systemName: on ? "bolt.fill" : "bolt")
+        .font(.system(size: 15, weight: .medium))
+        .foregroundStyle(on ? .primary : .tertiary)
+        .contentTransition(.symbolEffect(.replace))
+        .frame(width: 34, height: 30)
+        .background(on ? Color.primary.opacity(0.1) : .clear, in: .rect(cornerRadius: 9, style: .continuous))
+        .contentShape(.rect)
+    }
+    .buttonStyle(.plain)
+    .sensoryFeedback(.impact(weight: .light, intensity: 0.7), trigger: on)
+    .animation(.snappy(duration: 0.2), value: on)
+    .accessibilityLabel(on ? "Turn off fast mode" : "Turn on fast mode")
+  }
+}
+
+/// The desktop's effort slider: a dark pill with a dot per level, filled up
+/// to a white thumb. The thumb follows the finger, ticks at every level it
+/// passes, gives a little past either end with a bump, and springs onto the
+/// nearest level when let go.
 private struct EffortSlider: View {
+  @Environment(\.colorScheme) private var scheme
   let efforts: [EffortView]
   let selected: String?
   let onPick: (String) -> Void
+  var onLevel: (String) -> Void = { _ in }
 
   @State private var index = 0
-  /// Where the finger is, as a share of the track; past 0 or 1 while pulled beyond an end.
+  /// Where the finger is, as a share of the travel; past 0 or 1 while pulled beyond an end.
   @State private var dragged: CGFloat?
   @State private var beyond = false
   @State private var ticks = 0
   @State private var bumps = 0
   @State private var landings = 0
 
-  private let height: CGFloat = 58
+  private let thumb: CGFloat = 30
+  private let inset: CGFloat = 4
 
   var body: some View {
-    VStack(spacing: 14) {
-      HStack(alignment: .firstTextBaseline) {
-        Text("Reasoning")
-          .font(.subheadline.weight(.medium))
-          .foregroundStyle(.secondary)
-        Spacer()
-        Text(label)
-          .font(.title3.weight(.semibold))
-          .id(index)
-          .transition(.asymmetric(
-            insertion: .offset(y: 8).combined(with: .opacity),
-            removal: .offset(y: -8).combined(with: .opacity)))
-      }
-      .animation(.snappy(duration: 0.22), value: index)
-      GeometryReader { geometry in
-        track(width: geometry.size.width)
-      }
-      .frame(height: height)
+    GeometryReader { geometry in
+      track(width: geometry.size.width)
     }
+    .frame(height: thumb + inset * 2)
     .sensoryFeedback(.selection, trigger: ticks)
-    .sensoryFeedback(.impact(weight: .heavy, intensity: 0.8), trigger: bumps)
-    .sensoryFeedback(.impact(flexibility: .soft, intensity: 0.55), trigger: landings)
-    .onAppear { index = chosen }
+    .sensoryFeedback(.impact(weight: .heavy, intensity: 0.75), trigger: bumps)
+    .sensoryFeedback(.impact(flexibility: .soft, intensity: 0.5), trigger: landings)
+    .onAppear {
+      index = chosen
+      onLevel(label)
+    }
+    .onChange(of: index) { onLevel(label) }
     .onChange(of: selected) { if dragged == nil { index = chosen } }
     .onChange(of: efforts) { index = chosen }
     .accessibilityElement()
-    .accessibilityLabel("Reasoning")
+    .accessibilityLabel("Effort")
     .accessibilityValue(label)
     .accessibilityAdjustableAction { direction in
       let next = direction == .increment ? index + 1 : index - 1
@@ -472,46 +605,57 @@ private struct EffortSlider: View {
 
   private var chosen: Int { efforts.firstIndex { $0.id == selected } ?? 0 }
   private var label: String { efforts.indices.contains(index) ? efforts[index].label : "" }
+  private var dark: Bool { scheme == .dark }
 
   private func track(width: CGFloat) -> some View {
-    let travel = max(1, width - height)
+    let rail = width - inset * 2
+    let travel = max(1, rail - thumb)
     let share = dragged ?? stop(index)
     let inside = min(max(share, 0), 1)
     let pulled = share - inside
+    let reach = thumb + inside * travel
     return ZStack(alignment: .leading) {
       Capsule()
-        .fill(.fill.secondary)
-      Capsule()
-        .fill(.primary)
-        .frame(width: height + inside * travel)
-      ForEach(efforts.indices, id: \.self) { level in
+        .fill(dark ? Color.black.opacity(0.34) : Color(.systemGray5))
+        .overlay(Capsule().strokeBorder(Color.primary.opacity(dark ? 0.07 : 0.14), lineWidth: 1))
+      ZStack(alignment: .leading) {
+        dots(travel: travel, color: Color.primary.opacity(dark ? 0.28 : 0.4))
+        Capsule()
+          .fill(dark ? Color.white.opacity(0.24) : Color.white)
+          .frame(width: reach)
+        // The lit dots stay put while the fill's edge sweeps over them.
+        dots(travel: travel, color: dark ? Color.white.opacity(0.8) : Color.black.opacity(0.7))
+          .mask(alignment: .leading) {
+            Capsule().frame(width: reach)
+          }
         Circle()
-          .fill(stop(level) <= inside + 0.001 ? AnyShapeStyle(Color(.systemBackground).opacity(0.55)) : AnyShapeStyle(.tertiary))
-          .frame(width: 6, height: 6)
-          // The knob's icon covers the stop it sits on.
-          .opacity(abs(stop(level) - inside) * travel < height * 0.4 ? 0 : 1)
-          .position(x: height / 2 + stop(level) * travel, y: height / 2)
+          .fill(dark ? Color.white : Color(white: 0.11))
+          .shadow(color: .black.opacity(dark ? 0.45 : 0.15), radius: 1.5, y: 1)
+          .overlay {
+            Circle()
+              .fill(dark ? Color(white: 0.11) : Color.white)
+              .frame(width: 7, height: 7)
+              .scaleEffect(dragged == nil ? 1 : 1.4)
+              .animation(.snappy(duration: 0.16), value: dragged == nil)
+          }
+          .frame(width: thumb, height: thumb)
+          .offset(x: inside * travel)
       }
-      Image(systemName: "brain")
-        .font(.system(size: 19, weight: .medium))
-        .foregroundStyle(Color(.systemBackground))
-        .frame(width: height, height: height)
-        .offset(x: inside * travel)
-        .allowsHitTesting(false)
+      .frame(width: rail, height: thumb)
+      .padding(inset)
     }
-    .frame(height: height)
-    // Pulled past an end, the capsule gives a little in that direction.
-    .scaleEffect(x: 1 + abs(pulled) * 0.4, y: 1 - abs(pulled) * 0.25, anchor: pulled < 0 ? .trailing : .leading)
-    .scaleEffect(dragged == nil ? 1 : 1.015)
+    .frame(width: width, height: thumb + inset * 2)
+    // Pulled past an end, the pill gives a little in that direction.
+    .scaleEffect(x: 1 + abs(pulled) * 0.35, y: 1 - abs(pulled) * 0.2, anchor: pulled < 0 ? .trailing : .leading)
     .contentShape(.capsule)
     .gesture(
       DragGesture(minimumDistance: 0)
         .onChanged { value in
-          let raw = (value.location.x - height / 2) / travel
+          let raw = (value.location.x - inset - thumb / 2) / travel
           let share = raw < 0 ? -give(-raw) : raw > 1 ? 1 + give(raw - 1) : raw
           if dragged == nil {
-            // A touch away from the fill moves it there before it follows.
-            withAnimation(.snappy(duration: 0.18)) { dragged = share }
+            // A touch away from the thumb glides it there before it follows.
+            withAnimation(.spring(duration: 0.24, bounce: 0.1)) { dragged = share }
           } else {
             dragged = share
           }
@@ -525,12 +669,24 @@ private struct EffortSlider: View {
           beyond = past
         }
         .onEnded { _ in
-          withAnimation(.spring(response: 0.34, dampingFraction: 0.7)) { dragged = nil }
+          withAnimation(.spring(duration: 0.32, bounce: 0.28)) { dragged = nil }
           beyond = false
           landings += 1
           if efforts[index].id != selected { onPick(efforts[index].id) }
         }
     )
+  }
+
+  private func dots(travel: CGFloat, color: Color) -> some View {
+    ZStack(alignment: .leading) {
+      ForEach(efforts.indices, id: \.self) { level in
+        Circle()
+          .fill(color)
+          .frame(width: 4, height: 4)
+          .position(x: thumb / 2 + stop(level) * travel, y: thumb / 2)
+      }
+    }
+    .frame(width: travel + thumb, height: thumb)
   }
 
   private func stop(_ level: Int) -> CGFloat {
@@ -542,9 +698,9 @@ private struct EffortSlider: View {
     return Int((min(max(share, 0), 1) * CGFloat(efforts.count - 1)).rounded())
   }
 
-  /// How far the capsule follows a finger past its end: less the further it goes.
+  /// How far the thumb follows a finger past an end: less the further it goes.
   private func give(_ distance: CGFloat) -> CGFloat {
-    let limit: CGFloat = 0.08
+    let limit: CGFloat = 0.06
     return limit * (1 - 1 / (distance / limit + 1))
   }
 }
