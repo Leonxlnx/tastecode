@@ -32,9 +32,9 @@ the more permissive merge rule in `AGENTS.md`.
   change them on your own.
 - **Draft PRs by default. Merge only when Leon says so for those specific PRs.** A "go" for
   one set of PRs is not a standing go for the next.
-- **Bug fixes go to `main` as well**, as a separate draft PR, whenever the affected code
-  exists on `main`. Nightly-only code (extra providers, direct API, dashboards) stays on
-  `nightly`.
+- **Bug fixes go to `dev` like everything else.** A fix the public beta needs before the
+  next promotion also gets a separate draft PR against `main` (a hotfix) when the affected
+  code exists on `main`; Leon merges it, and it is then merged down to `nightly` and `dev`.
 - **Clean up after merges without asking.** Once a PR is merged, delete its branch after
   checking the tip is unchanged and no open PR uses it; keep a restore list (branch + SHA).
   Do not offer it as an option. Still ask before anything other people see (closing
@@ -46,18 +46,20 @@ the more permissive merge rule in `AGENTS.md`.
   goal, a taste call, or something that cannot be undone.
 - **Be exact.** Do not call something tested, signed, released or fixed unless it was. Leon
   has been burned by premature success claims.
-- **"Latest TasteCode" means a build from the newest `nightly` commit**, not the published
-  release. On Leon's laptop the nightly build folder is `D:\tastecode-nightly-build\repo`
-  (installer in `release\`).
+- **"Latest TasteCode" or "the dev version" means a build from the newest `dev` commit**;
+  "the nightly version" means a build from `nightly`. Neither is the published release. On
+  Leon's laptop the build folder is `D:\tastecode-nightly-build\repo` (installer in
+  `release\`); check out the branch Leon asked for there before building.
 
 ## Branches in one paragraph
 
-`main` is the public beta source (currently released as v0.1.1) and ships only Codex, Claude
-Code and Grok. `nightly` carries everything: extra providers, direct API connections, the
-dashboard reference library. They are separate on purpose. Changes the beta needs go to
-`main` and reach `nightly` by a normal `main` → `nightly` merge that must keep `nightly`'s
-provider code; everything else targets `nightly`. Never rebase or force-push a shared
-branch. See `AGENTS.md` and `rules/git.md`.
+Three long-lived branches, in this order: `dev` → `nightly` → `main`. All work starts from
+`dev` and lands there by PR. `nightly` takes promotions from `dev` (merge-commit PR) when a
+set of changes works; `main`, the public beta (currently released as v0.1.1, shipping only
+Codex, Claude Code and Grok), takes promotions from `nightly` only after Leon tested it.
+Hotfixes for the beta may go to `main` as draft PRs and are merged down to `nightly` and
+`dev` the same day. Never rebase or force-push a shared branch. See `AGENTS.md` and
+`rules/git.md`.
 
 ## Permissions (why sessions can or cannot bypass)
 
