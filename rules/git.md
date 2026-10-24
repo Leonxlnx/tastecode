@@ -4,9 +4,13 @@ Two people, two operating systems, one trunk.
 
 ## Branches
 
-Trunk is `main`. Protected: PR required, server-side rebase-merge only, no direct or
-force-push. Branch, PR, CI and merge authorization follows [AGENTS.md](../AGENTS.md);
-applicable approval already given in chat remains valid.
+Three long-lived branches: `dev` (integration; every branch starts here and every PR
+targets it), `nightly` (pre-release; only promotion PRs from `dev`) and `main` (stable
+public beta; only promotion PRs from `nightly`, plus hotfixes Leon merges). Feature PRs into
+`dev` use server-side rebase-merge; promotions and downward syncs use a merge commit, so
+`main` ⊆ `nightly` ⊆ `dev` holds as plain history. No direct or force-push to any of the
+three. Branch, PR, CI and merge authorization follows [AGENTS.md](../AGENTS.md); applicable
+approval already given in chat remains valid.
 
 ```
 <type>/<area>-<short-description>
@@ -86,7 +90,10 @@ screen to look different: [working-together.md](./working-together.md).
 
 `main` is protected: PR required, rebase-merge only, no force-push, no deletion. The
 ruleset may still report a missing GitHub review; a bypass-eligible collaborator may use
-the bypass after the human responsible for the work has explicitly approved it.
+the bypass after the human responsible for the work has explicitly approved it. Promotion
+PRs into `main` are the one place a merge commit is used there. `dev` and `nightly` follow
+the same rules by convention (no direct pushes, no force-push, no deletion) even where no
+GitHub ruleset enforces them yet.
 
 ## Verification gates
 

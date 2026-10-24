@@ -7,20 +7,28 @@ For any coding agent working in this repo — Claude Code, Codex, Cursor, an ACP
 **Where the project is:** M0 through M3 are done. M4 (the design agent) is next. See
 [docs/ROADMAP.md](./docs/ROADMAP.md) for durable status and GitHub issues/PRs for live work.
 
-**Branch model (Leon and Bluedev, 2026-08-08):** `main` is the public beta for roughly the
-next four weeks and becomes the stable release at v1. `nightly` is the integration branch:
-every new change lands there first and nothing is hidden on it — it carries the full
-provider roster (Codex, Claude Code, Grok plus Cursor, OpenCode, Antigravity, Pi, the ACP
-agents and API connections, all working). Since 2026-10-03 those other providers are absent
-from `main`'s code, not hidden: `main` ships only Codex, Claude Code and Grok (Grok's MCP
-mode still uses the ACP protocol client in `packages/adapter-acp`). Work that the beta itself
-needs (fixes and polish for the three shipped plans) still goes to `main` by PR and reaches
-`nightly` on the next sync; everything else targets `nightly`. Keep `nightly` synchronized
-by merging `main` and resolving conflicts without rewriting published history; a merge must
-never delete `nightly`'s provider code, so the first sync after the removal resolves those
-deletions in `nightly`'s favour. Do not bring another provider back to `main` without Leon
-saying so. The Rust + GPUI rewrite is preserved only on
-`archive/rust-rewrite-2026-08-15`; do not merge it back into `main` without Leon saying so.
+**Branch model (Leon, 2026-10-25): `dev` → `nightly` → `main`.**
+
+- **`dev`** is the integration branch. Every new change starts from `dev` and lands there by
+  PR: features, fixes, refactors, docs. It carries the full provider roster (Codex, Claude
+  Code, Grok plus Cursor, OpenCode, Antigravity, Pi, the ACP agents and API connections).
+- **`nightly`** is the pre-release channel: what works but is not proven yet. It receives
+  only promotions from `dev`: a PR from `dev` into `nightly`, merged with a merge commit,
+  titled `chore: promote dev to nightly (<date>)`, once the four gates are clean on the `dev`
+  tip and an installer built from it starts and streams. No feature PRs into `nightly`.
+- **`main`** is the stable public beta (stable release at v1). It receives only promotions
+  from `nightly` (merge commit) after Leon has tested an installer from `nightly` and says
+  so. Today `main` ships only Codex, Claude Code and Grok (the others are absent from its
+  code since 2026-10-03; Grok's MCP mode uses `packages/adapter-acp`); which providers a
+  promotion brings to `main` is Leon's call at that promotion.
+- **Hotfixes:** a fix the public beta needs before the next promotion also gets its own
+  draft PR against `main`; Leon merges it. Whenever something lands on `main` or `nightly`
+  outside a promotion, merge it down the same day (`main` → `nightly` → `dev`, normal merges,
+  never a rebase) so the three stay in order: `main` ⊆ `nightly` ⊆ `dev`.
+- A sync or promotion must never delete provider code that the receiving branch keeps.
+- The Rust + GPUI rewrite is preserved only on `archive/rust-rewrite-2026-08-15`; do not
+  merge it anywhere without Leon saying so.
+
 [docs/dashboard.html](./docs/dashboard.html) is the release checklist.
 
 ## Read first
@@ -47,7 +55,9 @@ saying so. The Rust + GPUI rewrite is preserved only on
 - **Never include Rust-port or mobile-app branch changes in a PR unless the user
   explicitly names that scope.** Broad requests such as “PR everything,” “ship all local
   changes,” or “everything” do not authorize either branch; exclude them by default.
-- **Never push to `main`.** Branch, PR, merge. An agent may **merge its own PR without
+- **Never push to `dev`, `nightly` or `main` directly.** Branch from `dev`, PR into `dev`,
+  merge. Promotions (`dev` → `nightly` → `main`) follow the branch model above. An agent may
+  **merge its own PR into `dev` without
   waiting** when the work is confidently finished: all four gates green locally, the flow
   exercised against the running app, and nothing in the PR touches `packages/contracts`,
   security, or another assignee's files. When any of that is in doubt, wait for the human
@@ -63,7 +73,7 @@ saying so. The Rust + GPUI rewrite is preserved only on
 - **Never mix a refactor with a behavior change** in one commit.
 - **Build shared features for every provider.** Contracts, persistence, orchestration and UI
   must still work when the user has only a direct API provider configured — checked on
-  `nightly`, where that provider lives. A vendor CLI, SDK or app-server may add
+  `dev` and `nightly`, where that provider lives. A vendor CLI, SDK or app-server may add
   capabilities, but must never become the foundation for shared product behavior.
 - **Keep provider behavior checks inside adapters.** Shared code reads declared capabilities
   and degrades honestly when an engine lacks one; it never branches behavior on a provider name.
@@ -72,7 +82,7 @@ saying so. The Rust + GPUI rewrite is preserved only on
 ## How to work
 
 - **You are rarely alone in this repo.** Several agent sessions (and both humans) often work
-  in parallel. Expect `main` to move under you, expect open draft PRs and `scratch/`
+  in parallel. Expect `dev` to move under you, expect open draft PRs and `scratch/`
   worktrees you did not create, and expect the shared dev stack on ports 4311/5183 to be
   restarted by someone else — a fresh `pnpm dev` deliberately replaces the running one.
   Before starting: check open PRs and worktrees, fetch and compare with the target branch
