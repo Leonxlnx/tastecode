@@ -97,19 +97,21 @@ struct Composer: View {
         .focused($focused)
         .padding(.horizontal, 16)
         .padding(.top, 14)
-        .padding(.bottom, 8)
-      HStack(spacing: 2) {
+        .padding(.bottom, 4)
+      // Everything but the send button is quiet text and glyphs, so the one
+      // filled thing in the bar is the one that sends.
+      HStack(spacing: 0) {
         if setup.images {
           attachMenu
         }
         SetupChip(setup: setup, actions: actions) { focused = false }
         AccessMenu(setup: setup, actions: actions)
-        Spacer(minLength: 4)
+        Spacer(minLength: 8)
         sendButton
       }
-      .padding(.leading, 6)
-      .padding(.trailing, 8)
-      .padding(.bottom, 8)
+      .padding(.leading, 8)
+      .padding(.trailing, 10)
+      .padding(.bottom, 10)
     }
     .animation(.smooth(duration: 0.32), value: queue.isEmpty)
     .glassEffect(.regular, in: .rect(cornerRadius: 26, style: .continuous))
@@ -136,12 +138,12 @@ struct Composer: View {
       }
     } label: {
       Image(systemName: "plus")
-        .font(.system(size: 17, weight: .regular))
-        .frame(width: 36, height: 36)
-        .contentShape(.circle)
+        .font(.system(size: 18, weight: .medium))
+        .frame(width: 32, height: 34)
+        .contentShape(.rect)
     }
     .menuOrder(.fixed)
-    .foregroundStyle(.primary)
+    .foregroundStyle(.secondary)
     .accessibilityLabel("Attach")
   }
 
@@ -154,15 +156,18 @@ struct Composer: View {
         send()
       }
     } label: {
+      let active = showsStop || canSend
       Image(systemName: showsStop ? "stop.fill" : "arrow.up")
-        .font(.system(size: showsStop ? 12 : 15, weight: .bold))
+        .font(.system(size: showsStop ? 11 : 15, weight: .bold))
         .contentTransition(.symbolEffect(.replace))
-        .foregroundStyle(showsStop || canSend ? Color(.systemBackground) : Color(.tertiaryLabel))
-        .frame(width: 22, height: 22)
+        .foregroundStyle(active ? AnyShapeStyle(Color(.systemBackground)) : AnyShapeStyle(.tertiary))
+        .frame(width: 32, height: 32)
+        // A fixed colour, not `.primary`: the glass turns hierarchical styles
+        // inside it into muted vibrancy, and a solid white would read grey.
+        .background(active ? AnyShapeStyle(Color(uiColor: .label)) : AnyShapeStyle(.fill.tertiary), in: .circle)
+        .animation(.snappy(duration: 0.22), value: active)
     }
-    .buttonStyle(.glassProminent)
-    .buttonBorderShape(.circle)
-    .tint(.primary)
+    .buttonStyle(Pressable())
     .disabled(!showsStop && !canSend)
     .animation(.snappy(duration: 0.2), value: showsStop)
     .accessibilityLabel(showsStop ? "Stop" : "Send")
@@ -227,9 +232,17 @@ struct Composer: View {
   }
 }
 
-/// The model and how hard it thinks, as one chip like the desktop's: the
-/// model's name, a meter of the reasoning level and its name. It opens the
-/// panel that changes both.
+/// Gives a little under the finger, as iOS's own buttons do.
+private struct Pressable: ButtonStyle {
+  func makeBody(configuration: Configuration) -> some View {
+    configuration.label
+      .scaleEffect(configuration.isPressed ? 0.9 : 1)
+      .animation(.snappy(duration: 0.18), value: configuration.isPressed)
+  }
+}
+
+/// The model and how hard it thinks, as quiet text: the model's name and the
+/// reasoning level's. It opens the panel that changes both.
 struct SetupChip: View {
   @Environment(AppModel.self) private var model
   let setup: SetupView
@@ -240,30 +253,28 @@ struct SetupChip: View {
 
   var body: some View {
     let efforts = model.catalog.source(setup.sourceKey)?.models.first(where: { $0.id == setup.model })?.efforts ?? []
-    let level = efforts.firstIndex { $0.id == setup.effort }
     Button {
       onOpen()
       present(true)
     } label: {
-      HStack(spacing: 7) {
+      HStack(spacing: 5) {
         Text(name)
           .lineLimit(1)
           .foregroundStyle(.primary)
-        if !efforts.isEmpty {
-          EffortMeter(count: efforts.count, level: level ?? 0)
-          if let effort = setup.effortLabel {
-            Text(effort)
-              .lineLimit(1)
-              .fixedSize()
-          }
+        if !efforts.isEmpty, let effort = setup.effortLabel {
+          Text(effort)
+            .lineLimit(1)
+            .fixedSize()
         }
+        Image(systemName: "chevron.down")
+          .font(.system(size: 10, weight: .bold))
+          .foregroundStyle(.tertiary)
       }
       .font(.subheadline.weight(.medium))
       .foregroundStyle(.secondary)
-      .padding(.horizontal, 12)
-      .frame(height: 32)
-      .background(.fill.tertiary, in: .capsule)
-      .contentShape(.capsule)
+      .padding(.trailing, 6)
+      .frame(height: 34)
+      .contentShape(.rect)
     }
     .buttonStyle(.plain)
     .padding(.horizontal, 4)
@@ -287,23 +298,6 @@ struct SetupChip: View {
     var transaction = Transaction()
     transaction.disablesAnimations = true
     withTransaction(transaction) { open = value }
-  }
-}
-
-/// A reasoning level as dots, one per level the model has, lit up to the chosen one.
-private struct EffortMeter: View {
-  let count: Int
-  let level: Int
-
-  var body: some View {
-    HStack(spacing: 2.5) {
-      ForEach(0..<count, id: \.self) { index in
-        Circle()
-          .fill(Color.primary.opacity(index <= level ? 0.62 : 0.16))
-          .frame(width: 4.5, height: 4.5)
-      }
-    }
-    .animation(.snappy(duration: 0.2), value: level)
   }
 }
 
@@ -849,9 +843,9 @@ struct AccessMenu: View {
       }
     } label: {
       Image(systemName: symbol)
-        .font(.subheadline.weight(.medium))
-        .foregroundStyle(setup.access == "full" ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
-        .frame(width: 36, height: 36)
+        .font(.system(size: 15, weight: .medium))
+        .foregroundStyle(.secondary)
+        .frame(width: 34, height: 34)
         .contentShape(.rect)
     }
     .menuOrder(.fixed)
