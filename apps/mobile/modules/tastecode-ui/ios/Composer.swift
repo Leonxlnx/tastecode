@@ -472,170 +472,114 @@ private struct LevelName: View {
   }
 }
 
-/// How hard the model thinks, on a ruler: a fine tick per step and a taller
-/// one per level, lit up to a bar the finger drags. The ticks swell around the
-/// bar while it moves; it clicks at every tick, knocks at every level, bumps
-/// past either end, and settles on the nearest level when let go.
+/// How hard the model thinks, on iOS's own slider with a round thumb: it
+/// snaps from level to level, with a tick at each one. A drag picks the level
+/// it is let go on; VoiceOver picks each level it steps to.
 private struct EffortSlider: View {
   let efforts: [EffortView]
   let selected: String?
   let onPick: (String) -> Void
   var onLevel: (String) -> Void = { _ in }
 
-  @State private var index = 0
-  /// Where the finger is, as a share of the travel; past 0 or 1 while pulled beyond an end.
-  @State private var dragged: CGFloat?
-  /// How far the ticks around the bar have risen, from 0 at rest to 1 while dragged.
-  @State private var swell: CGFloat = 0
-  @State private var tick = 0
-  @State private var beyond = false
-  @State private var clicks = 0
-  @State private var knocks = 0
-  @State private var bumps = 0
-  @State private var landings = 0
-
-  private let height: CGFloat = 48
-  /// Room at either end, so the bar on the first or last level is not cut off.
-  private let inset: CGFloat = 3
+  @State private var level = 0
+  @State private var dragging = false
 
   var body: some View {
-    GeometryReader { geometry in
-      ruler(width: geometry.size.width)
-    }
-    .frame(height: height)
-    .sensoryFeedback(.impact(weight: .light, intensity: 0.45), trigger: clicks)
-    .sensoryFeedback(.impact(weight: .medium, intensity: 0.9), trigger: knocks)
-    .sensoryFeedback(.impact(weight: .heavy, intensity: 0.75), trigger: bumps)
-    .sensoryFeedback(.impact(flexibility: .soft, intensity: 0.5), trigger: landings)
-    .onAppear {
-      index = chosen
+    RoundSlider(count: efforts.count, level: level) { next, active in
+      level = next
+      dragging = active
       onLevel(label)
+      if !active { pick() }
     }
-    .onChange(of: index) { onLevel(label) }
-    .onChange(of: selected) { if dragged == nil { index = chosen } }
-    .onChange(of: efforts) { index = chosen }
+    .frame(height: 44)
+    .disabled(efforts.count < 2)
     .accessibilityElement()
     .accessibilityLabel("Effort")
     .accessibilityValue(label)
     .accessibilityAdjustableAction { direction in
-      let next = direction == .increment ? index + 1 : index - 1
+      let next = direction == .increment ? level + 1 : level - 1
       guard efforts.indices.contains(next) else { return }
-      index = next
-      onPick(efforts[next].id)
+      level = next
+      onLevel(label)
+      pick()
     }
+    .onAppear {
+      level = chosen
+      onLevel(label)
+    }
+    .onChange(of: selected) { if !dragging { level = chosen } }
+    .onChange(of: efforts) { level = chosen }
   }
 
   private var chosen: Int { efforts.firstIndex { $0.id == selected } ?? 0 }
-  private var label: String { efforts.indices.contains(index) ? efforts[index].label : "" }
+  private var label: String { efforts.indices.contains(level) ? efforts[level].label : "" }
 
-  private func ruler(width: CGFloat) -> some View {
-    let travel = max(1, width - inset * 2)
-    let gaps = max(1, efforts.count - 1)
-    // About 10pt between ticks, whatever the number of levels.
-    let every = max(2, Int((travel / CGFloat(gaps) / 10).rounded()))
-    let count = gaps * every + 1
-    let share = dragged ?? stop(index)
-    let at = inset + share * travel
-    let marks = Ticks(count: count, every: every, inset: inset, at: at, swell: swell)
-    return ZStack(alignment: .leading) {
-      marks.fill(Color.primary.opacity(0.2))
-      marks
-        .fill(Color.primary)
-        .mask(alignment: .leading) {
-          Rectangle().frame(width: max(0, at))
-        }
-      Capsule()
-        .fill(Color.primary)
-        .frame(width: 4, height: dragged == nil ? 34 : 42)
-        .offset(x: at - 2)
-    }
-    .frame(width: width, height: height)
-    .contentShape(.rect)
-    .gesture(
-      DragGesture(minimumDistance: 0)
-        .onChanged { value in
-          let raw = (value.location.x - inset) / travel
-          let share = raw < 0 ? -give(-raw) : raw > 1 ? 1 + give(raw - 1) : raw
-          if dragged == nil {
-            // A touch away from the bar glides it there before it follows.
-            withAnimation(.spring(duration: 0.28, bounce: 0.12)) {
-              dragged = share
-              swell = 1
-            }
-          } else {
-            dragged = share
-          }
-          let next = Int((min(max(share, 0), 1) * CGFloat(count - 1)).rounded())
-          if next != tick {
-            if next % every == 0 { knocks += 1 } else { clicks += 1 }
-            tick = next
-          }
-          index = nearest(share)
-          let past = raw < 0 || raw > 1
-          if past && !beyond { bumps += 1 }
-          beyond = past
-        }
-        .onEnded { _ in
-          withAnimation(.spring(duration: 0.42, bounce: 0.2)) {
-            dragged = nil
-            swell = 0
-          }
-          tick = index * every
-          beyond = false
-          landings += 1
-          if efforts[index].id != selected { onPick(efforts[index].id) }
-        }
-    )
-    .onAppear { tick = index * every }
-  }
-
-  private func stop(_ level: Int) -> CGFloat {
-    efforts.count > 1 ? CGFloat(level) / CGFloat(efforts.count - 1) : 1
-  }
-
-  private func nearest(_ share: CGFloat) -> Int {
-    guard efforts.count > 1 else { return 0 }
-    return Int((min(max(share, 0), 1) * CGFloat(efforts.count - 1)).rounded())
-  }
-
-  /// How far the bar follows a finger past an end: less the further it goes.
-  private func give(_ distance: CGFloat) -> CGFloat {
-    let limit: CGFloat = 0.05
-    return limit * (1 - 1 / (distance / limit + 1))
+  private func pick() {
+    guard efforts.indices.contains(level), efforts[level].id != selected else { return }
+    onPick(efforts[level].id)
   }
 }
 
-/// The ruler's ticks, centred on its middle line; those near the bar stand
-/// taller by `swell`. Both values animate, so the bump travels with the bar.
-private struct Ticks: Shape {
+/// `UISlider` with a tick per level and a round thumb. UIKit tracks the
+/// finger, snaps to the ticks and plays the haptics.
+private struct RoundSlider: UIViewRepresentable {
   let count: Int
-  let every: Int
-  let inset: CGFloat
-  var at: CGFloat
-  var swell: CGFloat
+  let level: Int
+  /// The level under the thumb, and whether the finger is still on it.
+  let onChange: (_ level: Int, _ dragging: Bool) -> Void
 
-  var animatableData: AnimatablePair<CGFloat, CGFloat> {
-    get { AnimatablePair(at, swell) }
-    set {
-      at = newValue.first
-      swell = newValue.second
+  func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+  func makeUIView(context: Context) -> UISlider {
+    let slider = UISlider()
+    slider.minimumTrackTintColor = .label
+    slider.setThumbImage(Self.thumb, for: .normal)
+    // VoiceOver reads and adjusts the SwiftUI element around it instead.
+    slider.isAccessibilityElement = false
+    slider.accessibilityElementsHidden = true
+    slider.addTarget(context.coordinator, action: #selector(Coordinator.moved(_:)), for: .valueChanged)
+    slider.addTarget(
+      context.coordinator, action: #selector(Coordinator.released(_:)),
+      for: [.touchUpInside, .touchUpOutside, .touchCancel])
+    return slider
+  }
+
+  func updateUIView(_ slider: UISlider, context: Context) {
+    context.coordinator.parent = self
+    let ticks = max(2, count)
+    if slider.trackConfiguration?.ticks.count != ticks {
+      slider.trackConfiguration = UISlider.TrackConfiguration(numberOfTicks: ticks)
+    }
+    if !slider.isTracking {
+      slider.value = Float(level) / Float(ticks - 1)
     }
   }
 
-  func path(in rect: CGRect) -> Path {
-    var path = Path()
-    let travel = rect.width - inset * 2
-    for index in 0..<count {
-      let x = inset + (count > 1 ? travel * CGFloat(index) / CGFloat(count - 1) : travel)
-      let level = index % every == 0
-      let width: CGFloat = level ? 2.5 : 1.5
-      let near = exp(-pow((x - at) / 24, 2))
-      let height = (level ? 20 : 9) * (1 + swell * 0.8 * near)
-      path.addRoundedRect(
-        in: CGRect(x: x - width / 2, y: rect.midY - height / 2, width: width, height: height),
-        cornerSize: CGSize(width: width / 2, height: width / 2))
+  private static let thumb = UIGraphicsImageRenderer(size: CGSize(width: 36, height: 36)).image { context in
+    let circle = CGRect(x: 4, y: 4, width: 28, height: 28)
+    context.cgContext.setShadow(offset: CGSize(width: 0, height: 1), blur: 4, color: UIColor.black.withAlphaComponent(0.3).cgColor)
+    UIColor.white.setFill()
+    context.cgContext.fillEllipse(in: circle)
+  }
+
+  final class Coordinator: NSObject {
+    var parent: RoundSlider
+
+    init(_ parent: RoundSlider) { self.parent = parent }
+
+    /// Only the finger's moves: the release reports the level it lands on.
+    @objc func moved(_ slider: UISlider) {
+      guard slider.isTracking else { return }
+      parent.onChange(level(slider), true)
     }
-    return path
+
+    @objc func released(_ slider: UISlider) {
+      parent.onChange(level(slider), false)
+    }
+
+    private func level(_ slider: UISlider) -> Int {
+      Int((slider.value * Float(max(1, parent.count - 1))).rounded())
+    }
   }
 }
 
