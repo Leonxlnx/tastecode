@@ -20,7 +20,8 @@ struct PendingImage: Identifiable {
 }
 
 /// The input: one glass surface holding what you type, what you attach, where
-/// it goes (model, reasoning, access) and the button that sends or stops.
+/// it goes (the model and its reasoning in one chip, access) and the button
+/// that sends or stops.
 struct Composer: View {
   @Environment(AppModel.self) private var model
   let draftKey: String
@@ -101,8 +102,7 @@ struct Composer: View {
         if setup.images {
           attachMenu
         }
-        SetupMenu(setup: setup, actions: actions)
-        EffortMenu(setup: setup, actions: actions)
+        SetupChip(setup: setup, actions: actions) { focused = false }
         AccessMenu(setup: setup, actions: actions)
         Spacer(minLength: 4)
         sendButton
@@ -227,8 +227,136 @@ struct Composer: View {
   }
 }
 
-/// The model and its reasoning level, in one quiet menu.
-struct SetupMenu: View {
+/// The model and how hard it thinks, as one chip: the model's name and a
+/// meter of the reasoning level. It opens the panel that changes both.
+struct SetupChip: View {
+  @Environment(AppModel.self) private var model
+  let setup: SetupView
+  let actions: SetupActions
+  /// Puts the keyboard away before the panel covers it.
+  var onOpen: () -> Void = {}
+  @State private var open = false
+
+  var body: some View {
+    let efforts = model.catalog.source(setup.sourceKey)?.models.first(where: { $0.id == setup.model })?.efforts ?? []
+    let level = efforts.firstIndex { $0.id == setup.effort }
+    Button {
+      onOpen()
+      present(true)
+    } label: {
+      HStack(spacing: 7) {
+        Text(name)
+          .lineLimit(1)
+        if !efforts.isEmpty {
+          EffortMeter(count: efforts.count, level: level ?? 0)
+        }
+      }
+      .font(.subheadline.weight(.medium))
+      .foregroundStyle(.secondary)
+      .padding(.horizontal, 12)
+      .frame(height: 32)
+      .background(.fill.tertiary, in: .capsule)
+      .contentShape(.capsule)
+    }
+    .buttonStyle(.plain)
+    .padding(.horizontal, 4)
+    .layoutPriority(1)
+    .sensoryFeedback(.impact(weight: .light, intensity: 0.6), trigger: open) { _, opened in opened }
+    .accessibilityLabel([name, setup.effortLabel].compactMap { $0 }.joined(separator: ", "))
+    .accessibilityHint("Changes the model and how hard it thinks")
+    .fullScreenCover(isPresented: $open) {
+      SetupPanel(setup: setup, actions: actions) { present(false) }
+        .presentationBackground(.clear)
+    }
+  }
+
+  private var name: String {
+    guard let name = setup.modelName ?? setup.sourceName else { return "Model" }
+    return ([name] + [setup.tierName].compactMap { $0 }).joined(separator: " · ")
+  }
+
+  /// The panel draws its own entrance over the chat, so the cover's slide is off.
+  private func present(_ value: Bool) {
+    var transaction = Transaction()
+    transaction.disablesAnimations = true
+    withTransaction(transaction) { open = value }
+  }
+}
+
+/// A reasoning level as dots, one per level the model has, lit up to the chosen one.
+private struct EffortMeter: View {
+  let count: Int
+  let level: Int
+
+  var body: some View {
+    HStack(spacing: 2.5) {
+      ForEach(0..<count, id: \.self) { index in
+        Circle()
+          .fill(Color.primary.opacity(index <= level ? 0.62 : 0.16))
+          .frame(width: 4.5, height: 4.5)
+      }
+    }
+    .animation(.snappy(duration: 0.2), value: level)
+  }
+}
+
+/// Over the blurred chat: the model's name, which opens every model and
+/// provider, and under it the reasoning slider. A tap on the blur, or a swipe
+/// down, puts it away.
+private struct SetupPanel: View {
+  @Environment(AppModel.self) private var model
+  let setup: SetupView
+  let actions: SetupActions
+  let onClose: () -> Void
+  @State private var shown = false
+
+  var body: some View {
+    let efforts = model.catalog.source(setup.sourceKey)?.models.first(where: { $0.id == setup.model })?.efforts ?? []
+    ZStack(alignment: .bottom) {
+      Rectangle()
+        .fill(.ultraThinMaterial)
+        .ignoresSafeArea()
+        .opacity(shown ? 1 : 0)
+        .onTapGesture(perform: close)
+        .gesture(
+          DragGesture(minimumDistance: 24).onEnded { value in
+            if value.translation.height > 60 { close() }
+          })
+        .accessibilityAddTraits(.isButton)
+        .accessibilityLabel("Close")
+      VStack(spacing: 36) {
+        ModelTitle(setup: setup, actions: actions)
+        if efforts.isEmpty {
+          Text("This model has no reasoning levels.")
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
+        } else {
+          EffortSlider(efforts: efforts, selected: setup.effort, onPick: actions.effort)
+        }
+      }
+      .padding(.horizontal, 28)
+      .padding(.bottom, 44)
+      .opacity(shown ? 1 : 0)
+      .offset(y: shown ? 0 : 36)
+      .scaleEffect(shown ? 1 : 0.94, anchor: .bottom)
+    }
+    .onAppear {
+      withAnimation(.spring(response: 0.42, dampingFraction: 0.82)) { shown = true }
+    }
+  }
+
+  private func close() {
+    withAnimation(.smooth(duration: 0.22)) {
+      shown = false
+    } completion: {
+      onClose()
+    }
+  }
+}
+
+/// The model's name, large, over the provider it runs on; it opens the models
+/// of that provider, its speeds, and the other providers.
+private struct ModelTitle: View {
   @Environment(AppModel.self) private var model
   let setup: SetupView
   let actions: SetupActions
@@ -264,39 +392,160 @@ struct SetupMenu: View {
         }
       }
     } label: {
-      MenuLabel(text: label, symbol: nil)
+      VStack(spacing: 4) {
+        HStack(spacing: 6) {
+          Text(setup.modelName ?? "Choose a Model")
+            .font(.title2.weight(.semibold))
+            .foregroundStyle(.primary)
+            .contentTransition(.opacity)
+          Image(systemName: "chevron.up.chevron.down")
+            .font(.footnote.weight(.semibold))
+            .foregroundStyle(.tertiary)
+        }
+        Text([setup.sourceName, setup.tierName].compactMap { $0 }.joined(separator: " · "))
+          .font(.subheadline)
+          .foregroundStyle(.secondary)
+      }
+      .padding(.horizontal, 16)
+      .padding(.vertical, 8)
+      .contentShape(.rect)
     }
     .menuOrder(.fixed)
-    .layoutPriority(1)
-  }
-
-  private var label: String {
-    guard let name = setup.modelName ?? setup.sourceName else { return "Model" }
-    return ([name] + [setup.tierName].compactMap { $0 }).joined(separator: " · ")
+    .animation(.smooth(duration: 0.25), value: setup.modelName)
   }
 }
 
-/// How hard the model thinks, beside the model; absent when the model has no levels.
-struct EffortMenu: View {
-  @Environment(AppModel.self) private var model
-  let setup: SetupView
-  let actions: SetupActions
+/// How hard the model thinks, as a wide capsule filled up to the chosen
+/// level. It follows the finger, ticks at every level it passes, stretches
+/// and bumps at either end, and springs onto the nearest level when let go.
+private struct EffortSlider: View {
+  let efforts: [EffortView]
+  let selected: String?
+  let onPick: (String) -> Void
+
+  @State private var index = 0
+  /// Where the finger is, as a share of the track; past 0 or 1 while pulled beyond an end.
+  @State private var dragged: CGFloat?
+  @State private var beyond = false
+  @State private var ticks = 0
+  @State private var bumps = 0
+  @State private var landings = 0
+
+  private let height: CGFloat = 58
 
   var body: some View {
-    let efforts = model.catalog.source(setup.sourceKey)?.models.first(where: { $0.id == setup.model })?.efforts ?? []
-    if !efforts.isEmpty {
-      Menu {
-        Picker("Reasoning", selection: Binding(get: { setup.effort ?? "" }, set: { actions.effort($0) })) {
-          ForEach(efforts) { effort in
-            Text(effort.label).tag(effort.id)
-          }
-        }
-        .pickerStyle(.inline)
-      } label: {
-        MenuLabel(text: setup.effortLabel ?? "Effort", symbol: nil)
+    VStack(spacing: 14) {
+      HStack(alignment: .firstTextBaseline) {
+        Text("Reasoning")
+          .font(.subheadline.weight(.medium))
+          .foregroundStyle(.secondary)
+        Spacer()
+        Text(label)
+          .font(.title3.weight(.semibold))
+          .id(index)
+          .transition(.asymmetric(
+            insertion: .offset(y: 8).combined(with: .opacity),
+            removal: .offset(y: -8).combined(with: .opacity)))
       }
-      .menuOrder(.fixed)
+      .animation(.snappy(duration: 0.22), value: index)
+      GeometryReader { geometry in
+        track(width: geometry.size.width)
+      }
+      .frame(height: height)
     }
+    .sensoryFeedback(.selection, trigger: ticks)
+    .sensoryFeedback(.impact(weight: .heavy, intensity: 0.8), trigger: bumps)
+    .sensoryFeedback(.impact(flexibility: .soft, intensity: 0.55), trigger: landings)
+    .onAppear { index = chosen }
+    .onChange(of: selected) { if dragged == nil { index = chosen } }
+    .onChange(of: efforts) { index = chosen }
+    .accessibilityElement()
+    .accessibilityLabel("Reasoning")
+    .accessibilityValue(label)
+    .accessibilityAdjustableAction { direction in
+      let next = direction == .increment ? index + 1 : index - 1
+      guard efforts.indices.contains(next) else { return }
+      index = next
+      onPick(efforts[next].id)
+    }
+  }
+
+  private var chosen: Int { efforts.firstIndex { $0.id == selected } ?? 0 }
+  private var label: String { efforts.indices.contains(index) ? efforts[index].label : "" }
+
+  private func track(width: CGFloat) -> some View {
+    let travel = max(1, width - height)
+    let share = dragged ?? stop(index)
+    let inside = min(max(share, 0), 1)
+    let pulled = share - inside
+    return ZStack(alignment: .leading) {
+      Capsule()
+        .fill(.fill.secondary)
+      Capsule()
+        .fill(.primary)
+        .frame(width: height + inside * travel)
+      ForEach(efforts.indices, id: \.self) { level in
+        Circle()
+          .fill(stop(level) <= inside + 0.001 ? AnyShapeStyle(Color(.systemBackground).opacity(0.55)) : AnyShapeStyle(.tertiary))
+          .frame(width: 6, height: 6)
+          // The knob's icon covers the stop it sits on.
+          .opacity(abs(stop(level) - inside) * travel < height * 0.4 ? 0 : 1)
+          .position(x: height / 2 + stop(level) * travel, y: height / 2)
+      }
+      Image(systemName: "brain")
+        .font(.system(size: 19, weight: .medium))
+        .foregroundStyle(Color(.systemBackground))
+        .frame(width: height, height: height)
+        .offset(x: inside * travel)
+        .allowsHitTesting(false)
+    }
+    .frame(height: height)
+    // Pulled past an end, the capsule gives a little in that direction.
+    .scaleEffect(x: 1 + abs(pulled) * 0.4, y: 1 - abs(pulled) * 0.25, anchor: pulled < 0 ? .trailing : .leading)
+    .scaleEffect(dragged == nil ? 1 : 1.015)
+    .contentShape(.capsule)
+    .gesture(
+      DragGesture(minimumDistance: 0)
+        .onChanged { value in
+          let raw = (value.location.x - height / 2) / travel
+          let share = raw < 0 ? -give(-raw) : raw > 1 ? 1 + give(raw - 1) : raw
+          if dragged == nil {
+            // A touch away from the fill moves it there before it follows.
+            withAnimation(.snappy(duration: 0.18)) { dragged = share }
+          } else {
+            dragged = share
+          }
+          let next = nearest(share)
+          if next != index {
+            index = next
+            ticks += 1
+          }
+          let past = raw < 0 || raw > 1
+          if past && !beyond { bumps += 1 }
+          beyond = past
+        }
+        .onEnded { _ in
+          withAnimation(.spring(response: 0.34, dampingFraction: 0.7)) { dragged = nil }
+          beyond = false
+          landings += 1
+          if efforts[index].id != selected { onPick(efforts[index].id) }
+        }
+    )
+  }
+
+  private func stop(_ level: Int) -> CGFloat {
+    efforts.count > 1 ? CGFloat(level) / CGFloat(efforts.count - 1) : 1
+  }
+
+  private func nearest(_ share: CGFloat) -> Int {
+    guard efforts.count > 1 else { return 0 }
+    return Int((min(max(share, 0), 1) * CGFloat(efforts.count - 1)).rounded())
+  }
+
+  /// How far the capsule follows a finger past its end: less the further it goes.
+  private func give(_ distance: CGFloat) -> CGFloat {
+    let limit: CGFloat = 0.08
+    return limit * (1 - 1 / (distance / limit + 1))
   }
 }
 
@@ -372,32 +621,6 @@ struct AccessMenu: View {
     case "full": return "exclamationmark.shield"
     default: return "shield"
     }
-  }
-}
-
-/// A composer menu's face: its current value in secondary ink, nothing more.
-private struct MenuLabel: View {
-  let text: String
-  let symbol: String?
-
-  var body: some View {
-    HStack(spacing: 4) {
-      if let symbol {
-        Image(systemName: symbol)
-          .font(.footnote)
-          .foregroundStyle(.orange)
-      }
-      Text(text)
-        .lineLimit(1)
-      Image(systemName: "chevron.down")
-        .font(.system(size: 9, weight: .bold))
-        .foregroundStyle(.tertiary)
-    }
-    .font(.subheadline.weight(.medium))
-    .foregroundStyle(.secondary)
-    .padding(.horizontal, 8)
-    .frame(height: 36)
-    .contentShape(.rect)
   }
 }
 
