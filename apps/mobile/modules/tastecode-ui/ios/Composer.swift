@@ -472,12 +472,11 @@ private struct LevelName: View {
   }
 }
 
-/// The desktop's effort slider: a dark pill with a dot per level, filled up
-/// to a white thumb. The thumb follows the finger, ticks at every level it
-/// passes, gives a little past either end with a bump, and springs onto the
-/// nearest level when let go.
+/// How hard the model thinks, on a ruler: a fine tick per step and a taller
+/// one per level, lit up to a bar the finger drags. The ticks swell around the
+/// bar while it moves; it clicks at every tick, knocks at every level, bumps
+/// past either end, and settles on the nearest level when let go.
 private struct EffortSlider: View {
-  @Environment(\.colorScheme) private var scheme
   let efforts: [EffortView]
   let selected: String?
   let onPick: (String) -> Void
@@ -486,20 +485,26 @@ private struct EffortSlider: View {
   @State private var index = 0
   /// Where the finger is, as a share of the travel; past 0 or 1 while pulled beyond an end.
   @State private var dragged: CGFloat?
+  /// How far the ticks around the bar have risen, from 0 at rest to 1 while dragged.
+  @State private var swell: CGFloat = 0
+  @State private var tick = 0
   @State private var beyond = false
-  @State private var ticks = 0
+  @State private var clicks = 0
+  @State private var knocks = 0
   @State private var bumps = 0
   @State private var landings = 0
 
-  private let thumb: CGFloat = 34
-  private let inset: CGFloat = 4
+  private let height: CGFloat = 48
+  /// Room at either end, so the bar on the first or last level is not cut off.
+  private let inset: CGFloat = 3
 
   var body: some View {
     GeometryReader { geometry in
-      track(width: geometry.size.width)
+      ruler(width: geometry.size.width)
     }
-    .frame(height: thumb + inset * 2)
-    .sensoryFeedback(.selection, trigger: ticks)
+    .frame(height: height)
+    .sensoryFeedback(.impact(weight: .light, intensity: 0.45), trigger: clicks)
+    .sensoryFeedback(.impact(weight: .medium, intensity: 0.9), trigger: knocks)
     .sensoryFeedback(.impact(weight: .heavy, intensity: 0.75), trigger: bumps)
     .sensoryFeedback(.impact(flexibility: .soft, intensity: 0.5), trigger: landings)
     .onAppear {
@@ -522,88 +527,66 @@ private struct EffortSlider: View {
 
   private var chosen: Int { efforts.firstIndex { $0.id == selected } ?? 0 }
   private var label: String { efforts.indices.contains(index) ? efforts[index].label : "" }
-  private var dark: Bool { scheme == .dark }
 
-  private func track(width: CGFloat) -> some View {
-    let rail = width - inset * 2
-    let travel = max(1, rail - thumb)
+  private func ruler(width: CGFloat) -> some View {
+    let travel = max(1, width - inset * 2)
+    let gaps = max(1, efforts.count - 1)
+    // About 10pt between ticks, whatever the number of levels.
+    let every = max(2, Int((travel / CGFloat(gaps) / 10).rounded()))
+    let count = gaps * every + 1
     let share = dragged ?? stop(index)
-    let inside = min(max(share, 0), 1)
-    let pulled = share - inside
-    let reach = thumb + inside * travel
+    let at = inset + share * travel
+    let marks = Ticks(count: count, every: every, inset: inset, at: at, swell: swell)
     return ZStack(alignment: .leading) {
+      marks.fill(Color.primary.opacity(0.2))
+      marks
+        .fill(Color.primary)
+        .mask(alignment: .leading) {
+          Rectangle().frame(width: max(0, at))
+        }
       Capsule()
-        .fill(dark ? Color.black.opacity(0.34) : Color(.systemGray5))
-        .overlay(Capsule().strokeBorder(Color.primary.opacity(dark ? 0.07 : 0.14), lineWidth: 1))
-      ZStack(alignment: .leading) {
-        dots(travel: travel, color: Color.primary.opacity(dark ? 0.28 : 0.4))
-        Capsule()
-          .fill(dark ? Color.white.opacity(0.24) : Color.white)
-          .frame(width: reach)
-        // The lit dots stay put while the fill's edge sweeps over them.
-        dots(travel: travel, color: dark ? Color.white.opacity(0.8) : Color.black.opacity(0.7))
-          .mask(alignment: .leading) {
-            Capsule().frame(width: reach)
-          }
-        Circle()
-          .fill(dark ? Color.white : Color(white: 0.11))
-          .shadow(color: .black.opacity(dark ? 0.45 : 0.15), radius: 1.5, y: 1)
-          .overlay {
-            Circle()
-              .fill(dark ? Color(white: 0.11) : Color.white)
-              .frame(width: 7, height: 7)
-              .scaleEffect(dragged == nil ? 1 : 1.4)
-              .animation(.snappy(duration: 0.16), value: dragged == nil)
-          }
-          .frame(width: thumb, height: thumb)
-          .offset(x: inside * travel)
-      }
-      .frame(width: rail, height: thumb)
-      .padding(inset)
+        .fill(Color.primary)
+        .frame(width: 4, height: dragged == nil ? 34 : 42)
+        .offset(x: at - 2)
     }
-    .frame(width: width, height: thumb + inset * 2)
-    // Pulled past an end, the pill gives a little in that direction.
-    .scaleEffect(x: 1 + abs(pulled) * 0.35, y: 1 - abs(pulled) * 0.2, anchor: pulled < 0 ? .trailing : .leading)
-    .contentShape(.capsule)
+    .frame(width: width, height: height)
+    .contentShape(.rect)
     .gesture(
       DragGesture(minimumDistance: 0)
         .onChanged { value in
-          let raw = (value.location.x - inset - thumb / 2) / travel
+          let raw = (value.location.x - inset) / travel
           let share = raw < 0 ? -give(-raw) : raw > 1 ? 1 + give(raw - 1) : raw
           if dragged == nil {
-            // A touch away from the thumb glides it there before it follows.
-            withAnimation(.spring(duration: 0.24, bounce: 0.1)) { dragged = share }
+            // A touch away from the bar glides it there before it follows.
+            withAnimation(.spring(duration: 0.28, bounce: 0.12)) {
+              dragged = share
+              swell = 1
+            }
           } else {
             dragged = share
           }
-          let next = nearest(share)
-          if next != index {
-            index = next
-            ticks += 1
+          let next = Int((min(max(share, 0), 1) * CGFloat(count - 1)).rounded())
+          if next != tick {
+            if next % every == 0 { knocks += 1 } else { clicks += 1 }
+            tick = next
           }
+          index = nearest(share)
           let past = raw < 0 || raw > 1
           if past && !beyond { bumps += 1 }
           beyond = past
         }
         .onEnded { _ in
-          withAnimation(.spring(duration: 0.32, bounce: 0.28)) { dragged = nil }
+          withAnimation(.spring(duration: 0.42, bounce: 0.2)) {
+            dragged = nil
+            swell = 0
+          }
+          tick = index * every
           beyond = false
           landings += 1
           if efforts[index].id != selected { onPick(efforts[index].id) }
         }
     )
-  }
-
-  private func dots(travel: CGFloat, color: Color) -> some View {
-    ZStack(alignment: .leading) {
-      ForEach(efforts.indices, id: \.self) { level in
-        Circle()
-          .fill(color)
-          .frame(width: 4, height: 4)
-          .position(x: thumb / 2 + stop(level) * travel, y: thumb / 2)
-      }
-    }
-    .frame(width: travel + thumb, height: thumb)
+    .onAppear { tick = index * every }
   }
 
   private func stop(_ level: Int) -> CGFloat {
@@ -615,10 +598,44 @@ private struct EffortSlider: View {
     return Int((min(max(share, 0), 1) * CGFloat(efforts.count - 1)).rounded())
   }
 
-  /// How far the thumb follows a finger past an end: less the further it goes.
+  /// How far the bar follows a finger past an end: less the further it goes.
   private func give(_ distance: CGFloat) -> CGFloat {
-    let limit: CGFloat = 0.06
+    let limit: CGFloat = 0.05
     return limit * (1 - 1 / (distance / limit + 1))
+  }
+}
+
+/// The ruler's ticks, centred on its middle line; those near the bar stand
+/// taller by `swell`. Both values animate, so the bump travels with the bar.
+private struct Ticks: Shape {
+  let count: Int
+  let every: Int
+  let inset: CGFloat
+  var at: CGFloat
+  var swell: CGFloat
+
+  var animatableData: AnimatablePair<CGFloat, CGFloat> {
+    get { AnimatablePair(at, swell) }
+    set {
+      at = newValue.first
+      swell = newValue.second
+    }
+  }
+
+  func path(in rect: CGRect) -> Path {
+    var path = Path()
+    let travel = rect.width - inset * 2
+    for index in 0..<count {
+      let x = inset + (count > 1 ? travel * CGFloat(index) / CGFloat(count - 1) : travel)
+      let level = index % every == 0
+      let width: CGFloat = level ? 2.5 : 1.5
+      let near = exp(-pow((x - at) / 24, 2))
+      let height = (level ? 20 : 9) * (1 + swell * 0.8 * near)
+      path.addRoundedRect(
+        in: CGRect(x: x - width / 2, y: rect.midY - height / 2, width: width, height: height),
+        cornerSize: CGSize(width: width / 2, height: width / 2))
+    }
+    return path
   }
 }
 
