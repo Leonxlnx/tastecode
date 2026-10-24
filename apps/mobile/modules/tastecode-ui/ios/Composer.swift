@@ -472,26 +472,40 @@ private struct LevelName: View {
   }
 }
 
-/// How hard the model thinks, on iOS's own slider with a round thumb: it
-/// snaps from level to level, with a tick at each one. A drag picks the level
-/// it is let go on; VoiceOver picks each level it steps to.
+/// How hard the model thinks, drawn like the desktop's slider but bigger: a
+/// pill track with a dot per level, filled up to a round thumb. Held, the
+/// thumb lifts into Liquid Glass and follows the finger, stretching as it
+/// moves fast; let go, it settles on the nearest level and turns solid again.
 private struct EffortSlider: View {
   let efforts: [EffortView]
   let selected: String?
   let onPick: (String) -> Void
   var onLevel: (String) -> Void = { _ in }
 
+  @Environment(\.colorScheme) private var scheme
   @State private var level = 0
-  @State private var dragging = false
+  /// Where the held thumb is, from 0 on the first level to 1 on the last;
+  /// a little past either end while pulled beyond it.
+  @State private var held: CGFloat?
+  /// The finger's distance from the thumb's centre when it took hold, so the thumb does not jump.
+  @State private var grip: CGFloat = 0
+  /// Until when a thumb called from elsewhere on the track is still gliding to the finger.
+  @State private var glide = Date.distantPast
+  /// How fast the thumb moves, which stretches the glass along the track.
+  @State private var stretch: CGFloat = 0
+  @State private var beyond = false
+  @State private var bumps = 0
+
+  private let thumb: CGFloat = 34
+  private let inset: CGFloat = 4
 
   var body: some View {
-    RoundSlider(count: efforts.count, level: level) { next, active in
-      level = next
-      dragging = active
-      onLevel(label)
-      if !active { pick() }
+    GeometryReader { geometry in
+      track(width: geometry.size.width)
     }
-    .frame(height: 44)
+    .frame(height: thumb + inset * 2)
+    .sensoryFeedback(.selection, trigger: level) { _, _ in held != nil }
+    .sensoryFeedback(.impact(weight: .light, intensity: 0.7), trigger: bumps)
     .disabled(efforts.count < 2)
     .accessibilityElement()
     .accessibilityLabel("Effort")
@@ -499,7 +513,7 @@ private struct EffortSlider: View {
     .accessibilityAdjustableAction { direction in
       let next = direction == .increment ? level + 1 : level - 1
       guard efforts.indices.contains(next) else { return }
-      level = next
+      withAnimation(.spring(duration: 0.3, bounce: 0.2)) { level = next }
       onLevel(label)
       pick()
     }
@@ -507,78 +521,225 @@ private struct EffortSlider: View {
       level = chosen
       onLevel(label)
     }
-    .onChange(of: selected) { if !dragging { level = chosen } }
+    .onChange(of: selected) { if held == nil { level = chosen } }
     .onChange(of: efforts) { level = chosen }
   }
 
   private var chosen: Int { efforts.firstIndex { $0.id == selected } ?? 0 }
   private var label: String { efforts.indices.contains(level) ? efforts[level].label : "" }
 
+  private func track(width: CGFloat) -> some View {
+    let travel = max(1, width - inset * 2 - thumb)
+    let center = inset + thumb / 2 + (held ?? stop(level)) * travel
+    let face = TrackFace(
+      count: efforts.count, thumb: thumb, inset: inset, travel: travel, center: center,
+      colors: SliderColors(scheme))
+    return ZStack(alignment: .leading) {
+      face
+      Knob(held: held != nil, stretch: stretch, face: face, width: width)
+        .position(x: center, y: inset + thumb / 2)
+    }
+    .frame(width: width, height: thumb + inset * 2)
+    .contentShape(.rect)
+    .gesture(drag(travel: travel, center: center))
+  }
+
+  private func drag(travel: CGFloat, center: CGFloat) -> some Gesture {
+    DragGesture(minimumDistance: 0)
+      .onChanged { value in
+        let taking = held == nil
+        if taking {
+          // Taking hold of the thumb keeps it where the finger touched it;
+          // a touch elsewhere on the track brings it there.
+          let offset = value.startLocation.x - center
+          let onThumb = abs(offset) <= thumb / 2 + 8
+          grip = onThumb ? offset : 0
+          glide = onThumb ? .distantPast : .now + 0.22
+        }
+        let raw = (value.location.x - grip - inset - thumb / 2) / travel
+        let share = raw < 0 ? -give(-raw) : raw > 1 ? 1 + give(raw - 1) : raw
+        if Date.now < glide {
+          withAnimation(.spring(duration: 0.24, bounce: 0.15)) { held = share }
+        } else {
+          held = share
+        }
+        stretch = min(abs(value.velocity.width) / 3200, 0.14)
+        let next = nearest(share)
+        if next != level {
+          level = next
+          onLevel(label)
+        }
+        let past = raw < 0 || raw > 1
+        if past && !beyond { bumps += 1 }
+        beyond = past
+      }
+      .onEnded { _ in
+        withAnimation(.spring(duration: 0.36, bounce: 0.2)) {
+          held = nil
+          stretch = 0
+        }
+        beyond = false
+        pick()
+      }
+  }
+
   private func pick() {
     guard efforts.indices.contains(level), efforts[level].id != selected else { return }
     onPick(efforts[level].id)
   }
+
+  private func stop(_ level: Int) -> CGFloat {
+    efforts.count > 1 ? CGFloat(level) / CGFloat(efforts.count - 1) : 0
+  }
+
+  private func nearest(_ share: CGFloat) -> Int {
+    guard efforts.count > 1 else { return 0 }
+    return Int((min(max(share, 0), 1) * CGFloat(efforts.count - 1)).rounded())
+  }
+
+  /// How far the thumb follows a finger past an end: less the further it goes.
+  private func give(_ distance: CGFloat) -> CGFloat {
+    let limit: CGFloat = 0.04
+    return limit * (1 - 1 / (distance / limit + 1))
+  }
 }
 
-/// `UISlider` with a tick per level and a round thumb. UIKit tracks the
-/// finger, snaps to the ticks and plays the haptics.
-private struct RoundSlider: UIViewRepresentable {
+/// The track: a pill with a dot per level, filled up to the thumb's centre.
+private struct TrackFace: View {
   let count: Int
-  let level: Int
-  /// The level under the thumb, and whether the finger is still on it.
-  let onChange: (_ level: Int, _ dragging: Bool) -> Void
+  let thumb: CGFloat
+  let inset: CGFloat
+  let travel: CGFloat
+  let center: CGFloat
+  let colors: SliderColors
 
-  func makeCoordinator() -> Coordinator { Coordinator(self) }
-
-  func makeUIView(context: Context) -> UISlider {
-    let slider = UISlider()
-    slider.minimumTrackTintColor = .label
-    slider.setThumbImage(Self.thumb, for: .normal)
-    // VoiceOver reads and adjusts the SwiftUI element around it instead.
-    slider.isAccessibilityElement = false
-    slider.accessibilityElementsHidden = true
-    slider.addTarget(context.coordinator, action: #selector(Coordinator.moved(_:)), for: .valueChanged)
-    slider.addTarget(
-      context.coordinator, action: #selector(Coordinator.released(_:)),
-      for: [.touchUpInside, .touchUpOutside, .touchCancel])
-    return slider
-  }
-
-  func updateUIView(_ slider: UISlider, context: Context) {
-    context.coordinator.parent = self
-    let ticks = max(2, count)
-    if slider.trackConfiguration?.ticks.count != ticks {
-      slider.trackConfiguration = UISlider.TrackConfiguration(numberOfTicks: ticks)
-    }
-    if !slider.isTracking {
-      slider.value = Float(level) / Float(ticks - 1)
+  var body: some View {
+    let dots = Dots(count: count, start: inset + thumb / 2, travel: travel)
+    ZStack(alignment: .leading) {
+      Capsule()
+        .fill(colors.track)
+        .overlay(Capsule().strokeBorder(colors.line, lineWidth: 1))
+      dots.fill(colors.dot)
+      Capsule()
+        .fill(colors.fill)
+        .frame(width: max(thumb, center + thumb / 2 - inset), height: thumb)
+        .offset(x: inset)
+      dots
+        .fill(colors.lit)
+        .mask(alignment: .leading) {
+          Rectangle().frame(width: max(0, center + thumb / 2))
+        }
     }
   }
+}
 
-  private static let thumb = UIGraphicsImageRenderer(size: CGSize(width: 36, height: 36)).image { context in
-    let circle = CGRect(x: 4, y: 4, width: 28, height: 28)
-    context.cgContext.setShadow(offset: CGSize(width: 0, height: 1), blur: 4, color: UIColor.black.withAlphaComponent(0.3).cgColor)
-    UIColor.white.setFill()
-    context.cgContext.fillEllipse(in: circle)
+/// The thumb: solid with a dot in its middle at rest. Held, it grows into a
+/// glass lens: the track shows through it sharp and a little magnified, and
+/// the glass bends it at the rim.
+private struct Knob: View {
+  let held: Bool
+  let stretch: CGFloat
+  let face: TrackFace
+  /// The whole track's width, to line the lens's copy of it up with the track.
+  let width: CGFloat
+
+  var body: some View {
+    let size = face.thumb
+    let grow: CGFloat = held ? 1.4 : 1
+    // Each animation reaches only its own modifiers: the lens's copy of the
+    // track must move exactly with the track, never on a spring of its own.
+    // The solid gives way to the glass before it has grown, so no half-faded
+    // dot rides along.
+    ZStack {
+      lens(size: size, grow: grow)
+        .animation(.easeOut(duration: 0.12)) { $0.opacity(held ? 1 : 0) }
+      ZStack {
+        Circle()
+          .fill(face.colors.thumb)
+          .shadow(color: .black.opacity(0.28), radius: 1.5, y: 1)
+        Circle()
+          .fill(face.colors.thumbDot)
+          .frame(width: 8, height: 8)
+      }
+      .animation(.easeOut(duration: 0.12)) { $0.opacity(held ? 0 : 1) }
+    }
+    .frame(width: size, height: size)
+    .glassEffect(.clear, in: .circle)
+    .animation(Self.grow) { content in
+      content
+        .shadow(color: .black.opacity(held ? 0.3 : 0), radius: 8, y: 3)
+        .scaleEffect(grow)
+    }
+    .animation(.interactiveSpring(duration: 0.2)) { content in
+      content.scaleEffect(x: 1 + stretch, y: 1 - stretch * 0.5)
+    }
   }
 
-  final class Coordinator: NSObject {
-    var parent: RoundSlider
+  private static let grow = Animation.spring(duration: 0.34, bounce: 0.32)
 
-    init(_ parent: RoundSlider) { self.parent = parent }
+  /// The track seen through the glass: sharp, a fifth larger, giving way to the glass only at the rim.
+  private func lens(size: CGFloat, grow: CGFloat) -> some View {
+    let height = face.thumb + face.inset * 2
+    return face
+      .frame(width: width, height: height)
+      .offset(x: size / 2 - face.center, y: size / 2 - height / 2)
+      .frame(width: size, height: size, alignment: .topLeading)
+      // Undoes the thumb's growth on the same spring, so the magnification stays put.
+      .animation(Self.grow) { $0.scaleEffect(1.2 / grow) }
+      .mask {
+        RadialGradient(
+          stops: [.init(color: .black, location: 0), .init(color: .black, location: 0.9), .init(color: .clear, location: 1)],
+          center: .center, startRadius: 0, endRadius: size / 2)
+      }
+  }
+}
 
-    /// Only the finger's moves: the release reports the level it lands on.
-    @objc func moved(_ slider: UISlider) {
-      guard slider.isTracking else { return }
-      parent.onChange(level(slider), true)
+/// One dot per level, centred on the track's middle line.
+private struct Dots: Shape {
+  let count: Int
+  let start: CGFloat
+  let travel: CGFloat
+
+  func path(in rect: CGRect) -> Path {
+    var path = Path()
+    let size: CGFloat = 5
+    for index in 0..<count {
+      let x = start + (count > 1 ? travel * CGFloat(index) / CGFloat(count - 1) : 0)
+      path.addEllipse(in: CGRect(x: x - size / 2, y: rect.midY - size / 2, width: size, height: size))
     }
+    return path
+  }
+}
 
-    @objc func released(_ slider: UISlider) {
-      parent.onChange(level(slider), false)
-    }
+/// The desktop's slider colours: a dark track, grey fill and light thumb in
+/// dark mode; a light track, near-black fill and white thumb in light mode.
+private struct SliderColors {
+  let track: Color
+  let line: Color
+  let fill: Color
+  let dot: Color
+  let lit: Color
+  let thumb: Color
+  let thumbDot: Color
 
-    private func level(_ slider: UISlider) -> Int {
-      Int((slider.value * Float(max(1, parent.count - 1))).rounded())
+  init(_ scheme: ColorScheme) {
+    let ink = Color(red: 0.153, green: 0.153, blue: 0.165)
+    if scheme == .dark {
+      track = .black.opacity(0.36)
+      line = .white.opacity(0.07)
+      fill = .white.opacity(0.22)
+      dot = .white.opacity(0.28)
+      lit = .white.opacity(0.8)
+      thumb = Color(white: 0.93)
+      thumbDot = Color(white: 0.1)
+    } else {
+      track = ink.opacity(0.08)
+      line = ink.opacity(0.1)
+      fill = ink
+      dot = ink.opacity(0.4)
+      lit = .white.opacity(0.78)
+      thumb = .white
+      thumbDot = ink
     }
   }
 }
