@@ -125,7 +125,7 @@ struct ChatsScreen: View {
           }
           if !folded {
             ForEach(group.chats) { chat in
-              ChatRow(chat: chat, problem: $problem, onRename: startRenaming)
+              ChatRow(chat: chat, problem: $problem, onOpen: { path.append(.chat($0)) }, onRename: startRenaming)
             }
           }
         }
@@ -135,7 +135,7 @@ struct ChatsScreen: View {
         Section {
           GroupHeader(title: "Archived", count: archived.count, foldable: false, folded: false) {}
           ForEach(archived) { chat in
-            ChatRow(chat: chat, problem: $problem, onRename: startRenaming)
+            ChatRow(chat: chat, problem: $problem, onOpen: { path.append(.chat($0)) }, onRename: startRenaming)
           }
         }
         .listSectionSeparator(.hidden)
@@ -370,10 +370,12 @@ struct ChatRow: View {
   @Environment(AppModel.self) private var model
   let chat: ChatView
   @Binding var problem: String?
+  let onOpen: (String) -> Void
   let onRename: (ChatView) -> Void
 
   var body: some View {
-    NavigationLink(value: Route.chat(chat.id)) {
+    // A button, not a NavigationLink, which the list highlights edge to edge.
+    Button { onOpen(chat.id) } label: {
       HStack(alignment: .firstTextBaseline, spacing: 12) {
         // The provider's mark in a column of its own, centred on the title's line.
         ProviderLogo(mark: chat.mark, size: 15)
@@ -392,8 +394,14 @@ struct ChatRow: View {
         }
       }
       .padding(.vertical, 10)
+      .contentShape(.rect)
+      // Held, the row lifts as a rounded piece of the list, not a sharp band.
+      // The menu sits on the content, not the row: on the row the list draws
+      // its own highlight and keeps it for a few seconds after the menu closes.
+      .contentShape(.contextMenuPreview, .rect(cornerRadius: 16).inset(by: -10))
+      .contextMenu { menu }
     }
-    .navigationLinkIndicatorVisibility(.hidden)
+    .buttonStyle(RowPress())
     .listRowSeparator(.hidden)
     .listRowInsets(EdgeInsets(top: 0, leading: 20, bottom: 0, trailing: 20))
     .swipeActions(edge: .leading) {
@@ -411,18 +419,19 @@ struct ChatRow: View {
           .tint(.indigo)
       }
     }
-    .contextMenu {
-      Button(chat.pinned ? "Unpin" : "Pin", tabler: chat.pinned ? "pinned-off" : "pin") {
-        togglePin()
-      }
-      Button("Rename", tabler: "pencil") { onRename(chat) }
-      if chat.archived {
-        Button("Restore", tabler: "restore") { restore() }
-      } else {
-        Button("Archive", tabler: "archive") { archive() }
-      }
-    }
     .sensoryFeedback(.selection, trigger: chat.pinned)
+  }
+
+  @ViewBuilder private var menu: some View {
+    Button(chat.pinned ? "Unpin" : "Pin", tabler: chat.pinned ? "pinned-off" : "pin") {
+      togglePin()
+    }
+    Button("Rename", tabler: "pencil") { onRename(chat) }
+    if chat.archived {
+      Button("Restore", tabler: "restore") { restore() }
+    } else {
+      Button("Archive", tabler: "archive") { archive() }
+    }
   }
 
   /// The model, then the project where the group does not name it (pinned,
@@ -485,6 +494,16 @@ struct ChatRow: View {
         }
       }
     }
+  }
+}
+
+/// A chat row's press: it dims at once and comes back quickly, so a tap or a
+/// held menu leaves nothing behind.
+private struct RowPress: ButtonStyle {
+  func makeBody(configuration: Configuration) -> some View {
+    configuration.label
+      .opacity(configuration.isPressed ? 0.5 : 1)
+      .animation(.easeOut(duration: configuration.isPressed ? 0.06 : 0.2), value: configuration.isPressed)
   }
 }
 
