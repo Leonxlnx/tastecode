@@ -61,6 +61,7 @@ import {
   providerContextControl,
   validateContextSettings,
 } from './provider-context.js'
+import { runtimeForLaunch, validateRuntime } from './provider-runtimes.js'
 import { currentBranch, switchWorkspaceBranch, workspaceChanges } from './workspace.js'
 import { compactHistoryReplay } from './history-replay.js'
 import { decodeHistoryCursor, readHistoryPage, type HistoryPage } from './history-page.js'
@@ -107,6 +108,7 @@ import type {
   ProviderContextSettingsMap,
   ProviderId,
   ProviderLimitSource,
+  ProviderRuntimeSettings,
   QueuedTurn,
   SessionDiff,
   Skill,
@@ -804,7 +806,10 @@ export class Orchestrator {
   /** Other accounts' controls and model lists, by provider and account, made when first used. */
   #accountScopes = new Map<string, AccountScope>()
   /** What every account's controls share with the default account's. */
-  #scopeOptions: Pick<ProviderControlsOptions, 'controlIdleMs' | 'beforeLimitRead' | 'services'>
+  #scopeOptions: Pick<
+    ProviderControlsOptions,
+    'controlIdleMs' | 'beforeLimitRead' | 'services' | 'chosenRuntime'
+  >
   /** Install, update and sign-in terminals, by terminal id, and the source they change. */
   #providerTerminals = new Map<
     string,
@@ -933,13 +938,18 @@ export class Orchestrator {
       Math.floor(handlers.idleThreadRuntimeMs ?? IDLE_THREAD_RUNTIME_MS),
     )
     this.#scopeOptions = {
+      chosenRuntime: (provider) => this.#chosenRuntime(provider),
       ...(handlers.controlIdleMs !== undefined ? { controlIdleMs: handlers.controlIdleMs } : {}),
       ...(handlers.beforeLimitRead ? { beforeLimitRead: handlers.beforeLimitRead } : {}),
       ...(handlers.providerServices ? { services: handlers.providerServices } : {}),
     }
     this.#controls = new ProviderControls({
       listModels: (provider, agent, read) =>
-        this.#runtimeFor(provider, this.#onLog).listModels(agent, read),
+        this.#runtimeFor(provider, this.#onLog).listModels(
+          agent,
+          read,
+          this.#runtimeLaunch(provider, agent),
+        ),
       onLog: (_provider, line) => this.#onLog(line),
       onLogin: this.#onLogin,
       onUsageChanged: this.#onUsageChanged,
@@ -1009,7 +1019,11 @@ export class Orchestrator {
       providers: [provider],
       accountHome,
       listModels: (_provider, agent, read) =>
-        this.#runtimeFor(provider, this.#onLog, accountHome).listModels(agent, read),
+        this.#runtimeFor(provider, this.#onLog, accountHome).listModels(
+          agent,
+          read,
+          this.#runtimeLaunch(provider, agent),
+        ),
       onLog: (_provider, line) => this.#onLog(line),
       onLogin: (_provider, result) => this.#onLogin(provider, result, accountId),
       onUsageChanged: () => this.#onUsageChanged(provider, accountId),
@@ -1099,6 +1113,27 @@ export class Orchestrator {
     return this.#store.accountContextSettings()
   }
 
+  runtimeSettings(): ProviderRuntimeSettings {
+    return this.#store.providerRuntimeSettings()
+  }
+
+  /** New sessions, model lists and limit reads use it; sessions already running keep theirs. */
+  updateRuntimeSettings(provider: ProviderId, runtime: string | null): ProviderRuntimeSettings {
+    validateRuntime(provider, runtime)
+    return this.#store.updateProviderRuntimeSettings(provider, runtime)
+  }
+
+  /** The provider's chosen runtime, or undefined for its default. Every account shares it. */
+  #chosenRuntime(provider: ProviderId): string | undefined {
+    return runtimeForLaunch(provider, this.#store.providerRuntimeSettings()[provider])
+  }
+
+  /** Custom harnesses start their own engine; only the provider's own CLI follows the choice. */
+  #runtimeLaunch(provider: ProviderId, agent: string | undefined): Pick<StartOptions, 'runtime'> {
+    const runtime = agent ? undefined : this.#chosenRuntime(provider)
+    return runtime === undefined ? {} : { runtime }
+  }
+
   /** A further account's own settings; the default account always uses its provider's. */
   updateAccountContextSettings(entry: AccountContextSettings): readonly AccountContextSettings[] {
     if (entry.accountId === DEFAULT_ACCOUNT_ID) {
@@ -1112,8 +1147,9 @@ export class Orchestrator {
 
   /**
    * Custom harnesses configure their own engine, so only the provider's own
-   * CLI is tuned. A further account's own settings come first; without any it
-   * runs with its provider's.
+   * CLI is tuned. A further account's own context settings come first; without
+   * any it runs with its provider's. Every account runs through the provider's
+   * chosen runtime.
    */
   #contextRuntimeOptions(
     provider: ProviderId,
@@ -1121,6 +1157,7 @@ export class Orchestrator {
     accountId: string | undefined,
   ): StartOptions {
     if (agent) return {}
+    const launch = this.#runtimeLaunch(provider, agent)
     const own =
       accountId === undefined || accountId === DEFAULT_ACCOUNT_ID
         ? undefined
@@ -1131,7 +1168,7 @@ export class Orchestrator {
       providerContextControl(provider),
       own?.settings ?? this.#store.providerContextSettings()[provider],
     )
-    return context ? { context } : {}
+    return context ? { ...launch, context } : launch
   }
 
   async backgroundModelSettings(): Promise<BackgroundModelSettings> {

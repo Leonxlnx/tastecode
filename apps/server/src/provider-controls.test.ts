@@ -7,6 +7,7 @@ import {
   type ProviderLimit,
   type Skill,
 } from '@harness/contracts'
+import { CLAUDE_MCP_CAPABILITIES } from '@harness/adapter-claude-code/capabilities'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   parseLimitFailures,
@@ -247,6 +248,40 @@ describe('declared provider controls', () => {
     ).resolves.toEqual({ capabilities: { inventory: true, ...readOnly }, servers: [server] })
     expect(discover).toHaveBeenCalledOnce()
     expect(createCodex).not.toHaveBeenCalled()
+  })
+
+  it('starts the project probe and the limit read through the chosen runtime', async () => {
+    const discover = vi.fn(async () => ({ commands: [], servers: [] }))
+    const usageLimitSource = vi.fn(async () => ({ status: 'unavailable' as const }))
+    let chosen: string | undefined = 'cli'
+    const { registry } = setup({
+      chosenRuntime: (provider) => (provider === 'claude-code' ? chosen : undefined),
+      services: {
+        'claude-code': {
+          usageLimitSource,
+          projectInventory: {
+            mcpCapabilities: CLAUDE_MCP_CAPABILITIES,
+            discover,
+          },
+        },
+      },
+    })
+    const claude = registry.forProvider('claude-code')
+
+    await claude.listCommands!('/project')
+    await flush()
+    expect(discover).toHaveBeenCalledWith('/project', expect.objectContaining({ runtime: 'cli' }))
+    await claude.usageLimitSource('visible')
+    expect(usageLimitSource).toHaveBeenLastCalledWith({ runtime: 'cli' })
+
+    // The default runtime is no runtime at all.
+    chosen = undefined
+    await claude.listCommands!('/other')
+    await flush()
+    expect(discover).toHaveBeenLastCalledWith(
+      '/other',
+      expect.not.objectContaining({ runtime: expect.anything() }),
+    )
   })
 
   it('offers Claude, Grok and OpenCode project inventories by default without starting anything', () => {
