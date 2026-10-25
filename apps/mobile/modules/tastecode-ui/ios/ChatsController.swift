@@ -425,12 +425,10 @@ final class ChatsController: UIViewController, UICollectionViewDelegate, UISearc
 
   private func addProject() {
     weak var presented: UIViewController?
-    let browser = Hosted {
-      FolderBrowser { [weak self] path in
-        presented?.dismiss(animated: true)
-        self?.project = path
-        self?.reload(animated: true)
-      }
+    let browser = FolderBrowser { [weak self] path in
+      presented?.dismiss(animated: true)
+      self?.project = path
+      self?.reload(animated: true)
     }
     presented = browser
     present(browser, animated: true)

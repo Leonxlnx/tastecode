@@ -50,7 +50,7 @@ final class ChatController: UIViewController {
     navigationItem.titleMenuProvider = { [weak self] _ in self?.titleMenu() }
     changes.addAction(UIAction { [weak self] _ in
       guard let self else { return }
-      self.present(Hosted { ChangesSheet(threadId: self.threadId) }, animated: true)
+      self.present(ChangesSheet(threadId: self.threadId), animated: true)
     }, for: .touchUpInside)
   }
 
@@ -266,11 +266,9 @@ final class NewChatController: UIViewController {
 
   private func addProject() {
     weak var presented: UIViewController?
-    let browser = Hosted {
-      FolderBrowser { [model] path in
-        presented?.dismiss(animated: true)
-        model.send(["type": "newChat.set", "projectPath": path])
-      }
+    let browser = FolderBrowser { [model] path in
+      presented?.dismiss(animated: true)
+      model.send(["type": "newChat.set", "projectPath": path])
     }
     presented = browser
     present(browser, animated: true)

@@ -4,24 +4,6 @@ import UIKit
 // SwiftUI pieces other screens share. The transcript itself is UIKit: see
 // TranscriptController.
 
-/// "+12 −3", green and red: the one place a change's size is coloured.
-struct LineCounts: View {
-  let added: Int
-  let removed: Int
-
-  var body: some View {
-    HStack(spacing: 4) {
-      if added > 0 || removed == 0 {
-        Text("+\(added)").foregroundStyle(.green)
-      }
-      if removed > 0 {
-        Text("−\(removed)").foregroundStyle(.red)
-      }
-    }
-    .monospacedDigit()
-  }
-}
-
 /// A picture on black, fitted to the screen, pinch to zoom.
 struct ImageViewer: View {
   @Environment(\.dismiss) private var dismiss
