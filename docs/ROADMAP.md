@@ -117,7 +117,7 @@ empty repo._
 
 ### M8 — Phone (nightly)
 
-An iPhone app (Expo + SwiftUI, Liquid Glass) paired to the desktop over an end-to-end encrypted
+An iPhone app (Expo + UIKit, Liquid Glass) paired to the desktop over an end-to-end encrypted
 link on the local network or a tailnet. Pairing, chats across devices, new chats with model,
 reasoning and access choices, approvals, questions, queue, photos, folder browsing and change
 review are built; push notifications, a TestFlight build and Android finish the milestone.

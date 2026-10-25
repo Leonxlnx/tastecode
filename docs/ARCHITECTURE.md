@@ -12,7 +12,7 @@ add a change-log row.
 typed WebSocket protocol.**
 
 ```
-desktop renderer · web     phone (Expo + SwiftUI)     thin clients
+desktop renderer · web     phone (Expo + UIKit)       thin clients
         │  WebSocket, typed contracts   │ same protocol, end-to-end encrypted link
         │  req/res { id, method, params } · push { channel, sequence, data }
    core server (Node, local, long-lived)
@@ -136,15 +136,15 @@ carries every change, so a pick on one device shows on the other at once. The de
 the choice keys its picker hides (`models.hidden`) and the phone offers only the rest, because
 the desktop never runs a chat on a hidden model.
 
-The phone app is Expo with its interface written in Swift: one SwiftUI view hierarchy (iOS 26,
-Liquid Glass) inside an `@expo/ui` host, in the local `tastecode-ui` module, beside the
-`tastecode-link` module (Network.framework and CryptoKit, keys in the Keychain). Protocol logic,
+The phone app is Expo with its interface written in Swift: UIKit view controllers (iOS 26, Liquid
+Glass) under one native view that the React root fills the screen with, in the local
+`tastecode-ui` module, beside the `tastecode-link` module (Network.framework and CryptoKit, keys in the Keychain). Protocol logic,
 reconnects and state are TypeScript and import the shared contracts' types. TypeScript also
 words what the screens show (`src/view`: chat rows, step summaries, approval subjects) and sends
 it to Swift as JSON; an open chat sends only the rows that changed, so a streaming reply carries
 its own text and nothing else; Swift reads that JSON off the main thread. Swift draws and asks
-back through one action event. The chat transcript is UIKit, not SwiftUI: a collection view whose
-layout knows every row's exact height, rows laid out on a background queue from Markdown blocks
+back through one action event. The chat transcript is a collection view whose layout knows every
+row's exact height, rows laid out on a background queue from Markdown blocks
 measured once and cached, and in a long reply only the blocks near the screen built. Text is
 drawn off the main thread into IOSurfaces (also a screen and a half ahead of a scroll), which the
 main thread hands to Core Animation as they are; a streaming row moves only itself and the rows
@@ -158,7 +158,10 @@ Tailscale, readable by anyone on a café Wi-Fi). TLS with a pinned self-signed c
 encrypted frames). A fully native Swift app (Android would share nothing). Screens composed in
 React from `@expo/ui`'s SwiftUI components (the first version): menus, toolbars, the composer's
 glass and scrolling could not be shaped as iOS draws them, and every streamed delta re-rendered
-React. The transcript in SwiftUI (a lazy stack of `Text`): every streamed delta parsed and laid out
+React. Screens as one SwiftUI hierarchy inside an `@expo/ui` host (the second version): a held
+chat's grey highlight stayed about 0.8 s after its menu closed, with no way to end it; the chosen
+typeface replaced the monospaced face of keys and diffs; and the UIKit transcript sat behind a
+representable. The transcript in SwiftUI (a lazy stack of `Text`): every streamed delta parsed and laid out
 the whole reply again on the main thread: streaming the same reply in a simulator, it used about
 three times the main thread's time the UIKit transcript does. Transcript text drawn in
 `draw(_:)`, even with `drawsAsynchronously`: the main thread typeset every changed block and then
@@ -938,3 +941,4 @@ registry entry, which is deliberately a good first outside contribution.
 | 2026-10-22 | Added phone access: a Noise IK link on the LAN or a tailnet, one-time pairing codes, a phone method allowlist, `projects.changed`, and the Expo + SwiftUI phone app.           |
 | 2026-10-22 | Phone app screens moved from React-composed Expo UI to one SwiftUI hierarchy in Swift; TypeScript words the content and sends changed rows only.                               |
 | 2026-10-23 | Each chat's setup moved from every client's own storage to the server (`thread.settings`); the desktop shares its hidden models.                                               |
+| 2026-10-25 | Phone app screens moved from SwiftUI to UIKit view controllers under one native view; Expo UI is no longer a dependency.                                                       |
