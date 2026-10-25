@@ -61,6 +61,21 @@ const session = (id: string, title: string) => ({
   unread: false,
 })
 
+/** Rows have no layout in happy-dom; give one a place in a vertical list. */
+function mockRowRect(row: Element, top: number, height: number) {
+  vi.spyOn(row, 'getBoundingClientRect').mockReturnValue({
+    bottom: top + height,
+    height,
+    left: 0,
+    right: 200,
+    top,
+    width: 200,
+    x: 0,
+    y: top,
+    toJSON: () => ({}),
+  })
+}
+
 function renderProjectCatalog(
   projects: Array<{ path: string; name: string; sessions: [] }>,
   active?: string,
@@ -1594,24 +1609,16 @@ describe('Sidebar chat actions', () => {
 
     const source = screen.getByRole('button', { name: 'Chat 7, Codex, working' }).closest('li')!
     const target = screen.getByRole('button', { name: 'Chat 2, Codex' }).closest('li')!
-    vi.spyOn(target, 'getBoundingClientRect').mockReturnValue({
-      bottom: 90,
-      height: 30,
-      left: 0,
-      right: 200,
-      top: 60,
-      width: 200,
-      x: 0,
-      y: 60,
-      toJSON: () => ({}),
-    })
-    const dataTransfer = { dropEffect: 'none', effectAllowed: 'none', setData: vi.fn() }
+    const rows = Array.from(document.querySelectorAll<HTMLElement>('[data-archive-session-id]'))
+    rows.forEach((row, index) => mockRowRect(row, index * 30, 30))
+    const start = rows.indexOf(source) * 30 + 15
+    // Up past the threshold, then into Chat 2's slot.
+    fireEvent.pointerDown(source, { button: 0, pointerId: 1, clientY: start })
+    fireEvent.pointerMove(source, { pointerId: 1, clientY: start - 6 })
+    fireEvent.pointerMove(source, { pointerId: 1, clientY: rows.indexOf(target) * 30 + 8 })
+    fireEvent.pointerUp(source, { pointerId: 1 })
 
-    fireEvent.dragStart(source, { dataTransfer })
-    fireEvent.dragOver(target, { clientY: 80, dataTransfer })
-    fireEvent.drop(target, { clientY: 80, dataTransfer })
-
-    expect(onReorderSession).toHaveBeenCalledWith('/work/harness', 'thread-7', 'thread-2', 'after')
+    expect(onReorderSession).toHaveBeenCalledWith('/work/harness', 'thread-7', 'thread-2', 'before')
   })
 
   it('keeps a folded project bounded when many chats below the fold are unread', () => {
@@ -1856,6 +1863,7 @@ describe('Sidebar chat actions', () => {
 
   it('reorders chats when one is dragged between sidebar rows', () => {
     const onReorderSession = vi.fn()
+    const onSelectSession = vi.fn()
 
     render(
       <Sidebar
@@ -1876,7 +1884,7 @@ describe('Sidebar chat actions', () => {
         onClose={vi.fn()}
         onAddProject={vi.fn()}
         onNewSession={vi.fn()}
-        onSelectSession={vi.fn()}
+        onSelectSession={onSelectSession}
         onRenameProject={vi.fn()}
         onRemoveProject={vi.fn()}
         onTogglePin={vi.fn()}
@@ -1891,33 +1899,50 @@ describe('Sidebar chat actions', () => {
 
     const source = screen.getByRole('button', { name: 'First chat, Codex' }).closest('li')!
     const target = screen.getByRole('button', { name: 'Second chat, Codex' }).closest('li')!
-    vi.spyOn(target, 'getBoundingClientRect').mockReturnValue({
-      bottom: 90,
-      height: 30,
-      left: 0,
-      right: 200,
-      top: 60,
-      width: 200,
-      x: 0,
-      y: 60,
-      toJSON: () => ({}),
-    })
-    const dataTransfer = {
-      dropEffect: 'none',
-      effectAllowed: 'none',
-      setData: vi.fn(),
-    }
+    mockRowRect(source, 30, 30)
+    mockRowRect(target, 60, 30)
 
-    fireEvent.dragStart(source, { dataTransfer })
-    fireEvent.dragOver(target, { clientY: 80, dataTransfer })
-    fireEvent.dragOver(target, { clientY: 80, dataTransfer })
-    expect(target.dataset.dropPosition).toBe('after')
+    fireEvent.pointerDown(source, { button: 0, pointerId: 1, clientY: 45 })
     expect(prepareHaptics).toHaveBeenCalledOnce()
-    expect(performHaptic).toHaveBeenCalledOnce()
-    expect(performHaptic).toHaveBeenCalledWith('alignment')
-    fireEvent.drop(target, { clientY: 80, dataTransfer })
+    fireEvent.pointerMove(source, { pointerId: 1, clientY: 47 })
+    expect(source.classList.contains('is-row-dragging')).toBe(false)
+    // Crossing the threshold picks the row up where it lies, without a jump.
+    fireEvent.pointerMove(source, { pointerId: 1, clientY: 52 })
+    expect(source.classList.contains('is-row-dragging')).toBe(true)
+    expect(source.style.translate).toBeFalsy()
+    fireEvent.pointerMove(source, { pointerId: 1, clientY: 92 })
+    // The held row rides with the pointer (clamped to the list); the other
+    // slides up into its slot.
+    expect(source.style.translate).toBe('0 30px')
+    expect(target.classList.contains('is-row-shifting')).toBe(true)
+    expect(target.style.translate).toBe('0 -30px')
+    expect(performHaptic).toHaveBeenCalledExactlyOnceWith('alignment')
+    expect(onReorderSession).not.toHaveBeenCalled()
 
-    expect(onReorderSession).toHaveBeenCalledWith('/work/harness', 'thread-1', 'thread-2', 'after')
+    fireEvent.pointerUp(source, { pointerId: 1 })
+    expect(onReorderSession).toHaveBeenCalledExactlyOnceWith(
+      '/work/harness',
+      'thread-1',
+      'thread-2',
+      'after',
+    )
+    expect(source.style.translate).toBe('')
+    expect(target.style.translate).toBe('')
+    // The release that ended the drag must not open the chat.
+    fireEvent.click(screen.getByRole('button', { name: 'First chat, Codex' }))
+    expect(onSelectSession).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'First chat, Codex' }))
+    expect(onSelectSession).toHaveBeenCalledExactlyOnceWith('thread-1')
+
+    onReorderSession.mockClear()
+    fireEvent.pointerDown(source, { button: 0, pointerId: 2, clientY: 45 })
+    fireEvent.pointerMove(source, { pointerId: 2, clientY: 52 })
+    fireEvent.pointerMove(source, { pointerId: 2, clientY: 92 })
+    expect(target.style.translate).toBe('0 -30px')
+    fireEvent.keyDown(window, { key: 'Escape' })
+    fireEvent.pointerUp(source, { pointerId: 2 })
+    expect(onReorderSession).not.toHaveBeenCalled()
+    expect(target.style.translate).toBe('')
   })
 
   it('reorders projects when one is dragged between sidebar rows', () => {
@@ -1954,24 +1979,18 @@ describe('Sidebar chat actions', () => {
 
     const source = screen.getByRole('button', { name: 'First' }).closest('section')!
     const target = screen.getByRole('button', { name: 'Second' }).closest('section')!
-    vi.spyOn(target, 'getBoundingClientRect').mockReturnValue({
-      bottom: 80,
-      height: 30,
-      left: 0,
-      right: 200,
-      top: 50,
-      width: 200,
-      x: 0,
-      y: 50,
-      toJSON: () => ({}),
-    })
-    const dataTransfer = { dropEffect: 'none', effectAllowed: 'none', setData: vi.fn() }
+    const head = source.querySelector('.proj__head')!
+    mockRowRect(source, 20, 30)
+    mockRowRect(target, 50, 30)
 
-    fireEvent.dragStart(source, { dataTransfer })
-    fireEvent.dragOver(target, { clientY: 75, dataTransfer })
-    fireEvent.drop(target, { clientY: 75, dataTransfer })
+    fireEvent.pointerDown(head, { button: 0, pointerId: 1, clientY: 35 })
+    fireEvent.pointerMove(head, { pointerId: 1, clientY: 42 })
+    fireEvent.pointerMove(head, { pointerId: 1, clientY: 82 })
+    expect(source.style.translate).toBe('0 30px')
+    expect(target.style.translate).toBe('0 -30px')
+    fireEvent.pointerUp(head, { pointerId: 1 })
 
-    expect(onReorderProject).toHaveBeenCalledWith('/work/first', '/work/second', 'after')
+    expect(onReorderProject).toHaveBeenCalledExactlyOnceWith('/work/first', '/work/second', 'after')
   })
 
   it('adds all folders dropped on the sidebar with clear drop feedback', async () => {

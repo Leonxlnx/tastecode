@@ -266,11 +266,14 @@ describe('sidebar theme CSS', () => {
     expect(sessRule).toContain('font-weight: var(--rail-font-weight);')
     expect(sessRule).toContain('border-radius: var(--r-md);')
     expect(sidebarSource).toContain('const VIRTUAL_SESSION_ROW_HEIGHT = 30')
+    // A dragged project rides over its neighbours, so it needs the rail's
+    // opaque background; the rows making way slide with the shared curve.
     expect(appCss).toMatch(
-      /\.proj\[data-drop-position\]::before \{[^}]*right: 6px;[^}]*left: 26px;[^}]*height: 2px;[^}]*background: var\(--light\);/s,
+      /\.proj\.is-row-dragging \{[^}]*z-index: 3;[^}]*background: var\(--bg-rail\);/s,
     )
-    expect(appCss).toMatch(/\.proj\[data-drop-position='before'\]::before \{[^}]*top: -1px;/s)
-    expect(appCss).toMatch(/\.proj\[data-drop-position='after'\]::before \{[^}]*bottom: -1px;/s)
+    expect(appCss).toMatch(
+      /\.sessrow\.is-row-shifting,\s*\.proj\.is-row-shifting \{[^}]*transition: translate var\(--dur-slow\) var\(--ease-rail\);/s,
+    )
   })
 
   it('uses the reference pill shape without changing the virtual row geometry', () => {

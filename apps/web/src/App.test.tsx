@@ -11017,22 +11017,7 @@ describe('sidebar chat ordering', () => {
 
     const source = (await screen.findByRole('button', { name: 'First' })).closest('section')!
     const target = screen.getByRole('button', { name: 'Second' }).closest('section')!
-    vi.spyOn(target, 'getBoundingClientRect').mockReturnValue({
-      bottom: 80,
-      height: 30,
-      left: 0,
-      right: 200,
-      top: 50,
-      width: 200,
-      x: 0,
-      y: 50,
-      toJSON: () => ({}),
-    })
-    const dataTransfer = { dropEffect: 'none', effectAllowed: 'none', setData: vi.fn() }
-
-    fireEvent.dragStart(source, { dataTransfer })
-    fireEvent.dragOver(target, { clientY: 75, dataTransfer })
-    fireEvent.drop(target, { clientY: 75, dataTransfer })
+    dragRow(source, target, 'after')
 
     await waitFor(() => {
       expect(JSON.parse(localStorage.getItem('harness.projectOrder') ?? '[]')).toEqual([
@@ -11061,26 +11046,7 @@ describe('sidebar chat ordering', () => {
 
     const source = (await screen.findByRole('button', { name: /^First chat,/ })).closest('li')!
     const target = screen.getByRole('button', { name: /^Third chat,/ }).closest('li')!
-    vi.spyOn(target, 'getBoundingClientRect').mockReturnValue({
-      bottom: 88,
-      height: 28,
-      left: 0,
-      right: 200,
-      top: 60,
-      width: 200,
-      x: 0,
-      y: 60,
-      toJSON: () => ({}),
-    })
-    const dataTransfer = {
-      dropEffect: 'none',
-      effectAllowed: 'none',
-      setData: vi.fn(),
-    }
-
-    fireEvent.dragStart(source, { dataTransfer })
-    fireEvent.dragOver(target, { clientY: 80, dataTransfer })
-    fireEvent.drop(target, { clientY: 80, dataTransfer })
+    dragRow(source, target, 'after')
 
     await waitFor(() => {
       const order = SessionOrderSchema.parse(
@@ -13594,15 +13560,41 @@ function sessionTitles(): string[] {
 
 function dropChatRow(sourceTitle: string, targetTitle: string, position: 'before' | 'after') {
   const row = (title: string) => treeChatRow(title).closest('li')!
-  const source = row(sourceTitle)
-  const target = row(targetTitle)
-  vi.spyOn(target, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 60, 200, 28))
-  const dataTransfer = { dropEffect: 'none', effectAllowed: 'none', setData: vi.fn() }
-  const clientY = position === 'before' ? 65 : 85
+  dragRow(row(sourceTitle), row(targetTitle), position)
+}
 
-  fireEvent.dragStart(source, { dataTransfer })
-  fireEvent.dragOver(target, { clientY, dataTransfer })
-  fireEvent.drop(target, { clientY, dataTransfer })
+/**
+ * Drag a sidebar row (a chat `li` or a project `section`) with the pointer
+ * until it sits before or after another row of the same list, then release.
+ * happy-dom lays nothing out, so every row gets a 30px slot in list order.
+ */
+function dragRow(source: HTMLElement, target: HTMLElement, position: 'before' | 'after') {
+  const attribute = source.hasAttribute('data-project-path')
+    ? 'data-project-path'
+    : 'data-archive-session-id'
+  const rows = Array.from(source.parentElement!.children).filter((node): node is HTMLElement =>
+    node.hasAttribute(attribute),
+  )
+  const height = 30
+  rows.forEach((node, index) =>
+    vi
+      .spyOn(node, 'getBoundingClientRect')
+      .mockReturnValue(new DOMRect(0, index * height, 200, height)),
+  )
+  const from = rows.indexOf(source)
+  const to = rows.indexOf(target)
+  const down = to > from
+  const slot = down ? (position === 'after' ? to : to - 1) : position === 'before' ? to : to + 1
+  const handle = source.querySelector<HTMLElement>('.proj__head') ?? source
+  const start = from * height + height / 2
+  fireEvent.pointerDown(handle, { button: 0, pointerId: 1, clientY: start })
+  // The first move past the threshold only picks the row up where it lies.
+  fireEvent.pointerMove(handle, { pointerId: 1, clientY: start + (down ? 6 : -6) })
+  fireEvent.pointerMove(handle, {
+    pointerId: 1,
+    clientY: slot * height + height / 2 + (down ? 7 : -7),
+  })
+  fireEvent.pointerUp(handle, { pointerId: 1 })
 }
 
 describe('reopening a session', () => {
