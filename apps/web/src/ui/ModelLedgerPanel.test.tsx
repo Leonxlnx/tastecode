@@ -8,7 +8,8 @@ import { MODEL_PICKER_LAYOUT_KEY, writeModelPickerLayout } from '../model-picker
 import { MODEL_RECENTS_KEY } from '../model-recents.js'
 import type { ProviderAccountsSnapshot } from '../provider-accounts-state.js'
 import type { UsageSummaryState } from '../usage-summary-state.js'
-import type { ModelLedgerData } from './model-ledger-context.js'
+import { ModelLedgerFrameContext, type ModelLedgerData } from './model-ledger-context.js'
+import { ModelLedgerPanel } from './ModelLedgerPanel.js'
 import { ModelSelector, type ModelPickerHandle } from './ModelSelector.js'
 
 vi.mock('../haptics.js', () => ({ performAppHaptic: vi.fn(), prepareAppHaptics: vi.fn() }))
@@ -416,6 +417,28 @@ describe('ledger panel', () => {
       within(inspector()).getByRole('button', { name: 'Use studio@example.invalid · 92% left' }),
     )
     expect(onModelChange).toHaveBeenCalledWith(ASTRA_STUDIO.key)
+  })
+
+  it('keeps the source beside the name and the account to one line in a short panel', () => {
+    render(
+      <ModelLedgerFrameContext.Provider value={{ close: vi.fn(), height: 280 }}>
+        <ModelLedgerPanel
+          models={[ASTRA]}
+          modelId={ASTRA.key}
+          effort="high"
+          serviceTier={undefined}
+          disabled={false}
+          onModelChange={vi.fn()}
+          onEffortChange={vi.fn()}
+          onServiceTierChange={vi.fn()}
+          ledger={{ limits: [ready('codex', [window5h(36)])], accounts: ACCOUNTS }}
+        />
+      </ModelLedgerFrameContext.Provider>,
+    )
+    expect(document.querySelector('.model-ledger')?.hasAttribute('data-short')).toBe(true)
+    expect(inspector().querySelector('.model-ledger__sub')?.textContent).toBe('Codex')
+    expect(inspector().textContent).toContain('leon@example.invalid64% of 5-hour left')
+    expect(inspector().querySelectorAll('[role="meter"]')).toHaveLength(1)
   })
 
   it('groups other engines under "Move this chat to" in a chat and says what moving does', async () => {

@@ -702,21 +702,71 @@
   outline-offset: var(--focus-ring-inset);
 }
 
-/* a short panel (a new chat at a small window) keeps every line of the inspector */
+/* A short panel (a new chat, where the room below the composer is small): the
+   source sits beside the name, the job keeps one line, the account one line
+   and its meter, so the effort and what is left always fit. */
+
+.model-ledger__inspect > * {
+  flex-shrink: 0;
+}
 
 .model-ledger[data-short] .model-ledger__inspector {
-  padding-top: 12px;
-  padding-bottom: 10px;
+  padding-top: 11px;
+  padding-bottom: 9px;
+}
+
+.model-ledger[data-short] .model-ledger__heading {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.model-ledger[data-short] .model-ledger__title {
+  flex: none;
+  max-width: 62%;
+}
+
+.model-ledger[data-short] .model-ledger__sub {
+  min-width: 0;
+  margin-top: 0;
 }
 
 .model-ledger[data-short] .model-ledger__job {
-  margin-top: 6px;
+  margin-top: 4px;
   -webkit-line-clamp: 1;
 }
 
 .model-ledger[data-short] .model-ledger__label {
-  margin-top: 8px;
+  height: 18px;
+  margin-top: 7px;
   margin-bottom: 4px;
+}
+
+.model-ledger[data-short] .model-ledger__level {
+  height: 25px;
+}
+
+.model-ledger[data-short] .model-ledger__foot-area {
+  padding-top: 11px;
+}
+
+.model-ledger[data-short] .model-ledger__note {
+  margin-top: 8px;
+  padding: 7px 9px;
+}
+
+.model-ledger[data-short] .model-ledger__foot-area > .model-ledger__note:first-child {
+  margin-top: 0;
+}
+
+.model-ledger[data-short] .model-ledger__note-action {
+  margin-top: 5px;
+}
+
+/* A note says more than the job line at this size. */
+.model-ledger[data-short] .model-ledger__inspect:has(.model-ledger__note) .model-ledger__job {
+  display: none;
 }
 
 @media (prefers-reduced-motion: reduce) {

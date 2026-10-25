@@ -426,6 +426,7 @@ export function ModelLedgerPanel(props: ModelLedgerPanelProps) {
               chosenEffort={effortFor(highlighted)}
               fast={fastFor(highlighted)}
               tall={tall}
+              short={height < SHORT_HEIGHT}
               now={now}
               headroom={headroomFor(highlighted.choice)}
               account={(() => {
@@ -670,6 +671,8 @@ function Inspector(props: {
   chosenEffort: string | undefined
   fast: boolean
   tall: boolean
+  /** Little room: the source sits beside the name and the account takes one line. */
+  short: boolean
   now: number
   headroom: Headroom | undefined
   account: { name: string; plan?: string | undefined } | undefined
@@ -700,16 +703,18 @@ function Inspector(props: {
 
   return (
     <div className="model-ledger__inspect">
-      <p className="model-ledger__title">
-        <ProviderIcon mark={entry.mark} size={15} />
-        <span>{name}</span>
-        {isNewModel(entry, props.now) ? <span className="model-ledger__tag">New</span> : null}
-      </p>
-      <p className="model-ledger__sub">
-        {[entry.sourceName, lab, model.isDefault ? 'Default model' : undefined]
-          .filter(Boolean)
-          .join(' · ')}
-      </p>
+      <div className="model-ledger__heading">
+        <p className="model-ledger__title">
+          <ProviderIcon mark={entry.mark} size={15} />
+          <span>{name}</span>
+          {isNewModel(entry, props.now) ? <span className="model-ledger__tag">New</span> : null}
+        </p>
+        <p className="model-ledger__sub">
+          {[entry.sourceName, lab, model.isDefault && !props.short ? 'Default model' : undefined]
+            .filter(Boolean)
+            .join(' · ')}
+        </p>
+      </div>
       {model.description ? <p className="model-ledger__job">{model.description}</p> : null}
 
       <div className="model-ledger__label">
@@ -766,7 +771,7 @@ function Inspector(props: {
             <Clock size={14} aria-hidden />
             <div>
               The {out.name} limit
-              {props.account ? (
+              {props.account && !props.short ? (
                 <>
                   {' '}
                   on <b>{props.account.name}</b>
@@ -792,6 +797,7 @@ function Inspector(props: {
             account={props.account}
             headroom={props.headroom}
             tall={props.tall}
+            short={props.short}
             now={props.now}
           />
         )}
@@ -815,24 +821,46 @@ function AccountLine(props: {
   account: { name: string; plan?: string | undefined } | undefined
   headroom: Headroom | undefined
   tall: boolean
+  short: boolean
   now: number
 }) {
   const headroom = props.headroom
   if (!headroom && !props.account) return null
   const windows =
     headroom?.kind === 'windows' ? (props.tall ? headroom.windows : [headroom.tightest]) : []
-  const status =
-    headroom === undefined
-      ? undefined
-      : headroom.kind === 'checking'
-        ? 'Checking limits…'
-        : headroom.kind === 'spend'
-          ? `${usd(headroom.todayUsd)} spent today`
-          : headroom.kind === 'not-reported'
-            ? 'Limits not reported'
-            : headroom.kind === 'unavailable'
-              ? 'Limits unavailable'
-              : undefined
+  if (props.short) {
+    // One line and the meter: what is left of the tightest window.
+    const window = windows[0]
+    return (
+      <div className="model-ledger__account">
+        <div className="model-ledger__account-line">
+          <User size={14} aria-hidden />
+          <span className="model-ledger__who">{props.account?.name ?? props.fallbackName}</span>
+          <span
+            className={`model-ledger__left${window?.low ? ' is-low' : ''}`}
+            title={
+              window?.resetsAt ? `Resets ${resetPhrase(window.resetsAt, props.now)}` : undefined
+            }
+          >
+            {window ? `${window.left}% of ${window.name} left` : statusOf(headroom)}
+          </span>
+        </div>
+        {window ? (
+          <div
+            className={`model-ledger__meter${window.low ? ' is-low' : ''}`}
+            role="meter"
+            aria-label={`${capitalize(window.name)} limit left`}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={window.left}
+          >
+            <i style={{ width: `${window.left}%` }} />
+          </div>
+        ) : null}
+      </div>
+    )
+  }
+  const status = statusOf(headroom)
   return (
     <div className="model-ledger__account">
       <div className="model-ledger__account-line">
@@ -874,6 +902,17 @@ function AccountLine(props: {
     </div>
   )
 }
+
+/** The words for headroom that is not a share of a window. */
+function statusOf(headroom: Headroom | undefined): string | undefined {
+  if (headroom === undefined) return undefined
+  if (headroom.kind === 'checking') return 'Checking limits…'
+  if (headroom.kind === 'spend') return `${usd(headroom.todayUsd)} spent today`
+  if (headroom.kind === 'not-reported') return 'Limits not reported'
+  if (headroom.kind === 'unavailable') return 'Limits unavailable'
+  return undefined
+}
+
 function capitalize(text: string): string {
   return text.charAt(0).toUpperCase() + text.slice(1)
 }
