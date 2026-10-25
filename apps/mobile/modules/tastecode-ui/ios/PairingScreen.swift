@@ -45,9 +45,6 @@ final class PairingController: UIViewController {
     corners.lineCap = .round
     corners.lineJoin = .round
 
-    allow.configuration?.title = "Allow Camera"
-    allow.configuration?.buttonSize = .large
-    allow.tintColor = .label
     allow.addAction(UIAction { [weak self] _ in self?.askForCamera() }, for: .touchUpInside)
     let deniedTitle = UILabel()
     deniedTitle.text = "Camera access is off"
@@ -92,6 +89,10 @@ final class PairingController: UIViewController {
     words.spacing = 10
     words.setCustomSpacing(14, after: instructions)
 
+    registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (pairing: PairingController, _: UITraitCollection) in
+      pairing.applied = nil
+      pairing.setNeedsUpdateProperties()
+    }
     cancel.configuration?.title = "Cancel"
     cancel.configuration?.buttonSize = .large
     cancel.configuration?.baseForegroundColor = .label
@@ -154,6 +155,7 @@ final class PairingController: UIViewController {
     if let applied, applied.link == link, applied.camera == camera, applied.problem == problem { return }
     if applied?.link.pairing == true && !link.pairing { problem = nil }
     applied = (link, camera, problem)
+    allow.showAnswer("Allow Camera", ready: true, traits: traitCollection)
     // A code was read and the computer has not answered yet. Once it refuses
     // the code, the screen offers the camera and Paste again for a new one.
     let waiting = link.pairing && link.phase != .refused

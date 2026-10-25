@@ -87,7 +87,6 @@ final class ApprovalPanelView: UIView {
 
     deny.addAction(UIAction { [weak self] _ in self?.decide("deny") }, for: .touchUpInside)
     allow.addAction(UIAction { [weak self] _ in self?.decide("approve") }, for: .touchUpInside)
-    allow.tintColor = .label
     let answers = UIStackView(arrangedSubviews: [deny, allow])
     answers.axis = .horizontal
     answers.spacing = 10
@@ -125,12 +124,8 @@ final class ApprovalPanelView: UIView {
     deny.configuration?.attributedTitle = AttributedString(
       "Deny", attributes: AttributeContainer([.font: UIFont.app(.body, traits: traits)]))
     deny.configuration?.baseForegroundColor = .label
-    allow.configuration?.buttonSize = .large
-    allow.configuration?.attributedTitle = AttributedString(
-      "Allow", attributes: AttributeContainer([.font: UIFont.app(.body, weight: .semibold, traits: traits)]))
-    // Fixed colours: on the glass, dynamic ones turn into vibrancy and vanish on the white.
-    allow.configuration?.baseForegroundColor = (busy ? UIColor.tertiaryLabel : .systemBackground).resolvedColor(with: traits)
-    for button in [stop, deny, allow, always] { button.isEnabled = !busy }
+    allow.showAnswer("Allow", ready: !busy, traits: traits)
+    for button in [stop, deny, always] { button.isEnabled = !busy }
   }
 
   private func decide(_ decision: String) {
@@ -248,7 +243,6 @@ final class QuestionPanelView: UIView, UITextViewDelegate, UITextFieldDelegate {
 
     backButton.addAction(UIAction { [weak self] _ in self?.go(by: -1) }, for: .touchUpInside)
     nextButton.addAction(UIAction { [weak self] _ in self?.advance() }, for: .touchUpInside)
-    nextButton.tintColor = .label
     let buttons = UIStackView(arrangedSubviews: [backButton, nextButton])
     buttons.axis = .horizontal
     buttons.spacing = 10
@@ -326,13 +320,7 @@ final class QuestionPanelView: UIView, UITextViewDelegate, UITextFieldDelegate {
 
   private func refreshNext() {
     let ready = !answer(current).isEmpty && !busy
-    nextButton.isEnabled = ready
-    nextButton.configuration?.buttonSize = .large
-    nextButton.configuration?.attributedTitle = AttributedString(
-      last ? "Send" : "Next",
-      attributes: AttributeContainer([.font: UIFont.app(.body, weight: .semibold, traits: traitCollection)]))
-    nextButton.configuration?.baseForegroundColor = (ready ? UIColor.systemBackground : .tertiaryLabel)
-      .resolvedColor(with: traitCollection)
+    nextButton.showAnswer(last ? "Send" : "Next", ready: ready, traits: traitCollection)
     backButton.isEnabled = !busy
   }
 
@@ -471,5 +459,25 @@ private final class OptionRow: UIControl {
     didSet {
       UIView.animate(withDuration: isHighlighted ? 0.05 : 0.2) { self.alpha = self.isHighlighted ? 0.5 : 1 }
     }
+  }
+}
+
+extension UIButton {
+  /// A panel's one filled answer: the text's colour as the fill and the
+  /// background's on it while it can be pressed; plain glass with a grey
+  /// label while it waits. It is never disabled, which dims both into grey on
+  /// grey; it takes no touch instead.
+  func showAnswer(_ title: String, ready: Bool, traits: UITraitCollection) {
+    var answer: UIButton.Configuration = ready ? .prominentGlass() : .glass()
+    answer.buttonSize = .large
+    answer.attributedTitle = AttributedString(
+      title, attributes: AttributeContainer([.font: UIFont.app(.body, weight: .semibold, traits: traits)]))
+    // Fixed colours: on the glass, dynamic ones turn into vibrancy and fade into the fill.
+    answer.baseForegroundColor = (ready ? UIColor.systemBackground : .secondaryLabel).resolvedColor(with: traits)
+    configuration = answer
+    tintColor = .label
+    isEnabled = true
+    isUserInteractionEnabled = ready
+    accessibilityTraits = ready ? .button : [.button, .notEnabled]
   }
 }
