@@ -863,6 +863,15 @@ export function startServer(
         return orchestrator.updateContextSettings(p.provider, p.settings)
       }
 
+      case 'providers.runtimeSettings':
+        parseParams(method, params)
+        return orchestrator.runtimeSettings()
+
+      case 'providers.updateRuntimeSettings': {
+        const p = parseParams(method, params)
+        return orchestrator.updateRuntimeSettings(p.provider, p.runtime)
+      }
+
       case 'providers.accountContextSettings':
         parseParams(method, params)
         return { accounts: [...orchestrator.accountContextSettings()] }

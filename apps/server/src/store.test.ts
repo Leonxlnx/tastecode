@@ -1632,6 +1632,26 @@ describe('threads', () => {
     }
   })
 
+  it('keeps the chosen provider runtimes across a restart and forgets a reset one', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-runtime-'))
+    const file = path.join(dir, 'runtime.db')
+    const persistent = new Store(file)
+    expect(persistent.providerRuntimeSettings()).toEqual({})
+    const saved = persistent.updateProviderRuntimeSettings('claude-code', 'cli')
+    expect(Object.isFrozen(saved)).toBe(true)
+    expect(persistent.providerRuntimeSettings()).toBe(saved)
+    persistent.close()
+
+    const reopened = new Store(file)
+    try {
+      expect(reopened.providerRuntimeSettings()).toEqual({ 'claude-code': 'cli' })
+      expect(reopened.updateProviderRuntimeSettings('claude-code', null)).toEqual({})
+    } finally {
+      reopened.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('falls back to engine defaults when stored context settings are unreadable', () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-context-'))
     const file = path.join(dir, 'context.db')

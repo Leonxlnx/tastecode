@@ -51,7 +51,25 @@ describe('provider runtime loading', () => {
 
     await providerRuntime('claude-code', () => {}).listModels(undefined, { refresh: true })
 
-    expect(listModels).toHaveBeenCalledExactlyOnceWith(undefined, { refresh: true })
+    expect(listModels).toHaveBeenCalledExactlyOnceWith(undefined, { refresh: true }, undefined)
+  })
+
+  it('tells the loaded runtime how the read starts the engine', async () => {
+    const loaded = fakeRuntime()
+    const listModels = vi.spyOn(loaded, 'listModels')
+    adapters.providerRuntime.mockReturnValue(loaded)
+
+    await providerRuntime('claude-code', () => {}).listModels(
+      undefined,
+      { refresh: false },
+      { runtime: 'cli' },
+    )
+
+    expect(listModels).toHaveBeenCalledExactlyOnceWith(
+      undefined,
+      { refresh: false },
+      { runtime: 'cli' },
+    )
   })
 
   it('preserves which providers support restart resume', () => {
