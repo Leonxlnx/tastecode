@@ -259,7 +259,12 @@
   line-height: 14px;
 }
 
+/* The light theme's default skeleton is --surface-2, which the menu is drawn
+   on; mixed from the text color like the find bar's, the bars stay visible. */
 .model-ledger__skeleton {
+  --skeleton: color-mix(in srgb, var(--text) 9%, var(--menu-bg));
+  --skeleton-shine: color-mix(in srgb, var(--text) 15%, var(--menu-bg));
+
   display: flex;
   align-items: center;
   height: var(--ledger-row-h);
