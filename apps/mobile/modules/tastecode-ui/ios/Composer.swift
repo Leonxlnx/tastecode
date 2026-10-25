@@ -95,6 +95,9 @@ final class ComposerView: UIView, UITextViewDelegate {
   @available(*, unavailable)
   required init?(coder: NSCoder) { fatalError() }
 
+  /// The round buttons' and the model capsule's height.
+  static let control: CGFloat = 36
+
   private var trimmed: String { field.text.trimmingCharacters(in: .whitespacesAndNewlines) }
   private var uploading: Bool { images.contains { $0.path == nil && !$0.failed } }
   private var canSend: Bool {
@@ -127,7 +130,7 @@ final class ComposerView: UIView, UITextViewDelegate {
     placeholder.textColor = .placeholderText
     placeholder.isUserInteractionEnabled = false
     let fieldBox = UIView()
-    fieldBox.addPinned(field, insets: UIEdgeInsets(top: 14, left: 16, bottom: 4, right: 16))
+    fieldBox.addPinned(field, insets: UIEdgeInsets(top: 16, left: 14, bottom: 14, right: 14))
     fieldBox.addSubview(placeholder)
     placeholder.translatesAutoresizingMaskIntoConstraints = false
     fieldHeight = field.heightAnchor.constraint(equalToConstant: 22)
@@ -138,8 +141,7 @@ final class ComposerView: UIView, UITextViewDelegate {
       placeholder.topAnchor.constraint(equalTo: field.topAnchor),
     ])
 
-    attach.setImage(Tabler.image("plus", size: 23), for: .normal)
-    attach.tintColor = .secondaryLabel
+    attach.setImage(Tabler.image("plus", size: 22), for: .normal)
     attach.showsMenuAsPrimaryAction = true
     attach.preferredMenuElementOrder = .fixed
     attach.accessibilityLabel = "Attach"
@@ -149,35 +151,40 @@ final class ComposerView: UIView, UITextViewDelegate {
 
     chip.addAction(UIAction { [weak self] _ in self?.openSetup() }, for: .touchUpInside)
 
-    access.tintColor = .secondaryLabel
     access.showsMenuAsPrimaryAction = true
     access.preferredMenuElementOrder = .fixed
     access.menu = UIMenu(children: [
       UIDeferredMenuElement.uncached { [weak self] completion in completion(self?.accessMenu() ?? []) }
     ])
 
-    sendButton.layer.cornerRadius = 16
+    // Round buttons on a faint fill at either end, the send button the only solid one.
+    for button in [attach, access] {
+      button.tintColor = .label
+      button.backgroundColor = .quaternarySystemFill
+      button.layer.cornerRadius = Self.control / 2
+    }
+    sendButton.layer.cornerRadius = Self.control / 2
     sendButton.addAction(UIAction { [weak self] _ in self?.sendOrStop() }, for: .touchUpInside)
 
     let spacer = UIView()
     spacer.setContentHuggingPriority(.init(1), for: .horizontal)
     spacer.setContentCompressionResistancePriority(.init(1), for: .horizontal)
-    let row = UIStackView(arrangedSubviews: [attach, chip, access, spacer, sendButton])
+    let row = UIStackView(arrangedSubviews: [attach, chip, spacer, access, sendButton])
     row.axis = .horizontal
     row.alignment = .center
-    row.setCustomSpacing(8, after: spacer)
+    row.spacing = 8
     NSLayoutConstraint.activate([
-      attach.widthAnchor.constraint(equalToConstant: 32),
-      attach.heightAnchor.constraint(equalToConstant: 34),
-      chip.heightAnchor.constraint(equalToConstant: 34),
-      access.widthAnchor.constraint(equalToConstant: 34),
-      access.heightAnchor.constraint(equalToConstant: 34),
-      sendButton.widthAnchor.constraint(equalToConstant: 32),
-      sendButton.heightAnchor.constraint(equalToConstant: 32),
+      attach.widthAnchor.constraint(equalToConstant: Self.control),
+      attach.heightAnchor.constraint(equalToConstant: Self.control),
+      chip.heightAnchor.constraint(equalToConstant: Self.control),
+      access.widthAnchor.constraint(equalToConstant: Self.control),
+      access.heightAnchor.constraint(equalToConstant: Self.control),
+      sendButton.widthAnchor.constraint(equalToConstant: Self.control),
+      sendButton.heightAnchor.constraint(equalToConstant: Self.control),
       spacer.widthAnchor.constraint(greaterThanOrEqualToConstant: 0),
     ])
     let rowBox = UIView()
-    rowBox.addPinned(row, insets: UIEdgeInsets(top: 0, left: 8, bottom: 10, right: 10))
+    rowBox.addPinned(row, insets: UIEdgeInsets(top: 0, left: 8, bottom: 8, right: 8))
 
     let column = UIStackView(arrangedSubviews: [queueBox, stripBox, fieldBox, rowBox])
     column.axis = .vertical
@@ -275,7 +282,7 @@ final class ComposerView: UIView, UITextViewDelegate {
       .withTintColor((active ? UIColor.systemBackground : .tertiaryLabel).resolvedColor(with: traits), renderingMode: .alwaysOriginal)
     let apply = {
       self.sendButton.setImage(glyph, for: .normal)
-      self.sendButton.backgroundColor = active ? .label : .tertiarySystemFill
+      self.sendButton.backgroundColor = active ? .label : .quaternarySystemFill
     }
     if first || window == nil {
       apply()
@@ -469,12 +476,11 @@ final class ComposerView: UIView, UITextViewDelegate {
   }
 }
 
-/// The model and how hard it thinks, as quiet text: the model's name and the
+/// The model and how hard it thinks, in a capsule: the model's name and the
 /// reasoning level's. It opens the panel that changes both.
 private final class SetupChip: UIControl {
   private let name = UILabel()
   private let effort = UILabel()
-  private let chevron = UIImageView(image: Tabler.image("chevron-down", size: 13))
 
   override init(frame: CGRect) {
     super.init(frame: frame)
@@ -484,15 +490,21 @@ private final class SetupChip: UIControl {
     effort.textColor = .secondaryLabel
     effort.setContentCompressionResistancePriority(.required, for: .horizontal)
     effort.setContentHuggingPriority(.required, for: .horizontal)
-    chevron.tintColor = .tertiaryLabel
-    chevron.setContentCompressionResistancePriority(.required, for: .horizontal)
-    chevron.setContentHuggingPriority(.required, for: .horizontal)
-    let row = UIStackView(arrangedSubviews: [name, effort, chevron])
+    let row = UIStackView(arrangedSubviews: [name, effort])
     row.axis = .horizontal
-    row.alignment = .center
+    row.alignment = .firstBaseline
     row.spacing = 5
     row.isUserInteractionEnabled = false
-    addPinned(row, insets: UIEdgeInsets(top: 0, left: 4, bottom: 0, right: 10))
+    row.translatesAutoresizingMaskIntoConstraints = false
+    addSubview(row)
+    NSLayoutConstraint.activate([
+      row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+      row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+      row.centerYAnchor.constraint(equalTo: centerYAnchor),
+    ])
+    backgroundColor = .quaternarySystemFill
+    layer.cornerRadius = ComposerView.control / 2
+    layer.cornerCurve = .continuous
     setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
     isAccessibilityElement = true
     accessibilityTraits = .button
@@ -504,7 +516,7 @@ private final class SetupChip: UIControl {
 
   /// `traits` come from the composer: inside its trait change, this view's own are not updated yet.
   func applyFonts(_ traits: UITraitCollection) {
-    let font = UIFont.app(.subheadline, weight: .medium, traits: traits)
+    let font = UIFont.app(.subheadline, traits: traits)
     name.font = font
     effort.font = font
   }
