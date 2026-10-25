@@ -282,6 +282,31 @@ describe('background title source discovery', () => {
     },
   )
 
+  it('writes the title itself when the provider never named the chat', async () => {
+    const { title, started, store, orchestrator } = harness()
+    await title({ provider: 'claude-code' })
+    expect(orchestrator.awaitsProviderTitle('thread-1')).toBe(true)
+
+    await expect(orchestrator.nameUnnamedChat('thread-1')).resolves.toBe(true)
+
+    expect(store.thread('thread-1')?.title).toBe('Generated title')
+    expect(store.provisionalTitle('thread-1')).toBeUndefined()
+    expect(started).toEqual([{ provider: 'claude-code', model: 'claude-haiku-5-5' }])
+    expect(orchestrator.awaitsProviderTitle('thread-1')).toBe(false)
+  })
+
+  it("keeps the provider's name when it arrived first", async () => {
+    const { title, started, store, orchestrator } = harness()
+    await title({ provider: 'claude-code' })
+    store.renameThread('thread-1', 'Queue order fix')
+
+    expect(orchestrator.awaitsProviderTitle('thread-1')).toBe(false)
+    await expect(orchestrator.nameUnnamedChat('thread-1')).resolves.toBe(false)
+
+    expect(store.thread('thread-1')?.title).toBe('Queue order fix')
+    expect(started).toEqual([])
+  })
+
   it('reads Codex next, and only then, when Claude Code is signed out', async () => {
     signedOut('claude-code')
     const { title, started } = harness()

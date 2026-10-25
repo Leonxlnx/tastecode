@@ -670,6 +670,10 @@ export class Orchestrator {
   /** Approval mode selected for each attached or pending-resume thread; not persisted. */
   #threadApprovals = new Map<string, ApprovalMode>()
   #approvalChanges = new Map<string, Promise<void>>()
+  /** First prompts of chats left for their provider to name, until named. */
+  #providerNamePrompts = new Map<string, string>()
+  /** Chats that already had their fallback title written, or tried, this run. */
+  #fallbackTitled = new Set<string>()
   #sideThreads = new Map<string, string>()
   #sideParents = new Map<string, string>()
   #startingSideThreads = new Map<string, Promise<Thread>>()
@@ -1175,6 +1179,7 @@ export class Orchestrator {
       threadAccountHome(this.#accounts, before) === undefined
     ) {
       this.#store.setProvisionalTitle(threadId, expectedTitle)
+      this.#providerNamePrompts.set(threadId, request)
       return { title: expectedTitle, applied: false }
     }
 
@@ -1184,6 +1189,34 @@ export class Orchestrator {
     const applied = current?.title === expectedTitle
     if (applied) this.#store.renameThread(threadId, title)
     return { title: applied ? title : (current?.title ?? expectedTitle), applied }
+  }
+
+  /** Whether a chat still has the stand-in title it got while its provider was to name it. */
+  awaitsProviderTitle(threadId: string): boolean {
+    return (
+      !this.#fallbackTitled.has(threadId) && this.#store.provisionalTitle(threadId) !== undefined
+    )
+  }
+
+  /**
+   * Writes a title for a chat whose provider was left to name it and has not by
+   * the end of a turn: Claude Code leaves a chat that opens with a bare greeting
+   * unnamed. Call once provider history has had its chance to bring the
+   * provider's name in. True when the chat was renamed.
+   */
+  async nameUnnamedChat(threadId: string): Promise<boolean> {
+    const provisional = this.#store.provisionalTitle(threadId)
+    const chat = this.#store.thread(threadId)
+    if (provisional === undefined || !chat || this.#fallbackTitled.has(threadId)) return false
+    this.#fallbackTitled.add(threadId)
+    // A chat from before this run is known only by its stand-in, the start of its first prompt.
+    const request = this.#providerNamePrompts.get(threadId) ?? provisional
+    this.#providerNamePrompts.delete(threadId)
+    const output = await this.#runBackgroundTask(titlePrompt(request), chat)
+    // The provider's name, or the user's own, wins if it arrived meanwhile.
+    if (this.#store.provisionalTitle(threadId) !== provisional) return false
+    this.#store.renameThread(threadId, cleanGeneratedTitle(output, provisional))
+    return true
   }
 
   /** `threadId`: the chat whose checkout the diff is, when the request names one. */
