@@ -5,6 +5,7 @@ import {
   desktopChoiceKey,
   effortFor,
   effortLabel,
+  modelLabel,
   visibleModels,
   type CatalogState,
   type Choice,
@@ -23,7 +24,7 @@ function sourceView(source: Source, hidden: ReadonlySet<string>): SourceView {
     hidden.size > 0 ? { main: shown, more: [] as Model[] } : visibleModels(source.models)
   const model = (entry: Model, extra: boolean) => ({
     id: entry.id,
-    name: entry.displayName,
+    name: modelLabel(entry.displayName),
     more: extra,
     efforts: entry.reasoningEfforts.map((id) => ({ id, label: effortLabel(id) })),
     tiers: entry.serviceTiers.map(({ id, name }) => ({ id, name })),
@@ -93,7 +94,7 @@ export function setupView(
     sourceKey: source?.key ?? null,
     sourceName: source?.name ?? null,
     model: model?.id ?? null,
-    modelName: model?.displayName ?? null,
+    modelName: model ? modelLabel(model.displayName) : null,
     effort: effort ?? null,
     effortLabel: effort ? effortLabel(effort) : null,
     tier: tier?.id ?? null,

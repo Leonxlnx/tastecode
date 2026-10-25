@@ -138,7 +138,7 @@ describe('what a chat runs on', () => {
     )
     expect(named).toEqual({
       listed: ['Claude Code', 'Opus 5.5'],
-      own: ['Claude Code', 'my-model'],
+      own: ['Claude Code', 'My-Model'],
       default: ['codex', null],
     })
   })
