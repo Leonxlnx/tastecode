@@ -1,4 +1,5 @@
 import type { ModelChoice } from '../model-catalog.js'
+import { formatModelName } from './model-selector-utils.js'
 import { SettingsRow } from './settings/SettingsLayout.js'
 import '../styles/switch.css'
 
@@ -56,17 +57,18 @@ export function ModelVisibilityRow(props: {
   onModelVisibilityChange: (key: string, visible: boolean) => void
 }) {
   const { choice, visible } = props
+  const name = formatModelName(choice.model.displayName)
   return (
     <SettingsRow
       className="model-visibility__model"
-      name={choice.model.displayName}
+      name={name}
       tone={visible ? undefined : 'muted'}
     >
       <button
         className={`switch${visible ? ' is-on' : ''}`}
         type="button"
         role="switch"
-        aria-label={`Include ${choice.model.displayName} in model picker`}
+        aria-label={`Include ${name} in model picker`}
         aria-checked={visible}
         onClick={() => props.onModelVisibilityChange(choice.key, !visible)}
       >

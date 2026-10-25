@@ -1,10 +1,12 @@
-import type { DomainEvent } from './domain.js'
+import type { ApprovalMode, DomainEvent } from './domain.js'
 
 /** Local provider history. These server-only records never carry credentials. */
 export type ProviderHistorySession = {
   id: string
   workspacePath: string
   title: string
+  /** `title` is a name the provider or its user gave the session, not its first prompt. */
+  named?: boolean
   createdAt: number
   updatedAt: number
   /** Changes whenever the saved transcript changes. */
@@ -14,6 +16,8 @@ export type ProviderHistorySession = {
   archived?: boolean
   /** Provider-owned locator, interpreted only by its history adapter. */
   locator?: string
+  /** The access level the session last ran with, when its transcript records one. */
+  approval?: ApprovalMode
 }
 
 /**

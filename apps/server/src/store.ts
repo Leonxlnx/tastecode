@@ -34,6 +34,7 @@ import type {
   SidebarSettings,
   SessionSearchResult,
   ThreadLifecycle,
+  ThreadSettings,
   Usage,
 } from '@harness/contracts'
 import { z } from 'zod'
@@ -60,6 +61,10 @@ const PROVIDER_CONTEXT_SETTING = 'provider-context'
 const ACCOUNT_CONTEXT_SETTING = 'provider-account-context'
 const FEEDBACK_LEDGER_SETTING = 'feedback-ledger'
 const MODEL_LISTS_SETTING = 'model-lists'
+const PHONE_ACCESS_SETTING = 'phone-access'
+/** The model picker's hidden choice keys, as the desktop resolves them. */
+const HIDDEN_MODELS_SETTING = 'hidden-models'
+const PROVIDER_ROSTER_SETTING = 'provider-roster'
 const LIMIT_SNAPSHOT_SETTING = 'limit-snapshot'
 const AUTOMATIC_BACKGROUND_MODEL_PREFERENCE: BackgroundModelPreference = Object.freeze({
   mode: 'automatic',
@@ -164,6 +169,9 @@ export type StoredSidebarThread = {
   lifecycle: ThreadLifecycle
   unread: boolean
   continuedFrom?: string | undefined
+  /** The model of the chat's shared setup, from `thread_settings`. */
+  model?: string | undefined
+  lastActiveAt: number
 }
 
 type SidebarThreadUpdate = (thread: StoredSidebarThread) => StoredSidebarThread
@@ -365,6 +373,7 @@ CREATE TABLE IF NOT EXISTS threads (
   account_id   TEXT,
   provider_session_id TEXT,
   title        TEXT NOT NULL,
+  provisional_title TEXT,
   pinned       INTEGER NOT NULL DEFAULT 0,
   created_at   INTEGER NOT NULL,
   closed_at    INTEGER,
@@ -591,6 +600,14 @@ CREATE TABLE IF NOT EXISTS thread_approvals (
   mode TEXT NOT NULL
 );
 
+-- What a chat's next turn runs with, shared by every client. NULL is the source's default.
+CREATE TABLE IF NOT EXISTS thread_settings (
+  thread_id    TEXT PRIMARY KEY REFERENCES threads(id) ON DELETE CASCADE,
+  model        TEXT,
+  effort       TEXT,
+  service_tier TEXT
+);
+
 CREATE TABLE IF NOT EXISTS app_settings (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
@@ -681,6 +698,7 @@ const ADDED_COLUMNS: Array<{ table: string; column: string; definition: string }
   },
   { table: 'threads', column: 'continued_changes', definition: 'TEXT' },
   { table: 'threads', column: 'handover_pending', definition: 'INTEGER NOT NULL DEFAULT 0' },
+  { table: 'threads', column: 'provisional_title', definition: 'TEXT' },
 ]
 
 type SqliteInteger = number | bigint
@@ -753,7 +771,8 @@ type SidebarThreadRow = Pick<
   | 'woke_at'
   | 'unread'
   | 'continued_from'
->
+  | 'last_active_at'
+> & { settings_model: string | null }
 type InactiveThreadCandidateRow = Pick<ThreadRow, 'id' | 'unread'>
 type ThreadIdRow = Pick<ThreadRow, 'id'>
 type ThreadLifecycleRow = Pick<
@@ -1278,11 +1297,13 @@ export class Store {
       `SELECT * FROM threads WHERE ephemeral = 0 ORDER BY created_at DESC`,
     )
     this.#listSidebarThreads = this.#db.prepare(
-      `SELECT id, project_path, provider, agent, connection_id, account_id, title, pinned, created_at,
-              closed_at,
-              worktree_branch, lifecycle_state, lifecycle_at, lifecycle_reason, wake_at,
-              keep_active, woke_at, unread, continued_from
-       FROM threads WHERE ephemeral = 0 ORDER BY created_at DESC`,
+      `SELECT t.id, t.project_path, t.provider, t.agent, t.connection_id, t.account_id, t.title,
+              t.pinned, t.created_at, t.closed_at,
+              t.worktree_branch, t.lifecycle_state, t.lifecycle_at, t.lifecycle_reason, t.wake_at,
+              t.keep_active, t.woke_at, t.unread, t.continued_from, t.last_active_at,
+              s.model AS settings_model
+       FROM threads t LEFT JOIN thread_settings s ON s.thread_id = t.id
+       WHERE t.ephemeral = 0 ORDER BY t.created_at DESC`,
     )
     for (let mask = 0; mask < 4; mask += 1) {
       const clauses = ['session_search MATCH ?']
@@ -1792,14 +1813,35 @@ export class Store {
     })
   }
 
+  /** Any rename, the user's own included, settles the title; see `setProvisionalTitle`. */
   renameThread(id: string, title: string): void {
-    this.#db.prepare(`UPDATE threads SET title = ? WHERE id = ?`).run(title, id)
+    this.#db
+      .prepare(`UPDATE threads SET title = ?, provisional_title = NULL WHERE id = ?`)
+      .run(title, id)
     this.#updateCachedThread(id, (thread) =>
       thread.title === title ? thread : { ...thread, title },
     )
     this.#updateSidebarThread(id, (thread) =>
       thread.title === title ? thread : { ...thread, title },
     )
+  }
+
+  /**
+   * Mark `title`, taken from the chat's first prompt, as standing in until the
+   * provider names the chat. Recovery metadata: kept out of the cached thread.
+   */
+  setProvisionalTitle(id: string, title: string): void {
+    this.#db.prepare(`UPDATE threads SET provisional_title = ? WHERE id = ?`).run(title, id)
+  }
+
+  /** The stand-in title, while the chat still has it. */
+  provisionalTitle(id: string): string | undefined {
+    return sqliteRow<StringValueRow>(
+      this.#db.prepare(
+        `SELECT provisional_title AS value FROM threads WHERE id = ? AND provisional_title = title`,
+      ),
+      id,
+    )?.value
   }
 
   setThreadPinned(id: string, pinned: boolean): void {
@@ -2182,9 +2224,11 @@ export class Store {
     }))
     this.#updateSidebarThread(id, (thread) => {
       const nextUnread = thread.unread || unread
-      return thread.lifecycle === lifecycle && thread.unread === nextUnread
+      return thread.lifecycle === lifecycle &&
+        thread.unread === nextUnread &&
+        thread.lastActiveAt === at
         ? thread
-        : { ...thread, lifecycle, unread: nextUnread }
+        : { ...thread, lifecycle, unread: nextUnread, lastActiveAt: at }
     })
     return lifecycle
   }
@@ -2297,6 +2341,40 @@ export class Store {
       .run(threadId, mode)
   }
 
+  /** The chat's setup with its access level; empty when no client has chosen one. */
+  threadSettings(threadId: string): ThreadSettings {
+    const row = this.#db
+      .prepare('SELECT model, effort, service_tier FROM thread_settings WHERE thread_id = ?')
+      .get(threadId)
+    const approval = this.threadApproval(threadId)
+    const text = (value: unknown) => (typeof value === 'string' ? value : undefined)
+    const model = text(row?.['model'])
+    const effort = text(row?.['effort'])
+    const serviceTier = text(row?.['service_tier'])
+    return {
+      ...(model !== undefined ? { model } : {}),
+      ...(effort ? { effort } : {}),
+      ...(serviceTier ? { serviceTier } : {}),
+      ...(approval ? { approval } : {}),
+    }
+  }
+
+  /** Replaces the model, effort and tier together; the access level is kept apart. */
+  setThreadSettings(
+    threadId: string,
+    settings: Pick<ThreadSettings, 'model' | 'effort' | 'serviceTier'>,
+  ): void {
+    this.#db
+      .prepare(
+        `INSERT INTO thread_settings (thread_id, model, effort, service_tier) VALUES (?, ?, ?, ?)
+      ON CONFLICT(thread_id) DO UPDATE SET
+        model = excluded.model, effort = excluded.effort, service_tier = excluded.service_tier`,
+      )
+      .run(threadId, settings.model ?? null, settings.effort ?? null, settings.serviceTier ?? null)
+    // The project list names each chat's model.
+    this.#invalidateSidebarThreads()
+  }
+
   backgroundModelPreference(): BackgroundModelPreference {
     if (this.#backgroundModelPreferenceCache) return this.#backgroundModelPreferenceCache
     const row = sqliteRow<StringValueRow>(this.#readAppSetting, BACKGROUND_MODEL_SETTING)
@@ -2388,6 +2466,44 @@ export class Store {
 
   setFeedbackLedger(value: string): void {
     this.#writeAppSetting.run(FEEDBACK_LEDGER_SETTING, value)
+  }
+
+  /** Whether phones may connect, and the paired phones' public keys, as `PhoneAccess` serialized them. */
+  phoneAccessState(): string | undefined {
+    return sqliteRow<StringValueRow>(this.#readAppSetting, PHONE_ACCESS_SETTING)?.value
+  }
+
+  setPhoneAccessState(value: string): void {
+    this.#writeAppSetting.run(PHONE_ACCESS_SETTING, value)
+  }
+
+  hiddenModels(): string[] {
+    const value = sqliteRow<StringValueRow>(this.#readAppSetting, HIDDEN_MODELS_SETTING)?.value
+    if (value === undefined) return []
+    try {
+      return z.array(z.string()).catch([]).parse(JSON.parse(value))
+    } catch {
+      return []
+    }
+  }
+
+  setHiddenModels(keys: readonly string[]): void {
+    this.#writeAppSetting.run(HIDDEN_MODELS_SETTING, JSON.stringify(keys))
+  }
+
+  /** The desktop's provider roster; null until a desktop saved one. */
+  providerRoster(): string[] | null {
+    const value = sqliteRow<StringValueRow>(this.#readAppSetting, PROVIDER_ROSTER_SETTING)?.value
+    if (value === undefined) return null
+    try {
+      return z.array(z.string()).nullable().catch(null).parse(JSON.parse(value))
+    } catch {
+      return null
+    }
+  }
+
+  setProviderRoster(keys: readonly string[]): void {
+    this.#writeAppSetting.run(PROVIDER_ROSTER_SETTING, JSON.stringify(keys))
   }
 
   /** The last good model list per source, as `ModelListCache` serialized it. */
@@ -5273,6 +5389,8 @@ function toSidebarThread(row: SidebarThreadRow): StoredSidebarThread | undefined
     lifecycle: toThreadLifecycle(row),
     unread: row.unread === 1,
     ...(row.continued_from === null ? {} : { continuedFrom: row.continued_from }),
+    ...(row.settings_model ? { model: row.settings_model } : {}),
+    lastActiveAt: Number(row.last_active_at),
   }
 }
 

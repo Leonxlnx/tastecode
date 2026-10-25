@@ -849,7 +849,7 @@ describe('settings loading values', () => {
     expect(within(background).getByRole('combobox', { name: 'Background model' }).textContent).toBe(
       'Automatic (recommended)',
     )
-    expect(within(background).getByText('Currently luna through Codex.')).toBeTruthy()
+    expect(within(background).getByText('Currently Luna through Codex.')).toBeTruthy()
     // An open section on the shared rows, its value the inline select.
     expect(background.querySelector('.set-section__note')?.textContent).toBe(
       'Used for session titles, commit-message drafts, and other short writing.',
@@ -1381,7 +1381,7 @@ describe('model settings', () => {
       },
     })
     fireEvent.click(effort)
-    fireEvent.click(screen.getByRole('option', { name: 'high' }))
+    fireEvent.click(screen.getByRole('option', { name: 'High' }))
     await waitFor(() =>
       expect(transport.requests).toContainEqual({
         method: 'backgroundModel.updateSettings',
@@ -1396,7 +1396,7 @@ describe('model settings', () => {
         },
       }),
     )
-    await waitFor(() => expect(effort.textContent).toContain('high'))
+    await waitFor(() => expect(effort.textContent).toContain('High'))
     expect(speed.textContent).toContain('Fast')
     fireEvent.click(speed)
     fireEvent.click(screen.getByRole('option', { name: 'Standard' }))
@@ -1452,7 +1452,7 @@ describe('model settings', () => {
     })
 
     const picker = await screen.findByRole('combobox', { name: 'Background model' })
-    expect(picker.textContent).toContain('grok-code-fast-1 (unavailable)')
+    expect(picker.textContent).toContain('Grok-Code-Fast-1 (unavailable)')
     expect(screen.getByText(/grok-code-fast-1 is unavailable/i)).toBeTruthy()
     fireEvent.click(picker)
     fireEvent.click(screen.getByRole('option', { name: 'Automatic (recommended)' }))

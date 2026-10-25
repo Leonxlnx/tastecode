@@ -7,6 +7,7 @@ import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { WebSocket, type ServerOptions, type WebSocketServer } from 'ws'
 import { InvalidHistoryCursorError } from './history-page.js'
+import { generateNoiseKeyPair, NoiseInitiator, type NoiseSession } from './phone-noise.js'
 import { startServer } from './server.js'
 
 const state = vi.hoisted(() => ({
@@ -17,6 +18,7 @@ const state = vi.hoisted(() => ({
     { projectPath: string; worktreePath?: string; provider?: string; accountId?: string }
   >(),
   historyPage: vi.fn(),
+  historyEvents: [] as unknown[],
   read: [] as string[],
   reservedPreviewPorts: [] as Array<ReadonlySet<number> | undefined>,
   shutdown: [] as string[],
@@ -43,12 +45,29 @@ const state = vi.hoisted(() => ({
   earlierChanges: new Map<string, unknown>(),
   accountsRoot: '',
   accountsChanged: (_provider: string) => {},
+  credentials: new Map<string, string>(),
+  renamed: [] as string[],
+  settings: new Map<string, { model?: string; effort?: string; serviceTier?: string }>(),
+  approvals: new Map<string, string>(),
+  hiddenModels: [] as string[],
+  providerRoster: null as string[] | null,
 }))
 const temporary: string[] = []
 
 // Exercise the real listener without opening user data or starting providers.
 vi.mock('./data-location.js', () => ({ storeLocation: () => ':memory:' }))
 vi.mock('./data-lease.js', () => ({ acquireDataLease: () => () => undefined }))
+// The phone link key belongs in the system keychain, never in a test run's.
+vi.mock('./credentials.js', () => ({
+  readCredential: (reference: string) => {
+    const value = state.credentials.get(reference)
+    if (value === undefined) throw new Error('missing')
+    return value
+  },
+  writeCredential: (reference: string, value: string) => state.credentials.set(reference, value),
+  hasCredential: (reference: string) => state.credentials.has(reference),
+  removeCredential: (reference: string) => state.credentials.delete(reference),
+}))
 vi.mock('@harness/proc/desktop-path', () => ({ applyDesktopPath: () => undefined }))
 vi.mock('./store.js', () => ({
   Store: class {
@@ -71,8 +90,37 @@ vi.mock('./store.js', () => ({
     }
     recoverInterruptedThreads() {}
     nextLifecycleRefreshAt() {}
-    threadApproval() {
-      return undefined
+    threadApproval(threadId: string) {
+      return state.approvals.get(threadId)
+    }
+    hiddenModels() {
+      return state.hiddenModels
+    }
+    setHiddenModels(keys: string[]) {
+      state.hiddenModels = keys
+    }
+    providerRoster() {
+      return state.providerRoster
+    }
+    setProviderRoster(keys: string[]) {
+      state.providerRoster = keys
+    }
+    threadSettings(threadId: string) {
+      const approval = state.approvals.get(threadId)
+      return { ...state.settings.get(threadId), ...(approval ? { approval } : {}) }
+    }
+    setThreadSettings(
+      threadId: string,
+      settings: { model?: string; effort?: string; serviceTier?: string },
+    ) {
+      state.settings.set(
+        threadId,
+        Object.fromEntries(
+          (['model', 'effort', 'serviceTier'] as const).flatMap((key) =>
+            settings[key] === undefined ? [] : [[key, settings[key]]],
+          ),
+        ),
+      )
     }
     providerHistoryChangedAfter() {
       return false
@@ -84,6 +132,13 @@ vi.mock('./store.js', () => ({
       return undefined
     }
     setFeedbackLedger() {}
+    phoneAccessState() {
+      return undefined
+    }
+    setPhoneAccessState() {}
+    renameThread(threadId: string) {
+      state.renamed.push(threadId)
+    }
     close() {}
   },
 }))
@@ -104,6 +159,9 @@ vi.mock('./orchestrator.js', () => ({
     async disposeAll() {}
     historyPage(threadId: string, page: unknown) {
       return state.historyPage(threadId, page) as unknown
+    }
+    async history() {
+      return state.historyEvents
     }
     async historyForResponse(_threadId: string, afterSeq: number) {
       state.historyReads.push(afterSeq)
@@ -128,6 +186,9 @@ vi.mock('./orchestrator.js', () => ({
     }
     async submitTurn() {
       return { queued: false, turnId: 'turn' }
+    }
+    async setThreadApproval(threadId: string, approval: string) {
+      state.approvals.set(threadId, approval)
     }
     account(provider: string, _agent?: string, accountId?: string) {
       state.handled.push(`auth.status(${provider}${accountId ? `, ${accountId}` : ''})`)
@@ -334,6 +395,7 @@ afterEach(async () => {
   state.projects.length = 0
   state.threads.clear()
   state.historyPage.mockReset()
+  state.historyEvents.length = 0
   state.read.length = 0
   state.reservedPreviewPorts.length = 0
   state.shutdown.length = 0
@@ -357,6 +419,12 @@ afterEach(async () => {
   state.accountList = []
   state.usageHistory = undefined
   state.usageHistoryCalls.length = 0
+  state.credentials.clear()
+  state.renamed.length = 0
+  state.settings.clear()
+  state.approvals.clear()
+  state.hiddenModels = []
+  state.providerRoster = null
   vi.unstubAllEnvs()
   await Promise.all(
     temporary.splice(0).map((directory) => rm(directory, { recursive: true, maxRetries: 5 })),
@@ -1086,6 +1154,94 @@ describe('server shutdown', () => {
   })
 })
 
+describe('attached images', () => {
+  async function read(port: number, params: unknown) {
+    const client = new WebSocket(`ws://127.0.0.1:${port}`)
+    try {
+      await once(client, 'message')
+      const reply = once(client, 'message')
+      client.send(JSON.stringify({ id: 'image', method: 'attachments.read', params }))
+      const [message] = await reply
+      return JSON.parse(String(message)) as { result?: unknown; error?: { message: string } }
+    } finally {
+      client.terminate()
+    }
+  }
+
+  it('reads an image the chat attached and nothing else', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'attached-'))
+    try {
+      const attached = path.join(directory, 'shot.png')
+      const other = path.join(directory, 'other.png')
+      await writeFile(attached, Buffer.from('png bytes'))
+      await writeFile(other, Buffer.from('secret'))
+      state.historyEvents.push({
+        seq: 1,
+        event: {
+          type: 'item.completed',
+          item: {
+            id: 'u',
+            turnId: 't1',
+            type: 'message',
+            role: 'user',
+            status: 'completed',
+            createdAt: 1,
+            text: 'look',
+            attachments: [attached],
+          },
+        },
+      })
+      const { port } = await listen()
+      expect(await read(port, { threadId: 't', path: attached })).toMatchObject({
+        result: { mimeType: 'image/png', data: Buffer.from('png bytes').toString('base64') },
+      })
+      expect((await read(port, { threadId: 't', path: other })).error?.message).toContain(
+        'no such image',
+      )
+    } finally {
+      await rm(directory, { recursive: true })
+    }
+  })
+
+  it("reads a screenshot a reply shows, not one a user's text names", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'shown-'))
+    try {
+      const shown = path.join(directory, 'rail dark.png')
+      const typed = path.join(directory, 'typed.png')
+      await writeFile(shown, Buffer.from('png bytes'))
+      await writeFile(typed, Buffer.from('secret'))
+      const message = (id: string, role: 'user' | 'assistant', text: string) => ({
+        seq: 1,
+        event: {
+          type: 'item.completed',
+          item: {
+            id,
+            turnId: 't1',
+            type: 'message',
+            role,
+            status: 'completed',
+            createdAt: 1,
+            text,
+          },
+        },
+      })
+      state.historyEvents.push(
+        message('u', 'user', `![typed](${typed})`),
+        message('a', 'assistant', `The rail:\n![Rail, dark](<${shown}>)`),
+      )
+      const { port } = await listen()
+      expect(await read(port, { threadId: 't', path: shown })).toMatchObject({
+        result: { mimeType: 'image/png', data: Buffer.from('png bytes').toString('base64') },
+      })
+      expect((await read(port, { threadId: 't', path: typed })).error?.message).toContain(
+        'no such image',
+      )
+    } finally {
+      await rm(directory, { recursive: true })
+    }
+  })
+})
+
 describe('paged history requests', () => {
   async function history(port: number, params: unknown) {
     const client = new WebSocket(`ws://127.0.0.1:${port}`)
@@ -1624,5 +1780,247 @@ describe('feedback routes', () => {
     expect(
       await ask(address.port, 'feedback.preview', { ...draft, message: 'x'.repeat(4001) }),
     ).toMatchObject({ error: { code: 'bad_request' } })
+  })
+})
+
+describe('phone links', () => {
+  async function desktopClient(port: number) {
+    const client = new WebSocket(`ws://127.0.0.1:${port}`)
+    const messages: Array<Record<string, unknown>> = []
+    client.on('message', (message) => messages.push(JSON.parse(String(message))))
+    await once(client, 'message')
+    return { client, messages }
+  }
+
+  async function phoneLink(port: number, serverKey: string, hello: Record<string, unknown>) {
+    const socket = new WebSocket(`ws://127.0.0.1:${port}/link`)
+    await once(socket, 'open')
+    const initiator = new NoiseInitiator({
+      staticKey: generateNoiseKeyPair(),
+      remoteStaticKey: Buffer.from(serverKey, 'base64url'),
+    })
+    const frames: Array<Record<string, unknown>> = []
+    // The welcome frame follows the handshake reply at once, so one listener reads both.
+    const handshake = new Promise<{ payload: Buffer; session: NoiseSession }>((resolve) => {
+      let session: NoiseSession | undefined
+      socket.on('message', (data: Buffer) => {
+        if (session) {
+          frames.push(JSON.parse(session.receive.decrypt(data).toString()))
+          return
+        }
+        const read = initiator.readMessage2(data)
+        session = read.session
+        resolve(read)
+      })
+    })
+    socket.send(initiator.writeMessage1(Buffer.from(JSON.stringify(hello))))
+    const { payload, session } = await handshake
+    return { answer: JSON.parse(payload.toString()), socket, session, frames }
+  }
+
+  function send(link: { socket: WebSocket; session: NoiseSession }, frame: unknown) {
+    link.socket.send(link.session.send.encrypt(Buffer.from(JSON.stringify(frame))))
+  }
+
+  it('serves a paired phone the desktop protocol, limited to what a phone may do', async () => {
+    vi.stubEnv('HARNESS_PHONE_PORT', '0')
+    const { port } = await listen()
+    const desktop = await desktopClient(port)
+    try {
+      desktop.client.send(JSON.stringify({ id: 'pair', method: 'phone.startPairing', params: {} }))
+      await vi.waitFor(() =>
+        expect(desktop.messages.find((message) => message['id'] === 'pair')).toBeDefined(),
+      )
+      const reply = desktop.messages.find((message) => message['id'] === 'pair') as {
+        result: { status: { port: number }; pairing: { uri: string } }
+      }
+      const encoded = new URL(reply.result.pairing.uri).searchParams.get('p') ?? ''
+      const payload = JSON.parse(Buffer.from(encoded, 'base64url').toString()) as {
+        key: string
+        secret: string
+      }
+      expect([...state.credentials.keys()]).toEqual([
+        expect.stringMatching(/^phone-link\.server-key\.[0-9a-f]{12}$/),
+      ])
+
+      const phone = await phoneLink(reply.result.status.port, payload.key, {
+        v: 1,
+        name: 'iPhone',
+        pair: payload.secret,
+      })
+      expect(phone.answer).toMatchObject({ ok: true })
+      await vi.waitFor(() => expect(phone.frames[0]).toMatchObject({ channel: 'server.welcome' }))
+      await vi.waitFor(() =>
+        expect(desktop.messages).toContainEqual(
+          expect.objectContaining({
+            channel: 'phone.changed',
+            data: expect.objectContaining({
+              devices: [expect.objectContaining({ name: 'iPhone', connected: true })],
+            }),
+          }),
+        ),
+      )
+
+      send(phone, { id: 'info', method: 'system.info', params: {} })
+      send(phone, { id: 'shell', method: 'terminal.close', params: { terminalId: 't' } })
+      send(phone, { id: 'pair', method: 'phone.startPairing', params: {} })
+      send(phone, { id: 'rename', method: 'thread.rename', params: { threadId: 't', title: 'x' } })
+      await vi.waitFor(() => expect(phone.frames.filter((frame) => 'id' in frame)).toHaveLength(4))
+      const answers = Object.fromEntries(
+        phone.frames.filter((frame) => 'id' in frame).map((frame) => [frame['id'], frame]),
+      )
+      expect(answers['info']).toMatchObject({ result: { protocolVersion: expect.any(Number) } })
+      expect(answers['shell']).toMatchObject({ error: { code: 'forbidden' } })
+      expect(answers['pair']).toMatchObject({ error: { code: 'forbidden' } })
+      expect(answers['rename']).toMatchObject({ result: {} })
+      expect(state.renamed).toEqual(['t'])
+      // The desktop's list follows what the phone changed.
+      await vi.waitFor(() =>
+        expect(desktop.messages).toContainEqual(
+          expect.objectContaining({ channel: 'projects.changed', data: {} }),
+        ),
+      )
+      expect(phone.frames.some((frame) => frame['channel'] === 'phone.changed')).toBe(false)
+      phone.socket.terminate()
+    } finally {
+      desktop.client.terminate()
+    }
+  })
+
+  it('keeps one setup per chat that the phone and the desktop both follow', async () => {
+    vi.stubEnv('HARNESS_PHONE_PORT', '0')
+    state.threads.set('t', { projectPath: '/p', provider: 'codex' })
+    const { port } = await listen()
+    const desktop = await desktopClient(port)
+    try {
+      desktop.client.send(JSON.stringify({ id: 'pair', method: 'phone.startPairing', params: {} }))
+      await vi.waitFor(() =>
+        expect(desktop.messages.find((message) => message['id'] === 'pair')).toBeDefined(),
+      )
+      const reply = desktop.messages.find((message) => message['id'] === 'pair') as {
+        result: { status: { port: number }; pairing: { uri: string } }
+      }
+      const encoded = new URL(reply.result.pairing.uri).searchParams.get('p') ?? ''
+      const payload = JSON.parse(Buffer.from(encoded, 'base64url').toString()) as {
+        key: string
+        secret: string
+      }
+      const phone = await phoneLink(reply.result.status.port, payload.key, {
+        v: 1,
+        name: 'iPhone',
+        pair: payload.secret,
+      })
+      await vi.waitFor(() => expect(phone.frames[0]).toMatchObject({ channel: 'server.welcome' }))
+      const pushes = (messages: Array<Record<string, unknown>>) =>
+        messages.filter((message) => message['channel'] === 'thread.settings')
+
+      // The phone picks a model; the desktop is told.
+      send(phone, {
+        id: 'set',
+        method: 'thread.setSettings',
+        params: { threadId: 't', model: 'gpt-5.5', effort: 'high' },
+      })
+      await vi.waitFor(() =>
+        expect(pushes(desktop.messages).at(-1)).toMatchObject({
+          data: { threadId: 't', settings: { model: 'gpt-5.5', effort: 'high' } },
+        }),
+      )
+      // The desktop changes the access level; the phone is told.
+      desktop.client.send(
+        JSON.stringify({
+          id: 'access',
+          method: 'thread.setApproval',
+          params: { threadId: 't', approval: 'auto' },
+        }),
+      )
+      await vi.waitFor(() =>
+        expect(pushes(phone.frames).at(-1)).toMatchObject({
+          data: { threadId: 't', settings: { model: 'gpt-5.5', effort: 'high', approval: 'auto' } },
+        }),
+      )
+      // A turn sent with another setup moves the shared one; the same setup again says nothing.
+      const before = pushes(phone.frames).length
+      desktop.client.send(
+        JSON.stringify({
+          id: 'turn',
+          method: 'thread.sendTurn',
+          params: { threadId: 't', text: 'hi', model: 'gpt-5.5-mini' },
+        }),
+      )
+      await vi.waitFor(() =>
+        expect(pushes(phone.frames).at(-1)).toMatchObject({
+          data: { settings: { model: 'gpt-5.5-mini', approval: 'auto' } },
+        }),
+      )
+      expect(pushes(phone.frames).at(-1)?.['data']).not.toHaveProperty('settings.effort')
+      send(phone, {
+        id: 'again',
+        method: 'thread.sendTurn',
+        params: { threadId: 't', text: 'again', model: 'gpt-5.5-mini' },
+      })
+      send(phone, { id: 'read', method: 'thread.settings', params: { threadId: 't' } })
+      await vi.waitFor(() =>
+        expect(phone.frames.find((frame) => frame['id'] === 'read')).toMatchObject({
+          result: { model: 'gpt-5.5-mini', approval: 'auto' },
+        }),
+      )
+      expect(pushes(phone.frames)).toHaveLength(before + 1)
+
+      // The desktop's hidden models reach the phone, which may read but not change them.
+      desktop.client.send(
+        JSON.stringify({
+          id: 'hide',
+          method: 'models.setHidden',
+          params: { keys: ['codex:gpt-5.4', 'codex:gpt-5.4'] },
+        }),
+      )
+      await vi.waitFor(() =>
+        expect(phone.frames).toContainEqual(
+          expect.objectContaining({ channel: 'models.hidden', data: { keys: ['codex:gpt-5.4'] } }),
+        ),
+      )
+      send(phone, { id: 'unhide', method: 'models.setHidden', params: { keys: [] } })
+      send(phone, { id: 'hidden', method: 'models.hidden', params: {} })
+      await vi.waitFor(() =>
+        expect(phone.frames.find((frame) => frame['id'] === 'hidden')).toMatchObject({
+          result: { keys: ['codex:gpt-5.4'] },
+        }),
+      )
+      expect(phone.frames.find((frame) => frame['id'] === 'unhide')).toMatchObject({
+        error: { code: 'forbidden' },
+      })
+
+      // So do the providers the desktop added; the phone reads them, never sets them.
+      send(phone, { id: 'no-roster', method: 'providers.roster', params: {} })
+      await vi.waitFor(() =>
+        expect(phone.frames.find((frame) => frame['id'] === 'no-roster')).toMatchObject({
+          result: { keys: null },
+        }),
+      )
+      desktop.client.send(
+        JSON.stringify({
+          id: 'roster',
+          method: 'providers.setRoster',
+          params: { keys: ['codex', 'acp:kimi', 'codex'] },
+        }),
+      )
+      await vi.waitFor(() =>
+        expect(phone.frames).toContainEqual(
+          expect.objectContaining({
+            channel: 'providers.roster',
+            data: { keys: ['codex', 'acp:kimi'] },
+          }),
+        ),
+      )
+      send(phone, { id: 'set-roster', method: 'providers.setRoster', params: { keys: [] } })
+      await vi.waitFor(() =>
+        expect(phone.frames.find((frame) => frame['id'] === 'set-roster')).toMatchObject({
+          error: { code: 'forbidden' },
+        }),
+      )
+      phone.socket.terminate()
+    } finally {
+      desktop.client.terminate()
+    }
   })
 })

@@ -258,6 +258,7 @@
         <a href="#extensions">MCP, Skills, Workflows</a>
         <a href="#appearance">Appearance</a>
         <a href="#settings">Settings</a>
+        <a href="#phone">Phone</a>
         <a href="#shell">Desktop shell and security</a>
       </div>
 
@@ -1105,49 +1106,47 @@
                   provider's until changed (Model and Access kept as provider@account in
                   localStorage, Context on the server); a new chat starts with the active account's.
                   Sign in runs the provider's sign-in terminal in that folder (Codex · Work login).
-                  A chat is pinned to the account it started on and resumes there after a restart;
-                  the new-chat composer offers a New chat account control once the provider has a
-                  second account, which sets the provider's active account (not shown for a custom
-                  harness, which keeps its own sign-in). A chat's title and commit message are
-                  written through its own account when the background model is its provider's; the
-                  model picker lists the active account's models for a new chat and an open chat's
-                  own account's models; a project's MCP list and MCP sign-in come from a
-                  default-account chat only. Removing an account drops it before its processes stop
-                  and deletes a managed folder last. Plan limits, reset credits, model lists and
-                  usage are read per account: the current provider's active account is read at
-                  launch, its other signed-in accounts when the popup or Usage shows limits; the
-                  popup names the provider once and gives each account a line that opens to its full
-                  limits (the account new chats start on first and open; a closed line shows the %
-                  left of each window, such as Session and Weekly, a row each on a short gauge under
-                  the account name; a failed read says Unavailable with Retry on its line, one still
-                  loading says Checking…), the card's figure is each provider's active account, and
-                  a Usage sheet sums its accounts and lists each one with its tokens and limits.
-                  Profile &gt; Accounts lists further accounts (Codex · Work, plan or Signed out,
-                  never an email). When a turn fails while the chat's account is at a plan limit (a
-                  window at 100% that has not reset) and another account of the provider is signed
-                  in, the error offers Continue on Work (a menu, Continue on another account, when
-                  there are several); never automatic. It starts a new chat pinned to that account
-                  in the same project (an isolated chat's branch as base, in a checkout of its own
-                  that gets the earlier checkout's uncommitted changes copied in; when they cannot
-                  be copied, the first prompt and the new chat's note say which folder still holds
-                  them), with the failed request in its composer. Claude Code and Codex carry the
-                  earlier chat's own session on in the new account's folder (Claude Code a copy of
-                  its transcript under a new id, Codex a fork of its rollout copied with the
-                  rollouts it was forked from), so tool results and reasoning come along and the
-                  first prompt is just the request; a carried session whose first turn fails before
-                  any answer gives way to a fresh one that gets the conversation as a handover.
-                  Where the session cannot be carried on, or lacks part of the conversation, the
-                  first prompt carries the earlier chat's conversation as untrusted context (its
-                  first request, the latest exchange, every other user message and the assistant's
-                  messages newest first, then tool steps cut to their command line, exit code or
-                  file paths in what is left of 64,000 characters, preceded by any chat it continued
-                  itself up to where it was continued; kept in the provider's own session), the
-                  transcript shows only the user's words, and until its first message the new chat
-                  says Continues "title" on Work in a neutral note with Open (for an isolated chat,
-                  also that its uncommitted changes are already in this chat's checkout, or where
-                  they still are). The earlier chat is left as it was; its failed turn's row then
-                  reads Continued on Work and opens the new chat. Not yet: per-account Sign out,
-                  MCP/skills inventory and history import per account</span
+                  A chat is pinned to the account it started on and resumes there after a restart; a
+                  new chat's account is picked in the model picker. A chat's title and commit
+                  message are written through its own account when the background model is its
+                  provider's; the model picker lists the active account's models for a new chat and
+                  an open chat's own account's models; a project's MCP list and MCP sign-in come
+                  from a default-account chat only. Removing an account drops it before its
+                  processes stop and deletes a managed folder last. Plan limits, reset credits,
+                  model lists and usage are read per account: the current provider's active account
+                  is read at launch, its other signed-in accounts when the popup or Usage shows
+                  limits; the popup names the provider once and gives each account a line that opens
+                  to its full limits (the account new chats start on first and open; a closed line
+                  shows the % left of each window, such as Session and Weekly, a row each on a short
+                  gauge under the account name; a failed read says Unavailable with Retry on its
+                  line, one still loading says Checking…), the card's figure is each provider's
+                  active account, and a Usage sheet sums its accounts and lists each one with its
+                  tokens and limits. Profile &gt; Accounts lists further accounts (Codex · Work,
+                  plan or Signed out, never an email). When a turn fails while the chat's account is
+                  at a plan limit (a window at 100% that has not reset) and another account of the
+                  provider is signed in, the error offers Continue on Work (a menu, Continue on
+                  another account, when there are several); never automatic. It starts a new chat
+                  pinned to that account in the same project (an isolated chat's branch as base, in
+                  a checkout of its own that gets the earlier checkout's uncommitted changes copied
+                  in; when they cannot be copied, the first prompt and the new chat's note say which
+                  folder still holds them), with the failed request in its composer. Claude Code and
+                  Codex carry the earlier chat's own session on in the new account's folder (Claude
+                  Code a copy of its transcript under a new id, Codex a fork of its rollout copied
+                  with the rollouts it was forked from), so tool results and reasoning come along
+                  and the first prompt is just the request; a carried session whose first turn fails
+                  before any answer gives way to a fresh one that gets the conversation as a
+                  handover. Where the session cannot be carried on, or lacks part of the
+                  conversation, the first prompt carries the earlier chat's conversation as
+                  untrusted context (its first request, the latest exchange, every other user
+                  message and the assistant's messages newest first, then tool steps cut to their
+                  command line, exit code or file paths in what is left of 64,000 characters,
+                  preceded by any chat it continued itself up to where it was continued; kept in the
+                  provider's own session), the transcript shows only the user's words, and until its
+                  first message the new chat says Continues "title" on Work in a neutral note with
+                  Open (for an isolated chat, also that its uncommitted changes are already in this
+                  chat's checkout, or where they still are). The earlier chat is left as it was; its
+                  failed turn's row then reads Continued on Work and opens the new chat. Not yet:
+                  per-account Sign out, MCP/skills inventory and history import per account</span
                 ></span
               ></label
             >
@@ -1159,37 +1158,39 @@
                 chat's own models first, then every other provider's, then every other signed-in
                 account of a provider as a source of its own, named after the account (Claude Code
                 (Team), with the chat's own then reading Claude Code (Personal)); picked in a new
-                chat, another account's model makes that account the one new chats start on, as the
-                account chip does. Picking one shows "Your next message switches this chat to Claude
-                Code. The conversation so far goes with it." above the composer, with Stay on Codex;
-                only the user's own pick switches a chat (a fallback never leaves its provider, and
-                models the user hid from it still keep the picker away). Sending moves the chat
-                (same id, transcript, checkout, title and sidebar row): a session starts at the new
-                provider first, then the chat's session stops (tried three times) and the move is
-                stored, so a failed move leaves the chat where it was and puts the message back;
-                refused while a turn runs, prompts are queued or a Design run is active, and for a
-                Side chat. The transcript shows "Switched to Claude Code · sonnet" between the turns
-                (with the account's name after a move to another account, Switched to Codex (Team)),
-                and every window that hears it shows the row on the new provider. A move to another
-                account of the same provider carries the provider's own session on there, as
-                Continue on another account does. Otherwise the first prompt there carries the
-                conversation as context in which the user's earlier requests still hold (any chats
-                it continued, the first request and the latest exchange sharing the budget, other
-                messages newest first, the newest tool steps cut to what they did and kept to a
-                third of the budget, where the chat moved, files attached that still exist), then
-                whether the last turn was stopped or failed, the open task list and what git reports
-                as changed; sized at half a character per token of the model's context window as the
-                engine reports it (OpenCode and Pi per model, waited for at most two seconds) or
-                declares it (6,000–96,000 characters, 64,000 without one) and within the
-                command-line limit of Cursor and Antigravity (15,000 characters on Windows, 40,000
-                on Linux). A chat with no conversation yet sends just the request. The transcript
-                keeps only the user's words. A first turn there that ends stopped or failed before
-                any answer, or whose session goes away, sends the handover again with the next
-                prompt; a restart before the first prompt starts the new provider afresh. The
-                sessions a chat left stay its own: provider history neither imports them as chats
-                nor reads them in again. At a plan limit, other signed-in providers are offered
-                beside other accounts (Switch to Claude Code); choosing one sets the chat up to
-                switch with the failed request in the composer and sends nothing</span
+                chat, another account's model makes that account the one new chats start on. Picking
+                one shows "Your next message switches this chat to Claude Code. The conversation so
+                far goes with it." above the composer, with Stay on Codex; only the user's own pick
+                switches a chat (a fallback never leaves its provider, and models the user hid from
+                it still keep the picker away). Sending moves the chat (same id, transcript,
+                checkout, title and sidebar row): a session starts at the new provider first, then
+                the chat's session stops (tried three times) and the move is stored, so a failed
+                move leaves the chat where it was and puts the message back; refused while a turn
+                runs, prompts are queued or a Design run is active, and for a Side chat. The
+                transcript shows "Switched to Claude Code · sonnet" between the turns (with the
+                account's name after a move to another account, Switched to Codex (Team)), and every
+                window that hears it shows the row on the new provider. A move to another account of
+                the same provider carries the provider's own session on there, as Continue on
+                another account does. Otherwise the first prompt there carries the conversation as
+                context in which the user's earlier requests still hold (any chats it continued, the
+                first request and the latest exchange sharing the budget, other messages newest
+                first, the newest tool steps cut to what they did and kept to a third of the budget,
+                where the chat moved, files attached that still exist), then whether the last turn
+                was stopped or failed, the open task list and what git reports as changed; sized at
+                half a character per token of the model's context window as the engine reports it
+                (OpenCode and Pi per model, waited for at most two seconds) or declares it
+                (6,000–96,000 characters, 64,000 without one) and within the command-line limit of
+                Cursor and Antigravity (15,000 characters on Windows, 40,000 on Linux). A chat with
+                no conversation yet sends just the request. The transcript keeps only the user's
+                words. A first turn there that ends stopped or failed before any answer, or whose
+                session goes away, sends the handover again with the next prompt; a restart before
+                the first prompt starts the new provider afresh. The sessions a chat left stay its
+                own: provider history neither imports them as chats nor reads them in again. At a
+                plan limit, other signed-in providers are offered beside other accounts (Switch to
+                Claude Code); choosing one sets the chat up to switch with the failed request in the
+                composer and sends nothing. A model on another provider comes back at the effort it
+                was last used with (in a chat on Opus at xhigh, GPT-5.6 Sol comes back at its last
+                high); another model or account of the same provider keeps the current effort</span
               ></label
             >
           </li>
@@ -1609,8 +1610,9 @@
                   >the visible live tail applies each versioned suffix once through the bounded
                   incremental parser; while a reply streams, a table shows each row once its line is
                   complete, a link appears once it closes, task lists show their boxes and file
-                  names get their reference box; full Markdown and syntax highlighting run from the
-                  exact source at completion; patched Mermaid and DOMPurify releases leave the
+                  names get their reference box; a screenshot a reply shows by its path on the
+                  computer loads through the server; full Markdown and syntax highlighting run from
+                  the exact source at completion; patched Mermaid and DOMPurify releases leave the
                   production dependency audit clear; assistant prose uses denser type and spacing
                   without changing prompts, headings, or code; renderer and worker share curated
                   grammars, with plain-text fallback for other languages; replies use the full
@@ -1773,13 +1775,15 @@
                   >each completed model reply folds thoughts, work notes, and tool activity into one
                   closed disclosure while the final answer stays visible; the summary can be opened
                   and closed again; repeated settled reasoning-only histories with no answer do the
-                  same; every run of tool calls between two thoughts or messages folds into one
-                  batch with a counted summary such as Ran 3 commands, read 2 files and edited 1
-                  file, with failures marked on the batch; each call inside opens on its own to show
-                  its exact command, arguments and output; a lone call is its own row; Design turns
-                  keep their phases and notes in view with the same batches between them; an arrow
-                  beside the label opens aligned steps with quiet output surfaces, elapsed times,
-                  and visible failure marks in both themes</span
+                  same; everything between two work notes, thoughts included, folds into one batch
+                  with a counted summary such as Ran 3 commands, read 2 files and edited 1 file, a
+                  hammer for mixed work, with failures marked on the batch; open, it lists one line
+                  per step under the same icons, a command as itself and a thought by its first
+                  line, each opening on its own to show its exact command, arguments, output or
+                  whole thought; a lone call is its own row; Design turns keep their phases and
+                  notes in view with the same batches between them; an arrow beside the label opens
+                  aligned steps with quiet output surfaces, elapsed times, and visible failure marks
+                  in both themes</span
                 ></span
               ></label
             >
@@ -2983,12 +2987,14 @@
                 >Background writing: generated session titles and commit-message drafts use the
                 newest Haiku at medium effort through a signed-in Claude Code
                 <span class="d"
-                  >without Claude Code, Luna at medium with a connected Codex subscription, then
-                  Grok 4.6 at low when Grok is connected, otherwise the newest cost-oriented model
-                  at its lowest advertised effort across connected subscription and custom harness
-                  providers; Models settings exposes an explicit model and effort override, plus
-                  Standard/Fast speed for models that support Fast, including Codex; its note names
-                  no providers or models</span
+                  >Claude Code and Grok chats on the default account get no generated title: the
+                  name their provider gives the chat replaces the first prompt's title, unless the
+                  user renamed it first. Without Claude Code, Luna at medium with a connected Codex
+                  subscription, then Grok 4.6 at low when Grok is connected, otherwise the newest
+                  cost-oriented model at its lowest advertised effort across connected subscription
+                  and custom harness providers; Models settings exposes an explicit model and effort
+                  override, plus Standard/Fast speed for models that support Fast, including Codex;
+                  its note names no providers or models</span
                 ></span
               ></label
             >
@@ -3158,6 +3164,132 @@
         </ul>
       </section>
 
+      <section id="phone">
+        <header>
+          <h2>Phone (nightly only)</h2>
+          <span class="count"></span>
+        </header>
+        <ul class="check">
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Pair a phone from Settings › Phone with a one-time code
+                <span class="d"
+                  >the code is a tastecode://pair link drawn as a QR code: the computer's X25519
+                  key, port, local name, Wi-Fi and Tailscale addresses and a secret that expires
+                  after ten minutes; the first phone to present it pairs and the code closes; Copy
+                  link puts the same link on the clipboard for a phone that cannot scan, and the
+                  phone finds it in whatever is pasted (a message sent to oneself) and clears the
+                  clipboard once paired; a spent or expired code is refused with the reason; phone
+                  access is off until turned on, and turning it off closes every link while phones
+                  stay paired</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >End-to-end encrypted link on the local network or a tailnet
+                <span class="d"
+                  >Noise IK (X25519, ChaCha20-Poly1305, SHA-256) pinned to the computer's key, which
+                  lives in the OS credential store per data folder; the listener answers only
+                  private, link-local, loopback and 100.64.0.0/10 peers, refuses anything carrying
+                  an Origin header, throttles failed handshakes, and drops a link whose frame fails
+                  authentication; Node and CryptoKit both reproduce the published cacophony
+                  vector</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Paired phones listed with live state, removable
+                <span class="d"
+                  >name, paired date, Connected or last seen; Remove forgets the phone's key and
+                  closes its links</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >A phone may only read and drive chats
+                <span class="d"
+                  >phones get a method allowlist: chats, models, access levels, folders, images,
+                  change review; terminals, installs, credentials, MCP and pairing stay on the
+                  desktop, and phones never receive pairing or preview pushes</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Chats started, renamed or moved anywhere show up everywhere
+                <span class="d"
+                  >projects.changed tells every client after a list change; the desktop reloads its
+                  sidebar once per burst</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >iPhone app: chats, live status, search, archive and pin
+                <span class="d"
+                  >Expo with every screen in SwiftUI (Swift, Liquid Glass); one list with pinned
+                  chats on top, then chats waiting for you, working, and the rest by the computer's
+                  last activity; filters by project, device, agent, model and status, search and new
+                  chat at the bottom; pin and archive by swipe, and pin, rename or archive by
+                  holding a chat, shared with the desktop at once; models offered only from the
+                  providers added on the desktop, as it adds or removes them, with each signed-in
+                  account of a provider (Claude Code (Team)); Settings › Appearance sets the app's
+                  text size and font; reconnects on its own after sleep, network changes and server
+                  restarts</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >iPhone app: continue any chat and start new ones
+                <span class="d"
+                  >native Markdown replies with copyable code blocks and the screenshots they show,
+                  a long press on a message to copy it or select any part of it, plan; a turn's work
+                  folds under Worked for as on the desktop, one line per stretch between notes
+                  opening to one line per step; approvals and questions in place of the composer;
+                  queue with Send Now, Move Up and Down, Stop; the model and its reasoning as quiet
+                  text in the composer, beside a send button that fills in once there is something
+                  to send, opening over the chat as it blurs out of focus, in its middle, the
+                  model's name to pick any model, speed or provider and right under it the desktop's
+                  effort slider, bigger, whose thumb turns into a glass lens whenever it moves and
+                  clicks at every level; access level in a menu, kept by the computer so the desktop
+                  and the phone always show the same setup and the same models; project and private
+                  checkout from the new chat's title; photo attachments; rename, pin and archive
+                  from the chat title; the changed lines' count opens Changes</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >iPhone app: add projects from the computer's folders, review changes
+                <span class="d"
+                  >browses the home folder, other drives and mounted volumes without hidden folders,
+                  files or links; git repositories show an Add button; search filters the open
+                  folder's list by name; Changes shows the chat checkout's uncommitted diff</span
+                ></span
+              ></label
+            >
+          </li>
+        </ul>
+      </section>
       <section id="shell">
         <header>
           <h2>Desktop shell and security</h2>

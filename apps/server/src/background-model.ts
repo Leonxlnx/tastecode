@@ -420,8 +420,10 @@ export function cleanGeneratedTitle(output: string, fallback: string): string {
     .split(/\r?\n/)
     .find((line) => line.trim())
     ?.trim()
+    .replace(/^#+\s*/, '')
     .replace(/^(?:title\s*:\s*)/i, '')
-    .replace(/^["'`]+|["'`.]+$/g, '')
+    // Models asked for plain text still wrap titles in bold or quotes.
+    .replace(/^[*_"'`]+|[*_"'`.]+$/g, '')
     .trim()
   return sliceCodeUnits(title || fallback, 60).trim() || fallback
 }

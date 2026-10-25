@@ -298,6 +298,36 @@
     <div class="wrap">
       <section id="scope">
         <p>
+          October 23 on nightly (local commits, not pushed yet): a chat's setup is the same on every
+          device. Model, reasoning effort, service tier and access level are kept by the server
+          (thread.settings, pushed to every client), the desktop shares which models its picker
+          hides so the phone offers the same ones, and a pairing link can be copied on the computer
+          and pasted on the phone when the code cannot be scanned. Checked live with the desktop
+          renderer and the phone on one chat: each change on one side showed on the other, a prompt
+          queued on the desktop showed on the phone, and prompts reordered and removed on the phone
+          changed on the desktop too.
+        </p>
+        <p>
+          October 22 on nightly (local commits, not pushed yet): phone access and the iPhone app.
+          Settings › Phone turns on a second listener that speaks only a Noise IK handshake, pinned
+          to a key in the OS credential store, and shows a one-time pairing code; a paired phone is
+          one more client of the same protocol, limited to reading and driving chats, and a new
+          projects.changed push puts a chat started on either device in both lists. The app
+          (apps/mobile, Expo with every screen in SwiftUI written in Swift, Liquid Glass, its own
+          npm install) pairs, lists and continues every chat, starts new ones with a project, model,
+          reasoning level and access level, answers approvals and questions, attaches photos,
+          browses folders to add projects and shows a chat's changes. Verified on the iOS 27
+          simulator against a private server with Claude Code: pairing from the desktop's QR code, a
+          desktop-sent turn streaming on the phone, a phone-approved file write, reconnect after a
+          server restart. Not verified yet: a real iPhone (camera scan, Local Network prompt, a
+          phone on Wi-Fi or Tailscale) and Windows. Later the same day every screen was redrawn as
+          native SwiftUI in Swift (one list instead of three tabs, approvals and questions in place
+          of the composer) and checked again on the simulator: pairing by paste, an approval and two
+          agent questions answered on the phone, the queue, a photo, Changes and dark mode. Two
+          server bugs found on the way are fixed: generated titles kept the model's Markdown
+          asterisks, and a prompt with a picture showed twice once Claude's own history was read.
+        </p>
+        <p>
           October 20, evening on nightly (3adcd24a): all four gates passed on 3de247b3 (web 3,028
           tests, server 1,721, desktop 484 and every package, no failure). The Windows taskbar
           button shows the sidebar's amber needs-you dot with a thin dark ring instead of a drawn
@@ -356,17 +386,17 @@
           is a CLI folder of its own (CODEX_HOME, CLAUDE_CONFIG_DIR); Settings &gt; Providers &gt;
           Accounts adds a new, empty folder or brings an existing one, signs each account in in its
           own folder, and removes or deletes it; a chat is pinned to the account it started on and
-          resumes there; the composer picks the account for a new chat; plan limits, reset credits,
-          model lists and usage are read per account, and the account popup, the Usage sheets and
-          Profile list them by account. An adversarial review found three medium issues, fixed
-          before the merge: a chat's title and commit message went through the default account, the
-          model picker only listed the default account's models, and a project's MCP sign-in could
-          land in another account's folder. Also fixed: a brought folder that is, holds or sits in a
-          folder in use is refused; removal stops resolving the account before its folder goes; new
-          folders no longer copy the default account's settings, which can hold keys and login pins.
-          Checked with the four gates and in the Electron shell with stand-in CLIs only; real
-          sign-ins, macOS and Linux are not verified yet. The chunk PRs #1854 to #1890 show as
-          merged or closed.
+          resumes there; the model picker picks the account for a new chat; plan limits, reset
+          credits, model lists and usage are read per account, and the account popup, the Usage
+          sheets and Profile list them by account. An adversarial review found three medium issues,
+          fixed before the merge: a chat's title and commit message went through the default
+          account, the model picker only listed the default account's models, and a project's MCP
+          sign-in could land in another account's folder. Also fixed: a brought folder that is,
+          holds or sits in a folder in use is refused; removal stops resolving the account before
+          its folder goes; new folders no longer copy the default account's settings, which can hold
+          keys and login pins. Checked with the four gates and in the Electron shell with stand-in
+          CLIs only; real sign-ins, macOS and Linux are not verified yet. The chunk PRs #1854 to
+          #1890 show as merged or closed.
         </p>
         <p>
           October 19, second main into nightly (PR #1909): main 58d89955, the seven commits of PRs
@@ -1837,6 +1867,7 @@
           <span>Pi over RPC</span>
           <span>ACP agent library, 12 agents</span>
           <span>GLM and Z.ai coding plans</span>
+          <span>Phone access and the iPhone app</span>
         </div>
       </section>
 

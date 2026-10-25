@@ -20,6 +20,12 @@ export type ProviderControlCapabilities = Readonly<{
    */
   agentsSkillsDir: boolean
   nativeModels: boolean
+  /**
+   * The provider names the chats it runs for TasteCode, and its history source
+   * reports that name for sessions in the default account folder (server-internal).
+   * Only saved sessions showing such names turn this on.
+   */
+  nativeTitles: boolean
   notifications: boolean
   skillsInstall: boolean
   account: boolean
@@ -53,6 +59,7 @@ const unsupported: ProviderControlCapabilities = {
   nativeSkills: false,
   agentsSkillsDir: false,
   nativeModels: false,
+  nativeTitles: false,
   notifications: false,
   skillsInstall: false,
   account: false,
@@ -82,6 +89,8 @@ export const PROVIDER_CAPABILITIES = {
     managedMcp: true,
     mcpInventory: true,
     nativeModels: true,
+    // The CLI saves an `ai-title` row once a prompt says enough to name.
+    nativeTitles: true,
     account: true,
     login: true,
     signOut: true,
@@ -103,6 +112,8 @@ export const PROVIDER_CAPABILITIES = {
     nativeSkills: true,
     agentsSkillsDir: true,
     nativeModels: true,
+    // Codex's own apps name their threads; the app server leaves TasteCode's unnamed.
+    nativeTitles: false,
     notifications: true,
     skillsInstall: true,
     account: true,
@@ -128,6 +139,8 @@ export const PROVIDER_CAPABILITIES = {
     mcpInventory: true,
     nativeSkills: true,
     nativeModels: true,
+    // Headless sessions save a `generated_title` in their summary.
+    nativeTitles: true,
     account: true,
     signOut: true,
     usageLimits: true,

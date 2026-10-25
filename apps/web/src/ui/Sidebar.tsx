@@ -1,4 +1,5 @@
 import { useArchiveMotion } from './useArchiveMotion.js'
+import { useRowDrag, type RowDrag } from './useRowDrag.js'
 import {
   lazy,
   memo,
@@ -177,7 +178,6 @@ export type Project = {
 }
 
 type DropPosition = 'before' | 'after'
-type ProjectDropTarget = { path: string; position: DropPosition }
 
 /** Narrowest width at which the New chat row and the chat rows stay
  *  roomy — the narrowest rail still looks deliberate, never squeezed. */
@@ -588,14 +588,31 @@ function SidebarComponent(props: {
     () => new Map(props.projects.map((project) => [project.path, displayName(project)])),
     [props.projects],
   )
-  const [draggedProjectPath, setDraggedProjectPath] = useState<string>()
   const [folderDropActive, setFolderDropActive] = useState(false)
   const folderDragDepth = useRef(0)
-  const [projectDropTarget, setProjectDropTarget] = useState<ProjectDropTarget>()
-  const draggedProjectPathRef = useRef<string | undefined>(undefined)
-  const projectDropTargetRef = useRef<ProjectDropTarget | undefined>(undefined)
   const orderedProjectsRef = useRef(orderedProjects)
   orderedProjectsRef.current = orderedProjects
+  const railBody = useRef<HTMLDivElement>(null)
+  const projectDrag = useRowDrag({
+    attribute: 'data-project-path',
+    // A project only trades places inside its own group: pinned ones sit
+    // together at the top, and a drop across the line would be refused.
+    rows: (sourcePath) => {
+      const projects = orderedProjectsRef.current
+      const pinned = Boolean(projects.find((project) => project.path === sourcePath)?.pinned)
+      const group = new Set(
+        projects.filter((project) => Boolean(project.pinned) === pinned).map((p) => p.path),
+      )
+      return Array.from(
+        railBody.current?.querySelectorAll<HTMLElement>('[data-project-path]') ?? [],
+      ).filter((node) => group.has(node.getAttribute('data-project-path')!))
+    },
+    onReorder: props.onReorderProject
+      ? (source, target, position) =>
+          actionsRef.current.onReorderProject?.(source, target, position)
+      : undefined,
+    ignore: '.menuwrap, .rename',
+  })
   const [projectRenderLimit, setProjectRenderLimit] = useState(INITIAL_PROJECT_RENDER_COUNT)
   const { renderedProjects, renderedProjectCount } = useMemo(() => {
     let count = Math.min(projectRenderLimit, orderedProjects.length)
@@ -637,53 +654,6 @@ function SidebarComponent(props: {
     const timeout = window.setTimeout(revealNextProjects, 0)
     return () => window.clearTimeout(timeout)
   }, [inbox, orderedProjects.length, renderedProjectCount])
-
-  const endProjectDrag = useCallback(() => {
-    draggedProjectPathRef.current = undefined
-    projectDropTargetRef.current = undefined
-    setDraggedProjectPath(undefined)
-    setProjectDropTarget(undefined)
-  }, [])
-
-  const startProjectDrag = useCallback((event: DragEvent<HTMLElement>, project: Project) => {
-    if (event.target !== event.currentTarget || !actionsRef.current.onReorderProject) return
-    prepareAppHaptics()
-    event.dataTransfer.effectAllowed = 'move'
-    event.dataTransfer.setData('text/plain', project.path)
-    draggedProjectPathRef.current = project.path
-    setDraggedProjectPath(project.path)
-  }, [])
-
-  const dragOverProject = useCallback((event: DragEvent<HTMLElement>, project: Project) => {
-    const draggedPath = draggedProjectPathRef.current
-    if (!draggedPath || draggedPath === project.path) return
-    const source = orderedProjectsRef.current.find((candidate) => candidate.path === draggedPath)
-    if (source?.pinned !== project.pinned) return
-    event.preventDefault()
-    event.dataTransfer.dropEffect = 'move'
-    const bounds = event.currentTarget.getBoundingClientRect()
-    const position: DropPosition =
-      event.clientY < bounds.top + bounds.height / 2 ? 'before' : 'after'
-    const current = projectDropTargetRef.current
-    if (current?.path === project.path && current.position === position) return
-    const next = { path: project.path, position }
-    projectDropTargetRef.current = next
-    setProjectDropTarget(next)
-    performAppHaptic('alignment')
-  }, [])
-
-  const dropProject = useCallback(
-    (event: DragEvent<HTMLElement>, project: Project) => {
-      event.preventDefault()
-      const draggedPath = draggedProjectPathRef.current
-      const target = projectDropTargetRef.current
-      if (draggedPath && target?.path === project.path) {
-        actionsRef.current.onReorderProject?.(draggedPath, project.path, target.position)
-      }
-      endProjectDrag()
-    },
-    [endProjectDrag],
-  )
 
   const folderDropEnabled = canDropProjectFolders && props.onAddDroppedProjects !== undefined
   const hasDroppedFiles = (event: DragEvent<HTMLElement>) =>
@@ -843,9 +813,11 @@ function SidebarComponent(props: {
             </div>
 
             <div
+              ref={railBody}
               className="rail__body"
               data-narrow={props.width < NARROW_RAIL_WIDTH ? '' : undefined}
               onScroll={(event) => setBodyScrolled(event.currentTarget.scrollTop > 0)}
+              onClickCapture={projectDrag.onClickCapture}
             >
               {needsYou.length > 0 ? (
                 <NeedsYouBand
@@ -870,13 +842,7 @@ function SidebarComponent(props: {
                         onDelete={() => props.onDeleteSession(session.id)}
                         onTogglePin={() => props.onToggleSessionPin?.(session.id)}
                         onOpenInExplorer={() => void revealPath(projectPath)}
-                        reorderable={false}
-                        dragging={false}
-                        dropPosition={undefined}
-                        onDragStart={() => undefined}
-                        onDragOver={() => undefined}
-                        onDrop={() => undefined}
-                        onDragEnd={() => undefined}
+                        drag={undefined}
                       />
                     ))}
                   </ul>
@@ -912,17 +878,7 @@ function SidebarComponent(props: {
                       project.path === props.activeProjectPath ? props.activeSessionId : undefined
                     }
                     active={project.path === props.activeProjectPath}
-                    reorderable={Boolean(props.onReorderProject)}
-                    dragging={project.path === draggedProjectPath}
-                    dropPosition={
-                      projectDropTarget?.path === project.path
-                        ? projectDropTarget.position
-                        : undefined
-                    }
-                    onProjectDragStart={startProjectDrag}
-                    onProjectDragOver={dragOverProject}
-                    onProjectDrop={dropProject}
-                    onProjectDragEnd={endProjectDrag}
+                    drag={props.onReorderProject ? projectDrag : undefined}
                     onNewSession={newSession}
                     onSelectSession={selectSession}
                     onRenameProject={renameProject}
@@ -1320,13 +1276,7 @@ const ProjectRow = memo(function ProjectRow(props: {
   project: Project
   activeSessionId: string | undefined
   active: boolean
-  reorderable: boolean
-  dragging: boolean
-  dropPosition: DropPosition | undefined
-  onProjectDragStart: (event: DragEvent<HTMLElement>, project: Project) => void
-  onProjectDragOver: (event: DragEvent<HTMLElement>, project: Project) => void
-  onProjectDrop: (event: DragEvent<HTMLElement>, project: Project) => void
-  onProjectDragEnd: () => void
+  drag: RowDrag | undefined
   onNewSession: (path: string) => void
   onSelectSession: (id: string) => void
   onRenameProject: (path: string, name: string) => void
@@ -1402,20 +1352,22 @@ const ProjectRow = memo(function ProjectRow(props: {
 
   return (
     <section
-      className={`proj${props.dragging ? ' is-dragging' : ''}`}
+      className={`proj${props.drag ? ' is-reorderable' : ''}`}
       data-open={expanded}
-      data-drop-position={props.dropPosition}
-      draggable={props.reorderable}
-      onDragStart={(event) => props.onProjectDragStart(event, props.project)}
-      onDragOver={(event) => props.onProjectDragOver(event, props.project)}
-      onDrop={(event) => props.onProjectDrop(event, props.project)}
-      onDragEnd={props.onProjectDragEnd}
+      data-project-path={props.project.path}
     >
       <div
         className="proj__head"
         onMouseEnter={() => setActionsReady(true)}
         onFocusCapture={() => setActionsReady(true)}
         onContextMenuCapture={() => setActionsReady(true)}
+        onPointerDown={
+          props.drag ? (event) => props.drag?.onPointerDown(props.project.path, event) : undefined
+        }
+        onPointerMove={props.drag?.onPointerMove}
+        onPointerUp={props.drag?.onPointerUp}
+        onPointerCancel={props.drag?.onPointerCancel}
+        onLostPointerCapture={props.drag?.onLostPointerCapture}
       >
         {renaming ? (
           <InlineRename
@@ -1610,14 +1562,18 @@ const ProjectSessions = memo(function ProjectSessions(props: {
   ) => void
 }) {
   const count = props.project.sessions.length
-  const [draggedSessionId, setDraggedSessionId] = useState<string>()
-  const [dropTarget, setDropTarget] = useState<{
-    id: string
-    position: DropPosition
-  }>()
-  const draggedSessionIdRef = useRef<string | undefined>(undefined)
-  const dropTargetRef = useRef<{ id: string; position: DropPosition } | undefined>(undefined)
   const virtualSessionList = useRef<HTMLUListElement>(null)
+  const sessionDrag = useRowDrag({
+    attribute: 'data-archive-session-id',
+    rows: () =>
+      Array.from(
+        virtualSessionList.current?.querySelectorAll<HTMLElement>('[data-archive-session-id]') ??
+          [],
+      ),
+    onReorder: (sourceId, targetId, position) =>
+      props.onReorderSession(props.project.path, sourceId, targetId, position),
+    ignore: '.sess__actions',
+  })
   // Folded to its first rows, a project still lists each later chat with news.
   const foldedSessions = useMemo(
     () =>
@@ -1683,50 +1639,6 @@ const ProjectSessions = memo(function ProjectSessions(props: {
     updateVirtualRange(list.scrollTop)
   }, [props.activeSessionId, updateVirtualRange, virtualHeight, virtualized])
 
-  const endDrag = useCallback(() => {
-    draggedSessionIdRef.current = undefined
-    setDraggedSessionId(undefined)
-    setDropTarget(undefined)
-    dropTargetRef.current = undefined
-  }, [])
-
-  const startSessionDrag = useCallback((event: DragEvent<HTMLLIElement>, sessionId: string) => {
-    prepareAppHaptics()
-    event.dataTransfer.effectAllowed = 'move'
-    event.dataTransfer.setData('text/plain', sessionId)
-    draggedSessionIdRef.current = sessionId
-    setDraggedSessionId(sessionId)
-  }, [])
-
-  const dragOverSession = useCallback((event: DragEvent<HTMLLIElement>, targetId: string) => {
-    const draggedSessionId = draggedSessionIdRef.current
-    if (!draggedSessionId || draggedSessionId === targetId) return
-    event.preventDefault()
-    event.dataTransfer.dropEffect = 'move'
-    const bounds = event.currentTarget.getBoundingClientRect()
-    const position: DropPosition =
-      event.clientY < bounds.top + bounds.height / 2 ? 'before' : 'after'
-    const current = dropTargetRef.current
-    if (current?.id === targetId && current.position === position) return
-    const next = { id: targetId, position }
-    dropTargetRef.current = next
-    setDropTarget(next)
-    performAppHaptic('alignment')
-  }, [])
-
-  const dropSession = useCallback(
-    (event: DragEvent<HTMLLIElement>, targetId: string) => {
-      event.preventDefault()
-      const draggedSessionId = draggedSessionIdRef.current
-      const target = dropTargetRef.current
-      if (draggedSessionId && target?.id === targetId && draggedSessionId !== targetId) {
-        props.onReorderSession(props.project.path, draggedSessionId, targetId, target.position)
-      }
-      endDrag()
-    },
-    [endDrag, props.onReorderSession, props.project.path],
-  )
-
   return (
     <ul
       ref={virtualSessionList}
@@ -1737,6 +1649,7 @@ const ProjectSessions = memo(function ProjectSessions(props: {
       onScroll={
         virtualized ? (event) => updateVirtualRange(event.currentTarget.scrollTop) : undefined
       }
+      onClickCapture={sessionDrag.onClickCapture}
     >
       {count === 0 ? <li className="rail__hint">No chats</li> : null}
       {visibleSessions.map((session, visibleIndex) => {
@@ -1752,13 +1665,7 @@ const ProjectSessions = memo(function ProjectSessions(props: {
             onDeleteSession={props.onDeleteSession}
             onArchiveSession={props.onArchiveSession}
             onToggleSessionPin={props.onToggleSessionPin}
-            reorderable
-            dragging={session.id === draggedSessionId}
-            dropPosition={dropTarget?.id === session.id ? dropTarget.position : undefined}
-            onDragStart={startSessionDrag}
-            onDragOver={dragOverSession}
-            onDrop={dropSession}
-            onDragEnd={endDrag}
+            drag={sessionDrag}
             virtualTop={virtualized ? sessionIndex * VIRTUAL_SESSION_ROW_HEIGHT : undefined}
             virtualPosition={virtualized ? sessionIndex + 1 : undefined}
             virtualSetSize={virtualized ? listedCount : undefined}
@@ -1797,13 +1704,7 @@ const ProjectSessionRow = memo(function ProjectSessionRow(props: {
   onDeleteSession: (id: string) => void
   onArchiveSession: ((id: string) => void) | undefined
   onToggleSessionPin: ((id: string) => void) | undefined
-  reorderable: boolean
-  dragging: boolean
-  dropPosition: DropPosition | undefined
-  onDragStart: (event: DragEvent<HTMLLIElement>, sessionId: string) => void
-  onDragOver: (event: DragEvent<HTMLLIElement>, targetId: string) => void
-  onDrop: (event: DragEvent<HTMLLIElement>, targetId: string) => void
-  onDragEnd: () => void
+  drag: RowDrag
   virtualTop: number | undefined
   virtualPosition: number | undefined
   virtualSetSize: number | undefined
@@ -1819,13 +1720,7 @@ const ProjectSessionRow = memo(function ProjectSessionRow(props: {
       onArchive={props.onArchiveSession ? () => props.onArchiveSession?.(session.id) : undefined}
       onTogglePin={() => props.onToggleSessionPin?.(session.id)}
       onOpenInExplorer={() => void revealPath(props.projectPath)}
-      reorderable={props.reorderable}
-      dragging={props.dragging}
-      dropPosition={props.dropPosition}
-      onDragStart={(event) => props.onDragStart(event, session.id)}
-      onDragOver={(event) => props.onDragOver(event, session.id)}
-      onDrop={(event) => props.onDrop(event, session.id)}
-      onDragEnd={props.onDragEnd}
+      drag={props.drag}
       virtualTop={props.virtualTop}
       virtualPosition={props.virtualPosition}
       virtualSetSize={props.virtualSetSize}
@@ -1844,13 +1739,8 @@ function SessionRow(props: {
   onTogglePin: () => void
   onOpenInExplorer: () => void
   standalone?: boolean
-  reorderable: boolean
-  dragging: boolean
-  dropPosition: DropPosition | undefined
-  onDragStart: (event: DragEvent<HTMLLIElement>) => void
-  onDragOver: (event: DragEvent<HTMLLIElement>) => void
-  onDrop: (event: DragEvent<HTMLLIElement>) => void
-  onDragEnd: () => void
+  /** Absent where the row cannot be dragged into a new order. */
+  drag: RowDrag | undefined
   virtualTop?: number | undefined
   virtualPosition?: number | undefined
   virtualSetSize?: number | undefined
@@ -1890,17 +1780,16 @@ function SessionRow(props: {
   return (
     <li
       className={`sessrow ${props.active ? 'is-active' : ''} ${props.standalone ? 'is-pinned' : ''} ${
-        props.reorderable ? 'is-reorderable' : ''
-      } ${props.dragging ? 'is-dragging' : ''} ${props.session.unread ? 'is-unread' : ''} ${
-        archiveOnHover ? 'has-action' : ''
-      }`}
+        props.drag ? 'is-reorderable' : ''
+      } ${props.session.unread ? 'is-unread' : ''} ${archiveOnHover ? 'has-action' : ''}`}
       data-archive-session-id={props.session.id}
-      draggable={props.reorderable}
-      data-drop-position={props.dropPosition}
-      onDragStart={props.onDragStart}
-      onDragOver={props.onDragOver}
-      onDrop={props.onDrop}
-      onDragEnd={props.onDragEnd}
+      onPointerDown={
+        props.drag ? (event) => props.drag?.onPointerDown(props.session.id, event) : undefined
+      }
+      onPointerMove={props.drag?.onPointerMove}
+      onPointerUp={props.drag?.onPointerUp}
+      onPointerCancel={props.drag?.onPointerCancel}
+      onLostPointerCapture={props.drag?.onLostPointerCapture}
       style={virtualSessionStyle(props.virtualTop)}
       aria-posinset={props.virtualPosition}
       aria-setsize={props.virtualSetSize}

@@ -144,7 +144,7 @@ describe('Thread live frame isolation', () => {
         if (withTools) {
           fireEvent.click(view.getByRole('button', { name: 'Worked for 1m 2s' }))
           expect(view.getByText('Checking.')).toBeTruthy()
-          expect(view.getByText('Ran pwd')).toBeTruthy()
+          expect(view.getByText('pwd')).toBeTruthy()
         }
         act(() => vi.advanceTimersByTime(10_000))
         expect(view.getAllByText('Worked for 1m 2s')).toHaveLength(1)

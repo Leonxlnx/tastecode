@@ -12,8 +12,8 @@ add a change-log row.
 typed WebSocket protocol.**
 
 ```
-desktop renderer · web                   thin clients
-        │  WebSocket, typed contracts
+desktop renderer · web     phone (Expo + SwiftUI)     thin clients
+        │  WebSocket, typed contracts   │ same protocol, end-to-end encrypted link
         │  req/res { id, method, params } · push { channel, sequence, data }
    core server (Node, local, long-lived)
         │  orchestration · adapters · SQLite event log · checkpoints · worktrees · PTY
@@ -105,6 +105,67 @@ in Trecko.
 _Rejected:_ a renderer `fetch` to Trecko (widens the CSP and puts the key in the renderer).
 Leaving the key in the server's environment (every child process would inherit it). Compiling
 the key into desktop main (main never needs it).
+
+### Phones connect over an end-to-end encrypted link
+
+**A paired phone is one more client of the same protocol, reached directly over the local
+network or a tailnet, with every frame encrypted end to end.** Phone access is off until the
+user turns it on in Settings › Phone. Then a second listener (`HARNESS_PHONE_PORT`, default 4317) accepts WebSockets on `/link` from private, link-local, loopback and tailnet
+(100.64.0.0/10) addresses only, refuses any request carrying an `Origin` header (no page can
+reach it), and speaks nothing but a **Noise IK** handshake (`Noise_IK_25519_ChaChaPoly_SHA256`,
+prologue `tastecode-link/1`) until the phone has proved its key. The pairing code is a
+`tastecode://pair` link holding the computer's static X25519 key, its port, its addresses (local
+name, Wi-Fi, Tailscale) and a one-time secret that expires after ten minutes; the first phone to
+present it is registered by its public key, and the code closes. The phone pins the computer's
+key, so no address in the code has to be trusted and nothing can stand in the middle. After the
+handshake each WebSocket message is one ChaCha20-Poly1305 frame, larger than Noise's own 64 KiB
+limit when a history page needs it; a frame that fails authentication closes the link. Both
+implementations (Node's crypto in `apps/server/src/phone-noise.ts`, CryptoKit in
+`apps/mobile/modules/tastecode-link`) reproduce the published cacophony vector byte for byte.
+
+The server's private key lives in the OS credential store, one per data folder; paired phones
+are stored as public keys in `app_settings`. A phone may call only `PHONE_METHODS`: reading and
+driving chats, choosing models and access levels, browsing folders to add a project, attaching
+images. Terminals, installs, credentials, MCP and further pairing stay on the desktop, and
+phone links never receive `phone.*` or preview pushes. A paired phone sees every push the
+desktop sees, so a turn started on either streams on both; `projects.changed` tells every client
+when another one started, renamed or moved a chat. A chat's setup (model, reasoning effort,
+service tier, access level) is kept by the server, not by each client: `thread.settings` reads
+it, `thread.setSettings` and `thread.setApproval` change it, and the `thread.settings` push
+carries every change, so a pick on one device shows on the other at once. The desktop publishes
+the choice keys its picker hides (`models.hidden`) and the phone offers only the rest, because
+the desktop never runs a chat on a hidden model.
+
+The phone app is Expo with its interface written in Swift: one SwiftUI view hierarchy (iOS 26,
+Liquid Glass) inside an `@expo/ui` host, in the local `tastecode-ui` module, beside the
+`tastecode-link` module (Network.framework and CryptoKit, keys in the Keychain). Protocol logic,
+reconnects and state are TypeScript and import the shared contracts' types. TypeScript also
+words what the screens show (`src/view`: chat rows, step summaries, approval subjects) and sends
+it to Swift as JSON; an open chat sends only the rows that changed, so a streaming reply carries
+its own text and nothing else; Swift reads that JSON off the main thread. Swift draws and asks
+back through one action event. The chat transcript is UIKit, not SwiftUI: a collection view whose
+layout knows every row's exact height, rows laid out on a background queue from Markdown blocks
+measured once and cached, and in a long reply only the blocks near the screen built. Text is
+drawn off the main thread into IOSurfaces (also a screen and a half ahead of a scroll), which the
+main thread hands to Core Animation as they are; a streaming row moves only itself and the rows
+below it. An Android build replaces the two native modules with Kotlin and Compose and keeps
+everything else. The phone app has its own npm install, outside the pnpm workspace.
+
+_Rejected:_ the earlier phone design's bearer tokens in a plaintext WebSocket URL (safe only on
+Tailscale, readable by anyone on a café Wi-Fi). TLS with a pinned self-signed certificate
+(React Native's WebSocket cannot pin, and Node needs a certificate generator). A relay server
+(traffic and metadata would leave the user's machines; a relay can come later, carrying the same
+encrypted frames). A fully native Swift app (Android would share nothing). Screens composed in
+React from `@expo/ui`'s SwiftUI components (the first version): menus, toolbars, the composer's
+glass and scrolling could not be shaped as iOS draws them, and every streamed delta re-rendered
+React. The transcript in SwiftUI (a lazy stack of `Text`): every streamed delta parsed and laid out
+the whole reply again on the main thread: streaming the same reply in a simulator, it used about
+three times the main thread's time the UIKit transcript does. Transcript text drawn in
+`draw(_:)`, even with `drawsAsynchronously`: the main thread typeset every changed block and then
+waited at each commit for Core Animation's drawing queue, about 60% of its busy time while
+streaming. Text as plain `CGImage` contents: it cost the main thread 5–10% more CPU while
+scrolling than IOSurfaces, which Core Animation shares with the render server rather than
+sending over.
 
 ---
 
@@ -874,3 +935,6 @@ registry entry, which is deliberately a good first outside contribution.
 | 2026-10-11 | Ended a closed terminal's foreground job after a grace period, and a shell ignoring SIGHUP; background jobs stay.                                                              |
 | 2026-10-14 | Background writing reads only the model sources its choice needs, caches each source separately, and reuses Grok's sign-in `grok models` output for its model list.            |
 | 2026-10-19 | Made Claude Code's newest Haiku at medium the automatic background model, ahead of Codex Luna, which moved from low to medium effort.                                          |
+| 2026-10-22 | Added phone access: a Noise IK link on the LAN or a tailnet, one-time pairing codes, a phone method allowlist, `projects.changed`, and the Expo + SwiftUI phone app.           |
+| 2026-10-22 | Phone app screens moved from React-composed Expo UI to one SwiftUI hierarchy in Swift; TypeScript words the content and sends changed rows only.                               |
+| 2026-10-23 | Each chat's setup moved from every client's own storage to the server (`thread.settings`); the desktop shares its hidden models.                                               |

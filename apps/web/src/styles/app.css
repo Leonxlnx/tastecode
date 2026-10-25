@@ -471,35 +471,41 @@
   cursor: grab;
 }
 
-.sessrow.is-dragging {
-  opacity: 0.45;
-}
-
-.sessrow.is-dragging .sess {
+/* Live reorder: the held row rides with the pointer, the others slide aside
+   to open its slot; the order changes on release. */
+.is-row-reordering {
+  user-select: none;
   cursor: grabbing;
 }
 
-/* ::after: the active row's accent tick is a later ::before and would hide
-   the drop line on the row you are already in. */
-.sessrow[data-drop-position]::after {
-  content: '';
-  position: absolute;
-  z-index: 2;
-  /* Starts where the title does. */
-  left: calc(var(--sess-indent) + 19px);
-  right: 6px;
-  height: 2px;
-  border-radius: var(--r-pill);
-  background: var(--light);
-  pointer-events: none;
+.is-row-reordering .sess,
+.is-row-reordering .proj__head {
+  cursor: grabbing;
 }
 
-.sessrow[data-drop-position='before']::after {
-  top: -1px;
+/* Own layers for the duration: moves composite instead of repainting the rail. */
+.is-row-reordering > .sessrow,
+.is-row-reordering > .proj {
+  will-change: translate;
 }
 
-.sessrow[data-drop-position='after']::after {
-  bottom: -1px;
+.sessrow.is-row-dragging {
+  --sess-bg: var(--surface);
+  z-index: 3;
+  transition: none;
+}
+
+/* Rows making way use the rail's settle curve: quick to leave, long soft tail. */
+.sessrow.is-row-shifting,
+.proj.is-row-shifting {
+  transition: translate var(--dur-slow) var(--ease-rail);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sessrow.is-row-shifting,
+  .proj.is-row-shifting {
+    transition: none;
+  }
 }
 
 .sessrow:focus-within .sess__actions {
@@ -633,32 +639,14 @@
   margin-bottom: 4px;
 }
 
-.proj[draggable='true'] > .proj__head {
+.proj.is-reorderable > .proj__head {
   cursor: grab;
 }
 
-.proj.is-dragging {
-  opacity: 0.42;
-}
-
-.proj[data-drop-position]::before {
-  content: '';
-  position: absolute;
-  z-index: 2;
-  right: 6px;
-  left: 26px;
-  height: 2px;
-  border-radius: var(--r-pill);
-  background: var(--light);
-  pointer-events: none;
-}
-
-.proj[data-drop-position='before']::before {
-  top: -1px;
-}
-
-.proj[data-drop-position='after']::before {
-  bottom: -1px;
+/* Opaque, so a project block riding over its neighbours covers them. */
+.proj.is-row-dragging {
+  z-index: 3;
+  background: var(--bg-rail);
 }
 
 .proj__head {
@@ -2637,7 +2625,7 @@
      covers the first frame, and min-width: 0 beats the base .menu minimum. */
   min-width: 0;
   width: min(var(--menu-trigger-w, 224px), calc(100vw - 16px));
-  max-height: min(500px, calc(100vh - 24px));
+  max-height: calc(100vh - 24px);
   display: flex;
   flex-direction: column;
   overflow: hidden;

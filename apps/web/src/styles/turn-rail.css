@@ -1,0 +1,153 @@
+/* ---------- turn rail ---------- */
+
+/* One tick per prompt down the chat pane's left edge. Outside the scroller
+   like the jump button, so it stays put while the transcript moves, and in the
+   gutter beside the chat column, so it never covers a line of it. */
+.turn-rail {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  width: 34px;
+  padding: 20px 0;
+  pointer-events: none;
+}
+
+/* The floating composer covers the bottom of the transcript; the rail ends above it. */
+.stage__conversation:not(.is-new-session) .turn-rail {
+  bottom: var(--composer-overlay-height);
+}
+
+/* A long chat packs its ticks closer, down to 4px apart; past that the rail
+   scrolls on its own to keep the exchanges on screen in view (TurnRail). */
+.turn-rail__ticks {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  max-height: 100%;
+  overflow-y: hidden;
+  pointer-events: auto;
+}
+
+.turn-rail__tick {
+  position: relative;
+  flex: 0 1 8px;
+  min-height: 4px;
+  width: 100%;
+  padding: 0;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.turn-rail__tick::before {
+  position: absolute;
+  top: 50%;
+  left: 12px;
+  width: 6px;
+  height: 1px;
+  background: color-mix(in srgb, var(--text) 28%, transparent);
+  border-radius: var(--r-pill);
+  content: '';
+  transform: translateY(-50%);
+  transition:
+    width var(--dur-hover) var(--ease-out),
+    background-color var(--dur-hover) var(--ease-out);
+}
+
+/* The exchanges on screen: where the reader is. */
+.turn-rail__tick[data-in-view]::before {
+  width: 9px;
+  background: var(--text-2);
+}
+
+/* The tick reaches out toward its card. Keyboard focus draws the same tick,
+   which with the card beside it is the focus indicator. */
+.turn-rail__tick:is([data-previewed], :focus-visible)::before {
+  width: 12px;
+  background: var(--text);
+}
+
+.turn-rail__tick:focus-visible {
+  outline: none;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .turn-rail__tick:hover::before {
+    width: 12px;
+    background: var(--text);
+  }
+}
+
+/* Built like the app's other hover cards: the menu surface, the prompt as a
+   sidebar row would name it with its time at the end, the answer muted below. */
+.turn-rail__preview {
+  position: absolute;
+  top: 0;
+  left: 34px;
+  width: max-content;
+  max-width: min(300px, calc(100cqi - 80px));
+  padding: 8px 10px 9px;
+  background: var(--menu-bg);
+  border: 1px solid var(--menu-line);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-flyout);
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  line-height: 1.4;
+  pointer-events: none;
+  /* Only opacity: TurnRail places the card with transform. */
+  animation: fade-in 140ms var(--ease-out) both;
+}
+
+.turn-rail__head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.turn-rail__prompt {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: var(--t-sm);
+  font-weight: 520;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.turn-rail__time {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.turn-rail__reply {
+  display: -webkit-box;
+  margin-top: 3px;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+/* The gutter beside the column is too narrow here to hold the ticks. */
+@container chat-stage (max-width: 480px) {
+  .turn-rail {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .turn-rail__tick::before {
+    transition: none;
+  }
+
+  .turn-rail__preview {
+    animation: none;
+  }
+}

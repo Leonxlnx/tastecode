@@ -3741,59 +3741,6 @@ describe('web client', () => {
     )
   })
 
-  it('offers no account choice for a new chat on a custom harness, which keeps its own sign-in', async () => {
-    const codex = serverProviders[0]!
-    serverProviders = [
-      { ...codex, capabilities: { ...codex.capabilities!, multipleAccounts: true } },
-    ]
-    const request = transport.request.getMockImplementation()
-    if (!request) throw new Error('missing request mock')
-    transport.request.mockImplementation((method: string, params: unknown) => {
-      if (method === 'harnesses.list') {
-        return Promise.resolve({
-          harnesses: [
-            {
-              id: 'codex-fork',
-              displayName: 'Codex Fork',
-              provider: 'codex',
-              command: 'codex-fork',
-              args: [],
-            },
-          ],
-        })
-      }
-      if (method === 'models.list') {
-        const { agent } = methods['models.list'].params.parse(params)
-        const id = agent === 'codex-fork' ? 'fork-model' : 'codex-model'
-        return Promise.resolve({
-          models: [
-            { id, displayName: id, isDefault: true, reasoningEfforts: ['low'], serviceTiers: [] },
-          ],
-        })
-      }
-      return request(method, params)
-    })
-    render(<App />)
-    act(() => composerProps().onModelSelectorOpen?.())
-    await waitFor(() =>
-      expect(composerProps().models.map((choice) => choice.model.id)).toEqual(
-        expect.arrayContaining(['codex-model', 'fork-model']),
-      ),
-    )
-    const pick = (id: string) =>
-      act(() =>
-        composerProps().onModelChange(
-          composerProps().models.find((choice) => choice.model.id === id)!.key,
-        ),
-      )
-
-    // Codex itself runs as the chosen account, so the choice is offered.
-    pick('codex-model')
-    await waitFor(() => expect(composerProps().accountProvider).toBe('codex'))
-    pick('fork-model')
-    await waitFor(() => expect(composerProps().accountProvider).toBeUndefined())
-  })
-
   it('discovers a custom Pi source and binds new sessions to its harness id', async () => {
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
@@ -4182,7 +4129,7 @@ describe('web client', () => {
     expect(screen.queryByText('Loading models…')).toBeNull()
     fireEvent.click(await screen.findByRole('button', { name: 'Model and reasoning' }))
     expect(
-      await screen.findByRole('button', { name: 'Use gpt-6.1-sol through Codex' }),
+      await screen.findByRole('button', { name: 'Use Gpt-6.1-Sol through Codex' }),
     ).toBeTruthy()
     expect(document.querySelector('.model-selector__effort-title')?.textContent).toBe(
       'Effort: High',
@@ -5026,6 +4973,51 @@ describe('new chats', () => {
     expect(transport.request).not.toHaveBeenCalledWith('usage.summary', expect.anything())
   })
 
+  it('shows the card figure of the provider the model picker is on', async () => {
+    serverProviders = [...serverProviders, claudeCodeServerProvider()]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    const listed = (id: string) => ({
+      id,
+      displayName: id,
+      isDefault: true,
+      reasoningEfforts: [],
+      serviceTiers: [],
+    })
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'models.list') {
+        const { provider } = methods['models.list'].params.parse(params)
+        return Promise.resolve({ models: [listed(provider === 'codex' ? 'gpt-6.1-sol' : 'opus')] })
+      }
+      if (
+        method === 'usage.summary' &&
+        (params as { provider: string }).provider === 'claude-code'
+      ) {
+        return (request(method, params) as Promise<ResultOf<'usage.summary'>>).then((summary) => ({
+          ...summary,
+          limits: [{ label: '5 hours', usedPercent: 90 }],
+        }))
+      }
+      return request(method, params)
+    })
+    const card = () => document.querySelector('.account__usage')?.getAttribute('title')
+    render(<App />)
+
+    await waitFor(() => expect(card()).toBe('Codex · 5 hours · 75% left'))
+    // The popup reads Claude Code too, whose limit is tighter.
+    fireEvent.click(screen.getByRole('button', { name: 'Account' }))
+    const claude = await screen.findByRole('region', { name: 'Claude Code' })
+    await waitFor(() => expect(within(claude).getByText('10% left')).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', { name: 'Account' }))
+    expect(card()).toBe('Codex · 5 hours · 75% left')
+
+    await waitFor(() =>
+      expect(composerProps().models.map((choice) => choice.key)).toContain('claude-code:opus'),
+    )
+    act(() => composerProps().onModelChange('claude-code:opus'))
+    await waitFor(() => expect(card()).toBe('Claude Code · 5 hours · 10% left'))
+  })
+
   it('keeps installed provider limit sources separate in the account overview', async () => {
     serverProviders = [
       ...serverProviders,
@@ -5449,6 +5441,102 @@ describe('new chats', () => {
     expect(note()).toBeUndefined()
   })
 
+  it("brings back a model's last effort on another provider, not on another account", async () => {
+    const claude = claudeCodeServerProvider()
+    serverProviders = [
+      serverProviders[0]!,
+      { ...claude, capabilities: { ...claude.capabilities!, multipleAccounts: true } },
+    ]
+    serverProjects[0]!.sessions = [
+      { id: 'chat-1', title: 'Webhook retries', provider: 'claude-code', createdAt: 1 },
+    ]
+    const listed = (id: string, isDefault = false): Model => ({
+      id,
+      displayName: id,
+      isDefault,
+      reasoningEfforts: ['low', 'medium', 'high', 'xhigh'],
+      defaultReasoningEffort: 'medium',
+      serviceTiers: [],
+    })
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'accounts.list') {
+        return Promise.resolve({
+          accounts: [
+            { id: 'default', provider: 'claude-code', label: 'Personal', managed: false },
+            {
+              id: 'team-9z8y7x',
+              provider: 'claude-code',
+              label: 'Team',
+              home: 'C:\\TasteCode\\accounts\\claude-code\\team-9z8y7x',
+              managed: true,
+              email: 'team@example.test',
+            },
+          ],
+          active: {},
+        })
+      }
+      if (method === 'models.list') {
+        const { provider, accountId } = methods['models.list'].params.parse(params)
+        return Promise.resolve({
+          models:
+            provider === 'codex'
+              ? [listed('luna', true), listed('sol')]
+              : accountId === 'team-9z8y7x'
+                ? [listed('sonnet', true)]
+                : [listed('opus', true)],
+        })
+      }
+      return request(method, params)
+    })
+    // Codex was last used on Luna, but Sol last ran at high.
+    localStorage.setItem(
+      'harness.modelBySource',
+      JSON.stringify({
+        codex: { modelKey: 'codex:luna', effort: 'low' },
+        'claude-code': { modelKey: 'claude-code:opus', effort: 'xhigh' },
+      }),
+    )
+    localStorage.setItem(
+      'harness.effortByModel',
+      JSON.stringify({
+        'codex:luna': 'low',
+        'codex:sol': 'high',
+        'claude-code:opus': 'xhigh',
+        'claude-code:sonnet': 'low',
+      }),
+    )
+    const note = () =>
+      (composerProps().errors ?? []).find((error) =>
+        error.message.startsWith('Your next message switches'),
+      )
+    render(<App />)
+
+    fireEvent.click(await waitFor(() => treeChatRow('Webhook retries')))
+    await waitFor(() => expect(composerProps().modelId).toBe('claude-code:opus'))
+    expect(composerProps().effort).toBe('xhigh')
+
+    act(() => composerProps().onModelChange('codex:sol'))
+    await waitFor(() => expect(composerProps().modelId).toBe('codex:sol'))
+    expect(composerProps().effort).toBe('high')
+
+    await waitFor(() => expect(note()?.action?.label).toBe('Stay on Claude Code (Personal)'))
+    act(() => note()!.action!.run())
+    await waitFor(() => expect(composerProps().modelId).toBe('claude-code:opus'))
+    expect(composerProps().effort).toBe('xhigh')
+
+    // Another account of the same provider keeps the effort the chat is on.
+    await waitFor(() =>
+      expect(composerProps().models.map((choice) => choice.key)).toContain(
+        'claude-code@team-9z8y7x:sonnet',
+      ),
+    )
+    act(() => composerProps().onModelChange('claude-code@team-9z8y7x:sonnet'))
+    await waitFor(() => expect(composerProps().modelId).toBe('claude-code@team-9z8y7x:sonnet'))
+    expect(composerProps().effort).toBe('xhigh')
+  })
+
   it("offers a provider's other signed-in account as a source a chat can switch to", async () => {
     const codex = serverProviders[0]!
     serverProviders = [
@@ -5513,7 +5601,7 @@ describe('new chats', () => {
     render(<App />)
 
     // A new chat offers both accounts; picking Team's model makes Team the one
-    // new chats start on, as the account chip does.
+    // new chats start on.
     await waitFor(() =>
       expect(offered()).toEqual([
         'Codex (Personal): codex:gpt-6.1',
@@ -7150,6 +7238,42 @@ describe('new chats', () => {
     expect(transport.request).toHaveBeenCalledWith(
       'thread.start',
       expect.objectContaining({ baseRef: 'main' }),
+    )
+    expect(transport.request).not.toHaveBeenCalledWith('workspace.switchBranch', expect.anything())
+  })
+
+  it('starts on the checked-out branch while the shared checkout has uncommitted changes', async () => {
+    localStorage.setItem('harness.branch:/work/project', 'main')
+    serverProjects = [
+      { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },
+    ]
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'workspace.info'
+        ? Promise.resolve({ branch: 'feature/shelf', added: 4, removed: 1, dirtyFiles: 2 })
+        : method === 'workspace.branches'
+          ? Promise.resolve({ branches: ['feature/shelf', 'main'] })
+          : request(method, params),
+    )
+    render(<App />)
+    const picker = await screen.findByRole('button', { name: 'Choose branch' })
+    await waitFor(() => expect(rpcCount('workspace.branches')).toBe(1))
+    await waitFor(() => expect(picker.textContent).toContain('feature/shelf'))
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace mode' }))
+    fireEvent.click(await screen.findByRole('menuitemradio', { name: 'Isolated' }))
+    await waitFor(() => expect(picker.textContent).toContain('main'))
+    fireEvent.click(screen.getByRole('button', { name: 'Workspace mode' }))
+    fireEvent.click(await screen.findByRole('menuitemradio', { name: 'Local' }))
+    await waitFor(() => expect(picker.textContent).toContain('feature/shelf'))
+
+    submitTurn('Keep my changes where they are')
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('thread.start', expect.anything()),
+    )
+    expect(transport.request).toHaveBeenCalledWith(
+      'thread.start',
+      expect.not.objectContaining({ baseRef: expect.anything() }),
     )
     expect(transport.request).not.toHaveBeenCalledWith('workspace.switchBranch', expect.anything())
   })
@@ -10238,6 +10362,156 @@ describe('new chats', () => {
     await waitFor(() => expect(savedTier()).not.toBe('priority'))
   })
 
+  it('tells the server which models the picker hides, for the phone', async () => {
+    localStorage.setItem(
+      'harness.modelVisibility.v2',
+      JSON.stringify({
+        overrides: { 'codex:gpt-5.6-mini': { visible: false, at: 1 } },
+        firstSeen: {},
+      }),
+    )
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method, params) => {
+      if (method === 'models.list') {
+        return Promise.resolve({
+          models: [
+            cachedCodexChoice().model,
+            {
+              ...cachedCodexChoice().model,
+              id: 'gpt-5.6-mini',
+              displayName: 'GPT-5.6 Mini',
+              isDefault: false,
+            },
+          ],
+        })
+      }
+      if (method === 'models.setHidden') return Promise.resolve({})
+      return request(method, params)
+    })
+    render(<App />)
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('models.setHidden', {
+        keys: expect.arrayContaining(['codex:gpt-5.6-mini']),
+      }),
+    )
+    const sent = transport.request.mock.calls.filter(([method]) => method === 'models.setHidden')
+    expect(sent.at(-1)?.[1]).not.toEqual({ keys: expect.arrayContaining(['codex:gpt-6.1-sol']) })
+  })
+
+  it('keeps a chat on a shown model when the server names one the picker hides', async () => {
+    localStorage.setItem(
+      'harness.modelVisibility.v2',
+      JSON.stringify({
+        overrides: { 'codex:gpt-5.6-mini': { visible: false, at: 1 } },
+        firstSeen: {},
+      }),
+    )
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method, params) => {
+      if (method === 'models.list') {
+        return Promise.resolve({
+          models: [
+            cachedCodexChoice().model,
+            {
+              ...cachedCodexChoice().model,
+              id: 'gpt-5.6-mini',
+              displayName: 'GPT-5.6 Mini',
+              isDefault: false,
+            },
+          ],
+        })
+      }
+      if (method === 'thread.settings')
+        return Promise.resolve({ model: 'gpt-5.6-mini', effort: 'high' })
+      if (method === 'thread.setSettings' || method === 'models.setHidden')
+        return Promise.resolve({})
+      return request(method, params)
+    })
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('thread.setSettings', {
+        threadId: 'untouched-thread',
+        model: 'gpt-6.1-sol',
+        effort: 'low',
+      }),
+    )
+    expect(
+      (await screen.findByRole('button', { name: 'Model and reasoning' }, { timeout: 10_000 }))
+        .textContent,
+    ).toContain('5.6 Sol')
+  })
+
+  it('follows a chat setup another client chose and shares its own changes', async () => {
+    const mini = {
+      ...cachedCodexChoice().model,
+      id: 'gpt-5.6-mini',
+      displayName: 'GPT-5.6 Mini',
+      isDefault: false,
+    }
+    localStorage.setItem(
+      'harness.modelByThread:untouched-thread',
+      JSON.stringify({ modelKey: 'codex:gpt-5.6-mini', effort: 'high' }),
+    )
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method, params) => {
+      if (method === 'models.list')
+        return Promise.resolve({ models: [cachedCodexChoice().model, mini] })
+      if (method === 'thread.settings')
+        return Promise.resolve({ model: 'gpt-5.6-mini', effort: 'high', approval: 'ask' })
+      if (method === 'thread.setSettings') return Promise.resolve({})
+      return request(method, params)
+    })
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Model and reasoning' }, { timeout: 10_000 }),
+    )
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Model and reasoning' }).textContent).toContain(
+        '5.6 Mini',
+      ),
+    )
+
+    // The phone moves the open chat to another model, a lower effort and auto access.
+    const sharedBefore = transport.request.mock.calls.filter(
+      ([method]) => method === 'thread.setSettings',
+    ).length
+    act(() =>
+      transport.listeners.get('thread.settings')?.({
+        threadId: 'untouched-thread',
+        settings: { model: 'gpt-6.1-sol', effort: 'low', approval: 'auto' },
+      }),
+    )
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Model and reasoning' }).textContent).toContain(
+        '5.6 Sol',
+      )
+      expect(document.querySelector('.model-selector__effort-title')?.textContent).toBe(
+        'Effort: Low',
+      )
+      expect(screen.getByRole('button', { name: 'Permissions' }).textContent).toContain('Auto')
+    })
+    expect(JSON.parse(localStorage.getItem('harness.modelByThread:untouched-thread')!)).toEqual({
+      modelKey: 'codex:gpt-6.1-sol',
+      effort: 'low',
+    })
+    // Following a push never echoes it back.
+    expect(
+      transport.request.mock.calls.filter(([method]) => method === 'thread.setSettings'),
+    ).toHaveLength(sharedBefore)
+
+    // The desktop raises the effort; the server, and through it the phone, hears it.
+    fireEvent.keyDown(screen.getByRole('slider', { name: 'Reasoning effort' }), { key: 'End' })
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('thread.setSettings', {
+        threadId: 'untouched-thread',
+        model: 'gpt-6.1-sol',
+        effort: 'high',
+      }),
+    )
+  })
+
   it('opens a chat saved on a model Codex no longer ships and continues on the default', async () => {
     localStorage.setItem('harness.model', 'codex:gpt-5.4')
     serverProjects[0]!.sessions = [
@@ -10743,22 +11017,7 @@ describe('sidebar chat ordering', () => {
 
     const source = (await screen.findByRole('button', { name: 'First' })).closest('section')!
     const target = screen.getByRole('button', { name: 'Second' }).closest('section')!
-    vi.spyOn(target, 'getBoundingClientRect').mockReturnValue({
-      bottom: 80,
-      height: 30,
-      left: 0,
-      right: 200,
-      top: 50,
-      width: 200,
-      x: 0,
-      y: 50,
-      toJSON: () => ({}),
-    })
-    const dataTransfer = { dropEffect: 'none', effectAllowed: 'none', setData: vi.fn() }
-
-    fireEvent.dragStart(source, { dataTransfer })
-    fireEvent.dragOver(target, { clientY: 75, dataTransfer })
-    fireEvent.drop(target, { clientY: 75, dataTransfer })
+    dragRow(source, target, 'after')
 
     await waitFor(() => {
       expect(JSON.parse(localStorage.getItem('harness.projectOrder') ?? '[]')).toEqual([
@@ -10787,26 +11046,7 @@ describe('sidebar chat ordering', () => {
 
     const source = (await screen.findByRole('button', { name: /^First chat,/ })).closest('li')!
     const target = screen.getByRole('button', { name: /^Third chat,/ }).closest('li')!
-    vi.spyOn(target, 'getBoundingClientRect').mockReturnValue({
-      bottom: 88,
-      height: 28,
-      left: 0,
-      right: 200,
-      top: 60,
-      width: 200,
-      x: 0,
-      y: 60,
-      toJSON: () => ({}),
-    })
-    const dataTransfer = {
-      dropEffect: 'none',
-      effectAllowed: 'none',
-      setData: vi.fn(),
-    }
-
-    fireEvent.dragStart(source, { dataTransfer })
-    fireEvent.dragOver(target, { clientY: 80, dataTransfer })
-    fireEvent.drop(target, { clientY: 80, dataTransfer })
+    dragRow(source, target, 'after')
 
     await waitFor(() => {
       const order = SessionOrderSchema.parse(
@@ -13320,15 +13560,41 @@ function sessionTitles(): string[] {
 
 function dropChatRow(sourceTitle: string, targetTitle: string, position: 'before' | 'after') {
   const row = (title: string) => treeChatRow(title).closest('li')!
-  const source = row(sourceTitle)
-  const target = row(targetTitle)
-  vi.spyOn(target, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 60, 200, 28))
-  const dataTransfer = { dropEffect: 'none', effectAllowed: 'none', setData: vi.fn() }
-  const clientY = position === 'before' ? 65 : 85
+  dragRow(row(sourceTitle), row(targetTitle), position)
+}
 
-  fireEvent.dragStart(source, { dataTransfer })
-  fireEvent.dragOver(target, { clientY, dataTransfer })
-  fireEvent.drop(target, { clientY, dataTransfer })
+/**
+ * Drag a sidebar row (a chat `li` or a project `section`) with the pointer
+ * until it sits before or after another row of the same list, then release.
+ * happy-dom lays nothing out, so every row gets a 30px slot in list order.
+ */
+function dragRow(source: HTMLElement, target: HTMLElement, position: 'before' | 'after') {
+  const attribute = source.hasAttribute('data-project-path')
+    ? 'data-project-path'
+    : 'data-archive-session-id'
+  const rows = Array.from(source.parentElement!.children).filter((node): node is HTMLElement =>
+    node.hasAttribute(attribute),
+  )
+  const height = 30
+  rows.forEach((node, index) =>
+    vi
+      .spyOn(node, 'getBoundingClientRect')
+      .mockReturnValue(new DOMRect(0, index * height, 200, height)),
+  )
+  const from = rows.indexOf(source)
+  const to = rows.indexOf(target)
+  const down = to > from
+  const slot = down ? (position === 'after' ? to : to - 1) : position === 'before' ? to : to + 1
+  const handle = source.querySelector<HTMLElement>('.proj__head') ?? source
+  const start = from * height + height / 2
+  fireEvent.pointerDown(handle, { button: 0, pointerId: 1, clientY: start })
+  // The first move past the threshold only picks the row up where it lies.
+  fireEvent.pointerMove(handle, { pointerId: 1, clientY: start + (down ? 6 : -6) })
+  fireEvent.pointerMove(handle, {
+    pointerId: 1,
+    clientY: slot * height + height / 2 + (down ? 7 : -7),
+  })
+  fireEvent.pointerUp(handle, { pointerId: 1 })
 }
 
 describe('reopening a session', () => {

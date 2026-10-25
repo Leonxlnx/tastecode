@@ -249,6 +249,7 @@ describe('sidebar thread snapshots', () => {
         pinned: true,
         unread: true,
         worktreeBranch: 'feature/work',
+        lastActiveAt: 10,
       }),
     ])
     expect(store.sidebarThreads()).not.toBe(initial)
@@ -354,6 +355,65 @@ describe('retained thread metadata', () => {
     })
 
     expect(store.thread('later')).toBe(added)
+  })
+})
+
+describe('chat settings', () => {
+  it('keeps one setup per chat beside its access level, and drops it with the chat', () => {
+    store.addProject('/repo')
+    store.addThread({ id: 'main', projectPath: '/repo', provider: 'codex', title: 'Main' })
+    expect(store.threadSettings('main')).toEqual({})
+
+    store.setThreadSettings('main', { model: 'gpt-5.5', effort: 'high', serviceTier: 'fast' })
+    store.setThreadApproval('main', 'auto')
+    expect(store.threadSettings('main')).toEqual({
+      model: 'gpt-5.5',
+      effort: 'high',
+      serviceTier: 'fast',
+      approval: 'auto',
+    })
+
+    // A new setup replaces the old one whole: no effort means the model's default.
+    store.setThreadSettings('main', { model: '' })
+    expect(store.threadSettings('main')).toEqual({ model: '', approval: 'auto' })
+
+    store.deleteThread('main')
+    expect(store.threadSettings('main')).toEqual({})
+  })
+})
+
+it("names each chat's model in the sidebar list and follows a change", () => {
+  store.addProject('/repo')
+  store.addThread({ id: 'main', projectPath: '/repo', provider: 'codex', title: 'Main' })
+  store.addThread({ id: 'other', projectPath: '/repo', provider: 'codex', title: 'Other' })
+  expect(store.sidebarThreads().find((thread) => thread.id === 'main')).not.toHaveProperty('model')
+  store.setThreadSettings('main', { model: 'gpt-5.5' })
+  expect(store.sidebarThreads().find((thread) => thread.id === 'main')?.model).toBe('gpt-5.5')
+  store.setThreadSettings('main', { model: 'gpt-5.4-mini' })
+  expect(store.sidebarThreads().find((thread) => thread.id === 'main')?.model).toBe('gpt-5.4-mini')
+  // An empty model is the provider's own default; the list names none.
+  store.setThreadSettings('main', { model: '' })
+  expect(store.sidebarThreads().find((thread) => thread.id === 'main')).not.toHaveProperty('model')
+  expect(store.sidebarThreads().find((thread) => thread.id === 'other')).not.toHaveProperty('model')
+})
+
+describe('hidden models', () => {
+  it('keeps the picker’s hidden choice keys and survives a damaged record', () => {
+    expect(store.hiddenModels()).toEqual([])
+    store.setHiddenModels(['claude-code:claude-sonnet-5', 'codex:gpt-5.4'])
+    expect(store.hiddenModels()).toEqual(['claude-code:claude-sonnet-5', 'codex:gpt-5.4'])
+    store.setHiddenModels([])
+    expect(store.hiddenModels()).toEqual([])
+  })
+})
+
+describe('provider roster', () => {
+  it('is null until a desktop saves one, and keeps an empty one', () => {
+    expect(store.providerRoster()).toBeNull()
+    store.setProviderRoster(['codex', 'acp:kimi'])
+    expect(store.providerRoster()).toEqual(['codex', 'acp:kimi'])
+    store.setProviderRoster([])
+    expect(store.providerRoster()).toEqual([])
   })
 })
 

@@ -4,6 +4,7 @@ import {
   lazy,
   memo,
   Suspense,
+  type ContextType,
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
@@ -30,12 +31,13 @@ import { AccountLabelContext, type AccountLabel } from '../provider-accounts-sta
 import { ProviderIcon } from './ProviderIcon.js'
 import {
   IconArrowBarToDown as ArrowDownToLine,
-  IconBook2 as BookOpen,
   IconBrain as Brain,
   IconChevronRight as ChevronRight,
   IconAlertCircle as CircleAlert,
   IconHelpCircle as CircleQuestionMark,
+  IconEye as Eye,
   IconFilePencil as FilePenLine,
+  IconHammer as Hammer,
   IconHistory as History,
   IconLibraryPhoto as Images,
   IconListCheck as ListChecks,
@@ -45,8 +47,7 @@ import {
   IconPlayerStop as Stop,
   IconRotate as RotateCcw,
   IconSearch as Search,
-  IconStack2 as Layers,
-  IconTerminal2 as SquareTerminal,
+  IconTerminal as Terminal,
   IconTool as Wrench,
   IconWorldSearch as WorldSearch,
 } from '@tabler/icons-react'
@@ -89,6 +90,8 @@ import {
   waitingSubagentsLabel,
 } from './SubagentRow.js'
 import { FindBarSkeleton } from './SurfaceSkeletons.js'
+import { TurnRail, type VisibleRows } from './TurnRail.js'
+import { replyPreview, rowAtOffset, turnRailEntries, type TurnRailEntry } from './turn-rail.js'
 import {
   activityGroupAt,
   createThreadProjector,
@@ -110,6 +113,8 @@ import { createFollowGlide, type FollowGlide } from './scroll-follow.js'
 import { useVirtualItemKey } from './use-virtual-item-key.js'
 import { nearOlderHistoryEdge, prependedRowCount } from './older-history.js'
 import { shiftPendingScrollIndex } from './pending-scroll.js'
+import { ChatImageContext } from './MarkdownImage.js'
+import { resolveChatImage } from './chat-image-source.js'
 import { useOlderHistory } from './use-older-history.js'
 import { UserInput } from '../design-agent/UserInput.js'
 import type { Checkpoint } from './RollbackDialog.js'
@@ -134,6 +139,7 @@ const ThreadSearch = lazy(() =>
 
 const EMPTY_LIVE_ITEMS: ReadonlyMap<number, LiveItemUpdate> = new Map()
 const EMPTY_CHECKPOINTS: readonly Checkpoint[] = []
+const EMPTY_RAIL_ENTRIES: readonly TurnRailEntry[] = []
 
 /** Space kept between a disclosure's summary and the viewport edge it moves toward. */
 const HEADER_MARGIN = 12
@@ -181,6 +187,8 @@ export interface ThreadProps {
   onAnswerUserInput: (id: string, answers: Record<string, string[]>) => void | Promise<void>
   /** Keep agent questions inside this thread instead of the main composer. */
   inlineUserInput?: boolean | undefined
+  /** Mark each prompt on a rail at the pane's left edge; the main chat has the room. */
+  turnRail?: boolean | undefined
 }
 
 export const Thread = memo(function Thread(props: ThreadProps) {
@@ -190,6 +198,14 @@ export const Thread = memo(function Thread(props: ThreadProps) {
     props.frameStore.getStructureSnapshot,
   )
   const running = thread.running && !props.stopping
+  const { transport, threadId } = props
+  const chatImages = useMemo(
+    () =>
+      transport && threadId
+        ? (source: string) => resolveChatImage(transport, threadId, source)
+        : undefined,
+    [transport, threadId],
+  )
   const activeActivityIndices = useMemo(
     () => activeTurnActivityIndices(thread.items, thread.activeTurn?.id, thread.liveStart),
     [thread.items, thread.activeTurn?.id, thread.liveStart],
@@ -454,6 +470,20 @@ export const Thread = memo(function Thread(props: ThreadProps) {
     thread.activeTurn?.id,
   )
   const activePresentation = thread.activeTurn ? presentations.get(thread.activeTurn.id) : undefined
+  const railEntries = useRef<readonly TurnRailEntry[]>([])
+  railEntries.current = useMemo(
+    () =>
+      props.turnRail
+        ? turnRailEntries(turns, presentations, railEntries.current)
+        : EMPTY_RAIL_ENTRIES,
+    [props.turnRail, turns, presentations],
+  )
+  const presentationsRef = useRef(presentations)
+  presentationsRef.current = presentations
+  const replyOf = useCallback(
+    (turnId: string) => replyPreview(presentationsRef.current.get(turnId)?.responseText ?? ''),
+    [],
+  )
   const showWorkingRail = running && thread.activeTurn !== undefined
   const railIndex = showWorkingRail ? activePresentation?.firstResponseIndex : undefined
   // Until the turn's first response row exists, the working rail sits at the
@@ -865,6 +895,46 @@ export const Thread = memo(function Thread(props: ThreadProps) {
     [virtualizer],
   )
 
+  // The turn rail goes to a turn's start the way Alt+Up/Down does.
+  const jumpToTurn = useCallback(
+    (index: number) => {
+      stopJump()
+      setMode('free')
+      virtualizer.scrollToIndex(index, { align: 'start' })
+    },
+    [stopJump, virtualizer],
+  )
+  /** The rows between the top of the transcript and the composer floating over its end. */
+  const visibleRows = useCallback((): VisibleRows | undefined => {
+    const element = scroller.current
+    const runway = runwayRef.current
+    const list = virtualizerRef.current
+    if (!element || !runway || !list) return undefined
+    const top = element.getBoundingClientRect().top - runway.getBoundingClientRect().top
+    const covered = parseFloat(getComputedStyle(element).paddingBottom) || 0
+    const height = Math.max(1, element.clientHeight - covered)
+    list.getTotalSize()
+    const rows = list.measurementsCache
+    if (rows.length === 0) return undefined
+    return { first: rowAtOffset(rows, top), last: rowAtOffset(rows, top + height - 1) }
+  }, [])
+  // The rail sits beside the scroller, not in it, so a wheel over it would
+  // scroll nothing. It moves the transcript as a wheel over it would.
+  const wheelFromRail = useCallback(
+    (event: ReactWheelEvent) => {
+      const element = scroller.current
+      if (!element || event.deltaY === 0) return
+      onWheel(event)
+      const unit =
+        event.deltaMode === 1 ? LINE_PX : event.deltaMode === 2 ? element.clientHeight : 1
+      element.scrollBy({
+        top: event.deltaY * unit,
+        behavior: event.deltaMode === 0 ? 'auto' : 'smooth',
+      })
+    },
+    [onWheel],
+  )
+
   const projectRepeatedDesignRows = useMemo(createRepeatedDesignRowProjector, [props.threadId])
   const repeatedDesignRowAt = projectRepeatedDesignRows(thread.items)
   estimateRow.current = (index) => {
@@ -1274,7 +1344,7 @@ export const Thread = memo(function Thread(props: ThreadProps) {
     // of a scroll container scrolls away with the content — Ctrl+F used to
     // yank the transcript to the top just to show the find bar, and "Jump to
     // latest" rendered below the viewport exactly when it was needed.
-    <RowMeasureContext.Provider value={measureRow}>
+    <ThreadContexts measureRow={measureRow} chatImages={chatImages}>
       <div className="thread-shell">
         {finding ? (
           <Suspense fallback={<FindBarSkeleton />}>
@@ -1417,6 +1487,17 @@ export const Thread = memo(function Thread(props: ThreadProps) {
           <div className="thread__turn-room" ref={roomRef} aria-hidden />
         </div>
 
+        {props.turnRail ? (
+          <TurnRail
+            entries={railEntries.current}
+            scroller={scroller}
+            visibleRows={visibleRows}
+            replyOf={replyOf}
+            onJump={jumpToTurn}
+            onWheel={wheelFromRail}
+          />
+        ) : null}
+
         {/* Mount after the scroller so its ref is set before the layout effect. */}
         <FrameScrollFollower
           frameStore={props.frameStore}
@@ -1476,9 +1557,26 @@ export const Thread = memo(function Thread(props: ThreadProps) {
           </button>
         ) : null}
       </div>
-    </RowMeasureContext.Provider>
+    </ThreadContexts>
   )
 })
+
+/** What every row of a transcript reads: how to measure itself and how to load its pictures. */
+function ThreadContexts({
+  measureRow,
+  chatImages,
+  children,
+}: {
+  measureRow: ContextType<typeof RowMeasureContext>
+  chatImages: ContextType<typeof ChatImageContext>
+  children: ReactNode
+}) {
+  return (
+    <ChatImageContext.Provider value={chatImages}>
+      <RowMeasureContext.Provider value={measureRow}>{children}</RowMeasureContext.Provider>
+    </ChatImageContext.Provider>
+  )
+}
 
 /**
  * Follow-scroll needs every text frame, but the virtual list does not. Keep
@@ -2327,8 +2425,20 @@ export function providerNoticeLabel(notice: ProviderNotice, accountLabel?: Accou
 }
 
 /** A call that started a subagent draws as that subagent; anything else as a plain row. */
-function ActivityRow({ item, live }: { item: Item; live: boolean }) {
-  return item.subagent ? <SubagentRow item={item} /> : <AuxDisclosure item={item} live={live} />
+function ActivityRow({
+  item,
+  live,
+  batched = false,
+}: {
+  item: Item
+  live: boolean
+  batched?: boolean
+}) {
+  return item.subagent ? (
+    <SubagentRow item={item} />
+  ) : (
+    <AuxDisclosure item={item} live={live} batched={batched} />
+  )
 }
 
 function loneToolCall(activity: ActivityRenderSource): Item | undefined {
@@ -2397,7 +2507,16 @@ function lastActivityItemForRender({
  * A standalone operational row for activity that does not belong to a normal
  * tool stack, such as a design phase marker or an unknown provider item.
  */
-function AuxDisclosure({ item, live }: { item: Item; live: boolean }) {
+function AuxDisclosure({
+  item,
+  live,
+  batched = false,
+}: {
+  item: Item
+  live: boolean
+  /** In a batch, or a settled turn's work, the row's icon already says what kind of work it was. */
+  batched?: boolean
+}) {
   const disclosure = useDisclosure()
   const phase = item.type === 'tool_call' && designPhaseLabel(toolText(item)) !== undefined
   // An open row needs its detail anyway, so the detail answers whether it has
@@ -2407,7 +2526,11 @@ function AuxDisclosure({ item, live }: { item: Item; live: boolean }) {
     [item, phase, disclosure.contentMounted],
   )
   const expandable = !phase && (disclosure.contentMounted ? Boolean(detail) : hasAuxDetail(item))
-  const label = live ? summariseLive(item) : activityItemLabel(item)
+  const label = live
+    ? summariseLive(item)
+    : batched
+      ? batchedItemLabel(item)
+      : activityItemLabel(item)
 
   return (
     <div
@@ -2644,6 +2767,7 @@ function ReasoningDisclosure({
   projectPath,
   liveTextUpdate,
   liveUpdateVersion,
+  named = false,
 }: {
   item: Item
   text: string
@@ -2651,6 +2775,8 @@ function ReasoningDisclosure({
   projectPath: string | undefined
   liveTextUpdate: LiveItemUpdate['textUpdate'] | undefined
   liveUpdateVersion: number | undefined
+  /** Among the calls of a batch, a thought is named by its first line. */
+  named?: boolean
 }) {
   const disclosure = useDisclosure()
   const liveThinking = live && item.status === 'started'
@@ -2695,7 +2821,9 @@ function ReasoningDisclosure({
           <Brain size={13} />
         </span>
         <span ref={labelRef} className="aux__label">
-          {liveThinking ? liveThoughtLabel(item.createdAt) : thoughtLabel(item, false)}
+          {liveThinking
+            ? liveThoughtLabel(item.createdAt)
+            : (named && thoughtHeadline(text)) || thoughtLabel(item, false)}
         </span>
         <ChevronRight className="activity__chevron" size={15} strokeWidth={1.8} aria-hidden />
       </button>
@@ -2729,6 +2857,12 @@ function ReasoningDisclosure({
   )
 }
 
+/** A thought's first line as plain text, its Markdown marks dropped. */
+function thoughtHeadline(text: string): string {
+  const line = text.split('\n').find((entry) => entry.trim()) ?? ''
+  return inlineActivityText(line.replace(/^#+\s*/, '').replace(/[*_`]+/g, ''))
+}
+
 function thoughtLabel(item: Item, live: boolean): string {
   if (live && item.status === 'started') return liveThoughtLabel(item.createdAt)
   if (item.durationMs === undefined || item.durationMs < 1000) return 'Thought'
@@ -2754,11 +2888,11 @@ function thoughtDuration(ms: number): string {
 }
 
 /**
- * Every run of tool calls between two thoughts or messages folds into one
- * batch. A lone call stays a row of its own, and a list that is nothing but
- * tool calls is already the batch its summary names. Subagents started one
- * after another gather under a header of their own and never fold into a
- * tool batch, unless they are all there is to show.
+ * Everything the agent did between two of its notes folds into one batch,
+ * thoughts included. A lone call or thought stays a row of its own, and a
+ * list that is nothing but tool calls is already the batch its summary
+ * names. Subagents started one after another gather under a header of their
+ * own and never fold into a tool batch, unless they are all there is to show.
  */
 function groupToolRuns(items: Item[]): (Item | Item[])[] {
   if (items.every((item) => item.subagent)) return items
@@ -2776,17 +2910,28 @@ function groupToolRuns(items: Item[]): (Item | Item[])[] {
       rows.push(item)
     }
   }
-  return rows
+  // Thoughts with no call between them have nothing to count; they stay rows.
+  return rows.flatMap((row) => (Array.isArray(row) && !row.some(isStackedActivity) ? row : [row]))
 }
 
 function toolRunKind(item: Item, flat: boolean): 'subagents' | 'tools' | undefined {
   if (item.subagent) return 'subagents'
-  return !flat && isStackedActivity(item) ? 'tools' : undefined
+  if (flat) return undefined
+  return isStackedActivity(item) || item.type === 'reasoning' ? 'tools' : undefined
 }
 
-function ToolBatch({ items, live }: { items: Item[]; live: boolean }) {
+function ToolBatch({
+  items,
+  live,
+  projectPath,
+}: {
+  items: Item[]
+  live: boolean
+  projectPath: string | undefined
+}) {
   const disclosure = useDisclosure()
-  const tally = toolTally(items, live)
+  const calls = items.filter(isStackedActivity)
+  const tally = toolTally(calls, live)
 
   return (
     <div className="activity activity--batch" data-expanded={disclosure.expanded}>
@@ -2797,7 +2942,7 @@ function ToolBatch({ items, live }: { items: Item[]; live: boolean }) {
         onClick={disclosure.toggle}
       >
         <span className="activity__glyph" aria-hidden>
-          {toolBatchGlyph(items)}
+          {toolBatchGlyph(calls)}
         </span>
         <ToolTallyLabel tally={tally} />
         <ChevronRight className="activity__chevron" size={15} strokeWidth={1.8} aria-hidden />
@@ -2815,10 +2960,28 @@ function ToolBatch({ items, live }: { items: Item[]; live: boolean }) {
       >
         {disclosure.contentMounted ? (
           <div className="activity__reveal-clip">
-            <div className="activity__body">
-              {items.map((item) => (
-                <AuxDisclosure key={item.id} item={item} live={live && item.status === 'started'} />
-              ))}
+            <div className="activity__body activity__body--batch">
+              {items.map((item) =>
+                item.type === 'reasoning' ? (
+                  <ReasoningDisclosure
+                    key={item.id}
+                    item={item}
+                    text={item.text ?? ''}
+                    live={false}
+                    projectPath={projectPath}
+                    liveTextUpdate={undefined}
+                    liveUpdateVersion={undefined}
+                    named
+                  />
+                ) : (
+                  <AuxDisclosure
+                    key={item.id}
+                    item={item}
+                    live={live && item.status === 'started'}
+                    batched
+                  />
+                ),
+              )}
             </div>
           </div>
         ) : null}
@@ -2950,13 +3113,18 @@ function ActivityStack({
       >
         {disclosure.contentMounted ? (
           <div className="activity__reveal-clip">
-            <div className="activity__body">
+            <div className={`activity__body${activity.complete ? ' activity__body--work' : ''}`}>
               {(visibleActivity ? groupToolRuns(visibleActivity) : []).map((item) => {
                 if (Array.isArray(item)) {
                   return item[0]!.subagent ? (
                     <SubagentGroup key={item[0]!.id} items={item} />
                   ) : (
-                    <ToolBatch key={item[0]!.id} items={item} live={live} />
+                    <ToolBatch
+                      key={item[0]!.id}
+                      items={item}
+                      live={live}
+                      projectPath={projectPath}
+                    />
                   )
                 }
                 if (item.type === 'reasoning') {
@@ -2980,7 +3148,12 @@ function ActivityStack({
                   )
                 }
                 return (
-                  <ActivityRow key={item.id} item={item} live={live && item.status === 'started'} />
+                  <ActivityRow
+                    key={item.id}
+                    item={item}
+                    live={live && item.status === 'started'}
+                    batched={activity.complete}
+                  />
                 )
               })}
             </div>
@@ -3376,12 +3549,12 @@ function ToolTallyLabel({ tally, announce }: { tally: ToolTally; announce?: bool
   )
 }
 
-/** One kind of work keeps its own icon; a mix reads as a stack. */
+/** One kind of work keeps its own icon; a mix of them is a hammer. */
 function toolBatchGlyph(items: readonly Item[]) {
   const first = items[0]
-  if (!first) return <Layers size={14} />
+  if (!first) return <Hammer size={14} />
   const kind = toolKind(first)
-  return items.every((item) => toolKind(item) === kind) ? glyph(first) : <Layers size={14} />
+  return items.every((item) => toolKind(item) === kind) ? glyph(first) : <Hammer size={14} />
 }
 
 function liveActivityLabel(item: Item): string {
@@ -3456,6 +3629,13 @@ function activityItemLabel(item: Item): string {
   if (item.type === 'plan') return 'Updated plan'
 
   return summarise(item)
+}
+
+/** A command that ran fine reads as the command itself; anything else as on its own. */
+function batchedItemLabel(item: Item): string {
+  if (item.type !== 'command' || item.status !== 'completed') return activityItemLabel(item)
+  if (item.exitCode !== undefined && item.exitCode !== 0) return activityItemLabel(item)
+  return commandLabel(item.command) || activityItemLabel(item)
 }
 
 /** One path reads as the path; a patch across several files reads as a count. */
@@ -3781,7 +3961,7 @@ function glyph(item: Item) {
     case 'message':
       return <Brain size={13} />
     case 'command':
-      return <SquareTerminal size={13} />
+      return <Terminal size={14} />
     case 'reasoning':
       return <Brain size={13} />
     case 'file_change':
@@ -3792,7 +3972,7 @@ function glyph(item: Item) {
       if (designPhaseLabel(name)) return <Palette size={13} />
       if (isWebSearch(item)) return <WorldSearch size={14} />
       if (isSearchTool(name)) return <Search size={14} />
-      if (name.match(/read|open|file|list/)) return <BookOpen size={14} />
+      if (name.match(/read|open|file|list/)) return <Eye size={14} />
       return <Wrench size={13} />
     }
     case 'plan':

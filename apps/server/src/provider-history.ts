@@ -285,12 +285,18 @@ export class ProviderHistory {
                 this.store.addProviderThread(threadId, provider, session, projectPath)
                 this.#internalWithoutCopy.delete(threadId)
               } else if (
-                previous?.threadId === threadId &&
-                existing.title === previous.session.title &&
-                session.title
+                (previous?.threadId === threadId &&
+                  existing.title === previous.session.title &&
+                  session.title) ||
+                // The title taken from the chat's first prompt waited for this name.
+                (session.named && this.store.provisionalTitle(threadId) !== undefined)
               ) {
                 this.store.renameThread(threadId, session.title)
               }
+              // A session run outside TasteCode keeps the access level it last ran with
+              // there, until the chat has one of its own.
+              if (session.approval && this.store.threadApproval(threadId) === undefined)
+                this.store.setThreadApproval(threadId, session.approval)
               // An archived chat is imported closed, because its provider will
               // not resume it. Once unarchived there, it can be continued again.
               if (
@@ -629,6 +635,14 @@ function sameUserMessage(left: Item, right: Item): boolean {
   }
   return (
     (left.text === right.text || left.text === text) &&
-    JSON.stringify(left.attachments ?? []) === JSON.stringify(right.attachments ?? [])
+    sameAttachments(left.attachments ?? [], right.attachments ?? [])
+  )
+}
+
+/** A provider such as Claude saves an attached picture's bytes, not the path it came from. */
+function sameAttachments(local: readonly string[], native: readonly string[]): boolean {
+  return (
+    local.length === native.length &&
+    local.every((path, index) => path === native[index] || native[index]?.startsWith('data:'))
   )
 }

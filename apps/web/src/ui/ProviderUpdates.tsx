@@ -255,42 +255,44 @@ function ProviderUpdateItem(props: {
         <ProviderIcon mark={providerMark(update.provider)} size={14} />
         {update.displayName}
       </span>
-      <span className="update-slip__versions">
-        {from && to ? (
-          <>
-            <VersionReel
-              from={from}
-              to={to}
-              turn={busy ? 'turning' : succeeded ? 'turned' : 'rest'}
-            />
-            <span className="update-slip__arrow" aria-hidden>
-              →
+      <span className="update-slip__line">
+        <span className="update-slip__versions">
+          {from && to ? (
+            <>
+              <VersionReel
+                from={from}
+                to={to}
+                turn={busy ? 'turning' : succeeded ? 'turned' : 'rest'}
+              />
+              <span className="update-slip__arrow" aria-hidden>
+                →
+              </span>
+              <VersionTarget from={from} to={to} />
+            </>
+          ) : null}
+        </span>
+        <span className="visually-hidden">{status}</span>
+        <span className="update-slip__action">
+          {busy || succeeded ? (
+            <span className="update-slip__state" aria-hidden>
+              {operation?.phase === 'verifying' ? 'Checking' : busy ? 'Updating' : 'Updated'}
             </span>
-            <VersionTarget from={from} to={to} />
-          </>
-        ) : null}
-      </span>
-      <span className="visually-hidden">{status}</span>
-      <span className="update-slip__action">
-        {busy || succeeded ? (
-          <span className="update-slip__state" aria-hidden>
-            {operation?.phase === 'verifying' ? 'Checking' : busy ? 'Updating' : 'Updated'}
-          </span>
-        ) : update.canUpdate ? (
-          <button className="update-slip__button" type="button" onClick={props.onStart}>
-            {failed ? 'Retry' : 'Update'}
-          </button>
-        ) : (
-          <a
-            className="update-slip__link"
-            href={update.updateUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Update guide
-            <ArrowUpRight size={12} aria-hidden />
-          </a>
-        )}
+          ) : update.canUpdate ? (
+            <button className="update-slip__button" type="button" onClick={props.onStart}>
+              {failed ? 'Retry' : 'Update'}
+            </button>
+          ) : (
+            <a
+              className="update-slip__link"
+              href={update.updateUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Update guide
+              <ArrowUpRight size={12} aria-hidden />
+            </a>
+          )}
+        </span>
       </span>
       {operation?.error || hasLog ? (
         <span className="update-slip__note">

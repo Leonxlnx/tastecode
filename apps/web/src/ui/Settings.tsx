@@ -25,8 +25,10 @@ import {
   colorForeground,
 } from '../theme-colors.js'
 import {
+  formatModelName,
   getFastModeOffValue,
   getFastServiceTier,
+  getFriendlyEffortLabel,
   getNextServiceTierForModel,
   isFastModeEnabled,
 } from './model-selector-utils.js'
@@ -59,6 +61,7 @@ import {
   IconBlocks as Blocks,
   IconBug as Bug,
   IconDatabase as Database,
+  IconDeviceMobile as Smartphone,
   IconInfoCircle as Info,
   IconPackages as Boxes,
   IconKeyboard as Keyboard,
@@ -222,6 +225,12 @@ import { ProviderUpdateCheck } from './ProviderUpdates.js'
 import { useProviderUpdates, type ProviderUpdateSimulation } from '../provider-updates.js'
 import { useInstallCheck } from '../provider-recheck.js'
 
+const PhoneSettings = lazy(() =>
+  import('./PhoneSettings.js')
+    .then((module) => ({ default: module.PhoneSettings }))
+    .catch(surfaceLoadFailed),
+)
+
 const InstallTerminal = lazy(() =>
   import('./InstallTerminal.js')
     .then((module) => ({ default: module.InstallTerminal }))
@@ -236,6 +245,7 @@ export type SettingsSection =
   | 'skills'
   | 'workflows'
   | 'usage'
+  | 'phone'
   | 'appearance'
   | 'keybinds'
   | 'data'
@@ -534,6 +544,12 @@ function SettingsComponent(props: {
             onClick={() => setSection('usage')}
           />
           <SettingsNavItem
+            active={section === 'phone'}
+            icon={<Smartphone size={15} aria-hidden />}
+            label="Phone"
+            onClick={() => setSection('phone')}
+          />
+          <SettingsNavItem
             active={section === 'data'}
             icon={<Database size={15} aria-hidden />}
             label="Data & privacy"
@@ -590,6 +606,17 @@ function SettingsComponent(props: {
             {section === 'workflows' ? <GeneralSettings {...props} /> : null}
             {section === 'usage' ? (
               <UsageSettings transport={props.transport} limits={props.usageLimits} />
+            ) : null}
+            {section === 'phone' ? (
+              <Suspense
+                fallback={
+                  <SkeletonStatus label="Loading phone access…">
+                    <Skeleton width={260} height={11} />
+                  </SkeletonStatus>
+                }
+              >
+                <PhoneSettings transport={props.transport} />
+              </Suspense>
             ) : null}
             {section === 'appearance' ? <AppearanceSettings {...props} /> : null}
             {section === 'keybinds' ? (
@@ -1818,24 +1845,33 @@ function BackgroundModelSettings(props: { transport: Transport }) {
   const resolvedChoice = resolved ? findBackgroundModel(state?.sources ?? [], resolved) : undefined
   const automaticNote =
     manual && !selected
-      ? `${manual.model} is unavailable. Choose Automatic or another connected model.`
+      ? `${formatModelName(manual.model)} is unavailable. Choose Automatic or another connected model.`
       : resolved
-        ? `Currently ${resolvedChoice?.model.displayName ?? resolved.model} through ${resolved.sourceName}${resolved.effort ? ` at ${resolved.effort} effort` : ''}.`
+        ? `Currently ${formatModelName(resolvedChoice?.model.displayName ?? resolved.model)} through ${resolved.sourceName}${resolved.effort ? ` at ${getFriendlyEffortLabel(resolved.effort)} effort` : ''}.`
         : 'Connect a provider with an available model to enable background writing.'
   const modelOptions = [
     { value: 'automatic', label: 'Automatic (recommended)' },
     ...(manual && !selected
-      ? [{ value: 'unavailable', label: `${manual.model} (unavailable)`, disabled: true }]
+      ? [
+          {
+            value: 'unavailable',
+            label: `${formatModelName(manual.model)} (unavailable)`,
+            disabled: true,
+          },
+        ]
       : []),
     ...(state?.sources ?? []).flatMap((source) =>
       source.models.map((model) => ({
         value: backgroundModelValue(source.id, model.id),
-        label: model.displayName,
+        label: formatModelName(model.displayName),
       })),
     ),
   ]
   const effortOptions =
-    selected?.model.reasoningEfforts.map((effort) => ({ value: effort, label: effort })) ?? []
+    selected?.model.reasoningEfforts.map((effort) => ({
+      value: effort,
+      label: getFriendlyEffortLabel(effort),
+    })) ?? []
   const selectedEffort = manual?.effort ?? effortOptions[0]?.value ?? ''
   const fastTier = getFastServiceTier(selected?.model)
   const selectedSpeed = isFastModeEnabled(selected?.model, manual?.serviceTier)

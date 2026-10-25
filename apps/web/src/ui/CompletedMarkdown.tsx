@@ -27,7 +27,12 @@ import { isFileReference, isInlineFileReference } from './file-reference.js'
 import { FileTypeIcon } from './FileTypeIcon.js'
 import { shikiPlugin } from './highlighter.js'
 import { STREAMDOWN_ICONS } from './streamdown-icons.js'
-import { MarkdownImage, MarkdownImageContext } from './MarkdownImage.js'
+import {
+  ChatImage,
+  ChatImageContext,
+  MarkdownImage,
+  MarkdownImageContext,
+} from './MarkdownImage.js'
 import { MarkdownBlock, MarkdownCode, MarkdownPre } from './LargeCodeBlock.js'
 import { closedBlockCount, createBlockSplitter } from './markdown-blocks.js'
 
@@ -171,6 +176,7 @@ const STREAMDOWN_COMPONENTS = {
   strong: MarkdownStrong,
 } satisfies Components
 const IMAGE_COMPONENTS = { ...STREAMDOWN_COMPONENTS, img: MarkdownImage } satisfies Components
+const CHAT_IMAGE_COMPONENTS = { ...STREAMDOWN_COMPONENTS, img: ChatImage } satisfies Components
 
 type ImageTreeNode = {
   type: string
@@ -392,6 +398,7 @@ export const CompletedMarkdown = memo(function CompletedMarkdown({
     else commits.expect(text, splitBlocks(renderedText), onRendered)
   }, [commits, growing, onRendered, renderedText, splitBlocks, text])
   const imageSource = useContext(MarkdownImageContext)
+  const chatImages = useContext(ChatImageContext)
   const rehypePlugins = useMemo(() => {
     const plugins = Object.values(HARDENING_REHYPE_PLUGINS)
     // Resolve repository- and project-relative paths after raw HTML parsing,
@@ -420,7 +427,13 @@ export const CompletedMarkdown = memo(function CompletedMarkdown({
           plugins={STREAMDOWN_PLUGINS}
           controls={STREAMDOWN_CONTROLS}
           icons={STREAMDOWN_ICONS}
-          components={imageSource ? IMAGE_COMPONENTS : STREAMDOWN_COMPONENTS}
+          components={
+            imageSource
+              ? IMAGE_COMPONENTS
+              : chatImages
+                ? CHAT_IMAGE_COMPONENTS
+                : STREAMDOWN_COMPONENTS
+          }
           remarkPlugins={literalHtml ? LITERAL_HTML_REMARK_PLUGINS : REMARK_PLUGINS}
           rehypePlugins={rehypePlugins}
         >

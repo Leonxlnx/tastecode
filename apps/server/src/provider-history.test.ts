@@ -438,6 +438,35 @@ describe('provider history integration', () => {
     ).toEqual(['Hello'])
   })
 
+  it('recognizes the echo of a prompt whose picture the provider saved inline', async () => {
+    store.addThread({
+      id: 'local',
+      projectPath: process.cwd(),
+      provider: 'codex',
+      providerSessionId: 'native',
+      title: 'Local',
+    })
+    const withPicture = (events: DomainEvent[], attachment: string) =>
+      events.map((event) =>
+        event.type === 'item.completed' && event.item.role === 'user'
+          ? { ...event, item: { ...event.item, attachments: [attachment] } }
+          : event,
+      )
+    for (const event of withPicture(transcript('local', 'Answer'), '/tmp/attachments/a-image.jpg'))
+      store.append('local', event)
+    const { history, source } = setup()
+    vi.mocked(source.read).mockResolvedValue(
+      withPicture(transcript('native', 'Answer'), 'data:image/jpeg;base64,/9j/4AAQ'),
+    )
+    await history.refresh()
+    await history.load('local')
+    expect(
+      messages('local')
+        .filter((item) => item.role === 'user')
+        .map((item) => item.attachments),
+    ).toEqual([['/tmp/attachments/a-image.jpg']])
+  })
+
   it('recognizes a steer that the provider saved as a turn of its own', async () => {
     store.addThread({
       id: 'local',
@@ -1097,6 +1126,24 @@ describe('provider history integration', () => {
     await history.load('local')
     expect(store.usageSummary('local', 0).session.totalTokens).toBe(200)
   })
+  it('gives an imported chat the access level its session ran with, and keeps one it has', async () => {
+    const sessions: ProviderHistorySession[] = [
+      { ...metadata(), approval: 'full' },
+      metadata('unknown'),
+    ]
+    const { history } = setup(sessions)
+    await history.refresh()
+    expect(store.threadApproval('external:codex:native')).toBe('full')
+    expect(store.threadApproval('external:codex:unknown')).toBeUndefined()
+
+    store.setThreadApproval('external:codex:native', 'ask')
+    sessions[0] = { ...metadata(), approval: 'auto', revision: '2', updatedAt: 3000 }
+    sessions[1] = { ...metadata('unknown'), approval: 'auto', revision: '2', updatedAt: 3000 }
+    await history.refresh()
+    expect(store.threadApproval('external:codex:native')).toBe('ask')
+    expect(store.threadApproval('external:codex:unknown')).toBe('auto')
+  })
+
   it('imports archived chats in the same metadata batch with their native activity time', async () => {
     const { history } = setup([
       metadata(),
@@ -1322,6 +1369,38 @@ describe('provider history integration', () => {
     store.deleteThread(id)
     await restarted.refresh()
     expect(store.threads()).toEqual([])
+  })
+
+  it("gives a chat its provider's name while the first prompt's title stands in", async () => {
+    store.addThread({
+      id: 'native',
+      projectPath: process.cwd(),
+      provider: 'codex',
+      title: 'Fix it',
+    })
+    store.addThread({ id: 'renamed', projectPath: process.cwd(), provider: 'codex', title: 'Go' })
+    store.setProvisionalTitle('native', 'Fix it')
+    store.setProvisionalTitle('renamed', 'Go')
+    store.renameThread('renamed', 'Cache work')
+    const sessions = [
+      { ...metadata('native'), title: 'Fix it please, the queue drops jobs' },
+      { ...metadata('renamed'), title: 'Cache invalidation fix', named: true },
+    ]
+    const { history } = setup(sessions)
+
+    await history.refresh()
+    // Until the provider names the chat, its title is the first prompt again.
+    expect(store.thread('native')?.title).toBe('Fix it')
+    expect(store.thread('renamed')?.title).toBe('Cache work')
+
+    sessions[0] = { ...sessions[0]!, title: 'Queue drops jobs', named: true, revision: '2' }
+    await history.refresh()
+    expect(store.thread('native')?.title).toBe('Queue drops jobs')
+    expect(store.provisionalTitle('native')).toBeUndefined()
+
+    sessions[0] = { ...sessions[0]!, title: 'Queue drops retried jobs', revision: '3' }
+    await history.refresh()
+    expect(store.thread('native')?.title).toBe('Queue drops retried jobs')
   })
 
   it('deduplicates TasteCode sessions by native identity and imports only outside turns', async () => {

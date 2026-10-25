@@ -20,6 +20,7 @@ const threads: StoredSidebarThread[] = Array.from({ length: 10_000 }, (_, index)
   createdAt: index,
   lifecycle: { state: 'active', keepActive: false },
   unread: index % 25 === 0,
+  lastActiveAt: index,
 }))
 const statuses = new Map<string, ThreadInboxStatus>(
   threads.map((thread) => [thread.id, thread.unread ? 'ready' : 'idle']),

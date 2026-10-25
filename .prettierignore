@@ -23,7 +23,13 @@ tools/oxlint/anti-slop/
 
 # Icon Composer owns this bundle's JSON layout.
 apps/desktop/assets/*.icon/
+apps/mobile/assets/*.icon/
 
 # Vendor protocol bindings. Produced by `codex app-server generate-ts`;
 # reformatting them would make every regeneration a noisy diff.
 packages/adapter-codex/src/generated/
+
+# Expo generates these from app.json; they are not checked in.
+apps/mobile/ios/
+apps/mobile/android/
+apps/mobile/.expo/

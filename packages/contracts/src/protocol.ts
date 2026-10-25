@@ -25,6 +25,7 @@ import {
   ProviderUpdateSchema,
   UsageSchema,
 } from './domain.js'
+import { PhoneAccessStatusSchema, PhonePairingSchema, ProjectBrowseResultSchema } from './phone.js'
 import {
   CheckoutPullRequestResultSchema,
   GitHubRepositoryNameSchema,
@@ -91,6 +92,19 @@ export const QueuedTurnSchema = z.object({
   createdAt: z.number(),
 })
 export type QueuedTurn = z.infer<typeof QueuedTurnSchema>
+
+/**
+ * A chat's setup: what its next turn runs with. The server keeps it so every
+ * client shows the same choice, and pushes `thread.settings` when one client
+ * changes it. Absent fields mean the source's default.
+ */
+export const ThreadSettingsSchema = z.object({
+  model: z.string().optional(),
+  effort: z.string().min(1).optional(),
+  serviceTier: z.string().min(1).optional(),
+  approval: ApprovalModeSchema.optional(),
+})
+export type ThreadSettings = z.infer<typeof ThreadSettingsSchema>
 
 export const PanicStopSessionResultSchema = z.discriminatedUnion('status', [
   z.object({ threadId: z.string(), status: z.literal('interrupted') }),
@@ -1506,6 +1520,35 @@ export const methods = {
     }),
     result: z.object({ models: z.array(ModelSchema) }),
   },
+  /**
+   * The models the user hid from the model picker, as the desktop resolves its
+   * visibility settings: choice keys (`<source>:<URI-encoded model id>`, the
+   * source being `provider`, `provider:agent`, `api:connection` or
+   * `custom:provider`). Other clients offer only the models not listed, so a
+   * chat never moves to a model the desktop would refuse to run.
+   */
+  'models.hidden': {
+    params: z.object({}),
+    result: z.object({ keys: z.array(z.string()) }),
+  },
+  'models.setHidden': {
+    params: z.object({ keys: z.array(z.string()).max(10_000) }),
+    result: z.object({}),
+  },
+  /**
+   * The providers the user added on the desktop, which are the only ones it
+   * shows or starts: a direct provider by its id (`codex`), an ACP agent by
+   * `acp:<agent>`. API connections and custom models are not part of it.
+   * `null` until a desktop saved one; other clients then offer every source.
+   */
+  'providers.roster': {
+    params: z.object({}),
+    result: z.object({ keys: z.array(z.string()).nullable() }),
+  },
+  'providers.setRoster': {
+    params: z.object({ keys: z.array(z.string().min(1).max(200)).max(1_000) }),
+    result: z.object({}),
+  },
   /** Model policy for short product-owned writing tasks. */
   'backgroundModel.settings': {
     params: z.object({}),
@@ -1634,11 +1677,31 @@ export const methods = {
               closedAt: z.number().optional(),
               /** The private checkout branch, when this session is isolated. */
               worktreeBranch: z.string().optional(),
+              /**
+               * The model of the chat's shared setup (`thread.settings`), so a
+               * list can show or filter by it. Absent until a client chose one.
+               */
+              model: z.string().min(1).optional(),
+              /**
+               * When the chat last had activity: a prompt, a turn starting or
+               * ending, a request for the user. Lets a list order chats by
+               * recency. Absent from servers that predate it.
+               */
+              lastActiveAt: z.number().optional(),
             }),
           ),
         }),
       ),
     }),
+  },
+  /**
+   * List the folders inside one folder on this computer, so a client without
+   * a native folder picker (a paired phone) can choose a project. Hidden
+   * folders and files are left out. Absent `path` starts at the home folder.
+   */
+  'projects.browse': {
+    params: z.object({ path: z.string().min(1).max(4096).optional() }),
+    result: ProjectBrowseResultSchema,
   },
   'projects.add': {
     params: z.object({ path: z.string(), name: z.string().optional() }),
@@ -1719,6 +1782,15 @@ export const methods = {
       data: z.string().max(34_952_536),
     }),
     result: z.object({ path: z.string() }),
+  },
+  /**
+   * An image one of a chat's messages attached, for a client that cannot read
+   * this computer's files (a paired phone). Only a path the chat's messages
+   * name is readable, and only as an image.
+   */
+  'attachments.read': {
+    params: z.object({ threadId: z.string().min(1), path: z.string().min(1).max(4096) }),
+    result: z.object({ mimeType: z.string(), data: z.string() }),
   },
   'thread.rename': {
     params: z.object({ threadId: z.string(), title: z.string() }),
@@ -2104,6 +2176,25 @@ export const methods = {
     }),
     result: z.object({}),
   },
+  /** The chat's setup as the server keeps it. */
+  'thread.settings': {
+    params: z.object({ threadId: z.string() }),
+    result: ThreadSettingsSchema,
+  },
+  /**
+   * Replace the model, reasoning effort and service tier the chat's next turn
+   * runs with; absent fields go back to the source's default. The access level
+   * stays with `thread.setApproval`, which also reaches the live session.
+   */
+  'thread.setSettings': {
+    params: z.object({
+      threadId: z.string(),
+      model: z.string().optional(),
+      effort: z.string().min(1).optional(),
+      serviceTier: z.string().min(1).optional(),
+    }),
+    result: ThreadSettingsSchema,
+  },
   'thread.close': {
     params: z.object({ threadId: z.string() }),
     result: z.object({}),
@@ -2111,6 +2202,33 @@ export const methods = {
   'sidebar.settings': {
     params: z.object({}),
     result: SidebarSettingsSchema,
+  },
+  /** Whether phones may connect, where they can reach this computer, and the paired phones. */
+  'phone.status': {
+    params: z.object({}),
+    result: PhoneAccessStatusSchema,
+  },
+  /** Turning access off closes every phone link; paired phones stay paired. */
+  'phone.setEnabled': {
+    params: z.object({ enabled: z.boolean() }),
+    result: PhoneAccessStatusSchema,
+  },
+  /**
+   * Open a one-time pairing code, turning access on when it is off. A new
+   * code replaces an open one; the first phone that pairs closes it.
+   */
+  'phone.startPairing': {
+    params: z.object({}),
+    result: z.object({ status: PhoneAccessStatusSchema, pairing: PhonePairingSchema }),
+  },
+  'phone.cancelPairing': {
+    params: z.object({}),
+    result: PhoneAccessStatusSchema,
+  },
+  /** Forget a phone and close its links. It has to pair again to reconnect. */
+  'phone.removeDevice': {
+    params: z.object({ deviceId: z.string().min(1) }),
+    result: PhoneAccessStatusSchema,
   },
   'sidebar.updateSettings': {
     params: SidebarSettingsSchema.partial(),
@@ -2228,11 +2346,26 @@ export const channels = {
     items: z.array(QueuedTurnSchema),
     canSteer: z.boolean(),
   }),
+  /** The desktop hid or showed models in its picker. */
+  'models.hidden': z.object({ keys: z.array(z.string()) }),
+  /** The desktop added or removed a provider. */
+  'providers.roster': z.object({ keys: z.array(z.string()) }),
+  /** A chat's setup changed on some client, or a turn or provider change moved it. */
+  'thread.settings': z.object({ threadId: z.string(), settings: ThreadSettingsSchema }),
   'thread.lifecycle': z.object({
     threadId: z.string().min(1),
     lifecycle: ThreadLifecycleSchema,
   }),
   'sidebar.settings': SidebarSettingsSchema,
+  /**
+   * The project or chat list changed in a way no other push describes: a chat
+   * was started, renamed, pinned, moved or deleted, or a project was added,
+   * renamed, pinned or removed, possibly by another client. Clients call
+   * `projects.list` again; older clients ignore it.
+   */
+  'projects.changed': z.object({}),
+  /** Phone access changed: turned on or off, a phone paired, connected or left. */
+  'phone.changed': PhoneAccessStatusSchema,
   'terminal.output': z.object({
     terminalId: TerminalIdSchema,
     data: z.string(),

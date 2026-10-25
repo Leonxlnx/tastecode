@@ -1,0 +1,32 @@
+{
+  "expo": {
+    "name": "TasteCode",
+    "slug": "tastecode",
+    "scheme": "tastecode",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "bundleIdentifier": "dev.tastecode.mobile",
+      "icon": "./assets/tastecode.icon",
+      "supportsTablet": true,
+      "deploymentTarget": "26.0",
+      "infoPlist": {
+        "NSCameraUsageDescription": "TasteCode uses the camera to scan the pairing code your computer shows, and to take photos you attach to a message.",
+        "NSLocalNetworkUsageDescription": "TasteCode connects to TasteCode on your computer over your local network."
+      },
+      "appleTeamId": "28726K5AS9"
+    },
+    "plugins": [
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "deploymentTarget": "26.0"
+          }
+        }
+      ]
+    ]
+  }
+}

@@ -29,6 +29,7 @@ import type {
   QueuedTurn,
   ResultOf,
   SidebarSettings,
+  ThreadSettings,
 } from '@harness/contracts'
 import { DEFAULT_ACCOUNT_ID } from '@harness/contracts'
 import {
@@ -106,6 +107,7 @@ import { createSessionOrderSerializer } from './session-order-serializer.js'
 import type { CommandScope, PaletteCommand } from './ui/CommandPalette.js'
 import { Composer, type SendAvailability, type WorkspaceInfo } from './ui/Composer.js'
 import {
+  formatModelName,
   getFastModeOffValue,
   getFastServiceTier,
   getNextServiceTierForModel,
@@ -228,6 +230,7 @@ import {
 } from './ui/workspace/workspace-panel-width.js'
 import { useWindowChrome } from './window-chrome.js'
 import { backdropColorScheme } from './theme-colors.js'
+import { adoptedSelection, shareSavedSetups, sharedSetup } from './thread-settings.js'
 import {
   readProfileIdentityPreferences,
   writeProfileIdentityPreferences,
@@ -305,6 +308,8 @@ const CUSTOM_MODELS_KEY = 'harness.customModels.v1'
 /** Last model/effort/tier used per source, so returning to a provider
  *  restores the exact working setup instead of a best-guess translation. */
 const MODEL_BY_SOURCE_KEY = 'harness.modelBySource'
+/** Last effort used per model of a source, whichever of its accounts ran it. */
+const EFFORT_BY_MODEL_KEY = 'harness.effortByModel'
 const MODEL_BY_THREAD_PREFIX = 'harness.modelByThread:'
 const COMPOSER_DRAFTS_KEY = 'harness.composerDrafts.v1'
 const EMPTY_PALETTE_COMMANDS: PaletteCommand[] = []
@@ -600,6 +605,15 @@ function modelSource(choice: ModelChoice): string {
     connectionId: choice.connectionId,
     agentId: choice.agent?.id,
     accountId: choice.accountId,
+  })
+}
+
+/** A choice's source without its account: every account of a provider is the same provider. */
+function providerSource(choice: ModelChoice): string {
+  return sourceKey({
+    provider: choice.provider,
+    connectionId: choice.connectionId,
+    agentId: choice.agent?.id,
   })
 }
 
@@ -953,12 +967,29 @@ export function App() {
   const projectBranches = useRef(new Map<string, string>())
   /** Each project's checked-out branch, as workspace.info last said. */
   const checkedOutBranches = useRef(new Map<string, string | undefined>())
+  /** Projects whose checkout had uncommitted changes when workspace.info last read it. */
+  const dirtyCheckouts = useRef(new Set<string>())
   /** Branch lists by project, reused for BRANCH_LIST_TTL_MS. */
   const branchLists = useRef(
     new Map<string, { at: number; revision: number; branches: string[] }>(),
   )
   const [branchMenuOpened, setBranchMenuOpened] = useState(0)
   const openBranchMenu = useCallback(() => setBranchMenuOpened((count) => count + 1), [])
+  const recordCheckout = useCallback((path: string, info: WorkspaceInfo | undefined) => {
+    checkedOutBranches.current.set(path, info?.branch)
+    if (info?.dirtyFiles) dirtyCheckouts.current.add(path)
+    else dirtyCheckouts.current.delete(path)
+  }, [])
+  // A new chat in the shared checkout starts where it is while the checkout
+  // has uncommitted changes. Switching it then fails when a change touches a
+  // file the branches differ in, and otherwise carries the changes along. An
+  // isolated chat gets its own worktree, so any branch works as its base.
+  const newChatBranch = useCallback((path: string, isolate: boolean) => {
+    const checkedOut = checkedOutBranches.current.get(path)
+    return !isolate && checkedOut && dirtyCheckouts.current.has(path)
+      ? checkedOut
+      : projectBranches.current.get(path)
+  }, [])
   const [workspaceRefreshRevision, setWorkspaceRefreshRevision] = useState(0)
   const [account, setAccount] = useState<Account | undefined>()
   const [profileIdentity, setProfileIdentity] = useState(readProfileIdentityPreferences)
@@ -1224,6 +1255,33 @@ export function App() {
     () => models.filter((choice) => !hiddenModels.has(choice.key)),
     [models, hiddenModels],
   )
+  // The phone offers the models this picker offers, so neither moves a chat
+  // to a model the other hides. Compared as text: the set is rebuilt often.
+  const hiddenModelList = useMemo(() => JSON.stringify([...hiddenModels].sort()), [hiddenModels])
+  useEffect(() => {
+    if (!modelsLoaded) return
+    const timer = window.setTimeout(() => {
+      void transport
+        .request('models.setHidden', { keys: JSON.parse(hiddenModelList) as string[] })
+        .catch(() => undefined)
+    }, 500)
+    return () => window.clearTimeout(timer)
+  }, [hiddenModelList, modelsLoaded, transport])
+  // The phone offers only the providers added here, so it never shows one
+  // this app removed. Nothing is shared before the roster is first saved.
+  // Shared again on every connection: one closed before the request left
+  // drops it, and the server keeps only what last arrived.
+  useEffect(() => {
+    if (providerRoster === undefined) return
+    const share = () =>
+      void transport
+        .request('providers.setRoster', { keys: [...providerRoster] })
+        .catch(() => undefined)
+    if (transport.state === 'open') share()
+    return transport.onState((state) => {
+      if (state === 'open') share()
+    })
+  }, [providerRoster, transport])
   const visibleModelsRef = useRef(visibleModels)
   visibleModelsRef.current = visibleModels
   // Memoised for identity: while the catalog is empty this is the selected
@@ -1561,7 +1619,7 @@ export function App() {
       providerStatuses.find((entry) => entry.id === provider)?.capabilities?.autoReview === true,
     [provider, providerStatuses],
   )
-  // A new chat with such a provider offers its accounts beside the composer tools.
+  // A new chat with such a provider runs as one of its accounts.
   const providerHasAccounts = useMemo(
     () =>
       providerStatuses.find((entry) => entry.id === provider)?.capabilities?.multipleAccounts ===
@@ -2162,6 +2220,9 @@ export function App() {
       setQueuedTurns(items)
       setCanSteerQueue(canSteer)
     })
+    const offSettings = transport.on('thread.settings', ({ threadId, settings }) =>
+      adoptThreadSettingsRef.current(threadId, settings),
+    )
     const offLifecycle = transport.on('thread.lifecycle', ({ threadId, lifecycle }) => {
       pendingLifecycles.set(threadId, lifecycle)
       if (lifecycleFlush !== undefined) return
@@ -2245,6 +2306,7 @@ export function App() {
       probe.inFlight = probe.pendingPath = probe.idlePath = probe.blockedPath = undefined
       offEvents()
       offQueue()
+      offSettings()
       offLifecycle()
       offPreviewCapture()
       offSidebarSettings()
@@ -2974,13 +3036,13 @@ export function App() {
       .request('workspace.info', { path: activePath })
       .catch(() => undefined)
       .then((info) => {
-        checkedOutBranches.current.set(activePath, info?.branch)
+        recordCheckout(activePath, info)
         if (!cancelled) setWorkspace(info)
       })
     return () => {
       cancelled = true
     }
-  }, [transport, activePath, workspaceRefreshRevision])
+  }, [transport, activePath, workspaceRefreshRevision, recordCheckout])
 
   // Listing branches runs git twice, and only a new chat's shelf offers them, so
   // an open chat never asks. A list stays good for 30 s; opening the menu after
@@ -3108,6 +3170,8 @@ export function App() {
     authStatusRequest,
   ])
 
+  // Once per window: chats set up before the server kept setups share theirs.
+  const savedSetupsShared = useRef(false)
   const refreshProjects = useCallback(async () => {
     if (!startupMilestones.current.projectsRequested) {
       startupMilestones.current.projectsRequested = true
@@ -3115,6 +3179,14 @@ export function App() {
     }
     const result = await transport.request('projects.list', {})
     const list = result.projects.filter((project) => !removedProjectPaths.current.has(project.path))
+    if (!savedSetupsShared.current) {
+      savedSetupsShared.current = true
+      void shareSavedSetups(
+        list.flatMap((project) => project.sessions),
+        readThreadModelSelection,
+        (threadId, setup) => transport.request('thread.setSettings', { threadId, ...setup }),
+      )
+    }
     if (!startupMilestones.current.projectsReceived) {
       startupMilestones.current.projectsReceived = true
       reportStartupMilestone('projects-received')
@@ -3155,6 +3227,20 @@ export function App() {
       }),
     [transport, refreshProviderThreadHistory, refreshProjects],
   )
+
+  // Another client (a paired phone, a second window) started, renamed or moved
+  // a chat. A burst of changes reloads the list once.
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const off = transport.on('projects.changed', () => {
+      clearTimeout(timer)
+      timer = setTimeout(() => void refreshProjects().catch(() => undefined), 150)
+    })
+    return () => {
+      off()
+      clearTimeout(timer)
+    }
+  }, [transport, refreshProjects])
 
   const loadHistory = useCallback(
     async (threadId: string, afterSeq?: number) => {
@@ -3440,14 +3526,24 @@ export function App() {
         .map((status) => status.id),
     [provider, providerStatuses],
   )
-  // Each provider account is a limit source of its own. New chats start on a
-  // provider's active account, so that one is read for the current provider;
-  // its other accounts join the other providers, read when a view shows them.
+  // The account the model picker's provider runs on: another account picked
+  // there, else an open chat's own, else the one new chats start on.
+  const composerAccount: AccountId =
+    selectedModelChoice?.accountId ??
+    (activeSession?.provider === provider && !activeSession.agent && !activeSession.connectionId
+      ? ((activeSession.accountId as AccountId | undefined) ?? DEFAULT_ACCOUNT_ID)
+      : activeAccountOf(providerAccounts, provider))
+  // Each provider account is a limit source of its own. The account the
+  // composer is on is read for the current provider; its other accounts join
+  // the other providers, read when a view shows them.
   const limitTargets = useMemo(() => {
-    const targetsOf = (id: ProviderId): LimitTarget[] => {
+    const targetsOf = (id: ProviderId, first?: AccountId): LimitTarget[] => {
       const listed = accountsOf(providerAccounts, id)
       if (listed.length < 2) return [{ provider: id }]
-      const active = activeAccountOf(providerAccounts, id)
+      const active =
+        first !== undefined && listed.some((account) => account.id === first)
+          ? first
+          : activeAccountOf(providerAccounts, id)
       // A further account is read once it has named who it is: before its
       // first sign-in every read fails, and the views would offer a Retry.
       const others = listed
@@ -3463,9 +3559,12 @@ export function App() {
         accountId === DEFAULT_ACCOUNT_ID ? { provider: id } : { provider: id, accountId },
       )
     }
-    const [main = { provider }, ...rest] = targetsOf(provider)
-    return { main, onDemand: [...rest, ...otherUsageProviders.flatMap(targetsOf)] }
-  }, [provider, otherUsageProviders, providerAccounts])
+    const [main = { provider }, ...rest] = targetsOf(provider, composerAccount)
+    return {
+      main,
+      onDemand: [...rest, ...otherUsageProviders.flatMap((id) => targetsOf(id))],
+    }
+  }, [provider, composerAccount, otherUsageProviders, providerAccounts])
 
   useLayoutEffect(() => {
     usageController.select([limitTargets.main], limitTargets.onDemand)
@@ -3473,14 +3572,16 @@ export function App() {
   // Every source is read again every 15 minutes, so the popup opens on recent values.
   useEffect(() => pollUsageLimits(usageController), [usageController])
 
-  // The account card's one figure is about where new chats run: each
-  // provider's active account. The popup lists every account.
+  // The account card's one figure is about where the next message runs: the
+  // provider and account the model picker is on. The popup lists every account.
   const cardUsageState = useMemo(
     () =>
-      usageState.filter((state) =>
-        sameAccount(state.accountId, activeAccountOf(providerAccounts, state.provider)),
+      usageState.filter(
+        (state) =>
+          state.provider === limitTargets.main.provider &&
+          sameAccount(state.accountId, limitTargets.main.accountId),
       ),
-    [usageState, providerAccounts],
+    [usageState, limitTargets],
   )
   const accountLabel = useCallback<AccountLabel>(
     (requestedProvider, accountId) =>
@@ -3575,14 +3676,31 @@ export function App() {
       selectedModelChoice.key !== modelId
     )
       return
-    writeThreadModelSelection(activeId, {
+    const selection = {
       modelKey: selectedModelChoice.key,
       designMode,
       ...(selectedEffort ? { effort: selectedEffort } : {}),
       ...(selectedServiceTier ? { serviceTier: selectedServiceTier } : {}),
-    })
+    }
+    // A chat opened here for the first time saves this window's fallback; the
+    // server's setup, read on opening, replaces it. Only a change to a setup
+    // this window already had is one the other clients should follow.
+    const firstSetup = readThreadModelSelection(activeId) === undefined
+    writeThreadModelSelection(activeId, selection)
     pendingThreadModelSave.current = undefined
-  }, [activeId, modelId, selectedModelChoice, selectedEffort, selectedServiceTier, designMode])
+    if (firstSetup) return
+    void transport
+      .request('thread.setSettings', { threadId: activeId, ...sharedSetup(selection) })
+      .catch(() => undefined)
+  }, [
+    activeId,
+    modelId,
+    selectedModelChoice,
+    selectedEffort,
+    selectedServiceTier,
+    designMode,
+    transport,
+  ])
 
   // Remember the active source's exact setup, so returning to a provider
   // restores what was last used there instead of a best-guess translation.
@@ -3606,6 +3724,14 @@ export function App() {
       connectionId: selectedModelChoice.connectionId,
       agentId: selectedModelChoice.agent?.id,
     })
+    if (selectedEffort) {
+      const efforts = readModelEfforts()
+      const key = modelChoiceKey(source, selectedModelChoice.model.id)
+      if (efforts[key] !== selectedEffort) {
+        efforts[key] = selectedEffort
+        writeSetting(EFFORT_BY_MODEL_KEY, JSON.stringify(efforts))
+      }
+    }
     const selections = readSourceSelections()
     const entry: SourceSelection = {
       modelKey: selectedModelChoice.key,
@@ -3675,12 +3801,22 @@ export function App() {
         )
         return
       }
+      // A model on another provider comes back at the effort it was last
+      // used with. Another model or account of the same provider carries the
+      // current effort over.
+      const leaving = storedModelChoice ?? selectedModelChoice
+      const lastEffort =
+        leaving && providerSource(leaving) !== providerSource(selected)
+          ? readModelEfforts()[modelChoiceKey(providerSource(selected), selected.model.id)]
+          : undefined
       setEffort((current) =>
-        resolveReasoningEffort({
-          currentEffort: current,
-          currentModel: storedModelChoice?.model ?? selectedModelChoice?.model,
-          nextModel: selected.model,
-        }),
+        lastEffort && selected.model.reasoningEfforts.includes(lastEffort)
+          ? lastEffort
+          : resolveReasoningEffort({
+              currentEffort: current,
+              currentModel: storedModelChoice?.model ?? selectedModelChoice?.model,
+              nextModel: selected.model,
+            }),
       )
       // Not a bare id check: fast tiers are named differently per provider
       // (Codex 'priority', Cursor 'fast'), and fast intent must survive the
@@ -3699,6 +3835,68 @@ export function App() {
   )
   const commitModelChoiceRef = useRef(commitModelChoice)
   commitModelChoiceRef.current = commitModelChoice
+
+  // A chat's setup as the server keeps it: chosen on another client, or read
+  // on opening the chat. Mirrored here, and applied at once to the open chat.
+  const adoptThreadSettingsRef = useRef((_threadId: string, _settings: ThreadSettings) => {})
+  adoptThreadSettingsRef.current = (threadId, settings) => {
+    const open = threadId === activeIdRef.current
+    if (settings.approval) {
+      threadApprovals.current.set(threadId, settings.approval)
+      if (open) setActiveThreadApproval(settings.approval)
+    }
+    const session = findSession(projectsRef.current, threadId)?.session
+    if (open && settings.model !== undefined && session && modelsLoaded && selectedModelChoice) {
+      const source = sourceKey({
+        provider: session.provider,
+        connectionId: session.connectionId,
+        agentId: session.agent,
+      })
+      if (hiddenModels.has(modelChoiceKey(source, settings.model))) {
+        // This picker hides that model and never runs a chat on one it hides,
+        // so the chat stays on the model shown here, for every client.
+        void transport
+          .request('thread.setSettings', {
+            threadId,
+            ...sharedSetup({
+              modelKey: selectedModelChoice.key,
+              ...(selectedEffort ? { effort: selectedEffort } : {}),
+              ...(selectedServiceTier ? { serviceTier: selectedServiceTier } : {}),
+            }),
+          })
+          .catch(() => undefined)
+        return
+      }
+    }
+    const next = adoptedSelection(
+      settings,
+      readThreadModelSelection(threadId),
+      session,
+      visibleModelsRef.current,
+    )
+    if (!next) return
+    writeThreadModelSelection(threadId, next)
+    const choice = open
+      ? visibleModelsRef.current.find((candidate) => candidate.key === next.modelKey)
+      : undefined
+    if (choice) commitModelChoiceRef.current(choice, next)
+  }
+  const readSharedSettings = useCallback(
+    (threadId: string, local: ReturnType<typeof readThreadModelSelection>) => {
+      void transport
+        .request('thread.settings', { threadId })
+        .then((settings) => {
+          // A chat set up before the server kept setups shares this window's choice.
+          if (settings.model === undefined && local) {
+            return transport.request('thread.setSettings', { threadId, ...sharedSetup(local) })
+          }
+          adoptThreadSettingsRef.current(threadId, settings)
+          return undefined
+        })
+        .catch(() => undefined)
+    },
+    [transport],
+  )
 
   useEffect(() => writeProviderDefaults(providerDefaults), [providerDefaults])
 
@@ -3815,7 +4013,7 @@ export function App() {
       pendingThreadModelSave.current = activeIdRef.current
       if (selected.accountId !== undefined && !activeIdRef.current) {
         // A new chat starts on its provider's active account, so another
-        // account's model makes that account the active one, as its chip does.
+        // account's model makes that account the active one.
         const own = modelChoiceKey(selected.provider, selected.model.id)
         void providerAccountsStore
           .setActive(selected.provider, selected.accountId)
@@ -3940,7 +4138,7 @@ export function App() {
         // the checked-out branch needs the server to check and switch; asking
         // every time ran git before the agent started, and waiting here for a
         // branch list held the chat for seconds on a busy machine.
-        const shown = projectBranches.current.get(projectPath)
+        const shown = newChatBranch(projectPath, isolateSession)
         const branch =
           shown !== undefined && shown !== checkedOutBranches.current.get(projectPath)
             ? shown
@@ -4106,6 +4304,7 @@ export function App() {
       approval,
       autoReviewSupported,
       isolateSession,
+      newChatBranch,
       refreshProjects,
       generateSessionTitle,
       releaseWorkspaceStart,
@@ -4831,7 +5030,7 @@ export function App() {
               branch,
             })
         projectBranches.current.set(activePath, branch)
-        if (info) checkedOutBranches.current.set(activePath, info.branch)
+        if (info) recordCheckout(activePath, info)
         writeSetting(`harness.branch:${activePath}`, branch)
         const known = branchLists.current.get(activePath)
         if (known) known.branches = [branch, ...known.branches.filter((item) => item !== branch)]
@@ -4842,7 +5041,7 @@ export function App() {
         reportError(error instanceof Error ? error.message : String(error))
       }
     },
-    [transport, activePath, activeId, isolateSession],
+    [transport, activePath, activeId, isolateSession, recordCheckout],
   )
 
   // Stable identities, so the memo around Composer is not defeated by a fresh
@@ -4917,6 +5116,7 @@ export function App() {
       setRollbackOpen(false)
       activeIdRef.current = id
       setActiveThreadApproval(threadApprovals.current.get(id))
+      if (!id.startsWith('pending:')) readSharedSettings(id, threadSelection)
       setHistoryFailure(undefined)
       setActiveId(id)
       setComposerFocusRequest((request) => request + 1)
@@ -6691,7 +6891,7 @@ export function App() {
                 ...switchOptions.map((choice) => ({
                   id: `provider:${modelSource(choice)}`,
                   label: choice.sourceName,
-                  detail: choice.model.displayName,
+                  detail: formatModelName(choice.model.displayName),
                   run: () => switchAtLimit(choice),
                 })),
               ],
@@ -6900,6 +7100,7 @@ export function App() {
                           onUndoChanges={undoTurnChanges}
                           onLoadOlderHistory={loadOlderHistory}
                           onLoadCompleteHistory={loadCompleteHistory}
+                          turnRail
                         />
                       </Suspense>
                     </AccountLabelContext.Provider>
@@ -6921,16 +7122,10 @@ export function App() {
                     projectPath={activePath}
                     projectName={activeProject ? displayName(activeProject) : undefined}
                     threadId={activeId && !activeId.startsWith('pending:') ? activeId : undefined}
-                    accountProvider={
-                      // A custom harness runs on its own sign-in, whatever account is chosen.
-                      !activeId && providerHasAccounts && !selectedModelChoice?.agent
-                        ? provider
-                        : undefined
-                    }
                     projectsLoading={projectsStatus === 'loading'}
                     branch={
                       (!activeId && activePath
-                        ? projectBranches.current.get(activePath)
+                        ? newChatBranch(activePath, isolateSession)
                         : undefined) ??
                       active?.session.worktreeBranch ??
                       workspace?.branch ??
@@ -7695,6 +7890,20 @@ function readSourceSelections(): Record<string, SourceSelection> {
       ])
     }
     return Object.fromEntries(selections)
+  } catch {
+    return {}
+  }
+}
+
+function readModelEfforts(): Record<string, string> {
+  try {
+    const stored: unknown = JSON.parse(readSetting(EFFORT_BY_MODEL_KEY) ?? '{}')
+    if (!isRecord(stored)) return {}
+    return Object.fromEntries(
+      Object.entries(stored).filter(
+        (entry): entry is [string, string] => typeof entry[1] === 'string',
+      ),
+    )
   } catch {
     return {}
   }

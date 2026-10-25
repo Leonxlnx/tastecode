@@ -162,6 +162,8 @@ const isSession = objectValidator<Project['sessions'][number]>({
   lifecycle: optional(isLifecycle),
   closedAt: optional(isFiniteNumber),
   worktreeBranch: optional(isString),
+  model: optional(isNonEmptyString),
+  lastActiveAt: optional(isFiniteNumber),
 })
 const isProject = objectValidator<Project>({
   path: isString,

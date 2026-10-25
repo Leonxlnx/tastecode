@@ -1,6 +1,9 @@
 packages:
   - 'apps/*'
   - 'packages/*'
+  # The Expo phone app keeps its own npm install: React Native and CocoaPods
+  # stay out of the desktop's install on every machine.
+  - '!apps/mobile'
 # Packages allowed to run install scripts. Keep this list short and deliberate —
 # every entry is code we let run on both developers' machines and in CI.
 allowBuilds:

@@ -13,11 +13,19 @@ export type MarkdownImages = {
   resolve: MarkdownImageSource
 }
 export const MarkdownImageContext = createContext<MarkdownImages | undefined>(undefined)
+/** Loads the pictures a chat's replies show, screenshots on this computer included. */
+export const ChatImageContext = createContext<MarkdownImageSource | undefined>(undefined)
 
 type ImageProps = ComponentPropsWithoutRef<'img'> & { node?: unknown }
 
 export function MarkdownImage(props: ImageProps) {
   const resolve = useContext(MarkdownImageContext)?.resolve
+  if (typeof props.src !== 'string' || !props.src || !resolve) return null
+  return <ResolvedImage key={props.src} {...props} src={props.src} resolve={resolve} />
+}
+
+export function ChatImage(props: ImageProps) {
+  const resolve = useContext(ChatImageContext)
   if (typeof props.src !== 'string' || !props.src || !resolve) return null
   return <ResolvedImage key={props.src} {...props} src={props.src} resolve={resolve} />
 }
