@@ -1,82 +1,136 @@
-import SwiftUI
 import UIKit
 
 /// A permission the agent waits for, in place of the composer: what it wants
-/// to do, in its own words, and the two answers.
-struct ApprovalPanel: View {
-  @Environment(AppModel.self) private var model
-  let threadId: String
-  let request: ApprovalView
-  @State private var busy = false
-  @State private var problem: String?
+/// to do, in its own words, and the two answers. It sits on the bar's glass.
+final class ApprovalPanelView: UIView {
+  private let model = AppModel.shared
+  private let threadId: String
+  private let request: ApprovalView
+  weak var host: UIViewController?
 
-  var body: some View {
-    VStack(alignment: .leading, spacing: 12) {
-      HStack(alignment: .firstTextBaseline) {
-        Text(request.title)
-          .font(.headline)
-        Spacer()
-        Button("Stop") { decide("abort") }
-          .font(.subheadline)
-          .foregroundStyle(.secondary)
-          .buttonStyle(.plain)
-          .disabled(busy)
-      }
-      if let subject = request.subject {
-        ScrollView(.horizontal, showsIndicators: false) {
-          Text(subject)
-            .font(.system(.subheadline, design: .monospaced))
-            .lineLimit(6)
-            .fixedSize(horizontal: true, vertical: true)
-            .textSelection(.enabled)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.fill.tertiary, in: .rect(cornerRadius: 14, style: .continuous))
-      }
-      if let reason = request.reason {
-        Text(reason)
-          .font(.subheadline)
-          .foregroundStyle(.secondary)
-          .lineLimit(4)
-      }
-      if let place = request.where {
-        Text("In \(place)")
-          .font(.footnote)
-          .foregroundStyle(.tertiary)
-          .lineLimit(1)
-      }
-      HStack(spacing: 10) {
-        Button {
-          decide("deny")
-        } label: {
-          Text("Deny").frame(maxWidth: .infinity)
-        }
-        .buttonStyle(.glass)
-        Button {
-          decide("approve")
-        } label: {
-          Text("Allow")
-            .fontWeight(.semibold)
-            .foregroundStyle(busy ? Color(.tertiaryLabel) : Color(.systemBackground))
-            .frame(maxWidth: .infinity)
-        }
-        .buttonStyle(.glassProminent)
-      }
-      .controlSize(.large)
-      .disabled(busy)
-      .padding(.top, 2)
-      Button("Always allow in this chat") { decide("approve-session") }
-        .font(.footnote)
-        .foregroundStyle(.secondary)
-        .buttonStyle(.plain)
-        .frame(maxWidth: .infinity)
-        .disabled(busy)
+  private let title = UILabel()
+  private let stop = UIButton(type: .system)
+  private let subject = UILabel()
+  private let reason = UILabel()
+  private let place = UILabel()
+  private let deny = UIButton(configuration: .glass())
+  private let allow = UIButton(configuration: .prominentGlass())
+  private let always = UIButton(type: .system)
+  private var busy = false {
+    didSet { refreshButtons() }
+  }
+
+  init(threadId: String, request: ApprovalView) {
+    self.threadId = threadId
+    self.request = request
+    super.init(frame: .zero)
+    build()
+    registerForTraitChanges([
+      UITraitPreferredContentSizeCategory.self, UITraitLegibilityWeight.self, FontDesignTrait.self,
+      UITraitUserInterfaceStyle.self,
+    ]) { (panel: ApprovalPanelView, _: UITraitCollection) in
+      panel.applyFonts()
     }
-    .padding(16)
-    .glassEffect(.regular, in: .rect(cornerRadius: 26, style: .continuous))
-    .problemAlert($problem)
+  }
+
+  @available(*, unavailable)
+  required init?(coder: NSCoder) { fatalError() }
+
+  private func build() {
+    title.text = request.title
+    title.numberOfLines = 0
+    title.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+    stop.setTitle("Stop", for: .normal)
+    stop.tintColor = .secondaryLabel
+    stop.setContentHuggingPriority(.required, for: .horizontal)
+    stop.setContentCompressionResistancePriority(.required, for: .horizontal)
+    stop.addAction(UIAction { [weak self] _ in self?.decide("abort") }, for: .touchUpInside)
+    let header = UIStackView(arrangedSubviews: [title, stop])
+    header.axis = .horizontal
+    header.alignment = .firstBaseline
+    header.spacing = 8
+
+    var rows: [UIView] = [header]
+    if let text = request.subject {
+      subject.text = text
+      subject.numberOfLines = 6
+      subject.textColor = .label
+      let scroller = UIScrollView()
+      scroller.showsHorizontalScrollIndicator = false
+      scroller.alwaysBounceHorizontal = false
+      subject.translatesAutoresizingMaskIntoConstraints = false
+      scroller.addSubview(subject)
+      NSLayoutConstraint.activate([
+        subject.leadingAnchor.constraint(equalTo: scroller.contentLayoutGuide.leadingAnchor, constant: 12),
+        subject.trailingAnchor.constraint(equalTo: scroller.contentLayoutGuide.trailingAnchor, constant: -12),
+        subject.topAnchor.constraint(equalTo: scroller.contentLayoutGuide.topAnchor, constant: 10),
+        subject.bottomAnchor.constraint(equalTo: scroller.contentLayoutGuide.bottomAnchor, constant: -10),
+        scroller.frameLayoutGuide.heightAnchor.constraint(equalTo: scroller.contentLayoutGuide.heightAnchor),
+      ])
+      scroller.backgroundColor = .tertiarySystemFill
+      scroller.layer.cornerRadius = 14
+      scroller.layer.cornerCurve = .continuous
+      rows.append(scroller)
+    }
+    if let text = request.reason {
+      reason.text = text
+      reason.numberOfLines = 4
+      reason.textColor = .secondaryLabel
+      rows.append(reason)
+    }
+    if let text = request.where {
+      place.text = "In \(text)"
+      place.textColor = .tertiaryLabel
+      place.lineBreakMode = .byTruncatingMiddle
+      rows.append(place)
+    }
+
+    deny.addAction(UIAction { [weak self] _ in self?.decide("deny") }, for: .touchUpInside)
+    allow.addAction(UIAction { [weak self] _ in self?.decide("approve") }, for: .touchUpInside)
+    allow.tintColor = .label
+    let answers = UIStackView(arrangedSubviews: [deny, allow])
+    answers.axis = .horizontal
+    answers.spacing = 10
+    answers.distribution = .fillEqually
+    rows.append(answers)
+
+    always.setTitle("Always allow in this chat", for: .normal)
+    always.tintColor = .secondaryLabel
+    always.addAction(UIAction { [weak self] _ in self?.decide("approve-session") }, for: .touchUpInside)
+    rows.append(always)
+
+    let column = UIStackView(arrangedSubviews: rows)
+    column.axis = .vertical
+    column.spacing = 12
+    column.setCustomSpacing(14, after: rows[rows.count - 3])
+    addPinned(column, insets: UIEdgeInsets(top: 16, left: 16, bottom: 16, right: 16))
+    applyFonts()
+  }
+
+  private func applyFonts() {
+    let traits = traitCollection
+    title.font = .app(.headline, traits: traits)
+    stop.titleLabel?.font = .app(.subheadline, traits: traits)
+    subject.font = UIFont.monospacedSystemFont(
+      ofSize: UIFont.preferredFont(forTextStyle: .subheadline, compatibleWith: traits).pointSize, weight: .regular)
+    reason.font = .app(.subheadline, traits: traits)
+    place.font = .app(.footnote, traits: traits)
+    always.titleLabel?.font = .app(.footnote, traits: traits)
+    refreshButtons()
+  }
+
+  private func refreshButtons() {
+    let traits = traitCollection
+    deny.configuration?.buttonSize = .large
+    deny.configuration?.attributedTitle = AttributedString(
+      "Deny", attributes: AttributeContainer([.font: UIFont.app(.body, traits: traits)]))
+    deny.configuration?.baseForegroundColor = .label
+    allow.configuration?.buttonSize = .large
+    allow.configuration?.attributedTitle = AttributedString(
+      "Allow", attributes: AttributeContainer([.font: UIFont.app(.body, weight: .semibold, traits: traits)]))
+    // Fixed colours: on the glass, dynamic ones turn into vibrancy and vanish on the white.
+    allow.configuration?.baseForegroundColor = (busy ? UIColor.tertiaryLabel : .systemBackground).resolvedColor(with: traits)
+    for button in [stop, deny, allow, always] { button.isEnabled = !busy }
   }
 
   private func decide(_ decision: String) {
@@ -88,7 +142,7 @@ struct ApprovalPanel: View {
           "type": "thread.decide", "threadId": threadId, "approvalId": request.id, "decision": decision,
         ])
       } catch {
-        problem = error.localizedDescription
+        host?.showProblem(error.localizedDescription)
         busy = false
       }
     }
@@ -96,134 +150,236 @@ struct ApprovalPanel: View {
 }
 
 /// The agent's questions, one at a time, answered where the composer was.
-struct QuestionPanel: View {
-  @Environment(AppModel.self) private var model
-  let threadId: String
-  let request: QuestionsView
-  @State private var index = 0
-  @State private var chosen: [String: [String]] = [:]
-  @State private var typed: [String: String] = [:]
-  @State private var busy = false
-  @State private var problem: String?
-  @State private var optionsHeight: CGFloat = 0
+final class QuestionPanelView: UIView, UITextViewDelegate, UITextFieldDelegate {
+  private let model = AppModel.shared
+  private let threadId: String
+  private let request: QuestionsView
+  weak var host: UIViewController?
+  /// Asks the bar to take the panel's new height on its glass.
+  var onResize: () -> Void = {}
 
-  var body: some View {
-    let question = request.questions[min(index, request.questions.count - 1)]
-    let ready = !answer(question).isEmpty && !busy
-    let last = index >= request.questions.count - 1
-    VStack(alignment: .leading, spacing: 12) {
-      HStack(alignment: .firstTextBaseline) {
-        Text(question.header)
-          .font(.subheadline.weight(.medium))
-          .foregroundStyle(.secondary)
-        Spacer()
-        if request.questions.count > 1 {
-          Text("\(index + 1) of \(request.questions.count)")
-            .font(.subheadline)
-            .monospacedDigit()
-            .foregroundStyle(.tertiary)
-        }
-      }
-      Text(question.question)
-        .font(.headline)
-        .fixedSize(horizontal: false, vertical: true)
-      if !question.options.isEmpty {
-        ScrollView {
-          VStack(spacing: 0) {
-            ForEach(Array(question.options.enumerated()), id: \.offset) { offset, option in
-              if offset > 0 { Divider() }
-              optionRow(question, option)
-            }
-          }
-          .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { optionsHeight = $0 }
-        }
-        .scrollBounceBehavior(.basedOnSize)
-        .frame(height: min(max(optionsHeight, 1), 280))
-      }
-      if question.other {
-        answerField(question)
-      }
-      HStack(spacing: 10) {
-        if index > 0 {
-          Button {
-            withAnimation(.snappy) { index -= 1 }
-          } label: {
-            Text("Back").frame(maxWidth: .infinity)
-          }
-          .buttonStyle(.glass)
-        }
-        Button {
-          if last {
-            submit()
-          } else {
-            withAnimation(.snappy) { index += 1 }
-          }
-        } label: {
-          Text(last ? "Send" : "Next")
-            .fontWeight(.semibold)
-            .foregroundStyle(ready ? Color(.systemBackground) : Color(.tertiaryLabel))
-            .frame(maxWidth: .infinity)
-        }
-        .buttonStyle(.glassProminent)
-        .disabled(!ready)
-      }
-      .controlSize(.large)
+  private var index = 0
+  private var chosen: [String: [String]] = [:]
+  private var typed: [String: String] = [:]
+  private var busy = false
+
+  private let header = UILabel()
+  private let counter = UILabel()
+  private let question = UILabel()
+  private let options = UIScrollView()
+  private let optionList = UIStackView()
+  private var optionsHeight: NSLayoutConstraint!
+  private let answerBox = UIView()
+  private let answerText = UITextView()
+  private let answerSecret = UITextField()
+  private let answerPlaceholder = UILabel()
+  private var answerHeight: NSLayoutConstraint!
+  private let backButton = UIButton(configuration: .glass())
+  private let nextButton = UIButton(configuration: .prominentGlass())
+
+  init(threadId: String, request: QuestionsView) {
+    self.threadId = threadId
+    self.request = request
+    super.init(frame: .zero)
+    build()
+    show()
+    registerForTraitChanges([
+      UITraitPreferredContentSizeCategory.self, UITraitLegibilityWeight.self, FontDesignTrait.self,
+      UITraitUserInterfaceStyle.self,
+    ]) { (panel: QuestionPanelView, _: UITraitCollection) in
+      panel.show()
     }
-    .padding(16)
-    .glassEffect(.regular, in: .rect(cornerRadius: 26, style: .continuous))
-    .problemAlert($problem)
   }
 
-  private func optionRow(_ question: QuestionView, _ option: OptionView) -> some View {
-    let selected = chosen[question.id, default: []].contains(option.label)
-    return Button {
-      toggle(question, option.label)
-    } label: {
-      HStack(alignment: .firstTextBaseline, spacing: 12) {
-        VStack(alignment: .leading, spacing: 2) {
-          Text(option.label)
-            .font(.body)
-          Text(inlineMarkdown(option.detail, code: .system(.caption, design: .monospaced)))
-            .font(.footnote)
-            .foregroundStyle(.secondary)
-            .fixedSize(horizontal: false, vertical: true)
-        }
-        Spacer(minLength: 8)
-        Image(tabler: selected ? "circle-check-filled" : "circle", size: 22)
-          .foregroundStyle(selected ? AnyShapeStyle(.primary) : AnyShapeStyle(.tertiary))
-      }
-      .padding(.vertical, 10)
-      .contentShape(.rect)
-    }
-    .buttonStyle(.plain)
+  @available(*, unavailable)
+  required init?(coder: NSCoder) { fatalError() }
+
+  private var current: QuestionView { request.questions[min(index, request.questions.count - 1)] }
+  private var last: Bool { index >= request.questions.count - 1 }
+
+  private func build() {
+    header.textColor = .secondaryLabel
+    header.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+    counter.textColor = .tertiaryLabel
+    counter.setContentHuggingPriority(.required, for: .horizontal)
+    let top = UIStackView(arrangedSubviews: [header, counter])
+    top.axis = .horizontal
+    top.alignment = .firstBaseline
+    top.spacing = 8
+    question.numberOfLines = 0
+
+    optionList.axis = .vertical
+    optionList.translatesAutoresizingMaskIntoConstraints = false
+    options.addSubview(optionList)
+    options.alwaysBounceVertical = false
+    optionsHeight = options.heightAnchor.constraint(equalToConstant: 1)
+    NSLayoutConstraint.activate([
+      optionList.leadingAnchor.constraint(equalTo: options.contentLayoutGuide.leadingAnchor),
+      optionList.trailingAnchor.constraint(equalTo: options.contentLayoutGuide.trailingAnchor),
+      optionList.topAnchor.constraint(equalTo: options.contentLayoutGuide.topAnchor),
+      optionList.bottomAnchor.constraint(equalTo: options.contentLayoutGuide.bottomAnchor),
+      optionList.widthAnchor.constraint(equalTo: options.frameLayoutGuide.widthAnchor),
+      optionsHeight,
+    ])
+
+    answerBox.backgroundColor = .tertiarySystemFill
+    answerBox.layer.cornerRadius = 14
+    answerBox.layer.cornerCurve = .continuous
+    answerText.backgroundColor = .clear
+    answerText.textContainerInset = .zero
+    answerText.textContainer.lineFragmentPadding = 0
+    answerText.isScrollEnabled = false
+    answerText.delegate = self
+    answerPlaceholder.textColor = .placeholderText
+    answerPlaceholder.isUserInteractionEnabled = false
+    answerSecret.isSecureTextEntry = true
+    answerSecret.delegate = self
+    answerSecret.addAction(UIAction { [weak self] _ in self?.secretChanged() }, for: .editingChanged)
+    answerBox.addPinned(answerText, insets: UIEdgeInsets(top: 10, left: 12, bottom: 10, right: 12))
+    answerBox.addPinned(answerSecret, insets: UIEdgeInsets(top: 10, left: 12, bottom: 10, right: 12))
+    answerPlaceholder.translatesAutoresizingMaskIntoConstraints = false
+    answerBox.addSubview(answerPlaceholder)
+    answerHeight = answerText.heightAnchor.constraint(equalToConstant: 22)
+    NSLayoutConstraint.activate([
+      answerHeight,
+      answerPlaceholder.leadingAnchor.constraint(equalTo: answerText.leadingAnchor),
+      answerPlaceholder.topAnchor.constraint(equalTo: answerText.topAnchor),
+    ])
+
+    backButton.addAction(UIAction { [weak self] _ in self?.go(by: -1) }, for: .touchUpInside)
+    nextButton.addAction(UIAction { [weak self] _ in self?.advance() }, for: .touchUpInside)
+    nextButton.tintColor = .label
+    let buttons = UIStackView(arrangedSubviews: [backButton, nextButton])
+    buttons.axis = .horizontal
+    buttons.spacing = 10
+    buttons.distribution = .fillEqually
+
+    let column = UIStackView(arrangedSubviews: [top, question, options, answerBox, buttons])
+    column.axis = .vertical
+    column.spacing = 12
+    addPinned(column, insets: UIEdgeInsets(top: 16, left: 16, bottom: 16, right: 16))
   }
 
-  @ViewBuilder private func answerField(_ question: QuestionView) -> some View {
-    let binding = Binding(get: { typed[question.id] ?? "" }, set: { typed[question.id] = $0 })
+  /// Draws the question at `index`.
+  private func show() {
+    let traits = traitCollection
+    let question = current
+    header.font = .app(.subheadline, weight: .medium, traits: traits)
+    header.text = question.header
+    counter.font = UIFont.app(.subheadline, traits: traits).monospacedDigits
+    counter.text = "\(index + 1) of \(request.questions.count)"
+    counter.isHidden = request.questions.count < 2
+    self.question.font = .app(.headline, traits: traits)
+    self.question.text = question.question
+
+    for view in optionList.arrangedSubviews { view.removeFromSuperview() }
+    for (offset, option) in question.options.enumerated() {
+      if offset > 0 {
+        let line = UIView()
+        line.backgroundColor = .separator
+        line.heightAnchor.constraint(equalToConstant: 1 / max(1, traits.displayScale)).isActive = true
+        optionList.addArrangedSubview(line)
+      }
+      let row = OptionRow(option: option, traits: traits)
+      row.picked = chosen[question.id, default: []].contains(option.label)
+      row.addAction(UIAction { [weak self, weak row] _ in
+        guard let self, let row else { return }
+        self.toggle(option.label)
+        row.picked = self.chosen[question.id, default: []].contains(option.label)
+      }, for: .touchUpInside)
+      optionList.addArrangedSubview(row)
+    }
+    options.isHidden = question.options.isEmpty
+    optionList.layoutIfNeeded()
+    let fits = optionList.systemLayoutSizeFitting(
+      CGSize(width: max(bounds.width - 32, 300), height: UIView.layoutFittingCompressedSize.height),
+      withHorizontalFittingPriority: .required, verticalFittingPriority: .fittingSizeLevel
+    ).height
+    optionsHeight.constant = min(max(fits, 1), 280)
+
     let prompt = question.options.isEmpty ? "Your answer" : "Something else"
-    Group {
-      if question.secret {
-        SecureField(prompt, text: binding)
-      } else {
-        TextField(prompt, text: binding, axis: .vertical)
-          .lineLimit(1...4)
-      }
+    let font = UIFont.app(.body, traits: traits)
+    answerBox.isHidden = !question.other
+    answerText.isHidden = question.secret
+    answerSecret.isHidden = !question.secret
+    answerText.font = font
+    answerText.textColor = .label
+    answerSecret.font = font
+    answerSecret.placeholder = prompt
+    answerPlaceholder.font = font
+    answerPlaceholder.text = prompt
+    let text = typed[question.id] ?? ""
+    if question.secret {
+      answerSecret.text = text
+    } else {
+      answerText.text = text
     }
-    .font(.body)
-    .padding(.horizontal, 12)
-    .padding(.vertical, 10)
-    .background(.fill.tertiary, in: .rect(cornerRadius: 14, style: .continuous))
+    answerChanged()
+
+    backButton.isHidden = index == 0
+    backButton.configuration?.buttonSize = .large
+    backButton.configuration?.baseForegroundColor = .label
+    backButton.configuration?.attributedTitle = AttributedString(
+      "Back", attributes: AttributeContainer([.font: UIFont.app(.body, traits: traits)]))
+    refreshNext()
   }
 
-  private func toggle(_ question: QuestionView, _ label: String) {
+  private func refreshNext() {
+    let ready = !answer(current).isEmpty && !busy
+    nextButton.isEnabled = ready
+    nextButton.configuration?.buttonSize = .large
+    nextButton.configuration?.attributedTitle = AttributedString(
+      last ? "Send" : "Next",
+      attributes: AttributeContainer([.font: UIFont.app(.body, weight: .semibold, traits: traitCollection)]))
+    nextButton.configuration?.baseForegroundColor = (ready ? UIColor.systemBackground : .tertiaryLabel)
+      .resolvedColor(with: traitCollection)
+    backButton.isEnabled = !busy
+  }
+
+  // MARK: Answers
+
+  func textViewDidChange(_ textView: UITextView) {
+    typed[current.id] = answerText.text
+    answerChanged()
+    refreshNext()
+  }
+
+  private func secretChanged() {
+    typed[current.id] = answerSecret.text
+    refreshNext()
+  }
+
+  /// One to four lines tall; past four it scrolls.
+  private func answerChanged() {
+    answerPlaceholder.isHidden = current.secret || !answerText.text.isEmpty
+    guard let font = answerText.font else { return }
+    let width = answerText.bounds.width > 0 ? answerText.bounds.width : 280
+    let fits = ceil(answerText.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude)).height)
+    let most = ceil(font.lineHeight * 4)
+    let height = current.secret ? ceil(font.lineHeight) : min(max(fits, ceil(font.lineHeight)), most)
+    answerText.isScrollEnabled = fits > most
+    guard answerHeight.constant != height else { return }
+    answerHeight.constant = height
+    onResize()
+  }
+
+  private func toggle(_ label: String) {
     UISelectionFeedbackGenerator().selectionChanged()
-    var current = chosen[question.id, default: []]
+    let question = current
+    var picked = chosen[question.id, default: []]
     if question.multiple {
-      if let at = current.firstIndex(of: label) { current.remove(at: at) } else { current.append(label) }
+      if let at = picked.firstIndex(of: label) { picked.remove(at: at) } else { picked.append(label) }
     } else {
-      current = current == [label] ? [] : [label]
+      picked = picked == [label] ? [] : [label]
     }
-    chosen[question.id] = current
+    chosen[question.id] = picked
+    if !question.multiple {
+      // One choice: the others let go of theirs.
+      for case let row as OptionRow in optionList.arrangedSubviews {
+        row.picked = picked.contains(row.label)
+      }
+    }
+    refreshNext()
   }
 
   private func answer(_ question: QuestionView) -> [String] {
@@ -231,8 +387,25 @@ struct QuestionPanel: View {
     return chosen[question.id, default: []] + (other.isEmpty ? [] : [other])
   }
 
+  private func go(by step: Int) {
+    let target = index + step
+    guard request.questions.indices.contains(target) else { return }
+    endEditing(true)
+    index = target
+    UIView.transition(with: self, duration: 0.25, options: [.transitionCrossDissolve, .allowUserInteraction]) {
+      self.show()
+    }
+    onResize()
+  }
+
+  private func advance() {
+    if last { submit() } else { go(by: 1) }
+  }
+
   private func submit() {
     busy = true
+    refreshNext()
+    endEditing(true)
     let answers = Dictionary(uniqueKeysWithValues: request.questions.map { ($0.id, answer($0)) })
     Task {
       do {
@@ -241,9 +414,62 @@ struct QuestionPanel: View {
         ])
         UINotificationFeedbackGenerator().notificationOccurred(.success)
       } catch {
-        problem = error.localizedDescription
+        host?.showProblem(error.localizedDescription)
         busy = false
+        refreshNext()
       }
+    }
+  }
+}
+
+/// One answer to pick: its label, what it means, and a ring that fills when picked.
+private final class OptionRow: UIControl {
+  let label: String
+  private let ring = UIImageView()
+
+  var picked = false {
+    didSet {
+      ring.image = Tabler.image(picked ? "circle-check-filled" : "circle", size: 22)
+      ring.tintColor = picked ? .label : .tertiaryLabel
+      accessibilityTraits = picked ? [.button, .selected] : .button
+    }
+  }
+
+  init(option: OptionView, traits: UITraitCollection) {
+    label = option.label
+    super.init(frame: .zero)
+    let title = UILabel()
+    title.text = option.label
+    title.font = .app(.body, traits: traits)
+    title.numberOfLines = 0
+    let detail = UILabel()
+    let codeSize = UIFont.preferredFont(forTextStyle: .caption1, compatibleWith: traits).pointSize
+    detail.attributedText = InlineText.make(
+      option.detail, font: .app(.footnote, traits: traits), color: .secondaryLabel,
+      code: .monospacedSystemFont(ofSize: codeSize, weight: .regular))
+    detail.numberOfLines = 0
+    let words = UIStackView(arrangedSubviews: [title, detail])
+    words.axis = .vertical
+    words.spacing = 2
+    ring.setContentHuggingPriority(.required, for: .horizontal)
+    ring.setContentCompressionResistancePriority(.required, for: .horizontal)
+    let row = UIStackView(arrangedSubviews: [words, ring])
+    row.axis = .horizontal
+    row.alignment = .firstBaseline
+    row.spacing = 12
+    row.isUserInteractionEnabled = false
+    addPinned(row, insets: UIEdgeInsets(top: 10, left: 0, bottom: 10, right: 0))
+    picked = false
+    isAccessibilityElement = true
+    accessibilityLabel = [option.label, option.detail].filter { !$0.isEmpty }.joined(separator: ", ")
+  }
+
+  @available(*, unavailable)
+  required init?(coder: NSCoder) { fatalError() }
+
+  override var isHighlighted: Bool {
+    didSet {
+      UIView.animate(withDuration: isHighlighted ? 0.05 : 0.2) { self.alpha = self.isHighlighted ? 0.5 : 1 }
     }
   }
 }

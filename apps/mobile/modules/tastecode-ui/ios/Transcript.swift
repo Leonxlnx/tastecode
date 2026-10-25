@@ -4,27 +4,6 @@ import UIKit
 // SwiftUI pieces other screens share. The transcript itself is UIKit: see
 // TranscriptController.
 
-/// What you sent, while a new chat starts: right-aligned on a quiet fill.
-struct UserMessage: View {
-  let text: String
-
-  var body: some View {
-    VStack(alignment: .trailing, spacing: 6) {
-      if !text.isEmpty {
-        Text(text)
-          .font(.body)
-          .lineSpacing(2)
-          .textSelection(.enabled)
-          .padding(.horizontal, 15)
-          .padding(.vertical, 10)
-          .background(Color(.secondarySystemBackground), in: .rect(cornerRadius: 20, style: .continuous))
-      }
-    }
-    .padding(.leading, 48)
-    .frame(maxWidth: .infinity, alignment: .trailing)
-  }
-}
-
 /// "+12 −3", green and red: the one place a change's size is coloured.
 struct LineCounts: View {
   let added: Int
@@ -40,20 +19,6 @@ struct LineCounts: View {
       }
     }
     .monospacedDigit()
-  }
-}
-
-struct WorkingLine: View {
-  let text: String
-
-  var body: some View {
-    HStack(spacing: 8) {
-      ProgressView()
-        .controlSize(.mini)
-      Text(text)
-        .font(.subheadline)
-        .foregroundStyle(.secondary)
-    }
   }
 }
 

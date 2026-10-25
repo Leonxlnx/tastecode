@@ -1,4 +1,4 @@
-import SwiftUI
+import Foundation
 
 enum Route: Hashable {
   case chat(String)
@@ -66,19 +66,4 @@ func shortTime(_ date: Date, now: Date = .now) -> String {
   if hours < 24 { return "\(hours)h" }
   if hours < 24 * 6 { return date.formatted(.dateTime.weekday(.abbreviated)) }
   return date.formatted(.dateTime.day().month(.abbreviated))
-}
-
-extension View {
-  /// A failure the person should read, as an alert with one OK.
-  func problemAlert(_ problem: Binding<String?>) -> some View {
-    alert(
-      "Something went wrong",
-      isPresented: Binding(get: { problem.wrappedValue != nil }, set: { if !$0 { problem.wrappedValue = nil } }),
-      presenting: problem.wrappedValue
-    ) { _ in
-      Button("OK", role: .cancel) {}
-    } message: { text in
-      Text(text)
-    }
-  }
 }
