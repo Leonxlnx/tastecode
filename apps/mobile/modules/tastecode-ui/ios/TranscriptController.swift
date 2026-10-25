@@ -44,9 +44,33 @@ final class TranscriptLayout: UICollectionViewLayout {
   private var height: CGFloat = 0
   private var inserted: Set<IndexPath> = []
   private var deleted: Set<IndexPath> = []
+  /// The frames were worked out when the layout was invalidated, ahead of `prepare`.
+  private var placed = false
 
   override func prepare() {
     super.prepare()
+    if placed {
+      placed = false
+      return
+    }
+    place()
+  }
+
+  /// Rows that changed in place move only themselves and the rows below them;
+  /// the list is told how much taller it got, since it does not ask again.
+  override func invalidateLayout(with context: UICollectionViewLayoutInvalidationContext) {
+    if !context.invalidateEverything, !context.invalidateDataSourceCounts, context.invalidatedItemIndexPaths != nil {
+      let old = height
+      place()
+      placed = true
+      context.contentSizeAdjustment = CGSize(width: 0, height: height - old)
+    } else {
+      placed = false
+    }
+    super.invalidateLayout(with: context)
+  }
+
+  private func place() {
     frames.removeAll(keepingCapacity: true)
     guard let collectionView, let source, collectionView.numberOfSections > 0 else {
       height = 0
@@ -182,6 +206,8 @@ final class TranscriptController: UIViewController, UICollectionViewDelegate, Tr
   private var loadingImages: Set<String> = []
   /// Where the text ahead of the reader was last drawn from.
   private var prefetchedAt = CGFloat.nan
+  /// What each extra row (older history, working, plan, placeholder) was last built from.
+  private var extras: [String: ThreadMetaView] = [:]
 
   init(model: AppModel, store: ThreadStore, jumpToken: Int) {
     self.model = model
@@ -389,30 +415,37 @@ final class TranscriptController: UIViewController, UICollectionViewDelegate, Tr
     }
 
     var next: [String] = []
+    /// Builds an extra row again only when what it shows changed, so it does
+    /// not count as a changed row, and move the list, on every update.
+    func extra(_ key: String, _ meta: ThreadMetaView, same: (ThreadMetaView) -> Bool, make: () -> RowLayout) {
+      next.append(key)
+      if !everything, layouts[key] != nil, let previous = extras[key], same(previous) { return }
+      layouts[key] = make()
+      extras[key] = meta
+      changed.insert(key)
+    }
     if let meta {
       if meta.hasOlder {
-        next.append(Special.older)
-        layouts[Special.older] = RowLayouts.older(loading: meta.loadingOlder)
-        changed.insert(Special.older)
+        extra(Special.older, meta, same: { $0.loadingOlder == meta.loadingOlder }) {
+          RowLayouts.older(loading: meta.loadingOlder)
+        }
         if !meta.loadingOlder && order != items.filter({ !$0.hasPrefix("§") }) { askedForOlder = false }
       }
     }
     next.append(contentsOf: order)
     if let meta {
       if meta.waiting {
-        next.append(Special.working)
-        layouts[Special.working] = RowLayouts.working("Working", style: style, scale: scale)
-        changed.insert(Special.working)
+        extra(Special.working, meta, same: { _ in true }) { RowLayouts.working("Working", style: style, scale: scale) }
       }
       if !meta.plan.isEmpty {
-        next.append(Special.plan)
-        layouts[Special.plan] = RowLayouts.plan(meta.plan, width: width, style: style, scale: scale)
-        changed.insert(Special.plan)
+        extra(Special.plan, meta, same: { $0.plan == meta.plan }) {
+          RowLayouts.plan(meta.plan, width: width, style: style, scale: scale)
+        }
       }
       if order.isEmpty && meta.status != .ready {
-        next.append(Special.placeholder)
-        layouts[Special.placeholder] = RowLayouts.placeholder(meta, width: width, style: style, scale: scale)
-        changed.insert(Special.placeholder)
+        extra(Special.placeholder, meta, same: { $0 == meta }) {
+          RowLayouts.placeholder(meta, width: width, style: style, scale: scale)
+        }
       }
     }
 
@@ -445,10 +478,11 @@ final class TranscriptController: UIViewController, UICollectionViewDelegate, Tr
         dataSource.apply(snapshot, animatingDifferences: animated)
       }
     } else {
+      var first = Int.max
       for key in changed {
-        guard let indexPath = dataSource.indexPath(for: key),
-          let cell = collectionView.cellForItem(at: indexPath) as? TranscriptCell,
-          let layout = layouts[key]
+        guard let indexPath = dataSource.indexPath(for: key) else { continue }
+        first = min(first, indexPath.item)
+        guard let cell = collectionView.cellForItem(at: indexPath) as? TranscriptCell, let layout = layouts[key]
         else { continue }
         if cell.reuseIdentifier == Self.reuse(layout) {
           cell.apply(layout, animated: false)
@@ -458,7 +492,13 @@ final class TranscriptController: UIViewController, UICollectionViewDelegate, Tr
           dataSource.apply(snapshot, animatingDifferences: false)
         }
       }
-      flow.invalidateLayout()
+      if first < items.count {
+        // Only the rows that changed and those below them move: a streaming
+        // reply is the last row, so the list re-places one or two cells.
+        let context = UICollectionViewLayoutInvalidationContext()
+        context.invalidateItems(at: (first..<items.count).map { IndexPath(item: $0, section: 0) })
+        flow.invalidateLayout(with: context)
+      }
     }
     collectionView.layoutIfNeeded()
     restore(anchor)
