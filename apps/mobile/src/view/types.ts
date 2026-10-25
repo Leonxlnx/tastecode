@@ -42,7 +42,9 @@ export type ChatView = {
   branch: string | null
   /** The agent the chat runs on, as the model picker names it. */
   sourceName: string
-  /** The model of the chat's setup; null while it uses the agent's default. */
+  /** Which provider logo the row shows, as the desktop names its marks. */
+  mark: string
+  /** The model of the chat's setup, or its agent's default; null when neither is known. */
   modelName: string | null
 }
 

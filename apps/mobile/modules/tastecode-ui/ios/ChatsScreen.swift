@@ -338,10 +338,21 @@ struct ChatRow: View {
     model.perform(["type": "thread.restore", "threadId": chat.id]) { problem = $0 }
   }
 
-  private var detail: Text {
-    let project = Text(chat.projectName).foregroundStyle(.secondary)
-    guard let state = stateText else { return project }
-    return Text("\(project)\(Text(" · ").foregroundStyle(.secondary))\(state)")
+  /// What the chat runs on and where: the provider's logo, the model (or the
+  /// agent, when the chat uses its default), the project, then what it is doing.
+  /// A long line gives up the project before the state.
+  private var detail: some View {
+    HStack(spacing: 0) {
+      ProviderLogo(mark: chat.mark, size: 12)
+        .foregroundStyle(.secondary)
+        .padding(.trailing, 5)
+      Text("\(chat.modelName ?? chat.sourceName) · \(chat.projectName)")
+        .foregroundStyle(.secondary)
+      if let state = stateText {
+        Text("\(Text(" · ").foregroundStyle(.secondary))\(state)")
+          .layoutPriority(1)
+      }
+    }
   }
 
   private var stateText: Text? {

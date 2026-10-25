@@ -36,6 +36,8 @@ struct ChatView: Decodable, Equatable, Identifiable {
   var at: Double
   var branch: String?
   var sourceName: String
+  /// Which provider logo the row shows, as the desktop names its marks.
+  var mark: String
   var modelName: String?
 
   var date: Date { Date(timeIntervalSince1970: at / 1000) }
