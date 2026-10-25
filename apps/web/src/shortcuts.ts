@@ -197,7 +197,16 @@ export function defaultShortcutOf(
   return shortcut ? { ...shortcut } : null
 }
 
-export function createDefaultKeybindings(macOS = isMacOS()): Keybindings {
+/**
+ * Whether the defaults are macOS's, read from the platform itself rather than
+ * through the bridge: `DEFAULT_KEYBINDINGS` is built while this module loads,
+ * before a test or a preview may stand in for the bridge.
+ */
+function platformIsMacOS(): boolean {
+  return typeof navigator !== 'undefined' && navigator.platform.startsWith('Mac')
+}
+
+export function createDefaultKeybindings(macOS = platformIsMacOS()): Keybindings {
   // SAFETY: Definitions contain one unique entry for every KeybindingId, so
   // Object.fromEntries produces the complete Keybindings record.
   return Object.fromEntries(

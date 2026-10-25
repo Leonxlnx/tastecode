@@ -191,7 +191,8 @@ export const ModelSelector = memo(function ModelSelector(
 
   const name = getCompactModelName(model?.displayName)
   const account = ledgerLayout && choice ? accountNameOf(props.ledger, choice) : undefined
-  const keys = props.openShortcut ? shortcutKeys(props.openShortcut) : []
+  // Only the ledger's tooltip names the keys; List and Rail never read the platform.
+  const keys = ledgerLayout && props.openShortcut ? shortcutKeys(props.openShortcut) : []
 
   const selector = (
     <Menu
