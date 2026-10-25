@@ -123,6 +123,8 @@ export const WorkspaceReview = memo(function WorkspaceReview(props: {
   turnRunning?: boolean | undefined
   /** On screen: follows a running turn's edits. Hidden, it reads nothing until shown. */
   visible?: boolean | undefined
+  /** Scroll to this file once its diff is loaded (a Brief file row asked for it). */
+  focus?: { request: number; path: string } | undefined
   onOpenPullRequest?: ((target: PullRequestTarget) => void) | undefined
 }) {
   // The server does not know a chat's provisional id while its first message
@@ -469,6 +471,15 @@ export const WorkspaceReview = memo(function WorkspaceReview(props: {
     () => <ReviewFallbackFiles fallbacks={renderedDiff.fallbacks} />,
     [renderedDiff.fallbacks],
   )
+  const handledFocus = useRef(0)
+  useEffect(() => {
+    const focus = props.focus
+    if (!focus || focus.request === handledFocus.current || !diff) return
+    handledFocus.current = focus.request
+    const file = reviewFileFor(matchingFiles, focus.path)
+    // Wait a frame so a list that just mounted can scroll.
+    if (file) requestAnimationFrame(() => selectFile(file))
+  }, [diff, matchingFiles, props.focus, selectFile])
 
   if (!props.projectPath) {
     return (
@@ -890,6 +901,17 @@ function diffStats(diff: SessionDiff | undefined): { added: number; removed: num
     },
     { added: 0, removed: 0 },
   )
+}
+
+/** The diff file a path names: Review's paths are checkout-relative, a chat's may be absolute. */
+function reviewFileFor(files: readonly DiffFile[], path: string): DiffFile | undefined {
+  const target = path.replace(/\\/g, '/').replace(/^\.\//, '').toLowerCase()
+  return files.find((file) => {
+    const candidate = file.path.replace(/\\/g, '/').toLowerCase()
+    return (
+      candidate === target || target.endsWith(`/${candidate}`) || candidate.endsWith(`/${target}`)
+    )
+  })
 }
 
 function fileStats(file: DiffFile) {

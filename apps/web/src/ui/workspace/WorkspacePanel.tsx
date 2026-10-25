@@ -146,7 +146,9 @@ function WorkspacePanelComponent(props: {
   terminalToggleRequest?: number | undefined
   providerLogin?: WorkspaceProviderLoginRequest | undefined
   onProviderLoginClose?: ((id: number) => void) | undefined
-  externalToolRequest?: { request: number; kind: WorkspaceTool } | undefined
+  /** `path` asks Review to scroll to that file (the Brief's file rows). */
+  externalToolRequest?:
+    { request: number; kind: WorkspaceTool; path?: string | undefined } | undefined
   designPreviewRequest?: BrowserNavigationRequest | undefined
   /** Opens the Pull requests surface on the pull request the Review tab shows. */
   onOpenPullRequest?: ((target: PullRequestTarget) => void) | undefined
@@ -328,10 +330,14 @@ function WorkspacePanelComponent(props: {
     }
   }, [openTool, props.open, props.onClose, props.terminalToggleRequest])
 
+  const [reviewFocus, setReviewFocus] = useState<{ request: number; path: string }>()
   useEffect(() => {
     const request = props.externalToolRequest
     if (!request || request.request === handledExternalRequest.current) return
     handledExternalRequest.current = request.request
+    if (request.kind === 'review' && request.path) {
+      setReviewFocus({ request: request.request, path: request.path })
+    }
     openTool(request.kind)
   }, [openTool, props.externalToolRequest])
 
@@ -569,6 +575,7 @@ function WorkspacePanelComponent(props: {
                   sideChatPromptRequest={props.sideChatPromptRequest}
                   onOpenPullRequest={props.onOpenPullRequest}
                   browserNavigation={tab.id === DESIGN_PREVIEW_TAB_ID ? designPreview : undefined}
+                  reviewFocus={tab.kind === 'review' ? reviewFocus : undefined}
                   onBrowserPage={updateBrowserPage}
                   onCloseTab={closeTabByShortcut}
                   onClose={() => closeTab(tab.id)}
@@ -618,6 +625,7 @@ function WorkspaceToolSurface(props: {
   sideChatPromptRequest?: SideChatPromptRequest | undefined
   onOpenPullRequest?: ((target: PullRequestTarget) => void) | undefined
   browserNavigation?: BrowserNavigationRequest | undefined
+  reviewFocus?: { request: number; path: string } | undefined
   onBrowserPage: (tabId: string, page: BrowserPageInfo) => void
   /** Ctrl+W in a Browser tab. Stable, so a memoized Browser surface keeps its props. */
   onCloseTab: (tabId: string) => void
@@ -647,6 +655,7 @@ function WorkspaceToolSurface(props: {
           props.sideChatParentStatus !== 'idle' && props.sideChatParentStatus !== 'failed'
         }
         visible={props.active}
+        focus={props.reviewFocus}
         onOpenPullRequest={props.onOpenPullRequest}
       />
     )
