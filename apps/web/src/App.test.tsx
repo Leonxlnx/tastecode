@@ -4973,6 +4973,51 @@ describe('new chats', () => {
     expect(transport.request).not.toHaveBeenCalledWith('usage.summary', expect.anything())
   })
 
+  it('shows the card figure of the provider the model picker is on', async () => {
+    serverProviders = [...serverProviders, claudeCodeServerProvider()]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    const listed = (id: string) => ({
+      id,
+      displayName: id,
+      isDefault: true,
+      reasoningEfforts: [],
+      serviceTiers: [],
+    })
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'models.list') {
+        const { provider } = methods['models.list'].params.parse(params)
+        return Promise.resolve({ models: [listed(provider === 'codex' ? 'gpt-6.1-sol' : 'opus')] })
+      }
+      if (
+        method === 'usage.summary' &&
+        (params as { provider: string }).provider === 'claude-code'
+      ) {
+        return (request(method, params) as Promise<ResultOf<'usage.summary'>>).then((summary) => ({
+          ...summary,
+          limits: [{ label: '5 hours', usedPercent: 90 }],
+        }))
+      }
+      return request(method, params)
+    })
+    const card = () => document.querySelector('.account__usage')?.getAttribute('title')
+    render(<App />)
+
+    await waitFor(() => expect(card()).toBe('Codex · 5 hours · 75% left'))
+    // The popup reads Claude Code too, whose limit is tighter.
+    fireEvent.click(screen.getByRole('button', { name: 'Account' }))
+    const claude = await screen.findByRole('region', { name: 'Claude Code' })
+    await waitFor(() => expect(within(claude).getByText('10% left')).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', { name: 'Account' }))
+    expect(card()).toBe('Codex · 5 hours · 75% left')
+
+    await waitFor(() =>
+      expect(composerProps().models.map((choice) => choice.key)).toContain('claude-code:opus'),
+    )
+    act(() => composerProps().onModelChange('claude-code:opus'))
+    await waitFor(() => expect(card()).toBe('Claude Code · 5 hours · 10% left'))
+  })
+
   it('keeps installed provider limit sources separate in the account overview', async () => {
     serverProviders = [
       ...serverProviders,

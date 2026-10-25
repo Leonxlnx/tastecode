@@ -3526,14 +3526,24 @@ export function App() {
         .map((status) => status.id),
     [provider, providerStatuses],
   )
-  // Each provider account is a limit source of its own. New chats start on a
-  // provider's active account, so that one is read for the current provider;
-  // its other accounts join the other providers, read when a view shows them.
+  // The account the model picker's provider runs on: another account picked
+  // there, else an open chat's own, else the one new chats start on.
+  const composerAccount: AccountId =
+    selectedModelChoice?.accountId ??
+    (activeSession?.provider === provider && !activeSession.agent && !activeSession.connectionId
+      ? ((activeSession.accountId as AccountId | undefined) ?? DEFAULT_ACCOUNT_ID)
+      : activeAccountOf(providerAccounts, provider))
+  // Each provider account is a limit source of its own. The account the
+  // composer is on is read for the current provider; its other accounts join
+  // the other providers, read when a view shows them.
   const limitTargets = useMemo(() => {
-    const targetsOf = (id: ProviderId): LimitTarget[] => {
+    const targetsOf = (id: ProviderId, first?: AccountId): LimitTarget[] => {
       const listed = accountsOf(providerAccounts, id)
       if (listed.length < 2) return [{ provider: id }]
-      const active = activeAccountOf(providerAccounts, id)
+      const active =
+        first !== undefined && listed.some((account) => account.id === first)
+          ? first
+          : activeAccountOf(providerAccounts, id)
       // A further account is read once it has named who it is: before its
       // first sign-in every read fails, and the views would offer a Retry.
       const others = listed
@@ -3549,9 +3559,12 @@ export function App() {
         accountId === DEFAULT_ACCOUNT_ID ? { provider: id } : { provider: id, accountId },
       )
     }
-    const [main = { provider }, ...rest] = targetsOf(provider)
-    return { main, onDemand: [...rest, ...otherUsageProviders.flatMap(targetsOf)] }
-  }, [provider, otherUsageProviders, providerAccounts])
+    const [main = { provider }, ...rest] = targetsOf(provider, composerAccount)
+    return {
+      main,
+      onDemand: [...rest, ...otherUsageProviders.flatMap((id) => targetsOf(id))],
+    }
+  }, [provider, composerAccount, otherUsageProviders, providerAccounts])
 
   useLayoutEffect(() => {
     usageController.select([limitTargets.main], limitTargets.onDemand)
@@ -3559,14 +3572,16 @@ export function App() {
   // Every source is read again every 15 minutes, so the popup opens on recent values.
   useEffect(() => pollUsageLimits(usageController), [usageController])
 
-  // The account card's one figure is about where new chats run: each
-  // provider's active account. The popup lists every account.
+  // The account card's one figure is about where the next message runs: the
+  // provider and account the model picker is on. The popup lists every account.
   const cardUsageState = useMemo(
     () =>
-      usageState.filter((state) =>
-        sameAccount(state.accountId, activeAccountOf(providerAccounts, state.provider)),
+      usageState.filter(
+        (state) =>
+          state.provider === limitTargets.main.provider &&
+          sameAccount(state.accountId, limitTargets.main.accountId),
       ),
-    [usageState, providerAccounts],
+    [usageState, limitTargets],
   )
   const accountLabel = useCallback<AccountLabel>(
     (requestedProvider, accountId) =>
