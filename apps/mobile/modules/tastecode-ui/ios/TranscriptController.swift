@@ -180,6 +180,8 @@ final class TranscriptController: UIViewController, UICollectionViewDelegate, Tr
   private var jumpToken: Int
   private var askedForOlder = false
   private var loadingImages: Set<String> = []
+  /// Where the text ahead of the reader was last drawn from.
+  private var prefetchedAt = CGFloat.nan
 
   init(model: AppModel, store: ThreadStore, jumpToken: Int) {
     self.model = model
@@ -461,6 +463,7 @@ final class TranscriptController: UIViewController, UICollectionViewDelegate, Tr
     collectionView.layoutIfNeeded()
     restore(anchor)
     revealVisible()
+    prefetchText()
     let kept = Set(items)
     if layouts.count > kept.count + 8 {
       layouts = layouts.filter { kept.contains($0.key) }
@@ -569,8 +572,34 @@ final class TranscriptController: UIViewController, UICollectionViewDelegate, Tr
     }
   }
 
+  /// Draws, in the background, the text a screen and a half above and below,
+  /// so rows scrolling in show it at once instead of drawing it on the way.
+  private func prefetchText() {
+    let visible = collectionView.bounds
+    guard visible.height > 0, !(abs(visible.minY - prefetchedAt) < visible.height / 4) else { return }
+    prefetchedAt = visible.minY
+    let region = visible.insetBy(dx: 0, dy: -visible.height * 1.5)
+    let traits = traitCollection
+    for attributes in flow.layoutAttributesForElements(in: region) ?? [] {
+      guard let key = dataSource.itemIdentifier(for: attributes.indexPath), let layout = layouts[key],
+        store.rows[key]?.row.streaming != true
+      else { continue }
+      let doc: DocLayout
+      switch layout.content {
+      case .assistant(let reply): doc = reply
+      case .user(let user): doc = user.doc
+      default: continue
+      }
+      let local = region.offsetBy(dx: -attributes.frame.minX, dy: -attributes.frame.minY)
+      for piece in DocumentView.texts(in: doc, within: local) {
+        TextRenderer.shared.prefetch(TextImageKey(text: piece.text, size: piece.size, traits: traits))
+      }
+    }
+  }
+
   func scrollViewDidScroll(_ scrollView: UIScrollView) {
     revealVisible()
+    prefetchText()
     let bottom = isAtBottom
     if bottom != atBottom {
       atBottom = bottom

@@ -1,3 +1,4 @@
+import IOSurface
 import UIKit
 
 /// What a transcript's views ask of the screen that holds them.
@@ -15,38 +16,106 @@ protocol TranscriptContext: AnyObject {
   func retryOpen()
 }
 
-/// Text drawn straight from its attributed string, as laid out off the main
-/// thread. The same string drawing measured it, so it fills its frame exactly.
+/// Text as laid out off the main thread, shown as a picture `TextRenderer`
+/// drew in the background. The same string drawing measured it, so it fills
+/// its frame exactly. Only text that must appear in this very frame is drawn
+/// on the main thread; text that changes keeps its last picture until the
+/// next is ready.
 final class TextBlockView: UIView {
   var text: NSAttributedString? {
     didSet {
       guard text !== oldValue else { return }
-      setNeedsDisplay()
+      if let text, let oldValue, text.isEqual(to: oldValue) {
+        // Laid out again with the same words and look: what is drawn stays.
+        self.text = oldValue
+        return
+      }
       accessibilityLabel = text?.string
+      setNeedsLayout()
     }
   }
+  private var shown: TextImageKey?
+  private var pending: TextImageKey?
+  private var ticket: TextRenderer.Ticket?
+  private var urgent = false
 
   override init(frame: CGRect) {
     super.init(frame: frame)
     isOpaque = false
     backgroundColor = .clear
-    contentMode = .redraw
-    layer.drawsAsynchronously = true
+    // A frame that grew keeps the last picture at its top until the next is drawn.
+    contentMode = .topLeft
+    clipsToBounds = true
     isAccessibilityElement = true
     accessibilityTraits = .staticText
-    registerForTraitChanges([UITraitUserInterfaceStyle.self, UITraitAccessibilityContrast.self]) {
-      (view: TextBlockView, _: UITraitCollection) in
-      view.setNeedsDisplay()
+    registerForTraitChanges([
+      UITraitUserInterfaceStyle.self, UITraitAccessibilityContrast.self, UITraitDisplayScale.self,
+    ]) { (view: TextBlockView, _: UITraitCollection) in
+      // Drawn again at once, so it changes together with everything around it.
+      view.urgent = true
+      view.setNeedsLayout()
     }
   }
 
   @available(*, unavailable)
   required init?(coder: NSCoder) { fatalError() }
 
-  override func draw(_ rect: CGRect) {
-    text?.draw(
-      with: CGRect(x: 0, y: 0, width: bounds.width, height: .greatestFiniteMagnitude),
-      options: [.usesLineFragmentOrigin, .usesFontLeading], context: nil)
+  override func didMoveToWindow() {
+    super.didMoveToWindow()
+    if window != nil { setNeedsLayout() }
+  }
+
+  override func layoutSubviews() {
+    super.layoutSubviews()
+    refresh()
+  }
+
+  /// Forgets what it showed, before it is taken up for other text.
+  func clear() {
+    text = nil
+    ticket?.cancel()
+    ticket = nil
+    pending = nil
+    shown = nil
+    layer.contents = nil
+  }
+
+  private func refresh() {
+    let now = urgent
+    urgent = false
+    guard window != nil else { return }
+    guard let text, text.length > 0, bounds.width > 0, bounds.height > 0 else {
+      if shown != nil { clear() }
+      return
+    }
+    let key = TextImageKey(text: text, size: bounds.size, traits: traitCollection)
+    guard key != shown, now || key != pending else { return }
+    let renderer = TextRenderer.shared
+    if let image = renderer.cached(key) { return show(image, key) }
+    if (shown == nil || now) && onScreen { return show(renderer.renderNow(key), key) }
+    ticket?.cancel()
+    let ticket = TextRenderer.Ticket()
+    self.ticket = ticket
+    pending = key
+    renderer.render(key, keep: shown == nil, ticket: ticket) { [weak self] image in
+      guard let self, self.pending == key else { return }
+      self.show(image, key)
+    }
+  }
+
+  private func show(_ image: IOSurface?, _ key: TextImageKey) {
+    if pending != key { ticket?.cancel() }
+    ticket = nil
+    pending = nil
+    shown = key
+    layer.contentsScale = key.scale
+    layer.contents = image
+  }
+
+  /// Whether any of it is inside the window, so it cannot wait for the background.
+  private var onScreen: Bool {
+    guard let window, !isHidden else { return false }
+    return convert(bounds, to: window).intersects(window.bounds)
   }
 
   /// The link under a point, laid out the same way the text was drawn.
@@ -182,6 +251,7 @@ final class DocumentView: UIView {
 
   /// Kept hidden for the next block of its kind: hidden views are not drawn.
   private func recycle(_ view: UIView) {
+    Self.clearText(view)
     let type = ObjectIdentifier(Swift.type(of: view))
     if spare[type, default: []].count < 6 {
       view.isHidden = true
@@ -189,6 +259,28 @@ final class DocumentView: UIView {
     } else {
       view.removeFromSuperview()
     }
+  }
+
+  /// So a block taken up again never shows the text it held before.
+  private static func clearText(_ view: UIView) {
+    if let text = view as? TextBlockView { return text.clear() }
+    for subview in view.subviews { clearText(subview) }
+  }
+
+  /// The text of a reply's blocks within a region, at the sizes it is drawn,
+  /// to draw ahead of a scroll.
+  static func texts(in doc: DocLayout, within region: CGRect) -> [(text: NSAttributedString, size: CGSize)] {
+    var result: [(text: NSAttributedString, size: CGSize)] = []
+    for block in doc.blocks where block.frame.intersects(region) {
+      switch block.content {
+      case .text(let text): result.append((text, block.frame.size))
+      case .quote(let text, let frame): result.append((text, frame.size))
+      case .code(let code): result += code.chunks.map { ($0.text, $0.frame.size) }
+      case .table(let table): result += table.cells.map { ($0.text, $0.frame.size) }
+      case .rule, .image: break
+      }
+    }
+    return result
   }
 
   @objc private func tapped(_ gesture: UITapGestureRecognizer) {
