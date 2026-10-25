@@ -1,5 +1,7 @@
 import { z } from 'zod'
 import { withClaudeAccount } from './account-home.js'
+import type { ClaudeRuntime } from './capabilities.js'
+import { createClaudeCliQuery } from './cli-runtime.js'
 import {
   claudeSdkSpawner,
   createClaudeUsageQuery,
@@ -23,6 +25,8 @@ export type ClaudeLimitSource =
 
 export type ClaudeLimitSourceOptions = {
   createQuery?: ClaudeUsageQueryFactory | undefined
+  /** The runtime the user's sessions run through; the read uses it too. */
+  runtime?: ClaudeRuntime | undefined
   environment?: NodeJS.ProcessEnv | undefined
   spawn?: ClaudeSpawn | undefined
   timeoutMs?: number | undefined
@@ -243,7 +247,10 @@ export async function claudeLimitSource(
   options: ClaudeLimitSourceOptions = {},
 ): Promise<ClaudeLimitSource> {
   const abortController = new AbortController()
-  const query = (options.createQuery ?? createClaudeUsageQuery)({
+  const createQuery =
+    options.createQuery ??
+    (options.runtime === 'cli' ? createClaudeCliQuery : createClaudeUsageQuery)
+  const query = createQuery({
     prompt: waitForAbort(abortController.signal),
     options: {
       pathToClaudeCodeExecutable: 'claude',
