@@ -602,6 +602,47 @@
   opacity: 0.6;
 }
 
+/* brief view: the chat drawn as its Brief, a ledger of quiet labels and inked
+   facts under the header's two-part view switch. */
+
+.gwin__views {
+  top: 8%;
+  right: 8%;
+  width: 24%;
+  height: 8px !important;
+  background: var(--gw-panel);
+  border-radius: 3px !important;
+  box-shadow: inset 0 0 0 1px var(--gw-edge);
+}
+
+.gwin__views::before {
+  position: absolute;
+  top: 1.5px;
+  bottom: 1.5px;
+  left: 1.5px;
+  width: 44%;
+  background: var(--gw-strong);
+  border-radius: 2px;
+  content: '';
+}
+
+.gwin__brief-label,
+.gwin__brief-fact {
+  top: calc(24% + var(--row) * 8%);
+}
+
+.gwin__brief-label {
+  left: 9%;
+  width: 13%;
+  background: var(--gw-quiet);
+}
+
+.gwin__brief-fact {
+  left: 28%;
+  width: calc(var(--w) * 62%);
+  background: var(--gw-ink);
+}
+
 /* notifications: the window sits behind, the OS notifications come in over its
    corner, drawn as the picker's raised panel. Their dots are the sidebar's:
    amber for a chat that needs you, green for one that finished. */

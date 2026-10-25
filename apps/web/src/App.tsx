@@ -56,6 +56,7 @@ import {
 import { sliceCodeUnits } from './slice-code-units.js'
 import { readTerminalPlacement, subscribeTerminalPlacement } from './terminal-placement.js'
 import { useChatNotifications } from './use-chat-notifications.js'
+import { hasFinishedTurn, readBriefView, subscribeBriefView } from './brief-view.js'
 import { useAppUpdateInstallGate } from './app-update-install.js'
 import { ProviderUpdateNotice } from './ui/ProviderUpdates.js'
 import { IndeterminateRequestError, Transport } from './transport.js'
@@ -106,10 +107,13 @@ import { createSessionOrderSerializer } from './session-order-serializer.js'
 import type { CommandScope, PaletteCommand } from './ui/CommandPalette.js'
 import { Composer, type SendAvailability, type WorkspaceInfo } from './ui/Composer.js'
 import {
+  getCompactModelName,
   getFastModeOffValue,
   getFastServiceTier,
+  getFriendlyEffortLabel,
   getNextServiceTierForModel,
 } from './ui/model-selector-utils.js'
+import type { BriefSourceLabel } from './ui/BriefView.js'
 import type { Checkpoint } from './ui/RollbackDialog.js'
 import { SessionSearchHost, type SessionSearchHandle } from './ui/SessionSearchHost.js'
 import type { SettingsSection } from './ui/Settings.js'
@@ -128,13 +132,13 @@ import {
   SettingsSkeleton,
   WorkspacePanelSkeleton,
 } from './ui/SurfaceSkeletons.js'
-import { PanelToggles, StageHeader } from './ui/StageHeader.js'
+import { PanelToggles, StageHeader, type ChatView } from './ui/StageHeader.js'
 import { SurfaceErrorBoundary } from './ui/SurfaceErrorBoundary.js'
 import { surfaceLoadFailed } from './surface-load-error.js'
 import { preloadWhenIdle } from './idle-preload.js'
 import { NoticePresence } from './ui/NoticePresence.js'
 import type { ComposerError } from './ui/ComposerErrors.js'
-import { LazyThread } from './ui/LazyThread.js'
+import { LazyBrief, LazyThread, preloadBrief } from './ui/LazyThread.js'
 import { TitleBar } from './ui/TitleBar.js'
 import { ZoomHud } from './ui/ZoomHud.js'
 import { useDeferredArchiveQueue } from './ui/useDeferredArchiveQueue.js'
@@ -336,6 +340,8 @@ const BOTTOM_TERMINAL_MOTION_MS = 260
 /** How long a project's branch list answers the new-chat branch menu without git. */
 const BRANCH_LIST_TTL_MS = 30_000
 const NO_BRANCHES: string[] = []
+/** A running turn has no restore point yet; the Brief offers none meanwhile. */
+const NO_CHECKPOINTS: Checkpoint[] = []
 const RAIL_WIDTH_KEY = 'harness.rail.width'
 const DEFAULT_RAIL_WIDTH = 256
 const WORKSPACE_PANEL_WIDTH_KEY = 'harness.workspacePanel.width'
@@ -981,6 +987,9 @@ export function App() {
   // fade: while it faded in, the chat settling underneath showed through.
   const [settingsReturning, setSettingsReturning] = useState(false)
   const [keybindings, setKeybindings] = useState(readKeybindings)
+  const briefViewEnabled = useSyncExternalStore(subscribeBriefView, readBriefView, readBriefView)
+  /** Chats shown as their Brief, remembered for this window only. */
+  const [briefChats, setBriefChats] = useState<ReadonlySet<string>>(() => new Set())
   const [surface, setSurface] = useState<'chat' | 'pull-requests'>('chat')
   const [settingsSection, setSettingsSection] = useState<SettingsSectionRequest>({
     section: 'workflows',
@@ -1186,6 +1195,8 @@ export function App() {
   const [workspaceToolRequest, setWorkspaceToolRequest] = useState<{
     request: number
     kind: WorkspaceTool
+    /** Review scrolls to this file. */
+    path?: string | undefined
   }>()
   const nextWorkspaceToolRequest = useRef(0)
   const [workspaceDesignPreviewRequest, setWorkspaceDesignPreviewRequest] =
@@ -6064,6 +6075,63 @@ export function App() {
     () => projects.find((project) => project.path === activePath),
     [projects, activePath],
   )
+  // The Brief prototype: a second view of a chat, offered once the setting is
+  // on and the chat finished a turn. The conversation stays the default.
+  const briefAvailable =
+    briefViewEnabled &&
+    activeId !== undefined &&
+    !activeId.startsWith('pending:') &&
+    hasFinishedTurn(thread)
+  const briefShown = briefAvailable && activeId !== undefined && briefChats.has(activeId)
+  const showChatView = useCallback((view: ChatView) => {
+    const id = activeIdRef.current
+    if (!id) return
+    setBriefChats((current) => {
+      if ((view === 'brief') === current.has(id)) return current
+      const next = new Set(current)
+      if (view === 'brief') next.add(id)
+      else next.delete(id)
+      return next
+    })
+  }, [])
+  const showConversation = useCallback(() => showChatView('conversation'), [showChatView])
+  const openReviewAt = useCallback(
+    (path?: string) => {
+      if (!activePath) return
+      setWorkspacePanelHasMounted(true)
+      setWorkspaceToolRequest({
+        request: ++nextWorkspaceToolRequest.current,
+        kind: 'review',
+        ...(path ? { path } : {}),
+      })
+    },
+    [activePath],
+  )
+  // Ask about: plain words in the composer, after any draft; nothing is sent.
+  const askAbout = useCallback((text: string) => {
+    const owner = threadController.draftOwner
+    const draft = threadController.draft(owner).text
+    const next = draft.trim() ? `${draft.trimEnd()}\n${text}` : text
+    threadController.editDraft(owner, { text: next })
+    setComposerDraft((current) => ({
+      text: next,
+      undoable: true,
+      request: (current?.request ?? 0) + 1,
+    }))
+    setComposerFocusRequest((request) => request + 1)
+  }, [])
+  const briefSource = useMemo<BriefSourceLabel | undefined>(
+    () =>
+      selectedModelChoice
+        ? {
+            name: selectedModelChoice.agent?.name ?? selectedModelChoice.sourceName,
+            mark: selectedModelChoice.mark,
+            model: getCompactModelName(selectedModelChoice.model.displayName),
+            effort: selectedEffort ? getFriendlyEffortLabel(selectedEffort) : undefined,
+          }
+        : undefined,
+    [selectedModelChoice, selectedEffort],
+  )
   const keybindingActions = useMemo<Record<KeybindingId, () => void>>(
     () => ({
       commandPalette: () => {
@@ -6094,6 +6162,11 @@ export function App() {
       },
       previousChat: () => cycleChat(-1),
       nextChat: () => cycleChat(1),
+      toggleBriefView: () => {
+        if (briefAvailable && activeId) {
+          showChatView(briefChats.has(activeId) ? 'conversation' : 'brief')
+        }
+      },
       toggleSessionPin: () => {
         if (activeId) toggleSidebarSessionPin(activeId)
       },
@@ -6125,6 +6198,9 @@ export function App() {
       activeId,
       activePath,
       addProject,
+      briefAvailable,
+      briefChats,
+      showChatView,
       checkpoints.length,
       changeDesignMode,
       designMode,
@@ -6860,6 +6936,9 @@ export function App() {
                 onRenameSession={renameSidebarSession}
                 onToggleSessionPin={toggleSidebarSessionPin}
                 onArchiveSession={deleteSidebarSession}
+                chatView={briefAvailable ? (briefShown ? 'brief' : 'conversation') : undefined}
+                onChatViewChange={showChatView}
+                onPrepareChatView={preloadBrief}
               />
             )}
 
@@ -6871,7 +6950,35 @@ export function App() {
             >
               {surface === 'chat' ? (
                 <div className={`stage__conversation${activeId ? '' : ' is-new-session'}`}>
-                  {activeId ? (
+                  {activeId && briefShown ? (
+                    <Suspense fallback={<ThreadSkeleton />}>
+                      <LazyBrief
+                        key={activeId}
+                        frameStore={threadFrameStore}
+                        threadId={activeId}
+                        title={active?.session.title}
+                        projectPath={activePath}
+                        projectName={activeProject ? displayName(activeProject) : undefined}
+                        branch={
+                          active?.session.worktreeBranch ?? workspace?.branch ?? pathBranches[0]
+                        }
+                        source={briefSource}
+                        loading={loadingThreadId === activeId}
+                        checkpoints={thread.running ? NO_CHECKPOINTS : checkpoints}
+                        toggleShortcut={
+                          keybindings.toggleBriefView
+                            ? shortcutLabel(keybindings.toggleBriefView, macOS)
+                            : undefined
+                        }
+                        onOpenReview={openReviewAt}
+                        onAskAbout={askAbout}
+                        onShowConversation={showConversation}
+                        onRevertCheckpoint={revertCheckpoint}
+                        onOpenRollback={openRollback}
+                        onLoadCompleteHistory={loadCompleteHistory}
+                      />
+                    </Suspense>
+                  ) : activeId ? (
                     <AccountLabelContext.Provider value={accountLabel}>
                       <Suspense fallback={<ThreadSkeleton />}>
                         <LazyThread

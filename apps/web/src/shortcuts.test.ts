@@ -49,8 +49,17 @@ describe('shortcuts', () => {
       return shortcut ? [shortcutLabel(shortcut, false)] : []
     })
 
-    expect(KEYBINDING_DEFINITIONS).toHaveLength(21)
+    expect(KEYBINDING_DEFINITIONS).toHaveLength(22)
     expect(new Set(assigned).size).toBe(assigned.length)
+  })
+
+  it('keeps the Brief switch off Stop', () => {
+    const keybindings = createDefaultKeybindings()
+    expect(keybindings.toggleBriefView).toEqual({ key: 'i', primary: true })
+    expect(keybindings.interrupt).toEqual({ key: '.', primary: true })
+    expect(
+      findKeybindingConflict(keybindings, 'toggleBriefView', { key: 'i', primary: true }),
+    ).toBe(undefined)
   })
 
   it('matches Ctrl as the primary modifier outside macOS without stealing shifted variants', () => {

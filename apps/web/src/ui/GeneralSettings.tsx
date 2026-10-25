@@ -9,7 +9,9 @@ import {
   type ReactNode,
 } from 'react'
 import type { SidebarSettings } from '@harness/contracts'
-import { canNotifyChats } from '../bridge.js'
+import { canNotifyChats, isMacOS } from '../bridge.js'
+import { readBriefView, subscribeBriefView, writeBriefView } from '../brief-view.js'
+import { readKeybindings, shortcutLabel } from '../shortcuts.js'
 import {
   readChatNotificationMode,
   subscribeChatNotificationMode,
@@ -52,6 +54,13 @@ const PICKER_OPTIONS = [
   { value: 'rail', label: 'Rail' },
 ] as const satisfies ReadonlyArray<Option<ModelPickerLayout>>
 
+type BriefChoice = 'off' | 'on'
+
+const BRIEF_OPTIONS = [
+  { value: 'off', label: 'Off' },
+  { value: 'on', label: 'On' },
+] as const satisfies ReadonlyArray<Option<BriefChoice>>
+
 const NOTIFY_OPTIONS = [
   { value: 'off', label: 'Off' },
   { value: 'needs-you', label: 'Needs me' },
@@ -83,6 +92,11 @@ export function GeneralSettings(props: {
     readTerminalPlacement,
     readTerminalPlacement,
   )
+  const brief: BriefChoice = useSyncExternalStore(subscribeBriefView, readBriefView, readBriefView)
+    ? 'on'
+    : 'off'
+  const briefShortcut = readKeybindings().toggleBriefView
+  const briefKey = briefShortcut ? shortcutLabel(briefShortcut, isMacOS()) : undefined
   // While the settle scale is dragged the Inbox picture follows the pointer;
   // the server only hears the value the pointer lets go at.
   const [draftDays, setDraftDays] = useState<SettleDays | undefined>()
@@ -139,6 +153,14 @@ export function GeneralSettings(props: {
           options={PICKER_OPTIONS}
           onChange={writeModelPickerLayout}
           picture={(value) => <MiniWindow focus="picker" mode={mode} days={days} picker={value} />}
+        />
+        <Setting
+          name="Brief view"
+          note={`A prototype: a page beside each chat of what was asked, its plan, every change and the latest checks. Switch in the chat header${briefKey ? ` or with ${briefKey}` : ''}.`}
+          value={brief}
+          options={BRIEF_OPTIONS}
+          onChange={(next) => writeBriefView(next === 'on')}
+          picture={(value) => <MiniWindow focus="brief" mode={mode} days={days} brief={value} />}
         />
         {canNotifyChats ? (
           <Setting
@@ -425,6 +447,15 @@ function rowStyle(row: number, width: number): RowStyle {
 const CLASSIC_BLOCK = 4.6
 const THREAD_LINES = [0.92, 0.84, 0.88, 0.5] as const
 const PICKER_ROWS = [0.4, 0.78, 0.64, 0.7, 0.34, 0.6, 0.82] as const
+/** The Brief's ledger: [has a label, fact width] per row. */
+const BRIEF_ROWS = [
+  [true, 0.92],
+  [false, 0.58],
+  [true, 0.74],
+  [false, 0.62],
+  [true, 0.84],
+  [false, 0.5],
+] as const
 
 /**
  * The window in miniature, painted in the app's own surfaces: the sidebar,
@@ -433,12 +464,13 @@ const PICKER_ROWS = [0.4, 0.78, 0.64, 0.7, 0.34, 0.6, 0.82] as const
  * changes is drawn in full ink; the rest stays quiet around it.
  */
 function MiniWindow(props: {
-  focus: 'sidebar' | 'terminal' | 'picker' | 'notify'
+  focus: 'sidebar' | 'terminal' | 'picker' | 'notify' | 'brief'
   mode: SidebarMode
   days: SettleDays
   terminal?: TerminalPlacement
   picker?: ModelPickerLayout
   notify?: ChatNotificationMode
+  brief?: BriefChoice
 }) {
   const inbox = props.mode === 'inbox'
   const active = PLAN_CHATS.filter((chat) => props.days === null || chat.age < props.days).length
@@ -496,12 +528,25 @@ function MiniWindow(props: {
         )}
       </span>
       <span className="gwin__main">
-        <span className="gwin__thread">
-          <i className="gwin__ask" />
-          {THREAD_LINES.map((width, row) => (
-            <i key={row} className="gwin__line" style={rowStyle(row, width)} />
-          ))}
-        </span>
+        {props.brief === 'on' ? (
+          // The Brief: the view switch, then labels on the left, facts on the right.
+          <span className="gwin__brief">
+            <b className="gwin__views" />
+            {BRIEF_ROWS.map(([labelled, width], row) => (
+              <span key={row}>
+                {labelled ? <i className="gwin__brief-label" style={rowStyle(row, 1)} /> : null}
+                <i className="gwin__brief-fact" style={rowStyle(row, width)} />
+              </span>
+            ))}
+          </span>
+        ) : (
+          <span className="gwin__thread">
+            <i className="gwin__ask" />
+            {THREAD_LINES.map((width, row) => (
+              <i key={row} className="gwin__line" style={rowStyle(row, width)} />
+            ))}
+          </span>
+        )}
         <span className="gwin__prompt">
           <b />
         </span>

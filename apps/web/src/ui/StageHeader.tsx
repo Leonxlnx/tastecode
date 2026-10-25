@@ -21,14 +21,16 @@ import {
   IconEdit as SquarePen,
   IconTerminal2 as SquareTerminal,
 } from '@tabler/icons-react'
-import { isDesktop, revealPath } from '../bridge.js'
+import { isDesktop, isMacOS, revealPath } from '../bridge.js'
 import {
   DEFAULT_KEYBINDINGS,
   isComposingKey,
   isConfirmEnter,
   shortcutAria,
+  shortcutLabel,
   type KeybindingId,
   type Keybindings,
+  type Shortcut,
 } from '../shortcuts.js'
 import { IconMorph } from './IconMorph.js'
 import { Menu, MenuItem } from './Menu.js'
@@ -111,6 +113,68 @@ function closeThenRun(close: () => void, action: () => void) {
 
 type RenameTarget = { id: string; title: string | undefined }
 
+export type ChatView = 'brief' | 'conversation'
+
+const CHAT_VIEWS: ReadonlyArray<{ value: ChatView; label: string }> = [
+  { value: 'brief', label: 'Brief' },
+  { value: 'conversation', label: 'Conversation' },
+]
+
+/**
+ * Brief | Conversation: two views of one chat, the conversation the default.
+ * One radio group, like Settings' segmented choices: Tab reaches the chosen
+ * view, the arrow keys move the choice.
+ */
+function ChatViewSwitch(props: {
+  view: ChatView
+  shortcut: Shortcut | null | undefined
+  onChange: (view: ChatView) => void
+  onPrepare?: (() => void) | undefined
+}) {
+  const buttons = useRef<Array<HTMLButtonElement | null>>([])
+  const hint = props.shortcut ? ` (${shortcutLabel(props.shortcut, isMacOS())})` : ''
+  return (
+    <div
+      className="stagehead__views"
+      role="radiogroup"
+      aria-label="Chat view"
+      aria-keyshortcuts={shortcutAria(props.shortcut)}
+      onPointerEnter={props.onPrepare}
+      onFocus={props.onPrepare}
+    >
+      {CHAT_VIEWS.map((option, index) => {
+        const checked = option.value === props.view
+        return (
+          <button
+            key={option.value}
+            ref={(element) => {
+              buttons.current[index] = element
+            }}
+            type="button"
+            role="radio"
+            aria-checked={checked}
+            tabIndex={checked ? 0 : -1}
+            className="stagehead__view"
+            title={checked ? option.label : `Show the ${option.label.toLowerCase()}${hint}`}
+            onClick={() => {
+              if (!checked) props.onChange(option.value)
+            }}
+            onKeyDown={(event) => {
+              if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return
+              event.preventDefault()
+              const next = CHAT_VIEWS[(index + 1) % CHAT_VIEWS.length]!
+              buttons.current[(index + 1) % CHAT_VIEWS.length]?.focus()
+              props.onChange(next.value)
+            }}
+          >
+            {option.label}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
 /**
  * A new chat keeps a provisional id until its thread starts. The same chat
  * then takes the real id with its title unchanged; another chat would not.
@@ -141,6 +205,10 @@ function StageHeaderComponent(props: {
   onRenameSession: (id: string, title: string) => void
   onToggleSessionPin: (id: string) => void
   onArchiveSession: (id: string) => void
+  /** The Brief prototype's view switch; absent unless its setting is on and a turn finished. */
+  chatView?: ChatView | undefined
+  onChatViewChange?: ((view: ChatView) => void) | undefined
+  onPrepareChatView?: (() => void) | undefined
 }) {
   const keybindings = props.keybindings ?? DEFAULT_KEYBINDINGS
   const [renameTarget, setRenameTarget] = useState<RenameTarget>()
@@ -368,6 +436,14 @@ function StageHeaderComponent(props: {
       </div>
       {props.pullRequest && props.onOpenPullRequest ? (
         <StagePullRequestChip pullRequest={props.pullRequest} onOpen={props.onOpenPullRequest} />
+      ) : null}
+      {props.chatView && props.onChatViewChange ? (
+        <ChatViewSwitch
+          view={props.chatView}
+          shortcut={keybindings.toggleBriefView}
+          onChange={props.onChatViewChange}
+          onPrepare={props.onPrepareChatView}
+        />
       ) : null}
     </header>
   )

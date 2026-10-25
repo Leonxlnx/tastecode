@@ -85,6 +85,14 @@ export const KEYBINDING_DEFINITIONS = [
     defaultShortcut: { key: 'arrowdown', primary: true, alt: true },
   },
   {
+    // Never Ctrl+. (Stop). Does nothing until Settings > General > Brief view is on.
+    id: 'toggleBriefView',
+    group: 'Chats',
+    label: 'Switch Brief and conversation',
+    description: 'Show the open chat as its Brief or as its conversation, when Brief view is on.',
+    defaultShortcut: { key: 'i', primary: true },
+  },
+  {
     id: 'toggleSessionPin',
     group: 'Chats',
     label: 'Pin or unpin chat',

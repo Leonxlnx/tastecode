@@ -1503,6 +1503,55 @@
   color: var(--attention);
 }
 
+/* Brief | Conversation (the Brief prototype): Settings' segmented choice in
+   the header's 28px scale, at its right end. */
+.stagehead__views {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  flex: none;
+  height: 28px;
+  align-items: stretch;
+  margin-left: auto;
+  padding: 2px;
+  background: var(--bg);
+  border: 1px solid var(--chrome-border);
+  border-radius: var(--r-md);
+}
+
+.stagehead__view {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 10px;
+  background: none;
+  border: 0;
+  border-radius: var(--r-sm);
+  color: var(--text-3);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--t-sm);
+  line-height: 1;
+  white-space: nowrap;
+  transition:
+    background-color var(--dur-hover) var(--ease-out),
+    color var(--dur-hover) var(--ease-out);
+}
+
+.stagehead__view:hover {
+  color: var(--text);
+}
+
+.stagehead__view[aria-checked='true'] {
+  background: var(--menu-hover);
+  color: var(--text);
+  cursor: default;
+}
+
+.stagehead__view:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-inset);
+}
+
 .menu.stagehead__options-menu {
   min-width: 0;
   width: min(216px, calc(100vw - 16px));
