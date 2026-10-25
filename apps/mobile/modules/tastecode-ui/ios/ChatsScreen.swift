@@ -374,12 +374,9 @@ struct ChatRow: View {
   let onRename: (ChatView) -> Void
 
   var body: some View {
-    // A menu whose tap opens the chat: held, it shows its menu beside the row.
-    // A context menu lifts the row on a grey platter that stays for most of a
-    // second after the menu closes, and a NavigationLink's row highlight lingers.
-    Menu {
-      menu
-    } label: {
+    // A button, not a NavigationLink, whose row highlight lingers. The hold
+    // menu is UIKit's (`RowMenu`): SwiftUI's leaves a grey platter behind.
+    Button { onOpen(chat.id) } label: {
       HStack(alignment: .firstTextBaseline, spacing: 12) {
         // The provider's mark in a column of its own, centred on the title's line.
         ProviderLogo(mark: chat.mark, size: 15)
@@ -400,11 +397,12 @@ struct ChatRow: View {
       }
       .padding(.vertical, 10)
       .contentShape(.rect)
-    } primaryAction: {
-      onOpen(chat.id)
     }
-    .menuOrder(.fixed)
     .buttonStyle(RowPress())
+    .background(RowMenu(items: menuItems))
+    // A background of its own: with the list's default one, SwiftUI paints the
+    // held row grey edge to edge and keeps it most of a second after the menu.
+    .listRowBackground(Color.clear)
     .listRowSeparator(.hidden)
     .listRowInsets(EdgeInsets(top: 0, leading: 20, bottom: 0, trailing: 20))
     .swipeActions(edge: .leading) {
@@ -425,17 +423,16 @@ struct ChatRow: View {
     .sensoryFeedback(.selection, trigger: chat.pinned)
   }
 
-  @ViewBuilder private var menu: some View {
-    Button(chat.pinned ? "Unpin" : "Pin", tabler: chat.pinned ? "pinned-off" : "pin") {
-      togglePin()
-    }
-    Button("Rename", tabler: "pencil") { onRename(chat) }
-    if chat.archived {
-      Button("Restore", tabler: "restore") { restore() }
-    } else {
-      Button("Archive", tabler: "archive") { archive() }
-    }
+  private var menuItems: [RowMenu.Item] {
+    [
+      RowMenu.Item(title: chat.pinned ? "Unpin" : "Pin", icon: chat.pinned ? "pinned-off" : "pin") { togglePin() },
+      RowMenu.Item(title: "Rename", icon: "pencil") { onRename(chat) },
+      chat.archived
+        ? RowMenu.Item(title: "Restore", icon: "restore") { restore() }
+        : RowMenu.Item(title: "Archive", icon: "archive") { archive() },
+    ]
   }
+
 
   /// The model, then the project where the group does not name it (pinned,
   /// needs you, archived), then the state. A long line gives up the project first.
