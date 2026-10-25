@@ -39,6 +39,10 @@ export class OpenThread {
   #settings: ThreadSettings = {}
   #changes: ChangesView | null = null
   #wasRunning = false
+  /** A move to another source, shown at once while the computer starts the chat there. */
+  #moving: { source: Source; model: Model; setup: Setup } | undefined
+  /** That move until it is done, so a turn or a setup change waits for it. */
+  #move: Promise<void> | undefined
   #unsubscribe: Array<() => void>
   #scheduled = false
 
@@ -78,6 +82,7 @@ export class OpenThread {
 
   /** Changes the setup here at once and on the computer, which tells every other client. */
   async #write(setup: Setup): Promise<void> {
+    await this.#settled()
     const previous = this.#settings
     const next = { ...setup, ...(previous.approval ? { approval: previous.approval } : {}) }
     this.#adopt(next)
@@ -91,7 +96,13 @@ export class OpenThread {
     }
   }
 
+  /** Waits for a move under way, whether or not it worked. */
+  async #settled(): Promise<void> {
+    await this.#move?.catch(() => undefined)
+  }
+
   #current(): ResolvedSetup {
+    if (this.#moving) return { model: this.#moving.model, setup: this.#moving.setup }
     const source = this.source()
     const wanted = this.#settings.model
     // A model the source does not list, such as one the desktop added by hand,
@@ -169,6 +180,7 @@ export class OpenThread {
   }
 
   source(): Source | undefined {
+    if (this.#moving) return this.#moving.source
     const found = findSession(projects.state.get().projects, this.threadId)
     const sources = catalog.state.get().sources
     if (found) {
@@ -235,6 +247,8 @@ export class OpenThread {
 
   async send(text: string, attachments: string[]): Promise<void> {
     projects.touch(this.threadId)
+    // A move under way finishes first, so the turn goes where the chat now is.
+    if (this.#move) await this.#move
     await this.session.send(text, attachments, this.#current().setup)
   }
 
@@ -263,8 +277,13 @@ export class OpenThread {
     return this.#write(tier ? { ...rest, serviceTier: tier } : rest)
   }
 
-  /** Picks a model; one from another source moves the chat there, once its turn is done. */
+  /**
+   * Picks a model; one from another source moves the chat there, once its turn
+   * is done. The pick shows at once: starting the chat on the other source
+   * takes the computer a few seconds, and a failed move puts the old one back.
+   */
   async setModel(key: string, modelId: string): Promise<void> {
+    await this.#settled()
     const current = this.source()
     const target = catalog.state.get().sources.find((entry) => entry.key === key)
     const picked = target?.models.find((model) => model.id === modelId)
@@ -285,16 +304,52 @@ export class OpenThread {
       throw new Error('A chat can move to another provider once its turn has finished.')
     }
     const effort = effortFor(picked, undefined)
-    await connection.request('thread.changeProvider', {
-      threadId: this.threadId,
-      provider: target.provider,
-      ...(target.agent ? { agent: target.agent } : {}),
-      ...(target.accountId ? { accountId: target.accountId } : {}),
-      model: picked.id,
-      ...(effort ? { effort } : {}),
-      approval: this.#settings.approval ?? screen.approval,
-    })
-    await Promise.all([projects.refresh(), this.readSettings()])
+    const approval = this.#settings.approval ?? screen.approval
+    this.#moving = {
+      source: target,
+      model: picked,
+      setup: { model: picked.id, ...(effort ? { effort } : {}) },
+    }
+    this.flush()
+    const move = this.#moveTo(target, picked, effort, approval)
+    this.#move = move
+    try {
+      await move
+    } finally {
+      if (this.#move === move) this.#move = undefined
+    }
+  }
+
+  async #moveTo(
+    target: Source,
+    picked: Model,
+    effort: string | undefined,
+    approval: ApprovalMode,
+  ): Promise<void> {
+    try {
+      await connection.request('thread.changeProvider', {
+        threadId: this.threadId,
+        provider: target.provider,
+        ...(target.agent ? { agent: target.agent } : {}),
+        ...(target.accountId ? { accountId: target.accountId } : {}),
+        model: picked.id,
+        ...(effort ? { effort } : {}),
+        approval,
+      })
+    } catch (error) {
+      this.#moving = undefined
+      this.flush()
+      // Whether a dropped link moved the chat is unknown: the list asks the computer again.
+      void projects.refresh().catch(() => undefined)
+      throw error
+    }
+    try {
+      await Promise.all([projects.refresh(), this.readSettings()])
+    } finally {
+      // The list and the settings now say where the chat is.
+      this.#moving = undefined
+      this.flush()
+    }
   }
 
   async diff(): Promise<SessionDiff> {
