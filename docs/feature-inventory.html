@@ -2989,7 +2989,9 @@
                 <span class="d"
                   >Claude Code and Grok chats on the default account get no generated title: the
                   name their provider gives the chat replaces the first prompt's title, unless the
-                  user renamed it first. Without Claude Code, Luna at medium with a connected Codex
+                  user renamed it first. When a turn ends and the provider has still given no name
+                  (Claude Code names no chat that opens with a bare greeting), the title model
+                  writes one. Without Claude Code, Luna at medium with a connected Codex
                   subscription, then Grok 4.6 at low when Grok is connected, otherwise the newest
                   cost-oriented model at its lowest advertised effort across connected subscription
                   and custom harness providers; Models settings exposes an explicit model and effort
