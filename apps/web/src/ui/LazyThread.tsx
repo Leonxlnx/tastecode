@@ -61,6 +61,19 @@ export function preloadBrief(): void {
   void loadBrief().catch(() => undefined)
 }
 
+/** Whether the Brief's chunk, and with it the header switch's styles, has loaded. */
+export function isBriefLoaded(): boolean {
+  return briefModule !== undefined
+}
+
+/** Load the Brief's chunk; resolves true once loaded, false if it failed. */
+export function loadBriefView(): Promise<boolean> {
+  return loadBrief().then(
+    () => true,
+    () => false,
+  )
+}
+
 export const LazyBrief = memo(function LazyBrief(props: BriefProps) {
   const LoadedBrief = briefModule?.BriefView
   if (LoadedBrief) return <LoadedBrief {...props} />

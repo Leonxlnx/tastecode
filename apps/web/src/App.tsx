@@ -138,7 +138,13 @@ import { surfaceLoadFailed } from './surface-load-error.js'
 import { preloadWhenIdle } from './idle-preload.js'
 import { NoticePresence } from './ui/NoticePresence.js'
 import type { ComposerError } from './ui/ComposerErrors.js'
-import { LazyBrief, LazyThread, preloadBrief } from './ui/LazyThread.js'
+import {
+  isBriefLoaded,
+  LazyBrief,
+  LazyThread,
+  loadBriefView,
+  preloadBrief,
+} from './ui/LazyThread.js'
 import { TitleBar } from './ui/TitleBar.js'
 import { ZoomHud } from './ui/ZoomHud.js'
 import { useDeferredArchiveQueue } from './ui/useDeferredArchiveQueue.js'
@@ -988,6 +994,20 @@ export function App() {
   const [settingsReturning, setSettingsReturning] = useState(false)
   const [keybindings, setKeybindings] = useState(readKeybindings)
   const briefViewEnabled = useSyncExternalStore(subscribeBriefView, readBriefView, readBriefView)
+  // The Brief's chunk carries the header switch's styles too, so startup CSS
+  // is unchanged: with the setting on it loads after the first paint, and the
+  // switch appears once it has.
+  const [briefLoaded, setBriefLoaded] = useState(isBriefLoaded)
+  useEffect(() => {
+    if (!briefViewEnabled || briefLoaded) return
+    let live = true
+    void loadBriefView().then((loaded) => {
+      if (live && loaded) setBriefLoaded(true)
+    })
+    return () => {
+      live = false
+    }
+  }, [briefViewEnabled, briefLoaded])
   /** Chats shown as their Brief, remembered for this window only. */
   const [briefChats, setBriefChats] = useState<ReadonlySet<string>>(() => new Set())
   const [surface, setSurface] = useState<'chat' | 'pull-requests'>('chat')
@@ -6079,6 +6099,7 @@ export function App() {
   // on and the chat finished a turn. The conversation stays the default.
   const briefAvailable =
     briefViewEnabled &&
+    briefLoaded &&
     activeId !== undefined &&
     !activeId.startsWith('pending:') &&
     hasFinishedTurn(thread)
