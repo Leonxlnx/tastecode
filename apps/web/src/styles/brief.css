@@ -126,6 +126,13 @@
   display: block;
 }
 
+/* Behind Settings the Brief's loops wait like the shell's own do
+   (surface-skeleton.css); covered-shell.test.ts checks every one. */
+.shell__body[data-covered] .brief__pulse,
+.shell__body[data-covered] .brief__spinner {
+  animation-play-state: paused !important;
+}
+
 .brief__note {
   display: flex;
   align-items: center;
