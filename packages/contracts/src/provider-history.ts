@@ -5,6 +5,8 @@ export type ProviderHistorySession = {
   id: string
   workspacePath: string
   title: string
+  /** `title` is a name the provider or its user gave the session, not its first prompt. */
+  named?: boolean
   createdAt: number
   updatedAt: number
   /** Changes whenever the saved transcript changes. */
