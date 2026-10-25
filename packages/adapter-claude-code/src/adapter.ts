@@ -29,7 +29,8 @@ import type {
 import { JsonRpcValueSchema, killTree, spawnCli } from '@harness/proc'
 import { z } from 'zod'
 import { CLAUDE_ACCOUNT_HOME, withClaudeAccount } from './account-home.js'
-import { CLAUDE_CAPABILITIES } from './capabilities.js'
+import { CLAUDE_CAPABILITIES, type ClaudeRuntime } from './capabilities.js'
+import { createClaudeCliQuery } from './cli-runtime.js'
 import { mapClaudeCommands, mapClaudeMcpServers } from './inventory.js'
 import { ClaudeMcpRedactor, prepareClaudeMcpServers } from './mcp.js'
 import { activateClaudeMcpServers, createClaudeMcpBootstrap } from './mcp-bootstrap.js'
@@ -61,9 +62,10 @@ import { ClaudeSubagents } from './subagents.js'
 export { CLAUDE_CAPABILITIES } from './capabilities.js'
 
 /**
- * Claude Code is hosted through Anthropic's Agent SDK. The SDK keeps one
- * streaming session alive, owns the control protocol, and calls TasteCode back
- * for permissions and structured questions. Claude's own executable still
+ * Claude Code is hosted through Anthropic's Agent SDK, or through `claude -p`
+ * with TasteCode speaking the same stream-json protocol itself (cli-runtime.ts).
+ * Either way one streaming session stays alive, and the runtime calls TasteCode
+ * back for permissions and structured questions. Claude's own executable still
  * owns authentication; TasteCode never reads a credential file.
  */
 
@@ -538,7 +540,7 @@ class PromptQueue implements AsyncIterable<SDKUserMessage> {
   #closed = false
 
   push(value: SDKUserMessage): void {
-    if (this.#closed) throw new Error('Claude Agent SDK prompt stream is closed')
+    if (this.#closed) throw new Error('Claude Code prompt stream is closed')
     const waiter = this.#waiters.shift()
     if (waiter) waiter({ value, done: false })
     else this.#values.push(value)
@@ -652,6 +654,8 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
   constructor(
     options: {
       createQuery?: ClaudeQueryFactory
+      /** How the session runs: through the Agent SDK (the default) or `claude -p`. */
+      runtime?: ClaudeRuntime | undefined
       spawn?: ClaudeSpawn
       environment?: NodeJS.ProcessEnv
       startupTimeoutMs?: number
@@ -663,7 +667,8 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     } = {},
   ) {
     super()
-    this.#createQuery = options.createQuery ?? createClaudeQuery
+    this.#createQuery =
+      options.createQuery ?? (options.runtime === 'cli' ? createClaudeCliQuery : createClaudeQuery)
     this.#spawn = options.spawn ?? spawnCli
     this.#environment = withClaudeAccount(options.environment ?? process.env, options.accountHome)
     this.#configDir = CLAUDE_ACCOUNT_HOME.defaultHome(this.#environment)
@@ -1343,7 +1348,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
         this.#onMessage(message)
       }
       if (generation === this.#queryGeneration && !this.#disposed && this.#activeTurnId) {
-        this.#failActiveTurn('Claude Agent SDK session ended before the turn completed.')
+        this.#failActiveTurn('Claude Code session ended before the turn completed.')
       }
     } catch (error) {
       if (generation !== this.#queryGeneration || this.#disposed) return
@@ -1879,12 +1884,12 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
   }
 
   #requireQuery(): ClaudeQueryRuntime {
-    if (!this.#query) throw new Error('Claude Agent SDK session is not running')
+    if (!this.#query) throw new Error('Claude Code session is not running')
     return this.#query
   }
 
   #requirePromptQueue(): PromptQueue {
-    if (!this.#promptQueue) throw new Error('Claude Agent SDK prompt stream is not running')
+    if (!this.#promptQueue) throw new Error('Claude Code prompt stream is not running')
     return this.#promptQueue
   }
 }
