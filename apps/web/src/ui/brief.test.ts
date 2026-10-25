@@ -475,6 +475,22 @@ describe('deriveBrief: a failed turn', () => {
       turn: 1,
     })
   })
+
+  it('does not keep a check running after its turn was stopped', () => {
+    const stopped = chat([
+      {
+        prompt: 'Tidy the logging.',
+        stopped: true,
+        steps: [{ kind: 'command', command: 'pnpm vitest run src/webhooks', open: true }],
+      },
+      { prompt: 'Add the query.', open: true },
+    ])
+    const brief = deriveBrief(stopped)
+    expect(brief.running).toBe(true)
+    expect(brief.checks).toMatchObject([
+      { kind: 'test', state: 'ended', result: 'did not finish', turn: 1 },
+    ])
+  })
 })
 
 describe('deriveBrief: a running turn', () => {

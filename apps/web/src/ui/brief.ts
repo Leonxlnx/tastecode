@@ -139,8 +139,9 @@ export type BriefCheck = {
   command: string
   /**
    * `passed` and `failed` read the exit code; `running` has none yet;
-   * `ended` finished without one; `pending` failed while its turn still
-   * runs, which is routine (a test that fails before it is fixed).
+   * `ended` finished without one, or never finished because its turn
+   * stopped first; `pending` failed while its turn still runs, which is
+   * routine (a test that fails before it is fixed).
    */
   state: 'passed' | 'failed' | 'running' | 'ended' | 'pending'
   /** "42 passed", "no errors", "exit 1". */
@@ -790,10 +791,13 @@ function toolKind(name: string, args: string[]): BriefCheckKind | undefined {
 }
 
 function checkFor(kind: BriefCheckKind, item: Item, turn: BriefTurn, chained: boolean): BriefCheck {
-  const running = item.status === 'started'
+  const turnLive = turn.state === 'running'
+  // A command the agent never reported back on cannot outlive its turn: once the
+  // turn stopped or failed, it did not finish, whatever its last status said.
+  const unfinished = item.status === 'started'
+  const running = unfinished && turnLive
   const failed = item.status === 'failed' || (item.exitCode !== undefined && item.exitCode !== 0)
   const passed = !failed && item.exitCode === 0
-  const turnLive = turn.state === 'running'
   const state: BriefCheck['state'] = running
     ? 'running'
     : failed
@@ -808,7 +812,11 @@ function checkFor(kind: BriefCheckKind, item: Item, turn: BriefTurn, chained: bo
     label: CHECK_LABELS[kind],
     command: displayCommand(item.command),
     state,
-    result: running ? 'running' : checkResult(kind, item, passed, failed),
+    result: running
+      ? 'running'
+      : unfinished
+        ? 'did not finish'
+        : checkResult(kind, item, passed, failed),
     exitCode: item.exitCode,
     durationMs: item.durationMs,
     turn: turn.number,
