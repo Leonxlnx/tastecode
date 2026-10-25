@@ -2,6 +2,8 @@ import ExpoModulesCore
 import ExpoUI
 
 public final class TasteUIModule: Module {
+  private static let reading = DispatchQueue(label: "tastecode.ui.reading", qos: .userInitiated)
+
   public func definition() -> ModuleDefinition {
     Name("TasteUI")
 
@@ -16,16 +18,22 @@ public final class TasteUIModule: Module {
       }
     }
 
-    // Both keep the order the logic sent them in: one serial hop to the main queue each.
+    // Both keep the order the logic sent them in: through one serial queue,
+    // where state is read from its JSON, then one hop to the main queue each.
     Function("update") { (key: String, json: String) in
-      DispatchQueue.main.async {
-        MainActor.assumeIsolated { AppModel.shared.update(key, json) }
+      Self.reading.async {
+        guard let update = AppModel.decode(key, json) else { return }
+        DispatchQueue.main.async {
+          MainActor.assumeIsolated { AppModel.shared.apply(update) }
+        }
       }
     }
 
     Function("resolve") { (id: String, json: String?, error: String?) in
-      DispatchQueue.main.async {
-        MainActor.assumeIsolated { AppModel.shared.resolve(id, json, error) }
+      Self.reading.async {
+        DispatchQueue.main.async {
+          MainActor.assumeIsolated { AppModel.shared.resolve(id, json, error) }
+        }
       }
     }
 

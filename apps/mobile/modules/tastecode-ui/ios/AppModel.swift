@@ -37,29 +37,45 @@ final class AppModel {
 
   private let decoder = JSONDecoder()
 
-  func update(_ key: String, _ json: String) {
+  /// State the logic sent, read from its JSON off the main thread.
+  enum Update {
+    case link(LinkView)
+    case chats(ChatsView)
+    case catalog(CatalogView)
+    case newChat(NewChatView)
+    case thread(String, ThreadPatch)
+  }
+
+  private nonisolated(unsafe) static let backgroundDecoder = JSONDecoder()
+
+  /// Reads one piece of state. Called on one serial queue only, so a long
+  /// chat's first page never holds up the main thread.
+  nonisolated static func decode(_ key: String, _ json: String) -> Update? {
     let data = Data(json.utf8)
+    let decoder = backgroundDecoder
     do {
       switch key {
-      case "link":
-        let next = try decoder.decode(LinkView.self, from: data)
-        if link != next { link = next }
-      case "chats":
-        let next = try decoder.decode(ChatsView.self, from: data)
-        if chats != next { chats = next }
-      case "catalog":
-        let next = try decoder.decode(CatalogView.self, from: data)
-        if catalog != next { catalog = next }
-      case "newChat":
-        let next = try decoder.decode(NewChatView.self, from: data)
-        if newChat != next { newChat = next }
+      case "link": return .link(try decoder.decode(LinkView.self, from: data))
+      case "chats": return .chats(try decoder.decode(ChatsView.self, from: data))
+      case "catalog": return .catalog(try decoder.decode(CatalogView.self, from: data))
+      case "newChat": return .newChat(try decoder.decode(NewChatView.self, from: data))
       default:
-        guard key.hasPrefix("thread:") else { return }
-        let id = String(key.dropFirst("thread:".count))
-        thread(id).apply(try decoder.decode(ThreadPatch.self, from: data))
+        guard key.hasPrefix("thread:") else { return nil }
+        return .thread(String(key.dropFirst("thread:".count)), try decoder.decode(ThreadPatch.self, from: data))
       }
     } catch {
       NSLog("TasteUI: could not read %@: %@", key, String(describing: error))
+      return nil
+    }
+  }
+
+  func apply(_ update: Update) {
+    switch update {
+    case .link(let next): if link != next { link = next }
+    case .chats(let next): if chats != next { chats = next }
+    case .catalog(let next): if catalog != next { catalog = next }
+    case .newChat(let next): if newChat != next { newChat = next }
+    case .thread(let id, let patch): thread(id).apply(patch)
     }
   }
 
