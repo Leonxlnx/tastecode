@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// The typeface for the app's text. Code keeps its monospaced font.
 enum FontChoice: String, CaseIterable, Identifiable {
@@ -55,6 +56,87 @@ struct AppearanceModifier: ViewModifier {
 
 private func clamped(_ step: Int) -> Int {
   min(max(step, 0), textSizeSteps.count - 1)
+}
+
+/// The appearance chosen in Settings, read from where its page keeps it, for UIKit.
+struct AppearanceChoice {
+  /// Nil while the app follows the iPhone's text size.
+  let contentSize: UIContentSizeCategory?
+  let bold: Bool
+  let font: FontChoice
+
+  static var current: AppearanceChoice {
+    let defaults = UserDefaults.standard
+    let follow = defaults.object(forKey: AppearanceKey.followSystemSize) as? Bool ?? true
+    let step = defaults.object(forKey: AppearanceKey.sizeStep) as? Int ?? defaultSizeStep
+    return AppearanceChoice(
+      contentSize: follow ? nil : UIContentSizeCategory(textSizeSteps[clamped(step)]),
+      bold: defaults.bool(forKey: AppearanceKey.bold),
+      font: FontChoice(rawValue: defaults.string(forKey: AppearanceKey.font) ?? "") ?? .standard)
+  }
+}
+
+/// The typeface chosen in Settings, carried down the view tree like the text size.
+struct FontDesignTrait: UITraitDefinition {
+  static let defaultValue = FontChoice.standard
+  static let name = "TasteFontDesign"
+}
+
+extension UIFont {
+  /// A text style in the chosen typeface, at the size the traits ask for,
+  /// a step heavier when Bold Text is on, as SwiftUI draws it.
+  static func app(
+    _ style: TextStyle, weight: Weight? = nil, traits: UITraitCollection
+  ) -> UIFont {
+    let base = UIFont.preferredFont(forTextStyle: style, compatibleWith: traits)
+    var descriptor = base.fontDescriptor
+    if var weight {
+      if traits.legibilityWeight == .bold { weight = weight.bolder }
+      descriptor = descriptor.addingAttributes([.traits: [UIFontDescriptor.TraitKey.weight: weight]])
+    }
+    if let design = traits[FontDesignTrait.self].systemDesign, let designed = descriptor.withDesign(design) {
+      descriptor = designed
+    }
+    return UIFont(descriptor: descriptor, size: base.pointSize)
+  }
+}
+
+extension UIFont.Weight {
+  /// The next weight up, as Bold Text turns regular into semibold.
+  var bolder: UIFont.Weight {
+    switch self {
+    case .ultraLight: return .light
+    case .thin, .light: return .regular
+    case .regular: return .semibold
+    case .medium, .semibold: return .bold
+    default: return .heavy
+    }
+  }
+}
+
+extension FontChoice {
+  var systemDesign: UIFontDescriptor.SystemDesign? {
+    switch self {
+    case .standard: return nil
+    case .rounded: return .rounded
+    case .serif: return .serif
+    case .monospaced: return .monospaced
+    }
+  }
+}
+
+extension UIContentSizeCategory {
+  init(_ size: DynamicTypeSize) {
+    switch size {
+    case .xSmall: self = .extraSmall
+    case .small: self = .small
+    case .medium: self = .medium
+    case .large: self = .large
+    case .xLarge: self = .extraLarge
+    case .xxLarge: self = .extraExtraLarge
+    default: self = .extraExtraExtraLarge
+    }
+  }
 }
 
 /// Settings › Appearance: a live sample of a chat, then text size, typeface and weight.

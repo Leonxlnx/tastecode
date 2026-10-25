@@ -1,5 +1,4 @@
 import ExpoModulesCore
-import ExpoUI
 
 public final class TasteUIModule: Module {
   private static let reading = DispatchQueue(label: "tastecode.ui.reading", qos: .userInitiated)
@@ -37,6 +36,6 @@ public final class TasteUIModule: Module {
       }
     }
 
-    ExpoUIView(TasteAppView.self)
+    View(TasteAppView.self) {}
   }
 }

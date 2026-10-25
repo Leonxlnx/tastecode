@@ -1,6 +1,5 @@
 import { useEffect } from 'react'
 import { Alert, Linking } from 'react-native'
-import { Host } from '@expo/ui/swift-ui'
 import { TasteApp } from '../../modules/tastecode-ui'
 import { startBridge } from '../bridge'
 import { pairWith, startLink } from '../state/app'
@@ -24,8 +23,6 @@ export function App() {
   }, [])
 
   return (
-    <Host style={{ flex: 1 }}>
-      <TasteApp />
-    </Host>
+    <TasteApp style={{ flex: 1 }} />
   )
 }
