@@ -12,6 +12,11 @@ import {
 } from 'react'
 import {
   IconAlertCircle as CircleAlert,
+  IconCircleDashed as CircleDashed,
+  IconClock as Clock,
+  IconFiles as Files,
+  IconListDetails as PlanIcon,
+  IconMessageCircle as WorkIcon,
   IconArrowBackUp as Restore,
   IconCheck as Check,
   IconFileDiff as FileDiff,
@@ -31,6 +36,7 @@ import {
   briefClock,
   briefDuration,
   CHECK_LABELS,
+  checkDuration,
   deriveBrief,
   turnsLabel,
   type BriefAsk,
@@ -204,6 +210,8 @@ export const BriefView = memo(function BriefView(props: BriefProps) {
   const latest = brief.turns.at(-1)
   const workChat =
     brief.plan !== undefined || brief.changes.files.length > 0 || brief.checks.length > 0
+  /** The page is following a running turn (not reading an earlier moment). */
+  const live = brief.running && !brief.asOf
 
   return (
     <div className="brief-shell">
@@ -241,6 +249,7 @@ export const BriefView = memo(function BriefView(props: BriefProps) {
               ) : null}
               {brief.turns[0] ? (
                 <span className="brief__fact">
+                  <Clock size={14} aria-hidden />
                   {brief.partial ? 'Last ' : ''}
                   {brief.turns.length} {brief.turns.length === 1 ? 'turn' : 'turns'} since{' '}
                   {briefTime(brief.turns[0].startedAt)}
@@ -353,16 +362,16 @@ export const BriefView = memo(function BriefView(props: BriefProps) {
                       .join(', ')}
                     .
                   </p>
-                  {brief.stopped.kind === 'failed' && brief.stopped.message ? (
-                    <div className="brief-stop__actions">
-                      <CopyButton
-                        text={brief.stopped.message}
-                        label="Copy error"
-                        title="Copy error"
-                      />
-                    </div>
-                  ) : null}
                 </div>
+                {brief.stopped.kind === 'failed' && brief.stopped.message ? (
+                  <div className="brief-stop__actions">
+                    <CopyButton
+                      text={brief.stopped.message}
+                      label="Copy error"
+                      title="Copy error"
+                    />
+                  </div>
+                ) : null}
               </div>
             </Section>
           ) : null}
@@ -377,7 +386,9 @@ export const BriefView = memo(function BriefView(props: BriefProps) {
           {brief.now ? (
             <Section label="Now">
               <div className="brief-now">
-                <span className="brief__pulse" aria-hidden />
+                <span className="brief-row__glyph" aria-hidden>
+                  <span className="brief__pulse" />
+                </span>
                 <span className="brief-now__verb">{brief.now.verb}</span>
                 {brief.now.object ? (
                   <span className={`brief-now__object${brief.now.command ? ' is-command' : ''}`}>
@@ -440,20 +451,19 @@ export const BriefView = memo(function BriefView(props: BriefProps) {
                   })}
                 </ul>
               ) : (
-                <p className="brief-quiet">
+                <Quiet icon={<PlanIcon size={14} />}>
                   {brief.plan.status === 'not-kept'
-                    ? 'Only the latest turn’s plan is kept, so turn ' +
-                      brief.plan.turn +
-                      '’s is not shown.'
-                    : brief.running && !brief.asOf
-                      ? `No plan yet. ${agent} shares one when it makes it.`
+                    ? `Only the latest turn’s plan is kept, so turn ${brief.plan.turn}’s is not shown.`
+                    : live
+                      ? 'No plan shared yet.'
                       : `${agent} shared no plan for turn ${brief.plan.turn}.`}
-                </p>
+                </Quiet>
               )}
             </Section>
           ) : null}
 
-          {workChat ? (
+          {/* While a turn runs, empty Changes and Checks wait until there is something to say. */}
+          {workChat && !(live && brief.changes.files.length === 0) ? (
             <Section
               label="Changes"
               sub={brief.asOf ? `up to turn ${brief.asOf.number}` : 'whole chat'}
@@ -468,32 +478,36 @@ export const BriefView = memo(function BriefView(props: BriefProps) {
             </Section>
           ) : null}
 
-          {workChat ? (
+          {workChat && !(live && brief.checks.length === 0) ? (
             <Section label="Checks" sub="latest run of each">
-              <Checks checks={brief.checks} notRun={brief.notRun} onAskAbout={props.onAskAbout} />
+              <Checks
+                checks={brief.checks}
+                notRun={brief.notRun}
+                asOfTurn={brief.asOf?.number}
+                onAskAbout={props.onAskAbout}
+              />
             </Section>
           ) : null}
 
           {!workChat && brief.turns.length > 0 ? (
             <Section label="Work">
-              <p className="brief-quiet">
+              <Quiet icon={<WorkIcon size={14} />}>
                 Nothing changed and nothing was checked
                 {brief.commandCount > 0
                   ? `; ${agent} ran ${brief.commandCount} ${brief.commandCount === 1 ? 'command' : 'commands'}`
                   : ''}
                 .
-              </p>
+              </Quiet>
             </Section>
           ) : null}
 
           {brief.turns.length > 0 ? (
             <Section label="Answer" sub={brief.answer ? `turn ${brief.answer.turn}` : undefined}>
               {brief.answerPending && latest ? (
-                <p className="brief-quiet brief-quiet--lead">
-                  <span className="brief__pulse" aria-hidden />
+                <Quiet icon={<span className="brief__pulse" />} lead>
                   Turn {latest.number} has no answer yet.
                   {brief.answer ? ' The latest one is below.' : ''}
-                </p>
+                </Quiet>
               ) : null}
               {brief.answer ? (
                 <Answer
@@ -509,11 +523,11 @@ export const BriefView = memo(function BriefView(props: BriefProps) {
                   ]}
                 />
               ) : !brief.answerPending ? (
-                <p className="brief-quiet">
+                <Quiet icon={<Clock size={14} />}>
                   {brief.stopped
                     ? `No answer: the turn stopped before ${agent} wrote one.`
                     : 'No answer in this chat yet.'}
-                </p>
+                </Quiet>
               ) : null}
             </Section>
           ) : null}
@@ -533,10 +547,8 @@ function useCompleteHistory(
 ): HistoryRead {
   const [state, setState] = useState<HistoryRead>('idle')
   const wanted = Boolean(olderCursor && load)
-  const started = useRef(false)
   useEffect(() => {
-    if (!wanted || started.current || !load) return
-    started.current = true
+    if (!wanted || !load) return
     const controller = new AbortController()
     setState('reading')
     load(threadId, controller.signal).then(
@@ -569,6 +581,20 @@ function Section(props: {
       </h2>
       <div className="brief-sec__body">{props.children}</div>
     </section>
+  )
+}
+
+/** A quiet line in a section, its glyph in the rows' glyph column so its words line up. */
+function Quiet(props: { icon: ReactNode; lead?: boolean; after?: boolean; children: ReactNode }) {
+  return (
+    <p
+      className={`brief-quiet${props.lead ? ' brief-quiet--lead' : ''}${props.after ? ' brief-quiet--after' : ''}`}
+    >
+      <span className="brief-row__glyph" aria-hidden>
+        {props.icon}
+      </span>
+      <span>{props.children}</span>
+    </p>
   )
 }
 
@@ -615,7 +641,7 @@ function TurnTrack(props: {
   const stop = (turn: BriefTurn, index: number) => {
     const isSelected = turn.number === selected
     const isNow = index === last
-    const label = `Turn ${turn.number}${turn.prompt ? `: ${oneLine(turn.prompt, 90)}` : ''}`
+    const ask = turn.prompt ? `: ${oneLine(turn.prompt, 90)}` : ''
     return (
       <button
         key={turn.id}
@@ -625,7 +651,9 @@ function TurnTrack(props: {
         type="button"
         className={`brief-stop-node${isSelected ? ' is-selected' : ''}${isNow ? ' is-now' : ''}${isNow && props.running ? ' is-running' : ''}${turn.state === 'failed' ? ' is-failed' : ''}`}
         aria-current={isSelected ? 'step' : undefined}
-        aria-label={isNow ? `${label} (now)` : `${label}. Show the chat as it stood after it.`}
+        aria-label={
+          isNow ? `Turn ${turn.number}, now${ask}` : `Show the chat after turn ${turn.number}${ask}`
+        }
         tabIndex={index === focusIndex ? 0 : -1}
         onClick={() => props.onSelect(turn.number)}
         onKeyDown={(event) => onKeyDown(event, index)}
@@ -822,7 +850,7 @@ function Changes(props: {
 }) {
   const [open, setOpen] = useState(false)
   if (props.files.length === 0) {
-    return <p className="brief-quiet">No files changed in this chat.</p>
+    return <Quiet icon={<Files size={14} />}>No files changed in this chat.</Quiet>
   }
   const folded = !open && props.files.length > FILES_SHOWN + 1
   const shown = folded ? props.files.slice(0, FILES_SHOWN) : props.files
@@ -850,6 +878,7 @@ function Changes(props: {
             <button
               type="button"
               className="brief-row__main"
+              aria-label={`${file.directory}${file.name}${file.deleted ? ', deleted' : ''}, ${file.added} added, ${file.removed} removed, ${turnsLabel(file.turns)}. Open in Review.`}
               title={`Open ${file.directory}${file.name} in Review`}
               onClick={() => props.onOpenReview(file.path)}
             >
@@ -908,10 +937,15 @@ const NOT_RUN_WORDS = {
 function Checks(props: {
   checks: readonly BriefCheck[]
   notRun: readonly BriefCheckKind[]
+  asOfTurn: number | undefined
   onAskAbout: (text: string) => void
 }) {
   if (props.checks.length === 0) {
-    return <p className="brief-quiet">No tests, type checks, lint or builds ran in this chat.</p>
+    return (
+      <Quiet icon={<CircleDashed size={14} />}>
+        No tests, type checks, lint or builds ran in this chat.
+      </Quiet>
+    )
   }
   const notRun = props.notRun.map((kind) => NOT_RUN_WORDS[kind])
   return (
@@ -945,7 +979,7 @@ function Checks(props: {
               {check.result}
             </span>
             <span className="brief-check__duration">
-              {check.durationMs !== undefined ? briefDuration(check.durationMs) : ''}
+              {check.durationMs !== undefined ? checkDuration(check.durationMs) : ''}
             </span>
             <span className="brief-row__meta brief-row__hide brief-check__when">
               turn {check.turn} · {briefTime(check.at)}
@@ -958,10 +992,12 @@ function Checks(props: {
         ))}
       </ul>
       {notRun.length > 0 ? (
-        <p className="brief-quiet brief-quiet--after">
+        <Quiet icon={null} after>
           {capitalize(joinWords(notRun))}{' '}
-          {notRun.length === 1 && notRun[0] === 'lint' ? 'has' : 'have'} not run in this chat.
-        </p>
+          {props.asOfTurn !== undefined
+            ? `had not run by turn ${props.asOfTurn}.`
+            : `${notRun.length === 1 && notRun[0] === 'lint' ? 'has' : 'have'} not run in this chat.`}
+        </Quiet>
       ) : null}
     </>
   )

@@ -321,7 +321,13 @@ type Walk = {
   checks: BriefCheck[]
   commandCount: number
   /** The live turn's newest started activity and newest finished note. */
-  live: { activity: Item | undefined; note: Item | undefined; streaming: Item | undefined }
+  live: {
+    activity: Item | undefined
+    note: Item | undefined
+    streaming: Item | undefined
+    /** The turn's newest row that says something: an activity or a message. */
+    recent: Item | undefined
+  }
 }
 
 function walkItems(
@@ -334,7 +340,12 @@ function walkItems(
   const files = new Map<string, BriefFile>()
   const latestCheck = new Map<BriefCheckKind, { item: Item; turn: BriefTurn; chained: boolean }>()
   let commandCount = 0
-  const live: Walk['live'] = { activity: undefined, note: undefined, streaming: undefined }
+  const live: Walk['live'] = {
+    activity: undefined,
+    note: undefined,
+    streaming: undefined,
+    recent: undefined,
+  }
 
   for (let index = 0; index < cut; index += 1) {
     const item = items[index]!
@@ -392,6 +403,7 @@ function walkItems(
       } else if (item.type !== 'message' && !isBlankReasoning(item)) {
         live.streaming = undefined
       }
+      if (item.type !== 'reasoning' && item.type !== 'notice') live.recent = item
     }
   }
 
@@ -450,7 +462,7 @@ function nowFor(
   plan: BriefPlan | undefined,
   projectPath: string | undefined,
 ): BriefNow {
-  const { activity, note, streaming } = walk.live
+  const { activity, note, streaming, recent } = walk.live
   let verb = 'Thinking'
   let object: string | undefined
   let command = false
@@ -475,6 +487,13 @@ function nowFor(
     object = snippet
   } else if (streaming) {
     verb = streaming.phase === 'final_answer' ? 'Writing the answer' : 'Writing'
+  } else if (recent && recent.status !== 'started' && recent.type !== 'message') {
+    // Between two steps nothing runs; the step that just finished says more
+    // than a guess at what comes next.
+    const done = pastActivity(recent, projectPath)
+    verb = done.verb
+    object = done.object
+    command = done.command
   }
   return {
     verb,
@@ -484,6 +503,37 @@ function nowFor(
     step: planStep(plan),
     note: note?.text ? firstParagraph(note.text) : undefined,
   }
+}
+
+/** What a finished step did, worded for the Now row. */
+type BriefStep = Pick<BriefNow, 'verb' | 'object' | 'command'>
+
+function pastActivity(item: Item, projectPath: string | undefined): BriefStep {
+  if (item.type === 'command') {
+    const object = displayCommand(item.command) || undefined
+    return { verb: 'Ran', object, command: object !== undefined }
+  }
+  if (item.type === 'file_change') {
+    return {
+      verb: 'Edited',
+      object: item.path ? relativeDisplay(item.path, projectPath) : undefined,
+      command: false,
+    }
+  }
+  if (item.type === 'tool_call') {
+    const call = parseToolCall(item.text)
+    const name = call.name.toLowerCase()
+    return {
+      verb: /search|grep|glob|find/.test(name)
+        ? 'Searched'
+        : /read|open|view|cat|list/.test(name)
+          ? 'Read'
+          : `Used ${call.name || 'a tool'}`,
+      object: toolArgumentSnippet(call.args, 60),
+      command: false,
+    }
+  }
+  return { verb: 'Thinking', object: undefined, command: false }
 }
 
 function stoppedFor(
@@ -1025,6 +1075,11 @@ export function briefDuration(ms: number): string {
   const minutes = Math.floor(seconds / 60)
   if (minutes < 60) return `${minutes}m ${seconds % 60}s`
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m`
+}
+
+/** "0.4s", "3.1s" under ten seconds, where a check's tenths are worth reading; then as briefDuration. */
+export function checkDuration(ms: number): string {
+  return ms < 9_950 ? `${(Math.max(0, ms) / 1000).toFixed(1)}s` : briefDuration(ms)
 }
 
 /** "1:58", "12:04", "1:02:44": a running clock. */

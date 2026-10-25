@@ -49,7 +49,7 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  row-gap: 4px;
+  gap: 4px 16px;
   margin: 0;
   color: var(--text-3);
   font-size: var(--t-sm);
@@ -61,12 +61,6 @@
   align-items: center;
   gap: 6px;
   white-space: nowrap;
-}
-
-.brief__fact + .brief__fact::before {
-  margin: 0 9px 0 3px;
-  color: color-mix(in srgb, var(--text-3) 70%, transparent);
-  content: '·';
 }
 
 .brief__fact > svg {
@@ -300,10 +294,11 @@
   box-shadow: inset 0 0 0 1px var(--chrome-border);
 }
 
+/* Under the rule, so the chat's own title and facts stay readable. */
 .brief-tip {
   position: absolute;
   z-index: 3;
-  bottom: calc(100% + 6px);
+  top: calc(100% + 6px);
   left: 50%;
   display: none;
   width: max-content;
@@ -579,7 +574,7 @@
   display: flex;
   min-height: 30px;
   align-items: center;
-  gap: 9px;
+  gap: 10px;
   margin: 0;
   color: var(--text-3);
   font-size: var(--t-sm);
@@ -903,10 +898,6 @@
   font-size: var(--t-md);
 }
 
-.brief-now > .brief__pulse {
-  margin: 0 4px 0 4px;
-}
-
 .brief-now__verb {
   flex: none;
   color: var(--text-2);
@@ -937,7 +928,7 @@
 }
 
 .brief-now__note {
-  margin: 2px 0 0 25px;
+  margin: 2px 0 0 26px;
   color: var(--text-2);
   font-size: var(--t-md);
   line-height: 1.5;
@@ -1056,6 +1047,7 @@
 
 .brief-stop__body {
   min-width: 0;
+  flex: 1;
 }
 
 .brief-stop__title {
@@ -1075,7 +1067,8 @@
 
 .brief-stop__actions {
   display: flex;
-  margin: 6px 0 0 -6px;
+  flex: none;
+  margin: -3px -4px 0 auto;
 }
 
 /* ---------- answer ---------- */

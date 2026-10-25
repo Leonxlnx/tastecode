@@ -156,7 +156,7 @@ export function GeneralSettings(props: {
         />
         <Setting
           name="Brief view"
-          note={`A prototype: a page beside each chat of what was asked, its plan, every change and the latest checks. Switch in the chat header${briefKey ? ` or with ${briefKey}` : ''}.`}
+          note={`A prototype page beside each chat: the ask, the plan, every change and the latest checks. Switch in the chat header${briefKey ? ` or with ${briefKey}` : ''}.`}
           value={brief}
           options={BRIEF_OPTIONS}
           onChange={(next) => writeBriefView(next === 'on')}
