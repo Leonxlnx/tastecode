@@ -417,6 +417,11 @@
   }
 }
 
+/* Paused behind Settings like every other endless animation in the shell. */
+.shell__body[data-covered] .peek__skeleton > span {
+  animation-play-state: paused;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .peek__skeleton > span {
     animation: none;
