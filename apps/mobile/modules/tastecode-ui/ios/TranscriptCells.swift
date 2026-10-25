@@ -163,11 +163,7 @@ final class StepsCell: TranscriptCell {
     spinner.hidesWhenStopped = true
     failed.tintColor = .systemRed
     summary.textColor = .secondaryLabel
-    summary.font = .preferredFont(forTextStyle: .subheadline)
-    summary.adjustsFontForContentSizeCategory = true
     duration.textColor = .tertiaryLabel
-    duration.font = .monospacedDigitSystemFont(
-      ofSize: UIFont.preferredFont(forTextStyle: .subheadline).pointSize, weight: .regular)
     chevron.tintColor = .tertiaryLabel
     chevron.contentMode = .center
     divider.backgroundColor = .separator
@@ -253,6 +249,11 @@ final class StepsCell: TranscriptCell {
   }
 
   private func layoutHeader(_ steps: StepsLayout, width: CGFloat, previous: StepsLayout?, animated: Bool) {
+    if let style = context?.style {
+      // In the type the rows were laid out in.
+      summary.font = style.subheadline
+      duration.font = style.subheadline.monospacedDigits
+    }
     header.frame = CGRect(x: 0, y: 0, width: width, height: steps.header)
     let mid = steps.header / 2
     var x: CGFloat = 0
@@ -315,7 +316,8 @@ final class StepsCell: TranscriptCell {
     switch piece {
     case .batch(let id, let summary, let symbol, let failed, let open):
       (view as? StepLineView)?.show(
-        title: summary, symbol: symbol, failed: failed, running: false, counts: nil, chevron: .down(open: open)
+        title: summary, symbol: symbol, failed: failed, running: false, counts: nil, chevron: .down(open: open),
+        style: context?.style
       ) { [weak self] in
         guard let self else { return }
         self.context?.toggle(row: self.key, part: id)
@@ -323,7 +325,7 @@ final class StepsCell: TranscriptCell {
     case .line(let id, let title, let symbol, let failed, let running, let counts, let opens, let open):
       (view as? StepLineView)?.show(
         title: title, symbol: symbol, failed: failed, running: running, counts: counts,
-        chevron: opens ? .right(open: open) : nil
+        chevron: opens ? .right(open: open) : nil, style: context?.style
       ) { [weak self] in
         guard let self, opens else { return }
         self.context?.toggle(row: self.key, part: "step:\(id)")
@@ -353,14 +355,12 @@ final class StepLineView: UIView {
   private let spinner = UIActivityIndicatorView(style: .medium)
   private let chevron = UIImageView()
   private var action: (() -> Void)?
+  private var shownStyle: TranscriptStyle?
 
   override init(frame: CGRect) {
     super.init(frame: frame)
     icon.contentMode = .center
-    title.font = .preferredFont(forTextStyle: .subheadline)
     title.textColor = .secondaryLabel
-    trailing.font = .monospacedDigitSystemFont(
-      ofSize: UIFont.preferredFont(forTextStyle: .caption1).pointSize, weight: .regular)
     spinner.transform = CGAffineTransform(scaleX: 0.7, y: 0.7)
     spinner.hidesWhenStopped = true
     chevron.tintColor = .tertiaryLabel
@@ -375,9 +375,15 @@ final class StepLineView: UIView {
 
   func show(
     title text: String, symbol: String, failed: Bool, running: Bool, counts: (Int, Int)?, chevron kind: Chevron?,
-    action: @escaping () -> Void
+    style: TranscriptStyle?, action: @escaping () -> Void
   ) {
     self.action = action
+    if let style, style !== shownStyle {
+      // In the type the rows were laid out in.
+      shownStyle = style
+      title.font = style.subheadline
+      trailing.font = style.caption.monospacedDigits
+    }
     icon.image = Tabler.image(symbol, size: 16)
     icon.tintColor = failed ? .systemRed : .tertiaryLabel
     title.text = text

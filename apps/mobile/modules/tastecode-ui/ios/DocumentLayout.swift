@@ -69,7 +69,7 @@ struct ImageLayout {
   let label: NSAttributedString?
 }
 
-/// Measured blocks by their text, width and type size. A streaming reply
+/// Measured blocks by their text, width and type. A streaming reply
 /// changes only its last block, so every other block comes from here.
 final class BlockCache: @unchecked Sendable {
   static let shared = BlockCache()
@@ -116,7 +116,7 @@ enum DocumentBuilder {
         y += height
         continue
       }
-      let cacheKey = "\(cacheTag(block.kind))|\(width)|\(style.sizeCategory.rawValue)|\(color.hash)"
+      let cacheKey = "\(cacheTag(block.kind))|\(width)|\(style.key)|\(color.hash)"
       let measured = BlockCache.shared.value(cacheKey) {
         pieces(block.kind, width: width, style: style, scale: scale, color: color)
       }

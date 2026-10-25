@@ -4,6 +4,8 @@ import UIKit
 /// What a transcript's views ask of the screen that holds them.
 @MainActor
 protocol TranscriptContext: AnyObject {
+  /// The type the rows were laid out in, for the few labels a cell sets itself.
+  var style: TranscriptStyle { get }
   func image(for key: String) -> UIImage?
   /// Whether a picture could not be had, so a row stops waiting for it.
   func imageMissing(_ key: String) -> Bool

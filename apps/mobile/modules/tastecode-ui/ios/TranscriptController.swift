@@ -164,7 +164,7 @@ final class TranscriptController: UIViewController, UICollectionViewDelegate, Tr
 
   private var layouts: [String: RowLayout] = [:]
   private var items: [String] = []
-  private var style: TranscriptStyle
+  private(set) var style: TranscriptStyle
   private var width: CGFloat = 0
   private var scale: CGFloat = 3
   private let queue = DispatchQueue(label: "tastecode.transcript.layout", qos: .userInitiated)
@@ -244,7 +244,9 @@ final class TranscriptController: UIViewController, UICollectionViewDelegate, Tr
     view.addSubview(jumpButton)
 
     store.onChange = { [weak self] change in self?.storeChanged(change) }
-    registerForTraitChanges([UITraitPreferredContentSizeCategory.self]) { (controller: TranscriptController, _: UITraitCollection) in
+    registerForTraitChanges([
+      UITraitPreferredContentSizeCategory.self, UITraitLegibilityWeight.self, FontDesignTrait.self,
+    ]) { (controller: TranscriptController, _: UITraitCollection) in
       controller.style = TranscriptStyle(traits: controller.traitCollection)
       controller.dirtyAll = true
       controller.schedule()
@@ -261,8 +263,8 @@ final class TranscriptController: UIViewController, UICollectionViewDelegate, Tr
     jumpButton.center = CGPoint(
       x: view.bounds.midX, y: view.bounds.height - collectionView.adjustedContentInset.bottom - 30)
     scale = max(traitCollection.displayScale, 1)
-    if style.sizeCategory != traitCollection.preferredContentSizeCategory {
-      // Built before the screen knew its text size; the rows are laid out again at it.
+    if style.key != TranscriptStyle.key(traitCollection) {
+      // Built before the screen knew its type; the rows are laid out again in it.
       style = TranscriptStyle(traits: traitCollection)
       dirtyAll = true
     }

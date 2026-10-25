@@ -109,7 +109,8 @@ final class ChatsController: UIViewController, UICollectionViewDelegate, UISearc
 
     let cell = UICollectionView.CellRegistration<ChatCell, String> { [weak self] cell, _, id in
       guard let self, let chat = self.chats[id] else { return }
-      cell.show(chat, showsProject: self.showsProject(chat))
+      // The controller's traits: inside its trait change, the cell's own are not updated yet.
+      cell.show(chat, showsProject: self.showsProject(chat), traits: self.traitCollection)
     }
     dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView) { collectionView, indexPath, id in
       collectionView.dequeueConfiguredReusableCell(using: cell, for: indexPath, item: id)
@@ -121,7 +122,7 @@ final class ChatsController: UIViewController, UICollectionViewDelegate, UISearc
       let entry = self.sections[indexPath.section]
       header.show(
         title: entry.title, count: entry.chats.count, foldable: entry.foldable,
-        folded: entry.foldable && self.isFolded(entry.title))
+        folded: entry.foldable && self.isFolded(entry.title), traits: self.traitCollection)
       header.onToggle = { [weak self] in self?.toggleFold(entry.title) }
     }
     dataSource.supplementaryViewProvider = { collectionView, _, indexPath in
@@ -193,7 +194,7 @@ final class ChatsController: UIViewController, UICollectionViewDelegate, UISearc
       let entry = sections[indexPath.section]
       header.show(
         title: entry.title, count: entry.chats.count, foldable: entry.foldable,
-        folded: entry.foldable && isFolded(entry.title))
+        folded: entry.foldable && isFolded(entry.title), traits: traitCollection)
       header.onToggle = { [weak self] in self?.toggleFold(entry.title) }
     }
   }
@@ -551,12 +552,12 @@ final class GroupHeaderView: UICollectionReusableView {
   @available(*, unavailable)
   required init?(coder: NSCoder) { fatalError() }
 
-  func show(title: String, count value: Int, foldable: Bool, folded: Bool) {
+  func show(title: String, count value: Int, foldable: Bool, folded: Bool, traits: UITraitCollection) {
     self.foldable = foldable
     name.text = title
-    name.font = .app(.headline, traits: traitCollection)
+    name.font = .app(.headline, traits: traits)
     count.text = "\(value)"
-    count.font = .app(.subheadline, traits: traitCollection).monospacedDigits
+    count.font = .app(.subheadline, traits: traits).monospacedDigits
     chevron.isHidden = !foldable
     turnChevron(folded, animated: self.folded != folded && window != nil)
     self.folded = folded
@@ -658,9 +659,8 @@ final class ChatCell: UICollectionViewListCell {
     }
   }
 
-  func show(_ chat: ChatView, showsProject: Bool) {
+  func show(_ chat: ChatView, showsProject: Bool, traits: UITraitCollection) {
     self.chat = chat
-    let traits = traitCollection
     mark.mark = chat.mark
     mark.tintColor = chat.unread ? .secondaryLabel : .tertiaryLabel
     title.text = chat.title

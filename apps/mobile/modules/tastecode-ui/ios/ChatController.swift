@@ -47,6 +47,13 @@ final class ChatController: UIViewController {
     ])
 
     navigationItem.titleMenuProvider = { [weak self] _ in self?.titleMenu() }
+    registerForTraitChanges([
+      UITraitPreferredContentSizeCategory.self, UITraitLegibilityWeight.self, FontDesignTrait.self,
+    ]) { (chat: ChatController, _: UITraitCollection) in
+      // The changes button's counts are set in the chosen type.
+      chat.applied = nil
+      chat.setNeedsUpdateProperties()
+    }
     changes.addAction(UIAction { [weak self] _ in
       guard let self else { return }
       self.present(ChangesSheet(threadId: self.threadId), animated: true)

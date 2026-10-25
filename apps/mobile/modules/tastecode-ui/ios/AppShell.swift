@@ -16,6 +16,7 @@ final class TasteAppView: ExpoView {
     super.didMoveToWindow()
     // The app's tint is the text's colour, sheets and alerts included.
     window?.tintColor = .label
+    root.appWindow = window
     guard window != nil, root.parent == nil, let parent = owningController else { return }
     parent.addChild(root)
     root.view.frame = bounds
@@ -41,11 +42,15 @@ final class TasteAppView: ExpoView {
 }
 
 /// Picks the screen for the link's state, pairing or the chats, and applies
-/// the appearance chosen in Settings to everything under it.
+/// the appearance chosen in Settings to the whole window.
 final class RootController: UIViewController {
   private let model = AppModel.shared
   private var current: UIViewController?
   private var shown: Screen?
+  /// The window the app is in, which carries the appearance.
+  weak var appWindow: UIWindow? {
+    didSet { applyAppearance() }
+  }
 
   private enum Screen: Equatable { case blank, pairing, chats }
 
@@ -53,7 +58,6 @@ final class RootController: UIViewController {
     super.viewDidLoad()
     view.backgroundColor = .systemBackground
     view.tintColor = .label
-    applyAppearance()
     NotificationCenter.default.addObserver(
       self, selector: #selector(defaultsChanged), name: UserDefaults.didChangeNotification, object: nil)
   }
@@ -90,19 +94,22 @@ final class RootController: UIViewController {
     applyAppearance()
   }
 
-  /// Text size, weight and typeface as traits, so every screen's fonts follow them.
+  /// Text size, weight and typeface as traits, so every screen's fonts follow
+  /// them. On the window, not this controller: sheets are presented from the
+  /// React root above it and would not see its traits.
   private func applyAppearance() {
+    guard let window = appWindow else { return }
     let appearance = AppearanceChoice.current
     if let size = appearance.contentSize {
-      traitOverrides.preferredContentSizeCategory = size
+      window.traitOverrides.preferredContentSizeCategory = size
     } else {
-      traitOverrides.remove(UITraitPreferredContentSizeCategory.self)
+      window.traitOverrides.remove(UITraitPreferredContentSizeCategory.self)
     }
     if appearance.bold {
-      traitOverrides.legibilityWeight = .bold
+      window.traitOverrides.legibilityWeight = .bold
     } else {
-      traitOverrides.remove(UITraitLegibilityWeight.self)
+      window.traitOverrides.remove(UITraitLegibilityWeight.self)
     }
-    traitOverrides[FontDesignTrait.self] = appearance.font
+    window.traitOverrides[FontDesignTrait.self] = appearance.font
   }
 }
