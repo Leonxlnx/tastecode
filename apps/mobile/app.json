@@ -15,7 +15,8 @@
       "infoPlist": {
         "NSCameraUsageDescription": "TasteCode uses the camera to scan the pairing code your computer shows, and to take photos you attach to a message.",
         "NSLocalNetworkUsageDescription": "TasteCode connects to TasteCode on your computer over your local network."
-      }
+      },
+      "appleTeamId": "28726K5AS9"
     },
     "plugins": [
       [
