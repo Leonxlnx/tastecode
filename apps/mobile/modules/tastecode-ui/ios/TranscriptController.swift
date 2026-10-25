@@ -1,27 +1,4 @@
-import SwiftUI
 import UIKit
-
-/// The conversation, newest at the bottom, in UIKit: rows are laid out off the
-/// main thread at their exact height, and a streaming reply redraws only the
-/// block that grew. It follows the reply while you are at the bottom, holds
-/// still while you read further up, and pins what you just sent to the top.
-struct TranscriptView: UIViewControllerRepresentable {
-  @Environment(AppModel.self) private var model
-  let store: ThreadStore
-  /// Changes whenever the screen wants the newest message in view, such as after sending.
-  let jumpToken: Int
-  /// The height of the bar over the bottom of the list, which it scrolls under.
-  let bottomBar: CGFloat
-
-  func makeUIViewController(context: Context) -> TranscriptController {
-    TranscriptController(model: model, store: store, jumpToken: jumpToken)
-  }
-
-  func updateUIViewController(_ controller: TranscriptController, context: Context) {
-    controller.jump(jumpToken)
-    controller.bottomBar(bottomBar)
-  }
-}
 
 /// Rows' heights for the layout, from whoever owns the rows.
 @MainActor
@@ -155,6 +132,10 @@ final class TranscriptLayout: UICollectionViewLayout {
   }
 }
 
+/// The conversation, newest at the bottom: rows are laid out off the main
+/// thread at their exact height, and a streaming reply redraws only the
+/// block that grew. It follows the reply while you are at the bottom, holds
+/// still while you read further up, and pins what you just sent to the top.
 @MainActor
 final class TranscriptController: UIViewController, UICollectionViewDelegate, TranscriptLayoutSource,
   TranscriptContext
@@ -716,9 +697,7 @@ final class TranscriptController: UIViewController, UICollectionViewDelegate, Tr
   }
 
   func openImage(_ image: UIImage) {
-    let viewer = UIHostingController(rootView: ImageViewer(image: image))
-    viewer.modalPresentationStyle = .fullScreen
-    present(viewer, animated: true)
+    present(ImageViewer(image: image), animated: true)
   }
 
   func openLink(_ url: URL) {

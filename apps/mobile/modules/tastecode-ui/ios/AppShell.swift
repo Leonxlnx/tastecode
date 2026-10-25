@@ -1,5 +1,4 @@
 import ExpoModulesCore
-import SwiftUI
 import UIKit
 
 /// The whole interface, as one native view the React root fills the screen
@@ -67,7 +66,7 @@ final class RootController: UIViewController {
     shown = screen
     switch screen {
     case .blank: show(nil)
-    case .pairing: show(Hosted { PairingRoot() })
+    case .pairing: show(PairingController())
     case .chats: show(AppNavigation())
     }
   }
@@ -91,8 +90,7 @@ final class RootController: UIViewController {
     applyAppearance()
   }
 
-  /// Text size, weight and typeface as traits, so UIKit's fonts and hosted
-  /// SwiftUI both follow them.
+  /// Text size, weight and typeface as traits, so every screen's fonts follow them.
   private func applyAppearance() {
     let appearance = AppearanceChoice.current
     if let size = appearance.contentSize {
@@ -106,37 +104,5 @@ final class RootController: UIViewController {
       traitOverrides.remove(UITraitLegibilityWeight.self)
     }
     traitOverrides[FontDesignTrait.self] = appearance.font
-  }
-}
-
-/// The pairing screen, given the link once it is known.
-private struct PairingRoot: View {
-  @Environment(AppModel.self) private var model
-
-  var body: some View {
-    if let link = model.link { PairingScreen(link: link) }
-  }
-}
-
-/// A SwiftUI screen not yet rewritten in UIKit, with what every screen expects
-/// around it: the model, the chosen appearance and the app's tint.
-final class Hosted<Content: View>: UIHostingController<HostedRoot<Content>> {
-  init(@ViewBuilder _ content: () -> Content) {
-    super.init(rootView: HostedRoot(content: content()))
-  }
-
-  @available(*, unavailable)
-  required init?(coder: NSCoder) { fatalError() }
-}
-
-struct HostedRoot<Content: View>: View {
-  let content: Content
-  @State private var model = AppModel.shared
-
-  var body: some View {
-    content
-      .modifier(AppearanceModifier())
-      .tint(.primary)
-      .environment(model)
   }
 }
