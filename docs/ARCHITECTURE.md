@@ -142,12 +142,14 @@ Liquid Glass) inside an `@expo/ui` host, in the local `tastecode-ui` module, bes
 reconnects and state are TypeScript and import the shared contracts' types. TypeScript also
 words what the screens show (`src/view`: chat rows, step summaries, approval subjects) and sends
 it to Swift as JSON; an open chat sends only the rows that changed, so a streaming reply carries
-its own text and nothing else. Swift draws and asks back through one action event. The chat
-transcript is UIKit, not SwiftUI: a collection view whose layout knows every row's exact height,
-rows laid out on a background queue from Markdown blocks measured once and cached, text drawn
-straight from attributed strings, and in a long reply only the blocks near the screen built. An Android
-build replaces the two native modules with Kotlin and Compose and keeps everything else. The
-phone app has its own npm install, outside the pnpm workspace.
+its own text and nothing else; Swift reads that JSON off the main thread. Swift draws and asks
+back through one action event. The chat transcript is UIKit, not SwiftUI: a collection view whose
+layout knows every row's exact height, rows laid out on a background queue from Markdown blocks
+measured once and cached, and in a long reply only the blocks near the screen built. Text is
+drawn off the main thread into IOSurfaces (also a screen and a half ahead of a scroll), which the
+main thread hands to Core Animation as they are; a streaming row moves only itself and the rows
+below it. An Android build replaces the two native modules with Kotlin and Compose and keeps
+everything else. The phone app has its own npm install, outside the pnpm workspace.
 
 _Rejected:_ the earlier phone design's bearer tokens in a plaintext WebSocket URL (safe only on
 Tailscale, readable by anyone on a café Wi-Fi). TLS with a pinned self-signed certificate
@@ -158,7 +160,12 @@ React from `@expo/ui`'s SwiftUI components (the first version): menus, toolbars,
 glass and scrolling could not be shaped as iOS draws them, and every streamed delta re-rendered
 React. The transcript in SwiftUI (a lazy stack of `Text`): every streamed delta parsed and laid out
 the whole reply again on the main thread: streaming the same reply in a simulator, it used about
-three times the main thread's time the UIKit transcript does.
+three times the main thread's time the UIKit transcript does. Transcript text drawn in
+`draw(_:)`, even with `drawsAsynchronously`: the main thread typeset every changed block and then
+waited at each commit for Core Animation's drawing queue, about 60% of its busy time while
+streaming. Text as plain `CGImage` contents: it cost the main thread 5–10% more CPU while
+scrolling than IOSurfaces, which Core Animation shares with the render server rather than
+sending over.
 
 ---
 
