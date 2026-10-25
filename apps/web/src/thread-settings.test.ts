@@ -65,12 +65,14 @@ describe('a chat setup shared through the server', () => {
 
 describe('shareSavedSetups', () => {
   it('shares only chats the server names no model for, skipping the default', async () => {
-    const saved: Record<string, LocalThreadSelection> = {
-      old: { modelKey: 'codex:gpt-5.5', effort: 'high' },
-      named: { modelKey: 'codex:gpt-5.4' },
-      automatic: { modelKey: 'codex:automatic' },
-      failing: { modelKey: 'claude-code:claude-opus-5-5' },
-    }
+    const saved = new Map(
+      Object.entries({
+        old: { modelKey: 'codex:gpt-5.5', effort: 'high' },
+        named: { modelKey: 'codex:gpt-5.4' },
+        automatic: { modelKey: 'codex:automatic' },
+        failing: { modelKey: 'claude-code:claude-opus-5-5' },
+      } satisfies Record<string, LocalThreadSelection>),
+    )
     const shared: Array<[string, unknown]> = []
     const count = await shareSavedSetups(
       [
@@ -80,7 +82,7 @@ describe('shareSavedSetups', () => {
         { id: 'unknown' },
         { id: 'failing' },
       ],
-      (id) => saved[id],
+      (id) => saved.get(id),
       async (id, setup) => {
         if (id === 'failing') throw new Error('gone')
         shared.push([id, setup])
