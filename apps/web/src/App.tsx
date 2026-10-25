@@ -967,12 +967,29 @@ export function App() {
   const projectBranches = useRef(new Map<string, string>())
   /** Each project's checked-out branch, as workspace.info last said. */
   const checkedOutBranches = useRef(new Map<string, string | undefined>())
+  /** Projects whose checkout had uncommitted changes when workspace.info last read it. */
+  const dirtyCheckouts = useRef(new Set<string>())
   /** Branch lists by project, reused for BRANCH_LIST_TTL_MS. */
   const branchLists = useRef(
     new Map<string, { at: number; revision: number; branches: string[] }>(),
   )
   const [branchMenuOpened, setBranchMenuOpened] = useState(0)
   const openBranchMenu = useCallback(() => setBranchMenuOpened((count) => count + 1), [])
+  const recordCheckout = useCallback((path: string, info: WorkspaceInfo | undefined) => {
+    checkedOutBranches.current.set(path, info?.branch)
+    if (info?.dirtyFiles) dirtyCheckouts.current.add(path)
+    else dirtyCheckouts.current.delete(path)
+  }, [])
+  // A new chat in the shared checkout starts where it is while the checkout
+  // has uncommitted changes. Switching it then fails when a change touches a
+  // file the branches differ in, and otherwise carries the changes along. An
+  // isolated chat gets its own worktree, so any branch works as its base.
+  const newChatBranch = useCallback((path: string, isolate: boolean) => {
+    const checkedOut = checkedOutBranches.current.get(path)
+    return !isolate && checkedOut && dirtyCheckouts.current.has(path)
+      ? checkedOut
+      : projectBranches.current.get(path)
+  }, [])
   const [workspaceRefreshRevision, setWorkspaceRefreshRevision] = useState(0)
   const [account, setAccount] = useState<Account | undefined>()
   const [profileIdentity, setProfileIdentity] = useState(readProfileIdentityPreferences)
@@ -3019,13 +3036,13 @@ export function App() {
       .request('workspace.info', { path: activePath })
       .catch(() => undefined)
       .then((info) => {
-        checkedOutBranches.current.set(activePath, info?.branch)
+        recordCheckout(activePath, info)
         if (!cancelled) setWorkspace(info)
       })
     return () => {
       cancelled = true
     }
-  }, [transport, activePath, workspaceRefreshRevision])
+  }, [transport, activePath, workspaceRefreshRevision, recordCheckout])
 
   // Listing branches runs git twice, and only a new chat's shelf offers them, so
   // an open chat never asks. A list stays good for 30 s; opening the menu after
@@ -4106,7 +4123,7 @@ export function App() {
         // the checked-out branch needs the server to check and switch; asking
         // every time ran git before the agent started, and waiting here for a
         // branch list held the chat for seconds on a busy machine.
-        const shown = projectBranches.current.get(projectPath)
+        const shown = newChatBranch(projectPath, isolateSession)
         const branch =
           shown !== undefined && shown !== checkedOutBranches.current.get(projectPath)
             ? shown
@@ -4272,6 +4289,7 @@ export function App() {
       approval,
       autoReviewSupported,
       isolateSession,
+      newChatBranch,
       refreshProjects,
       generateSessionTitle,
       releaseWorkspaceStart,
@@ -4997,7 +5015,7 @@ export function App() {
               branch,
             })
         projectBranches.current.set(activePath, branch)
-        if (info) checkedOutBranches.current.set(activePath, info.branch)
+        if (info) recordCheckout(activePath, info)
         writeSetting(`harness.branch:${activePath}`, branch)
         const known = branchLists.current.get(activePath)
         if (known) known.branches = [branch, ...known.branches.filter((item) => item !== branch)]
@@ -5008,7 +5026,7 @@ export function App() {
         reportError(error instanceof Error ? error.message : String(error))
       }
     },
-    [transport, activePath, activeId, isolateSession],
+    [transport, activePath, activeId, isolateSession, recordCheckout],
   )
 
   // Stable identities, so the memo around Composer is not defeated by a fresh
@@ -7092,7 +7110,7 @@ export function App() {
                     projectsLoading={projectsStatus === 'loading'}
                     branch={
                       (!activeId && activePath
-                        ? projectBranches.current.get(activePath)
+                        ? newChatBranch(activePath, isolateSession)
                         : undefined) ??
                       active?.session.worktreeBranch ??
                       workspace?.branch ??
