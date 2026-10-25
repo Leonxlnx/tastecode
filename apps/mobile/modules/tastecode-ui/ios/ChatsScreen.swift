@@ -115,7 +115,7 @@ struct ChatsScreen: View {
     let active = chats.filter { !$0.archived }
     let archived = chats.filter(\.archived)
     List {
-      ForEach(ChatGroup.groups(active), id: \.title) { group in
+      ForEach(ChatGroup.groups(active, seen: model.seen), id: \.title) { group in
         Section {
           let folded = group.foldable && foldedProjects.contains(group.title) && query.isEmpty
           GroupHeader(title: group.title, count: group.chats.count, foldable: group.foldable, folded: folded) {
@@ -165,7 +165,7 @@ struct ChatsScreen: View {
   @ViewBuilder private var emptyState: some View {
     let status = model.chats.status
     if !query.isEmpty {
-      ContentUnavailableView.search(text: query)
+      ContentUnavailableView("No Results for “\(query)”", tabler: "search", description: Text("Check the spelling or try a new search."))
     } else if let link = model.link, link.phase == .waiting || link.phase == .refused, status != .ready {
       ContentUnavailableView {
         Text("Can't reach \(link.computerName ?? "your computer")")
@@ -217,39 +217,39 @@ struct ChatsScreen: View {
       Button {
         showSettings = true
       } label: {
-        Image(systemName: "gearshape")
+        Image(tabler: "settings", size: 22)
       }
       .accessibilityLabel("Settings")
     }
     ToolbarItem(placement: .topBarTrailing) {
       Menu {
         Section {
-          Picker("Project", systemImage: "folder", selection: $project) {
+          Picker("Project", tabler: "folder", selection: $project) {
             Text("All Projects").tag(String?.none)
             ForEach(model.chats.projects) { entry in
               Text(entry.name).tag(Optional(entry.path))
             }
           }
           // One computer today; the list is ready for more.
-          Picker("Device", systemImage: "laptopcomputer", selection: $device) {
+          Picker("Device", tabler: "device-laptop", selection: $device) {
             Text("All Devices").tag(String?.none)
             if let name = model.link?.computerName {
               Text(name).tag(Optional(name))
             }
           }
-          Picker("Agent", systemImage: "terminal", selection: $source) {
+          Picker("Agent", tabler: "terminal-2", selection: $source) {
             Text("All Agents").tag(String?.none)
             ForEach(distinct { $0.sourceName }, id: \.self) { name in
               Text(name).tag(Optional(name))
             }
           }
-          Picker("Model", systemImage: "cpu", selection: $modelName) {
+          Picker("Model", tabler: "cpu", selection: $modelName) {
             Text("All Models").tag(String?.none)
             ForEach(distinct { $0.modelName }, id: \.self) { name in
               Text(name).tag(Optional(name))
             }
           }
-          Picker("Status", systemImage: "circle.dashed", selection: $status) {
+          Picker("Status", tabler: "circle-dashed", selection: $status) {
             ForEach(StatusFilter.allCases, id: \.self) { filter in
               Text(filter.title).tag(filter)
             }
@@ -257,16 +257,16 @@ struct ChatsScreen: View {
         }
         .pickerStyle(.menu)
         Section {
-          Toggle("Show Archived", systemImage: "archivebox", isOn: $showArchived)
+          Toggle("Show Archived", tabler: "archive", isOn: $showArchived)
           if filtering {
-            Button("Clear Filters", systemImage: "xmark") { clearFilters() }
+            Button("Clear Filters", tabler: "x") { clearFilters() }
           }
         }
         Section {
-          Button("Add Project…", systemImage: "folder.badge.plus") { addingProject = true }
+          Button("Add Project…", tabler: "folder-plus") { addingProject = true }
         }
       } label: {
-        Image(systemName: filtering ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease")
+        Image(tabler: filtering ? "filter-filled" : "filter", size: 22)
       }
       .menuOrder(.fixed)
       .accessibilityLabel("Filter")
@@ -277,7 +277,7 @@ struct ChatsScreen: View {
       Button {
         path.append(.newChat(project: project))
       } label: {
-        Image(systemName: "square.and.pencil")
+        Image(tabler: "edit", size: 22)
       }
       .accessibilityLabel("New Chat")
     }
@@ -293,10 +293,12 @@ struct ChatGroup {
   /// Only projects fold away; what is pinned or needs you always shows.
   let foldable: Bool
 
-  static func groups(_ chats: [ChatView]) -> [ChatGroup] {
+  /// `seen`: whether a chat was on screen here since its last activity.
+  static func groups(_ chats: [ChatView], seen: (ChatView) -> Bool) -> [ChatGroup] {
     let pinned = chats.filter(\.pinned)
     let rest = chats.filter { !$0.pinned }
-    let waiting = rest.filter { $0.state.waitsForYou || $0.state == .failed }
+    // A question or approval waits until answered; a failure only until it is seen.
+    let waiting = rest.filter { $0.state.waitsForYou || ($0.state == .failed && !seen($0)) }
     var groups: [ChatGroup] = []
     if !pinned.isEmpty { groups.append(ChatGroup(title: "Pinned", chats: pinned, foldable: false)) }
     if !waiting.isEmpty { groups.append(ChatGroup(title: "Needs You", chats: waiting, foldable: false)) }
@@ -321,46 +323,46 @@ struct GroupHeader: View {
   let toggle: () -> Void
 
   var body: some View {
-    if foldable {
-      Button(action: toggle) { label }
-        .buttonStyle(.plain)
-        .modifier(HeaderRow())
-        .accessibilityValue(folded ? "Folded, \(count) chats" : "Open")
-    } else {
-      label.modifier(HeaderRow())
-    }
-  }
-
-  private var label: some View {
-      HStack(spacing: 6) {
-        Text(title)
-          .font(.subheadline.weight(.semibold))
-          .foregroundStyle(.primary)
-        if foldable {
-          Image(systemName: "chevron.down")
-            .font(.caption2.weight(.bold))
-            .foregroundStyle(.tertiary)
-            .rotationEffect(.degrees(folded ? -90 : 0))
-        }
-        Spacer()
-        if folded {
-          Text("\(count)")
-            .font(.footnote)
-            .monospacedDigit()
-            .foregroundStyle(.tertiary)
-            .transition(.opacity)
-        }
+    Group {
+      if foldable {
+        Button(action: toggle) { label }
+          .buttonStyle(.plain)
+          .accessibilityValue(folded ? "Folded, \(count) chats" : "Open")
+      } else {
+        label
       }
-      .contentShape(Rectangle())
+    }
+    .listRowSeparator(.hidden)
+    .listRowInsets(EdgeInsets(top: 30, leading: 20, bottom: 6, trailing: 20))
+    .accessibilityAddTraits(.isHeader)
   }
-}
 
-private struct HeaderRow: ViewModifier {
-  func body(content: Content) -> some View {
-    content
-      .listRowSeparator(.hidden)
-      .listRowInsets(EdgeInsets(top: 18, leading: 16, bottom: 4, trailing: 20))
-      .accessibilityAddTraits(.isHeader)
+  /// The name in bold with its chat count beside it, over a hairline; the
+  /// chevron at the edge turns as the group folds.
+  private var label: some View {
+    VStack(spacing: 10) {
+      HStack(alignment: .firstTextBaseline, spacing: 8) {
+        Text(title)
+          .font(.title3.weight(.bold))
+          .foregroundStyle(.primary)
+        Text("\(count)")
+          .font(.title3.weight(.medium))
+          .monospacedDigit()
+          .foregroundStyle(.tertiary)
+        Spacer()
+        if foldable { chevron }
+      }
+      Rectangle()
+        .fill(.separator)
+        .frame(height: 1 / 3)
+    }
+    .contentShape(Rectangle())
+  }
+
+  private var chevron: some View {
+    Image(tabler: "chevron-down", size: 15)
+      .foregroundStyle(.tertiary)
+      .rotationEffect(.degrees(folded ? -90 : 0))
   }
 }
 
@@ -374,43 +376,44 @@ struct ChatRow: View {
   var body: some View {
     NavigationLink(value: Route.chat(chat.id)) {
       HStack(alignment: .firstTextBaseline, spacing: 12) {
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: 4) {
           Text(chat.title)
-            .font(.callout.weight(chat.unread ? .semibold : .regular))
+            .font(.system(size: 16, weight: chat.unread ? .semibold : .regular))
             .lineLimit(1)
           detail
         }
         Spacer(minLength: 8)
         trailing
       }
-      .padding(.vertical, 2)
+      .padding(.vertical, 7)
     }
     .navigationLinkIndicatorVisibility(.hidden)
-    .alignmentGuide(.listRowSeparatorLeading) { _ in 0 }
+    .listRowSeparator(.hidden)
+    .listRowInsets(EdgeInsets(top: 0, leading: 20, bottom: 0, trailing: 20))
     .swipeActions(edge: .leading) {
-      Button(chat.pinned ? "Unpin" : "Pin", systemImage: chat.pinned ? "pin.slash.fill" : "pin.fill") {
+      Button(chat.pinned ? "Unpin" : "Pin", tabler: chat.pinned ? "pinned-off" : "pin-filled") {
         togglePin()
       }
       .tint(.orange)
     }
     .swipeActions(edge: .trailing, allowsFullSwipe: true) {
       if chat.archived {
-        Button("Restore", systemImage: "tray.and.arrow.up.fill") { restore() }
+        Button("Restore", tabler: "restore") { restore() }
           .tint(.indigo)
       } else {
-        Button("Archive", systemImage: "archivebox.fill") { archive() }
+        Button("Archive", tabler: "archive-filled") { archive() }
           .tint(.indigo)
       }
     }
     .contextMenu {
-      Button(chat.pinned ? "Unpin" : "Pin", systemImage: chat.pinned ? "pin.slash" : "pin") {
+      Button(chat.pinned ? "Unpin" : "Pin", tabler: chat.pinned ? "pinned-off" : "pin") {
         togglePin()
       }
-      Button("Rename", systemImage: "pencil") { onRename(chat) }
+      Button("Rename", tabler: "pencil") { onRename(chat) }
       if chat.archived {
-        Button("Restore", systemImage: "tray.and.arrow.up") { restore() }
+        Button("Restore", tabler: "restore") { restore() }
       } else {
-        Button("Archive", systemImage: "archivebox") { archive() }
+        Button("Archive", tabler: "archive") { archive() }
       }
     }
     .sensoryFeedback(.selection, trigger: chat.pinned)
@@ -434,8 +437,9 @@ struct ChatRow: View {
     .lineLimit(1)
   }
 
+  /// In a group that is not its project's: pinned, archived or needing you.
   private var showsProject: Bool {
-    chat.pinned || chat.archived || chat.state.waitsForYou || chat.state == .failed
+    chat.pinned || chat.archived || chat.state.waitsForYou || (chat.state == .failed && !model.seen(chat))
   }
 
   private func togglePin() {
@@ -467,8 +471,7 @@ struct ChatRow: View {
     } else {
       HStack(spacing: 5) {
         if chat.pinned {
-          Image(systemName: "pin.fill")
-            .font(.caption2)
+          Image(tabler: "pin-filled", size: 13)
             .foregroundStyle(.tertiary)
         }
         TimelineView(.periodic(from: .now, by: 60)) { context in

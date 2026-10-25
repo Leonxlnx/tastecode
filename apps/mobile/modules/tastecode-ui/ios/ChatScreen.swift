@@ -8,8 +8,15 @@ struct ChatScreen: View {
 
   var body: some View {
     ChatContent(store: model.thread(threadId))
-      .onAppear { model.openThread(threadId) }
-      .onDisappear { model.closeThread(threadId) }
+      .onAppear {
+        model.openThread(threadId)
+        model.markSeen(threadId)
+      }
+      .onDisappear {
+        // Whatever happened while it was open was seen too.
+        model.markSeen(threadId)
+        model.closeThread(threadId)
+      }
   }
 }
 
@@ -37,19 +44,19 @@ private struct ChatContent: View {
       .navigationSubtitle(subtitle(meta))
       .toolbarTitleMenu {
         if let meta {
-          Button("Rename…", systemImage: "pencil") {
+          Button("Rename…", tabler: "pencil") {
             draftTitle = meta.title
             renaming = true
           }
-          Button(meta.pinned ? "Unpin" : "Pin", systemImage: meta.pinned ? "pin.slash" : "pin") {
+          Button(meta.pinned ? "Unpin" : "Pin", tabler: meta.pinned ? "pinned-off" : "pin") {
             model.perform(["type": "thread.pin", "threadId": store.id, "pinned": !meta.pinned]) { problem = $0 }
           }
           if meta.archived {
-            Button("Restore", systemImage: "tray.and.arrow.up") {
+            Button("Restore", tabler: "restore") {
               model.perform(["type": "thread.restore", "threadId": store.id]) { problem = $0 }
             }
           } else {
-            Button("Archive", systemImage: "archivebox") {
+            Button("Archive", tabler: "archive") {
               model.perform(["type": "thread.archive", "threadId": store.id]) { problem = $0 }
             }
           }
@@ -290,18 +297,17 @@ private struct ProjectPicker: View {
           Section {
             Toggle(
               "Private Checkout",
-              systemImage: "arrow.triangle.branch",
+              tabler: "git-branch",
               isOn: Binding(get: { view.isolate }, set: { model.send(["type": "newChat.set", "isolate": $0]) })
             )
-            Button("Add Project…", systemImage: "folder.badge.plus") { addingProject = true }
+            Button("Add Project…", tabler: "folder-plus") { addingProject = true }
           }
         } label: {
           HStack(spacing: 6) {
             Text(view.projectName ?? "Choose a project")
               .font(.title2.weight(.semibold))
               .foregroundStyle(.primary)
-            Image(systemName: "chevron.down")
-              .font(.footnote.weight(.bold))
+            Image(tabler: "chevron-down", size: 15)
               .foregroundStyle(.tertiary)
           }
           .contentShape(.rect)
