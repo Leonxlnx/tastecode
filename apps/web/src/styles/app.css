@@ -1089,6 +1089,99 @@
   }
 }
 
+/* Design lab prototype (sidebar peek): a band row in two lines, the chat and
+   how long it has waited, then what it asks. The dot keeps the mark column and
+   sits on the first line, so titles still start on one line with the tree. */
+.needs-band__row--ask,
+.needs-band__row--ask > .sess {
+  height: auto;
+  min-height: 44px;
+}
+
+.needs-band__row--ask > .sess {
+  align-items: flex-start;
+  padding-top: 5px;
+  padding-bottom: 6px;
+  white-space: normal;
+}
+
+.needs-band__row--ask .sess__mark {
+  height: 18px;
+}
+
+.needs-band__row--ask.is-peeked {
+  --sess-bg: var(--rail-raised);
+}
+
+.sess__ask {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  gap: 1px;
+}
+
+.sess__ask-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  height: 18px;
+}
+
+.sess__ask-head .sess__title {
+  flex: 1 1 auto;
+}
+
+.sess__ask-head .sess__time {
+  flex: none;
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+
+.sess__ask-line {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  min-width: 0;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  letter-spacing: 0;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.sess__ask-verb {
+  flex: none;
+  color: var(--text-2);
+  font-weight: 500;
+}
+
+.sess__ask-line[data-state='loading'] .sess__ask-verb,
+.sess__ask-line[data-state='none'] .sess__ask-verb {
+  color: var(--text-3);
+  font-weight: 400;
+}
+
+.sess__ask-object {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sess__ask-object.is-code {
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.needs-band__row--ask.has-action:focus-within .sess__ask-head .sess__time {
+  opacity: 0;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .needs-band__row--ask.has-action:hover .sess__ask-head .sess__time {
+    opacity: 0;
+  }
+}
+
 /* ---------- archived ---------- */
 
 .archived__toggle {

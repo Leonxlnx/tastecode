@@ -98,10 +98,14 @@ import {
 import {
   applyProjectOrder,
   moveRailSession,
+  needsYouSessions,
   parseStoredProjectOrder,
   parseStoredSessionOrder,
   sidebarSessions,
 } from './sidebar-order.js'
+import { NeedsYouAsks } from './needs-you-asks.js'
+import { readSidebarPeek, subscribeSidebarPeek } from './sidebar-peek-pref.js'
+import type { NeedsYouPeekActions } from './ui/SidebarPeek.js'
 import { createSessionOrderSerializer } from './session-order-serializer.js'
 import type { CommandScope, PaletteCommand } from './ui/CommandPalette.js'
 import { Composer, type SendAvailability, type WorkspaceInfo } from './ui/Composer.js'
@@ -768,6 +772,24 @@ export function App() {
             ? removeSetting(COMPOSER_DRAFTS_KEY)
             : writeSetting(COMPOSER_DRAFTS_KEY, drafts),
       }),
+  )
+  // Design lab prototype (sidebar peek): what each Needs you chat asks. Read
+  // from the renderer's own state of a chat when it holds the request, else
+  // from the newest turn of its history; never on the streaming path.
+  const [needsYouAsks] = useState(
+    () =>
+      new NeedsYouAsks({
+        live: (id) => threadController.snapshot(id),
+        readNewest: (id) =>
+          transport
+            .request('thread.history', { threadId: id, page: { turnLimit: 1 } })
+            .then((result) => result.events),
+      }),
+  )
+  const sidebarPeekEnabled = useSyncExternalStore(
+    subscribeSidebarPeek,
+    readSidebarPeek,
+    readSidebarPeek,
   )
   const [activeId, setActiveIdState] = useState<string | undefined>()
   const setActiveId = useCallback(
@@ -2099,6 +2121,12 @@ export function App() {
       }
 
       if (affectsSessionStatus(event)) {
+        // The sidebar peek keeps what a chat now waits on (a status event, never a delta).
+        needsYouAsks.capture(
+          threadId,
+          next,
+          needsYouAttention(statusFor(next, event, threadId !== activeIdRef.current)),
+        )
         // A status change never moves the chat in the sidebar; only a new chat,
         // a pin or a drag does.
         setProjects((current) =>
@@ -5128,6 +5156,33 @@ export function App() {
     },
     [transport, threadController, loadHistory],
   )
+  // The sidebar peek answers another chat through the same two calls the
+  // transcript card uses, with that chat's id. Allow once or Deny only.
+  const needsYouPeek = useMemo<NeedsYouPeekActions | undefined>(
+    () =>
+      sidebarPeekEnabled
+        ? {
+            asks: needsYouAsks,
+            answerApproval: (threadId, approvalId, decision) =>
+              transport
+                .request('thread.respondToApproval', { threadId, approvalId, decision })
+                .then(() => undefined),
+            answerQuestion: (threadId, requestId, answers) =>
+              transport
+                .request('thread.respondToUserInput', { threadId, requestId, answers })
+                .then(() => undefined),
+            modelName: (source, model) =>
+              modelsRef.current.find(
+                (choice) => choice.provider === source && choice.model.id === model,
+              )?.model.displayName,
+          }
+        : undefined,
+    [needsYouAsks, sidebarPeekEnabled, transport],
+  )
+  const [needsYouPeekRequest, setNeedsYouPeekRequest] = useState<{
+    request: number
+    direction: 1 | -1
+  }>()
   const editMessage = useCallback((text: string) => {
     const owner = threadController.draftOwner
     const draft = threadController.draft(owner).text
@@ -5838,6 +5893,30 @@ export function App() {
     },
     [selectSession],
   )
+  /**
+   * F8 / Shift+F8: the next chat that needs you. With the band in view the
+   * peek moves to it; with the rail hidden, in Inbox mode or with the peek off,
+   * the chat itself opens.
+   */
+  const moveNeedsYou = useCallback(
+    (direction: 1 | -1) => {
+      if (needsYouPeek && !collapsed && sidebarSettingsRef.current.mode !== 'inbox') {
+        setNeedsYouPeekRequest((current) => ({ request: (current?.request ?? 0) + 1, direction }))
+        return
+      }
+      const entries = needsYouSessions(visibleProjectsRef.current, undefined)
+      if (entries.length === 0) return
+      const current = entries.findIndex((entry) => entry.session.id === activeIdRef.current)
+      const index =
+        current < 0
+          ? direction > 0
+            ? 0
+            : entries.length - 1
+          : (current + direction + entries.length) % entries.length
+      void selectSession(entries[index]!.session.id)
+    },
+    [collapsed, needsYouPeek, selectSession],
+  )
   const selectSessionSearchResult = useCallback(
     (threadId: string, turnId?: string) => {
       // Counted outside the state: a used jump is cleared, and a new one must
@@ -6094,6 +6173,8 @@ export function App() {
       },
       previousChat: () => cycleChat(-1),
       nextChat: () => cycleChat(1),
+      nextNeedsYou: () => moveNeedsYou(1),
+      previousNeedsYou: () => moveNeedsYou(-1),
       toggleSessionPin: () => {
         if (activeId) toggleSidebarSessionPin(activeId)
       },
@@ -6129,6 +6210,7 @@ export function App() {
       changeDesignMode,
       designMode,
       cycleChat,
+      moveNeedsYou,
       deleteSidebarSession,
       interrupt,
       openPullRequests,
@@ -6818,6 +6900,8 @@ export function App() {
           onToggleSessionPin={toggleSidebarSessionPin}
           onDeleteSession={deleteSidebarSession}
           onMarkSessionRead={markSidebarSessionRead}
+          needsYouPeek={needsYouPeek}
+          needsYouPeekRequest={needsYouPeekRequest}
           onArchiveSession={archiveSidebarChat}
           onRestoreSession={restoreSidebarChat}
           onArchiveProject={archiveSidebarProject}
@@ -7488,6 +7572,13 @@ function statusFor(
   if (state.approvals.length > 0) return 'approval'
   if (state.userInputs.length > 0) return 'input'
   return state.running ? 'working' : 'idle'
+}
+
+/** The band reason a status stands for; whether a failure is still unread is the band's call. */
+function needsYouAttention(
+  status: Project['sessions'][number]['status'],
+): 'approval' | 'input' | 'failed' | undefined {
+  return status === 'approval' || status === 'input' || status === 'failed' ? status : undefined
 }
 
 function basename(path: string): string {

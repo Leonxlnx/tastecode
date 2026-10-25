@@ -85,6 +85,20 @@ export const KEYBINDING_DEFINITIONS = [
     defaultShortcut: { key: 'arrowdown', primary: true, alt: true },
   },
   {
+    id: 'nextNeedsYou',
+    group: 'Chats',
+    label: 'Next chat that needs you',
+    description: 'Peek at the next approval, question or failure beside the sidebar.',
+    defaultShortcut: { key: 'f8' },
+  },
+  {
+    id: 'previousNeedsYou',
+    group: 'Chats',
+    label: 'Previous chat that needs you',
+    description: 'Peek at the previous approval, question or failure beside the sidebar.',
+    defaultShortcut: { key: 'f8', shift: true },
+  },
+  {
     id: 'toggleSessionPin',
     group: 'Chats',
     label: 'Pin or unpin chat',

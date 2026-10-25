@@ -52,8 +52,10 @@ import {
   canDropProjectFolders,
   droppedProjectFolderPaths,
   isDesktop,
+  isMacOS,
   revealPath,
 } from '../bridge.js'
+import { MAX_ASK_TARGETS } from '../needs-you-asks.js'
 import {
   appHapticsSupported,
   performAppHaptic,
@@ -91,6 +93,7 @@ import type { AccountLimitsState } from './AccountLimits.js'
 import type { InboxActions } from './InboxSidebar.js'
 import { ProviderIcon } from './ProviderIcon.js'
 import { activeIndicatorRef } from './active-indicator.js'
+import { askTarget, NeedsYouAskRow, SidebarPeek, type NeedsYouPeekActions } from './SidebarPeek.js'
 import { compactRelativeTime, readSessionClock, subscribeSessionClock } from './session-clock.js'
 import '../styles/account-card.css'
 import { InboxRailSkeleton, SidebarTreeSkeleton } from './SurfaceSkeletons.js'
@@ -277,6 +280,13 @@ function SidebarComponent(props: {
   onRestoreSession?: ((id: string) => void) | undefined
   /** Reads a failed chat without opening it, which clears it from Needs you. */
   onMarkSessionRead?: ((id: string) => void) | undefined
+  /**
+   * Design lab prototype: Needs you rows say what each chat asks and a peek
+   * beside the rail answers it. Absent, the band is dev's one-line list.
+   */
+  needsYouPeek?: NeedsYouPeekActions | undefined
+  /** Bumped by the next / previous "needs you" shortcut to move the peek. */
+  needsYouPeekRequest?: { request: number; direction: 1 | -1 } | undefined
   onArchiveProject: (sessionIds: string[]) => void
   onReorderProject?: (sourcePath: string, targetPath: string, position: DropPosition) => void
   onReorderSession: (
@@ -588,6 +598,137 @@ function SidebarComponent(props: {
     () => new Map(props.projects.map((project) => [project.path, displayName(project)])),
     [props.projects],
   )
+  const peekActions = inbox ? undefined : props.needsYouPeek
+  const [peek, setPeek] = useState<{ entry: NeedsYouEntry; projectName: string }>()
+  const peekId = peek?.entry.session.id
+  const peekEntry = useMemo(
+    () =>
+      peekId === undefined ? undefined : needsYou.find((entry) => entry.session.id === peekId),
+    [needsYou, peekId],
+  )
+  /** Where focus was when the peek opened from outside the rail, such as F8 in the composer. */
+  const peekReturn = useRef<HTMLElement | null>(null)
+  const needsYouRef = useRef(needsYou)
+  needsYouRef.current = needsYou
+  const projectNamesRef = useRef(projectNames)
+  projectNamesRef.current = projectNames
+
+  // The band's first rows, and the peeked chat, are the only chats ever read.
+  useEffect(() => {
+    if (!peekActions) return
+    const targets = needsYou.slice(0, MAX_ASK_TARGETS).map(askTarget)
+    if (peekEntry && !targets.some((target) => target.id === peekEntry.session.id))
+      targets.push(askTarget(peekEntry))
+    peekActions.asks.sync(targets)
+  }, [needsYou, peekActions, peekEntry])
+
+  const peekRow = useCallback(
+    (id: string | undefined) =>
+      id === undefined
+        ? null
+        : (railRef.current?.querySelector<HTMLElement>(
+            `.needs-band [data-peek-id="${globalThis.CSS?.escape?.(id) ?? id}"]`,
+          ) ?? null),
+    [],
+  )
+  const peekAnchor = useCallback(() => peekRow(peekId), [peekId, peekRow])
+  const openPeek = useCallback((entry: NeedsYouEntry, projectName: string) => {
+    const focused = document.activeElement
+    peekReturn.current =
+      focused instanceof HTMLElement &&
+      focused !== document.body &&
+      !focused.closest('.rail, .peek')
+        ? focused
+        : null
+    setPeek({ entry, projectName })
+  }, [])
+  const closePeek = useCallback(
+    (returnFocus: boolean) => {
+      setPeek(undefined)
+      if (!returnFocus) return
+      const back = peekReturn.current?.isConnected
+        ? peekReturn.current
+        : peekRow(peekId)?.querySelector<HTMLElement>('.sess')
+      back?.focus()
+    },
+    [peekId, peekRow],
+  )
+  const togglePeek = useCallback(
+    (entry: NeedsYouEntry, projectName: string) => {
+      if (entry.session.id === peekId) closePeek(true)
+      else openPeek(entry, projectName)
+    },
+    [closePeek, openPeek, peekId],
+  )
+  const openPeekChat = useCallback(
+    (id: string) => {
+      setPeek(undefined)
+      selectSession(id)
+    },
+    [selectSession],
+  )
+  // An answer sent: the row leaves on its own. Keyboard work carries on at the
+  // next row, or where it was before the peek opened.
+  const answeredPeek = useCallback(
+    (id: string) => {
+      const row = peekRow(id)
+      const sibling = (row?.nextElementSibling ?? row?.previousElementSibling) as HTMLElement | null
+      setPeek(undefined)
+      const next = sibling?.matches('[data-peek-id]')
+        ? sibling.querySelector<HTMLElement>('.sess')
+        : peekReturn.current?.isConnected
+          ? peekReturn.current
+          : null
+      next?.focus()
+    },
+    [peekRow],
+  )
+  const markPeekRead = useCallback((id: string) => {
+    setPeek(undefined)
+    actionsRef.current.onMarkSessionRead?.(id)
+  }, [])
+  const bandPeek = useMemo(
+    () =>
+      peekActions
+        ? { actions: peekActions, openId: peekId, onToggle: togglePeek, onOpenChat: openPeekChat }
+        : undefined,
+    [openPeekChat, peekActions, peekId, togglePeek],
+  )
+
+  // F8 and Shift+F8 walk the band; the peek follows.
+  const peekRequest = props.needsYouPeekRequest
+  const lastPeekRequest = useRef(peekRequest?.request)
+  useEffect(() => {
+    if (!peekRequest || peekRequest.request === lastPeekRequest.current) return
+    lastPeekRequest.current = peekRequest.request
+    const entries = needsYouRef.current
+    if (entries.length === 0) return
+    const current = entries.findIndex((entry) => entry.session.id === peekId)
+    const index =
+      current < 0
+        ? peekRequest.direction > 0
+          ? 0
+          : entries.length - 1
+        : (current + peekRequest.direction + entries.length) % entries.length
+    const entry = entries[index]!
+    const projectName =
+      projectNamesRef.current.get(entry.projectPath) ?? basename(entry.projectPath)
+    if (current < 0) openPeek(entry, projectName)
+    else setPeek({ entry, projectName })
+  }, [openPeek, peekId, peekRequest])
+
+  // The peek belongs to a visible band row: it goes with the rail, with the
+  // chat being opened, and with a failure someone read.
+  useEffect(() => {
+    if (peekId === undefined) return
+    if (
+      props.collapsed ||
+      !peekActions ||
+      props.activeSessionId === peekId ||
+      (!peekEntry && peek?.entry.attention === 'failed')
+    )
+      setPeek(undefined)
+  }, [peek, peekActions, peekEntry, peekId, props.activeSessionId, props.collapsed])
   const [draggedProjectPath, setDraggedProjectPath] = useState<string>()
   const [folderDropActive, setFolderDropActive] = useState(false)
   const folderDragDepth = useRef(0)
@@ -853,6 +994,7 @@ function SidebarComponent(props: {
                   projectNames={projectNames}
                   onSelectSession={selectSession}
                   onMarkSessionRead={props.onMarkSessionRead ? markSessionRead : undefined}
+                  peek={bandPeek}
                 />
               ) : null}
               {pinnedSessions.length > 0 ? (
@@ -1088,6 +1230,22 @@ function SidebarComponent(props: {
           {isDesktop ? <AppUpdateNotice /> : null}
         </div>
       </nav>
+      {peek && peekActions && !props.collapsed ? (
+        <SidebarPeek
+          entry={peekEntry ?? peek.entry}
+          projectName={peek.projectName}
+          gone={peekEntry === undefined}
+          actions={peekActions}
+          container={slotRef.current}
+          anchor={peekAnchor}
+          nextShortcut={keybindings.nextNeedsYou}
+          macOS={isMacOS()}
+          onClose={closePeek}
+          onOpenChat={openPeekChat}
+          onAnswered={answeredPeek}
+          onMarkRead={props.onMarkSessionRead ? markPeekRead : undefined}
+        />
+      ) : null}
       <RailResizeHandle
         buttonRef={resizeHandleRef}
         hidden={props.collapsed}
@@ -2204,36 +2362,66 @@ const NeedsYouBand = memo(function NeedsYouBand(props: {
   projectNames: ReadonlyMap<string, string>
   onSelectSession: (id: string) => void
   onMarkSessionRead: ((id: string) => void) | undefined
+  /** The design lab peek: rows say what each chat asks, a click or Space peeks. */
+  peek?:
+    | {
+        actions: NeedsYouPeekActions
+        openId: string | undefined
+        onToggle: (entry: NeedsYouEntry, projectName: string) => void
+        onOpenChat: (id: string) => void
+      }
+    | undefined
 }) {
   const [expanded, setExpanded] = useState(false)
   const short = useSyncExternalStore(subscribeShortWindow, readShortWindow, () => false)
   const visible = short ? NEEDS_YOU_VISIBLE_SHORT : NEEDS_YOU_VISIBLE
-  const shown = expanded ? props.entries : props.entries.slice(0, visible)
+  const openId = props.peek?.openId
+  // A peek moved to a folded row by F8 unfolds the band, so it has a row to sit beside.
+  const unfolded =
+    expanded ||
+    (openId !== undefined &&
+      props.entries.findIndex((entry) => entry.session.id === openId) >= visible)
+  const shown = unfolded ? props.entries : props.entries.slice(0, visible)
   const folded = props.entries.length - shown.length
   return (
-    <section className="needs-band" aria-label="Needs you">
+    <section className={`needs-band${props.peek ? ' needs-band--ask' : ''}`} aria-label="Needs you">
       <p className="section" aria-hidden>
         Needs you
       </p>
       <ul className="proj__sessions needs-band__list">
-        {shown.map((entry) => (
-          <NeedsYouRow
-            key={entry.session.id}
-            entry={entry}
-            projectName={props.projectNames.get(entry.projectPath) ?? basename(entry.projectPath)}
-            onSelectSession={props.onSelectSession}
-            onMarkSessionRead={props.onMarkSessionRead}
-          />
-        ))}
-        {folded > 0 || (expanded && props.entries.length > visible) ? (
+        {shown.map((entry) => {
+          const projectName =
+            props.projectNames.get(entry.projectPath) ?? basename(entry.projectPath)
+          return props.peek ? (
+            <NeedsYouAskRow
+              key={entry.session.id}
+              entry={entry}
+              projectName={projectName}
+              asks={props.peek.actions.asks}
+              peeked={entry.session.id === openId}
+              onPeek={props.peek.onToggle}
+              onOpenChat={props.peek.onOpenChat}
+              onMarkSessionRead={props.onMarkSessionRead}
+            />
+          ) : (
+            <NeedsYouRow
+              key={entry.session.id}
+              entry={entry}
+              projectName={projectName}
+              onSelectSession={props.onSelectSession}
+              onMarkSessionRead={props.onMarkSessionRead}
+            />
+          )
+        })}
+        {folded > 0 || (unfolded && props.entries.length > visible) ? (
           <li className="proj__sessions-toggle-row">
             <button
               type="button"
               className="proj__sessions-toggle"
-              aria-expanded={expanded}
-              onClick={() => setExpanded(!expanded)}
+              aria-expanded={unfolded}
+              onClick={() => setExpanded(!unfolded)}
             >
-              {expanded ? 'Show less' : `+${folded} more`}
+              {unfolded ? 'Show less' : `+${folded} more`}
             </button>
           </li>
         ) : null}
