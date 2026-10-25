@@ -164,11 +164,15 @@ final class QuestionPanelView: UIView, UITextViewDelegate, UITextFieldDelegate {
   private let options = UIScrollView()
   private let optionList = UIStackView()
   private var optionsHeight: NSLayoutConstraint!
-  private let answerBox = UIView()
+  /// The same glass as the buttons under it, so the field and they read as one set.
+  private let answerBox = UIVisualEffectView(effect: UIGlassEffect(style: .regular))
   private let answerText = UITextView()
   private let answerSecret = UITextField()
   private let answerPlaceholder = UILabel()
   private var answerHeight: NSLayoutConstraint!
+  /// Above and below the typed text, so one line sits in the middle of a button-high field.
+  private var answerInsets: [NSLayoutConstraint] = []
+  private var fieldRadius: CGFloat = 0
   private let backButton = UIButton(configuration: .glass())
   private let nextButton = UIButton(configuration: .prominentGlass())
 
@@ -217,9 +221,6 @@ final class QuestionPanelView: UIView, UITextViewDelegate, UITextFieldDelegate {
       optionsHeight,
     ])
 
-    answerBox.backgroundColor = .tertiarySystemFill
-    answerBox.layer.cornerRadius = 14
-    answerBox.layer.cornerCurve = .continuous
     answerText.backgroundColor = .clear
     answerText.textContainerInset = .zero
     answerText.textContainer.lineFragmentPadding = 0
@@ -230,10 +231,20 @@ final class QuestionPanelView: UIView, UITextViewDelegate, UITextFieldDelegate {
     answerSecret.isSecureTextEntry = true
     answerSecret.delegate = self
     answerSecret.addAction(UIAction { [weak self] _ in self?.secretChanged() }, for: .editingChanged)
-    answerBox.addPinned(answerText, insets: UIEdgeInsets(top: 10, left: 12, bottom: 10, right: 12))
-    answerBox.addPinned(answerSecret, insets: UIEdgeInsets(top: 10, left: 12, bottom: 10, right: 12))
+    for field in [answerText, answerSecret] as [UIView] {
+      field.translatesAutoresizingMaskIntoConstraints = false
+      answerBox.contentView.addSubview(field)
+      let top = field.topAnchor.constraint(equalTo: answerBox.contentView.topAnchor, constant: 10)
+      let bottom = answerBox.contentView.bottomAnchor.constraint(equalTo: field.bottomAnchor, constant: 10)
+      answerInsets += [top, bottom]
+      NSLayoutConstraint.activate([
+        top, bottom,
+        field.leadingAnchor.constraint(equalTo: answerBox.contentView.leadingAnchor, constant: 18),
+        field.trailingAnchor.constraint(equalTo: answerBox.contentView.trailingAnchor, constant: -18),
+      ])
+    }
     answerPlaceholder.translatesAutoresizingMaskIntoConstraints = false
-    answerBox.addSubview(answerPlaceholder)
+    answerBox.contentView.addSubview(answerPlaceholder)
     answerHeight = answerText.heightAnchor.constraint(equalToConstant: 22)
     NSLayoutConstraint.activate([
       answerHeight,
@@ -252,6 +263,23 @@ final class QuestionPanelView: UIView, UITextViewDelegate, UITextFieldDelegate {
     column.axis = .vertical
     column.spacing = 12
     addPinned(column, insets: UIEdgeInsets(top: 16, left: 16, bottom: 16, right: 16))
+  }
+
+  /// The field has the buttons' height and round ends, so the two read as one set.
+  override func layoutSubviews() {
+    super.layoutSubviews()
+    let pill = nextButton.bounds.height
+    guard pill > 0 else { return }
+    if fieldRadius != pill / 2 {
+      fieldRadius = pill / 2
+      answerBox.cornerConfiguration = .corners(radius: .fixed(fieldRadius))
+    }
+    let line = ceil(answerText.font?.lineHeight ?? 22)
+    let inset = max(10, ((pill - line) / 2).rounded(.down))
+    if answerInsets.contains(where: { $0.constant != inset }) {
+      for constraint in answerInsets { constraint.constant = inset }
+      setNeedsLayout()
+    }
   }
 
   /// Draws the question at `index`.
