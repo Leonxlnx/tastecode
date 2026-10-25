@@ -15,6 +15,8 @@ final class TasteAppView: ExpoView {
 
   override func didMoveToWindow() {
     super.didMoveToWindow()
+    // The app's tint is the text's colour, sheets and alerts included.
+    window?.tintColor = .label
     guard window != nil, root.parent == nil, let parent = owningController else { return }
     parent.addChild(root)
     root.view.frame = bounds

@@ -140,139 +140,301 @@ extension UIContentSizeCategory {
 }
 
 /// Settings › Appearance: a live sample of a chat, then text size, typeface and weight.
-struct AppearanceSettings: View {
-  @AppStorage(AppearanceKey.followSystemSize) private var followSystem = true
-  @AppStorage(AppearanceKey.sizeStep) private var step = defaultSizeStep
-  @AppStorage(AppearanceKey.font) private var font = FontChoice.standard
-  @AppStorage(AppearanceKey.bold) private var bold = false
-  @Environment(\.dynamicTypeSize) private var systemSize
+final class AppearanceController: FormController {
+  private let defaults = UserDefaults.standard
+  private let sample = ChatSampleView()
+  private let follow = UISwitch()
+  private let bold = UISwitch()
+  private let slider = SizeSliderView()
+  private let fonts = FontRowView()
 
-  var body: some View {
-    Form {
-      Section {
-        ChatSample(systemSize: systemSize)
-          .listRowInsets(EdgeInsets(top: 18, leading: 16, bottom: 18, trailing: 16))
-      }
-      Section {
-        Toggle("Same as iPhone", isOn: $followSystem.animation(.smooth))
-          .tint(.green)
-          .onChange(of: followSystem) { _, follows in
-            // Turning it off starts the slider where the iPhone's setting is.
-            if !follows { step = textSizeSteps.firstIndex(of: systemSize) ?? defaultSizeStep }
-          }
-        if !followSystem {
-          SizeSlider(step: $step)
-        }
-      } header: {
-        Text("Text Size")
-      } footer: {
-        Text(followSystem ? "Follows Settings › Display & Brightness › Text Size." : "Only TasteCode uses this size.")
-      }
-      Section("Font") {
-        FontRow(font: $font)
-          .listRowInsets(EdgeInsets(top: 12, leading: 12, bottom: 12, trailing: 12))
-        Toggle("Bold Text", isOn: $bold)
-          .tint(.green)
-      }
-    }
+  private var followsSystem: Bool { defaults.object(forKey: AppearanceKey.followSystemSize) as? Bool ?? true }
+  private var step: Int { clamped(defaults.object(forKey: AppearanceKey.sizeStep) as? Int ?? defaultSizeStep) }
+  private var font: FontChoice { FontChoice(rawValue: defaults.string(forKey: AppearanceKey.font) ?? "") ?? .standard }
+  private var isBold: Bool { defaults.bool(forKey: AppearanceKey.bold) }
+
+  /// The iPhone's own text size, from outside the app's choice.
+  private var systemSize: UIContentSizeCategory {
+    view.window?.windowScene?.traitCollection.preferredContentSizeCategory ?? .large
+  }
+
+  override func viewDidLoad() {
+    super.viewDidLoad()
+    title = "Appearance"
     // The page keeps its own size steady, so the slider does not move under the finger.
-    .dynamicTypeSize(.large)
-    .navigationTitle("Appearance")
-    .navigationBarTitleDisplayMode(.inline)
+    traitOverrides.preferredContentSizeCategory = .large
+    follow.onTintColor = .systemGreen
+    follow.addAction(UIAction { [weak self] _ in self?.setFollows() }, for: .valueChanged)
+    bold.onTintColor = .systemGreen
+    bold.addAction(UIAction { [weak self] _ in
+      guard let self else { return }
+      self.defaults.set(self.bold.isOn, forKey: AppearanceKey.bold)
+      self.reload()
+    }, for: .valueChanged)
+    slider.onStep = { [weak self] step in
+      self?.defaults.set(step, forKey: AppearanceKey.sizeStep)
+      self?.reload()
+    }
+    fonts.onPick = { [weak self] font in
+      self?.defaults.set(font.rawValue, forKey: AppearanceKey.font)
+      self?.reload()
+    }
+    sync()
+  }
+
+  override func reload(force: Bool = false) {
+    sync()
+    super.reload(force: force)
+  }
+
+  /// Puts the controls and the sample where the settings are.
+  private func sync() {
+    guard isViewLoaded else { return }
+    let follows = followsSystem
+    if follow.isOn != follows { follow.setOn(follows, animated: view.window != nil) }
+    if bold.isOn != isBold { bold.setOn(isBold, animated: view.window != nil) }
+    slider.step = step
+    fonts.selected = font
+    sample.show(
+      traitCollection.modifyingTraits {
+        $0.preferredContentSizeCategory = follows ? systemSize : sizeCategories[step]
+        $0.legibilityWeight = isBold ? .bold : .regular
+        $0[FontDesignTrait.self] = font
+      }, animated: view.window != nil)
+  }
+
+  override func viewWillAppear(_ animated: Bool) {
+    super.viewWillAppear(animated)
+    // Its sample and controls need the whole height.
+    navigationController?.expandSheet()
+  }
+
+  private func setFollows() {
+    if !follow.isOn {
+      // Turning it off starts the slider where the iPhone's setting is.
+      defaults.set(sizeCategories.firstIndex(of: systemSize) ?? defaultSizeStep, forKey: AppearanceKey.sizeStep)
+    }
+    defaults.set(follow.isOn, forKey: AppearanceKey.followSystemSize)
+    reload()
+  }
+
+  override func sections() -> [Section] {
+    let follows = followsSystem
+    var size = [toggleRow("follow", "Same as iPhone", toggle: follow)]
+    if !follows {
+      size.append(viewRow("slider", slider, insets: NSDirectionalEdgeInsets(top: 13.5, leading: 16, bottom: 13.5, trailing: 16)))
+    }
+    return [
+      Section(id: "sample", rows: [
+        viewRow(
+          "sample", sample, insets: NSDirectionalEdgeInsets(top: 18, leading: 16, bottom: 18, trailing: 16),
+          version: "\(follows ? systemSize.rawValue : "\(step)")|\(font)|\(isBold)")
+      ]),
+      Section(
+        id: "size", header: "Text Size",
+        footer: follows ? "Follows Settings › Display & Brightness › Text Size." : "Only TasteCode uses this size.",
+        rows: size),
+      Section(id: "font", header: "Font", rows: [
+        viewRow("fonts", fonts, insets: NSDirectionalEdgeInsets(top: 12, leading: 12, bottom: 12, trailing: 12)),
+        toggleRow("bold", "Bold Text", toggle: bold),
+      ]),
+    ]
   }
 }
 
-/// A user message and a reply, drawn with the settings being chosen.
-private struct ChatSample: View {
-  @AppStorage(AppearanceKey.followSystemSize) private var followSystem = true
-  @AppStorage(AppearanceKey.sizeStep) private var step = defaultSizeStep
-  @AppStorage(AppearanceKey.font) private var font = FontChoice.standard
-  @AppStorage(AppearanceKey.bold) private var bold = false
-  /// The iPhone's own size, read outside the page's steady one.
-  let systemSize: DynamicTypeSize
+/// The slider's steps as UIKit's text sizes.
+private let sizeCategories = textSizeSteps.map(UIContentSizeCategory.init)
 
-  var body: some View {
-    VStack(alignment: .leading, spacing: 12) {
-      Text("Why does the date test fail at midnight?")
-        .font(.body)
-        .padding(.horizontal, 13)
-        .padding(.vertical, 8)
-        .background(Color(.tertiarySystemFill), in: .rect(cornerRadius: 18, style: .continuous))
-        .frame(maxWidth: .infinity, alignment: .trailing)
-        .padding(.leading, 40)
-      Text("It reads the date in the local time zone. \(Text("parseDate").font(.system(.subheadline, design: .monospaced))) should use UTC, then the test passes.")
-        .font(.body)
-        .lineSpacing(2)
+/// A user message and a reply, drawn with the settings being chosen.
+private final class ChatSampleView: UIView {
+  private let bubble = UIView()
+  private let question = UILabel()
+  private let reply = UILabel()
+  private var shown: UITraitCollection?
+
+  override init(frame: CGRect) {
+    super.init(frame: frame)
+    bubble.backgroundColor = .tertiarySystemFill
+    bubble.layer.cornerRadius = 18
+    bubble.layer.cornerCurve = .continuous
+    question.numberOfLines = 0
+    question.text = "Why does the date test fail at midnight?"
+    bubble.addPinned(question, insets: UIEdgeInsets(top: 8, left: 13, bottom: 8, right: 13))
+    reply.numberOfLines = 0
+    bubble.translatesAutoresizingMaskIntoConstraints = false
+    reply.translatesAutoresizingMaskIntoConstraints = false
+    addSubview(bubble)
+    addSubview(reply)
+    NSLayoutConstraint.activate([
+      bubble.topAnchor.constraint(equalTo: topAnchor),
+      bubble.trailingAnchor.constraint(equalTo: trailingAnchor),
+      bubble.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 40),
+      reply.topAnchor.constraint(equalTo: bubble.bottomAnchor, constant: 12),
+      reply.leadingAnchor.constraint(equalTo: leadingAnchor),
+      reply.trailingAnchor.constraint(equalTo: trailingAnchor),
+      reply.bottomAnchor.constraint(equalTo: bottomAnchor),
+    ])
+  }
+
+  @available(*, unavailable)
+  required init?(coder: NSCoder) { fatalError() }
+
+  /// Draws the sample at `traits`: the chosen size, typeface and weight.
+  func show(_ traits: UITraitCollection, animated: Bool) {
+    let key = (traits.preferredContentSizeCategory, traits.legibilityWeight, traits[FontDesignTrait.self])
+    if let shown, (shown.preferredContentSizeCategory, shown.legibilityWeight, shown[FontDesignTrait.self]) == key {
+      return
     }
-    .fontDesign(font.design)
-    .environment(\.legibilityWeight, bold ? .bold : nil)
-    .dynamicTypeSize(followSystem ? systemSize : textSizeSteps[clamped(step)])
-    .animation(.smooth(duration: 0.25), value: step)
-    .animation(.smooth(duration: 0.25), value: font)
-    .frame(maxWidth: .infinity, alignment: .leading)
+    shown = traits
+    let apply = {
+      let body = UIFont.app(.body, traits: traits)
+      self.question.font = body
+      let paragraph = NSMutableParagraphStyle()
+      paragraph.lineSpacing = 2
+      let line = NSMutableAttributedString(
+        string: "It reads the date in the local time zone. ",
+        attributes: [.font: body, .foregroundColor: UIColor.label, .paragraphStyle: paragraph])
+      let codeSize = UIFont.preferredFont(forTextStyle: .subheadline, compatibleWith: traits).pointSize
+      line.append(NSAttributedString(
+        string: "parseDate",
+        attributes: [
+          .font: UIFont.monospacedSystemFont(ofSize: codeSize, weight: traits.legibilityWeight == .bold ? .semibold : .regular),
+          .foregroundColor: UIColor.label, .paragraphStyle: paragraph,
+        ]))
+      line.append(NSAttributedString(
+        string: " should use UTC, then the test passes.",
+        attributes: [.font: body, .foregroundColor: UIColor.label, .paragraphStyle: paragraph]))
+      self.reply.attributedText = line
+    }
+    if animated {
+      UIView.transition(with: self, duration: 0.25, options: [.transitionCrossDissolve, .allowUserInteraction], animations: apply)
+    } else {
+      apply()
+    }
   }
 }
 
 /// The system's text size control: a small A, a stepped track, a large A.
-private struct SizeSlider: View {
-  @Binding var step: Int
+private final class SizeSliderView: UIView {
+  var onStep: (Int) -> Void = { _ in }
+  var step = defaultSizeStep {
+    didSet { if Int(slider.value.rounded()) != step { slider.value = Float(step) } }
+  }
+  private let slider = UISlider()
 
-  var body: some View {
-    HStack(spacing: 14) {
-      Image(tabler: "text-decrease", size: 15)
-        .foregroundStyle(.secondary)
-      Slider(
-        value: Binding(get: { Double(clamped(step)) }, set: { step = Int($0.rounded()) }),
-        in: 0...Double(textSizeSteps.count - 1),
-        step: 1
-      )
-      .tint(.primary)
-      .sensoryFeedback(.selection, trigger: step)
-      Image(tabler: "text-increase", size: 24)
-        .foregroundStyle(.secondary)
+  override init(frame: CGRect) {
+    super.init(frame: frame)
+    let small = UIImageView(image: Tabler.image("text-decrease", size: 15))
+    let large = UIImageView(image: Tabler.image("text-increase", size: 24))
+    for icon in [small, large] {
+      icon.tintColor = .secondaryLabel
+      icon.setContentHuggingPriority(.required, for: .horizontal)
     }
-    .padding(.vertical, 4)
-    .accessibilityElement(children: .combine)
-    .accessibilityLabel("Text size")
+    slider.minimumValue = 0
+    slider.maximumValue = Float(textSizeSteps.count - 1)
+    slider.minimumTrackTintColor = .label
+    slider.addAction(UIAction { [weak self] _ in self?.moved() }, for: .valueChanged)
+    let row = UIStackView(arrangedSubviews: [small, slider, large])
+    row.axis = .horizontal
+    row.alignment = .center
+    row.spacing = 14
+    addPinned(row, insets: UIEdgeInsets(top: 4, left: 0, bottom: 4, right: 0))
+    isAccessibilityElement = true
+    accessibilityLabel = "Text size"
+    accessibilityTraits = .adjustable
+  }
+
+  @available(*, unavailable)
+  required init?(coder: NSCoder) { fatalError() }
+
+  override var accessibilityValue: String? {
+    get { "\(step + 1) of \(textSizeSteps.count)" }
+    set {}
+  }
+
+  override func accessibilityIncrement() { set(step + 1) }
+  override func accessibilityDecrement() { set(step - 1) }
+
+  /// Snaps to the nearest step as it moves, as a stepped slider does.
+  private func moved() {
+    let next = Int(slider.value.rounded())
+    slider.value = Float(next)
+    set(next)
+  }
+
+  private func set(_ next: Int) {
+    let value = clamped(next)
+    guard value != step else { return }
+    step = value
+    UISelectionFeedbackGenerator().selectionChanged()
+    onStep(value)
   }
 }
 
 /// The four typefaces side by side, each shown in itself.
-private struct FontRow: View {
-  @Binding var font: FontChoice
-
-  var body: some View {
-    HStack(spacing: 8) {
-      ForEach(FontChoice.allCases) { choice in
-        let selected = font == choice
-        Button {
-          withAnimation(.smooth(duration: 0.2)) { font = choice }
-        } label: {
-          VStack(spacing: 6) {
-            Text("Aa")
-              .font(.system(size: 26, weight: .regular, design: choice.design))
-              .foregroundStyle(.primary)
-            Text(choice.title)
-              .font(.caption)
-              .foregroundStyle(selected ? .primary : .secondary)
-          }
-          .frame(maxWidth: .infinity)
-          .padding(.vertical, 12)
-          .background {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-              .fill(selected ? Color(.tertiarySystemFill) : .clear)
-          }
-          .overlay {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-              .strokeBorder(Color.primary.opacity(selected ? 0.5 : 0), lineWidth: 1.5)
-          }
-          .contentShape(.rect)
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(choice.title)
-        .accessibilityAddTraits(selected ? .isSelected : [])
-      }
+private final class FontRowView: UIView {
+  var onPick: (FontChoice) -> Void = { _ in }
+  var selected = FontChoice.standard {
+    didSet {
+      guard selected != oldValue else { return }
+      UIView.animate(withDuration: 0.2) { self.paint() }
     }
-    .sensoryFeedback(.selection, trigger: font)
+  }
+  private var tiles: [(choice: FontChoice, view: UIControl, title: UILabel)] = []
+
+  override init(frame: CGRect) {
+    super.init(frame: frame)
+    let row = UIStackView()
+    row.axis = .horizontal
+    row.spacing = 8
+    row.distribution = .fillEqually
+    for choice in FontChoice.allCases {
+      let tile = UIControl()
+      tile.layer.cornerRadius = 12
+      tile.layer.cornerCurve = .continuous
+      let sample = UILabel()
+      sample.text = "Aa"
+      sample.textColor = .label
+      let base = UIFont.systemFont(ofSize: 26, weight: .regular)
+      sample.font = choice.systemDesign.flatMap { base.fontDescriptor.withDesign($0) }.map { UIFont(descriptor: $0, size: 26) } ?? base
+      let title = UILabel()
+      title.text = choice.title
+      title.font = .preferredFont(forTextStyle: .caption1)
+      let column = UIStackView(arrangedSubviews: [sample, title])
+      column.axis = .vertical
+      column.alignment = .center
+      column.spacing = 6
+      column.isUserInteractionEnabled = false
+      tile.addPinned(column, insets: UIEdgeInsets(top: 12, left: 0, bottom: 12, right: 0))
+      tile.addAction(UIAction { [weak self] _ in
+        guard let self, self.selected != choice else { return }
+        UISelectionFeedbackGenerator().selectionChanged()
+        self.selected = choice
+        self.onPick(choice)
+      }, for: .touchUpInside)
+      tile.isAccessibilityElement = true
+      tile.accessibilityLabel = choice.title
+      row.addArrangedSubview(tile)
+      tiles.append((choice, tile, title))
+    }
+    addPinned(row)
+    paint()
+    registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (row: FontRowView, _: UITraitCollection) in
+      row.paint()
+    }
+  }
+
+  @available(*, unavailable)
+  required init?(coder: NSCoder) { fatalError() }
+
+  private func paint() {
+    for tile in tiles {
+      let on = tile.choice == selected
+      tile.view.backgroundColor = on ? .tertiarySystemFill : .clear
+      tile.view.layer.borderWidth = 1.5
+      tile.view.layer.borderColor = UIColor.label.withAlphaComponent(on ? 0.5 : 0).resolvedColor(with: traitCollection).cgColor
+      tile.title.textColor = on ? .label : .secondaryLabel
+      tile.view.accessibilityTraits = on ? [.button, .selected] : .button
+    }
   }
 }

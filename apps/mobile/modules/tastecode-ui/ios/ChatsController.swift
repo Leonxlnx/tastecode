@@ -323,10 +323,7 @@ final class ChatsController: UIViewController, UICollectionViewDelegate, UISearc
 
   private func setUpBars() {
     let settings = UIBarButtonItem(image: Tabler.image("settings", size: 22), primaryAction: UIAction { [weak self] _ in
-      weak var presented: UIViewController?
-      let sheet = Hosted { SettingsSheet { presented?.expandSheet() } }
-      presented = sheet
-      self?.presentSheet(sheet, height: 560)
+      self?.presentSheet(UINavigationController(rootViewController: SettingsController()), height: 560)
     })
     settings.accessibilityLabel = "Settings"
     navigationItem.leftBarButtonItem = settings
