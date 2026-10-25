@@ -1,0 +1,700 @@
+/* Ledger picker (design lab prototype): a list beside an inspector.
+   The frame (width, border) lives in model-ledger-trigger.css. */
+
+.model-ledger {
+  --ledger-list-w: 268px;
+  --ledger-row-h: 28px;
+  --ledger-inspector-bg: color-mix(in srgb, var(--bg) 45%, var(--menu-bg));
+  --ledger-well: color-mix(in srgb, var(--text) 5.5%, transparent);
+  --ledger-track: color-mix(in srgb, var(--text) 13%, transparent);
+  --ledger-meter: color-mix(in srgb, var(--text) 62%, transparent);
+
+  display: grid;
+  grid-template-rows: 42px minmax(0, 1fr) 34px;
+  width: 100%;
+  min-width: 0;
+  height: min(var(--ledger-h, 420px), calc(100vh - 16px));
+  color: var(--text);
+  font-size: var(--t-sm);
+}
+
+:root[data-theme='light'] .model-ledger {
+  --ledger-inspector-bg: color-mix(in srgb, var(--text) 2.5%, var(--menu-bg));
+  --ledger-well: color-mix(in srgb, var(--text) 5%, var(--menu-bg));
+  --ledger-track: color-mix(in srgb, var(--text) 11%, transparent);
+  --ledger-meter: color-mix(in srgb, var(--text) 70%, transparent);
+}
+
+/* search */
+
+.model-ledger__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 0 10px 0 15px;
+  border-bottom: 1px solid var(--line);
+  color: var(--text-3);
+}
+
+.model-ledger__search {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  outline: 0;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--t-md);
+}
+
+.model-ledger__search::placeholder {
+  color: var(--composer-placeholder);
+}
+
+.model-ledger__clear {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: var(--r-sm);
+  color: var(--text-3);
+  cursor: pointer;
+}
+
+.model-ledger__clear:hover {
+  background: var(--control-hover);
+  color: var(--text);
+}
+
+/* two panes */
+
+.model-ledger__body {
+  display: grid;
+  grid-template-columns: var(--ledger-list-w) minmax(0, 1fr);
+  min-height: 0;
+}
+
+.model-ledger__list {
+  position: relative;
+  min-height: 0;
+  padding: 4px 5px 10px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scroll-padding: 8px;
+  scrollbar-color: var(--surface-3) transparent;
+  scrollbar-width: thin;
+}
+
+.model-ledger__section {
+  display: flex;
+  align-items: flex-end;
+  height: 26px;
+  padding: 0 10px 4px;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+}
+
+.model-ledger__section.is-move {
+  height: 38px;
+  margin-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
+.model-ledger__group {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  height: 30px;
+  padding: 0 10px 6px;
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.model-ledger__group svg {
+  flex: none;
+  margin-bottom: 1px;
+}
+
+.model-ledger__group-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.model-ledger__group-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  margin-left: auto;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+.model-ledger__glance.is-low {
+  color: var(--warning);
+}
+
+.model-ledger__glance.is-out {
+  color: var(--error);
+}
+
+.model-ledger__spin {
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid var(--ledger-track);
+  border-top-color: var(--text-2);
+  border-radius: var(--r-circle);
+  animation: model-ledger-spin 0.9s linear infinite;
+}
+
+@keyframes model-ledger-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.model-ledger__row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: var(--ledger-row-h);
+  padding: 0 10px 0 31px;
+  border-radius: var(--r-md);
+  color: var(--text);
+  font-size: 13px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.model-ledger__row.is-recent {
+  padding-left: 10px;
+}
+
+.model-ledger__row.is-recent svg {
+  flex: none;
+  color: var(--text-2);
+}
+
+.model-ledger__row.is-highlighted {
+  background: var(--menu-hover);
+}
+
+.model-ledger__row.is-current .model-ledger__name {
+  font-weight: 500;
+}
+
+.model-ledger__name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.model-ledger__name b {
+  color: var(--text);
+  font-weight: 650;
+}
+
+.model-ledger__row-end {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  margin-left: auto;
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+.model-ledger__row-end svg {
+  color: var(--text);
+}
+
+.model-ledger__row.is-more {
+  padding-left: 30px;
+  color: var(--text-3);
+  font-size: 12.5px;
+}
+
+.model-ledger__row.is-more svg {
+  flex: none;
+  margin-left: -18px;
+}
+
+.model-ledger__tag {
+  flex: none;
+  height: 16px;
+  padding: 0 5px;
+  background: var(--ledger-well);
+  border: 1px solid color-mix(in srgb, var(--text) 10%, transparent);
+  border-radius: var(--r-sm);
+  color: var(--text-2);
+  font-size: 10.5px;
+  font-weight: 500;
+  line-height: 14px;
+}
+
+.model-ledger__skeleton {
+  display: flex;
+  align-items: center;
+  height: var(--ledger-row-h);
+  padding-left: 31px;
+}
+
+.model-ledger__skeleton span {
+  height: 9px;
+  border-radius: var(--r-pill);
+  background: var(--skeleton);
+  animation: model-ledger-pulse 1.4s var(--ease-in-out) infinite alternate;
+}
+
+@keyframes model-ledger-pulse {
+  to {
+    background: var(--skeleton-shine);
+  }
+}
+
+.model-ledger__failure {
+  padding: 1px 10px 7px 31px;
+  color: var(--text-3);
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: normal;
+}
+
+.model-ledger__failure button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  margin: 5px 0 0;
+  padding: 0 8px 0 7px;
+  background: var(--menu-bg);
+  border: 1px solid var(--chrome-border);
+  border-radius: var(--r-sm);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.model-ledger__failure button:hover {
+  background: var(--control-hover);
+}
+
+.model-ledger__failure span {
+  display: block;
+}
+
+.model-ledger__empty {
+  padding: 56px 22px 0;
+  color: var(--text-3);
+  font-size: 12.5px;
+  line-height: 1.5;
+  text-align: center;
+  white-space: normal;
+}
+
+.model-ledger__empty b {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--text);
+  font-size: var(--t-md);
+  font-weight: 500;
+}
+
+/* inspector */
+
+.model-ledger__inspector {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  padding: 15px 17px 13px;
+  overflow: hidden;
+  background: var(--ledger-inspector-bg);
+  border-left: 1px solid var(--line);
+}
+
+.model-ledger__inspect {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.model-ledger__inspector p {
+  margin: 0;
+}
+
+.model-ledger__title {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  color: var(--text);
+  font-size: 15.5px;
+  font-weight: 600;
+  letter-spacing: -0.012em;
+  line-height: 1.3;
+}
+
+.model-ledger__title > span:not(.model-ledger__tag) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-ledger__title svg {
+  flex: none;
+}
+
+.model-ledger__sub {
+  margin-top: 3px;
+  overflow: hidden;
+  color: var(--text-3);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-ledger__job {
+  display: -webkit-box;
+  margin-top: 9px;
+  overflow: hidden;
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.model-ledger__label {
+  display: flex;
+  align-items: center;
+  height: 22px;
+  margin-top: 12px;
+  margin-bottom: 5px;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+}
+
+.model-ledger__fast {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  margin-left: auto;
+  padding: 0 3px 0 7px;
+  background: none;
+  border: 0;
+  border-radius: var(--r-sm);
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--t-xs);
+  cursor: pointer;
+}
+
+.model-ledger__fast:hover,
+.model-ledger__fast.is-on {
+  color: var(--text);
+}
+
+.model-ledger__fast svg {
+  flex: none;
+}
+
+.model-ledger__switch {
+  position: relative;
+  width: 24px;
+  height: 14px;
+  background: var(--ledger-track);
+  border-radius: var(--r-pill);
+  transition: background var(--dur-fast) var(--ease-out);
+}
+
+.model-ledger__switch::after {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 10px;
+  height: 10px;
+  background: var(--text-2);
+  border-radius: var(--r-circle);
+  content: '';
+  transition:
+    transform var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
+}
+
+.model-ledger__fast.is-on .model-ledger__switch {
+  background: var(--light);
+}
+
+.model-ledger__fast.is-on .model-ledger__switch::after {
+  background: var(--on-light);
+  transform: translateX(10px);
+}
+
+/* effort: one labelled segment per level the model declares */
+
+.model-ledger__levels {
+  display: flex;
+  padding: 2px;
+  background: var(--ledger-well);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+}
+
+:root[data-theme='light'] .model-ledger__levels {
+  border-color: transparent;
+}
+
+.model-ledger__level {
+  display: grid;
+  flex: 1 1 auto;
+  place-items: center;
+  height: 26px;
+  padding: 0 6px;
+  background: none;
+  border: 0;
+  border-radius: calc(var(--r-md) - 2px);
+  color: var(--text-3);
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    color var(--dur-hover) var(--ease-out),
+    background var(--dur-hover) var(--ease-out);
+}
+
+.model-ledger__level:hover {
+  color: var(--text);
+}
+
+.model-ledger__level.is-selected {
+  background: var(--surface-3);
+  box-shadow:
+    0 1px 2px rgb(0 0 0 / 25%),
+    inset 0 0 0 1px color-mix(in srgb, var(--text) 8%, transparent);
+  color: var(--text);
+}
+
+:root[data-theme='light'] .model-ledger__level.is-selected {
+  background: var(--bg-prompt);
+  box-shadow:
+    0 1px 2px rgb(24 24 27 / 8%),
+    0 0 0 1px rgb(24 24 27 / 6%);
+}
+
+.model-ledger__hint {
+  min-height: 17px;
+  margin-top: 6px !important;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+}
+
+.model-ledger__no-effort {
+  padding-top: 2px;
+  color: var(--text-3);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.model-ledger__foot-area {
+  margin-top: auto;
+  padding-top: 12px;
+}
+
+.model-ledger__account-line {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  color: var(--text-2);
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+
+.model-ledger__account-line svg {
+  flex: none;
+  color: var(--text-3);
+}
+
+.model-ledger__account-line.is-window {
+  margin-top: 11px;
+  padding-left: 21px;
+}
+
+.model-ledger__who {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  text-overflow: ellipsis;
+}
+
+.model-ledger__plan {
+  flex: none;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+}
+
+.model-ledger__left {
+  flex: none;
+  margin-left: auto;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.model-ledger__left.is-low {
+  color: var(--warning);
+}
+
+.model-ledger__meter {
+  height: 3px;
+  margin-top: 7px;
+  overflow: hidden;
+  background: var(--ledger-track);
+  border-radius: var(--r-xs);
+}
+
+.model-ledger__meter i {
+  display: block;
+  height: 100%;
+  background: var(--ledger-meter);
+  border-radius: var(--r-xs);
+}
+
+.model-ledger__meter.is-low i {
+  background: var(--warning);
+}
+
+.model-ledger__note {
+  display: flex;
+  gap: 9px;
+  margin-top: 10px;
+  padding: 9px 10px;
+  background: var(--ledger-well);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.model-ledger__foot-area > .model-ledger__note:first-child {
+  margin-top: 0;
+}
+
+.model-ledger__note svg {
+  flex: none;
+  margin-top: 1px;
+  color: var(--text-2);
+}
+
+.model-ledger__note b {
+  color: var(--text);
+  font-weight: 550;
+}
+
+.model-ledger__note-action {
+  display: flex;
+  align-items: center;
+  height: 24px;
+  margin-top: 7px;
+  padding: 0 9px;
+  background: var(--menu-bg);
+  border: 1px solid var(--chrome-border);
+  border-radius: var(--r-md);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.model-ledger__note-action:hover {
+  background: var(--control-hover);
+}
+
+.model-ledger__more-note .model-ledger__job {
+  -webkit-line-clamp: 4;
+}
+
+.model-ledger__waiting {
+  color: var(--text-3);
+  font-size: 12.5px;
+}
+
+/* key hints */
+
+.model-ledger__foot {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+  padding: 0 12px 0 15px;
+  overflow: hidden;
+  border-top: 1px solid var(--line);
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  white-space: nowrap;
+}
+
+.model-ledger__foot span {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.model-ledger__foot kbd:last-of-type {
+  margin-right: 3px;
+}
+
+.model-ledger :is(button, [role='option']):focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-inset);
+}
+
+/* a short panel (a new chat at a small window) keeps every line of the inspector */
+
+.model-ledger[data-short] .model-ledger__inspector {
+  padding-top: 12px;
+  padding-bottom: 10px;
+}
+
+.model-ledger[data-short] .model-ledger__job {
+  margin-top: 6px;
+  -webkit-line-clamp: 1;
+}
+
+.model-ledger[data-short] .model-ledger__label {
+  margin-top: 8px;
+  margin-bottom: 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .model-ledger__spin,
+  .model-ledger__skeleton span {
+    animation: none;
+  }
+
+  .model-ledger__level,
+  .model-ledger__switch,
+  .model-ledger__switch::after {
+    transition: none;
+  }
+}

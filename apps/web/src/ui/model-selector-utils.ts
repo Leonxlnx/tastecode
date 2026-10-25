@@ -57,6 +57,22 @@ export function getFriendlyEffortLabel(value: string | undefined): string {
     .replace(/\b\w/g, (letter) => letter.toUpperCase())
 }
 
+/**
+ * An effort level as one word in sentence case, for the ledger picker:
+ * `xhigh` is "Extra high", `max` is "Max". The list and rail keep
+ * `getFriendlyEffortLabel`'s title case.
+ */
+export function getEffortWord(value: string | undefined): string {
+  if (!value) return 'Default'
+  const words = value
+    .trim()
+    .toLowerCase()
+    .replace(/[_-]+/g, ' ')
+    .replace(/\bx(?=(?:high|low)\b)/g, 'extra ')
+    .replace(/\s+/g, ' ')
+  return words.charAt(0).toUpperCase() + words.slice(1)
+}
+
 export function getEffortIndexFromPointer(input: {
   clientX: number
   left: number

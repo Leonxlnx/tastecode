@@ -50,6 +50,7 @@ const TERMINAL_OPTIONS = [
 const PICKER_OPTIONS = [
   { value: 'list', label: 'List' },
   { value: 'rail', label: 'Rail' },
+  { value: 'ledger', label: 'Ledger' },
 ] as const satisfies ReadonlyArray<Option<ModelPickerLayout>>
 
 const NOTIFY_OPTIONS = [
@@ -134,7 +135,7 @@ export function GeneralSettings(props: {
         />
         <Setting
           name="Model picker"
-          note="Rail picks a provider first, then its models. List shows every model in one scroll."
+          note="List shows every model in one scroll. Rail picks a provider first, then its models. Ledger sets each model beside its effort levels and the plan it runs on."
           value={picker}
           options={PICKER_OPTIONS}
           onChange={writeModelPickerLayout}
@@ -518,11 +519,19 @@ function MiniWindow(props: {
               {PICKER_ROWS.map((width, row) => (
                 <i
                   key={row}
-                  data-head={row === 0 || (row === 4 && props.picker === 'list') || undefined}
+                  data-head={row === 0 || (row === 4 && props.picker !== 'rail') || undefined}
                   style={rowStyle(row, width)}
                 />
               ))}
             </span>
+            {props.picker === 'ledger' ? (
+              <span className="gwin__inspect">
+                <i data-title style={rowStyle(0, 0.62)} />
+                <i style={rowStyle(1, 0.86)} />
+                <b className="gwin__levels" />
+                <i data-meter style={rowStyle(5, 0.9)} />
+              </span>
+            ) : null}
           </span>
         ) : null}
       </span>

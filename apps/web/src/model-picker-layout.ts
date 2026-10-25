@@ -1,18 +1,23 @@
-/** The model picker ships two layouts: the original flat list (default) and
- *  the provider-rail catalog. The choice is an appearance preference so it
- *  lives next to theme/font in localStorage, with a window event so an open
- *  picker re-renders when Settings flips it. */
+/** The model picker ships three layouts: the original flat list (default), the
+ *  provider-rail catalog, and the ledger (a list beside an inspector, a design
+ *  lab prototype). The choice is an appearance preference so it lives next to
+ *  theme/font in localStorage, with a window event so an open picker
+ *  re-renders when Settings flips it. */
 
-export type ModelPickerLayout = 'list' | 'rail'
+export type ModelPickerLayout = 'list' | 'rail' | 'ledger'
 
 export const MODEL_PICKER_LAYOUT_KEY = 'harness.modelPickerLayout'
 const CHANGE_EVENT = 'harness:model-picker-layout'
 let sessionLayout: ModelPickerLayout | undefined
 
+function parseLayout(value: string | null): ModelPickerLayout {
+  return value === 'rail' || value === 'ledger' ? value : 'list'
+}
+
 export function readModelPickerLayout(): ModelPickerLayout {
   if (sessionLayout) return sessionLayout
   try {
-    return localStorage.getItem(MODEL_PICKER_LAYOUT_KEY) === 'rail' ? 'rail' : 'list'
+    return parseLayout(localStorage.getItem(MODEL_PICKER_LAYOUT_KEY))
   } catch {
     return 'list'
   }

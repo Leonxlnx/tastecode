@@ -1,4 +1,6 @@
 import {
+  lazy,
+  Suspense,
   useDeferredValue,
   useRef,
   useState,
@@ -15,8 +17,10 @@ import {
 import { performAppHaptic, prepareAppHaptics } from '../haptics.js'
 import { readModelPickerLayout, subscribeModelPickerLayout } from '../model-picker-layout.js'
 import { filterModelChoicesByQuery, type ModelChoice } from '../model-catalog.js'
+import type { ModelLedgerData } from './model-ledger-context.js'
 import { ModelSearchField } from './ModelSearchField.js'
 import { ProviderIcon } from './ProviderIcon.js'
+import { SkeletonRows, SkeletonStatus } from './Skeleton.js'
 import { SourceIdentity } from './SourceIdentity.js'
 import {
   getEffortIndexFromPointer,
@@ -31,6 +35,11 @@ import {
   type ModelSelectorProps,
 } from './model-selector-utils.js'
 import '../styles/model-selector-menu.css'
+
+/** The ledger layout is a prototype; its own chunk keeps List and Rail as light as before. */
+const ModelLedgerPanel = lazy(() =>
+  import('./ModelLedgerPanel.js').then((module) => ({ default: module.ModelLedgerPanel })),
+)
 
 function ProviderModelList(props: {
   models: ModelChoice[]
@@ -424,10 +433,25 @@ function EffortSlider(props: {
   )
 }
 
-export function ModelSelectorPanel(props: ModelSelectorProps) {
+export function ModelSelectorPanel(
+  props: ModelSelectorProps & { ledger?: ModelLedgerData | undefined },
+) {
   const [previewEffortIndex, setPreviewEffortIndex] = useState<number | null>(null)
   const [hoverEffortIndex, setHoverEffortIndex] = useState<number | null>(null)
   const pickerLayout = useSyncExternalStore(subscribeModelPickerLayout, readModelPickerLayout)
+  if (pickerLayout === 'ledger') {
+    return (
+      <Suspense
+        fallback={
+          <SkeletonStatus label="Loading models…" className="model-selector__loading">
+            <SkeletonRows rows={7} icon />
+          </SkeletonStatus>
+        }
+      >
+        <ModelLedgerPanel {...props} />
+      </Suspense>
+    )
+  }
   const choice = props.choice ?? getSelectedChoice(props.models, props.modelId)
   const model = choice?.model
   const selectedEffort = getSelectedEffort(model, props.effort)
