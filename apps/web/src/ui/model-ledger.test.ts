@@ -196,6 +196,25 @@ describe('buildLedgerRows', () => {
       'skeleton',
     ])
   })
+  it('keeps a provider’s own source ahead of its further accounts while it lists', () => {
+    const studio = choice('codex', 'Codex (Studio)', ASTRA.model, { accountId: 'studio' })
+    const rows = buildLedgerRows({
+      models: [OPUS, studio],
+      query: '',
+      recents: [],
+      current: { key: OPUS.key, effort: 'high' },
+      pending: new Set(['codex']),
+    })
+    expect(kinds(rows)).toEqual([
+      'group:claude-code:ready',
+      'model:opus-5.5',
+      'group:codex:loading',
+      'skeleton',
+      'skeleton',
+      'group:codex@studio:ready',
+      'model:gpt-6-astra',
+    ])
+  })
   it('folds a long list behind a "more" row but never hides the model in use', () => {
     const many = Array.from({ length: 38 }, (_, index) =>
       choice('opencode', 'OpenCode', model(`m-${index}`, `Model ${index}`), {

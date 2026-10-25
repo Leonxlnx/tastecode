@@ -109,9 +109,11 @@ export function providerOfSource(source: string): ProviderId | undefined {
   return (PROVIDER_ORDER as readonly string[]).includes(provider) ? provider : undefined
 }
 
+/** A provider's own source first, then its further accounts, then agents. */
 function sourceRank(source: string): number {
   const provider = providerOfSource(source)
-  return provider ? providerRank(provider) : PROVIDER_ORDER.length
+  if (!provider) return PROVIDER_ORDER.length
+  return providerRank(provider) + (source.includes('@') ? 0.5 : 0)
 }
 
 type GroupDraft = {
