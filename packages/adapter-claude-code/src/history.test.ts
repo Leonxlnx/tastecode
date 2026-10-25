@@ -94,7 +94,7 @@ function transcript(random: () => number) {
   const first = row('first', 'user', 'Generated prompt', null, { timestamp: later(0) })
   const expected: Pick<
     ProviderHistorySession,
-    'title' | 'workspacePath' | 'createdAt' | 'updatedAt' | 'approval'
+    'title' | 'named' | 'workspacePath' | 'createdAt' | 'updatedAt' | 'approval'
   > = {
     title: 'Generated prompt',
     workspacePath: first.cwd,
@@ -153,6 +153,7 @@ function transcript(random: () => number) {
         }
       }
       expected.title = customTitle ?? aiTitle ?? 'Generated prompt'
+      if (customTitle ?? aiTitle) expected.named = true
     }
     return rows
   }
@@ -184,7 +185,12 @@ describe('Claude Code saved history', () => {
     )
     const first = await f.source.list()
     expect(first).toHaveLength(1)
-    expect(first[0]).toMatchObject({ id: SESSION, title: 'Native title', createdAt: AT })
+    expect(first[0]).toMatchObject({
+      id: SESSION,
+      title: 'Native title',
+      named: true,
+      createdAt: AT,
+    })
     const before = await readFile(f.file, 'utf8')
     const info = await stat(f.file)
     await f.source.read(first[0]!)
@@ -288,6 +294,8 @@ describe('Claude Code saved history', () => {
     const [session] = await f.source.list()
 
     expect(session?.title).toBe('First prompt')
+    // The first prompt stands in for a name; it is not one.
+    expect(session?.named).toBeUndefined()
   })
 
   it('lists the access level the session last ran with', async () => {
@@ -501,7 +509,10 @@ describe('Claude Code saved history', () => {
       },
       remember: (locator, revision, session) => kept.set(locator, { revision, session }),
     }
-    expect((await f.source.list(options))[0]?.title).toBe('First summary')
+    expect((await f.source.list(options))[0]).toMatchObject({
+      title: 'First summary',
+      named: true,
+    })
     await index('Second summary')
     expect((await f.source.list(options))[0]?.title).toBe('Second summary')
     const restarted = createClaudeHistorySource({ configDir: f.configDir })
