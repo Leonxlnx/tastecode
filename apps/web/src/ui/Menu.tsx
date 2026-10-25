@@ -2,11 +2,13 @@ import {
   useCallback,
   useEffect,
   useId,
+  useImperativeHandle,
   useLayoutEffect,
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
+  type Ref,
   type RefObject,
 } from 'react'
 import { createPortal } from 'react-dom'
@@ -48,6 +50,16 @@ type MenuBaseProps = {
   onTriggerIntent?: (() => void) | undefined
   shortcutAria?: string | undefined
   contextMenuTargetRef?: RefObject<HTMLElement | null>
+  /** Opens and closes the menu from outside, such as an app shortcut, without a DOM query. */
+  handleRef?: Ref<MenuHandle> | undefined
+}
+
+/** What a menu's owner may do to it without a click on its trigger. */
+export type MenuHandle = {
+  /** Opens as a keyboard open does: focus goes into the panel, nothing animates. */
+  open: () => void
+  close: () => void
+  isOpen: () => boolean
 }
 
 type MenuProps = MenuBaseProps &
@@ -209,6 +221,30 @@ export function Menu(props: MenuProps) {
   const closeMenu = useCallback(() => {
     setRuntime((current) => (current.open ? { ...current, open: false } : current))
   }, [])
+
+  const openRef = useRef(runtime.open)
+  openRef.current = runtime.open
+  useImperativeHandle(
+    props.handleRef,
+    () => ({
+      open: () => {
+        if (openRef.current || props.disabled) return
+        showMenu({
+          modality: 'keyboard',
+          focus: 'first',
+          // Focus goes back where it was, such as the prompt field the shortcut came from.
+          returnFocus:
+            document.activeElement instanceof HTMLElement &&
+            document.activeElement !== document.body
+              ? document.activeElement
+              : trigger.current,
+        })
+      },
+      close: closeMenu,
+      isOpen: () => openRef.current,
+    }),
+    [closeMenu, props.disabled, showMenu],
+  )
 
   useLayoutEffect(() => {
     const target = props.contextMenuTargetRef?.current
