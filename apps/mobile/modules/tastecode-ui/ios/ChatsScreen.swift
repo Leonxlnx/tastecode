@@ -377,14 +377,14 @@ struct ChatRow: View {
       HStack(alignment: .firstTextBaseline, spacing: 12) {
         VStack(alignment: .leading, spacing: 4) {
           Text(chat.title)
-            .font(.callout.weight(chat.unread ? .semibold : .regular))
+            .font(.body.weight(chat.unread ? .semibold : .regular))
             .lineLimit(1)
           detail
         }
         Spacer(minLength: 8)
         trailing
       }
-      .padding(.vertical, 2)
+      .padding(.vertical, 8)
     }
     .navigationLinkIndicatorVisibility(.hidden)
     .listRowSeparator(.hidden)
@@ -422,7 +422,7 @@ struct ChatRow: View {
   /// needs you, archived), then the state. A long line gives up the project first.
   private var detail: some View {
     HStack(spacing: 0) {
-      ProviderLogo(mark: chat.mark, size: 12)
+      ProviderLogo(mark: chat.mark, size: 13)
         .foregroundStyle(.secondary)
         .padding(.trailing, 5)
       Text(showsProject ? "\(chat.modelName ?? chat.sourceName) · \(chat.projectName)" : chat.modelName ?? chat.sourceName)
@@ -432,7 +432,7 @@ struct ChatRow: View {
           .layoutPriority(1)
       }
     }
-    .font(.footnote)
+    .font(.subheadline)
     .lineLimit(1)
   }
 
