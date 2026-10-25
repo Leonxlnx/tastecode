@@ -15,7 +15,11 @@ describe('account limits layout', () => {
     expect(usage).toContain('font-size: var(--t-xs)')
     expect(usage).toContain('border-radius: var(--r-lg)')
     expect(usage).toContain('background: color-mix(in srgb, var(--text) 4%, var(--menu-bg))')
-    expect(usage).toContain('max-height: min(360px, calc(100vh - 150px))')
+    // No height of its own: a fixed cap made the well scroll with the window
+    // nowhere near full once a provider listed several accounts. The popup's
+    // viewport bound and the well's flex shrink are what limit it.
+    expect(usage).not.toContain('max-height')
+    expect(usage).toContain('flex: 0 1 auto')
     expect(usage).toContain('overflow-y: auto')
     expect(usage).toContain('overscroll-behavior: contain')
     expect(usage).toContain('min-height: 0')

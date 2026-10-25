@@ -153,10 +153,11 @@ describe('sidebar theme CSS', () => {
     )
   })
 
-  it('keeps the account popup compact and pins its actions below scrolling limits', () => {
+  it('lets the account popup grow to the window and pins its actions below scrolling limits', () => {
     expect(appCss).toMatch(
-      /\.menu--settings \{[^}]*max-height: min\(500px, calc\(100vh - 24px\)\);[^}]*display: flex;[^}]*flex-direction: column;[^}]*overflow: hidden;/s,
+      /\.menu--settings \{[^}]*max-height: calc\(100vh - 24px\);[^}]*display: flex;[^}]*flex-direction: column;[^}]*overflow: hidden;/s,
     )
+    expect(appCss).not.toMatch(/\.menu--settings \{[^}]*max-height: min\(/s)
     expect(appCss).toMatch(/\.menu--compact \{[^}]*gap: 0;[^}]*padding: 3px;/s)
     expect(accountLimitsCss).toMatch(
       /\.account-menu__usage \{[^}]*flex: 0 1 auto;[^}]*min-height: 0;[^}]*overflow-y: auto;[^}]*overscroll-behavior: contain;/s,
