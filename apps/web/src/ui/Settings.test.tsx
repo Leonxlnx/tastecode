@@ -312,7 +312,13 @@ describe('settings v1 pages', () => {
     ['about', ['TasteCode', 'Updates', 'Source']],
     [
       'debug',
-      ['Onboarding', 'Usage history index', 'Simulate app update', 'Simulate provider updates'],
+      [
+        'Onboarding',
+        'Usage history index',
+        'Sidebar peek (design lab)',
+        'Simulate app update',
+        'Simulate provider updates',
+      ],
     ],
   ] as const)('lays %s out as open rows without a card', (section, names) => {
     const { container } = renderSettings({

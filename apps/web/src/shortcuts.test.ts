@@ -49,7 +49,7 @@ describe('shortcuts', () => {
       return shortcut ? [shortcutLabel(shortcut, false)] : []
     })
 
-    expect(KEYBINDING_DEFINITIONS).toHaveLength(21)
+    expect(KEYBINDING_DEFINITIONS).toHaveLength(23)
     expect(new Set(assigned).size).toBe(assigned.length)
   })
 
