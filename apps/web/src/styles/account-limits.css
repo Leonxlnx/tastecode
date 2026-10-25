@@ -1,10 +1,13 @@
 /* Plan limits sit in one soft well above the account actions, grouped by
-   provider and separated by space instead of rules. The well scrolls on its
-   own so Edit profile and Settings stay pinned beside the card. */
+   provider and separated by space instead of rules. Neither the well nor the
+   popup (.menu--settings) has a fixed height: the limits grow with the
+   accounts they list, and a pixel cap made them scroll with room still above.
+   The window alone bounds the popup; the well takes what it leaves beside
+   the actions and scrolls only then, so Edit profile and Settings stay
+   pinned beside the card. */
 .account-menu__usage {
   flex: 0 1 auto;
   min-height: 0;
-  max-height: min(360px, calc(100vh - 150px));
   display: grid;
   align-content: start;
   gap: 14px;

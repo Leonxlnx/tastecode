@@ -2637,7 +2637,7 @@
      covers the first frame, and min-width: 0 beats the base .menu minimum. */
   min-width: 0;
   width: min(var(--menu-trigger-w, 224px), calc(100vw - 16px));
-  max-height: min(500px, calc(100vh - 24px));
+  max-height: calc(100vh - 24px);
   display: flex;
   flex-direction: column;
   overflow: hidden;
