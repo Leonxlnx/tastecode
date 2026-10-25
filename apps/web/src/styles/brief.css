@@ -834,6 +834,23 @@
 }
 
 /* checks */
+/*
+ * Centred one by one, the 12px mono command sat 2px above the 14px label
+ * beside it. Put the row's words on one baseline and centre that line in the
+ * row instead (a wrapping container lets align-content centre its line; the
+ * command's zero basis keeps everything on it).
+ */
+.brief-check {
+  flex-wrap: wrap;
+  align-content: center;
+  align-items: baseline;
+}
+
+.brief-check > .brief-row__glyph,
+.brief-check > .brief-row__action {
+  align-self: center;
+}
+
 .brief-check__label {
   width: 52px;
   flex: none;
