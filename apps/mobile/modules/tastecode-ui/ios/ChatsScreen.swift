@@ -333,20 +333,20 @@ struct GroupHeader: View {
       }
     }
     .listRowSeparator(.hidden)
-    .listRowInsets(EdgeInsets(top: 30, leading: 20, bottom: 6, trailing: 20))
+    .listRowInsets(EdgeInsets(top: 18, leading: 20, bottom: 4, trailing: 20))
     .accessibilityAddTraits(.isHeader)
   }
 
   /// The name in bold with its chat count beside it, over a hairline; the
   /// chevron at the edge turns as the group folds.
   private var label: some View {
-    VStack(spacing: 10) {
-      HStack(alignment: .firstTextBaseline, spacing: 8) {
+    VStack(spacing: 6) {
+      HStack(alignment: .firstTextBaseline, spacing: 6) {
         Text(title)
-          .font(.title3.weight(.bold))
+          .font(.subheadline.weight(.semibold))
           .foregroundStyle(.primary)
         Text("\(count)")
-          .font(.title3.weight(.medium))
+          .font(.subheadline)
           .monospacedDigit()
           .foregroundStyle(.tertiary)
         Spacer()
@@ -378,14 +378,14 @@ struct ChatRow: View {
       HStack(alignment: .firstTextBaseline, spacing: 12) {
         VStack(alignment: .leading, spacing: 4) {
           Text(chat.title)
-            .font(.system(size: 16, weight: chat.unread ? .semibold : .regular))
+            .font(.callout.weight(chat.unread ? .semibold : .regular))
             .lineLimit(1)
           detail
         }
         Spacer(minLength: 8)
         trailing
       }
-      .padding(.vertical, 7)
+      .padding(.vertical, 2)
     }
     .navigationLinkIndicatorVisibility(.hidden)
     .listRowSeparator(.hidden)
