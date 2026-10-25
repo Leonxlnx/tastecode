@@ -374,8 +374,12 @@ struct ChatRow: View {
   let onRename: (ChatView) -> Void
 
   var body: some View {
-    // A button, not a NavigationLink, which the list highlights edge to edge.
-    Button { onOpen(chat.id) } label: {
+    // A menu whose tap opens the chat: held, it shows its menu beside the row.
+    // A context menu lifts the row on a grey platter that stays for most of a
+    // second after the menu closes, and a NavigationLink's row highlight lingers.
+    Menu {
+      menu
+    } label: {
       HStack(alignment: .firstTextBaseline, spacing: 12) {
         // The provider's mark in a column of its own, centred on the title's line.
         ProviderLogo(mark: chat.mark, size: 15)
@@ -386,6 +390,7 @@ struct ChatRow: View {
           HStack(alignment: .firstTextBaseline, spacing: 8) {
             Text(chat.title)
               .font(.callout.weight(chat.unread ? .semibold : .regular))
+              .foregroundStyle(.primary)
               .lineLimit(1)
             Spacer(minLength: 0)
             trailing
@@ -395,12 +400,10 @@ struct ChatRow: View {
       }
       .padding(.vertical, 10)
       .contentShape(.rect)
-      // Held, the row lifts as a rounded piece of the list, not a sharp band.
-      // The menu sits on the content, not the row: on the row the list draws
-      // its own highlight and keeps it for a few seconds after the menu closes.
-      .contentShape(.contextMenuPreview, .rect(cornerRadius: 16).inset(by: -10))
-      .contextMenu { menu }
+    } primaryAction: {
+      onOpen(chat.id)
     }
+    .menuOrder(.fixed)
     .buttonStyle(RowPress())
     .listRowSeparator(.hidden)
     .listRowInsets(EdgeInsets(top: 0, leading: 20, bottom: 0, trailing: 20))
