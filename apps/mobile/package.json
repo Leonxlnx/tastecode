@@ -3,7 +3,6 @@
   "version": "1.0.0",
   "main": "index.ts",
   "dependencies": {
-    "@expo/ui": "~58.0.22",
     "expo": "~58.0.17",
     "expo-build-properties": "~58.0.11",
     "expo-device": "~58.0.5",

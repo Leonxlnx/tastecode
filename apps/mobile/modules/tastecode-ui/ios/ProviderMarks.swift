@@ -1,4 +1,3 @@
-import SwiftUI
 
 // The desktop's provider marks (apps/web/src/ui/ProviderIcon.tsx and
 // agent-marks.ts), as SVG path data. Copied, not shared: the phone has its own
@@ -128,7 +127,7 @@ extension ProviderMark {
     "kimi": ProviderMark(
       viewBox: CGRect(x: 0, y: 0, width: 24, height: 25),
       shapes: [
-        ProviderMark.Shape("M21.72.94a2.23 2.23 0 0 1 0 4.46h-1.97a.26.26 0 0 1-.26-.26V3.17A2.23 2.23 0 0 1 21.72.94Z", color: Color(red: 0x17 / 255, green: 0x83 / 255, blue: 1)),
+        ProviderMark.Shape("M21.72.94a2.23 2.23 0 0 1 0 4.46h-1.97a.26.26 0 0 1-.26-.26V3.17A2.23 2.23 0 0 1 21.72.94Z", color: UIColor(red: 0x17 / 255, green: 0x83 / 255, blue: 1, alpha: 1)),
         ProviderMark.Shape("m9.39 13.95 8.43-8.36c.16-.16.07-.47-.14-.47h-4.54l-.14.06-9.08 9.01c-.14.14-.35.02-.35-.21V5.39c0-.15-.1-.27-.22-.27H.22c-.12 0-.22.12-.22.27v18.53c0 .15.1.27.22.27h3.13c.12 0 .22-.12.22-.27v-3.78c0-.08.03-.16.08-.21l2.82-2.79c.07-.07.16-.08.24-.03l7.53 5.54c1.23.83 2.61 1.34 4.01 1.49.12.01.23-.11.23-.27v-3.56c0-.14-.08-.25-.19-.26-.82-.13-1.63-.45-2.35-.94L9.42 14.39c-.14-.09-.15-.32-.03-.44Z"),
       ]),
     "pi": ProviderMark(

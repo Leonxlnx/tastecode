@@ -1,4 +1,3 @@
-import SwiftUI
 import UIKit
 
 /// One chat: the transcript, the composer (or the decision the agent waits

@@ -1,4 +1,3 @@
-import SwiftUI
 import UIKit
 
 /// The typeface for the app's text. Code keeps its monospaced font.
@@ -15,15 +14,6 @@ enum FontChoice: String, CaseIterable, Identifiable {
     case .monospaced: return "Mono"
     }
   }
-
-  var design: Font.Design {
-    switch self {
-    case .standard: return .default
-    case .rounded: return .rounded
-    case .serif: return .serif
-    case .monospaced: return .monospaced
-    }
-  }
 }
 
 enum AppearanceKey {
@@ -34,25 +24,10 @@ enum AppearanceKey {
 }
 
 /// The text sizes the slider steps through, smallest first; `large` is the iPhone's default.
-let textSizeSteps: [DynamicTypeSize] = [.xSmall, .small, .medium, .large, .xLarge, .xxLarge, .xxxLarge]
+let textSizeSteps: [UIContentSizeCategory] = [
+  .extraSmall, .small, .medium, .large, .extraLarge, .extraExtraLarge, .extraExtraExtraLarge,
+]
 private let defaultSizeStep = 3
-
-/// Applies the chosen text size, typeface and weight to everything below it.
-/// One unbranched chain: a branch would make a change rebuild the screens and close any open sheet.
-struct AppearanceModifier: ViewModifier {
-  @AppStorage(AppearanceKey.followSystemSize) private var followSystem = true
-  @AppStorage(AppearanceKey.sizeStep) private var step = defaultSizeStep
-  @AppStorage(AppearanceKey.font) private var font = FontChoice.standard
-  @AppStorage(AppearanceKey.bold) private var bold = false
-  @Environment(\.dynamicTypeSize) private var systemSize
-
-  func body(content: Content) -> some View {
-    content
-      .fontDesign(font.design)
-      .environment(\.legibilityWeight, bold ? .bold : nil)
-      .dynamicTypeSize(followSystem ? systemSize : textSizeSteps[clamped(step)])
-  }
-}
 
 private func clamped(_ step: Int) -> Int {
   min(max(step, 0), textSizeSteps.count - 1)
@@ -70,7 +45,7 @@ struct AppearanceChoice {
     let follow = defaults.object(forKey: AppearanceKey.followSystemSize) as? Bool ?? true
     let step = defaults.object(forKey: AppearanceKey.sizeStep) as? Int ?? defaultSizeStep
     return AppearanceChoice(
-      contentSize: follow ? nil : UIContentSizeCategory(textSizeSteps[clamped(step)]),
+      contentSize: follow ? nil : textSizeSteps[clamped(step)],
       bold: defaults.bool(forKey: AppearanceKey.bold),
       font: FontChoice(rawValue: defaults.string(forKey: AppearanceKey.font) ?? "") ?? .standard)
   }
@@ -121,20 +96,6 @@ extension FontChoice {
     case .rounded: return .rounded
     case .serif: return .serif
     case .monospaced: return .monospaced
-    }
-  }
-}
-
-extension UIContentSizeCategory {
-  init(_ size: DynamicTypeSize) {
-    switch size {
-    case .xSmall: self = .extraSmall
-    case .small: self = .small
-    case .medium: self = .medium
-    case .large: self = .large
-    case .xLarge: self = .extraLarge
-    case .xxLarge: self = .extraExtraLarge
-    default: self = .extraExtraExtraLarge
     }
   }
 }
@@ -197,7 +158,7 @@ final class AppearanceController: FormController {
     fonts.selected = font
     sample.show(
       traitCollection.modifyingTraits {
-        $0.preferredContentSizeCategory = follows ? systemSize : sizeCategories[step]
+        $0.preferredContentSizeCategory = follows ? systemSize : textSizeSteps[step]
         $0.legibilityWeight = isBold ? .bold : .regular
         $0[FontDesignTrait.self] = font
       }, animated: view.window != nil)
@@ -212,7 +173,7 @@ final class AppearanceController: FormController {
   private func setFollows() {
     if !follow.isOn {
       // Turning it off starts the slider where the iPhone's setting is.
-      defaults.set(sizeCategories.firstIndex(of: systemSize) ?? defaultSizeStep, forKey: AppearanceKey.sizeStep)
+      defaults.set(textSizeSteps.firstIndex(of: systemSize) ?? defaultSizeStep, forKey: AppearanceKey.sizeStep)
     }
     defaults.set(follow.isOn, forKey: AppearanceKey.followSystemSize)
     reload()
@@ -241,9 +202,6 @@ final class AppearanceController: FormController {
     ]
   }
 }
-
-/// The slider's steps as UIKit's text sizes.
-private let sizeCategories = textSizeSteps.map(UIContentSizeCategory.init)
 
 /// A user message and a reply, drawn with the settings being chosen.
 private final class ChatSampleView: UIView {

@@ -1,4 +1,3 @@
-import SwiftUI
 import UIKit
 
 /// A reply split into its blocks: paragraphs, headings, lists, quotes, code,
@@ -200,25 +199,6 @@ struct MarkdownBlock: Identifiable {
   private static func isSeparatorRow(_ row: [String]) -> Bool {
     row.allSatisfy { cell in !cell.isEmpty && cell.allSatisfy { "-:".contains($0) } }
   }
-}
-
-/// Inline Markdown (emphasis, code, links, strikethrough) as SwiftUI text.
-func inlineMarkdown(
-  _ text: String, code codeFont: Font = .system(.subheadline, design: .monospaced)
-) -> AttributedString {
-  let options = AttributedString.MarkdownParsingOptions(
-    allowsExtendedAttributes: false,
-    interpretedSyntax: .inlineOnlyPreservingWhitespace,
-    failurePolicy: .returnPartiallyParsedIfPossible
-  )
-  var parsed = (try? AttributedString(markdown: text, options: options)) ?? AttributedString(text)
-  // Inline code reads as a word set in another face, not a shout: a size down, on a faint fill.
-  let code = parsed.runs.filter { $0.inlinePresentationIntent?.contains(.code) == true }.map(\.range)
-  for range in code {
-    parsed[range].font = codeFont
-    parsed[range].backgroundColor = Color(.tertiarySystemFill)
-  }
-  return parsed
 }
 
 /// A Markdown image source as a path on the computer the chat runs on, or nil

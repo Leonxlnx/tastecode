@@ -1,21 +1,20 @@
-import SwiftUI
 import UIKit
 
 /// A provider's logo as vector paths, drawn in the text colour around it.
 struct ProviderMark {
   struct Shape {
-    let path: Path
+    let path: CGPath
     var evenOdd = false
     var opacity: Double = 1
     /// A fixed colour, for the rare mark that has one; nil draws in the current style.
-    var color: Color?
+    var color: UIColor?
     /// Drawn as a line this wide instead of filled.
     var stroke: CGFloat?
     /// Punched out of the shapes before it.
     var cutout = false
 
     init(
-      _ d: String, evenOdd: Bool = false, opacity: Double = 1, color: Color? = nil, stroke: CGFloat? = nil,
+      _ d: String, evenOdd: Bool = false, opacity: Double = 1, color: UIColor? = nil, stroke: CGFloat? = nil,
       cutout: Bool = false
     ) {
       path = SVGPath.parse(d)
@@ -31,44 +30,11 @@ struct ProviderMark {
   let shapes: [Shape]
 }
 
-/// A provider's mark, square and as tall as `size`. Unknown marks draw the
-/// generic connection mark, so a row never loses its icon.
-struct ProviderLogo: View {
-  let mark: String
-  var size: CGFloat = 14
-
-  var body: some View {
-    let logo = ProviderMark.all[mark] ?? ProviderMark.all["custom"]!
-    Canvas { context, canvas in
-      let box = logo.viewBox
-      let scale = min(canvas.width / box.width, canvas.height / box.height)
-      var transform = CGAffineTransform(
-        translationX: (canvas.width - box.width * scale) / 2, y: (canvas.height - box.height * scale) / 2)
-      transform = transform.scaledBy(x: scale, y: scale).translatedBy(x: -box.minX, y: -box.minY)
-      let style = GraphicsContext.Shading.foreground
-      for shape in logo.shapes {
-        let path = shape.path.applying(transform)
-        var layer = context
-        layer.opacity = shape.opacity
-        if shape.cutout { layer.blendMode = .destinationOut }
-        let shading = shape.color.map { GraphicsContext.Shading.color($0) } ?? style
-        if let width = shape.stroke {
-          layer.stroke(path, with: shading, style: StrokeStyle(lineWidth: width * scale, lineCap: .round))
-        } else {
-          layer.fill(path, with: shading, style: FillStyle(eoFill: shape.evenOdd))
-        }
-      }
-    }
-    .frame(width: size, height: size)
-    .accessibilityHidden(true)
-  }
-}
-
-/// SVG path data (the `d` attribute) as a SwiftUI path: every command,
+/// SVG path data (the `d` attribute) as a Core Graphics path: every command,
 /// absolute and relative, with arcs turned into curves.
 enum SVGPath {
-  static func parse(_ data: String) -> Path {
-    var path = Path()
+  static func parse(_ data: String) -> CGPath {
+    let path = CGMutablePath()
     var scanner = Scanner(Array(data.utf8))
     var current = CGPoint.zero
     var start = CGPoint.zero
@@ -143,7 +109,7 @@ enum SVGPath {
           let large = scanner.flag(), let sweep = scanner.flag(), let p = point()
         else { return path }
         addArc(
-          to: &path, from: current, to: p, radii: CGSize(width: rx, height: ry), rotation: rotation,
+          to: path, from: current, to: p, radii: CGSize(width: rx, height: ry), rotation: rotation,
           large: large, sweep: sweep)
         current = p
         lastControl = nil
@@ -166,7 +132,7 @@ enum SVGPath {
 
   /// An elliptical arc as cubic curves, from SVG's endpoint form (SVG 1.1, appendix F.6).
   private static func addArc(
-    to path: inout Path, from p0: CGPoint, to p1: CGPoint, radii: CGSize, rotation: CGFloat, large: Bool,
+    to path: CGMutablePath, from p0: CGPoint, to p1: CGPoint, radii: CGSize, rotation: CGFloat, large: Bool,
     sweep: Bool
   ) {
     var rx = abs(radii.width)
@@ -325,11 +291,11 @@ final class ProviderMarkView: UIView {
     transform = transform.scaledBy(x: scale, y: scale).translatedBy(x: -box.minX, y: -box.minY)
     let ink = tintColor.resolvedColor(with: traitCollection)
     for shape in logo.shapes {
-      let path = shape.path.applying(transform).cgPath
+      guard let path = shape.path.copy(using: &transform) else { continue }
       context.saveGState()
       context.setAlpha(shape.opacity)
       if shape.cutout { context.setBlendMode(.clear) }
-      let color = shape.color.map { UIColor($0) } ?? ink
+      let color = shape.color ?? ink
       context.addPath(path)
       if let width = shape.stroke {
         context.setStrokeColor(color.cgColor)

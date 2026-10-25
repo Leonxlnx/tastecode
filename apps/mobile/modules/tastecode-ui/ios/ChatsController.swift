@@ -1,4 +1,3 @@
-import SwiftUI
 import UIKit
 
 /// The app's navigation: the chats, and the chats and new chats pushed from them.
