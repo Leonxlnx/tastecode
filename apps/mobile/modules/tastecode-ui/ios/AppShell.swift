@@ -66,7 +66,7 @@ final class RootController: UIViewController {
     switch screen {
     case .blank: show(nil)
     case .pairing: show(Hosted { PairingRoot() })
-    case .chats: show(Hosted { ChatsScreen() })
+    case .chats: show(AppNavigation())
     }
   }
 

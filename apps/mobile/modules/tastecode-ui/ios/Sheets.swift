@@ -6,7 +6,8 @@ import UIKit
 struct SettingsSheet: View {
   @Environment(AppModel.self) private var model
   @Environment(\.dismiss) private var dismiss
-  @State private var detent: PresentationDetent = .height(560)
+  /// Pulls the sheet up to the whole height.
+  let expand: () -> Void
 
   var body: some View {
     NavigationStack {
@@ -26,7 +27,7 @@ struct SettingsSheet: View {
           NavigationLink {
             // Its preview and controls need the whole height.
             AppearanceSettings()
-              .onAppear { withAnimation(.smooth) { detent = .large } }
+              .onAppear { expand() }
           } label: {
             SettingsLabel("Appearance", tabler: "text-size")
           }
@@ -45,13 +46,13 @@ struct SettingsSheet: View {
       }
       .navigationTitle("Settings")
       .navigationBarTitleDisplayMode(.inline)
+      .containerBackground(.clear, for: .navigation)
       .toolbar {
         ToolbarItem(placement: .topBarTrailing) {
           CloseButton { dismiss() }
         }
       }
     }
-    .presentationDetents([.height(560), .large], selection: $detent)
   }
 }
 

@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// A provider's logo as vector paths, drawn in the text colour around it.
 struct ProviderMark {
@@ -288,6 +289,58 @@ enum SVGPath {
         }
       }
       return Double(String(decoding: bytes[begin..<index], as: UTF8.self)).map { CGFloat($0) }
+    }
+  }
+}
+
+/// A provider's mark for UIKit, drawn in the view's tint colour.
+final class ProviderMarkView: UIView {
+  var mark = "custom" {
+    didSet { if mark != oldValue { setNeedsDisplay() } }
+  }
+
+  override init(frame: CGRect) {
+    super.init(frame: frame)
+    isOpaque = false
+    backgroundColor = .clear
+    contentMode = .redraw
+    isAccessibilityElement = false
+  }
+
+  @available(*, unavailable)
+  required init?(coder: NSCoder) { fatalError() }
+
+  override func tintColorDidChange() {
+    super.tintColorDidChange()
+    setNeedsDisplay()
+  }
+
+  override func draw(_ rect: CGRect) {
+    guard let context = UIGraphicsGetCurrentContext() else { return }
+    let logo = ProviderMark.all[mark] ?? ProviderMark.all["custom"]!
+    let box = logo.viewBox
+    let scale = min(bounds.width / box.width, bounds.height / box.height)
+    var transform = CGAffineTransform(
+      translationX: (bounds.width - box.width * scale) / 2, y: (bounds.height - box.height * scale) / 2)
+    transform = transform.scaledBy(x: scale, y: scale).translatedBy(x: -box.minX, y: -box.minY)
+    let ink = tintColor.resolvedColor(with: traitCollection)
+    for shape in logo.shapes {
+      let path = shape.path.applying(transform).cgPath
+      context.saveGState()
+      context.setAlpha(shape.opacity)
+      if shape.cutout { context.setBlendMode(.clear) }
+      let color = shape.color.map { UIColor($0) } ?? ink
+      context.addPath(path)
+      if let width = shape.stroke {
+        context.setStrokeColor(color.cgColor)
+        context.setLineWidth(width * scale)
+        context.setLineCap(.round)
+        context.strokePath()
+      } else {
+        context.setFillColor(color.cgColor)
+        context.fillPath(using: shape.evenOdd ? .evenOdd : .winding)
+      }
+      context.restoreGState()
     }
   }
 }

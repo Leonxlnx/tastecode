@@ -1,105 +1,21 @@
 import SwiftUI
 import UIKit
 
-/// One chat, continued from wherever it was started.
-struct ChatScreen: View {
-  @Environment(AppModel.self) private var model
-  let threadId: String
-
-  var body: some View {
-    ChatContent(store: model.thread(threadId))
-      .onAppear {
-        model.openThread(threadId)
-        model.markSeen(threadId)
-      }
-      .onDisappear {
-        // Whatever happened while it was open was seen too.
-        model.markSeen(threadId)
-        model.closeThread(threadId)
-      }
-  }
-}
-
-private struct ChatContent: View {
-  @Environment(AppModel.self) private var model
+/// The chat's bottom bar as UIKit hosts it, with its own problem alert.
+struct ChatBarHost: View {
   let store: ThreadStore
-  @State private var jumpToken = 0
-  /// The composer's height: the transcript scrolls under it, and stops short of hiding behind it.
-  @State private var barHeight: CGFloat = 0
-  @State private var showChanges = false
-  @State private var renaming = false
-  @State private var draftTitle = ""
+  let onSent: () -> Void
   @State private var problem: String?
 
   var body: some View {
-    let meta = store.meta
-    TranscriptView(store: store, jumpToken: jumpToken, bottomBar: barHeight)
-      .ignoresSafeArea(.container)
-      .safeAreaBar(edge: .bottom) {
-        ChatBar(store: store, problem: $problem) { jumpToken += 1 }
-          .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { barHeight = $0 }
-      }
-      .navigationTitle(meta?.title ?? "")
-      .navigationBarTitleDisplayMode(.inline)
-      .navigationSubtitle(subtitle(meta))
-      .toolbarTitleMenu {
-        if let meta {
-          Button("Rename…", tabler: "pencil") {
-            draftTitle = meta.title
-            renaming = true
-          }
-          Button(meta.pinned ? "Unpin" : "Pin", tabler: meta.pinned ? "pinned-off" : "pin") {
-            model.perform(["type": "thread.pin", "threadId": store.id, "pinned": !meta.pinned]) { problem = $0 }
-          }
-          if meta.archived {
-            Button("Restore", tabler: "restore") {
-              model.perform(["type": "thread.restore", "threadId": store.id]) { problem = $0 }
-            }
-          } else {
-            Button("Archive", tabler: "archive") {
-              model.perform(["type": "thread.archive", "threadId": store.id]) { problem = $0 }
-            }
-          }
-        }
-      }
-      .toolbar {
-        if let changes = meta?.changes {
-          ToolbarItem(placement: .topBarTrailing) {
-            Button {
-              showChanges = true
-            } label: {
-              LineCounts(added: changes.added, removed: changes.removed)
-                .font(.subheadline.weight(.medium))
-                .padding(.horizontal, 4)
-            }
-            .accessibilityLabel("Changes: \(changes.files) files")
-          }
-        }
-      }
-      .sheet(isPresented: $showChanges) {
-        ChangesSheet(threadId: store.id)
-      }
-      .alert("Rename Chat", isPresented: $renaming) {
-        TextField("Title", text: $draftTitle)
-        Button("Cancel", role: .cancel) {}
-        Button("Rename") {
-          let title = draftTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-          guard !title.isEmpty else { return }
-          model.perform(["type": "thread.rename", "threadId": store.id, "title": title]) { problem = $0 }
-        }
-      }
+    ChatBar(store: store, problem: $problem, onSent: onSent)
       .problemAlert($problem)
-  }
-
-  private func subtitle(_ meta: ThreadMetaView?) -> String {
-    if model.link?.phase != .open { return "Reconnecting…" }
-    return meta?.projectName ?? ""
   }
 }
 
 /// The bottom of a chat: the composer, or the decision the agent waits for.
 /// They share one piece of glass that reshapes from one to the other.
-private struct ChatBar: View {
+struct ChatBar: View {
   @Environment(AppModel.self) private var model
   let store: ThreadStore
   @Binding var problem: String?
@@ -185,25 +101,21 @@ private struct ChatBar: View {
   }
 }
 
-/// A chat that does not exist yet. The middle of the screen is the project it
-/// will start in; the composer below is the same one every chat has.
-struct NewChatScreen: View {
+/// What a new chat's screen shows: the project it will start in, and the
+/// composer every chat has. `onStarted` hands the started chat to UIKit.
+struct NewChatBody: View {
   @Environment(AppModel.self) private var model
   let project: String?
-  @State private var started: String?
+  let onStarted: (String) -> Void
   @State private var pending: String?
   @State private var addingProject = false
   @State private var problem: String?
 
   var body: some View {
-    if let started {
-      ChatScreen(threadId: started)
-    } else {
-      content
-        .onAppear {
-          model.send(["type": "newChat.open", "projectPath": project.map { $0 as Any } ?? NSNull()])
-        }
-    }
+    content
+      .onAppear {
+        model.send(["type": "newChat.open", "projectPath": project.map { $0 as Any } ?? NSNull()])
+      }
   }
 
   private var content: some View {
@@ -244,7 +156,7 @@ struct NewChatScreen: View {
           do {
             let chat = try await model.request(
               StartedChat.self, ["type": "newChat.start", "text": text, "attachments": attachments])
-            started = chat.threadId
+            onStarted(chat.threadId)
           } catch {
             pending = nil
             throw error
@@ -254,8 +166,6 @@ struct NewChatScreen: View {
       .padding(.horizontal, 10)
       .padding(.bottom, 6)
     }
-    .navigationTitle("New Chat")
-    .navigationBarTitleDisplayMode(.inline)
     .sheet(isPresented: $addingProject) {
       FolderBrowser { path in
         addingProject = false
