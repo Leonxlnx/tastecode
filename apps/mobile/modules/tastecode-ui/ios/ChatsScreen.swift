@@ -23,6 +23,7 @@ struct ChatsScreen: View {
   @State private var problem: String?
   @State private var renaming: ChatView?
   @State private var newTitle = ""
+  @AppStorage("foldedProjects") private var foldedStore = ""
 
   var body: some View {
     NavigationStack(path: $path) {
@@ -112,31 +113,30 @@ struct ChatsScreen: View {
   @ViewBuilder private var list: some View {
     let chats = matching
     let active = chats.filter { !$0.archived }
-    let pinned = active.filter(\.pinned)
-    let others = active.filter { !$0.pinned }
     let archived = chats.filter(\.archived)
     List {
-      if !pinned.isEmpty {
-        Section("Pinned") {
-          ForEach(pinned) { chat in
-            ChatRow(chat: chat, problem: $problem, onRename: startRenaming)
+      ForEach(ChatGroup.groups(active), id: \.title) { group in
+        Section {
+          let folded = group.foldable && foldedProjects.contains(group.title) && query.isEmpty
+          GroupHeader(title: group.title, count: group.chats.count, foldable: group.foldable, folded: folded) {
+            toggleFold(group.title)
+          }
+          if !folded {
+            ForEach(group.chats) { chat in
+              ChatRow(chat: chat, problem: $problem, onRename: startRenaming)
+            }
           }
         }
+        .listSectionSeparator(.hidden)
       }
-      Section {
-        ForEach(others) { chat in
-          ChatRow(chat: chat, problem: $problem, onRename: startRenaming)
-        }
-      } header: {
-        if !pinned.isEmpty { Text("Chats") }
-      }
-      .listSectionSeparator(.hidden, edges: .top)
       if showArchived && !archived.isEmpty {
-        Section("Archived") {
+        Section {
+          GroupHeader(title: "Archived", count: archived.count, foldable: false, folded: false) {}
           ForEach(archived) { chat in
             ChatRow(chat: chat, problem: $problem, onRename: startRenaming)
           }
         }
+        .listSectionSeparator(.hidden)
       }
     }
     .listStyle(.plain)
@@ -149,6 +149,17 @@ struct ChatsScreen: View {
       }
     }
     .animation(.default, value: chats.map(\.id))
+  }
+
+  /// Projects folded away, by name; kept on this phone across launches.
+  private var foldedProjects: Set<String> {
+    Set(foldedStore.split(separator: "\n").map(String.init))
+  }
+
+  private func toggleFold(_ name: String) {
+    var folded = foldedProjects
+    if folded.contains(name) { folded.remove(name) } else { folded.insert(name) }
+    withAnimation(.snappy) { foldedStore = folded.sorted().joined(separator: "\n") }
   }
 
   @ViewBuilder private var emptyState: some View {
@@ -273,7 +284,87 @@ struct ChatsScreen: View {
   }
 }
 
-/// One chat: its title, where it runs and what it is doing, and when.
+/// A run of chats under one heading: pinned ones, the ones that need you, then
+/// one group per project in the order its newest chat comes, so a row never
+/// has to repeat its project.
+struct ChatGroup {
+  let title: String
+  let chats: [ChatView]
+  /// Only projects fold away; what is pinned or needs you always shows.
+  let foldable: Bool
+
+  static func groups(_ chats: [ChatView]) -> [ChatGroup] {
+    let pinned = chats.filter(\.pinned)
+    let rest = chats.filter { !$0.pinned }
+    let waiting = rest.filter { $0.state.waitsForYou || $0.state == .failed }
+    var groups: [ChatGroup] = []
+    if !pinned.isEmpty { groups.append(ChatGroup(title: "Pinned", chats: pinned, foldable: false)) }
+    if !waiting.isEmpty { groups.append(ChatGroup(title: "Needs You", chats: waiting, foldable: false)) }
+    var order: [String] = []
+    var byProject: [String: [ChatView]] = [:]
+    for chat in rest where !waiting.contains(chat) {
+      if byProject[chat.projectName] == nil { order.append(chat.projectName) }
+      byProject[chat.projectName, default: []].append(chat)
+    }
+    for name in order { groups.append(ChatGroup(title: name, chats: byProject[name] ?? [], foldable: true)) }
+    return groups
+  }
+}
+
+/// A group's name over its chats. A project's name folds it away with a tap,
+/// leaving the name and how many chats wait under it.
+struct GroupHeader: View {
+  let title: String
+  let count: Int
+  let foldable: Bool
+  let folded: Bool
+  let toggle: () -> Void
+
+  var body: some View {
+    if foldable {
+      Button(action: toggle) { label }
+        .buttonStyle(.plain)
+        .modifier(HeaderRow())
+        .accessibilityValue(folded ? "Folded, \(count) chats" : "Open")
+    } else {
+      label.modifier(HeaderRow())
+    }
+  }
+
+  private var label: some View {
+      HStack(spacing: 6) {
+        Text(title)
+          .font(.subheadline.weight(.semibold))
+          .foregroundStyle(.primary)
+        if foldable {
+          Image(systemName: "chevron.down")
+            .font(.caption2.weight(.bold))
+            .foregroundStyle(.tertiary)
+            .rotationEffect(.degrees(folded ? -90 : 0))
+        }
+        Spacer()
+        if folded {
+          Text("\(count)")
+            .font(.footnote)
+            .monospacedDigit()
+            .foregroundStyle(.tertiary)
+            .transition(.opacity)
+        }
+      }
+      .contentShape(Rectangle())
+  }
+}
+
+private struct HeaderRow: ViewModifier {
+  func body(content: Content) -> some View {
+    content
+      .listRowSeparator(.hidden)
+      .listRowInsets(EdgeInsets(top: 18, leading: 16, bottom: 4, trailing: 20))
+      .accessibilityAddTraits(.isHeader)
+  }
+}
+
+/// One chat: its title, then the provider's logo, model and what it is doing.
 struct ChatRow: View {
   @Environment(AppModel.self) private var model
   let chat: ChatView
@@ -283,20 +374,19 @@ struct ChatRow: View {
   var body: some View {
     NavigationLink(value: Route.chat(chat.id)) {
       HStack(alignment: .firstTextBaseline, spacing: 12) {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: 3) {
           Text(chat.title)
-            .font(.subheadline.weight(chat.unread ? .semibold : .regular))
+            .font(.callout.weight(chat.unread ? .semibold : .regular))
             .lineLimit(1)
           detail
-            .font(.footnote)
-            .lineLimit(1)
         }
         Spacer(minLength: 8)
         trailing
       }
-      .padding(.vertical, 1)
+      .padding(.vertical, 2)
     }
     .navigationLinkIndicatorVisibility(.hidden)
+    .alignmentGuide(.listRowSeparatorLeading) { _ in 0 }
     .swipeActions(edge: .leading) {
       Button(chat.pinned ? "Unpin" : "Pin", systemImage: chat.pinned ? "pin.slash.fill" : "pin.fill") {
         togglePin()
@@ -326,6 +416,28 @@ struct ChatRow: View {
     .sensoryFeedback(.selection, trigger: chat.pinned)
   }
 
+  /// Logo and model, then the project where the group does not name it (pinned,
+  /// needs you, archived), then the state. A long line gives up the project first.
+  private var detail: some View {
+    HStack(spacing: 0) {
+      ProviderLogo(mark: chat.mark, size: 12)
+        .foregroundStyle(.secondary)
+        .padding(.trailing, 5)
+      Text(showsProject ? "\(chat.modelName ?? chat.sourceName) · \(chat.projectName)" : chat.modelName ?? chat.sourceName)
+        .foregroundStyle(.secondary)
+      if let state = stateText {
+        Text("\(Text(" · ").foregroundStyle(.secondary))\(state)")
+          .layoutPriority(1)
+      }
+    }
+    .font(.footnote)
+    .lineLimit(1)
+  }
+
+  private var showsProject: Bool {
+    chat.pinned || chat.archived || chat.state.waitsForYou || chat.state == .failed
+  }
+
   private func togglePin() {
     model.perform(["type": "thread.pin", "threadId": chat.id, "pinned": !chat.pinned]) { problem = $0 }
   }
@@ -336,23 +448,6 @@ struct ChatRow: View {
 
   private func restore() {
     model.perform(["type": "thread.restore", "threadId": chat.id]) { problem = $0 }
-  }
-
-  /// What the chat runs on and where: the provider's logo, the model (or the
-  /// agent, when the chat uses its default), the project, then what it is doing.
-  /// A long line gives up the project before the state.
-  private var detail: some View {
-    HStack(spacing: 0) {
-      ProviderLogo(mark: chat.mark, size: 12)
-        .foregroundStyle(.secondary)
-        .padding(.trailing, 5)
-      Text("\(chat.modelName ?? chat.sourceName) · \(chat.projectName)")
-        .foregroundStyle(.secondary)
-      if let state = stateText {
-        Text("\(Text(" · ").foregroundStyle(.secondary))\(state)")
-          .layoutPriority(1)
-      }
-    }
   }
 
   private var stateText: Text? {
