@@ -1,8 +1,8 @@
 import UIKit
 
-/// One piece of glass along the bottom of a chat. It holds the composer, or
-/// the decision the agent waits for in its place, and reshapes from one to
-/// the other.
+/// The bottom of a chat: the composer, which brings its own pieces of glass,
+/// or on one piece of glass the decision the agent waits for in its place.
+/// It reshapes from one to the other.
 final class GlassBar: UIView {
   private let glass = UIVisualEffectView(effect: UIGlassEffect(style: .regular))
   private(set) var content: UIView?
@@ -10,8 +10,7 @@ final class GlassBar: UIView {
 
   override init(frame: CGRect) {
     super.init(frame: frame)
-    // The desktop composer's corners, around controls 8 points in with 11-point corners of their own.
-    glass.cornerConfiguration = .corners(radius: .fixed(20))
+    glass.cornerConfiguration = .corners(radius: .fixed(26))
     glass.clipsToBounds = true
     addPinned(glass)
   }
@@ -23,6 +22,16 @@ final class GlassBar: UIView {
   /// takes the new one's height.
   func show(_ next: UIView, animated: Bool) {
     guard next !== content else { return }
+    // The composer brings its own pieces of glass; a decision sits on the bar's.
+    let bare = next is ComposerView
+    // Its pieces' rims and shadows reach past the bar's edge, so nothing is cut off then.
+    glass.clipsToBounds = !bare
+    let shape = { self.glass.effect = bare ? nil : UIGlassEffect(style: .regular) }
+    if animated && window != nil && content != nil {
+      UIView.animate(springDuration: 0.35, bounce: 0, animations: shape)
+    } else {
+      shape()
+    }
     let old = content
     content = next
     let box = glass.contentView

@@ -57,6 +57,10 @@ final class ComposerView: UIView, UITextViewDelegate {
 
   private let queueView = QueueView()
   private let queueBox = UIView()
+  /// What shows and hides with the queue: the box, or its own glass in the floating layouts.
+  private lazy var queueHolder: UIView = queueBox
+  /// What shows and hides with the send button.
+  private lazy var sendHolder: UIView = sendButton
   private let strip = ImageStripView()
   private let stripBox = UIView()
   private let field = UITextView()
@@ -96,7 +100,7 @@ final class ComposerView: UIView, UITextViewDelegate {
   @available(*, unavailable)
   required init?(coder: NSCoder) { fatalError() }
 
-  /// The controls' height, the desktop's 32 a little larger for a finger.
+  /// The model capsule's and the access circle's height.
   static let control: CGFloat = 34
 
   private var trimmed: String { field.text.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -131,7 +135,8 @@ final class ComposerView: UIView, UITextViewDelegate {
     placeholder.textColor = .placeholderText
     placeholder.isUserInteractionEnabled = false
     let fieldBox = UIView()
-    fieldBox.addPinned(field, insets: UIEdgeInsets(top: 14, left: 16, bottom: 10, right: 16))
+    // One line sits in the middle of the 44-point capsule.
+    fieldBox.addPinned(field, insets: UIEdgeInsets(top: 11, left: 16, bottom: 11, right: 6))
     fieldBox.addSubview(placeholder)
     placeholder.translatesAutoresizingMaskIntoConstraints = false
     fieldHeight = field.heightAnchor.constraint(equalToConstant: 22)
@@ -157,48 +162,95 @@ final class ComposerView: UIView, UITextViewDelegate {
       UIDeferredMenuElement.uncached { [weak self] completion in completion(self?.accessMenu() ?? []) }
     ])
 
-    // The desktop composer's controls: rounded squares a shade off the glass
-    // with a fine edge, and the send button round, the only solid thing.
-    for button in [attach, access] { ComposerInk.chip(button) }
-    sendButton.layer.cornerRadius = Self.control / 2
     sendButton.addAction(UIAction { [weak self] _ in self?.sendOrStop() }, for: .touchUpInside)
 
-    let spacer = UIView()
-    spacer.setContentHuggingPriority(.init(1), for: .horizontal)
-    spacer.setContentCompressionResistancePriority(.init(1), for: .horizontal)
-    let row = UIStackView(arrangedSubviews: [attach, access, spacer, chip, sendButton])
-    row.axis = .horizontal
-    row.alignment = .center
-    row.spacing = 6
-    NSLayoutConstraint.activate([
-      attach.widthAnchor.constraint(equalToConstant: Self.control),
-      attach.heightAnchor.constraint(equalToConstant: Self.control),
-      chip.heightAnchor.constraint(equalToConstant: Self.control),
-      access.widthAnchor.constraint(equalToConstant: Self.control),
-      access.heightAnchor.constraint(equalToConstant: Self.control),
-      sendButton.widthAnchor.constraint(equalToConstant: Self.control),
-      sendButton.heightAnchor.constraint(equalToConstant: Self.control),
-      spacer.widthAnchor.constraint(greaterThanOrEqualToConstant: 0),
-    ])
-    let rowBox = UIView()
-    rowBox.addPinned(row, insets: UIEdgeInsets(top: 0, left: 8, bottom: 8, right: 8))
-
-    let column = UIStackView(arrangedSubviews: [queueBox, stripBox, fieldBox, rowBox])
+    let column = buildPieces(fieldBox)
     column.axis = .vertical
     addPinned(column)
-    queueBox.isHidden = true
+    queueHolder.isHidden = true
     stripBox.isHidden = true
     applyFonts()
     paint()
+  }
+
+  private func square(_ view: UIView, _ side: CGFloat) {
+    view.translatesAutoresizingMaskIntoConstraints = false
+    NSLayoutConstraint.activate([
+      view.widthAnchor.constraint(equalToConstant: side), view.heightAnchor.constraint(equalToConstant: side),
+    ])
+  }
+
+  /// iOS 26's own way, as in Messages and Safari: separate pieces of glass.
+  /// Attach in a round one beside the text's capsule, send inside it once
+  /// there is something to send; the model's capsule and the access circle
+  /// above them.
+  private func buildPieces(_ fieldBox: UIView) -> UIStackView {
+    func glass(radius: CGFloat?, interactive: Bool) -> UIVisualEffectView {
+      let effect = UIGlassEffect(style: .regular)
+      effect.isInteractive = interactive
+      let view = UIVisualEffectView(effect: effect)
+      view.cornerConfiguration = radius.map { .corners(radius: .fixed($0)) } ?? .capsule()
+      return view
+    }
+    sendButton.layer.cornerRadius = 16
+    square(sendButton, 32)
+
+    let queueGlass = glass(radius: 22, interactive: false)
+    queueGlass.contentView.addPinned(queueBox, insets: UIEdgeInsets(top: 0, left: 0, bottom: 12, right: 0))
+    queueHolder = queueGlass
+
+    let chipGlass = glass(radius: nil, interactive: true)
+    chipGlass.contentView.addPinned(chip)
+    chip.heightAnchor.constraint(equalToConstant: Self.control).isActive = true
+    let accessGlass = glass(radius: nil, interactive: true)
+    accessGlass.contentView.addPinned(access)
+    square(access, Self.control)
+    let top = UIStackView(arrangedSubviews: [chipGlass, accessGlass, UIView()])
+    top.spacing = 8
+    top.axis = .horizontal
+    top.alignment = .center
+
+    let attachGlass = glass(radius: nil, interactive: true)
+    attachGlass.contentView.addPinned(attach)
+    square(attach, 44)
+    let text = UIStackView(arrangedSubviews: [stripBox, fieldBox])
+    text.axis = .vertical
+    let sendBox = UIView()
+    sendButton.translatesAutoresizingMaskIntoConstraints = false
+    sendBox.addSubview(sendButton)
+    // Held by its right edge: as the box folds away, the button fades where it
+    // stands instead of sliding out past the glass.
+    let lead = sendButton.leadingAnchor.constraint(equalTo: sendBox.leadingAnchor)
+    lead.priority = .required - 1
+    NSLayoutConstraint.activate([
+      lead,
+      sendButton.topAnchor.constraint(equalTo: sendBox.topAnchor),
+      sendButton.trailingAnchor.constraint(equalTo: sendBox.trailingAnchor, constant: -6),
+      sendButton.bottomAnchor.constraint(equalTo: sendBox.bottomAnchor, constant: -6),
+    ])
+    sendHolder = sendBox
+    let inside = UIStackView(arrangedSubviews: [text, sendBox])
+    inside.axis = .horizontal
+    inside.alignment = .bottom
+    let fieldGlass = glass(radius: 22, interactive: false)
+    fieldGlass.contentView.addPinned(inside)
+    fieldGlass.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
+    let bottom = UIStackView(arrangedSubviews: [attachGlass, fieldGlass])
+    bottom.axis = .horizontal
+    bottom.alignment = .bottom
+    bottom.spacing = 8
+
+    let column = UIStackView(arrangedSubviews: [queueGlass, top, bottom])
+    column.spacing = 8
+    return column
   }
 
   /// Colours drawn as they are, resolved for light or dark: on the glass,
   /// dynamic ones turn into vibrancy and lose their tone.
   private func paint() {
     let traits = traitCollection
-    for button in [attach, access] { button.layer.borderColor = ComposerInk.edge.resolvedColor(with: traits).cgColor }
     attach.setImage(
-      Tabler.image("plus", size: 18).withTintColor(ComposerInk.glyph.resolvedColor(with: traits), renderingMode: .alwaysOriginal),
+      Tabler.image("plus", size: 21).withTintColor(UIColor.label.resolvedColor(with: traits), renderingMode: .alwaysOriginal),
       for: .normal)
     chip.paint(traits)
     refreshAccess()
@@ -229,16 +281,16 @@ final class ComposerView: UIView, UITextViewDelegate {
       let animate = window != nil && !force
       queueView.show(next.queue, canSteer: next.canSteer, animated: animate)
       let hidden = next.queue.isEmpty
-      if queueBox.isHidden != hidden {
+      if queueHolder.isHidden != hidden {
         if animate {
-          queueBox.alpha = hidden ? 1 : 0
+          queueHolder.alpha = hidden ? 1 : 0
           UIView.animate(springDuration: 0.32, bounce: 0) {
-            self.queueBox.isHidden = hidden
-            self.queueBox.alpha = hidden ? 0 : 1
+            self.queueHolder.isHidden = hidden
+            self.queueHolder.alpha = hidden ? 0 : 1
             self.window?.layoutIfNeeded()
           }
         } else {
-          queueBox.isHidden = hidden
+          queueHolder.isHidden = hidden
         }
       }
     }
@@ -257,8 +309,8 @@ final class ComposerView: UIView, UITextViewDelegate {
     let setup = state.setup
     let efforts = model.catalog.source(setup.sourceKey)?.models.first { $0.id == setup.model }?.efforts ?? []
     let name = setup.modelName ?? setup.sourceName ?? "Model"
-    let level = efforts.firstIndex { $0.id == setup.effort }.map { $0 + 1 } ?? 0
-    chip.show(mark: setup.mark ?? "custom", name: name, fast: setup.tier != nil, levels: efforts.count, level: level)
+    chip.show(
+      mark: setup.mark ?? "custom", name: name, fast: setup.tier != nil, effort: efforts.isEmpty ? nil : setup.effortLabel)
     chip.accessibilityLabel = [name, setup.tierName, efforts.isEmpty ? nil : setup.effortLabel]
       .compactMap { $0 }.joined(separator: ", ")
   }
@@ -295,10 +347,14 @@ final class ComposerView: UIView, UITextViewDelegate {
     // Fixed colours, the glyph drawn in its own: on the glass, tinted ones turn into muted vibrancy.
     let traits = traitCollection
     let glyph = Tabler.image(stop ? "player-stop-filled" : "arrow-up", size: stop ? 14 : 19)
-      .withTintColor((active ? UIColor.systemBackground : .tertiaryLabel).resolvedColor(with: traits), renderingMode: .alwaysOriginal)
+      .withTintColor(UIColor.systemBackground.resolvedColor(with: traits), renderingMode: .alwaysOriginal)
     let apply = {
       self.sendButton.setImage(glyph, for: .normal)
-      self.sendButton.backgroundColor = active ? .label : ComposerInk.idle
+      self.sendButton.backgroundColor = .label
+      // It shows only when there is something to send or stop.
+      self.sendHolder.isHidden = !active
+      self.sendHolder.alpha = active ? 1 : 0
+      self.window?.layoutIfNeeded()
     }
     if first || window == nil {
       apply()
@@ -492,22 +548,21 @@ final class ComposerView: UIView, UITextViewDelegate {
   }
 }
 
-/// The model as the desktop's composer shows it on a narrow window: the
-/// provider's logo, the model's name, a bolt for a faster tier, a dot per
-/// reasoning level filled up to the chosen one, and a chevron. It opens the
+/// The model in its glass capsule: the provider's logo, the model's name, a
+/// bolt for a faster tier, the reasoning level and a chevron. It opens the
 /// panel that changes them.
 private final class SetupChip: UIControl {
   private let mark = ProviderMarkView()
   private let name = UILabel()
   private let fast = UIImageView()
-  private let dots = EffortDots()
+  private let effort = UILabel()
   private let chevron = UIImageView()
 
   override init(frame: CGRect) {
     super.init(frame: frame)
     name.lineBreakMode = .byTruncatingTail
     name.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-    for fixed in [mark, fast, dots, chevron] as [UIView] {
+    for fixed in [mark, fast, effort, chevron] as [UIView] {
       fixed.setContentCompressionResistancePriority(.required, for: .horizontal)
       fixed.setContentHuggingPriority(.required, for: .horizontal)
     }
@@ -515,20 +570,18 @@ private final class SetupChip: UIControl {
       mark.widthAnchor.constraint(equalToConstant: 14),
       mark.heightAnchor.constraint(equalToConstant: 14),
     ])
-    let row = UIStackView(arrangedSubviews: [mark, name, fast, dots, chevron])
+    let row = UIStackView(arrangedSubviews: [mark, name, fast, effort, chevron])
     row.axis = .horizontal
     row.alignment = .center
-    row.spacing = 6
-    row.setCustomSpacing(4, after: dots)
+    row.spacing = 5
     row.isUserInteractionEnabled = false
     row.translatesAutoresizingMaskIntoConstraints = false
     addSubview(row)
     NSLayoutConstraint.activate([
-      row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 11),
-      row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -9),
+      row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 13),
+      row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -11),
       row.centerYAnchor.constraint(equalTo: centerYAnchor),
     ])
-    ComposerInk.chip(self)
     setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
     isAccessibilityElement = true
     accessibilityTraits = .button
@@ -540,26 +593,27 @@ private final class SetupChip: UIControl {
 
   /// `traits` come from the composer: inside its trait change, this view's own are not updated yet.
   func applyFonts(_ traits: UITraitCollection) {
-    name.font = .app(.subheadline, traits: traits)
+    let font = UIFont.app(.subheadline, weight: .medium, traits: traits)
+    name.font = font
+    effort.font = font
   }
 
   func paint(_ traits: UITraitCollection) {
-    layer.borderColor = ComposerInk.edge.resolvedColor(with: traits).cgColor
-    name.textColor = UIColor.label.resolvedColor(with: traits)
-    mark.tintColor = UIColor.label.resolvedColor(with: traits)
-    fast.image = Tabler.image("bolt", size: 13)
-      .withTintColor(UIColor.label.resolvedColor(with: traits), renderingMode: .alwaysOriginal)
-    chevron.image = Tabler.image("chevron-down", size: 14)
+    let ink = UIColor.label.resolvedColor(with: traits)
+    name.textColor = ink
+    effort.textColor = UIColor.secondaryLabel.resolvedColor(with: traits)
+    mark.tintColor = ink
+    fast.image = Tabler.image("bolt", size: 13).withTintColor(ink, renderingMode: .alwaysOriginal)
+    chevron.image = Tabler.image("chevron-down", size: 13)
       .withTintColor(UIColor.tertiaryLabel.resolvedColor(with: traits), renderingMode: .alwaysOriginal)
-    dots.paint(traits)
   }
 
-  func show(mark logo: String, name text: String, fast faster: Bool, levels: Int, level: Int) {
+  func show(mark logo: String, name text: String, fast faster: Bool, effort label: String?) {
     mark.mark = logo
     name.text = text
     fast.isHidden = !faster
-    dots.show(levels: levels, level: level)
-    dots.isHidden = levels == 0
+    effort.text = label
+    effort.isHidden = label == nil
   }
 
   override var isHighlighted: Bool {
@@ -569,58 +623,8 @@ private final class SetupChip: UIControl {
   }
 }
 
-/// A dot per reasoning level, the chosen one and those below it filled, as the desktop's model button draws them.
-private final class EffortDots: UIView {
-  private var levels = 0
-  private var level = 0
-  private var filled = UIColor.secondaryLabel
-  private var empty = UIColor.tertiaryLabel
-  private let size: CGFloat = 4
-  private let gap: CGFloat = 2
-
-  override init(frame: CGRect) {
-    super.init(frame: frame)
-    isOpaque = false
-    backgroundColor = .clear
-  }
-
-  @available(*, unavailable)
-  required init?(coder: NSCoder) { fatalError() }
-
-  override var intrinsicContentSize: CGSize {
-    CGSize(width: levels == 0 ? 0 : CGFloat(levels) * size + CGFloat(levels - 1) * gap, height: size)
-  }
-
-  func paint(_ traits: UITraitCollection) {
-    filled = UIColor.secondaryLabel.resolvedColor(with: traits)
-    empty = UIColor.label.withAlphaComponent(0.22).resolvedColor(with: traits)
-    setNeedsDisplay()
-  }
-
-  func show(levels count: Int, level chosen: Int) {
-    guard count != levels || chosen != level else { return }
-    if count != levels { invalidateIntrinsicContentSize() }
-    levels = count
-    level = chosen
-    setNeedsDisplay()
-  }
-
-  override func draw(_ rect: CGRect) {
-    for index in 0..<levels {
-      (index < level ? filled : empty).setFill()
-      let x = CGFloat(index) * (size + gap)
-      UIBezierPath(ovalIn: CGRect(x: x, y: (bounds.height - size) / 2, width: size, height: size)).fill()
-    }
-  }
-}
-
-/// The desktop composer's colours, set on the phone's glass.
+/// The composer's colours, the access ones the desktop's.
 enum ComposerInk {
-  /// A control's fill and edge: a shade off what is under it, as the desktop's controls sit on its card.
-  static let fill = UIColor { $0.userInterfaceStyle == .dark ? UIColor(white: 1, alpha: 0.05) : UIColor(white: 0, alpha: 0.03) }
-  static let edge = UIColor { $0.userInterfaceStyle == .dark ? UIColor(white: 1, alpha: 0.1) : UIColor(white: 0, alpha: 0.09) }
-  /// The send button while there is nothing to send.
-  static let idle = UIColor { $0.userInterfaceStyle == .dark ? UIColor(white: 1, alpha: 0.09) : UIColor(white: 0, alpha: 0.06) }
   /// The controls' icons: the desktop's text colour mixed a little toward its secondary one.
   static let glyph = UIColor {
     $0.userInterfaceStyle == .dark ? UIColor(white: 0.8, alpha: 1) : UIColor(red: 0.2, green: 0.2, blue: 0.22, alpha: 1)
@@ -628,14 +632,6 @@ enum ComposerInk {
   /// Auto-review and full access, in the desktop's colours for them.
   static let review = UIColor { $0.userInterfaceStyle == .dark ? UIColor(rgb: 0x65B8FF) : UIColor(rgb: 0x2D72DC) }
   static let danger = UIColor { $0.userInterfaceStyle == .dark ? UIColor(rgb: 0xFE8549) : UIColor(rgb: 0xEF4D05) }
-
-  /// Shapes a view as one of the composer's controls; its edge colour is set where it is painted.
-  static func chip(_ view: UIView) {
-    view.backgroundColor = fill
-    view.layer.cornerRadius = 11
-    view.layer.cornerCurve = .continuous
-    view.layer.borderWidth = 1
-  }
 }
 
 extension UIColor {
