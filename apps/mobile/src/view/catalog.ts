@@ -11,6 +11,7 @@ import {
   type Choice,
   type Source,
 } from '../state/catalog'
+import { providerLook } from './provider-mark'
 import type { CatalogView, SetupView, SourceView } from './types'
 
 /**
@@ -93,6 +94,7 @@ export function setupView(
   return {
     sourceKey: source?.key ?? null,
     sourceName: source?.name ?? null,
+    mark: source ? providerLook(source.provider, source.agent).mark : 'custom',
     model: model?.id ?? null,
     modelName: model ? modelLabel(model.displayName) : null,
     effort: effort ?? null,

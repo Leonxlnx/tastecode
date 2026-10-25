@@ -10,7 +10,8 @@ final class GlassBar: UIView {
 
   override init(frame: CGRect) {
     super.init(frame: frame)
-    glass.cornerConfiguration = .corners(radius: .fixed(26))
+    // The desktop composer's corners, around controls 8 points in with 11-point corners of their own.
+    glass.cornerConfiguration = .corners(radius: .fixed(20))
     glass.clipsToBounds = true
     addPinned(glass)
   }

@@ -210,6 +210,11 @@ extension Tabler {
     "loader-2": Icon(filled: false, paths: [
       "M12 3a9 9 0 1 0 9 9",
     ]),
+    "lock-open": Icon(filled: false, paths: [
+      "M5 13a2 2 0 0 1 2 -2h10a2 2 0 0 1 2 2v6a2 2 0 0 1 -2 2h-10a2 2 0 0 1 -2 -2l0 -6",
+      "M11 16a1 1 0 1 0 2 0a1 1 0 1 0 -2 0",
+      "M8 11v-5a4 4 0 0 1 8 0",
+    ]),
     "menu-2": Icon(filled: false, paths: [
       "M4 6l16 0",
       "M4 12l16 0",
@@ -266,6 +271,15 @@ extension Tabler {
       "M3 4.001v5h5",
       "M11 12a1 1 0 1 0 2 0a1 1 0 1 0 -2 0",
     ]),
+    "scan-eye": Icon(filled: false, paths: [
+      "M7 12q 5 -7 10 0",
+      "M7 12q 5 7 10 0",
+      "M12 12h-.01",
+      "M3 7v-2a2 2 0 0 1 2 -2h2",
+      "M3 17v2a2 2 0 0 0 2 2h2",
+      "M17 3h2a2 2 0 0 1 2 2v2",
+      "M17 21h2a2 2 0 0 0 2 -2v-2",
+    ]),
     "search": Icon(filled: false, paths: [
       "M3 10a7 7 0 1 0 14 0a7 7 0 1 0 -14 0",
       "M21 21l-6 -6",
@@ -302,6 +316,11 @@ extension Tabler {
       "M15.04 19.745c-.942 .551 -1.964 .976 -3.04 1.255a12 12 0 0 1 -8.5 -15a12 12 0 0 0 8.5 -3a12 12 0 0 0 8.5 3a12 12 0 0 1 .195 6.015",
       "M19 16v3",
       "M19 22v.01",
+    ]),
+    "shield-question": Icon(filled: false, paths: [
+      "M15.065 19.732c-.95 .557 -1.98 .986 -3.065 1.268a12 12 0 0 1 -8.5 -15a12 12 0 0 0 8.5 -3a12 12 0 0 0 8.5 3c.51 1.738 .617 3.55 .333 5.303",
+      "M19 22v.01",
+      "M19 19a2.003 2.003 0 0 0 .914 -3.782a1.98 1.98 0 0 0 -2.414 .483",
     ]),
     "terminal": Icon(filled: false, paths: [
       "M5 7l5 5l-5 5",

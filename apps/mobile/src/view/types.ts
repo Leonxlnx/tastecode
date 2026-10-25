@@ -92,6 +92,8 @@ export type CatalogView = {
 export type SetupView = {
   sourceKey: string | null
   sourceName: string | null
+  /** The logo the desktop draws for the source. */
+  mark: string
   model: string | null
   modelName: string | null
   effort: string | null

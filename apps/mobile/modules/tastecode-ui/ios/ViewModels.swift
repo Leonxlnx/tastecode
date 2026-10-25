@@ -116,6 +116,8 @@ struct CatalogView: Decodable, Equatable {
 struct SetupView: Decodable, Equatable {
   var sourceKey: String?
   var sourceName: String?
+  /// The logo the desktop draws for the source.
+  var mark: String?
   var model: String?
   var modelName: String?
   var effort: String?
@@ -128,7 +130,7 @@ struct SetupView: Decodable, Equatable {
   var switchable: Bool
 
   static let empty = SetupView(
-    sourceKey: nil, sourceName: nil, model: nil, modelName: nil, effort: nil, effortLabel: nil,
+    sourceKey: nil, sourceName: nil, mark: nil, model: nil, modelName: nil, effort: nil, effortLabel: nil,
     tier: nil, tierName: nil, access: "ask", accessTitle: "Ask first", images: true, switchable: true)
 }
 

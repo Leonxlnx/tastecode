@@ -87,6 +87,7 @@ final class ComposerView: UIView, UITextViewDelegate {
       composer.applyFonts()
     }
     registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (composer: ComposerView, _: UITraitCollection) in
+      composer.paint()
       composer.sendShown = nil
       composer.refreshSend()
     }
@@ -95,8 +96,8 @@ final class ComposerView: UIView, UITextViewDelegate {
   @available(*, unavailable)
   required init?(coder: NSCoder) { fatalError() }
 
-  /// The round buttons' and the model capsule's height.
-  static let control: CGFloat = 36
+  /// The controls' height, the desktop's 32 a little larger for a finger.
+  static let control: CGFloat = 34
 
   private var trimmed: String { field.text.trimmingCharacters(in: .whitespacesAndNewlines) }
   private var uploading: Bool { images.contains { $0.path == nil && !$0.failed } }
@@ -130,7 +131,7 @@ final class ComposerView: UIView, UITextViewDelegate {
     placeholder.textColor = .placeholderText
     placeholder.isUserInteractionEnabled = false
     let fieldBox = UIView()
-    fieldBox.addPinned(field, insets: UIEdgeInsets(top: 16, left: 14, bottom: 14, right: 14))
+    fieldBox.addPinned(field, insets: UIEdgeInsets(top: 14, left: 16, bottom: 10, right: 16))
     fieldBox.addSubview(placeholder)
     placeholder.translatesAutoresizingMaskIntoConstraints = false
     fieldHeight = field.heightAnchor.constraint(equalToConstant: 22)
@@ -141,7 +142,6 @@ final class ComposerView: UIView, UITextViewDelegate {
       placeholder.topAnchor.constraint(equalTo: field.topAnchor),
     ])
 
-    attach.setImage(Tabler.image("plus", size: 22), for: .normal)
     attach.showsMenuAsPrimaryAction = true
     attach.preferredMenuElementOrder = .fixed
     attach.accessibilityLabel = "Attach"
@@ -157,22 +157,19 @@ final class ComposerView: UIView, UITextViewDelegate {
       UIDeferredMenuElement.uncached { [weak self] completion in completion(self?.accessMenu() ?? []) }
     ])
 
-    // Round buttons on a faint fill at either end, the send button the only solid one.
-    for button in [attach, access] {
-      button.tintColor = .label
-      button.backgroundColor = .quaternarySystemFill
-      button.layer.cornerRadius = Self.control / 2
-    }
+    // The desktop composer's controls: rounded squares a shade off the glass
+    // with a fine edge, and the send button round, the only solid thing.
+    for button in [attach, access] { ComposerInk.chip(button) }
     sendButton.layer.cornerRadius = Self.control / 2
     sendButton.addAction(UIAction { [weak self] _ in self?.sendOrStop() }, for: .touchUpInside)
 
     let spacer = UIView()
     spacer.setContentHuggingPriority(.init(1), for: .horizontal)
     spacer.setContentCompressionResistancePriority(.init(1), for: .horizontal)
-    let row = UIStackView(arrangedSubviews: [attach, chip, spacer, access, sendButton])
+    let row = UIStackView(arrangedSubviews: [attach, access, spacer, chip, sendButton])
     row.axis = .horizontal
     row.alignment = .center
-    row.spacing = 8
+    row.spacing = 6
     NSLayoutConstraint.activate([
       attach.widthAnchor.constraint(equalToConstant: Self.control),
       attach.heightAnchor.constraint(equalToConstant: Self.control),
@@ -192,6 +189,19 @@ final class ComposerView: UIView, UITextViewDelegate {
     queueBox.isHidden = true
     stripBox.isHidden = true
     applyFonts()
+    paint()
+  }
+
+  /// Colours drawn as they are, resolved for light or dark: on the glass,
+  /// dynamic ones turn into vibrancy and lose their tone.
+  private func paint() {
+    let traits = traitCollection
+    for button in [attach, access] { button.layer.borderColor = ComposerInk.edge.resolvedColor(with: traits).cgColor }
+    attach.setImage(
+      Tabler.image("plus", size: 18).withTintColor(ComposerInk.glyph.resolvedColor(with: traits), renderingMode: .alwaysOriginal),
+      for: .normal)
+    chip.paint(traits)
+    refreshAccess()
   }
 
   private func applyFonts() {
@@ -246,21 +256,27 @@ final class ComposerView: UIView, UITextViewDelegate {
   private func refreshChip() {
     let setup = state.setup
     let efforts = model.catalog.source(setup.sourceKey)?.models.first { $0.id == setup.model }?.efforts ?? []
-    let name = setup.modelName ?? setup.sourceName
-    let title = name.map { ([$0] + [setup.tierName].compactMap { $0 }).joined(separator: " · ") } ?? "Model"
-    chip.show(name: title, effort: efforts.isEmpty ? nil : setup.effortLabel)
-    chip.accessibilityLabel = [title, setup.effortLabel].compactMap { $0 }.joined(separator: ", ")
+    let name = setup.modelName ?? setup.sourceName ?? "Model"
+    let level = efforts.firstIndex { $0.id == setup.effort }.map { $0 + 1 } ?? 0
+    chip.show(mark: setup.mark ?? "custom", name: name, fast: setup.tier != nil, levels: efforts.count, level: level)
+    chip.accessibilityLabel = [name, setup.tierName, efforts.isEmpty ? nil : setup.effortLabel]
+      .compactMap { $0 }.joined(separator: ", ")
   }
 
   private func refreshAccess() {
+    // The desktop's icon for each level, coloured where it reaches further than asking.
     let symbol: String
+    let ink: UIColor
     switch state.setup.access {
-    case "ask": symbol = "hand-stop"
-    case "auto", "auto-review": symbol = "shield-check"
-    case "full": symbol = "shield-exclamation"
-    default: symbol = "shield"
+    case "ask": (symbol, ink) = ("shield-question", ComposerInk.glyph)
+    case "auto": (symbol, ink) = ("shield-check", ComposerInk.glyph)
+    case "auto-review": (symbol, ink) = ("scan-eye", ComposerInk.review)
+    case "full": (symbol, ink) = ("lock-open", ComposerInk.danger)
+    default: (symbol, ink) = ("shield", ComposerInk.glyph)
     }
-    access.setImage(Tabler.image(symbol, size: 20), for: .normal)
+    access.setImage(
+      Tabler.image(symbol, size: 18).withTintColor(ink.resolvedColor(with: traitCollection), renderingMode: .alwaysOriginal),
+      for: .normal)
     access.accessibilityLabel = "Access: \(state.setup.accessTitle)"
   }
 
@@ -282,7 +298,7 @@ final class ComposerView: UIView, UITextViewDelegate {
       .withTintColor((active ? UIColor.systemBackground : .tertiaryLabel).resolvedColor(with: traits), renderingMode: .alwaysOriginal)
     let apply = {
       self.sendButton.setImage(glyph, for: .normal)
-      self.sendButton.backgroundColor = active ? .label : .quaternarySystemFill
+      self.sendButton.backgroundColor = active ? .label : ComposerInk.idle
     }
     if first || window == nil {
       apply()
@@ -476,35 +492,43 @@ final class ComposerView: UIView, UITextViewDelegate {
   }
 }
 
-/// The model and how hard it thinks, in a capsule: the model's name and the
-/// reasoning level's. It opens the panel that changes both.
+/// The model as the desktop's composer shows it on a narrow window: the
+/// provider's logo, the model's name, a bolt for a faster tier, a dot per
+/// reasoning level filled up to the chosen one, and a chevron. It opens the
+/// panel that changes them.
 private final class SetupChip: UIControl {
+  private let mark = ProviderMarkView()
   private let name = UILabel()
-  private let effort = UILabel()
+  private let fast = UIImageView()
+  private let dots = EffortDots()
+  private let chevron = UIImageView()
 
   override init(frame: CGRect) {
     super.init(frame: frame)
-    name.textColor = .label
     name.lineBreakMode = .byTruncatingTail
     name.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-    effort.textColor = .secondaryLabel
-    effort.setContentCompressionResistancePriority(.required, for: .horizontal)
-    effort.setContentHuggingPriority(.required, for: .horizontal)
-    let row = UIStackView(arrangedSubviews: [name, effort])
+    for fixed in [mark, fast, dots, chevron] as [UIView] {
+      fixed.setContentCompressionResistancePriority(.required, for: .horizontal)
+      fixed.setContentHuggingPriority(.required, for: .horizontal)
+    }
+    NSLayoutConstraint.activate([
+      mark.widthAnchor.constraint(equalToConstant: 14),
+      mark.heightAnchor.constraint(equalToConstant: 14),
+    ])
+    let row = UIStackView(arrangedSubviews: [mark, name, fast, dots, chevron])
     row.axis = .horizontal
-    row.alignment = .firstBaseline
-    row.spacing = 5
+    row.alignment = .center
+    row.spacing = 6
+    row.setCustomSpacing(4, after: dots)
     row.isUserInteractionEnabled = false
     row.translatesAutoresizingMaskIntoConstraints = false
     addSubview(row)
     NSLayoutConstraint.activate([
-      row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
-      row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+      row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 11),
+      row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -9),
       row.centerYAnchor.constraint(equalTo: centerYAnchor),
     ])
-    backgroundColor = .quaternarySystemFill
-    layer.cornerRadius = ComposerView.control / 2
-    layer.cornerCurve = .continuous
+    ComposerInk.chip(self)
     setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
     isAccessibilityElement = true
     accessibilityTraits = .button
@@ -516,21 +540,109 @@ private final class SetupChip: UIControl {
 
   /// `traits` come from the composer: inside its trait change, this view's own are not updated yet.
   func applyFonts(_ traits: UITraitCollection) {
-    let font = UIFont.app(.subheadline, traits: traits)
-    name.font = font
-    effort.font = font
+    name.font = .app(.subheadline, traits: traits)
   }
 
-  func show(name text: String, effort level: String?) {
+  func paint(_ traits: UITraitCollection) {
+    layer.borderColor = ComposerInk.edge.resolvedColor(with: traits).cgColor
+    name.textColor = UIColor.label.resolvedColor(with: traits)
+    mark.tintColor = UIColor.label.resolvedColor(with: traits)
+    fast.image = Tabler.image("bolt", size: 13)
+      .withTintColor(UIColor.label.resolvedColor(with: traits), renderingMode: .alwaysOriginal)
+    chevron.image = Tabler.image("chevron-down", size: 14)
+      .withTintColor(UIColor.tertiaryLabel.resolvedColor(with: traits), renderingMode: .alwaysOriginal)
+    dots.paint(traits)
+  }
+
+  func show(mark logo: String, name text: String, fast faster: Bool, levels: Int, level: Int) {
+    mark.mark = logo
     name.text = text
-    effort.text = level
-    effort.isHidden = level == nil
+    fast.isHidden = !faster
+    dots.show(levels: levels, level: level)
+    dots.isHidden = levels == 0
   }
 
   override var isHighlighted: Bool {
     didSet {
       UIView.animate(withDuration: isHighlighted ? 0.05 : 0.2) { self.alpha = self.isHighlighted ? 0.5 : 1 }
     }
+  }
+}
+
+/// A dot per reasoning level, the chosen one and those below it filled, as the desktop's model button draws them.
+private final class EffortDots: UIView {
+  private var levels = 0
+  private var level = 0
+  private var filled = UIColor.secondaryLabel
+  private var empty = UIColor.tertiaryLabel
+  private let size: CGFloat = 4
+  private let gap: CGFloat = 2
+
+  override init(frame: CGRect) {
+    super.init(frame: frame)
+    isOpaque = false
+    backgroundColor = .clear
+  }
+
+  @available(*, unavailable)
+  required init?(coder: NSCoder) { fatalError() }
+
+  override var intrinsicContentSize: CGSize {
+    CGSize(width: levels == 0 ? 0 : CGFloat(levels) * size + CGFloat(levels - 1) * gap, height: size)
+  }
+
+  func paint(_ traits: UITraitCollection) {
+    filled = UIColor.secondaryLabel.resolvedColor(with: traits)
+    empty = UIColor.label.withAlphaComponent(0.22).resolvedColor(with: traits)
+    setNeedsDisplay()
+  }
+
+  func show(levels count: Int, level chosen: Int) {
+    guard count != levels || chosen != level else { return }
+    if count != levels { invalidateIntrinsicContentSize() }
+    levels = count
+    level = chosen
+    setNeedsDisplay()
+  }
+
+  override func draw(_ rect: CGRect) {
+    for index in 0..<levels {
+      (index < level ? filled : empty).setFill()
+      let x = CGFloat(index) * (size + gap)
+      UIBezierPath(ovalIn: CGRect(x: x, y: (bounds.height - size) / 2, width: size, height: size)).fill()
+    }
+  }
+}
+
+/// The desktop composer's colours, set on the phone's glass.
+enum ComposerInk {
+  /// A control's fill and edge: a shade off what is under it, as the desktop's controls sit on its card.
+  static let fill = UIColor { $0.userInterfaceStyle == .dark ? UIColor(white: 1, alpha: 0.05) : UIColor(white: 0, alpha: 0.03) }
+  static let edge = UIColor { $0.userInterfaceStyle == .dark ? UIColor(white: 1, alpha: 0.1) : UIColor(white: 0, alpha: 0.09) }
+  /// The send button while there is nothing to send.
+  static let idle = UIColor { $0.userInterfaceStyle == .dark ? UIColor(white: 1, alpha: 0.09) : UIColor(white: 0, alpha: 0.06) }
+  /// The controls' icons: the desktop's text colour mixed a little toward its secondary one.
+  static let glyph = UIColor {
+    $0.userInterfaceStyle == .dark ? UIColor(white: 0.8, alpha: 1) : UIColor(red: 0.2, green: 0.2, blue: 0.22, alpha: 1)
+  }
+  /// Auto-review and full access, in the desktop's colours for them.
+  static let review = UIColor { $0.userInterfaceStyle == .dark ? UIColor(rgb: 0x65B8FF) : UIColor(rgb: 0x2D72DC) }
+  static let danger = UIColor { $0.userInterfaceStyle == .dark ? UIColor(rgb: 0xFE8549) : UIColor(rgb: 0xEF4D05) }
+
+  /// Shapes a view as one of the composer's controls; its edge colour is set where it is painted.
+  static func chip(_ view: UIView) {
+    view.backgroundColor = fill
+    view.layer.cornerRadius = 11
+    view.layer.cornerCurve = .continuous
+    view.layer.borderWidth = 1
+  }
+}
+
+extension UIColor {
+  convenience init(rgb: UInt32) {
+    self.init(
+      red: CGFloat((rgb >> 16) & 0xFF) / 255, green: CGFloat((rgb >> 8) & 0xFF) / 255, blue: CGFloat(rgb & 0xFF) / 255,
+      alpha: 1)
   }
 }
 
