@@ -103,7 +103,7 @@ import {
   parseStoredSessionOrder,
   sidebarSessions,
 } from './sidebar-order.js'
-import { NeedsYouAsks } from './needs-you-asks.js'
+import { NeedsYouAsks, statusAfterRequest } from './needs-you-asks.js'
 import { readSidebarPeek, subscribeSidebarPeek } from './sidebar-peek-pref.js'
 import type { NeedsYouPeekActions } from './ui/SidebarPeek.js'
 import { createSessionOrderSerializer } from './session-order-serializer.js'
@@ -2131,7 +2131,11 @@ export function App() {
         // a pin or a drag does.
         setProjects((current) =>
           updateSession(current, threadId, (session) => {
-            const status = statusFor(next, event, threadId !== activeIdRef.current)
+            const status = statusAfterRequest(
+              session.status,
+              statusFor(next, event, threadId !== activeIdRef.current),
+              event,
+            )
             return {
               ...session,
               status,

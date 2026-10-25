@@ -1,4 +1,10 @@
-import type { ApprovalRequest, DomainEvent, Item, UserInputRequest } from '@harness/contracts'
+import type {
+  ApprovalRequest,
+  DomainEvent,
+  Item,
+  ThreadInboxStatus,
+  UserInputRequest,
+} from '@harness/contracts'
 import type { Attention } from './sidebar-order.js'
 import { emptyThread, type ThreadState } from './thread-state.js'
 import { reduceEventLog } from './thread-store.js'
@@ -322,6 +328,23 @@ function approvalLine(request: ApprovalRequest): AskLine {
 function firstLine(text: string | undefined): string | undefined {
   const line = text?.split(/\r?\n/).find((part) => part.trim() !== '')
   return line?.trim()
+}
+
+/**
+ * A request is only open inside a running turn. A chat this window never
+ * loaded does not know that its turn runs, so a request answered from the
+ * peek (or in another window) would read as idle, and its row would show a
+ * time where the spinner belongs. It is working until its turn says it ended.
+ */
+export function statusAfterRequest(
+  previous: ThreadInboxStatus,
+  next: ThreadInboxStatus,
+  event: DomainEvent,
+): ThreadInboxStatus {
+  const answered = event.type === 'approval.resolved' || event.type === 'user_input.resolved'
+  return answered && next === 'idle' && (previous === 'approval' || previous === 'input')
+    ? 'working'
+    : next
 }
 
 /** The peek answers only what it can show in full and answer safely. */

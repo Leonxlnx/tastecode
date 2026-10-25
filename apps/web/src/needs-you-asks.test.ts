@@ -6,6 +6,7 @@ import {
   MAX_ASK_TARGETS,
   NeedsYouAsks,
   questionAnswerable,
+  statusAfterRequest,
   type NeedsYouAskSource,
   type NeedsYouAskTarget,
 } from './needs-you-asks.js'
@@ -205,6 +206,23 @@ const target = (id: string, attention: NeedsYouAskTarget['attention'], since = 1
   id,
   attention,
   since,
+})
+
+describe('the status a chat has after its request is answered', () => {
+  const resolved: DomainEvent = { type: 'approval.resolved', id: 'approval-1' }
+  it('keeps a chat this window never loaded working, since its turn still runs', () => {
+    expect(statusAfterRequest('approval', 'idle', resolved)).toBe('working')
+    expect(
+      statusAfterRequest('input', 'idle', { type: 'user_input.resolved', id: 'input-1' }),
+    ).toBe('working')
+  })
+
+  it('leaves every other change as the chat reported it', () => {
+    expect(statusAfterRequest('approval', 'approval', resolved)).toBe('approval')
+    expect(statusAfterRequest('working', 'idle', resolved)).toBe('idle')
+    const ended: DomainEvent = { type: 'turn.completed', turnId: 't', status: 'completed' }
+    expect(statusAfterRequest('approval', 'idle', ended)).toBe('idle')
+  })
 })
 
 describe('the band ask cache', () => {
