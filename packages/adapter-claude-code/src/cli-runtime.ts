@@ -48,7 +48,6 @@ const UNANSWERED_REQUESTS = new Set([
   'request_user_dialog',
 ])
 
-const LineSchema = z.looseObject({ type: z.string() })
 const ControlResponseSchema = z.object({
   type: z.literal('control_response'),
   response: z.union([
@@ -434,10 +433,14 @@ class ClaudeCliQuery implements ClaudeQueryRuntime, ClaudeUsageQueryRuntime {
     return undefined
   }
 
+  /**
+   * Every streamed delta passes here, so a plain message costs a few field
+   * reads; only control traffic, results and command lists are parsed.
+   */
   #onLine(value: unknown): void {
-    const line = LineSchema.safeParse(value)
-    if (!line.success) return
-    switch (line.data.type) {
+    if (typeof value !== 'object' || value === null) return
+    const line = value as { type?: unknown; subtype?: unknown; sdk_host_only?: unknown }
+    switch (line.type) {
       case 'control_response': {
         const parsed = ControlResponseSchema.safeParse(value)
         if (!parsed.success) return
@@ -465,19 +468,23 @@ class ClaudeCliQuery implements ClaudeQueryRuntime, ClaudeUsageQueryRuntime {
       case 'transcript_mirror':
         return
     }
-    const commands = CommandsChangedSchema.safeParse(value)
-    if (commands.success) this.#commands = commands.data.commands as SlashCommand[]
-    const result = ResultSchema.safeParse(value)
-    this.#errorResult = result.success && result.data.is_error ? errorText(result.data) : undefined
-    const message = value as SDKMessage & { sdk_host_only?: unknown }
-    // Status pushes meant only for the SDK's own bookkeeping never reach its caller.
-    if (
-      message.type === 'system' &&
-      message.subtype === 'session_state_changed' &&
-      message.sdk_host_only === true
-    )
-      return
-    this.#messages.push(message)
+    if (typeof line.type !== 'string') return
+    if (line.type === 'result') {
+      const result = ResultSchema.safeParse(value)
+      this.#errorResult =
+        result.success && result.data.is_error ? errorText(result.data) : undefined
+    } else {
+      this.#errorResult = undefined
+    }
+    if (line.type === 'system') {
+      if (line.subtype === 'commands_changed') {
+        const commands = CommandsChangedSchema.safeParse(value)
+        if (commands.success) this.#commands = commands.data.commands as SlashCommand[]
+      }
+      // Status pushes meant only for the SDK's own bookkeeping never reach its caller.
+      if (line.subtype === 'session_state_changed' && line.sdk_host_only === true) return
+    }
+    this.#messages.push(value as SDKMessage)
   }
 
   async #answer(request: ControlRequest): Promise<void> {
