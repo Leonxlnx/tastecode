@@ -29,7 +29,7 @@ import type { ProviderDefault } from '../provider-defaults.js'
 import type { Transport } from '../transport.js'
 import { APPROVAL_MODES } from './approval-modes.js'
 import { Menu, MenuItem } from './Menu.js'
-import { getFriendlyEffortLabel } from './model-selector-utils.js'
+import { formatModelName, getFriendlyEffortLabel } from './model-selector-utils.js'
 import { Skeleton } from './Skeleton.js'
 import { SettingsSegmented } from './settings/SettingsSegmented.js'
 import '../styles/switch.css'
@@ -485,8 +485,11 @@ function ModelDefault(props: {
     : undefined
   const effortLabel = efforts.length > 0 && effort ? getFriendlyEffortLabel(effort) : undefined
   const unavailable =
-    pinned && !pinnedChoice ? `${props.pinnedName ?? pinned.model} (unavailable)` : undefined
-  const value = pinnedChoice?.model.displayName ?? unavailable ?? 'Last used'
+    pinned && !pinnedChoice
+      ? `${formatModelName(props.pinnedName ?? pinned.model)} (unavailable)`
+      : undefined
+  const value =
+    (pinnedChoice && formatModelName(pinnedChoice.model.displayName)) ?? unavailable ?? 'Last used'
 
   const pin = (choice: ModelChoice) => {
     const kept = pinned?.effort
@@ -535,7 +538,7 @@ function ModelDefault(props: {
           {props.models.map((choice) => (
             <PanelChoice
               key={choice.key}
-              title={choice.model.displayName}
+              title={formatModelName(choice.model.displayName)}
               selected={choice === pinnedChoice}
               onClick={() => {
                 if (choice !== pinnedChoice) pin(choice)
