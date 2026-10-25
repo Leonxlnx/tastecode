@@ -337,7 +337,7 @@ struct GroupHeader: View {
       }
     }
     .listRowSeparator(.hidden)
-    .listRowInsets(EdgeInsets(top: 18, leading: 20, bottom: 4, trailing: 20))
+    .listRowInsets(EdgeInsets(top: 26, leading: 20, bottom: 4, trailing: 20))
     .accessibilityAddTraits(.isHeader)
   }
 
@@ -346,7 +346,7 @@ struct GroupHeader: View {
   private var label: some View {
     HStack(alignment: .firstTextBaseline, spacing: 6) {
       Text(title)
-        .font(.subheadline.weight(.semibold))
+        .font(.headline)
         .foregroundStyle(.primary)
       Text("\(count)")
         .font(.subheadline)
@@ -375,16 +375,23 @@ struct ChatRow: View {
   var body: some View {
     NavigationLink(value: Route.chat(chat.id)) {
       HStack(alignment: .firstTextBaseline, spacing: 12) {
-        VStack(alignment: .leading, spacing: 4) {
-          Text(chat.title)
-            .font(.body.weight(chat.unread ? .semibold : .regular))
-            .lineLimit(1)
+        // The provider's mark in a column of its own, centred on the title's line.
+        ProviderLogo(mark: chat.mark, size: 15)
+          .foregroundStyle(chat.unread ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary))
+          .frame(width: 18)
+          .alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 5.5 }
+        VStack(alignment: .leading, spacing: 3) {
+          HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(chat.title)
+              .font(.callout.weight(chat.unread ? .semibold : .regular))
+              .lineLimit(1)
+            Spacer(minLength: 0)
+            trailing
+          }
           detail
         }
-        Spacer(minLength: 8)
-        trailing
       }
-      .padding(.vertical, 8)
+      .padding(.vertical, 10)
     }
     .navigationLinkIndicatorVisibility(.hidden)
     .listRowSeparator(.hidden)
@@ -418,13 +425,10 @@ struct ChatRow: View {
     .sensoryFeedback(.selection, trigger: chat.pinned)
   }
 
-  /// Logo and model, then the project where the group does not name it (pinned,
+  /// The model, then the project where the group does not name it (pinned,
   /// needs you, archived), then the state. A long line gives up the project first.
   private var detail: some View {
     HStack(spacing: 0) {
-      ProviderLogo(mark: chat.mark, size: 13)
-        .foregroundStyle(.secondary)
-        .padding(.trailing, 5)
       Text(showsProject ? "\(chat.modelName ?? chat.sourceName) · \(chat.projectName)" : chat.modelName ?? chat.sourceName)
         .foregroundStyle(.secondary)
       if let state = stateText {
@@ -432,7 +436,7 @@ struct ChatRow: View {
           .layoutPriority(1)
       }
     }
-    .font(.subheadline)
+    .font(.footnote)
     .lineLimit(1)
   }
 
