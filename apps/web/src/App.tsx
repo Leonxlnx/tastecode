@@ -4720,11 +4720,13 @@ export function App() {
               accountId: activeSession.accountId as AccountId | undefined,
             }
           : undefined,
+      catalogLoading: catalogAvailability === 'loading',
       pendingSources: pendingModelSources,
       sourceErrors: modelErrors,
       onRetrySources: refreshCatalog,
     }),
     [
+      catalogAvailability,
       usageState,
       showUsage,
       providerAccounts,

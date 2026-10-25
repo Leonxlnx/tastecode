@@ -102,8 +102,9 @@
     transform 120ms var(--ease-out);
 }
 
-.model-ledger-anchor:has(.menutrigger:hover:not([aria-expanded='true'])) .model-ledger-tip,
-.model-ledger-anchor:has(.menutrigger:focus-visible:not([aria-expanded='true'])) .model-ledger-tip {
+/* Hover only: focus comes back to the trigger each time the picker closes,
+   and a tooltip on every return would be noise. */
+.model-ledger-anchor:has(.menutrigger:hover:not([aria-expanded='true'])) .model-ledger-tip {
   opacity: 1;
   transform: none;
   transition-delay: 450ms;

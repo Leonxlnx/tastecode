@@ -161,6 +161,41 @@ describe('buildLedgerRows', () => {
     expect(group).toMatchObject({ name: 'Antigravity', mark: 'antigravity' })
   })
 
+  it('says it is still checking which engines are set up before any source lists', () => {
+    const rows = buildLedgerRows({
+      models: [OPUS],
+      query: '',
+      recents: [],
+      current: { key: OPUS.key, effort: 'high' },
+      checking: true,
+    })
+    expect(kinds(rows)).toEqual([
+      'group:claude-code:ready',
+      'model:opus-5.5',
+      'checking',
+      'skeleton',
+      'skeleton',
+    ])
+    // Once sources list, each names itself instead.
+    expect(
+      kinds(
+        buildLedgerRows({
+          models: [OPUS],
+          query: '',
+          recents: [],
+          current: { key: OPUS.key, effort: 'high' },
+          checking: true,
+          pending: new Set(['codex']),
+        }),
+      ),
+    ).toEqual([
+      'group:claude-code:ready',
+      'model:opus-5.5',
+      'group:codex:loading',
+      'skeleton',
+      'skeleton',
+    ])
+  })
   it('folds a long list behind a "more" row but never hides the model in use', () => {
     const many = Array.from({ length: 38 }, (_, index) =>
       choice('opencode', 'OpenCode', model(`m-${index}`, `Model ${index}`), {
@@ -367,6 +402,16 @@ describe('headroom', () => {
     expect(headroomOf([], 'grok', undefined, NOW)).toBeUndefined()
   })
 
+  it('says a window the provider only names the short way', () => {
+    const weekly = headroomOf(
+      [ready('grok', [{ label: 'Weekly', usedPercent: 42 }])],
+      'grok',
+      undefined,
+      NOW,
+    )
+    expect(headroomGlance(weekly, NOW)).toEqual({ text: '58% · week', tone: 'quiet' })
+    expect(weekly).toMatchObject({ tightest: { name: 'weekly' } })
+  })
   it('keeps each account’s limits apart', () => {
     const states = [
       ready('codex', [limit({ usedPercent: 100 })]),

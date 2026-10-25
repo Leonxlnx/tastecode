@@ -76,9 +76,11 @@ export type LedgerRow =
       /** Set for a "Recent" row: the pair as it was sent. */
       recent?: { effort?: string | undefined; serviceTier?: string | undefined } | undefined
     }
-  | { kind: 'more'; id: string; source: string; name: string; hidden: number }
+  | { kind: 'more'; id: string; source: string; name: string; mark: ProviderMark; hidden: number }
   | { kind: 'skeleton'; id: string; width: number }
   | { kind: 'failure'; id: string; source: string; message: string }
+  /** The app is still asking which engines are installed and signed in. */
+  | { kind: 'checking'; id: string }
 
 export type LedgerModelRow = Extract<LedgerRow, { kind: 'model' }>
 export type LedgerGroupRow = Extract<LedgerRow, { kind: 'group' }>
@@ -96,6 +98,8 @@ export type LedgerRowsInput = {
   errors?: Readonly<Record<string, { message: string }>> | undefined
   /** Folded sources the user opened. */
   expanded?: ReadonlySet<string> | undefined
+  /** The app does not know its engines yet, so more sources may follow. */
+  checking?: boolean | undefined
 }
 
 /** The provider a source key belongs to, when it is a provider's own source. */
@@ -261,6 +265,7 @@ export function buildLedgerRows(input: LedgerRowsInput): LedgerRow[] {
         id: `more:${draft.source}`,
         source: draft.source,
         name: draft.name,
+        mark: draft.mark,
         hidden,
       })
     }
@@ -270,6 +275,13 @@ export function buildLedgerRows(input: LedgerRowsInput): LedgerRow[] {
   if (others.length > 0) {
     rows.push({ kind: 'section', id: 'section:move', label: 'Move this chat to' })
     for (const draft of others) pushGroup(draft, true)
+  }
+  if (input.checking && !searching && pending.size === 0) {
+    rows.push(
+      { kind: 'checking', id: 'checking' },
+      { kind: 'skeleton', id: 'skeleton:checking:0', width: 104 },
+      { kind: 'skeleton', id: 'skeleton:checking:1', width: 80 },
+    )
   }
   return rows
 }
@@ -400,6 +412,13 @@ export type Headroom =
   | { kind: 'not-reported' }
   | { kind: 'unavailable'; message?: string | undefined }
 
+/** A window a provider names but does not measure, said the short way. */
+const SHORT_WINDOW_NAMES: ReadonlyMap<string, string> = new Map([
+  ['weekly', 'week'],
+  ['daily', 'day'],
+  ['monthly', 'month'],
+])
+
 /** How a window is named in a sentence and beside a source. */
 type LedgerWindowName = Pick<LedgerWindow, 'name' | 'short'>
 
@@ -407,7 +426,9 @@ function windowNames(limit: ProviderLimit): LedgerWindowName {
   const minutes = limit.windowMinutes
   if (minutes === undefined) {
     const name = limit.label.trim()
-    return { name: name.charAt(0).toLowerCase() + name.slice(1), short: name }
+    const lower = name.toLowerCase()
+    const short = SHORT_WINDOW_NAMES.get(lower) ?? lower
+    return { name: name.charAt(0).toLowerCase() + name.slice(1), short }
   }
   if (minutes === 10_080) return { name: 'weekly', short: 'week' }
   if (minutes === 1_440) return { name: 'daily', short: 'day' }

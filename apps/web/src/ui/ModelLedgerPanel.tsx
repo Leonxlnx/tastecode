@@ -120,6 +120,7 @@ export function ModelLedgerPanel(props: ModelLedgerPanelProps) {
         pending: ledger?.pendingSources,
         errors: ledger?.sourceErrors,
         expanded,
+        checking: ledger?.catalogLoading,
       }),
     [
       props.models,
@@ -129,6 +130,7 @@ export function ModelLedgerPanel(props: ModelLedgerPanelProps) {
       ledger?.chat,
       ledger?.pendingSources,
       ledger?.sourceErrors,
+      ledger?.catalogLoading,
       expanded,
     ],
   )
@@ -227,9 +229,19 @@ export function ModelLedgerPanel(props: ModelLedgerPanelProps) {
     }
     close()
   }
+  /** Opens a folded source and moves to the first model the fold hid. */
   const expand = (source: string) => {
+    const shown = new Set(
+      rows.flatMap((row) =>
+        row.kind === 'model' && !row.recent && row.source === source ? [row.choice.key] : [],
+      ),
+    )
+    const revealed = props.models.find(
+      (entry) => modelSourceKey(entry) === source && !shown.has(entry.key),
+    )
     scrollOnMove.current = true
     setExpanded((open) => new Set([...open, source]))
+    if (revealed) setHighlightId(`model:${revealed.key}`)
   }
 
   const moveHighlight = (index: number) => {
@@ -301,6 +313,14 @@ export function ModelLedgerPanel(props: ModelLedgerPanelProps) {
   const searching = query.trim().length > 0
   const hasRows = rows.some(isSelectableRow)
   const loadingAll = !hasRows && rows.some((row) => row.kind === 'skeleton')
+  /** Nothing to inspect: the message takes the whole panel. */
+  const empty: 'search' | 'none' | undefined = hasRows
+    ? undefined
+    : searching
+      ? 'search'
+      : !loadingAll && rows.length === 0
+        ? 'none'
+        : undefined
   const optionId = (index: number) => `${baseId}-row-${index}`
 
   return (
@@ -345,7 +365,7 @@ export function ModelLedgerPanel(props: ModelLedgerPanelProps) {
         ) : null}
       </div>
 
-      <div className="model-ledger__body">
+      <div className={`model-ledger__body${empty ? ' is-empty' : ''}`}>
         <div
           ref={listRef}
           id={`${baseId}-list`}
@@ -354,12 +374,12 @@ export function ModelLedgerPanel(props: ModelLedgerPanelProps) {
           aria-label="Models"
           onPointerMove={onListPointerMove}
         >
-          {searching && !hasRows ? (
+          {empty === 'search' ? (
             <div className="model-ledger__empty" role="status">
               <b>No model matches “{query.trim()}”</b>
               Search looks at every engine you added, by model, provider and lab.
             </div>
-          ) : !hasRows && !loadingAll && rows.length === 0 ? (
+          ) : empty === 'none' ? (
             <div className="model-ledger__empty" role="status">
               <b>No models yet</b>
               Add a provider in Settings to list its models here.
@@ -397,7 +417,7 @@ export function ModelLedgerPanel(props: ModelLedgerPanelProps) {
           )}
         </div>
 
-        <div className="model-ledger__inspector">
+        <div className="model-ledger__inspector" hidden={empty !== undefined}>
           {highlighted?.kind === 'model' ? (
             <Inspector
               row={highlighted}
@@ -451,7 +471,10 @@ export function ModelLedgerPanel(props: ModelLedgerPanelProps) {
             />
           ) : highlighted?.kind === 'more' ? (
             <div className="model-ledger__more-note">
-              <p className="model-ledger__title">{highlighted.name}</p>
+              <p className="model-ledger__title">
+                <ProviderIcon mark={highlighted.mark} size={15} />
+                <span>{highlighted.name}</span>
+              </p>
               <p className="model-ledger__job">
                 {highlighted.hidden} more {highlighted.hidden === 1 ? 'model' : 'models'} from{' '}
                 {highlighted.name}. Press Enter to list them all, or type a name to find one.
@@ -542,6 +565,14 @@ function LedgerListRow(props: {
             `${row.count} models`
           ) : null}
         </span>
+      </div>
+    )
+  }
+  if (row.kind === 'checking') {
+    return (
+      <div className="model-ledger__group is-checking" {...data}>
+        <span className="model-ledger__spin" aria-hidden />
+        <span className="model-ledger__group-name">Checking which engines are set up…</span>
       </div>
     )
   }
@@ -714,6 +745,7 @@ function Inspector(props: {
                 aria-checked={level === props.chosenEffort}
                 tabIndex={-1}
                 className={`model-ledger__level${level === props.effort ? ' is-selected' : ''}${level === fallback ? ' is-default' : ''}`}
+                title={level === fallback ? 'Default for this model' : undefined}
                 onPointerEnter={() => props.onHoverEffort(level)}
                 onClick={() => props.onPickEffort(level)}
               >
@@ -721,13 +753,6 @@ function Inspector(props: {
               </button>
             ))}
           </div>
-          <p className="model-ledger__hint">
-            {props.effort === fallback
-              ? 'Default for this model'
-              : fallback
-                ? `Default is ${getEffortWord(fallback)}`
-                : null}
-          </p>
         </>
       ) : (
         <p className="model-ledger__no-effort">
@@ -766,7 +791,7 @@ function Inspector(props: {
             fallbackName={entry.sourceName}
             account={props.account}
             headroom={props.headroom}
-            tall={props.tall && !props.row.moves}
+            tall={props.tall}
             now={props.now}
           />
         )}
@@ -814,7 +839,7 @@ function AccountLine(props: {
         <User size={14} aria-hidden />
         <span className="model-ledger__who">{props.account?.name ?? props.fallbackName}</span>
         {props.account?.plan ? (
-          <span className="model-ledger__plan">{props.account.plan}</span>
+          <span className="model-ledger__plan">{capitalize(props.account.plan)}</span>
         ) : null}
         {status ? (
           <span
@@ -823,18 +848,17 @@ function AccountLine(props: {
           >
             {status}
           </span>
-        ) : windows[0] ? (
-          <WindowText window={windows[0]} now={props.now} />
         ) : null}
       </div>
       {windows.map((window, index) => (
-        <div key={`${window.name}:${index}`}>
-          {index > 0 ? (
-            <div className="model-ledger__account-line is-window">
-              <span className="model-ledger__who">{capitalize(window.name)}</span>
-              <WindowText window={window} now={props.now} />
-            </div>
-          ) : null}
+        <div className="model-ledger__window" key={`${window.name}:${index}`}>
+          <div className="model-ledger__window-line">
+            <span>{capitalize(window.name)}</span>
+            <span className={`model-ledger__left${window.low ? ' is-low' : ''}`}>
+              {window.left}% left
+              {window.resetsAt ? ` · resets ${resetPhrase(window.resetsAt, props.now)}` : ''}
+            </span>
+          </div>
           <div
             className={`model-ledger__meter${window.low ? ' is-low' : ''}`}
             role="meter"
@@ -850,20 +874,6 @@ function AccountLine(props: {
     </div>
   )
 }
-
-function WindowText(props: {
-  window: { name: string; left: number; resetsAt: number | undefined; low: boolean }
-  now: number
-}) {
-  const window = props.window
-  return (
-    <span className={`model-ledger__left${window.low ? ' is-low' : ''}`}>
-      {window.left}% of {window.name} left
-      {window.resetsAt ? ` · resets ${resetPhrase(window.resetsAt, props.now)}` : ''}
-    </span>
-  )
-}
-
 function capitalize(text: string): string {
   return text.charAt(0).toUpperCase() + text.slice(1)
 }

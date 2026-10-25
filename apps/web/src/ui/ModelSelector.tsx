@@ -78,8 +78,8 @@ const LEDGER_MIN_H = 260
 const LEDGER_MIN_DOWN = 280
 const LEDGER_NEW_CHAT_MAX_H = 420
 const LEDGER_CHAT_MAX_H = 452
-/** Menu gap plus viewport gutter, as Menu positions panels. */
-const LEDGER_EDGE = 6 + 8
+/** Menu gap, viewport gutter and the panel's border, as Menu positions panels. */
+const LEDGER_EDGE = 6 + 8 + 2 + 2
 
 export {
   getCompactModelName,

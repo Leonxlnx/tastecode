@@ -80,6 +80,15 @@
   min-height: 0;
 }
 
+/* Nothing to inspect: the message has the whole panel. */
+.model-ledger__body.is-empty {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.model-ledger__inspector[hidden] {
+  display: none;
+}
+
 .model-ledger__list {
   position: relative;
   min-height: 0;
@@ -117,6 +126,11 @@
   font-size: 12px;
   font-weight: 500;
   white-space: nowrap;
+}
+
+.model-ledger__group.is-checking {
+  color: var(--text-3);
+  font-weight: 400;
 }
 
 .model-ledger__group svg {
@@ -500,11 +514,22 @@
     0 0 0 1px rgb(24 24 27 / 6%);
 }
 
-.model-ledger__hint {
-  min-height: 17px;
-  margin-top: 6px !important;
-  color: var(--text-3);
-  font-size: var(--t-xs);
+/* The model's own default level carries a small mark under its word. */
+.model-ledger__level {
+  position: relative;
+}
+
+.model-ledger__level.is-default::after {
+  position: absolute;
+  bottom: 3px;
+  left: 50%;
+  width: 3px;
+  height: 3px;
+  background: currentColor;
+  border-radius: var(--r-circle);
+  content: '';
+  opacity: 0.6;
+  translate: -50% 0;
 }
 
 .model-ledger__no-effort {
@@ -515,8 +540,7 @@
 }
 
 .model-ledger__foot-area {
-  margin-top: auto;
-  padding-top: 12px;
+  padding-top: 16px;
 }
 
 .model-ledger__account-line {
@@ -534,9 +558,17 @@
   color: var(--text-3);
 }
 
-.model-ledger__account-line.is-window {
-  margin-top: 11px;
-  padding-left: 21px;
+.model-ledger__window {
+  margin-top: 9px;
+}
+
+.model-ledger__window-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  white-space: nowrap;
 }
 
 .model-ledger__who {
@@ -566,7 +598,7 @@
 
 .model-ledger__meter {
   height: 3px;
-  margin-top: 7px;
+  margin-top: 6px;
   overflow: hidden;
   background: var(--ledger-track);
   border-radius: var(--r-xs);
@@ -630,7 +662,8 @@
   background: var(--control-hover);
 }
 
-.model-ledger__more-note .model-ledger__job {
+.model-ledger__more-note .model-ledger__job,
+.model-ledger[data-short] .model-ledger__more-note .model-ledger__job {
   -webkit-line-clamp: 4;
 }
 

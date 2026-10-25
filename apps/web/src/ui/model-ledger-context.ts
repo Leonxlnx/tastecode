@@ -16,6 +16,8 @@ export type ModelLedgerData = {
   accounts?: ProviderAccountsSnapshot | undefined
   /** The open chat, when it can move to another engine. Absent in a new chat. */
   chat?: { source: string; provider: ProviderId; accountId?: AccountId | undefined } | undefined
+  /** The app is still asking which engines are installed, before any source lists. */
+  catalogLoading?: boolean | undefined
   /** Sources still listing their models. */
   pendingSources?: ReadonlySet<string> | undefined
   /** The last listing error of each source that failed. */

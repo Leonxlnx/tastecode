@@ -226,7 +226,9 @@ describe('ledger panel', () => {
     expect(
       within(inspector()).getByRole('radio', { name: 'High' }).getAttribute('aria-checked'),
     ).toBe('true')
-    expect(inspector().textContent).toContain('Default for this model')
+    expect(within(inspector()).getByRole('radio', { name: 'High' }).getAttribute('title')).toBe(
+      'Default for this model',
+    )
   })
 
   it('moves the model with Up and Down, previews effort with Left and Right, and uses both with Enter', async () => {
@@ -299,6 +301,26 @@ describe('ledger panel', () => {
     expect(onServiceTierChange).toHaveBeenCalledWith('priority')
   })
 
+  it('folds a long engine and opens it on the first model the fold hid', async () => {
+    const many: ModelChoice[] = Array.from({ length: 12 }, (_, index) => ({
+      key: `opencode:m${index}`,
+      provider: 'opencode',
+      sourceName: 'OpenCode',
+      mark: 'opencode',
+      model: model(`m${index}`, `Model ${index}`, { reasoningEfforts: [] }),
+    }))
+    renderLedger({ models: [OPUS, ...many] })
+    const search = await openLedger()
+    fireEvent.keyDown(search, { key: 'Tab' })
+    expect(highlighted()).toContain('Model 0')
+    for (let step = 0; step < 5; step += 1) fireEvent.keyDown(search, { key: 'ArrowDown' })
+    expect(highlighted()).toContain('7 more')
+    expect(inspector().textContent).toContain('7 more models from OpenCode')
+
+    fireEvent.keyDown(search, { key: 'Enter' })
+    expect(highlighted()).toContain('Model 5')
+    expect(screen.getAllByRole('option')).toHaveLength(13)
+  })
   it('searches, clears with Escape and says when nothing matches', async () => {
     renderLedger()
     const search = await openLedger()
@@ -376,7 +398,7 @@ describe('ledger panel', () => {
 
     fireEvent.keyDown(search, { key: 'Tab' })
     expect(inspector().textContent).toContain('leon@example.invalid')
-    expect(inspector().textContent).toContain('64% of 5-hour left')
+    expect(inspector().textContent).toContain('5-hour64% left · resets ')
   })
 
   it('offers the other account when the plan limit is used up', async () => {
