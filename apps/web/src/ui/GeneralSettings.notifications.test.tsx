@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 
 const desktop = vi.hoisted(() => ({ canNotifyChats: true }))
 
@@ -14,6 +14,9 @@ vi.mock('../bridge.js', async (importOriginal) => ({
 const { CHAT_NOTIFICATIONS_KEY, writeChatNotificationMode } =
   await import('../chat-notifications.js')
 const { GeneralSettings } = await import('./GeneralSettings.js')
+
+/** Other settings offer their own Off; these queries stay inside Notifications. */
+const notifications = () => within(screen.getByRole('radiogroup', { name: 'Notifications' }))
 
 function renderGeneral() {
   return render(
@@ -53,8 +56,8 @@ describe('notification setting', () => {
   it('pictures the notifications each choice sends', () => {
     renderGeneral()
     const toasts = (name: string) =>
-      [...screen.getByRole('radio', { name }).querySelectorAll('.gwin__toast')].map((toast) =>
-        toast.getAttribute('data-kind'),
+      [...notifications().getByRole('radio', { name }).querySelectorAll('.gwin__toast')].map(
+        (toast) => toast.getAttribute('data-kind'),
       )
     expect(toasts('Off')).toEqual([])
     expect(toasts('Needs me')).toEqual(['needs-you'])
@@ -63,14 +66,14 @@ describe('notification setting', () => {
 
   it('saves a choice made by click or with the arrow keys', () => {
     renderGeneral()
-    fireEvent.click(screen.getByRole('radio', { name: 'Also finished' }))
+    fireEvent.click(notifications().getByRole('radio', { name: 'Also finished' }))
     expect(localStorage.getItem(CHAT_NOTIFICATIONS_KEY)).toBe('needs-you-or-finished')
-    const chosen = screen.getByRole('radio', { name: 'Also finished' })
+    const chosen = notifications().getByRole('radio', { name: 'Also finished' })
     expect(chosen.getAttribute('aria-checked')).toBe('true')
 
     fireEvent.keyDown(chosen, { key: 'ArrowRight' })
     expect(localStorage.getItem(CHAT_NOTIFICATIONS_KEY)).toBe('off')
-    expect(document.activeElement).toBe(screen.getByRole('radio', { name: 'Off' }))
+    expect(document.activeElement).toBe(notifications().getByRole('radio', { name: 'Off' }))
   })
 
   it('is not offered where nothing could show a notification', () => {
