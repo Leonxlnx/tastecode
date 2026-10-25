@@ -1,0 +1,1181 @@
+/* ---------- brief ---------- */
+
+/* The Brief: a page of what is true in a chat now, beside its conversation.
+   One ledger grammar throughout: a muted label on the left, the facts on the
+   right, sections a hairline apart, in the transcript's own column. Colour
+   means one thing each: amber waits for you (the sidebar's dot), green passed
+   or added, red failed or removed. Everything else is ink and greys. */
+
+.brief-shell {
+  position: relative;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  min-height: 0;
+  min-width: 0;
+}
+
+.brief {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 26px 0 calc(var(--composer-overlay-height, 120px) + 56px);
+  scrollbar-gutter: stable both-edges;
+  outline: none;
+}
+
+/* The transcript column: the prompt text box's width, as .thread__col. */
+.brief__col {
+  width: min(
+    calc(var(--chat-w) - 2 * var(--chat-text-inset)),
+    calc(100cqi - 2 * (var(--chat-gutter) + var(--chat-text-inset)))
+  );
+  margin: 0 auto;
+  container: brief / inline-size;
+}
+
+/* ---------- head ---------- */
+
+.brief__title {
+  margin: 0 0 6px;
+  color: var(--text);
+  font-size: var(--t-xl);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.25;
+  text-wrap: balance;
+  user-select: text;
+}
+
+.brief__context {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  row-gap: 4px;
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--t-sm);
+  line-height: 20px;
+}
+
+.brief__fact {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.brief__fact + .brief__fact::before {
+  margin: 0 9px 0 3px;
+  color: color-mix(in srgb, var(--text-3) 70%, transparent);
+  content: '·';
+}
+
+.brief__fact > svg {
+  flex: none;
+  stroke-width: 1.8;
+}
+
+.brief__mark {
+  flex: none;
+  color: var(--text-2);
+}
+
+.brief__quiet {
+  margin-left: -6px;
+}
+
+.brief__fact--live {
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.brief__clock {
+  font-variant-numeric: tabular-nums;
+}
+
+/* The working breath, the transcript's own (thread.css), kept here so the
+   page needs nothing from the conversation's stylesheet. */
+.brief__pulse {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: var(--r-pill);
+  background: var(--text-2);
+  animation: brief-pulse 1.6s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+  will-change: transform, opacity;
+}
+
+@keyframes brief-pulse {
+  0%,
+  100% {
+    opacity: 0.38;
+    transform: scale(0.62);
+  }
+
+  50% {
+    opacity: 0.9;
+    transform: scale(1);
+  }
+}
+
+.brief__spinner {
+  display: inline-grid;
+  width: 14px;
+  height: 14px;
+  flex: none;
+  place-items: center;
+  color: var(--running);
+  animation: spin 800ms linear infinite;
+}
+
+.brief__spinner > svg {
+  display: block;
+}
+
+.brief__note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0 0;
+  color: var(--text-3);
+  font-size: var(--t-sm);
+}
+
+/* ---------- turn track ---------- */
+
+/* Every turn is a moment the page can be read at. Up to six turns are named
+   stops on one rule; more become ticks with the ask on hover. */
+.brief-track {
+  display: flex;
+  align-items: center;
+  height: 30px;
+  margin: 18px 0 4px;
+}
+
+.brief-track__seg {
+  display: contents;
+}
+
+.brief-track__rule {
+  flex: 1;
+  min-width: 16px;
+  height: 1px;
+  margin: 0 4px;
+  background: var(--line-strong);
+}
+
+.brief-stop-node {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  height: 26px;
+  align-items: center;
+  gap: 7px;
+  padding: 0 10px 0 8px;
+  background: transparent;
+  border: 0;
+  border-radius: var(--r-pill);
+  color: var(--text-3);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--t-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  transition:
+    background-color var(--dur-hover) var(--ease-out),
+    color var(--dur-hover) var(--ease-out);
+}
+
+.brief-track:not(.is-ticks) .brief-track__seg:first-child .brief-stop-node {
+  margin-left: -8px;
+}
+
+.brief-track:not(.is-ticks) .brief-track__seg:last-child .brief-stop-node {
+  margin-right: -10px;
+}
+
+.brief-stop-node b {
+  color: var(--text-2);
+  font-weight: 500;
+}
+
+.brief-stop-node:hover {
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+
+.brief-stop-node:hover b,
+.brief-stop-node.is-selected b,
+.brief-stop-node.is-now b {
+  color: var(--text);
+}
+
+.brief-stop-node.is-selected:not(.is-now) {
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--chrome-border);
+  color: var(--text);
+}
+
+.brief-stop-node:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-inset);
+}
+
+.brief-stop-node__dot {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: var(--r-circle);
+  background: var(--bg);
+  box-shadow: inset 0 0 0 1.3px color-mix(in srgb, var(--text-2) 80%, transparent);
+}
+
+.brief-stop-node.is-now .brief-stop-node__dot,
+.brief-stop-node.is-selected .brief-stop-node__dot {
+  background: var(--text);
+  box-shadow: none;
+}
+
+.brief-stop-node.is-now.is-running .brief-stop-node__dot {
+  background: var(--running);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--running) 18%, transparent);
+}
+
+.brief-stop-node.is-failed .brief-stop-node__dot {
+  box-shadow: inset 0 0 0 1.3px var(--error);
+}
+
+.brief-stop-node.is-failed.is-now .brief-stop-node__dot {
+  background: var(--error);
+}
+
+/* Ticks: a long chat on one rule. */
+.brief-track.is-ticks {
+  gap: 14px;
+}
+
+.brief-track__end {
+  flex: none;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.brief-track__end.is-now {
+  color: var(--text);
+}
+
+.brief-track__ticks {
+  position: relative;
+  flex: 1;
+  height: 26px;
+  margin: 0 4px;
+}
+
+.brief-track__ticks::before {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  left: 0;
+  height: 1px;
+  background: var(--line-strong);
+  content: '';
+}
+
+.brief-track__tick {
+  position: absolute;
+  top: 50%;
+  translate: -50% -50%;
+}
+
+.brief-track.is-ticks .brief-stop-node {
+  width: 22px;
+  height: 22px;
+  justify-content: center;
+  padding: 0;
+}
+
+.brief-track.is-ticks .brief-stop-node.is-selected:not(.is-now) {
+  box-shadow: inset 0 0 0 1px var(--chrome-border);
+}
+
+.brief-tip {
+  position: absolute;
+  z-index: 3;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  display: none;
+  width: max-content;
+  max-width: 300px;
+  padding: 6px 9px 7px;
+  translate: -50% 0;
+  background: var(--surface);
+  border: 1px solid var(--chrome-border);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-flyout);
+  color: var(--text-2);
+  font-size: var(--t-xs);
+  line-height: 1.4;
+  text-align: left;
+  white-space: normal;
+  pointer-events: none;
+}
+
+.brief-tip b {
+  display: block;
+  color: var(--text);
+  font-weight: 500;
+}
+
+.brief-track__tick:first-child .brief-tip,
+.brief-track__tick:nth-child(2) .brief-tip {
+  left: -8px;
+  translate: 0 0;
+}
+
+.brief-track__tick:last-child .brief-tip,
+.brief-track__tick:nth-last-child(2) .brief-tip {
+  right: -8px;
+  left: auto;
+  translate: 0 0;
+}
+
+.brief-stop-node:is(:hover, :focus-visible) .brief-tip {
+  display: block;
+}
+
+/* ---------- as of ---------- */
+
+.brief-asof {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 12px 0 6px;
+  padding: 7px 7px 7px 13px;
+  background: color-mix(in srgb, var(--text) 4%, transparent);
+  border-radius: var(--r-lg);
+  box-shadow: inset 0 0 0 1px var(--line);
+  color: var(--text-2);
+  font-size: var(--t-sm);
+}
+
+.brief-asof > svg {
+  flex: none;
+  color: var(--text-2);
+  stroke-width: 1.8;
+}
+
+.brief-asof__text {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  line-height: 1.4;
+}
+
+.brief-asof__text b {
+  color: var(--text);
+  font-weight: 500;
+}
+
+/* ---------- buttons ---------- */
+
+.brief-btn {
+  display: inline-flex;
+  flex: none;
+  height: 28px;
+  align-items: center;
+  gap: 7px;
+  padding: 0 10px;
+  background: var(--bg);
+  border: 1px solid var(--chrome-border);
+  border-radius: var(--r-md);
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--t-sm);
+  white-space: nowrap;
+  transition:
+    background-color var(--dur-hover) var(--ease-out),
+    border-color var(--dur-hover) var(--ease-out),
+    color var(--dur-hover) var(--ease-out);
+}
+
+.brief-btn:hover {
+  background: var(--surface-2);
+  border-color: var(--line-strong);
+}
+
+.brief-btn:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.brief-btn > svg {
+  flex: none;
+  stroke-width: 1.8;
+}
+
+.brief-btn--quiet {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-2);
+}
+
+.brief-btn--quiet:hover {
+  background: var(--surface-2);
+  border-color: transparent;
+  color: var(--text);
+}
+
+/* Emphasis is a light surface, not a hue (tokens.css). */
+.brief-btn--strong {
+  background: var(--light);
+  border-color: transparent;
+  color: var(--on-light);
+}
+
+.brief-btn--strong:hover {
+  background: color-mix(in srgb, var(--light) 88%, var(--bg));
+  border-color: transparent;
+}
+
+.brief-kbd {
+  display: inline-grid;
+  min-width: 18px;
+  height: 18px;
+  place-items: center;
+  padding: 0 5px;
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  border-radius: var(--r-sm);
+  color: var(--text-2);
+  font: 500 10.5px/1 var(--font-ui);
+}
+
+.brief-btn--strong .brief-kbd {
+  background: color-mix(in srgb, var(--on-light) 12%, transparent);
+  color: color-mix(in srgb, var(--on-light) 72%, transparent);
+}
+
+.brief-link {
+  display: inline-flex;
+  margin: 0 0 6px;
+  padding: 0;
+  background: none;
+  border: 0;
+  color: var(--text-2);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--t-sm);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--text-3) 50%, transparent);
+  text-underline-offset: 3px;
+}
+
+.brief-link:hover {
+  color: var(--text);
+}
+
+.brief-link:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+  border-radius: var(--r-xs);
+}
+
+/* ---------- sections ---------- */
+
+.brief-sec {
+  display: grid;
+  grid-template-columns: 104px minmax(0, 1fr);
+  column-gap: 12px;
+  padding: 15px 0 14px;
+  border-top: 1px solid var(--line);
+}
+
+.brief__head + .brief-sec,
+.brief-track + .brief-sec,
+.brief-asof + .brief-sec,
+.brief__note + .brief-sec {
+  border-top: 0;
+}
+
+.brief-track + .brief-sec {
+  margin-top: 4px;
+}
+
+.brief__head + .brief-sec {
+  margin-top: 14px;
+}
+
+.brief-sec__label {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+  margin: 0;
+  padding-top: 5px;
+  color: var(--text-3);
+  font-size: var(--t-sm);
+  font-weight: 400;
+  line-height: 20px;
+}
+
+.brief-sec__name {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.brief-sec__sub {
+  color: color-mix(in srgb, var(--text-3) 82%, transparent);
+  font-size: var(--t-xs);
+  line-height: 18px;
+}
+
+.brief-sec.is-needs .brief-sec__label,
+.brief-sec.is-failed .brief-sec__label {
+  color: var(--text);
+}
+
+.brief-sec__dot {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: var(--r-circle);
+  background: var(--warning);
+}
+
+.brief-sec__body {
+  min-width: 0;
+}
+
+.brief-sec__head {
+  display: flex;
+  min-height: 30px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 2px;
+}
+
+.brief-sec__count {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 9px;
+  color: var(--text-2);
+  font-size: var(--t-md);
+}
+
+.brief-sec__count b {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.brief-sec__head .brief-btn {
+  margin-right: -10px;
+}
+
+.brief-quiet {
+  display: flex;
+  min-height: 30px;
+  align-items: center;
+  gap: 9px;
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--t-sm);
+  line-height: 1.45;
+}
+
+.brief-quiet--lead {
+  margin-bottom: 6px;
+}
+
+.brief-quiet--after {
+  min-height: 26px;
+  margin-top: 2px;
+}
+
+/* ---------- rows ---------- */
+
+.brief-rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.brief-row {
+  position: relative;
+  display: flex;
+  min-height: 30px;
+  align-items: center;
+  gap: 10px;
+  margin: 0 -8px;
+  padding: 0 8px;
+  border-radius: var(--r-md);
+  color: var(--text-2);
+  font-size: var(--t-md);
+  transition: background-color var(--dur-hover) var(--ease-out);
+}
+
+.brief-row:hover {
+  background: var(--surface-2);
+}
+
+.brief-row:has(> .brief-row__main) {
+  padding-right: 4px;
+}
+
+.brief-row:has(> .brief-row__main:focus-visible) {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-inset);
+}
+
+.brief-row__main {
+  display: flex;
+  min-width: 0;
+  min-height: 30px;
+  flex: 1;
+  align-items: center;
+  gap: 10px;
+  padding: 0 4px 0 0;
+  background: none;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.brief-row__main:focus-visible {
+  outline: none;
+}
+
+.brief-row__glyph {
+  display: grid;
+  width: 16px;
+  height: 16px;
+  flex: none;
+  place-items: center;
+  color: var(--text-3);
+}
+
+.brief-row__glyph > svg {
+  stroke-width: 2;
+}
+
+.brief-row__text {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.brief-row__meta {
+  flex: none;
+  color: var(--text-3);
+  font-size: var(--t-sm);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* The row's own verb takes the place of its quiet meta while pointed at. */
+.brief-row__action {
+  display: none;
+  height: 24px;
+  flex: none;
+  align-items: center;
+  gap: 5px;
+  padding: 0 8px;
+  background: none;
+  border: 0;
+  border-radius: var(--r-sm);
+  color: var(--text-2);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--t-sm);
+  white-space: nowrap;
+}
+
+.brief-row__action > svg {
+  stroke-width: 1.8;
+}
+
+.brief-row__action:hover {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.brief-row__action:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-inset);
+}
+
+.brief-row:is(:hover, :focus-within) > .brief-row__action {
+  display: inline-flex;
+}
+
+.brief-row:is(:hover, :focus-within) .brief-row__hide {
+  display: none;
+}
+
+.brief-ring {
+  display: block;
+  width: 7px;
+  height: 7px;
+  border-radius: var(--r-circle);
+  box-shadow: inset 0 0 0 1.3px color-mix(in srgb, var(--text-3) 80%, transparent);
+}
+
+/* plan steps */
+.brief-step.is-done .brief-row__text {
+  color: var(--text-3);
+}
+
+.brief-step.is-running .brief-row__text {
+  color: var(--text);
+}
+
+.brief-step.is-running .brief-row__glyph {
+  color: var(--text);
+}
+
+/* asks */
+.brief-asked {
+  display: -webkit-box;
+  margin: 2px 0 8px;
+  overflow: hidden;
+  color: var(--text);
+  font-size: var(--t-lg);
+  letter-spacing: -0.005em;
+  line-height: 1.45;
+  white-space: pre-line;
+  word-break: break-word;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 6;
+  user-select: text;
+}
+
+.brief-asked.is-open {
+  display: block;
+  -webkit-line-clamp: unset;
+}
+
+.brief-earlier .brief-row {
+  min-height: 28px;
+  font-size: var(--t-sm);
+}
+
+.brief-earlier .brief-row__main {
+  min-height: 28px;
+}
+
+.brief-earlier .brief-row__text {
+  color: var(--text-3);
+}
+
+.brief-earlier .brief-row:hover .brief-row__text {
+  color: var(--text-2);
+}
+
+/* files */
+.brief-file .md-file-ref__icon {
+  display: grid;
+  width: 15px;
+  height: 15px;
+  place-items: center;
+  color: var(--text-3);
+}
+
+.brief-file .md-file-ref__icon > svg {
+  display: block;
+  width: 15px;
+  height: 15px;
+  stroke-width: 1.8;
+}
+
+.brief-file__dir {
+  color: var(--text-3);
+}
+
+.brief-file__name {
+  color: var(--text);
+}
+
+.brief-file__turns {
+  min-width: 78px;
+  text-align: right;
+}
+
+.brief-tag {
+  display: inline-flex;
+  height: 18px;
+  flex: none;
+  align-items: center;
+  padding: 0 7px;
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  border-radius: var(--r-pill);
+  color: var(--text-2);
+  font-size: 10.5px;
+}
+
+.brief-stats {
+  display: inline-flex;
+  flex: none;
+  justify-content: flex-end;
+  gap: 6px;
+  font-size: var(--t-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.brief-file .brief-stats {
+  min-width: 70px;
+}
+
+.brief-more {
+  padding-left: 26px;
+  color: var(--text-2);
+  font-size: var(--t-sm);
+}
+
+/* checks */
+.brief-check__label {
+  width: 52px;
+  flex: none;
+  color: var(--text);
+}
+
+.brief-check__command {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: -0.01em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.brief-check__result {
+  flex: none;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.brief-check__duration {
+  width: 46px;
+  flex: none;
+  color: var(--text-3);
+  font-size: var(--t-sm);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.brief-check__when {
+  min-width: 92px;
+  text-align: right;
+}
+
+.brief-check.is-passed .brief-row__glyph {
+  color: var(--success);
+}
+
+.brief-check.is-failed .brief-row__glyph {
+  color: var(--error);
+}
+
+.brief-check.is-running .brief-check__result,
+.brief-check:is(.is-pending, .is-ended) .brief-check__result {
+  color: var(--text-2);
+}
+
+/* ---------- now ---------- */
+
+.brief-now {
+  display: flex;
+  min-width: 0;
+  min-height: 30px;
+  align-items: center;
+  gap: 10px;
+  font-size: var(--t-md);
+}
+
+.brief-now > .brief__pulse {
+  margin: 0 4px 0 4px;
+}
+
+.brief-now__verb {
+  flex: none;
+  color: var(--text-2);
+}
+
+.brief-now__object {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.brief-now__object.is-command {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  letter-spacing: -0.01em;
+}
+
+.brief-now__meta {
+  display: inline-flex;
+  flex: none;
+  gap: 14px;
+  margin-left: auto;
+  color: var(--text-3);
+  font-size: var(--t-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.brief-now__note {
+  margin: 2px 0 0 25px;
+  color: var(--text-2);
+  font-size: var(--t-md);
+  line-height: 1.5;
+  user-select: text;
+}
+
+/* ---------- needs you ---------- */
+
+.brief-ask {
+  padding: 12px 14px 12px;
+  background: color-mix(in srgb, var(--warning) 3.5%, var(--bg));
+  border-radius: var(--r-lg);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warning) 34%, var(--line));
+}
+
+.brief-ask + .brief-ask {
+  margin-top: 8px;
+}
+
+.brief-ask__who {
+  margin: 0 0 7px;
+  color: var(--text-3);
+  font-size: var(--t-sm);
+}
+
+.brief-ask__question {
+  margin: 0 0 9px;
+  color: var(--text);
+  font-size: var(--t-lg);
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  line-height: 1.35;
+  user-select: text;
+}
+
+.brief-ask__command {
+  margin: 0 0 7px;
+  padding: 9px 12px;
+  overflow-x: auto;
+  background: var(--chrome-recessed);
+  border-radius: var(--r-md);
+  box-shadow: inset 0 0 0 1px var(--line);
+  color: var(--text);
+  font: 12.5px/1.5 var(--font-mono);
+  white-space: pre-wrap;
+  word-break: break-all;
+  user-select: text;
+}
+
+.brief-ask__command > span {
+  color: var(--text-3);
+}
+
+.brief-ask__path {
+  margin: 0 0 6px;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+}
+
+.brief-ask__meta {
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--t-sm);
+}
+
+.brief-ask__reason {
+  margin: 6px 0 0;
+  color: var(--text-2);
+  font-size: var(--t-md);
+  line-height: 1.45;
+}
+
+.brief-ask__options {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.brief-ask__options li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-2);
+  font-size: var(--t-md);
+}
+
+.brief-ask__foot {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+
+/* ---------- stopped ---------- */
+
+.brief-stop {
+  display: flex;
+  gap: 10px;
+  padding-top: 4px;
+}
+
+.brief-stop__glyph {
+  display: grid;
+  width: 16px;
+  height: 20px;
+  flex: none;
+  place-items: center;
+  color: var(--text-3);
+}
+
+.brief-sec.is-failed .brief-stop__glyph {
+  color: var(--error);
+}
+
+.brief-stop__body {
+  min-width: 0;
+}
+
+.brief-stop__title {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--t-md);
+  font-weight: 500;
+  line-height: 1.45;
+  user-select: text;
+}
+
+.brief-stop__detail {
+  margin: 2px 0 0;
+  color: var(--text-3);
+  font-size: var(--t-sm);
+}
+
+.brief-stop__actions {
+  display: flex;
+  margin: 6px 0 0 -6px;
+}
+
+/* ---------- answer ---------- */
+
+.brief-answer__body {
+  position: relative;
+  max-height: 360px;
+  overflow: hidden;
+  padding-top: 4px;
+  user-select: text;
+}
+
+.brief-answer__body.is-folded {
+  mask-image: linear-gradient(to bottom, black calc(100% - 72px), transparent);
+}
+
+.brief-answer__body.is-open {
+  max-height: none;
+}
+
+.brief-answer__meta {
+  display: flex;
+  min-height: 28px;
+  align-items: center;
+  gap: 12px;
+  margin-top: 6px;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.brief-answer__meta .brief-link {
+  margin: 0;
+}
+
+.brief-answer__meta .copy-action button,
+.brief-stop__actions .copy-action button {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  place-items: center;
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: var(--r-md);
+  color: var(--text-3);
+  cursor: pointer;
+}
+
+.brief-answer__meta .copy-action button:hover,
+.brief-stop__actions .copy-action button:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.brief-answer__meta .copy-action button svg,
+.brief-stop__actions .copy-action button svg {
+  width: 15px;
+  height: 15px;
+}
+
+/* ---------- narrow ---------- */
+
+@container brief (max-width: 660px) {
+  .brief-sec {
+    grid-template-columns: 82px minmax(0, 1fr);
+    column-gap: 10px;
+  }
+
+  .brief-stop-node > span:not(.brief-stop-node__dot, .brief-tip) {
+    display: none;
+  }
+
+  .brief-check__duration,
+  .brief-check__when {
+    display: none;
+  }
+
+  .brief-file__turns {
+    min-width: 0;
+  }
+
+  .brief-asof {
+    flex-wrap: wrap;
+  }
+
+  .brief-asof__text {
+    flex-basis: calc(100% - 30px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .brief__pulse,
+  .brief__spinner {
+    animation: none;
+  }
+
+  .brief-row,
+  .brief-btn,
+  .brief-stop-node {
+    transition-duration: 0s;
+  }
+}
