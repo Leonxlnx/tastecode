@@ -24,6 +24,8 @@ struct ChatsScreen: View {
   @State private var renaming: ChatView?
   @State private var newTitle = ""
   @AppStorage("foldedProjects") private var foldedStore = ""
+  /// Folded projects as the list draws them; changed inside an animation, then stored.
+  @State private var folded: Set<String>?
 
   var body: some View {
     NavigationStack(path: $path) {
@@ -153,13 +155,15 @@ struct ChatsScreen: View {
 
   /// Projects folded away, by name; kept on this phone across launches.
   private var foldedProjects: Set<String> {
-    Set(foldedStore.split(separator: "\n").map(String.init))
+    folded ?? Set(foldedStore.split(separator: "\n").map(String.init))
   }
 
   private func toggleFold(_ name: String) {
     var folded = foldedProjects
     if folded.contains(name) { folded.remove(name) } else { folded.insert(name) }
-    withAnimation(.snappy) { foldedStore = folded.sorted().joined(separator: "\n") }
+    // The state changes inside the animation, so the rows slide and the chevron turns with it.
+    withAnimation(.smooth(duration: 0.38)) { self.folded = folded }
+    foldedStore = folded.sorted().joined(separator: "\n")
   }
 
   @ViewBuilder private var emptyState: some View {
@@ -337,24 +341,19 @@ struct GroupHeader: View {
     .accessibilityAddTraits(.isHeader)
   }
 
-  /// The name in bold with its chat count beside it, over a hairline; the
-  /// chevron at the edge turns as the group folds.
+  /// The name with its chat count beside it; the chevron at the edge turns as
+  /// the group folds.
   private var label: some View {
-    VStack(spacing: 6) {
-      HStack(alignment: .firstTextBaseline, spacing: 6) {
-        Text(title)
-          .font(.subheadline.weight(.semibold))
-          .foregroundStyle(.primary)
-        Text("\(count)")
-          .font(.subheadline)
-          .monospacedDigit()
-          .foregroundStyle(.tertiary)
-        Spacer()
-        if foldable { chevron }
-      }
-      Rectangle()
-        .fill(.separator)
-        .frame(height: 1 / 3)
+    HStack(alignment: .firstTextBaseline, spacing: 6) {
+      Text(title)
+        .font(.subheadline.weight(.semibold))
+        .foregroundStyle(.primary)
+      Text("\(count)")
+        .font(.subheadline)
+        .monospacedDigit()
+        .foregroundStyle(.tertiary)
+      Spacer()
+      if foldable { chevron }
     }
     .contentShape(Rectangle())
   }
