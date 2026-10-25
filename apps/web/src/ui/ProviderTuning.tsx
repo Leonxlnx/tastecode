@@ -22,6 +22,8 @@ import type {
   ProviderContextSettings,
   ProviderContextSettingsMap,
   ProviderId,
+  ProviderRuntimeOption,
+  ProviderRuntimeSettings,
   ProviderStatus,
 } from '@harness/contracts'
 import type { ModelChoice } from '../model-catalog.js'
@@ -252,6 +254,84 @@ export function useProviderContextSettings(transport: Transport, enabled: boolea
   return { state, errors, update }
 }
 
+export type RuntimeSettingsState =
+  | { phase: 'loading' }
+  | { phase: 'ready'; settings: ProviderRuntimeSettings }
+  | { phase: 'error'; message: string }
+
+function withProviderRuntime(
+  settings: ProviderRuntimeSettings,
+  provider: ProviderId,
+  runtime: string | null | undefined,
+): ProviderRuntimeSettings {
+  const next = { ...settings }
+  if (runtime == null) delete next[provider]
+  else next[provider] = runtime
+  return next
+}
+
+/**
+ * The runtime each provider launches through, kept by the server because the
+ * server starts every session, the phone's included. A choice shows at once
+ * and falls back to the last saved one when the server refuses it.
+ */
+export function useProviderRuntimeSettings(transport: Transport, enabled: boolean) {
+  const [state, setState] = useState<RuntimeSettingsState>({ phase: 'loading' })
+  const [errors, setErrors] = useState<Partial<Record<ProviderId, string>>>({})
+  const confirmed = useRef<ProviderRuntimeSettings>({})
+  const updates = useRef<Partial<Record<ProviderId, number>>>({})
+
+  useEffect(() => {
+    if (!enabled) return
+    let live = true
+    void (async () => {
+      try {
+        const settings = await transport.request('providers.runtimeSettings', {})
+        if (!live) return
+        confirmed.current = settings
+        setState({ phase: 'ready', settings })
+      } catch (cause) {
+        if (live) setState({ phase: 'error', message: errorMessage(cause) })
+      }
+    })()
+    return () => {
+      live = false
+    }
+  }, [transport, enabled])
+
+  const update = useCallback(
+    (provider: ProviderId, runtime: string | null) => {
+      const show = (shown: string | null | undefined) =>
+        setState((current) =>
+          current.phase === 'ready'
+            ? { phase: 'ready', settings: withProviderRuntime(current.settings, provider, shown) }
+            : current,
+        )
+      const request = (updates.current[provider] ?? 0) + 1
+      updates.current[provider] = request
+      show(runtime)
+      setErrors((current) => ({ ...current, [provider]: undefined }))
+      void (async () => {
+        try {
+          const saved = await transport.request('providers.updateRuntimeSettings', {
+            provider,
+            runtime,
+          })
+          confirmed.current = saved
+          if (updates.current[provider] === request) show(saved[provider])
+        } catch (cause) {
+          if (updates.current[provider] !== request) return
+          show(confirmed.current[provider])
+          setErrors((current) => ({ ...current, [provider]: errorMessage(cause) }))
+        }
+      })()
+    },
+    [transport],
+  )
+
+  return { state, errors, update }
+}
+
 export function formatTokens(tokens: number): string {
   if (tokens >= 1_000_000) {
     const millions = tokens / 1_000_000
@@ -297,6 +377,18 @@ export function ProviderTuning(props: {
   name?: string | undefined
   /** A further account's settings, its own or its provider's, in place of the provider's. */
   accountContext?: ProviderContextState | undefined
+  /**
+   * The runtime the provider's sessions launch through, for a provider that
+   * declares more than one. Absent where the rows are an account's: every
+   * account runs through its provider's.
+   */
+  runtime?:
+    | {
+        state: RuntimeSettingsState
+        error?: string | undefined
+        onChange: (runtime: string | null) => void
+      }
+    | undefined
 }) {
   const id = props.provider.id
   const name = props.name ?? props.provider.displayName
@@ -307,6 +399,8 @@ export function ProviderTuning(props: {
       ? { phase: 'ready', settings: props.context.settings[id] }
       : props.context)
   const pending = props.pending === true
+  const runtimes = props.provider.capabilities?.runtimes ?? []
+  const runtime = props.runtime && runtimes.length > 1 ? props.runtime : undefined
 
   return (
     <div
@@ -355,10 +449,30 @@ export function ProviderTuning(props: {
             )}
           </TuneRow>
         ) : null}
+        {runtime ? (
+          <TuneRow label="Runtime">
+            {pending || runtime.state.phase === 'loading' ? (
+              <ValueSkeleton width={VALUE_SKELETON_WIDTHS.runtime} />
+            ) : (
+              <RuntimeDefault
+                name={name}
+                runtimes={runtimes}
+                state={runtime.state}
+                selected={runtime.state.phase === 'ready' ? runtime.state.settings[id] : undefined}
+                onChange={runtime.onChange}
+              />
+            )}
+          </TuneRow>
+        ) : null}
       </div>
       {props.contextError ? (
         <p className="provider-tune__error" role="alert">
           Could not save the context setting. {props.contextError}
+        </p>
+      ) : null}
+      {runtime?.error ? (
+        <p className="provider-tune__error" role="alert">
+          Could not save the runtime. {runtime.error}
         </p>
       ) : null}
     </div>
@@ -399,7 +513,7 @@ function TuneRow(props: { label: string; children: ReactNode }) {
 }
 
 /** Close to the widths of the values they stand in for, so the fill-in barely moves. */
-const VALUE_SKELETON_WIDTHS = { model: 64, access: 82, context: 108 } as const
+const VALUE_SKELETON_WIDTHS = { model: 64, access: 82, context: 108, runtime: 70 } as const
 
 function ValueSkeleton(props: { width: number }) {
   return (
@@ -705,6 +819,58 @@ function AccessDefault(props: {
             />
           )
         })
+      }
+    </Menu>
+  )
+}
+
+/** The first runtime is the provider's default, kept as no setting at all. */
+function RuntimeDefault(props: {
+  name: string
+  runtimes: readonly ProviderRuntimeOption[]
+  state: Exclude<RuntimeSettingsState, { phase: 'loading' }>
+  selected: string | undefined
+  onChange: (runtime: string | null) => void
+}) {
+  if (props.state.phase === 'error') {
+    return (
+      <span className="provider-tune__unavailable" title={props.state.message}>
+        Unavailable
+      </span>
+    )
+  }
+  const defaultRuntime = props.runtimes[0]!
+  const current = props.runtimes.find((runtime) => runtime.id === props.selected) ?? defaultRuntime
+  return (
+    <Menu
+      align="right"
+      drop="down"
+      label={`${props.name} runtime: ${current.label}`}
+      triggerClassName="provider-tune__trigger set-select--inline"
+      panelLabel={`${props.name} runtime`}
+      panelClassName="menu--compact provider-tune__menu"
+      trigger={(open) => (
+        <TuneValue open={open} quiet={current === defaultRuntime}>
+          <span className="tune-value__text">{current.label}</span>
+        </TuneValue>
+      )}
+    >
+      {(close) =>
+        props.runtimes.map((runtime) => (
+          <MenuItem
+            key={runtime.id}
+            title={runtime.label}
+            detail={runtime.description}
+            icon={null}
+            active={runtime === current}
+            checked={runtime === current}
+            onClick={() => {
+              if (runtime !== current)
+                props.onChange(runtime === defaultRuntime ? null : runtime.id)
+              close()
+            }}
+          />
+        ))
       }
     </Menu>
   )
