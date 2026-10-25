@@ -1,4 +1,4 @@
-import { sourceKey, type Source } from '../state/catalog'
+import { modelLabel, sourceKey, type Source } from '../state/catalog'
 import type { ProjectsState, Session } from '../state/projects'
 import { isArchived, lastActivity } from '../state/projects'
 import type { ChatState, ChatsView, ChatView } from './types'
@@ -56,7 +56,10 @@ export function chatsView(state: ProjectsState, sources: readonly Source[] = [])
       if (session.lifecycle?.state === 'snoozed') continue
       const source = sourceOf(session, sources)
       const model = session.model
-        ? (source?.models.find((entry) => entry.id === session.model)?.displayName ?? session.model)
+        ? modelLabel(
+            source?.models.find((entry) => entry.id === session.model)?.displayName ??
+              session.model,
+          )
         : null
       chats.push({
         id: session.id,

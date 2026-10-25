@@ -179,7 +179,7 @@ describe('an open chat on the screens', () => {
     })
     expect(patches.at(-1)?.meta.setup).toMatchObject({
       model: 'my-custom',
-      modelName: 'my-custom',
+      modelName: 'My-Custom',
       effort: 'low',
     })
     link.listeners.get('thread.settings')?.({

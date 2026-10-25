@@ -369,10 +369,24 @@ const EFFORT_LABELS = new Map([
   ['low', 'Low'],
   ['medium', 'Medium'],
   ['high', 'High'],
-  ['xhigh', 'Extra high'],
+  ['xhigh', 'Extra High'],
   ['max', 'Max'],
 ])
 
 export function effortLabel(effort: string): string {
-  return EFFORT_LABELS.get(effort) ?? effort.charAt(0).toUpperCase() + effort.slice(1)
+  return EFFORT_LABELS.get(effort) ?? capitalizeWords(effort.replace(/[_-]+/g, ' '))
+}
+
+const WORD_START = /(^|[\s\-_/(])(\p{Ll})/gu
+
+function capitalizeWords(text: string): string {
+  return text.replace(
+    WORD_START,
+    (_, before: string, letter: string) => before + letter.toUpperCase(),
+  )
+}
+
+/** Starts every word of a model name with a capital letter: `Opus 4.7 fast` → `Opus 4.7 Fast`. */
+export function modelLabel(name: string): string {
+  return capitalizeWords(name)
 }
