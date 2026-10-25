@@ -269,6 +269,19 @@ describe('background title source discovery', () => {
     expect(vendor.calls).toEqual(['account:claude-code', 'models:claude-code'])
   })
 
+  it.each(['claude-code', 'grok'] as const)(
+    'leaves naming a %s chat to its provider and reads no source',
+    async (provider) => {
+      const { title, started, store } = harness()
+
+      await expect(title({ provider })).resolves.toEqual({ title: 'New chat', applied: false })
+
+      expect(started).toEqual([])
+      expect(vendor.calls).toEqual([])
+      expect(store.provisionalTitle('thread-1')).toBe('New chat')
+    },
+  )
+
   it('reads Codex next, and only then, when Claude Code is signed out', async () => {
     signedOut('claude-code')
     const { title, started } = harness()
@@ -583,7 +596,8 @@ describe('background writing for a chat on another account', () => {
   const accounts: AccountDirectory = {
     home: (provider, accountId) => {
       if (accountId === undefined || accountId === 'default') return undefined
-      if (provider === 'codex' && accountId === 'work') return workHome
+      if ((provider === 'codex' || provider === 'claude-code') && accountId === 'work')
+        return workHome
       throw new AccountNotFoundError()
     },
     active: () => 'default',
@@ -610,6 +624,20 @@ describe('background writing for a chat on another account', () => {
       { provider: 'codex', model: 'gpt-5.6-luna', accountHome: workHome },
       { provider: 'codex', model: 'gpt-5.6-luna' },
     ])
+  })
+
+  it('still writes a title for a Work Claude chat, whose own name history cannot read', async () => {
+    const { title, started, store } = harness({ mode: 'automatic' }, undefined, accounts)
+
+    await expect(title({ provider: 'claude-code', accountId: 'work' })).resolves.toEqual({
+      title: 'Generated title',
+      applied: true,
+    })
+
+    expect(started).toEqual([
+      { provider: 'claude-code', model: 'claude-haiku-4-5', accountHome: workHome },
+    ])
+    expect(store.provisionalTitle('thread-1')).toBeUndefined()
   })
 
   it("drafts a Work chat's commit message through the Work account", async () => {

@@ -1371,6 +1371,38 @@ describe('provider history integration', () => {
     expect(store.threads()).toEqual([])
   })
 
+  it("gives a chat its provider's name while the first prompt's title stands in", async () => {
+    store.addThread({
+      id: 'native',
+      projectPath: process.cwd(),
+      provider: 'codex',
+      title: 'Fix it',
+    })
+    store.addThread({ id: 'renamed', projectPath: process.cwd(), provider: 'codex', title: 'Go' })
+    store.setProvisionalTitle('native', 'Fix it')
+    store.setProvisionalTitle('renamed', 'Go')
+    store.renameThread('renamed', 'Cache work')
+    const sessions = [
+      { ...metadata('native'), title: 'Fix it please, the queue drops jobs' },
+      { ...metadata('renamed'), title: 'Cache invalidation fix', named: true },
+    ]
+    const { history } = setup(sessions)
+
+    await history.refresh()
+    // Until the provider names the chat, its title is the first prompt again.
+    expect(store.thread('native')?.title).toBe('Fix it')
+    expect(store.thread('renamed')?.title).toBe('Cache work')
+
+    sessions[0] = { ...sessions[0]!, title: 'Queue drops jobs', named: true, revision: '2' }
+    await history.refresh()
+    expect(store.thread('native')?.title).toBe('Queue drops jobs')
+    expect(store.provisionalTitle('native')).toBeUndefined()
+
+    sessions[0] = { ...sessions[0]!, title: 'Queue drops retried jobs', revision: '3' }
+    await history.refresh()
+    expect(store.thread('native')?.title).toBe('Queue drops retried jobs')
+  })
+
   it('deduplicates TasteCode sessions by native identity and imports only outside turns', async () => {
     store.addProject(process.cwd())
     store.addThread({

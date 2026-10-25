@@ -373,6 +373,7 @@ CREATE TABLE IF NOT EXISTS threads (
   account_id   TEXT,
   provider_session_id TEXT,
   title        TEXT NOT NULL,
+  provisional_title TEXT,
   pinned       INTEGER NOT NULL DEFAULT 0,
   created_at   INTEGER NOT NULL,
   closed_at    INTEGER,
@@ -697,6 +698,7 @@ const ADDED_COLUMNS: Array<{ table: string; column: string; definition: string }
   },
   { table: 'threads', column: 'continued_changes', definition: 'TEXT' },
   { table: 'threads', column: 'handover_pending', definition: 'INTEGER NOT NULL DEFAULT 0' },
+  { table: 'threads', column: 'provisional_title', definition: 'TEXT' },
 ]
 
 type SqliteInteger = number | bigint
@@ -1811,14 +1813,35 @@ export class Store {
     })
   }
 
+  /** Any rename, the user's own included, settles the title; see `setProvisionalTitle`. */
   renameThread(id: string, title: string): void {
-    this.#db.prepare(`UPDATE threads SET title = ? WHERE id = ?`).run(title, id)
+    this.#db
+      .prepare(`UPDATE threads SET title = ?, provisional_title = NULL WHERE id = ?`)
+      .run(title, id)
     this.#updateCachedThread(id, (thread) =>
       thread.title === title ? thread : { ...thread, title },
     )
     this.#updateSidebarThread(id, (thread) =>
       thread.title === title ? thread : { ...thread, title },
     )
+  }
+
+  /**
+   * Mark `title`, taken from the chat's first prompt, as standing in until the
+   * provider names the chat. Recovery metadata: kept out of the cached thread.
+   */
+  setProvisionalTitle(id: string, title: string): void {
+    this.#db.prepare(`UPDATE threads SET provisional_title = ? WHERE id = ?`).run(title, id)
+  }
+
+  /** The stand-in title, while the chat still has it. */
+  provisionalTitle(id: string): string | undefined {
+    return sqliteRow<StringValueRow>(
+      this.#db.prepare(
+        `SELECT provisional_title AS value FROM threads WHERE id = ? AND provisional_title = title`,
+      ),
+      id,
+    )?.value
   }
 
   setThreadPinned(id: string, pinned: boolean): void {
