@@ -17,6 +17,7 @@ import {
 import { createPortal } from 'react-dom'
 import { RowIssue } from './RowIssue.js'
 import { surfaceLoadFailed } from '../surface-load-error.js'
+import { readSidebarPeek, subscribeSidebarPeek, writeSidebarPeek } from '../sidebar-peek-pref.js'
 import { AppearanceColorPicker } from './AppearanceColorPicker.js'
 import {
   accentColor,
@@ -614,6 +615,7 @@ function SettingsComponent(props: {
                   </button>
                 </SettingsRow>
                 <UsageHistoryReset transport={props.transport} />
+                <SidebarPeekRow />
                 <AppUpdateSimulationRow />
                 <ProviderUpdateSimulationRow transport={props.transport} />
                 <SettingsSection
@@ -2503,6 +2505,28 @@ export function DebugSettings(props: { transport: Transport }) {
     <SettingsPage title="Debug">
       <UsageHistoryReset transport={props.transport} />
     </SettingsPage>
+  )
+}
+
+/** Design lab prototype switch, so the peek can be compared with dev's one-line band. */
+function SidebarPeekRow() {
+  const enabled = useSyncExternalStore(subscribeSidebarPeek, readSidebarPeek, readSidebarPeek)
+  return (
+    <SettingsRow
+      name="Sidebar peek (design lab)"
+      note="Needs you rows say what each chat asks, and a peek beside the sidebar answers it. Off shows the one-line band."
+    >
+      <button
+        className={`switch${enabled ? ' is-on' : ''}`}
+        type="button"
+        role="switch"
+        aria-label="Sidebar peek"
+        aria-checked={enabled}
+        onClick={() => writeSidebarPeek(!enabled)}
+      >
+        <span className="switch__thumb" />
+      </button>
+    </SettingsRow>
   )
 }
 
