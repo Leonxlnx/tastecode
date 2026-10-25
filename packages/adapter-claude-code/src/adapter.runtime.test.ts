@@ -7,6 +7,7 @@ import { spawnCli } from '@harness/proc'
 import { afterEach, describe, expect, it } from 'vitest'
 import { ClaudeCodeAdapter } from './adapter.js'
 import { CLAUDE_RUNTIMES, type ClaudeRuntime } from './capabilities.js'
+import { discoverClaudeProject } from './discovery.js'
 import { claudeLimitSource } from './limits.js'
 import type { ClaudeSpawn } from './sdk-runtime.js'
 
@@ -244,6 +245,23 @@ describe('Claude runtimes', () => {
         .sort()
     expect(flags(session(cli.launches))).toEqual(flags(session(sdk.launches)))
   }, 30_000)
+
+  it("reads a project's commands and MCP servers through claude -p as through the SDK", async () => {
+    const discover = async (runtime: ClaudeRuntime) => {
+      const fake = fakeClaude()
+      const inventory = await discoverClaudeProject(process.cwd(), {
+        runtime,
+        spawn: fake.spawn,
+        environment: fake.environment,
+      })
+      return { inventory, launch: fake.launches()[0]! }
+    }
+    const sdk = await discover('sdk')
+    const cli = await discover('cli')
+    expect(cli.inventory).toEqual(sdk.inventory)
+    expect(cli.inventory.commands.map((command) => command.name)).toContain('review')
+    expect(cli.launch.argv[0]).toBe('-p')
+  }, 15_000)
 
   it('reads plan limits through claude -p when the sessions run through it', async () => {
     const read = async (runtime: ClaudeRuntime) => {
