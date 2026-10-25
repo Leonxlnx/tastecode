@@ -1167,6 +1167,16 @@ export class Orchestrator {
     const before = this.#store.thread(threadId)
     if (!before) throw new Error(`no such thread: ${threadId}`)
     if (before.title !== expectedTitle) return { title: before.title, applied: false }
+    // A provider that names its chats does so unasked, and provider history puts
+    // that name in place of this one; a title model would only write a second
+    // name. History reads the default account's folder only.
+    if (
+      PROVIDER_CAPABILITIES[before.provider].nativeTitles &&
+      threadAccountHome(this.#accounts, before) === undefined
+    ) {
+      this.#store.setProvisionalTitle(threadId, expectedTitle)
+      return { title: expectedTitle, applied: false }
+    }
 
     const output = await this.#runBackgroundTask(titlePrompt(request), before)
     const title = cleanGeneratedTitle(output, expectedTitle)

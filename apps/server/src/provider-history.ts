@@ -285,9 +285,11 @@ export class ProviderHistory {
                 this.store.addProviderThread(threadId, provider, session, projectPath)
                 this.#internalWithoutCopy.delete(threadId)
               } else if (
-                previous?.threadId === threadId &&
-                existing.title === previous.session.title &&
-                session.title
+                (previous?.threadId === threadId &&
+                  existing.title === previous.session.title &&
+                  session.title) ||
+                // The title taken from the chat's first prompt waited for this name.
+                (session.named && this.store.provisionalTitle(threadId) !== undefined)
               ) {
                 this.store.renameThread(threadId, session.title)
               }
