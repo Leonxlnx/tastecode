@@ -562,16 +562,18 @@ function metadata(
   if (!digest.message) return undefined
   const workspacePath = string(digest.relocatedCwd) ?? digest.cwd ?? string(index.projectPath)
   if (!workspacePath) return undefined
-  const named =
-    digest.customTitle ?? digest.aiTitle ?? string(index.summary) ?? string(index.firstPrompt)
+  // The index's summary is a name Claude wrote, like an ai-title; its first prompt is not.
+  const name = digest.customTitle ?? digest.aiTitle ?? string(index.summary)
+  const label = name ?? string(index.firstPrompt)
   return {
     id,
     locator,
     revision,
     workspacePath,
     title:
-      (named === undefined ? (digest.prompt ?? '') : titleText(named)) ||
+      (label === undefined ? (digest.prompt ?? '') : titleText(label)) ||
       'Claude Code conversation',
+    ...(name && titleText(name) ? { named: true } : {}),
     createdAt: timestamp(digest.firstAt) ?? timestamp(index.created) ?? mtime,
     updatedAt: Math.max(mtime, timestamp(digest.lastAt) ?? 0),
     ...(digest.approval ? { approval: digest.approval } : {}),

@@ -241,12 +241,14 @@ describe('Grok native history', () => {
     await save(directory, 'updates.jsonl', [
       update('user_message_chunk', { content: { type: 'text', text: 'hello' } }),
     ])
-    expect((await source.list())[0]?.title).toBe('Native Grok chat')
+    expect((await source.list())[0]).toMatchObject({ title: 'Native Grok chat', named: true })
     const summary = path.join(directory, 'summary.json')
     await writeFile(summary, JSON.stringify({ generated_title: 'Renamed Grok chat' }))
     expect((await source.list())[0]?.title).toBe('Renamed Grok chat')
     await rm(summary)
-    expect((await source.list())[0]?.title).toBe('Grok chat')
+    const [unnamed] = await source.list()
+    expect(unnamed?.title).toBe('Grok chat')
+    expect(unnamed?.named).toBeUndefined()
   })
 
   it('replays exact Markdown, thought text, tools, command output, diffs, images and turns', async () => {
