@@ -6120,18 +6120,29 @@ export function App() {
     }))
     setComposerFocusRequest((request) => request + 1)
   }, [])
-  const briefSource = useMemo<BriefSourceLabel | undefined>(
-    () =>
-      selectedModelChoice
-        ? {
-            name: selectedModelChoice.agent?.name ?? selectedModelChoice.sourceName,
-            mark: selectedModelChoice.mark,
-            model: getCompactModelName(selectedModelChoice.model.displayName),
-            effort: selectedEffort ? getFriendlyEffortLabel(selectedEffort) : undefined,
-          }
-        : undefined,
-    [selectedModelChoice, selectedEffort],
-  )
+  // The Brief names the chat's own engine, never the composer's next pick: a
+  // pick that would move the chat must not rename the work it already did.
+  const briefSession = active?.session
+  const briefSource = useMemo<BriefSourceLabel | undefined>(() => {
+    if (!briefSession) return undefined
+    const own = moveChoice ? chatOwnChoice : selectedModelChoice
+    const same =
+      own !== undefined &&
+      own.provider === briefSession.provider &&
+      own.agent?.id === briefSession.agent
+    return {
+      name: same ? (own.agent?.name ?? own.sourceName) : providerName(briefSession.provider),
+      mark: same
+        ? own.mark
+        : briefSession.agent
+          ? agentMark(briefSession.agent)
+          : providerMark(briefSession.provider),
+      // Before the provider lists its models the choice is only its default.
+      model: same && own.model.id ? getCompactModelName(own.model.displayName) : undefined,
+      effort:
+        same && !moveChoice && selectedEffort ? getFriendlyEffortLabel(selectedEffort) : undefined,
+    }
+  }, [briefSession, moveChoice, chatOwnChoice, selectedModelChoice, selectedEffort])
   const keybindingActions = useMemo<Record<KeybindingId, () => void>>(
     () => ({
       commandPalette: () => {
@@ -6960,7 +6971,10 @@ export function App() {
                         projectPath={activePath}
                         projectName={activeProject ? displayName(activeProject) : undefined}
                         branch={
-                          active?.session.worktreeBranch ?? workspace?.branch ?? pathBranches[0]
+                          // Only the branch read for this project: the shelf's
+                          // workspace info lags a project switch.
+                          active?.session.worktreeBranch ??
+                          (activePath ? checkedOutBranches.current.get(activePath) : undefined)
                         }
                         source={briefSource}
                         loading={loadingThreadId === activeId}
