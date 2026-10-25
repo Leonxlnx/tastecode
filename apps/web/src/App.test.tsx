@@ -7197,6 +7197,42 @@ describe('new chats', () => {
     expect(transport.request).not.toHaveBeenCalledWith('workspace.switchBranch', expect.anything())
   })
 
+  it('starts on the checked-out branch while the shared checkout has uncommitted changes', async () => {
+    localStorage.setItem('harness.branch:/work/project', 'main')
+    serverProjects = [
+      { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },
+    ]
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'workspace.info'
+        ? Promise.resolve({ branch: 'feature/shelf', added: 4, removed: 1, dirtyFiles: 2 })
+        : method === 'workspace.branches'
+          ? Promise.resolve({ branches: ['feature/shelf', 'main'] })
+          : request(method, params),
+    )
+    render(<App />)
+    const picker = await screen.findByRole('button', { name: 'Choose branch' })
+    await waitFor(() => expect(rpcCount('workspace.branches')).toBe(1))
+    await waitFor(() => expect(picker.textContent).toContain('feature/shelf'))
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace mode' }))
+    fireEvent.click(await screen.findByRole('menuitemradio', { name: 'Isolated' }))
+    await waitFor(() => expect(picker.textContent).toContain('main'))
+    fireEvent.click(screen.getByRole('button', { name: 'Workspace mode' }))
+    fireEvent.click(await screen.findByRole('menuitemradio', { name: 'Local' }))
+    await waitFor(() => expect(picker.textContent).toContain('feature/shelf'))
+
+    submitTurn('Keep my changes where they are')
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('thread.start', expect.anything()),
+    )
+    expect(transport.request).toHaveBeenCalledWith(
+      'thread.start',
+      expect.not.objectContaining({ baseRef: expect.anything() }),
+    )
+    expect(transport.request).not.toHaveBeenCalledWith('workspace.switchBranch', expect.anything())
+  })
+
   it('starts a chat on the checkout without waiting for the branch list', async () => {
     serverProjects = [
       { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },
