@@ -239,7 +239,7 @@ describe('an open chat on the screens', () => {
         },
       ],
     } as never)
-    let settings: Record<string, unknown> = { model: 'a' }
+    let settings = { model: 'a' }
     let answer: (error?: Error) => void = () => undefined
     link.answer = async (method) => {
       if (method === 'thread.settings') return settings
