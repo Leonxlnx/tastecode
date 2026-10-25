@@ -107,6 +107,7 @@ import { createSessionOrderSerializer } from './session-order-serializer.js'
 import type { CommandScope, PaletteCommand } from './ui/CommandPalette.js'
 import { Composer, type SendAvailability, type WorkspaceInfo } from './ui/Composer.js'
 import {
+  formatModelName,
   getFastModeOffValue,
   getFastServiceTier,
   getNextServiceTierForModel,
@@ -6857,7 +6858,7 @@ export function App() {
                 ...switchOptions.map((choice) => ({
                   id: `provider:${modelSource(choice)}`,
                   label: choice.sourceName,
-                  detail: choice.model.displayName,
+                  detail: formatModelName(choice.model.displayName),
                   run: () => switchAtLimit(choice),
                 })),
               ],

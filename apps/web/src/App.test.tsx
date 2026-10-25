@@ -4129,7 +4129,7 @@ describe('web client', () => {
     expect(screen.queryByText('Loading models…')).toBeNull()
     fireEvent.click(await screen.findByRole('button', { name: 'Model and reasoning' }))
     expect(
-      await screen.findByRole('button', { name: 'Use gpt-6.1-sol through Codex' }),
+      await screen.findByRole('button', { name: 'Use Gpt-6.1-Sol through Codex' }),
     ).toBeTruthy()
     expect(document.querySelector('.model-selector__effort-title')?.textContent).toBe(
       'Effort: High',

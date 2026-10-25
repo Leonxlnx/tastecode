@@ -25,8 +25,10 @@ import {
   colorForeground,
 } from '../theme-colors.js'
 import {
+  formatModelName,
   getFastModeOffValue,
   getFastServiceTier,
+  getFriendlyEffortLabel,
   getNextServiceTierForModel,
   isFastModeEnabled,
 } from './model-selector-utils.js'
@@ -1843,24 +1845,33 @@ function BackgroundModelSettings(props: { transport: Transport }) {
   const resolvedChoice = resolved ? findBackgroundModel(state?.sources ?? [], resolved) : undefined
   const automaticNote =
     manual && !selected
-      ? `${manual.model} is unavailable. Choose Automatic or another connected model.`
+      ? `${formatModelName(manual.model)} is unavailable. Choose Automatic or another connected model.`
       : resolved
-        ? `Currently ${resolvedChoice?.model.displayName ?? resolved.model} through ${resolved.sourceName}${resolved.effort ? ` at ${resolved.effort} effort` : ''}.`
+        ? `Currently ${formatModelName(resolvedChoice?.model.displayName ?? resolved.model)} through ${resolved.sourceName}${resolved.effort ? ` at ${getFriendlyEffortLabel(resolved.effort)} effort` : ''}.`
         : 'Connect a provider with an available model to enable background writing.'
   const modelOptions = [
     { value: 'automatic', label: 'Automatic (recommended)' },
     ...(manual && !selected
-      ? [{ value: 'unavailable', label: `${manual.model} (unavailable)`, disabled: true }]
+      ? [
+          {
+            value: 'unavailable',
+            label: `${formatModelName(manual.model)} (unavailable)`,
+            disabled: true,
+          },
+        ]
       : []),
     ...(state?.sources ?? []).flatMap((source) =>
       source.models.map((model) => ({
         value: backgroundModelValue(source.id, model.id),
-        label: model.displayName,
+        label: formatModelName(model.displayName),
       })),
     ),
   ]
   const effortOptions =
-    selected?.model.reasoningEfforts.map((effort) => ({ value: effort, label: effort })) ?? []
+    selected?.model.reasoningEfforts.map((effort) => ({
+      value: effort,
+      label: getFriendlyEffortLabel(effort),
+    })) ?? []
   const selectedEffort = manual?.effort ?? effortOptions[0]?.value ?? ''
   const fastTier = getFastServiceTier(selected?.model)
   const selectedSpeed = isFastModeEnabled(selected?.model, manual?.serviceTier)

@@ -31,6 +31,16 @@ export type ModelGroup = {
   entries: ModelChoice[]
 }
 
+const WORD_START = /(^|[\s\-_/(])(\p{Ll})/gu
+
+/** Starts every word of a model name with a capital letter: `Opus 4.7 fast` → `Opus 4.7 Fast`. */
+export function formatModelName(name: string): string {
+  return name.replace(
+    WORD_START,
+    (_, before: string, letter: string) => before + letter.toUpperCase(),
+  )
+}
+
 const GPT_MODEL_NAME = /^gpt(?:[-\s]*(\d[\w.]*))?(?:[-\s]+(.+))?$/i
 
 /**
@@ -41,9 +51,9 @@ export function getCompactModelName(displayName: string | undefined): string {
   const name = displayName?.trim()
   if (!name) return 'Model'
   const gpt = GPT_MODEL_NAME.exec(name)
-  if (!gpt) return name.replace(/-/g, ' ').trim()
+  if (!gpt) return formatModelName(name.replace(/-/g, ' ').trim())
   const version = gpt[1] ? `-${gpt[1]}` : ''
-  const rest = gpt[2]?.replace(/-/g, ' ').trim()
+  const rest = gpt[2] ? formatModelName(gpt[2].replace(/-/g, ' ').trim()) : undefined
   return `GPT${version}${rest ? ` ${rest}` : ''}`
 }
 
