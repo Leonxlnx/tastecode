@@ -84,7 +84,7 @@ struct ImageViewer: View {
         .background(.black)
         .toolbar {
           ToolbarItem(placement: .topBarLeading) {
-            Button(role: .close) { dismiss() }
+            CloseButton { dismiss() }
           }
           ToolbarItem(placement: .topBarTrailing) {
             ShareLink(item: Image(uiImage: image), preview: SharePreview("Picture", image: Image(uiImage: image)))

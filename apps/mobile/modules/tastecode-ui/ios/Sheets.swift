@@ -18,7 +18,7 @@ struct SettingsSheet: View {
             LabeledContent {
               Text(model.link == nil ? "" : "1")
             } label: {
-              SettingsLabel("Devices", systemImage: "laptopcomputer")
+              SettingsLabel("Devices", tabler: "device-laptop")
             }
           }
         }
@@ -28,7 +28,7 @@ struct SettingsSheet: View {
             AppearanceSettings()
               .onAppear { withAnimation(.smooth) { detent = .large } }
           } label: {
-            SettingsLabel("Appearance", systemImage: "textformat.size")
+            SettingsLabel("Appearance", tabler: "text-size")
           }
         }
         Section("App") {
@@ -38,7 +38,7 @@ struct SettingsSheet: View {
             LabeledContent {
               Text(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "")
             } label: {
-              SettingsLabel("About", systemImage: "info.circle")
+              SettingsLabel("About", tabler: "info-circle")
             }
           }
         }
@@ -47,7 +47,7 @@ struct SettingsSheet: View {
       .navigationBarTitleDisplayMode(.inline)
       .toolbar {
         ToolbarItem(placement: .topBarTrailing) {
-          Button(role: .close) { dismiss() }
+          CloseButton { dismiss() }
         }
       }
     }
@@ -85,21 +85,21 @@ private struct DevicesSettings: View {
   }
 }
 
-/// A settings row's name with its symbol in the text's colour, not the tint.
+/// A settings row's name with its icon in the text's colour, not the tint.
 private struct SettingsLabel: View {
   let title: String
-  let systemImage: String
+  let icon: String
 
-  init(_ title: String, systemImage: String) {
+  init(_ title: String, tabler icon: String) {
     self.title = title
-    self.systemImage = systemImage
+    self.icon = icon
   }
 
   var body: some View {
     Label {
       Text(title)
     } icon: {
-      Image(systemName: systemImage).foregroundStyle(.primary)
+      Image(tabler: icon).foregroundStyle(.primary)
     }
   }
 }
@@ -254,8 +254,7 @@ private struct FolderList: View {
         ForEach(matching(listing)) { entry in
           NavigationLink(value: entry.path) {
             HStack(spacing: 12) {
-              Image(systemName: "folder")
-                .font(.body)
+              Image(tabler: "folder", size: 22)
                 .foregroundStyle(.secondary)
                 .frame(width: 22)
               Text(entry.name)
@@ -284,13 +283,13 @@ private struct FolderList: View {
     .listStyle(.plain)
     .overlay {
       if let error {
-        ContentUnavailableView("Can't Open This Folder", systemImage: "folder.badge.questionmark", description: Text(error))
+        ContentUnavailableView("Can't Open This Folder", tabler: "folder-question", description: Text(error))
       } else if listing == nil {
         ProgressView()
       } else if listing?.folders.isEmpty == true {
-        ContentUnavailableView("No Folders Inside", systemImage: "folder")
+        ContentUnavailableView("No Folders Inside", tabler: "folder")
       } else if let listing, matching(listing).isEmpty {
-        ContentUnavailableView.search(text: query)
+        ContentUnavailableView("No Results for “\(query)”", tabler: "search", description: Text("Check the spelling or try a new search."))
       }
     }
     .searchable(text: $query, prompt: "Search folders")
@@ -303,7 +302,7 @@ private struct FolderList: View {
     .toolbar {
       if folder == nil {
         ToolbarItem(placement: .topBarLeading) {
-          Button(role: .close) { dismiss() }
+          CloseButton { dismiss() }
         }
       }
       if let listing, listing.roots.count > 1 {
@@ -313,7 +312,7 @@ private struct FolderList: View {
               Button(root.name) { onJump(root.path) }
             }
           } label: {
-            Image(systemName: "externaldrive")
+            Image(tabler: "server-2", size: 22)
           }
         }
       }
@@ -420,12 +419,12 @@ struct ChangesSheet: View {
       .listStyle(.plain)
       .overlay {
         if let error {
-          ContentUnavailableView("No Changes Shown", systemImage: "exclamationmark.triangle", description: Text(error))
+          ContentUnavailableView("No Changes Shown", tabler: "alert-triangle", description: Text(error))
         } else if diff == nil {
           ProgressView()
         } else if diff?.files.isEmpty == true {
           ContentUnavailableView(
-            "No Changes", systemImage: "checkmark",
+            "No Changes", tabler: "check",
             description: Text("The checkout this chat works in has no uncommitted changes."))
         }
       }
@@ -434,7 +433,7 @@ struct ChangesSheet: View {
       .navigationSubtitle(summary)
       .toolbar {
         ToolbarItem(placement: .topBarTrailing) {
-          Button(role: .close) { dismiss() }
+          CloseButton { dismiss() }
         }
       }
       .task {

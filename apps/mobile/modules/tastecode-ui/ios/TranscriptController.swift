@@ -253,8 +253,7 @@ final class TranscriptController: UIViewController, UICollectionViewDelegate, Tr
     view.addSubview(bottomFade)
 
     var jump = UIButton.Configuration.glass()
-    jump.image = UIImage(
-      systemName: "arrow.down", withConfiguration: UIImage.SymbolConfiguration(pointSize: 15, weight: .semibold))
+    jump.image = Tabler.image("arrow-down", size: 18)
     jump.cornerStyle = .capsule
     jumpButton.configuration = jump
     jumpButton.accessibilityLabel = "Scroll to the newest message"
@@ -774,10 +773,10 @@ final class TranscriptController: UIViewController, UICollectionViewDelegate, Tr
     guard [.assistant, .user, .error, .notice].contains(row.kind) else { return nil }
     return UIContextMenuConfiguration(identifier: key as NSString, previewProvider: nil) { [weak self] _ in
       UIMenu(children: [
-        UIAction(title: "Copy", image: UIImage(systemName: "doc.on.doc")) { _ in
+        UIAction(title: "Copy", image: Tabler.image("copy")) { _ in
           UIPasteboard.general.string = text
         },
-        UIAction(title: "Select Text", image: UIImage(systemName: "text.cursor")) { _ in
+        UIAction(title: "Select Text", image: Tabler.image("cursor-text")) { _ in
           self?.selectText(key)
         },
       ])

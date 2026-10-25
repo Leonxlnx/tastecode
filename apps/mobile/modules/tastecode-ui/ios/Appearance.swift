@@ -137,8 +137,7 @@ private struct SizeSlider: View {
 
   var body: some View {
     HStack(spacing: 14) {
-      Image(systemName: "textformat.size.smaller")
-        .font(.footnote)
+      Image(tabler: "text-decrease", size: 15)
         .foregroundStyle(.secondary)
       Slider(
         value: Binding(get: { Double(clamped(step)) }, set: { step = Int($0.rounded()) }),
@@ -147,8 +146,7 @@ private struct SizeSlider: View {
       )
       .tint(.primary)
       .sensoryFeedback(.selection, trigger: step)
-      Image(systemName: "textformat.size.larger")
-        .font(.title3)
+      Image(tabler: "text-increase", size: 24)
         .foregroundStyle(.secondary)
     }
     .padding(.vertical, 4)

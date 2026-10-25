@@ -189,10 +189,8 @@ struct QuestionPanel: View {
             .fixedSize(horizontal: false, vertical: true)
         }
         Spacer(minLength: 8)
-        Image(systemName: selected ? "checkmark.circle.fill" : "circle")
-          .font(.body)
+        Image(tabler: selected ? "circle-check-filled" : "circle", size: 22)
           .foregroundStyle(selected ? AnyShapeStyle(.primary) : AnyShapeStyle(.tertiary))
-          .contentTransition(.symbolEffect(.replace))
       }
       .padding(.vertical, 10)
       .contentShape(.rect)

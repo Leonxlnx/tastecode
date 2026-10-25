@@ -63,7 +63,7 @@ struct Composer: View {
         let taken = try await onEdit(id)
         let typed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         text = typed.isEmpty ? taken.text : "\(taken.text)\n\n\(text)"
-        let placeholder = UIImage(systemName: "photo") ?? UIImage()
+        let placeholder = Tabler.image("photo")
         for path in taken.attachments where !images.contains(where: { $0.path == path }) {
           images.append(PendingImage(image: model.images[path] ?? placeholder, path: path))
         }
@@ -132,13 +132,12 @@ struct Composer: View {
 
   private var attachMenu: some View {
     Menu {
-      Button("Photo Library", systemImage: "photo.on.rectangle") { picking = true }
+      Button("Photo Library", tabler: "photo") { picking = true }
       if UIImagePickerController.isSourceTypeAvailable(.camera) {
-        Button("Take Photo", systemImage: "camera") { takingPhoto = true }
+        Button("Take Photo", tabler: "camera") { takingPhoto = true }
       }
     } label: {
-      Image(systemName: "plus")
-        .font(.system(size: 18, weight: .medium))
+      Image(tabler: "plus", size: 23)
         .frame(width: 32, height: 34)
         .contentShape(.rect)
     }
@@ -157,9 +156,7 @@ struct Composer: View {
       }
     } label: {
       let active = showsStop || canSend
-      Image(systemName: showsStop ? "stop.fill" : "arrow.up")
-        .font(.system(size: showsStop ? 11 : 15, weight: .bold))
-        .contentTransition(.symbolEffect(.replace))
+      Image(tabler: showsStop ? "player-stop-filled" : "arrow-up", size: showsStop ? 14 : 19)
         .foregroundStyle(active ? AnyShapeStyle(Color(.systemBackground)) : AnyShapeStyle(.tertiary))
         .frame(width: 32, height: 32)
         // A fixed colour, not `.primary`: the glass turns hierarchical styles
@@ -266,8 +263,7 @@ struct SetupChip: View {
             .lineLimit(1)
             .fixedSize()
         }
-        Image(systemName: "chevron.down")
-          .font(.system(size: 10, weight: .bold))
+        Image(tabler: "chevron-down", size: 13)
           .foregroundStyle(.tertiary)
       }
       .font(.subheadline.weight(.medium))
@@ -354,8 +350,7 @@ private struct SetupPanel: View {
     }
     .overlay(alignment: .topLeading) {
       Button(action: close) {
-        Image(systemName: "xmark")
-          .font(.system(size: 15, weight: .semibold))
+        Image(tabler: "x", size: 19)
           .frame(width: 30, height: 30)
       }
       .buttonStyle(.glass)
@@ -445,7 +440,7 @@ private struct ModelTitle: View {
             Text(tier.name).tag(tier.id)
           }
         } label: {
-          Label("Speed", systemImage: "hare")
+          Label("Speed", tabler: "bolt")
           Text(setup.tierName ?? "Standard")
         }
         .pickerStyle(.menu)
@@ -467,8 +462,7 @@ private struct ModelTitle: View {
             .foregroundStyle(.primary)
             .lineLimit(1)
             .contentTransition(.opacity)
-          Image(systemName: "chevron.up.chevron.down")
-            .font(.footnote.weight(.semibold))
+          Image(tabler: "selector", size: 16)
             .foregroundStyle(.tertiary)
         }
         Text([setup.sourceName, setup.tierName].compactMap { $0 }.joined(separator: " · "))
@@ -842,8 +836,7 @@ struct AccessMenu: View {
         }
       }
     } label: {
-      Image(systemName: symbol)
-        .font(.system(size: 15, weight: .medium))
+      Image(tabler: symbol, size: 20)
         .foregroundStyle(.secondary)
         .frame(width: 34, height: 34)
         .contentShape(.rect)
@@ -855,9 +848,9 @@ struct AccessMenu: View {
   /// One symbol per level, so the level reads without its name.
   private var symbol: String {
     switch setup.access {
-    case "ask": return "hand.raised"
-    case "auto", "auto-review": return "checkmark.shield"
-    case "full": return "exclamationmark.shield"
+    case "ask": return "hand-stop"
+    case "auto", "auto-review": return "shield-check"
+    case "full": return "shield-exclamation"
     default: return "shield"
     }
   }
@@ -917,8 +910,7 @@ private struct QueueLines: View {
   private func row(_ item: QueuedView, in rows: [QueuedView]) -> some View {
     let lifted = dragging == item.id
     return HStack(alignment: .center, spacing: 6) {
-      Image(systemName: "line.3.horizontal")
-        .font(.footnote.weight(.medium))
+      Image(tabler: "grip-horizontal", size: 17)
         .foregroundStyle(.tertiary)
         .frame(width: 28, height: 36)
         .contentShape(.rect)
@@ -936,7 +928,7 @@ private struct QueueLines: View {
               .multilineTextAlignment(.leading)
           }
           if item.images > 0 {
-            Label(item.images == 1 ? "1 picture" : "\(item.images) pictures", systemImage: "photo")
+            Label(item.images == 1 ? "1 picture" : "\(item.images) pictures", tabler: "photo")
               .font(.caption)
               .foregroundStyle(.secondary)
           }
@@ -951,8 +943,7 @@ private struct QueueLines: View {
         Button {
           onSteer(item.id)
         } label: {
-          Image(systemName: "arrow.up.circle")
-            .font(.body)
+          Image(tabler: "circle-arrow-up", size: 21)
             .frame(width: 30, height: 30)
             .contentShape(.rect)
         }
@@ -963,8 +954,7 @@ private struct QueueLines: View {
       Button {
         onUnqueue(item.id)
       } label: {
-        Image(systemName: "xmark")
-          .font(.caption.weight(.semibold))
+        Image(tabler: "x", size: 15)
           .frame(width: 30, height: 30)
           .contentShape(.rect)
       }
@@ -986,15 +976,15 @@ private struct QueueLines: View {
     .contentShape(.rect)
     .contextMenu {
       if canEdit && !item.pending {
-        Button("Edit", systemImage: "pencil") { onEdit(item.id) }
+        Button("Edit", tabler: "pencil") { onEdit(item.id) }
       }
       if canSteer && !item.pending {
-        Button("Send Now", systemImage: "arrow.up.circle") { onSteer(item.id) }
+        Button("Send Now", tabler: "circle-arrow-up") { onSteer(item.id) }
       }
       if item.id != rows.first?.id && !item.pending {
-        Button("Move to Top", systemImage: "arrow.up.to.line") { reorder(item.id, to: 0, in: rows) }
+        Button("Move to Top", tabler: "arrow-bar-to-up") { reorder(item.id, to: 0, in: rows) }
       }
-      Button("Remove", systemImage: "trash", role: .destructive) { onUnqueue(item.id) }
+      Button("Remove", tabler: "trash", role: .destructive) { onUnqueue(item.id) }
         .disabled(item.pending)
     } preview: {
       // The row lives on the composer's glass; lifted alone it needs its own ground.
@@ -1106,10 +1096,10 @@ private struct ImageStrip: View {
               Button {
                 images.removeAll { $0.id == pending.id }
               } label: {
-                Image(systemName: "xmark.circle.fill")
-                  .symbolRenderingMode(.palette)
-                  .foregroundStyle(.white, .black.opacity(0.55))
-                  .font(.system(size: 18))
+                Image(tabler: "x", size: 13, fixed: true)
+                  .foregroundStyle(.white)
+                  .frame(width: 20, height: 20)
+                  .background(.black.opacity(0.55), in: .circle)
               }
               .buttonStyle(.plain)
               .offset(x: 5, y: -5)

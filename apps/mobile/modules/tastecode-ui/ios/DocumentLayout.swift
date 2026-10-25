@@ -225,15 +225,15 @@ enum DocumentBuilder {
       if index > 0 { result.append(NSAttributedString(string: "\n", attributes: base)) }
       result.append(NSAttributedString(string: "\t", attributes: base))
       if let checked = item.checked {
-        let symbol = UIImage(
-          systemName: checked ? "checkmark.circle.fill" : "circle",
-          withConfiguration: UIImage.SymbolConfiguration(font: style.subheadline))?
-          .withTintColor(checked ? color : .secondaryLabel, renderingMode: .alwaysOriginal)
+        // The text size is already in the font, so the icon is not scaled again.
+        let symbol = Tabler.image(
+          checked ? "circle-check-filled" : "circle", size: ceil(style.subheadline.pointSize * 1.15), fixed: true
+        )
+        .withTintColor(checked ? color : .secondaryLabel, renderingMode: .alwaysOriginal)
         let attachment = NSTextAttachment()
         attachment.image = symbol
-        if let size = symbol?.size {
-          attachment.bounds = CGRect(x: 0, y: (style.body.capHeight - size.height) / 2, width: size.width, height: size.height)
-        }
+        let size = symbol.size
+        attachment.bounds = CGRect(x: 0, y: (style.body.capHeight - size.height) / 2, width: size.width, height: size.height)
         let mark = NSMutableAttributedString(attachment: attachment)
         mark.addAttributes([.paragraphStyle: paragraph], range: NSRange(location: 0, length: mark.length))
         result.append(mark)
