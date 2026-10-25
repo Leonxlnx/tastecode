@@ -50,12 +50,12 @@ export const CLAUDE_RUNTIMES = [
   {
     id: 'sdk',
     label: 'Agent SDK',
-    description: "Anthropic's Agent SDK starts Claude Code and speaks its protocol",
+    description: "Anthropic's Agent SDK runs Claude Code",
   },
   {
     id: 'cli',
     label: 'claude -p',
-    description: 'TasteCode starts claude -p and speaks its stream-json protocol itself',
+    description: 'TasteCode runs claude -p itself',
   },
 ] as const satisfies readonly ProviderRuntimeOption[]
 
