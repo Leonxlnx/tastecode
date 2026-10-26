@@ -79,6 +79,18 @@ describe('app-screen deal', () => {
     ])
   })
 
+  it('does not read a kind from everyday verbs', () => {
+    expect(appScreenKinds(brief('Build a dashboard in order to exchange notes'))).toEqual([
+      'workspace',
+    ])
+    expect(appScreenKinds(brief('Build a dashboard in order to see things'))).toEqual([
+      'analytics',
+      'smb-admin',
+      'workspace',
+    ])
+    expect(appScreenKinds(brief('Stock market watchlist'))).toEqual(['markets'])
+  })
+
   it('deals a style, shell and one pattern per screen that suit the kind', () => {
     const direction = selectAppDirection(brief('Budget dashboard for our household'), first)
     expect(direction).toEqual({
