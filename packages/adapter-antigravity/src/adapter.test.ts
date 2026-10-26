@@ -280,6 +280,21 @@ describe('Antigravity turn invocation', () => {
     ).toEqual(['--model', 'gemini-3.6-flash-low'])
   })
 
+  it("runs each turn with agy's auto-updater switched off", async () => {
+    const child = new FakeChild()
+    const seen: Array<NodeJS.ProcessEnv> = []
+    const adapter = new AntigravityAdapter({
+      spawn: (_command, _args, options) => {
+        seen.push(options.env)
+        return child
+      },
+    })
+    const thread = await adapter.startThread('C:\\repo')
+    await adapter.sendTurn(thread.id, 'Hi')
+
+    expect(seen).toEqual([{ AGY_CLI_DISABLE_AUTO_UPDATE: 'true' }])
+  })
+
   it('refreshes a cold model index before applying an effort', async () => {
     resetAntigravityIndexForTests()
     const discovery = new FakeChild()

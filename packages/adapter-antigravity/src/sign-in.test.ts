@@ -91,7 +91,11 @@ describe('antigravityAccount', () => {
       {
         command: antigravityCommand(),
         args: ['models'],
-        options: { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true },
+        options: {
+          env: { ...process.env, AGY_CLI_DISABLE_AUTO_UPDATE: 'true' },
+          stdio: ['pipe', 'pipe', 'pipe'],
+          windowsHide: true,
+        },
       },
     ])
     expect(fake.stdinEnded).toBe(1)

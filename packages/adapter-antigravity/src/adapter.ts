@@ -1,15 +1,9 @@
 import { EventEmitter } from 'node:events'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import type { ApprovalMode, Capabilities, DomainEvent, Model, Thread } from '@harness/contracts'
-import {
-  argumentPromptLimit,
-  killTree,
-  ProtocolFrameError,
-  spawnOwned,
-  readNdjson,
-} from '@harness/proc'
+import { argumentPromptLimit, killTree, ProtocolFrameError, readNdjson } from '@harness/proc'
 import { z } from 'zod'
-import { antigravityCommand } from './command.js'
+import { ANTIGRAVITY_ENVIRONMENT, antigravityCommand, spawnAgy, type AgySpawn } from './command.js'
 import {
   ANTIGRAVITY_SIGN_IN_REQUIRED,
   antigravitySignIn,
@@ -144,11 +138,7 @@ export type AntigravityAdapterEvents = {
   log: [string]
 }
 
-type SpawnFn = (
-  command: string,
-  args: string[],
-  options: { cwd?: string; stdio: ['pipe', 'pipe', 'pipe']; windowsHide: boolean },
-) => ChildProcessWithoutNullStreams
+type SpawnFn = AgySpawn
 
 export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
   #processStop: Promise<void> = Promise.resolve()
@@ -167,7 +157,7 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
 
   constructor(options: { spawn?: SpawnFn } = {}) {
     super()
-    this.#spawn = options.spawn ?? spawnOwned
+    this.#spawn = options.spawn ?? spawnAgy
   }
 
   /** The prompt is an argument of every turn's command line. */
@@ -226,6 +216,7 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
     if (this.#child) await this.#stop(this.#child)
     const child = this.#spawn(antigravityCommand(), args, {
       cwd: this.#workspacePath,
+      env: ANTIGRAVITY_ENVIRONMENT,
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
     })
@@ -404,7 +395,7 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
    */
   async listModels(): Promise<Model[]> {
     const result =
-      this.#spawn === spawnOwned ? await sharedAgyModels() : await readAgyModels(this.#spawn)
+      this.#spawn === spawnAgy ? await sharedAgyModels() : await readAgyModels(this.#spawn)
     if (antigravitySignIn(result) === false) throw new Error(ANTIGRAVITY_SIGN_IN_REQUIRED)
     if (result.code !== 0) throw new Error('Antigravity model discovery failed')
     return parseAntigravityModels(result.stdout)
