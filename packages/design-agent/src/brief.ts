@@ -1,3 +1,4 @@
+import { APP_SCREENS_ENABLED } from './app-screen-mode.js'
 import { readDesignArtifact, writeDesignArtifact } from './artifact-store.js'
 import { DASHBOARD_REFERENCES_ENABLED } from './dashboard-references.js'
 import { record, string, stringsAllowEmpty } from './parse.js'
@@ -45,11 +46,16 @@ const PAGE_ABOUT_PRODUCT = new RegExp(
 const APPLICATION_SURFACE =
   /\b(?:dashboards?|admin|analytics|applications?|apps?|webapps?|product interface)\b/u
 
+/** Dashboards run as tasteskill app screens, or from the parked image catalog when it returns. */
+export function dashboardModeEnabled(): boolean {
+  return APP_SCREENS_ENABLED || DASHBOARD_REFERENCES_ENABLED
+}
+
 export function isDashboardBrief(
   brief: Pick<DesignBrief, 'pageType' | 'originalRequest'>,
 ): boolean {
-  // While dashboards are parked, every request runs as a website (see dashboard-references.ts).
-  if (!DASHBOARD_REFERENCES_ENABLED) return false
+  // With both dashboard paths off, every request runs as a website.
+  if (!dashboardModeEnabled()) return false
   // The requested surface wins over the product being advertised on it: a site,
   // one-pager or Webseite for an analytics app is still a website.
   const pageType = surfaceText(brief.pageType)
@@ -59,9 +65,9 @@ export function isDashboardBrief(
   return !isMarketingSurface(request) && APPLICATION_SURFACE.test(request)
 }
 
-/** A page plan in the dashboard mode; a saved one routes nothing while dashboards are parked. */
+/** A page plan in the dashboard mode; a saved one routes nothing while both paths are off. */
 export function isDashboardPageMode(mode: string | undefined): boolean {
-  return DASHBOARD_REFERENCES_ENABLED && mode === 'operate_monitor'
+  return dashboardModeEnabled() && mode === 'operate_monitor'
 }
 
 function isMarketingSurface(text: string): boolean {

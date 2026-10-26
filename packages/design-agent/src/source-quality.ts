@@ -31,16 +31,17 @@ export function validateDesignSourceQuality(
   const referenceBound =
     !!page?.sections.length && page.sections.every((section) => section.referenceDirectionId)
   // Native chart/icon SVG, inline or as a standalone icon file, belongs to the implemented
-  // dashboard, not the acquired asset set. Visual Review checks its purpose and geometry
-  // against the locked screen references.
+  // dashboard, not the acquired asset set. So do the 1px dividers an app screen uses between
+  // KPI cells and panels. Visual Review checks them against the locked screen references or
+  // the dealt app sheet; an app screen has no references, so this does not require them.
   const nativeDashboard =
-    referenceBound &&
-    page?.architecture?.mode === 'operate_monitor' &&
+    !!page?.sections.length &&
+    page.architecture?.mode === 'operate_monitor' &&
     page.sections.every((section) => section.layoutFamily === 'dashboard')
   const violations = designSourceViolations(
     workspacePath,
     assets,
-    referenceBound,
+    referenceBound || nativeDashboard,
     nativeDashboard,
   ).filter((violation) => {
     const remaining = previous.get(violation) ?? 0

@@ -90,8 +90,20 @@ export function designConsistencyAudit(
   }
 }
 
+export interface DesignConsistencyOptions {
+  /**
+   * False on an app screen: the tasteskill kit it copies (app.css, charts.js) keeps a fixed set
+   * of small radii for chips, ticks and tooltips that no four-value brand scale can hold, and
+   * Review judges panel radii against the dealt sheet instead.
+   */
+  radii?: boolean
+}
+
 /** Concise, actionable automated Review findings for the drift an audit found. */
-export function designConsistencyFindings(audit: DesignConsistencyAudit): ReviewFinding[] {
+export function designConsistencyFindings(
+  audit: DesignConsistencyAudit,
+  { radii = true }: DesignConsistencyOptions = {},
+): ReviewFinding[] {
   const findings: ReviewFinding[] = []
   if (audit.fonts.length) {
     const approved = audit.approvedFonts.join(', ')
@@ -108,6 +120,7 @@ export function designConsistencyFindings(audit: DesignConsistencyAudit): Review
       repair: `Replace ${listed(families)} with the approved brand fonts ${approved}, and remove their loading (Google Fonts links or @import, @font-face, next/font or @fontsource imports), so every section uses the one brand type system.`,
     })
   }
+  if (!radii) return findings
   const files = [...new Set(audit.radii.flatMap(({ files }) => files))].sort()
   if (audit.radiusTokens && audit.radiiOutsideTokens.length) {
     const tokens = audit.radiusTokens.join(', ')
@@ -149,8 +162,9 @@ export function designConsistencyFindings(audit: DesignConsistencyAudit): Review
 export function enforceDesignConsistencyFindings(
   review: VisualReview,
   audit: DesignConsistencyAudit,
+  options: DesignConsistencyOptions = {},
 ): VisualReview {
-  const automated = designConsistencyFindings(audit)
+  const automated = designConsistencyFindings(audit, options)
   if (!automated.length) return review
   const owned = new Set<string>(DESIGN_CONSISTENCY_FINDING_IDS)
   return {
