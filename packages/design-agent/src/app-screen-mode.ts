@@ -9,4 +9,4 @@
  * library holds no images, so this path needs neither the parked dashboard image catalog
  * (dashboard-references.ts stays off) nor an image-capable provider.
  */
-export const APP_SCREENS_ENABLED: boolean = false
+export const APP_SCREENS_ENABLED: boolean = true

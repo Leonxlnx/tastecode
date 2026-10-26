@@ -127,6 +127,10 @@ describe('app-screen deal', () => {
   it('deals only for dashboard runs without dashboard reference images', () => {
     const website = { ...brief('Landing page for our analytics app'), pageType: 'landing_page' }
     expect(appDirectionForRun(website, [], first)).toBeUndefined()
+    const dashboard = brief('Analytics dashboard for traffic')
+    expect(appDirectionForRun(dashboard, [], first)).toMatchObject({ kind: 'analytics' })
+    const imageDeck = [{ id: 'dash', family: 'dashboard' as const, cue: '', imagePath: 'd.webp' }]
+    expect(appDirectionForRun(dashboard, imageDeck, first)).toBeUndefined()
   })
 
   it('rejects a saved sheet that names something outside the bundled library', () => {
