@@ -22,7 +22,5 @@ export function App() {
     return () => subscription.remove()
   }, [])
 
-  return (
-    <TasteApp style={{ flex: 1 }} />
-  )
+  return <TasteApp style={{ flex: 1 }} />
 }
