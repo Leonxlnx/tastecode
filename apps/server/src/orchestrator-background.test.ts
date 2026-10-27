@@ -604,7 +604,8 @@ describe('background writing for a chat on another account', () => {
   }
 
   beforeEach(() => {
-    signIn('claude-code', [model('claude-haiku-4-5')])
+    // Automatic writing tries Claude Code first; signed out, it reaches the Codex chats' own provider.
+    signedOut('claude-code')
     signIn('codex', [model('gpt-5.6-luna')], { plan: 'Pro' })
     signIn('grok', [model('grok-4.6')])
     workHome = mkdtempSync(path.join(os.tmpdir(), 'tastecode-background-work-'))
@@ -627,6 +628,7 @@ describe('background writing for a chat on another account', () => {
   })
 
   it('still writes a title for a Work Claude chat, whose own name history cannot read', async () => {
+    signIn('claude-code', [model('claude-haiku-4-5')])
     const { title, started, store } = harness({ mode: 'automatic' }, undefined, accounts)
 
     await expect(title({ provider: 'claude-code', accountId: 'work' })).resolves.toEqual({
@@ -672,6 +674,15 @@ describe('background writing for a chat on another account', () => {
     await title({ accountId: 'work' })
 
     expect(started).toEqual([{ provider: 'grok', model: 'grok-4.6' }])
+  })
+
+  it("writes a Work Codex chat's title through Claude Code's own sign-in when it comes first", async () => {
+    signIn('claude-code', [model('claude-haiku-4-5')])
+    const { title, started } = harness({ mode: 'automatic' }, undefined, accounts)
+
+    await title({ accountId: 'work' })
+
+    expect(started).toEqual([{ provider: 'claude-code', model: 'claude-haiku-4-5' }])
   })
 
   it('refuses rather than writing through the default account once the account is removed', async () => {
