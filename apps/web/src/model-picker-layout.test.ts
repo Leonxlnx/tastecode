@@ -18,6 +18,15 @@ describe('model picker layout preference', () => {
     expect(readModelPickerLayout()).toBe('list')
   })
 
+  it('keeps the ledger as a third layout and reads anything unknown as the list', () => {
+    writeModelPickerLayout('ledger')
+    expect(localStorage.getItem(MODEL_PICKER_LAYOUT_KEY)).toBe('ledger')
+    expect(readModelPickerLayout()).toBe('ledger')
+
+    localStorage.setItem(MODEL_PICKER_LAYOUT_KEY, 'grid')
+    expect(readModelPickerLayout()).toBe('list')
+  })
+
   it('keeps the new session value when persistent storage rejects the write', () => {
     localStorage.setItem(MODEL_PICKER_LAYOUT_KEY, 'list')
     vi.spyOn(localStorage, 'setItem').mockImplementation(() => {

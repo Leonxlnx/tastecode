@@ -602,6 +602,51 @@
   opacity: 0.6;
 }
 
+/* ledger: the list beside an inspector with the effort levels and a plan meter */
+
+.gwin[data-picker='ledger'] .gwin__picker {
+  left: 4%;
+  right: 6%;
+}
+
+.gwin[data-picker='ledger'] .gwin__models {
+  flex: 0 0 44%;
+}
+
+.gwin__inspect {
+  position: relative;
+  flex: 1;
+  background: color-mix(in srgb, var(--text) 3%, var(--gw-panel));
+  box-shadow: inset 1px 0 var(--gw-edge);
+}
+
+.gwin__inspect i {
+  left: 12%;
+  top: calc(12% + var(--row) * 12%);
+  width: calc(var(--w) * 76%);
+  background: var(--gw-quiet);
+}
+
+.gwin__inspect i[data-title] {
+  height: 4px;
+  background: var(--gw-strong);
+}
+
+.gwin__inspect i[data-meter] {
+  background: var(--gw-ink);
+}
+
+.gwin__inspect .gwin__levels {
+  top: 44%;
+  left: 12%;
+  right: 12%;
+  height: 9px;
+  border-radius: var(--r-xs);
+  background:
+    linear-gradient(var(--gw-ink), var(--gw-ink)) 52% 50% / 22% 5px no-repeat,
+    var(--gw-edge);
+}
+
 /* notifications: the window sits behind, the OS notifications come in over its
    corner, drawn as the picker's raised panel. Their dots are the sidebar's:
    amber for a chat that needs you, green for one that finished. */

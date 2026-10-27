@@ -112,6 +112,9 @@ import {
   getFastServiceTier,
   getNextServiceTierForModel,
 } from './ui/model-selector-utils.js'
+import type { ModelLedgerData } from './ui/model-ledger-context.js'
+import type { ModelPickerHandle } from './ui/ModelSelector.js'
+import { recordModelRecent } from './model-recents.js'
 import type { Checkpoint } from './ui/RollbackDialog.js'
 import { SessionSearchHost, type SessionSearchHandle } from './ui/SessionSearchHost.js'
 import type { SettingsSection } from './ui/Settings.js'
@@ -4731,6 +4734,14 @@ export function App() {
         if (interruptRequested) requestInterrupt(threadId)
         const result = await turnRequest
         turnAccepted = true
+        // The ledger picker's Recent rows: pairs a message actually left with.
+        if (turnChoice) {
+          recordModelRecent({
+            key: turnChoice.key,
+            effort: selectedEffort,
+            serviceTier: selectedServiceTier,
+          })
+        }
         const current = threadController.snapshot(threadId) ?? emptyThread
         const pending = threadController.submission(threadId, optimisticItemId)
         threadController.updateSubmission(threadId, optimisticItemId, { accepted: true })
@@ -4890,6 +4901,42 @@ export function App() {
   const refreshCatalog = useCallback(() => {
     setCatalogRequest((request) => request + 1)
   }, [])
+
+  /** The model picker in the composer, for its open and effort-step shortcuts. */
+  const modelPickerRef = useRef<ModelPickerHandle>(null)
+  // What the ledger picker layout reads beyond the models: plan limits,
+  // accounts, the open chat it may move, and how each source's listing went.
+  const modelLedger = useMemo<ModelLedgerData>(
+    () => ({
+      limits: usageState,
+      onShowLimits: showUsage,
+      accounts: providerAccounts,
+      chat:
+        movableChat && activeSession && activeModelSource
+          ? {
+              source: activeModelSource,
+              provider: activeSession.provider,
+              accountId: activeSession.accountId as AccountId | undefined,
+            }
+          : undefined,
+      catalogLoading: catalogAvailability === 'loading',
+      pendingSources: pendingModelSources,
+      sourceErrors: modelErrors,
+      onRetrySources: refreshCatalog,
+    }),
+    [
+      catalogAvailability,
+      usageState,
+      showUsage,
+      providerAccounts,
+      movableChat,
+      activeSession,
+      activeModelSource,
+      pendingModelSources,
+      modelErrors,
+      refreshCatalog,
+    ],
+  )
 
   const changeProviderRoster = useCallback(
     (roster: ProviderRoster) => {
@@ -6289,6 +6336,11 @@ export function App() {
         setPaletteScope(null)
         setComposerFocusRequest((request) => request + 1)
       },
+      openModelPicker: () => {
+        setPaletteScope(null)
+        modelPickerRef.current?.toggle()
+      },
+      stepEffort: () => modelPickerRef.current?.stepEffort(),
       interrupt: () => {
         if (thread.running) interrupt()
       },
@@ -7178,6 +7230,8 @@ export function App() {
                     onReady={handleComposerReady}
                     queuedTurns={queuedTurns}
                     canSteerQueue={canSteerQueue}
+                    modelLedger={modelLedger}
+                    modelPickerRef={modelPickerRef}
                     onModelSelectorOpen={discoverEveryModelSource}
                     onModelChange={selectModel}
                     onEffortChange={changeEffort}

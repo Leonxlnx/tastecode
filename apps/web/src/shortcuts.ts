@@ -64,6 +64,23 @@ export const KEYBINDING_DEFINITIONS = [
     defaultShortcut: { key: 'l', primary: true },
   },
   {
+    id: 'openModelPicker',
+    group: 'Chats',
+    label: 'Choose model',
+    description: 'Open the model and effort picker in the composer.',
+    defaultShortcut: { key: 'm', primary: true },
+    // Command+M minimizes the window on macOS before the page sees it. The Mac
+    // default is open (a question for Karol); until then it starts unassigned.
+    macDefaultShortcut: null,
+  },
+  {
+    id: 'stepEffort',
+    group: 'Chats',
+    label: 'Step reasoning effort',
+    description: 'Raise the effort one level, back to the lowest after the highest.',
+    defaultShortcut: { key: 'm', primary: true, shift: true },
+  },
+  {
     id: 'interrupt',
     group: 'Chats',
     label: 'Stop response',
@@ -168,13 +185,34 @@ export type KeybindingId = (typeof KEYBINDING_DEFINITIONS)[number]['id']
 export type KeybindingGroup = (typeof KEYBINDING_DEFINITIONS)[number]['group']
 export type Keybindings = Record<KeybindingId, Shortcut | null>
 
-export function createDefaultKeybindings(): Keybindings {
+/** The shortcut an action starts with on this platform. */
+export function defaultShortcutOf(
+  definition: (typeof KEYBINDING_DEFINITIONS)[number],
+  macOS: boolean,
+): Shortcut | null {
+  const shortcut =
+    macOS && 'macDefaultShortcut' in definition
+      ? definition.macDefaultShortcut
+      : definition.defaultShortcut
+  return shortcut ? { ...shortcut } : null
+}
+
+/**
+ * Whether the defaults are macOS's, read from the platform itself rather than
+ * through the bridge: `DEFAULT_KEYBINDINGS` is built while this module loads,
+ * before a test or a preview may stand in for the bridge.
+ */
+function platformIsMacOS(): boolean {
+  return typeof navigator !== 'undefined' && navigator.platform.startsWith('Mac')
+}
+
+export function createDefaultKeybindings(macOS = platformIsMacOS()): Keybindings {
   // SAFETY: Definitions contain one unique entry for every KeybindingId, so
   // Object.fromEntries produces the complete Keybindings record.
   return Object.fromEntries(
     KEYBINDING_DEFINITIONS.map((definition) => [
       definition.id,
-      definition.defaultShortcut ? { ...definition.defaultShortcut } : null,
+      defaultShortcutOf(definition, macOS),
     ]),
   ) as Keybindings
 }

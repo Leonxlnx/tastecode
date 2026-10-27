@@ -49,8 +49,29 @@ describe('shortcuts', () => {
       return shortcut ? [shortcutLabel(shortcut, false)] : []
     })
 
-    expect(KEYBINDING_DEFINITIONS).toHaveLength(21)
+    expect(KEYBINDING_DEFINITIONS).toHaveLength(23)
     expect(new Set(assigned).size).toBe(assigned.length)
+  })
+
+  it('opens the model picker on Ctrl+M and steps effort on Ctrl+Shift+M, but leaves Command+M to macOS', () => {
+    const windows = createDefaultKeybindings(false)
+    expect(windows.openModelPicker).toEqual({ key: 'm', primary: true })
+    expect(windows.stepEffort).toEqual({ key: 'm', primary: true, shift: true })
+    expect(shortcutLabel(windows.openModelPicker!, false)).toBe('Ctrl+M')
+    expect(
+      matchesShortcut(
+        new KeyboardEvent('keydown', { key: 'M', ctrlKey: true, shiftKey: true }),
+        windows.openModelPicker,
+      ),
+    ).toBe(false)
+
+    // Command+M minimizes the window before the page sees it.
+    const mac = createDefaultKeybindings(true)
+    expect(mac.openModelPicker).toBeNull()
+    expect(mac.stepEffort).toEqual({ key: 'm', primary: true, shift: true })
+
+    onPlatform('MacIntel')
+    expect(createDefaultKeybindings().openModelPicker).toBeNull()
   })
 
   it('matches Ctrl as the primary modifier outside macOS without stealing shifted variants', () => {

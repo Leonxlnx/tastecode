@@ -27,6 +27,8 @@ const OUTSIDE_SHELL = {
   '.session-search__spinner': 'session search',
   ".version-reel[data-turn='turning'] .version-reel__strip": 'provider update notice',
   '.media-viewer__video-loading': 'media viewer (portal to the body)',
+  '.model-ledger__spin': 'ledger model picker (menu portal to the body)',
+  '.model-ledger__skeleton span': 'ledger model picker (menu portal to the body)',
 } satisfies Record<string, string>
 const outsideShell = new Set<string>(Object.keys(OUTSIDE_SHELL))
 

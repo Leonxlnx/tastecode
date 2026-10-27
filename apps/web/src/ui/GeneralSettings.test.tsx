@@ -137,6 +137,19 @@ describe('general settings', () => {
     expect(screen.getByRole('radio', { name: 'Right' }).getAttribute('aria-checked')).toBe('true')
   })
 
+  it('offers the ledger as a third model picker, drawn with its inspector', () => {
+    renderGeneral()
+
+    const ledger = screen.getByRole('radio', { name: 'Ledger' })
+    expect(ledger.querySelector('.gwin')?.getAttribute('data-picker')).toBe('ledger')
+    expect(ledger.querySelector('.gwin__inspect')).toBeTruthy()
+    expect(screen.getByRole('radio', { name: 'List' }).querySelector('.gwin__inspect')).toBeNull()
+
+    fireEvent.click(ledger)
+    expect(localStorage.getItem(MODEL_PICKER_LAYOUT_KEY)).toBe('ledger')
+    expect(ledger.getAttribute('aria-checked')).toBe('true')
+  })
+
   it('says what each setting decides', () => {
     renderGeneral()
     expect(

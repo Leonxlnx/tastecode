@@ -8,9 +8,12 @@ import {
   useRef,
   useState,
   type DragEvent,
+  type Ref,
 } from 'react'
 import type { ApprovalMode, ProviderId, QueuedTurn, Usage } from '@harness/contracts'
 import type { ModelChoice } from '../model-catalog.js'
+import type { ModelLedgerData } from './model-ledger-context.js'
+import type { ModelPickerHandle } from './ModelSelector.js'
 import {
   IconArrowUp as ArrowUp,
   IconBox as Box,
@@ -547,6 +550,10 @@ function ComposerComponent(props: {
   onReady?: (() => void) | undefined
   queuedTurns: QueuedTurn[]
   canSteerQueue: boolean
+  /** Plan limits, accounts and listing state for the ledger picker layout. */
+  modelLedger?: ModelLedgerData | undefined
+  /** Opens the model picker or steps its effort from an app shortcut. */
+  modelPickerRef?: Ref<ModelPickerHandle> | undefined
   onModelSelectorOpen?: (() => void) | undefined
   onModelChange: (id: string) => void
   onEffortChange: (effort: string) => void
@@ -2236,6 +2243,9 @@ function ComposerComponent(props: {
                       onModelChange={props.onModelChange}
                       onEffortChange={props.onEffortChange}
                       onServiceTierChange={props.onServiceTierChange}
+                      ledger={props.modelLedger}
+                      pickerRef={props.modelPickerRef}
+                      openShortcut={keybindings.openModelPicker}
                     />
                   </Suspense>
                 ) : voiceState === 'idle' && showModelPlaceholder ? (

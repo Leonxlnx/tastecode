@@ -17,7 +17,7 @@ import { DESIGN_BRIEF_ATTACHMENT } from './design-agent/briefing.js'
 import { serializeModelCatalogCache as serializeCatalogWithinLimits } from './model-catalog-cache.js'
 import { choicesFor, type ModelChoice } from './model-catalog.js'
 import { parseModelVisibility, type ModelVisibilityRecord } from './model-catalog-visibility.js'
-import { KEYBINDING_DEFINITIONS, type Shortcut } from './shortcuts.js'
+import { defaultShortcutOf, KEYBINDING_DEFINITIONS, type Shortcut } from './shortcuts.js'
 import { TERMINAL_PLACEMENT_KEY } from './terminal-placement.js'
 import { IndeterminateRequestError, type ConnectionState, type Transport } from './transport.js'
 import { resetInstalls } from './provider-install.js'
@@ -49,12 +49,12 @@ interface TestServerProvider extends Omit<
   capabilities?: Partial<NonNullable<ServerProvider['capabilities']>>
 }
 
-const ASSIGNED_DEFAULT_SHORTCUTS: Array<{ label: string; shortcut: Shortcut }> =
-  KEYBINDING_DEFINITIONS.flatMap((definition) =>
-    definition.defaultShortcut
-      ? [{ label: definition.label, shortcut: { ...definition.defaultShortcut } }]
-      : [],
-  )
+/** A platform's assigned defaults: macOS leaves Command+M to the system. */
+const assignedDefaultShortcuts = (macOS: boolean): Array<{ label: string; shortcut: Shortcut }> =>
+  KEYBINDING_DEFINITIONS.flatMap((definition) => {
+    const shortcut = defaultShortcutOf(definition, macOS)
+    return shortcut ? [{ label: definition.label, shortcut }] : []
+  })
 
 const transport = vi.hoisted(() => ({
   request: vi.fn<TestRequest>(),
@@ -11926,7 +11926,7 @@ describe('global shortcuts', () => {
 
   it.each(
     ['macOS', 'Windows', 'Linux'].flatMap((platform) =>
-      ASSIGNED_DEFAULT_SHORTCUTS.map((binding) => ({ ...binding, platform })),
+      assignedDefaultShortcuts(platform === 'macOS').map((binding) => ({ ...binding, platform })),
     ),
   )('dispatches $label from the composer on $platform', async ({ shortcut, platform }) => {
     shortcutPlatform.macOS = platform === 'macOS'
