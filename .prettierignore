@@ -29,6 +29,12 @@ apps/mobile/assets/*.icon/
 # reformatting them would make every regeneration a noisy diff.
 packages/adapter-codex/src/generated/
 
+# Unmodified tasteskill files; provenance.json pins their SHA-256 and a test checks it.
+packages/design-agent/references/app-screens/app.json
+packages/design-agent/references/app-screens/app-screens.md
+packages/design-agent/references/app-screens/app.css
+packages/design-agent/references/app-screens/charts.js
+
 # Expo generates these from app.json; they are not checked in.
 apps/mobile/ios/
 apps/mobile/android/

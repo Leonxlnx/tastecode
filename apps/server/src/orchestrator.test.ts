@@ -51,7 +51,10 @@ import {
   snapshotDesignFiles,
   parseAssetManifest,
   validateResolvedDesignAssets,
+  APP_SCREENS_ENABLED,
+  appDirectionTypefaces,
   DASHBOARD_REFERENCES_ENABLED,
+  parseAppDirection,
 } from '@harness/design-agent'
 import { encodeHistoryCursor, readHistoryPage } from './history-page.js'
 import { compactHistoryReplay } from './history-replay.js'
@@ -4799,8 +4802,8 @@ describe('provider-neutral design briefing', () => {
     'builds without questions through the same workflow with synthetic image-capable $provider (dashboard: $dashboard)',
     async ({ provider, dashboard }) => {
       const model = 'future-provider/model-that-needs-no-design-code'
-      // A parked dashboard request runs the website workflow end to end (dashboard-references.ts).
-      const appScreen = dashboard && DASHBOARD_REFERENCES_ENABLED
+      // A dashboard runs as a tasteskill app screen while the image catalog stays parked.
+      const appScreen = dashboard && APP_SCREENS_ENABLED && !DASHBOARD_REFERENCES_ENABLED
       const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-flow-'))
       const referencePath = path.join(workspace, 'reference-home.png')
       writeFileSync(referencePath, 'reference image bytes')
@@ -4932,7 +4935,24 @@ describe('provider-neutral design briefing', () => {
           store.designRun(thread.id) as { typographyCandidates: { sans: string[] } }
         ).typographyCandidates
         expect(typography.sans).toHaveLength(10)
-        expect(sessions[0]?.sent[1]).toContain(JSON.stringify(typography))
+        const stored = store.designRun(thread.id) as { appDirection?: unknown }
+        // An app screen takes its face from the dealt sheet; a website from the draw.
+        const face = appScreen
+          ? appDirectionTypefaces(parseAppDirection(stored.appDirection))[0]
+          : typography.sans[0]
+        if (appScreen) {
+          expect(sessions[0]?.sent[1]).toContain('APP SHEET: dealt by TasteCode')
+          expect(sessions[0]?.sent[1]).not.toContain(JSON.stringify(typography))
+          expect(readdirSync(path.join(workspace, '.taste', 'app-kit')).sort()).toEqual([
+            'LICENSE',
+            'app-screens.md',
+            'app.css',
+            'charts.js',
+          ])
+        } else {
+          expect(stored.appDirection).toBeUndefined()
+          expect(sessions[0]?.sent[1]).toContain(JSON.stringify(typography))
+        }
         const brief = JSON.parse(readFileSync(path.join(workspace, '.taste', 'brief.json'), 'utf8'))
         expect(brief.subject).toBe('Independent studio')
         expect(brief.explicitAnswers).toEqual([])
@@ -4962,7 +4982,7 @@ describe('provider-neutral design briefing', () => {
               colorPalette: [{ name: 'Ink', value: '#171717', usage: 'Primary text' }],
               typefaces: [
                 {
-                  family: typography.sans[0],
+                  family: face,
                   source: 'Google Fonts',
                   roles: ['body'],
                   weights: [400, 600],
@@ -4989,11 +5009,10 @@ describe('provider-neutral design briefing', () => {
         await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(3))
         expect(store.designRun(thread.id)).toMatchObject({ phase: 'page' })
         expect(sessions[0]?.sent[2]).toContain('Page Blueprint phase')
-        if (dashboard && !appScreen) expect(sessions[0]?.sent[2]).not.toContain('operate_monitor')
         if (appScreen) {
-          expect(sessions[0]?.sent[2]).toContain(
-            'Use architecture.mode operate_monitor and layoutFamily dashboard',
-          )
+          expect(sessions[0]?.sent[2]).toContain('for an app screen')
+          expect(sessions[0]?.sent[2]).toContain('"mode":"operate_monitor"')
+          expect(sessions[0]?.sent[2]).toContain('APP SHEET: dealt by TasteCode')
           expect(sessions[0]?.sent[2]).not.toContain('normally plan at least eight')
         }
         expect(sessions[0]?.sent[2]).toContain('user-reference-1')
@@ -5060,6 +5079,9 @@ describe('provider-neutral design briefing', () => {
         await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(5))
         expect(sessions[0]?.sent[4]).toContain('Build phase')
         if (appScreen) {
+          expect(sessions[0]?.sent[4]).toContain(
+            'Build phase of TasteCode Design Mode for an app screen',
+          )
           expect(sessions[0]?.sent[4]).toContain('DASHBOARD INTERACTION AND MOTION')
           expect(sessions[0]?.sent[4]).not.toContain('<reference-reveal-source>')
         }
@@ -5181,6 +5203,7 @@ describe('provider-neutral design briefing', () => {
           ...Array.from({ length: 8 }, () => ({ model, effort: 'xhigh' })),
         ])
         expect(readdirSync(path.join(workspace, '.taste')).sort()).toEqual([
+          ...(appScreen ? ['app-kit'] : []),
           'assets.json',
           'brand.json',
           'brief.json',

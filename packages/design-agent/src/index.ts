@@ -1,4 +1,14 @@
 export { DASHBOARD_REFERENCES_ENABLED } from './dashboard-references.js'
+export { APP_SCREENS_ENABLED } from './app-screen-mode.js'
+export {
+  appDirectionForRun,
+  appDirectionTypefaces,
+  appScreenSource,
+  parseAppDirection,
+  selectAppDirection,
+  writeAppScreenKit,
+  type AppDirection,
+} from './app-screens.js'
 export {
   isDashboardBrief,
   parseDesignBrief,
@@ -126,6 +136,7 @@ export {
   designConsistencyFindings,
   enforceDesignConsistencyFindings,
   type DesignConsistencyAudit,
+  type DesignConsistencyOptions,
 } from './design-consistency.js'
 export {
   designPreviewPrompt,

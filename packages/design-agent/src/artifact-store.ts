@@ -24,6 +24,35 @@ export function readDesignArtifact(workspacePath: string, name: ArtifactName): u
   )
 }
 
+/** The app-screen kit TasteCode copies next to the run's artifacts; see app-screens.ts. */
+export const DESIGN_KIT_DIRECTORY = 'app-kit'
+
+function kitPath(workspacePath: string, name: string): string {
+  if (!/^[a-z0-9][a-z0-9.-]{0,63}$/iu.test(name)) throw new Error(`Invalid Design kit file ${name}`)
+  const root = realpathSync(workspacePath)
+  let directory = root
+  for (const segment of ['.taste', DESIGN_KIT_DIRECTORY]) {
+    directory = path.join(directory, segment)
+    mkdirSync(directory, { recursive: true })
+    if (!lstatSync(directory).isDirectory() || realpathSync(directory) !== directory) {
+      throw new Error('Design kit directory must be a real directory inside the workspace')
+    }
+  }
+  return path.join(directory, name)
+}
+
+/** Writes one kit file under `.taste/app-kit/`, replacing it atomically like an artifact. */
+export function writeDesignKitFile(workspacePath: string, name: string, content: string): void {
+  const target = kitPath(workspacePath, name)
+  const temporary = path.join(path.dirname(target), `.${name}.${randomUUID()}.tmp`)
+  try {
+    writeFileSync(temporary, content, { encoding: 'utf8', flag: 'wx', mode: 0o600 })
+    renameSync(temporary, target)
+  } finally {
+    rmSync(temporary, { force: true })
+  }
+}
+
 export function writeDesignArtifact(
   workspacePath: string,
   name: ArtifactName,

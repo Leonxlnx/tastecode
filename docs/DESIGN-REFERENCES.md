@@ -57,18 +57,35 @@ Each saved deck entry records `site` and `role` (`anchor`, `same-site`, `similar
 `fallback`). Only the anchor carries `style`, a one-line summary of its site's design language and
 likely typefaces. Decks saved before this change, without these fields, still parse and resume.
 
-**Dashboards are parked (owner decision, 2026-10-16).** The first dashboard reference set did not
-meet the design bar, so `DASHBOARD_REFERENCES_ENABLED` in
+**Dashboards run as tasteskill app screens (owner request, 2026-10-25).** A dashboard or other
+app screen (admin, analytics, settings, inbox, wallet, builder) is built from the app-screen part
+of tasteskill v2.1, bundled unmodified from
+[Leonxlnx/taste-skill](https://github.com/Leonxlnx/taste-skill) tag `v2.1.5` in
+`packages/design-agent/references/app-screens/` (MIT; `provenance.json` pins each file's
+SHA-256). `APP_SCREENS_ENABLED` in `packages/design-agent/src/app-screen-mode.ts` turns it on.
+After Briefing records a dashboard, the server deals one app sheet, a port of tasteskill's
+`draw.mjs --app`: a product kind read from the brief's words, one of seven styles that suits it
+(tokens, typeface and the style's one move), the style's shell two times in three or one of its
+alternatives, and one screen pattern per screen of that kind. The sheet is persisted with the run
+as library IDs. Brand records the sheet's tokens as named colours and its typeface, which replaces
+the random typography draw; Page plans one `operate_monitor` screen whose sections are the shell
+and the blocks of each view; Build copies tasteskill's `app.css` and `charts.js` from
+`.taste/app-kit/`, where the server writes them with a license line that copies keep; Review
+answers tasteskill's app-screen critique and checks its house rules and tells. Each phase quotes
+the sections of tasteskill's app-screen chapter it needs, unchanged. The library has no images,
+so a dashboard draws no reference deck and needs no image input of its own; the source check
+accepts native chart SVG and 1px dividers on a dashboard plan, and the source audit leaves corner
+radii to Review there because the copied kit keeps its own small radii.
+
+The dashboard image catalog stays parked (owner decision, 2026-10-16): the first dashboard
+reference set did not meet the design bar, so `DASHBOARD_REFERENCES_ENABLED` in
 `packages/design-agent/src/dashboard-references.ts` is `false` and the 200 dashboard pairs no
 longer ship in the bundled library. While it is off, no library's `dashboard-catalog.json` or
-`dashboard` family entry is loaded, including a configured local library that still has one,
-`isDashboardBrief` routes nothing into dashboard mode, and the Page protocol does not offer the
-`operate_monitor` mode or the `dashboard` family. A request for a dashboard or app screen still
-completes: Briefing records it as a website that presents the product, with its key views as
-native interface sections, and notes in the brief's assumptions that dashboard screens are not
-available. The run never claims a dashboard library and never fails for lack of one. The rules
-below describe the parked dashboard path; they return when the switch is turned back on together
-with a new reviewed asset set in `dashboard-catalog.json`.
+`dashboard` family entry is loaded, including a configured local library that still has one. With
+both switches off, `isDashboardBrief` routes nothing into dashboard mode and a dashboard request
+completes as a website that presents the product. The rules below describe the parked image path;
+they return only when its switch is turned back on together with a new reviewed asset set in
+`dashboard-catalog.json`.
 
 Dashboards keep exactly one complete app screen. Instead of a uniform draw, the server scores each
 eligible screen by the domain words it shares with the request, subject, required content and

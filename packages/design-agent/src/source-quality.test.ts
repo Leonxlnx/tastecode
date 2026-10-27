@@ -18,7 +18,7 @@ afterEach(() => {
 })
 
 describe('design source scan size limits', () => {
-  it('allows inline native charts only in reference-bound operating dashboards', () => {
+  it('allows inline native charts only in operating dashboards', () => {
     const root = workspace()
     writeFileSync(
       path.join(root, 'Chart.tsx'),
@@ -36,12 +36,31 @@ describe('design source scan size limits', () => {
     expect(() => validateDesignSourceQuality(root, ['Chart.tsx'])).toThrow(
       'unmanifested inline SVG',
     )
+    // An app screen dealt from the tasteskill library has no reference images to bind to.
+    const appScreen = {
+      ...dashboard!,
+      sections: [{ ...dashboard!.sections[0]!, referenceDirectionId: undefined }],
+    }
+    expect(() =>
+      validateDesignSourceQuality(root, ['Chart.tsx'], [], undefined, appScreen),
+    ).not.toThrow()
     expect(() =>
       validateDesignSourceQuality(root, ['Chart.tsx'], [], undefined, {
-        ...dashboard!,
-        sections: [{ ...dashboard!.sections[0]!, referenceDirectionId: undefined }],
+        ...appScreen,
+        architecture: { ...appScreen.architecture, mode: 'persuade_convert' },
       }),
     ).toThrow('unmanifested inline SVG')
+    writeFileSync(
+      path.join(root, 'strip.css'),
+      '.stat + .stat { border-left: 1px solid var(--border); }',
+    )
+    expect(() =>
+      validateDesignSourceQuality(root, ['strip.css'], [], undefined, appScreen),
+    ).not.toThrow()
+    expect(() => validateDesignSourceQuality(root, ['strip.css'])).toThrow(
+      'one-sided card-edge border',
+    )
+    rmSync(path.join(root, 'strip.css'))
     writeFileSync(path.join(root, 'filler.svg'), '<svg />')
     expect(() =>
       validateDesignSourceQuality(root, ['Chart.tsx'], [], undefined, dashboard),
