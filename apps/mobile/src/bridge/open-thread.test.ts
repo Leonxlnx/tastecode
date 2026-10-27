@@ -29,6 +29,7 @@ vi.mock('../state/app', async () => {
     sessions: { acquire: () => session, release: vi.fn() },
     projects: {
       state: new AppStore({ status: 'ready', error: undefined, activity: {}, projects: [] }),
+      refresh: vi.fn(async () => link.refreshed()),
     },
     catalog: { state: new AppStore({ status: 'ready', sources: [] }), ensure: vi.fn() },
     connection: {
@@ -46,6 +47,7 @@ vi.mock('../state/app', async () => {
 
 const link = vi.hoisted(() => ({
   listeners: new Map<string, (data: unknown) => void>(),
+  refreshed: (): void => undefined,
   answer: async (method: string, _params: Record<string, unknown>): Promise<unknown> =>
     method === 'thread.settings' ? {} : { threadId: 't', version: '1', files: [] },
 }))
@@ -195,6 +197,87 @@ describe('an open chat on the screens', () => {
       effort: 'high',
       serviceTier: 'fast',
     })
+    thread.close()
+  })
+
+  it('shows a move to another provider at once, while the computer starts the chat there', async () => {
+    const model = (id: string) => ({ id, displayName: id, reasoningEfforts: [], serviceTiers: [] })
+    const onProvider = (provider: string) =>
+      app.projects.state.set({
+        status: 'ready',
+        error: undefined,
+        activity: {},
+        projects: [
+          {
+            path: '/p',
+            name: 'p',
+            pinned: false,
+            createdAt: 1,
+            sessions: [{ id: 't', title: 'T', provider, createdAt: 1, running: false }],
+          },
+        ],
+      } as never)
+    onProvider('codex')
+    app.catalog.state.set({
+      status: 'ready',
+      sources: [
+        {
+          provider: 'codex',
+          key: 'codex',
+          name: 'Codex',
+          capabilities: undefined,
+          status: 'ready',
+          models: [model('a')],
+        },
+        {
+          provider: 'claude-code',
+          key: 'claude-code',
+          name: 'Claude Code',
+          capabilities: undefined,
+          status: 'ready',
+          models: [model('opus')],
+        },
+      ],
+    } as never)
+    let settings = { model: 'a' }
+    let answer: (error?: Error) => void = () => undefined
+    link.answer = async (method) => {
+      if (method === 'thread.settings') return settings
+      if (method === 'thread.changeProvider') {
+        return new Promise((resolve, reject) => {
+          answer = (error) => (error ? reject(error) : resolve({}))
+        })
+      }
+      return { threadId: 't', version: '1', files: [] }
+    }
+    const patches: ThreadPatch[] = []
+    const thread = new OpenThread('t', (patch) => patches.push(patch))
+    await vi.waitFor(() =>
+      expect(patches.at(-1)?.meta.setup).toMatchObject({ sourceKey: 'codex', model: 'a' }),
+    )
+
+    // The computer refuses: the chat shows where it still is.
+    const refused = thread.setModel('claude-code', 'opus')
+    await vi.waitFor(() =>
+      expect(patches.at(-1)?.meta.setup).toMatchObject({ sourceKey: 'claude-code', model: 'opus' }),
+    )
+    answer(new Error('Claude Code is not signed in.'))
+    await expect(refused).rejects.toThrow('not signed in')
+    expect(patches.at(-1)?.meta.setup).toMatchObject({ sourceKey: 'codex', model: 'a' })
+
+    // The computer moves it: the pick stays shown, never the old provider in between.
+    const moved = thread.setModel('claude-code', 'opus')
+    await vi.waitFor(() =>
+      expect(patches.at(-1)?.meta.setup).toMatchObject({ sourceKey: 'claude-code', model: 'opus' }),
+    )
+    const shown = patches.length - 1
+    link.refreshed = () => onProvider('claude-code')
+    settings = { model: 'opus' }
+    answer()
+    await moved
+    expect(patches.slice(shown).map((patch) => patch.meta.setup.sourceKey)).not.toContain('codex')
+    expect(patches.at(-1)?.meta.setup).toMatchObject({ sourceKey: 'claude-code', model: 'opus' })
+    link.refreshed = () => undefined
     thread.close()
   })
 })

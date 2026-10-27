@@ -1,31 +1,8 @@
 import AVFoundation
-import SwiftUI
 import UIKit
 
 /// The camera, looking for the pairing code. Reports each new code once, and
 /// "denied" or "no_camera" when it cannot look.
-struct CameraPreview: UIViewRepresentable {
-  let onCode: (String) -> Void
-  let onUnavailable: (String) -> Void
-
-  func makeUIView(context: Context) -> ScannerUIView {
-    let view = ScannerUIView()
-    view.onCode = onCode
-    view.onUnavailable = onUnavailable
-    view.start()
-    return view
-  }
-
-  func updateUIView(_ view: ScannerUIView, context: Context) {
-    view.onCode = onCode
-    view.onUnavailable = onUnavailable
-  }
-
-  static func dismantleUIView(_ view: ScannerUIView, coordinator: ()) {
-    view.stop()
-  }
-}
-
 final class ScannerUIView: UIView, AVCaptureMetadataOutputObjectsDelegate {
   var onCode: (String) -> Void = { _ in }
   var onUnavailable: (String) -> Void = { _ in }

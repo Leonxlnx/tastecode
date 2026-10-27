@@ -1,6 +1,5 @@
 import Foundation
 import Observation
-import SwiftUI
 import UIKit
 
 struct ActionError: LocalizedError {
@@ -87,6 +86,26 @@ final class AppModel {
     let store = ThreadStore(id: id)
     threads[id] = store
     return store
+  }
+
+  /// Each chat's last activity when it was last on screen here, so a chat that
+  /// failed leaves Needs You once seen and comes back only when something new
+  /// happens in it. Kept on this phone across launches.
+  private(set) var seenChats: [String: Double] =
+    UserDefaults.standard.dictionary(forKey: "seenChats") as? [String: Double] ?? [:]
+
+  /// Whether the chat was on screen here since its last activity.
+  func seen(_ chat: ChatView) -> Bool {
+    (seenChats[chat.id] ?? -1) >= chat.at
+  }
+
+  func markSeen(_ id: String) {
+    guard let chat = chats.chats.first(where: { $0.id == id }), seenChats[id] != chat.at else { return }
+    seenChats[id] = chat.at
+    // Chats gone from the computer are forgotten here too.
+    let known = Set(chats.chats.map(\.id))
+    seenChats = seenChats.filter { known.contains($0.key) }
+    UserDefaults.standard.set(seenChats, forKey: "seenChats")
   }
 
   func openThread(_ id: String) {

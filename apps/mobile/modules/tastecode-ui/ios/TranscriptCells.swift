@@ -93,7 +93,7 @@ final class UserCell: TranscriptCell {
 final class AttachmentThumb: UIView {
   private let picture = UIImageView()
   private let spinner = UIActivityIndicatorView(style: .medium)
-  private let icon = UIImageView(image: UIImage(systemName: "photo"))
+  private let icon = UIImageView(image: Tabler.image("photo", size: 24))
   private weak var context: TranscriptContext?
 
   override init(frame: CGRect) {
@@ -105,7 +105,6 @@ final class AttachmentThumb: UIView {
     picture.contentMode = .scaleAspectFill
     icon.tintColor = .tertiaryLabel
     icon.contentMode = .center
-    icon.preferredSymbolConfiguration = UIImage.SymbolConfiguration(textStyle: .title3)
     [picture, spinner, icon].forEach(addSubview)
     isAccessibilityElement = true
     accessibilityLabel = "Attached picture"
@@ -148,10 +147,10 @@ final class AttachmentThumb: UIView {
 final class StepsCell: TranscriptCell {
   private let header = UIView()
   private let spinner = UIActivityIndicatorView(style: .medium)
-  private let failed = UIImageView(image: UIImage(systemName: "exclamationmark.circle"))
+  private let failed = UIImageView(image: Tabler.image("alert-circle", size: 16))
   private let summary = UILabel()
   private let duration = UILabel()
-  private let chevron = UIImageView(image: UIImage(systemName: "chevron.right"))
+  private let chevron = UIImageView(image: Tabler.image("chevron-right", size: 13))
   private let divider = UIView()
   private var pieces: [String: UIView] = [:]
   private var shown: StepsLayout?
@@ -163,17 +162,10 @@ final class StepsCell: TranscriptCell {
     spinner.transform = CGAffineTransform(scaleX: 0.7, y: 0.7)
     spinner.hidesWhenStopped = true
     failed.tintColor = .systemRed
-    failed.preferredSymbolConfiguration = UIImage.SymbolConfiguration(textStyle: .footnote)
     summary.textColor = .secondaryLabel
-    summary.font = .preferredFont(forTextStyle: .subheadline)
-    summary.adjustsFontForContentSizeCategory = true
     duration.textColor = .tertiaryLabel
-    duration.font = .monospacedDigitSystemFont(
-      ofSize: UIFont.preferredFont(forTextStyle: .subheadline).pointSize, weight: .regular)
     chevron.tintColor = .tertiaryLabel
     chevron.contentMode = .center
-    chevron.preferredSymbolConfiguration = UIImage.SymbolConfiguration(
-      font: .systemFont(ofSize: UIFont.preferredFont(forTextStyle: .caption2).pointSize, weight: .bold))
     divider.backgroundColor = .separator
     [spinner, failed, summary, duration, chevron].forEach(header.addSubview)
     contentView.addSubview(header)
@@ -257,6 +249,11 @@ final class StepsCell: TranscriptCell {
   }
 
   private func layoutHeader(_ steps: StepsLayout, width: CGFloat, previous: StepsLayout?, animated: Bool) {
+    if let style = context?.style {
+      // In the type the rows were laid out in.
+      summary.font = style.subheadline
+      duration.font = style.subheadline.monospacedDigits
+    }
     header.frame = CGRect(x: 0, y: 0, width: width, height: steps.header)
     let mid = steps.header / 2
     var x: CGFloat = 0
@@ -319,7 +316,8 @@ final class StepsCell: TranscriptCell {
     switch piece {
     case .batch(let id, let summary, let symbol, let failed, let open):
       (view as? StepLineView)?.show(
-        title: summary, symbol: symbol, failed: failed, running: false, counts: nil, chevron: .down(open: open)
+        title: summary, symbol: symbol, failed: failed, running: false, counts: nil, chevron: .down(open: open),
+        style: context?.style
       ) { [weak self] in
         guard let self else { return }
         self.context?.toggle(row: self.key, part: id)
@@ -327,7 +325,7 @@ final class StepsCell: TranscriptCell {
     case .line(let id, let title, let symbol, let failed, let running, let counts, let opens, let open):
       (view as? StepLineView)?.show(
         title: title, symbol: symbol, failed: failed, running: running, counts: counts,
-        chevron: opens ? .right(open: open) : nil
+        chevron: opens ? .right(open: open) : nil, style: context?.style
       ) { [weak self] in
         guard let self, opens else { return }
         self.context?.toggle(row: self.key, part: "step:\(id)")
@@ -357,20 +355,16 @@ final class StepLineView: UIView {
   private let spinner = UIActivityIndicatorView(style: .medium)
   private let chevron = UIImageView()
   private var action: (() -> Void)?
+  private var shownStyle: TranscriptStyle?
 
   override init(frame: CGRect) {
     super.init(frame: frame)
     icon.contentMode = .center
-    icon.preferredSymbolConfiguration = UIImage.SymbolConfiguration(textStyle: .footnote)
-    title.font = .preferredFont(forTextStyle: .subheadline)
     title.textColor = .secondaryLabel
-    trailing.font = .monospacedDigitSystemFont(
-      ofSize: UIFont.preferredFont(forTextStyle: .caption1).pointSize, weight: .regular)
     spinner.transform = CGAffineTransform(scaleX: 0.7, y: 0.7)
     spinner.hidesWhenStopped = true
     chevron.tintColor = .tertiaryLabel
     chevron.contentMode = .center
-    chevron.preferredSymbolConfiguration = UIImage.SymbolConfiguration(pointSize: 10, weight: .semibold)
     [icon, title, trailing, spinner, chevron].forEach(addSubview)
     isAccessibilityElement = true
     addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(tapped)))
@@ -381,10 +375,16 @@ final class StepLineView: UIView {
 
   func show(
     title text: String, symbol: String, failed: Bool, running: Bool, counts: (Int, Int)?, chevron kind: Chevron?,
-    action: @escaping () -> Void
+    style: TranscriptStyle?, action: @escaping () -> Void
   ) {
     self.action = action
-    icon.image = UIImage(systemName: symbol)
+    if let style, style !== shownStyle {
+      // In the type the rows were laid out in.
+      shownStyle = style
+      title.font = style.subheadline
+      trailing.font = style.caption.monospacedDigits
+    }
+    icon.image = Tabler.image(symbol, size: 16)
     icon.tintColor = failed ? .systemRed : .tertiaryLabel
     title.text = text
     if running {
@@ -402,11 +402,11 @@ final class StepLineView: UIView {
     switch kind {
     case .down(let open):
       chevron.isHidden = false
-      chevron.image = UIImage(systemName: "chevron.down")
+      chevron.image = Tabler.image("chevron-down", size: 13)
       rotate(open ? .pi : 0)
     case .right(let open):
       chevron.isHidden = false
-      chevron.image = UIImage(systemName: "chevron.right")
+      chevron.image = Tabler.image("chevron-right", size: 13)
       rotate(open ? .pi / 2 : 0)
     case nil:
       chevron.isHidden = true
@@ -484,14 +484,13 @@ final class NoticeCell: TranscriptCell {
 }
 
 final class ErrorCell: TranscriptCell {
-  private let icon = UIImageView(image: UIImage(systemName: "exclamationmark.triangle.fill"))
+  private let icon = UIImageView(image: Tabler.image("alert-triangle-filled", size: 18))
   private let text = TextBlockView()
 
   override init(frame: CGRect) {
     super.init(frame: frame)
     icon.tintColor = .systemRed
     icon.contentMode = .center
-    icon.preferredSymbolConfiguration = UIImage.SymbolConfiguration(textStyle: .subheadline)
     contentView.addSubview(icon)
     contentView.addSubview(text)
   }
@@ -552,7 +551,6 @@ final class PlanCell: TranscriptCell {
     while rows.count < plan.items.count {
       let icon = UIImageView()
       icon.contentMode = .center
-      icon.preferredSymbolConfiguration = UIImage.SymbolConfiguration(textStyle: .footnote)
       let text = TextBlockView()
       contentView.addSubview(icon)
       contentView.addSubview(text)
@@ -564,14 +562,20 @@ final class PlanCell: TranscriptCell {
       row.text.removeFromSuperview()
     }
     for (row, item) in zip(rows, plan.items) {
-      let symbol = item.status == "done" ? "checkmark.circle.fill" : item.status == "running" ? "circle.dotted" : "circle"
-      if row.icon.image != UIImage(systemName: symbol) { row.icon.image = UIImage(systemName: symbol) }
+      let symbol = item.status == "done" ? "circle-check-filled" : item.status == "running" ? "circle-dotted" : "circle"
+      row.icon.image = Tabler.image(symbol, size: 16)
       row.icon.tintColor = item.status == "pending" ? .tertiaryLabel : .label
       row.icon.frame = CGRect(x: 0, y: item.frame.minY, width: 18, height: plan.lineHeight)
       if item.status == "running" {
-        row.icon.addSymbolEffect(.rotate, options: .repeat(.continuous))
+        if row.icon.layer.animation(forKey: "spin") == nil {
+          let spin = CABasicAnimation(keyPath: "transform.rotation.z")
+          spin.toValue = CGFloat.pi * 2
+          spin.duration = 2.4
+          spin.repeatCount = .infinity
+          row.icon.layer.add(spin, forKey: "spin")
+        }
       } else {
-        row.icon.removeAllSymbolEffects()
+        row.icon.layer.removeAnimation(forKey: "spin")
       }
       row.text.text = item.text
       row.text.frame = item.frame
