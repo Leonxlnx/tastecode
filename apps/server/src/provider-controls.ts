@@ -20,6 +20,7 @@ import { validateAcpMcpServer } from '@harness/adapter-acp/mcp'
 import { withClaudeAccount } from '@harness/adapter-claude-code/account-home'
 import {
   CLAUDE_MCP_CAPABILITIES,
+  isClaudeRuntime,
   validateClaudeMcpServer,
 } from '@harness/adapter-claude-code/capabilities'
 import { GROK_MCP_CAPABILITIES } from '@harness/adapter-grok/mcp'
@@ -114,7 +115,7 @@ export type CodexControlAdapter = Pick<
 export type ProviderServices = {
   validateMcpServer?: (server: McpServerConfig) => void
   account?: (agent?: string) => Promise<Account>
-  usageLimitSource?: () => Promise<LimitSource>
+  usageLimitSource?: (launch: ProviderLaunch) => Promise<LimitSource>
   startLogin?: (
     onComplete: (result: ProviderLoginResult) => void,
   ) => LoginHandle | Promise<LoginHandle>
@@ -220,7 +221,15 @@ export type ProviderControlsOptions = {
   accountHome?: string | undefined
   /** The providers these controls serve; absent, every provider. */
   providers?: readonly ProviderId[] | undefined
+  /**
+   * The runtime the user chose for a provider's sessions, if not its default.
+   * Reads that start the engine (limits, a project's inventory) start it so too.
+   */
+  chosenRuntime?: ((provider: ProviderId) => string | undefined) | undefined
 }
+
+/** How a read that starts the engine starts it. */
+export type ProviderLaunch = { runtime?: string | undefined }
 
 type ProcessEntry = {
   creating: Promise<CodexControlAdapter>
@@ -396,6 +405,11 @@ type AccountEntry = {
   reading?: Promise<Account> | undefined
 }
 
+/** Only a runtime Claude Code declared reaches it; anything else runs its default. */
+function claudeLaunch(runtime: string | undefined) {
+  return isClaudeRuntime(runtime) ? { runtime } : {}
+}
+
 const defaultServices = {
   antigravity: {
     account: async () => (await loadAntigravity()).antigravityAccount(),
@@ -432,13 +446,17 @@ const defaultServices = {
     // project without a chat starts one without a prompt (10-15 s), cached.
     projectInventory: {
       mcpCapabilities: CLAUDE_MCP_CAPABILITIES,
-      discover: async (projectPath, options) =>
-        (await loadClaude()).discoverClaudeProject(projectPath, options),
+      discover: async (projectPath, { runtime, ...options }) =>
+        (await loadClaude()).discoverClaudeProject(projectPath, {
+          ...options,
+          ...claudeLaunch(runtime),
+        }),
       watchPaths: async (projectPath) =>
         (await loadClaude()).claudeInventoryWatchPaths(projectPath),
     },
     account: async () => (await loadClaude()).claudeAccount(),
-    usageLimitSource: async () => (await loadClaude()).claudeLimitSource(),
+    usageLimitSource: async ({ runtime }) =>
+      (await loadClaude()).claudeLimitSource(claudeLaunch(runtime)),
     startLogin: async (complete) => (await loadClaude()).startClaudeLogin(complete),
     signOut: async () => (await loadClaude()).signOutClaude(),
   },
@@ -485,8 +503,12 @@ const accountServices = new Map<ProviderId, (accountHome: string) => ProviderSer
       ...defaultServices['claude-code'],
       projectInventory: {
         ...defaultServices['claude-code'].projectInventory,
-        discover: async (projectPath, options) =>
-          (await loadClaude()).discoverClaudeProject(projectPath, { ...options, accountHome }),
+        discover: async (projectPath, { runtime, ...options }) =>
+          (await loadClaude()).discoverClaudeProject(projectPath, {
+            ...options,
+            ...claudeLaunch(runtime),
+            accountHome,
+          }),
         watchPaths: async (projectPath) =>
           (await loadClaude()).claudeInventoryWatchPaths(
             projectPath,
@@ -494,7 +516,8 @@ const accountServices = new Map<ProviderId, (accountHome: string) => ProviderSer
           ),
       },
       account: async () => (await loadClaude()).claudeAccount({ accountHome }),
-      usageLimitSource: async () => (await loadClaude()).claudeLimitSource({ accountHome }),
+      usageLimitSource: async ({ runtime }) =>
+        (await loadClaude()).claudeLimitSource({ ...claudeLaunch(runtime), accountHome }),
       startLogin: async (complete) =>
         (await loadClaude()).startClaudeLogin(complete, { accountHome }),
       signOut: async () => (await loadClaude()).signOutClaude({ accountHome }),
@@ -759,7 +782,7 @@ export class ProviderControls {
               provider,
               () =>
                 this.#read(async () => {
-                  const source = await services.usageLimitSource?.()
+                  const source = await services.usageLimitSource?.(this.#launch(provider))
                   return source?.status === 'ready'
                     ? { provider, status: 'ready', limits: source.limits }
                     : { provider, status: 'unavailable' }
@@ -1376,13 +1399,23 @@ export class ProviderControls {
     return account
   }
 
+  #launch(provider: ProviderId): ProviderLaunch {
+    const runtime = this.#options.chosenRuntime?.(provider)
+    return runtime === undefined ? {} : { runtime }
+  }
+
   #projectInventory(
     provider: ProviderId,
     services: ProviderServices,
   ): ProjectInventoryCache | undefined {
     if (!services.projectInventory) return undefined
+    const service = services.projectInventory
     const inventory = new ProjectInventoryCache({
-      service: services.projectInventory,
+      service: {
+        ...service,
+        discover: (projectPath, options) =>
+          service.discover(projectPath, { ...options, ...this.#launch(provider) }),
+      },
       watchTtlMs: this.#skills.ttlMs,
       onChanged: (projectPath, parts) => {
         if (this.#closed) return

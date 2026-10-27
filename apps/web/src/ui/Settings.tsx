@@ -107,6 +107,7 @@ import {
   ProviderTuningSkeleton,
   useAccountContextSettings,
   useProviderContextSettings,
+  useProviderRuntimeSettings,
 } from './ProviderTuning.js'
 import { Skeleton, SkeletonCode, SkeletonStatus } from './Skeleton.js'
 import { listInstalledFontFamilies, readInstalledFontFamilies } from '../local-fonts.js'
@@ -817,6 +818,11 @@ export function ProviderSettings(props: {
   currentTransport.current = props.transport
   const providerDefaults = props.providerDefaults
   const context = useProviderContextSettings(props.transport, providerDefaults !== undefined)
+  const runtimes = useProviderRuntimeSettings(
+    props.transport,
+    providerDefaults !== undefined &&
+      props.providerStatuses.some((status) => (status.capabilities?.runtimes?.length ?? 0) > 1),
+  )
 
   const updateOperation = useCallback((provider: ProviderId, operation?: AuthOperation) => {
     operations.current = { ...operations.current, [provider]: operation }
@@ -1326,6 +1332,11 @@ export function ProviderSettings(props: {
         context={context.state}
         contextError={context.errors[status.id]}
         onContextChange={(settings) => context.update(status.id, settings)}
+        runtime={{
+          state: runtimes.state,
+          error: runtimes.errors[status.id],
+          onChange: (runtime) => runtimes.update(status.id, runtime),
+        }}
         pending={pending}
       />
     )

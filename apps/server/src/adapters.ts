@@ -1,4 +1,5 @@
 import type { ClaudeCodeAdapter } from '@harness/adapter-claude-code'
+import { isClaudeRuntime } from '@harness/adapter-claude-code/capabilities'
 import type { GrokAdapter } from '@harness/adapter-grok'
 import type {
   ApprovalDecision,
@@ -63,6 +64,8 @@ export type StartOptions = {
   baseRef?: string | undefined
   /** The user's context settings, already narrowed to what this engine declared. */
   context?: ProviderContextSettings | undefined
+  /** One of the engine's declared runtimes, chosen by the user; absent, its default. */
+  runtime?: string | undefined
   /** Internal project overrides and their already-resolved OS credentials. */
   mcpServers?: McpServerConfig[] | undefined
   mcpCredentials?: Record<string, string> | undefined
@@ -178,8 +181,15 @@ export type ProviderRuntime = {
     from: SavedSession,
     options: StartOptions,
   ): Promise<{ thread: Thread; session: AgentSession }>
-  /** `read.refresh`: the caller keeps an earlier list if this read fails. */
-  listModels(agent?: string, read?: ModelListRead): Promise<Model[]>
+  /**
+   * `read.refresh`: the caller keeps an earlier list if this read fails.
+   * `launch` starts the engine the way the user's sessions start.
+   */
+  listModels(
+    agent?: string,
+    read?: ModelListRead,
+    launch?: Pick<StartOptions, 'runtime'>,
+  ): Promise<Model[]>
 }
 
 /**
@@ -956,20 +966,25 @@ function claudeRuntime(
   resolveHarness: (id: string) => CustomHarness | undefined,
   accountHome: string | undefined,
 ): ProviderRuntime {
-  const adapterFor = async (agent: string | undefined, workspacePath?: string) => {
+  const adapterFor = async (
+    agent: string | undefined,
+    workspacePath?: string,
+    runtime?: string | undefined,
+  ) => {
     const harness = harnessFor('claude-code', agent, resolveHarness)
     const launch = harness
       ? resolveCustomHarnessLaunch(harness, workspacePath ?? process.cwd())
       : undefined
     const { ClaudeCodeAdapter } = await loadClaudeAdapter()
-    const adapter = new ClaudeCodeAdapter(
-      harness
+    const adapter = new ClaudeCodeAdapter({
+      ...(harness
         ? {
             spawn: customHarnessSpawn(harness, workspacePath),
             environment: launch!.environment,
           }
-        : accountOption(accountHome),
-    )
+        : accountOption(accountHome)),
+      ...(isClaudeRuntime(runtime) ? { runtime } : {}),
+    })
     adapter.on('log', onLog)
     return adapter
   }
@@ -1003,7 +1018,7 @@ function claudeRuntime(
 
   return {
     async start(workspacePath, options) {
-      const adapter = await adapterFor(options.agent, workspacePath)
+      const adapter = await adapterFor(options.agent, workspacePath, options.runtime)
       return startedSession(sessionFor(adapter, options.agent), () =>
         adapter.startThread(workspacePath, {
           model: options.model,
@@ -1021,7 +1036,7 @@ function claudeRuntime(
       // A harness runs with a sign-in of its own, apart from the account folders.
       const harness = harnessFor('claude-code', options.agent, resolveHarness)
       if (harness) throw new Error(`${harness.displayName} cannot carry a session on.`)
-      const adapter = await adapterFor(undefined, workspacePath)
+      const adapter = await adapterFor(undefined, workspacePath, options.runtime)
       return startedSession(sessionFor(adapter, undefined), () =>
         adapter.forkThread(
           workspacePath,
@@ -1039,7 +1054,7 @@ function claudeRuntime(
       )
     },
     async resume(threadId, workspacePath, options) {
-      const adapter = await adapterFor(options.agent, workspacePath)
+      const adapter = await adapterFor(options.agent, workspacePath, options.runtime)
       return mapProviderSession(
         threadId,
         await startedSession(sessionFor(adapter, options.agent), () =>
@@ -1055,8 +1070,8 @@ function claudeRuntime(
         ),
       )
     },
-    async listModels(agent, read) {
-      const adapter = await adapterFor(agent)
+    async listModels(agent, read, launch) {
+      const adapter = await adapterFor(agent, undefined, launch?.runtime)
       try {
         return await adapter.listModels({ refresh: read?.refresh === true })
       } finally {

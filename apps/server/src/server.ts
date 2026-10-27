@@ -258,7 +258,10 @@ export function startServer(
   const orchestrator = new Orchestrator(store, {
     onEvent: (threadId, event, seq, serializedEvent) => {
       if (event.type === 'item.delta') streamQuiet.noteDelta()
-      else if (event.type === 'turn.completed') turnEndedInCheckout(threadId)
+      else if (event.type === 'turn.completed') {
+        turnEndedInCheckout(threadId)
+        if (orchestrator.awaitsProviderTitle(threadId)) void nameUnnamedChat(threadId)
+      }
       if (serializedEvent === undefined) {
         push.broadcast('thread.event', { threadId, event, seq })
       } else {
@@ -597,6 +600,20 @@ export function startServer(
 
   let listChange: ReturnType<typeof setTimeout> | undefined
   /** Coalesces a burst (a new chat is started, renamed and titled within moments). */
+  /**
+   * A chat left for its provider to name still has its stand-in title after a
+   * turn: history is read first, so a name the provider did write wins, and
+   * only then does the title model write one.
+   */
+  async function nameUnnamedChat(threadId: string): Promise<void> {
+    try {
+      if (providerHistory && !historyClosing) await (await providerHistory).refresh()
+      if (await orchestrator.nameUnnamedChat(threadId)) announceListChange()
+    } catch {
+      // The chat keeps its first-prompt title; renaming it settles that too.
+    }
+  }
+
   function announceListChange(): void {
     listChange ??= setTimeout(() => {
       listChange = undefined
@@ -844,6 +861,15 @@ export function startServer(
       case 'providers.updateContextSettings': {
         const p = parseParams(method, params)
         return orchestrator.updateContextSettings(p.provider, p.settings)
+      }
+
+      case 'providers.runtimeSettings':
+        parseParams(method, params)
+        return orchestrator.runtimeSettings()
+
+      case 'providers.updateRuntimeSettings': {
+        const p = parseParams(method, params)
+        return orchestrator.updateRuntimeSettings(p.provider, p.runtime)
       }
 
       case 'providers.accountContextSettings':

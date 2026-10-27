@@ -470,6 +470,13 @@ export const ProviderContextSettingsMapSchema = z.partialRecord(
 export type ProviderContextSettingsMap = z.infer<typeof ProviderContextSettingsMapSchema>
 
 /**
+ * The runtime each provider runs through, by id from its declared `runtimes`.
+ * A provider without an entry runs through its default.
+ */
+export const ProviderRuntimeSettingsSchema = z.partialRecord(ProviderIdSchema, z.string().min(1))
+export type ProviderRuntimeSettings = z.infer<typeof ProviderRuntimeSettingsSchema>
+
+/**
  * A further provider account's own context settings. An account without an
  * entry, and the default account always, follows its provider's settings.
  */
@@ -965,6 +972,19 @@ export const methods = {
       settings: ProviderContextSettingsSchema,
     }),
     result: ProviderContextSettingsMapSchema,
+  },
+  /** The runtime each provider's sessions launch through; applies to every account. */
+  'providers.runtimeSettings': {
+    params: z.object({}),
+    result: ProviderRuntimeSettingsSchema,
+  },
+  /**
+   * Chooses one of the provider's declared runtimes; null returns it to its
+   * default. Sessions already running keep theirs.
+   */
+  'providers.updateRuntimeSettings': {
+    params: z.object({ provider: ProviderIdSchema, runtime: z.string().min(1).nullable() }),
+    result: ProviderRuntimeSettingsSchema,
   },
   /** Every further account that has context settings of its own. */
   'providers.accountContextSettings': {
