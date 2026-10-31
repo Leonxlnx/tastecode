@@ -392,17 +392,18 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Runtime choice in Settings: the Agent SDK (default) or claude -p, with the same
-                features through either
+                >Runtime choice in Settings, separate for each account: the Agent SDK (default) or
+                claude -p, with the same features through either
                 <span class="d"
                   >claude -p runs with stream-json on stdin and stdout and TasteCode speaks the
                   protocol the SDK speaks: the same launch flags, initialize request, control
                   requests (interrupt, model, access, MCP status and servers, settings, usage) and
                   tool-permission and question callbacks, without the SDK's sdk-ts entrypoint; the
-                  server keeps the choice per provider and applies it to new and resumed chats,
-                  model lists, plan-limit reads and project inventory probes for every account, so
-                  phone chats use it too; running chats keep theirs, and custom harnesses keep their
-                  own launch</span
+                  server keeps each account's choice and applies it to that account's new and
+                  resumed chats, model lists, plan-limit reads and project inventory probes, so
+                  phone chats use it too; an account without a choice stays on the Agent SDK
+                  whatever another account chose; running chats keep theirs, and custom harnesses
+                  keep their own launch</span
                 ></span
               ></label
             >
