@@ -70,21 +70,26 @@ function createSidebarFixture() {
   }
 }
 
-const SHOW_MORE = `Show ${sessions.length - 5} more`
 const toggleFixture = createSidebarFixture()
 const scrollFixture = createSidebarFixture()
-scrollFixture.clickToggle(SHOW_MORE)
-const virtualList = scrollFixture.container.querySelector<HTMLUListElement>(
-  '.proj__sessions--virtual',
-)!
-if (!virtualList) throw new Error('Missing virtual session list')
-function scrollVirtualList(scrollTop: number) {
-  virtualList.scrollTop = scrollTop
-  flushSync(() => fireEvent.scroll(virtualList))
+// The first "Show more" lists 15 chats, the second all of them.
+scrollFixture.clickToggle('Show more')
+scrollFixture.clickToggle('Show more')
+if (!scrollFixture.container.querySelector('.proj__sessions--virtual')) {
+  throw new Error('Missing virtual session list')
 }
+// The virtual list scrolls with the rail, so the rail is what scrolls here.
+const rail = scrollFixture.container.querySelector<HTMLElement>('.rail__body')!
+function scrollVirtualList(scrollTop: number) {
+  rail.scrollTop = scrollTop
+  flushSync(() => fireEvent.scroll(rail))
+}
+// Off the top, so the rail's own top-shadow state has settled before probing.
+scrollVirtualList(300)
+scrollVirtualList(301)
 
 const commitsBeforeSameRangeProbe = scrollFixture.commitCount
-for (let offset = 0; offset < 10; offset += 1) scrollVirtualList(offset)
+for (let offset = 0; offset < 10; offset += 1) scrollVirtualList(302 + offset)
 const sameRangeProbeCommits = scrollFixture.commitCount - commitsBeforeSameRangeProbe
 
 afterAll(() => {
@@ -98,7 +103,8 @@ describe('large expanded project', () => {
   bench(
     'expands and collapses a 10,000-chat project',
     () => {
-      toggleFixture.clickToggle(SHOW_MORE)
+      toggleFixture.clickToggle('Show more')
+      toggleFixture.clickToggle('Show more')
       toggleFixture.clickToggle('Show less')
     },
     OPTIONS,
@@ -107,7 +113,7 @@ describe('large expanded project', () => {
   bench(
     `handles 100 scroll events inside one virtual row (${sameRangeProbeCommits}/10 probe commits)`,
     () => {
-      for (let offset = 0; offset < 100; offset += 1) scrollVirtualList(offset % 32)
+      for (let offset = 0; offset < 100; offset += 1) scrollVirtualList(300 + (offset % 30))
     },
     OPTIONS,
   )
