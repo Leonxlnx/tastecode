@@ -1632,6 +1632,34 @@ describe('threads', () => {
     }
   })
 
+  it("keeps further accounts' own runtimes across a restart and forgets a reset one", () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-account-runtime-'))
+    const file = path.join(dir, 'runtime.db')
+    const persistent = new Store(file)
+    expect(persistent.accountRuntimeSettings()).toEqual([])
+    persistent.updateAccountRuntimeSetting('claude-code', 'work-1a2b3c', 'sdk')
+    persistent.updateAccountRuntimeSetting('claude-code', 'work-1a2b3c', 'cli')
+    const saved = persistent.updateAccountRuntimeSetting('claude-code', 'side-4d5e6f', 'cli')
+    expect(Object.isFrozen(saved)).toBe(true)
+    expect(persistent.accountRuntimeSettings()).toBe(saved)
+    persistent.close()
+
+    const reopened = new Store(file)
+    try {
+      expect(reopened.accountRuntimeSettings()).toEqual([
+        { provider: 'claude-code', accountId: 'work-1a2b3c', runtime: 'cli' },
+        { provider: 'claude-code', accountId: 'side-4d5e6f', runtime: 'cli' },
+      ])
+      expect(reopened.updateAccountRuntimeSetting('claude-code', 'work-1a2b3c', null)).toEqual([
+        { provider: 'claude-code', accountId: 'side-4d5e6f', runtime: 'cli' },
+      ])
+      expect(reopened.providerRuntimeSettings()).toEqual({})
+    } finally {
+      reopened.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('keeps the chosen provider runtimes across a restart and forgets a reset one', () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-runtime-'))
     const file = path.join(dir, 'runtime.db')

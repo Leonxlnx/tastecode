@@ -12,6 +12,7 @@ import {
 import path from 'node:path'
 import {
   AccountContextSettingsSchema,
+  AccountRuntimeSettingSchema,
   ApprovalModeSchema,
   BackgroundModelPreferenceSchema,
   DEFAULT_ACCOUNT_ID,
@@ -24,6 +25,8 @@ import {
 } from '@harness/contracts'
 import type {
   AccountContextSettings,
+  AccountId,
+  AccountRuntimeSetting,
   ApprovalMode,
   BackgroundModelPreference,
   DiffDecision,
@@ -63,6 +66,7 @@ const PROVIDER_CONTEXT_SETTING = 'provider-context'
 const ACCOUNT_CONTEXT_SETTING = 'provider-account-context'
 /** The runtime each provider launches through; a provider without one uses its default. */
 const PROVIDER_RUNTIME_SETTING = 'provider-runtime'
+const ACCOUNT_RUNTIME_SETTING = 'provider-account-runtime'
 const FEEDBACK_LEDGER_SETTING = 'feedback-ledger'
 const MODEL_LISTS_SETTING = 'model-lists'
 const PHONE_ACCESS_SETTING = 'phone-access'
@@ -1009,6 +1013,7 @@ export class Store {
   #providerContextSettingsCache: ProviderContextSettingsMap | undefined
   #accountContextSettingsCache: readonly AccountContextSettings[] | undefined
   #providerRuntimeSettingsCache: ProviderRuntimeSettings | undefined
+  #accountRuntimeSettingsCache: readonly AccountRuntimeSetting[] | undefined
   /**
    * Compact replays by thread. `tail` is false once an event lands after the
    * snapshot: the entry still serves as a base and for older history pages.
@@ -2463,6 +2468,39 @@ export class Store {
     this.#writeAppSetting.run(PROVIDER_RUNTIME_SETTING, JSON.stringify(next))
     this.#providerRuntimeSettingsCache = Object.freeze(next)
     return this.#providerRuntimeSettingsCache
+  }
+
+  accountRuntimeSettings(): readonly AccountRuntimeSetting[] {
+    if (this.#accountRuntimeSettingsCache) return this.#accountRuntimeSettingsCache
+    const row = sqliteRow<StringValueRow>(this.#readAppSetting, ACCOUNT_RUNTIME_SETTING)
+    let settings: AccountRuntimeSetting[] = []
+    if (row) {
+      try {
+        settings = z.array(AccountRuntimeSettingSchema).parse(JSON.parse(row.value))
+      } catch {
+        // A shape a newer build wrote leaves every account on the default runtime.
+        console.warn('[store] unreadable account runtime settings, using engine defaults')
+      }
+    }
+    this.#accountRuntimeSettingsCache = Object.freeze(settings)
+    return this.#accountRuntimeSettingsCache
+  }
+
+  /** `null` returns the account to the default runtime. */
+  updateAccountRuntimeSetting(
+    provider: ProviderId,
+    accountId: AccountId,
+    runtime: string | null,
+  ): readonly AccountRuntimeSetting[] {
+    const others = this.accountRuntimeSettings().filter(
+      (each) => each.provider !== provider || each.accountId !== accountId,
+    )
+    const next = Object.freeze(
+      runtime === null ? others : [...others, Object.freeze({ provider, accountId, runtime })],
+    )
+    this.#writeAppSetting.run(ACCOUNT_RUNTIME_SETTING, JSON.stringify(next))
+    this.#accountRuntimeSettingsCache = next
+    return next
   }
 
   accountContextSettings(): readonly AccountContextSettings[] {
