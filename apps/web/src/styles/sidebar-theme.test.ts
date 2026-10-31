@@ -101,18 +101,19 @@ describe('sidebar theme CSS', () => {
     )
   })
 
-  it('hangs project chats off a soft guide under the folder mark', () => {
+  it('indents project chats under the folder mark, with no guide beside them', () => {
     expect(appCss).not.toContain('.proj__chevron')
     expect(appCss).toMatch(/\.proj__toggle \{[^}]*gap: 8px;[^}]*padding: 2px 7px;/s)
+    // The first chat follows its project's row directly.
     expect(appCss).toMatch(
-      /\.proj__sessions \{[^}]*--sess-indent: 7px;[^}]*display: grid;[^}]*grid-template-columns: minmax\(0, 1fr\);[^}]*row-gap: 2px;[^}]*margin: 2px 0 8px;[^}]*padding: 0;/s,
+      /\.proj__sessions \{[^}]*--sess-indent: 7px;[^}]*display: grid;[^}]*grid-template-columns: minmax\(0, 1fr\);[^}]*row-gap: 2px;[^}]*margin: 0 0 8px;[^}]*padding: 0;/s,
     )
-    // Pinned chats keep the outer gutter (7px); a project's chats indent past
-    // the guide, which sits on the folder mark's centre (7px + 13px / 2).
+    // Pinned chats keep the outer gutter (7px); a project's chats indent under
+    // its folder mark.
     expect(appCss).toMatch(/\.proj__drawer > \.proj__sessions \{[^}]*--sess-indent: 22px;/s)
-    expect(appCss).toMatch(
-      /\.proj::after \{[^}]*position: absolute;[^}]*left: 13px;[^}]*width: 1px;[^}]*background: var\(--rail-guide\);[^}]*pointer-events: none;/s,
-    )
+    // The hairline down the left of an open project is gone, and its token with it.
+    expect(appCss).not.toContain('.proj::after')
+    expect(appCss).not.toContain('--rail-guide')
     // Pinned chats share the project-chat indent; no override may pull them left.
     expect(appCss).not.toMatch(/\.sessrow\.is-pinned[^{]*\{[^}]*padding-left/s)
     expect(appCss).not.toMatch(/\.proj__sessions \{[^}]*border-left/s)
@@ -123,9 +124,9 @@ describe('sidebar theme CSS', () => {
     expect(appCss).toMatch(
       /\.proj__sessions-toggle \{[^}]*padding: 0 8px 0 calc\(var\(--sess-indent\) \+ 21px\);/s,
     )
-    expect(appCss).toMatch(
-      /\.proj__sessions > \.rail__hint \{[^}]*padding-left: calc\(var\(--sess-indent\) \+ 21px\);/s,
-    )
+    // An empty project's "No chats" starts under the project name, not at the
+    // chat-title indent, where it floated right with no mark in front of it.
+    expect(appCss).toMatch(/\.proj__sessions > \.rail__hint \{[^}]*padding-left: 28px;/s)
     expect(appCss).not.toMatch(/\.sessrow\.is-pinned \.sess \{/s)
   })
 
