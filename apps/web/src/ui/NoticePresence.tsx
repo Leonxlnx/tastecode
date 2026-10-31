@@ -13,7 +13,8 @@ type NoticePresenceProps = {
 
 type NoticePhase = 'open' | 'closing'
 
-const DOCKED_COMPOSER = '.stage__conversation:not(.is-new-session) > .composer'
+// In a split, the focused pane's composer: the other one is dormant.
+const DOCKED_COMPOSER = '.stage__conversation:not(.is-new-session) > .composer:not(.is-dormant)'
 /** Clears the Jump to latest pill: 14px above the composer, 34px tall, plus 8px. */
 export const NOTICE_COMPOSER_CLEARANCE = 56
 const NOTICE_EDGE = 12

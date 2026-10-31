@@ -570,6 +570,11 @@ function ComposerComponent(props: {
   onDeleteQueuedTurn: (id: string) => void | Promise<boolean | void>
   onMoveQueuedTurn: (id: string, direction: 'up' | 'down') => void | Promise<boolean | void>
   onSteerQueuedTurn: (id: string) => void
+  /**
+   * The composer of a split pane without focus: shown as it was, inactive, and
+   * any recording is cancelled so a transcript cannot land in another chat.
+   */
+  dormant?: boolean | undefined
 }) {
   const keybindings = props.keybindings ?? DEFAULT_KEYBINDINGS
   // The textarea owns its full draft. React only needs the blank/nonblank
@@ -1569,7 +1574,11 @@ function ComposerComponent(props: {
 
   return (
     <>
-      <div ref={composerRoot} className={`composer${props.newSession ? ' is-new-session' : ''}`}>
+      <div
+        ref={composerRoot}
+        className={`composer${props.newSession ? ' is-new-session' : ''}${props.dormant ? ' is-dormant' : ''}`}
+        inert={props.dormant ? true : undefined}
+      >
         <div
           ref={composerAnchor}
           className={`composer__box ${dragging ? 'is-dropping' : ''}`}
@@ -2245,7 +2254,7 @@ function ComposerComponent(props: {
                 {props.voiceAvailable ? (
                   <Suspense fallback={props.running ? null : <VoiceControlSkeleton />}>
                     <ComposerVoiceControl
-                      contextKey={`${props.provider}:${props.projectPath ?? ''}:${props.draftRequest?.request ?? ''}`}
+                      contextKey={`${props.provider}:${props.projectPath ?? ''}:${props.draftRequest?.request ?? ''}${props.dormant ? ':dormant' : ''}`}
                       disabled={props.disabled}
                       running={props.running}
                       getCursor={() => area.current?.selectionStart ?? textRef.current.length}

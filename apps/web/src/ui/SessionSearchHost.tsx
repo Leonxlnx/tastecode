@@ -92,7 +92,8 @@ export const SessionSearchHost = memo(SessionSearchHostComponent)
 const RESTORED_FOCUS_FALLBACKS = [
   '[aria-label="Search chats"]',
   '[aria-label="Search threads"]',
-  'textarea[placeholder="Do anything"]',
+  // In a split, the focused pane's composer: the other one is dormant.
+  '.composer:not(.is-dormant) textarea[placeholder="Do anything"]',
   '.titlebar__toggle',
 ] as const
 
