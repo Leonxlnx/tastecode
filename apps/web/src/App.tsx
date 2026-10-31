@@ -116,6 +116,7 @@ import {
 } from './ui/model-selector-utils.js'
 import type { Checkpoint } from './ui/RollbackDialog.js'
 import { SessionSearchHost, type SessionSearchHandle } from './ui/SessionSearchHost.js'
+import { useStageGlide } from './ui/stage-glide.js'
 import type { SettingsSection } from './ui/Settings.js'
 import { Sidebar, type Project, type Session } from './ui/Sidebar.js'
 import {
@@ -207,8 +208,19 @@ import {
   subscribeInstalls,
   type ProviderLoginTerminalTarget,
 } from './provider-install.js'
-import { providerScanChanged, useRecheckOnFocus } from './provider-recheck.js'
-import { rememberedSignIn, rememberSignIn } from './remembered-sign-in.js'
+import {
+  PROVIDER_RECHECK_INTERVAL_MS,
+  providerScanChanged,
+  useRecheckOnFocus,
+} from './provider-recheck.js'
+import {
+  lastSignIn,
+  rememberedSignIn,
+  rememberedSignInsVersion,
+  rememberSignIn,
+  subscribeRememberedSignIns,
+} from './remembered-sign-in.js'
+import { knownSignIn, providerCanRun } from './provider-availability.js'
 import {
   defaultsScope,
   isDefaultsScope,
@@ -464,6 +476,8 @@ type CustomModel = {
 type CatalogAvailability = 'loading' | 'ready' | 'failed'
 type AccountCheck = {
   provider: ProviderId
+  /** The further account the check is for; absent for the default account. */
+  accountId?: AccountId
   state: CatalogAvailability
   account?: Account
   error?: ComposerError
@@ -564,8 +578,12 @@ export function resolveSendAvailability(input: {
   if (input.accountCheck.provider === provider && input.accountCheck.state === 'ready') {
     return input.accountCheck.account?.signedIn ? 'ready' : 'setup-required'
   }
-  if (status.auth === 'unauthenticated') return 'setup-required'
-  if (status.auth === 'authenticated') return 'ready'
+  // The provider's status is its default account's; a further account's own
+  // check speaks for it.
+  const furtherAccount =
+    input.accountCheck.provider === provider && input.accountCheck.accountId !== undefined
+  if (!furtherAccount && status.auth === 'unauthenticated') return 'setup-required'
+  if (!furtherAccount && status.auth === 'authenticated') return 'ready'
   if (input.accountCheck.provider !== provider) return 'loading'
   // A check that could not answer in time, or still has not after the grace
   // period, confirms nothing either way. Send stays available: a CLI that
@@ -1530,11 +1548,42 @@ export function App() {
     },
     [otherAccountSources, providerAccounts],
   )
+  const signInsVersion = useSyncExternalStore(
+    subscribeRememberedSignIns,
+    rememberedSignInsVersion,
+    rememberedSignInsVersion,
+  )
+  /**
+   * Providers whose own models cannot run now: not installed, nothing
+   * declared, or signed out as far as the app knows (provider-availability.ts).
+   * `signedOut` is the part a sign-in elsewhere would change.
+   */
+  const unavailableProviders = useMemo(() => {
+    void signInsVersion // A kept sign-in answer changed.
+    const blocked = new Set<ProviderId>()
+    const signedOut = new Set<ProviderId>()
+    for (const status of providerStatuses) {
+      // A kept read is of the default account; another account may be the one new chats use.
+      const kept =
+        activeAccountOf(providerAccounts, status.id) === DEFAULT_ACCOUNT_ID
+          ? lastSignIn(status.id)
+          : undefined
+      if (providerCanRun(status, kept)) continue
+      blocked.add(status.id)
+      if (status.installed && status.capabilities && knownSignIn(status, kept) === false) {
+        signedOut.add(status.id)
+      }
+    }
+    return { blocked, signedOut }
+  }, [providerStatuses, providerAccounts, signInsVersion])
+  const composerSource = sourceKey({ provider, agentId: sourceAgent })
   /**
    * What the picker offers: the chat's own models, then every other provider's,
    * and every other signed-in account's. Models the user hid from the chat's
    * own source keep the picker away, as before; a source that lists none at
-   * all still lets the chat move on.
+   * all still lets the chat move on. A provider that cannot run is left out,
+   * except the source the composer is on, which says itself why it cannot send.
+   * Agents, connections and further accounts answer for their own sign-in.
    */
   const pickerModels = useMemo(
     () =>
@@ -1547,7 +1596,17 @@ export function App() {
             ...otherAccountChoices,
           ]
         : [...selectableModels, ...otherAccountChoices]
-      ).map(withAccountName),
+      )
+        .filter(
+          (choice) =>
+            !unavailableProviders.blocked.has(choice.provider) ||
+            choice.agent !== undefined ||
+            choice.connectionId !== undefined ||
+            choice.accountId !== undefined ||
+            modelSource(choice) === activeModelSource ||
+            modelSource(choice) === composerSource,
+        )
+        .map(withAccountName),
     [
       movableChat,
       selectableModels,
@@ -1556,6 +1615,8 @@ export function App() {
       activeModelSource,
       otherAccountChoices,
       withAccountName,
+      unavailableProviders,
+      composerSource,
     ],
   )
   // Only the user's own pick moves a chat; a fallback never leaves its provider.
@@ -3162,6 +3223,23 @@ export function App() {
     }
   }, [transport, activePath, branchShelfPath, workspaceRefreshRevision, branchMenuOpened])
 
+  // The account the model picker's provider runs on: another account picked
+  // there, else an open chat's own, else the one new chats start on.
+  const composerAccount: AccountId =
+    selectedModelChoice?.accountId ??
+    (activeSession?.provider === provider && !activeSession.agent && !activeSession.connectionId
+      ? ((activeSession.accountId as AccountId | undefined) ?? DEFAULT_ACCOUNT_ID)
+      : activeAccountOf(providerAccounts, provider))
+  // The composer's sign-in check asks a further account itself: the default
+  // account being signed in or out says nothing about the account the next
+  // message runs on. A custom harness keeps its own sign-in.
+  const checkedAccount: AccountId | undefined =
+    composerAccount !== DEFAULT_ACCOUNT_ID && !selectedModelChoice?.agent && !sourceAgent
+      ? composerAccount
+      : undefined
+  const checkedAccountRef = useRef(checkedAccount)
+  checkedAccountRef.current = checkedAccount
+
   useEffect(() => {
     let cancelled = false
     const revision = ++accountRequestRevision.current
@@ -3172,16 +3250,24 @@ export function App() {
         cancelled = true
       }
     }
+    const accountId = checkedAccount
+    const forAccount = accountId === undefined ? {} : { accountId }
     // Retrying a check that could not answer keeps Send available until the
     // new answer arrives; it would otherwise lock the composer for the read.
     // So does a provider whose last read said signed in. ACP reads are per
-    // agent, so they are not remembered per provider.
-    const remembers = provider !== 'acp'
+    // agent, and further accounts are per account, so neither is remembered
+    // per provider.
+    const remembers = provider !== 'acp' && accountId === undefined
     const remembered = remembers && rememberedSignIn(provider)
     setAccountCheck((current) =>
-      current.provider === provider && current.state === 'failed'
+      current.provider === provider && current.accountId === accountId && current.state === 'failed'
         ? current
-        : { provider, state: 'loading', ...(remembered ? { remembered: true as const } : {}) },
+        : {
+            provider,
+            ...forAccount,
+            state: 'loading',
+            ...(remembered ? { remembered: true as const } : {}),
+          },
     )
     const grace = setTimeout(() => {
       if (cancelled || revision !== accountRequestRevision.current) return
@@ -3197,19 +3283,21 @@ export function App() {
         ...(provider === 'acp' && (selectedModelChoice?.agent?.id ?? sourceAgent)
           ? { agent: selectedModelChoice?.agent?.id ?? sourceAgent }
           : {}),
+        ...forAccount,
       })
       .finally(() => clearTimeout(grace))
       .then((nextAccount) => {
         if (remembers) rememberSignIn(provider, nextAccount.signedIn)
         if (cancelled || revision !== accountRequestRevision.current) return
         setAccount(nextAccount)
-        setAccountCheck({ provider, state: 'ready', account: nextAccount })
+        setAccountCheck({ provider, ...forAccount, state: 'ready', account: nextAccount })
       })
       .catch((cause) => {
         if (cancelled || revision !== accountRequestRevision.current) return
         setAccount(undefined)
         setAccountCheck({
           provider,
+          ...forAccount,
           state: 'failed',
           // Send stays available, so this informs rather than interrupts.
           error: {
@@ -3229,6 +3317,7 @@ export function App() {
     sourceAgent,
     selectedModelChoice?.agent,
     selectedModelChoice?.connectionId,
+    checkedAccount,
     authStatusRequest,
   ])
 
@@ -3593,13 +3682,6 @@ export function App() {
         .map((status) => status.id),
     [provider, providerStatuses],
   )
-  // The account the model picker's provider runs on: another account picked
-  // there, else an open chat's own, else the one new chats start on.
-  const composerAccount: AccountId =
-    selectedModelChoice?.accountId ??
-    (activeSession?.provider === provider && !activeSession.agent && !activeSession.connectionId
-      ? ((activeSession.accountId as AccountId | undefined) ?? DEFAULT_ACCOUNT_ID)
-      : activeAccountOf(providerAccounts, provider))
   // Each provider account is a limit source of its own. The account the
   // composer is on is read for the current provider; its other accounts join
   // the other providers, read when a view shows them.
@@ -4996,7 +5078,9 @@ export function App() {
   const handleAccountChange = useCallback(
     (changedProvider: ProviderId, changedAccount: Account) => {
       if (changedProvider !== 'acp') rememberSignIn(changedProvider, changedAccount.signedIn)
-      if (changedProvider === providerRef.current) {
+      // This is the default account's sign-in; a composer on a further
+      // account keeps that account's own check.
+      if (changedProvider === providerRef.current && checkedAccountRef.current === undefined) {
         accountRequestRevision.current += 1
         setAccount(changedAccount)
         setAccountCheck({ provider: changedProvider, state: 'ready', account: changedAccount })
@@ -5004,6 +5088,27 @@ export function App() {
     },
     [],
   )
+
+  // The picker leaves out providers known to be signed out. One signed in from
+  // its own terminal since comes back once the picker opens and its account is
+  // read again; each is read at most once per recheck interval.
+  const signedOutProviders = useRef(unavailableProviders.signedOut)
+  signedOutProviders.current = unavailableProviders.signedOut
+  const signInRechecks = useRef(new Map<ProviderId, number>())
+  const openModelSelector = useCallback(() => {
+    discoverEveryModelSource()
+    const now = Date.now()
+    for (const id of signedOutProviders.current) {
+      if (!rosterAllows(providerRosterRef.current, id)) continue
+      const last = signInRechecks.current.get(id)
+      if (last !== undefined && now - last < PROVIDER_RECHECK_INTERVAL_MS) continue
+      signInRechecks.current.set(id, now)
+      void transport.request('auth.status', { provider: id }).then(
+        (account) => handleAccountChange(id, account),
+        () => undefined,
+      )
+    }
+  }, [discoverEveryModelSource, handleAccountChange, transport])
 
   useEffect(() => {
     if (!providerLoginTerminal || !providerLoginState) return
@@ -6377,6 +6482,13 @@ export function App() {
   // working chat's spinner, the live activity row) pause until it closes
   // instead of drawing a frame every refresh.
   const shellBody = useRef<HTMLDivElement>(null)
+  // The chat column follows the rail and the side panel instead of jumping to
+  // its new centre when either changes the pane's width.
+  const stage = useRef<HTMLElement>(null)
+  useStageGlide(
+    stage,
+    `${collapsed ? 'rail-folded' : 'rail-open'} ${workspacePanelOpen ? 'panel-open' : 'panel-hidden'} ${workspacePanelExpanded ? 'panel-expanded' : ''}`,
+  )
   const coverShell = useCallback((event: ReactAnimationEvent<HTMLDivElement>) => {
     if (event.target === event.currentTarget) shellBody.current?.setAttribute('data-covered', '')
   }, [])
@@ -7283,7 +7395,7 @@ export function App() {
     onReady: handleComposerReady,
     queuedTurns: queuedTurns,
     canSteerQueue: canSteerQueue,
-    onModelSelectorOpen: discoverEveryModelSource,
+    onModelSelectorOpen: openModelSelector,
     onModelChange: selectModel,
     onEffortChange: changeEffort,
     onServiceTierChange: changeServiceTier,
@@ -7405,7 +7517,7 @@ export function App() {
           className={`workspace-layout${workspacePanelOpen ? ' is-panel-open' : ''}${workspacePanelExpanded ? ' is-panel-expanded' : ''}`}
           style={workspaceLayoutStyle(workspacePanelWidth)}
         >
-          <main className="stage">
+          <main className="stage" ref={stage}>
             {surface === 'pull-requests' ? (
               <Suspense fallback={<PullRequestsSkeleton />}>
                 <PullRequestsView
@@ -7700,7 +7812,10 @@ export function App() {
               transport={transport}
               projectPath={activePath}
               projectName={activeProject ? displayName(activeProject) : undefined}
-              account={account}
+              // Right after the composer moves to another provider, `account` is
+              // still the last one's until the new read starts; Settings must
+              // not show it as the new provider's.
+              account={accountCheck.provider === provider ? account : undefined}
               accountLoading={
                 accountCheck.provider !== provider || accountCheck.state === 'loading'
               }

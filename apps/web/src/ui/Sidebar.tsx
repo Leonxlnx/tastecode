@@ -87,6 +87,7 @@ import {
   shortcutAria,
   type Keybindings,
 } from '../shortcuts.js'
+import { USAGE_LOW_PERCENT } from '../usage-limits-state.js'
 import { GeneratedAvatar } from './GeneratedAvatar.js'
 import { AppUpdateNotice } from './AppUpdateNotice.js'
 import { Menu, MenuItem } from './Menu.js'
@@ -97,6 +98,7 @@ import { SplitSidebarContext, type SplitSidebar } from './split-view-context.js'
 import { activeIndicatorRef } from './active-indicator.js'
 import { compactRelativeTime, readSessionClock, subscribeSessionClock } from './session-clock.js'
 import '../styles/account-card.css'
+import '../styles/rail-motion.css'
 import { InboxRailSkeleton, SidebarTreeSkeleton } from './SurfaceSkeletons.js'
 
 type AccountLimitsModule = typeof import('./AccountLimits.js')
@@ -212,8 +214,6 @@ const MAX_RAIL_WIDTH = 420
 /** Below this a rail (an older saved width) keeps a Needs you or Archived row
  *  to its title: the project name beside it would be cut to a few letters. */
 const NARROW_RAIL_WIDTH = 220
-/** Matches the account menu's own limit bars, which turn red at the same point. */
-const USAGE_LOW_PERCENT = 15
 const INITIAL_PROJECT_RENDER_COUNT = 30
 const DEFERRED_PROJECT_RENDER_COUNT = 20
 const DEFERRED_PROJECT_RENDER_TIMEOUT_MS = 100

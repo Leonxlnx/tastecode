@@ -1,12 +1,13 @@
 import { execFileSync } from 'node:child_process'
 import { once } from 'node:events'
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
-import { connect, type Socket } from 'node:net'
+import { connect, createServer, Server, type Socket } from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { WebSocket, type ServerOptions, type WebSocketServer } from 'ws'
 import { InvalidHistoryCursorError } from './history-page.js'
+import { PHONE_ACCESS_UNAVAILABLE } from './phone-access.js'
 import { generateNoiseKeyPair, NoiseInitiator, type NoiseSession } from './phone-noise.js'
 import { startServer } from './server.js'
 
@@ -51,6 +52,7 @@ const state = vi.hoisted(() => ({
   approvals: new Map<string, string>(),
   hiddenModels: [] as string[],
   providerRoster: null as string[] | null,
+  phoneAccessState: undefined as string | undefined,
 }))
 const temporary: string[] = []
 
@@ -133,9 +135,11 @@ vi.mock('./store.js', () => ({
     }
     setFeedbackLedger() {}
     phoneAccessState() {
-      return undefined
+      return state.phoneAccessState
     }
-    setPhoneAccessState() {}
+    setPhoneAccessState(value: string) {
+      state.phoneAccessState = value
+    }
     renameThread(threadId: string) {
       state.renamed.push(threadId)
     }
@@ -425,6 +429,7 @@ afterEach(async () => {
   state.approvals.clear()
   state.hiddenModels = []
   state.providerRoster = null
+  state.phoneAccessState = undefined
   vi.unstubAllEnvs()
   await Promise.all(
     temporary.splice(0).map((directory) => rm(directory, { recursive: true, maxRetries: 5 })),
@@ -1822,8 +1827,70 @@ describe('phone links', () => {
     link.socket.send(link.session.send.encrypt(Buffer.from(JSON.stringify(frame))))
   }
 
+  async function freePort(): Promise<number> {
+    const probe = createServer()
+    await new Promise<void>((resolve) => probe.listen(0, '127.0.0.1', resolve))
+    const address = probe.address()
+    await new Promise((resolve) => probe.close(resolve))
+    if (!address || typeof address === 'string') throw new Error('Missing probe address')
+    return address.port
+  }
+
+  function tcpConnect(port: number): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const socket = connect({ host: '127.0.0.1', port })
+      socket.once('connect', () => {
+        socket.destroy()
+        resolve()
+      })
+      socket.once('error', reject)
+    })
+  }
+
+  it('keeps the phone port closed in a build without phone access, even if left on', async () => {
+    const phonePort = await freePort()
+    vi.stubEnv('HARNESS_PHONE_PORT', String(phonePort))
+    vi.stubEnv('HARNESS_PHONE_ACCESS', '')
+    // What an earlier dev build left behind.
+    state.phoneAccessState = JSON.stringify({ enabled: true, devices: [] })
+    const listenCalls = vi.spyOn(Server.prototype, 'listen')
+    const { port } = await listen()
+    const desktop = await desktopClient(port)
+    try {
+      const requests = [
+        ['status', 'phone.status', {}],
+        ['on', 'phone.setEnabled', { enabled: true }],
+        ['pair', 'phone.startPairing', {}],
+        ['off', 'phone.setEnabled', { enabled: false }],
+      ] as const
+      for (const [id, method, params] of requests) {
+        desktop.client.send(JSON.stringify({ id, method, params }))
+      }
+      const replies = () => desktop.messages.filter((message) => 'id' in message)
+      await vi.waitFor(() => expect(replies()).toHaveLength(requests.length))
+      const answers = Object.fromEntries(replies().map((reply) => [reply['id'], reply]))
+      expect(answers['status']).toMatchObject({
+        result: { available: false, enabled: false, listening: false, addresses: [] },
+      })
+      expect(answers['on']).toMatchObject({ error: { message: PHONE_ACCESS_UNAVAILABLE } })
+      expect(answers['pair']).toMatchObject({ error: { message: PHONE_ACCESS_UNAVAILABLE } })
+      expect(answers['off']).toMatchObject({ result: { available: false, listening: false } })
+      expect(JSON.parse(state.phoneAccessState ?? '')).toMatchObject({ enabled: false })
+
+      // Nothing was asked to listen on the phone port, and nothing answers there.
+      expect(listenCalls.mock.calls.filter(([first]) => first === phonePort)).toEqual([])
+      await expect(tcpConnect(phonePort)).rejects.toMatchObject({ code: 'ECONNREFUSED' })
+      // No phone link key was made either.
+      expect(state.credentials.size).toBe(0)
+    } finally {
+      listenCalls.mockRestore()
+      desktop.client.terminate()
+    }
+  }, 15_000)
+
   it('serves a paired phone the desktop protocol, limited to what a phone may do', async () => {
     vi.stubEnv('HARNESS_PHONE_PORT', '0')
+    vi.stubEnv('HARNESS_PHONE_ACCESS', '1')
     const { port } = await listen()
     const desktop = await desktopClient(port)
     try {
@@ -1889,6 +1956,7 @@ describe('phone links', () => {
 
   it('keeps one setup per chat that the phone and the desktop both follow', async () => {
     vi.stubEnv('HARNESS_PHONE_PORT', '0')
+    vi.stubEnv('HARNESS_PHONE_ACCESS', '1')
     state.threads.set('t', { projectPath: '/p', provider: 'codex' })
     const { port } = await listen()
     const desktop = await desktopClient(port)

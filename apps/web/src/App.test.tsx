@@ -21,6 +21,7 @@ import { KEYBINDING_DEFINITIONS, type Shortcut } from './shortcuts.js'
 import { TERMINAL_PLACEMENT_KEY } from './terminal-placement.js'
 import { IndeterminateRequestError, type ConnectionState, type Transport } from './transport.js'
 import { resetInstalls } from './provider-install.js'
+import { PROVIDER_RECHECK_INTERVAL_MS } from './provider-recheck.js'
 import { providerUpdatesStore } from './provider-updates.js'
 import { mockKeyboardModifierState } from './test-keyboard.js'
 import { NEWEST_HISTORY_TURNS } from './thread-controller.js'
@@ -1371,6 +1372,23 @@ describe('web client', () => {
         { provider: 'codex', state: 'loading', remembered: true },
       ),
     ).toBe('setup-required')
+    // The provider's status is its default account's; a further account's own
+    // check decides for that account, signed out or in.
+    const team = { provider: 'codex' as const, accountId: 'team-9z8y7x' }
+    expect(resolve({ auth: 'unauthenticated' }, { ...team, state: 'loading' })).toBe('loading')
+    expect(resolve({ auth: 'unauthenticated' }, { ...team, state: 'loading', slow: true })).toBe(
+      'ready',
+    )
+    expect(resolve({ auth: 'authenticated' }, { ...team, state: 'loading' })).toBe('loading')
+    expect(
+      resolve(
+        { auth: 'unauthenticated' },
+        { ...team, state: 'ready', account: { signedIn: true } },
+      ),
+    ).toBe('ready')
+    expect(
+      resolve({ auth: 'authenticated' }, { ...team, state: 'ready', account: { signedIn: false } }),
+    ).toBe('setup-required')
   })
 
   it('cuts a prompt title before an emoji split at 40 code units', () => {
@@ -2437,6 +2455,82 @@ describe('web client', () => {
     ]) {
       expect(localStorage.getItem(key)).toBeNull()
     }
+  })
+
+  it('leaves a provider known to be signed out out of the picker until a read says otherwise', async () => {
+    serverProviders = [
+      ...serverProviders,
+      { ...claudeCodeServerProvider(), auth: 'unknown' },
+      { ...grokServerProvider(), auth: 'unknown' },
+    ]
+    // Claude Code's last account read said signed out; Grok's was never read.
+    localStorage.setItem('harness.signedOutProviders', JSON.stringify(['claude-code']))
+    mockLiveDiscovery()
+    let claudeAccount = { signedIn: false }
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'auth.status' &&
+      methods['auth.status'].params.parse(params).provider === 'claude-code'
+        ? Promise.resolve(claudeAccount)
+        : request(method, params),
+    )
+    const claudeReads = () =>
+      transport.request.mock.calls.filter(
+        ([method, params]) =>
+          method === 'auth.status' &&
+          methods['auth.status'].params.parse(params).provider === 'claude-code',
+      ).length
+
+    render(<App />)
+
+    await waitFor(() => expect(offeredModelNames('grok')).toEqual(['Grok 4.7']))
+    await waitFor(() => expect(offeredModelNames('codex').length).toBeGreaterThan(0))
+    expect(offeredModelNames('claude-code')).toEqual([])
+
+    // Opening the picker asks again; still signed out, it stays away.
+    act(() => composerProps().onModelSelectorOpen?.())
+    await waitFor(() => expect(claudeReads()).toBe(1))
+    await act(async () => undefined)
+    expect(offeredModelNames('claude-code')).toEqual([])
+    // A second opening within the recheck interval does not start the CLI again.
+    act(() => composerProps().onModelSelectorOpen?.())
+    await act(async () => undefined)
+    expect(claudeReads()).toBe(1)
+
+    // Signed in from its own terminal since: back once a read says so.
+    claudeAccount = { signedIn: true }
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + PROVIDER_RECHECK_INTERVAL_MS + 1)
+    act(() => composerProps().onModelSelectorOpen?.())
+    await waitFor(() =>
+      expect(offeredModelNames('claude-code')).toEqual([
+        'Fable 5.1',
+        'Opus 5.5',
+        'Sonnet 5.5',
+        'Haiku 5.5',
+      ]),
+    )
+    expect(claudeReads()).toBe(2)
+  })
+
+  it('keeps the provider the composer is on in the picker while it is signed out', async () => {
+    serverProviders = [...serverProviders, { ...claudeCodeServerProvider(), auth: 'unknown' }]
+    localStorage.setItem('harness.provider', 'claude-code')
+    mockLiveDiscovery()
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'auth.status' &&
+      methods['auth.status'].params.parse(params).provider === 'claude-code'
+        ? Promise.resolve({ signedIn: false })
+        : request(method, params),
+    )
+
+    render(<App />)
+
+    await waitFor(() =>
+      expect(localStorage.getItem('harness.signedOutProviders')).toContain('claude-code'),
+    )
+    await waitFor(() => expect(offeredModelNames('claude-code').length).toBeGreaterThan(0))
+    expect(composerProps().provider).toBe('claude-code')
   })
 
   it('returns an older build’s list to the current lineups from the cached catalog', async () => {
@@ -4379,6 +4473,70 @@ describe('web client', () => {
     expect(await screen.findByRole('heading', { name: 'Add providers' })).toBeTruthy()
   })
 
+  it("never shows the composer's last provider's sign-in as the next one's in Settings", async () => {
+    await import('./ui/Settings.js')
+    serverProjects = []
+    localStorage.setItem('harness.provider', 'claude-code')
+    localStorage.setItem('harness.providerRoster.v1', '[]')
+    serverProviders.unshift({
+      ...serverProviders[0]!,
+      id: 'claude-code',
+      displayName: 'Claude Code',
+      auth: 'unknown',
+    })
+    let answerCodex!: (account: { signedIn: boolean }) => void
+    const codexAccount = new Promise<{ signedIn: boolean }>((resolve) => {
+      answerCodex = resolve
+    })
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'auth.status') {
+        // Claude Code's CLI is signed out; Codex's read is still running.
+        return methods['auth.status'].params.parse(params).provider === 'codex'
+          ? codexAccount
+          : Promise.resolve({ signedIn: false })
+      }
+      if (method === 'models.list') {
+        return Promise.resolve({
+          models:
+            methods['models.list'].params.parse(params).provider === 'codex'
+              ? [cachedCodexChoice().model]
+              : [],
+        })
+      }
+      return request(method, params)
+    })
+    render(<App />)
+
+    expect(await screen.findByText('Add a provider to start chatting.')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Add provider' }))
+    expect(await screen.findByRole('heading', { name: 'Add providers' })).toBeTruthy()
+    const codexRow = () =>
+      screen.getByRole('button', { name: /^(Add|Remove) Codex$/ }).closest('.provider-row')!
+    expect(codexRow().textContent).toContain('Signed in')
+
+    // Adding Codex lists its models, and the composer moves to it.
+    fireEvent.click(screen.getByRole('button', { name: 'Add Codex' }))
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('models.list', { provider: 'codex' }),
+    )
+    // Settings' read of the row and the composer's own read of its new provider.
+    await waitFor(() =>
+      expect(
+        transport.request.mock.calls.filter(
+          ([method, params]) =>
+            method === 'auth.status' && (params as { provider?: string }).provider === 'codex',
+        ),
+      ).toHaveLength(2),
+    )
+    await act(async () => undefined)
+    expect(codexRow().textContent).not.toContain('Not signed in')
+
+    await act(async () => answerCodex({ signedIn: true }))
+    expect(codexRow().textContent).toContain('Signed in')
+    expect(codexRow().textContent).not.toContain('Not signed in')
+  })
+
   it('starts the roster from what was in use: installed providers and agents with chats', async () => {
     serverProjects = [
       {
@@ -5664,6 +5822,66 @@ describe('new chats', () => {
     )
     expect(composerProps().modelId).toBe('codex:gpt-6.1-team')
     expect(note()).toBeUndefined()
+  })
+
+  it("checks the sign-in of the chat's own account, not the default one", async () => {
+    const codex = serverProviders[0]!
+    // The default account is signed out; the chat runs on Team, which is not.
+    serverProviders = [
+      {
+        ...codex,
+        auth: 'unauthenticated',
+        capabilities: { ...codex.capabilities!, multipleAccounts: true },
+      },
+    ]
+    serverProjects[0]!.sessions = [
+      {
+        id: 'chat-1',
+        title: 'Webhook retries',
+        provider: 'codex',
+        accountId: 'team-9z8y7x',
+        createdAt: 1,
+      },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'accounts.list') {
+        return Promise.resolve({
+          accounts: [
+            { id: 'default', provider: 'codex', label: 'Personal', managed: false },
+            {
+              id: 'team-9z8y7x',
+              provider: 'codex',
+              label: 'Team',
+              home: 'C:\\TasteCode\\accounts\\codex\\team-9z8y7x',
+              managed: true,
+              email: 'team@example.test',
+            },
+          ],
+          active: {},
+        })
+      }
+      if (method === 'auth.status') {
+        const { accountId } = methods['auth.status'].params.parse(params)
+        return Promise.resolve(
+          accountId === 'team-9z8y7x'
+            ? { signedIn: true, email: 'team@example.test' }
+            : { signedIn: false },
+        )
+      }
+      return request(method, params)
+    })
+    render(<App />)
+
+    fireEvent.click(await waitFor(() => treeChatRow('Webhook retries')))
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('auth.status', {
+        provider: 'codex',
+        accountId: 'team-9z8y7x',
+      }),
+    )
+    await waitFor(() => expect(composerProps().sendAvailability).toBe('ready'))
   })
 
   it('keeps the message and the chat where they were when a switch fails', async () => {
