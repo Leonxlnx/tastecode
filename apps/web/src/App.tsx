@@ -3100,6 +3100,14 @@ export function App() {
     }
   }, [transport, activePath, branchShelfPath, workspaceRefreshRevision, branchMenuOpened])
 
+  // The account the model picker's provider runs on: another account picked
+  // there, else an open chat's own, else the one new chats start on.
+  const composerAccount: AccountId =
+    selectedModelChoice?.accountId ??
+    (activeSession?.provider === provider && !activeSession.agent && !activeSession.connectionId
+      ? ((activeSession.accountId as AccountId | undefined) ?? DEFAULT_ACCOUNT_ID)
+      : activeAccountOf(providerAccounts, provider))
+
   useEffect(() => {
     let cancelled = false
     const revision = ++accountRequestRevision.current
@@ -3526,13 +3534,6 @@ export function App() {
         .map((status) => status.id),
     [provider, providerStatuses],
   )
-  // The account the model picker's provider runs on: another account picked
-  // there, else an open chat's own, else the one new chats start on.
-  const composerAccount: AccountId =
-    selectedModelChoice?.accountId ??
-    (activeSession?.provider === provider && !activeSession.agent && !activeSession.connectionId
-      ? ((activeSession.accountId as AccountId | undefined) ?? DEFAULT_ACCOUNT_ID)
-      : activeAccountOf(providerAccounts, provider))
   // Each provider account is a limit source of its own. The account the
   // composer is on is read for the current provider; its other accounts join
   // the other providers, read when a view shows them.
