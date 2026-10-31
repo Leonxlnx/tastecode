@@ -22,6 +22,7 @@ import type { UsageSummaryState } from '../usage-summary-state.js'
 import '../styles/account-limits.css'
 import { ProviderIcon } from './ProviderIcon.js'
 import { compactRelativeTime } from './session-clock.js'
+import { resetText } from './usage/usage-format.js'
 
 /** Values older than this say how old they are; younger ones read as current. */
 const AGE_SHOWN_AFTER_MS = 10 * 60_000
@@ -535,6 +536,8 @@ function LimitRow(props: {
   const gauge = props.limit.valueLabel === undefined
   const value = props.limit.valueLabel ?? `${left}% left`
   const pace = evenPace(props.limit, props.now)
+  const reset =
+    props.limit.resetsAt === undefined ? undefined : resetLine(props.limit.resetsAt, props.now)
 
   return (
     <div
@@ -568,9 +571,9 @@ function LimitRow(props: {
           )}
         </div>
       ) : null}
-      {props.limit.resetsAt !== undefined ? (
-        <span className="account-menu__limit-reset">
-          {resetLabel(props.limit.resetsAt, props.now)}
+      {reset ? (
+        <span className="account-menu__limit-reset" title={reset.title}>
+          {reset.label}
         </span>
       ) : null}
       {credits?.length ? (
@@ -782,17 +785,13 @@ export function evenPace(limit: Limit, now: number): number | undefined {
   return ahead >= 2 && ahead <= 98 ? ahead : undefined
 }
 
-/** A reset within the week reads as weekday and time; further out, as a date. */
-function resetLabel(at: number, now: number): string {
-  const date = new Date(at)
-  if (Number.isNaN(date.getTime())) return 'Reset time unavailable.'
-  const untilReset = at - now
-  const withinWeek = untilReset >= 0 && untilReset < 6 * 86_400_000
-  const formatted = date.toLocaleString(
-    undefined,
-    withinWeek
-      ? { weekday: 'short', hour: '2-digit', minute: '2-digit' }
-      : { year: 'numeric', month: 'short', day: 'numeric' },
-  )
-  return `Resets ${formatted}`
+/**
+ * The Usage page's words on a line of their own: "Resets in 3h 12m" within a
+ * day, the weekday and time within the week, the date after that, with the
+ * exact time on hover.
+ */
+function resetLine(at: number, now: number): { label: string; title?: string } {
+  const reset = resetText(at, now)
+  if (!reset) return { label: 'Reset time unavailable.' }
+  return { label: reset.label.charAt(0).toUpperCase() + reset.label.slice(1), title: reset.title }
 }

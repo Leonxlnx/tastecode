@@ -790,7 +790,8 @@ describe('account limits', () => {
     const farFuture = screen.getByText('Far future').closest('.account-menu__limit')
     expect(epoch).not.toBeNull()
     expect(farFuture).not.toBeNull()
-    expect(within(epoch as HTMLElement).getByText(/^Resets .*19(?:69|70)$/)).toBeTruthy()
+    // A reset time already past reads as due, in the Usage page's words.
+    expect(within(epoch as HTMLElement).getByText('Resets now')).toBeTruthy()
     expect(within(farFuture as HTMLElement).getByText('Reset time unavailable.')).toBeTruthy()
   })
 
@@ -908,6 +909,32 @@ describe('account limits', () => {
     expect(pace('Weekly').title).toBe('At an even pace, 69% would be left now.')
     expect(pace('Fresh')).toEqual({ title: '', left: undefined })
     expect(pace('Unknown window')).toEqual({ title: '', left: undefined })
+  })
+
+  it('says when a window resets the way the Usage page does, the exact time on hover', () => {
+    const now = Date.UTC(2026, 8, 13, 12)
+    vi.useFakeTimers({ toFake: ['Date'], now })
+    render(
+      limits({
+        status: 'ready',
+        provider: 'codex',
+        summary: summary([
+          { label: '5 hours', usedPercent: 20, resetsAt: now + 41 * 60_000 },
+          { label: 'Daily', usedPercent: 20, resetsAt: now + (3 * 60 + 12) * 60_000 },
+          { label: 'Monthly', usedPercent: 20, resetsAt: now + 30 * 86_400_000 },
+        ]),
+      }),
+    )
+
+    const reset = (label: string) =>
+      screen
+        .getByText(label)
+        .closest('.account-menu__limit')!
+        .querySelector('.account-menu__limit-reset')
+    expect(reset('5 hours')?.textContent).toBe('Resets in 41m')
+    expect(reset('Daily')?.textContent).toBe('Resets in 3h 12m')
+    expect(reset('Monthly')?.textContent).toBe('Resets Oct 13')
+    expect(reset('5 hours')?.getAttribute('title')).toMatch(/^Sun, Sep 13, /)
   })
 
   it('handles expired and invalid dates without inventing an expiry', () => {
