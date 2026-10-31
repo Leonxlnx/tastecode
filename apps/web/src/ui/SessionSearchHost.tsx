@@ -92,15 +92,17 @@ export const SessionSearchHost = memo(SessionSearchHostComponent)
 const RESTORED_FOCUS_FALLBACKS = [
   '[aria-label="Search chats"]',
   '[aria-label="Search threads"]',
-  // In a split, the focused pane's composer: the other one is dormant.
-  '.composer:not(.is-dormant) textarea[placeholder="Do anything"]',
+  'textarea[placeholder="Do anything"]',
   '.titlebar__toggle',
 ] as const
 
 function restoredFocusFallback(): HTMLElement | undefined {
   for (const selector of RESTORED_FOCUS_FALLBACKS) {
-    const target = document.querySelector<HTMLElement>(selector)
-    if (canReceiveRestoredFocus(target)) return target
+    // In a split the first composer can be the dormant pane's, which is inert;
+    // the focused pane's composer is the one to return to.
+    for (const target of document.querySelectorAll<HTMLElement>(selector)) {
+      if (canReceiveRestoredFocus(target)) return target
+    }
   }
   return undefined
 }
