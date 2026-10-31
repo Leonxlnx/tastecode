@@ -41,23 +41,32 @@ export function accountAtLimit(
 }
 
 /**
- * The provider's other accounts a chat can carry on with: every account but
- * the chat's own that is known to be signed in. A further account counts once
+ * The provider's accounts known to be signed in. A further account counts once
  * its own sign-in check named who it is; the default one also when the
  * provider reports it signed in.
  */
+export function signedInAccounts(
+  accounts: ProviderAccountsSnapshot,
+  provider: ProviderId,
+  defaultSignedIn: boolean,
+): ProviderAccount[] {
+  return accountsOf(accounts, provider).filter(
+    (account) =>
+      account.email !== undefined ||
+      account.plan !== undefined ||
+      (account.id === DEFAULT_ACCOUNT_ID && defaultSignedIn),
+  )
+}
+
+/** The provider's other accounts a chat can carry on with: every signed-in one but its own. */
 export function continueAccounts(
   accounts: ProviderAccountsSnapshot,
   provider: ProviderId,
   chatAccount: AccountId | undefined,
   defaultSignedIn: boolean,
 ): ProviderAccount[] {
-  return accountsOf(accounts, provider).filter(
-    (account) =>
-      !sameAccount(account.id, chatAccount) &&
-      (account.email !== undefined ||
-        account.plan !== undefined ||
-        (account.id === DEFAULT_ACCOUNT_ID && defaultSignedIn)),
+  return signedInAccounts(accounts, provider, defaultSignedIn).filter(
+    (account) => !sameAccount(account.id, chatAccount),
   )
 }
 
