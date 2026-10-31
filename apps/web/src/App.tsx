@@ -229,6 +229,7 @@ import {
   restoreWorkspacePanelWidth,
 } from './ui/workspace/workspace-panel-width.js'
 import { useWindowChrome } from './window-chrome.js'
+import { AppBackground } from './ui/AppBackground.js'
 import { backdropColorScheme } from './theme-colors.js'
 import { adoptedSelection, shareSavedSetups, sharedSetup } from './thread-settings.js'
 import {
@@ -6983,6 +6984,8 @@ export function App() {
       {isDesktop ? <ZoomHud /> : null}
 
       <div className="shell__body" ref={shellBody}>
+        {/* Inside the body, so its aurora pauses with the shell behind Settings. */}
+        <AppBackground />
         <Sidebar
           projects={archiveProjects}
           projectsLoading={projectsStatus === 'loading'}

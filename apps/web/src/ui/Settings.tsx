@@ -18,6 +18,7 @@ import { createPortal } from 'react-dom'
 import { RowIssue } from './RowIssue.js'
 import { surfaceLoadFailed } from '../surface-load-error.js'
 import { AppearanceColorPicker } from './AppearanceColorPicker.js'
+import { AppBackgroundSettings } from './AppBackgroundSettings.js'
 import {
   accentColor,
   backdropColor,
@@ -2105,6 +2106,7 @@ function AppearanceSettings(props: {
           onChange={(updates) => props.onAppearancePreferenceChange(mode, updates)}
         />
       ))}
+      <AppBackgroundSettings />
       {props.showMacOSHaptics || props.showMacOSFontSmoothing ? (
         <SettingsSection label="Shared appearance controls">
           {props.showMacOSHaptics ? <SidebarHapticsSetting /> : null}
