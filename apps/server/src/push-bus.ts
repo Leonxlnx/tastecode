@@ -168,6 +168,32 @@ export class PushBus<Socket extends PushSocket = WebSocket> {
     }
   }
 
+  /**
+   * A sub-agent chat's event, reusing its stored JSON like the chat stream. Its
+   * deltas are as hot as a chat's, so nothing is encoded twice here either.
+   */
+  broadcastRecordedSubagentEvent(
+    threadId: string,
+    parentThreadId: string,
+    serializedEvent: string,
+    seq: number,
+  ): void {
+    if (this.#sockets.size === 0) return
+    const prefix = framePrefix('subagent.event')
+    const dataJson = `{"threadId":${JSON.stringify(threadId)},"parentThreadId":${JSON.stringify(parentThreadId)},"event":${serializedEvent},"seq":${seq}}`
+    let previousSequence = -1
+    let previousFrame = ''
+    for (const [socket, state] of this.#sockets) {
+      if (socket.readyState !== socket.OPEN) continue
+      const sequence = ++state.sequence
+      if (sequence !== previousSequence) {
+        previousSequence = sequence
+        previousFrame = `${prefix}${sequence},"data":${dataJson}}`
+      }
+      this.#sendFrame(socket, state, previousFrame)
+    }
+  }
+
   /** Reuse the exact event JSON already written to SQLite. */
   broadcastRecordedEvent(
     channel: RecordedEventChannel,
