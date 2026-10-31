@@ -687,6 +687,23 @@
           <li>
             <label
               ><input type="checkbox" /><span
+                >Plan limits from agy's own /usage
+                <span class="d"
+                  >agy -p "/usage" --output-format json answers without a turn, quota or saved
+                  conversation since agy 1.1.11, so the read checks agy --version first and never
+                  asks an older agy; each model group's 5-hour and weekly bucket becomes a row
+                  (Gemini 5 hours, Gemini weekly, Claude and GPT 5 hours, Claude and GPT weekly on
+                  agy 1.4.7); an untouched bucket shows no reset time, because agy reports now plus
+                  the window for it; disabled buckets are left out; signed out or no quota groups is
+                  no plan limits; reads start agy (3 to 12 s), so they wait for the account popup or
+                  Usage page and run at most every 5 minutes</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
                 >Conversation resume, interrupt, permission mapping
                 <span class="d"
                   >unreadable frames and throwing listeners are logged without ending the turn;
