@@ -276,6 +276,15 @@ export function startServer(
         push.broadcastRecordedEvent('sideChat.event', threadId, serializedEvent, seq)
       }
     },
+    onSubagentEvent: (threadId, parentThreadId, event, seq, serializedEvent) => {
+      if (event.type === 'item.delta') streamQuiet.noteDelta()
+      if (serializedEvent === undefined) {
+        push.broadcast('subagent.event', { threadId, parentThreadId, event, seq })
+      } else {
+        push.broadcastRecordedSubagentEvent(threadId, parentThreadId, serializedEvent, seq)
+      }
+    },
+    agentTools: true,
     onQueue: (threadId, state) => push.broadcast('thread.queue', { threadId, ...state }),
     onLog: (line) => console.log(`[agent] ${line}`),
     onLogin: (provider, result, accountId) => {
@@ -1426,6 +1435,11 @@ export function startServer(
       case 'thread.diff': {
         const p = parseParams(method, params)
         return orchestrator.diff(p.threadId)
+      }
+
+      case 'thread.subagents': {
+        const p = parseParams(method, params)
+        return { subagents: orchestrator.subagents(p.threadId) }
       }
 
       case 'thread.undoTurnChanges': {

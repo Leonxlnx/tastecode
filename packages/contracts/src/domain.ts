@@ -77,6 +77,21 @@ export const SubagentSchema = z.object({
   lastTool: z.string().min(1).optional(),
   /** The provider's short account of progress or of the result. */
   summary: z.string().optional(),
+  /**
+   * The hidden TasteCode chat this sub-agent runs in, when TasteCode started it
+   * on a provider of its own choosing. Its transcript is read with
+   * `thread.history` and followed on `subagent.event`. Absent for a sub-agent
+   * the engine runs itself, whose steps are not kept.
+   */
+  threadId: z.string().min(1).optional(),
+  /** Where a TasteCode sub-agent runs, when that differs from its parent. */
+  provider: ProviderIdSchema.optional(),
+  /** The ACP agent or custom harness, when the provider runs several. */
+  agent: z.string().min(1).optional(),
+  /** The model it runs on, as the provider names it. */
+  model: z.string().min(1).optional(),
+  /** It waits for the user: an approval, or an answer to a question. */
+  attention: z.enum(['approval', 'input']).optional(),
 })
 export type Subagent = z.infer<typeof SubagentSchema>
 
