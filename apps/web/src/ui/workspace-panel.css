@@ -43,6 +43,17 @@
   border-left: 0;
 }
 
+/* Hiding takes the panel's grid column away at once. For the length of its
+   fade the panel leaves over the chat at its last open width instead of
+   vanishing with the column; WorkspacePanel sets the width and clears both. */
+.workspace-panel[data-leaving] {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: var(--workspace-panel-leave-w);
+}
+
 .workspace-panel__resize {
   position: absolute;
   z-index: 8;
