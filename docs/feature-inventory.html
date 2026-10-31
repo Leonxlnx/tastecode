@@ -1244,21 +1244,27 @@
                   picker. The composer's sign-in check asks the account the next message runs on, so
                   a signed-out default account does not block Send for a chat on a signed-in further
                   account, nor the reverse. A chat's title and commit message are written through
-                  its own account when the background model is its provider's; the model picker
-                  lists the active account's models for a new chat and an open chat's own account's
-                  models; a project's MCP list and MCP sign-in come from a default-account chat
-                  only. Removing an account drops it before its processes stop and deletes a managed
-                  folder last. Plan limits, reset credits, model lists and usage are read per
-                  account: the current provider's active account is read at launch, its other
-                  signed-in accounts when the popup or Usage shows limits; the popup names the
-                  provider once and gives each account a line that opens to its full limits (the
-                  account new chats start on first and open; a closed line shows the % left of each
-                  window, such as Session and Weekly, a row each on a short gauge under the account
-                  name; a failed read says Unavailable with Retry on its line, one still loading
-                  says Checking…), the card's figure is each provider's active account, and a Usage
-                  sheet sums its accounts and lists each one with its tokens and limits. Above a
-                  provider's account lines the popup sums them into one pool (All accounts, worked
-                  out in the client from the limits it holds until the server sends one): per
+                  its own account when the background model is its provider's, with a model that
+                  account's own sign-in and plan offer; the model picker lists the active account's
+                  models for a new chat and an open chat's own account's models. Settings &gt;
+                  Models gives each signed-in account its own section (Claude Code · Work) with its
+                  own switches and starting defaults, kept as provider@account, so hiding a model on
+                  one account leaves the others alone in the picker; a failed list keeps its section
+                  with the reason and Retry; a choice made before accounts had their own switches
+                  still holds for a further account until it gets its own. An account's Model row
+                  offers that account's models. A project's MCP list and MCP sign-in come from a
+                  default-account chat only. Removing an account drops it before its processes stop
+                  and deletes a managed folder last. Plan limits, reset credits, model lists and
+                  usage are read per account: the current provider's active account is read at
+                  launch, its other signed-in accounts when the popup or Usage shows limits; the
+                  popup names the provider once and gives each account a line that opens to its full
+                  limits (the account new chats start on first and open; a closed line shows the %
+                  left of each window, such as Session and Weekly, a row each on a short gauge under
+                  the account name; a failed read says Unavailable with Retry on its line, one still
+                  loading says Checking…), the card's figure is each provider's active account, and
+                  a Usage sheet sums its accounts and lists each one with its tokens and limits.
+                  Above a provider's account lines the popup sums them into one pool (All accounts,
+                  worked out in the client from the limits it holds until the server sends one): per
                   window, Session and Weekly told apart by their length (only overall windows count,
                   not a limit on one model, and an account that reports two of one kind counts the
                   more used one), the % left of the pool, its size in the provider's cheapest plan
