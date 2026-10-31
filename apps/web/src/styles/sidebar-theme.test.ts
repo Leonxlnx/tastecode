@@ -196,6 +196,16 @@ describe('sidebar theme CSS', () => {
     expect(sidebarSource).not.toContain('IconChevronUp')
   })
 
+  it('keeps the open account card and its popup dark in the dark theme', () => {
+    // The shared pressed grey lit the whole card while its popup was open.
+    expect(accountCardCss).toMatch(
+      /:root:not\(\[data-theme='light'\]\) \.account-card \{\s*--control-pressed: color-mix\(in srgb, var\(--text\) 3%, var\(--rail-raised\)\);/,
+    )
+    expect(accountCardCss).toMatch(
+      /:root:not\(\[data-theme='light'\]\) \.menu\.menu--account \{\s*--menu-bg: color-mix\(in srgb, var\(--surface\) 35%, var\(--bg-rail\)\);/,
+    )
+  })
+
   it('marks an unread chat by a heavier title, not a second dot', () => {
     // A failed or waiting chat already shows a dot in the row's one slot; an
     // unread dot beside it made two.
