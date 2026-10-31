@@ -208,10 +208,12 @@ export function modelVisibilityDefaults(choices: readonly ModelChoice[]): ModelV
   const families = new Map<string, { newest: LineageMember; members: LineageMember[] }>()
   for (const choice of choices) {
     if (isCustomModelChoice(choice)) continue
+    // Accounts are sources of their own: one's newer model says nothing about another's plan.
     const source = sourceKey({
       provider: choice.provider,
       connectionId: choice.connectionId,
       agentId: choice.agent?.id,
+      accountId: choice.accountId,
     })
     stock.push({ choice, source })
     if (choice.model.recommended === true) curatedSources.add(source)
@@ -263,6 +265,26 @@ export function modelVisibilityDefaults(choices: readonly ModelChoice[]): ModelV
 /** A visibility the user chose for one model, and when. */
 export type ModelVisibilityOverride = { visible: boolean; at: number }
 
+/** One switch stood for all of a provider's accounts until this moment (2026-10-31). */
+const ACCOUNT_SWITCHES_SINCE = Date.UTC(2026, 9, 31, 22, 0)
+const FURTHER_ACCOUNT_SOURCE = /^([^:@]+)@[a-z0-9-]+:/
+
+/**
+ * The user's choice for one model: its own, else what they chose for the
+ * provider while that one switch stood for this account as well. A choice made
+ * on another account since then stays with that account.
+ */
+function chosenVisibility(
+  overrides: Readonly<Record<string, ModelVisibilityOverride>>,
+  key: string,
+): ModelVisibilityOverride | undefined {
+  if (Object.hasOwn(overrides, key)) return overrides[key]
+  const providerKey = key.replace(FURTHER_ACCOUNT_SOURCE, '$1:')
+  if (providerKey === key || !Object.hasOwn(overrides, providerKey)) return undefined
+  const override = overrides[providerKey]
+  return override && override.at < ACCOUNT_SWITCHES_SINCE ? override : undefined
+}
+
 /**
  * The keys hidden right now: a choice's own override when it has one, its
  * default otherwise. Showing a superseded model sticks only when the user did
@@ -278,7 +300,7 @@ export function effectiveHiddenModels(
 ): Set<string> {
   const hidden = new Set<string>()
   for (const { key } of choices) {
-    const override = Object.hasOwn(overrides, key) ? overrides[key] : undefined
+    const override = chosenVisibility(overrides, key)
     if (!override) {
       if (defaults.hidden.has(key)) hidden.add(key)
       continue

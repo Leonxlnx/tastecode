@@ -120,11 +120,22 @@ import { Sidebar, type Project, type Session } from './ui/Sidebar.js'
 import {
   accountAtLimit,
   continueAccounts,
+  signedInAccounts,
   continuationNote,
   continuedIn,
   type EarlierChanges,
   lastRequest,
 } from './continue-account.js'
+import {
+  accountListKey,
+  accountModelKey,
+  accountModelRows,
+  accountSourceKey,
+  hiddenListedKeys,
+  modelsByAccount,
+  parseAccountListKey,
+  withOwnModelKeys,
+} from './account-models.js'
 import { Skeleton, SkeletonStatus, ThreadSkeleton } from './ui/Skeleton.js'
 import {
   PullRequestsSkeleton,
@@ -171,6 +182,7 @@ import {
   type ModelChoice,
 } from './model-catalog.js'
 import {
+  choiceKeySource,
   chooseModelsVisibility,
   EMPTY_MODEL_VISIBILITY,
   hiddenModelKeys,
@@ -1261,13 +1273,120 @@ export function App() {
   catalogModelsRef.current = catalogModels
   const modelsRef = useRef(models)
   modelsRef.current = models
-  /** How every listed model starts, recomputed only when the catalog changes. */
-  const modelDefaults = useMemo(() => modelVisibilityDefaults(catalogModels), [catalogModels])
+  /**
+   * Every signed-in account of a provider that has more than one. Each lists
+   * its own models, whose plan may differ, and keeps its own choices about them.
+   */
+  const accountListKeys = useMemo(() => {
+    const keys: string[] = []
+    for (const status of providerStatuses) {
+      if (status.capabilities?.multipleAccounts !== true) continue
+      if (!rosterAllows(providerRoster, sourceKey({ provider: status.id }))) continue
+      if (accountsOf(providerAccounts, status.id).length < 2) continue
+      const defaultSignedIn = status.auth === 'authenticated'
+      for (const account of signedInAccounts(providerAccounts, status.id, defaultSignedIn)) {
+        keys.push(accountListKey(status.id, account.id))
+      }
+    }
+    return keys.join('\u0001')
+  }, [providerStatuses, providerRoster, providerAccounts])
+  const accountListKeysRef = useRef(accountListKeys)
+  accountListKeysRef.current = accountListKeys
+  const [accountModelLists, setAccountModelLists] = useState<ReadonlyMap<string, Model[]>>(
+    () => new Map(),
+  )
+  const [accountModelListsRevision, setAccountModelListsRevision] = useState(0)
+  /** Why an account's models could not be listed, by its source key. */
+  const [accountModelErrors, setAccountModelErrors] = useState<Record<string, ComposerError>>({})
+  const [pendingAccountModels, setPendingAccountModels] = useState<ReadonlySet<string>>(new Set())
+  useEffect(() => {
+    if (!accountListKeys) {
+      setPendingAccountModels(new Set())
+      return
+    }
+    let cancelled = false
+    const keys = accountListKeys.split('\u0001')
+    const sourceOf = (key: string) => {
+      const { provider: id, accountId } = parseAccountListKey(key)
+      return accountSourceKey(id, accountId)
+    }
+    setPendingAccountModels(new Set(keys.map(sourceOf)))
+    for (const key of keys) {
+      const { provider: id, accountId } = parseAccountListKey(key)
+      const source = sourceOf(key)
+      const settled = () => {
+        setPendingAccountModels((current) => {
+          const next = new Set(current)
+          next.delete(source)
+          return next
+        })
+      }
+      void transport
+        .request('models.list', {
+          provider: id,
+          ...(accountId === DEFAULT_ACCOUNT_ID ? {} : { accountId }),
+        })
+        .then(
+          (result) => {
+            if (cancelled) return
+            setAccountModelLists((current) => new Map(current).set(key, result.models))
+            setAccountModelErrors((current) => {
+              if (!Object.hasOwn(current, source)) return current
+              const next = { ...current }
+              delete next[source]
+              return next
+            })
+            settled()
+            updateModelVisibility((record) =>
+              settleModelVisibilitySource(
+                record,
+                source,
+                accountModelRows(id, accountId, result.models),
+                Date.now(),
+              ),
+            )
+          },
+          (cause: unknown) => {
+            if (cancelled) return
+            settled()
+            setAccountModelErrors((current) => ({
+              ...current,
+              [source]: {
+                id: `models:${source}:${crypto.randomUUID()}`,
+                message: `Could not load ${providerName(id)} models. ${cause instanceof Error ? cause.message : String(cause)}`,
+              },
+            }))
+          },
+        )
+    }
+    return () => {
+      cancelled = true
+    }
+  }, [accountListKeys, accountModelListsRevision, transport, updateModelVisibility])
+  /** The catalog with every account of a provider on its own, as Settings lists them. */
+  const accountModels = useMemo(
+    () =>
+      modelsByAccount(
+        models,
+        providerAccounts,
+        new Set(accountListKeys ? accountListKeys.split('\u0001') : []),
+        accountModelLists,
+      ),
+    [models, providerAccounts, accountListKeys, accountModelLists],
+  )
+  /** How every listed model starts, recomputed only when a list changes. */
+  const modelDefaults = useMemo(() => modelVisibilityDefaults(accountModels), [accountModels])
   const modelDefaultsRef = useRef(modelDefaults)
   modelDefaultsRef.current = modelDefaults
+  /** Hidden models by the key their account keeps them under. */
+  const hiddenAccountModels = useMemo(
+    () => hiddenModelKeys(accountModels, modelDefaults, modelVisibility),
+    [accountModels, modelDefaults, modelVisibility],
+  )
+  /** The catalog's own rows that are hidden, by their key in the picker. */
   const hiddenModels = useMemo(
-    () => hiddenModelKeys(models, modelDefaults, modelVisibility),
-    [models, modelDefaults, modelVisibility],
+    () => hiddenListedKeys(models, hiddenAccountModels, providerAccounts),
+    [models, hiddenAccountModels, providerAccounts],
   )
   const visibleModels = useMemo(
     () => models.filter((choice) => !hiddenModels.has(choice.key)),
@@ -1275,7 +1394,10 @@ export function App() {
   )
   // The phone offers the models this picker offers, so neither moves a chat
   // to a model the other hides. Compared as text: the set is rebuilt often.
-  const hiddenModelList = useMemo(() => JSON.stringify([...hiddenModels].sort()), [hiddenModels])
+  const hiddenModelList = useMemo(
+    () => JSON.stringify([...hiddenAccountModels].sort()),
+    [hiddenAccountModels],
+  )
   useEffect(() => {
     if (!modelsLoaded) return
     const timer = window.setTimeout(() => {
@@ -1390,12 +1512,15 @@ export function App() {
   }, [chatModelAccount, chatModelsRevision, transport])
   const selectableModels = useMemo(() => {
     if (chatModelAccount && chatModels?.account === chatModelAccount && chatModels.models.length) {
-      return chatModels.models.filter((choice) => !hiddenModels.has(choice.key))
+      const { provider: id, accountId } = parseAccountListKey(chatModelAccount)
+      return chatModels.models.filter(
+        (choice) => !hiddenAccountModels.has(accountModelKey(id, accountId, choice.model.id)),
+      )
     }
     return activeModelSource
       ? visibleModels.filter((choice) => modelSource(choice) === activeModelSource)
       : visibleModels
-  }, [activeModelSource, visibleModels, chatModelAccount, chatModels, hiddenModels])
+  }, [activeModelSource, visibleModels, chatModelAccount, chatModels, hiddenAccountModels])
   const storedModelChoice = models.find((choice) => choice.key === modelId)
   const sourceHasCatalogModels = useMemo(
     () =>
@@ -1432,48 +1557,19 @@ export function App() {
     }
     return sources
   }, [activeSession, movableChat, providerStatuses, providerRoster, providerAccounts])
-  const otherAccountKeys = otherAccountSources
-    .map(({ provider: id, accountId }) => chatAccountKey(id, accountId))
-    .join('\u0001')
-  const otherAccountKeysRef = useRef(otherAccountKeys)
-  otherAccountKeysRef.current = otherAccountKeys
-  const [otherAccountModels, setOtherAccountModels] = useState<ReadonlyMap<string, Model[]>>(
-    () => new Map(),
-  )
-  const [otherAccountModelsRevision, setOtherAccountModelsRevision] = useState(0)
-  useEffect(() => {
-    if (!otherAccountKeys) return
-    let cancelled = false
-    for (const key of otherAccountKeys.split('\u0001')) {
-      const [id = '', accountId = DEFAULT_ACCOUNT_ID] = key.split('\u0000')
-      void transport
-        .request('models.list', {
-          provider: id as ProviderId,
-          ...(accountId === DEFAULT_ACCOUNT_ID ? {} : { accountId }),
-        })
-        .then(
-          (result) => {
-            if (!cancelled)
-              setOtherAccountModels((current) => new Map(current).set(key, result.models))
-          },
-          // The account is offered once its list arrives.
-          () => undefined,
-        )
-    }
-    return () => {
-      cancelled = true
-    }
-  }, [otherAccountKeys, otherAccountModelsRevision, transport])
   const otherAccountChoices = useMemo(
     () =>
       otherAccountSources.flatMap(({ provider: id, accountId }) =>
         choicesFor(
           { provider: id, accountId, sourceName: providerName(id), mark: providerMark(id) },
-          otherAccountModels.get(chatAccountKey(id, accountId)) ?? [],
+          // The account is offered once its list arrives.
+          accountModelLists.get(chatAccountKey(id, accountId)) ?? [],
           false,
-        ).filter((choice) => !hiddenModels.has(modelChoiceKey(id, choice.model.id))),
+        ).filter(
+          (choice) => !hiddenAccountModels.has(accountModelKey(id, accountId, choice.model.id)),
+        ),
       ),
-    [otherAccountSources, otherAccountModels, hiddenModels],
+    [otherAccountSources, accountModelLists, hiddenAccountModels],
   )
   /** "Claude Code (Team)", once a provider offers more than one of its accounts. */
   const withAccountName = useCallback(
@@ -2554,8 +2650,11 @@ export function App() {
         setModelErrors({ ...discoveryErrors })
         // Per source, so a source that fails never holds back the others.
         if (result.discovered) {
+          // A provider's own list is its active account's, whose choices these are.
+          const ownRows = withOwnModelKeys(result.models, providerAccountsRef.current)
+          const ownSource = ownRows[0] ? choiceKeySource(ownRows[0].key) : source
           updateModelVisibility((record) =>
-            settleModelVisibilitySource(record, source, result.models, Date.now()),
+            settleModelVisibilitySource(record, ownSource, ownRows, Date.now()),
           )
         }
         if (result.discovered && !pendingCacheWrite) {
@@ -2850,10 +2949,11 @@ export function App() {
       // A hidden model cannot remain the internal selection. Otherwise the
       // picker shows no such choice while a turn can still silently use it.
       // Every source has settled its visibility above, so the record is current.
-      const hidden = hiddenModelKeys(
+      const ownRows = withOwnModelKeys(all, providerAccountsRef.current)
+      const hidden = hiddenListedKeys(
         all,
-        modelVisibilityDefaults(catalog),
-        modelVisibilityRef.current,
+        hiddenModelKeys(ownRows, modelVisibilityDefaults(ownRows), modelVisibilityRef.current),
+        providerAccountsRef.current,
       )
       const visible = all.filter((choice) => !hidden.has(choice.key))
       const currentSession = activeIdRef.current
@@ -2989,12 +3089,12 @@ export function App() {
         ) {
           setChatModelsRevision((revision) => revision + 1)
         }
-        // So does every other account the picker offers.
+        // So does every other account the picker and Settings list.
         if (
           agent === undefined &&
-          otherAccountKeysRef.current.split('\u0001').includes(chatAccountKey(provider, accountId))
+          accountListKeysRef.current.split('\u0001').includes(chatAccountKey(provider, accountId))
         ) {
-          setOtherAccountModelsRevision((revision) => revision + 1)
+          setAccountModelListsRevision((revision) => revision + 1)
         }
         // A provider's own list is its active account's; a custom harness keeps its own sign-in.
         const listed =
@@ -3934,7 +4034,15 @@ export function App() {
         connectionId: session.connectionId,
         agentId: session.agent,
       })
-      if (hiddenModels.has(modelChoiceKey(source, settings.model))) {
+      const hiddenKey =
+        session.agent || session.connectionId
+          ? modelChoiceKey(source, settings.model)
+          : accountModelKey(
+              session.provider,
+              session.accountId as AccountId | undefined,
+              settings.model,
+            )
+      if (hiddenAccountModels.has(hiddenKey)) {
         // This picker hides that model and never runs a chat on one it hides,
         // so the chat stays on the model shown here, for every client.
         void transport
@@ -4971,7 +5079,16 @@ export function App() {
   // Settings, where a per-render identity would re-trigger them every render.
   const refreshCatalog = useCallback(() => {
     setCatalogRequest((request) => request + 1)
+    setAccountModelListsRevision((revision) => revision + 1)
   }, [])
+  const settingsModelErrors = useMemo(
+    () => ({ ...modelErrors, ...accountModelErrors }),
+    [modelErrors, accountModelErrors],
+  )
+  const settingsPendingModels = useMemo(
+    () => new Set([...pendingModelSources, ...pendingAccountModels]),
+    [pendingModelSources, pendingAccountModels],
+  )
 
   const changeProviderRoster = useCallback(
     (roster: ProviderRoster) => {
@@ -7451,11 +7568,11 @@ export function App() {
               onProviderRosterChange={changeProviderRoster}
               providersView={settingsSection.view}
               providersLoading={catalogAvailability === 'loading'}
-              models={models}
+              models={accountModels}
               modelsLoading={catalogAvailability === 'loading'}
-              modelErrors={modelErrors}
-              pendingModelSources={pendingModelSources}
-              hiddenModels={hiddenModels}
+              modelErrors={settingsModelErrors}
+              pendingModelSources={settingsPendingModels}
+              hiddenModels={hiddenAccountModels}
               onModelVisibilityChange={changeModelVisibility}
               onModelsVisibilityChange={changeModelsVisibility}
               providerDefaults={providerDefaultsControls}
@@ -7732,7 +7849,7 @@ function Empty(props: {
 
 /** One provider account, as a key; the default account however it is named. */
 function chatAccountKey(provider: ProviderId, accountId: AccountId | undefined): string {
-  return `${provider}\u0000${accountId ?? DEFAULT_ACCOUNT_ID}`
+  return accountListKey(provider, accountId ?? DEFAULT_ACCOUNT_ID)
 }
 
 /**
