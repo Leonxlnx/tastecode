@@ -717,7 +717,7 @@
   overflow: hidden;
   transition:
     grid-template-rows var(--dur-slow) var(--ease-out),
-    opacity var(--dur-fast) var(--ease-out);
+    opacity var(--dur-slow) var(--ease-out);
 }
 
 .proj__drawer[data-open='true'] {

@@ -1,0 +1,17 @@
+/* Sidebar motion that app.css's startup budget has no room for. Sidebar.tsx
+   imports it; every rule here adds to app.css, none restates it. */
+
+/* A closed drawer's list has no margins (app.css): a 0fr track still counts
+   them. They used to snap, so 10px of drawer appeared on the first frame of an
+   open and vanished on the first frame of a close, before the height moved.
+   They now move on the drawer's own clock, from zero on a list that mounts
+   with the open. */
+.proj__drawer > .proj__sessions {
+  transition: margin-block var(--dur-slow) var(--ease-out);
+}
+
+@starting-style {
+  .proj__drawer[data-open='true'] > .proj__sessions {
+    margin-block: 0;
+  }
+}
