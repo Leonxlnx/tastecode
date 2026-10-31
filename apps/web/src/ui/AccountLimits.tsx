@@ -790,8 +790,8 @@ export function evenPace(limit: Limit, now: number): number | undefined {
  * day, the weekday and time within the week, the date after that, with the
  * exact time on hover.
  */
-function resetLine(at: number, now: number): { label: string; title?: string } {
+function resetLine(at: number, now: number) {
   const reset = resetText(at, now)
-  if (!reset) return { label: 'Reset time unavailable.' }
+  if (!reset) return { label: 'Reset time unavailable.', title: undefined }
   return { label: reset.label.charAt(0).toUpperCase() + reset.label.slice(1), title: reset.title }
 }
