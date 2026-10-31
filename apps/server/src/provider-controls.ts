@@ -413,6 +413,7 @@ function claudeLaunch(runtime: string | undefined) {
 const defaultServices = {
   antigravity: {
     account: async () => (await loadAntigravity()).antigravityAccount(),
+    usageLimitSource: async () => (await loadAntigravity()).antigravityLimitSource(),
     // agy keeps its Google sign-in in the OS keyring and drops it only from
     // its own TUI; doing nothing here would show a sign-out that never happened.
     signOut: async () => {

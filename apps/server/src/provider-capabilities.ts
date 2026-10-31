@@ -72,15 +72,24 @@ const unsupported: ProviderControlCapabilities = {
 }
 
 /**
- * Codex and Grok start a short-lived process per read. Codex's running
- * sessions report their windows live; Grok's do not, so its values can be
- * this old while a turn runs.
+ * Codex, Grok and Antigravity start a short-lived process per read. Codex's
+ * running sessions report their windows live; the others' do not, so their
+ * values can be this old while a turn runs.
  */
 const PROCESS_LIMIT_READ_INTERVAL_MS = 5 * 60_000
 
 export const PROVIDER_CAPABILITIES = {
   acp: { ...unsupported, resume: true, nativeModels: true, account: true, signOut: true },
-  antigravity: { ...unsupported, nativeModels: true, account: true },
+  antigravity: {
+    ...unsupported,
+    nativeModels: true,
+    account: true,
+    usageLimits: true,
+    limitReadIntervalMs: PROCESS_LIMIT_READ_INTERVAL_MS,
+    // Each read starts agy with its language server and asks Google for the
+    // quota (4 to 12 s), so it waits for a view that shows the limits.
+    limitReadsWhenShown: true,
+  },
   api: { ...unsupported, resume: true },
   'claude-code': {
     ...unsupported,
