@@ -1579,7 +1579,7 @@ const ProjectSessions = memo(function ProjectSessions(props: {
       props.onReorderSession(props.project.path, sourceId, targetId, position),
     ignore: '.sess__actions',
   })
-  // Folded to its first rows, a project still lists each later chat with news.
+  // Folded, a project still lists every chat with news, which take its first rows.
   const listedSessions = useMemo(
     () =>
       props.fold === 'all'

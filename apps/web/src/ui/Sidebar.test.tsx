@@ -1477,7 +1477,7 @@ describe('Sidebar chat actions', () => {
     expect(screen.getByRole('button', { name: 'Show more' })).toBeTruthy()
   })
 
-  it('keeps a working, unread or open chat below the fold in sight, at its own place', () => {
+  it('keeps a working, unread or open chat in sight within the fold, at its own place', () => {
     const chats: Session[] = Array.from({ length: 9 }, (_, index) =>
       session(`thread-${index + 1}`, `Chat ${index + 1}`),
     )
@@ -1510,37 +1510,39 @@ describe('Sidebar chat actions', () => {
     )
     const titles = () =>
       [...document.querySelectorAll('.proj__drawer .sess__title')].map((title) => title.textContent)
-    const firstFive = ['Chat 1', 'Chat 2', 'Chat 3', 'Chat 4', 'Chat 5']
     const view = render(content('thread-1'))
 
-    // Rows 7 and 8 keep their places; the quiet rows 6 and 9 stay folded.
-    expect(titles()).toEqual([...firstFive, 'Chat 7', 'Chat 8'])
+    // The open chat 1 and the chats with news, 7 and 8, take three of the five
+    // rows at their own places; the first quiet chats, 2 and 3, fill the rest.
+    const folded = ['Chat 1', 'Chat 2', 'Chat 3', 'Chat 7', 'Chat 8']
+    expect(titles()).toEqual(folded)
     const working = screen.getByRole('button', { name: 'Chat 7, Codex, working' })
     expect(working.querySelector('.sess__spinner')).not.toBeNull()
     const unread = screen.getByRole('button', { name: 'Chat 8, Codex, ready, unread' })
     expect(unread.closest('.sessrow')?.classList.contains('is-unread')).toBe(true)
 
     fireEvent.click(screen.getByRole('button', { name: 'Show more' }))
-    expect(titles()).toEqual([...firstFive, 'Chat 6', 'Chat 7', 'Chat 8', 'Chat 9'])
+    expect(titles()).toEqual(chats.map((chat) => chat.title))
     fireEvent.click(screen.getByRole('button', { name: 'Show less' }))
-    expect(titles()).toEqual([...firstFive, 'Chat 7', 'Chat 8'])
+    expect(titles()).toEqual(folded)
 
     // The open chat shows where it stands, with the active pill, until another chat opens.
     view.rerender(content('thread-9'))
-    expect(titles()).toEqual([...firstFive, 'Chat 7', 'Chat 8', 'Chat 9'])
+    expect(titles()).toEqual(['Chat 1', 'Chat 2', 'Chat 7', 'Chat 8', 'Chat 9'])
     const open = screen.getByRole('button', { name: 'Chat 9, Codex' }).closest('.sessrow')
     expect(open?.querySelector('.sessrow__indicator')).not.toBeNull()
     expect(screen.getByRole('button', { name: 'Show more' })).toBeTruthy()
 
     view.rerender(content('thread-2'))
-    expect(titles()).toEqual([...firstFive, 'Chat 7', 'Chat 8'])
+    expect(titles()).toEqual(folded)
     expect(screen.getByRole('button', { name: 'Show more' })).toBeTruthy()
   })
 
-  it('drops the fold toggle once every chat below the fold is in sight', () => {
-    const chats: Session[] = Array.from({ length: 6 }, (_, index) =>
-      session(`thread-${index + 1}`, `Chat ${index + 1}`),
-    )
+  it('lists every running chat past the fold and drops the toggle when none is left', () => {
+    const chats: Session[] = Array.from({ length: 6 }, (_, index) => ({
+      ...session(`thread-${index + 1}`, `Chat ${index + 1}`),
+      status: 'working' as const,
+    }))
     chats[5] = { ...chats[5]!, status: 'approval' }
     render(
       <Sidebar
@@ -1569,6 +1571,7 @@ describe('Sidebar chat actions', () => {
     )
 
     const drawer = document.querySelector<HTMLElement>('.proj__drawer')!
+    expect(drawer.querySelectorAll('.sessrow')).toHaveLength(6)
     expect(
       within(drawer).getByRole('button', { name: 'Chat 6, Codex, waiting for approval' }),
     ).toBeTruthy()
@@ -1657,9 +1660,11 @@ describe('Sidebar chat actions', () => {
     const rail = document.querySelector<HTMLElement>('.rail__body')!
     rail.scrollTop = 90 * 30
     fireEvent.scroll(rail)
+    // The open chat 1 and the 85 unread ones fill the fold; quiet chats 2 to 5 wait.
     const last = screen.getByRole('button', { name: 'Chat 90, Codex, ready, unread' }).closest('li')
-    expect(last?.getAttribute('aria-posinset')).toBe('90')
-    expect(last?.getAttribute('aria-setsize')).toBe('90')
+    expect(last?.getAttribute('aria-posinset')).toBe('86')
+    expect(last?.getAttribute('aria-setsize')).toBe('86')
+    expect(screen.queryByRole('button', { name: 'Chat 2, Codex' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Chat 91, Codex' })).toBeNull()
     expect(screen.getByRole('button', { name: 'Show more' })).toBeTruthy()
   })

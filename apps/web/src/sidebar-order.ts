@@ -242,20 +242,27 @@ export function sessionAttention(session: Session): Attention | undefined {
 }
 
 /**
- * The chats a project lists while it is folded to its first `limit` rows: those
- * rows, then every later chat that is working, needs the user, is unread or is
- * open, each at its own place in the order. Nothing moves; only quiet chats
- * below the fold stay hidden, so the fold never hides a chat with news.
+ * The chats a project lists while it is folded to `limit` rows. Every chat that
+ * is working, needs the user, is unread or is open is listed, past the limit if
+ * there are more of them; the rows left over go to the first quiet chats. Each
+ * keeps its place in the order, so nothing moves and the fold never hides news.
  */
 export function foldedProjectSessions(
   sessions: readonly Session[],
   activeSessionId: string | undefined,
   limit: number,
 ): Session[] {
-  const listed = sessions.slice(0, limit)
-  for (let index = limit; index < sessions.length; index += 1) {
-    const session = sessions[index]!
-    if (session.id === activeSessionId || hasNews(session)) listed.push(session)
+  const inSight = (session: Session) => session.id === activeSessionId || hasNews(session)
+  let quietRows = limit
+  for (const session of sessions) if (inSight(session)) quietRows -= 1
+  const listed: Session[] = []
+  for (const session of sessions) {
+    if (inSight(session)) {
+      listed.push(session)
+    } else if (quietRows > 0) {
+      listed.push(session)
+      quietRows -= 1
+    }
   }
   return listed
 }
