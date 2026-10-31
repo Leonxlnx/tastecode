@@ -7323,7 +7323,10 @@ export function App() {
               transport={transport}
               projectPath={activePath}
               projectName={activeProject ? displayName(activeProject) : undefined}
-              account={account}
+              // Right after the composer moves to another provider, `account` is
+              // still the last one's until the new read starts; Settings must
+              // not show it as the new provider's.
+              account={accountCheck.provider === provider ? account : undefined}
               accountLoading={
                 accountCheck.provider !== provider || accountCheck.state === 'loading'
               }
