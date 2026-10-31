@@ -1,0 +1,7 @@
+/* While the chat pane glides with the rail (ui/stage-glide.ts) it hangs past
+   the window's right edge or into the rail's column for a few frames. Clip
+   that travel to the body row so it never becomes scrollable overflow that a
+   focus() or scrollIntoView could shift the whole window by. */
+.shell__body[data-stage-gliding] {
+  overflow: clip;
+}

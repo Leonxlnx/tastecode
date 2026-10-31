@@ -114,6 +114,7 @@ import {
 } from './ui/model-selector-utils.js'
 import type { Checkpoint } from './ui/RollbackDialog.js'
 import { SessionSearchHost, type SessionSearchHandle } from './ui/SessionSearchHost.js'
+import { useStageGlide } from './ui/stage-glide.js'
 import type { SettingsSection } from './ui/Settings.js'
 import { Sidebar, type Project, type Session } from './ui/Sidebar.js'
 import {
@@ -6217,6 +6218,13 @@ export function App() {
   // working chat's spinner, the live activity row) pause until it closes
   // instead of drawing a frame every refresh.
   const shellBody = useRef<HTMLDivElement>(null)
+  // The chat column follows the rail and the side panel instead of jumping to
+  // its new centre when either changes the pane's width.
+  const stage = useRef<HTMLElement>(null)
+  useStageGlide(
+    stage,
+    `${collapsed ? 'rail-folded' : 'rail-open'} ${workspacePanelOpen ? 'panel-open' : 'panel-hidden'} ${workspacePanelExpanded ? 'panel-expanded' : ''}`,
+  )
   const coverShell = useCallback((event: ReactAnimationEvent<HTMLDivElement>) => {
     if (event.target === event.currentTarget) shellBody.current?.setAttribute('data-covered', '')
   }, [])
@@ -7137,7 +7145,7 @@ export function App() {
           className={`workspace-layout${workspacePanelOpen ? ' is-panel-open' : ''}${workspacePanelExpanded ? ' is-panel-expanded' : ''}`}
           style={workspaceLayoutStyle(workspacePanelWidth)}
         >
-          <main className="stage">
+          <main className="stage" ref={stage}>
             {surface === 'pull-requests' ? (
               <Suspense fallback={<PullRequestsSkeleton />}>
                 <PullRequestsView
