@@ -27,6 +27,29 @@ function Pane(props: { layout: string }) {
   )
 }
 
+/** The stage as App renders it with split view's pane wrappers. */
+function WrappedPane(props: { layout: string; split?: boolean }) {
+  const stage = useRef<HTMLElement>(null)
+  useStageGlide(stage, props.layout)
+  const pane = (slot: number) => (
+    <section className="split__pane" data-slot={slot}>
+      <div className="stage__conversation" />
+    </section>
+  )
+  return (
+    <div className="shell__body">
+      <main className="stage" ref={stage}>
+        <div className={`stage__body${props.split ? ' is-split' : ''}`}>
+          <div className="split">
+            {pane(0)}
+            {props.split ? pane(1) : null}
+          </div>
+        </div>
+      </main>
+    </div>
+  )
+}
+
 function from(target: string): string | undefined {
   const animation = animations.find((entry) => (entry.target as HTMLElement).matches(target))
   return animation?.keyframes[0]?.['transform'] as string | undefined
@@ -116,6 +139,26 @@ describe('stage glide', () => {
 
     expect(from('.stage')).toBeUndefined()
     expect(from('.stage__conversation')).toBe('translate3d(260px, 0, 0)')
+  })
+
+  it('finds the one conversation inside the split view wrappers', () => {
+    const view = render(<WrappedPane layout="rail-open" />)
+
+    stageBox = { left: 0, width: 1400 }
+    view.rerender(<WrappedPane layout="rail-folded" />)
+
+    expect(from('.stage')).toBe('translate3d(256px, 0, 0)')
+    expect(from('.stage__conversation')).toBe('translate3d(-128px, 0, 0)')
+  })
+
+  it('glides only the pane edge when two chats split the stage', () => {
+    const view = render(<WrappedPane layout="rail-open" split />)
+
+    stageBox = { left: 0, width: 1400 }
+    view.rerender(<WrappedPane layout="rail-folded" split />)
+
+    expect(from('.stage')).toBe('translate3d(256px, 0, 0)')
+    expect(from('.stage__conversation')).toBeUndefined()
   })
 
   it('stays still under reduced motion', () => {
