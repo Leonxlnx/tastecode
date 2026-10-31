@@ -2185,6 +2185,19 @@ describe('provider account contracts', () => {
     expect(update.params.safeParse({ ...own, settings: { compactAt: 5 } }).success).toBe(false)
   })
 
+  it('keeps a runtime of their own for further accounts', () => {
+    const own = { provider: 'claude-code', accountId: 'personal-1a2b3c', runtime: 'cli' }
+    expect(methods['providers.accountRuntimeSettings'].params.parse({})).toEqual({})
+    const update = methods['providers.updateAccountRuntimeSetting']
+    expect(update.params.parse(own)).toEqual(own)
+    expect(update.params.parse({ ...own, runtime: null })).toEqual({ ...own, runtime: null })
+    expect(update.result.parse({ accounts: [own] })).toEqual({ accounts: [own] })
+    for (const bad of [{ accountId: 'Not An Id' }, { provider: 'nobody' }, { runtime: '' }]) {
+      expect(update.params.safeParse({ ...own, ...bad }).success).toBe(false)
+    }
+    expect(update.result.safeParse({ accounts: [{ ...own, runtime: null }] }).success).toBe(false)
+  })
+
   it('lists config folders found on the machine to offer as accounts', () => {
     const found = {
       provider: 'claude-code',
