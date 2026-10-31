@@ -6,6 +6,7 @@ import { methods, type Account, type ProviderId, type ResultOf } from '@harness/
 import { customModelChoice, type ModelChoice } from '../model-catalog.js'
 import { MODEL_PICKER_LAYOUT_KEY, writeModelPickerLayout } from '../model-picker-layout.js'
 import { resetInstalls } from '../provider-install.js'
+import { providerAccountsStore } from '../provider-accounts-state.js'
 import { providerUpdatesStore } from '../provider-updates.js'
 import { SIMULATED_CHECK_MS, stopAppUpdateSimulation } from '../app-update-simulation.js'
 import {
@@ -782,6 +783,67 @@ describe('model sources that failed to load', () => {
     expect(titles()).toEqual(['Codex', 'Cursor'])
     expect(screen.getByRole('switch', { name: 'Include Composer 2 in model picker' })).toBeTruthy()
     expect(sourceList().querySelector('.set-notice')).toBeNull()
+  })
+
+  it("names the account whose models could not be listed, beside its provider's other account", async () => {
+    const transport = new TestTransport((method) => {
+      if (method === 'accounts.list') {
+        return {
+          accounts: [
+            {
+              id: 'default',
+              provider: 'claude-code',
+              label: 'Personal',
+              managed: false,
+              createdAt: 1,
+            },
+            {
+              id: 'work',
+              provider: 'claude-code',
+              label: 'Work',
+              home: '/accounts/work',
+              managed: false,
+              createdAt: 1,
+              plan: 'Max',
+            },
+          ],
+          active: {},
+        }
+      }
+      return undefined
+    })
+    const release = providerAccountsStore(transport).retain()
+    await waitFor(() => expect(providerAccountsStore(transport).snapshot().phase).toBe('ready'))
+    renderSettings({
+      initialSection: 'models',
+      transport,
+      overrides: {
+        providerStatuses: [installedProvider('claude-code', 'Claude Code')],
+        models: [
+          {
+            key: 'claude-code:opus',
+            provider: 'claude-code',
+            sourceName: 'Claude Code · Personal',
+            mark: 'anthropic',
+            model: {
+              id: 'opus',
+              displayName: 'Opus',
+              isDefault: true,
+              reasoningEfforts: [],
+              serviceTiers: [],
+            },
+          },
+        ],
+        modelErrors: {
+          'claude-code@work': { id: 'models:work', message: 'Could not load the Work models.' },
+        },
+      },
+    })
+    const work = screen.getByRole('region', { name: 'Claude Code · Work' })
+    expect(noticeText(within(work).getByRole('alert'))).toBe('Could not load the Work models.')
+    expect(within(work).getByRole('button', { name: 'Retry' })).toBeTruthy()
+    expect(screen.getByRole('switch', { name: 'Include Opus in model picker' })).toBeTruthy()
+    release()
   })
 
   it('lists failed sources instead of the empty line when nothing loaded', () => {
