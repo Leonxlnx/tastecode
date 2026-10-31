@@ -37,6 +37,7 @@ import {
   DEFAULT_PHONE_PORT,
   PHONE_METHODS,
   PhoneAccess,
+  phoneAccessAvailable,
   type PhoneLinkSocket,
 } from './phone-access.js'
 import { readCredential, writeCredential } from './credentials.js'
@@ -573,6 +574,7 @@ export function startServer(
   // One identity per data folder: a second profile pairs its own phones.
   const phoneKeyCredential = `phone-link.server-key.${createHash('sha256').update(databasePath).digest('hex').slice(0, 12)}`
   const phoneAccess = new PhoneAccess({
+    available: phoneAccessAvailable(process.env),
     store,
     keys: {
       read: () => {
