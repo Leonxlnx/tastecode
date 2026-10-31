@@ -340,19 +340,21 @@
               ><input type="checkbox" /><span
                 >Rate limit windows in the account popup
                 <span class="d"
-                  >space separates provider groups without splitting their windows; each bar is a
-                  red-to-green gauge whose tip colour says how much is left, filling from empty when
-                  the popup opens (not with reduced motion); 5 hour and weekly reset times; earned
-                  resets show each expiry date, soonest first and red within 24 hours, with a Use
-                  control beside each selectable expiry that spends that reset; confirmation keeps
-                  the date visible and moves Confirm away from Use so a second click cannot spend
-                  it; non-ChatGPT accounts are honestly unavailable and malformed provider responses
-                  stay errors; the rolling account/rateLimits/updated values Codex sends during
-                  turns merge into the held read without starting a new app-server, so the bars
-                  follow a running chat within about a second; full reads happen at most every 5
-                  minutes, except when the popup opens, on its refresh icon and in the 15-minute
-                  background read; background reads skip the reset-credit details, which a shown
-                  popup reads in full</span
+                  >space separates provider groups without splitting their windows; each bar is one
+                  quiet text-ink fill that turns red at 15% left or less, every bar filling from
+                  empty at once when the popup opens (not with reduced motion), never row by row; 5
+                  hour and weekly reset times under each bar in the Usage page's words (Resets in 3h
+                  12m within a day, the weekday and time within the week, the date after that, the
+                  exact time on hover); earned resets show each expiry date, soonest first and red
+                  within 24 hours, with a Use control beside each selectable expiry that spends that
+                  reset; confirmation keeps the date visible and moves Confirm away from Use so a
+                  second click cannot spend it; non-ChatGPT accounts are honestly unavailable and
+                  malformed provider responses stay errors; the rolling account/rateLimits/updated
+                  values Codex sends during turns merge into the held read without starting a new
+                  app-server, so the bars follow a running chat within about a second; full reads
+                  happen at most every 5 minutes, except when the popup opens, on its refresh icon
+                  and in the 15-minute background read; background reads skip the reset-credit
+                  details, which a shown popup reads in full</span
                 ></span
               ></label
             >
@@ -1105,68 +1107,70 @@
                   to return to it), rows named Codex · Work, each with the roster's minus to remove
                   it; Add providers opens on Found on this computer, which offers sibling folders a
                   CLI has used and no account has yet (~/.claude_personal beside ~/.claude,
-                  ~/.codex-deepseek beside ~/.codex; names and dates only, no file opened and no CLI
-                  run, copies kept aside skipped); Ignore takes one out of that list and out of the
-                  count the Providers page names beside its plus, into an Ignored list folded at the
-                  foot of Add providers (kept per profile, Unignore offers it again); Add account at
-                  the foot of Add providers makes a new, empty folder TasteCode manages (nothing is
-                  copied from the default account, whose settings can hold keys and login pins), or
-                  uses an existing folder as it is and asks it once who is signed in there; a folder
-                  that is, holds or sits inside the default folder, another account's folder or
-                  TasteCode's data folder is refused, links resolved; one action per row (Sign in
-                  until the account names who it is, then Set active or Active) after its menu
-                  (Rename, Open in Explorer, Set active for an account not signed in yet, and Delete
-                  folder for a managed folder; the minus removes an account and keeps its folder,
-                  each confirmed). An account is renamed where its name stands (pencil, double click
-                  or Rename; Enter or leaving saves, Escape puts it back), the default one too,
-                  whose provider row reads Claude Code · Default once there are others. Each
-                  signed-in account has its own Model, Access and Context rows, following its
-                  provider's until changed (Model and Access kept as provider@account in
-                  localStorage, Context on the server); a new chat starts with the active account's.
-                  Sign in runs the provider's sign-in terminal in that folder (Codex · Work login).
-                  A chat is pinned to the account it started on and resumes there after a restart; a
-                  new chat's account is picked in the model picker. The composer's sign-in check
-                  asks the account the next message runs on, so a signed-out default account does
-                  not block Send for a chat on a signed-in further account, nor the reverse. A
-                  chat's title and commit message are written through its own account when the
-                  background model is its provider's; the model picker lists the active account's
-                  models for a new chat and an open chat's own account's models; a project's MCP
-                  list and MCP sign-in come from a default-account chat only. Removing an account
-                  drops it before its processes stop and deletes a managed folder last. Plan limits,
-                  reset credits, model lists and usage are read per account: the current provider's
-                  active account is read at launch, its other signed-in accounts when the popup or
-                  Usage shows limits; the popup names the provider once and gives each account a
-                  line that opens to its full limits (the account new chats start on first and open;
-                  a closed line shows the % left of each window, such as Session and Weekly, a row
-                  each on a short gauge under the account name; a failed read says Unavailable with
-                  Retry on its line, one still loading says Checking…), the card's figure is each
-                  provider's active account, and a Usage sheet sums its accounts and lists each one
-                  with its tokens and limits. Profile &gt; Accounts lists further accounts (Codex ·
-                  Work, plan or Signed out, never an email). When a turn fails while the chat's
-                  account is at a plan limit (a window at 100% that has not reset) and another
-                  account of the provider is signed in, the error offers Continue on Work (a menu,
-                  Continue on another account, when there are several); never automatic. It starts a
-                  new chat pinned to that account in the same project (an isolated chat's branch as
-                  base, in a checkout of its own that gets the earlier checkout's uncommitted
-                  changes copied in; when they cannot be copied, the first prompt and the new chat's
-                  note say which folder still holds them), with the failed request in its composer.
-                  Claude Code and Codex carry the earlier chat's own session on in the new account's
-                  folder (Claude Code a copy of its transcript under a new id, Codex a fork of its
-                  rollout copied with the rollouts it was forked from), so tool results and
-                  reasoning come along and the first prompt is just the request; a carried session
-                  whose first turn fails before any answer gives way to a fresh one that gets the
-                  conversation as a handover. Where the session cannot be carried on, or lacks part
-                  of the conversation, the first prompt carries the earlier chat's conversation as
-                  untrusted context (its first request, the latest exchange, every other user
-                  message and the assistant's messages newest first, then tool steps cut to their
-                  command line, exit code or file paths in what is left of 64,000 characters,
-                  preceded by any chat it continued itself up to where it was continued; kept in the
-                  provider's own session), the transcript shows only the user's words, and until its
-                  first message the new chat says Continues "title" on Work in a neutral note with
-                  Open (for an isolated chat, also that its uncommitted changes are already in this
-                  chat's checkout, or where they still are). The earlier chat is left as it was; its
-                  failed turn's row then reads Continued on Work and opens the new chat. Not yet:
-                  per-account Sign out, MCP/skills inventory and history import per account</span
+                  ~/.codex-deepseek beside ~/.codex, and beside the built-in ~/.codex as well when
+                  CODEX_HOME or CLAUDE_CONFIG_DIR moves the default folder elsewhere; names and
+                  dates only, no file opened and no CLI run, copies kept aside skipped); Ignore
+                  takes one out of that list and out of the count the Providers page names beside
+                  its plus, into an Ignored list folded at the foot of Add providers (kept per
+                  profile, Unignore offers it again); Add account at the foot of Add providers makes
+                  a new, empty folder TasteCode manages (nothing is copied from the default account,
+                  whose settings can hold keys and login pins), or uses an existing folder as it is
+                  and asks it once who is signed in there; a folder that is, holds or sits inside
+                  the default folder, another account's folder or TasteCode's data folder is
+                  refused, links resolved; one action per row (Sign in until the account names who
+                  it is, then Set active or Active) after its menu (Rename, Open in Explorer, Set
+                  active for an account not signed in yet, and Delete folder for a managed folder;
+                  the minus removes an account and keeps its folder, each confirmed). An account is
+                  renamed where its name stands (pencil, double click or Rename; Enter or leaving
+                  saves, Escape puts it back), the default one too, whose provider row reads Claude
+                  Code · Default once there are others. Each signed-in account has its own Model,
+                  Access and Context rows, following its provider's until changed (Model and Access
+                  kept as provider@account in localStorage, Context on the server); a new chat
+                  starts with the active account's. Sign in runs the provider's sign-in terminal in
+                  that folder (Codex · Work login). A chat is pinned to the account it started on
+                  and resumes there after a restart; a new chat's account is picked in the model
+                  picker. The composer's sign-in check asks the account the next message runs on, so
+                  a signed-out default account does not block Send for a chat on a signed-in further
+                  account, nor the reverse. A chat's title and commit message are written through
+                  its own account when the background model is its provider's; the model picker
+                  lists the active account's models for a new chat and an open chat's own account's
+                  models; a project's MCP list and MCP sign-in come from a default-account chat
+                  only. Removing an account drops it before its processes stop and deletes a managed
+                  folder last. Plan limits, reset credits, model lists and usage are read per
+                  account: the current provider's active account is read at launch, its other
+                  signed-in accounts when the popup or Usage shows limits; the popup names the
+                  provider once and gives each account a line that opens to its full limits (the
+                  account new chats start on first and open; a closed line shows the % left of each
+                  window, such as Session and Weekly, a row each on a short gauge under the account
+                  name; a failed read says Unavailable with Retry on its line, one still loading
+                  says Checking…), the card's figure is each provider's active account, and a Usage
+                  sheet sums its accounts and lists each one with its tokens and limits. Profile
+                  &gt; Accounts lists further accounts (Codex · Work, plan or Signed out, never an
+                  email). When a turn fails while the chat's account is at a plan limit (a window at
+                  100% that has not reset) and another account of the provider is signed in, the
+                  error offers Continue on Work (a menu, Continue on another account, when there are
+                  several); never automatic. It starts a new chat pinned to that account in the same
+                  project (an isolated chat's branch as base, in a checkout of its own that gets the
+                  earlier checkout's uncommitted changes copied in; when they cannot be copied, the
+                  first prompt and the new chat's note say which folder still holds them), with the
+                  failed request in its composer. Claude Code and Codex carry the earlier chat's own
+                  session on in the new account's folder (Claude Code a copy of its transcript under
+                  a new id, Codex a fork of its rollout copied with the rollouts it was forked
+                  from), so tool results and reasoning come along and the first prompt is just the
+                  request; a carried session whose first turn fails before any answer gives way to a
+                  fresh one that gets the conversation as a handover. Where the session cannot be
+                  carried on, or lacks part of the conversation, the first prompt carries the
+                  earlier chat's conversation as untrusted context (its first request, the latest
+                  exchange, every other user message and the assistant's messages newest first, then
+                  tool steps cut to their command line, exit code or file paths in what is left of
+                  64,000 characters, preceded by any chat it continued itself up to where it was
+                  continued; kept in the provider's own session), the transcript shows only the
+                  user's words, and until its first message the new chat says Continues "title" on
+                  Work in a neutral note with Open (for an isolated chat, also that its uncommitted
+                  changes are already in this chat's checkout, or where they still are). The earlier
+                  chat is left as it was; its failed turn's row then reads Continued on Work and
+                  opens the new chat. Not yet: per-account Sign out, MCP/skills inventory and
+                  history import per account</span
                 ></span
               ></label
             >
@@ -2359,15 +2363,16 @@
                 <span class="d"
                   >open and closed groups use the same chevron-free 28 px row rhythm; scrolling the
                   list reveals a strong divider below the fixed New chat, New project, and Pull
-                  requests actions without shifting them; a 1 px soft guide drops from each folder
-                  mark to the project's last row and its chats indent past it, while pinned chats
-                  keep the outer gutter; one active pill slides to the newly selected chat in 220 ms
-                  (it jumps under reduced motion); a project lists its first 5 chats, plus every
-                  later chat that is starting, working, needs the user, is unread or is open, each
-                  at its own place, and "Show N more" counts the chats still folded (no toggle when
-                  none is); the larger project add action stays clear of the scrollbar; drag-folding
-                  moves the intact rail and grid closed together, even before pointer release; Enter
-                  or Escape in an inline rename returns focus to the row without opening it</span
+                  requests actions without shifting them; a project's chats follow its row directly
+                  and indent under its folder mark with no guide line, an empty project's No chats
+                  starts under its name, and pinned chats keep the outer gutter; one active pill
+                  slides to the newly selected chat in 220 ms (it jumps under reduced motion); a
+                  project lists its first 5 chats, plus every later chat that is starting, working,
+                  needs the user, is unread or is open, each at its own place, and "Show N more"
+                  counts the chats still folded (no toggle when none is); the larger project add
+                  action stays clear of the scrollbar; drag-folding moves the intact rail and grid
+                  closed together, even before pointer release; Enter or Escape in an inline rename
+                  returns focus to the row without opening it</span
                 ></span
               ></label
             >
@@ -3033,19 +3038,20 @@
                   value at API prices, sessions and active days named under the title, and under
                   them each provider's share of the tokens as one bar with a legend; each provider
                   keeps its brand colour (Claude orange, Codex in the text colour, Grok violet, any
-                  other provider grey) on its mark, share, bars and limit meters; one sheet per
-                  provider in value order, read top to bottom: its name with its sessions, tokens
-                  and value on the same line, a bar chart of its tokens on its own scale (a bar a
-                  day, a week on 1 year and All), the other bars fading while one is read, with the
-                  busiest bar labelled and its own dates under it at weekdays, Mondays or month
-                  starts, a tooltip beside the hovered or keyboard-read bar with its date, tokens
-                  and value, then its plan limits beside a table of its models, stacked in a narrow
-                  pane; a provider signed in to more than one account lists Accounts instead of Plan
-                  limits, each with its tokens, value and its own limits under it (one account per
-                  provider until provider accounts land); a provider without sessions in the period
-                  keeps its name and its limits; a skeleton of names and charts while loading;
-                  indexing and failure sentences under the totals, where a refresh of an existing
-                  index is announced only once a later read still finds it running</span
+                  other provider grey) on its mark, share and chart bars, while its limit meters are
+                  the popup's quiet text-ink bars; one sheet per provider in value order, read top
+                  to bottom: its name with its sessions, tokens and value on the same line, a bar
+                  chart of its tokens on its own scale (a bar a day, a week on 1 year and All), the
+                  other bars fading while one is read, with the busiest bar labelled and its own
+                  dates under it at weekdays, Mondays or month starts, a tooltip beside the hovered
+                  or keyboard-read bar with its date, tokens and value, then its plan limits beside
+                  a table of its models, stacked in a narrow pane; a provider signed in to more than
+                  one account lists Accounts instead of Plan limits, each with its tokens, value and
+                  its own limits under it (one account per provider until provider accounts land); a
+                  provider without sessions in the period keeps its name and its limits; a skeleton
+                  of names and charts while loading; indexing and failure sentences under the
+                  totals, where a refresh of an existing index is announced only once a later read
+                  still finds it running</span
                 ></span
               ></label
             >
@@ -3058,9 +3064,11 @@
                   >every window with the share left on a meter and the reset countdown, from the
                   same owner as the account popup, which opening the page asks to read sources it
                   reads only on view; Last known with its age, Updated Xm ago, Checking, and
-                  Unavailable with Retry (a source that failed to read stays); Reached, and a low
-                  state at 15% left or less, both in error ink and also named in one sentence under
-                  the totals; the old section's even-pace tick is not drawn in the sheets</span
+                  Unavailable with Retry (a source that failed to read stays); each meter is the
+                  account popup's bar, one text-ink fill on a faint track, whose fill alone turns
+                  the error colour at 15% left or less; Reached and low windows are also named in
+                  one sentence under the totals; the old section's even-pace tick is not drawn in
+                  the sheets</span
                 ></span
               ></label
             >
@@ -3190,10 +3198,25 @@
 
       <section id="phone">
         <header>
-          <h2>Phone (nightly only)</h2>
+          <h2>Phone (dev builds only)</h2>
           <span class="count"></span>
         </header>
         <ul class="check">
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Phone access only in builds started with HARNESS_PHONE_ACCESS=1
+                <span class="d"
+                  >pnpm dev sets it; every other build hides Settings › Phone and never opens the
+                  phone port, even when an earlier dev build left access on, and refuses turning it
+                  on or pairing with "Phone access is not part of this build."; turning it off and
+                  removing a paired phone still work; a tester of a dev installer sets
+                  HARNESS_PHONE_ACCESS=1 as a user environment variable (Windows: setx
+                  HARNESS_PHONE_ACCESS 1) and quits and restarts TasteCode</span
+                ></span
+              ></label
+            >
+          </li>
           <li>
             <label
               ><input type="checkbox" /><span

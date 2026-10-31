@@ -47,15 +47,22 @@ describe('account limits layout', () => {
     )
   })
 
-  it('draws each bar as a red-to-green gauge and leaves the number in text ink', () => {
+  it('draws each bar as one quiet fill, red only when nearly spent, with the number in text ink', () => {
     expect(rule('.account-menu__source')).toContain('gap: 8px')
     expect(rule('.account-menu__limit')).toContain('gap: 5px')
     const bar = rule('.account-menu__limit-bar')
-    expect(bar).toContain('height: 6px')
+    expect(bar).toContain('height: 4px')
+    expect(rule('.account-menu__account-gauge')).toContain('height: 4px')
     expect(bar).toContain('border-radius: var(--r-pill)')
     const fill = rule('.account-menu__limit-bar > span')
-    expect(fill).toMatch(
-      /linear-gradient\(\s*to right in oklch,\s*var\(--gauge-empty\),\s*var\(--gauge-half\),\s*var\(--gauge-full\)\s*\)/,
+    // A red-to-green gradient read as noise; the fill matches the card's meter.
+    expect(css).not.toContain('gradient')
+    expect(fill).toContain('background: color-mix(in srgb, var(--text) 52%, transparent)')
+    expect(rule('.account-menu__account-gauge > span')).toContain(
+      'background: color-mix(in srgb, var(--text) 52%, transparent)',
+    )
+    expect(css).toMatch(
+      /\.account-menu__limit\[data-low\] \.account-menu__limit-bar > span:not\(\.account-menu__limit-pace\),\s*\.account-menu__account-gauge\[data-low\] > span \{\s*background: var\(--error\);/,
     )
     expect(fill).toContain('clip-path: inset(0 calc((1 - var(--limit-fill)) * 100%) 0 0')
     expect(rule('.account-menu__limit[data-gauge]')).toContain('--limit-fill: var(--left)')
@@ -66,10 +73,16 @@ describe('account limits layout', () => {
     expect(css).not.toMatch(/#[0-9a-f]{3,8}\b/i)
   })
 
-  it('fills the gauges once when the popup opens, and not at all with reduced motion', () => {
+  it('fills every gauge at once when the popup opens, and not at all with reduced motion', () => {
     const gauge = rule('.account-menu__limit[data-gauge]')
-    expect(gauge).toContain('animation: account-limit-fill')
-    expect(gauge).toContain('animation-delay: calc(80ms + var(--order) * 70ms)')
+    expect(gauge).toContain('animation: account-limit-fill 520ms var(--ease-out) both')
+    expect(rule('.account-menu__account-gauge')).toContain(
+      'animation: account-limit-fill 520ms var(--ease-out) both',
+    )
+    // Bars filling one row after another read as a cascade; no delay, no overshoot.
+    expect(css).not.toContain('animation-delay')
+    expect(css).not.toContain('--order')
+    expect(css).not.toContain('--ease-overshoot')
     expect(css).toMatch(/@keyframes account-limit-fill \{\s*from \{\s*--limit-fill: 0;/)
     expect(css).toMatch(
       /@media \(prefers-reduced-motion: reduce\) \{\s*\.account-menu__limit\[data-gauge\] \{\s*animation: none;\s*transition: none;/,
