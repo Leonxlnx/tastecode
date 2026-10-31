@@ -182,7 +182,10 @@ function harness(
     },
     listModels: (agent) => {
       const key = agent ? `${provider}:${agent}` : provider
-      return read(`models:${key}`, () => vendor.models.get(key) ?? [])
+      return read(
+        `models:${key}`,
+        () => (accountHome && vendor.models.get(`${key}@work`)) || vendor.models.get(key) || [],
+      )
     },
   })
   const store = new Store(':memory:')
@@ -665,6 +668,18 @@ describe('background writing for a chat on another account', () => {
       { provider: 'claude-code', model: 'claude-haiku-4-5', accountHome: workHome },
     ])
     expect(store.provisionalTitle('thread-1')).toBeUndefined()
+  })
+
+  it("chooses a Work chat's model from the Work account's own plan", async () => {
+    signIn('claude-code', [model('claude-haiku-4-5')])
+    vendor.models.set('claude-code@work', [model('claude-haiku-5-0')])
+    const { title, started } = harness({ mode: 'automatic' }, undefined, accounts)
+
+    await title({ provider: 'claude-code', accountId: 'work' })
+
+    expect(started).toEqual([
+      { provider: 'claude-code', model: 'claude-haiku-5-0', accountHome: workHome },
+    ])
   })
 
   it("drafts a Work chat's commit message through the Work account", async () => {
