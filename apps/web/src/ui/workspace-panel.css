@@ -31,7 +31,10 @@
   visibility: visible;
   opacity: 1;
   pointer-events: auto;
-  transform: translate3d(0, 0, 0);
+  /* None, not translate3d(0, 0, 0): a resting 3D transform kept the open
+     panel on its own layer, where Chromium drops subpixel antialiasing from
+     all of its text. The slide still runs on the compositor. */
+  transform: none;
   transition-delay: 0s;
 }
 

@@ -27,7 +27,9 @@ describe('workspace panel motion', () => {
     expect(css).not.toContain('.workspace-layout')
     expect(rule('.workspace-panel')).toContain('transform: translate3d(24px, 0, 0);')
     expect(rule('.workspace-panel')).toContain('transform var(--dur-slow) var(--ease-rail)')
-    expect(rule('.workspace-panel.is-open')).toContain('transform: translate3d(0, 0, 0);')
+    // At rest the panel is not a layer of its own, so its text keeps subpixel
+    // antialiasing; translate3d(0, 0, 0) kept it promoted for good.
+    expect(rule('.workspace-panel.is-open')).toContain('transform: none;')
     expect(rule('.workspace-panel__body')).toContain('contain: layout paint;')
     expect(rule('.workspace-panel')).not.toContain('var(--dur-rail)')
     expect(appRule('.stage')).toContain('min-height: 0;')
