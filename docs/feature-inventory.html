@@ -1105,66 +1105,68 @@
                   to return to it), rows named Codex · Work, each with the roster's minus to remove
                   it; Add providers opens on Found on this computer, which offers sibling folders a
                   CLI has used and no account has yet (~/.claude_personal beside ~/.claude,
-                  ~/.codex-deepseek beside ~/.codex; names and dates only, no file opened and no CLI
-                  run, copies kept aside skipped); Ignore takes one out of that list and out of the
-                  count the Providers page names beside its plus, into an Ignored list folded at the
-                  foot of Add providers (kept per profile, Unignore offers it again); Add account at
-                  the foot of Add providers makes a new, empty folder TasteCode manages (nothing is
-                  copied from the default account, whose settings can hold keys and login pins), or
-                  uses an existing folder as it is and asks it once who is signed in there; a folder
-                  that is, holds or sits inside the default folder, another account's folder or
-                  TasteCode's data folder is refused, links resolved; one action per row (Sign in
-                  until the account names who it is, then Set active or Active) after its menu
-                  (Rename, Open in Explorer, Set active for an account not signed in yet, and Delete
-                  folder for a managed folder; the minus removes an account and keeps its folder,
-                  each confirmed). An account is renamed where its name stands (pencil, double click
-                  or Rename; Enter or leaving saves, Escape puts it back), the default one too,
-                  whose provider row reads Claude Code · Default once there are others. Each
-                  signed-in account has its own Model, Access and Context rows, following its
-                  provider's until changed (Model and Access kept as provider@account in
-                  localStorage, Context on the server); a new chat starts with the active account's.
-                  Sign in runs the provider's sign-in terminal in that folder (Codex · Work login).
-                  A chat is pinned to the account it started on and resumes there after a restart; a
-                  new chat's account is picked in the model picker. A chat's title and commit
-                  message are written through its own account when the background model is its
-                  provider's; the model picker lists the active account's models for a new chat and
-                  an open chat's own account's models; a project's MCP list and MCP sign-in come
-                  from a default-account chat only. Removing an account drops it before its
-                  processes stop and deletes a managed folder last. Plan limits, reset credits,
-                  model lists and usage are read per account: the current provider's active account
-                  is read at launch, its other signed-in accounts when the popup or Usage shows
-                  limits; the popup names the provider once and gives each account a line that opens
-                  to its full limits (the account new chats start on first and open; a closed line
-                  shows the % left of each window, such as Session and Weekly, a row each on a short
-                  gauge under the account name; a failed read says Unavailable with Retry on its
-                  line, one still loading says Checking…), the card's figure is each provider's
-                  active account, and a Usage sheet sums its accounts and lists each one with its
-                  tokens and limits. Profile &gt; Accounts lists further accounts (Codex · Work,
-                  plan or Signed out, never an email). When a turn fails while the chat's account is
-                  at a plan limit (a window at 100% that has not reset) and another account of the
-                  provider is signed in, the error offers Continue on Work (a menu, Continue on
-                  another account, when there are several); never automatic. It starts a new chat
-                  pinned to that account in the same project (an isolated chat's branch as base, in
-                  a checkout of its own that gets the earlier checkout's uncommitted changes copied
-                  in; when they cannot be copied, the first prompt and the new chat's note say which
-                  folder still holds them), with the failed request in its composer. Claude Code and
-                  Codex carry the earlier chat's own session on in the new account's folder (Claude
-                  Code a copy of its transcript under a new id, Codex a fork of its rollout copied
-                  with the rollouts it was forked from), so tool results and reasoning come along
-                  and the first prompt is just the request; a carried session whose first turn fails
-                  before any answer gives way to a fresh one that gets the conversation as a
-                  handover. Where the session cannot be carried on, or lacks part of the
-                  conversation, the first prompt carries the earlier chat's conversation as
-                  untrusted context (its first request, the latest exchange, every other user
-                  message and the assistant's messages newest first, then tool steps cut to their
-                  command line, exit code or file paths in what is left of 64,000 characters,
-                  preceded by any chat it continued itself up to where it was continued; kept in the
-                  provider's own session), the transcript shows only the user's words, and until its
-                  first message the new chat says Continues "title" on Work in a neutral note with
-                  Open (for an isolated chat, also that its uncommitted changes are already in this
-                  chat's checkout, or where they still are). The earlier chat is left as it was; its
-                  failed turn's row then reads Continued on Work and opens the new chat. Not yet:
-                  per-account Sign out, MCP/skills inventory and history import per account</span
+                  ~/.codex-deepseek beside ~/.codex, and beside the built-in ~/.codex as well when
+                  CODEX_HOME or CLAUDE_CONFIG_DIR moves the default folder elsewhere; names and
+                  dates only, no file opened and no CLI run, copies kept aside skipped); Ignore
+                  takes one out of that list and out of the count the Providers page names beside
+                  its plus, into an Ignored list folded at the foot of Add providers (kept per
+                  profile, Unignore offers it again); Add account at the foot of Add providers makes
+                  a new, empty folder TasteCode manages (nothing is copied from the default account,
+                  whose settings can hold keys and login pins), or uses an existing folder as it is
+                  and asks it once who is signed in there; a folder that is, holds or sits inside
+                  the default folder, another account's folder or TasteCode's data folder is
+                  refused, links resolved; one action per row (Sign in until the account names who
+                  it is, then Set active or Active) after its menu (Rename, Open in Explorer, Set
+                  active for an account not signed in yet, and Delete folder for a managed folder;
+                  the minus removes an account and keeps its folder, each confirmed). An account is
+                  renamed where its name stands (pencil, double click or Rename; Enter or leaving
+                  saves, Escape puts it back), the default one too, whose provider row reads Claude
+                  Code · Default once there are others. Each signed-in account has its own Model,
+                  Access and Context rows, following its provider's until changed (Model and Access
+                  kept as provider@account in localStorage, Context on the server); a new chat
+                  starts with the active account's. Sign in runs the provider's sign-in terminal in
+                  that folder (Codex · Work login). A chat is pinned to the account it started on
+                  and resumes there after a restart; a new chat's account is picked in the model
+                  picker. A chat's title and commit message are written through its own account when
+                  the background model is its provider's; the model picker lists the active
+                  account's models for a new chat and an open chat's own account's models; a
+                  project's MCP list and MCP sign-in come from a default-account chat only. Removing
+                  an account drops it before its processes stop and deletes a managed folder last.
+                  Plan limits, reset credits, model lists and usage are read per account: the
+                  current provider's active account is read at launch, its other signed-in accounts
+                  when the popup or Usage shows limits; the popup names the provider once and gives
+                  each account a line that opens to its full limits (the account new chats start on
+                  first and open; a closed line shows the % left of each window, such as Session and
+                  Weekly, a row each on a short gauge under the account name; a failed read says
+                  Unavailable with Retry on its line, one still loading says Checking…), the card's
+                  figure is each provider's active account, and a Usage sheet sums its accounts and
+                  lists each one with its tokens and limits. Profile &gt; Accounts lists further
+                  accounts (Codex · Work, plan or Signed out, never an email). When a turn fails
+                  while the chat's account is at a plan limit (a window at 100% that has not reset)
+                  and another account of the provider is signed in, the error offers Continue on
+                  Work (a menu, Continue on another account, when there are several); never
+                  automatic. It starts a new chat pinned to that account in the same project (an
+                  isolated chat's branch as base, in a checkout of its own that gets the earlier
+                  checkout's uncommitted changes copied in; when they cannot be copied, the first
+                  prompt and the new chat's note say which folder still holds them), with the failed
+                  request in its composer. Claude Code and Codex carry the earlier chat's own
+                  session on in the new account's folder (Claude Code a copy of its transcript under
+                  a new id, Codex a fork of its rollout copied with the rollouts it was forked
+                  from), so tool results and reasoning come along and the first prompt is just the
+                  request; a carried session whose first turn fails before any answer gives way to a
+                  fresh one that gets the conversation as a handover. Where the session cannot be
+                  carried on, or lacks part of the conversation, the first prompt carries the
+                  earlier chat's conversation as untrusted context (its first request, the latest
+                  exchange, every other user message and the assistant's messages newest first, then
+                  tool steps cut to their command line, exit code or file paths in what is left of
+                  64,000 characters, preceded by any chat it continued itself up to where it was
+                  continued; kept in the provider's own session), the transcript shows only the
+                  user's words, and until its first message the new chat says Continues "title" on
+                  Work in a neutral note with Open (for an isolated chat, also that its uncommitted
+                  changes are already in this chat's checkout, or where they still are). The earlier
+                  chat is left as it was; its failed turn's row then reads Continued on Work and
+                  opens the new chat. Not yet: per-account Sign out, MCP/skills inventory and
+                  history import per account</span
                 ></span
               ></label
             >
