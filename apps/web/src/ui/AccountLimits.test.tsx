@@ -738,8 +738,11 @@ describe('account limits', () => {
     const row = bar.closest<HTMLElement>('.account-menu__limit')!
     expect(row.hasAttribute('data-gauge')).toBe(true)
     expect(row.style.getPropertyValue('--left')).toBe('0.15')
+    // 15% left is where the card's meter turns red too.
+    expect(row.hasAttribute('data-low')).toBe(true)
     const credits = within(codex).getByText('$12.40').closest<HTMLElement>('.account-menu__limit')!
     expect(credits.hasAttribute('data-gauge')).toBe(false)
+    expect(credits.hasAttribute('data-low')).toBe(false)
     expect(credits.style.getPropertyValue('--left')).toBe('')
 
     view.rerender(

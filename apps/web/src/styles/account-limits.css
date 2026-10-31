@@ -318,9 +318,9 @@
   initial-value: 0;
 }
 
-/* Each bar is a little fuel gauge. The whole red-to-green scale is painted
-   across the track and the fill uncovers it from the empty end, so the
-   colour at the tip says how much is left. */
+/* Each bar is one quiet fill in text ink, the same as the card's meter: the
+   number says how much is left, and only an allowance that is nearly spent
+   turns the error colour. */
 .account-menu__limit[data-gauge] {
   --limit-fill: var(--left);
   animation: account-limit-fill 820ms var(--ease-overshoot) both;
@@ -345,13 +345,13 @@
   display: block;
   height: 100%;
   border-radius: inherit;
-  background: linear-gradient(
-    to right in oklch,
-    var(--gauge-empty),
-    var(--gauge-half),
-    var(--gauge-full)
-  );
+  background: color-mix(in srgb, var(--text) 52%, transparent);
   clip-path: inset(0 calc((1 - var(--limit-fill)) * 100%) 0 0 round var(--r-pill));
+}
+
+.account-menu__limit[data-low] .account-menu__limit-bar > span:not(.account-menu__limit-pace),
+.account-menu__account-gauge[data-low] > span {
+  background: var(--error);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -409,8 +409,8 @@
    limits. The chevron hangs where the provider's mark sits, so account names
    start on the provider name's edge and an open account's limits sit under
    its name. A closed line carries what is left of each window, Session and
-   Weekly, under its name: a row each, on short gauges of the same red-to-green
-   scale as the full bars, set in columns so the gauges line up. */
+   Weekly, under its name: a row each, on short gauges drawn like the full
+   bars, set in columns so the gauges line up. */
 .account-menu__account {
   display: grid;
   gap: 8px;
@@ -553,12 +553,7 @@ button.account-menu__account-line:focus-visible {
   display: block;
   height: 100%;
   border-radius: inherit;
-  background: linear-gradient(
-    to right in oklch,
-    var(--gauge-empty),
-    var(--gauge-half),
-    var(--gauge-full)
-  );
+  background: color-mix(in srgb, var(--text) 52%, transparent);
   clip-path: inset(0 calc((1 - var(--limit-fill)) * 100%) 0 0 round var(--r-pill));
 }
 

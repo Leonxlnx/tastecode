@@ -17,7 +17,7 @@ import {
 import { IconChevronRight as ChevronRight, IconRefresh as RefreshCw } from '@tabler/icons-react'
 import type { AccountLabel } from '../provider-accounts-state.js'
 import { providerDisplayName, providerMark } from '../provider-presentation.js'
-import { limitKey } from '../usage-limits-state.js'
+import { limitKey, USAGE_LOW_PERCENT } from '../usage-limits-state.js'
 import type { UsageSummaryState } from '../usage-summary-state.js'
 import '../styles/account-limits.css'
 import { ProviderIcon } from './ProviderIcon.js'
@@ -302,6 +302,7 @@ function AccountLine(props: {
                   {limit.valueLabel === undefined ? (
                     <span
                       className="account-menu__account-gauge"
+                      data-low={remaining(limit) <= USAGE_LOW_PERCENT ? '' : undefined}
                       style={
                         { '--left': remaining(limit) / 100, '--order': index } as CSSProperties
                       }
@@ -544,7 +545,8 @@ function LimitRow(props: {
     <div
       className="account-menu__limit"
       data-gauge={gauge ? '' : undefined}
-      // The bar takes its length and colour from how much is left.
+      data-low={gauge && left <= USAGE_LOW_PERCENT ? '' : undefined}
+      // The bar takes its length from how much is left.
       style={
         gauge ? ({ '--left': left / 100, '--order': props.order } as CSSProperties) : undefined
       }

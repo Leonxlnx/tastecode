@@ -47,15 +47,21 @@ describe('account limits layout', () => {
     )
   })
 
-  it('draws each bar as a red-to-green gauge and leaves the number in text ink', () => {
+  it('draws each bar as one quiet fill, red only when nearly spent, with the number in text ink', () => {
     expect(rule('.account-menu__source')).toContain('gap: 8px')
     expect(rule('.account-menu__limit')).toContain('gap: 5px')
     const bar = rule('.account-menu__limit-bar')
     expect(bar).toContain('height: 6px')
     expect(bar).toContain('border-radius: var(--r-pill)')
     const fill = rule('.account-menu__limit-bar > span')
-    expect(fill).toMatch(
-      /linear-gradient\(\s*to right in oklch,\s*var\(--gauge-empty\),\s*var\(--gauge-half\),\s*var\(--gauge-full\)\s*\)/,
+    // A red-to-green gradient read as noise; the fill matches the card's meter.
+    expect(css).not.toContain('gradient')
+    expect(fill).toContain('background: color-mix(in srgb, var(--text) 52%, transparent)')
+    expect(rule('.account-menu__account-gauge > span')).toContain(
+      'background: color-mix(in srgb, var(--text) 52%, transparent)',
+    )
+    expect(css).toMatch(
+      /\.account-menu__limit\[data-low\] \.account-menu__limit-bar > span:not\(\.account-menu__limit-pace\),\s*\.account-menu__account-gauge\[data-low\] > span \{\s*background: var\(--error\);/,
     )
     expect(fill).toContain('clip-path: inset(0 calc((1 - var(--limit-fill)) * 100%) 0 0')
     expect(rule('.account-menu__limit[data-gauge]')).toContain('--limit-fill: var(--left)')
