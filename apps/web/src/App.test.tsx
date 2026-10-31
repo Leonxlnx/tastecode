@@ -1366,6 +1366,23 @@ describe('web client', () => {
         { provider: 'codex', state: 'loading', remembered: true },
       ),
     ).toBe('setup-required')
+    // The provider's status is its default account's; a further account's own
+    // check decides for that account, signed out or in.
+    const team = { provider: 'codex' as const, accountId: 'team-9z8y7x' }
+    expect(resolve({ auth: 'unauthenticated' }, { ...team, state: 'loading' })).toBe('loading')
+    expect(resolve({ auth: 'unauthenticated' }, { ...team, state: 'loading', slow: true })).toBe(
+      'ready',
+    )
+    expect(resolve({ auth: 'authenticated' }, { ...team, state: 'loading' })).toBe('loading')
+    expect(
+      resolve(
+        { auth: 'unauthenticated' },
+        { ...team, state: 'ready', account: { signedIn: true } },
+      ),
+    ).toBe('ready')
+    expect(
+      resolve({ auth: 'authenticated' }, { ...team, state: 'ready', account: { signedIn: false } }),
+    ).toBe('setup-required')
   })
 
   it('cuts a prompt title before an emoji split at 40 code units', () => {
@@ -5659,6 +5676,66 @@ describe('new chats', () => {
     )
     expect(composerProps().modelId).toBe('codex:gpt-6.1-team')
     expect(note()).toBeUndefined()
+  })
+
+  it("checks the sign-in of the chat's own account, not the default one", async () => {
+    const codex = serverProviders[0]!
+    // The default account is signed out; the chat runs on Team, which is not.
+    serverProviders = [
+      {
+        ...codex,
+        auth: 'unauthenticated',
+        capabilities: { ...codex.capabilities!, multipleAccounts: true },
+      },
+    ]
+    serverProjects[0]!.sessions = [
+      {
+        id: 'chat-1',
+        title: 'Webhook retries',
+        provider: 'codex',
+        accountId: 'team-9z8y7x',
+        createdAt: 1,
+      },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'accounts.list') {
+        return Promise.resolve({
+          accounts: [
+            { id: 'default', provider: 'codex', label: 'Personal', managed: false },
+            {
+              id: 'team-9z8y7x',
+              provider: 'codex',
+              label: 'Team',
+              home: 'C:\\TasteCode\\accounts\\codex\\team-9z8y7x',
+              managed: true,
+              email: 'team@example.test',
+            },
+          ],
+          active: {},
+        })
+      }
+      if (method === 'auth.status') {
+        const { accountId } = methods['auth.status'].params.parse(params)
+        return Promise.resolve(
+          accountId === 'team-9z8y7x'
+            ? { signedIn: true, email: 'team@example.test' }
+            : { signedIn: false },
+        )
+      }
+      return request(method, params)
+    })
+    render(<App />)
+
+    fireEvent.click(await waitFor(() => treeChatRow('Webhook retries')))
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('auth.status', {
+        provider: 'codex',
+        accountId: 'team-9z8y7x',
+      }),
+    )
+    await waitFor(() => expect(composerProps().sendAvailability).toBe('ready'))
   })
 
   it('keeps the message and the chat where they were when a switch fails', async () => {

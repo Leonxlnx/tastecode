@@ -439,6 +439,8 @@ type CustomModel = {
 type CatalogAvailability = 'loading' | 'ready' | 'failed'
 type AccountCheck = {
   provider: ProviderId
+  /** The further account the check is for; absent for the default account. */
+  accountId?: AccountId
   state: CatalogAvailability
   account?: Account
   error?: ComposerError
@@ -539,8 +541,12 @@ export function resolveSendAvailability(input: {
   if (input.accountCheck.provider === provider && input.accountCheck.state === 'ready') {
     return input.accountCheck.account?.signedIn ? 'ready' : 'setup-required'
   }
-  if (status.auth === 'unauthenticated') return 'setup-required'
-  if (status.auth === 'authenticated') return 'ready'
+  // The provider's status is its default account's; a further account's own
+  // check speaks for it.
+  const furtherAccount =
+    input.accountCheck.provider === provider && input.accountCheck.accountId !== undefined
+  if (!furtherAccount && status.auth === 'unauthenticated') return 'setup-required'
+  if (!furtherAccount && status.auth === 'authenticated') return 'ready'
   if (input.accountCheck.provider !== provider) return 'loading'
   // A check that could not answer in time, or still has not after the grace
   // period, confirms nothing either way. Send stays available: a CLI that
@@ -3107,6 +3113,15 @@ export function App() {
     (activeSession?.provider === provider && !activeSession.agent && !activeSession.connectionId
       ? ((activeSession.accountId as AccountId | undefined) ?? DEFAULT_ACCOUNT_ID)
       : activeAccountOf(providerAccounts, provider))
+  // The composer's sign-in check asks a further account itself: the default
+  // account being signed in or out says nothing about the account the next
+  // message runs on. A custom harness keeps its own sign-in.
+  const checkedAccount: AccountId | undefined =
+    composerAccount !== DEFAULT_ACCOUNT_ID && !selectedModelChoice?.agent && !sourceAgent
+      ? composerAccount
+      : undefined
+  const checkedAccountRef = useRef(checkedAccount)
+  checkedAccountRef.current = checkedAccount
 
   useEffect(() => {
     let cancelled = false
@@ -3118,16 +3133,24 @@ export function App() {
         cancelled = true
       }
     }
+    const accountId = checkedAccount
+    const forAccount = accountId === undefined ? {} : { accountId }
     // Retrying a check that could not answer keeps Send available until the
     // new answer arrives; it would otherwise lock the composer for the read.
     // So does a provider whose last read said signed in. ACP reads are per
-    // agent, so they are not remembered per provider.
-    const remembers = provider !== 'acp'
+    // agent, and further accounts are per account, so neither is remembered
+    // per provider.
+    const remembers = provider !== 'acp' && accountId === undefined
     const remembered = remembers && rememberedSignIn(provider)
     setAccountCheck((current) =>
-      current.provider === provider && current.state === 'failed'
+      current.provider === provider && current.accountId === accountId && current.state === 'failed'
         ? current
-        : { provider, state: 'loading', ...(remembered ? { remembered: true as const } : {}) },
+        : {
+            provider,
+            ...forAccount,
+            state: 'loading',
+            ...(remembered ? { remembered: true as const } : {}),
+          },
     )
     const grace = setTimeout(() => {
       if (cancelled || revision !== accountRequestRevision.current) return
@@ -3143,19 +3166,21 @@ export function App() {
         ...(provider === 'acp' && (selectedModelChoice?.agent?.id ?? sourceAgent)
           ? { agent: selectedModelChoice?.agent?.id ?? sourceAgent }
           : {}),
+        ...forAccount,
       })
       .finally(() => clearTimeout(grace))
       .then((nextAccount) => {
         if (remembers) rememberSignIn(provider, nextAccount.signedIn)
         if (cancelled || revision !== accountRequestRevision.current) return
         setAccount(nextAccount)
-        setAccountCheck({ provider, state: 'ready', account: nextAccount })
+        setAccountCheck({ provider, ...forAccount, state: 'ready', account: nextAccount })
       })
       .catch((cause) => {
         if (cancelled || revision !== accountRequestRevision.current) return
         setAccount(undefined)
         setAccountCheck({
           provider,
+          ...forAccount,
           state: 'failed',
           // Send stays available, so this informs rather than interrupts.
           error: {
@@ -3175,6 +3200,7 @@ export function App() {
     sourceAgent,
     selectedModelChoice?.agent,
     selectedModelChoice?.connectionId,
+    checkedAccount,
     authStatusRequest,
   ])
 
@@ -4927,7 +4953,9 @@ export function App() {
   const handleAccountChange = useCallback(
     (changedProvider: ProviderId, changedAccount: Account) => {
       if (changedProvider !== 'acp') rememberSignIn(changedProvider, changedAccount.signedIn)
-      if (changedProvider === providerRef.current) {
+      // This is the default account's sign-in; a composer on a further
+      // account keeps that account's own check.
+      if (changedProvider === providerRef.current && checkedAccountRef.current === undefined) {
         accountRequestRevision.current += 1
         setAccount(changedAccount)
         setAccountCheck({ provider: changedProvider, state: 'ready', account: changedAccount })

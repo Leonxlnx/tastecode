@@ -1125,36 +1125,38 @@
                   localStorage, Context on the server); a new chat starts with the active account's.
                   Sign in runs the provider's sign-in terminal in that folder (Codex · Work login).
                   A chat is pinned to the account it started on and resumes there after a restart; a
-                  new chat's account is picked in the model picker. A chat's title and commit
-                  message are written through its own account when the background model is its
-                  provider's; the model picker lists the active account's models for a new chat and
-                  an open chat's own account's models; a project's MCP list and MCP sign-in come
-                  from a default-account chat only. Removing an account drops it before its
-                  processes stop and deletes a managed folder last. Plan limits, reset credits,
-                  model lists and usage are read per account: the current provider's active account
-                  is read at launch, its other signed-in accounts when the popup or Usage shows
-                  limits; the popup names the provider once and gives each account a line that opens
-                  to its full limits (the account new chats start on first and open; a closed line
-                  shows the % left of each window, such as Session and Weekly, a row each on a short
-                  gauge under the account name; a failed read says Unavailable with Retry on its
-                  line, one still loading says Checking…), the card's figure is each provider's
-                  active account, and a Usage sheet sums its accounts and lists each one with its
-                  tokens and limits. Profile &gt; Accounts lists further accounts (Codex · Work,
-                  plan or Signed out, never an email). When a turn fails while the chat's account is
-                  at a plan limit (a window at 100% that has not reset) and another account of the
-                  provider is signed in, the error offers Continue on Work (a menu, Continue on
-                  another account, when there are several); never automatic. It starts a new chat
-                  pinned to that account in the same project (an isolated chat's branch as base, in
-                  a checkout of its own that gets the earlier checkout's uncommitted changes copied
-                  in; when they cannot be copied, the first prompt and the new chat's note say which
-                  folder still holds them), with the failed request in its composer. Claude Code and
-                  Codex carry the earlier chat's own session on in the new account's folder (Claude
-                  Code a copy of its transcript under a new id, Codex a fork of its rollout copied
-                  with the rollouts it was forked from), so tool results and reasoning come along
-                  and the first prompt is just the request; a carried session whose first turn fails
-                  before any answer gives way to a fresh one that gets the conversation as a
-                  handover. Where the session cannot be carried on, or lacks part of the
-                  conversation, the first prompt carries the earlier chat's conversation as
+                  new chat's account is picked in the model picker. The composer's sign-in check
+                  asks the account the next message runs on, so a signed-out default account does
+                  not block Send for a chat on a signed-in further account, nor the reverse. A
+                  chat's title and commit message are written through its own account when the
+                  background model is its provider's; the model picker lists the active account's
+                  models for a new chat and an open chat's own account's models; a project's MCP
+                  list and MCP sign-in come from a default-account chat only. Removing an account
+                  drops it before its processes stop and deletes a managed folder last. Plan limits,
+                  reset credits, model lists and usage are read per account: the current provider's
+                  active account is read at launch, its other signed-in accounts when the popup or
+                  Usage shows limits; the popup names the provider once and gives each account a
+                  line that opens to its full limits (the account new chats start on first and open;
+                  a closed line shows the % left of each window, such as Session and Weekly, a row
+                  each on a short gauge under the account name; a failed read says Unavailable with
+                  Retry on its line, one still loading says Checking…), the card's figure is each
+                  provider's active account, and a Usage sheet sums its accounts and lists each one
+                  with its tokens and limits. Profile &gt; Accounts lists further accounts (Codex ·
+                  Work, plan or Signed out, never an email). When a turn fails while the chat's
+                  account is at a plan limit (a window at 100% that has not reset) and another
+                  account of the provider is signed in, the error offers Continue on Work (a menu,
+                  Continue on another account, when there are several); never automatic. It starts a
+                  new chat pinned to that account in the same project (an isolated chat's branch as
+                  base, in a checkout of its own that gets the earlier checkout's uncommitted
+                  changes copied in; when they cannot be copied, the first prompt and the new chat's
+                  note say which folder still holds them), with the failed request in its composer.
+                  Claude Code and Codex carry the earlier chat's own session on in the new account's
+                  folder (Claude Code a copy of its transcript under a new id, Codex a fork of its
+                  rollout copied with the rollouts it was forked from), so tool results and
+                  reasoning come along and the first prompt is just the request; a carried session
+                  whose first turn fails before any answer gives way to a fresh one that gets the
+                  conversation as a handover. Where the session cannot be carried on, or lacks part
+                  of the conversation, the first prompt carries the earlier chat's conversation as
                   untrusted context (its first request, the latest exchange, every other user
                   message and the assistant's messages newest first, then tool steps cut to their
                   command line, exit code or file paths in what is left of 64,000 characters,
