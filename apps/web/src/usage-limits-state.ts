@@ -17,7 +17,10 @@ type LoadSummary = (params: ParamsOf<'usage.summary'>) => Promise<ResultOf<'usag
 /** How often every source is read in the background, so a view opens on recent values. */
 export const USAGE_POLL_MS = 15 * 60_000
 
-/** At or below this share left, the card's meter and the popup's bars turn red. */
+/**
+ * At or below this share left a window runs low: the card's meter, the
+ * popup's bars and the Usage page's meters turn red.
+ */
 export const USAGE_LOW_PERCENT = 15
 
 type Entry = {

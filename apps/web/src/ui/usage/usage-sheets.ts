@@ -11,7 +11,7 @@ import {
 } from '@harness/contracts'
 import type { AccountLabel } from '../../provider-accounts-state.js'
 import { providerDisplayName, type ProviderMark } from '../../provider-presentation.js'
-import { limitKey, limitTargetOf } from '../../usage-limits-state.js'
+import { limitKey, limitTargetOf, USAGE_LOW_PERCENT } from '../../usage-limits-state.js'
 import type { UsageSummaryState } from '../../usage-summary-state.js'
 import { limitSource, remaining, sourceStatus } from '../AccountLimits.js'
 import { dateFromKey, formatMoney, resetText } from './usage-format.js'
@@ -27,9 +27,6 @@ export type PlanLimitsSource = {
   show(): () => void
   refresh(provider?: ProviderId, intent?: UsageReadIntent, accountId?: AccountId): void
 }
-
-/** At or under this share left, a window reads as running low. */
-const LOW_SHARE = 15
 
 /** The value is a partial estimate under this share of priced tokens. */
 const FULL_ESTIMATE_SHARE = 0.95
@@ -119,7 +116,11 @@ function sheetLimit(limit: Limit): SheetLimit {
   const textual = limit.valueLabel !== undefined
   // Reached only when the provider says it is used up, not when 0.4% rounds to none.
   const state =
-    !textual && limit.usedPercent >= 100 ? 'reached' : !textual && left <= LOW_SHARE ? 'low' : 'ok'
+    !textual && limit.usedPercent >= 100
+      ? 'reached'
+      : !textual && left <= USAGE_LOW_PERCENT
+        ? 'low'
+        : 'ok'
   return {
     label: limit.label,
     left,
