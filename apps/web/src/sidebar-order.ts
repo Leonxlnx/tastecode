@@ -133,8 +133,8 @@ function sameIds<T>(
 /**
  * The rail: pinned chats in their own section, then pinned projects ahead of
  * the rest, then archived chats at the end. Every list keeps its saved order.
- * A chat that starts, waits, finishes or is read stays where it is; only a new
- * chat, a pin, a drag or archiving moves one.
+ * A chat that starts, waits or is read stays where it is; only a new chat, a
+ * finished turn (liftSession), a pin, a drag or archiving moves one.
  */
 export function sidebarRail(projects: Project[]): SidebarRail {
   const pinned: PinnedSession[] = []
@@ -182,6 +182,30 @@ export function sidebarSessions(projects: Project[], mode: 'classic' | 'inbox'):
     ...pinnedSessions.map(({ session }) => session),
     ...orderedProjects.flatMap((project) => project.sessions),
   ]
+}
+
+/**
+ * A chat whose turn just ended goes to the top of its project, above the chats
+ * still working, so what is done is seen first.
+ */
+export function liftSession<P extends { sessions: readonly { id: string }[] }>(
+  projects: P[],
+  sessionId: string,
+): P[] {
+  for (const [projectIndex, project] of projects.entries()) {
+    const index = project.sessions.findIndex((session) => session.id === sessionId)
+    if (index < 0) continue
+    if (index === 0) return projects
+    const sessions = [
+      project.sessions[index]!,
+      ...project.sessions.slice(0, index),
+      ...project.sessions.slice(index + 1),
+    ]
+    const next = [...projects]
+    next[projectIndex] = { ...project, sessions }
+    return next
+  }
+  return projects
 }
 
 /**

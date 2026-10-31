@@ -98,6 +98,7 @@ import {
 } from './project-store.js'
 import {
   applyProjectOrder,
+  liftSession,
   moveRailSession,
   parseStoredProjectOrder,
   parseStoredSessionOrder,
@@ -2316,10 +2317,16 @@ export function App() {
       }
 
       if (affectsSessionStatus(event)) {
-        // A status change never moves the chat in the sidebar; only a new chat,
-        // a pin or a drag does.
-        setProjects((current) =>
-          updateSession(current, threadId, (session) => {
+        // A finished turn lifts its chat to the top of its project; any other
+        // status change keeps it where it is. The lift is saved like a drag, so
+        // the next project refresh does not put it back by date.
+        const finished = event.type === 'turn.completed'
+        const finishedIn = finished
+          ? findSession(projectsRef.current, threadId)?.project.path
+          : undefined
+        if (finishedIn) draggedSessionOrder.add(finishedIn)
+        setProjects((current) => {
+          const updated = updateSession(current, threadId, (session) => {
             const status = statusFor(next, event, threadId !== activeIdRef.current)
             return {
               ...session,
@@ -2331,8 +2338,9 @@ export function App() {
                   }
                 : {}),
             }
-          }),
-        )
+          })
+          return finished ? liftSession(updated, threadId) : updated
+        })
         if (event.type === 'turn.completed' && threadId === activeIdRef.current) {
           // Only here for the server's mark-as-read side effect — the live event
           // stream already delivered the turn. afterSeq skips serializing,
@@ -2493,6 +2501,7 @@ export function App() {
     isThreadCacheProtected,
     refreshProviderThreadHistory,
     setThreadDesignMode,
+    draggedSessionOrder,
   ])
 
   useEffect(() => {

@@ -4,6 +4,7 @@ import {
   applySessionOrder,
   foldedProjectSessions,
   isArchived,
+  liftSession,
   moveRailSession,
   needsYouSessions,
   parseStoredProjectOrder,
@@ -96,7 +97,7 @@ const shown = (sessions: Session[]) =>
   ids(sidebarRail([{ path: '/p', sessions }]).orderedProjects[0]!.sessions)
 
 describe('the rail keeps its order', () => {
-  it('does not move a chat when it starts, waits, finishes or is read', () => {
+  it('does not move a chat by what its status shows', () => {
     const saved = [chat('A'), chat('B'), chat('C'), chat('D')]
     expect(shown(saved)).toEqual(['A', 'B', 'C', 'D'])
 
@@ -114,6 +115,19 @@ describe('the rail keeps its order', () => {
       )
       expect(shown(next)).toEqual(['A', 'B', 'C', 'D'])
     }
+  })
+
+  it('lifts a finished chat to the top of its own project only', () => {
+    const projects = [
+      { path: '/one', sessions: [chat('A', { status: 'working' }), chat('B'), chat('C')] },
+      { path: '/two', sessions: [chat('D'), chat('E')] },
+    ]
+    const lifted = liftSession(projects, 'C')
+    expect(ids(lifted[0]!.sessions)).toEqual(['C', 'A', 'B'])
+    expect(lifted[1]).toBe(projects[1])
+    // Already on top, or not listed: nothing changes.
+    expect(liftSession(lifted, 'C')).toBe(lifted)
+    expect(liftSession(projects, 'gone')).toBe(projects)
   })
 
   it('keeps an unchanged project projection when nothing in it is pinned or archived', () => {

@@ -6195,6 +6195,39 @@ describe('new chats', () => {
     expect(screen.getByText('75% left')).toBeTruthy()
   })
 
+  it('lifts a chat above the working ones when its turn finishes, and keeps it there', async () => {
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'project',
+        pinned: false,
+        createdAt: 0,
+        sessions: [
+          { id: 'thread-a', title: 'First chat', provider: 'codex', createdAt: 2, running: false },
+          { id: 'thread-b', title: 'Second chat', provider: 'codex', createdAt: 1, running: false },
+          { id: 'thread-c', title: 'Third chat', provider: 'codex', createdAt: 0, running: false },
+        ],
+      },
+    ]
+    render(<App />)
+    await screen.findByRole('button', { name: 'Third chat, Codex' })
+    const order = () => sidebarProps().projects[0]!.sessions.map(({ id }) => id)
+
+    startTurn('thread-a', 'turn-a')
+    startTurn('thread-c', 'turn-c')
+    completeTurn('thread-c', 'turn-c')
+
+    await waitFor(() => expect(order()).toEqual(['thread-c', 'thread-a', 'thread-b']))
+    // Saved like a drag, so a refresh does not put it back by date.
+    await waitFor(() =>
+      expect(
+        SessionOrderSchema.parse(
+          JSON.parse(localStorage.getItem('harness.sessionOrder.dragged') ?? '{}'),
+        )['/work/project'],
+      ).toEqual(['thread-c', 'thread-a', 'thread-b']),
+    )
+  })
+
   it('keeps a chat in its sidebar place when a turn starts in it', async () => {
     serverProjects = [
       {
@@ -13657,7 +13690,7 @@ describe('live sessions', () => {
     expect(answered.querySelector('.sess__spinner')).not.toBeNull()
   })
 
-  it('keeps chats in place while they run and when they finish unread', async () => {
+  it('keeps chats in place while they run and lifts one that finishes unread', async () => {
     serverProjects = [
       {
         path: '/work/project',
@@ -13693,7 +13726,7 @@ describe('live sessions', () => {
       turnId: 'background-turn',
       status: 'completed',
     })
-    expect(sessionTitles()).toEqual(['Idle chat', 'Background chat', 'Running chat'])
+    expect(sessionTitles()).toEqual(['Background chat', 'Idle chat', 'Running chat'])
     expect(
       screen
         .getByRole('button', { name: 'Background chat, Codex, ready, unread' })
