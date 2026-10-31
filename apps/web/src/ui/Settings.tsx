@@ -109,6 +109,7 @@ import {
   ProviderTuning,
   ProviderTuningSkeleton,
   useAccountContextSettings,
+  useAccountRuntimeSettings,
   useProviderContextSettings,
   useProviderRuntimeSettings,
 } from './ProviderTuning.js'
@@ -1213,6 +1214,11 @@ export function ProviderSettings(props: {
     props.transport,
     providerDefaults !== undefined && accountProviders.length > 0,
   )
+  const accountRuntimes = useAccountRuntimeSettings(
+    props.transport,
+    providerDefaults !== undefined &&
+      accountProviders.some((status) => (status.capabilities?.runtimes?.length ?? 0) > 1),
+  )
   const installedAgentKey = agents
     .filter((agent) => agent.installed)
     .map((agent) => agent.id)
@@ -1578,6 +1584,11 @@ export function ProviderSettings(props: {
         accountContext={accountContext.resolve(context.state, status.id, account.id)}
         contextError={accountContext.errors(status.id, account.id)}
         onContextChange={(settings) => accountContext.update(status.id, account.id, settings)}
+        runtime={{
+          state: accountRuntimes.resolve(status.id, account.id),
+          error: accountRuntimes.errors(status.id, account.id),
+          onChange: (runtime) => accountRuntimes.update(status.id, account.id, runtime),
+        }}
       />
     )
   }
