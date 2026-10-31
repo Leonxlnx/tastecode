@@ -288,7 +288,7 @@ describe('a folded project', () => {
   const folded = (sessions: Session[], activeSessionId?: string) =>
     ids(foldedProjectSessions(sessions, activeSessionId, 5)).join('')
 
-  it('lists its first rows, then each later chat with news at its own place', () => {
+  it('fills its rows with every chat that has news, then the first quiet ones, in order', () => {
     const sessions = [
       ...quiet,
       chat('F'),
@@ -297,9 +297,18 @@ describe('a folded project', () => {
       chat('I'),
     ]
 
-    expect(folded(sessions, 'A')).toBe('ABCDEGH')
-    expect(folded(sessions, 'I')).toBe('ABCDEGHI')
+    expect(folded(sessions, 'A')).toBe('ABCGH')
+    expect(folded(sessions, 'I')).toBe('ABGHI')
     expect(folded(quiet.slice(0, 3))).toBe('ABC')
+  })
+
+  it('lists every running chat even when there are more of them than rows', () => {
+    const running = (id: string) => chat(id, { status: 'working' })
+
+    expect(folded([...quiet, running('F')])).toBe('ABCDF')
+    expect(folded([chat('Q'), ...['F', 'G', 'H', 'I', 'J', 'K'].map(running), ...quiet])).toBe(
+      'FGHIJK',
+    )
   })
 
   it('keeps a chat in sight while it starts, works or needs the user, not once it is quiet', () => {
@@ -312,7 +321,7 @@ describe('a folded project', () => {
       { status: 'ready', unread: true },
       { status: 'idle', unread: true },
     ] as const) {
-      expect(folded([...quiet, chat('F', changes)])).toBe('ABCDEF')
+      expect(folded([...quiet, chat('F', changes)])).toBe('ABCDF')
     }
     for (const changes of [
       { status: 'idle' },
