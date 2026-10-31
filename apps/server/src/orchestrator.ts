@@ -3745,6 +3745,11 @@ export class Orchestrator {
 
   forgetDeletedThread(threadId: string): void {
     this.#revokeAgentTools(threadId)
+    this.#subagents.forget(threadId)
+    // The store deleted a chat's sub-agent chats with it.
+    for (const [childId, parentId] of this.#subagentParents) {
+      if (parentId === threadId || childId === threadId) this.#subagentParents.delete(childId)
+    }
     this.#inboxProjections.delete(threadId)
     this.#staleInboxProjectionThreads.delete(threadId)
   }
@@ -4540,6 +4545,11 @@ export class Orchestrator {
   }
 
   async interrupt(threadId: string): Promise<void> {
+    // A chat's sub-agents stop with it, a background one included.
+    await Promise.all([this.#interruptTurn(threadId), this.#subagents.stopFor(threadId)])
+  }
+
+  async #interruptTurn(threadId: string): Promise<void> {
     // "Stop" on a thread that is not live must be a no-op, not an error the
     // user cannot act on.
     if (!this.#threads.has(threadId)) {
@@ -4581,6 +4591,8 @@ export class Orchestrator {
     )
     this.#panicStopping = true
     this.#panicGeneration += 1
+    // Every sub-agent ends as stopped; the busy chats below include theirs.
+    this.#subagents.release()
     try {
       for (const threadId of this.#designFlows.keys()) {
         for (const [turnId, owner] of this.#designTurns) {
@@ -4702,7 +4714,16 @@ export class Orchestrator {
     await Promise.all([
       sideThreadId ? this.closeSideThread(sideThreadId) : undefined,
       runtimeDisposed,
+      ...this.#endSubagents(threadId),
     ])
+  }
+
+  /** A chat's sub-agents end with its process; their chats stay readable. */
+  #endSubagents(threadId: string): Array<Promise<void>> {
+    this.#subagents.release(threadId)
+    return this.#store
+      .ownedThreadIds(threadId)
+      .map((childId) => this.#disposeThreadRuntime(childId))
   }
 
   /**
@@ -4733,6 +4754,7 @@ export class Orchestrator {
     await Promise.all([
       sideThreadId ? this.closeSideThread(sideThreadId) : undefined,
       runtimeDisposed,
+      ...this.#endSubagents(threadId),
     ])
   }
 

@@ -26,6 +26,7 @@ class FakeSession implements AgentSession {
   readonly capabilities = CAPABILITIES
   sent: string[] = []
   interrupted = false
+  disposed = false
   #listeners: Array<(event: DomainEvent) => void> = []
   constructor(readonly turnId: string) {}
   emit(event: DomainEvent): void {
@@ -39,7 +40,9 @@ class FakeSession implements AgentSession {
     this.interrupted = true
   }
   respondToApproval(): void {}
-  dispose(): void {}
+  dispose(): void {
+    this.disposed = true
+  }
   on(_event: 'event' | 'log', listener: (value: never) => void): void {
     this.#listeners.push(listener as (event: DomainEvent) => void)
   }
@@ -116,7 +119,7 @@ function harness() {
     () => orchestrator.disposeAll(),
     () => rmSync(directory, { recursive: true, force: true, maxRetries: 3 }),
   )
-  return { store, orchestrator, sessions, started, parentEvents, childEvents }
+  return { store, orchestrator, sessions, started, parentEvents, childEvents, directory }
 }
 
 /** Calls one agent tool the way an engine does: JSON-RPC over HTTP with the chat's token. */
@@ -159,11 +162,35 @@ const subagentRows = (events: Array<{ threadId: string; event: DomainEvent }>, t
     id === threadId && event.type === 'item.completed' && event.item.subagent ? [event.item] : [],
   ) as Array<Item & { subagent: NonNullable<Item['subagent']> }>
 
+/** A parent in a running turn whose sub-agent on another provider runs its task. */
+async function runningChild(h: ReturnType<typeof harness>, task = 'Review src/a.ts') {
+  await h.orchestrator.listModels('claude-code')
+  const first = h.sessions.length
+  // Not a Git checkout, so no checkpoint slows the child's first turn.
+  const parent = await h.orchestrator.startThread('codex', h.directory, { approval: 'full' })
+  const parentOptions = h.started[first]!.options
+  h.sessions[first]!.emit({
+    type: 'turn.started',
+    turn: { id: `turn-${first}`, threadId: parent.id, status: 'running', createdAt: Date.now() },
+  })
+  await expect(
+    callTool(parentOptions, 'start_agent', { provider: 'claude-code', task }),
+  ).resolves.toMatchObject({ status: 'running' })
+  await until(() => h.sessions[first + 1]?.sent.length === 1)
+  const childSession = h.sessions[first + 1]!
+  const childId = `thread-${first + 2}`
+  childSession.emit({
+    type: 'turn.started',
+    turn: { id: childSession.turnId, threadId: childId, status: 'running', createdAt: Date.now() },
+  })
+  return { parent, parentOptions, childSession, childId }
+}
+
 describe('sub-agents on another provider', () => {
   it('runs a child on another provider in the parent checkout and hands its answer back', async () => {
     const h = harness()
     await h.orchestrator.listModels('claude-code')
-    const workspace = process.cwd()
+    const workspace = h.directory
     const parent = await h.orchestrator.startThread('codex', workspace, { approval: 'full' })
     const parentOptions = h.started[0]!.options
     const reserved = parentOptions.mcpServers?.find((entry) => entry.id === AGENT_TOOLS_SERVER_ID)
@@ -290,7 +317,7 @@ describe('sub-agents on another provider', () => {
   it('asks the user before a start in a chat that asks first', async () => {
     const h = harness()
     await h.orchestrator.listModels('claude-code')
-    const asking = await h.orchestrator.startThread('codex', process.cwd(), { approval: 'ask' })
+    const asking = await h.orchestrator.startThread('codex', h.directory, { approval: 'ask' })
     h.sessions[0]!.emit({
       type: 'turn.started',
       turn: { id: 'ask-turn', threadId: asking.id, status: 'running', createdAt: Date.now() },
@@ -311,6 +338,34 @@ describe('sub-agents on another provider', () => {
       threadId: asking.id,
       event: { type: 'approval.resolved', id: asked[0]!.id },
     })
+  })
+
+  it('stops a running child when the parent stops, and on Stop all', async () => {
+    const h = harness()
+    const { parent, childSession } = await runningChild(h)
+    await h.orchestrator.interrupt(parent.id)
+    expect(h.sessions[0]!.interrupted).toBe(true)
+    expect(childSession.interrupted).toBe(true)
+    expect(subagentRows(h.parentEvents, parent.id).at(-1)!.subagent.state).toBe('interrupted')
+
+    const second = await runningChild(h, 'Look again')
+    await h.orchestrator.panicStop()
+    expect(second.childSession.interrupted).toBe(true)
+    expect(h.store.subagents.ofParent(second.parent.id)[0]).toMatchObject({ state: 'stopped' })
+  })
+
+  it('ends the children with a closed parent and deletes them with it', async () => {
+    const h = harness()
+    const { parent, childSession, childId } = await runningChild(h)
+    await h.orchestrator.close(parent.id)
+    expect(childSession.disposed).toBe(true)
+    expect(subagentRows(h.parentEvents, parent.id).at(-1)!.subagent.state).toBe('interrupted')
+    // Its transcript stays readable until the parent goes.
+    expect(h.store.thread(childId)).toBeDefined()
+    h.store.deleteThread(parent.id)
+    h.orchestrator.forgetDeletedThread(parent.id)
+    expect(h.store.thread(childId)).toBeUndefined()
+    expect(h.orchestrator.subagents(parent.id)).toEqual([])
   })
 
   it('reserves the agent tools server id', async () => {

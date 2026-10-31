@@ -405,6 +405,40 @@ export class SubagentBroker implements AgentToolsBroker {
     }
   }
 
+  /** Stops a chat's unfinished sub-agents, as stopping the chat does. */
+  async stopFor(parentThreadId: string): Promise<void> {
+    const stopping = [...this.#live.values()].filter(
+      (live) =>
+        live.run.parentThreadId === parentThreadId && !FINISHED_SUBAGENT_STATES.has(live.run.state),
+    )
+    await Promise.all(stopping.map((live) => this.#stop(live)))
+  }
+
+  /**
+   * Settles unfinished runs as stopped without stopping their chats: the caller
+   * ends those itself, as closing the parent and Stop all do. Without an id,
+   * every chat's runs.
+   */
+  release(parentThreadId?: string): void {
+    for (const live of this.#live.values()) {
+      if (parentThreadId !== undefined && live.run.parentThreadId !== parentThreadId) continue
+      if (FINISHED_SUBAGENT_STATES.has(live.run.state)) continue
+      live.stopRequested = true
+      this.#finish(live, 'stopped')
+    }
+  }
+
+  /** Lets go of a deleted chat's runs. */
+  forget(parentThreadId: string): void {
+    for (const [itemId, live] of this.#live) {
+      if (live.run.parentThreadId !== parentThreadId) continue
+      clearTimeout(live.timer)
+      this.#live.delete(itemId)
+      if (live.run.threadId) this.#byChild.delete(live.run.threadId)
+    }
+    this.#allowed.delete(parentThreadId)
+  }
+
   /** The sub-agents TasteCode started for a chat, newest first, as `thread.subagents` lists them. */
   list(parentThreadId: string): ThreadSubagent[] {
     return this.#runs.ofParent(parentThreadId).map((run) => {
