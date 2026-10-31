@@ -1785,7 +1785,7 @@ const JUMP_HANDOVER_PX = JUMP_MIN_PX_PER_MS * JUMP_EASE_MS
 /** How long after a turn ends its last changes still glide into view. */
 const FOLLOW_SETTLE_MS = 1_200
 /** The working rail's footprint above its turn's first response: --working-rail-h in thread.css. */
-const WORKING_RAIL_PX = 42
+const WORKING_RAIL_PX = 38
 /** How long after a chat opens its rows are still measuring themselves in. */
 const OPEN_SETTLE_MS = 400
 /** A requested end at most this many viewports away glides there; a further one is written at once. */
@@ -2005,6 +2005,15 @@ const ThreadFrameRow = memo(function ThreadFrameRow({
         item.id.startsWith('design-not-applicable-'))) &&
     !(item.type === 'message' && item.role === 'user') &&
     !(nextVisibleItem.type === 'message' && nextVisibleItem.role === 'user')
+  const nextShownItem = compactToNext
+    ? nextItemWithARow(
+        items,
+        liveItems,
+        activityLead && activityGroup ? activityGroup.lastIndex + 1 : index + 1,
+      )
+    : undefined
+  const workToNext =
+    (activityLead || isActivity(item)) && nextShownItem !== undefined && isActivity(nextShownItem)
   const settling = settlingTurnId === item.turnId
   const railAnchor = showWorkingRail && live && presentation?.firstResponseIndex === index
   const activityComplete = presentation?.complete === true && !live && presentation.design !== true
@@ -2031,7 +2040,7 @@ const ThreadFrameRow = memo(function ThreadFrameRow({
 
   return (
     <div
-      className={`thread__row${suppressed ? ' is-suppressed' : ''}${compactToNext ? ' is-compact-to-next' : ''}${entering ? ' is-entering' : ''}${settling ? ' is-settling' : ''}${railAnchor ? ' is-rail-anchor' : ''}`}
+      className={`thread__row${suppressed ? ' is-suppressed' : ''}${compactToNext ? ' is-compact-to-next' : ''}${workToNext ? ' is-work-to-next' : ''}${entering ? ' is-entering' : ''}${settling ? ' is-settling' : ''}${railAnchor ? ' is-rail-anchor' : ''}`}
       data-index={index}
       // The virtual list writes the row's position itself (directDomUpdates).
       ref={measureElement}
@@ -2060,6 +2069,21 @@ const ThreadFrameRow = memo(function ThreadFrameRow({
     </div>
   )
 })
+
+/** The next item that draws anything: reasoning with no text takes no row. */
+function nextItemWithARow(
+  items: readonly Item[],
+  liveItems: ReadonlyMap<number, LiveItemUpdate>,
+  from: number,
+): Item | undefined {
+  let index = from
+  let item = threadItemAt(items, liveItems, index)
+  while (item && isBlankReasoning(item)) {
+    index += 1
+    item = threadItemAt(items, liveItems, index)
+  }
+  return item
+}
 
 /** Roughly one paragraph, for rows whose height depends on their text. */
 const DEFAULT_ROW_ESTIMATE = 72

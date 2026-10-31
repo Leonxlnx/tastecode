@@ -148,11 +148,11 @@ describe('Thread virtual rows', () => {
     )
     const runway = view.container.querySelector<HTMLElement>('.thread__runway')!
     const rail = view.container.querySelector<HTMLElement>('.thread__rail')!
-    // The rail's 42px sit at the end of the runway, under the rail.
-    expect(runway.style.height).toBe('102px')
+    // The rail's 38px sit at the end of the runway, under the rail.
+    expect(runway.style.height).toBe('98px')
     expect(rail.style.transform).toBe('translateY(60px)')
 
-    // The answer row pads its top by the same 42px for the rail.
+    // The answer row pads its top by the same 38px for the rail.
     heights = [60, 82]
     act(() =>
       store.publish({

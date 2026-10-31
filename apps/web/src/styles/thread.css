@@ -47,7 +47,7 @@
      stay mounted for the whole turn; is-rail-anchor, or the runway's end before
      any response row exists, reserves exactly this much space for it to overlay
      (WORKING_RAIL_PX in Thread.tsx). */
-  --working-rail-h: 42px;
+  --working-rail-h: 38px;
 }
 
 /* Holds the full scroll height while only the visible rows exist. */
@@ -72,6 +72,13 @@
   padding-bottom: 4px;
 }
 
+/* Work rows in a row are one list: each line's 30px box touches the next, and
+   the margins and padding they carry against prose fall away. An open row keeps
+   them, so its details do not run into the line below. */
+.thread__row.is-work-to-next > :is(.activity, .aux):not([data-expanded='true']) {
+  margin-bottom: -8px;
+}
+
 .thread__row.is-suppressed {
   height: 0;
   overflow: hidden;
@@ -81,6 +88,12 @@
 /* The working rail overlays this padding; see --working-rail-h. */
 .thread__row.is-rail-anchor {
   padding-top: var(--working-rail-h);
+}
+
+/* A work row's text sits higher in its box than a reply's, so it starts a little
+   earlier to keep the same distance from the rail. */
+.thread__row.is-rail-anchor > :is(.activity, .aux) {
+  margin-top: -4px;
 }
 
 /* One mount for the whole turn, positioned like a row rather than rendered as
@@ -852,14 +865,14 @@ button.thread__older:hover {
 /* A settled turn's work reads like its reply: the whole column, notes in the
    reply's ink, and each run of work one line with its chevron at the edge. */
 .activity__body--work {
-  gap: 6px;
+  gap: 0;
   margin: 6px 0 2px;
   padding-left: 0;
   border-left: 0;
 }
 
 .activity__body--work > .activity__message {
-  padding: 4px 0;
+  padding: 8px 0;
   color: var(--response-text);
 }
 
