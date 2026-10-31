@@ -2341,6 +2341,49 @@
           <li>
             <label
               ><input type="checkbox" /><span
+                >Agents tab lists the chat's subagents
+                <span class="d"
+                  >the engine's own subagents and the ones TasteCode started on another provider, a
+                  Running group above a Finished group, newest first; each row shows its name, the
+                  engine and model for another provider, its task, tools, tokens and time, and
+                  "Needs approval" while it waits; rows on transcript pages not loaded yet come from
+                  thread.subagents; a hidden tab neither subscribes nor asks, and streamed text
+                  never rescans the list</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Open a subagent from the Agents tab
+                <span class="d"
+                  >a row opens its detail in the tab: one TasteCode started shows its own chat
+                  read-only and live, with its approvals and questions answerable and a Stop button;
+                  one the engine runs itself shows its task, current tool and report with
+                  "Transcript not available for this engine yet"; the back arrow returns to the
+                  list</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Subagents on another provider follow their chat
+                <span class="d"
+                  >a chat in Ask mode asks once per start (Allow once, Always this session, Deny,
+                  Stop the turn), and an unanswered start ends with its turn; stopping the chat
+                  stops its subagents, closing it ends them, deleting it deletes them, and Stop all
+                  settles them as stopped; after a restart an unfinished one shows as interrupted;
+                  results the agent never read go in front of the chat's next prompt, once</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
                 >Two versions switchable in Settings
                 <span class="d"
                   >Classic and Inbox; Inbox settles untouched chats after N days (new profiles start

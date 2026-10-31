@@ -1,0 +1,284 @@
+/* ---------- Agents tab ----------
+
+   The chat's subagents as a quiet list: a small label per group, then rows
+   that keep the chat row's anatomy. Name first, the engine and task in the
+   muted tone, figures in mono on the right. Loaded with the tab, never at
+   startup. */
+
+.workspace-agents {
+  height: 100%;
+  overflow-y: auto;
+  padding: 10px 8px 16px;
+}
+
+.agents-group + .agents-group {
+  margin-top: 14px;
+}
+
+.agents-group__label {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin: 0;
+  padding: 4px 8px 6px;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  font-weight: 500;
+}
+
+.agents-group__count {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.agents-group__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.agents-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 6px 8px;
+  border-radius: var(--r-md);
+}
+
+.agents-row__lead {
+  display: inline-flex;
+  flex: none;
+  justify-content: center;
+  width: 14px;
+  color: var(--text-3);
+}
+
+.agents-row__text {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  gap: 2px;
+}
+
+.agents-row__name,
+.agents-row__detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agents-row__name {
+  color: var(--text);
+  font-size: var(--t-sm);
+  font-weight: 500;
+}
+
+.agents-row__detail {
+  color: var(--text-3);
+  font-size: var(--t-xs);
+}
+
+.agents-row__meta {
+  display: inline-flex;
+  flex: none;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+
+.agents-row__attention {
+  color: var(--text-2);
+  font-size: var(--t-xs);
+}
+
+/* A narrow panel keeps the name and the task readable: the token count goes first, as in the chat. */
+@container workspace-panel (max-width: 520px) {
+  .agents-row .subagent__part--tokens {
+    display: none;
+  }
+
+  .agents-row .subagent__part--tokens:first-child + .subagent__part::before {
+    content: none;
+  }
+}
+
+/* Rows open their detail. Quiet like the panel's other controls: a surface on
+   hover, the focus ring on keyboard focus, nothing else moves. */
+.agents-group__list > li {
+  display: block;
+}
+
+button.agents-row {
+  width: 100%;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--dur-hover) ease;
+}
+
+button.agents-row:hover {
+  background: var(--surface-2);
+}
+
+button.agents-row:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-inset);
+}
+
+/* ---------- One subagent ----------
+
+   A header with the way back, the name and the engine, Stop while it runs;
+   the status line the row shows; then its own chat, read-only, or for an
+   engine's own subagent what its row knows. */
+
+.agent-detail {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.agent-detail__head {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px 2px 8px;
+}
+
+.agent-detail__back,
+.agent-detail__stop {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  color: var(--text-3);
+  font: inherit;
+  cursor: pointer;
+  transition:
+    background-color var(--dur-hover) ease,
+    color var(--dur-hover) ease;
+}
+
+.agent-detail__back {
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: var(--r-md);
+}
+
+.agent-detail__stop {
+  gap: 5px;
+  height: 24px;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  color: var(--text-2);
+  font-size: var(--t-xs);
+}
+
+.agent-detail__back:is(:hover, :focus-visible),
+.agent-detail__stop:is(:hover, :focus-visible):not(:disabled) {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.agent-detail__back:focus-visible,
+.agent-detail__stop:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.agent-detail__stop:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.agent-detail__title {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  gap: 1px;
+}
+
+.agent-detail__name,
+.agent-detail__engine {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-detail__name {
+  color: var(--text);
+  font-size: var(--t-sm);
+  font-weight: 500;
+}
+
+.agent-detail__engine {
+  color: var(--text-3);
+  font-size: var(--t-xs);
+}
+
+.agent-detail__status {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  padding: 2px 12px 10px 40px;
+  border-bottom: 1px solid var(--line);
+}
+
+.agent-detail__error {
+  color: var(--error);
+  font-size: var(--t-xs);
+}
+
+.agent-detail__transcript {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.agent-detail__snapshot {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px 16px 16px 40px;
+}
+
+.agent-detail__section + .agent-detail__section {
+  margin-top: 14px;
+}
+
+.agent-detail__label {
+  margin: 0 0 4px;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  font-weight: 500;
+}
+
+.agent-detail__text {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--t-sm);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.agent-detail__text--report {
+  color: var(--text);
+  white-space: pre-wrap;
+}
+
+.agent-detail__note {
+  margin: 16px 0 0;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+}
