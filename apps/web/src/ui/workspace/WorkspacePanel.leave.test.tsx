@@ -74,6 +74,26 @@ describe('WorkspacePanel leaving', () => {
     expect(panel.style.getPropertyValue('--workspace-panel-leave-w')).toBe('')
   })
 
+  it('knows its width when hidden before the browser rendered a frame of it open', () => {
+    // An observer that has not reported yet, as in the frame the panel opened.
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    )
+    const { container, rerender } = render(<WorkspacePanel {...props} open={false} />)
+    const panel = container.querySelector<HTMLElement>('.workspace-panel')!
+
+    rerender(<WorkspacePanel {...props} />)
+    rerender(<WorkspacePanel {...props} open={false} />)
+
+    expect(panel.hasAttribute('data-leaving')).toBe(true)
+    expect(panel.style.getPropertyValue('--workspace-panel-leave-w')).toBe('520px')
+  })
+
   it('drops the leaving frame at once when the panel opens again mid-fade', () => {
     const { container, rerender } = render(<WorkspacePanel {...props} />)
     const panel = container.querySelector<HTMLElement>('.workspace-panel')!

@@ -383,6 +383,7 @@ function WorkspacePanelComponent(props: {
   // chat underneath already has its width back.
   const openWidth = useRef(0)
   const wasOpen = useRef(props.open)
+  // Edge drags and window resizes while open keep the width current.
   useEffect(() => {
     const panel = panelElement.current
     if (bottom || !props.open || !panel || typeof ResizeObserver === 'undefined') return
@@ -399,6 +400,13 @@ function WorkspacePanelComponent(props: {
     const closing = wasOpen.current && !props.open
     wasOpen.current = props.open
     if (!panel || bottom) return
+    // Measured here as well as by the observer: a panel hidden before the
+    // browser rendered a frame of it open would otherwise have no width yet.
+    // The layout this reads is the one the open has to compute anyway.
+    if (props.open) {
+      const width = panel.getBoundingClientRect().width
+      if (width > 0) openWidth.current = width
+    }
     const settle = () => {
       panel.removeAttribute('data-leaving')
       panel.style.removeProperty('--workspace-panel-leave-w')
