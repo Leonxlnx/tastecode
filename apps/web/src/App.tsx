@@ -815,9 +815,15 @@ export function App() {
     threadFrameStore.subscribeStructure,
     threadFrameStore.getStructureSnapshot,
   )
+  /** Draw into the focused column, whatever it shows. */
   const setThread = useCallback(
-    (next: ThreadState) => threadFrameStore.publish(next),
-    [threadFrameStore],
+    (next: ThreadState) => threadController.frames.publish(next),
+    [threadController],
+  )
+  /** Draw a chat's state if a column shows it; a hidden chat is only cached. */
+  const publishThread = useCallback(
+    (threadId: string, next: ThreadState) => threadController.publish(threadId, next),
+    [threadController],
   )
   const [loadingThreadId, setLoadingThreadId] = useState<string | undefined>()
   const [historyFailure, setHistoryFailure] = useState<
@@ -2137,11 +2143,10 @@ export function App() {
   const settleQueuedSubmissions = useCallback(
     (threadId: string, items: QueuedTurn[], snapshot?: ThreadState) => {
       const rejected = threadController.settleSubmissions(threadId, items, snapshot)
-      if (threadId === activeIdRef.current)
-        setThread(threadController.snapshot(threadId) ?? emptyThread)
+      publishThread(threadId, threadController.snapshot(threadId) ?? emptyThread)
       for (const submission of rejected) restoreRejectedDraft(threadId, submission)
     },
-    [restoreRejectedDraft],
+    [restoreRejectedDraft, publishThread],
   )
   const acceptSidebarSettings = useCallback(
     (settings: SidebarSettings) => {
@@ -2389,12 +2394,14 @@ export function App() {
     refreshWorkspaceAfterCompletion,
     refreshUsage,
     usageController,
-    threadFrameStore,
     pruneThreadStateCache,
     pruneQueueMetadata,
     isThreadCacheProtected,
     refreshProviderThreadHistory,
     setThreadDesignMode,
+    // The controller, not a column's frame store: a store that changed identity
+    // here would close the transport in this effect's cleanup.
+    threadController,
   ])
 
   useEffect(() => {
@@ -4616,7 +4623,7 @@ export function App() {
           if (current !== undefined && current.activeTurn?.id === optimisticTurnId) {
             const next: ThreadState = { ...current, running: false, activeTurn: undefined }
             threadController.update(provisionalId, next)
-            if (activeIdRef.current === provisionalId) setThread(next)
+            publishThread(provisionalId, next)
           }
           releasePendingStart()
           restoreDraftAfterFailedStart()
@@ -4637,7 +4644,7 @@ export function App() {
           attachments,
         )
         threadController.update(targetId, provisional)
-        if (activeIdRef.current === targetId) setThread(provisional)
+        publishThread(targetId, provisional)
         setThreadRevealRequest((request) => request + 1)
         threadId = await pending.promise
         if (!threadId) {
@@ -4667,10 +4674,8 @@ export function App() {
         )
         optimisticTurnId = next.activeTurn?.id
         threadController.update(threadId, next)
-        if (threadId === activeIdRef.current) {
-          setThread(next)
-          setThreadRevealRequest((request) => request + 1)
-        }
+        publishThread(threadId, next)
+        if (threadId === activeIdRef.current) setThreadRevealRequest((request) => request + 1)
       } else if (wasRunning && steering) {
         const next = appendUserMessage(
           before,
@@ -4680,7 +4685,7 @@ export function App() {
           attachments,
         )
         threadController.update(threadId, next)
-        if (threadId === activeIdRef.current) setThread(next)
+        publishThread(threadId, next)
       }
       if (optimisticQueueId) {
         updateQueue(threadId, (items) => [
@@ -4855,7 +4860,7 @@ export function App() {
             if (!wasRunning) {
               const reconciled = pending ? removePendingSubmission(current, pending) : current
               threadController.update(threadId, reconciled)
-              if (threadId === activeIdRef.current) setThread(reconciled)
+              publishThread(threadId, reconciled)
             }
             threadController.forgetSubmission(threadId, optimisticItemId)
           }
@@ -4887,7 +4892,7 @@ export function App() {
               next = { ...next, running: false, activeTurn: undefined }
             }
             threadController.update(threadId, next)
-            if (threadId === activeIdRef.current) setThread(next)
+            publishThread(threadId, next)
           }
           restoreRejectedDraft(threadId, { text, attachments })
         } else if (steering) {
@@ -4895,7 +4900,7 @@ export function App() {
           if (current) {
             const next = removeOptimisticMessage(current, optimisticItemId)
             threadController.update(threadId, next)
-            if (threadId === activeIdRef.current) setThread(next)
+            publishThread(threadId, next)
           }
         }
         reportError(error instanceof Error ? error.message : String(error))

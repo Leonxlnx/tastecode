@@ -418,6 +418,132 @@ describe('history gap recovery', () => {
   })
 })
 
+describe('two visible columns', () => {
+  const textOf = (store: ThreadController['columns'][number]) =>
+    threadItems(store.getSnapshot())[0]?.text
+  const stubFrames = () => {
+    const frames: FrameRequestCallback[] = []
+    vi.stubGlobal(
+      'requestAnimationFrame',
+      vi.fn((callback: FrameRequestCallback) => frames.push(callback)),
+    )
+    vi.stubGlobal('cancelAnimationFrame', vi.fn())
+    return frames
+  }
+
+  it('streams both shown chats in full and draws them in one frame into their own columns', () => {
+    const frames = stubFrames()
+    const controller = new ThreadController(new TestTransport())
+    controller.activate('left')
+    controller.show(1, 'right')
+    for (const id of ['left', 'right']) {
+      controller.setCursor(id, 0)
+      controller.receive({ threadId: id, event: started, seq: 1 }, unprotected)
+    }
+    const left = vi.fn()
+    const right = vi.fn()
+    controller.columns[0].subscribe(left)
+    controller.columns[1].subscribe(right)
+    for (let index = 0; index < 50; index += 1) {
+      controller.receive({ threadId: 'left', event: delta, seq: index + 2 }, unprotected)
+      controller.receive({ threadId: 'right', event: delta, seq: index + 2 }, unprotected)
+    }
+    expect(frames).toHaveLength(1)
+    frames[0]!(0)
+    expect(left).toHaveBeenCalledOnce()
+    expect(right).toHaveBeenCalledOnce()
+    expect(textOf(controller.columns[0])).toBe('x'.repeat(50))
+    expect(textOf(controller.columns[1])).toBe('x'.repeat(50))
+    controller.suspend()
+  })
+
+  it('keeps a structural event in one column from cancelling the other column’s frame', () => {
+    const frames = stubFrames()
+    const controller = new ThreadController(new TestTransport())
+    controller.activate('left')
+    controller.show(1, 'right')
+    for (const id of ['left', 'right']) {
+      controller.setCursor(id, 0)
+      controller.receive({ threadId: id, event: started, seq: 1 }, unprotected)
+    }
+    controller.receive({ threadId: 'right', event: delta, seq: 2 }, unprotected)
+    controller.receive({ threadId: 'left', event: delta, seq: 2 }, unprotected)
+    controller.receive(
+      {
+        threadId: 'left',
+        event: { type: 'turn.completed', turnId: 'turn', status: 'completed' },
+        seq: 3,
+      },
+      unprotected,
+    )
+    expect(cancelAnimationFrame).not.toHaveBeenCalled()
+    expect(textOf(controller.columns[0])).toBe('x')
+    frames[0]!(0)
+    expect(textOf(controller.columns[1])).toBe('x')
+    controller.suspend()
+  })
+
+  it('keeps the lighter background path for a chat no column shows', () => {
+    stubFrames()
+    const controller = new ThreadController(new TestTransport())
+    controller.activate('left')
+    controller.show(1, 'right')
+    // Neither chat has a loaded history, so only a shown one keeps its text.
+    for (const id of ['right', 'hidden']) {
+      controller.receive({ threadId: id, event: started }, unprotected)
+      controller.receive({ threadId: id, event: delta }, unprotected)
+    }
+    expect(controller.isVisible('right')).toBe(true)
+    expect(controller.isVisible('hidden')).toBe(false)
+    expect(threadItems(controller.flush('right'))[0]?.text).toBe('x')
+    expect(threadItems(controller.flush('hidden'))[0]?.text).toBe('')
+    controller.suspend()
+  })
+
+  it('never prunes or compacts the chat shown beside the focused one', () => {
+    const controller = new ThreadController(new TestTransport())
+    controller.activate('left')
+    controller.show(1, 'right')
+    for (let index = 0; index < 20; index += 1) {
+      controller.update('thread-' + index, reduce(emptyThread, started))
+      controller.setCursor('thread-' + index, 1)
+    }
+    const large = { ...started, item: { ...started.item, text: 'x'.repeat(512 * 1024) } }
+    controller.update('right', { ...reduce(emptyThread, large), running: true })
+    controller.setCursor('right', 1)
+    controller.prune(unprotected)
+    expect(controller.snapshot('right')).toBeDefined()
+    expect(controller.compact('right', false)).toBe(false)
+    expect(controller.cursor('right')).toBe(1)
+    controller.show(1, undefined)
+    expect(controller.compact('right', false)).toBe(true)
+  })
+
+  it('publishes the cached state when a column starts showing a chat', () => {
+    const controller = new ThreadController(new TestTransport())
+    const cached = reduce(emptyThread, { ...started, item: { ...started.item, text: 'saved' } })
+    controller.update('right', cached)
+    controller.activate('left')
+    controller.show(1, 'right')
+    expect(controller.columns[1].getSnapshot()).toBe(cached)
+    expect(controller.storeFor('right')).toBe(controller.columns[1])
+    expect(controller.storeFor('elsewhere')).toBeUndefined()
+  })
+
+  it('moves the active chat with focus and keeps each column’s store', () => {
+    const controller = new ThreadController(new TestTransport())
+    controller.activate('left')
+    controller.show(1, 'right')
+    expect(controller.frames).toBe(controller.columns[0])
+    controller.focus(1)
+    expect(controller.frames).toBe(controller.columns[1])
+    controller.activate('other')
+    expect(controller.shown(1)).toBe('other')
+    expect(controller.shown(0)).toBe('left')
+    expect(controller.storeFor('left')).toBe(controller.columns[0])
+  })
+})
+
 describe('paged history', () => {
   const turn = (index: number, seq: number) => ({
     seq,
