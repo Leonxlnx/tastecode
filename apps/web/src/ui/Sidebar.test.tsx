@@ -128,6 +128,66 @@ function controlledIdleCallbacks() {
 }
 
 describe('Sidebar chat actions', () => {
+  it('opens a chat beside the active one from its menu or with Alt+click, and marks it', async () => {
+    const onSelectSession = vi.fn()
+    const onOpenSessionBeside = vi.fn()
+    const project = {
+      path: '/work/project',
+      name: 'project',
+      pinned: false,
+      sessions: [
+        session('active', 'Active chat'),
+        session('beside', 'Beside chat'),
+        session('other', 'Other chat'),
+      ],
+    }
+    render(
+      <Sidebar
+        projects={[project]}
+        activeProjectPath="/work/project"
+        activeSessionId="active"
+        besideSessionId="beside"
+        onOpenSessionBeside={onOpenSessionBeside}
+        account={undefined}
+        providerName="Codex"
+        collapsed={false}
+        width={248}
+        onWidthChange={vi.fn()}
+        onClose={vi.fn()}
+        onAddProject={vi.fn()}
+        onNewSession={vi.fn()}
+        onSelectSession={onSelectSession}
+        onRenameProject={vi.fn()}
+        onRemoveProject={vi.fn()}
+        onTogglePin={vi.fn()}
+        onRenameSession={vi.fn()}
+        onDeleteSession={vi.fn()}
+        onArchiveProject={vi.fn()}
+        onReorderSession={vi.fn()}
+        onOpenSearch={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />,
+    )
+    const row = (title: string) => screen.getByRole('button', { name: new RegExp(`^${title},`) })
+
+    expect(row('Beside chat').closest('.sessrow')!.classList.contains('is-beside')).toBe(true)
+    expect(row('Active chat').closest('.sessrow')!.classList.contains('is-beside')).toBe(false)
+
+    fireEvent.click(row('Other chat'), { altKey: true })
+    expect(onOpenSessionBeside).toHaveBeenCalledWith('other')
+    expect(onSelectSession).not.toHaveBeenCalled()
+
+    fireEvent.contextMenu(row('Other chat'))
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Open beside' }))
+    expect(onOpenSessionBeside).toHaveBeenCalledTimes(2)
+
+    // The chats already on screen have nothing to open beside.
+    fireEvent.click(row('Beside chat'), { altKey: true })
+    expect(onSelectSession).toHaveBeenCalledWith('beside')
+    fireEvent.contextMenu(row('Active chat'))
+    await screen.findByRole('menuitem', { name: 'Rename chat' })
+    expect(screen.queryByRole('menuitem', { name: 'Open beside' })).toBeNull()
+  })
   it('shows placeholder projects instead of an empty list while projects load', () => {
     const view = renderProjectCatalog([], undefined, undefined, true)
 
