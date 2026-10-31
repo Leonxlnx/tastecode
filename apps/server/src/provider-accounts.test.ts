@@ -357,8 +357,10 @@ describe('finding further accounts on the machine', () => {
     const { folder, accounts } = machine()
     const personal = folder('.cli_personal', ['sessions/'])
     const laptop = folder('.cli-work-laptop', ['config.toml'])
+    const copywriting = folder('.cli-copywriting', ['config.toml'])
     const found = accounts.detect()
     expect(found.map(({ home, label }) => ({ home, label }))).toEqual([
+      { home: copywriting, label: 'Copywriting' },
       { home: laptop, label: 'Work laptop' },
       { home: personal, label: 'Personal' },
     ])
@@ -371,6 +373,8 @@ describe('finding further accounts on the machine', () => {
     folder('.cli.bak', ['config.toml'])
     folder('.cli-backup', ['config.toml'])
     folder('.cli_old2', ['config.toml'])
+    folder('.cli.backup-pre-move-20260813-020621', ['config.toml'])
+    folder('.cli-work-old', ['config.toml'])
     folder('.client', ['config.toml'])
     folder('.cli-', ['config.toml'])
     writeFileSync(path.join(home, '.cli.json'), '{}\n')

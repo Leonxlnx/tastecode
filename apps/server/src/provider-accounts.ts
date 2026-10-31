@@ -502,8 +502,11 @@ export class ProviderAccounts implements AccountDirectory {
 /** The longest account label the contract takes. */
 const LABEL_LIMIT = 80
 
-/** Folder names that are a copy kept aside, not an account in use. */
-const SET_ASIDE = /(?:^|[-_.])(?:bak|backup|old|orig|copy|tmp|temp)\d*$/i
+/**
+ * Folder names that are a copy kept aside, not an account in use: the word as
+ * a part of its own anywhere in the name, as in `.codex.backup-20260813`.
+ */
+const SET_ASIDE = /(?:^|[-_.])(?:bak|backup|old|orig|copy|tmp|temp)\d*(?=$|[-_.])/i
 
 /**
  * The folders whose siblings can be further accounts: the default account's,
