@@ -222,11 +222,13 @@ describe('settings viewport layout', () => {
     renderSettings()
 
     expect(screen.getByRole('heading', { name: 'Theme', level: 2 })).toBeTruthy()
-    expect(screen.getAllByRole('radio').map((option) => option.getAttribute('value'))).toEqual([
-      'system',
-      'light',
-      'dark',
-    ])
+    expect(
+      within(screen.getByRole('group', { name: 'Theme' }))
+        .getAllByRole('radio')
+        .map((option) => option.getAttribute('value')),
+    ).toEqual(['system', 'light', 'dark'])
+    // One window background for both modes, after their rows.
+    expect(screen.getByRole('heading', { name: 'Window background', level: 2 })).toBeTruthy()
 
     expect(screen.getByRole('heading', { name: 'Light mode' })).toBeTruthy()
     expect(screen.getByRole('heading', { name: 'Dark mode' })).toBeTruthy()
@@ -513,9 +515,11 @@ describe('settings dialog keyboard behavior', () => {
     renderSettings()
     const dialog = screen.getByRole('dialog', { name: 'Settings' })
     const first = screen.getByRole('button', { name: 'Back to app' })
-    const last = within(screen.getByRole('region', { name: 'Dark mode' })).getByRole('combobox', {
-      name: 'Sidebar translucency',
-    })
+    // The chosen Window background is the page's last tab stop.
+    const last = within(screen.getByRole('radiogroup', { name: 'Window background' })).getByRole(
+      'radio',
+      { name: 'None' },
+    )
 
     last.focus()
     fireEvent.keyDown(last, { key: 'Tab' })

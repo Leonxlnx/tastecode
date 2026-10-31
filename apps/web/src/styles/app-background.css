@@ -1,0 +1,251 @@
+/*
+ * Window background (Settings › Appearance). This sheet loads only while one
+ * is chosen, so None costs nothing and looks exactly as before.
+ *
+ * One layer (.app-bg) paints the background behind the whole window, or
+ * nothing for Transparent, where the OS backdrop shows instead. The sidebar
+ * and the chat pane turn into tinted panes over it; the prompt bar, menus,
+ * code and the workspace panel keep their own opaque surfaces. The title
+ * bar stays opaque, as it does with sidebar glass: the native caption
+ * buttons on Windows paint a solid colour beside it.
+ *
+ * Everything here is static except the aurora, which moves in half-second
+ * steps on the compositor (the window repaints twice a second, not sixty
+ * times), pauses behind Settings and stands still under
+ * prefers-reduced-motion. Nothing in this sheet runs on a streamed delta; no
+ * pane uses backdrop-filter, and the picture arrives already blurred.
+ *
+ * The tokens below are the knobs to tune.
+ */
+
+:root[data-app-bg] {
+  /* How much of --bg the chat pane keeps over the background. */
+  --app-bg-stage: 74%;
+  /* How fast Sidebar translucency thins the sidebar (Medium is 0.35). */
+  --app-bg-rail-fade: 100%;
+  /* The dim laid over a picture. */
+  --app-bg-scrim: rgb(0 0 0 / 40%);
+  /* Grain strength; effects carry a trace of it so their gradients do not band. */
+  --app-bg-grain: 0.035;
+  --app-bg-aurora-a: color-mix(in srgb, var(--attention) 22%, transparent);
+  --app-bg-aurora-b: rgb(45 212 191 / 11%);
+  --app-bg-aurora-c: rgb(139 92 246 / 14%);
+  --app-bg-noise: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+:root[data-app-bg='image'] {
+  --app-bg-stage: 80%;
+}
+
+:root[data-app-bg='effect'] {
+  --app-bg-stage: 42%;
+}
+
+:root[data-app-bg][data-app-bg-effect='grain'] {
+  --app-bg-grain: 0.11;
+}
+
+:root[data-theme='light'][data-app-bg] {
+  --app-bg-stage: 80%;
+  --app-bg-rail-fade: 60%;
+  --app-bg-scrim: rgb(255 255 255 / 45%);
+  --app-bg-grain: 0.045;
+  --app-bg-aurora-a: color-mix(in srgb, var(--attention) 16%, transparent);
+  --app-bg-aurora-b: rgb(45 212 191 / 12%);
+  --app-bg-aurora-c: rgb(139 92 246 / 10%);
+}
+
+:root[data-theme='light'][data-app-bg='image'] {
+  --app-bg-stage: 86%;
+}
+
+:root[data-theme='light'][data-app-bg='effect'] {
+  --app-bg-stage: 52%;
+}
+
+:root[data-theme='light'][data-app-bg][data-app-bg-effect='grain'] {
+  --app-bg-grain: 0.12;
+}
+
+/* ---------- the layer ---------- */
+
+.app-bg {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  background: var(--bg);
+  pointer-events: none;
+  contain: strict;
+}
+
+.app-bg::before,
+.app-bg::after {
+  position: absolute;
+  inset: 0;
+  content: '';
+}
+
+/* A picture: the blurred display copy, then the dim over it. */
+.app-bg[data-mode='image']::before {
+  background: var(--app-bg-image, none) center / cover no-repeat;
+  opacity: 0;
+  transition: opacity 320ms var(--ease-out);
+}
+
+.app-bg[data-mode='image'][data-ready]::before {
+  opacity: 1;
+}
+
+.app-bg[data-mode='image']::after {
+  background: var(--app-bg-scrim);
+}
+
+/* Effects: gradients on ::before, grain on ::after. */
+.app-bg[data-mode='effect']::after {
+  background: var(--app-bg-noise) 0 0 / 180px 180px;
+  opacity: var(--app-bg-grain);
+}
+
+/* Glow: a soft light falling in from the top, tinted by the accent, and a
+   faint lift in the opposite corner. */
+.app-bg[data-effect='glow']::before {
+  background:
+    radial-gradient(
+      70% 60% at 62% 4%,
+      color-mix(in srgb, var(--attention) 24%, transparent),
+      transparent 74%
+    ),
+    radial-gradient(
+      50% 45% at 0% 100%,
+      color-mix(in srgb, var(--text) 7%, transparent),
+      transparent 72%
+    );
+}
+
+/* Grain: film grain over a slight diagonal lift. */
+.app-bg[data-effect='grain']::before {
+  background: linear-gradient(
+    165deg,
+    color-mix(in srgb, var(--text) 6%, transparent),
+    transparent 60%
+  );
+}
+
+/* Aurora: three slow bands. The layer is larger than the window so its turn
+   never shows an edge. */
+.app-bg[data-effect='aurora']::before {
+  inset: -18%;
+  background:
+    radial-gradient(42% 34% at 30% 32%, var(--app-bg-aurora-a), transparent 70%),
+    radial-gradient(38% 30% at 72% 52%, var(--app-bg-aurora-c), transparent 70%),
+    radial-gradient(46% 36% at 46% 82%, var(--app-bg-aurora-b), transparent 72%);
+  will-change: transform;
+  animation: app-bg-aurora 96s steps(192) infinite alternate;
+}
+
+@keyframes app-bg-aurora {
+  from {
+    transform: translate3d(-3%, -2%, 0) rotate(-5deg);
+  }
+
+  to {
+    transform: translate3d(3%, 2%, 0) rotate(5deg);
+  }
+}
+
+/* Settings covers the window: nobody sees the aurora move (covered-shell.test.ts). */
+.shell__body[data-covered] .app-bg[data-effect='aurora']::before {
+  animation-play-state: paused;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-bg[data-effect='aurora']::before {
+    animation: none;
+  }
+
+  .app-bg[data-mode='image']::before {
+    transition: none;
+  }
+}
+
+/* ---------- the panes over it ---------- */
+
+/* The prefix outranks the sidebar-glass rules in app.css, which paint these
+   same elements; data-glass, data-shell and data-theme are always set. */
+
+:root[data-app-bg][data-theme][data-shell][data-glass] body,
+:root[data-app-bg][data-theme][data-shell][data-glass] .shell__body,
+:root[data-app-bg][data-theme][data-shell][data-glass] .shell__body > .workspace-layout,
+:root[data-app-bg][data-theme][data-shell][data-glass] .stagehead {
+  background: transparent;
+}
+
+:root[data-app-bg][data-theme][data-shell][data-glass] .stage {
+  background: color-mix(in srgb, var(--bg) var(--app-bg-stage), transparent);
+}
+
+/* Sidebar translucency still decides how much shows through; Off keeps the
+   sidebar opaque. The collapsed flyout stays opaque as before. */
+:root[data-app-bg][data-theme][data-shell][data-glass] .rail-slot:not(.is-collapsed) .rail {
+  background: var(--app-bg-rail-pane);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+:root[data-app-bg][data-theme][data-shell][data-glass] {
+  --app-bg-rail-pane: color-mix(
+    in srgb,
+    var(--bg-rail-tint) calc(100% - var(--rail-glass, 0) * var(--app-bg-rail-fade)),
+    transparent
+  );
+}
+
+/* The stage's rounded top-left corner leaves a notch where the shell body
+   used to show the sidebar colour; fill just that notch with the sidebar's
+   pane so the raw background does not show as a wedge. */
+:root[data-app-bg][data-theme][data-shell][data-glass]
+  .shell:not(.is-narrow)
+  .shell__body
+  > .workspace-layout::before {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: var(--r-lg);
+  height: var(--r-lg);
+  background: radial-gradient(
+    circle at 100% 100%,
+    transparent calc(var(--r-lg) - 0.5px),
+    var(--app-bg-rail-pane) var(--r-lg)
+  );
+  content: '';
+  pointer-events: none;
+}
+
+/* The floating composer hid the transcript under it with a band of --bg,
+   which would sit as a solid strip on a see-through pane. Fade the
+   transcript itself out instead, sparing the scrollbar on the right. */
+:root[data-app-bg][data-theme][data-shell][data-glass]
+  .stage__conversation:not(.is-new-session)
+  > .composer::before {
+  background: none;
+}
+
+:root[data-app-bg][data-theme][data-shell][data-glass]
+  .stage__conversation:not(.is-new-session)
+  .thread {
+  mask-image:
+    linear-gradient(
+      to bottom,
+      #000 calc(100% - var(--composer-overlay-height)),
+      transparent calc(100% - var(--composer-overlay-height) + 12px)
+    ),
+    linear-gradient(#000, #000);
+  mask-position:
+    left top,
+    right top;
+  mask-repeat: no-repeat;
+  mask-size:
+    calc(100% - 10px) 100%,
+    10px 100%;
+}
