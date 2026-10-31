@@ -202,9 +202,9 @@ function openLiveMarkdownNode(
   }
 
   if (operation.node === 'table') {
-    // The completed table's wrapper: a controls row above a scroller. The
-    // controls row is empty while streaming but keeps its height, so the
-    // finished table lands exactly where the live one was.
+    // The completed table's wrapper: its controls, then a scroller. The
+    // controls are empty while streaming and take no room, as the finished
+    // table's float over its corner, so it lands exactly where the live one was.
     const wrapper = document.createElement('div')
     const controls = document.createElement('div')
     const scroller = document.createElement('div')

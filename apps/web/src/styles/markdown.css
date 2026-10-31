@@ -366,36 +366,35 @@
   white-space: nowrap;
 }
 
-/* A table reads like a code block: a 32px row with a quiet "table" label on
-   the prose edge and the actions on the right, above a rounded card. The
-   label is the wrapper's own first line, so the live table (Markdown.tsx),
-   whose controls row stays empty while it streams, shows the same row and
-   nothing moves when it completes. */
-.md [data-streamdown='table-wrapper']::before {
-  content: 'table';
-  display: block;
-  height: 32px;
-  color: var(--text-3);
-  font-family: var(--font-mono);
-  font-size: var(--t-xs);
-  line-height: 32px;
+/* A table needs no label: it is the card itself, with the same room above it
+   as below. */
+.md [data-streamdown='table-wrapper']:not(:first-child) {
+  margin-top: 14px;
 }
 
 /* Streamdown's table toolbar and menus rely on Tailwind utilities, which this
-   app does not load. The toolbar is lifted onto the label row like a code
-   block's actions: the same ghost buttons, centred, hanging 6.5px so the last
-   glyph ends on the card border, and fading in as a whole on hover or focus.
-   Menus stay out of document flow. */
+   app does not load. The toolbar sits in the card's top right corner, inside
+   the header row, and fades in as a whole on hover or focus. It takes the
+   header's fill, fading in from the left, so a header cell under it ends
+   softly instead of under the glyphs. The live table's controls are empty
+   while it streams and take no room. Menus stay out of document flow. */
 .md [data-streamdown='table-wrapper'] > div:first-child:not(:last-child) {
   position: absolute;
-  top: 2px;
-  right: -6.5px;
+  top: 1px;
+  right: 1px;
   z-index: 1;
   display: flex;
   align-items: center;
   gap: 2px;
+  padding: 0 2px 0 16px;
+  border-top-right-radius: calc(var(--r-lg) - 1px);
+  background: linear-gradient(to right, transparent, var(--surface) 16px);
   opacity: 0;
   transition: opacity var(--dur-hover) var(--ease-out);
+
+  &:empty {
+    display: none;
+  }
 
   > div {
     position: relative;
@@ -417,7 +416,7 @@
 
     &:hover,
     &:focus-visible {
-      background: var(--surface);
+      background: var(--surface-3);
       color: var(--text-2);
     }
 
