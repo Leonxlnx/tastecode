@@ -215,12 +215,17 @@ const INITIAL_PROJECT_RENDER_COUNT = 30
 const DEFERRED_PROJECT_RENDER_COUNT = 20
 const DEFERRED_PROJECT_RENDER_TIMEOUT_MS = 100
 const COLLAPSED_PROJECT_SESSION_COUNT = 5
+/** The first "Show more" lists three folds' worth; the next one lists every chat. */
+const MORE_PROJECT_SESSION_COUNT = COLLAPSED_PROJECT_SESSION_COUNT * 3
 const VIRTUALIZED_PROJECT_SESSION_COUNT = 64
 /** A 28px chat row plus the list's 2px row gap. */
 const VIRTUAL_SESSION_ROW_HEIGHT = 30
+/** Rows assumed in view until the rail has been measured. */
 const VIRTUAL_SESSION_VIEWPORT_ROWS = 16
 const VIRTUAL_SESSION_OVERSCAN = 6
-const VIRTUAL_SESSION_VIEWPORT_HEIGHT = VIRTUAL_SESSION_ROW_HEIGHT * VIRTUAL_SESSION_VIEWPORT_ROWS
+
+/** How much of a project's chat list shows: its first rows, three times that, or all. */
+type SessionFold = 'folded' | 'more' | 'all'
 const projectMenuTrigger = () => (
   <span className="dots">
     <Ellipsis size={16} aria-hidden />
@@ -1298,7 +1303,7 @@ const ProjectRow = memo(function ProjectRow(props: {
   const attention = useMemo(() => projectAttention(props.project), [props.project])
   const [open, setOpen] = useState(props.active)
   const [sessionsMounted, setSessionsMounted] = useState(props.active)
-  const [showAllSessions, setShowAllSessions] = useState(false)
+  const [sessionFold, setSessionFold] = useState<SessionFold>('folded')
   const [actionsReady, setActionsReady] = useState(false)
   const [renaming, setRenaming] = useState(false)
   const [confirming, setConfirming] = useState<'archive' | 'remove'>()
@@ -1389,7 +1394,7 @@ const ProjectRow = memo(function ProjectRow(props: {
                   setProjectOpen(!expanded)
                   return
                 }
-                if (expanded) setShowAllSessions(false)
+                if (expanded) setSessionFold('folded')
                 setProjectOpen(!expanded)
               }}
               aria-expanded={expanded}
@@ -1529,8 +1534,8 @@ const ProjectRow = memo(function ProjectRow(props: {
           <ProjectSessions
             project={props.project}
             activeSessionId={props.activeSessionId}
-            showAll={showAllSessions}
-            onShowAllChange={setShowAllSessions}
+            fold={sessionFold}
+            onFoldChange={setSessionFold}
             onSelectSession={props.onSelectSession}
             onRenameSession={props.onRenameSession}
             onDeleteSession={props.onDeleteSession}
@@ -1547,8 +1552,8 @@ const ProjectRow = memo(function ProjectRow(props: {
 const ProjectSessions = memo(function ProjectSessions(props: {
   project: Project
   activeSessionId: string | undefined
-  showAll: boolean
-  onShowAllChange: (showAll: boolean) => void
+  fold: SessionFold
+  onFoldChange: (fold: SessionFold) => void
   onSelectSession: (id: string) => void
   onRenameSession: (id: string, title: string) => void
   onToggleSessionPin: ((id: string) => void) | undefined
@@ -1575,24 +1580,35 @@ const ProjectSessions = memo(function ProjectSessions(props: {
     ignore: '.sess__actions',
   })
   // Folded to its first rows, a project still lists each later chat with news.
-  const foldedSessions = useMemo(
+  const listedSessions = useMemo(
     () =>
-      foldedProjectSessions(
-        props.project.sessions,
-        props.activeSessionId,
-        COLLAPSED_PROJECT_SESSION_COUNT,
-      ),
-    [props.activeSessionId, props.project.sessions],
+      props.fold === 'all'
+        ? props.project.sessions
+        : foldedProjectSessions(
+            props.project.sessions,
+            props.activeSessionId,
+            props.fold === 'more' ? MORE_PROJECT_SESSION_COUNT : COLLAPSED_PROJECT_SESSION_COUNT,
+          ),
+    [props.activeSessionId, props.fold, props.project.sessions],
   )
-  const hiddenCount = count - foldedSessions.length
-  const listedSessions = props.showAll ? props.project.sessions : foldedSessions
   const listedCount = listedSessions.length
+  const hiddenCount = count - listedCount
+  const nextFold: SessionFold | undefined =
+    hiddenCount > 0
+      ? props.fold === 'folded'
+        ? 'more'
+        : 'all'
+      : props.fold === 'folded'
+        ? undefined
+        : 'folded'
   const virtualized = listedCount > VIRTUALIZED_PROJECT_SESSION_COUNT
-  const [virtualRange, setVirtualRange] = useState(() => virtualSessionRange(0, listedCount))
+  const [virtualRange, setVirtualRange] = useState(() =>
+    virtualSessionRange(0, VIRTUAL_SESSION_VIEWPORT_ROWS * VIRTUAL_SESSION_ROW_HEIGHT, listedCount),
+  )
   const virtualRangeRef = useRef(virtualRange)
   const updateVirtualRange = useCallback(
-    (scrollTop: number) => {
-      const next = virtualSessionRange(scrollTop, listedCount)
+    (top: number, height: number) => {
+      const next = virtualSessionRange(top, height, listedCount)
       const current = virtualRangeRef.current
       if (current.start === next.start && current.end === next.end) return
       virtualRangeRef.current = next
@@ -1604,51 +1620,55 @@ const ProjectSessions = memo(function ProjectSessions(props: {
   const visibleSessions = virtualized
     ? listedSessions.slice(virtualRange.start, virtualRange.end)
     : listedSessions
-  const virtualHeight = (listedCount + 1) * VIRTUAL_SESSION_ROW_HEIGHT
+  const virtualHeight = (listedCount + (nextFold ? 1 : 0)) * VIRTUAL_SESSION_ROW_HEIGHT
   const virtualListStyle = virtualized
-    ? ({
-        '--virtual-session-height': `${virtualHeight}px`,
-        height: Math.min(virtualHeight, VIRTUAL_SESSION_VIEWPORT_HEIGHT),
-      } as CSSProperties)
+    ? ({ '--virtual-session-height': `${virtualHeight}px` } as CSSProperties)
     : undefined
 
-  // Deleting or restoring a chat changes the count but must not move the list.
-  // Only a newly active chat, or virtualization switching on (null), re-centres.
-  const centredSessionId = useRef<string | undefined | null>(null)
+  // A long list keeps its full height and scrolls with the rail, so it never
+  // gets a scrollbar of its own; only the rows near the rail's view mount.
   useLayoutEffect(() => {
-    if (!virtualized) {
-      centredSessionId.current = null
-      return
-    }
     const list = virtualSessionList.current
-    if (!list) return
-    if (centredSessionId.current !== props.activeSessionId) {
-      centredSessionId.current = props.activeSessionId
-      const activeIndex = props.activeSessionId
-        ? listedSessions.findIndex((session) => session.id === props.activeSessionId)
-        : -1
-      const target = Math.max(
-        0,
-        Math.min(
-          activeIndex * VIRTUAL_SESSION_ROW_HEIGHT - VIRTUAL_SESSION_VIEWPORT_HEIGHT / 2,
-          virtualHeight - VIRTUAL_SESSION_VIEWPORT_HEIGHT,
-        ),
-      )
-      list.scrollTop = activeIndex >= 0 ? target : 0
+    // Found through the DOM: on the rail's first commit its ref is not set yet.
+    const scroller = list?.closest<HTMLElement>('.rail__body')
+    if (!virtualized || !list || !scroller) return
+    // Where the list starts in the rail's content changes only when something
+    // above it resizes, comes or goes, so a scroll reads scrollTop alone.
+    let offset = 0
+    let height = 0
+    const update = () => updateVirtualRange(scroller.scrollTop - offset, height)
+    const measure = () => {
+      offset =
+        list.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop
+      height = scroller.clientHeight
+      update()
     }
-    updateVirtualRange(list.scrollTop)
-  }, [props.activeSessionId, updateVirtualRange, virtualHeight, virtualized])
+    const resize = new ResizeObserver(measure)
+    resize.observe(scroller)
+    for (const child of scroller.children) resize.observe(child)
+    const mutations = new MutationObserver((records) => {
+      for (const record of records) {
+        for (const node of record.addedNodes) if (node instanceof Element) resize.observe(node)
+        for (const node of record.removedNodes) if (node instanceof Element) resize.unobserve(node)
+      }
+      measure()
+    })
+    mutations.observe(scroller, { childList: true })
+    scroller.addEventListener('scroll', update, { passive: true })
+    measure()
+    return () => {
+      scroller.removeEventListener('scroll', update)
+      mutations.disconnect()
+      resize.disconnect()
+    }
+  }, [updateVirtualRange, virtualized])
 
   return (
     <ul
       ref={virtualSessionList}
       className={`proj__sessions${virtualized ? ' proj__sessions--virtual' : ''}`}
       style={virtualListStyle}
-      tabIndex={virtualized ? 0 : undefined}
       aria-label={virtualized ? `${displayName(props.project)} chats` : undefined}
-      onScroll={
-        virtualized ? (event) => updateVirtualRange(event.currentTarget.scrollTop) : undefined
-      }
       onClickCapture={sessionDrag.onClickCapture}
     >
       {count === 0 ? <li className="rail__hint">No chats</li> : null}
@@ -1672,7 +1692,7 @@ const ProjectSessions = memo(function ProjectSessions(props: {
           />
         )
       })}
-      {hiddenCount > 0 ? (
+      {nextFold ? (
         <li
           className="proj__sessions-toggle-row"
           style={
@@ -1684,10 +1704,9 @@ const ProjectSessions = memo(function ProjectSessions(props: {
           <button
             type="button"
             className="proj__sessions-toggle"
-            aria-expanded={props.showAll}
-            onClick={() => props.onShowAllChange(!props.showAll)}
+            onClick={() => props.onFoldChange(nextFold)}
           >
-            {props.showAll ? 'Show less' : `Show ${hiddenCount} more`}
+            {nextFold === 'folded' ? 'Show less' : 'Show more'}
           </button>
         </li>
       ) : null}
@@ -2309,13 +2328,16 @@ function sessionLabel(session: Session): string {
   }
 }
 
-function virtualSessionRange(scrollTop: number, count: number) {
-  const firstVisible = Math.floor(scrollTop / VIRTUAL_SESSION_ROW_HEIGHT)
-  const start = Math.max(0, firstVisible - VIRTUAL_SESSION_OVERSCAN)
-  const end = Math.min(
-    count,
-    firstVisible + VIRTUAL_SESSION_VIEWPORT_ROWS + VIRTUAL_SESSION_OVERSCAN,
-  )
+/**
+ * The rows of a virtual list to mount when `top` pixels of it lie above the
+ * rail's view (negative while it starts further down) and the view is
+ * `height` tall. A list wholly out of view mounts none.
+ */
+function virtualSessionRange(top: number, height: number, count: number) {
+  const first = Math.floor(top / VIRTUAL_SESSION_ROW_HEIGHT)
+  const last = Math.floor((top + height) / VIRTUAL_SESSION_ROW_HEIGHT)
+  const start = Math.min(count, Math.max(0, first - VIRTUAL_SESSION_OVERSCAN))
+  const end = Math.min(count, Math.max(start, last + 1 + VIRTUAL_SESSION_OVERSCAN))
   return { start, end }
 }
 

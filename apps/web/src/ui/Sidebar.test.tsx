@@ -1465,16 +1465,16 @@ describe('Sidebar chat actions', () => {
     expect(screen.getByRole('button', { name: 'Chat 5, Codex' })).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Chat 6, Codex' })).toBeNull()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Show 2 more' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Show more' }))
     expect(screen.getByRole('button', { name: 'Chat 7, Codex' })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Show less' }))
     expect(screen.queryByRole('button', { name: 'Chat 6, Codex' })).toBeNull()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Show 2 more' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Show more' }))
     fireEvent.click(screen.getByRole('button', { name: 'TasteCode' }))
     fireEvent.click(screen.getByRole('button', { name: 'TasteCode' }))
     expect(screen.queryByRole('button', { name: 'Chat 6, Codex' })).toBeNull()
-    expect(screen.getByRole('button', { name: 'Show 2 more' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Show more' })).toBeTruthy()
   })
 
   it('keeps a working, unread or open chat below the fold in sight, at its own place', () => {
@@ -1520,7 +1520,7 @@ describe('Sidebar chat actions', () => {
     const unread = screen.getByRole('button', { name: 'Chat 8, Codex, ready, unread' })
     expect(unread.closest('.sessrow')?.classList.contains('is-unread')).toBe(true)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Show 2 more' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Show more' }))
     expect(titles()).toEqual([...firstFive, 'Chat 6', 'Chat 7', 'Chat 8', 'Chat 9'])
     fireEvent.click(screen.getByRole('button', { name: 'Show less' }))
     expect(titles()).toEqual([...firstFive, 'Chat 7', 'Chat 8'])
@@ -1530,11 +1530,11 @@ describe('Sidebar chat actions', () => {
     expect(titles()).toEqual([...firstFive, 'Chat 7', 'Chat 8', 'Chat 9'])
     const open = screen.getByRole('button', { name: 'Chat 9, Codex' }).closest('.sessrow')
     expect(open?.querySelector('.sessrow__indicator')).not.toBeNull()
-    expect(screen.getByRole('button', { name: 'Show 1 more' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Show more' })).toBeTruthy()
 
     view.rerender(content('thread-2'))
     expect(titles()).toEqual([...firstFive, 'Chat 7', 'Chat 8'])
-    expect(screen.getByRole('button', { name: 'Show 2 more' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Show more' })).toBeTruthy()
   })
 
   it('drops the fold toggle once every chat below the fold is in sight', () => {
@@ -1654,13 +1654,14 @@ describe('Sidebar chat actions', () => {
 
     const list = screen.getByRole('list', { name: 'Large project chats' })
     expect(list.querySelectorAll('.sessrow').length).toBeLessThanOrEqual(28)
-    list.scrollTop = 90 * 30
-    fireEvent.scroll(list)
+    const rail = document.querySelector<HTMLElement>('.rail__body')!
+    rail.scrollTop = 90 * 30
+    fireEvent.scroll(rail)
     const last = screen.getByRole('button', { name: 'Chat 90, Codex, ready, unread' }).closest('li')
     expect(last?.getAttribute('aria-posinset')).toBe('90')
     expect(last?.getAttribute('aria-setsize')).toBe('90')
     expect(screen.queryByRole('button', { name: 'Chat 91, Codex' })).toBeNull()
-    expect(screen.getByRole('button', { name: 'Show 10 more' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Show more' })).toBeTruthy()
   })
 
   it.each([65, 10_000])(
@@ -1703,25 +1704,33 @@ describe('Sidebar chat actions', () => {
         </Profiler>,
       )
 
-      fireEvent.click(screen.getByRole('button', { name: `Show ${sessionCount - 5} more` }))
+      fireEvent.click(screen.getByRole('button', { name: 'Show more' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Show more' }))
       const list = screen.getByRole('list', { name: 'Large project chats' })
-      expect(list.getAttribute('tabindex')).toBe('0')
+      // The rail scrolls the list; it is no scroll box or tab stop of its own.
+      expect(list.hasAttribute('tabindex')).toBe(false)
       expect(list.querySelectorAll('.sessrow').length).toBeLessThanOrEqual(28)
       expect(screen.queryByRole('button', { name: `Chat ${sessionCount}, Codex` })).toBeNull()
 
+      // Off the top first: the rail's top-shadow state settles over its first two scrolls.
+      const rail = document.querySelector<HTMLElement>('.rail__body')!
+      for (const scrollTop of [300, 301]) {
+        rail.scrollTop = scrollTop
+        fireEvent.scroll(rail)
+      }
       const commitsBeforeSameRangeScroll = commitCount
-      list.scrollTop = 1
-      fireEvent.scroll(list)
-      list.scrollTop = 29
-      fireEvent.scroll(list)
+      rail.scrollTop = 302
+      fireEvent.scroll(rail)
+      rail.scrollTop = 329
+      fireEvent.scroll(rail)
       expect(commitCount).toBe(commitsBeforeSameRangeScroll)
 
-      list.scrollTop = 30
-      fireEvent.scroll(list)
+      rail.scrollTop = 330
+      fireEvent.scroll(rail)
       expect(commitCount).toBe(commitsBeforeSameRangeScroll + 1)
 
-      list.scrollTop = sessionCount * 30
-      fireEvent.scroll(list)
+      rail.scrollTop = sessionCount * 30
+      fireEvent.scroll(rail)
 
       const last = screen.getByRole('button', { name: `Chat ${sessionCount}, Codex` }).closest('li')
       expect(last?.getAttribute('aria-posinset')).toBe(String(sessionCount))
@@ -1730,15 +1739,20 @@ describe('Sidebar chat actions', () => {
     },
   )
 
-  it('keeps an expanded long project scrolled in place when a chat is deleted or restored', () => {
-    const sessions = Array.from({ length: 70 }, (_, index) =>
-      session(`thread-${index + 1}`, `Chat ${index + 1}`),
-    )
-    const content = (projectSessions: typeof sessions, activeSessionId: string) => (
+  it('shows three folds of chats, then every chat, then folds back', () => {
+    render(
       <Sidebar
-        projects={[{ path: '/work/large', name: 'Large project', sessions: projectSessions }]}
+        projects={[
+          {
+            path: '/work/large',
+            name: 'Large project',
+            sessions: Array.from({ length: 70 }, (_, index) =>
+              session(`thread-${index + 1}`, `Chat ${index + 1}`),
+            ),
+          },
+        ]}
         activeProjectPath="/work/large"
-        activeSessionId={activeSessionId}
+        activeSessionId="thread-1"
         account={undefined}
         providerName="Codex"
         collapsed={false}
@@ -1757,29 +1771,25 @@ describe('Sidebar chat actions', () => {
         onReorderSession={vi.fn()}
         onOpenSearch={vi.fn()}
         onOpenSettings={vi.fn()}
-      />
+      />,
     )
-    const view = render(content(sessions, 'thread-1'))
-    fireEvent.click(screen.getByRole('button', { name: 'Show 65 more' }))
-    const list = screen.getByRole('list', { name: 'Large project chats' })
-    list.scrollTop = 60 * 30
-    fireEvent.scroll(list)
+    const rows = () => document.querySelectorAll('.proj__drawer .sessrow').length
 
-    view.rerender(
-      content(
-        sessions.filter((entry) => entry.id !== 'thread-61'),
-        'thread-1',
-      ),
-    )
-    expect(list.scrollTop).toBe(60 * 30)
-    expect(screen.getByRole('button', { name: 'Chat 62, Codex' })).toBeTruthy()
+    expect(rows()).toBe(5)
+    fireEvent.click(screen.getByRole('button', { name: 'Show more' }))
+    expect(rows()).toBe(15)
+    expect(screen.getByRole('button', { name: 'Chat 15, Codex' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Chat 16, Codex' })).toBeNull()
 
-    view.rerender(content(sessions, 'thread-1'))
-    expect(list.scrollTop).toBe(60 * 30)
-    expect(screen.getByRole('button', { name: 'Chat 61, Codex' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Show more' }))
+    const rail = document.querySelector<HTMLElement>('.rail__body')!
+    rail.scrollTop = 70 * 30
+    fireEvent.scroll(rail)
+    expect(screen.getByRole('button', { name: 'Chat 70, Codex' })).toBeTruthy()
 
-    view.rerender(content(sessions, 'thread-40'))
-    expect(list.scrollTop).toBe(39 * 30 - 8 * 30)
+    fireEvent.click(screen.getByRole('button', { name: 'Show less' }))
+    expect(rows()).toBe(5)
+    expect(screen.getByRole('button', { name: 'Show more' })).toBeTruthy()
   })
 
   it('starts with only the active project expanded', () => {

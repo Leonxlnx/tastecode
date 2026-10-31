@@ -756,13 +756,10 @@
   max-width: 100%;
 }
 
+/* Full height, scrolled by the rail: only the rows near its view are mounted. */
 .proj__sessions--virtual {
   position: relative;
-  overflow-x: hidden;
-  overflow-y: auto;
-  overflow-anchor: none;
   contain: layout paint style;
-  scrollbar-width: thin;
 }
 
 .proj__sessions--virtual::before {
