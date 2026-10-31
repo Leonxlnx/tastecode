@@ -330,6 +330,29 @@ function noop(): void {}
 function noopKeybindingChange(_action: KeybindingId, _shortcut: Shortcut | null): void {}
 
 /**
+ * Phone access is part of some builds only (the server needs
+ * HARNESS_PHONE_ACCESS=1). Asked once when Settings opens; the page stays
+ * hidden until the server says this build offers it, and on any failure.
+ */
+function usePhoneAccessAvailable(transport: Transport): boolean {
+  const [available, setAvailable] = useState(false)
+  useEffect(() => {
+    let current = true
+    transport
+      .request('phone.status', {})
+      .then((status) => {
+        // Servers from before the flag offered phone access everywhere.
+        if (current) setAvailable(status.available !== false)
+      })
+      .catch(() => undefined)
+    return () => {
+      current = false
+    }
+  }, [transport])
+  return available
+}
+
+/**
  * Settings stays intentionally small: the sidebar reorganizes the decisions
  * the app already exposes without inventing preferences for their own sake.
  */
@@ -400,7 +423,12 @@ function SettingsComponent(props: {
   const [selectedSection, setSection] = useState<SettingsSection>(
     props.initialSection ?? 'workflows',
   )
-  const section = selectedSection === 'debug' && !props.showDebug ? 'workflows' : selectedSection
+  const phoneAvailable = usePhoneAccessAvailable(props.transport)
+  const section =
+    (selectedSection === 'debug' && !props.showDebug) ||
+    (selectedSection === 'phone' && !phoneAvailable)
+      ? 'workflows'
+      : selectedSection
 
   useEffect(() => {
     setSection(props.initialSection ?? 'workflows')
@@ -544,12 +572,14 @@ function SettingsComponent(props: {
             label="Usage"
             onClick={() => setSection('usage')}
           />
-          <SettingsNavItem
-            active={section === 'phone'}
-            icon={<Smartphone size={15} aria-hidden />}
-            label="Phone"
-            onClick={() => setSection('phone')}
-          />
+          {phoneAvailable ? (
+            <SettingsNavItem
+              active={section === 'phone'}
+              icon={<Smartphone size={15} aria-hidden />}
+              label="Phone"
+              onClick={() => setSection('phone')}
+            />
+          ) : null}
           <SettingsNavItem
             active={section === 'data'}
             icon={<Database size={15} aria-hidden />}
