@@ -35,6 +35,22 @@ describe('workspace panel motion', () => {
     expect(appRule('.stage')).toContain('min-height: 0;')
   })
 
+  it('lets a hidden panel leave over the chat', () => {
+    // The grid column goes at once; the panel keeps its width while it fades.
+    const leaving = rule('.workspace-panel[data-leaving]')
+    expect(leaving).toContain('position: absolute;')
+    expect(leaving).toContain('right: 0;')
+    expect(leaving).toContain('width: var(--workspace-panel-leave-w);')
+    expect(component).toContain("panel.setAttribute('data-leaving', '')")
+    expect(component).toContain('const PANEL_LEAVE_MS = 260')
+  })
+
+  it('gives the first open, which mounts the panel already open, its entrance', () => {
+    expect(css).toMatch(
+      /@starting-style \{\s*\.workspace-panel\.is-open:not\(\.workspace-panel--bottom\) \{\s*opacity: 0;\s*transform: translate3d\(24px, 0, 0\);/,
+    )
+  })
+
   it('keeps the closed panel mounted but inert so tab state survives', () => {
     expect(component).toContain('aria-hidden={!props.open}')
     expect(component).toContain('inert={props.open ? undefined : true}')
