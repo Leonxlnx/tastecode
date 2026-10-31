@@ -683,6 +683,58 @@ describe('account limits', () => {
     expect(screen.queryByRole('alert')).toBeNull()
   })
 
+  it("shows Antigravity's model groups with the rows the server read from agy", () => {
+    // What the server answered for agy 1.4.7's /usage, captured 2026-10-31.
+    const now = Date.parse('2026-10-31T11:00:00Z')
+    vi.spyOn(Date, 'now').mockReturnValue(now)
+    render(
+      limits({
+        status: 'ready',
+        provider: 'antigravity',
+        summary: {
+          ...summary(),
+          limitSource: {
+            provider: 'antigravity',
+            status: 'ready',
+            checkedAt: now,
+            limits: [
+              { id: 'gemini-5h', label: 'Gemini 5 hours', usedPercent: 0, windowMinutes: 300 },
+              {
+                id: 'gemini-weekly',
+                label: 'Gemini weekly',
+                usedPercent: 0.48,
+                resetsAt: Date.parse('2026-11-06T00:54:37Z'),
+                windowMinutes: 10_080,
+              },
+              { id: '3p-5h', label: 'Claude and GPT 5 hours', usedPercent: 0, windowMinutes: 300 },
+              {
+                id: '3p-weekly',
+                label: 'Claude and GPT weekly',
+                usedPercent: 0,
+                windowMinutes: 10_080,
+              },
+            ],
+          },
+        },
+      }),
+    )
+
+    const antigravity = screen.getByRole('region', { name: 'Antigravity' })
+    expect(statusOf(antigravity)).toBeNull()
+    expect(
+      within(antigravity)
+        .getAllByRole('progressbar')
+        .map((bar) => [bar.getAttribute('aria-label'), bar.getAttribute('aria-valuenow')]),
+    ).toEqual([
+      ['Antigravity Gemini 5 hours left', '100'],
+      ['Antigravity Gemini weekly left', '100'],
+      ['Antigravity Claude and GPT 5 hours left', '100'],
+      ['Antigravity Claude and GPT weekly left', '100'],
+    ])
+    // Only the bucket agy has started counting down names a reset.
+    expect(antigravity.querySelectorAll('.account-menu__limit-reset')).toHaveLength(1)
+  })
+
   it('distinguishes loading from an empty successful response', () => {
     const view = render(limits({ status: 'loading', provider: 'codex' }))
     const panel = screen.getByRole('region', { name: 'Plan limits' })
