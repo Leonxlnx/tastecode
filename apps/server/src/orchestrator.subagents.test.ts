@@ -278,22 +278,39 @@ describe('sub-agents on another provider', () => {
     ])
   })
 
-  it('offers no agent tools to a provider without them or a chat that asks first', async () => {
+  it('offers no agent tools to a provider without them', async () => {
     const h = harness()
     await h.orchestrator.listModels('claude-code')
     await h.orchestrator.startThread('grok', process.cwd())
     expect(
       h.started[0]!.options.mcpServers?.some((entry) => entry.id === AGENT_TOOLS_SERVER_ID),
     ).not.toBe(true)
+  })
 
+  it('asks the user before a start in a chat that asks first', async () => {
+    const h = harness()
+    await h.orchestrator.listModels('claude-code')
     const asking = await h.orchestrator.startThread('codex', process.cwd(), { approval: 'ask' })
-    h.sessions[1]!.emit({
+    h.sessions[0]!.emit({
       type: 'turn.started',
       turn: { id: 'ask-turn', threadId: asking.id, status: 'running', createdAt: Date.now() },
     })
     await expect(
-      callTool(h.started[1]!.options, 'start_agent', { provider: 'claude-code', task: 'x' }),
-    ).resolves.toMatchObject({ error: expect.stringContaining('asks the user before it acts') })
+      callTool(h.started[0]!.options, 'start_agent', { provider: 'claude-code', task: 'x' }),
+    ).resolves.toMatchObject({ agent_id: 'a1', status: 'waiting_for_approval' })
+    const asked = h.parentEvents.flatMap(({ threadId, event }) =>
+      threadId === asking.id && event.type === 'approval.requested' ? [event.request] : [],
+    )
+    expect(asked).toHaveLength(1)
+    expect(h.sessions).toHaveLength(1)
+    // The chat's own agent never hears this answer; TasteCode starts the child.
+    h.orchestrator.respondToApproval(asking.id, asked[0]!.id, 'approve')
+    await until(() => h.sessions[1]?.sent.length === 1)
+    expect(h.started[1]!.options).toMatchObject({ approval: 'ask' })
+    expect(h.parentEvents).toContainEqual({
+      threadId: asking.id,
+      event: { type: 'approval.resolved', id: asked[0]!.id },
+    })
   })
 
   it('reserves the agent tools server id', async () => {

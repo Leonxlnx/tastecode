@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type {
+  ApprovalDecision,
   ApprovalMode,
   DomainEvent,
   Item,
@@ -74,6 +75,8 @@ export interface SubagentHost {
   outcome(threadId: string, turnId: string): SubagentOutcome
   /** Records an event on the parent's transcript and sends it to clients. */
   recordOnParent(parentThreadId: string, event: DomainEvent): void
+  /** Stops the parent's running turn, as "Stop the turn" on its approval asks. */
+  interruptParent(parentThreadId: string): Promise<void>
 }
 
 /** What a sub-agent's chat is told before its task. */
@@ -87,6 +90,9 @@ export const SUBAGENT_INSTRUCTIONS = [
 const UPDATE_INTERVAL_MS = 1_000
 /** The row's summary of a result; the whole result is in the sub-agent's own chat. */
 const SUMMARY_CHARACTERS = 4_000
+/** The task as the user's approval quotes it. */
+const APPROVAL_TASK_CHARACTERS = 1_000
+const START_APPROVAL_PREFIX = 'subagent-start-'
 const TOOL_ITEM_TYPES = new Set<Item['type']>(['tool_call', 'command', 'file_change'])
 
 /** What a wait reports per sub-agent, as the calling agent reads it. */
@@ -126,6 +132,8 @@ type LiveRun = {
   timer?: ReturnType<typeof setTimeout> | undefined
   /** Stop was asked before the child chat existed. */
   stopRequested: boolean
+  /** The start the user is asked about; set while the run waits for that answer. */
+  pendingStart?: { approvalId: string; spec: SubagentChildSpec } | undefined
 }
 
 export class SubagentBroker implements AgentToolsBroker {
@@ -137,6 +145,10 @@ export class SubagentBroker implements AgentToolsBroker {
   #byChild = new Map<string, LiveRun>()
   /** Waits to wake when one of a parent's runs changes state. */
   #waiters = new Map<string, Set<() => void>>()
+  /** Starts waiting for the user's answer, by the approval id the parent shows. */
+  #startApprovals = new Map<string, LiveRun>()
+  /** Chats whose user allowed sub-agents for the rest of this session. */
+  #allowed = new Set<string>()
   #disposed = false
 
   constructor(runs: SubagentRunTable, host: SubagentHost, options: { now?: () => number } = {}) {
@@ -166,13 +178,6 @@ export class SubagentBroker implements AgentToolsBroker {
   async start(caller: AgentToolsCaller, args: StartAgentArgs): Promise<unknown> {
     if (this.#disposed) throw new AgentToolError('TasteCode is shutting down.')
     const parent = this.#host.parent(caller.threadId)
-    // A chat that asks before it acts must ask before a sub-agent starts too;
-    // until TasteCode can ask that itself, such a chat starts none.
-    if (parent.approval === 'ask') {
-      throw new AgentToolError(
-        'This chat asks the user before it acts, and TasteCode cannot ask about a sub-agent yet. Do the work yourself.',
-      )
-    }
     const choice = this.#host.choices().find((entry) => entry.provider === args.provider)
     if (!choice) {
       const known = this.#host
@@ -189,6 +194,9 @@ export class SubagentBroker implements AgentToolsBroker {
       )
     }
     this.#checkLimits(caller.threadId, parent.turnId)
+    // A chat that asks before it acts asks before a sub-agent starts, once per start
+    // unless its user allowed them for the session.
+    const ask = parent.approval === 'ask' && !this.#allowed.has(caller.threadId)
     const runs = this.#runs.ofParent(caller.threadId)
     const at = this.#now()
     const run: StoredSubagentRun = {
@@ -200,28 +208,61 @@ export class SubagentBroker implements AgentToolsBroker {
       ...(args.model ? { model: args.model } : {}),
       ...(args.name ? { name: args.name } : {}),
       task: args.task,
-      state: 'running',
+      state: ask ? 'waiting_for_approval' : 'running',
       snapshot: { id: '', state: 'running' },
       createdAt: at,
     }
-    const live = this.#track(run)
-    run.snapshot = this.#snapshot(live)
-    this.#runs.add(run)
-    this.#send(live)
-    void this.#launch(live, {
+    const spec: SubagentChildSpec = {
       parentThreadId: caller.threadId,
       provider: choice.provider,
       model: args.model,
       effort: args.effort,
       name: args.name,
       task: args.task,
-    })
+    }
+    const live = this.#track(run)
+    if (ask) live.pendingStart = { approvalId: `${START_APPROVAL_PREFIX}${randomUUID()}`, spec }
+    run.snapshot = this.#snapshot(live)
+    this.#runs.add(run)
+    this.#send(live)
+    if (live.pendingStart) this.#ask(live, live.pendingStart.approvalId)
+    else void this.#launch(live, spec)
     return {
       agent_id: run.shortId,
-      status: 'running',
+      status: run.state,
       provider: run.provider,
       ...(run.model ? { model: run.model } : {}),
+      ...(ask
+        ? { note: 'The user is asked before it starts. Call wait_for_agents to hear the answer.' }
+        : {}),
     }
+  }
+
+  /**
+   * The user's answer to a sub-agent start. Returns false for an approval that
+   * is not one, so the orchestrator hands it to the chat's agent instead.
+   */
+  answer(parentThreadId: string, approvalId: string, decision: ApprovalDecision): boolean {
+    const live = this.#startApprovals.get(approvalId)
+    // A late answer to a start that already ended stays here; no agent knows its id.
+    if (!live) return approvalId.startsWith(START_APPROVAL_PREFIX)
+    if (live.run.parentThreadId !== parentThreadId) return false
+    const spec = this.#settleAsk(live)
+    if (!spec) return true
+    if (decision === 'approve' || decision === 'approve-session') {
+      if (decision === 'approve-session') this.#allowed.add(parentThreadId)
+      live.run.state = 'running'
+      this.#runs.update(live.run.itemId, { state: 'running' })
+      this.#changed(live)
+      void this.#launch(live, spec)
+      return true
+    }
+    live.error = 'The user declined to start it.'
+    this.#finish(live, 'declined')
+    if (decision === 'abort') {
+      void this.#host.interruptParent(parentThreadId).catch(() => undefined)
+    }
+    return true
   }
 
   async wait(caller: AgentToolsCaller, args: WaitForAgentsArgs, signal: AbortSignal) {
@@ -350,8 +391,15 @@ export class SubagentBroker implements AgentToolsBroker {
   /** The parent's turn ended: what still runs carries on in the background. */
   parentTurnEnded(parentThreadId: string): void {
     for (const live of this.#live.values()) {
-      if (live.run.parentThreadId !== parentThreadId || live.background) continue
+      if (live.run.parentThreadId !== parentThreadId) continue
       if (FINISHED_SUBAGENT_STATES.has(live.run.state)) continue
+      if (live.pendingStart) {
+        // An unanswered start ends with its turn, as the turn's own approvals do.
+        live.error = 'The turn ended before the user answered.'
+        this.#finish(live, 'declined')
+        continue
+      }
+      if (live.background) continue
       live.background = true
       this.#flush(live)
     }
@@ -452,8 +500,38 @@ export class SubagentBroker implements AgentToolsBroker {
     if (threadId) await this.#host.stopChild(threadId).catch(() => undefined)
   }
 
+  /** Puts the start question on the parent's transcript. */
+  #ask(live: LiveRun, approvalId: string): void {
+    this.#startApprovals.set(approvalId, live)
+    const { run } = live
+    const target = `${run.provider}${run.model ? ` (${run.model})` : ''}`
+    this.#host.recordOnParent(run.parentThreadId, {
+      type: 'approval.requested',
+      request: {
+        id: approvalId,
+        kind: 'permissions',
+        reason: `Start a subagent on ${target}${run.name ? `, "${run.name}"` : ''}: ${shorten(run.task, APPROVAL_TASK_CHARACTERS)}`,
+        createdAt: this.#now(),
+      },
+    })
+  }
+
+  /** Takes a run's start question off the parent; returns the start it asked about. */
+  #settleAsk(live: LiveRun): SubagentChildSpec | undefined {
+    const pending = live.pendingStart
+    if (!pending) return undefined
+    live.pendingStart = undefined
+    this.#startApprovals.delete(pending.approvalId)
+    this.#host.recordOnParent(live.run.parentThreadId, {
+      type: 'approval.resolved',
+      id: pending.approvalId,
+    })
+    return pending.spec
+  }
+
   #finish(live: LiveRun, state: SubagentRunState, answer?: string): void {
     if (FINISHED_SUBAGENT_STATES.has(live.run.state)) return
+    this.#settleAsk(live)
     const at = this.#now()
     live.run.state = state
     live.run.finishedAt = at
@@ -520,7 +598,11 @@ export class SubagentBroker implements AgentToolsBroker {
     const { run } = live
     const finished = FINISHED_SUBAGENT_STATES.has(run.state)
     const attention =
-      live.approvals.size > 0 ? 'approval' : live.inputs.size > 0 ? 'input' : undefined
+      live.pendingStart || live.approvals.size > 0
+        ? 'approval'
+        : live.inputs.size > 0
+          ? 'input'
+          : undefined
     const summary = run.result ?? live.error
     return {
       id: run.shortId,
@@ -605,8 +687,9 @@ function subagentState(state: SubagentRunState): SubagentState {
     case 'completed':
       return 'completed'
     case 'failed':
-    case 'declined':
       return 'failed'
+    // Declined never ran: the row says "Stopped" with the reason, not a red failure.
+    case 'declined':
     case 'stopped':
     case 'interrupted':
       return 'interrupted'

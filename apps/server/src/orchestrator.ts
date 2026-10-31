@@ -975,6 +975,7 @@ export class Orchestrator {
       recordOnParent: (parentThreadId, event) => {
         if (this.#store.thread(parentThreadId)) this.#record(parentThreadId, event)
       },
+      interruptParent: (parentThreadId) => this.interrupt(parentThreadId),
     })
     this.#agentTools = handlers.agentTools ? new AgentToolsEndpoint(this.#subagents) : undefined
     this.#onQueue = handlers.onQueue ?? (() => {})
@@ -4477,6 +4478,8 @@ export class Orchestrator {
   }
 
   respondToApproval(threadId: string, approvalId: string, decision: ApprovalDecision): void {
+    // TasteCode asked this one itself, about starting a sub-agent.
+    if (this.#subagents.answer(threadId, approvalId, decision)) return
     this.#get(threadId).session.respondToApproval(approvalId, decision)
   }
 
