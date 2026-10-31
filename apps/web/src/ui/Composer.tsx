@@ -784,14 +784,23 @@ function ComposerComponent(props: {
     return () => observer.disconnect()
   }, [])
 
+  const queueShown = renderedQueue.items.length > 0
   useLayoutEffect(() => {
     if (props.newSession) return
     const root = composerRoot.current
     const conversation = root?.parentElement
     if (!root || !conversation?.classList.contains('stage__conversation')) return
+    const queue = queueShown ? queuePanel.current : null
 
     const updateOverlayHeight = () => {
-      const height = root.getBoundingClientRect().height
+      const box = root.getBoundingClientRect()
+      // Queued prompts hang above the box, outside the root's own height. The
+      // transcript ends above them with the room the root keeps above the box.
+      const queueTop = queue
+        ? queue.getBoundingClientRect().top -
+          (Number.parseFloat(getComputedStyle(root).paddingTop) || 0)
+        : box.top
+      const height = box.bottom - Math.min(box.top, queueTop)
       if (height > 0) {
         conversation.style.setProperty('--composer-overlay-height', `${height}px`)
       }
@@ -803,12 +812,13 @@ function ComposerComponent(props: {
       ? new ResizeObserverConstructor(updateOverlayHeight)
       : undefined
     observer?.observe(root)
+    if (queue) observer?.observe(queue)
 
     return () => {
       observer?.disconnect()
       conversation.style.removeProperty('--composer-overlay-height')
     }
-  }, [props.newSession])
+  }, [props.newSession, queueShown])
 
   // T3 Code's draft composer uses a FLIP transition: remember where the real
   // composer was before send, render it in the docked layout, then animate only

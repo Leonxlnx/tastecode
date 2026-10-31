@@ -1823,6 +1823,32 @@ describe('Composer project requirement', () => {
 })
 
 describe('Composer height', () => {
+  it('keeps the transcript clear of the queued prompts above the box', () => {
+    const conversation = document.body.appendChild(document.createElement('div'))
+    conversation.className = 'stage__conversation'
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      if (this.classList.contains('composer__queue')) return queueRect(60, 50)
+      if (this.classList.contains('composer')) return queueRect(100, 120)
+      return queueRect(0, 0)
+    })
+    const overlay = () => conversation.style.getPropertyValue('--composer-overlay-height')
+
+    const view = renderComposer(vi.fn(), { newSession: false, running: true }, conversation)
+    expect(overlay()).toBe('120px')
+
+    // The queue hangs 40px above the root, so the transcript ends 40px higher.
+    view.rerenderComposer({
+      queuedTurns: [{ id: 'q1', text: 'Next prompt', attachments: [], createdAt: 1 }],
+    })
+    expect(overlay()).toBe('160px')
+
+    view.rerenderComposer({ queuedTurns: [] })
+    view.unmount()
+    conversation.remove()
+  })
+
   it('skips capped insertion layout reads but still shrinks after deletion', async () => {
     renderComposer(vi.fn())
     const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
@@ -2369,6 +2395,7 @@ function deferred() {
 function renderComposer(
   onSend: (text: string, attachments: string[]) => void,
   overrides: Partial<Parameters<typeof Composer>[0]> = {},
+  container?: HTMLElement,
 ) {
   let currentOverrides = overrides
   const transport = overrides.transport ?? createResourceTransport()
@@ -2420,7 +2447,7 @@ function renderComposer(
       {...currentOverrides}
     />
   )
-  const view = render(composer())
+  const view = render(composer(), container ? { container } : undefined)
   return Object.assign(view, {
     rerenderComposer(next: Partial<Parameters<typeof Composer>[0]>) {
       currentOverrides = { ...currentOverrides, ...next }
