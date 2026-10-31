@@ -77,7 +77,9 @@ export function accountListKey(provider: ProviderId, accountId: AccountId): stri
   return `${provider}\u0000${accountId}`
 }
 
-export function parseAccountListKey(key: string): { provider: ProviderId; accountId: AccountId } {
+export type AccountListEntry = { provider: ProviderId; accountId: AccountId }
+
+export function parseAccountListKey(key: string): AccountListEntry {
   const [provider = '', accountId = DEFAULT_ACCOUNT_ID] = key.split('\u0000')
   return { provider: provider as ProviderId, accountId }
 }
