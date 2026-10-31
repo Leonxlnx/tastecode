@@ -1919,17 +1919,20 @@ describe('Composer height', () => {
     const cappedText = 'line\n'.repeat(11)
     fireEvent.change(composer, { target: { value: cappedText } })
     await waitFor(() => expect(composer.style.height).toBe('242px'))
-    resize?.([{ contentRect: { width: 500 } } as ResizeObserverEntry], {} as ResizeObserver)
-    resize?.([{ contentRect: { width: 700 } } as ResizeObserverEntry], {} as ResizeObserver)
-
-    contentHeight = 120
     const readsAtCap = layoutReads
-    fireEvent.input(composer, {
-      target: { value: `${cappedText}x` },
-      inputType: 'insertText',
-      data: 'x',
-    })
+    const resizeTo = (width: number) =>
+      resize?.([{ contentRect: { width } } as ResizeObserverEntry], {} as ResizeObserver)
+    // The first report is where it starts; then it widens over a few frames.
+    resizeTo(500)
+    contentHeight = 120
+    resizeTo(640)
+    resizeTo(700)
+    // Nothing is measured while the width is still moving.
+    expect(layoutReads).toBe(readsAtCap)
+
+    // Once it holds still, the draft is fitted again without a key press.
     await waitFor(() => expect(composer.style.height).toBe('120px'))
+    expect(composer.style.overflowY).toBe('hidden')
     expect(layoutReads).toBe(readsAtCap + 2)
   })
 
