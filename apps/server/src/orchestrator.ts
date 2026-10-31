@@ -1198,7 +1198,7 @@ export class Orchestrator {
       []
     let lastError: unknown
     for (;;) {
-      const loaders = this.#backgroundSourceLoaders().filter(
+      const loaders = this.#backgroundSourceLoaders(chat).filter(
         (loader) =>
           !failed.some(
             (source) =>
@@ -1243,18 +1243,36 @@ export class Orchestrator {
     )
   }
 
-  #backgroundSourceLoaders(): BackgroundModelSourceLoader[] {
+  /**
+   * `chat`: its own provider answers as its account, whose sign-in and plan
+   * decide what can write for it, whatever the default account has.
+   */
+  #backgroundSourceLoaders(chat?: {
+    provider: ProviderId
+    accountId?: AccountId | undefined
+  }): BackgroundModelSourceLoader[] {
     // The desktop starts only the providers the user added; background writing
     // is no exception. Custom harnesses are not part of the roster.
     const roster = this.#store.providerRoster()
     const added = BACKGROUND_PROVIDERS.filter(
       ([provider]) => roster === null || roster.includes(provider),
     )
-    const builtIns = added.map(([provider, displayName]) => ({
-      provider,
-      load: () =>
-        this.#backgroundSource(provider, () => this.#discoverProviderSource(provider, displayName)),
-    }))
+    const builtIns = added.map(([provider, displayName]) => {
+      const accountId =
+        chat?.provider === provider && chat.accountId !== DEFAULT_ACCOUNT_ID
+          ? chat.accountId
+          : undefined
+      return {
+        provider,
+        load: async () => {
+          // A chat whose account is gone gets no writing, rather than another account's.
+          if (accountId) threadAccountHome(this.#accounts, { provider, accountId })
+          return this.#backgroundSource(accountId ? `${provider}@${accountId}` : provider, () =>
+            this.#discoverProviderSource(provider, displayName, accountId),
+          )
+        },
+      }
+    })
     const custom = this.#customHarnesses.list().map((harness) => ({
       provider: harness.provider,
       agent: harness.id,
@@ -1299,11 +1317,12 @@ export class Orchestrator {
   async #discoverProviderSource(
     provider: (typeof BACKGROUND_PROVIDERS)[number][0],
     displayName: string,
+    accountId?: AccountId,
   ): Promise<AvailableBackgroundModelSource | undefined> {
     try {
-      const account = await this.account(provider)
+      const account = await this.account(provider, undefined, accountId)
       if (!account.signedIn) return undefined
-      const models = await this.listModels(provider)
+      const models = await this.listModels(provider, undefined, accountId)
       if (models.length === 0) return undefined
       return {
         id: provider,
