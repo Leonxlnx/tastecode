@@ -43,6 +43,36 @@ describe('SplitPane', () => {
     expect(onFocusPane).toHaveBeenCalledTimes(2)
   })
 
+  it('keeps the caret in the composer a press focused the pane through', () => {
+    const onFocusPane = vi.fn()
+    render(
+      <SplitPane
+        slot={1}
+        split
+        focused={false}
+        start={false}
+        label="Right chat"
+        onFocusPane={onFocusPane}
+      >
+        <div className="composer__box" data-testid="composer-box" />
+      </SplitPane>,
+    )
+    const box = screen.getByTestId('composer-box')
+    box.getBoundingClientRect = () => ({ left: 10, right: 110, top: 10, bottom: 60 }) as DOMRect
+
+    // A press beside the composer focuses the pane and lets focus move as usual.
+    fireEvent.pointerDown(box, { button: 0, clientX: 500, clientY: 30 })
+    expect(onFocusPane).toHaveBeenLastCalledWith(1, false)
+    expect(fireEvent.mouseDown(box)).toBe(true)
+
+    // A press on it focuses the composer; the mousedown after it must not take
+    // focus away again, and only that one mousedown is held back.
+    fireEvent.pointerDown(box, { button: 0, clientX: 50, clientY: 30 })
+    expect(onFocusPane).toHaveBeenLastCalledWith(1, true)
+    expect(fireEvent.mouseDown(box)).toBe(false)
+    expect(fireEvent.mouseDown(box)).toBe(true)
+  })
+
   it('leaves a focused pane alone', () => {
     const onFocusPane = vi.fn()
     render(pane({ split: true, focused: true, onFocusPane }))

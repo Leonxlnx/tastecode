@@ -1,4 +1,5 @@
 import {
+  useRef,
   useSyncExternalStore,
   type ComponentProps,
   type CSSProperties,
@@ -63,6 +64,10 @@ export function SplitPane(props: {
   onFocusPane: (slot: PaneSlot, toComposer: boolean) => void
   children: ReactNode
 }) {
+  // Set by a press that focused this pane through its composer. The mousedown
+  // that follows would otherwise move focus on to whatever lay under the inert
+  // composer (the transcript, so the page body) and take the caret away again.
+  const keepComposerFocus = useRef(false)
   // One element type in both layouts: switching between them must not remount
   // the chat inside.
   if (!props.split) {
@@ -80,11 +85,19 @@ export function SplitPane(props: {
       aria-label={props.label}
       data-split-slot={props.slot}
       onPointerDownCapture={(event) => {
+        keepComposerFocus.current = false
         if (event.button !== 0 || props.focused) return
-        props.onFocusPane(
-          props.slot,
-          pressedComposer(event.currentTarget, event.clientX, event.clientY),
-        )
+        const toComposer = pressedComposer(event.currentTarget, event.clientX, event.clientY)
+        keepComposerFocus.current = toComposer
+        props.onFocusPane(props.slot, toComposer)
+      }}
+      onMouseDownCapture={(event) => {
+        if (!keepComposerFocus.current) return
+        keepComposerFocus.current = false
+        event.preventDefault()
+      }}
+      onPointerUpCapture={() => {
+        keepComposerFocus.current = false
       }}
       onFocusCapture={() => {
         if (!props.focused) props.onFocusPane(props.slot, false)
