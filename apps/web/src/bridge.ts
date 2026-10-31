@@ -41,6 +41,8 @@ type Bridge = {
   setZoom: (action: ZoomAction) => Promise<void>
   setTheme: (preference: AppThemePreference) => Promise<void>
   setWindowChrome?: (chrome: WindowChrome) => Promise<void>
+  getWindowMaterialSupport?: () => Promise<WindowMaterialSupport>
+  setWindowMaterial?: (material: WindowMaterial) => Promise<void>
   prepareHaptics?: () => void
   performHaptic?: (pattern: NativeHapticPattern) => void
   capturePreview: (request: PreviewCaptureRequest) => Promise<PreviewCaptureResult>
@@ -320,6 +322,28 @@ export type WindowChrome = {
 
 export function setDesktopWindowChrome(chrome: WindowChrome): Promise<void> {
   return bridge?.setWindowChrome?.(chrome) ?? Promise.resolve()
+}
+
+/**
+ * What the OS can draw behind the desktop window: a Windows 11 backdrop
+ * material, macOS vibrancy, or nothing (Windows 10, Linux, a browser).
+ * Mirrors apps/desktop/src/window-material.ts.
+ */
+export type WindowMaterialSupport = 'material' | 'vibrancy' | 'none'
+/** The Windows 11 backdrop: Acrylic blurs what is behind, Mica tints the wallpaper. */
+export type WindowMaterial = 'acrylic' | 'mica'
+
+export async function desktopWindowMaterialSupport(): Promise<WindowMaterialSupport> {
+  try {
+    const support = await bridge?.getWindowMaterialSupport?.()
+    return support === 'material' || support === 'vibrancy' ? support : 'none'
+  } catch {
+    return 'none'
+  }
+}
+
+export function setDesktopWindowMaterial(material: WindowMaterial): Promise<void> {
+  return bridge?.setWindowMaterial?.(material) ?? Promise.resolve()
 }
 
 export function prepareNativeHaptics(): void {
