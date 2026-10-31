@@ -158,7 +158,7 @@ describe('provider runtimes', () => {
     await orchestrator.disposeAll()
   })
 
-  it('runs each account through its own runtime, not another account\'s', async () => {
+  it("runs each account through its own runtime, not another account's", async () => {
     const { orchestrator, runtimes } = setup(new Store(':memory:'), twoAccounts)
     const started = async (accountId?: string) => {
       await orchestrator.startThread(
@@ -228,9 +228,9 @@ describe('provider runtimes', () => {
 
   it('refuses a runtime for the default account, a gone account or an undeclared id', () => {
     const { orchestrator } = setup(new Store(':memory:'), twoAccounts)
-    expect(() =>
-      orchestrator.updateAccountRuntimeSetting('claude-code', 'default', 'cli'),
-    ).toThrow("The default account uses its provider's runtime setting.")
+    expect(() => orchestrator.updateAccountRuntimeSetting('claude-code', 'default', 'cli')).toThrow(
+      "The default account uses its provider's runtime setting.",
+    )
     expect(() => orchestrator.updateAccountRuntimeSetting('claude-code', 'gone', 'cli')).toThrow(
       AccountNotFoundError,
     )
