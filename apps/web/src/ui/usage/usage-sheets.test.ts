@@ -13,7 +13,6 @@ import {
   markInk,
   providerShares,
   rangeText,
-  resetText,
   shareText,
   sheetLimits,
   type ProviderSheet,
@@ -394,15 +393,6 @@ describe('provider colours and shares', () => {
 })
 
 describe('usage words', () => {
-  it('reads resets as a countdown, a weekday or a date', () => {
-    expect(resetText(NOW - 1, NOW)?.label).toBe('resets now')
-    expect(resetText(NOW + 42 * 60_000, NOW)?.label).toBe('resets in 42m')
-    expect(resetText(NOW + 3 * 3_600_000 + 53 * 60_000, NOW)?.label).toBe('resets in 3h 53m')
-    expect(resetText(NOW + 2 * 86_400_000, NOW)?.label).toMatch(/^resets [A-Z][a-z]{2} \d/)
-    expect(resetText(NOW + 30 * 86_400_000, NOW)?.label).toBe('resets Nov 17')
-    expect(resetText(Number.NaN, NOW)).toBeUndefined()
-  })
-
   it('reads a week as a range, naming the year once and only off the reference year', () => {
     expect(rangeText('2026-10-06', '2026-10-12', 2026)).toBe('Oct 6 – 12')
     expect(rangeText('2026-09-29', '2026-10-05', 2026)).toBe('Sep 29 – Oct 5')

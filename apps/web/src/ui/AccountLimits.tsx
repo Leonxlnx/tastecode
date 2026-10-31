@@ -17,11 +17,12 @@ import {
 import { IconChevronRight as ChevronRight, IconRefresh as RefreshCw } from '@tabler/icons-react'
 import type { AccountLabel } from '../provider-accounts-state.js'
 import { providerDisplayName, providerMark } from '../provider-presentation.js'
-import { limitKey } from '../usage-limits-state.js'
+import { limitKey, USAGE_LOW_PERCENT } from '../usage-limits-state.js'
 import type { UsageSummaryState } from '../usage-summary-state.js'
 import '../styles/account-limits.css'
 import { ProviderIcon } from './ProviderIcon.js'
 import { compactRelativeTime } from './session-clock.js'
+import { resetText } from './usage/usage-format.js'
 
 /** Values older than this say how old they are; younger ones read as current. */
 const AGE_SHOWN_AFTER_MS = 10 * 60_000
@@ -302,9 +303,8 @@ function AccountLine(props: {
                   {limit.valueLabel === undefined ? (
                     <span
                       className="account-menu__account-gauge"
-                      style={
-                        { '--left': remaining(limit) / 100, '--order': index } as CSSProperties
-                      }
+                      data-low={remaining(limit) <= USAGE_LOW_PERCENT ? '' : undefined}
+                      style={{ '--left': remaining(limit) / 100 } as CSSProperties}
                     >
                       <span />
                     </span>
@@ -331,7 +331,6 @@ function AccountLine(props: {
               accountId={props.state.accountId}
               limit={limit}
               now={props.now}
-              order={index}
               onConsumeReset={props.onConsumeReset}
             />
           ))}
@@ -445,7 +444,6 @@ function LimitSource(props: {
           accountId={props.state.accountId}
           limit={limit}
           now={props.now}
-          order={index}
           onConsumeReset={props.onConsumeReset}
         />
       ))}
@@ -529,7 +527,6 @@ function LimitRow(props: {
   accountId?: AccountId | undefined
   limit: Limit
   now: number
-  order: number
   onConsumeReset?: ConsumeReset | undefined
 }) {
   const consumable = props.limit.action === 'consume-reset' && props.onConsumeReset !== undefined
@@ -539,15 +536,16 @@ function LimitRow(props: {
   const gauge = props.limit.valueLabel === undefined
   const value = props.limit.valueLabel ?? `${left}% left`
   const pace = evenPace(props.limit, props.now)
+  const reset =
+    props.limit.resetsAt === undefined ? undefined : resetLine(props.limit.resetsAt, props.now)
 
   return (
     <div
       className="account-menu__limit"
       data-gauge={gauge ? '' : undefined}
-      // The bar takes its length and colour from how much is left.
-      style={
-        gauge ? ({ '--left': left / 100, '--order': props.order } as CSSProperties) : undefined
-      }
+      data-low={gauge && left <= USAGE_LOW_PERCENT ? '' : undefined}
+      // The bar takes its length from how much is left.
+      style={gauge ? ({ '--left': left / 100 } as CSSProperties) : undefined}
     >
       <div className="account-menu__limit-row">
         <span className="account-menu__limit-label">{props.limit.label}</span>
@@ -573,9 +571,9 @@ function LimitRow(props: {
           )}
         </div>
       ) : null}
-      {props.limit.resetsAt !== undefined ? (
-        <span className="account-menu__limit-reset">
-          {resetLabel(props.limit.resetsAt, props.now)}
+      {reset ? (
+        <span className="account-menu__limit-reset" title={reset.title}>
+          {reset.label}
         </span>
       ) : null}
       {credits?.length ? (
@@ -787,17 +785,13 @@ export function evenPace(limit: Limit, now: number): number | undefined {
   return ahead >= 2 && ahead <= 98 ? ahead : undefined
 }
 
-/** A reset within the week reads as weekday and time; further out, as a date. */
-function resetLabel(at: number, now: number): string {
-  const date = new Date(at)
-  if (Number.isNaN(date.getTime())) return 'Reset time unavailable.'
-  const untilReset = at - now
-  const withinWeek = untilReset >= 0 && untilReset < 6 * 86_400_000
-  const formatted = date.toLocaleString(
-    undefined,
-    withinWeek
-      ? { weekday: 'short', hour: '2-digit', minute: '2-digit' }
-      : { year: 'numeric', month: 'short', day: 'numeric' },
-  )
-  return `Resets ${formatted}`
+/**
+ * The Usage page's words on a line of their own: "Resets in 3h 12m" within a
+ * day, the weekday and time within the week, the date after that, with the
+ * exact time on hover.
+ */
+function resetLine(at: number, now: number) {
+  const reset = resetText(at, now)
+  if (!reset) return { label: 'Reset time unavailable.', title: undefined }
+  return { label: reset.label.charAt(0).toUpperCase() + reset.label.slice(1), title: reset.title }
 }
