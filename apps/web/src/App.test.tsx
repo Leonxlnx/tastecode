@@ -4374,6 +4374,70 @@ describe('web client', () => {
     expect(await screen.findByRole('heading', { name: 'Add providers' })).toBeTruthy()
   })
 
+  it("never shows the composer's last provider's sign-in as the next one's in Settings", async () => {
+    await import('./ui/Settings.js')
+    serverProjects = []
+    localStorage.setItem('harness.provider', 'claude-code')
+    localStorage.setItem('harness.providerRoster.v1', '[]')
+    serverProviders.unshift({
+      ...serverProviders[0]!,
+      id: 'claude-code',
+      displayName: 'Claude Code',
+      auth: 'unknown',
+    })
+    let answerCodex!: (account: { signedIn: boolean }) => void
+    const codexAccount = new Promise<{ signedIn: boolean }>((resolve) => {
+      answerCodex = resolve
+    })
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'auth.status') {
+        // Claude Code's CLI is signed out; Codex's read is still running.
+        return methods['auth.status'].params.parse(params).provider === 'codex'
+          ? codexAccount
+          : Promise.resolve({ signedIn: false })
+      }
+      if (method === 'models.list') {
+        return Promise.resolve({
+          models:
+            methods['models.list'].params.parse(params).provider === 'codex'
+              ? [cachedCodexChoice().model]
+              : [],
+        })
+      }
+      return request(method, params)
+    })
+    render(<App />)
+
+    expect(await screen.findByText('Add a provider to start chatting.')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Add provider' }))
+    expect(await screen.findByRole('heading', { name: 'Add providers' })).toBeTruthy()
+    const codexRow = () =>
+      screen.getByRole('button', { name: /^(Add|Remove) Codex$/ }).closest('.provider-row')!
+    expect(codexRow().textContent).toContain('Signed in')
+
+    // Adding Codex lists its models, and the composer moves to it.
+    fireEvent.click(screen.getByRole('button', { name: 'Add Codex' }))
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('models.list', { provider: 'codex' }),
+    )
+    // Settings' read of the row and the composer's own read of its new provider.
+    await waitFor(() =>
+      expect(
+        transport.request.mock.calls.filter(
+          ([method, params]) =>
+            method === 'auth.status' && (params as { provider?: string }).provider === 'codex',
+        ),
+      ).toHaveLength(2),
+    )
+    await act(async () => undefined)
+    expect(codexRow().textContent).not.toContain('Not signed in')
+
+    await act(async () => answerCodex({ signedIn: true }))
+    expect(codexRow().textContent).toContain('Signed in')
+    expect(codexRow().textContent).not.toContain('Not signed in')
+  })
+
   it('starts the roster from what was in use: installed providers and agents with chats', async () => {
     serverProjects = [
       {
