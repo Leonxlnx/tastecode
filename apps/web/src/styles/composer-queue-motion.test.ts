@@ -28,7 +28,9 @@ describe('composer queue motion', () => {
     expect(row).toContain('opacity var(--dur-fast) var(--ease-out)')
     expect(row).toContain('transform var(--dur-press) var(--ease-out)')
     expect(appCss).toMatch(
-      /\.queue-row\[data-queue-phase='entering'\] \{[\s\S]*?composer-queue-item-in var\(--dur-slow\) var\(--ease-in-out\)/,
+      // The panel grows on --ease-rail; the new row fades in on the same curve
+      // so it is readable while the space opens, not after.
+      /\.queue-row\[data-queue-phase='entering'\] \{[\s\S]*?composer-queue-item-in var\(--dur-slow\) var\(--ease-rail\)/,
     )
     expect(appCss).toMatch(
       /\.queue-row\[data-queue-phase='exiting'\] \{[\s\S]*?composer-queue-item-out var\(--dur-fast\) var\(--ease-out\)/,

@@ -1802,7 +1802,7 @@
 }
 
 .queue-row[data-queue-phase='entering'] {
-  animation: composer-queue-item-in var(--dur-slow) var(--ease-in-out) both;
+  animation: composer-queue-item-in var(--dur-slow) var(--ease-rail) both;
 }
 
 .queue-row[data-queue-phase='exiting'] {
