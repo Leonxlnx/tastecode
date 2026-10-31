@@ -303,9 +303,7 @@ function AccountLine(props: {
                     <span
                       className="account-menu__account-gauge"
                       data-low={remaining(limit) <= USAGE_LOW_PERCENT ? '' : undefined}
-                      style={
-                        { '--left': remaining(limit) / 100, '--order': index } as CSSProperties
-                      }
+                      style={{ '--left': remaining(limit) / 100 } as CSSProperties}
                     >
                       <span />
                     </span>
@@ -332,7 +330,6 @@ function AccountLine(props: {
               accountId={props.state.accountId}
               limit={limit}
               now={props.now}
-              order={index}
               onConsumeReset={props.onConsumeReset}
             />
           ))}
@@ -446,7 +443,6 @@ function LimitSource(props: {
           accountId={props.state.accountId}
           limit={limit}
           now={props.now}
-          order={index}
           onConsumeReset={props.onConsumeReset}
         />
       ))}
@@ -530,7 +526,6 @@ function LimitRow(props: {
   accountId?: AccountId | undefined
   limit: Limit
   now: number
-  order: number
   onConsumeReset?: ConsumeReset | undefined
 }) {
   const consumable = props.limit.action === 'consume-reset' && props.onConsumeReset !== undefined
@@ -547,9 +542,7 @@ function LimitRow(props: {
       data-gauge={gauge ? '' : undefined}
       data-low={gauge && left <= USAGE_LOW_PERCENT ? '' : undefined}
       // The bar takes its length from how much is left.
-      style={
-        gauge ? ({ '--left': left / 100, '--order': props.order } as CSSProperties) : undefined
-      }
+      style={gauge ? ({ '--left': left / 100 } as CSSProperties) : undefined}
     >
       <div className="account-menu__limit-row">
         <span className="account-menu__limit-label">{props.limit.label}</span>

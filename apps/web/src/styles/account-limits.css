@@ -320,11 +320,11 @@
 
 /* Each bar is one quiet fill in text ink, the same as the card's meter: the
    number says how much is left, and only an allowance that is nearly spent
-   turns the error colour. */
+   turns the error colour. Every bar fills at once, in one calm movement,
+   rather than one row after another. */
 .account-menu__limit[data-gauge] {
   --limit-fill: var(--left);
-  animation: account-limit-fill 820ms var(--ease-overshoot) both;
-  animation-delay: calc(80ms + var(--order) * 70ms);
+  animation: account-limit-fill 520ms var(--ease-out) both;
   transition: --limit-fill var(--dur-slow) var(--ease-out);
 }
 
@@ -544,8 +544,7 @@ button.account-menu__account-line:focus-visible {
   height: 4px;
   border-radius: var(--r-pill);
   background: color-mix(in srgb, var(--text) 9%, transparent);
-  animation: account-limit-fill 820ms var(--ease-overshoot) both;
-  animation-delay: calc(80ms + var(--order) * 70ms);
+  animation: account-limit-fill 520ms var(--ease-out) both;
   transition: --limit-fill var(--dur-slow) var(--ease-out);
 }
 

@@ -72,10 +72,16 @@ describe('account limits layout', () => {
     expect(css).not.toMatch(/#[0-9a-f]{3,8}\b/i)
   })
 
-  it('fills the gauges once when the popup opens, and not at all with reduced motion', () => {
+  it('fills every gauge at once when the popup opens, and not at all with reduced motion', () => {
     const gauge = rule('.account-menu__limit[data-gauge]')
-    expect(gauge).toContain('animation: account-limit-fill')
-    expect(gauge).toContain('animation-delay: calc(80ms + var(--order) * 70ms)')
+    expect(gauge).toContain('animation: account-limit-fill 520ms var(--ease-out) both')
+    expect(rule('.account-menu__account-gauge')).toContain(
+      'animation: account-limit-fill 520ms var(--ease-out) both',
+    )
+    // Bars filling one row after another read as a cascade; no delay, no overshoot.
+    expect(css).not.toContain('animation-delay')
+    expect(css).not.toContain('--order')
+    expect(css).not.toContain('--ease-overshoot')
     expect(css).toMatch(/@keyframes account-limit-fill \{\s*from \{\s*--limit-fill: 0;/)
     expect(css).toMatch(
       /@media \(prefers-reduced-motion: reduce\) \{\s*\.account-menu__limit\[data-gauge\] \{\s*animation: none;\s*transition: none;/,
