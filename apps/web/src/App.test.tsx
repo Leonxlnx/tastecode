@@ -111,6 +111,8 @@ const threadCallbacks = vi.hoisted<ThreadCallbacks>(() => ({
   searchJump: undefined,
   searchJumpDone: undefined,
 }))
+/** The last props each chat's transcript rendered with, for split view's two transcripts. */
+const threadPropsById = vi.hoisted(() => new Map<string, ThreadProps>())
 const pickFolder = vi.hoisted(() => vi.fn<() => Promise<string | undefined>>())
 const droppedProjectFolderPaths = vi.hoisted(() =>
   vi.fn<(files: ArrayLike<File>) => Promise<string[]>>(),
@@ -186,8 +188,10 @@ vi.mock('./ui/Thread.js', async () => {
       return (
         <div
           data-testid="thread"
+          data-thread-id={props.threadId}
           data-started-at={frame.activeTurn?.startedAt}
           ref={() => {
+            if (props.threadId) threadPropsById.set(props.threadId, props)
             threadCallbacks.decideApproval = props.onDecide
             threadCallbacks.answerUserInput = props.onAnswerUserInput
             threadCallbacks.undoChanges = props.onUndoChanges
@@ -417,6 +421,7 @@ beforeEach(() => {
   threadCallbacks.threadId = undefined
   threadCallbacks.searchJump = undefined
   threadCallbacks.searchJumpDone = undefined
+  threadPropsById.clear()
   window.location.hash = ''
   document.documentElement.removeAttribute('data-theme')
   document.documentElement.classList.remove('dark')
@@ -14822,5 +14827,220 @@ describe('feedback entry points', () => {
       false,
     )
     expect(transport.request.mock.calls.some(([method]) => method === 'thread.start')).toBe(false)
+  })
+})
+
+describe('split view', () => {
+  function useTwoChats(extra: TestServerSession[] = []) {
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'project',
+        pinned: false,
+        createdAt: 0,
+        sessions: [
+          { id: 'left-thread', title: 'Left chat', provider: 'codex', createdAt: 3 },
+          { id: 'right-thread', title: 'Right chat', provider: 'codex', createdAt: 2 },
+          ...extra,
+        ],
+      },
+    ]
+  }
+  const pane = (title: string) => screen.getByRole('region', { name: title })
+  const transcriptIn = (title: string) => within(pane(title)).getByTestId('thread')
+  const isFocused = (title: string) => pane(title).classList.contains('is-focused')
+
+  async function openSplit(extra?: TestServerSession[]) {
+    useTwoChats(extra)
+    render(<App />)
+    fireEvent.click(await waitFor(() => treeChatRow('Left chat')))
+    await screen.findByTestId('thread')
+    fireEvent.contextMenu(treeChatRow('Right chat'))
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Open beside' }))
+    await waitFor(() => expect(screen.getAllByTestId('thread')).toHaveLength(2))
+  }
+
+  function streamText(threadId: string, text: string) {
+    emitThreadEvent(threadId, {
+      type: 'item.started',
+      item: {
+        id: `${threadId}-item`,
+        turnId: 'turn-1',
+        type: 'message',
+        role: 'assistant',
+        status: 'started',
+        text: '',
+        createdAt: 1,
+      },
+    })
+    emitThreadEvent(threadId, {
+      type: 'item.delta',
+      turnId: 'turn-1',
+      itemId: `${threadId}-item`,
+      textDelta: text,
+    })
+  }
+
+  it('opens a chat beside the active one from the chat menu, and the opened pane has focus', async () => {
+    await openSplit()
+    expect(transcriptIn('Left chat').dataset.threadId).toBe('left-thread')
+    expect(transcriptIn('Right chat').dataset.threadId).toBe('right-thread')
+    expect(isFocused('Right chat')).toBe(true)
+    expect(isFocused('Left chat')).toBe(false)
+    expect(sidebarProps().activeSessionId).toBe('right-thread')
+    expect(sidebarProps().besideSessionId).toBe('left-thread')
+    // Each pane has its own header; the stage-wide one is not shown.
+    expect(within(pane('Left chat')).getByRole('button', { name: 'Close Left chat pane' }))
+    expect(within(pane('Right chat')).getByRole('button', { name: 'Close Right chat pane' }))
+    expect(document.querySelector('.stage__body')!.classList.contains('is-split')).toBe(true)
+  })
+
+  it('opens a chat beside with Alt+click and keeps the open chat mounted', async () => {
+    useTwoChats()
+    render(<App />)
+    fireEvent.click(await waitFor(() => treeChatRow('Left chat')))
+    const first = await screen.findByTestId('thread')
+    fireEvent.click(treeChatRow('Right chat'), { altKey: true })
+    await waitFor(() => expect(screen.getAllByTestId('thread')).toHaveLength(2))
+    expect(isFocused('Right chat')).toBe(true)
+    // Opening the split keeps the chat that was open mounted.
+    expect(transcriptIn('Left chat')).toBe(first)
+  })
+
+  it('streams both chats into their own panes', async () => {
+    await openSplit()
+    streamText('left-thread', 'from the left')
+    streamText('right-thread', 'from the right')
+    await waitFor(() => {
+      expect(within(transcriptIn('Left chat')).getByText('from the left')).toBeTruthy()
+      expect(within(transcriptIn('Right chat')).getByText('from the right')).toBeTruthy()
+    })
+    expect(within(transcriptIn('Left chat')).queryByText('from the right')).toBeNull()
+  })
+
+  it('moves focus on a press in the other pane without remounting either transcript', async () => {
+    await openSplit()
+    const left = transcriptIn('Left chat')
+    const right = transcriptIn('Right chat')
+    const leftComposer = pane('Left chat').querySelector('.composer')!
+    expect(leftComposer.classList.contains('is-dormant')).toBe(true)
+    expect(leftComposer.hasAttribute('inert')).toBe(true)
+
+    fireEvent.pointerDown(left, { button: 0 })
+
+    await waitFor(() => expect(isFocused('Left chat')).toBe(true))
+    expect(sidebarProps().activeSessionId).toBe('left-thread')
+    expect(sidebarProps().besideSessionId).toBe('right-thread')
+    expect(transcriptIn('Left chat')).toBe(left)
+    expect(transcriptIn('Right chat')).toBe(right)
+    expect(pane('Left chat').querySelector('.composer')).toBe(leftComposer)
+    expect(leftComposer.classList.contains('is-dormant')).toBe(false)
+    expect(pane('Right chat').querySelector('.composer')!.classList.contains('is-dormant')).toBe(
+      true,
+    )
+  })
+
+  it('gives the focused pane the live composer and keeps the other one as it was', async () => {
+    await openSplit()
+    type ComposerCall = ComponentProps<typeof import('./ui/Composer.js').Composer>
+    const lastComposer = (dormant: boolean) =>
+      shellRenders.composer.mock.calls
+        .map(([props]) => props as ComposerCall)
+        .findLast((props) => (props.dormant === true) === dormant)!
+    expect(lastComposer(false).threadId).toBe('right-thread')
+    expect(lastComposer(true).threadId).toBe('left-thread')
+    expect(lastComposer(true).errorsVisible).toBe(false)
+
+    fireEvent.pointerDown(transcriptIn('Left chat'), { button: 0 })
+
+    await waitFor(() => expect(lastComposer(false).threadId).toBe('left-thread'))
+    expect(lastComposer(true).threadId).toBe('right-thread')
+  })
+  it('answers an approval in the unfocused pane on that pane’s chat', async () => {
+    await openSplit()
+    act(() => threadPropsById.get('left-thread')!.onDecide('approval-1', 'approve'))
+    expect(transport.request).toHaveBeenCalledWith('thread.respondToApproval', {
+      threadId: 'left-thread',
+      approvalId: 'approval-1',
+      decision: 'approve',
+    })
+  })
+
+  it('replaces the focused pane’s chat from the sidebar, and a chat shown beside only takes focus', async () => {
+    await openSplit([{ id: 'third-thread', title: 'Third chat', provider: 'codex', createdAt: 1 }])
+    fireEvent.click(treeChatRow('Third chat'))
+    await waitFor(() => expect(transcriptIn('Third chat').dataset.threadId).toBe('third-thread'))
+    expect(screen.queryByRole('region', { name: 'Right chat' })).toBeNull()
+    expect(isFocused('Third chat')).toBe(true)
+    const left = transcriptIn('Left chat')
+
+    fireEvent.click(treeChatRow('Left chat'))
+
+    await waitFor(() => expect(isFocused('Left chat')).toBe(true))
+    expect(screen.getAllByTestId('thread')).toHaveLength(2)
+    expect(transcriptIn('Left chat')).toBe(left)
+    expect(sidebarProps().besideSessionId).toBe('third-thread')
+  })
+
+  it('keeps the chat beside read when its turn completes', async () => {
+    await openSplit()
+    startTurn('left-thread', 'turn-1')
+    completeTurn('left-thread', 'turn-1')
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('thread.history', {
+        threadId: 'left-thread',
+        afterSeq: Number.MAX_SAFE_INTEGER,
+      }),
+    )
+    const left = sidebarProps()
+      .projects.flatMap((project) => project.sessions)
+      .find((session) => session.id === 'left-thread')
+    expect(left?.unread).toBe(false)
+  })
+
+  it('closes a pane and returns to the single chat layout with the other chat still mounted', async () => {
+    await openSplit()
+    const left = transcriptIn('Left chat')
+    fireEvent.click(
+      within(pane('Right chat')).getByRole('button', { name: 'Close Right chat pane' }),
+    )
+    await waitFor(() => expect(screen.getAllByTestId('thread')).toHaveLength(1))
+    expect(screen.getByTestId('thread')).toBe(left)
+    expect(sidebarProps().activeSessionId).toBe('left-thread')
+    expect(sidebarProps().besideSessionId).toBeUndefined()
+    expect(document.querySelector('.stage__body')!.classList.contains('is-split')).toBe(false)
+    expect(screen.queryByRole('region', { name: 'Left chat' })).toBeNull()
+    expect(screen.queryByRole('button', { name: /^Close .* pane$/ })).toBeNull()
+  })
+
+  it('closes the pane of a chat that is deleted', async () => {
+    await openSplit()
+    await chooseChatMenuItem('Left chat', 'Delete chat')
+    await waitFor(() => expect(screen.getAllByTestId('thread')).toHaveLength(1))
+    expect(screen.getByTestId('thread').dataset.threadId).toBe('right-thread')
+    expect(sidebarProps().besideSessionId).toBeUndefined()
+  })
+
+  it('draws the chat beside without rendering the app for its streamed text', async () => {
+    await openSplit()
+    streamText('left-thread', '')
+    await waitFor(() => expect(within(transcriptIn('Left chat')).queryByText('x')).toBeNull())
+    const frames: FrameRequestCallback[] = []
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      frames.push(callback)
+      return frames.length
+    })
+    appRenders.mockClear()
+    for (let index = 0; index < 200; index += 1) {
+      emitThreadEvent('left-thread', {
+        type: 'item.delta',
+        turnId: 'turn-1',
+        itemId: 'left-thread-item',
+        textDelta: 'x',
+      })
+    }
+    act(() => frames[0]?.(16))
+    expect(within(transcriptIn('Left chat')).getByText('x'.repeat(200))).toBeTruthy()
+    expect(appRenders).not.toHaveBeenCalled()
   })
 })
