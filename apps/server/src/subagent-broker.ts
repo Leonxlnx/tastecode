@@ -19,10 +19,14 @@ import {
 import { SUBAGENT_LIMITS } from './subagent-limits.js'
 import {
   FINISHED_SUBAGENT_STATES,
+  shorten,
+  subagentRunItem,
   type StoredSubagentRun,
   type SubagentRunState,
   type SubagentRunTable,
 } from './subagent-runs.js'
+
+export { shorten }
 
 /** A provider a sub-agent can run on, and the models its list offers. */
 export type AgentModelChoice = {
@@ -83,8 +87,6 @@ export const SUBAGENT_INSTRUCTIONS = [
 const UPDATE_INTERVAL_MS = 1_000
 /** The row's summary of a result; the whole result is in the sub-agent's own chat. */
 const SUMMARY_CHARACTERS = 4_000
-/** The task as the row's tool call shows it, sent with every update. */
-const ROW_TASK_CHARACTERS = 2_000
 const TOOL_ITEM_TYPES = new Set<Item['type']>(['tool_call', 'command', 'file_change'])
 
 /** What a wait reports per sub-agent, as the calling agent reads it. */
@@ -507,7 +509,7 @@ export class SubagentBroker implements AgentToolsBroker {
     this.#runs.update(live.run.itemId, { snapshot })
     this.#host.recordOnParent(live.run.parentThreadId, {
       type: 'item.completed',
-      item: this.#item(live.run, snapshot),
+      item: subagentRunItem(live.run),
     })
     // A finished run's chat may still report; nothing it says changes the run.
     if (FINISHED_SUBAGENT_STATES.has(live.run.state) && live.run.threadId)
@@ -538,19 +540,6 @@ export class SubagentBroker implements AgentToolsBroker {
       ...(run.agent ? { agent: run.agent } : {}),
       ...(run.model ? { model: run.model } : {}),
       ...(!finished && attention ? { attention } : {}),
-    }
-  }
-
-  #item(run: StoredSubagentRun, snapshot: Subagent): Item {
-    return {
-      id: run.itemId,
-      turnId: run.turnId,
-      type: 'tool_call',
-      // The call that started it is done; the sub-agent's own state is the snapshot's.
-      status: run.state === 'failed' ? 'failed' : 'completed',
-      text: `subagent\n${JSON.stringify({ prompt: shorten(run.task, ROW_TASK_CHARACTERS) })}`,
-      subagent: snapshot,
-      createdAt: run.createdAt,
     }
   }
 
@@ -634,15 +623,6 @@ function toolLabel(item: Item): string {
 function oneLine(text: string, limit: number): string {
   const line = text.replace(/\s+/g, ' ').trim()
   return line.length > limit ? `${line.slice(0, limit - 1)}…` : line
-}
-
-/** Keeps the start and the end, where a report puts its summary and its conclusion. */
-export function shorten(text: string, limit: number): string {
-  if (text.length <= limit) return text
-  const marker = '\n\n[… shortened by TasteCode …]\n\n'
-  const keep = limit - marker.length
-  const head = Math.ceil(keep / 2)
-  return `${text.slice(0, head)}${marker}${text.slice(text.length - (keep - head))}`
 }
 
 function errorText(error: unknown): string {
