@@ -59,7 +59,8 @@ export function SplitPane(props: {
   /** The pane shown first; the other one sits to its right. */
   start: boolean
   label: string
-  onFocusPane: (slot: PaneSlot, target: EventTarget | null) => void
+  /** toComposer: the press was on this pane's composer, so typing should follow. */
+  onFocusPane: (slot: PaneSlot, toComposer: boolean) => void
   children: ReactNode
 }) {
   // One element type in both layouts: switching between them must not remount
@@ -71,9 +72,7 @@ export function SplitPane(props: {
       </section>
     )
   }
-  const claimFocus = (target: EventTarget | null) => {
-    if (!props.focused) props.onFocusPane(props.slot, target)
-  }
+
   return (
     <section
       className={`split__pane${props.focused ? ' is-focused' : ' is-dormant'}${props.start ? ' is-start' : ' is-end'}`}
@@ -81,13 +80,28 @@ export function SplitPane(props: {
       aria-label={props.label}
       data-split-slot={props.slot}
       onPointerDownCapture={(event) => {
-        if (event.button === 0) claimFocus(event.target)
+        if (event.button !== 0 || props.focused) return
+        props.onFocusPane(
+          props.slot,
+          pressedComposer(event.currentTarget, event.clientX, event.clientY),
+        )
       }}
-      onFocusCapture={(event) => claimFocus(event.target)}
+      onFocusCapture={() => {
+        if (!props.focused) props.onFocusPane(props.slot, false)
+      }}
     >
       {props.children}
     </section>
   )
+}
+
+/**
+ * The dormant composer is inert, so a press on it reaches whatever lies below;
+ * its box decides whether the press meant the composer.
+ */
+function pressedComposer(pane: HTMLElement, x: number, y: number): boolean {
+  const box = pane.querySelector('.composer__box')?.getBoundingClientRect()
+  return box !== undefined && x >= box.left && x <= box.right && y >= box.top && y <= box.bottom
 }
 
 const CONTENTS: CSSProperties = { display: 'contents' }

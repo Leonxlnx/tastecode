@@ -6041,11 +6041,10 @@ export function App() {
     [focusPane, editMessage],
   )
   const focusPaneFromEvent = useCallback(
-    (slot: PaneSlot, target: EventTarget | null) => {
+    (slot: PaneSlot, toComposer: boolean) => {
       focusPane(slot)
-      // A press in the composer area means the user wants to type there.
-      if (target instanceof Element && target.closest('.composer'))
-        setComposerFocusRequest((request) => request + 1)
+      // A press on the composer means the user wants to type there.
+      if (toComposer) setComposerFocusRequest((request) => request + 1)
     },
     [focusPane],
   )

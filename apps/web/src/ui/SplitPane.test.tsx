@@ -35,7 +35,7 @@ describe('SplitPane', () => {
     expect(screen.getByRole('region', { name: 'Right chat' }).className).toContain('is-dormant')
 
     fireEvent.pointerDown(button, { button: 0 })
-    expect(onFocusPane).toHaveBeenLastCalledWith(1, button)
+    expect(onFocusPane).toHaveBeenLastCalledWith(1, false)
     fireEvent.focus(button)
     expect(onFocusPane).toHaveBeenCalledTimes(2)
     // A right-button press opens a context menu; it does not move focus.
