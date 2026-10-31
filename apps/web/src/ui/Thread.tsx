@@ -493,6 +493,9 @@ export const Thread = memo(function Thread(props: ThreadProps) {
   // the row was measured with the rail's room: the transcript was briefly
   // shorter and the scroll was clamped.
   const railReserve = showWorkingRail && railIndex === undefined ? WORKING_RAIL_PX : 0
+  // A working turn's last line keeps clear of the prompt bar. A finished turn
+  // ends on its answer's taller actions row, so the end never moves up.
+  const runwayEnd = railReserve + (showWorkingRail ? WORKING_TAIL_PX : 0)
 
   /**
    * The virtual list moves the scroll itself: when a row above the viewport
@@ -606,7 +609,7 @@ export const Thread = memo(function Thread(props: ThreadProps) {
     // the rows it shows change.
     directDomUpdates: true,
     onChange: onVirtualChange,
-    paddingEnd: railReserve,
+    paddingEnd: runwayEnd,
   })
   virtualizerRef.current = virtualizer
   /**
@@ -1112,8 +1115,8 @@ export const Thread = memo(function Thread(props: ThreadProps) {
   // whenever the thread is shorter than the viewport.
   const railIndexRef = useRef(railIndex)
   railIndexRef.current = railIndex
-  const railReserveRef = useRef(railReserve)
-  railReserveRef.current = railReserve
+  const runwayEndRef = useRef(runwayEnd)
+  runwayEndRef.current = runwayEnd
   const rail = useRef<{ element: HTMLDivElement | null; offset: number | undefined }>({
     element: null,
     offset: undefined,
@@ -1125,7 +1128,7 @@ export const Thread = memo(function Thread(props: ThreadProps) {
     if (!element) return
     const index = railIndexRef.current
     // Without a response row, over the room the runway keeps at its end.
-    const reserved = virtualizer.getTotalSize() - railReserveRef.current
+    const reserved = virtualizer.getTotalSize() - runwayEndRef.current
     const next =
       index === undefined ? reserved : (virtualizer.measurementsCache[index]?.start ?? reserved)
     if (next === offset) return
@@ -1787,6 +1790,8 @@ const JUMP_HANDOVER_PX = JUMP_MIN_PX_PER_MS * JUMP_EASE_MS
 const FOLLOW_SETTLE_MS = 1_200
 /** The working rail's footprint above its turn's first response: --working-rail-h in thread.css. */
 const WORKING_RAIL_PX = 38
+/** The extra room below a working turn's last line, above the prompt bar. */
+const WORKING_TAIL_PX = 16
 /** How long after a chat opens its rows are still measuring themselves in. */
 const OPEN_SETTLE_MS = 400
 /** A requested end at most this many viewports away glides there; a further one is written at once. */
