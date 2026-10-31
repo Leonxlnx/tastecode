@@ -11,22 +11,22 @@ function rule(selector: string): string {
 }
 
 describe('markdown tables', () => {
-  it('open with a code-block-style "table" label row instead of an empty toolbar row', () => {
-    // The label is the wrapper's own first line, so the live table, whose
-    // controls row is empty while it streams, has the same 32px row.
-    const label = rule(String.raw`\.md \[data-streamdown='table-wrapper'\]::before`)
-    expect(label).toContain("content: 'table';")
-    expect(label).toContain('display: block;')
-    expect(label).toContain('height: 32px;')
-    expect(label).toContain('line-height: 32px;')
-    expect(label).toContain('font-family: var(--font-mono);')
-    expect(label).toContain('color: var(--text-3);')
+  it('start at the card, with no label row above it', () => {
+    expect(markdownCss).not.toMatch(/\[data-streamdown='table-wrapper'\]::before/)
+    expect(
+      rule(String.raw`\.md \[data-streamdown='table-wrapper'\]:not\(:first-child\)`),
+    ).toContain('margin-top: 14px;')
     expect(markdownCss).not.toContain('min-height: 26px')
   })
 
-  it('lifts the actions onto the label row and fades them in as a whole', () => {
+  it("floats the actions in the header's corner and fades them in as a whole", () => {
     const controls = rule(CONTROLS)
-    expect(controls).toMatch(/^\s*position: absolute;\s*top: 2px;\s*right: -6\.5px;/)
+    expect(controls).toMatch(/^\s*position: absolute;\s*top: 1px;\s*right: 1px;/)
+    expect(controls).toContain(
+      'background: linear-gradient(to right, transparent, var(--surface) 16px);',
+    )
+    // The live table's controls are empty while it streams.
+    expect(controls).toMatch(/&:empty \{\s*display: none;/)
     expect(controls).toContain('opacity: 0;')
     expect(controls).toContain('transition: opacity var(--dur-hover) var(--ease-out);')
     expect(markdownCss).toMatch(
@@ -39,7 +39,7 @@ describe('markdown tables', () => {
     )
   })
 
-  it('draws the actions as the same ghost buttons as a code block', () => {
+  it('draws the actions as ghost buttons on the header fill', () => {
     const controls = rule(CONTROLS)
     const button = /> button,\s*> div > button \{([\s\S]*?)\n {4}svg/.exec(controls)?.[1] ?? ''
     expect(button).toMatch(/width: 28px;\s*height: 28px;/)
@@ -47,7 +47,7 @@ describe('markdown tables', () => {
     expect(button).toContain('border: 0;')
     expect(button).not.toContain('opacity')
     expect(button).toMatch(
-      /&:hover,\s*&:focus-visible \{\s*background: var\(--surface\);\s*color: var\(--text-2\);/,
+      /&:hover,\s*&:focus-visible \{\s*background: var\(--surface-3\);\s*color: var\(--text-2\);/,
     )
     expect(controls).toMatch(/svg \{\s*width: 15px;\s*height: 15px;\s*stroke-width: 1\.7;/)
   })
