@@ -36,6 +36,11 @@ export const PhoneDeviceSchema = z.object({
 export type PhoneDevice = z.infer<typeof PhoneDeviceSchema>
 
 export const PhoneAccessStatusSchema = z.object({
+  /**
+   * False when this build keeps phone access off: the listener cannot start
+   * and the desktop hides the feature. Absent (older servers) means available.
+   */
+  available: z.boolean().optional(),
   /** The user turned phone access on. Persisted across restarts. */
   enabled: z.boolean(),
   /** The listener accepts links right now. False while enabled means `error` says why. */
