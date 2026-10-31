@@ -2886,9 +2886,14 @@ export class Orchestrator {
       !handover &&
       this.#store.thread(threadId)?.continuedFrom !== undefined &&
       this.#store.threadNeedsContinueContext(threadId)
+    // Sub-agent results its agent has not read go in front of the prompt.
+    const unreadSubagents = this.#subagents.unreadResults(threadId)
     // The prompt carries more than the user's words; the transcript keeps the words.
     if (
-      (handover || continuation || this.#store.threadNeedsRestoreContext(threadId)) &&
+      (handover ||
+        continuation ||
+        unreadSubagents ||
+        this.#store.threadNeedsRestoreContext(threadId)) &&
       !submission
     ) {
       submission = { id: crypto.randomUUID(), text, attachments, createdAt: Date.now() }
@@ -3017,9 +3022,10 @@ export class Orchestrator {
         }
         return turnId
       }
-      const prompt = existsSync(path.join(this.#repoPath(threadId), '.taste', 'brief.json'))
+      const ownPrompt = existsSync(path.join(this.#repoPath(threadId), '.taste', 'brief.json'))
         ? `This is an ordinary user turn, not an active TasteCode Design phase. Earlier phase-only JSON protocols no longer apply. Follow the current request normally and explain your work in normal prose, unless the user explicitly requests structured data. If asked to launch a preview, perform the launch on an available local port and report its URL instead of returning a preview-plan JSON object.\n\nUser request:\n${text}`
         : text
+      const prompt = unreadSubagents ? `${unreadSubagents.text}${ownPrompt}` : ownPrompt
       const turnId = await entry.session.sendTurn(
         threadId,
         handover
@@ -3050,6 +3056,7 @@ export class Orchestrator {
       this.#acceptTurnStart(threadId, turnId, pendingStart)
       this.#store.clearThreadRestoreContext(threadId)
       if (continuation) this.#store.clearThreadContinueContext(threadId)
+      if (unreadSubagents) this.#subagents.markRead(unreadSubagents.itemIds)
       if (handover) {
         this.#store.clearThreadHandover(threadId)
         this.#handoverTurns.set(threadId, { turnId, answered: false })

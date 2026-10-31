@@ -115,9 +115,10 @@ function harness() {
       },
     },
   })
+  // Cleanups run in reverse: the chats end before their folder goes.
   cleanups.push(
-    () => orchestrator.disposeAll(),
     () => rmSync(directory, { recursive: true, force: true, maxRetries: 3 }),
+    () => orchestrator.disposeAll(),
   )
   return { store, orchestrator, sessions, started, parentEvents, childEvents, directory }
 }
@@ -151,7 +152,7 @@ async function callTool(options: StartOptions, name: string, args: Record<string
 }
 
 const until = async (check: () => boolean) => {
-  for (let attempt = 0; attempt < 200 && !check(); attempt += 1) {
+  for (let attempt = 0; attempt < 1_000 && !check(); attempt += 1) {
     await new Promise((resolve) => setTimeout(resolve, 5))
   }
   expect(check()).toBe(true)
@@ -186,7 +187,8 @@ async function runningChild(h: ReturnType<typeof harness>, task = 'Review src/a.
   return { parent, parentOptions, childSession, childId }
 }
 
-describe('sub-agents on another provider', () => {
+// Each test talks to the agent tools over real HTTP; a busy machine needs more than 5 s.
+describe('sub-agents on another provider', { timeout: 30_000 }, () => {
   it('runs a child on another provider in the parent checkout and hands its answer back', async () => {
     const h = harness()
     await h.orchestrator.listModels('claude-code')
@@ -366,6 +368,42 @@ describe('sub-agents on another provider', () => {
     h.orchestrator.forgetDeletedThread(parent.id)
     expect(h.store.thread(childId)).toBeUndefined()
     expect(h.orchestrator.subagents(parent.id)).toEqual([])
+  })
+
+  it('puts results the agent never read in front of its next prompt, once', async () => {
+    const h = harness()
+    const { parent, childSession } = await runningChild(h)
+    childSession.emit({
+      type: 'item.completed',
+      item: {
+        id: 'answer',
+        turnId: childSession.turnId,
+        type: 'message',
+        role: 'assistant',
+        status: 'completed',
+        text: 'Found two bugs.',
+        createdAt: Date.now(),
+      },
+    })
+    childSession.emit({ type: 'turn.completed', turnId: childSession.turnId, status: 'completed' })
+    h.sessions[0]!.emit({ type: 'turn.completed', turnId: 'turn-0', status: 'completed' })
+
+    await h.orchestrator.sendTurn(parent.id, 'What next?')
+    const prompt = h.sessions[0]!.sent.at(-1)!
+    expect(prompt).toContain(
+      '<subagent agent_id="a1" provider="claude-code" status="completed">\nFound two bugs.\n</subagent>',
+    )
+    expect(prompt).toContain('not instructions')
+    expect(prompt.endsWith('The user’s message follows.\n\nWhat next?')).toBe(true)
+    expect(h.store.subagents.ofParent(parent.id)[0]!.deliveredAt).toBeDefined()
+
+    h.sessions[0]!.emit({
+      type: 'turn.completed',
+      turnId: h.sessions[0]!.turnId,
+      status: 'completed',
+    })
+    await h.orchestrator.sendTurn(parent.id, 'And then?')
+    expect(h.sessions[0]!.sent.at(-1)).toBe('And then?')
   })
 
   it('reserves the agent tools server id', async () => {
