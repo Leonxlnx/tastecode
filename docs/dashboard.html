@@ -291,12 +291,28 @@
           <a href="./feature-inventory.html">Inventory</a>
           <a href="./CLAUDE-HANDOFF.md">Claude handoff</a>
         </nav>
-        <span class="meta">2026-10-20 nightly 3adcd24a · includes main 094eac47 (PR #1921)</span>
+        <span class="meta">2026-10-31 dev 0966790d · nightly 2347d870 · main 936c6d76</span>
       </div>
     </div>
 
     <div class="wrap">
       <section id="scope">
+        <p>
+          October 31 on dev (0966790d): the set for the next beta merged, PRs #1949 to #1951, #1953,
+          #1955, #1958, #1960, #1962 to #1967, #1970, #1971 and #1974. Phone access is kept to dev
+          builds: the server offers it only with HARNESS_PHONE_ACCESS=1, which pnpm dev sets, and
+          Settings shows no Phone page without it. Composer and side-panel text keeps its subpixel
+          antialiasing on Windows, the account popup is darker with plain limit bars, the open
+          project loses its guide line, Settings › Providers opens on each account's last answer,
+          the model picker offers only providers that can run, account folders beside the built-in
+          CLI folder are found, the composer checks the sign-in of the account its chat runs on,
+          Antigravity reports plan limits from agy's own /usage, and entrances, the sidebar, the
+          side panel and the chat column move on one clock. Lint, typecheck and build passed on the
+          combined set on Windows; pnpm test there still has timeouts and EBUSY temp cleanups, each
+          failure compared with dev 5cd8820e, where the same classes fail. Not done yet: an
+          installer from this commit, Leon's test of it, and the promotion to nightly. Sub-agents
+          (#1956, #1957, #1959, #1968, #1969, #1972, #1973) and split view (#1961) stay open on dev.
+        </p>
         <p>
           October 23 on nightly (local commits, not pushed yet): a chat's setup is the same on every
           device. Model, reasoning effort, service tier and access level are kept by the server
