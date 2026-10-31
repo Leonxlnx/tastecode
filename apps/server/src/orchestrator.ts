@@ -95,6 +95,7 @@ import type {
   PanicStopResult,
   ParamsOf,
   AccountContextSettings,
+  AccountRuntimeSetting,
   ProviderContextSettings,
   ProviderContextSettingsMap,
   ProviderAccount,
@@ -634,7 +635,7 @@ export class Orchestrator {
   /** What every account's controls share with the default account's. */
   #scopeOptions: Pick<
     ProviderControlsOptions,
-    'controlIdleMs' | 'beforeLimitRead' | 'services' | 'createCodex' | 'chosenRuntime'
+    'controlIdleMs' | 'beforeLimitRead' | 'services' | 'createCodex'
   >
   /** Install, update and sign-in terminals, by terminal id, and the source they change. */
   #providerTerminals = new Map<
@@ -804,7 +805,6 @@ export class Orchestrator {
     )
     this.#stopSettleMs = Math.max(1, handlers.stopSettleMs ?? STOP_SETTLE_TIMEOUT_MS)
     this.#scopeOptions = {
-      chosenRuntime: (provider) => this.#chosenRuntime(provider),
       ...(handlers.controlIdleMs !== undefined ? { controlIdleMs: handlers.controlIdleMs } : {}),
       ...(handlers.beforeLimitRead ? { beforeLimitRead: handlers.beforeLimitRead } : {}),
       ...(handlers.providerServices ? { services: handlers.providerServices } : {}),
@@ -834,6 +834,7 @@ export class Orchestrator {
         read: () => this.#store.limitSnapshot(),
         write: (value) => this.#store.setLimitSnapshot(value),
       },
+      chosenRuntime: (provider) => this.#chosenRuntime(provider),
       ...this.#scopeOptions,
     })
     this.#modelLists = new ModelListCache({
@@ -889,7 +890,7 @@ export class Orchestrator {
         this.#runtimeFor(provider, this.#onLog, accountHome).listModels(
           agent,
           read,
-          this.#runtimeLaunch(provider, agent),
+          this.#runtimeLaunch(provider, agent, accountId),
         ),
       onLog: (_provider, line) => this.#onLog(line),
       onLogin: (_provider, result) => this.#onLogin(provider, result, accountId),
@@ -897,6 +898,7 @@ export class Orchestrator {
       onLimitsChanged: (_provider, source) => this.#onLimitsChanged({ ...source, accountId }),
       onAuthChanged: () => modelLists.invalidate(provider),
       limitSnapshot: snapshot('limits'),
+      chosenRuntime: () => this.#chosenRuntime(provider, accountId),
       ...this.#scopeOptions,
     })
     const modelLists = new ModelListCache({
@@ -984,20 +986,52 @@ export class Orchestrator {
     return this.#store.providerRuntimeSettings()
   }
 
-  /** New sessions, model lists and limit reads use it; sessions already running keep theirs. */
+  /** The default account's new sessions, model lists and limit reads use it; running ones keep theirs. */
   updateRuntimeSettings(provider: ProviderId, runtime: string | null): ProviderRuntimeSettings {
     validateRuntime(provider, runtime)
     return this.#store.updateProviderRuntimeSettings(provider, runtime)
   }
 
-  /** The provider's chosen runtime, or undefined for its default. Every account shares it. */
-  #chosenRuntime(provider: ProviderId): string | undefined {
-    return runtimeForLaunch(provider, this.#store.providerRuntimeSettings()[provider])
+  accountRuntimeSettings(): readonly AccountRuntimeSetting[] {
+    return this.#store.accountRuntimeSettings()
+  }
+
+  /** A further account's runtime, used as {@link updateRuntimeSettings} uses the default account's. */
+  updateAccountRuntimeSetting(
+    provider: ProviderId,
+    accountId: AccountId,
+    runtime: string | null,
+  ): readonly AccountRuntimeSetting[] {
+    if (accountId === DEFAULT_ACCOUNT_ID) {
+      throw new Error("The default account uses its provider's runtime setting.")
+    }
+    validateRuntime(provider, runtime)
+    // Throws for an account that is gone or one this provider cannot have.
+    this.#accounts.home(provider, accountId)
+    return this.#store.updateAccountRuntimeSetting(provider, accountId, runtime)
+  }
+
+  /**
+   * The account's chosen runtime, or undefined for the default one. Each account
+   * chooses alone: one without a choice does not follow another account's.
+   */
+  #chosenRuntime(provider: ProviderId, accountId?: AccountId): string | undefined {
+    const chosen =
+      accountId === undefined || accountId === DEFAULT_ACCOUNT_ID
+        ? this.#store.providerRuntimeSettings()[provider]
+        : this.#store
+            .accountRuntimeSettings()
+            .find((entry) => entry.provider === provider && entry.accountId === accountId)?.runtime
+    return runtimeForLaunch(provider, chosen)
   }
 
   /** Custom harnesses start their own engine; only the provider's own CLI follows the choice. */
-  #runtimeLaunch(provider: ProviderId, agent: string | undefined): Pick<StartOptions, 'runtime'> {
-    const runtime = agent ? undefined : this.#chosenRuntime(provider)
+  #runtimeLaunch(
+    provider: ProviderId,
+    agent: string | undefined,
+    accountId?: AccountId,
+  ): Pick<StartOptions, 'runtime'> {
+    const runtime = agent ? undefined : this.#chosenRuntime(provider, accountId)
     return runtime === undefined ? {} : { runtime }
   }
 
@@ -1015,8 +1049,8 @@ export class Orchestrator {
   /**
    * Custom harnesses configure their own engine, so only the provider's own
    * CLI is tuned. A further account's own context settings come first; without
-   * any it runs with its provider's. Every account runs through the provider's
-   * chosen runtime.
+   * any it runs with its provider's. Each account runs through its own chosen
+   * runtime.
    */
   #contextRuntimeOptions(
     provider: ProviderId,
@@ -1024,7 +1058,7 @@ export class Orchestrator {
     accountId: string | undefined,
   ): StartOptions {
     if (agent) return {}
-    const launch = this.#runtimeLaunch(provider, agent)
+    const launch = this.#runtimeLaunch(provider, agent, accountId)
     const own =
       accountId === undefined || accountId === DEFAULT_ACCOUNT_ID
         ? undefined
