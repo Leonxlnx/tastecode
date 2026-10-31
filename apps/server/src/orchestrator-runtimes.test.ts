@@ -50,16 +50,16 @@ const personalHome = path.join(root, 'claude-personal')
 mkdirSync(personalHome)
 const workHome = path.join(root, 'claude-work')
 mkdirSync(workHome)
-const accountHomes: Readonly<Record<string, string>> = {
-  personal: personalHome,
-  work: workHome,
-}
+const accountHomes = new Map([
+  ['personal', personalHome],
+  ['work', workHome],
+])
 
 /** Two further Claude Code accounts; anything else is gone. */
 const twoAccounts: AccountDirectory = {
   home(provider, accountId) {
     if (accountId === undefined || accountId === 'default') return undefined
-    const home = provider === 'claude-code' ? accountHomes[accountId] : undefined
+    const home = provider === 'claude-code' ? accountHomes.get(accountId) : undefined
     if (home === undefined) throw new AccountNotFoundError()
     return home
   },
