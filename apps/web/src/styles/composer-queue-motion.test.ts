@@ -24,11 +24,14 @@ describe('composer queue motion', () => {
     expect(appCss).toMatch(
       /@keyframes composer-queue-panel-in \{[\s\S]*?clip-path: inset\(100% 0 0\);[\s\S]*?opacity: 0;[\s\S]*?clip-path: inset\(0 0 0\);[\s\S]*?opacity: 1;/,
     )
-    expect(row).toContain('will-change: transform, opacity;')
+    // A resting will-change would keep queued text off subpixel antialiasing.
+    expect(row).not.toContain('will-change')
     expect(row).toContain('opacity var(--dur-fast) var(--ease-out)')
     expect(row).toContain('transform var(--dur-press) var(--ease-out)')
     expect(appCss).toMatch(
-      /\.queue-row\[data-queue-phase='entering'\] \{[\s\S]*?composer-queue-item-in var\(--dur-slow\) var\(--ease-in-out\)/,
+      // The panel grows on --ease-rail; the new row fades in on the same curve
+      // so it is readable while the space opens, not after.
+      /\.queue-row\[data-queue-phase='entering'\] \{[\s\S]*?composer-queue-item-in var\(--dur-slow\) var\(--ease-rail\)/,
     )
     expect(appCss).toMatch(
       /\.queue-row\[data-queue-phase='exiting'\] \{[\s\S]*?composer-queue-item-out var\(--dur-fast\) var\(--ease-out\)/,
@@ -40,6 +43,13 @@ describe('composer queue motion', () => {
     expect(appCss).toContain(
       '@keyframes composer-queue-item-out {\n  to {\n    opacity: 0;\n  }\n}',
     )
+  })
+
+  it('keeps the composer box off its own layer at rest, so its labels stay crisp', () => {
+    // Chromium draws text in a will-change: transform layer without subpixel
+    // antialiasing; the dock FLIP promotes the box only while it runs.
+    expect(rule('.composer__box')).not.toContain('will-change')
+    expect(composerSource).toContain("{ transform: 'translate3d(0, 0, 0)' }")
   })
 
   it('keeps queued rows compact', () => {

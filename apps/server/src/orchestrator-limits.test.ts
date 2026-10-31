@@ -12,6 +12,7 @@ const sources = vi.hoisted(() => ({
   codex: vi.fn(),
   claude: vi.fn(),
   grok: vi.fn(),
+  antigravity: vi.fn(),
   consume: vi.fn(),
   constructed: 0,
   disposed: [] as number[],
@@ -52,6 +53,13 @@ vi.mock('@harness/adapter-grok', async (importOriginal) => {
   return { ...original, grokLimitSource: () => sources.grok() }
 })
 
+// Without this the default service starts the real agy, which signs in with
+// the machine's Google account and asks Google for the quota.
+vi.mock('@harness/adapter-antigravity', async (importOriginal) => {
+  const original = await importOriginal<typeof import('@harness/adapter-antigravity')>()
+  return { ...original, antigravityLimitSource: () => sources.antigravity() }
+})
+
 const { Orchestrator } = await import('./orchestrator.js')
 
 const orchestrator = () =>
@@ -65,6 +73,7 @@ beforeEach(() => {
   sources.codex.mockReset()
   sources.claude.mockReset()
   sources.grok.mockReset()
+  sources.antigravity.mockReset()
   sources.consume.mockReset()
   sources.constructed = 0
   sources.disposed = []
@@ -75,6 +84,7 @@ describe('provider limit sources', () => {
     ['codex', 'codex'],
     ['claude-code', 'claude'],
     ['grok', 'grok'],
+    ['antigravity', 'antigravity'],
   ] as const)('keeps %s source state authoritative', async (provider, reader) => {
     sources[reader].mockResolvedValue({
       status: 'ready',
@@ -185,7 +195,7 @@ describe('provider limit sources', () => {
 
   it.each(
     ProviderIdSchema.options.filter(
-      (provider) => !['codex', 'claude-code', 'grok'].includes(provider),
+      (provider) => !['codex', 'claude-code', 'grok', 'antigravity'].includes(provider),
     ),
   )('marks %s unavailable without querying a subscription source', async (provider) => {
     const instance = orchestrator()
@@ -197,6 +207,7 @@ describe('provider limit sources', () => {
     expect(sources.codex).not.toHaveBeenCalled()
     expect(sources.claude).not.toHaveBeenCalled()
     expect(sources.grok).not.toHaveBeenCalled()
+    expect(sources.antigravity).not.toHaveBeenCalled()
     await instance.disposeAll()
   })
 

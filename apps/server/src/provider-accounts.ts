@@ -267,33 +267,34 @@ export class ProviderAccounts implements AccountDirectory {
       const source = this.#source(provider)
       const markers = source.markers ?? []
       if (markers.length === 0) continue
-      const defaultHome = source.defaultHome(this.#environment)
-      const parent = path.dirname(defaultHome)
-      const base = path.basename(defaultHome)
-      let names: string[]
-      try {
-        names = readdirSync(parent)
-      } catch {
-        continue
-      }
       const rows = this.#rows.providerAccounts(provider)
       const labels = new Set(
         this.#accounts(provider, rows).map((account) => account.label.toLocaleLowerCase()),
       )
-      for (const name of names.sort()) {
-        const suffix = siblingSuffix(base, name)
-        if (suffix === undefined) continue
-        const folder = path.join(parent, name)
-        const lastUsed = lastWritten(folder, markers)
-        if (lastUsed === undefined) continue
+      for (const searched of searchedHomes(source, this.#environment)) {
+        const parent = path.dirname(searched)
+        const base = path.basename(searched)
+        let names: string[]
         try {
-          this.#existingFolder(provider, source, rows, folder)
+          names = readdirSync(parent)
         } catch {
           continue
         }
-        const label = freeLabel(labels, labelFrom(suffix), name)
-        labels.add(label.toLocaleLowerCase())
-        found.push({ provider, home: folder, label, lastUsed })
+        for (const name of names.sort()) {
+          const suffix = siblingSuffix(base, name)
+          if (suffix === undefined) continue
+          const folder = path.join(parent, name)
+          const lastUsed = lastWritten(folder, markers)
+          if (lastUsed === undefined) continue
+          try {
+            this.#existingFolder(provider, source, rows, folder)
+          } catch {
+            continue
+          }
+          const label = freeLabel(labels, labelFrom(suffix), name)
+          labels.add(label.toLocaleLowerCase())
+          found.push({ provider, home: folder, label, lastUsed })
+        }
       }
     }
     return found
@@ -501,8 +502,24 @@ export class ProviderAccounts implements AccountDirectory {
 /** The longest account label the contract takes. */
 const LABEL_LIMIT = 80
 
-/** Folder names that are a copy kept aside, not an account in use. */
-const SET_ASIDE = /(?:^|[-_.])(?:bak|backup|old|orig|copy|tmp|temp)\d*$/i
+/**
+ * Folder names that are a copy kept aside, not an account in use: the word as
+ * a part of its own anywhere in the name, as in `.codex.backup-20260813`.
+ */
+const SET_ASIDE = /(?:^|[-_.])(?:bak|backup|old|orig|copy|tmp|temp)\d*(?=$|[-_.])/i
+
+/**
+ * The folders whose siblings can be further accounts: the default account's,
+ * and the CLI's built-in one when a variable such as CODEX_HOME moved the
+ * default elsewhere. Folders made beside `~/.codex` stay that CLI's after
+ * such a move, and are found there.
+ */
+function searchedHomes(source: AccountHomeSource, environment: NodeJS.ProcessEnv): string[] {
+  const homes = [source.defaultHome(environment), source.defaultHome({})]
+  return homes.filter(
+    (home, index) => homes.findIndex((other) => folderRelation(home, other) === 'same') === index,
+  )
+}
 
 /**
  * What follows the default folder's name in a sibling's, `personal` for

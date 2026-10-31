@@ -93,13 +93,16 @@
   width: 100%;
 }
 
+/* A sent message, the working line under it and the docking composer arrive
+   on one clock (--dur-slow), so the turn lands as one motion rather than three
+   that finish at different moments. */
 .thread__row.is-entering > :is(.reply, .aux, .activity, .turn-error) {
-  animation: thread-item-in 280ms var(--ease-out) both;
+  animation: thread-item-in var(--dur-slow) var(--ease-out) both;
 }
 
 .thread__row.is-entering > .said {
   transform-origin: right bottom;
-  animation: thread-message-in 300ms var(--ease-out) both;
+  animation: thread-message-in var(--dur-slow) var(--ease-out) both;
 }
 
 @keyframes thread-item-in {
@@ -675,7 +678,7 @@ button.thread__older:hover {
 .activity--working {
   /* No margin below: the rail is absolutely positioned, so the gap to the
      response is part of --working-rail-h instead. */
-  animation: activity-in 260ms var(--ease-out) both;
+  animation: activity-in var(--dur-slow) var(--ease-out) both;
 }
 
 .activity--working .activity__summary {

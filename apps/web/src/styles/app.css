@@ -127,8 +127,6 @@
   /* One raised surface for the rail: the account card and the active chat. */
   --rail-raised: color-mix(in srgb, var(--surface-2) 75%, var(--bg-rail-tint));
   --rail-raised-ring: color-mix(in srgb, var(--text) 6%, transparent);
-  /* The hairline that hangs a project's chats off its folder mark. */
-  --rail-guide: color-mix(in srgb, var(--text) 12%, transparent);
 
   position: absolute;
   inset: 0 auto 0 0;
@@ -719,7 +717,7 @@
   overflow: hidden;
   transition:
     grid-template-rows var(--dur-slow) var(--ease-out),
-    opacity var(--dur-fast) var(--ease-out);
+    opacity var(--dur-slow) var(--ease-out);
 }
 
 .proj__drawer[data-open='true'] {
@@ -735,25 +733,11 @@
 }
 
 .proj__drawer > .proj__sessions {
-  /* A project's chats indent past the guide under its folder mark. */
+  /* A project's chats indent under its folder mark, with no rule beside them:
+     the indent alone says which project they belong to. */
   --sess-indent: 22px;
   --sess-indicator-x: 12px;
   min-height: 0;
-}
-
-/* The guide runs from under the folder mark (centre 13.5px) to the middle of
-   the last row. It hangs on the project so the drawer's clip cannot cut it,
-   and paints nothing once the drawer is shorter than the offsets. */
-.proj::after {
-  content: '';
-  position: absolute;
-  top: 24px;
-  bottom: 22px;
-  left: 13px;
-  width: 1px;
-  border-radius: var(--r-pill);
-  background: var(--rail-guide);
-  pointer-events: none;
 }
 
 .proj__sessions {
@@ -764,7 +748,8 @@
   grid-template-columns: minmax(0, 1fr);
   row-gap: 2px;
   list-style: none;
-  margin: 2px 0 8px;
+  /* The first chat follows its project's row directly. */
+  margin: 0 0 8px;
   padding: 0;
   /* Let the grid item shrink so long titles reach their ellipsis boundary. */
   min-width: 0;
@@ -874,8 +859,11 @@
   margin: 0 0 10px;
 }
 
+/* An empty project's one line starts under its name (folder mark 7px + 13px +
+   8px gap). At the chat-title indent it floated right of everything above it,
+   with no mark in front to explain the gap. */
 .proj__sessions > .rail__hint {
-  padding-left: calc(var(--sess-indent) + 21px);
+  padding-left: 28px;
 }
 
 .sess__title {
@@ -1689,9 +1677,7 @@
   max-width: var(--chat-w);
   margin: 0 auto;
   border-radius: var(--r-composer);
-  /* Archiving replaces the thread in the same commit as this FLIP. Keep the
-     bounded visual box promoted so that work cannot delay layer creation. */
-  will-change: transform;
+  /* Not promoted at rest: text in a promoted layer loses subpixel AA. */
 }
 
 .composer__prompt {
@@ -1795,14 +1781,13 @@
   padding: 0 5px;
   opacity: 1;
   color: var(--queue-text);
-  will-change: transform, opacity;
   transition:
     opacity var(--dur-fast) var(--ease-out),
     transform var(--dur-press) var(--ease-out);
 }
 
 .queue-row[data-queue-phase='entering'] {
-  animation: composer-queue-item-in var(--dur-slow) var(--ease-in-out) both;
+  animation: composer-queue-item-in var(--dur-slow) var(--ease-rail) both;
 }
 
 .queue-row[data-queue-phase='exiting'] {

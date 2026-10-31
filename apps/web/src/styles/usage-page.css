@@ -3,7 +3,8 @@
    tokens, then one sheet per provider, read top to bottom: name and totals,
    a bar chart of its tokens with its own dates, then its plan limits beside a
    table of its models. Each provider keeps its brand colour (--usage-ink) on
-   its mark, bars and meters. Type follows Providers: 15px provider names,
+   its mark, share and chart bars; its limit meters are the account popup's
+   quiet bars. Type follows Providers: 15px provider names,
    12.5px rows, 11.5px dates and notes. */
 
 .settings .usage-page {
@@ -453,35 +454,30 @@
   white-space: nowrap;
 }
 
+/* The account popup's bar: one text-ink fill on a faint track, whatever the
+   provider. Only a window at 15% left or less turns its fill the error
+   colour; the words stay in their usual ink, and the sentence under the
+   totals names it. */
 .settings .usage-limit__meter {
   position: relative;
   display: block;
   height: 4px;
   margin-top: 5px;
   overflow: hidden;
-  background: color-mix(in srgb, var(--usage-ink) 16%, transparent);
-  border-radius: var(--r-xs);
+  background: color-mix(in srgb, var(--text) 9%, transparent);
+  border-radius: var(--r-pill);
 }
 
 .settings .usage-limit__fill {
   position: absolute;
   inset: 0 auto 0 0;
   width: var(--usage-limit-left);
-  background: var(--usage-ink);
-  border-radius: var(--r-xs);
+  background: color-mix(in srgb, var(--text) 52%, transparent);
+  border-radius: inherit;
 }
 
-.settings .usage-limit.is-low :is(.usage-limit__name, .usage-limit__note, .usage-limit__end),
-.settings .usage-limit.is-reached :is(.usage-limit__name, .usage-limit__note, .usage-limit__end) {
-  color: var(--error);
-}
-
-.settings .usage-limit.is-low .usage-limit__fill {
+.settings .usage-limit:is(.is-low, .is-reached) .usage-limit__fill {
   background: var(--error);
-}
-
-.settings .usage-limit.is-reached .usage-limit__meter {
-  background: color-mix(in srgb, var(--error) 28%, transparent);
 }
 
 /* A provider signed in more than once: each account, its limits under it */
@@ -636,18 +632,18 @@
   height: 94px;
 }
 
-/* A new period raises each chart from its baseline, one sheet after another */
+/* A new period raises every chart from its baseline at once; the peak label
+   follows when the bars are nearly up. No per-sheet delay: a cascade down
+   the page read as the charts arriving one by one. */
 
 .settings .usage-chart__bars {
   transform-box: view-box;
   transform-origin: 0 100%;
   animation: usage-rise 520ms var(--ease-out) both;
-  animation-delay: calc(var(--usage-sheet-index, 0) * 60ms);
 }
 
 .settings .usage-chart__peak {
-  animation: usage-fade 240ms var(--ease-out) both;
-  animation-delay: calc(var(--usage-sheet-index, 0) * 60ms + 420ms);
+  animation: usage-fade 240ms var(--ease-out) 420ms both;
 }
 
 @keyframes usage-rise {

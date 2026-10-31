@@ -21,6 +21,18 @@
   background: var(--control-pressed);
 }
 
+/* In the dark theme the shared pressed grey turned the whole card light while
+   its popup was open. The card stays one quiet step above its resting tone,
+   and the popup sits a step below the other menus, near the rail it opens
+   over; its limits well follows, since it is mixed from the menu ground. */
+:root:not([data-theme='light']) .account-card {
+  --control-pressed: color-mix(in srgb, var(--text) 3%, var(--rail-raised));
+}
+
+:root:not([data-theme='light']) .menu.menu--account {
+  --menu-bg: color-mix(in srgb, var(--surface) 35%, var(--bg-rail));
+}
+
 .account-card > .menuwrap {
   min-width: 0;
 }
