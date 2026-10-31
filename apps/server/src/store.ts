@@ -49,7 +49,7 @@ import {
   type HistoryTailRows,
 } from './history-tail.js'
 import { DatabaseSync, type SQLInputValue, type StatementSync } from './sqlite.js'
-import { SubagentRunTable } from './subagent-runs.js'
+import { SubagentRunTable, subagentRunItem } from './subagent-runs.js'
 import {
   affectsInboxProjection,
   applyInboxProjectionEvent,
@@ -3376,6 +3376,14 @@ export class Store {
         }
         this.touchThread(threadId, true, at)
         recovered.push(threadId)
+      }
+      // Sub-agents died with that process too; their parents' rows say so.
+      for (const run of this.subagents.interruptUnfinished(at)) {
+        this.#appendEvent(
+          run.parentThreadId,
+          { type: 'item.completed', item: subagentRunItem(run) },
+          at,
+        )
       }
       this.#db.exec('COMMIT')
       return recovered

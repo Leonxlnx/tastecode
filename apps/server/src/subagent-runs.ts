@@ -4,6 +4,8 @@ import type { DatabaseSync, StatementSync } from './sqlite.js'
 
 /** The task as the row's tool call shows it, sent with every update. */
 const ROW_TASK_CHARACTERS = 2_000
+/** Why a run that was unfinished when the app closed ended. */
+export const RESTART_SUMMARY = 'TasteCode closed while this subagent ran.'
 
 /**
  * Where one sub-agent run stands, as its parent agent sees it. A run waits for
@@ -216,8 +218,10 @@ export class SubagentRunTable {
         ...run.snapshot,
         state: 'interrupted',
         background: false,
+        summary: RESTART_SUMMARY,
       }
       delete snapshot.attention
+      delete snapshot.lastTool
       this.update(run.itemId, { state: 'interrupted', snapshot, finishedAt: at })
       settled.push({ ...run, state: 'interrupted', snapshot, finishedAt: at })
     }
