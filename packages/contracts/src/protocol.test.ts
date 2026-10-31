@@ -2033,6 +2033,71 @@ describe('subagent contracts', () => {
     )
   })
 
+  it('carries where a TasteCode sub-agent runs, and still reads snapshots without it', () => {
+    const crossProvider = {
+      ...subagent,
+      threadId: 'codex-child-1',
+      provider: 'codex',
+      model: 'gpt-5.5',
+      attention: 'approval',
+    }
+    expect(ItemSchema.parse({ ...call, subagent: crossProvider }).subagent).toEqual(crossProvider)
+    expect(ItemSchema.parse({ ...call, subagent }).subagent).toEqual(subagent)
+    for (const attention of ['approval', 'input'])
+      expect(
+        ItemSchema.parse({ ...call, subagent: { ...subagent, attention } }).subagent?.attention,
+      ).toBe(attention)
+  })
+
+  it.each([
+    ['empty thread id', { threadId: '' }],
+    ['unknown provider', { provider: 'gemini-web' }],
+    ['empty model', { model: '' }],
+    ['empty agent', { agent: '' }],
+    ['unknown attention', { attention: 'review' }],
+  ])('rejects a TasteCode sub-agent with %s', (_name, change) => {
+    expect(ItemSchema.safeParse({ ...call, subagent: { ...subagent, ...change } }).success).toBe(
+      false,
+    )
+  })
+
+  it('lists a chat’s TasteCode sub-agents with the row that shows each', () => {
+    expect(methods['thread.subagents'].params.parse({ threadId: 'th1' })).toEqual({
+      threadId: 'th1',
+    })
+    expect(methods['thread.subagents'].params.safeParse({ threadId: '' }).success).toBe(false)
+    const listed = {
+      subagents: [
+        {
+          itemId: 'subagent-codex-child-1',
+          createdAt: 10,
+          subagent: { id: 'a1', state: 'running', threadId: 'codex-child-1', provider: 'codex' },
+        },
+      ],
+    }
+    expect(methods['thread.subagents'].result.parse(listed)).toEqual(listed)
+    expect(methods['thread.subagents'].result.parse({ subagents: [] })).toEqual({ subagents: [] })
+    expect(
+      methods['thread.subagents'].result.safeParse({
+        subagents: [{ itemId: '', createdAt: 1, subagent: { id: 'a1', state: 'running' } }],
+      }).success,
+    ).toBe(false)
+  })
+
+  it('routes a sub-agent’s own events on their own channel', () => {
+    const data = {
+      threadId: 'codex-child-1',
+      parentThreadId: 'claude-code-parent',
+      seq: 4,
+      event: { type: 'item.delta', turnId: 't1', itemId: 'm1', textDelta: 'hi' },
+    }
+    expect(channels['subagent.event'].parse(data)).toEqual(data)
+    const { seq: _seq, ...withoutSeq } = data
+    expect(channels['subagent.event'].parse(withoutSeq)).toEqual(withoutSeq)
+    const { parentThreadId: _parent, ...withoutParent } = data
+    expect(channels['subagent.event'].safeParse(withoutParent).success).toBe(false)
+  })
+
   it('declares how an engine reports subagents, absent for plain tool calls', () => {
     expect(CapabilitiesSchema.parse(capabilities).subagents).toBeUndefined()
     for (const subagents of ['summary', 'progress'])
