@@ -21,6 +21,7 @@ import { KEYBINDING_DEFINITIONS, type Shortcut } from './shortcuts.js'
 import { TERMINAL_PLACEMENT_KEY } from './terminal-placement.js'
 import { IndeterminateRequestError, type ConnectionState, type Transport } from './transport.js'
 import { resetInstalls } from './provider-install.js'
+import { PROVIDER_RECHECK_INTERVAL_MS } from './provider-recheck.js'
 import { providerUpdatesStore } from './provider-updates.js'
 import { mockKeyboardModifierState } from './test-keyboard.js'
 import { NEWEST_HISTORY_TURNS } from './thread-controller.js'
@@ -2432,6 +2433,82 @@ describe('web client', () => {
     ]) {
       expect(localStorage.getItem(key)).toBeNull()
     }
+  })
+
+  it('leaves a provider known to be signed out out of the picker until a read says otherwise', async () => {
+    serverProviders = [
+      ...serverProviders,
+      { ...claudeCodeServerProvider(), auth: 'unknown' },
+      { ...grokServerProvider(), auth: 'unknown' },
+    ]
+    // Claude Code's last account read said signed out; Grok's was never read.
+    localStorage.setItem('harness.signedOutProviders', JSON.stringify(['claude-code']))
+    mockLiveDiscovery()
+    let claudeAccount = { signedIn: false }
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'auth.status' &&
+      methods['auth.status'].params.parse(params).provider === 'claude-code'
+        ? Promise.resolve(claudeAccount)
+        : request(method, params),
+    )
+    const claudeReads = () =>
+      transport.request.mock.calls.filter(
+        ([method, params]) =>
+          method === 'auth.status' &&
+          methods['auth.status'].params.parse(params).provider === 'claude-code',
+      ).length
+
+    render(<App />)
+
+    await waitFor(() => expect(offeredModelNames('grok')).toEqual(['Grok 4.7']))
+    await waitFor(() => expect(offeredModelNames('codex').length).toBeGreaterThan(0))
+    expect(offeredModelNames('claude-code')).toEqual([])
+
+    // Opening the picker asks again; still signed out, it stays away.
+    act(() => composerProps().onModelSelectorOpen?.())
+    await waitFor(() => expect(claudeReads()).toBe(1))
+    await act(async () => undefined)
+    expect(offeredModelNames('claude-code')).toEqual([])
+    // A second opening within the recheck interval does not start the CLI again.
+    act(() => composerProps().onModelSelectorOpen?.())
+    await act(async () => undefined)
+    expect(claudeReads()).toBe(1)
+
+    // Signed in from its own terminal since: back once a read says so.
+    claudeAccount = { signedIn: true }
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + PROVIDER_RECHECK_INTERVAL_MS + 1)
+    act(() => composerProps().onModelSelectorOpen?.())
+    await waitFor(() =>
+      expect(offeredModelNames('claude-code')).toEqual([
+        'Fable 5.1',
+        'Opus 5.5',
+        'Sonnet 5.5',
+        'Haiku 5.5',
+      ]),
+    )
+    expect(claudeReads()).toBe(2)
+  })
+
+  it('keeps the provider the composer is on in the picker while it is signed out', async () => {
+    serverProviders = [...serverProviders, { ...claudeCodeServerProvider(), auth: 'unknown' }]
+    localStorage.setItem('harness.provider', 'claude-code')
+    mockLiveDiscovery()
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'auth.status' &&
+      methods['auth.status'].params.parse(params).provider === 'claude-code'
+        ? Promise.resolve({ signedIn: false })
+        : request(method, params),
+    )
+
+    render(<App />)
+
+    await waitFor(() =>
+      expect(localStorage.getItem('harness.signedOutProviders')).toContain('claude-code'),
+    )
+    await waitFor(() => expect(offeredModelNames('claude-code').length).toBeGreaterThan(0))
+    expect(composerProps().provider).toBe('claude-code')
   })
 
   it('returns an older build’s list to the current lineups from the cached catalog', async () => {

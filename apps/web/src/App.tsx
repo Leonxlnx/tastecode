@@ -203,8 +203,19 @@ import {
   subscribeInstalls,
   type ProviderLoginTerminalTarget,
 } from './provider-install.js'
-import { providerScanChanged, useRecheckOnFocus } from './provider-recheck.js'
-import { rememberedSignIn, rememberSignIn } from './remembered-sign-in.js'
+import {
+  PROVIDER_RECHECK_INTERVAL_MS,
+  providerScanChanged,
+  useRecheckOnFocus,
+} from './provider-recheck.js'
+import {
+  lastSignIn,
+  rememberedSignIn,
+  rememberedSignInsVersion,
+  rememberSignIn,
+  subscribeRememberedSignIns,
+} from './remembered-sign-in.js'
+import { knownSignIn, providerCanRun } from './provider-availability.js'
 import {
   defaultsScope,
   isDefaultsScope,
@@ -1472,11 +1483,42 @@ export function App() {
     },
     [otherAccountSources, providerAccounts],
   )
+  const signInsVersion = useSyncExternalStore(
+    subscribeRememberedSignIns,
+    rememberedSignInsVersion,
+    rememberedSignInsVersion,
+  )
+  /**
+   * Providers whose own models cannot run now: not installed, nothing
+   * declared, or signed out as far as the app knows (provider-availability.ts).
+   * `signedOut` is the part a sign-in elsewhere would change.
+   */
+  const unavailableProviders = useMemo(() => {
+    void signInsVersion // A kept sign-in answer changed.
+    const blocked = new Set<ProviderId>()
+    const signedOut = new Set<ProviderId>()
+    for (const status of providerStatuses) {
+      // A kept read is of the default account; another account may be the one new chats use.
+      const kept =
+        activeAccountOf(providerAccounts, status.id) === DEFAULT_ACCOUNT_ID
+          ? lastSignIn(status.id)
+          : undefined
+      if (providerCanRun(status, kept)) continue
+      blocked.add(status.id)
+      if (status.installed && status.capabilities && knownSignIn(status, kept) === false) {
+        signedOut.add(status.id)
+      }
+    }
+    return { blocked, signedOut }
+  }, [providerStatuses, providerAccounts, signInsVersion])
+  const composerSource = sourceKey({ provider, agentId: sourceAgent })
   /**
    * What the picker offers: the chat's own models, then every other provider's,
    * and every other signed-in account's. Models the user hid from the chat's
    * own source keep the picker away, as before; a source that lists none at
-   * all still lets the chat move on.
+   * all still lets the chat move on. A provider that cannot run is left out,
+   * except the source the composer is on, which says itself why it cannot send.
+   * Agents, connections and further accounts answer for their own sign-in.
    */
   const pickerModels = useMemo(
     () =>
@@ -1489,7 +1531,17 @@ export function App() {
             ...otherAccountChoices,
           ]
         : [...selectableModels, ...otherAccountChoices]
-      ).map(withAccountName),
+      )
+        .filter(
+          (choice) =>
+            !unavailableProviders.blocked.has(choice.provider) ||
+            choice.agent !== undefined ||
+            choice.connectionId !== undefined ||
+            choice.accountId !== undefined ||
+            modelSource(choice) === activeModelSource ||
+            modelSource(choice) === composerSource,
+        )
+        .map(withAccountName),
     [
       movableChat,
       selectableModels,
@@ -1498,6 +1550,8 @@ export function App() {
       activeModelSource,
       otherAccountChoices,
       withAccountName,
+      unavailableProviders,
+      composerSource,
     ],
   )
   // Only the user's own pick moves a chat; a fallback never leaves its provider.
@@ -4935,6 +4989,27 @@ export function App() {
     [],
   )
 
+  // The picker leaves out providers known to be signed out. One signed in from
+  // its own terminal since comes back once the picker opens and its account is
+  // read again; each is read at most once per recheck interval.
+  const signedOutProviders = useRef(unavailableProviders.signedOut)
+  signedOutProviders.current = unavailableProviders.signedOut
+  const signInRechecks = useRef(new Map<ProviderId, number>())
+  const openModelSelector = useCallback(() => {
+    discoverEveryModelSource()
+    const now = Date.now()
+    for (const id of signedOutProviders.current) {
+      if (!rosterAllows(providerRosterRef.current, id)) continue
+      const last = signInRechecks.current.get(id)
+      if (last !== undefined && now - last < PROVIDER_RECHECK_INTERVAL_MS) continue
+      signInRechecks.current.set(id, now)
+      void transport.request('auth.status', { provider: id }).then(
+        (account) => handleAccountChange(id, account),
+        () => undefined,
+      )
+    }
+  }, [discoverEveryModelSource, handleAccountChange, transport])
+
   useEffect(() => {
     if (!providerLoginTerminal || !providerLoginState) return
     const succeeded = providerLoginState.phase === 'succeeded'
@@ -7178,7 +7253,7 @@ export function App() {
                     onReady={handleComposerReady}
                     queuedTurns={queuedTurns}
                     canSteerQueue={canSteerQueue}
-                    onModelSelectorOpen={discoverEveryModelSource}
+                    onModelSelectorOpen={openModelSelector}
                     onModelChange={selectModel}
                     onEffortChange={changeEffort}
                     onServiceTierChange={changeServiceTier}
