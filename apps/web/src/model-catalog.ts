@@ -1,4 +1,5 @@
 import type { AccountId, Model, ProviderId } from '@harness/contracts'
+import type { ModelTarget } from './model-label.js'
 import type { ProviderMark } from './provider-presentation.js'
 import { providerPresentation, sourcePresentation } from './provider-presentation.js'
 
@@ -477,6 +478,27 @@ export function customModelChoice(
     },
     key: customModelKey(input),
   }
+}
+
+/**
+ * The name the picker shows for a model a chat runs on. Another account's list
+ * can hold the same model, and names it when the chat's own account is not
+ * listed (yet).
+ */
+export function modelDisplayName(
+  choices: readonly ModelChoice[],
+  target: ModelTarget,
+): string | undefined {
+  let otherAccount: string | undefined
+  for (const choice of choices) {
+    if (choice.provider !== target.provider || choice.model.id !== target.modelId) continue
+    if (choice.agent?.id !== target.agent) continue
+    const name = choice.model.displayName.trim()
+    if (!name) continue
+    if (choice.accountId === target.accountId) return name
+    otherAccount ??= name
+  }
+  return otherAccount
 }
 
 export function isCustomModelChoice(choice: ModelChoice): boolean {

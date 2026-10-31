@@ -167,6 +167,7 @@ import {
   type AccountLabel,
   type ProviderAccountsSnapshot,
 } from './provider-accounts-state.js'
+import { ModelLabelContext, type ModelLabel } from './model-label.js'
 import {
   agentMark,
   choicesFor,
@@ -174,6 +175,7 @@ import {
   customModelKey,
   isCustomModelChoice,
   modelChoiceKey,
+  modelDisplayName,
   modelVisibilityDefaults,
   providerDisplayName,
   providerMark,
@@ -3770,6 +3772,7 @@ export function App() {
       accountLabelOf(providerAccounts, requestedProvider, accountId),
     [providerAccounts],
   )
+  const modelLabel = useCallback<ModelLabel>((target) => modelDisplayName(models, target), [models])
   const activeAccount = useCallback(
     (requestedProvider: ProviderId) => activeAccountOf(providerAccounts, requestedProvider),
     [providerAccounts],
@@ -7302,36 +7305,38 @@ export function App() {
                 <div className={`stage__conversation${activeId ? '' : ' is-new-session'}`}>
                   {activeId ? (
                     <AccountLabelContext.Provider value={accountLabel}>
-                      <Suspense fallback={<ThreadSkeleton />}>
-                        <LazyThread
-                          key={threadEntryKey}
-                          frameStore={threadFrameStore}
-                          errorsInComposer
-                          stopping={stopping}
-                          loading={loadingThreadId === activeId}
-                          loadFailure={
-                            historyFailure?.threadId === activeId
-                              ? historyFailure.message
-                              : undefined
-                          }
-                          onRetryLoad={retryOpenedHistory}
-                          projectPath={activePath}
-                          threadId={activeId}
-                          transport={transport}
-                          searchJump={searchJump?.threadId === activeId ? searchJump : undefined}
-                          onSearchJumpDone={finishSearchJump}
-                          revealRequest={threadRevealRequest}
-                          checkpoints={checkpoints}
-                          onDecide={decideApproval}
-                          onAnswerUserInput={answerUserInput}
-                          onEditMessage={editMessage}
-                          onRevertCheckpoint={revertCheckpoint}
-                          onUndoChanges={undoTurnChanges}
-                          onLoadOlderHistory={loadOlderHistory}
-                          onLoadCompleteHistory={loadCompleteHistory}
-                          turnRail
-                        />
-                      </Suspense>
+                      <ModelLabelContext.Provider value={modelLabel}>
+                        <Suspense fallback={<ThreadSkeleton />}>
+                          <LazyThread
+                            key={threadEntryKey}
+                            frameStore={threadFrameStore}
+                            errorsInComposer
+                            stopping={stopping}
+                            loading={loadingThreadId === activeId}
+                            loadFailure={
+                              historyFailure?.threadId === activeId
+                                ? historyFailure.message
+                                : undefined
+                            }
+                            onRetryLoad={retryOpenedHistory}
+                            projectPath={activePath}
+                            threadId={activeId}
+                            transport={transport}
+                            searchJump={searchJump?.threadId === activeId ? searchJump : undefined}
+                            onSearchJumpDone={finishSearchJump}
+                            revealRequest={threadRevealRequest}
+                            checkpoints={checkpoints}
+                            onDecide={decideApproval}
+                            onAnswerUserInput={answerUserInput}
+                            onEditMessage={editMessage}
+                            onRevertCheckpoint={revertCheckpoint}
+                            onUndoChanges={undoTurnChanges}
+                            onLoadOlderHistory={loadOlderHistory}
+                            onLoadCompleteHistory={loadCompleteHistory}
+                            turnRail
+                          />
+                        </Suspense>
+                      </ModelLabelContext.Provider>
                     </AccountLabelContext.Provider>
                   ) : (
                     <Empty

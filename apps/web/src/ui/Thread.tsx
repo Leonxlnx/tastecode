@@ -28,6 +28,7 @@ import {
 import type { ApprovalDecision, Item, ProviderNotice } from '@harness/contracts'
 import { agentMark, providerDisplayName, providerMark } from '../provider-presentation.js'
 import { AccountLabelContext, type AccountLabel } from '../provider-accounts-state.js'
+import { ModelLabelContext, type ModelLabel } from '../model-label.js'
 import { ProviderIcon } from './ProviderIcon.js'
 import {
   IconArrowBarToDown as ArrowDownToLine,
@@ -2415,9 +2416,10 @@ const Row = memo(function Row({
 /** Where the chat moved to another provider; the turns after it ran there. */
 function NoticeRow({ item }: { item: Item }) {
   const accountLabel = useContext(AccountLabelContext)
+  const modelLabel = useContext(ModelLabelContext)
   const notice = item.notice
   if (notice?.kind !== 'provider') return null
-  const label = providerNoticeLabel(notice, accountLabel)
+  const label = providerNoticeLabel(notice, accountLabel, modelLabel)
   return (
     <div className="aux aux--notice" role="note">
       <div className="aux__row" title={label}>
@@ -2437,7 +2439,11 @@ function NoticeRow({ item }: { item: Item }) {
   )
 }
 
-export function providerNoticeLabel(notice: ProviderNotice, accountLabel?: AccountLabel): string {
+export function providerNoticeLabel(
+  notice: ProviderNotice,
+  accountLabel?: AccountLabel,
+  modelLabel?: ModelLabel,
+): string {
   const provider =
     notice.provider === 'acp' && notice.agent ? notice.agent : providerDisplayName(notice.provider)
   // Another account of a provider is named, so a move between two accounts says where.
@@ -2445,7 +2451,16 @@ export function providerNoticeLabel(notice: ProviderNotice, accountLabel?: Accou
     notice.accountId && accountLabel
       ? `${provider} (${accountLabel(notice.provider, notice.accountId)})`
       : provider
-  return notice.model ? `Switched to ${name} · ${notice.model}` : `Switched to ${name}`
+  if (!notice.model) return `Switched to ${name}`
+  // The model by the name the picker gives it, not the id the server keeps.
+  const model =
+    modelLabel?.({
+      provider: notice.provider,
+      agent: notice.agent,
+      accountId: notice.accountId,
+      modelId: notice.model,
+    }) ?? notice.model
+  return `Switched to ${name} · ${model}`
 }
 
 /** A call that started a subagent draws as that subagent; anything else as a plain row. */
