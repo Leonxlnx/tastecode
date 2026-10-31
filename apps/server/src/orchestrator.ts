@@ -4552,31 +4552,33 @@ export class Orchestrator {
   }
 
   async interrupt(threadId: string): Promise<void> {
-    // A chat's sub-agents stop with it, a background one included.
-    await Promise.all([this.#interruptTurn(threadId), this.#subagents.stopFor(threadId)])
-  }
-
-  async #interruptTurn(threadId: string): Promise<void> {
-    // "Stop" on a thread that is not live must be a no-op, not an error the
-    // user cannot act on.
-    if (!this.#threads.has(threadId)) {
-      // A persisted thread is not attached until resume resolves. Invalidate
-      // that resume so its pending submission cannot run after the user stops it.
-      if (this.#resumingThreads.has(threadId)) {
-        this.#runtimeGenerations.set(threadId, (this.#runtimeGenerations.get(threadId) ?? 0) + 1)
+    // A chat's sub-agents stop with it, a background one included. A chat
+    // without any keeps the exact timing it had.
+    const children = this.#subagents.stopFor(threadId)
+    try {
+      // "Stop" on a thread that is not live must be a no-op, not an error the
+      // user cannot act on.
+      if (!this.#threads.has(threadId)) {
+        // A persisted thread is not attached until resume resolves. Invalidate
+        // that resume so its pending submission cannot run after the user stops it.
+        if (this.#resumingThreads.has(threadId)) {
+          this.#runtimeGenerations.set(threadId, (this.#runtimeGenerations.get(threadId) ?? 0) + 1)
+        }
+        return
       }
-      return
+      // The checkpoint runs before the provider starts. An interrupt sent in
+      // that window used to hit an idle adapter and disappear, after which the
+      // turn started anyway. Wait until the adapter has accepted or rejected
+      // the start, then deliver the interrupt against its real active turn.
+      // A Design phase hand-off starts its turn without that barrier.
+      const barrier = this.#turnStartBarriers.get(threadId)?.done
+      await barrier
+      await this.#designProviderStarts.get(threadId)?.catch(() => undefined)
+      const entry = this.#threads.get(threadId)
+      if (entry) await entry.session.interrupt(threadId)
+    } finally {
+      if (children) await children
     }
-    // The checkpoint runs before the provider starts. An interrupt sent in
-    // that window used to hit an idle adapter and disappear, after which the
-    // turn started anyway. Wait until the adapter has accepted or rejected
-    // the start, then deliver the interrupt against its real active turn.
-    // A Design phase hand-off starts its turn without that barrier.
-    const barrier = this.#turnStartBarriers.get(threadId)?.done
-    await barrier
-    await this.#designProviderStarts.get(threadId)?.catch(() => undefined)
-    const entry = this.#threads.get(threadId)
-    if (entry) await entry.session.interrupt(threadId)
   }
 
   /** Overlapping callers share one stop, so none can lift the guard while another still runs. */

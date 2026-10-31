@@ -452,13 +452,18 @@ export class SubagentBroker implements AgentToolsBroker {
     }
   }
 
-  /** Stops a chat's unfinished sub-agents, as stopping the chat does. */
-  async stopFor(parentThreadId: string): Promise<void> {
-    const stopping = [...this.#live.values()].filter(
-      (live) =>
-        live.run.parentThreadId === parentThreadId && !FINISHED_SUBAGENT_STATES.has(live.run.state),
-    )
-    await Promise.all(stopping.map((live) => this.#stop(live)))
+  /**
+   * Stops a chat's unfinished sub-agents, as stopping the chat does. Returns
+   * nothing when it has none, so the caller adds no wait of its own.
+   */
+  stopFor(parentThreadId: string): Promise<void> | undefined {
+    const stopping: LiveRun[] = []
+    for (const live of this.#live.values()) {
+      if (live.run.parentThreadId !== parentThreadId) continue
+      if (!FINISHED_SUBAGENT_STATES.has(live.run.state)) stopping.push(live)
+    }
+    if (stopping.length === 0) return undefined
+    return Promise.all(stopping.map((live) => this.#stop(live))).then(() => undefined)
   }
 
   /**
