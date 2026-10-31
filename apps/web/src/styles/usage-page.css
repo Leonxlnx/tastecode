@@ -632,18 +632,18 @@
   height: 94px;
 }
 
-/* A new period raises each chart from its baseline, one sheet after another */
+/* A new period raises every chart from its baseline at once; the peak label
+   follows when the bars are nearly up. No per-sheet delay: a cascade down
+   the page read as the charts arriving one by one. */
 
 .settings .usage-chart__bars {
   transform-box: view-box;
   transform-origin: 0 100%;
   animation: usage-rise 520ms var(--ease-out) both;
-  animation-delay: calc(var(--usage-sheet-index, 0) * 60ms);
 }
 
 .settings .usage-chart__peak {
-  animation: usage-fade 240ms var(--ease-out) both;
-  animation-delay: calc(var(--usage-sheet-index, 0) * 60ms + 420ms);
+  animation: usage-fade 240ms var(--ease-out) 420ms both;
 }
 
 @keyframes usage-rise {
