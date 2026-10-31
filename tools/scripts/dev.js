@@ -284,7 +284,11 @@ ownRecord = { ...self, root }
 await mkdir(path.dirname(ownerFile), { recursive: true })
 await writeFile(ownerFile, JSON.stringify(ownRecord), { mode: 0o600 })
 
-run('server', 'apps/server', ['run', 'dev'], { HARNESS_RENDERER_ORIGIN: new URL(VITE_URL).origin })
+run('server', 'apps/server', ['run', 'dev'], {
+  HARNESS_RENDERER_ORIGIN: new URL(VITE_URL).origin,
+  // Phone access is a dev-only feature for now; builds started any other way leave it off.
+  HARNESS_PHONE_ACCESS: '1',
+})
 run('web', 'apps/web', ['run', 'dev'])
 await waitForPort(5183)
 run('desktop', 'apps/desktop', ['run', 'start'], { HARNESS_DEV_SERVER: VITE_URL })
