@@ -1071,7 +1071,7 @@ describe('Sidebar chat actions', () => {
     }
   })
 
-  it('keeps working and unread chats in the saved chat order', () => {
+  it('lists a done chat first, then a working one, then the read ones', () => {
     const unread = {
       ...session('thread-unread', 'Just done'),
       status: 'ready' as const,
@@ -1122,7 +1122,7 @@ describe('Sidebar chat actions', () => {
       [...document.querySelectorAll('.proj__drawer .sess__title')].map(
         (title) => title.textContent,
       ),
-    ).toEqual(['Older chat', 'Just done', 'Still running', 'Newer chat'])
+    ).toEqual(['Just done', 'Still running', 'Older chat', 'Newer chat'])
     const justDone = screen.getByRole('button', { name: 'Just done, Codex, ready, unread' })
     // Unread is the heavier title; the row's one slot shows the finished dot.
     expect(justDone.querySelector('.sess__meta')?.children).toHaveLength(1)
@@ -1182,7 +1182,7 @@ describe('Sidebar chat actions', () => {
       [...document.querySelectorAll('.proj__drawer .sess__title')].map(
         (title) => title.textContent,
       ),
-    ).toEqual(['Current work', 'Busy chat'])
+    ).toEqual(['Busy chat', 'Current work'])
     // A running chat keeps its spinner under the pointer and offers no archive.
     const busy = screen.getByRole('button', { name: 'Busy chat, Codex, working' })
     expect(busy.querySelector('.sess__spinner')).not.toBeNull()
@@ -1281,12 +1281,12 @@ describe('Sidebar chat actions', () => {
       'Build the release, failed, TasteCode',
       'Mark Build the release as read',
     ])
-    // The tree below keeps its own order and lists each chat once more.
+    // The tree below lists each chat once more, by its group.
     expect(
       [...document.querySelectorAll('.proj__drawer .sess__title')].map(
         (title) => title.textContent,
       ),
-    ).toEqual(['Quiet chat', 'Run the migration', 'Build the release', 'Answer is ready'])
+    ).toEqual(['Answer is ready', 'Run the migration', 'Build the release', 'Quiet chat'])
 
     fireEvent.click(within(band).getByRole('button', { name: 'Mark Build the release as read' }))
     expect(onMarkSessionRead).toHaveBeenCalledWith('thread-failed')
@@ -1477,7 +1477,7 @@ describe('Sidebar chat actions', () => {
     expect(screen.getByRole('button', { name: 'Show more' })).toBeTruthy()
   })
 
-  it('keeps a working, unread or open chat in sight within the fold, at its own place', () => {
+  it('keeps a working, unread or open chat in sight within the fold, in its group', () => {
     const chats: Session[] = Array.from({ length: 9 }, (_, index) =>
       session(`thread-${index + 1}`, `Chat ${index + 1}`),
     )
@@ -1512,9 +1512,9 @@ describe('Sidebar chat actions', () => {
       [...document.querySelectorAll('.proj__drawer .sess__title')].map((title) => title.textContent)
     const view = render(content('thread-1'))
 
-    // The open chat 1 and the chats with news, 7 and 8, take three of the five
-    // rows at their own places; the first quiet chats, 2 and 3, fill the rest.
-    const folded = ['Chat 1', 'Chat 2', 'Chat 3', 'Chat 7', 'Chat 8']
+    // Done chat 8 and working chat 7 lead; with the open chat 1 they take three
+    // of the five rows, and the first quiet chats, 2 and 3, fill the rest.
+    const folded = ['Chat 8', 'Chat 7', 'Chat 1', 'Chat 2', 'Chat 3']
     expect(titles()).toEqual(folded)
     const working = screen.getByRole('button', { name: 'Chat 7, Codex, working' })
     expect(working.querySelector('.sess__spinner')).not.toBeNull()
@@ -1522,13 +1522,23 @@ describe('Sidebar chat actions', () => {
     expect(unread.closest('.sessrow')?.classList.contains('is-unread')).toBe(true)
 
     fireEvent.click(screen.getByRole('button', { name: 'Show more' }))
-    expect(titles()).toEqual(chats.map((chat) => chat.title))
+    expect(titles()).toEqual([
+      'Chat 8',
+      'Chat 7',
+      'Chat 1',
+      'Chat 2',
+      'Chat 3',
+      'Chat 4',
+      'Chat 5',
+      'Chat 6',
+      'Chat 9',
+    ])
     fireEvent.click(screen.getByRole('button', { name: 'Show less' }))
     expect(titles()).toEqual(folded)
 
     // The open chat shows where it stands, with the active pill, until another chat opens.
     view.rerender(content('thread-9'))
-    expect(titles()).toEqual(['Chat 1', 'Chat 2', 'Chat 7', 'Chat 8', 'Chat 9'])
+    expect(titles()).toEqual(['Chat 8', 'Chat 7', 'Chat 1', 'Chat 2', 'Chat 9'])
     const open = screen.getByRole('button', { name: 'Chat 9, Codex' }).closest('.sessrow')
     expect(open?.querySelector('.sessrow__indicator')).not.toBeNull()
     expect(screen.getByRole('button', { name: 'Show more' })).toBeTruthy()
@@ -1583,12 +1593,12 @@ describe('Sidebar chat actions', () => {
     const chats: Session[] = Array.from({ length: 8 }, (_, index) =>
       session(`thread-${index + 1}`, `Chat ${index + 1}`),
     )
-    chats[6] = { ...chats[6]!, status: 'working' }
+    // The open chat 7 shows below the fold, at its own place.
     render(
       <Sidebar
         projects={[{ path: '/work/harness', name: 'TasteCode', sessions: chats }]}
         activeProjectPath="/work/harness"
-        activeSessionId="thread-1"
+        activeSessionId="thread-7"
         account={undefined}
         providerName="Codex"
         collapsed={false}
@@ -1610,7 +1620,7 @@ describe('Sidebar chat actions', () => {
       />,
     )
 
-    const source = screen.getByRole('button', { name: 'Chat 7, Codex, working' }).closest('li')!
+    const source = screen.getByRole('button', { name: 'Chat 7, Codex' }).closest('li')!
     const target = screen.getByRole('button', { name: 'Chat 2, Codex' }).closest('li')!
     const rows = Array.from(document.querySelectorAll<HTMLElement>('[data-archive-session-id]'))
     rows.forEach((row, index) => mockRowRect(row, index * 30, 30))
@@ -1660,8 +1670,10 @@ describe('Sidebar chat actions', () => {
     const rail = document.querySelector<HTMLElement>('.rail__body')!
     rail.scrollTop = 90 * 30
     fireEvent.scroll(rail)
-    // The open chat 1 and the 85 unread ones fill the fold; quiet chats 2 to 5 wait.
-    const last = screen.getByRole('button', { name: 'Chat 90, Codex, ready, unread' }).closest('li')
+    // The 85 done chats lead and the open chat 1 follows them; quiet chats 2 to 5 wait.
+    const lastDone = screen.getByRole('button', { name: 'Chat 90, Codex, ready, unread' })
+    expect(lastDone.closest('li')?.getAttribute('aria-posinset')).toBe('85')
+    const last = screen.getByRole('button', { name: 'Chat 1, Codex' }).closest('li')
     expect(last?.getAttribute('aria-posinset')).toBe('86')
     expect(last?.getAttribute('aria-setsize')).toBe('86')
     expect(screen.queryByRole('button', { name: 'Chat 2, Codex' })).toBeNull()

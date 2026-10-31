@@ -11307,7 +11307,7 @@ describe('sidebar chat ordering', () => {
     })
   })
 
-  it('drops a chat exactly where it was dropped beside an unread chat', async () => {
+  it('drops a chat exactly where it was dropped beside a done chat', async () => {
     serverProjects = [
       serverProject('/work/project', 'project', [
         { id: 'thread-b', title: 'B chat' },
@@ -11319,16 +11319,16 @@ describe('sidebar chat ordering', () => {
     render(<App />)
 
     await screen.findByRole('button', { name: /^C chat,/ })
-    // The unread chat keeps its place in the tree; the band lists it again.
-    expect(sessionTitles()).toEqual(['B chat', 'C chat', 'A chat'])
-    dropChatRow('B chat', 'A chat', 'after')
+    // The done chat leads the tree.
+    expect(sessionTitles()).toEqual(['A chat', 'B chat', 'C chat'])
+    dropChatRow('C chat', 'A chat', 'after')
 
-    expect(sessionTitles()).toEqual(['C chat', 'A chat', 'B chat'])
+    expect(sessionTitles()).toEqual(['A chat', 'C chat', 'B chat'])
     await waitFor(() => {
       const order = SessionOrderSchema.parse(
         JSON.parse(localStorage.getItem('harness.sessionOrder.dragged') ?? '{}'),
       )
-      expect(order['/work/project']).toEqual(['thread-c', 'thread-a', 'thread-b'])
+      expect(order['/work/project']).toEqual(['thread-a', 'thread-c', 'thread-b'])
     })
   })
 
@@ -11352,14 +11352,16 @@ describe('sidebar chat ordering', () => {
     await screen.findByRole('button', { name: /^One pinned,/ })
     act(() => sidebarProps().onSelectSession('one-a'))
     await waitFor(() => expect(sidebarProps().activeSessionId).toBe('one-a'))
-    // The tree reads: Pinned (One pinned), Two (Two A), One (One A, One B, One unread). The
-    // band's second listing of One unread is not a stop.
+    // The tree reads: Pinned (One pinned), Two (Two A), One (One unread, One A, One B).
     await step('ArrowDown', 'one-b')
-    await step('ArrowDown', 'one-unread')
     await step('ArrowDown', 'one-pinned')
     await step('ArrowDown', 'two-a')
-    await step('ArrowUp', 'one-pinned')
-    await step('ArrowUp', 'one-unread')
+    // Opened and read, the done chat keeps its place until another chat opens,
+    // so the next step is the chat below it, not the top of the rail.
+    await step('ArrowDown', 'one-unread')
+    await step('ArrowDown', 'one-a')
+    // Left behind, it is read and goes with the read chats, after One B.
+    await step('ArrowUp', 'two-a')
   })
 
   it('moves to the previous and next chat in the order the inbox shows', async () => {
@@ -12927,7 +12929,7 @@ describe('live sessions', () => {
     expect(screen.queryByLabelText('Queued prompts')).toBeNull()
   })
 
-  it('keeps a chat in its place when a turn starts in an older one', async () => {
+  it('lists a chat with the working ones when a turn starts in an older one', async () => {
     serverSidebarSettings.mode = 'classic'
     serverProjects = [
       {
@@ -12953,7 +12955,7 @@ describe('live sessions', () => {
     })
 
     expect(screen.getByRole('button', { name: 'Older session, Codex, working' })).toBeTruthy()
-    expect(sessionTitles()).toEqual(['Newer session', 'Older session'])
+    expect(sessionTitles()).toEqual(['Older session', 'Newer session'])
   })
 
   it('folds streamed deltas once per animation frame', async () => {
@@ -13690,7 +13692,7 @@ describe('live sessions', () => {
     expect(answered.querySelector('.sess__spinner')).not.toBeNull()
   })
 
-  it('keeps chats in place while they run and lifts one that finishes unread', async () => {
+  it('lists working chats above idle ones and a finished unread one above both', async () => {
     serverProjects = [
       {
         path: '/work/project',
@@ -13707,7 +13709,7 @@ describe('live sessions', () => {
 
     render(<App />)
     await screen.findByRole('button', { name: 'Running chat, Codex, working' })
-    expect(sessionTitles()).toEqual(['Idle chat', 'Background chat', 'Running chat'])
+    expect(sessionTitles()).toEqual(['Running chat', 'Idle chat', 'Background chat'])
 
     emitThreadEvent('background-thread', {
       type: 'turn.started',
@@ -13719,14 +13721,14 @@ describe('live sessions', () => {
       },
     })
     expect(screen.getByRole('button', { name: 'Background chat, Codex, working' })).toBeTruthy()
-    expect(sessionTitles()).toEqual(['Idle chat', 'Background chat', 'Running chat'])
+    expect(sessionTitles()).toEqual(['Background chat', 'Running chat', 'Idle chat'])
 
     emitThreadEvent('background-thread', {
       type: 'turn.completed',
       turnId: 'background-turn',
       status: 'completed',
     })
-    expect(sessionTitles()).toEqual(['Background chat', 'Idle chat', 'Running chat'])
+    expect(sessionTitles()).toEqual(['Background chat', 'Running chat', 'Idle chat'])
     expect(
       screen
         .getByRole('button', { name: 'Background chat, Codex, ready, unread' })

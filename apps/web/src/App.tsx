@@ -102,6 +102,8 @@ import {
   moveRailSession,
   parseStoredProjectOrder,
   parseStoredSessionOrder,
+  railSessionOrder,
+  sessionGroup,
   sidebarSessions,
 } from './sidebar-order.js'
 import { createSessionOrderSerializer } from './session-order-serializer.js'
@@ -1929,6 +1931,15 @@ export function App() {
 
   const activeIdRef = useRef(activeId)
   activeIdRef.current = activeId
+  // The open chat that was done when it opened, or finished while open, stays
+  // with the done chats in the rail until another chat opens.
+  const [heldSessionId, setHeldSessionId] = useState<string>()
+  const shownHeldSessionId = heldSessionId === activeId ? heldSessionId : undefined
+  const heldSessionIdRef = useRef(shownHeldSessionId)
+  heldSessionIdRef.current = shownHeldSessionId
+  useEffect(() => {
+    if (heldSessionId !== undefined && heldSessionId !== activeId) setHeldSessionId(undefined)
+  }, [activeId, heldSessionId])
   const activePathRef = useRef(activePath)
   activePathRef.current = activePath
   useEffect(() => {
@@ -2325,6 +2336,7 @@ export function App() {
           ? findSession(projectsRef.current, threadId)?.project.path
           : undefined
         if (finishedIn) draggedSessionOrder.add(finishedIn)
+        if (finished && threadId === activeIdRef.current) setHeldSessionId(threadId)
         setProjects((current) => {
           const updated = updateSession(current, threadId, (session) => {
             const status = statusFor(next, event, threadId !== activeIdRef.current)
@@ -5352,6 +5364,9 @@ export function App() {
       setActiveThreadApproval(threadApprovals.current.get(id))
       if (!id.startsWith('pending:')) readSharedSettings(id, threadSelection)
       setHistoryFailure(undefined)
+      setHeldSessionId((held) =>
+        held === id || (found && sessionGroup(found.session) === 'done') ? id : undefined,
+      )
       setActiveId(id)
       setComposerFocusRequest((request) => request + 1)
       setThreadRevealRequest((request) => request + 1)
@@ -6230,7 +6245,12 @@ export function App() {
       setProjects((current) =>
         current.map((project) => {
           if (project.path !== projectPath) return project
-          const sessions = moveRailSession(project.sessions, sourceId, targetId, position)
+          const sessions = moveRailSession(
+            railSessionOrder(project.sessions, heldSessionIdRef.current),
+            sourceId,
+            targetId,
+            position,
+          )
           return sessions === project.sessions ? project : { ...project, sessions }
         }),
       )
@@ -6257,7 +6277,11 @@ export function App() {
   }, [])
   const cycleChat = useCallback(
     (direction: -1 | 1) => {
-      const sessions = sidebarSessions(visibleProjectsRef.current, sidebarSettingsRef.current.mode)
+      const sessions = sidebarSessions(
+        visibleProjectsRef.current,
+        sidebarSettingsRef.current.mode,
+        heldSessionIdRef.current,
+      )
       if (sessions.length === 0) return
       const activeId = activeIdRef.current
       const current = activeId ? sessions.findIndex((session) => session.id === activeId) : -1
@@ -7229,6 +7253,7 @@ export function App() {
           projectsLoading={projectsStatus === 'loading'}
           activeProjectPath={activePath}
           activeSessionId={surface === 'chat' ? activeId : undefined}
+          heldSessionId={surface === 'chat' ? shownHeldSessionId : undefined}
           pullRequestsActive={surface === 'pull-requests'}
           providerName={providerName(provider, sourceAgentName)}
           keybindings={keybindings}

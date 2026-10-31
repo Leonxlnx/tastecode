@@ -237,6 +237,8 @@ function SidebarComponent(props: {
   projectsLoading?: boolean | undefined
   activeProjectPath: string | undefined
   activeSessionId: string | undefined
+  /** The open chat that stays with the done chats until another chat opens. */
+  heldSessionId?: string | undefined
   account: Account | undefined
   profileIdentity?: ProfileIdentityPreferences | undefined
   providerName: string
@@ -582,8 +584,8 @@ function SidebarComponent(props: {
   // A status push replaces one project in an otherwise retained tree. Keep
   // every unchanged projection stable so React only reconciles that project.
   const { orderedProjects, pinnedSessions, archivedSessions } = useMemo(
-    () => sidebarRail(props.projects),
-    [props.projects],
+    () => sidebarRail(props.projects, props.heldSessionId),
+    [props.projects, props.heldSessionId],
   )
   const needsYou = useMemo(
     () => needsYouSessions(props.projects, props.activeSessionId),
