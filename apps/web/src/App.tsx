@@ -7285,6 +7285,7 @@ export function App() {
                 onWidthChange={setWorkspacePanelWidth}
                 terminalToggleRequest={workspaceTerminalToggleRequest}
                 externalToolRequest={workspaceToolRequest}
+                frameStore={threadFrameStore}
                 designPreviewRequest={workspaceDesignPreviewRequest}
                 onOpenPullRequest={openCheckoutPullRequest}
                 providerLogin={
