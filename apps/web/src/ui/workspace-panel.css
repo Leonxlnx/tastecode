@@ -54,6 +54,15 @@
   width: var(--workspace-panel-leave-w);
 }
 
+/* The panel mounts already open the first time it is shown; without a
+   starting style that first open skipped its entrance and appeared at once. */
+@starting-style {
+  .workspace-panel.is-open:not(.workspace-panel--bottom) {
+    opacity: 0;
+    transform: translate3d(24px, 0, 0);
+  }
+}
+
 .workspace-panel__resize {
   position: absolute;
   z-index: 8;

@@ -43,6 +43,12 @@ describe('workspace panel motion', () => {
     expect(component).toContain('const PANEL_LEAVE_MS = 260')
   })
 
+  it('gives the first open, which mounts the panel already open, its entrance', () => {
+    expect(css).toMatch(
+      /@starting-style \{\s*\.workspace-panel\.is-open:not\(\.workspace-panel--bottom\) \{\s*opacity: 0;\s*transform: translate3d\(24px, 0, 0\);/,
+    )
+  })
+
   it('keeps the closed panel mounted but inert so tab state survives', () => {
     expect(component).toContain('aria-hidden={!props.open}')
     expect(component).toContain('inert={props.open ? undefined : true}')
