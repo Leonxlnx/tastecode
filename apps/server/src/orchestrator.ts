@@ -12,7 +12,12 @@ import type {
   VisualReview,
 } from '@harness/design-agent'
 import { isDesignBriefAttachment } from '@harness/design-agent/attachment'
-import { DEFAULT_ACCOUNT_ID, JsonValueSchema, PreviewDomAuditSchema } from '@harness/contracts'
+import {
+  DEFAULT_ACCOUNT_ID,
+  JsonValueSchema,
+  PreviewDomAuditSchema,
+  ProviderIdSchema,
+} from '@harness/contracts'
 import { z } from 'zod'
 import {
   providerRuntime,
@@ -117,6 +122,7 @@ import type {
   Thread,
   ThreadInboxStatus,
   ThreadLifecycle,
+  ThreadSubagent,
   UsageReadIntent,
 } from '@harness/contracts'
 import {
@@ -136,8 +142,23 @@ import { assertPublicWorkspaceFile, existingWorkspacePath } from './api-workspac
 import {
   continuationPromptFromReplay,
   type EarlierChanges,
+  projectHistoryItems,
   sideChatInstructionsFromReplay,
 } from './side-chat.js'
+import {
+  AGENT_TOOLS_SERVER_ID,
+  AgentToolError,
+  AgentToolsEndpoint,
+  type AgentToolsGrant,
+} from './agent-tools-mcp.js'
+import {
+  SUBAGENT_INSTRUCTIONS,
+  SubagentBroker,
+  type AgentModelChoice,
+  type SubagentChildSpec,
+  type SubagentOutcome,
+  type SubagentParent,
+} from './subagent-broker.js'
 import { IDLE_THREAD_RUNTIME_MS, idleThreadRuntimeLimit } from './runtime-retention.js'
 import {
   cleanGeneratedCommitMessage,
@@ -172,6 +193,18 @@ type RecordedEventHandler = (
   seq: number,
   serializedEvent?: string,
 ) => void
+
+/** A sub-agent chat's event, with the chat that started it. */
+type SubagentEventHandler = (
+  threadId: string,
+  parentThreadId: string,
+  event: DomainEvent,
+  seq: number,
+  serializedEvent?: string,
+) => void
+
+/** The header value's credential reference in the reserved `tastecode` server. */
+const AGENT_TOOLS_CREDENTIAL = 'tastecode-agent-tools'
 
 type HistoryEntry = { seq: number; event: DomainEvent }
 type HistoryRead = { events: HistoryEntry[]; serializedEvents?: string | undefined }
@@ -513,6 +546,13 @@ function onAccount(thread: Thread, accountId: string | undefined): Thread {
     : { ...thread, accountId }
 }
 
+/** A user's MCP server may not take the id TasteCode's agent tools use. */
+function assertUserMcpServerId(id: string): void {
+  if (id === AGENT_TOOLS_SERVER_ID) {
+    throw new Error(`"${AGENT_TOOLS_SERVER_ID}" is reserved for TasteCode's own agent tools.`)
+  }
+}
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
@@ -680,6 +720,14 @@ export class Orchestrator {
   #sideParents = new Map<string, string>()
   #startingSideThreads = new Map<string, Promise<Thread>>()
   #discardedSideThreads = new Set<string>()
+  /** Sub-agent chats this process runs, and the chat that started each. */
+  #subagentParents = new Map<string, string>()
+  #onSubagentEvent: SubagentEventHandler
+  #subagents: SubagentBroker
+  /** TasteCode's agent tools; absent when this orchestrator serves none. */
+  #agentTools: AgentToolsEndpoint | undefined
+  /** Each parent chat's token for the agent tools, kept while it exists. */
+  #agentToolGrants = new Map<string, AgentToolsGrant>()
   #activeTurns = new Set<string>()
   #activeTurnIds = new Map<string, string>()
   #serverOwnedUserTurns = new Set<string>()
@@ -825,6 +873,10 @@ export class Orchestrator {
     handlers: {
       onEvent: RecordedEventHandler
       onSideEvent?: RecordedEventHandler
+      /** Events of sub-agent chats, which stay off the chat stream. */
+      onSubagentEvent?: SubagentEventHandler
+      /** Serve TasteCode's agent tools to chats on providers that take them. */
+      agentTools?: boolean
       onQueue?: (threadId: string, state: QueueState) => void
       onLog: (line: string) => void
       /** `accountId` is absent for the default account. */
@@ -901,6 +953,30 @@ export class Orchestrator {
       (process.env['HARNESS_WORKTREE_DIR'] || path.join(path.dirname(storeLocation()), 'trees'))
     this.#onEvent = handlers.onEvent
     this.#onSideEvent = handlers.onSideEvent ?? handlers.onEvent
+    this.#onSubagentEvent = handlers.onSubagentEvent ?? (() => {})
+    this.#subagents = new SubagentBroker(store.subagents, {
+      parent: (threadId) => this.#subagentParent(threadId),
+      choices: () => this.#agentModelChoices(),
+      createChild: (spec) => this.#startSubagentThread(spec),
+      sendToChild: async (threadId, task, options) => {
+        await this.submitTurn(
+          threadId,
+          task,
+          [],
+          {
+            ...(options.model ? { model: options.model } : {}),
+            ...(options.effort ? { effort: options.effort } : {}),
+          },
+          `subagent-task-${crypto.randomUUID()}`,
+        )
+      },
+      stopChild: (threadId) => this.interrupt(threadId),
+      outcome: (threadId, turnId) => this.#subagentOutcome(threadId, turnId),
+      recordOnParent: (parentThreadId, event) => {
+        if (this.#store.thread(parentThreadId)) this.#record(parentThreadId, event)
+      },
+    })
+    this.#agentTools = handlers.agentTools ? new AgentToolsEndpoint(this.#subagents) : undefined
     this.#onQueue = handlers.onQueue ?? (() => {})
     this.#onLog = handlers.onLog
     this.#onLogin = handlers.onLogin
@@ -1445,7 +1521,8 @@ export class Orchestrator {
             : undefined,
         )
       : { capabilities: PROJECT_MCP_MANAGEMENT_CAPABILITIES, servers: [] }
-    const inherited = inventory.servers
+    // TasteCode's own agent tools are not one of the user's servers.
+    const inherited = inventory.servers.filter((server) => server.id !== AGENT_TOOLS_SERVER_ID)
     const servers = new Map(inherited.map((server) => [server.id, server]))
     for (const config of this.#mcpConfig.list(provider, projectPath)) {
       const current = servers.get(config.id)
@@ -1591,6 +1668,7 @@ export class Orchestrator {
 
   addMcpServer(provider: ProviderId, projectPath: string, server: McpServerConfig): void {
     this.#requireMcpManagement(provider)
+    assertUserMcpServerId(server.id)
     this.#controls.forProvider(provider).validateMcpServer?.(server)
     this.#mcpConfig.add(provider, projectPath, server)
     this.#controls.projectMcpConfigChanged(provider, projectPath)
@@ -1598,6 +1676,7 @@ export class Orchestrator {
 
   updateMcpServer(provider: ProviderId, projectPath: string, server: McpServerConfig): void {
     this.#requireMcpManagement(provider)
+    assertUserMcpServerId(server.id)
     this.#controls.forProvider(provider).validateMcpServer?.(server)
     this.#mcpConfig.update(provider, projectPath, server)
     this.#controls.projectMcpConfigChanged(provider, projectPath)
@@ -1625,11 +1704,15 @@ export class Orchestrator {
     const results = await Promise.allSettled(
       [...active].map(async ([threadId, entry]) => {
         if (entry.session.reloadMcpServers) {
+          // A chat with agent tools keeps them through a reload.
+          const own = this.#agentToolGrants.has(threadId)
+            ? (await this.#agentToolsOptions(provider, threadId, options)).options
+            : options
           return this.#withThreadRuntimeOperation(threadId, () =>
             entry.session.reloadMcpServers!(
               entry.thread.id,
-              options.mcpServers ?? [],
-              options.mcpCredentials ?? {},
+              own.mcpServers ?? [],
+              own.mcpCredentials ?? {},
             ),
           )
         }
@@ -1758,6 +1841,62 @@ export class Orchestrator {
       }
     }
     return { mcpServers, mcpCredentials }
+  }
+
+  /** Whether a chat on `provider` gets the agent tools. Synchronous, so other starts keep their timing. */
+  #offersAgentTools(provider: ProviderId): boolean {
+    return this.#agentTools !== undefined && PROVIDER_CAPABILITIES[provider].agentTools
+  }
+
+  /**
+   * Adds TasteCode's agent tools as the reserved `tastecode` server for a chat
+   * whose provider takes them. Its token names the chat once `threadId` is
+   * known; a new chat's caller binds it after the chat exists.
+   */
+  async #agentToolsOptions(
+    provider: ProviderId,
+    threadId: string | undefined,
+    mcp: StartOptions,
+  ): Promise<{ options: StartOptions; grant?: AgentToolsGrant }> {
+    const endpoint = this.#agentTools
+    if (!endpoint || !PROVIDER_CAPABILITIES[provider].agentTools) return { options: mcp }
+    let url: string
+    try {
+      url = await endpoint.url()
+    } catch (error) {
+      this.#onLog(`[agent-tools] not offered: ${errorMessage(error)}`)
+      return { options: mcp }
+    }
+    const grant = (threadId && this.#agentToolGrants.get(threadId)) || endpoint.grant()
+    if (threadId) {
+      grant.bind(threadId)
+      this.#agentToolGrants.set(threadId, grant)
+    }
+    const server: McpServerConfig = {
+      id: AGENT_TOOLS_SERVER_ID,
+      enabled: true,
+      displayName: 'TasteCode agents',
+      transport: {
+        type: 'http',
+        url,
+        headers: { Authorization: { source: 'credential', credentialRef: AGENT_TOOLS_CREDENTIAL } },
+      },
+    }
+    return {
+      options: {
+        mcpServers: [
+          ...(mcp.mcpServers ?? []).filter((entry) => entry.id !== AGENT_TOOLS_SERVER_ID),
+          server,
+        ],
+        mcpCredentials: { ...mcp.mcpCredentials, [AGENT_TOOLS_CREDENTIAL]: grant.authorization },
+      },
+      grant,
+    }
+  }
+
+  #revokeAgentTools(threadId: string): void {
+    this.#agentToolGrants.get(threadId)?.revoke()
+    this.#agentToolGrants.delete(threadId)
   }
 
   async account(provider: ProviderId, agent?: string, accountId?: AccountId): Promise<Account> {
@@ -2080,7 +2219,15 @@ export class Orchestrator {
         ...(target.serviceTier ? { serviceTier: target.serviceTier } : {}),
         ...(approval ? { approval } : {}),
         instructions: composeInstructions(),
-        ...this.#mcpRuntimeOptions(target.provider, stored.projectPath),
+        ...(this.#offersAgentTools(target.provider)
+          ? (
+              await this.#agentToolsOptions(
+                target.provider,
+                threadId,
+                this.#mcpRuntimeOptions(target.provider, stored.projectPath),
+              )
+            ).options
+          : this.#mcpRuntimeOptions(target.provider, stored.projectPath)),
         ...this.#contextRuntimeOptions(target.provider, target.agent, accountId),
       }
       // Another account of the same provider can take the session itself.
@@ -2250,12 +2397,46 @@ export class Orchestrator {
   async #startThread(
     provider: ProviderId,
     workspacePath: string,
+    options: StartOptions & {
+      accountId?: AccountId | undefined
+      continueFrom?: string | undefined
+    },
+    generation: { dispose: number; panic: number; project: number },
+  ): Promise<Thread> {
+    const mcp = this.#mcpRuntimeOptions(provider, workspacePath)
+    // Awaited only when offered, so other starts keep their timing.
+    const agentTools = this.#offersAgentTools(provider)
+      ? await this.#agentToolsOptions(provider, undefined, mcp)
+      : { options: mcp, grant: undefined }
+    try {
+      const thread = await this.#launchThread(
+        provider,
+        workspacePath,
+        options,
+        generation,
+        agentTools.options,
+      )
+      if (agentTools.grant) {
+        agentTools.grant.bind(thread.id)
+        this.#agentToolGrants.set(thread.id, agentTools.grant)
+      }
+      return thread
+    } catch (error) {
+      agentTools.grant?.revoke()
+      throw error
+    }
+  }
+
+  async #launchThread(
+    provider: ProviderId,
+    workspacePath: string,
     {
       accountId: requestedAccount,
       continueFrom,
       ...options
     }: StartOptions & { accountId?: AccountId | undefined; continueFrom?: string | undefined },
     generation: { dispose: number; panic: number; project: number },
+    mcpOptions: StartOptions,
   ): Promise<Thread> {
     const cancelled = () =>
       generation.dispose !== this.#disposeGeneration ||
@@ -2274,7 +2455,7 @@ export class Orchestrator {
     const runtimeOptions = {
       ...options,
       instructions: composeInstructions(options.instructions),
-      ...this.#mcpRuntimeOptions(provider, workspacePath),
+      ...mcpOptions,
       ...this.#contextRuntimeOptions(provider, options.agent, accountId),
     }
     const worktree = options.isolate
@@ -2508,6 +2689,168 @@ export class Orchestrator {
     }
   }
 
+  /** The sub-agents TasteCode started for a chat, newest first. */
+  subagents(threadId: string): ThreadSubagent[] {
+    return this.#subagents.list(threadId)
+  }
+
+  /** The calling chat as a parent that may start sub-agents now. */
+  #subagentParent(threadId: string): SubagentParent {
+    const stored = this.#store.thread(threadId)
+    if (!stored || stored.closedAt !== undefined) throw new AgentToolError('This chat is closed.')
+    if (stored.ephemeral) throw new AgentToolError('A sub-agent cannot start sub-agents.')
+    if (this.#designOwnsThread(threadId)) {
+      throw new AgentToolError('Sub-agents are not available during a Design run.')
+    }
+    const turnId = this.#activeTurnIds.get(threadId)
+    if (turnId === undefined) throw new AgentToolError('Sub-agents start from a running turn.')
+    return {
+      provider: stored.provider,
+      turnId,
+      approval:
+        this.#threadApprovals.get(threadId) ?? this.#store.threadApproval(threadId) ?? 'ask',
+    }
+  }
+
+  /**
+   * Providers in the roster with a model list this launch already read, minus
+   * hidden models. Listing never starts a vendor process: a provider the app
+   * has not listed is left out rather than probed from inside a turn.
+   */
+  #agentModelChoices(): AgentModelChoice[] {
+    const roster = this.#store.providerRoster()
+    const hidden = new Set(this.#store.hiddenModels())
+    const choices: AgentModelChoice[] = []
+    for (const provider of ProviderIdSchema.options) {
+      if (roster !== null && !roster.includes(provider)) continue
+      const listed = this.#defaultScope.modelLists.peek(provider)
+      if (!listed) continue
+      const models = listed.filter((model) => !hidden.has(`${provider}:${model.id}`))
+      if (models.length === 0) continue
+      choices.push({
+        provider,
+        models: models.map((model) => ({
+          id: model.id,
+          name: model.displayName,
+          ...(model.isDefault ? { default: true as const } : {}),
+          ...(model.reasoningEfforts.length > 0 ? { efforts: model.reasoningEfforts } : {}),
+        })),
+      })
+    }
+    return choices
+  }
+
+  /**
+   * Starts a sub-agent's hidden chat in its parent's checkout, at the parent's
+   * access level and on the provider's account for new chats. Modelled on
+   * Side chat; the chat gets the project's MCP servers but never the agent
+   * tools, so sub-agents stay one level deep.
+   */
+  async #startSubagentThread(spec: SubagentChildSpec): Promise<string> {
+    const panicGeneration = this.#panicGeneration
+    const disposeGeneration = this.#disposeGeneration
+    const assertCurrent = () => {
+      if (
+        panicGeneration !== this.#panicGeneration ||
+        disposeGeneration !== this.#disposeGeneration
+      )
+        throw new Error('The sub-agent start was cancelled by Stop all or shutdown.')
+    }
+    const storedParent = this.#store.thread(spec.parentThreadId)
+    if (!storedParent || storedParent.closedAt !== undefined) {
+      throw new Error('The chat that started this sub-agent closed.')
+    }
+    const workspacePath =
+      storedParent.worktreePath ?? resolveWorkspacePath(storedParent.projectPath)
+    // Never a higher access level than the chat that starts it.
+    const approval =
+      this.#threadApprovals.get(spec.parentThreadId) ??
+      this.#store.threadApproval(spec.parentThreadId) ??
+      'ask'
+    const accountId = accountForNewThread(this.#accounts, spec.provider, undefined, undefined)
+    const accountHome = existingAccountHome(this.#accounts, spec.provider, accountId)
+    const runtime = this.#runtimeFor(spec.provider, this.#onLog, accountHome)
+    const runtimeOptions: StartOptions = {
+      approval,
+      ...(spec.model ? { model: spec.model } : {}),
+      ...(spec.effort ? { effort: spec.effort } : {}),
+      instructions: composeInstructions(SUBAGENT_INSTRUCTIONS),
+      ...this.#mcpRuntimeOptions(spec.provider, storedParent.projectPath),
+      ...this.#contextRuntimeOptions(spec.provider, undefined, accountId),
+    }
+    let started: Awaited<ReturnType<ProviderRuntime['start']>> | undefined
+    try {
+      assertCurrent()
+      started = await runtime.start(workspacePath, runtimeOptions)
+      const thread = onAccount(started.thread, accountId)
+      this.#saveSubagentHistoryRecord(thread)
+      assertCurrent()
+      const parent = this.#store.thread(spec.parentThreadId)
+      if (!parent || parent.closedAt !== undefined) {
+        throw new Error('The chat that started this sub-agent closed.')
+      }
+      this.#store.addThread({
+        id: thread.id,
+        projectPath: storedParent.projectPath,
+        provider: spec.provider,
+        ...(thread.accountId ? { accountId: thread.accountId } : {}),
+        title: spec.name ?? 'Sub-agent',
+        createdAt: thread.createdAt,
+        ephemeral: true,
+        ownerThreadId: spec.parentThreadId,
+        ...(storedParent.worktreePath ? { worktreePath: storedParent.worktreePath } : {}),
+      })
+      this.#subagentParents.set(thread.id, spec.parentThreadId)
+      this.#attachThread(
+        thread,
+        started.session,
+        storedParent.projectPath,
+        runtime.resume !== undefined,
+      )
+      this.#threadApprovals.set(thread.id, approval)
+      this.#store.setThreadApproval(thread.id, approval)
+      return thread.id
+    } catch (error) {
+      if (error instanceof StartupCleanupError) {
+        void this.#stopFailedStartup(
+          `subagent-start-${crypto.randomUUID()}`,
+          workspacePath,
+          error,
+        ).catch((stopError: unknown) =>
+          this.#onLog(`[startup] agent still not stopped: ${errorMessage(stopError)}`),
+        )
+        throw error.startError
+      }
+      await started?.session.dispose()
+      const childId = started?.thread.id
+      if (childId) {
+        this.#subagentParents.delete(childId)
+        if (this.#store.thread(childId)) {
+          this.#store.forgetWorktree(childId)
+          this.#store.deleteThread(childId)
+          this.forgetDeletedThread(childId)
+        }
+      }
+      throw error
+    }
+  }
+
+  /** What a sub-agent's turn left, read once when it ends, never per delta. */
+  #subagentOutcome(threadId: string, turnId: string): SubagentOutcome {
+    const items = projectHistoryItems(this.#store.history(threadId)).filter(
+      (item) => item.turnId === turnId,
+    )
+    const answer = items.findLast(
+      (item) => item.type === 'message' && item.role === 'assistant' && item.text?.trim(),
+    )?.text
+    const changedPaths = [
+      ...new Set(
+        items.flatMap((item) => (item.type === 'file_change' && item.path ? [item.path] : [])),
+      ),
+    ]
+    return { answer, changedPaths }
+  }
+
   async sendTurn(
     threadId: string,
     text: string,
@@ -2552,7 +2895,8 @@ export class Orchestrator {
     // The conversation the handover carries ends before this prompt is recorded.
     const handoverThrough = handover ? this.#store.lastSeq(threadId) : 0
     this.#touchThreadRuntime(threadId)
-    if (!this.#sideParents.has(threadId)) this.#wakeForActivity(threadId)
+    if (!this.#sideParents.has(threadId) && !this.#subagentParents.has(threadId))
+      this.#wakeForActivity(threadId)
     const panicGeneration = this.#panicGeneration
     const pendingStart = this.#beginTurnStart(threadId, submission)
     this.#addSidebarStatus(this.#startingTurns, threadId)
@@ -2953,6 +3297,14 @@ export class Orchestrator {
     const { seq, serializedEvent } = this.#store.appendWithSerializedEvent(threadId, event)
     if (this.#sideParents.has(threadId)) {
       this.#onSideEvent(threadId, event, seq, serializedEvent)
+    } else if (this.#subagentParents.size > 0 && this.#subagentParents.has(threadId)) {
+      this.#onSubagentEvent(
+        threadId,
+        this.#subagentParents.get(threadId)!,
+        event,
+        seq,
+        serializedEvent,
+      )
     } else {
       this.#onEvent(threadId, event, seq, serializedEvent)
     }
@@ -2976,6 +3328,14 @@ export class Orchestrator {
       const { seq, serializedEvent } = persisted[index]!
       if (this.#sideParents.has(threadId)) {
         this.#onSideEvent(threadId, event, seq, serializedEvent)
+      } else if (this.#subagentParents.size > 0 && this.#subagentParents.has(threadId)) {
+        this.#onSubagentEvent(
+          threadId,
+          this.#subagentParents.get(threadId)!,
+          event,
+          seq,
+          serializedEvent,
+        )
       } else {
         this.#onEvent(threadId, event, seq, serializedEvent)
       }
@@ -3050,19 +3410,33 @@ export class Orchestrator {
     }
     if (affectsInbox) this.#recordSidebarStatusChange(threadId)
     const sideChat = this.#sideParents.has(threadId)
+    const subagentParent = this.#subagentParents.get(threadId)
     if (
       !sideChat &&
+      subagentParent === undefined &&
       (event.type === 'turn.started' ||
         event.type === 'approval.requested' ||
         event.type === 'user_input.requested')
     ) {
       this.#wakeForActivity(threadId)
     }
-    if (!sideChat && (event.type === 'turn.completed' || event.type === 'thread.error')) {
+    if (
+      !sideChat &&
+      subagentParent === undefined &&
+      (event.type === 'turn.completed' || event.type === 'thread.error')
+    ) {
       this.#wakeForActivity(threadId, true)
     }
     if (sideChat) this.#onSideEvent(threadId, event, seq, serializedEvent)
-    else this.#onEvent(threadId, event, seq, serializedEvent)
+    else if (subagentParent !== undefined) {
+      this.#onSubagentEvent(threadId, subagentParent, event, seq, serializedEvent)
+      this.#subagents.childEvent(threadId, event)
+    } else {
+      this.#onEvent(threadId, event, seq, serializedEvent)
+      // What its turn started carries on in the background.
+      if (event.type === 'turn.completed' || event.type === 'thread.error')
+        this.#subagents.parentTurnEnded(threadId)
+    }
     if (
       event.type === 'turn.started' &&
       matchedStart?.submission &&
@@ -3369,6 +3743,7 @@ export class Orchestrator {
   }
 
   forgetDeletedThread(threadId: string): void {
+    this.#revokeAgentTools(threadId)
     this.#inboxProjections.delete(threadId)
     this.#staleInboxProjectionThreads.delete(threadId)
   }
@@ -4293,6 +4668,11 @@ export class Orchestrator {
   }
 
   async close(threadId: string): Promise<void> {
+    // A sub-agent's chat goes with the chat that started it; closing stops it.
+    if (this.#store.thread(threadId)?.ownerThreadId !== undefined) {
+      await this.#disposeThreadRuntime(threadId)
+      return
+    }
     if (this.#store.thread(threadId)?.ephemeral) {
       await this.closeSideThread(threadId)
       return
@@ -4314,6 +4694,7 @@ export class Orchestrator {
     // Recorded before waiting for the Side chat to stop, so a replacement Side
     // chat that starts meanwhile sees the closed parent and refuses to attach.
     this.#store.closeThread(threadId)
+    this.#revokeAgentTools(threadId)
     this.#onLifecycleScheduleChanged()
     await Promise.all([
       sideThreadId ? this.closeSideThread(sideThreadId) : undefined,
@@ -4327,6 +4708,10 @@ export class Orchestrator {
    * back, and its chats must still accept messages then.
    */
   async stopThread(threadId: string): Promise<void> {
+    if (this.#store.thread(threadId)?.ownerThreadId !== undefined) {
+      await this.#disposeThreadRuntime(threadId, 'close', true)
+      return
+    }
     if (this.#store.thread(threadId)?.ephemeral) {
       await this.closeSideThread(threadId)
       return
@@ -4395,7 +4780,22 @@ export class Orchestrator {
    */
   #isSideThread(threadId: string): boolean {
     if (this.#sideParents.has(threadId)) return true
-    return this.#store.thread(threadId)?.ephemeral === true
+    const stored = this.#store.thread(threadId)
+    // A sub-agent's chat is stored ephemeral too, but has an owner.
+    return stored?.ephemeral === true && stored.ownerThreadId === undefined
+  }
+
+  /** Keeps provider history import from listing a sub-agent's session as a chat of its own. */
+  #saveSubagentHistoryRecord(thread: Thread, providerSessionId = thread.id): void {
+    this.#store.replaceProviderHistory(thread.provider, thread.id, {
+      id: providerSessionId,
+      workspacePath: thread.workspacePath,
+      title: 'Sub-agent',
+      createdAt: thread.createdAt,
+      updatedAt: thread.createdAt,
+      revision: 'subagent',
+      internal: true,
+    })
   }
 
   #disposeThreadRuntime(
@@ -4535,6 +4935,9 @@ export class Orchestrator {
 
   async disposeAll(): Promise<void> {
     this.#disposeGeneration += 1
+    this.#subagents.dispose()
+    const agentToolsClosed = this.#agentTools?.close()
+    this.#agentToolGrants.clear()
     for (const controller of this.#designPreviewAborts.values()) controller.abort()
     this.#designPreviewAborts.clear()
     const accountScopes = [...this.#accountScopes.values()]
@@ -4558,7 +4961,12 @@ export class Orchestrator {
     const providerStops = [...this.#stoppingSessions.keys()].map((threadId) =>
       this.#stopThreadProvider(threadId),
     )
-    const stopped = Promise.allSettled([terminalsClosed, controlStopped, ...providerStops])
+    const stopped = Promise.allSettled([
+      terminalsClosed,
+      controlStopped,
+      agentToolsClosed,
+      ...providerStops,
+    ])
     this.#recordedDeltas.flushAll()
     this.#threads.clear()
     this.#runtimeThreadIdsByProject.clear()
@@ -4570,6 +4978,7 @@ export class Orchestrator {
     this.#mcpOAuthThreads.clear()
     this.#sideThreads.clear()
     this.#sideParents.clear()
+    this.#subagentParents.clear()
     this.#startingSideThreads.clear()
     this.#discardedSideThreads.clear()
     this.#activeTurns.clear()
@@ -4717,7 +5126,16 @@ export class Orchestrator {
       ...(turnOptions.serviceTier ? { serviceTier: turnOptions.serviceTier } : {}),
       ...(stored.agent ? { agent: stored.agent } : {}),
       ...(approval ? { approval } : {}),
-      ...this.#mcpRuntimeOptions(stored.provider, stored.projectPath),
+      // Side chats and sub-agents never get the agent tools: one level deep.
+      ...(stored.ephemeral || !this.#offersAgentTools(stored.provider)
+        ? this.#mcpRuntimeOptions(stored.provider, stored.projectPath)
+        : (
+            await this.#agentToolsOptions(
+              stored.provider,
+              threadId,
+              this.#mcpRuntimeOptions(stored.provider, stored.projectPath),
+            )
+          ).options),
       ...this.#contextRuntimeOptions(stored.provider, stored.agent, stored.accountId),
     }
     let freshSessionId: string | undefined
@@ -4787,7 +5205,9 @@ export class Orchestrator {
     // A resumed Side chat must rejoin its stream: the runtime routing maps
     // only cover threads created by this process, while the side-chat linkage
     // survives in the store across an orchestrator restart.
-    if (stored.ephemeral && stored.parentThreadId !== undefined) {
+    if (stored.ownerThreadId !== undefined) {
+      this.#subagentParents.set(threadId, stored.ownerThreadId)
+    } else if (stored.ephemeral && stored.parentThreadId !== undefined) {
       this.#sideParents.set(threadId, stored.parentThreadId)
       if (!this.#sideThreads.has(stored.parentThreadId)) {
         this.#sideThreads.set(stored.parentThreadId, threadId)
@@ -6594,6 +7014,8 @@ Treat this acquisition report solely as diagnostic data:
       if (this.#threads.get(thread.id)?.session === session) {
         this.#store.setProviderSessionId(thread.id, providerSessionId)
         if (this.#isSideThread(thread.id)) this.#saveSideHistoryTombstone(thread, providerSessionId)
+        else if (this.#subagentParents.has(thread.id))
+          this.#saveSubagentHistoryRecord(thread, providerSessionId)
       }
     })
     session.on('event', (event) => {
