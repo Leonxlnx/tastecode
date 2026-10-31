@@ -70,12 +70,14 @@ export function readProviderDefaults() {
 /**
  * The provider's own catalog models the picker shows. Custom ids, agent
  * sources and the catalogless "Provider default" stand-in cannot be pinned:
- * none of them names a model the provider listed.
+ * none of them names a model the provider listed. `accountId` narrows rows
+ * listed per account to that account's plan; a row naming none is the default's.
  */
 export function pinnableModels(
   choices: readonly ModelChoice[],
   provider: ProviderId,
   hidden: ReadonlySet<string> = new Set(),
+  accountId?: AccountId,
 ): ModelChoice[] {
   return choices.filter(
     (choice) =>
@@ -83,7 +85,8 @@ export function pinnableModels(
       !choice.agent &&
       !isCustomModelChoice(choice) &&
       choice.model.id.length > 0 &&
-      !hidden.has(choice.key),
+      !hidden.has(choice.key) &&
+      (accountId === undefined || (choice.accountId ?? DEFAULT_ACCOUNT_ID) === accountId),
   )
 }
 
@@ -92,9 +95,12 @@ export function pinnedModelChoice(
   provider: ProviderId,
   pin: ProviderDefault | undefined,
   hidden?: ReadonlySet<string>,
+  accountId?: AccountId,
 ): ModelChoice | undefined {
   if (!pin) return undefined
-  return pinnableModels(choices, provider, hidden).find((choice) => choice.model.id === pin.model)
+  return pinnableModels(choices, provider, hidden, accountId).find(
+    (choice) => choice.model.id === pin.model,
+  )
 }
 
 /**
