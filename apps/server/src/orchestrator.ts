@@ -811,10 +811,7 @@ export class Orchestrator {
   /** Other accounts' controls and model lists, by provider and account, made when first used. */
   #accountScopes = new Map<string, AccountScope>()
   /** What every account's controls share with the default account's. */
-  #scopeOptions: Pick<
-    ProviderControlsOptions,
-    'controlIdleMs' | 'beforeLimitRead' | 'services'
-  >
+  #scopeOptions: Pick<ProviderControlsOptions, 'controlIdleMs' | 'beforeLimitRead' | 'services'>
   /** Install, update and sign-in terminals, by terminal id, and the source they change. */
   #providerTerminals = new Map<
     string,

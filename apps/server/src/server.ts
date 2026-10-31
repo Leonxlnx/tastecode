@@ -881,7 +881,9 @@ export function startServer(
       case 'providers.updateAccountRuntimeSetting': {
         const p = parseParams(method, params)
         return {
-          accounts: [...orchestrator.updateAccountRuntimeSetting(p.provider, p.accountId, p.runtime)],
+          accounts: [
+            ...orchestrator.updateAccountRuntimeSetting(p.provider, p.accountId, p.runtime),
+          ],
         }
       }
 
