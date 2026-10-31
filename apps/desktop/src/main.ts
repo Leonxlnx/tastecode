@@ -93,6 +93,14 @@ import {
   windowThemeSource,
 } from './window-theme.js'
 import {
+  DEFAULT_WINDOW_MATERIAL,
+  loadWindowMaterial,
+  parseWindowMaterial,
+  saveWindowMaterial,
+  windowMaterialSupport,
+  type WindowMaterial,
+} from './window-material.js'
+import {
   DEFAULT_ZOOM_FACTOR,
   isZoomAction,
   nextZoomFactor,
@@ -125,6 +133,9 @@ const mainWindowStatePath = path.join(productDataPath, 'window-state.json')
 const windowChromePath = path.join(productDataPath, 'window-chrome.json')
 /** What window-chrome.json holds, so an unchanged report does not rewrite it. */
 let savedWindowChrome: string | undefined
+const windowMaterialPath = path.join(productDataPath, 'window-material.json')
+/** The backdrop the window draws now; the renderer changes it for Transparent. */
+let windowMaterial: WindowMaterial | undefined
 const defaultMainWindowSize = { width: 1180, height: 820 }
 const minimumMainWindowSize = { width: 720, height: 520 }
 const startupStartedAt = Number(process.env['HARNESS_STARTUP_STARTED_AT'])
@@ -548,6 +559,7 @@ function createWindow(): void {
   const lastChrome = loadWindowChrome(windowChromePath)
   savedWindowChrome = lastChrome ? JSON.stringify(lastChrome) : undefined
   const initialTheme = lastChrome ? windowChromeOptions(lastChrome) : windowThemeOptions('dark')
+  windowMaterial ??= loadWindowMaterial(windowMaterialPath) ?? DEFAULT_WINDOW_MATERIAL
   const savedWindowState = loadMainWindowState(mainWindowStatePath)
   const restoredWindowState = restoreMainWindowState(
     savedWindowState,
@@ -573,7 +585,7 @@ function createWindow(): void {
     // behind the sidebar to blur.
     ...(process.platform === 'win32'
       ? {
-          backgroundMaterial: 'acrylic' as const,
+          backgroundMaterial: windowMaterial,
         }
       : {}),
     ...(process.platform === 'darwin' ? { vibrancy: 'sidebar' as const } : {}),
@@ -947,6 +959,33 @@ ipcMain.handle('harness:setWindowChrome', (event, value: unknown) => {
   savedWindowChrome = serialized
   try {
     saveWindowChrome(windowChromePath, chrome)
+  } catch {
+    // Only the next launch's first frames depend on it.
+  }
+})
+
+// Window background › Transparent: the renderer asks what the OS can draw
+// behind the window (and says so in Settings when it cannot), then picks the
+// Windows 11 backdrop. The look is unchanged where nothing can be drawn.
+ipcMain.handle('harness:getWindowMaterialSupport', (event) => {
+  requireOwnRenderer(event.sender)
+  return windowMaterialSupport(process.platform, process.getSystemVersion())
+})
+
+ipcMain.handle('harness:setWindowMaterial', (event, value: unknown) => {
+  requireOwnRenderer(event.sender)
+  const material = parseWindowMaterial(value)
+  if (material === windowMaterial) return
+  windowMaterial = material
+  const window = BrowserWindow.fromWebContents(event.sender)
+  if (
+    window &&
+    windowMaterialSupport(process.platform, process.getSystemVersion()) === 'material'
+  ) {
+    window.setBackgroundMaterial(material)
+  }
+  try {
+    saveWindowMaterial(windowMaterialPath, material)
   } catch {
     // Only the next launch's first frames depend on it.
   }
