@@ -20,6 +20,8 @@ describe('plan-limit bars', () => {
   it('draws the Usage page meters as the popup draws its bars', () => {
     const popupBar = rule(popup, '.account-menu__limit-bar')
     const usageMeter = rule(usage, '.settings .usage-limit__meter')
+    expect(popupBar).toContain('height: 4px')
+    expect(usageMeter).toContain('height: 4px')
     expect(popupBar).toContain(TRACK)
     expect(usageMeter).toContain(TRACK)
     expect(popupBar).toContain('border-radius: var(--r-pill)')

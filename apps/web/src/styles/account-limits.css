@@ -334,8 +334,10 @@
   }
 }
 
+/* As thin as the Usage page's meters and the closed account gauges, so a
+   limit is one bar wherever it shows. */
 .account-menu__limit-bar {
-  height: 6px;
+  height: 4px;
   border-radius: var(--r-pill);
   background: color-mix(in srgb, var(--text) 9%, transparent);
   overflow: hidden;

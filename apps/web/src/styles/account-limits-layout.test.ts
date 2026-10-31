@@ -51,7 +51,8 @@ describe('account limits layout', () => {
     expect(rule('.account-menu__source')).toContain('gap: 8px')
     expect(rule('.account-menu__limit')).toContain('gap: 5px')
     const bar = rule('.account-menu__limit-bar')
-    expect(bar).toContain('height: 6px')
+    expect(bar).toContain('height: 4px')
+    expect(rule('.account-menu__account-gauge')).toContain('height: 4px')
     expect(bar).toContain('border-radius: var(--r-pill)')
     const fill = rule('.account-menu__limit-bar > span')
     // A red-to-green gradient read as noise; the fill matches the card's meter.
