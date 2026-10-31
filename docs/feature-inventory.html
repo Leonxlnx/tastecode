@@ -3188,10 +3188,25 @@
 
       <section id="phone">
         <header>
-          <h2>Phone (nightly only)</h2>
+          <h2>Phone (dev builds only)</h2>
           <span class="count"></span>
         </header>
         <ul class="check">
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Phone access only in builds started with HARNESS_PHONE_ACCESS=1
+                <span class="d"
+                  >pnpm dev sets it; every other build hides Settings › Phone and never opens the
+                  phone port, even when an earlier dev build left access on, and refuses turning it
+                  on or pairing with "Phone access is not part of this build."; turning it off and
+                  removing a paired phone still work; a tester of a dev installer sets
+                  HARNESS_PHONE_ACCESS=1 as a user environment variable (Windows: setx
+                  HARNESS_PHONE_ACCESS 1) and quits and restarts TasteCode</span
+                ></span
+              ></label
+            >
+          </li>
           <li>
             <label
               ><input type="checkbox" /><span

@@ -26,6 +26,18 @@ import {
 import type { PushSocket } from './push-bus.js'
 
 export const DEFAULT_PHONE_PORT = 4317
+/**
+ * Phone access is a dev-only feature for now: a build offers it only when this
+ * variable is exactly `1`. `pnpm dev` sets it; a tester of a dev installer sets
+ * it as a user environment variable before starting the app.
+ */
+export const PHONE_ACCESS_ENV = 'HARNESS_PHONE_ACCESS'
+export const PHONE_ACCESS_UNAVAILABLE = 'Phone access is not part of this build.'
+
+export function phoneAccessAvailable(env: NodeJS.ProcessEnv): boolean {
+  return env[PHONE_ACCESS_ENV] === '1'
+}
+
 const PAIRING_TTL_MS = 10 * 60 * 1_000
 const HANDSHAKE_TIMEOUT_MS = 10_000
 const MAX_HANDSHAKE_BYTES = 4_096
@@ -214,8 +226,14 @@ export class PhoneLinkSocket implements PushSocket {
  * private, tailnet and loopback addresses, refuses anything a browser could
  * send (an `Origin` header), and speaks nothing but a Noise IK handshake until
  * the phone has proved it holds a paired key or a fresh pairing secret.
+ *
+ * In a build without phone access (`available: false`) nothing can open the
+ * listener: resuming, turning access on and pairing all refuse, and a state
+ * stored as on by an earlier build is left as it is but never acted on.
+ * Turning access off, cancelling a code and forgetting a phone still work.
  */
 export class PhoneAccess {
+  #available: boolean
   #store: PhoneStateStore
   #keys: PhoneKeyStore
   #port: number
@@ -241,6 +259,8 @@ export class PhoneAccess {
   #alive = new WeakMap<WebSocket, boolean>()
 
   constructor(options: {
+    /** Whether this build offers phone access at all; see `phoneAccessAvailable`. */
+    available: boolean
     store: PhoneStateStore
     keys: PhoneKeyStore
     onConnection: (socket: PhoneLinkSocket) => void
@@ -250,6 +270,7 @@ export class PhoneAccess {
     serverName?: string
     networkInterfaces?: () => NodeJS.Dict<NetworkInterfaceInfo[]>
   }) {
+    this.#available = options.available
     this.#store = options.store
     this.#keys = options.keys
     this.#onConnection = options.onConnection
@@ -262,7 +283,19 @@ export class PhoneAccess {
   }
 
   status(): PhoneAccessStatus {
+    if (!this.#available) {
+      return {
+        available: false,
+        enabled: false,
+        listening: false,
+        port: this.#port,
+        serverName: this.#serverName,
+        addresses: [],
+        devices: this.#state.devices.map((device) => this.#publicDevice(device)),
+      }
+    }
     return {
+      available: true,
       enabled: this.#state.enabled,
       listening: this.#listening,
       port: this.#port,
@@ -280,6 +313,7 @@ export class PhoneAccess {
   }
 
   async setEnabled(enabled: boolean): Promise<PhoneAccessStatus> {
+    if (enabled) this.#requireAvailable()
     if (this.#state.enabled !== enabled) {
       this.#state = { ...this.#state, enabled }
       this.#save()
@@ -291,6 +325,7 @@ export class PhoneAccess {
   }
 
   async startPairing(): Promise<{ status: PhoneAccessStatus; pairing: PhonePairing }> {
+    this.#requireAvailable()
     if (!this.#state.enabled) {
       this.#state = { ...this.#state, enabled: true }
       this.#save()
@@ -352,6 +387,10 @@ export class PhoneAccess {
     }
   }
 
+  #requireAvailable(): void {
+    if (!this.#available) throw new Error(PHONE_ACCESS_UNAVAILABLE)
+  }
+
   #key(): NoiseKeyPair {
     if (this.#serverKey) return this.#serverKey
     const stored = this.#keys.read()
@@ -383,6 +422,8 @@ export class PhoneAccess {
   }
 
   async #start(): Promise<void> {
+    // The one way to the listener, so no caller can open it in a build without phone access.
+    this.#requireAvailable()
     if (this.#listening) return
     if (this.#starting) return this.#starting
     this.#starting = this.#listen().finally(() => {
