@@ -91,3 +91,14 @@
   color: var(--text-2);
   font-size: var(--t-xs);
 }
+
+/* A narrow panel keeps the name and the task readable: the token count goes first, as in the chat. */
+@container workspace-panel (max-width: 520px) {
+  .agents-row .subagent__part--tokens {
+    display: none;
+  }
+
+  .agents-row .subagent__part--tokens:first-child + .subagent__part::before {
+    content: none;
+  }
+}
