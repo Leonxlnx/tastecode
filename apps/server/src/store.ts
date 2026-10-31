@@ -2798,10 +2798,6 @@ export class Store {
     this.#pendingSidebarThreads = updated
   }
 
-  /**
-   * Marks a session finished without discarding it. Closing a session ends the
-   * process; it does not mean the user wanted the transcript gone.
-   */
   /** The sub-agent chats a chat started, oldest first. */
   ownedThreadIds(ownerThreadId: string): string[] {
     return sqliteRows<{ id: string }>(
@@ -2810,6 +2806,10 @@ export class Store {
     ).map((row) => row.id)
   }
 
+  /**
+   * Marks a session finished without discarding it. Closing a session ends the
+   * process; it does not mean the user wanted the transcript gone.
+   */
   closeThread(id: string): void {
     const closedAt = Date.now()
     this.#transaction(() => {
