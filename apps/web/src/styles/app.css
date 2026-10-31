@@ -1689,9 +1689,7 @@
   max-width: var(--chat-w);
   margin: 0 auto;
   border-radius: var(--r-composer);
-  /* Archiving replaces the thread in the same commit as this FLIP. Keep the
-     bounded visual box promoted so that work cannot delay layer creation. */
-  will-change: transform;
+  /* Not promoted at rest: text in a promoted layer loses subpixel AA. */
 }
 
 .composer__prompt {
@@ -1795,7 +1793,6 @@
   padding: 0 5px;
   opacity: 1;
   color: var(--queue-text);
-  will-change: transform, opacity;
   transition:
     opacity var(--dur-fast) var(--ease-out),
     transform var(--dur-press) var(--ease-out);
