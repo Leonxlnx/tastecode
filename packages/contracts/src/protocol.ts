@@ -1694,6 +1694,12 @@ export const methods = {
           name: z.string(),
           pinned: z.boolean(),
           createdAt: z.number(),
+          /**
+           * A folder the server made for a chat started without a project
+           * (`projects.createChatFolder`). Clients list its chats on their own
+           * rather than as a project of their own.
+           */
+          chat: z.boolean().optional(),
           sessions: z.array(
             z.object({
               id: z.string(),
@@ -1755,6 +1761,21 @@ export const methods = {
       name: z.string(),
       pinned: z.boolean(),
       createdAt: z.number(),
+    }),
+  },
+  /**
+   * Make a new, empty folder for a chat that belongs to no project and
+   * register it as a project, so the chat can start there. The server names
+   * it after the date and two random words, inside its own data folder.
+   */
+  'projects.createChatFolder': {
+    params: z.object({}),
+    result: z.object({
+      path: z.string(),
+      name: z.string(),
+      pinned: z.boolean(),
+      createdAt: z.number(),
+      chat: z.literal(true),
     }),
   },
   'projects.pin': {
