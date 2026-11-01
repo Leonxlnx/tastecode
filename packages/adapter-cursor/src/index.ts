@@ -3,3 +3,4 @@ export { cursorAccount, isCursorSignedIn, signOutCursor, startCursorLogin } from
 export { CursorEventMapper, type CursorEvent } from './events.js'
 export { cursorInstallCommand } from './install.js'
 export { listCursorCommands, type CursorCommandOptions } from './commands.js'
+export { cursorLimitSource, type CursorLimitSource } from './limits.js'

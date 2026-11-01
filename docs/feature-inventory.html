@@ -570,6 +570,26 @@
               ></label
             >
           </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Plan limits in the account popup and the Usage page
+                <span class="d"
+                  >cursor-agent's /usage is a TUI screen that print mode does not answer, so the
+                  server makes the one request that screen makes
+                  (DashboardService/GetCurrentPeriodUsage on api2.cursor.sh, binary Connect) with
+                  the access token cursor-agent stored at sign-in (%APPDATA%Cursorauth.json on
+                  Windows, ~/.config/cursor/auth.json on Linux), read at the moment of the request
+                  and never kept, logged, refreshed or written; rows Included, Auto and API as in
+                  /usage, Included alone showing the billing-cycle reset; signed out, an Enterprise
+                  account without plan usage, and macOS (token in the keychain) show no Cursor
+                  block; a refused token reads "Sign in to Cursor again" with Retry; reads at most
+                  every 5 minutes except refresh and retry; checked only against encoded fixtures,
+                  never against Cursor's server</span
+                ></span
+              ></label
+            >
+          </li>
         </ul>
 
         <h3>OpenCode (local server, HTTP/SSE) <span class="pill-parked">nightly only</span></h3>

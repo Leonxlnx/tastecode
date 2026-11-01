@@ -482,6 +482,8 @@ const defaultServices = {
       loading: false,
     }),
     account: async () => (await loadCursor()).cursorAccount(),
+    // One HTTPS request with cursor-agent's stored sign-in; see the adapter.
+    usageLimitSource: async () => (await loadCursor()).cursorLimitSource(),
     startLogin: async (complete) => (await loadCursor()).startCursorLogin(complete),
     signOut: async () => (await loadCursor()).signOutCursor(),
   },
