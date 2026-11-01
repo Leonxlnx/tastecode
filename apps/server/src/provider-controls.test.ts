@@ -307,7 +307,8 @@ describe('declared provider controls', () => {
     expect(opencode.listMcpServers).toBeDefined()
     expect(opencode.listCommands).toBeDefined()
     expect(opencode.listSkills).toBeDefined()
-    expect(registry.forProvider('cursor').listCommands).toBeUndefined()
+    // Cursor's list is read from folders on disk.
+    expect(registry.forProvider('cursor').listCommands).toBeDefined()
     expect(createCodex).not.toHaveBeenCalled()
   })
 
