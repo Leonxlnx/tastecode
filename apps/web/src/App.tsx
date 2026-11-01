@@ -1669,6 +1669,7 @@ export function App() {
               provider: selectedModelChoice.provider,
               connectionId: selectedModelChoice.connectionId,
               agentId: selectedModelChoice.agent?.id,
+              modelImages: selectedModelChoice.model.images,
             }
           : { provider, agentId: sourceAgent },
         providerStatuses,
