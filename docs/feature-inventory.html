@@ -1318,15 +1318,17 @@
                   arguments sends it at once; @ lists MCP servers; $ lists skills, with Codex skill
                   chips unchanged; the provider list comes from commands.list: Claude Code from an
                   open chat or, for a project without one, the cached background probe, with the
-                  built-ins that change state TasteCode owns and terminal-only commands hidden;
-                  Codex from a fixed list of the app-server actions /goal, /compact and /review,
-                  which its chats send as thread/goal/*, thread/compact/start and review/start
-                  requests instead of text (a goal answer shows as a short assistant turn; checked
-                  against a fake app-server only); Grok, OpenCode and other ACP agents from a live
-                  chat or a probe (an OpenCode chat sends a leading /name it lists to its session
-                  command route with the rest as arguments; v1 servers only, checked against a fake
-                  server); when the probe failed, the menu says "Couldn't load commands." and asks
-                  again the next time it opens</span
+                  built-ins that change state TasteCode owns and terminal-only commands hidden (only
+                  Claude's own rows: a custom, plugin or MCP command of another name stays, and each
+                  Claude row says whether it is built-in, custom, plugin or MCP; /advisor is listed
+                  and runs through the SDK); Codex from a fixed list of the app-server actions
+                  /goal, /compact and /review, which its chats send as thread/goal/*,
+                  thread/compact/start and review/start requests instead of text (a goal answer
+                  shows as a short assistant turn; checked against a fake app-server only); Grok,
+                  OpenCode and other ACP agents from a live chat or a probe (an OpenCode chat sends
+                  a leading /name it lists to its session command route with the rest as arguments;
+                  v1 servers only, checked against a fake server); when the probe failed, the menu
+                  says "Couldn't load commands." and asks again the next time it opens</span
                 ></span
               ></label
             >
