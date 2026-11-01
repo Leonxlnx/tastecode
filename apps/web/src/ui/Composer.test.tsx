@@ -414,6 +414,62 @@ describe('Composer draft state', () => {
     expect(onSend).toHaveBeenCalledWith('/feedback hello', [])
   })
 
+  it.each(['/clear', '/new', ' /CLEAR '])(
+    'starts a new chat for %s instead of sending it',
+    (text) => {
+      const onSend = vi.fn()
+      const onNewChatCommand = vi.fn()
+      renderComposer(onSend, { onNewChatCommand, projectPath: undefined })
+      const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+      fireEvent.change(composer, { target: { value: text } })
+      fireEvent.keyDown(composer, { key: 'Enter' })
+      expect(onNewChatCommand).toHaveBeenCalledTimes(1)
+      expect(onSend).not.toHaveBeenCalled()
+      expect(composer.value).toBe('')
+    },
+  )
+
+  it('sends /clear with more words, or with no handler, to the provider as typed', () => {
+    const onSend = vi.fn()
+    const onNewChatCommand = vi.fn()
+    renderComposer(onSend, { onNewChatCommand })
+    const composer = screen.getByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: '/clear the build cache' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    expect(onSend).toHaveBeenCalledWith('/clear the build cache', [])
+    expect(onNewChatCommand).not.toHaveBeenCalled()
+  })
+
+  it('opens the model picker for /model instead of sending it', async () => {
+    const onSend = vi.fn()
+    const onModelSelectorOpen = vi.fn()
+    renderComposer(onSend, {
+      onModelSelectorOpen,
+      models: [
+        {
+          key: 'codex:model',
+          provider: 'codex',
+          sourceName: 'Codex',
+          mark: 'openai',
+          model: {
+            id: 'model',
+            displayName: 'Test model',
+            isDefault: true,
+            reasoningEfforts: [],
+            serviceTiers: [],
+          },
+        },
+      ],
+    })
+    await screen.findByRole('button', { name: 'Model and reasoning' })
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+    fireEvent.change(composer, { target: { value: '/model' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    expect(onModelSelectorOpen).toHaveBeenCalledTimes(1)
+    expect(onSend).not.toHaveBeenCalled()
+    expect(composer.value).toBe('')
+  })
+
   it('clears the saved draft before handing the text over', () => {
     const events: string[] = []
     renderComposer((text) => events.push(`send ${text}`), {
