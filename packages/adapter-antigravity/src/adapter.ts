@@ -50,6 +50,9 @@ export const ANTIGRAVITY_CAPABILITIES: Capabilities = {
   reasoningItems: false,
   approvals: false,
   images: false,
+  // agy's print mode takes text only, but its own file viewer opens images and
+  // shows them to the model, so an attached image goes in as a path to open.
+  imageFiles: true,
 }
 
 export type AntigravityStartOptions = {
@@ -74,6 +77,25 @@ function applyAntigravityTurnOptions(
     else merged[field] = value
   }
   return merged
+}
+
+/**
+ * Names attached images in the prompt so the agent opens them with its own
+ * file viewer. Print mode has no image input of its own: `--input-format
+ * stream-json` accepts a single content block type (agy 1.1.x strings:
+ * "stream input content block type %q is not supported (only %q)"), and the
+ * CLI's paste-an-image path exists only in its interactive prompt.
+ */
+export function antigravityImagePrompt(text: string, attachments: readonly string[]): string {
+  if (attachments.length === 0) return text
+  const subject = attachments.length === 1 ? 'this image' : 'these images'
+  const block = [
+    '<attached-images>',
+    `The user attached ${subject}. Open each file with your file viewer to see it before you answer.`,
+    ...attachments.map((file) => `- ${file}`),
+    '</attached-images>',
+  ].join('\n')
+  return text.trim() ? `${text}\n\n${block}` : block
 }
 
 /**
@@ -191,7 +213,6 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
     attachments: string[] = [],
     options: AntigravityTurnOptions = {},
   ): Promise<string> {
-    if (attachments.length) throw new Error('Antigravity attachments are not supported yet')
     this.#options = applyAntigravityTurnOptions(this.#options, options)
     // The picker normally warms this process-wide index. A server restart can
     // resume straight into a turn, though, and passing the collapsed anchor
@@ -204,10 +225,11 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
       }
     }
     const turnId = `${threadId}-turn-${++this.#turnCounter}`
+    const request = antigravityImagePrompt(text, attachments)
     const prompt =
       this.#instructionsPending && this.#options.instructions
-        ? `<system-instructions>\n${this.#options.instructions}\n</system-instructions>\n\n${text}`
-        : text
+        ? `<system-instructions>\n${this.#options.instructions}\n</system-instructions>\n\n${request}`
+        : request
     this.#instructionsPending = false
     const args = antigravityTurnArgs(prompt, this.#options, this.#conversationId)
 

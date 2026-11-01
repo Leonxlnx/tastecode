@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest'
 import {
   AntigravityAdapter,
   ANTIGRAVITY_CAPABILITIES,
+  antigravityImagePrompt,
   antigravityTurnArgs,
   parseAntigravityModels,
 } from './adapter.js'
@@ -242,6 +243,23 @@ describe('Antigravity turn invocation', () => {
     expect(logs.some((line) => line.includes('listener failed'))).toBe(true)
     expect(killed).toBe(0)
     child.emit('close', 0)
+  })
+
+  it('hands attached images to the agent as files it opens, not as pixels', async () => {
+    expect(ANTIGRAVITY_CAPABILITIES).toMatchObject({ images: false, imageFiles: true })
+    const record: SpawnRecord = {}
+    const child = new FakeChild()
+    const adapter = new AntigravityAdapter({ spawn: fakeSpawn(record, child) })
+    const thread = await adapter.startThread('C:\\repo')
+    const image = 'C:\\Temp\\TasteCode\\attachments\\shot.png'
+    await adapter.sendTurn(thread.id, 'What is wrong here?', [image])
+    const prompt = record.args?.[record.args.indexOf('-p') + 1]
+    expect(prompt?.startsWith('What is wrong here?\n\n<attached-images>')).toBe(true)
+    expect(prompt).toContain(`- ${image}`)
+    expect(antigravityImagePrompt('', ['a.png', 'b.png'])).toBe(
+      '<attached-images>\nThe user attached these images. Open each file with your file viewer to see it before you answer.\n- a.png\n- b.png\n</attached-images>',
+    )
+    expect(antigravityImagePrompt('Hi', [])).toBe('Hi')
   })
 
   it('prepends session instructions to the first prompt only', async () => {
