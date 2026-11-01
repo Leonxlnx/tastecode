@@ -128,6 +128,58 @@ function controlledIdleCallbacks() {
 }
 
 describe('Sidebar chat actions', () => {
+  it('lists chats without a project under Chats and starts another from there', () => {
+    const onNewChatWithoutProject = vi.fn()
+    const onNewSession = vi.fn()
+    const folder = '/home/me/.tastecode/threads/2026-11-01-amber-heron'
+    render(
+      <Sidebar
+        projects={[
+          { path: '/work/repo', name: 'Repo', sessions: [session('work', 'Fix the parser')] },
+          {
+            path: folder,
+            name: '2026-11-01-amber-heron',
+            chat: true,
+            sessions: [session('loose', 'Trip ideas')],
+          },
+        ]}
+        activeProjectPath={folder}
+        activeSessionId="loose"
+        account={undefined}
+        providerName="Codex"
+        collapsed={false}
+        width={248}
+        onWidthChange={vi.fn()}
+        onClose={vi.fn()}
+        onAddProject={vi.fn()}
+        onNewSession={onNewSession}
+        onNewChatWithoutProject={onNewChatWithoutProject}
+        onSelectSession={vi.fn()}
+        onRenameProject={vi.fn()}
+        onRemoveProject={vi.fn()}
+        onTogglePin={vi.fn()}
+        onRenameSession={vi.fn()}
+        onDeleteSession={vi.fn()}
+        onArchiveProject={vi.fn()}
+        onReorderSession={vi.fn()}
+        onOpenSearch={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByText('Chats')).toBeTruthy()
+    expect(screen.getByText('Trip ideas')).toBeTruthy()
+    expect(screen.queryByText('2026-11-01-amber-heron')).toBeNull()
+    expect(screen.getByText('Repo')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'New chat without a project' }))
+    expect(onNewChatWithoutProject).toHaveBeenCalledTimes(1)
+    // From a chat without a project, New chat goes to that chat's folder, which
+    // the app turns into another chat without a project.
+    fireEvent.click(screen.getByRole('button', { name: 'New chat' }))
+    expect(onNewSession).toHaveBeenCalledWith(folder, undefined)
+  })
+
   it('shows placeholder projects instead of an empty list while projects load', () => {
     const view = renderProjectCatalog([], undefined, undefined, true)
 

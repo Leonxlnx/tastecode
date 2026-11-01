@@ -210,6 +210,43 @@ describe('the rail keeps its order', () => {
     ).toEqual(['a'])
   })
 
+  it('lists chats without a project in their own section, not as projects', () => {
+    const rail = sidebarRail([
+      { path: '/repo', sessions: [chat('work')] },
+      { path: '/chats/older', chat: true, sessions: [chat('older', { createdAt: 1 })] },
+      {
+        path: '/chats/newer',
+        chat: true,
+        sessions: [chat('newer', { createdAt: 3 }), chat('gone', { createdAt: 2, ...archived(4) })],
+      },
+      {
+        path: '/chats/done',
+        chat: true,
+        sessions: [chat('done', { createdAt: 0, unread: true })],
+      },
+      { path: '/chats/pinned', chat: true, sessions: [chat('pin', { pinned: true })] },
+    ])
+
+    expect(rail.orderedProjects.map(({ path }) => path)).toEqual(['/repo'])
+    // Grouped like a project's chats, newest first within each group.
+    expect(rail.chatSessions.map(({ projectPath, session }) => [projectPath, session.id])).toEqual([
+      ['/chats/done', 'done'],
+      ['/chats/newer', 'newer'],
+      ['/chats/older', 'older'],
+    ])
+    expect(rail.pinnedSessions.map(({ session }) => session.id)).toEqual(['pin'])
+    expect(rail.archivedSessions.map(({ session }) => session.id)).toEqual(['gone'])
+    expect(
+      sidebarSessions(
+        [
+          { path: '/repo', sessions: [chat('work')] },
+          { path: '/chats/one', chat: true, sessions: [chat('loose')] },
+        ],
+        'classic',
+      ).map(({ id }) => id),
+    ).toEqual(['loose', 'work'])
+  })
+
   it('leaves a chat the server settled on its own in the tree', () => {
     const idle = chat('idle', {
       lifecycle: { state: 'settled', settledAt: 10, reason: 'inactivity' },

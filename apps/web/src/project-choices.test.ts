@@ -35,4 +35,20 @@ describe('project choice projection', () => {
     expect(reordered).not.toBe(renamed)
     expect(reordered.map(({ path }) => path)).toEqual(['/beta', '/alpha', '/gamma'])
   })
+
+  it('leaves out the folders made for chats without a project', () => {
+    const project = createProjectChoiceProjector()
+    const first = project([
+      { path: '/alpha', name: 'Alpha' },
+      { path: '/chats/2026-11-01-amber-heron', chat: true },
+    ])
+    const withAnotherChat = project([
+      { path: '/chats/2026-11-01-quiet-wren', chat: true },
+      { path: '/alpha', name: 'Alpha' },
+      { path: '/chats/2026-11-01-amber-heron', chat: true },
+    ])
+
+    expect(first).toEqual([{ path: '/alpha', name: 'Alpha' }])
+    expect(withAnotherChat).toBe(first)
+  })
 })

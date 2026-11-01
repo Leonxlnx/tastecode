@@ -11,6 +11,8 @@ type ProjectSidebarProjection = {
 export type SidebarRail = {
   orderedProjects: Project[]
   pinnedSessions: PinnedSession[]
+  /** Chats without a project, by group like a project's, newest first in each. */
+  chatSessions: PinnedSession[]
   /** Archived chats of every project, the most recently archived first. */
   archivedSessions: PinnedSession[]
 }
@@ -131,8 +133,9 @@ function sameIds<T>(
 }
 
 /**
- * The rail: pinned chats in their own section, then pinned projects ahead of
- * the rest, then archived chats at the end. Every list keeps its saved order,
+ * The rail: pinned chats in their own section, then the chats without a
+ * project, then pinned projects ahead of the rest, then archived chats at the
+ * end. Every list keeps its saved order,
  * except that a project's chats are listed by group (sessionGroup): what is
  * done first, then what needs the user, what is working, and the rest. A
  * finished turn also lifts its chat to the top of its group (liftSession).
@@ -142,20 +145,36 @@ function sameIds<T>(
 export function sidebarRail(projects: Project[], heldSessionId?: string): SidebarRail {
   const pinned: PinnedSession[] = []
   const archived: PinnedSession[] = []
+  const chats: PinnedSession[] = []
   const pinnedProjects: Project[] = []
   const unpinnedProjects: Project[] = []
   for (const source of projects) {
     const projection = projectSidebarProjection(source, heldSessionId)
     pinned.push(...projection.pinnedSessions)
     archived.push(...projection.archivedSessions)
-    if (source.pinned) pinnedProjects.push(projection.project)
+    if (source.chat) {
+      for (const session of projection.project.sessions) {
+        chats.push({ projectPath: source.path, session })
+      }
+    } else if (source.pinned) pinnedProjects.push(projection.project)
     else unpinnedProjects.push(projection.project)
   }
   return {
     orderedProjects: [...pinnedProjects, ...unpinnedProjects],
     pinnedSessions: pinned,
+    chatSessions: groupChats(chats, heldSessionId),
     archivedSessions: archived.sort((a, b) => archivedAt(b.session) - archivedAt(a.session)),
   }
+}
+
+function groupChats(chats: PinnedSession[], heldSessionId?: string): PinnedSession[] {
+  if (chats.length < 2) return chats
+  const newestFirst = [...chats].sort((a, b) => b.session.createdAt - a.session.createdAt)
+  const byId = new Map(newestFirst.map((chat) => [chat.session.id, chat]))
+  return groupSessions(
+    newestFirst.map(({ session }) => session),
+    heldSessionId,
+  ).map((session) => byId.get(session.id)!)
 }
 
 /**
@@ -184,9 +203,10 @@ export function sidebarSessions(
   if (mode === 'inbox') {
     return classifyInboxEntries(projects, '', '').ordered.map(({ session }) => session)
   }
-  const { orderedProjects, pinnedSessions } = sidebarRail(projects, heldSessionId)
+  const { orderedProjects, pinnedSessions, chatSessions } = sidebarRail(projects, heldSessionId)
   return [
     ...pinnedSessions.map(({ session }) => session),
+    ...chatSessions.map(({ session }) => session),
     ...orderedProjects.flatMap((project) => project.sessions),
   ]
 }

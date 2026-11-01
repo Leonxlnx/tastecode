@@ -177,6 +177,8 @@ export type Project = {
   name?: string
   sessions: Session[]
   pinned?: boolean
+  /** A folder the server made for a chat without a project; listed under Chats. */
+  chat?: boolean
 }
 
 type DropPosition = 'before' | 'after'
@@ -272,6 +274,8 @@ function SidebarComponent(props: {
   onAddProject: () => void
   onAddDroppedProjects?: ((paths: string[]) => void) | undefined
   onNewSession: (projectPath?: string, chooseProject?: boolean) => void
+  /** Start a chat that belongs to no project; it gets a folder of its own. */
+  onNewChatWithoutProject?: (() => void) | undefined
   onSelectSession: (id: string) => void
   onRenameProject: (path: string, name: string) => void
   onRemoveProject: (path: string) => void
@@ -512,6 +516,11 @@ function SidebarComponent(props: {
     [closeOnNarrowViewport],
   )
 
+  const newChatWithoutProject = useCallback(() => {
+    actionsRef.current.onNewChatWithoutProject?.()
+    closeOnNarrowViewport()
+  }, [closeOnNarrowViewport])
+
   const addProject = useCallback(() => {
     props.onAddProject()
     closeOnNarrowViewport()
@@ -583,7 +592,7 @@ function SidebarComponent(props: {
 
   // A status push replaces one project in an otherwise retained tree. Keep
   // every unchanged projection stable so React only reconciles that project.
-  const { orderedProjects, pinnedSessions, archivedSessions } = useMemo(
+  const { orderedProjects, pinnedSessions, chatSessions, archivedSessions } = useMemo(
     () => sidebarRail(props.projects, props.heldSessionId),
     [props.projects, props.heldSessionId],
   )
@@ -769,11 +778,14 @@ function SidebarComponent(props: {
                   className="navitem rail__new-chat"
                   aria-keyshortcuts={shortcutAria(keybindings.newChat)}
                   onClick={() => {
+                    // From a chat without a project, the next one has none either.
                     const project =
                       props.projects.find(
                         (candidate) => candidate.path === props.activeProjectPath,
-                      ) ?? props.projects[0]
+                      ) ?? props.projects.find((candidate) => !candidate.chat)
                     if (project) newSession(project.path)
+                    else if (props.projects.length > 0 && props.onNewChatWithoutProject)
+                      newChatWithoutProject()
                     else {
                       props.onAddProject()
                       closeOnNarrowViewport()
@@ -839,6 +851,40 @@ function SidebarComponent(props: {
                   <p className="section">Pinned</p>
                   <ul className="proj__sessions pinned-sessions">
                     {pinnedSessions.map(({ projectPath, session }) => (
+                      <SessionRow
+                        key={session.id}
+                        session={session}
+                        active={session.id === props.activeSessionId}
+                        standalone
+                        onSelect={() => selectSession(session.id)}
+                        onRename={(title) => props.onRenameSession(session.id, title)}
+                        onDelete={() => props.onDeleteSession(session.id)}
+                        onTogglePin={() => props.onToggleSessionPin?.(session.id)}
+                        onOpenInExplorer={() => void revealPath(projectPath)}
+                        drag={undefined}
+                      />
+                    ))}
+                  </ul>
+                </>
+              ) : null}
+              {chatSessions.length > 0 ? (
+                <>
+                  <div className="section section--row">
+                    <span>Chats</span>
+                    {props.onNewChatWithoutProject ? (
+                      <button
+                        type="button"
+                        className="section__add"
+                        aria-label="New chat without a project"
+                        title="New chat without a project"
+                        onClick={newChatWithoutProject}
+                      >
+                        <Plus size={12} aria-hidden />
+                      </button>
+                    ) : null}
+                  </div>
+                  <ul className="proj__sessions pinned-sessions">
+                    {chatSessions.map(({ projectPath, session }) => (
                       <SessionRow
                         key={session.id}
                         session={session}
