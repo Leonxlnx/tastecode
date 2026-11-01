@@ -31,6 +31,7 @@ import {
   type OpenCodeV2Event,
   type OpenCodeWireEvent,
 } from './events.js'
+import { openCodePromptParts, openCodeV2Files } from './attachments.js'
 import { openCodeModels, type OpenCodeCatalogEntry } from './models.js'
 
 export const OPENCODE_CAPABILITIES: Capabilities = {
@@ -41,7 +42,7 @@ export const OPENCODE_CAPABILITIES: Capabilities = {
   approvals: true,
   // opencode's `question` tool, answered through its v1 question routes.
   userInput: true,
-  images: false,
+  images: true,
 }
 
 type Events = { event: [DomainEvent]; log: [string]; disconnected: [] }
@@ -188,6 +189,7 @@ const ConnectedModelSchema = z.object({
   capabilities: z
     .object({
       toolcall: z.boolean().optional(),
+      input: z.object({ image: z.boolean().optional() }).optional(),
       output: z.object({ text: z.boolean().optional() }).optional(),
     })
     .optional(),
@@ -493,7 +495,6 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
     ) {
       throw new Error('OpenCode session has not started')
     }
-    if (attachments.length) throw new Error('OpenCode attachments are not supported yet')
     if (this.#streamFailure) throw this.#streamFailure
     if (this.#turnId) throw new Error('a turn is already running')
     const selection = applyOpenCodeTurnOptions(
@@ -514,7 +515,7 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
       turn: { id: turnId, threadId, status: 'running', createdAt: Date.now() },
     })
     if (this.#protocol === 'v2') {
-      void this.#sendV2Turn(text, turnId).catch(() => this.#failTurn(turnId))
+      void this.#sendV2Turn(text, turnId, attachments).catch(() => this.#failTurn(turnId))
       return turnId
     }
     const variant =
@@ -522,7 +523,7 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
     void this.#client!.session.promptAsync({
       path: { id: this.#sessionId },
       body: {
-        parts: [{ type: 'text', text }],
+        parts: openCodePromptParts(text, attachments),
         ...(model ? { model } : {}),
         ...(variant ? { variant } : {}),
         ...(this.#instructions ? { system: this.#instructions } : {}),
@@ -687,6 +688,7 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
               releaseDate: model.release_date,
               toolCall: model.capabilities?.toolcall,
               textOutput: model.capabilities?.output?.text,
+              imageInput: model.capabilities?.input?.image,
               isDefault: v2
                 ? v2.defaultModel === id
                 : connected.default?.[provider.id] === model.id,
@@ -879,7 +881,7 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
     return this.#v2Request(path, init).then((value) => result.parse(value))
   }
 
-  async #sendV2Turn(text: string, turnId: string): Promise<void> {
+  async #sendV2Turn(text: string, turnId: string, attachments: string[]): Promise<void> {
     const sessionId = this.#sessionId!
     const model = openCodeV2Model(this.#model, this.#effort)
     if (model) {
@@ -893,7 +895,7 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
       this.#instructionsPending && this.#instructions ? `${this.#instructions}\n\n${text}` : text
     await this.#v2Request(`/api/session/${encodeURIComponent(sessionId)}/prompt`, {
       method: 'POST',
-      body: JSON.stringify({ text: prompt }),
+      body: JSON.stringify({ text: prompt, ...openCodeV2Files(attachments) }),
     })
     this.#instructionsPending = false
   }
