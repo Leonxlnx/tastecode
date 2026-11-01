@@ -134,5 +134,8 @@ export function describeGoalReply(
         : request.params.status === 'paused'
           ? 'Goal paused'
           : 'Goal resumed'
-  return `${lead} (${status}): ${goal.objective}${budget ? `\n${budget.trim()}` : ''}`
+  // Pausing or resuming already names the new status in the lead.
+  const shown =
+    request.method === 'thread/goal/set' && !request.params.objective ? '' : ` (${status})`
+  return `${lead}${shown}: ${goal.objective}${budget ? `\n${budget.trim()}` : ''}`
 }
