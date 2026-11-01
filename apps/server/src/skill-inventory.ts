@@ -116,7 +116,7 @@ type SkillFrontmatter = {
   description?: string
 }
 
-function parseSkillFrontmatter(markdown: string): SkillFrontmatter {
+export function parseSkillFrontmatter(markdown: string): SkillFrontmatter {
   const match = /^---\r?\n([\s\S]*?)\r?\n---/.exec(markdown)
   if (!match) return {}
   const fields: Record<string, string> = {}
@@ -144,7 +144,7 @@ function parseSkillFrontmatter(markdown: string): SkillFrontmatter {
   return frontmatter
 }
 
-function skillName(frontmatterName: string | undefined, folder: string): string {
+export function skillName(frontmatterName: string | undefined, folder: string): string {
   const candidate = frontmatterName?.trim() || folder
   return candidate.length > 0 ? candidate : folder
 }

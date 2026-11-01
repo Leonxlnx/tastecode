@@ -744,7 +744,7 @@ export class Orchestrator {
   #recordedTurnDiffs = new Map<string, { turnId: string; diff: string }>()
   #worktreeRoot: string
   readonly #defaultSkillsRoot: string | undefined
-  #defaultSkills: Promise<DefaultSkills> | undefined
+  #defaultSkills: DefaultSkills | undefined
   #onEvent: RecordedEventHandler
   #onSideEvent: RecordedEventHandler
   #onQueue: (threadId: string, state: QueueState) => void
@@ -1539,7 +1539,7 @@ export class Orchestrator {
       : undefined
     // Every provider's chats can use the skills that ship with TasteCode, so
     // they are listed even where the provider has no inventory of its own.
-    const bundled = (await this.#bundledSkills()).skills
+    const bundled = this.#bundledSkills().skills
     if (!control.listSkills) {
       const own = local
         ? { capabilities: LOCAL_SKILL_CAPABILITIES, ...local }
@@ -1556,14 +1556,9 @@ export class Orchestrator {
   }
 
   /** Read once per server: the bundled files do not change while it runs. */
-  #bundledSkills(): Promise<DefaultSkills> {
+  #bundledSkills(): DefaultSkills {
     const root = this.#defaultSkillsRoot
-    this.#defaultSkills ??= root
-      ? loadDefaultSkills(root).catch((error: unknown) => {
-          this.#onLog(`[skills] default skills unavailable: ${errorMessage(error)}`)
-          return { root, skills: [], catalog: '' }
-        })
-      : Promise.resolve({ root: '', skills: [], catalog: '' })
+    this.#defaultSkills ??= root ? loadDefaultSkills(root) : { root: '', skills: [], catalog: '' }
     return this.#defaultSkills
   }
 
@@ -1573,12 +1568,12 @@ export class Orchestrator {
    * catalog everywhere else), then any instructions of the caller. Side work
    * that is not a chat of its own leaves the skills out.
    */
-  async #sessionStart(
+  #sessionStart(
     provider: ProviderId,
     instructions?: string,
     { skills = true }: { skills?: boolean } = {},
-  ): Promise<Pick<StartOptions, 'instructions' | 'skillPlugin'>> {
-    const bundled = skills ? await this.#bundledSkills() : undefined
+  ): Pick<StartOptions, 'instructions' | 'skillPlugin'> {
+    const bundled = skills ? this.#bundledSkills() : undefined
     const native = this.#controls.forProvider(provider).capabilities.defaultSkillsPlugin
     const catalog = bundled && !native ? bundled.catalog : ''
     return {
@@ -2124,7 +2119,7 @@ export class Orchestrator {
         ...(target.effort ? { effort: target.effort } : {}),
         ...(target.serviceTier ? { serviceTier: target.serviceTier } : {}),
         ...(approval ? { approval } : {}),
-        ...(await this.#sessionStart(target.provider)),
+        ...this.#sessionStart(target.provider),
         ...this.#mcpRuntimeOptions(target.provider, stored.projectPath),
         ...this.#contextRuntimeOptions(target.provider, target.agent, accountId),
       }
@@ -2318,9 +2313,9 @@ export class Orchestrator {
     const runtime = this.#runtimeFor(provider, this.#onLog, accountHome)
     const runtimeOptions = {
       ...options,
-      ...(await this.#sessionStart(provider, options.instructions, {
+      ...this.#sessionStart(provider, options.instructions, {
         skills: !options.ephemeral,
-      })),
+      }),
       ...this.#mcpRuntimeOptions(provider, workspacePath),
       ...this.#contextRuntimeOptions(provider, options.agent, accountId),
     }
@@ -4767,7 +4762,7 @@ export class Orchestrator {
       ...this.#mcpRuntimeOptions(stored.provider, stored.projectPath),
       ...this.#contextRuntimeOptions(stored.provider, stored.agent, stored.accountId),
     }
-    const sessionStart = await this.#sessionStart(stored.provider, undefined, {
+    const sessionStart = this.#sessionStart(stored.provider, undefined, {
       skills: !stored.ephemeral,
     })
     let freshSessionId: string | undefined

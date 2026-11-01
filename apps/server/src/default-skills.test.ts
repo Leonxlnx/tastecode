@@ -20,7 +20,7 @@ afterEach(async () => {
 describe('default skills', () => {
   it('lists the bundled skills as read-only system skills with a short catalog', async () => {
     const root = await writeDefaultSkillsFixture(await tempDir())
-    const loaded = await loadDefaultSkills(root)
+    const loaded = loadDefaultSkills(root)
 
     expect(loaded.skills.map((skill) => [skill.id, skill.name, skill.scope])).toEqual([
       ['tastecode:cinetic', 'cinetic', 'system'],
@@ -50,20 +50,18 @@ describe('default skills', () => {
       'resources',
     )
     await mkdir(deep, { recursive: true })
-    const loaded = await loadDefaultSkills(await writeDefaultSkillsFixture(deep))
+    const loaded = loadDefaultSkills(await writeDefaultSkillsFixture(deep))
 
     expect(loaded.skills).toHaveLength(3)
     expect(loaded.catalog.length).toBeLessThan(700)
   })
 
   it('lists only skills that are on disk, and nothing without a bundle', async () => {
-    const partial = await loadDefaultSkills(
-      await writeDefaultSkillsFixture(await tempDir(), ['cook']),
-    )
+    const partial = loadDefaultSkills(await writeDefaultSkillsFixture(await tempDir(), ['cook']))
     expect(partial.skills.map((skill) => skill.name)).toEqual(['cook'])
     expect(partial.catalog).not.toContain('cinetic')
 
-    const missing = await loadDefaultSkills(path.join(await tempDir(), 'no-bundle'))
+    const missing = loadDefaultSkills(path.join(await tempDir(), 'no-bundle'))
     expect(missing).toMatchObject({ skills: [], catalog: '' })
   })
 
