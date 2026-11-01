@@ -19,7 +19,34 @@ export const CODEX_COMMANDS: ProviderCommand[] = [
     description: 'Review uncommitted changes, or what your instructions ask for',
     argumentHint: '[instructions]',
   },
+  {
+    name: 'init',
+    description: 'Create an AGENTS.md file with instructions for Codex',
+    argumentHint: '[what to focus on]',
+  },
 ]
+
+/**
+ * Codex's TUI answers `/init` by sending a prompt of its own; the app-server
+ * has no request for it. This is TasteCode's wording of the same job.
+ */
+export const CODEX_INIT_PROMPT = [
+  'Create an AGENTS.md file in the root of this repository with instructions for coding agents working in it.',
+  'Read the project first: its layout, languages, build, lint and test commands, and the conventions the code already follows.',
+  'Keep it short and specific to this repository: how to build, test and run it, where things live, and the rules a newcomer would get wrong.',
+  'If an AGENTS.md already exists, improve it instead of replacing what is still accurate.',
+].join('\n')
+
+/**
+ * The text a leading `/init` sends as a normal turn, with anything typed
+ * after it added as the user's own focus; undefined for any other text.
+ */
+export function codexPromptCommand(text: string): string | undefined {
+  const match = COMMAND.exec(text.trim())
+  if (!match || match[1]!.toLowerCase() !== 'init') return undefined
+  const focus = (match[2] ?? '').trim()
+  return focus ? `${CODEX_INIT_PROMPT}\n\nFocus on: ${focus}` : CODEX_INIT_PROMPT
+}
 
 type CommandMethod = 'thread/goal/set' | 'thread/goal/get' | 'thread/goal/clear'
 type TurnMethod = 'thread/compact/start' | 'review/start'

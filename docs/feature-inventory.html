@@ -1310,30 +1310,48 @@
                 compact resource picker, and selected resource chips
                 <span class="d"
                   >/ at the start of a message lists TasteCode commands (/new and its alias /clear
-                  start a new chat and /model opens the model picker for every provider, /side and
-                  /btw in a started chat, /feedback while feedback is available), then the
-                  provider's commands, then its skills, and no longer opens mid-message; TasteCode
-                  commands win name collisions in the menu; choosing a command types /name into the
-                  draft for the provider to expand, and Enter on an exactly typed command without
-                  arguments sends it at once; @ lists MCP servers; $ lists skills, with Codex skill
-                  chips unchanged; the provider list comes from commands.list: Claude Code from an
-                  open chat or, for a project without one, the cached background probe, with the
-                  built-ins that change state TasteCode owns and terminal-only commands hidden;
+                  start a new chat and /model opens the model picker for every provider,
+                  /permissions (aliases /approvals, /allowed-tools) opens the permissions picker,
+                  and the screens a CLI opens only in its terminal open TasteCode's own instead:
+                  /resume (/continue) the chat search, /settings (/config) Settings, /mcp, /skills
+                  and /usage (/status, /cost, /stats) their Settings pages, /login (/logout)
+                  Providers; typed with arguments they still go to the provider; /side and /btw in a
+                  started chat, /feedback while feedback is available), then the provider's commands
+                  grouped by the source it reports (built-in, custom, skills, plugin commands and
+                  skills, MCP prompts; an empty description names the kind, such as Custom command),
+                  and no longer opens mid-message; TasteCode commands win name collisions in the
+                  menu; choosing a command types /name into the draft for the provider to expand,
+                  and Enter on an exactly typed command without arguments sends it at once; @ lists
+                  MCP servers; $ lists skills, with Codex skill chips unchanged; the provider list
+                  comes from commands.list: Claude Code from an open chat or, for a project without
+                  one, the cached background probe, with the built-ins that change state TasteCode
+                  owns and terminal-only commands hidden (only Claude's own rows: a custom, plugin
+                  or MCP command of another name stays, and each Claude row says whether it is
+                  built-in, custom, plugin or MCP; /advisor is listed and runs through the SDK);
                   Codex from a fixed list of the app-server actions /goal, /compact and /review,
                   which its chats send as thread/goal/*, thread/compact/start and review/start
                   requests instead of text (a goal answer shows as a short assistant turn; checked
-                  against a fake app-server only); Grok, OpenCode and other ACP agents from a live
-                  chat or a probe (an OpenCode chat sends a leading /name it lists to its session
-                  command route with the rest as arguments; v1 servers only, checked against a fake
-                  server); Antigravity from the read-only commands agy's print mode answers itself
-                  (/quota, /credits, /effort, /hooks, /help, /changelog, plus /usage, /model,
-                  /skills, /permissions and /config with an argument), run with JSON output and
-                  shown as a reply without touching the chat's conversation, and the skills in
-                  .agents/skills, _agents/skills and ~/.gemini/config/skills, which a leading /name
-                  expands (a command goes without the first prompt's session instructions; checked
-                  against fakes and agy 1.4.7's captured /usage output only); when the probe failed,
-                  the menu says "Couldn't load commands." and asks again the next time it
-                  opens</span
+                  against a fake app-server only), plus /init, which sends TasteCode's own prompt to
+                  create or improve AGENTS.md as a normal turn (Codex's TUI does the same with its
+                  own prompt; checked against a fake app-server only); Grok, OpenCode and other ACP
+                  agents from a live chat or a probe (a Grok or ACP chat sends a leading /name
+                  without the first prompt's session instructions, which wait for the next prompt,
+                  because the agent runs a command only at the start of a prompt; Grok's print-mode
+                  chats hand the prompt to the same agent session, read from the grok binary,
+                  checked against fakes only; an OpenCode chat sends a leading /name it lists to its
+                  session command route with the rest as arguments; v1 servers only, checked against
+                  a fake server); Cursor from the custom command folders (.cursor/commands and
+                  .claude/commands in the project and home) and skill folders its print-mode turns
+                  expand, read from disk without a process (team, global and plugin commands are not
+                  listed; checked against temp folders only); Antigravity from the read-only
+                  commands agy's print mode answers itself (/quota, /credits, /effort, /hooks,
+                  /help, /changelog, plus /usage, /model, /skills, /permissions and /config with an
+                  argument), run with JSON output and shown as a reply without touching the chat's
+                  conversation, and the skills in .agents/skills, _agents/skills and
+                  ~/.gemini/config/skills, which a leading /name expands (a command goes without the
+                  first prompt's session instructions; checked against fakes and agy 1.4.7's
+                  captured /usage output only); when the probe failed, the menu says "Couldn't load
+                  commands." and asks again the next time it opens</span
                 ></span
               ></label
             >
