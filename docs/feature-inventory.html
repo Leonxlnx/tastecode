@@ -2715,9 +2715,11 @@
                   off for a project. Hiding inherited servers follows the provider's declared
                   hideInherited capability, with the legacy rule when it is absent, and a server's
                   tool list renders only when its row is expanded; open Codex chats resume with
-                  saved changes, Grok receives selected servers through ACP, and Claude receives
-                  enabled definitions on start and resume with credentials kept out of process
-                  arguments; controls follow the available capabilities, and Claude rejects
+                  saved changes, Grok receives selected servers through ACP, other ACP agents
+                  receive the project's ACP servers in session/new (stdio always, HTTP only when the
+                  agent's initialize answer advertises it; a left-out server is logged), and Claude
+                  receives enabled definitions on start and resume with credentials kept out of
+                  process arguments; controls follow the available capabilities, and Claude rejects
                   unsupported inherited-server hiding before saving</span
                 ></span
               ></label
