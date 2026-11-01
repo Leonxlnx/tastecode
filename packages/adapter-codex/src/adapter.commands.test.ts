@@ -1,7 +1,7 @@
 import type { DomainEvent } from '@harness/contracts'
 import { describe, expect, it, vi } from 'vitest'
 import { CodexAdapter } from './adapter.js'
-import { codexCommandRequest } from './commands.js'
+import { CODEX_INIT_PROMPT, codexCommandRequest, codexPromptCommand } from './commands.js'
 import { FakeCodexRpc } from './fake-rpc.test-support.js'
 
 const proc = vi.hoisted(() => ({ rpc: undefined as FakeCodexRpc | undefined }))
@@ -148,6 +148,29 @@ describe('Codex slash commands', () => {
     } finally {
       await adapter.dispose()
     }
+  })
+
+  it("sends /init as a normal turn with TasteCode's AGENTS.md prompt", async () => {
+    expect(codexCommandRequest('t', '/init')).toBeUndefined()
+    expect(codexPromptCommand('/init')).toBe(CODEX_INIT_PROMPT)
+    expect(codexPromptCommand(' /INIT the server only ')).toBe(
+      `${CODEX_INIT_PROMPT}\n\nFocus on: the server only`,
+    )
+    expect(codexPromptCommand('/initialize')).toBeUndefined()
+    expect(codexPromptCommand('please /init')).toBeUndefined()
+    const { adapter, rpc } = await commandAdapter()
+    try {
+      await expect(adapter.sendTurn('thread-1', '/init')).resolves.toBe('turn-1')
+      await adapter.sendTurn('thread-1', '/init', ['C:\\a.txt'])
+    } finally {
+      await adapter.dispose()
+    }
+    const inputs = rpc.calls
+      .filter((call) => call.method === 'turn/start')
+      .map((call) => (call.params as { input: Array<{ type: string; text?: string }> }).input[0])
+    expect(inputs[0]).toMatchObject({ type: 'text', text: CODEX_INIT_PROMPT })
+    // With an attachment the words go to Codex as typed, as every command does.
+    expect(inputs[1]).toMatchObject({ type: 'text', text: '/init' })
   })
 
   it('sends a command with attachments as typed text', async () => {

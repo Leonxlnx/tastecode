@@ -25,7 +25,7 @@ import {
 import { discoverAgentModels, findAgentSpec, type AcpAgentSpec } from './agents.js'
 import { optionFor, type PermissionOption } from './approvals.js'
 import { ACP_CAPABILITIES } from './capabilities.js'
-import { mapAcpCommands } from './commands.js'
+import { mapAcpCommands, startsWithAcpCommand } from './commands.js'
 import { Streamer } from './events.js'
 import type { AcpMcpServer } from './mcp.js'
 import { modelConfigOption, sessionModels } from './session-models.js'
@@ -383,10 +383,14 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     const rpc = this.#rpc
     if (!rpc || !this.#sessionId) throw new Error('session not started')
 
-    const prompt =
-      this.#instructionsPending && this.#instructions
-        ? `<system-instructions>\n${this.#instructions}\n</system-instructions>\n\n${text}`
-        : text
+    // An agent runs a slash command only when the prompt starts with it, so a
+    // command goes alone and the instructions wait for the next prompt.
+    const withInstructions = Boolean(
+      this.#instructionsPending && this.#instructions && !startsWithAcpCommand(text),
+    )
+    const prompt = withInstructions
+      ? `<system-instructions>\n${this.#instructions}\n</system-instructions>\n\n${text}`
+      : text
     // Read and validate attachments before opening the turn. A preparation
     // error must reject sendTurn without leaving a started turn orphaned.
     const promptContent = acpPromptContent(prompt, attachments, this.#images)
@@ -406,7 +410,7 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
 
     // Deliberately not awaited inline: updates stream in while this is pending,
     // and the caller needs the turn id now to route them.
-    this.#instructionsPending = false
+    if (withInstructions) this.#instructionsPending = false
     void rpc
       .request(
         'session/prompt',
