@@ -291,12 +291,30 @@
           <a href="./feature-inventory.html">Inventory</a>
           <a href="./CLAUDE-HANDOFF.md">Claude handoff</a>
         </nav>
-        <span class="meta">2026-10-31 dev 0966790d · nightly 2347d870 · main 936c6d76</span>
+        <span class="meta">2026-11-01 dev aa5a4adc · nightly 2347d870 · main 936c6d76</span>
       </div>
     </div>
 
     <div class="wrap">
       <section id="scope">
+        <p>
+          November 1 on dev (aa5a4adc): default skills, provider commands, MCP for ACP agents, image
+          upload for more providers and split view merged, PRs #1961, #1977 to #1993. TasteCode now
+          ships cinetic, taste-skill v2.5 and cook for every provider (Claude Code loads them as the
+          tastecode plugin, the others get a short catalog in the first prompt). Codex gets /goal,
+          /compact and /review as app-server requests, OpenCode runs its listed commands through the
+          command route, and /new, /clear and /model run TasteCode's own actions. ACP agents receive
+          the project's MCP servers, filtered by the transports they advertise, and providers that
+          cannot start MCP sign-in say so. Images reach OpenCode and Cursor as pixels, Antigravity
+          and ACP agents without image prompts as files they open, and the composer gate matches
+          each provider's declared capability. Split view opens a second chat beside the first.
+          Checked on Windows on the identical combined tree: typecheck, lint and the packaged
+          installer passed, plus targeted tests on the merge-resolved files; each PR's own tests
+          passed; everything was exercised only against fake CLIs. Installed on Leon's laptop for
+          his test. Not done yet: real-provider checks, the full pnpm test on the combined tree,
+          macOS, and the promotion to nightly. Sub-agents (#1956, #1957, #1959, #1968, #1969, #1972,
+          #1973) and the window background setting (#1954) stay open on dev.
+        </p>
         <p>
           October 31 on dev (0966790d): the set for the next beta merged, PRs #1949 to #1951, #1953,
           #1955, #1958, #1960, #1962 to #1967, #1970, #1971 and #1974. Phone access is kept to dev
@@ -311,7 +329,8 @@
           combined set on Windows; pnpm test there still has timeouts and EBUSY temp cleanups, each
           failure compared with dev 5cd8820e, where the same classes fail. Not done yet: an
           installer from this commit, Leon's test of it, and the promotion to nightly. Sub-agents
-          (#1956, #1957, #1959, #1968, #1969, #1972, #1973) and split view (#1961) stay open on dev.
+          (#1956, #1957, #1959, #1968, #1969, #1972, #1973) stayed open on dev; split view followed
+          on November 1.
         </p>
         <p>
           October 23 on nightly (local commits, not pushed yet): a chat's setup is the same on every
