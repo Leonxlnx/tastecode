@@ -232,7 +232,7 @@ function runAgy(spawn: AgySpawn, args: string[], timeoutMs: number): Promise<Cap
 }
 
 /** The JSON object agy printed: the whole output, else its last line that is one. */
-function lastJsonObject(stdout: string): unknown {
+export function lastJsonObject(stdout: string): unknown {
   try {
     return JSON.parse(stdout)
   } catch {

@@ -412,6 +412,12 @@ function claudeLaunch(runtime: string | undefined) {
 
 const defaultServices = {
   antigravity: {
+    // agy answers its read-only commands itself and expands skills from
+    // folders, so the list needs no process.
+    listCommands: async (projectPath) => ({
+      commands: await (await loadAntigravity()).listAntigravityCommands(projectPath),
+      loading: false,
+    }),
     account: async () => (await loadAntigravity()).antigravityAccount(),
     usageLimitSource: async () => (await loadAntigravity()).antigravityLimitSource(),
     // agy keeps its Google sign-in in the OS keyring and drops it only from

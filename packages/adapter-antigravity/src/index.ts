@@ -25,3 +25,8 @@ export {
   resetAntigravityIndexForTests,
   type AntigravityModelIndex,
 } from './models.js'
+export {
+  AGY_ANSWERED_COMMANDS,
+  listAntigravityCommands,
+  type AntigravityCommandOptions,
+} from './commands.js'

@@ -5,6 +5,8 @@ import type { ApprovalMode, Capabilities, DomainEvent, Model, Thread } from '@ha
 import { argumentPromptLimit, killTree, ProtocolFrameError, readNdjson } from '@harness/proc'
 import { z } from 'zod'
 import { ANTIGRAVITY_ENVIRONMENT, antigravityCommand, spawnAgy, type AgySpawn } from './command.js'
+import { agyCommandName, isAgyAnsweredCommand } from './commands.js'
+import { lastJsonObject } from './limits.js'
 import {
   ANTIGRAVITY_SIGN_IN_REQUIRED,
   antigravitySignIn,
@@ -162,6 +164,14 @@ const AgyFrameSchema = z.object({
     .optional(),
 })
 
+/** The fields of agy's `--output-format json` object an answered command needs. */
+const AgyAnswerSchema = z.object({
+  status: z.string().optional(),
+  response: z.string().optional(),
+})
+/** A command's answer is a few KB; /changelog is the longest. */
+const ANSWER_LIMIT_CHARS = 1024 * 1024
+
 export type AntigravityAdapterEvents = {
   event: [DomainEvent]
   log: [string]
@@ -221,6 +231,9 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
     options: AntigravityTurnOptions = {},
   ): Promise<string> {
     this.#options = applyAntigravityTurnOptions(this.#options, options)
+    if (attachments.length === 0 && isAgyAnsweredCommand(text)) {
+      return this.#answerCommand(threadId, `${threadId}-turn-${++this.#turnCounter}`, text)
+    }
     // The picker normally warms this process-wide index. A server restart can
     // resume straight into a turn, though, and passing the collapsed anchor
     // id in that case silently loses a non-default effort selection.
@@ -233,11 +246,15 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
     }
     const turnId = `${threadId}-turn-${++this.#turnCounter}`
     const request = antigravityImagePrompt(text, attachments)
-    const prompt =
-      this.#instructionsPending && this.#options.instructions
-        ? `<system-instructions>\n${this.#options.instructions}\n</system-instructions>\n\n${request}`
-        : request
-    this.#instructionsPending = false
+    // agy expands a slash command or skill only at the start of the prompt, so
+    // a command goes alone and the instructions wait for the next prompt.
+    const carriesInstructions = Boolean(
+      this.#instructionsPending && this.#options.instructions && !agyCommandName(text),
+    )
+    const prompt = carriesInstructions
+      ? `<system-instructions>\n${this.#options.instructions}\n</system-instructions>\n\n${request}`
+      : request
+    if (carriesInstructions) this.#instructionsPending = false
     const args = antigravityTurnArgs(prompt, this.#options, this.#conversationId, [
       ...new Set(attachments.map((file) => path.dirname(file))),
     ])
@@ -402,6 +419,82 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
     // throws out of the event loop and takes the whole server down.
     child.on('error', (error) => finishProcess(String(error)))
 
+    child.stdin.end()
+    return turnId
+  }
+
+  /**
+   * One of the commands agy answers itself, run as limits.ts runs `/usage`:
+   * `--output-format json`, whose single object (fixtures/agy-usage-1.4.7.json)
+   * carries the answer in `response`, one tab-separated record per line. No
+   * model, mode or conversation switch: the answer starts no agent turn and
+   * leaves no conversation, so the chat's next prompt resumes as before.
+   */
+  async #answerCommand(threadId: string, turnId: string, text: string): Promise<string> {
+    if (this.#child) await this.#stop(this.#child)
+    const child = this.#spawn(
+      antigravityCommand(),
+      ['-p', text.trim(), '--output-format', 'json'],
+      {
+        cwd: this.#workspacePath,
+        env: ANTIGRAVITY_ENVIRONMENT,
+        stdio: ['pipe', 'pipe', 'pipe'],
+        windowsHide: true,
+      },
+    )
+    this.#child = child
+    this.emit('event', {
+      type: 'turn.started',
+      turn: { id: turnId, threadId, status: 'running', createdAt: Date.now() },
+    })
+    let stdout = ''
+    child.stdout.setEncoding('utf8')
+    child.stdout.on('data', (chunk: string) => {
+      if (stdout.length < ANSWER_LIMIT_CHARS) stdout += chunk
+    })
+    child.stderr.setEncoding('utf8')
+    child.stderr.on('data', (chunk: string) => this.emit('log', chunk.trimEnd()))
+    let finished = false
+    const finish = (error?: string) => {
+      if (finished) return
+      finished = true
+      if (this.#child === child) this.#child = undefined
+      const killReason = this.#killReasons.get(child)
+      if (killReason) {
+        if (killReason === 'interrupt') {
+          this.emit('event', { type: 'turn.completed', turnId, status: 'interrupted' })
+        }
+        return
+      }
+      const answer = AgyAnswerSchema.safeParse(lastJsonObject(stdout))
+      const response = answer.success ? answer.data.response?.trimEnd() : undefined
+      if (!error && answer.success && answer.data.status === 'SUCCESS' && response) {
+        this.emit('event', {
+          type: 'item.completed',
+          item: {
+            id: `${turnId}-message`,
+            turnId,
+            type: 'message',
+            role: 'assistant',
+            status: 'completed',
+            text: response,
+            createdAt: Date.now(),
+          },
+        })
+        this.emit('event', { type: 'turn.completed', turnId, status: 'completed' })
+        return
+      }
+      // agy's own error text can name the account, so only the command leaves.
+      this.emit('event', {
+        type: 'thread.error',
+        threadId,
+        message: error ?? `Antigravity did not answer ${text.trim().split(/\s/)[0]}.`,
+      })
+      this.emit('event', { type: 'turn.completed', turnId, status: 'failed' })
+    }
+    child.on('close', () => finish())
+    child.on('error', (error) => finish(String(error)))
+    // agy waits forever on a piped stdin that stays open.
     child.stdin.end()
     return turnId
   }
