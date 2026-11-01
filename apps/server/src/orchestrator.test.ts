@@ -58,6 +58,7 @@ import { compactHistoryReplay } from './history-replay.js'
 import { writeDefaultSkillsFixture } from './default-skills.test-support.js'
 import { McpConfigStore } from './mcp-config.js'
 import { Orchestrator } from './orchestrator.js'
+import { PROVIDER_CAPABILITIES } from './provider-capabilities.js'
 import type { ProviderControlsOptions } from './provider-controls.js'
 import { StartupCleanupError } from './provider-session.js'
 import { DatabaseSync } from './sqlite.js'
@@ -1522,7 +1523,7 @@ describe('default skills', () => {
   })
 
   it.each(ProviderIdSchema.options)(
-    'gives %s chats the skill catalog, but not a Side chat',
+    'gives %s chats the default skills, but not a Side chat',
     async (provider) => {
       const { orchestrator, startedOptions, store, root } = await skillsHarness()
       const parent = await orchestrator.startThread(provider, process.cwd())
@@ -1530,11 +1531,18 @@ describe('default skills', () => {
       await orchestrator.startSideThread(parent.id)
 
       expect(startedOptions[0]?.instructions).toContain('Do not use em dashes')
-      expect(startedOptions[0]?.instructions).toContain('Skills included with TasteCode')
-      expect(startedOptions[0]?.instructions).toContain(path.join(root, 'skills'))
-      expect(startedOptions[0]?.instructions).toContain('- cook: long reference-matching loops')
-      expect(startedOptions[0]?.skillPlugin).toBeUndefined()
+      if (PROVIDER_CAPABILITIES[provider].defaultSkillsPlugin) {
+        // Loaded natively as a plugin, so the catalog would only repeat it.
+        expect(startedOptions[0]?.skillPlugin).toBe(root)
+        expect(startedOptions[0]?.instructions).not.toContain('Skills included with TasteCode')
+      } else {
+        expect(startedOptions[0]?.instructions).toContain('Skills included with TasteCode')
+        expect(startedOptions[0]?.instructions).toContain(path.join(root, 'skills'))
+        expect(startedOptions[0]?.instructions).toContain('- cook: long reference-matching loops')
+        expect(startedOptions[0]?.skillPlugin).toBeUndefined()
+      }
       expect(startedOptions[1]?.instructions).not.toContain('Skills included with TasteCode')
+      expect(startedOptions[1]?.skillPlugin).toBeUndefined()
       await orchestrator.disposeAll()
     },
   )

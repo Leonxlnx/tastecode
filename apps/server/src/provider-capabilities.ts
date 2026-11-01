@@ -23,7 +23,8 @@ export type ProviderControlCapabilities = Readonly<{
    * The provider loads the skills that ship with TasteCode itself, from the
    * plugin folder passed as `StartOptions.skillPlugin`, so its sessions skip
    * the skill catalog in the shared instructions (server-internal). Only a
-   * provider whose runtime confirms the plugin loaded turns this on.
+   * runtime with a native plugin loader turns this on (Claude Code's
+   * `--plugin-dir`, which shows the skills as `tastecode:<name>`).
    */
   defaultSkillsPlugin: boolean
   nativeModels: boolean
@@ -105,6 +106,7 @@ export const PROVIDER_CAPABILITIES = {
     forkSession: true,
     managedMcp: true,
     mcpInventory: true,
+    defaultSkillsPlugin: true,
     nativeModels: true,
     // The CLI saves an `ai-title` row once a prompt says enough to name.
     nativeTitles: true,

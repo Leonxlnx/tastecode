@@ -1034,6 +1034,7 @@ function claudeRuntime(
           mcpServers: options.mcpServers,
           mcpCredentials: options.mcpCredentials,
           context: options.context,
+          plugins: options.skillPlugin ? [options.skillPlugin] : undefined,
         }),
       )
     },
@@ -1054,6 +1055,7 @@ function claudeRuntime(
             mcpServers: options.mcpServers,
             mcpCredentials: options.mcpCredentials,
             context: options.context,
+            plugins: options.skillPlugin ? [options.skillPlugin] : undefined,
           },
         ),
       )
@@ -1071,6 +1073,7 @@ function claudeRuntime(
             mcpServers: options.mcpServers,
             mcpCredentials: options.mcpCredentials,
             context: options.context,
+            plugins: options.skillPlugin ? [options.skillPlugin] : undefined,
           }),
         ),
       )
