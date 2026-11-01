@@ -39,6 +39,13 @@ import type { RequestId } from './generated/RequestId.js'
 import { CODEX_ACCOUNT_HOME, codexAccountEnvironment } from './account-home.js'
 import { CODEX_CAPABILITIES } from './capabilities.js'
 import {
+  codexCommandRequest,
+  describeGoalReply,
+  GoalResponseSchema,
+  ReviewStartResponseSchema,
+  type CodexCommandRequest,
+} from './commands.js'
+import {
   configuredMcpInventory,
   type ConfiguredMcpServer,
   mapMcpServerStatus,
@@ -126,6 +133,10 @@ const INVALID_PARAMS = -32602
 const CONTROL_READ_TIMEOUT_MS = 10_000
 const INITIALIZE_TIMEOUT_MS = 30_000
 const THREAD_START_TIMEOUT_MS = 30_000
+/** How long a command whose request answers with nothing waits for its turn to start. */
+const COMMAND_TURN_START_TIMEOUT_MS = 15_000
+/** The id of the next turn a thread starts; undefined when none started in time. */
+type TurnStartWait = { turnId: Promise<string | undefined>; cancel: () => void }
 const ServerRequestResolvedSchema = z.object({
   threadId: z.string(),
   requestId: z.union([z.number(), z.string()]),
@@ -631,6 +642,8 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
   readonly #subagents = new CodexSubagents((event) => this.emit('event', event))
   #activeTurns = new Map<string, string>()
   #pendingTurnCompletions = new Set<Set<string>>()
+  /** A command waiting to learn the id of the turn its request started. */
+  #turnStartWaiters = new Map<string, (turnId: string | undefined) => void>()
   #sessionThread: { id: string; workspacePath: string } | undefined
   #mcpServers: Record<string, JsonValue>
   #mcpEnvironment: NodeJS.ProcessEnv
@@ -1309,6 +1322,8 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     if (!this.#threadModels.has(threadId)) {
       throw new Error('Start or resume the Codex thread before sending another turn')
     }
+    const command = attachments.length === 0 ? codexCommandRequest(threadId, text) : undefined
+    if (command) return this.#runCommand(threadId, command)
     const rpc = this.#rpc
     const mode = this.#threadApprovals.get(threadId)
     const approval = mode ? CODEX_APPROVAL[mode] : undefined
@@ -1370,6 +1385,90 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     }
     if (options.model) this.#threadModels.set(threadId, options.model)
     return response.turn.id
+  }
+
+  /**
+   * Runs a typed command as its app-server request. Review and compaction
+   * run as Codex turns; a goal request answers at once, so its answer is shown
+   * as a short turn of its own.
+   */
+  async #runCommand(threadId: string, command: CodexCommandRequest): Promise<string> {
+    const rpc = this.#rpc
+    let turnId: string
+    if (command.method === 'review/start') {
+      const completed = new Set<string>()
+      this.#pendingTurnCompletions.add(completed)
+      try {
+        turnId = (await this.#callParsed(command.method, command.params, ReviewStartResponseSchema))
+          .turn.id
+      } finally {
+        this.#pendingTurnCompletions.delete(completed)
+      }
+      if (!completed.has(turnId) && !this.#activeTurns.has(threadId)) {
+        this.#activeTurns.set(threadId, turnId)
+      }
+    } else if (command.method === 'thread/compact/start') {
+      // The request answers with nothing; the turn it starts names itself.
+      const started = this.#nextTurnStart(threadId)
+      try {
+        await this.#call(command.method, command.params)
+      } catch (error) {
+        started.cancel()
+        throw error
+      }
+      const startedTurn = await started.turnId
+      turnId =
+        startedTurn ??
+        this.#commandReply(threadId, 'Codex accepted the compaction but reported no progress.')
+    } else {
+      const response = await this.#callParsed(command.method, command.params, GoalResponseSchema)
+      turnId = this.#commandReply(threadId, describeGoalReply(command, response))
+    }
+    if (this.#rpc !== rpc)
+      throw new Error('Codex disconnected while starting the turn; resume the thread')
+    return turnId
+  }
+
+  #nextTurnStart(threadId: string): TurnStartWait {
+    let settle: (turnId: string | undefined) => void = () => {}
+    const turnId = new Promise<string | undefined>((resolve) => {
+      settle = resolve
+    })
+    const timer = setTimeout(() => finish(undefined), COMMAND_TURN_START_TIMEOUT_MS)
+    const finish = (id: string | undefined) => {
+      clearTimeout(timer)
+      if (this.#turnStartWaiters.get(threadId) === finish) this.#turnStartWaiters.delete(threadId)
+      settle(id)
+    }
+    this.#turnStartWaiters.set(threadId, finish)
+    return { turnId, cancel: () => finish(undefined) }
+  }
+
+  /** A turn TasteCode completes itself to show the answer to a request that runs no turn. */
+  #commandReply(threadId: string, text: string): string {
+    const turnId = `tastecode-command-${crypto.randomUUID()}`
+    const createdAt = Date.now()
+    // After the caller has accepted the returned turn id.
+    setTimeout(() => {
+      this.emit('event', {
+        type: 'turn.started',
+        turn: { id: turnId, threadId, status: 'running', createdAt },
+      })
+      this.emit('event', {
+        type: 'item.completed',
+        item: {
+          id: `${turnId}-reply`,
+          turnId,
+          type: 'message',
+          role: 'assistant',
+          status: 'completed',
+          text,
+          createdAt,
+        },
+      })
+      this.emit('event', { type: 'turn.completed', turnId, status: 'completed' })
+    }, 0)
+    return turnId
   }
 
   async interrupt(threadId: string): Promise<void> {
@@ -1665,6 +1764,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
       case 'turn/started': {
         const p = TurnStartedNotificationSchema.parse(params)
         this.#activeTurns.set(p.threadId, p.turn.id)
+        this.#turnStartWaiters.get(p.threadId)?.(p.turn.id)
         emit({
           type: 'turn.started',
           turn: {
