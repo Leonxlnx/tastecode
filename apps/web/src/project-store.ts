@@ -385,6 +385,7 @@ export function reconcileProjectList(
     if (
       previous.name !== project.name ||
       previous.pinned !== project.pinned ||
+      Boolean(previous.chat) !== Boolean(project.chat) ||
       previous.sessions.length !== orderedSessions.length
     ) {
       exactSessionChanges = false
@@ -420,13 +421,17 @@ export function reconcileProjectList(
     }
 
     const sameProject =
-      previous.name === project.name && previous.pinned === project.pinned && !sessionsChanged
+      previous.name === project.name &&
+      previous.pinned === project.pinned &&
+      Boolean(previous.chat) === Boolean(project.chat) &&
+      !sessionsChanged
     const next = sameProject
       ? previous
       : {
           path: project.path,
           name: project.name,
           pinned: project.pinned,
+          ...(project.chat ? { chat: true } : {}),
           sessions: sessionsChanged ? sessions : previous.sessions,
         }
     projects.push(next)
@@ -454,6 +459,7 @@ function materializeProject(
     path: project.path,
     name: project.name,
     pinned: project.pinned,
+    ...(project.chat ? { chat: true } : {}),
     sessions: applySessionOrder(project.path, project.sessions, sessionOrder).map((session) =>
       reconcileServerSession(undefined, session, now),
     ),
