@@ -416,10 +416,10 @@ function InboxSidebarComponent(props: {
               onChange={props.onScopeChange}
               options={[
                 { value: '', label: 'All projects' },
-                ...props.projects.map((project) => ({
-                  value: project.path,
-                  label: projectName(project),
-                })),
+                // A chat's own folder is not a project to filter by.
+                ...props.projects.flatMap((project) =>
+                  project.chat ? [] : [{ value: project.path, label: projectName(project) }],
+                ),
               ]}
             />
           </label>

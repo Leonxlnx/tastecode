@@ -394,6 +394,18 @@ describe('server project snapshot reconciliation', () => {
     expect(next[0]!.sessions[1]).toBe(current[0]!.sessions[1])
   })
 
+  it('keeps the mark of a folder made for a chat without a project', () => {
+    const [plain, folder] = serverProjects(2, 1)
+    const snapshot = [plain!, { ...folder!, chat: true }]
+    const current = reconcileProjectList([], snapshot, [], {}, 100)
+
+    expect(current.map(({ chat }) => chat)).toEqual([undefined, true])
+    expect(reconcileProjectList(current, snapshot, [], {}, 200)).toBe(current)
+    const unmarked = reconcileProjectList(current, [plain!, folder!], [], {}, 300)
+    expect(unmarked[1]!.chat).toBeUndefined()
+    expect(unmarked[0]).toBe(current[0])
+  })
+
   it('converts once, retains an unchanged tree, and copies one changed status', () => {
     const snapshot = serverProjects(2, 2)
     const current = reconcileProjectList([], snapshot, [], {}, 100)
