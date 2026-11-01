@@ -55,7 +55,7 @@ export function mergeSkills(primary: Skill[], extra: Skill[]): Skill[] {
   return merged
 }
 
-async function listSkillsIn(
+export async function listSkillsIn(
   root: string,
   scope: SkillScope,
 ): Promise<{ skills: Skill[]; errors: SkillDiscoveryError[] }> {
