@@ -4,6 +4,11 @@ import { createRequire } from 'node:module'
 import { lstat, mkdir, mkdtemp, readdir, rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import {
+  readManifest as readDefaultSkills,
+  syncBundle as syncDefaultSkills,
+  verifyBundle as verifyDefaultSkills,
+} from '../../packages/default-skills/scripts/sync.js'
 import { generateReleaseChecksums } from './release-checksums.js'
 import {
   desktopDirectory,
@@ -143,6 +148,13 @@ export async function verifyPackagedResources(
     path.join(resources, 'app.asar'),
     path.join(sourceRoot, 'packages', 'design-agent', 'references'),
   )
+  // Agents read the default skills as real files, so they ship outside the ASAR.
+  const skills = await readDefaultSkills(
+    path.join(sourceRoot, 'packages', 'default-skills', 'skills.json'),
+  )
+  const problems = await verifyDefaultSkills(skills, path.join(resources, 'default-skills'))
+  if (problems.length)
+    throw new Error(`Packaged default skills do not match their pins: ${problems.join('; ')}`)
 }
 
 export function assertInstallerProofHost(env = process.env) {
@@ -237,6 +249,8 @@ export async function buildPackageProof(directory, platform) {
     if (/^(?:CSC_|WIN_CSC_|APPLE_)/.test(name) && name !== 'CSC_IDENTITY_AUTO_DISCOVERY')
       delete env[name]
   }
+  // Fetches the pinned skills when this checkout has none; a hash mismatch stops the proof.
+  await syncDefaultSkills(await readDefaultSkills())
   const targets =
     platform === 'windows'
       ? ['--win', 'nsis', '--x64']

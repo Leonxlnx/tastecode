@@ -76,6 +76,11 @@ export type StartOptions = {
   providerSessionId?: string | undefined
   /** Opaque local state, validated only by the adapter that owns it. */
   resumeState?: unknown
+  /**
+   * The folder of the skills that ship with TasteCode, laid out as a Claude
+   * Code plugin. Passed only to providers that declare `defaultSkillsPlugin`.
+   */
+  skillPlugin?: string | undefined
 }
 
 export type TurnOptions = Pick<StartOptions, 'model' | 'serviceTier' | 'effort'>
@@ -1029,6 +1034,7 @@ function claudeRuntime(
           mcpServers: options.mcpServers,
           mcpCredentials: options.mcpCredentials,
           context: options.context,
+          plugins: options.skillPlugin ? [options.skillPlugin] : undefined,
         }),
       )
     },
@@ -1049,6 +1055,7 @@ function claudeRuntime(
             mcpServers: options.mcpServers,
             mcpCredentials: options.mcpCredentials,
             context: options.context,
+            plugins: options.skillPlugin ? [options.skillPlugin] : undefined,
           },
         ),
       )
@@ -1066,6 +1073,7 @@ function claudeRuntime(
             mcpServers: options.mcpServers,
             mcpCredentials: options.mcpCredentials,
             context: options.context,
+            plugins: options.skillPlugin ? [options.skillPlugin] : undefined,
           }),
         ),
       )

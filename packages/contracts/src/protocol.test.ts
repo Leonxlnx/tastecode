@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { CapabilitiesSchema, DomainEventSchema, ItemSchema } from './domain.js'
+import { CapabilitiesSchema, DomainEventSchema, ItemSchema, ModelSchema } from './domain.js'
 import {
   channels,
   DiffFileSchema,
@@ -2387,6 +2387,26 @@ describe('provider account contracts', () => {
     expect(CapabilitiesSchema.safeParse({ ...capabilities, multipleAccounts: 'yes' }).success).toBe(
       false,
     )
+  })
+
+  it('keeps image files apart from pixels and lets a model narrow images', () => {
+    const capabilities = {
+      steer: false,
+      fork: false,
+      interrupt: true,
+      reasoningItems: false,
+      approvals: false,
+      images: false,
+    }
+    expect(CapabilitiesSchema.parse(capabilities).imageFiles).toBeUndefined()
+    expect(CapabilitiesSchema.parse({ ...capabilities, imageFiles: true })).toMatchObject({
+      images: false,
+      imageFiles: true,
+    })
+    expect(CapabilitiesSchema.safeParse({ ...capabilities, imageFiles: 'yes' }).success).toBe(false)
+    const model = { id: 'm', displayName: 'M', isDefault: true, reasoningEfforts: [] }
+    expect(ModelSchema.parse(model).images).toBeUndefined()
+    expect(ModelSchema.parse({ ...model, images: false }).images).toBe(false)
   })
 })
 
