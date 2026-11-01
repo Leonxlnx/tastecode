@@ -291,12 +291,27 @@
           <a href="./feature-inventory.html">Inventory</a>
           <a href="./CLAUDE-HANDOFF.md">Claude handoff</a>
         </nav>
-        <span class="meta">2026-11-01 dev aa5a4adc · nightly 2347d870 · main 936c6d76</span>
+        <span class="meta">2026-11-01 dev 903bd694 · nightly 2347d870 · main 936c6d76</span>
       </div>
     </div>
 
     <div class="wrap">
       <section id="scope">
+        <p>
+          November 1, evening, on dev (903bd694): slash commands for the five providers planned for
+          v0.5 and a calmer limits view merged, PRs #1995 to #2004. Commands carry their source
+          (built-in, custom, plugin, MCP) and the / menu groups by it; typed alone, /permissions,
+          /resume, /settings, /mcp, /skills, /usage and /login open TasteCode's own screens for
+          every provider; Codex adds /init; a Grok or ACP chat that opens with a command no longer
+          sends it to the model as text; Cursor lists its custom commands and skills from disk;
+          Antigravity runs the read-only commands agy answers itself. The limits popup shows an
+          unused allowance as one quiet line, and Cursor's plan limits come from the request
+          cursor-agent's own /usage screen makes, with its stored sign-in read only at that moment
+          (checked against fixtures, never against Cursor's server). Typecheck, lint, the packaged
+          installer and targeted tests passed on the identical combined tree; installed on Leon's
+          laptop. Not done: real-provider checks, the full pnpm test, macOS, the v0.5 provider list
+          per build, and the promotion to nightly.
+        </p>
         <p>
           November 1 on dev (aa5a4adc): default skills, provider commands, MCP for ACP agents, image
           upload for more providers and split view merged, PRs #1961, #1977 to #1993. TasteCode now
