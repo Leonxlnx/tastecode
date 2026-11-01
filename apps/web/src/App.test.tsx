@@ -10064,7 +10064,8 @@ describe('new chats', () => {
     )
 
     fireEvent.click(screen.getByRole('button', { name: 'Choose project' }))
-    expect(screen.getAllByRole('menuitem')).toHaveLength(2)
+    // Both projects, then the choice of none.
+    expect(screen.getAllByRole('menuitem')).toHaveLength(3)
     fireEvent.click(screen.getByRole('menuitem', { name: /Another Project/ }))
 
     expect(screen.getByRole('heading').textContent).toContain(
@@ -10073,6 +10074,54 @@ describe('new chats', () => {
     expect(screen.getByRole('button', { name: 'Choose project' }).textContent).toContain(
       'Another Project',
     )
+  })
+
+  it('starts a chat without a project in a folder of its own', async () => {
+    serverProjects = [
+      { path: '/work/project', name: 'TasteCode', pinned: false, createdAt: 0, sessions: [] },
+    ]
+    const folder = {
+      path: '/home/me/.tastecode/threads/2026-11-01-amber-heron',
+      name: '2026-11-01-amber-heron',
+      pinned: false,
+      createdAt: 2,
+      chat: true as const,
+    }
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation(async (method, params) => {
+      if (method !== 'projects.createChatFolder') return request(method, params)
+      serverProjects = [...serverProjects, { ...folder, sessions: [] }]
+      return folder
+    })
+
+    render(<App />)
+    expect((await screen.findByRole('heading')).textContent).toContain(
+      'What should we build in TasteCode?',
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Choose project' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: /No project/ }))
+
+    expect(screen.getByRole('heading').textContent).toBe('What should we build?')
+    expect(screen.getByRole('button', { name: 'Choose project' }).textContent).toContain(
+      'No project',
+    )
+    expect(screen.queryByRole('button', { name: 'Workspace mode' })).toBeNull()
+    expect(rpcCount('projects.createChatFolder')).toBe(0)
+
+    submitTurn('Plan a weekend in Lisbon')
+    await waitFor(() => expect(rpcCount('thread.start')).toBe(1))
+    expect(rpcCount('projects.createChatFolder')).toBe(1)
+    const start = transport.request.mock.calls.find(([method]) => method === 'thread.start')
+    expect(start?.[1]).toMatchObject({ workspacePath: folder.path })
+    expect(start?.[1]).not.toHaveProperty('isolate')
+    // The chat is listed under Chats; its folder is not offered as a project.
+    expect(await screen.findByText('Chats')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'New chat' }))
+    expect(screen.getByRole('heading').textContent).toBe('What should we build?')
+    fireEvent.click(screen.getByRole('button', { name: 'Choose project' }))
+    expect(
+      screen.getAllByRole('menuitem').map((item) => item.textContent?.includes('amber-heron')),
+    ).not.toContain(true)
   })
 
   it('toggles an empty project without leaving the current new chat', async () => {
@@ -11703,7 +11752,11 @@ describe('inbox lifecycle', () => {
       within(picker)
         .getAllByRole('option')
         .map((option) => option.textContent),
-    ).toEqual(['New thread in Beta/work/beta', 'New thread in Alpha/work/alpha'])
+    ).toEqual([
+      'New thread in Beta/work/beta',
+      'New thread in Alpha/work/alpha',
+      'New thread without a projectGets a folder of its own',
+    ])
   })
 
   it('stops emphasizing completed work after it is opened', async () => {

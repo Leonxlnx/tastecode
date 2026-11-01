@@ -19,6 +19,7 @@ import {
   IconFolder as Folder,
   IconGitBranch as GitBranch,
   IconGripVertical as GripVertical,
+  IconMessage as MessageIcon,
   IconPhoto as ImageIcon,
   IconDeviceLaptop as Laptop,
   IconPalette as Palette,
@@ -476,6 +477,8 @@ function ComposerComponent(props: {
   projects: ReadonlyArray<ProjectChoice>
   projectPath: string | undefined
   projectName: string | undefined
+  /** The new chat belongs to no project; its first message gives it a folder of its own. */
+  withoutProject?: boolean | undefined
   /** The started chat this composer writes to; absent for a new chat. */
   threadId?: string | undefined
   projectsLoading?: boolean
@@ -560,6 +563,7 @@ function ComposerComponent(props: {
   onTranscribeVoice: (requestId: string, recording: VoiceRecording) => Promise<string>
   onCancelVoice: (requestId: string) => void
   onProjectChange: (path: string) => void
+  onChooseWithoutProject?: (() => void) | undefined
   onBranchChange: (branch: string) => void
   onProjectRequired: () => void
   onSetupProvider: () => void
@@ -1367,7 +1371,7 @@ function ComposerComponent(props: {
       (!props.attachmentsSupported && attachments.length > 0)
     )
       return false
-    if (!props.projectPath) {
+    if (!props.projectPath && !props.withoutProject) {
       props.onProjectRequired()
       return false
     }
@@ -1611,8 +1615,14 @@ function ComposerComponent(props: {
                 panelClassName="menu--compact menu--project-picker"
                 trigger={() => (
                   <span className="shelf-control__content">
-                    <Folder size={15} aria-hidden />
-                    {props.projectName === undefined && props.projectsLoading ? (
+                    {props.withoutProject ? (
+                      <MessageIcon size={15} aria-hidden />
+                    ) : (
+                      <Folder size={15} aria-hidden />
+                    )}
+                    {props.withoutProject ? (
+                      <span>No project</span>
+                    ) : props.projectName === undefined && props.projectsLoading ? (
                       <Skeleton className="skeleton-group" width={56} height={9} />
                     ) : (
                       <span>{props.projectName ?? 'Choose project'}</span>
@@ -1635,49 +1645,64 @@ function ComposerComponent(props: {
                         }}
                       />
                     ))}
+                    {props.onChooseWithoutProject ? (
+                      <MenuItem
+                        title="No project"
+                        icon={<MessageIcon size={14} aria-hidden />}
+                        detail="Gets a folder of its own"
+                        active={props.withoutProject === true}
+                        onClick={() => {
+                          props.onChooseWithoutProject?.()
+                          close()
+                        }}
+                      />
+                    ) : null}
                   </>
                 )}
               </Menu>
 
-              <Menu
-                label="Workspace mode"
-                drop="down"
-                triggerClassName="shelf-control shelf-control--mode"
-                panelClassName="menu--compact menu--mode"
-                shortcutAria={shortcutAria(keybindings.toggleIsolatedSession)}
-                trigger={() => (
-                  <span className="shelf-control__content">
-                    <IconMorph active={props.isolate ? 1 : 0}>
-                      <Laptop size={15} aria-hidden />
-                      <GitBranch size={15} aria-hidden />
-                    </IconMorph>
-                    <span>{props.isolate ? 'Isolated' : 'Local'}</span>
-                  </span>
-                )}
-              >
-                {(close) => (
-                  <>
-                    <MenuItem
-                      title="Local"
-                      icon={<Laptop size={14} aria-hidden />}
-                      checked={!props.isolate}
-                      onClick={() => {
-                        props.onIsolateChange(false)
-                        close()
-                      }}
-                    />
-                    <MenuItem
-                      title="Isolated"
-                      icon={<GitBranch size={14} aria-hidden />}
-                      checked={props.isolate}
-                      onClick={() => {
-                        props.onIsolateChange(true)
-                        close()
-                      }}
-                    />
-                  </>
-                )}
-              </Menu>
+              {/* A chat without a project gets a fresh folder, not a git checkout to isolate. */}
+              {props.withoutProject ? null : (
+                <Menu
+                  label="Workspace mode"
+                  drop="down"
+                  triggerClassName="shelf-control shelf-control--mode"
+                  panelClassName="menu--compact menu--mode"
+                  shortcutAria={shortcutAria(keybindings.toggleIsolatedSession)}
+                  trigger={() => (
+                    <span className="shelf-control__content">
+                      <IconMorph active={props.isolate ? 1 : 0}>
+                        <Laptop size={15} aria-hidden />
+                        <GitBranch size={15} aria-hidden />
+                      </IconMorph>
+                      <span>{props.isolate ? 'Isolated' : 'Local'}</span>
+                    </span>
+                  )}
+                >
+                  {(close) => (
+                    <>
+                      <MenuItem
+                        title="Local"
+                        icon={<Laptop size={14} aria-hidden />}
+                        checked={!props.isolate}
+                        onClick={() => {
+                          props.onIsolateChange(false)
+                          close()
+                        }}
+                      />
+                      <MenuItem
+                        title="Isolated"
+                        icon={<GitBranch size={14} aria-hidden />}
+                        checked={props.isolate}
+                        onClick={() => {
+                          props.onIsolateChange(true)
+                          close()
+                        }}
+                      />
+                    </>
+                  )}
+                </Menu>
+              )}
 
               {props.branches.length > 0 ? (
                 <Menu
