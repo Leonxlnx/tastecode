@@ -288,7 +288,7 @@ describe('declared provider controls', () => {
     const { codex, createCodex } = setup()
     const { commands, loading } = await codex.listCommands!('/project')
     expect(loading).toBe(false)
-    expect(commands.map((command) => command.name)).toEqual(['goal', 'compact', 'review'])
+    expect(commands.map((command) => command.name)).toEqual(['goal', 'compact', 'review', 'init'])
     expect(createCodex).not.toHaveBeenCalled()
   })
 
