@@ -50,3 +50,47 @@ describe('source attachment capability', () => {
     )
   })
 })
+
+describe('image files and per-model images', () => {
+  const status = (
+    id: ProviderStatus['id'],
+    extra: Partial<ReturnType<typeof capabilities>> & { imageFiles?: boolean },
+    images = false,
+  ): ProviderStatus => ({
+    id,
+    displayName: id,
+    installed: true,
+    auth: 'authenticated',
+    capabilities: { ...capabilities(images), ...extra },
+  })
+
+  it('accepts images an engine hands over as files, for every model and agent', () => {
+    const providers = [
+      status('antigravity', { imageFiles: true }),
+      status('acp', { imageFiles: true }),
+    ]
+    expect(sourceSupportsAttachments({ provider: 'antigravity' }, providers)).toBe(true)
+    expect(
+      sourceSupportsAttachments(
+        { provider: 'acp', agentId: 'gemini', modelImages: false },
+        providers,
+      ),
+    ).toBe(true)
+  })
+
+  it('lets a model narrow pixels, and asks an agent-scoped model to declare them', () => {
+    const providers = [status('opencode', {}, true), status('pi', {}, true)]
+    expect(sourceSupportsAttachments({ provider: 'opencode' }, providers)).toBe(true)
+    expect(sourceSupportsAttachments({ provider: 'opencode', modelImages: false }, providers)).toBe(
+      false,
+    )
+    expect(sourceSupportsAttachments({ provider: 'pi', agentId: 'local' }, providers)).toBe(false)
+    expect(
+      sourceSupportsAttachments({ provider: 'pi', agentId: 'local', modelImages: true }, providers),
+    ).toBe(true)
+  })
+
+  it('still refuses an engine that declares neither', () => {
+    expect(sourceSupportsAttachments({ provider: 'cursor' }, [status('cursor', {})])).toBe(false)
+  })
+})
