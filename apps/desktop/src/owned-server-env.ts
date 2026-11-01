@@ -48,3 +48,15 @@ export function withFeedbackDetails(
       : {}),
   }
 }
+
+/**
+ * Where the server finds the Agent Skills that ship with the app. A packaged
+ * build keeps them as real files in its resources folder so agent processes
+ * can read them; an unpackaged run leaves the server to find the workspace copy.
+ */
+export function withDefaultSkills(
+  env: NodeJS.ProcessEnv,
+  directory: string | undefined,
+): NodeJS.ProcessEnv {
+  return directory ? { ...env, HARNESS_DEFAULT_SKILLS_DIR: directory } : env
+}
