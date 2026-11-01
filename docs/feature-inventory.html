@@ -1318,8 +1318,10 @@
                   the provider list comes from commands.list: Claude Code from an open chat or, for
                   a project without one, the cached background probe, with the built-ins that change
                   state TasteCode owns and terminal-only commands hidden; Grok, OpenCode and other
-                  ACP agents from a live chat or a probe; when the probe failed, the menu says
-                  "Couldn't load commands." and asks again the next time it opens</span
+                  ACP agents from a live chat or a probe (an OpenCode chat sends a leading /name it
+                  lists to its session command route with the rest as arguments; v1 servers only,
+                  checked against a fake server); when the probe failed, the menu says "Couldn't
+                  load commands." and asks again the next time it opens</span
                 ></span
               ></label
             >
