@@ -57,8 +57,8 @@ type LoginResponse = { loginId: string; authUrl?: string }
 type LoginHandle = LoginResponse & { cancel: () => Promise<void> }
 type LimitSource = { status: 'ready'; limits: ProviderLimit[] } | { status: 'unavailable' }
 /**
- * The Codex control process serves no commands, so a `commands` watch holds no
- * process lease. It does watch a project inventory's configuration folders,
+ * The Codex control process serves no commands (its list is static), so a
+ * `commands` watch holds no process lease. It does watch a project inventory's configuration folders,
  * and services report command changes through `InventoryRead.changed`.
  */
 type WatchTarget = ParamsOf<'providers.watch'>['targets'][number]
@@ -421,7 +421,14 @@ const defaultServices = {
     },
   },
   api: {},
-  codex: {},
+  codex: {
+    // Codex's slash commands are app-server actions its chats route typed
+    // commands to, so the list needs no process.
+    listCommands: async () => ({
+      commands: (await loadCodex()).CODEX_COMMANDS.map((command) => ({ ...command })),
+      loading: false,
+    }),
+  },
   opencode: {
     // OpenCode reports these from a running server. A project without a chat
     // starts one without a session (4-12 s), cached.
