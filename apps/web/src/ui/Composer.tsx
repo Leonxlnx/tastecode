@@ -157,6 +157,8 @@ const PREVIEWABLE_IMAGE_RE = /\.(apng|avif|bmp|gif|ico|jpe?g|png|webp)$/i
 const VIDEO_RE = /\.(avi|m4v|mkv|mov|mp4|mpe?g|ogg|ogv|webm)$/i
 const COMPOSER_MIN_HEIGHT = 48
 const COMPOSER_MAX_HEIGHT = 242
+/** How long the composer's width must hold still before a draft is re-measured. */
+const COMPOSER_WIDTH_SETTLE_MS = 120
 
 function composerInputOnlyInserts(previous: string, next: string, event: InputEvent): boolean {
   if (event.isComposing) return false
@@ -575,6 +577,11 @@ function ComposerComponent(props: {
   onDeleteQueuedTurn: (id: string) => void | Promise<boolean | void>
   onMoveQueuedTurn: (id: string, direction: 'up' | 'down') => void | Promise<boolean | void>
   onSteerQueuedTurn: (id: string) => void
+  /**
+   * The composer of a split pane without focus: shown as it was, inactive, and
+   * any recording is cancelled so a transcript cannot land in another chat.
+   */
+  dormant?: boolean | undefined
 }) {
   const keybindings = props.keybindings ?? DEFAULT_KEYBINDINGS
   // The textarea owns its full draft. React only needs the blank/nonblank
@@ -628,6 +635,8 @@ function ComposerComponent(props: {
   const resizeFrame = useRef<number | undefined>(undefined)
   const composerAtMaximumHeight = useRef(false)
   const observedComposerWidth = useRef<number | undefined>(undefined)
+  /** Re-fits the text box to its draft; set once `grow` exists below. */
+  const growRef = useRef<() => void>(() => {})
   const composerRoot = useRef<HTMLDivElement>(null)
   const composerAnchor = useRef<HTMLDivElement>(null)
   const queuePanel = useRef<HTMLDivElement>(null)
@@ -782,6 +791,7 @@ function ComposerComponent(props: {
   useEffect(() => {
     const el = area.current
     if (!el || typeof ResizeObserver === 'undefined') return
+    let settle: ReturnType<typeof setTimeout> | undefined
     const observer = new ResizeObserver((entries) => {
       const width = entries[0]?.contentRect.width
       if (width === undefined) return
@@ -789,10 +799,19 @@ function ComposerComponent(props: {
       observedComposerWidth.current = width
       if (previousWidth !== undefined && width !== previousWidth) {
         composerAtMaximumHeight.current = false
+        // A draft wraps differently at the new width (opening a split halves
+        // it), and its extra lines stayed clipped until the next key. Measure
+        // once the width settles, not on every frame of a window or panel drag.
+        if (el.value === '') return
+        clearTimeout(settle)
+        settle = setTimeout(() => growRef.current(), COMPOSER_WIDTH_SETTLE_MS)
       }
     })
     observer.observe(el)
-    return () => observer.disconnect()
+    return () => {
+      clearTimeout(settle)
+      observer.disconnect()
+    }
   }, [])
 
   useLayoutEffect(() => {
@@ -1036,6 +1055,7 @@ function ComposerComponent(props: {
       el.style.height = `${nextHeight}px`
     })
   }
+  growRef.current = grow
 
   const updateText = (value: string, syncArea = true, notify = true) => {
     textRef.current = value
@@ -1600,7 +1620,11 @@ function ComposerComponent(props: {
 
   return (
     <>
-      <div ref={composerRoot} className={`composer${props.newSession ? ' is-new-session' : ''}`}>
+      <div
+        ref={composerRoot}
+        className={`composer${props.newSession ? ' is-new-session' : ''}${props.dormant ? ' is-dormant' : ''}`}
+        inert={props.dormant ? true : undefined}
+      >
         <div
           ref={composerAnchor}
           className={`composer__box ${dragging ? 'is-dropping' : ''}`}
@@ -2276,7 +2300,7 @@ function ComposerComponent(props: {
                 {props.voiceAvailable ? (
                   <Suspense fallback={props.running ? null : <VoiceControlSkeleton />}>
                     <ComposerVoiceControl
-                      contextKey={`${props.provider}:${props.projectPath ?? ''}:${props.draftRequest?.request ?? ''}`}
+                      contextKey={`${props.provider}:${props.projectPath ?? ''}:${props.draftRequest?.request ?? ''}${props.dormant ? ':dormant' : ''}`}
                       disabled={props.disabled}
                       running={props.running}
                       getCursor={() => area.current?.selectionStart ?? textRef.current.length}

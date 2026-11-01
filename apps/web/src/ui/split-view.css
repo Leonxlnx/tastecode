@@ -1,0 +1,65 @@
+/* Split view: two chats side by side in the stage. Loaded with the first split
+   (split-view-styles.ts), so nothing here reaches startup CSS. Without a split
+   the panes are `display: contents` and none of these rules apply. */
+
+/* The stage-wide header is not rendered in a split; each pane has its own. */
+.stage > .stage__body.is-split {
+  grid-row: 1 / -1;
+}
+
+.split {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+}
+
+.split__pane {
+  position: relative;
+  display: grid;
+  flex: 1 1 0;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  /* Each pane is its own chat stage, so the narrow transcript and composer
+     layouts follow the pane's width, not the window's. */
+  container: chat-stage / inline-size;
+}
+
+.split__pane.is-end {
+  border-left: 1px solid var(--line);
+}
+
+.split__pane > .stage__conversation.is-new-session {
+  align-content: center;
+}
+
+/* Only the left pane's header sits clear of the window's panel toggles. */
+.shell .split > .split__pane.is-start > .stagehead.stagehead {
+  padding-right: 10px;
+}
+
+.stagehead__close-pane {
+  position: relative;
+  z-index: 1;
+  flex: none;
+  margin-left: auto;
+}
+
+/* The pane without focus: its title and composer recede; the transcript keeps
+   full contrast because it is still being read. */
+.split__pane.is-dormant .stagehead__title {
+  color: var(--text-3);
+}
+
+.split__pane .composer.is-dormant {
+  opacity: 0.55;
+}
+
+/* The chat open beside the active one: the active row's fill, no active bar. */
+.sessrow.is-beside {
+  --sess-bg: color-mix(in srgb, var(--surface-2) 75%, var(--bg-rail-tint));
+}
+
+:root[data-theme='light'] .sessrow.is-beside {
+  --sess-bg: var(--chrome-raised);
+}

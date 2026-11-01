@@ -82,8 +82,11 @@ export function useStageGlide(stage: RefObject<HTMLElement | null>, layout: stri
     const previous = box.current
     // React commits this before the browser renders the change and before the
     // ResizeObserver above reports it, so `previous` is still the old layout.
+    // Without a split, the split view's pane wrappers take no box, so the one
+    // conversation is laid out as the body's own column. In a split each pane
+    // centres its own column and only the pane's edge glides.
     const conversation = element.querySelector<HTMLElement>(
-      ':scope > .stage__body > .stage__conversation',
+      ':scope > .stage__body > .stage__conversation, :scope > .stage__body:not(.is-split) > .split > .split__pane > .stage__conversation',
     )
     // A second toggle mid-glide continues from where things are on screen.
     const paneShift = liveOffset(element)
