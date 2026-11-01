@@ -1,3 +1,4 @@
+import path from 'node:path'
 import { ChildProcess } from 'node:child_process'
 import { PassThrough } from 'node:stream'
 import type { DomainEvent } from '@harness/contracts'
@@ -256,6 +257,10 @@ describe('Antigravity turn invocation', () => {
     const prompt = record.args?.[record.args.indexOf('-p') + 1]
     expect(prompt?.startsWith('What is wrong here?\n\n<attached-images>')).toBe(true)
     expect(prompt).toContain(`- ${image}`)
+    expect(record.args?.slice(record.args.indexOf('--add-dir'))).toEqual([
+      '--add-dir',
+      path.dirname(image),
+    ])
     expect(antigravityImagePrompt('', ['a.png', 'b.png'])).toBe(
       '<attached-images>\nThe user attached these images. Open each file with your file viewer to see it before you answer.\n- a.png\n- b.png\n</attached-images>',
     )

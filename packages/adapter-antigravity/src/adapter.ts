@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
+import path from 'node:path'
 import type { ApprovalMode, Capabilities, DomainEvent, Model, Thread } from '@harness/contracts'
 import { argumentPromptLimit, killTree, ProtocolFrameError, readNdjson } from '@harness/proc'
 import { z } from 'zod'
@@ -106,6 +107,7 @@ export function antigravityTurnArgs(
   prompt: string,
   options: AntigravityStartOptions,
   conversationId: string | undefined,
+  readableDirectories: readonly string[] = [],
 ): string[] {
   // The picker holds a collapsed base id; the wire wants the concrete
   // per-effort slug from the listing.
@@ -123,6 +125,11 @@ export function antigravityTurnArgs(
     ...(options.approval === 'auto' ? ['--mode', 'accept-edits'] : []),
     ...(options.approval === 'full' ? ['--dangerously-skip-permissions'] : []),
     ...(conversationId ? ['--conversation', conversationId] : []),
+    // Attached images are saved outside the workspace, where agy's
+    // non-workspace file policy would stop its file viewer; --add-dir is its
+    // own switch for reading one more directory (agy 1.x usage string
+    // "--add-dir <path>").
+    ...readableDirectories.flatMap((directory) => ['--add-dir', directory]),
   ]
 }
 
@@ -231,7 +238,9 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
         ? `<system-instructions>\n${this.#options.instructions}\n</system-instructions>\n\n${request}`
         : request
     this.#instructionsPending = false
-    const args = antigravityTurnArgs(prompt, this.#options, this.#conversationId)
+    const args = antigravityTurnArgs(prompt, this.#options, this.#conversationId, [
+      ...new Set(attachments.map((file) => path.dirname(file))),
+    ])
 
     // A turn already in flight would be orphaned by the reassignment below —
     // its exit handler must also not clobber the new child's reference.
