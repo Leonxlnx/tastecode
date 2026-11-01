@@ -13,7 +13,7 @@ import {
 } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import { CLAUDE_MCP_CAPABILITIES } from '@harness/adapter-claude-code/capabilities'
 import { GROK_MCP_CAPABILITIES } from '@harness/adapter-grok/mcp'
 import { OPENCODE_MCP_CAPABILITIES } from '@harness/adapter-opencode/inventory'
@@ -55,6 +55,7 @@ import {
 } from '@harness/design-agent'
 import { encodeHistoryCursor, readHistoryPage } from './history-page.js'
 import { compactHistoryReplay } from './history-replay.js'
+import { writeDefaultSkillsFixture } from './default-skills.test-support.js'
 import { McpConfigStore } from './mcp-config.js'
 import { Orchestrator } from './orchestrator.js'
 import type { ProviderControlsOptions } from './provider-controls.js'
@@ -336,6 +337,7 @@ function harness(
   maxIdleThreadRuntimes?: number,
   idleThreadRuntimeMs?: number,
   providerServices?: ProviderControlsOptions['services'],
+  defaultSkillsRoot?: string,
 ) {
   const sessions: FakeSession[] = []
   const received: Array<{
@@ -466,6 +468,7 @@ function harness(
       opencode: { ...quietOpenCodeInventory, ...providerServices?.opencode },
     },
     ...(worktreeRoot ? { worktreeRoot } : {}),
+    ...(defaultSkillsRoot ? { defaultSkillsRoot } : {}),
   })
 
   return {
@@ -1492,6 +1495,64 @@ describe('reply style', () => {
       expect(startedOptions[0]?.instructions).toContain('Do not use em dashes')
     },
   )
+})
+
+describe('default skills', () => {
+  const skillsHarness = async () => {
+    const parent = mkdtempSync(path.join(os.tmpdir(), 'tc-orchestrator-skills-'))
+    onTestFinished(() => rmSync(parent, { recursive: true, force: true }))
+    const root = await writeDefaultSkillsFixture(parent)
+    return { root, ...harness(undefined, undefined, undefined, undefined, undefined, root) }
+  }
+
+  it.each(ProviderIdSchema.options)('lists the bundled skills for %s', async (provider) => {
+    const { orchestrator } = await skillsHarness()
+    const inventory = await orchestrator.listSkills(provider, process.cwd())
+
+    expect(
+      inventory.skills
+        .filter((skill) => skill.id.startsWith('tastecode:'))
+        .map((skill) => [skill.name, skill.scope]),
+    ).toEqual([
+      ['cinetic', 'system'],
+      ['design-taste-frontend', 'system'],
+      ['cook', 'system'],
+    ])
+    await orchestrator.disposeAll()
+  })
+
+  it.each(ProviderIdSchema.options)(
+    'gives %s chats the skill catalog, but not a Side chat',
+    async (provider) => {
+      const { orchestrator, startedOptions, store, root } = await skillsHarness()
+      const parent = await orchestrator.startThread(provider, process.cwd())
+      store.append(parent.id, userMessage(`user-${provider}`, 'Question', 'parent-turn'))
+      await orchestrator.startSideThread(parent.id)
+
+      expect(startedOptions[0]?.instructions).toContain('Do not use em dashes')
+      expect(startedOptions[0]?.instructions).toContain('Skills included with TasteCode')
+      expect(startedOptions[0]?.instructions).toContain(path.join(root, 'skills'))
+      expect(startedOptions[0]?.instructions).toContain('- cook: long reference-matching loops')
+      expect(startedOptions[0]?.skillPlugin).toBeUndefined()
+      expect(startedOptions[1]?.instructions).not.toContain('Skills included with TasteCode')
+      await orchestrator.disposeAll()
+    },
+  )
+
+  it('starts without a catalog when no bundle was given', async () => {
+    const { orchestrator, startedOptions } = harness()
+    await orchestrator.startThread('cursor', process.cwd())
+    expect(startedOptions[0]?.instructions).not.toContain('Skills included with TasteCode')
+    await orchestrator.disposeAll()
+  })
+
+  it('refuses to switch off a bundled skill through a provider', async () => {
+    const { orchestrator } = await skillsHarness()
+    await expect(
+      orchestrator.setSkillEnabled('codex', process.cwd(), 'tastecode:cook', false),
+    ).rejects.toThrow(/included with TasteCode/)
+    await orchestrator.disposeAll()
+  })
 })
 
 describe('provider-neutral Side chat', () => {

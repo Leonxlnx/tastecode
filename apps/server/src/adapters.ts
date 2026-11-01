@@ -76,6 +76,11 @@ export type StartOptions = {
   providerSessionId?: string | undefined
   /** Opaque local state, validated only by the adapter that owns it. */
   resumeState?: unknown
+  /**
+   * The folder of the skills that ship with TasteCode, laid out as a Claude
+   * Code plugin. Passed only to providers that declare `defaultSkillsPlugin`.
+   */
+  skillPlugin?: string | undefined
 }
 
 export type TurnOptions = Pick<StartOptions, 'model' | 'serviceTier' | 'effort'>

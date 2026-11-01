@@ -75,6 +75,7 @@ import {
 import { handoverBudget, handoverPrompt } from './handover.js'
 import { REPLY_STYLE_INSTRUCTIONS } from './reply-style.js'
 import { LOCAL_SKILL_CAPABILITIES, listLocalSkills, mergeSkills } from './skill-inventory.js'
+import { isDefaultSkillId, loadDefaultSkills, type DefaultSkills } from './default-skills.js'
 import type { ProviderAccountSnapshotKind, Store, StoredCheckpoint } from './store.js'
 import {
   carryUncommittedChanges,
@@ -742,6 +743,8 @@ export class Orchestrator {
   /** The latest patch recorded for each running turn. */
   #recordedTurnDiffs = new Map<string, { turnId: string; diff: string }>()
   #worktreeRoot: string
+  readonly #defaultSkillsRoot: string | undefined
+  #defaultSkills: Promise<DefaultSkills> | undefined
   #onEvent: RecordedEventHandler
   #onSideEvent: RecordedEventHandler
   #onQueue: (threadId: string, state: QueueState) => void
@@ -889,6 +892,8 @@ export class Orchestrator {
 
       /** Where isolated checkouts live. Outside any repository, on purpose. */
       worktreeRoot?: string
+      /** The folder of the skills that ship with TasteCode; absent, sessions get none. */
+      defaultSkillsRoot?: string
     },
   ) {
     this.#store = store
@@ -899,6 +904,7 @@ export class Orchestrator {
     this.#worktreeRoot =
       handlers.worktreeRoot ??
       (process.env['HARNESS_WORKTREE_DIR'] || path.join(path.dirname(storeLocation()), 'trees'))
+    this.#defaultSkillsRoot = handlers.defaultSkillsRoot
     this.#onEvent = handlers.onEvent
     this.#onSideEvent = handlers.onSideEvent ?? handlers.onEvent
     this.#onQueue = handlers.onQueue ?? (() => {})
@@ -1531,18 +1537,55 @@ export class Orchestrator {
     const local = control.capabilities.agentsSkillsDir
       ? await listLocalSkills(projectPath)
       : undefined
+    // Every provider's chats can use the skills that ship with TasteCode, so
+    // they are listed even where the provider has no inventory of its own.
+    const bundled = (await this.#bundledSkills()).skills
     if (!control.listSkills) {
-      return local
+      const own = local
         ? { capabilities: LOCAL_SKILL_CAPABILITIES, ...local }
         : { capabilities: NO_SKILL_CAPABILITIES, skills: [], errors: [] }
+      return { ...own, skills: mergeSkills(own.skills, bundled) }
     }
     this.watchProvider(provider, projectPath, ['skills'])
     const vendor = await control.listSkills(projectPath)
-    if (!local) return vendor
     return {
       capabilities: vendor.capabilities,
-      skills: mergeSkills(vendor.skills, local.skills),
-      errors: [...vendor.errors, ...local.errors],
+      skills: mergeSkills(mergeSkills(vendor.skills, local?.skills ?? []), bundled),
+      errors: [...vendor.errors, ...(local?.errors ?? [])],
+    }
+  }
+
+  /** Read once per server: the bundled files do not change while it runs. */
+  #bundledSkills(): Promise<DefaultSkills> {
+    const root = this.#defaultSkillsRoot
+    this.#defaultSkills ??= root
+      ? loadDefaultSkills(root).catch((error: unknown) => {
+          this.#onLog(`[skills] default skills unavailable: ${errorMessage(error)}`)
+          return { root, skills: [], catalog: '' }
+        })
+      : Promise.resolve({ root: '', skills: [], catalog: '' })
+    return this.#defaultSkills
+  }
+
+  /**
+   * The instructions a session starts with: reply style, then the default
+   * skills (as a plugin where the provider loads them itself, as a short
+   * catalog everywhere else), then any instructions of the caller. Side work
+   * that is not a chat of its own leaves the skills out.
+   */
+  async #sessionStart(
+    provider: ProviderId,
+    instructions?: string,
+    { skills = true }: { skills?: boolean } = {},
+  ): Promise<Pick<StartOptions, 'instructions' | 'skillPlugin'>> {
+    const bundled = skills ? await this.#bundledSkills() : undefined
+    const native = this.#controls.forProvider(provider).capabilities.defaultSkillsPlugin
+    const catalog = bundled && !native ? bundled.catalog : ''
+    return {
+      instructions: composeInstructions(
+        [catalog, instructions?.trim()].filter(Boolean).join('\n\n'),
+      ),
+      ...(bundled?.skills.length && native ? { skillPlugin: bundled.root } : {}),
     }
   }
 
@@ -1552,6 +1595,8 @@ export class Orchestrator {
     skillId: string,
     enabled: boolean,
   ): Promise<boolean> {
+    if (isDefaultSkillId(skillId))
+      throw new Error('Skills included with TasteCode cannot be turned off yet.')
     const control = this.#controls.forProvider(provider)
     if (!control.setSkillEnabled)
       throw new Error(`provider "${provider}" cannot configure skills yet`)
@@ -2079,7 +2124,7 @@ export class Orchestrator {
         ...(target.effort ? { effort: target.effort } : {}),
         ...(target.serviceTier ? { serviceTier: target.serviceTier } : {}),
         ...(approval ? { approval } : {}),
-        instructions: composeInstructions(),
+        ...(await this.#sessionStart(target.provider)),
         ...this.#mcpRuntimeOptions(target.provider, stored.projectPath),
         ...this.#contextRuntimeOptions(target.provider, target.agent, accountId),
       }
@@ -2273,7 +2318,9 @@ export class Orchestrator {
     const runtime = this.#runtimeFor(provider, this.#onLog, accountHome)
     const runtimeOptions = {
       ...options,
-      instructions: composeInstructions(options.instructions),
+      ...(await this.#sessionStart(provider, options.instructions, {
+        skills: !options.ephemeral,
+      })),
       ...this.#mcpRuntimeOptions(provider, workspacePath),
       ...this.#contextRuntimeOptions(provider, options.agent, accountId),
     }
@@ -4720,20 +4767,21 @@ export class Orchestrator {
       ...this.#mcpRuntimeOptions(stored.provider, stored.projectPath),
       ...this.#contextRuntimeOptions(stored.provider, stored.agent, stored.accountId),
     }
+    const sessionStart = await this.#sessionStart(stored.provider, undefined, {
+      skills: !stored.ephemeral,
+    })
     let freshSessionId: string | undefined
     const result = await (
       fresh || !resume
-        ? runtime
-            .start(workspacePath, { ...options, instructions: composeInstructions() })
-            .then((started) => {
-              freshSessionId = started.thread.id
-              return mapProviderSession(threadId, started)
-            })
+        ? runtime.start(workspacePath, { ...options, ...sessionStart }).then((started) => {
+            freshSessionId = started.thread.id
+            return mapProviderSession(threadId, started)
+          })
         : resume(threadId, workspacePath, {
             ...options,
             ...(stored.providerSessionId ? { providerSessionId: stored.providerSessionId } : {}),
             ...(resumeState === undefined ? {} : { resumeState }),
-            instructions: REPLY_STYLE_INSTRUCTIONS,
+            ...sessionStart,
           })
     ).catch((error: unknown) => {
       if (!(error instanceof StartupCleanupError)) throw error

@@ -19,6 +19,13 @@ export type ProviderControlCapabilities = Readonly<{
    * and the home folder. Only a capture of the CLI reading them turns this on.
    */
   agentsSkillsDir: boolean
+  /**
+   * The provider loads the skills that ship with TasteCode itself, from the
+   * plugin folder passed as `StartOptions.skillPlugin`, so its sessions skip
+   * the skill catalog in the shared instructions (server-internal). Only a
+   * provider whose runtime confirms the plugin loaded turns this on.
+   */
+  defaultSkillsPlugin: boolean
   nativeModels: boolean
   /**
    * The provider names the chats it runs for TasteCode, and its history source
@@ -58,6 +65,7 @@ const unsupported: ProviderControlCapabilities = {
   mcpInventory: false,
   nativeSkills: false,
   agentsSkillsDir: false,
+  defaultSkillsPlugin: false,
   nativeModels: false,
   nativeTitles: false,
   notifications: false,
@@ -120,6 +128,8 @@ export const PROVIDER_CAPABILITIES = {
     mcpInventory: true,
     nativeSkills: true,
     agentsSkillsDir: true,
+    // skills/extraRoots/set exists, but nothing shows it stays out of ~/.codex.
+    defaultSkillsPlugin: false,
     nativeModels: true,
     // Codex's own apps name their threads; the app server leaves TasteCode's unnamed.
     nativeTitles: false,
