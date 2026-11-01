@@ -469,6 +469,12 @@ const defaultServices = {
     signOut: async () => (await loadClaude()).signOutClaude(),
   },
   cursor: {
+    // A print-mode turn expands the custom commands and skills it finds on
+    // disk, so the list is read from the same folders without a process.
+    listCommands: async (projectPath) => ({
+      commands: await (await loadCursor()).listCursorCommands(projectPath),
+      loading: false,
+    }),
     account: async () => (await loadCursor()).cursorAccount(),
     startLogin: async (complete) => (await loadCursor()).startCursorLogin(complete),
     signOut: async () => (await loadCursor()).signOutCursor(),
