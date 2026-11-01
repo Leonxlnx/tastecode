@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events'
-import { mkdirSync, readFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -180,22 +180,37 @@ const IMAGE_MIME_TYPES = new Map([
   ['.webp', 'image/webp'],
 ])
 
+/** A prompt block: ACP's resource link also carries a name and size. */
+export type AcpPromptBlock = ContentBlock & { name?: string; size?: number }
+
+/**
+ * Builds a session/prompt body. Images go as pixels when the agent negotiated
+ * image prompts; otherwise, and for every other file, as resource links,
+ * which ACP requires every agent to accept ("Baseline agent functionality
+ * requires support for ContentBlock::Text and ContentBlock::ResourceLink").
+ */
 export function acpPromptContent(
   text: string,
   attachments: string[] = [],
   images = false,
-): ContentBlock[] {
-  if (attachments.length > 0 && !images) throw new Error('ACP agent does not support images')
+): AcpPromptBlock[] {
   return [
     { type: 'text', text },
-    ...attachments.map((file) => {
+    ...attachments.map((file): AcpPromptBlock => {
       const mimeType = IMAGE_MIME_TYPES.get(path.extname(file).toLowerCase())
-      if (!mimeType) throw new Error(`ACP image type is not supported: ${path.extname(file)}`)
+      const uri = pathToFileURL(file).href
+      if (images && mimeType) {
+        return { type: 'image', data: readFileSync(file).toString('base64'), mimeType, uri }
+      }
+      // Stat it now so a vanished file fails before the turn opens, as an
+      // image read would.
+      const { size } = statSync(file)
       return {
-        type: 'image',
-        data: readFileSync(file).toString('base64'),
-        mimeType,
-        uri: pathToFileURL(file).href,
+        type: 'resource_link',
+        name: path.basename(file),
+        uri,
+        size,
+        ...(mimeType ? { mimeType } : {}),
       }
     }),
   ]
@@ -268,7 +283,7 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
   }
 
   get capabilities(): Capabilities {
-    return { ...ACP_CAPABILITIES, images: this.#images }
+    return { ...ACP_CAPABILITIES, images: this.#images, imageFiles: true }
   }
 
   async startThread(workspacePath: string, options: AcpStartOptions = {}): Promise<Thread> {
