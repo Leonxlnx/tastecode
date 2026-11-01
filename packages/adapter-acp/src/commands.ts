@@ -33,6 +33,14 @@ export function acpCommandName(entry: unknown): string | undefined {
   return name.length <= MAX_NAME && COMMAND_NAME.test(name) ? name : undefined
 }
 
+/**
+ * Whether a prompt is a slash command: `/name`, then nothing, a space or a
+ * newline. A path such as `/usr/bin` has a second slash in its first word.
+ */
+export function startsWithAcpCommand(text: string): boolean {
+  return /^\/[^/\s]+(?:\s|$)/.test(text.trimStart())
+}
+
 export function mapAcpCommands(entries: readonly unknown[]): ProviderCommand[] {
   const seen = new Set<string>()
   const commands: ProviderCommand[] = []
