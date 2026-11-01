@@ -520,17 +520,57 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
     }
     const variant =
       this.#effort && this.#effort !== OPENCODE_DEFAULT_VARIANT ? this.#effort : undefined
-    void this.#client!.session.promptAsync({
-      path: { id: this.#sessionId },
-      body: {
-        parts: openCodePromptParts(text, attachments),
-        ...(model ? { model } : {}),
-        ...(variant ? { variant } : {}),
-        ...(this.#instructions ? { system: this.#instructions } : {}),
-      },
-      throwOnError: true,
-    }).catch(() => this.#failTurn(turnId))
+    const sessionId = this.#sessionId
+    const client = this.#client!
+    void (async () => {
+      const command = await this.#listedCommand(text)
+      // Stopped while the list was read.
+      if (this.#turnId !== turnId) return
+      if (command) {
+        // OpenCode expands a command only on its command route; sent as a
+        // prompt, "/name" reaches the model as plain text. The route takes the
+        // model as "provider/model" and has no variant or system field.
+        // The route answers only when the command has finished, so a long
+        // command can outlive the HTTP client's timeout. Once the session
+        // streams activity the event stream owns the turn's outcome.
+        await client.session
+          .command({
+            path: { id: sessionId },
+            body: {
+              command: command.name,
+              arguments: command.arguments,
+              ...(selection.model ? { model: selection.model } : {}),
+            },
+            throwOnError: true,
+          })
+          .catch((error: unknown) => {
+            if (!this.#turnSawActivity) throw error
+          })
+        return
+      }
+      await client.session.promptAsync({
+        path: { id: sessionId },
+        body: {
+          parts: openCodePromptParts(text, attachments),
+          ...(model ? { model } : {}),
+          ...(variant ? { variant } : {}),
+          ...(this.#instructions ? { system: this.#instructions } : {}),
+        },
+        throwOnError: true,
+      })
+    })().catch(() => this.#failTurn(turnId))
     return turnId
+  }
+
+  /** A leading `/name` that this project's OpenCode lists as a command, with its arguments. */
+  async #listedCommand(text: string): Promise<{ name: string; arguments: string } | undefined> {
+    const match = /^\/([^\s/][^\s]*)(?:\s+([\s\S]*))?$/.exec(text.trim())
+    if (!match) return undefined
+    const name = match[1]!
+    // A failed list sends the text as typed, as before commands ran here.
+    const listed = await this.commands(this.#workspacePath).catch(() => [])
+    if (!listed.some((command) => command.name === name)) return undefined
+    return { name, arguments: (match[2] ?? '').trim() }
   }
 
   async interrupt(threadId: string): Promise<void> {
@@ -737,7 +777,7 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
     return stopped
   }
 
-  /** Commands and skills OpenCode runs itself when a message starts with `/name`. */
+  /** Commands and skills a message starting with `/name` runs through OpenCode's command route. */
   async listCommands(_threadId?: string): Promise<ProviderCommand[]> {
     return this.commands(this.#workspacePath)
   }

@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events'
-import { mkdirSync, readFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -94,6 +94,13 @@ export type AcpLaunchOptions = {
   env?: Record<string, string> | undefined
 }
 
+/**
+ * TasteCode-managed MCP servers for an agent that advertises its transports.
+ * Stdio servers always go; http servers only when the agent's initialize
+ * answer says it accepts them, as ACP requires.
+ */
+export type AcpManagedMcp = { servers: AcpMcpServer[] }
+
 export interface AcpRpc {
   onStderr(handler: (text: string) => void): void
   onNotification(handler: (method: string, params: JsonRpcValue | undefined) => void): void
@@ -180,22 +187,37 @@ const IMAGE_MIME_TYPES = new Map([
   ['.webp', 'image/webp'],
 ])
 
+/** A prompt block: ACP's resource link also carries a name and size. */
+export type AcpPromptBlock = ContentBlock & { name?: string; size?: number }
+
+/**
+ * Builds a session/prompt body. Images go as pixels when the agent negotiated
+ * image prompts; otherwise, and for every other file, as resource links,
+ * which ACP requires every agent to accept ("Baseline agent functionality
+ * requires support for ContentBlock::Text and ContentBlock::ResourceLink").
+ */
 export function acpPromptContent(
   text: string,
   attachments: string[] = [],
   images = false,
-): ContentBlock[] {
-  if (attachments.length > 0 && !images) throw new Error('ACP agent does not support images')
+): AcpPromptBlock[] {
   return [
     { type: 'text', text },
-    ...attachments.map((file) => {
+    ...attachments.map((file): AcpPromptBlock => {
       const mimeType = IMAGE_MIME_TYPES.get(path.extname(file).toLowerCase())
-      if (!mimeType) throw new Error(`ACP image type is not supported: ${path.extname(file)}`)
+      const uri = pathToFileURL(file).href
+      if (images && mimeType) {
+        return { type: 'image', data: readFileSync(file).toString('base64'), mimeType, uri }
+      }
+      // Stat it now so a vanished file fails before the turn opens, as an
+      // image read would.
+      const { size } = statSync(file)
       return {
-        type: 'image',
-        data: readFileSync(file).toString('base64'),
-        mimeType,
-        uri: pathToFileURL(file).href,
+        type: 'resource_link',
+        name: path.basename(file),
+        uri,
+        size,
+        ...(mimeType ? { mimeType } : {}),
       }
     }),
   ]
@@ -207,6 +229,7 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
   readonly #spawn: typeof spawnCli
   readonly #provider: ProviderId
   readonly #mcpServers: AcpMcpServer[]
+  readonly #managedMcp: AcpMcpServer[]
   readonly #env: Record<string, string> | undefined
   readonly #argsFor: ((settings: AcpTurnSettings) => string[]) | undefined
   #settings: AcpTurnSettings
@@ -240,8 +263,9 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
   #commands: ProviderCommand[] = []
   #commandsKey = '[]'
 
-  constructor(agentId: string, launch?: AcpLaunchOptions) {
+  constructor(agentId: string, launch?: AcpLaunchOptions, managedMcp?: AcpManagedMcp) {
     super()
+    this.#managedMcp = managedMcp?.servers ?? []
     this.#spawn = launch?.spawn ?? spawnCli
     this.#provider = launch?.provider ?? 'acp'
     this.#mcpServers = launch?.mcpServers ?? []
@@ -268,7 +292,7 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
   }
 
   get capabilities(): Capabilities {
-    return { ...ACP_CAPABILITIES, images: this.#images }
+    return { ...ACP_CAPABILITIES, images: this.#images, imageFiles: true }
   }
 
   async startThread(workspacePath: string, options: AcpStartOptions = {}): Promise<Thread> {
@@ -283,7 +307,7 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
         'session/new',
         {
           cwd: workspacePath,
-          mcpServers: this.#mcpServers,
+          mcpServers: this.#sessionMcpServers(),
         },
         { result: NewSessionResultSchema },
       )
@@ -331,7 +355,7 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     const loaded = await rpc.request('session/load', {
       sessionId,
       cwd: workspacePath,
-      mcpServers: this.#mcpServers,
+      mcpServers: this.#sessionMcpServers(),
     })
     this.#sessionId = sessionId
     const reloaded = NewSessionResultSchema.safeParse(loaded ?? {})
@@ -570,7 +594,7 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
       await rpc.request('session/load', {
         sessionId,
         cwd: this.#workspacePath,
-        mcpServers: this.#mcpServers,
+        mcpServers: this.#sessionMcpServers(),
       })
       this.#sessionId = sessionId
       this.#model = next.model
@@ -654,6 +678,22 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     this.#images = init.agentCapabilities?.promptCapabilities?.image ?? false
     this.#loadSession = init.agentCapabilities?.loadSession ?? false
     return rpc
+  }
+
+  /** The launch's servers as given, plus the managed ones this agent's transports allow. */
+  #sessionMcpServers(): AcpMcpServer[] {
+    if (this.#managedMcp.length === 0) return this.#mcpServers
+    const http = this.#initialize?.agentCapabilities?.mcpCapabilities?.http === true
+    const accepted = this.#managedMcp.filter((server) => !('type' in server) || http)
+    for (const server of this.#managedMcp) {
+      if (!accepted.includes(server)) {
+        this.emit(
+          'log',
+          `${this.#spec.name} does not accept HTTP MCP servers; "${server.name}" was left out of this session`,
+        )
+      }
+    }
+    return [...this.#mcpServers, ...accepted]
   }
 
   async #selectSessionModel(model: string | undefined): Promise<void> {

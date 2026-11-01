@@ -1309,17 +1309,24 @@
                 >Slash commands, skills and MCP servers from /, $, or @ with keyboard navigation, a
                 compact resource picker, and selected resource chips
                 <span class="d"
-                  >/ at the start of a message lists TasteCode commands (/side and /btw in a started
-                  chat, /feedback while feedback is available), then the provider's commands, then
-                  its skills, and no longer opens mid-message; TasteCode commands win name
-                  collisions in the menu; choosing a command types /name into the draft for the
-                  provider to expand, and Enter on an exactly typed command without arguments sends
-                  it at once; @ lists MCP servers; $ lists skills, with Codex skill chips unchanged;
-                  the provider list comes from commands.list: Claude Code from an open chat or, for
-                  a project without one, the cached background probe, with the built-ins that change
-                  state TasteCode owns and terminal-only commands hidden; Grok, OpenCode and other
-                  ACP agents from a live chat or a probe; when the probe failed, the menu says
-                  "Couldn't load commands." and asks again the next time it opens</span
+                  >/ at the start of a message lists TasteCode commands (/new and its alias /clear
+                  start a new chat and /model opens the model picker for every provider, /side and
+                  /btw in a started chat, /feedback while feedback is available), then the
+                  provider's commands, then its skills, and no longer opens mid-message; TasteCode
+                  commands win name collisions in the menu; choosing a command types /name into the
+                  draft for the provider to expand, and Enter on an exactly typed command without
+                  arguments sends it at once; @ lists MCP servers; $ lists skills, with Codex skill
+                  chips unchanged; the provider list comes from commands.list: Claude Code from an
+                  open chat or, for a project without one, the cached background probe, with the
+                  built-ins that change state TasteCode owns and terminal-only commands hidden;
+                  Codex from a fixed list of the app-server actions /goal, /compact and /review,
+                  which its chats send as thread/goal/*, thread/compact/start and review/start
+                  requests instead of text (a goal answer shows as a short assistant turn; checked
+                  against a fake app-server only); Grok, OpenCode and other ACP agents from a live
+                  chat or a probe (an OpenCode chat sends a leading /name it lists to its session
+                  command route with the rest as arguments; v1 servers only, checked against a fake
+                  server); when the probe failed, the menu says "Couldn't load commands." and asks
+                  again the next time it opens</span
                 ></span
               ></label
             >
@@ -2715,9 +2722,11 @@
                   off for a project. Hiding inherited servers follows the provider's declared
                   hideInherited capability, with the legacy rule when it is absent, and a server's
                   tool list renders only when its row is expanded; open Codex chats resume with
-                  saved changes, Grok receives selected servers through ACP, and Claude receives
-                  enabled definitions on start and resume with credentials kept out of process
-                  arguments; controls follow the available capabilities, and Claude rejects
+                  saved changes, Grok receives selected servers through ACP, other ACP agents
+                  receive the project's ACP servers in session/new (stdio always, HTTP only when the
+                  agent's initialize answer advertises it; a left-out server is logged), and Claude
+                  receives enabled definitions on start and resume with credentials kept out of
+                  process arguments; controls follow the available capabilities, and Claude rejects
                   unsupported inherited-server hiding before saving</span
                 ></span
               ></label
@@ -2747,7 +2756,11 @@
             <label
               ><input type="checkbox" /><span
                 >MCP OAuth sign-in handled by the server, credentials in the OS store
-                <span class="d">pending until the matching completion event</span></span
+                <span class="d"
+                  >pending until the matching completion event; a provider TasteCode cannot start
+                  MCP sign-in for shows no Sign in button but a line saying to sign in through that
+                  provider, and the @ menu says Sign in outside TasteCode</span
+                ></span
               ></label
             >
           </li>
@@ -2777,6 +2790,25 @@
                   whose CLI loads them (Codex), while the others show their own skill inventory or
                   unavailable; Grok and OpenCode list their skills with scope, and their project
                   skills show here</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Default skills: cinetic, taste-skill (design-taste-frontend) and cook ship with
+                TasteCode for every provider
+                <span class="d"
+                  >pinned to exact upstream commits in packages/default-skills/skills.json, fetched
+                  and hash-checked by its sync script (the files are not in git) and packaged as
+                  real files in resources/default-skills; the Skills page lists them read-only under
+                  Included with TasteCode, and $ offers them in the composer; chats get a short
+                  catalog (names, one line, folder) in their instructions and read SKILL.md only
+                  when needed, Side chats and background sessions do not; Claude Code loads the
+                  folder natively as the plugin tastecode (skills show as tastecode:&lt;name&gt;,
+                  Agent SDK plugins option and claude -p --plugin-dir) and gets no catalog; a
+                  missing bundle lists nothing and adds no catalog</span
                 ></span
               ></label
             >

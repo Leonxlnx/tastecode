@@ -33,3 +33,6 @@ packages/adapter-codex/src/generated/
 apps/mobile/ios/
 apps/mobile/android/
 apps/mobile/.expo/
+
+# Upstream skill files, fetched by packages/default-skills (gitignored).
+packages/default-skills/bundle/
