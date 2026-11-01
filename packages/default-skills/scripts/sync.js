@@ -1,7 +1,7 @@
 // Fetches the Agent Skills TasteCode ships by default from their pinned GitHub
 // commits, checks them against skills.json and lays them out as one folder that
 // is both a plain skills tree (`skills/<name>/SKILL.md`) and a Claude Code
-// plugin (`.claude-plugin/plugin.json`).
+// plugin (`.claude-plugin/plugin.json`), with a copy of skills.json for the app.
 //
 //   node scripts/sync.js            fetch when the bundle is missing or differs
 //   node scripts/sync.js --verify   check the bundle only; exit 1 when it is off
@@ -162,7 +162,14 @@ export async function verifyBundle(manifest, root = bundleRoot) {
   } catch {
     problems.push('plugin.json is missing')
   }
-  const expected = new Set(['.claude-plugin', 'skills'])
+  try {
+    const copy = JSON.parse(await readFile(path.join(root, 'skills.json'), 'utf8'))
+    if (JSON.stringify(copy) !== JSON.stringify(manifest))
+      problems.push('skills.json in the bundle differs from the pinned one')
+  } catch {
+    problems.push('skills.json is missing from the bundle')
+  }
+  const expected = new Set(['.claude-plugin', 'skills', 'skills.json'])
   for (const name of await readdir(root))
     if (!expected.has(name)) problems.push(`unexpected entry in bundle: ${name}`)
   let folders = []
@@ -239,6 +246,8 @@ export async function syncBundle(
     }
     await mkdir(path.join(staging, '.claude-plugin'), { recursive: true })
     await writeFile(path.join(staging, '.claude-plugin', 'plugin.json'), pluginManifest(manifest))
+    // The app reads names and summaries from here; the source tree is not shipped.
+    await writeFile(path.join(staging, 'skills.json'), `${JSON.stringify(next, null, 2)}\n`)
     await rm(root, { recursive: true, force: true })
     await rename(staging, root)
   } finally {

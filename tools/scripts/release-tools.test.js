@@ -674,6 +674,10 @@ test('real ASAR resources retain every reference byte, license file, and the res
     path.join(resources, 'default-skills', '.claude-plugin', 'plugin.json'),
     `${JSON.stringify(skillsManifest.plugin, null, 2)}\n`,
   )
+  await writeFile(
+    path.join(resources, 'default-skills', 'skills.json'),
+    JSON.stringify(skillsManifest),
+  )
   await verifyPackagedResources(resources, releaseConfig, source)
   await writeFile(updaterFile, dump({ ...updater, channel: 'wrong' }))
   await assert.rejects(verifyPackagedResources(resources, releaseConfig, source), /configured feed/)
