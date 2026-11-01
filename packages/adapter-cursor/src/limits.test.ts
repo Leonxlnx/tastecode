@@ -107,14 +107,14 @@ describe('decodeCurrentPeriodUsage', () => {
 })
 
 describe('cursorLimitsFromUsage', () => {
-  it('shows Included, Auto and API like /usage, ending with the billing cycle', () => {
+  it('shows Included, Auto and API like /usage, the billing cycle once', () => {
     const timing = { resetsAt: END, windowMinutes: (END - START) / 60_000 }
     expect(cursorLimitsFromUsage(decodeCurrentPeriodUsage(usageBytes(PLAN)))).toEqual({
       status: 'ready',
       limits: [
         { id: 'included', label: 'Included', usedPercent: 37, ...timing },
-        { id: 'auto', label: 'Auto', usedPercent: 21.5, ...timing },
-        { id: 'api', label: 'API', usedPercent: 15.5, ...timing },
+        { id: 'auto', label: 'Auto', usedPercent: 21.5 },
+        { id: 'api', label: 'API', usedPercent: 15.5 },
       ],
     })
   })

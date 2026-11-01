@@ -141,7 +141,7 @@ export type CurrentPeriodUsage = {
 
 /**
  * The rows `/usage` shows under "Included": the share of the plan used, then
- * its Auto and API parts when Cursor reports them. All three end with the
+ * its Auto and API parts when Cursor reports them, which end with the same
  * billing cycle. Without plan usage (Enterprise spend accounts) the CLI says
  * usage is not available for the plan, and so does this.
  */
@@ -165,13 +165,16 @@ export function cursorLimitsFromUsage(usage: CurrentPeriodUsage): CursorLimitSou
       ? ((plan.includedSpend ?? 0) / plan.limit) * 100
       : undefined)
   const rows: ProviderLimit[] = []
-  const add = (id: string, label: string, percent: number | undefined) => {
+  // Auto and API are parts of Included and end with the same cycle; only
+  // Included carries the reset, so the popup says it once.
+  const add = (id: string, label: string, percent: number | undefined, timed: boolean) => {
     if (percent === undefined || !Number.isFinite(percent)) return
-    rows.push({ id, label, usedPercent: Math.max(0, Math.min(100, percent)), ...timing })
+    const usedPercent = Math.max(0, Math.min(100, percent))
+    rows.push({ id, label, usedPercent, ...(timed ? timing : {}) })
   }
-  add('included', 'Included', total)
-  add('auto', 'Auto', plan.autoPercentUsed)
-  add('api', 'API', plan.apiPercentUsed)
+  add('included', 'Included', total, true)
+  add('auto', 'Auto', plan.autoPercentUsed, false)
+  add('api', 'API', plan.apiPercentUsed, false)
   return rows.length > 0 ? { status: 'ready', limits: rows } : { status: 'unavailable' }
 }
 
