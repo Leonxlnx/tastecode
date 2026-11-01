@@ -901,7 +901,7 @@ function acpRuntime(
   const open = async (workspacePath: string, options: StartOptions, threadId?: string) => {
     if (!options.agent) throw new Error('no ACP agent chosen')
     const harness = harnessFor('acp', options.agent, resolveHarness)
-    const { AcpAdapter } = await loadAcpAdapter()
+    const { AcpAdapter, prepareAcpMcpServers } = await loadAcpAdapter()
     const adapter = new AcpAdapter(
       options.agent,
       harness
@@ -912,6 +912,9 @@ function acpRuntime(
             spawn: customHarnessSpawn(harness),
           }
         : undefined,
+      {
+        servers: prepareAcpMcpServers(options.mcpServers ?? [], options.mcpCredentials ?? {}),
+      },
     )
     adapter.on('log', onLog)
     return startedSession(adapter, async () => {
