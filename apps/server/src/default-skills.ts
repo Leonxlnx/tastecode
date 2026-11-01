@@ -1,8 +1,8 @@
-import { readFile } from 'node:fs/promises'
+import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Skill } from '@harness/contracts'
-import { listSkillsIn } from './skill-inventory.js'
+import { parseSkillFrontmatter, skillName } from './skill-inventory.js'
 
 /** Ids of the skills that ship with TasteCode; no provider owns them, so none can switch them. */
 export const DEFAULT_SKILL_ID_PREFIX = 'tastecode:'
@@ -34,35 +34,45 @@ export function defaultSkillsRoot(env: NodeJS.ProcessEnv = process.env): string 
 /**
  * Reads the bundled skills that are actually on disk. A checkout that never
  * fetched them, or a damaged install, lists none and adds no catalog rather
- * than pointing agents at files that are not there.
+ * than pointing agents at files that are not there. It reads a few small
+ * files once, synchronously, so a session start never waits a tick for it:
+ * resume and Stop races depend on a session being created right away.
  */
-export async function loadDefaultSkills(root = defaultSkillsRoot()): Promise<DefaultSkills> {
+export function loadDefaultSkills(root = defaultSkillsRoot()): DefaultSkills {
   let entries: BundledEntry[]
   try {
-    const manifest = JSON.parse(await readFile(path.join(root, 'skills.json'), 'utf8')) as {
+    const manifest = JSON.parse(readFileSync(path.join(root, 'skills.json'), 'utf8')) as {
       skills?: unknown
     }
     entries = Array.isArray(manifest.skills) ? (manifest.skills as BundledEntry[]) : []
   } catch {
     return { root, skills: [], catalog: '' }
   }
-  const listed = await listSkillsIn(path.join(root, 'skills'), 'system')
-  const byFolder = new Map(
-    listed.skills.flatMap((skill) =>
-      skill.source.type === 'folder' ? [[path.basename(skill.source.path), skill] as const] : [],
-    ),
-  )
   const skills: Skill[] = []
   const lines: string[] = []
   for (const entry of entries) {
-    if (typeof entry.folder !== 'string') continue
-    const skill = byFolder.get(entry.folder)
-    if (!skill || skill.source.type !== 'folder') continue
-    skills.push({ ...skill, id: `${DEFAULT_SKILL_ID_PREFIX}${skill.name}` })
+    if (typeof entry.folder !== 'string' || !/^[\w.-]+$/.test(entry.folder)) continue
+    const dir = path.join(root, 'skills', entry.folder)
+    let markdown: string
+    try {
+      markdown = readFileSync(path.join(dir, 'SKILL.md'), 'utf8')
+    } catch {
+      continue
+    }
+    const frontmatter = parseSkillFrontmatter(markdown)
+    const name = skillName(frontmatter.name, entry.folder)
+    skills.push({
+      id: `${DEFAULT_SKILL_ID_PREFIX}${name}`,
+      name,
+      description: frontmatter.description ?? '',
+      source: { type: 'folder', path: dir },
+      scope: 'system',
+      enabled: true,
+      dependencyErrors: [],
+    })
     const summary = typeof entry.summary === 'string' ? entry.summary.trim() : ''
-    const folder = path.basename(skill.source.path)
-    const where = folder === skill.name ? '' : ` (folder ${folder})`
-    lines.push(`- ${skill.name}${where}${summary ? `: ${summary}` : ''}`)
+    const where = entry.folder === name ? '' : ` (folder ${entry.folder})`
+    lines.push(`- ${name}${where}${summary ? `: ${summary}` : ''}`)
   }
   return {
     root,
