@@ -1321,9 +1321,11 @@
                   the app-server actions /goal, /compact and /review, which its chats send as
                   thread/goal/*, thread/compact/start and review/start requests instead of text (a
                   goal answer shows as a short assistant turn; checked against a fake app-server
-                  only); Grok, OpenCode and other ACP agents from a live chat or a probe; when the
-                  probe failed, the menu says "Couldn't load commands." and asks again the next time
-                  it opens</span
+                  only); Grok, OpenCode and other ACP agents from a live chat or a probe (an
+                  OpenCode chat sends a leading /name it lists to its session command route with the
+                  rest as arguments; v1 servers only, checked against a fake server); when the probe
+                  failed, the menu says "Couldn't load commands." and asks again the next time it
+                  opens</span
                 ></span
               ></label
             >
