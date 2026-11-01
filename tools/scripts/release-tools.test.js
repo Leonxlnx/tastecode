@@ -658,6 +658,22 @@ test('real ASAR resources retain every reference byte, license file, and the res
   }
   const updaterFile = path.join(resources, 'app-update.yml')
   await writeFile(updaterFile, dump(updater))
+  const skillsManifest = { plugin: { name: 'tastecode' }, skills: [] }
+  await mkdir(path.join(source, 'packages', 'default-skills'), { recursive: true })
+  await writeFile(
+    path.join(source, 'packages', 'default-skills', 'skills.json'),
+    JSON.stringify(skillsManifest),
+  )
+  await assert.rejects(
+    verifyPackagedResources(resources, releaseConfig, source),
+    /default skills do not match/,
+  )
+  await mkdir(path.join(resources, 'default-skills', '.claude-plugin'), { recursive: true })
+  await mkdir(path.join(resources, 'default-skills', 'skills'))
+  await writeFile(
+    path.join(resources, 'default-skills', '.claude-plugin', 'plugin.json'),
+    `${JSON.stringify(skillsManifest.plugin, null, 2)}\n`,
+  )
   await verifyPackagedResources(resources, releaseConfig, source)
   await writeFile(updaterFile, dump({ ...updater, channel: 'wrong' }))
   await assert.rejects(verifyPackagedResources(resources, releaseConfig, source), /configured feed/)
