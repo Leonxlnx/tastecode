@@ -94,6 +94,13 @@ export type AcpLaunchOptions = {
   env?: Record<string, string> | undefined
 }
 
+/**
+ * TasteCode-managed MCP servers for an agent that advertises its transports.
+ * Stdio servers always go; http servers only when the agent's initialize
+ * answer says it accepts them, as ACP requires.
+ */
+export type AcpManagedMcp = { servers: AcpMcpServer[] }
+
 export interface AcpRpc {
   onStderr(handler: (text: string) => void): void
   onNotification(handler: (method: string, params: JsonRpcValue | undefined) => void): void
@@ -207,6 +214,7 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
   readonly #spawn: typeof spawnCli
   readonly #provider: ProviderId
   readonly #mcpServers: AcpMcpServer[]
+  readonly #managedMcp: AcpMcpServer[]
   readonly #env: Record<string, string> | undefined
   readonly #argsFor: ((settings: AcpTurnSettings) => string[]) | undefined
   #settings: AcpTurnSettings
@@ -240,8 +248,9 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
   #commands: ProviderCommand[] = []
   #commandsKey = '[]'
 
-  constructor(agentId: string, launch?: AcpLaunchOptions) {
+  constructor(agentId: string, launch?: AcpLaunchOptions, managedMcp?: AcpManagedMcp) {
     super()
+    this.#managedMcp = managedMcp?.servers ?? []
     this.#spawn = launch?.spawn ?? spawnCli
     this.#provider = launch?.provider ?? 'acp'
     this.#mcpServers = launch?.mcpServers ?? []
@@ -283,7 +292,7 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
         'session/new',
         {
           cwd: workspacePath,
-          mcpServers: this.#mcpServers,
+          mcpServers: this.#sessionMcpServers(),
         },
         { result: NewSessionResultSchema },
       )
@@ -331,7 +340,7 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     const loaded = await rpc.request('session/load', {
       sessionId,
       cwd: workspacePath,
-      mcpServers: this.#mcpServers,
+      mcpServers: this.#sessionMcpServers(),
     })
     this.#sessionId = sessionId
     const reloaded = NewSessionResultSchema.safeParse(loaded ?? {})
@@ -570,7 +579,7 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
       await rpc.request('session/load', {
         sessionId,
         cwd: this.#workspacePath,
-        mcpServers: this.#mcpServers,
+        mcpServers: this.#sessionMcpServers(),
       })
       this.#sessionId = sessionId
       this.#model = next.model
@@ -654,6 +663,22 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     this.#images = init.agentCapabilities?.promptCapabilities?.image ?? false
     this.#loadSession = init.agentCapabilities?.loadSession ?? false
     return rpc
+  }
+
+  /** The launch's servers as given, plus the managed ones this agent's transports allow. */
+  #sessionMcpServers(): AcpMcpServer[] {
+    if (this.#managedMcp.length === 0) return this.#mcpServers
+    const http = this.#initialize?.agentCapabilities?.mcpCapabilities?.http === true
+    const accepted = this.#managedMcp.filter((server) => !('type' in server) || http)
+    for (const server of this.#managedMcp) {
+      if (!accepted.includes(server)) {
+        this.emit(
+          'log',
+          `${this.#spec.name} does not accept HTTP MCP servers; "${server.name}" was left out of this session`,
+        )
+      }
+    }
+    return [...this.#mcpServers, ...accepted]
   }
 
   async #selectSessionModel(model: string | undefined): Promise<void> {

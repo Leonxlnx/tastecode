@@ -491,6 +491,8 @@ const defaultServices = {
     signOut: async () => (await loadGrok()).signOutGrok(),
   },
   acp: {
+    // ACP sessions can only add servers.
+    validateMcpServer: validateAcpMcpServer,
     account: async (agent) => (agent ? (await loadAcp()).acpAccount(agent) : { signedIn: false }),
     signOut: async (agent) => {
       if (agent) await (await loadAcp()).acpSignOut(agent)

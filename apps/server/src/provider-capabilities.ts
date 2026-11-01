@@ -88,7 +88,15 @@ const unsupported: ProviderControlCapabilities = {
 const PROCESS_LIMIT_READ_INTERVAL_MS = 5 * 60_000
 
 export const PROVIDER_CAPABILITIES = {
-  acp: { ...unsupported, resume: true, nativeModels: true, account: true, signOut: true },
+  acp: {
+    ...unsupported,
+    resume: true,
+    // TasteCode's project servers go to session/new, filtered by the agent's transports.
+    managedMcp: true,
+    nativeModels: true,
+    account: true,
+    signOut: true,
+  },
   antigravity: {
     ...unsupported,
     nativeModels: true,
