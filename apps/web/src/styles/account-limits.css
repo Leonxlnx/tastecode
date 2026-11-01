@@ -234,6 +234,11 @@
   white-space: nowrap;
 }
 
+/* An untouched allowance has no bar; its number steps back with it. */
+.account-menu__limit[data-full] .account-menu__limit-value {
+  color: var(--text-3);
+}
+
 .account-menu__limit-btn {
   border: 0;
   border-radius: var(--r-sm);
@@ -274,10 +279,6 @@
 .account-menu__reset-expiry {
   grid-area: 1 / 1;
   min-width: 0;
-}
-
-.account-menu__reset-time {
-  display: block;
 }
 
 .account-menu__reset-credit .account-menu__limit-use {

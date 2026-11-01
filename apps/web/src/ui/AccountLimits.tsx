@@ -22,7 +22,7 @@ import type { UsageSummaryState } from '../usage-summary-state.js'
 import '../styles/account-limits.css'
 import { ProviderIcon } from './ProviderIcon.js'
 import { compactRelativeTime } from './session-clock.js'
-import { resetText } from './usage/usage-format.js'
+import { dateTimeText, resetText } from './usage/usage-format.js'
 
 /** Values older than this say how old they are; younger ones read as current. */
 const AGE_SHOWN_AFTER_MS = 10 * 60_000
@@ -533,16 +533,22 @@ function LimitRow(props: {
   const credits = props.limit.resetCredits
   const hasSelectableCredits = credits?.some((credit) => credit.id !== undefined)
   const left = remaining(props.limit)
-  const gauge = props.limit.valueLabel === undefined
+  // An untouched allowance is one line: a full bar and its reset time say
+  // nothing the number does not, and the rows that are being spent stand out.
+  const full = props.limit.valueLabel === undefined && left === 100
+  const gauge = props.limit.valueLabel === undefined && !full
   const value = props.limit.valueLabel ?? `${left}% left`
   const pace = evenPace(props.limit, props.now)
   const reset =
-    props.limit.resetsAt === undefined ? undefined : resetLine(props.limit.resetsAt, props.now)
+    props.limit.resetsAt === undefined || full
+      ? undefined
+      : resetLine(props.limit.resetsAt, props.now)
 
   return (
     <div
       className="account-menu__limit"
       data-gauge={gauge ? '' : undefined}
+      data-full={full ? '' : undefined}
       data-low={gauge && left <= USAGE_LOW_PERCENT ? '' : undefined}
       // The bar takes its length from how much is left.
       style={gauge ? ({ '--left': left / 100 } as CSSProperties) : undefined}
@@ -733,17 +739,7 @@ function ResetCreditExpiries(props: {
                   data-expiring-soon={untilExpiry > 0 && untilExpiry < 86_400_000 ? '' : undefined}
                 >
                   {untilExpiry <= 0 ? 'Expired' : 'Expires'}{' '}
-                  {validDate.toLocaleDateString(undefined, {
-                    year: 'numeric',
-                    month: 'short',
-                    day: 'numeric',
-                  })}{' '}
-                  <span className="account-menu__reset-time">
-                    {validDate.toLocaleTimeString(undefined, {
-                      hour: '2-digit',
-                      minute: '2-digit',
-                    })}
-                  </span>
+                  {dateTimeText(validDate.getTime(), now)}
                 </time>
               ) : expiresAt === null ? (
                 'No expiry'
