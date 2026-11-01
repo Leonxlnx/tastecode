@@ -385,7 +385,10 @@ function menuEntries(inventory: Inventory, ownCommands: readonly AppCommand[]) {
     '/': [...commands, ...slashSkills],
     $: skills,
     '@': (inventory.mcp?.servers ?? []).map((server) =>
-      menuEntry(mcpResource(server), [server.displayName ?? server.id, server.id].map(lowercase)),
+      menuEntry(
+        mcpResource(server, inventory.mcp?.capabilities.startOAuth === true),
+        [server.displayName ?? server.id, server.id].map(lowercase),
+      ),
     ),
   }
 }
@@ -506,11 +509,14 @@ function skillResource(skill: Skill): ComposerResource {
   }
 }
 
-function mcpResource(server: McpServer): ComposerResource {
+/** `canSignIn`: TasteCode can start this provider's MCP sign-in from MCP settings. */
+function mcpResource(server: McpServer, canSignIn: boolean): ComposerResource {
   const unavailableReason = !server.enabled
     ? 'Disabled'
     : server.auth?.status === 'sign_in_required'
-      ? 'Sign in required'
+      ? canSignIn
+        ? 'Sign in required'
+        : 'Sign in outside TasteCode'
       : server.startup?.state === 'failed'
         ? server.startup.message
         : undefined
