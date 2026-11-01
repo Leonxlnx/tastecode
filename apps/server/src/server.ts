@@ -33,6 +33,8 @@ import { DEFAULT_PORT } from './server-config.js'
 import { Store } from './store.js'
 import { createProjectListProjector, type ProjectListState } from './project-list.js'
 import { browseFolders } from './project-browser.js'
+import { createChatFolder, isChatFolder } from './chat-folder.js'
+import { chatFoldersRoot } from './product-paths.js'
 import {
   DEFAULT_PHONE_PORT,
   PHONE_METHODS,
@@ -100,6 +102,7 @@ const LIST_CHANGES: ReadonlySet<MethodName> = new Set<MethodName>([
   'thread.delete',
   'thread.changeProvider',
   'projects.add',
+  'projects.createChatFolder',
   'projects.pin',
   'projects.rename',
   'projects.remove',
@@ -349,8 +352,10 @@ export function startServer(
     },
   })
   const checkpointProtection = orchestrator.protectStoredCheckpoints()
+  const chatFolders = chatFoldersRoot()
   const projectList = createProjectListProjector({
     includeDefaults: process.env['HARNESS_PROJECT_LIST_INCLUDE_DEFAULTS'] === '1',
+    isChatFolder: (projectPath) => isChatFolder(chatFolders, projectPath),
   })
   const serializeProjectList = createSerializedResultCache()
   const historyResponse = createHistoryResponseProjector()
@@ -1246,6 +1251,11 @@ export function startServer(
         const project = store.addProject(p.path, p.name)
         refreshProviderHistory()
         return project
+      }
+
+      case 'projects.createChatFolder': {
+        const project = store.addProject(createChatFolder(chatFolders))
+        return { ...project, chat: true as const }
       }
 
       case 'projects.pin': {
