@@ -7308,6 +7308,7 @@ export function App() {
                     onSend={sendTurn}
                     onSteer={steerTurn}
                     onFeedbackCommand={feedback.status.enabled ? openCommandFeedback : undefined}
+                    onNewChatCommand={startNewChat}
                     onInterrupt={interrupt}
                     stopping={stopping}
                     onDeleteQueuedTurn={deleteQueuedTurn}
