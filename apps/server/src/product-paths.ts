@@ -21,3 +21,9 @@ export function configFile(name: string): string {
     path.join(os.homedir(), '.personalharness', name),
   )
 }
+
+/** Where a chat without a project gets its own folder: `~/.tastecode/threads`. */
+export function chatFoldersRoot(): string {
+  const override = process.env['HARNESS_CONFIG_DIR']
+  return path.join(override || path.join(os.homedir(), '.tastecode'), 'threads')
+}

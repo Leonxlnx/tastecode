@@ -38,7 +38,13 @@ type ThreadProjectionLocation = {
 }
 
 /** Retains unchanged response objects and projects only status rows named by the change journal. */
-export function createProjectListProjector(options: { includeDefaults?: boolean } = {}) {
+export function createProjectListProjector(
+  options: {
+    includeDefaults?: boolean
+    /** Whether a project is a folder made for a chat without a project. */
+    isChatFolder?: (projectPath: string) => boolean
+  } = {},
+) {
   const sessionProjections = new WeakMap<StoredSidebarThread, SessionProjection>()
   let previousProjects = new Map<string, ProjectProjection>()
   let previousResult: ProjectList | undefined
@@ -189,7 +195,9 @@ export function createProjectListProjector(options: { includeDefaults?: boolean 
       const value =
         previous?.source === project && previous.sessions === sessions
           ? previous.value
-          : { ...project, sessions }
+          : options.isChatFolder?.(project.path)
+            ? { ...project, chat: true, sessions }
+            : { ...project, sessions }
       const projection = { source: project, sessions, value }
       nextProjects.set(project.path, projection)
       projected.push(value)
