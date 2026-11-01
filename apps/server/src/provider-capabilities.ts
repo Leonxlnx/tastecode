@@ -160,6 +160,10 @@ export const PROVIDER_CAPABILITIES = {
     account: true,
     login: true,
     signOut: true,
+    usageLimits: true,
+    // A read is one HTTPS request, no process; Cursor's figures change with
+    // each turn but nothing reports them live, so they are this old at most.
+    limitReadIntervalMs: PROCESS_LIMIT_READ_INTERVAL_MS,
   },
   grok: {
     ...unsupported,
