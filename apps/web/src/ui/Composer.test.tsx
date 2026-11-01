@@ -470,6 +470,60 @@ describe('Composer draft state', () => {
     expect(composer.value).toBe('')
   })
 
+  it.each([
+    ['/resume', 'resume'],
+    ['/continue', 'resume'],
+    ['/config', 'settings'],
+    ['/mcp', 'mcp'],
+    ['/skills', 'skills'],
+    ['/status', 'usage'],
+    ['/cost', 'usage'],
+    ['/logout', 'login'],
+  ])('opens TasteCode’s own screen for %s instead of sending it', (text, screenName) => {
+    const onSend = vi.fn()
+    const onAppScreenCommand = vi.fn()
+    renderComposer(onSend, { onAppScreenCommand })
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+    fireEvent.change(composer, { target: { value: text } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    expect(onAppScreenCommand).toHaveBeenCalledWith(screenName)
+    expect(onSend).not.toHaveBeenCalled()
+    expect(composer.value).toBe('')
+  })
+
+  it('sends /mcp with arguments, or with no handler, to the provider as typed', () => {
+    const onSend = vi.fn()
+    const onAppScreenCommand = vi.fn()
+    const { unmount } = renderComposer(onSend, { onAppScreenCommand })
+    const composer = screen.getByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: '/mcp login github' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    expect(onSend).toHaveBeenCalledWith('/mcp login github', [])
+    expect(onAppScreenCommand).not.toHaveBeenCalled()
+    unmount()
+    renderComposer(onSend)
+    fireEvent.change(screen.getByPlaceholderText('Do anything'), { target: { value: '/mcp' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    expect(onSend).toHaveBeenLastCalledWith('/mcp', [])
+  })
+
+  it.each(['/permissions', '/approvals'])(
+    'opens the permissions picker for %s instead of sending it',
+    async (text) => {
+      const onSend = vi.fn()
+      renderComposer(onSend)
+      const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+      fireEvent.change(composer, { target: { value: text } })
+      fireEvent.keyDown(composer, { key: 'Enter' })
+      expect(onSend).not.toHaveBeenCalled()
+      expect(composer.value).toBe('')
+      await waitFor(() =>
+        expect(
+          screen.getByRole('button', { name: 'Permissions' }).getAttribute('aria-expanded'),
+        ).toBe('true'),
+      )
+    },
+  )
   it('clears the saved draft before handing the text over', () => {
     const events: string[] = []
     renderComposer((text) => events.push(`send ${text}`), {
@@ -1687,7 +1741,7 @@ describe('Composer provider commands', () => {
       screen
         .getAllByRole('option')
         .map((option) => option.querySelector('.composer-resource-picker__name')?.textContent),
-    ).toEqual(['/side', '/feedback', '/code-review', '/context', '/compact'])
+    ).toEqual(['/permissions', '/side', '/feedback', '/code-review', '/context', '/compact'])
     expect(screen.getByRole('option', { name: /\/feedback/ }).textContent).toContain(
       'Send feedback to the TasteCode team',
     )
