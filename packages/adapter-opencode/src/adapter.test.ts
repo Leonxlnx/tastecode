@@ -1,3 +1,6 @@
+import { pathToFileURL } from 'node:url'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
 import { EventEmitter, once } from 'node:events'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { readFileSync } from 'node:fs'
@@ -233,6 +236,35 @@ describe('OpenCode adapter', () => {
       } finally {
         releaseSession()
         await adapter.dispose()
+      }
+    },
+  )
+
+  it.each(['v1', 'v2'] as const)(
+    'hands attached images to a %s server as files',
+    async (protocol) => {
+      const mock = protocol === 'v1' ? await serveOpenCode() : await serveOpenCodeV2()
+      const adapter = new OpenCodeAdapter({ baseUrl: mock.baseUrl })
+      const image = path.join(tmpdir(), 'TasteCode', 'attachments', 'shot.png')
+      try {
+        const thread = await adapter.startThread('C:\repo')
+        await adapter.sendTurn(thread.id, 'What is wrong here?', [image])
+        const url = pathToFileURL(image).href
+        if (protocol === 'v1') {
+          const prompt = await mock.waitFor('/session/session-1/prompt_async')
+          expect(prompt.body).toMatchObject({
+            parts: [
+              { type: 'text', text: 'What is wrong here?' },
+              { type: 'file', mime: 'image/png', filename: 'shot.png', url },
+            ],
+          })
+        } else {
+          await expect
+            .poll(() => mock.requests.find((request) => request.url.endsWith('/prompt'))?.body)
+            .toMatchObject({ text: 'What is wrong here?', files: [{ uri: url, name: 'shot.png' }] })
+        }
+      } finally {
+        adapter.dispose()
       }
     },
   )
