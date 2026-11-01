@@ -33,6 +33,19 @@ const threads: StoredSidebarThread[] = [
 ]
 
 describe('projects.list projector', () => {
+  it('marks only the folders made for chats without a project', () => {
+    const project = createProjectListProjector({ isChatFolder: (path) => path === '/two' })
+    const result = project(projects, threads, new Set(), {
+      isTurnRunning: () => false,
+      inboxStatus: () => 'idle',
+      revision: () => 0,
+    })
+    expect(result.projects.map(({ path, chat }) => ({ path, chat }))).toEqual([
+      { path: '/one', chat: undefined },
+      { path: '/two', chat: true },
+    ])
+  })
+
   it('keeps distinct API connections in the project session response', () => {
     const project = createProjectListProjector()
     const apiThreads: StoredSidebarThread[] = ['first', 'second'].map((connectionId) => ({
