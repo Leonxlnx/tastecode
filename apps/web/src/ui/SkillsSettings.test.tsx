@@ -87,6 +87,40 @@ describe('Agent Skills settings', () => {
     })
   })
 
+  it('lists the skills included with TasteCode read-only, also without a provider inventory', async () => {
+    const included = {
+      ...skill,
+      id: 'tastecode:cook',
+      name: 'cook',
+      displayName: undefined,
+      description: 'Runs the Cook Loop.',
+      source: { type: 'folder' as const, path: '/app/resources/default-skills/skills/cook' },
+      scope: 'system' as const,
+      dependencyErrors: [],
+    }
+    const vendorSystem = { ...included, id: '/codex/system/SKILL.md', name: 'skill-creator' }
+    const transport = client(async () => ({
+      capabilities: { inventory: false, configure: false, install: false },
+      skills: [vendorSystem, included],
+      errors: [],
+    }))
+    render(
+      <SkillsSettings
+        transport={transport}
+        provider="cursor"
+        providerName="Cursor"
+        projectPath="/work/project"
+        projectName="Project"
+      />,
+    )
+
+    expect(await screen.findByRole('heading', { name: 'Included with TasteCode' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'cook', level: 2 })).toBeTruthy()
+    expect(screen.getByText('Runs the Cook Loop.')).toBeTruthy()
+    expect(screen.queryByText('skill-creator')).toBeNull()
+    expect(screen.queryByRole('switch')).toBeNull()
+  })
+
   it('hides unsupported-provider actions', async () => {
     const transport = client(async () => ({
       capabilities: { inventory: false, configure: false, install: false },
