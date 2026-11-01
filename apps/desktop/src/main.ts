@@ -67,7 +67,11 @@ import { NativeMenuDispatch } from './native-menu-dispatch.js'
 import { isRendererFileUrl, rendererFileUrl } from './own-renderer.js'
 import { configurePreviewNavigation } from './preview-navigation.js'
 import { savePastedFile } from './pasted-file.js'
-import { ownedServerEnvironment, withFeedbackDetails } from './owned-server-env.js'
+import {
+  ownedServerEnvironment,
+  withDefaultSkills,
+  withFeedbackDetails,
+} from './owned-server-env.js'
 import { revealablePath } from './reveal-path.js'
 import { projectFilePath } from './project-file-path.js'
 import { PreviewCaptureOwner } from './preview-capture.js'
@@ -435,9 +439,12 @@ function startOwnedServer(): boolean {
   let serverEnv: NodeJS.ProcessEnv
   try {
     serverEnv = withFeedbackDetails(
-      ownedServerEnvironment(
-        process.env,
-        app.isPackaged ? readFileSync(rendererIndexPath(), 'utf8') : undefined,
+      withDefaultSkills(
+        ownedServerEnvironment(
+          process.env,
+          app.isPackaged ? readFileSync(rendererIndexPath(), 'utf8') : undefined,
+        ),
+        app.isPackaged ? path.join(process.resourcesPath, 'default-skills') : undefined,
       ),
       {
         appVersion: app.getVersion(),

@@ -368,7 +368,14 @@ export const CapabilitiesSchema = z.object({
   userInput: z.boolean().optional(),
   /** Can route elevated approval requests through an automatic risk reviewer. */
   autoReview: z.boolean().optional(),
+  /** The model receives attached images as pixels in the prompt itself. */
   images: z.boolean(),
+  /**
+   * Attached images can be handed to the agent as saved files it opens with
+   * its own tools. Unlike `images`, nothing guarantees the model sees the
+   * pixels, so features that depend on vision read `images` only.
+   */
+  imageFiles: z.boolean().optional(),
   /** Absent when the engine decides its context on its own. */
   context: ContextControlSchema.optional(),
   /**
@@ -411,6 +418,11 @@ export const ModelSchema = z.object({
     )
     .default([]),
   defaultServiceTier: z.string().nullable().optional(),
+  /**
+   * Whether this model, or the agent serving it, receives attached images as
+   * pixels. Absent: the engine's `images` capability decides.
+   */
+  images: z.boolean().optional(),
   /**
    * Display name of the model's creator, such as "DeepSeek" or "Anthropic".
    * Groups rows inside one source; a routing provider is not a lab.

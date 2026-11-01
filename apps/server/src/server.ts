@@ -18,6 +18,7 @@ import { cliProbe, invalidateCliProbes } from './cli-probe.js'
 import { stopModelListings } from './runtime-loader.js'
 import { readWorkspaceDiff, StaleDiffSnapshotError } from './diff-review.js'
 import { Orchestrator, resolveWorkspacePath, type LifecycleScheduleHint } from './orchestrator.js'
+import { defaultSkillsRoot } from './default-skills.js'
 import { checkForUpdates } from './update-check.js'
 import type { FeedbackConfig } from './feedback-config.js'
 import { FeedbackService, providerVersionLabel } from './feedback.js'
@@ -301,6 +302,7 @@ export function startServer(
       push.broadcast('usage.changed', accountId ? { provider, accountId } : { provider }),
     onLimitsChanged: (source) => push.broadcast('usage.limits', { source }),
     providerBinary: async (provider) => (await providerService).providerBinary(provider),
+    defaultSkillsRoot: defaultSkillsRoot(),
     onModelsChanged: (provider, agent, accountId) =>
       push.broadcast('models.changed', {
         provider,

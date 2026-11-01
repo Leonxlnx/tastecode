@@ -19,8 +19,8 @@
     "typecheck": "tsc -b",
     "start": "tsc -b && node scripts/build-main.js && node scripts/build-preload.js && node scripts/start.js",
     "test": "vitest run src --passWithNoTests",
-    "dist": "pnpm -w licenses:verify && pnpm -w build && node scripts/build-preload.js && electron-builder",
-    "dist:dir": "pnpm -w licenses:verify && pnpm -w build && node scripts/build-preload.js && electron-builder --dir",
+    "dist": "pnpm -w licenses:verify && pnpm --filter @harness/default-skills sync && pnpm -w build && node scripts/build-preload.js && electron-builder",
+    "dist:dir": "pnpm -w licenses:verify && pnpm --filter @harness/default-skills sync && pnpm -w build && node scripts/build-preload.js && electron-builder --dir",
     "verify:native-bindings": "node scripts/run-native-binding-proof.js"
   },
   "dependencies": {
@@ -109,6 +109,10 @@
       {
         "from": "../../release/THIRD_PARTY_LICENSES.txt",
         "to": "THIRD_PARTY_LICENSES.txt"
+      },
+      {
+        "from": "../../packages/default-skills/bundle",
+        "to": "default-skills"
       },
       {
         "from": "dist/feedback",
