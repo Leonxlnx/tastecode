@@ -1727,6 +1727,7 @@ export function App() {
               provider: selectedModelChoice.provider,
               connectionId: selectedModelChoice.connectionId,
               agentId: selectedModelChoice.agent?.id,
+              modelImages: selectedModelChoice.model.images,
             }
           : { provider, agentId: sourceAgent },
         providerStatuses,
@@ -7411,6 +7412,7 @@ export function App() {
     onSend: sendTurn,
     onSteer: steerTurn,
     onFeedbackCommand: feedback.status.enabled ? openCommandFeedback : undefined,
+    onNewChatCommand: startNewChat,
     onInterrupt: interrupt,
     stopping: stopping,
     onDeleteQueuedTurn: deleteQueuedTurn,

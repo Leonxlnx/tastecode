@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
+import path from 'node:path'
 import type { ApprovalMode, Capabilities, DomainEvent, Model, Thread } from '@harness/contracts'
 import { argumentPromptLimit, killTree, ProtocolFrameError, readNdjson } from '@harness/proc'
 import { z } from 'zod'
@@ -50,6 +51,9 @@ export const ANTIGRAVITY_CAPABILITIES: Capabilities = {
   reasoningItems: false,
   approvals: false,
   images: false,
+  // agy's print mode takes text only, but its own file viewer opens images and
+  // shows them to the model, so an attached image goes in as a path to open.
+  imageFiles: true,
 }
 
 export type AntigravityStartOptions = {
@@ -77,6 +81,25 @@ function applyAntigravityTurnOptions(
 }
 
 /**
+ * Names attached images in the prompt so the agent opens them with its own
+ * file viewer. Print mode has no image input of its own: `--input-format
+ * stream-json` accepts a single content block type (agy 1.1.x strings:
+ * "stream input content block type %q is not supported (only %q)"), and the
+ * CLI's paste-an-image path exists only in its interactive prompt.
+ */
+export function antigravityImagePrompt(text: string, attachments: readonly string[]): string {
+  if (attachments.length === 0) return text
+  const subject = attachments.length === 1 ? 'this image' : 'these images'
+  const block = [
+    '<attached-images>',
+    `The user attached ${subject}. Open each file with your file viewer to see it before you answer.`,
+    ...attachments.map((file) => `- ${file}`),
+    '</attached-images>',
+  ].join('\n')
+  return text.trim() ? `${text}\n\n${block}` : block
+}
+
+/**
  * The per-turn argv. The prompt may be multi-line because the binary is
  * spawned directly (never through cmd.exe).
  */
@@ -84,6 +107,7 @@ export function antigravityTurnArgs(
   prompt: string,
   options: AntigravityStartOptions,
   conversationId: string | undefined,
+  readableDirectories: readonly string[] = [],
 ): string[] {
   // The picker holds a collapsed base id; the wire wants the concrete
   // per-effort slug from the listing.
@@ -101,6 +125,11 @@ export function antigravityTurnArgs(
     ...(options.approval === 'auto' ? ['--mode', 'accept-edits'] : []),
     ...(options.approval === 'full' ? ['--dangerously-skip-permissions'] : []),
     ...(conversationId ? ['--conversation', conversationId] : []),
+    // Attached images are saved outside the workspace, where agy's
+    // non-workspace file policy would stop its file viewer; --add-dir is its
+    // own switch for reading one more directory (agy 1.x usage string
+    // "--add-dir <path>").
+    ...readableDirectories.flatMap((directory) => ['--add-dir', directory]),
   ]
 }
 
@@ -191,7 +220,6 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
     attachments: string[] = [],
     options: AntigravityTurnOptions = {},
   ): Promise<string> {
-    if (attachments.length) throw new Error('Antigravity attachments are not supported yet')
     this.#options = applyAntigravityTurnOptions(this.#options, options)
     // The picker normally warms this process-wide index. A server restart can
     // resume straight into a turn, though, and passing the collapsed anchor
@@ -204,12 +232,15 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
       }
     }
     const turnId = `${threadId}-turn-${++this.#turnCounter}`
+    const request = antigravityImagePrompt(text, attachments)
     const prompt =
       this.#instructionsPending && this.#options.instructions
-        ? `<system-instructions>\n${this.#options.instructions}\n</system-instructions>\n\n${text}`
-        : text
+        ? `<system-instructions>\n${this.#options.instructions}\n</system-instructions>\n\n${request}`
+        : request
     this.#instructionsPending = false
-    const args = antigravityTurnArgs(prompt, this.#options, this.#conversationId)
+    const args = antigravityTurnArgs(prompt, this.#options, this.#conversationId, [
+      ...new Set(attachments.map((file) => path.dirname(file))),
+    ])
 
     // A turn already in flight would be orphaned by the reassignment below —
     // its exit handler must also not clobber the new child's reference.

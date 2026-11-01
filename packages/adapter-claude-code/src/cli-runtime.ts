@@ -128,6 +128,11 @@ export function claudeCliArgs(options: Options): string[] {
   if (options.allowDangerouslySkipPermissions) args.push('--allow-dangerously-skip-permissions')
   if (options.includePartialMessages) args.push('--include-partial-messages')
   for (const directory of options.additionalDirectories ?? []) args.push(`--add-dir=${directory}`)
+  for (const plugin of options.plugins ?? []) {
+    if (plugin.type !== 'local') throw new Error(`Unsupported Claude plugin type: ${plugin.type}`)
+    const flag = plugin.skipMcpDiscovery ? '--plugin-dir-no-mcp' : '--plugin-dir'
+    args.push(`${flag}=${plugin.path}`)
+  }
   if (options.sessionId) args.push(`--session-id=${options.sessionId}`)
   if (options.persistSession === false) args.push('--no-session-persistence')
   if (options.settings !== undefined)

@@ -39,7 +39,7 @@ import {
   savePastedFile,
   type PickedAttachment,
 } from '../bridge.js'
-import { appCommands } from '../app-commands.js'
+import { appCommands, parseAppActionCommand } from '../app-commands.js'
 import { parseFeedbackCommand } from '../feedback-command.js'
 import { DEFAULT_KEYBINDINGS, shortcutAria, type Keybindings } from '../shortcuts.js'
 import type { Transport } from '../transport.js'
@@ -569,6 +569,8 @@ function ComposerComponent(props: {
   onSteer: (text: string, attachments: string[]) => void
   /** /feedback [text] opens TasteCode's feedback dialog instead of reaching a provider. */
   onFeedbackCommand?: ((text: string) => void) | undefined
+  /** /new or /clear starts a new chat instead of reaching a provider. */
+  onNewChatCommand?: (() => void) | undefined
   onInterrupt: () => void
   /** An interrupt is sent and the turn has not ended yet. */
   stopping?: boolean | undefined
@@ -663,9 +665,18 @@ function ComposerComponent(props: {
   // A side chat branches off a started chat; feedback needs this build's service.
   const sideChatAvailable = props.threadId !== undefined
   const feedbackAvailable = props.onFeedbackCommand !== undefined
+  const newChatAvailable = props.onNewChatCommand !== undefined
+  // /model opens the picker this composer shows; without one it means nothing here.
+  const modelPickerAvailable = !props.modelPending && props.models.length > 0
   const ownCommands = useMemo(
-    () => appCommands({ sideChat: sideChatAvailable, feedback: feedbackAvailable }),
-    [sideChatAvailable, feedbackAvailable],
+    () =>
+      appCommands({
+        sideChat: sideChatAvailable,
+        feedback: feedbackAvailable,
+        newChat: newChatAvailable,
+        model: modelPickerAvailable,
+      }),
+    [sideChatAvailable, feedbackAvailable, newChatAvailable, modelPickerAvailable],
   )
 
   const updateResourceTrigger = (trigger: ComposerResourceTrigger | undefined) => {
@@ -1365,6 +1376,23 @@ function ComposerComponent(props: {
     if (feedback && props.onFeedbackCommand) {
       updateText('')
       props.onFeedbackCommand(feedback.text)
+      return true
+    }
+    const action = selectedResources.length === 0 ? parseAppActionCommand(content) : undefined
+    if (action === 'new-chat' && props.onNewChatCommand) {
+      updateText('')
+      props.onNewChatCommand()
+      return true
+    }
+    const modelTrigger =
+      action === 'model'
+        ? composerRoot.current?.querySelector<HTMLButtonElement>('.menutrigger--model-selector')
+        : undefined
+    if (modelTrigger && !modelTrigger.disabled) {
+      updateText('')
+      setResourceTrigger(undefined)
+      // The picker's own trigger, so it opens exactly as a click opens it.
+      modelTrigger.click()
       return true
     }
     const trimmed = composerPromptWithResources(content, selectedResources)

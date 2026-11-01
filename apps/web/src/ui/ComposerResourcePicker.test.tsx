@@ -32,6 +32,7 @@ function createResourceTransport(
     loading: false,
   }),
   skills: unknown[] = [ANIMATE_SKILL],
+  mcpAuth: unknown = { status: 'not_required' },
 ) {
   return new TestTransport(async (method) => {
     if (method === 'skills.list') {
@@ -59,7 +60,7 @@ function createResourceTransport(
             description: 'Search official product documentation',
             scope: 'global',
             enabled: true,
-            auth: { status: 'not_required' },
+            auth: mcpAuth,
             startup: { state: 'ready' },
             tools: [],
             resources: [],
@@ -126,6 +127,19 @@ describe('ComposerResourcePicker', () => {
     expect(onSelect).toHaveBeenCalledWith(
       expect.objectContaining({ key: 'mcp:officialDocs', name: 'Official Docs' }),
     )
+  })
+
+  it('says a server needs sign-in outside TasteCode when TasteCode cannot start it', async () => {
+    renderPicker(
+      createResourceTransport(undefined, undefined, {
+        status: 'sign_in_required',
+        method: 'oauth',
+      }),
+      { marker: '@', query: '', start: 0, end: 1 },
+      { provider: 'claude-code' },
+    )
+    const docs = await screen.findByRole('option', { name: /Official Docs/ })
+    expect(docs.textContent).toContain('Sign in outside TasteCode')
   })
 
   it('lists provider commands before skills and asks the open chat for them', async () => {

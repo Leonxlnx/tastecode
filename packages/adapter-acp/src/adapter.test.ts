@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { acpPromptContent, parseAcpThreadId } from './adapter.js'
+import { ACP_CAPABILITIES } from './capabilities.js'
 import { prepareAcpMcpServers, validateAcpMcpServer } from './mcp.js'
 
 describe('ACP persisted sessions', () => {
@@ -33,10 +34,38 @@ describe('ACP image prompts', () => {
     }
   })
 
-  it('fails closed when the ACP agent did not negotiate image input', () => {
-    expect(() => acpPromptContent('Review this page.', ['preview.png'], false)).toThrow(
-      'does not support images',
-    )
+  it('links files the agent did not negotiate as pixels, which every agent accepts', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'harness-acp-link-'))
+    const image = join(directory, 'preview.png')
+    const notes = join(directory, 'notes.pdf')
+    try {
+      writeFileSync(image, Buffer.from([1, 2, 3]))
+      writeFileSync(notes, Buffer.from([1, 2, 3, 4]))
+      expect(acpPromptContent('Review this page.', [image], false)).toEqual([
+        { type: 'text', text: 'Review this page.' },
+        {
+          type: 'resource_link',
+          name: 'preview.png',
+          uri: pathToFileURL(image).href,
+          size: 3,
+          mimeType: 'image/png',
+        },
+      ])
+      // A file that is not an image stays a link even when pixels were negotiated.
+      expect(acpPromptContent('Read this.', [notes], true)[1]).toEqual({
+        type: 'resource_link',
+        name: 'notes.pdf',
+        uri: pathToFileURL(notes).href,
+        size: 4,
+      })
+      expect(() => acpPromptContent('Gone.', [join(directory, 'missing.png')], false)).toThrow()
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('declares image files for every agent and pixels only after negotiation', () => {
+    expect(ACP_CAPABILITIES).toMatchObject({ images: false, imageFiles: true })
   })
 })
 

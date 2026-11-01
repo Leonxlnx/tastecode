@@ -428,6 +428,8 @@ export type ClaudeStartOptions = {
   mcpServers?: McpServerConfig[] | undefined
   mcpCredentials?: Record<string, string> | undefined
   context?: ProviderContextSettings | undefined
+  /** Local plugin folders the session loads, as `--plugin-dir` does; never written to the config folder. */
+  plugins?: readonly string[] | undefined
 }
 
 /**
@@ -1173,6 +1175,14 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
                     : {}),
                 },
                 settingSources: ['user', 'project', 'local'],
+                ...(options.plugins?.length
+                  ? {
+                      plugins: options.plugins.map((plugin) => ({
+                        type: 'local' as const,
+                        path: plugin,
+                      })),
+                    }
+                  : {}),
                 persistSession: !options.ephemeral,
                 permissionMode: PERMISSION_MODE[options.approval ?? 'ask'],
                 allowDangerouslySkipPermissions: true,
