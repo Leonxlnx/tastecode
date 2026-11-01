@@ -1779,8 +1779,10 @@ describe('provider command contracts', () => {
           argumentHint: '<page>',
           aliases: ['taste'],
           kind: 'skill',
+          source: 'plugin',
         },
-        { name: 'review', description: '', kind: 'command' },
+        { name: 'review', description: '', kind: 'command', source: 'builtin' },
+        { name: 'mcp__docs__search', description: '', source: 'mcp' },
       ],
       loading: false,
     }
@@ -1799,6 +1801,7 @@ describe('provider command contracts', () => {
     { name: 'context', aliases: ['/ctx'] },
     { name: 'context', argumentHint: '' },
     { name: 'context', kind: 'prompt' },
+    { name: 'context', source: 'user' },
   ])('rejects malformed commands: %j', (command) => {
     expect(
       list.result.safeParse({ commands: [{ description: '', ...command }], loading: false })

@@ -165,6 +165,41 @@ describe('ComposerResourcePicker', () => {
     })
   })
 
+  it('groups commands by source: built-in, custom, skills, plugins, then MCP prompts', async () => {
+    const transport = createResourceTransport(() => ({
+      commands: [
+        { name: 'docs-search', description: '', source: 'mcp' },
+        { name: 'acme:lint', description: 'Lint with Acme rules', source: 'plugin' },
+        { name: 'pdf', description: 'Work with PDF files', kind: 'skill', source: 'plugin' },
+        { name: 'standup', description: '', source: 'custom' },
+        { name: 'simplify', description: 'Simplify the diff', kind: 'skill', source: 'builtin' },
+        { name: 'context', description: 'Show current context usage', source: 'builtin' },
+        { name: 'legacy', description: 'No source reported' },
+      ],
+      loading: false,
+    }))
+    renderPicker(transport, slash(''), { threadId: 'thread-1' })
+
+    await screen.findByRole('option', { name: /\/context/ })
+    expect(optionNames()).toEqual([
+      '/context',
+      '/legacy',
+      '/standup',
+      '/simplify',
+      '/acme:lint',
+      '/pdf',
+      '/docs-search',
+      'Animate',
+    ])
+    // An empty description says what kind of command it is, as Claude Code's menu does.
+    expect(screen.getByRole('option', { name: /\/standup/ }).textContent).toContain(
+      'Custom command',
+    )
+    expect(screen.getByRole('option', { name: /\/docs-search/ }).textContent).toContain(
+      'MCP prompt',
+    )
+  })
+
   it('ranks exact names, then name prefixes, then aliases, then other matches', async () => {
     const transport = createResourceTransport(
       () => ({

@@ -39,7 +39,7 @@ import {
   savePastedFile,
   type PickedAttachment,
 } from '../bridge.js'
-import { appCommands, parseAppActionCommand } from '../app-commands.js'
+import { appCommands, parseAppActionCommand, type AppScreen } from '../app-commands.js'
 import { parseFeedbackCommand } from '../feedback-command.js'
 import { DEFAULT_KEYBINDINGS, shortcutAria, type Keybindings } from '../shortcuts.js'
 import type { Transport } from '../transport.js'
@@ -571,6 +571,8 @@ function ComposerComponent(props: {
   onFeedbackCommand?: ((text: string) => void) | undefined
   /** /new or /clear starts a new chat instead of reaching a provider. */
   onNewChatCommand?: (() => void) | undefined
+  /** /resume, /settings, /mcp, /skills, /usage or /login opens TasteCode's own screen for it. */
+  onAppScreenCommand?: ((screen: AppScreen) => void) | undefined
   onInterrupt: () => void
   /** An interrupt is sent and the turn has not ended yet. */
   stopping?: boolean | undefined
@@ -668,6 +670,9 @@ function ComposerComponent(props: {
   const newChatAvailable = props.onNewChatCommand !== undefined
   // /model opens the picker this composer shows; without one it means nothing here.
   const modelPickerAvailable = !props.modelPending && props.models.length > 0
+  // /permissions opens the access picker this composer shows next to dictation.
+  const permissionsAvailable = !props.approvalLoading
+  const screensAvailable = props.onAppScreenCommand !== undefined
   const ownCommands = useMemo(
     () =>
       appCommands({
@@ -675,8 +680,17 @@ function ComposerComponent(props: {
         feedback: feedbackAvailable,
         newChat: newChatAvailable,
         model: modelPickerAvailable,
+        permissions: permissionsAvailable,
+        screens: screensAvailable,
       }),
-    [sideChatAvailable, feedbackAvailable, newChatAvailable, modelPickerAvailable],
+    [
+      sideChatAvailable,
+      feedbackAvailable,
+      newChatAvailable,
+      modelPickerAvailable,
+      permissionsAvailable,
+      screensAvailable,
+    ],
   )
 
   const updateResourceTrigger = (trigger: ComposerResourceTrigger | undefined) => {
@@ -1384,15 +1398,23 @@ function ComposerComponent(props: {
       props.onNewChatCommand()
       return true
     }
-    const modelTrigger =
-      action === 'model'
-        ? composerRoot.current?.querySelector<HTMLButtonElement>('.menutrigger--model-selector')
+    if (typeof action === 'object' && props.onAppScreenCommand) {
+      updateText('')
+      setResourceTrigger(undefined)
+      props.onAppScreenCommand(action.screen)
+      return true
+    }
+    const pickerTrigger =
+      action === 'model' || action === 'permissions'
+        ? composerRoot.current?.querySelector<HTMLButtonElement>(
+            action === 'model' ? '.menutrigger--model-selector' : '.composer__permission',
+          )
         : undefined
-    if (modelTrigger && !modelTrigger.disabled) {
+    if (pickerTrigger && !pickerTrigger.disabled) {
       updateText('')
       setResourceTrigger(undefined)
       // The picker's own trigger, so it opens exactly as a click opens it.
-      modelTrigger.click()
+      pickerTrigger.click()
       return true
     }
     const trimmed = composerPromptWithResources(content, selectedResources)
