@@ -107,6 +107,7 @@ import {
 } from './sidebar-order.js'
 import { createSessionOrderSerializer } from './session-order-serializer.js'
 import type { CommandScope, PaletteCommand } from './ui/CommandPalette.js'
+import type { AppScreen } from './app-commands.js'
 import { Composer, type SendAvailability, type WorkspaceInfo } from './ui/Composer.js'
 import {
   formatModelName,
@@ -6437,6 +6438,18 @@ export function App() {
     },
     [],
   )
+  // A CLI's /resume, /config, /mcp, ... screen, as TasteCode's own.
+  const openAppScreen = useCallback(
+    (screen: AppScreen) => {
+      if (screen === 'resume') {
+        setSettingsOpen(false)
+        setPaletteScope('all')
+        return
+      }
+      openSettings(screen === 'settings' ? undefined : screen === 'login' ? 'providers' : screen)
+    },
+    [openSettings],
+  )
   const changeKeybinding = useCallback((action: KeybindingId, shortcut: Shortcut | null) => {
     setKeybindings((current) => {
       const next = { ...current, [action]: shortcut }
@@ -7413,6 +7426,7 @@ export function App() {
     onSteer: steerTurn,
     onFeedbackCommand: feedback.status.enabled ? openCommandFeedback : undefined,
     onNewChatCommand: startNewChat,
+    onAppScreenCommand: openAppScreen,
     onInterrupt: interrupt,
     stopping: stopping,
     onDeleteQueuedTurn: deleteQueuedTurn,

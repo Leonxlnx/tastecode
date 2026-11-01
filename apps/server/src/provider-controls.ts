@@ -412,6 +412,12 @@ function claudeLaunch(runtime: string | undefined) {
 
 const defaultServices = {
   antigravity: {
+    // agy answers its read-only commands itself and expands skills from
+    // folders, so the list needs no process.
+    listCommands: async (projectPath) => ({
+      commands: await (await loadAntigravity()).listAntigravityCommands(projectPath),
+      loading: false,
+    }),
     account: async () => (await loadAntigravity()).antigravityAccount(),
     usageLimitSource: async () => (await loadAntigravity()).antigravityLimitSource(),
     // agy keeps its Google sign-in in the OS keyring and drops it only from
@@ -469,6 +475,12 @@ const defaultServices = {
     signOut: async () => (await loadClaude()).signOutClaude(),
   },
   cursor: {
+    // A print-mode turn expands the custom commands and skills it finds on
+    // disk, so the list is read from the same folders without a process.
+    listCommands: async (projectPath) => ({
+      commands: await (await loadCursor()).listCursorCommands(projectPath),
+      loading: false,
+    }),
     account: async () => (await loadCursor()).cursorAccount(),
     // One HTTPS request with cursor-agent's stored sign-in; see the adapter.
     usageLimitSource: async () => (await loadCursor()).cursorLimitSource(),

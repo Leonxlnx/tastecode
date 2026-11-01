@@ -3,6 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import type { ResultOf } from '@harness/contracts'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AccountLimits, type AccountLimitsState } from './AccountLimits.js'
+import { dateTimeText } from './usage/usage-format.js'
 
 afterEach(() => {
   cleanup()
@@ -778,8 +779,8 @@ describe('account limits', () => {
             provider: 'codex',
             status: 'ready',
             limits: [
-              { label: 'Epoch', usedPercent: 0, resetsAt: 0 },
-              { label: 'Far future', usedPercent: 0, resetsAt: Number.MAX_SAFE_INTEGER },
+              { label: 'Epoch', usedPercent: 10, resetsAt: 0 },
+              { label: 'Far future', usedPercent: 10, resetsAt: Number.MAX_SAFE_INTEGER },
             ],
           },
         },
@@ -829,18 +830,11 @@ describe('account limits', () => {
       false,
       false,
     ])
+    // The words of a reset line: month and day, then the time, no year this year.
     for (const [index, time] of times.entries()) {
-      expect(time.textContent).toBe(
-        `Expires ${new Date(expected[index]!).toLocaleDateString(undefined, {
-          year: 'numeric',
-          month: 'short',
-          day: 'numeric',
-        })} ${new Date(expected[index]!).toLocaleTimeString(undefined, {
-          hour: '2-digit',
-          minute: '2-digit',
-        })}`,
-      )
+      expect(time.textContent).toBe(`Expires ${dateTimeText(expected[index]!, now)}`)
     }
+    expect(times[0]!.textContent).toMatch(/^Expires Sep 13, /)
     expect(list.lastElementChild?.textContent).toBe('No expiry')
     expect(credits[0]?.expiresAt).toBeNull()
   })
@@ -890,7 +884,7 @@ describe('account limits', () => {
             resetsAt: now + 7_000 * 60_000,
           },
           // A window that just began would put the mark on the rounded end.
-          { label: 'Fresh', usedPercent: 0, windowMinutes: 300, resetsAt: now + 299 * 60_000 },
+          { label: 'Fresh', usedPercent: 1, windowMinutes: 300, resetsAt: now + 299 * 60_000 },
           { label: 'Unknown window', usedPercent: 40, resetsAt: now + 60_000 },
         ]),
       }),
@@ -909,6 +903,43 @@ describe('account limits', () => {
     expect(pace('Weekly').title).toBe('At an even pace, 69% would be left now.')
     expect(pace('Fresh')).toEqual({ title: '', left: undefined })
     expect(pace('Unknown window')).toEqual({ title: '', left: undefined })
+  })
+
+  it('keeps an untouched allowance to one line, with no bar and no reset time', () => {
+    const now = Date.UTC(2026, 8, 13, 12)
+    vi.useFakeTimers({ toFake: ['Date'], now })
+    render(
+      limits({
+        status: 'ready',
+        provider: 'antigravity',
+        summary: summary([
+          { label: 'Gemini 5 hours', usedPercent: 0, windowMinutes: 300 },
+          {
+            label: 'Gemini weekly',
+            usedPercent: 0.4,
+            windowMinutes: 10_080,
+            resetsAt: now + 86_400_000 * 3,
+          },
+          {
+            label: 'Claude weekly',
+            usedPercent: 1,
+            windowMinutes: 10_080,
+            resetsAt: now + 86_400_000 * 3,
+          },
+        ]),
+      }),
+    )
+
+    const row = (label: string) => screen.getByText(label).closest('.account-menu__limit')!
+    for (const label of ['Gemini 5 hours', 'Gemini weekly']) {
+      expect(row(label).hasAttribute('data-full')).toBe(true)
+      expect(within(row(label) as HTMLElement).getByText('100% left')).toBeTruthy()
+      expect(within(row(label) as HTMLElement).queryByRole('progressbar')).toBeNull()
+      expect(row(label).querySelector('.account-menu__limit-reset')).toBeNull()
+    }
+    expect(row('Claude weekly').hasAttribute('data-full')).toBe(false)
+    expect(within(row('Claude weekly') as HTMLElement).getByRole('progressbar')).toBeTruthy()
+    expect(row('Claude weekly').querySelector('.account-menu__limit-reset')).not.toBeNull()
   })
 
   it('says when a window resets the way the Usage page does, the exact time on hover', () => {

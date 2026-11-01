@@ -1,8 +1,15 @@
 import {
   IconAdjustmentsHorizontal,
+  IconBlocks,
+  IconChartBar,
   IconEdit,
   IconMessage,
   IconMessageCirclePlus,
+  IconNetwork,
+  IconSearch,
+  IconSettings,
+  IconShieldCheck,
+  IconUser,
   type TablerIcon,
 } from '@tabler/icons-react'
 
@@ -56,35 +63,94 @@ const MODEL_COMMAND = {
   icon: IconAdjustmentsHorizontal,
 } satisfies AppCommand
 
-export type AppAction = 'new-chat' | 'model'
+const PERMISSIONS_COMMAND = {
+  name: 'permissions',
+  // Codex's earlier name and Claude Code's alias for the same picker.
+  aliases: ['approvals', 'allowed-tools'],
+  description: 'Choose what the agent may do without asking',
+  icon: IconShieldCheck,
+} satisfies AppCommand
 
 /**
- * `/new`, `/clear` or `/model` typed alone. With anything after it the draft
- * is not one of these and goes to the provider as typed.
+ * Screens a CLI opens in its terminal (`/resume`, `/config`, `/mcp`, ...) and
+ * cannot open through TasteCode. The same words open TasteCode's own screen
+ * for it, whichever provider the chat uses.
+ */
+export type AppScreen = 'resume' | 'settings' | 'mcp' | 'skills' | 'usage' | 'login'
+
+const SCREEN_COMMANDS = [
+  {
+    screen: 'resume',
+    name: 'resume',
+    aliases: ['continue'],
+    description: 'Find and open an earlier chat',
+    icon: IconSearch,
+  },
+  {
+    screen: 'settings',
+    name: 'settings',
+    aliases: ['config'],
+    description: 'Open settings',
+    icon: IconSettings,
+  },
+  { screen: 'mcp', name: 'mcp', description: 'Manage MCP servers', icon: IconNetwork },
+  { screen: 'skills', name: 'skills', description: 'Browse and manage skills', icon: IconBlocks },
+  {
+    screen: 'usage',
+    name: 'usage',
+    aliases: ['status', 'cost', 'stats'],
+    description: 'See plan usage and limits',
+    icon: IconChartBar,
+  },
+  {
+    screen: 'login',
+    name: 'login',
+    aliases: ['logout'],
+    description: 'Sign in to or out of a provider',
+    icon: IconUser,
+  },
+] as const satisfies ReadonlyArray<AppCommand & { screen: AppScreen }>
+
+export type AppAction = 'new-chat' | 'model' | 'permissions' | { screen: AppScreen }
+
+function named(command: AppCommand, name: string): boolean {
+  return command.name === name || (command.aliases?.includes(name) ?? false)
+}
+
+/**
+ * `/new`, `/model`, `/permissions`, `/resume` and the other actions typed
+ * alone. With anything after it the draft is not one of these and goes to the
+ * provider as typed.
  */
 export function parseAppActionCommand(text: string): AppAction | undefined {
-  const match = /^\/([a-z]+)$/i.exec(text.trim())
+  const match = /^\/([a-z][a-z-]*)$/i.exec(text.trim())
   const name = match?.[1]?.toLowerCase()
-  if (name === NEW_CHAT_COMMAND.name || NEW_CHAT_COMMAND.aliases.includes(name ?? ''))
-    return 'new-chat'
-  if (name === MODEL_COMMAND.name) return 'model'
-  return undefined
+  if (!name) return undefined
+  if (named(NEW_CHAT_COMMAND, name)) return 'new-chat'
+  if (named(MODEL_COMMAND, name)) return 'model'
+  if (named(PERMISSIONS_COMMAND, name)) return 'permissions'
+  const screen = SCREEN_COMMANDS.find((command) => named(command, name))
+  return screen ? { screen: screen.screen } : undefined
 }
 
 /**
  * The commands that work right now: a side chat branches off a started chat,
  * feedback needs this build's feedback service, and the actions need a
- * handler or a model picker to open.
+ * handler, a model picker or a permissions picker to open.
  */
 export function appCommands(available: {
   sideChat: boolean
   feedback: boolean
   newChat?: boolean
   model?: boolean
+  permissions?: boolean
+  screens?: boolean
 }): readonly AppCommand[] {
   return [
     ...(available.newChat ? [NEW_CHAT_COMMAND] : []),
     ...(available.model ? [MODEL_COMMAND] : []),
+    ...(available.permissions ? [PERMISSIONS_COMMAND] : []),
+    ...(available.screens ? SCREEN_COMMANDS.map(({ screen: _screen, ...command }) => command) : []),
     ...(available.sideChat ? [SIDE_CHAT_COMMAND] : []),
     ...(available.feedback ? [FEEDBACK_COMMAND] : []),
   ]

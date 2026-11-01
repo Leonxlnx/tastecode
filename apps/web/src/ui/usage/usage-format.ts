@@ -41,7 +41,26 @@ export function dateFromKey(value: string): Date {
 
 const weekday = new Intl.DateTimeFormat('en-US', { weekday: 'short' })
 const monthDay = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' })
+const monthDayYear = new Intl.DateTimeFormat('en-US', {
+  month: 'short',
+  day: 'numeric',
+  year: 'numeric',
+})
 const clock = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' })
+
+/**
+ * A moment in the words of a reset line: "Nov 30, 9:24 PM", with the year
+ * only when it is not this year's.
+ */
+export function dateTimeText(at: number, now: number): string | undefined {
+  const date = new Date(at)
+  if (Number.isNaN(date.getTime())) return undefined
+  const day =
+    date.getFullYear() === new Date(now).getFullYear()
+      ? monthDay.format(date)
+      : monthDayYear.format(date)
+  return `${day}, ${clock.format(date)}`
+}
 
 /**
  * "resets in 42m" and "resets in 3h 12m" within a day, the weekday and time
