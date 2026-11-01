@@ -908,6 +908,13 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
     [threadController],
   )
   const [activePath, setActivePath] = useState<string | undefined>()
+  /**
+   * New chat belongs to no project: its first message makes it a folder of its
+   * own (projects.createChatFolder) instead of starting in activePath.
+   */
+  const [chatWithoutProject, setChatWithoutProject] = useState(false)
+  const chatWithoutProjectRef = useRef(chatWithoutProject)
+  chatWithoutProjectRef.current = chatWithoutProject
   const [split, setSplitState] = useState<SplitView>()
   const splitRef = useRef(split)
   const setSplit = useCallback((next: SplitView | undefined) => {
@@ -3836,7 +3843,9 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
     }
     const savedOrder = loadSessionOrder()
     const projectOrder = loadProjectOrder()
-    const firstProjectPath = applyProjectOrder(list, projectOrder)[0]?.path
+    const firstProjectPath = applyProjectOrder(list, projectOrder).find(
+      (project) => !project.chat,
+    )?.path
     // A full snapshot received after queued pushes is authoritative. Flush the
     // older batch first so its state update cannot replay over this snapshot.
     flushPendingLifecyclePushes.current?.()
@@ -3848,7 +3857,9 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       }
       return reconciled
     })
-    setActivePath((current) => current ?? firstProjectPath)
+    setActivePath(
+      (current) => current ?? (chatWithoutProjectRef.current ? undefined : firstProjectPath),
+    )
     return list
   }, [transport])
 
@@ -4736,6 +4747,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       }
       const activePath = added.at(-1)
       if (!refreshed || !activePath) return
+      setChatWithoutProject(false)
       setActivePath(activePath)
       activeIdRef.current = undefined
       setActiveId(undefined)
@@ -4781,6 +4793,8 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       provisionalId: string,
       title: string,
       titlePrompt: string,
+      /** The project is a folder just made for a chat without one: no git, no branch. */
+      chatFolder = false,
     ): Promise<string | undefined> => {
       const choice = selectedModelChoice
       if (!choice) return undefined
@@ -4799,8 +4813,9 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
         // every time ran git before the agent started, and waiting here for a
         // branch list held the chat for seconds on a busy machine.
         // A folder that is not a Git repository has nothing to isolate from: it starts Local.
-        const isolate = isolateSession && !unbranchedProjects.current.has(projectPath)
-        const shown = newChatBranch(projectPath, isolate)
+        const isolate =
+          isolateSession && !chatFolder && !unbranchedProjects.current.has(projectPath)
+        const shown = chatFolder ? undefined : newChatBranch(projectPath, isolate)
         const branch =
           shown !== undefined && shown !== checkedOutBranches.current.get(projectPath)
             ? shown
@@ -4992,9 +5007,13 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
   )
 
   const beginSession = useCallback(
-    (projectPath: string, draft?: string) => {
+    /** No `projectPath`, or a chat's own folder, starts a chat without a project. */
+    (projectPath: string | undefined, draft?: string) => {
+      const withoutProject =
+        projectPath === undefined ||
+        projectsRef.current.some((project) => project.path === projectPath && project.chat)
       setSurface('chat')
-      enterNewChatDraft(projectPath)
+      if (!withoutProject && projectPath) enterNewChatDraft(projectPath)
       if (draft !== undefined) {
         // Added to what is drafted there already: an unsent prompt is never replaced.
         const next = threadController.recoverDraft(NEW_CHAT_DRAFT_KEY, {
@@ -5008,7 +5027,8 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       }
       setNotice(undefined)
       setActionError(undefined)
-      setActivePath(projectPath)
+      setChatWithoutProject(withoutProject)
+      setActivePath(withoutProject ? undefined : projectPath)
       activeIdRef.current = undefined
       setActiveId(undefined)
       setThread(emptyThread)
@@ -5160,8 +5180,34 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       const optimisticCreatedAt = Date.now()
       let titledOnCreate = false
       let interruptRequested = false
+      let startPath = activePath
+      if (!threadId && !startPath && chatWithoutProject) {
+        try {
+          const folder = await transport.request('projects.createChatFolder', {})
+          setProjects((current) =>
+            current.some((project) => project.path === folder.path)
+              ? current
+              : [
+                  {
+                    path: folder.path,
+                    name: folder.name,
+                    pinned: folder.pinned,
+                    chat: true,
+                    sessions: [],
+                  },
+                  ...current,
+                ],
+          )
+          setChatWithoutProject(false)
+          startPath = folder.path
+        } catch (error) {
+          restoreDraft()
+          reportError(error instanceof Error ? error.message : String(error))
+          return
+        }
+      }
       if (!threadId) {
-        if (!activePath) {
+        if (!startPath) {
           restoreDraft()
           return
         }
@@ -5187,12 +5233,12 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
         // The chat keeps Creatify; the next new chat starts without it.
         setThreadDesignMode(undefined, false)
         workspaceStartId = provisionalId
-        workspaceStartToken = holdWorkspaceStart(provisionalId, activePath)
+        workspaceStartToken = holdWorkspaceStart(provisionalId, startPath)
         optimisticTurnId = provisional.activeTurn?.id
         threadController.update(provisionalId, provisional)
         setProjects((current) =>
           current.map((project) =>
-            project.path === activePath
+            project.path === startPath
               ? {
                   ...project,
                   sessions: [
@@ -5226,10 +5272,11 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
         setThread(provisional)
         setThreadRevealRequest((request) => request + 1)
         const promise = createSession(
-          activePath,
+          startPath,
           provisionalId,
           titleFrom(titlePrompt),
           titlePrompt,
+          startPath !== activePath,
         )
         pendingSession.current = { id: provisionalId, promise, title: titleFrom(titlePrompt) }
         threadId = await promise
@@ -5559,6 +5606,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       transport,
       activeId,
       activePath,
+      chatWithoutProject,
       createSession,
       projects,
       selectedModelChoice,
@@ -5775,11 +5823,17 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
   // prettier-ignore
   const steerQueuedTurn = useCallback((queuedTurnId: string) => { if (!activeId) return; holdQueueAction(queuedTurnId, activeId, 'steer'); const projectPath = findSession(projectsRef.current, activeId)?.project.path; void transport.request('thread.steerQueuedTurn', { threadId: activeId, queuedTurnId }).then(() => { updateQueue(activeId, (items) => items.filter((item) => item.id !== queuedTurnId)); settleQueueAction(queuedTurnId, 'steer'); workspaceIdleProbe.current.unknownQueues.delete(activeId); releaseQueuedStart(queuedTurnId); refreshWorkspaceAfterCompletion(projectPath) }).catch((error) => { settleQueueAction(queuedTurnId, 'steer', error instanceof IndeterminateRequestError); reportError(error instanceof Error ? error.message : String(error)) }) }, [transport, activeId, updateQueue, releaseQueuedStart, refreshWorkspaceAfterCompletion, holdQueueAction, settleQueueAction])
 
+  /** No `path` makes the new chat one without a project. */
   const selectProject = useCallback(
-    (path: string) => {
+    (path: string | undefined) => {
       setSurface('chat')
-      if (path === activePathRef.current) return
-      enterNewChatDraft(path)
+      setChatWithoutProject(path === undefined)
+      const unchanged =
+        path === undefined
+          ? !activePathRef.current && !activeIdRef.current
+          : path === activePathRef.current
+      if (unchanged) return
+      if (path) enterNewChatDraft(path)
       setActivePath(path)
       activeIdRef.current = undefined
       setActiveId(undefined)
@@ -5790,6 +5844,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
     },
     [enterNewChatDraft],
   )
+  const selectWithoutProject = useCallback(() => selectProject(undefined), [selectProject])
 
   const selectBranch = useCallback(
     async (branch: string) => {
@@ -5911,6 +5966,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
         setThreadRevealRequest((request) => request + 1)
         setThreadEntryKey(++threadEntryKeys.current)
       }
+      setChatWithoutProject(false)
       setActivePath(found?.project.path)
       threadController.resetBackground(id)
       threadController.flush(id)
@@ -6417,13 +6473,15 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
   const startNewChat = useCallback(() => {
     const currentProjects = projectsRef.current
     const currentPath = activePathRef.current
-    if (sidebarSettings.mode === 'inbox' && currentProjects.length > 1) {
+    const folders = currentProjects.filter((project) => !project.chat)
+    if (sidebarSettings.mode === 'inbox' && folders.length > 1) {
       setPreferredNewThreadProject(currentPath)
       setPaletteScope('new-thread')
       return
     }
-    const path = currentPath ?? currentProjects[0]?.path
-    if (path) beginSession(path)
+    // A chat without a project is followed by another one, as a project's chat is.
+    const path = currentPath ?? (chatWithoutProjectRef.current ? undefined : folders[0]?.path)
+    if (path || currentProjects.length > 0) beginSession(path)
     else void addProject()
   }, [beginSession, addProject, sidebarSettings.mode])
 
@@ -6599,7 +6657,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
   const startSidebarSession = useCallback(
     (path?: string, chooseProject?: boolean) => {
       setSurface('chat')
-      const currentProjects = projectsRef.current
+      const currentProjects = projectsRef.current.filter((project) => !project.chat)
       const currentPath = activePathRef.current
       if (chooseProject && currentProjects.length > 1) {
         setPreferredNewThreadProject(path ?? currentPath)
@@ -6607,6 +6665,8 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       } else if (path) beginSession(path)
       else if (currentProjects.length === 1 && currentProjects[0]) {
         beginSession(currentProjects[0].path)
+      } else if (currentProjects.length === 0) {
+        beginSession(undefined)
       } else {
         setPreferredNewThreadProject(currentPath)
         setPaletteScope('new-thread')
@@ -6614,6 +6674,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
     },
     [beginSession],
   )
+  const startChatWithoutProject = useCallback(() => beginSession(undefined), [beginSession])
   const selectSidebarSession = useCallback((id: string) => void selectSession(id), [selectSession])
 
   /** The focused pane as it is now, to show unchanged while the other pane has focus. */
@@ -7735,6 +7796,15 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
         newThreadProject: true,
         run: () => beginSession(project.path),
       })),
+      {
+        id: 'new-chat-without-project',
+        title: 'New thread without a project',
+        detail: 'Gets a folder of its own',
+        group: 'Projects',
+        keywords: 'session conversation chat folder none',
+        newThreadProject: true,
+        run: () => beginSession(undefined),
+      },
     ]
   }, [
     paletteScope,
@@ -8106,6 +8176,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
     projects: projectChoices,
     projectPath: activePath,
     projectName: activeProject ? displayName(activeProject) : undefined,
+    withoutProject: chatWithoutProject && !activePath,
     threadId: activeId && !activeId.startsWith('pending:') ? activeId : undefined,
     projectsLoading: projectsStatus === 'loading',
     branch:
@@ -8175,6 +8246,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
     onCancelVoice: cancelVoice,
     onProjectChange: selectProject,
     onAddProject: addProject,
+    onChooseWithoutProject: selectWithoutProject,
     onBranchChange: changeBranch,
     onProjectRequired: requireProject,
     onSetupProvider: sendAvailability === 'no-provider' ? openProviderPicker : openProviderSetup,
@@ -8272,6 +8344,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
           onAddProject={addSidebarProject}
           onAddDroppedProjects={addDroppedSidebarProjects}
           onNewSession={startSidebarSession}
+          onNewChatWithoutProject={startChatWithoutProject}
           onSelectSession={selectSidebarSession}
           besideSessionId={surface === 'chat' ? besideId : undefined}
           onOpenSessionBeside={openSessionBeside}
@@ -8387,6 +8460,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
                                 <Empty
                                   projects={projects}
                                   activePath={activePath}
+                                  withoutProject={chatWithoutProject}
                                   status={projectsStatus}
                                   startupProjectName={startupProjectName}
                                   onAddProject={addSidebarProject}
@@ -8702,9 +8776,13 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
             scope={paletteScope}
             deferredSearch={paletteChatSearch}
             preferredCommandId={
-              paletteScope === 'new-thread' && preferredNewThreadProject
-                ? `new-chat-${encodeURIComponent(preferredNewThreadProject)}`
-                : undefined
+              paletteScope !== 'new-thread' || !preferredNewThreadProject
+                ? undefined
+                : projects.some(
+                      (project) => project.path === preferredNewThreadProject && project.chat,
+                    )
+                  ? 'new-chat-without-project'
+                  : `new-chat-${encodeURIComponent(preferredNewThreadProject)}`
             }
             onClose={closePalette}
           />
@@ -8895,6 +8973,8 @@ const EMPTY_PROJECT_NOWRAP = 28
 function Empty(props: {
   projects: Project[]
   activePath: string | undefined
+  /** The new chat gets a folder of its own instead of starting in a project. */
+  withoutProject: boolean
   status: 'loading' | 'ready' | 'failed'
   startupProjectName: string | undefined
   onAddProject: () => void
@@ -8921,6 +9001,16 @@ function Empty(props: {
         <button className="btn" type="button" onClick={props.onRetry}>
           Retry
         </button>
+      </div>
+    )
+  }
+
+  if (props.withoutProject) {
+    return (
+      <div className="empty">
+        <div className="empty__prompt" role="heading" aria-level={1}>
+          What should we build?
+        </div>
       </div>
     )
   }
