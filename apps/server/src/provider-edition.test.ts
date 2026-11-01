@@ -1,4 +1,9 @@
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { CustomHarnessStore } from './custom-harnesses.js'
+import { ProviderControls } from './provider-controls.js'
 import { providerOffered, takeEdition } from './provider-edition.js'
 import {
   detectProviders,
@@ -69,5 +74,36 @@ describe('build edition', () => {
     )
     expect(() => providerRuntime('pi', () => {})).toThrow('not part of this TasteCode build')
     expect(() => providerRuntime('grok', () => {})).not.toThrow()
+  })
+
+  it('keeps a harness on a hidden provider in the file but out of the list', () => {
+    takeEdition({ HARNESS_EDITION: 'release' })
+    const location = path.join(mkdtempSync(path.join(tmpdir(), 'edition-')), 'harnesses.json')
+    const hidden = {
+      id: 'pi-local',
+      displayName: 'Pi local',
+      provider: 'pi',
+      command: 'pi',
+      args: [],
+    }
+    writeFileSync(location, JSON.stringify({ version: 1, harnesses: [hidden] }))
+    const store = new CustomHarnessStore(location)
+
+    expect(store.list()).toEqual([])
+    expect(() => store.upsert({ ...hidden, provider: 'opencode' })).toThrow(
+      'not part of this TasteCode build',
+    )
+    store.upsert({ id: 'fork', displayName: 'Fork', provider: 'codex', command: 'c', args: [] })
+    expect(JSON.parse(readFileSync(location, 'utf8')).harnesses).toContainEqual(hidden)
+  })
+
+  it('answers for a hidden provider without its services', async () => {
+    takeEdition({ HARNESS_EDITION: 'release' })
+    const controls = new ProviderControls({ listModels: async () => [] })
+    const control = controls.forProvider('opencode')
+    expect(control.capabilities.managedMcp).toBe(false)
+    expect(control.listModels).toBeUndefined()
+    await expect(control.account()).resolves.toMatchObject({ signedIn: false })
+    await controls.disposeAll()
   })
 })
