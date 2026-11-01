@@ -40,6 +40,7 @@ import { CODEX_ACCOUNT_HOME, codexAccountEnvironment } from './account-home.js'
 import { CODEX_CAPABILITIES } from './capabilities.js'
 import {
   codexCommandRequest,
+  codexPromptCommand,
   describeGoalReply,
   GoalResponseSchema,
   ReviewStartResponseSchema,
@@ -1324,6 +1325,8 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     }
     const command = attachments.length === 0 ? codexCommandRequest(threadId, text) : undefined
     if (command) return this.#runCommand(threadId, command)
+    // /init is a prompt in Codex's TUI, so it goes out as a normal turn.
+    if (attachments.length === 0) text = codexPromptCommand(text) ?? text
     const rpc = this.#rpc
     const mode = this.#threadApprovals.get(threadId)
     const approval = mode ? CODEX_APPROVAL[mode] : undefined
