@@ -85,3 +85,25 @@ export function withEdition(
 ): NodeJS.ProcessEnv {
   return edition ? { ...env, HARNESS_EDITION: edition } : env
 }
+
+const EDITION_SWITCH = '--tastecode-edition='
+
+/**
+ * The renderer argument that carries a packaged build's edition to the
+ * preload, so setup can draw the provider list's shape before the server has
+ * listed it.
+ */
+export function editionArgument(edition: BuildEdition): string {
+  return EDITION_SWITCH + edition
+}
+
+/**
+ * The edition the main process passed, or undefined when it passed none (an
+ * unpackaged run, whose server offers every provider unless a developer set
+ * HARNESS_EDITION). Anything else is ignored rather than trusted.
+ */
+export function editionFromArguments(argv: readonly string[]): BuildEdition | undefined {
+  const value = argv.find((argument) => argument.startsWith(EDITION_SWITCH))
+  const edition = value?.slice(EDITION_SWITCH.length)
+  return edition === 'release' || edition === 'dev' ? edition : undefined
+}

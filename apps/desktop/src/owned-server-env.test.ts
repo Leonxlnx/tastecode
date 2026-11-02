@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
+  editionArgument,
+  editionFromArguments,
   ownedServerEnvironment,
   packagedEdition,
   withDefaultSkills,
@@ -110,5 +112,14 @@ describe('build edition', () => {
       HARNESS_EDITION: 'release',
     })
     expect(withEdition(inherited, undefined)).toBe(inherited)
+  })
+
+  it('carries the edition to the preload and ignores anything it does not know', () => {
+    const argv = (...extra: string[]) => ['electron', '--type=renderer', ...extra]
+    expect(editionFromArguments(argv(editionArgument('release')))).toBe('release')
+    expect(editionFromArguments(argv(editionArgument('dev')))).toBe('dev')
+    expect(editionFromArguments(argv())).toBeUndefined()
+    expect(editionFromArguments(argv('--tastecode-edition=nightly'))).toBeUndefined()
+    expect(editionFromArguments(argv('--tastecode-edition='))).toBeUndefined()
   })
 })

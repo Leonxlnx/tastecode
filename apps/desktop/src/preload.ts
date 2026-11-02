@@ -4,6 +4,7 @@ import type { AppUpdateState } from './app-updater.js'
 import { isBrowserShortcutMessage, type BrowserShortcutAction } from './browser-shortcuts.js'
 import { clipboardText } from './clipboard-text.js'
 import { isNativeMenuActionMessage, type NativeMenuActionSource } from './menu-contract.js'
+import { editionFromArguments } from './owned-server-env.js'
 import { droppedFilePath, isAppUpdateState, isFiniteNumber } from './preload-validation.js'
 import type { WindowChrome } from './window-theme.js'
 
@@ -17,6 +18,7 @@ type PickedAttachment = {
 
 const startupStartedAt = Number(process.env['HARNESS_STARTUP_STARTED_AT'])
 const startupBenchmarkEnabled = Number.isFinite(startupStartedAt) && startupStartedAt > 0
+const edition = editionFromArguments(process.argv)
 
 /**
  * The entire native surface exposed to the renderer.
@@ -139,6 +141,8 @@ const api = {
           ipcRenderer.send('harness:startupRendererMilestone', name),
       }
     : {}),
+  /** Which providers a packaged build's server offers; absent in an unpackaged run. */
+  ...(edition ? { edition } : {}),
   isDesktop: true,
 }
 

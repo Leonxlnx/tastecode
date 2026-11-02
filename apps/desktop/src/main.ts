@@ -68,6 +68,7 @@ import { isRendererFileUrl, rendererFileUrl } from './own-renderer.js'
 import { configurePreviewNavigation } from './preview-navigation.js'
 import { savePastedFile } from './pasted-file.js'
 import {
+  editionArgument,
   ownedServerEnvironment,
   packagedEdition,
   withDefaultSkills,
@@ -623,6 +624,11 @@ function createWindow(): void {
       // traffic the app would ever do outside the renderer's own CSP.
       spellcheck: false,
       preload: path.join(here, 'preload.cjs'),
+      // The edition startOwnedServer hands this build's server, so setup's
+      // placeholder has the shape of the server's provider list from the start.
+      ...(app.isPackaged && !devServer
+        ? { additionalArguments: [editionArgument(readPackagedEdition())] }
+        : {}),
     },
   })
   mainWindow = window
