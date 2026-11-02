@@ -168,6 +168,15 @@
       "source": "https://github.com/inikulin/parse5"
     },
     {
+      "name": "qrcode-generator",
+      "use": "Phone pairing code",
+      "license": "MIT",
+      "metadataLicenses": ["MIT"],
+      "source": "https://github.com/kazuhikoarase/qrcode-generator",
+      "bundledLicense": "licenses/npm/qrcode-generator-2.0.4-MIT.txt",
+      "licenseSource": "https://github.com/kazuhikoarase/qrcode-generator/blob/83b7e8fe3fddd3b0368dbafd6ce56995bd25e3c8/LICENSE"
+    },
+    {
       "name": "react",
       "use": "Renderer UI",
       "license": "MIT",

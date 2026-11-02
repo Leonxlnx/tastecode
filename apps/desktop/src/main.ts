@@ -39,6 +39,8 @@ import {
 import { shouldHideWindowOnClose } from './background-lifecycle.js'
 import {
   createAppUpdateController,
+  installsUpdateOnQuit,
+  parseRunningAgents,
   type AppUpdateController,
   type AppUpdateState,
 } from './app-updater.js'
@@ -67,7 +69,15 @@ import { NativeMenuDispatch } from './native-menu-dispatch.js'
 import { isRendererFileUrl, rendererFileUrl } from './own-renderer.js'
 import { configurePreviewNavigation } from './preview-navigation.js'
 import { savePastedFile } from './pasted-file.js'
-import { ownedServerEnvironment, withFeedbackDetails } from './owned-server-env.js'
+import {
+  editionArgument,
+  ownedServerEnvironment,
+  packagedEdition,
+  withDefaultSkills,
+  withEdition,
+  withFeedbackDetails,
+  type BuildEdition,
+} from './owned-server-env.js'
 import { revealablePath } from './reveal-path.js'
 import { projectFilePath } from './project-file-path.js'
 import { PreviewCaptureOwner } from './preview-capture.js'
@@ -92,6 +102,14 @@ import {
   windowThemeOptions,
   windowThemeSource,
 } from './window-theme.js'
+import {
+  DEFAULT_WINDOW_MATERIAL,
+  loadWindowMaterial,
+  parseWindowMaterial,
+  saveWindowMaterial,
+  windowMaterialSupport,
+  type WindowMaterial,
+} from './window-material.js'
 import {
   DEFAULT_ZOOM_FACTOR,
   isZoomAction,
@@ -125,6 +143,9 @@ const mainWindowStatePath = path.join(productDataPath, 'window-state.json')
 const windowChromePath = path.join(productDataPath, 'window-chrome.json')
 /** What window-chrome.json holds, so an unchanged report does not rewrite it. */
 let savedWindowChrome: string | undefined
+const windowMaterialPath = path.join(productDataPath, 'window-material.json')
+/** The backdrop the window draws now; the renderer changes it for Transparent. */
+let windowMaterial: WindowMaterial | undefined
 const defaultMainWindowSize = { width: 1180, height: 820 }
 const minimumMainWindowSize = { width: 720, height: 520 }
 const startupStartedAt = Number(process.env['HARNESS_STARTUP_STARTED_AT'])
@@ -279,6 +300,8 @@ function showServerFailureNotice(): void {
 }
 let diagnostics: LocalDiagnostics | undefined
 let appUpdater: AppUpdateController | undefined
+/** Chats with a running turn, as the main window's page last reported them. */
+let runningAgents = 0
 let waitingForUpdateCleanup = false
 let waitingForServerShutdown = false
 let mainWindowStatePersistence: MainWindowStatePersistence | undefined
@@ -430,23 +453,40 @@ if (!ownsSingleInstance) {
  * isolated without paying for a second full app executable launch. The legacy
  * Node-mode child remains available as a field fallback.
  */
+/** The packaged package.json inside app.asar; unreadable means a release build. */
+function readPackagedEdition(): BuildEdition {
+  try {
+    return packagedEdition(
+      JSON.parse(readFileSync(path.join(app.getAppPath(), 'package.json'), 'utf8')),
+    )
+  } catch {
+    return 'release'
+  }
+}
+
 function startOwnedServer(): boolean {
   if (devServer || serverSupervisor) return true
   let serverEnv: NodeJS.ProcessEnv
   try {
-    serverEnv = withFeedbackDetails(
-      ownedServerEnvironment(
-        process.env,
-        app.isPackaged ? readFileSync(rendererIndexPath(), 'utf8') : undefined,
+    serverEnv = withEdition(
+      withFeedbackDetails(
+        withDefaultSkills(
+          ownedServerEnvironment(
+            process.env,
+            app.isPackaged ? readFileSync(rendererIndexPath(), 'utf8') : undefined,
+          ),
+          app.isPackaged ? path.join(process.resourcesPath, 'default-skills') : undefined,
+        ),
+        {
+          appVersion: app.getVersion(),
+          // Written at build time by scripts/build-main.js; an unpackaged run reads
+          // the maintainer's ~/.tastecode file on the server side instead.
+          feedbackConfig: app.isPackaged
+            ? path.join(process.resourcesPath, 'feedback', 'feedback.env')
+            : undefined,
+        },
       ),
-      {
-        appVersion: app.getVersion(),
-        // Written at build time by scripts/build-main.js; an unpackaged run reads
-        // the maintainer's ~/.tastecode file on the server side instead.
-        feedbackConfig: app.isPackaged
-          ? path.join(process.resourcesPath, 'feedback', 'feedback.env')
-          : undefined,
-      },
+      app.isPackaged ? readPackagedEdition() : undefined,
     )
   } catch (error) {
     dialog.showErrorBox(nativeAppName, error instanceof Error ? error.message : String(error))
@@ -548,6 +588,7 @@ function createWindow(): void {
   const lastChrome = loadWindowChrome(windowChromePath)
   savedWindowChrome = lastChrome ? JSON.stringify(lastChrome) : undefined
   const initialTheme = lastChrome ? windowChromeOptions(lastChrome) : windowThemeOptions('dark')
+  windowMaterial ??= loadWindowMaterial(windowMaterialPath) ?? DEFAULT_WINDOW_MATERIAL
   const savedWindowState = loadMainWindowState(mainWindowStatePath)
   const restoredWindowState = restoreMainWindowState(
     savedWindowState,
@@ -573,7 +614,7 @@ function createWindow(): void {
     // behind the sidebar to blur.
     ...(process.platform === 'win32'
       ? {
-          backgroundMaterial: 'acrylic' as const,
+          backgroundMaterial: windowMaterial,
         }
       : {}),
     ...(process.platform === 'darwin' ? { vibrancy: 'sidebar' as const } : {}),
@@ -599,6 +640,11 @@ function createWindow(): void {
       // traffic the app would ever do outside the renderer's own CSP.
       spellcheck: false,
       preload: path.join(here, 'preload.cjs'),
+      // The edition startOwnedServer hands this build's server, so setup's
+      // placeholder has the shape of the server's provider list from the start.
+      ...(app.isPackaged && !devServer
+        ? { additionalArguments: [editionArgument(readPackagedEdition())] }
+        : {}),
     },
   })
   mainWindow = window
@@ -917,6 +963,14 @@ ipcMain.handle('harness:installUpdate', (event) => {
   return appUpdater?.install() ?? false
 })
 
+// Sent after every sidebar status change. Only the main window's page reports;
+// a page that goes away leaves its last count, which errs towards not installing.
+ipcMain.on('harness:runningAgents', (event, value: unknown) => {
+  if (!isOwnRenderer(event.sender) || event.sender !== mainWindow?.webContents) return
+  const count = parseRunningAgents(value)
+  if (count !== undefined) runningAgents = count
+})
+
 ipcMain.handle('harness:setTheme', (event, preference: unknown) => {
   requireOwnRenderer(event.sender)
   nativeTheme.themeSource = windowThemeSource(preference)
@@ -947,6 +1001,33 @@ ipcMain.handle('harness:setWindowChrome', (event, value: unknown) => {
   savedWindowChrome = serialized
   try {
     saveWindowChrome(windowChromePath, chrome)
+  } catch {
+    // Only the next launch's first frames depend on it.
+  }
+})
+
+// Window background › Transparent: the renderer asks what the OS can draw
+// behind the window (and says so in Settings when it cannot), then picks the
+// Windows 11 backdrop. The look is unchanged where nothing can be drawn.
+ipcMain.handle('harness:getWindowMaterialSupport', (event) => {
+  requireOwnRenderer(event.sender)
+  return windowMaterialSupport(process.platform, process.getSystemVersion())
+})
+
+ipcMain.handle('harness:setWindowMaterial', (event, value: unknown) => {
+  requireOwnRenderer(event.sender)
+  const material = parseWindowMaterial(value)
+  if (material === windowMaterial) return
+  windowMaterial = material
+  const window = BrowserWindow.fromWebContents(event.sender)
+  if (
+    window &&
+    windowMaterialSupport(process.platform, process.getSystemVersion()) === 'material'
+  ) {
+    window.setBackgroundMaterial(material)
+  }
+  try {
+    saveWindowMaterial(windowMaterialPath, material)
   } catch {
     // Only the next launch's first frames depend on it.
   }
@@ -1158,6 +1239,8 @@ if (ownsSingleInstance) {
       event.preventDefault()
       return
     }
+    // Decided on the first request, before the server stops the agents it ends.
+    if (!appIsQuitting) appUpdater?.prepareForQuit(runningAgents > 0)
     const updater = appUpdater
     const updateStatus = updater?.state().status
     if (
@@ -1231,6 +1314,7 @@ if (ownsSingleInstance) {
         }),
       currentVersion: app.getVersion(),
       enabled: app.isPackaged && !devServer && ['darwin', 'win32'].includes(process.platform),
+      installOnQuit: installsUpdateOnQuit(app.isPackaged ? readPackagedEdition() : undefined),
       onError: (cause) => void diagnostics?.record('updater', cause),
     })
     appUpdater.subscribe((state) => {

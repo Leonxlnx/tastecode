@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { CapabilitiesSchema, DomainEventSchema, ItemSchema } from './domain.js'
+import { CapabilitiesSchema, DomainEventSchema, ItemSchema, ModelSchema } from './domain.js'
 import {
   channels,
   DiffFileSchema,
@@ -20,6 +20,7 @@ import {
   SkillCapabilitiesSchema,
   SkillSchema,
   ThreadLifecycleSchema,
+  ThreadSettingsSchema,
   UsageHistoryProviderSchema,
   UsageHistoryResultSchema,
   type ProviderLimit,
@@ -231,6 +232,41 @@ describe('domain events', () => {
       type: 'user_input.resolved',
       id: request.id,
     })
+  })
+})
+
+describe('thread settings', () => {
+  it('keeps one setup per chat that every client reads and changes the same way', () => {
+    expect(
+      methods['thread.setSettings'].params.parse({
+        threadId: 't',
+        model: 'gpt-5.5',
+        effort: 'high',
+      }),
+    ).toEqual({ threadId: 't', model: 'gpt-5.5', effort: 'high' })
+    // A provider without a model list runs its own default under the empty id.
+    expect(ThreadSettingsSchema.parse({ model: '' })).toEqual({ model: '' })
+    expect(() =>
+      methods['thread.setSettings'].params.parse({ threadId: 't', effort: '' }),
+    ).toThrow()
+    expect(
+      channels['thread.settings'].parse({ threadId: 't', settings: { approval: 'auto' } }),
+    ).toEqual({ threadId: 't', settings: { approval: 'auto' } })
+    expect(() => ThreadSettingsSchema.parse({ approval: 'sometimes' })).toThrow()
+  })
+
+  it('shares the models the desktop hides by their choice keys', () => {
+    const keys = ['claude-code:claude-sonnet-5', 'acp:kimi:kimi-k3', 'api:openrouter:x%2Fy']
+    expect(methods['models.setHidden'].params.parse({ keys })).toEqual({ keys })
+    expect(channels['models.hidden'].parse({ keys: [] })).toEqual({ keys: [] })
+  })
+
+  it('shares the providers the desktop added, and none until it saved them', () => {
+    const keys = ['codex', 'acp:kimi']
+    expect(methods['providers.setRoster'].params.parse({ keys })).toEqual({ keys })
+    expect(methods['providers.roster'].result.parse({ keys: null })).toEqual({ keys: null })
+    expect(channels['providers.roster'].parse({ keys })).toEqual({ keys })
+    expect(() => methods['providers.setRoster'].params.parse({ keys: [''] })).toThrow()
   })
 })
 
@@ -1743,8 +1779,10 @@ describe('provider command contracts', () => {
           argumentHint: '<page>',
           aliases: ['taste'],
           kind: 'skill',
+          source: 'plugin',
         },
-        { name: 'review', description: '', kind: 'command' },
+        { name: 'review', description: '', kind: 'command', source: 'builtin' },
+        { name: 'mcp__docs__search', description: '', source: 'mcp' },
       ],
       loading: false,
     }
@@ -1763,6 +1801,7 @@ describe('provider command contracts', () => {
     { name: 'context', aliases: ['/ctx'] },
     { name: 'context', argumentHint: '' },
     { name: 'context', kind: 'prompt' },
+    { name: 'context', source: 'user' },
   ])('rejects malformed commands: %j', (command) => {
     expect(
       list.result.safeParse({ commands: [{ description: '', ...command }], loading: false })
@@ -2270,6 +2309,16 @@ describe('provider account contracts', () => {
       methods['projects.list'].result.parse({ projects: [project] }).projects[0]?.sessions[0]
         ?.accountId,
     ).toBe('work')
+    expect(
+      methods['projects.list'].result.parse({
+        projects: [{ ...project, sessions: [{ ...session, model: 'gpt-5.5' }] }],
+      }).projects[0]?.sessions[0]?.model,
+    ).toBe('gpt-5.5')
+    expect(
+      methods['projects.list'].result.safeParse({
+        projects: [{ ...project, sessions: [{ ...session, model: '' }] }],
+      }).success,
+    ).toBe(false)
     const continued = { ...session, id: 'th3', continuedFrom: 'th2' }
     expect(
       methods['projects.list'].result.parse({ projects: [{ ...project, sessions: [continued] }] })
@@ -2341,5 +2390,38 @@ describe('provider account contracts', () => {
     expect(CapabilitiesSchema.safeParse({ ...capabilities, multipleAccounts: 'yes' }).success).toBe(
       false,
     )
+  })
+
+  it('keeps image files apart from pixels and lets a model narrow images', () => {
+    const capabilities = {
+      steer: false,
+      fork: false,
+      interrupt: true,
+      reasoningItems: false,
+      approvals: false,
+      images: false,
+    }
+    expect(CapabilitiesSchema.parse(capabilities).imageFiles).toBeUndefined()
+    expect(CapabilitiesSchema.parse({ ...capabilities, imageFiles: true })).toMatchObject({
+      images: false,
+      imageFiles: true,
+    })
+    expect(CapabilitiesSchema.safeParse({ ...capabilities, imageFiles: 'yes' }).success).toBe(false)
+    const model = { id: 'm', displayName: 'M', isDefault: true, reasoningEfforts: [] }
+    expect(ModelSchema.parse(model).images).toBeUndefined()
+    expect(ModelSchema.parse({ ...model, images: false }).images).toBe(false)
+  })
+})
+
+describe('attachments.read', () => {
+  it('names one chat and one path', () => {
+    const read = methods['attachments.read']
+    expect(read.params.safeParse({ threadId: 't', path: '/tmp/a.png' }).success).toBe(true)
+    expect(read.params.safeParse({ threadId: '', path: '/tmp/a.png' }).success).toBe(false)
+    expect(read.params.safeParse({ threadId: 't', path: '' }).success).toBe(false)
+    expect(read.result.parse({ mimeType: 'image/png', data: 'AAAA' })).toEqual({
+      mimeType: 'image/png',
+      data: 'AAAA',
+    })
   })
 })

@@ -6,7 +6,6 @@ import type {
   CanUseTool,
   ModelInfo,
   Options as ClaudeQueryOptions,
-  PermissionMode,
   PermissionResult,
   SDKMessage,
   SDKUserMessage,
@@ -30,7 +29,8 @@ import type {
 import { JsonRpcValueSchema, killTree, spawnCli } from '@harness/proc'
 import { z } from 'zod'
 import { CLAUDE_ACCOUNT_HOME, withClaudeAccount } from './account-home.js'
-import { CLAUDE_CAPABILITIES } from './capabilities.js'
+import { CLAUDE_CAPABILITIES, type ClaudeRuntime } from './capabilities.js'
+import { createClaudeCliQuery } from './cli-runtime.js'
 import { mapClaudeCommands, mapClaudeMcpServers } from './inventory.js'
 import { ClaudeMcpRedactor, prepareClaudeMcpServers } from './mcp.js'
 import { activateClaudeMcpServers, createClaudeMcpBootstrap } from './mcp-bootstrap.js'
@@ -56,14 +56,16 @@ import {
   type ClaudeSpawn,
 } from './sdk-runtime.js'
 import { mapClaudeRateLimitEvent, type ProviderLimit } from './limits.js'
+import { PERMISSION_MODE } from './permission-mode.js'
 import { ClaudeSubagents } from './subagents.js'
 
 export { CLAUDE_CAPABILITIES } from './capabilities.js'
 
 /**
- * Claude Code is hosted through Anthropic's Agent SDK. The SDK keeps one
- * streaming session alive, owns the control protocol, and calls TasteCode back
- * for permissions and structured questions. Claude's own executable still
+ * Claude Code is hosted through Anthropic's Agent SDK, or through `claude -p`
+ * with TasteCode speaking the same stream-json protocol itself (cli-runtime.ts).
+ * Either way one streaming session stays alive, and the runtime calls TasteCode
+ * back for permissions and structured questions. Claude's own executable still
  * owns authentication; TasteCode never reads a credential file.
  */
 
@@ -400,13 +402,6 @@ async function readClaudeAppliedSettings(
   return parsed.success ? parsed.data.applied : undefined
 }
 
-const PERMISSION_MODE = {
-  ask: 'default',
-  auto: 'acceptEdits',
-  'auto-review': 'auto',
-  full: 'bypassPermissions',
-} satisfies Record<ApprovalMode, PermissionMode>
-
 export type ClaudeAdapterEvents = {
   event: [DomainEvent]
   log: [string]
@@ -433,6 +428,8 @@ export type ClaudeStartOptions = {
   mcpServers?: McpServerConfig[] | undefined
   mcpCredentials?: Record<string, string> | undefined
   context?: ProviderContextSettings | undefined
+  /** Local plugin folders the session loads, as `--plugin-dir` does; never written to the config folder. */
+  plugins?: readonly string[] | undefined
 }
 
 /**
@@ -545,7 +542,7 @@ class PromptQueue implements AsyncIterable<SDKUserMessage> {
   #closed = false
 
   push(value: SDKUserMessage): void {
-    if (this.#closed) throw new Error('Claude Agent SDK prompt stream is closed')
+    if (this.#closed) throw new Error('Claude Code prompt stream is closed')
     const waiter = this.#waiters.shift()
     if (waiter) waiter({ value, done: false })
     else this.#values.push(value)
@@ -601,6 +598,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
   /** The config folder the CLI runs in, where its sessions are saved. */
   readonly #configDir: string
   readonly #startupTimeoutMs: number
+  readonly #stopTimeoutMs: number
   #workspacePath = ''
   #threadId = ''
   #options: ClaudeStartOptions = {}
@@ -632,6 +630,16 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
   #steersOutliveRun = false
   /** Settles once a stop receipt is read; the stopped run's result may overtake it. */
   #stopReceipt: Promise<void> | undefined
+  /** A Stop waiting for the stopped run's result, and the deadline that ends it without one. */
+  #stopDeadline:
+    | {
+        query: ClaudeQueryRuntime
+        turnId: string
+        timer: ReturnType<typeof setTimeout>
+        ended: Promise<void>
+        end: () => void
+      }
+    | undefined
   /** The SDK's `total_cost_usd` is a running total for the current query. */
   #queryCostUsd = 0
   /** What the main chain's latest request held in context, or 0 before the first one. */
@@ -659,9 +667,13 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
   constructor(
     options: {
       createQuery?: ClaudeQueryFactory
+      /** How the session runs: through the Agent SDK (the default) or `claude -p`. */
+      runtime?: ClaudeRuntime | undefined
       spawn?: ClaudeSpawn
       environment?: NodeJS.ProcessEnv
       startupTimeoutMs?: number
+      /** How long a Stop may wait for the stopped run's result before the turn ends without it. */
+      stopTimeoutMs?: number
       /**
        * The config folder of the account this adapter runs as. Its sessions,
        * models and plan are that account's. Absent: the default one.
@@ -670,13 +682,17 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     } = {},
   ) {
     super()
-    this.#createQuery = options.createQuery ?? createClaudeQuery
+    this.#createQuery =
+      options.createQuery ?? (options.runtime === 'cli' ? createClaudeCliQuery : createClaudeQuery)
     this.#spawn = options.spawn ?? spawnCli
     this.#environment = withClaudeAccount(options.environment ?? process.env, options.accountHome)
     this.#configDir = CLAUDE_ACCOUNT_HOME.defaultHome(this.#environment)
     this.#startupTimeoutMs = options.startupTimeoutMs ?? CLAUDE_STARTUP_TIMEOUT_MS
     if (!Number.isFinite(this.#startupTimeoutMs) || this.#startupTimeoutMs <= 0)
       throw new Error('Claude startup timeout must be a positive number')
+    this.#stopTimeoutMs = options.stopTimeoutMs ?? CLAUDE_STOP_TIMEOUT_MS
+    if (!Number.isFinite(this.#stopTimeoutMs) || this.#stopTimeoutMs <= 0)
+      throw new Error('Claude stop timeout must be a positive number')
   }
 
   get capabilities(): Capabilities {
@@ -814,6 +830,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     const query = this.#query
     const redactor = this.#redactor
     this.#interruptRequested = true
+    const abandoned = this.#awaitStoppedRun(query, turnId)
     // The SDK keeps queued async messages through an interrupt and lists them in its receipt.
     const stopping = query.interrupt().then((receipt) => {
       if (
@@ -832,14 +849,93 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
         : undefined
     if (receipt) this.#stopReceipt = receipt
     try {
-      await stopping
+      // A request the CLI never answers must not hold Stop open: the deadline ends both.
+      await Promise.race([stopping, abandoned])
     } catch (error) {
       // The turn keeps running, so a later error result is real and must still surface.
-      if (this.#query === query) this.#interruptRequested = false
+      if (this.#query === query) {
+        this.#interruptRequested = false
+        this.#clearStopDeadline(false)
+      }
       throw new Error(redactor.redact(error instanceof Error ? error.message : String(error)))
     } finally {
       if (receipt && this.#stopReceipt === receipt) this.#stopReceipt = undefined
     }
+  }
+
+  /**
+   * Starts the wait for the stopped run's result. The returned promise settles once the
+   * stop is over: the run reported, the turn ended, or the deadline ended it. A second Stop
+   * keeps the first deadline.
+   */
+  #awaitStoppedRun(query: ClaudeQueryRuntime, turnId: string): Promise<void> {
+    const current = this.#stopDeadline
+    if (current?.query === query && current.turnId === turnId) return current.ended
+    this.#clearStopDeadline()
+    let end!: () => void
+    const ended = new Promise<void>((resolve) => {
+      end = resolve
+    })
+    const timer = setTimeout(() => {
+      if (this.#stopDeadline?.timer !== timer) return
+      this.#stopDeadline = undefined
+      this.#abandonStoppedTurn(query, turnId)
+      end()
+    }, this.#stopTimeoutMs)
+    timer.unref?.()
+    this.#stopDeadline = { query, turnId, timer, ended, end }
+    return ended
+  }
+
+  /**
+   * `over`: the stopped run reported or the turn ended, so a Stop still waiting for Claude's
+   * answer is done. Otherwise only the deadline goes, and that answer still decides.
+   */
+  #clearStopDeadline(over = true): void {
+    const deadline = this.#stopDeadline
+    if (!deadline) return
+    this.#stopDeadline = undefined
+    clearTimeout(deadline.timer)
+    if (over) deadline.end()
+  }
+
+  /**
+   * Claude neither ended the stopped run nor, possibly, answered the Stop: the CLI hung or
+   * lost the request, and the turn would run on behind a chat that says it is stopping.
+   * End the turn as stopped and the process with it. The owner starts a new process for
+   * the next prompt, which resumes the session.
+   */
+  #abandonStoppedTurn(query: ClaudeQueryRuntime, turnId: string): void {
+    if (this.#disposed || this.#query !== query || this.#activeTurnId !== turnId) return
+    this.#log(
+      `Claude did not end the stopped turn within ${describeDuration(this.#stopTimeoutMs)}; ending its process`,
+    )
+    this.#completeStreamingItems('failed', 'interrupted')
+    // Before the disconnect: the owner detaches this session then and drops its events.
+    this.emit('event', { type: 'turn.completed', turnId, status: 'interrupted' })
+    this.#activeTurnId = undefined
+    this.#interruptRequested = false
+    this.#turnSteers.clear()
+    this.#heldTurnStatus = undefined
+    this.#steersOutliveRun = false
+    this.#stopReceipt = undefined
+    this.#clearStreamingState()
+    // A new generation keeps the closed query's late messages and its end from reporting.
+    this.#queryGeneration += 1
+    this.#stopMcpSettle()
+    this.#queryAbort?.abort()
+    this.#promptQueue?.close()
+    this.#queryAbort = undefined
+    this.#promptQueue = undefined
+    this.#query = undefined
+    try {
+      query.close()
+    } catch (error) {
+      this.#log(`Could not close Claude: ${error instanceof Error ? error.message : String(error)}`)
+    }
+    this.#subagents.endSession()
+    this.#settlePending('Claude turn was stopped.')
+    this.emit('disconnected')
   }
 
   async setApproval(approval: ApprovalMode): Promise<void> {
@@ -1054,6 +1150,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     this.#sessionGeneration += 1
     this.#queryGeneration += 1
     this.#stopMcpSettle()
+    this.#clearStopDeadline(false)
     this.#settlePending('Claude session closed.')
     this.#queryAbort?.abort()
     this.#promptQueue?.close()
@@ -1175,6 +1272,14 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
                     : {}),
                 },
                 settingSources: ['user', 'project', 'local'],
+                ...(options.plugins?.length
+                  ? {
+                      plugins: options.plugins.map((plugin) => ({
+                        type: 'local' as const,
+                        path: plugin,
+                      })),
+                    }
+                  : {}),
                 persistSession: !options.ephemeral,
                 permissionMode: PERMISSION_MODE[options.approval ?? 'ask'],
                 allowDangerouslySkipPermissions: true,
@@ -1350,13 +1455,14 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
         this.#onMessage(message)
       }
       if (generation === this.#queryGeneration && !this.#disposed && this.#activeTurnId) {
-        this.#failActiveTurn('Claude Agent SDK session ended before the turn completed.')
+        this.#failActiveTurn('Claude Code session ended before the turn completed.')
       }
     } catch (error) {
       if (generation !== this.#queryGeneration || this.#disposed) return
       this.#failActiveTurn(error instanceof Error ? error.message : String(error))
     } finally {
       if (generation === this.#queryGeneration && this.#query === query) {
+        this.#clearStopDeadline()
         this.#query = undefined
         this.#promptQueue?.close()
         this.#promptQueue = undefined
@@ -1433,6 +1539,8 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     }
 
     if (message.type === 'result') {
+      // A stopped run ended: Claude handled the Stop, even when steers run on in the turn.
+      this.#clearStopDeadline()
       const turnId = this.#activeTurnId
       if (!turnId) return
       this.#resumeOnRestart = true
@@ -1573,6 +1681,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     const status = this.#heldTurnStatus
     if (!status || [...this.#turnSteers.values()].some((started) => !started)) return
     this.#heldTurnStatus = undefined
+    this.#clearStopDeadline()
     this.emit('event', { type: 'turn.completed', turnId, status })
     this.#activeTurnId = undefined
   }
@@ -1831,6 +1940,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
 
   #failActiveTurn(message: string): void {
     message = this.#redactor.redact(message)
+    this.#clearStopDeadline()
     const turnId = this.#activeTurnId
     if (!turnId) {
       this.emit('log', message)
@@ -1886,12 +1996,12 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
   }
 
   #requireQuery(): ClaudeQueryRuntime {
-    if (!this.#query) throw new Error('Claude Agent SDK session is not running')
+    if (!this.#query) throw new Error('Claude Code session is not running')
     return this.#query
   }
 
   #requirePromptQueue(): PromptQueue {
-    if (!this.#promptQueue) throw new Error('Claude Agent SDK prompt stream is not running')
+    if (!this.#promptQueue) throw new Error('Claude Code prompt stream is not running')
     return this.#promptQueue
   }
 }
@@ -2122,6 +2232,13 @@ function versionedClaudeModelName(id: string): string | undefined {
  * failed sessions that would have started.
  */
 const CLAUDE_STARTUP_TIMEOUT_MS = 60_000
+
+/**
+ * How long a Stop may take before the turn ends without Claude. A stopped run normally
+ * reports its result within a second or two; this leaves room for a busy machine and for
+ * the commands the run must end first.
+ */
+const CLAUDE_STOP_TIMEOUT_MS = 15_000
 
 type ClaudeStartupPhase = 'start' | 'mcp'
 

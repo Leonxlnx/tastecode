@@ -12,8 +12,8 @@ add a change-log row.
 typed WebSocket protocol.**
 
 ```
-desktop renderer · web                   thin clients
-        │  WebSocket, typed contracts
+desktop renderer · web     phone (Expo + UIKit)       thin clients
+        │  WebSocket, typed contracts   │ same protocol, end-to-end encrypted link
         │  req/res { id, method, params } · push { channel, sequence, data }
    core server (Node, local, long-lived)
         │  orchestration · adapters · SQLite event log · checkpoints · worktrees · PTY
@@ -105,6 +105,77 @@ in Trecko.
 _Rejected:_ a renderer `fetch` to Trecko (widens the CSP and puts the key in the renderer).
 Leaving the key in the server's environment (every child process would inherit it). Compiling
 the key into desktop main (main never needs it).
+
+### Phones connect over an end-to-end encrypted link
+
+**A paired phone is one more client of the same protocol, reached directly over the local
+network or a tailnet, with every frame encrypted end to end.** For now phone access is a dev
+feature: a build offers it only when the server runs with `HARNESS_PHONE_ACCESS=1`, which
+`pnpm dev` sets. Without it nothing can open the phone listener (resuming a state an earlier dev
+build stored as on, turning access on and pairing all refuse with "Phone access is not part of
+this build."), `phone.status` answers `available: false`, and the desktop hides Settings › Phone.
+The packaged desktop passes its own environment to the server it starts, so a tester of a dev
+installer turns it on with a user environment variable (on Windows `setx HARNESS_PHONE_ACCESS 1`
+or System Properties › Environment Variables) and then quits and restarts TasteCode. Where it is
+offered, phone access is off until the user turns it on in Settings › Phone. Then a second listener (`HARNESS_PHONE_PORT`, default 4317) accepts WebSockets on `/link` from private, link-local, loopback and tailnet
+(100.64.0.0/10) addresses only, refuses any request carrying an `Origin` header (no page can
+reach it), and speaks nothing but a **Noise IK** handshake (`Noise_IK_25519_ChaChaPoly_SHA256`,
+prologue `tastecode-link/1`) until the phone has proved its key. The pairing code is a
+`tastecode://pair` link holding the computer's static X25519 key, its port, its addresses (local
+name, Wi-Fi, Tailscale) and a one-time secret that expires after ten minutes; the first phone to
+present it is registered by its public key, and the code closes. The phone pins the computer's
+key, so no address in the code has to be trusted and nothing can stand in the middle. After the
+handshake each WebSocket message is one ChaCha20-Poly1305 frame, larger than Noise's own 64 KiB
+limit when a history page needs it; a frame that fails authentication closes the link. Both
+implementations (Node's crypto in `apps/server/src/phone-noise.ts`, CryptoKit in
+`apps/mobile/modules/tastecode-link`) reproduce the published cacophony vector byte for byte.
+
+The server's private key lives in the OS credential store, one per data folder; paired phones
+are stored as public keys in `app_settings`. A phone may call only `PHONE_METHODS`: reading and
+driving chats, choosing models and access levels, browsing folders to add a project, attaching
+images. Terminals, installs, credentials, MCP and further pairing stay on the desktop, and
+phone links never receive `phone.*` or preview pushes. A paired phone sees every push the
+desktop sees, so a turn started on either streams on both; `projects.changed` tells every client
+when another one started, renamed or moved a chat. A chat's setup (model, reasoning effort,
+service tier, access level) is kept by the server, not by each client: `thread.settings` reads
+it, `thread.setSettings` and `thread.setApproval` change it, and the `thread.settings` push
+carries every change, so a pick on one device shows on the other at once. The desktop publishes
+the choice keys its picker hides (`models.hidden`) and the phone offers only the rest, because
+the desktop never runs a chat on a hidden model.
+
+The phone app is Expo with its interface written in Swift: UIKit view controllers (iOS 26, Liquid
+Glass) under one native view that the React root fills the screen with, in the local
+`tastecode-ui` module, beside the `tastecode-link` module (Network.framework and CryptoKit, keys in the Keychain). Protocol logic,
+reconnects and state are TypeScript and import the shared contracts' types. TypeScript also
+words what the screens show (`src/view`: chat rows, step summaries, approval subjects) and sends
+it to Swift as JSON; an open chat sends only the rows that changed, so a streaming reply carries
+its own text and nothing else; Swift reads that JSON off the main thread. Swift draws and asks
+back through one action event. The chat transcript is a collection view whose layout knows every
+row's exact height, rows laid out on a background queue from Markdown blocks
+measured once and cached, and in a long reply only the blocks near the screen built. Text is
+drawn off the main thread into IOSurfaces (also a screen and a half ahead of a scroll), which the
+main thread hands to Core Animation as they are; a streaming row moves only itself and the rows
+below it. An Android build replaces the two native modules with Kotlin and Compose and keeps
+everything else. The phone app has its own npm install, outside the pnpm workspace.
+
+_Rejected:_ the earlier phone design's bearer tokens in a plaintext WebSocket URL (safe only on
+Tailscale, readable by anyone on a café Wi-Fi). TLS with a pinned self-signed certificate
+(React Native's WebSocket cannot pin, and Node needs a certificate generator). A relay server
+(traffic and metadata would leave the user's machines; a relay can come later, carrying the same
+encrypted frames). A fully native Swift app (Android would share nothing). Screens composed in
+React from `@expo/ui`'s SwiftUI components (the first version): menus, toolbars, the composer's
+glass and scrolling could not be shaped as iOS draws them, and every streamed delta re-rendered
+React. Screens as one SwiftUI hierarchy inside an `@expo/ui` host (the second version): a held
+chat's grey highlight stayed about 0.8 s after its menu closed, with no way to end it; the chosen
+typeface replaced the monospaced face of keys and diffs; and the UIKit transcript sat behind a
+representable. The transcript in SwiftUI (a lazy stack of `Text`): every streamed delta parsed and laid out
+the whole reply again on the main thread: streaming the same reply in a simulator, it used about
+three times the main thread's time the UIKit transcript does. Transcript text drawn in
+`draw(_:)`, even with `drawsAsynchronously`: the main thread typeset every changed block and then
+waited at each commit for Core Animation's drawing queue, about 60% of its busy time while
+streaming. Text as plain `CGImage` contents: it cost the main thread 5–10% more CPU while
+scrolling than IOSurfaces, which Core Animation shares with the render server rather than
+sending over.
 
 ---
 
@@ -267,6 +338,9 @@ a user override. Claude Code now runs through Anthropic's Agent SDK while keepin
 installed `claude` executable and account, so the adapter gets a persistent prompt stream,
 interactive permissions and questions, and live control calls without making shared behavior
 depend on that vendor. A different Claude surface can still replace it without touching the UI.
+The user can instead run it through `claude -p` with stream-json on both pipes, where the adapter
+speaks the same control protocol itself (`cli-runtime.ts`); an engine declares such choices as
+`capabilities.runtimes`, and the server stores the choice and applies it at every launch.
 Because the adapter always names that executable, the SDK's optional per-platform CLI packages
 (about 290 MB each) are removed from the dependency graph in `pnpm-workspace.yaml` and excluded
 from the desktop package; the app ships no Claude binary of its own.
@@ -338,6 +412,24 @@ once. Git checkpoints work identically regardless of which engine made the chang
 Every other adapter in this document, the ACP agent roster and the direct API runtime exist
 only on `nightly`; on `main`, `packages/adapter-acp` remains solely as the protocol client
 behind project-enabled Grok MCP sessions. The decisions below still bind both branches.
+
+**Each build offers the providers of its edition (2026-11-01).** Promotions `dev` → `nightly`
+→ `main` merge whole branches, so the provider code on `dev` reaches `main` with a promotion;
+the build, not the branch, decides what a user is offered. A release build offers exactly Claude Code, Codex,
+Grok, Cursor and Antigravity; a dev build offers every provider. The edition is decided at
+package time through electron-builder `extraMetadata`: `dist` and `dist:dir` write
+`tastecodeEdition=dev` into the packaged `package.json`, and `dist:release` writes nothing.
+Desktop main reads that field; a missing, unknown or unreadable value means release, so a
+package built any other way fails closed. It passes the edition to the server as
+`HARNESS_EDITION`, applied after the inherited environment so a variable set on the machine
+cannot widen a release build; unpackaged runs (`pnpm dev`) pass nothing and offer everything.
+The server reads `HARNESS_EDITION` once at startup, deletes it from `process.env` so agent CLIs
+and terminals do not inherit it, and refuses to start on any value other than `release` or
+`dev`. It enforces the edition at `providers.list` (and `acp.agents`), at provider install and
+launch, in the runtime loader every session passes through, in `startThread` before the
+base-branch switch, and in the custom-harness listing. The renderer only follows
+`providers.list`; shared code never checks a provider by name. The release asset check refuses
+a package whose `tastecodeEdition` is anything other than `release`.
 
 **The product must work with only a direct API provider configured.** TasteCode owns the
 shared session model, persistence, orchestration, queueing, review, worktrees, terminal and
@@ -686,16 +778,30 @@ manual.
 
 ## Dashboard design references (nightly)
 
-**Parked since 2026-10-16 (owner decision).** The dashboard asset set is not good enough to ship,
-so Design mode builds websites only until better assets arrive. One switch,
-`DASHBOARD_REFERENCES_ENABLED` in `packages/design-agent/src/dashboard-references.ts`, turns the
-whole surface off: no dashboard catalog is loaded from any library, no dashboard deck is sampled,
-`isDashboardBrief` and a saved `operate_monitor` page route nothing into dashboard prompts, and
-the Page protocol stops offering that mode and family. A dashboard or app-screen request becomes a
-normal website run built from website references, with the limitation recorded in the brief's
-assumptions; it never fails and never claims a dashboard library. The 400 dashboard WebPs, their
-catalog and provenance left the packaged library (about 42 MB) and stay in git history. The
-history below describes the parked path.
+**Dashboards run as tasteskill app screens since 2026-10-25 (owner request).** A dashboard brief
+is dealt an app sheet from the tasteskill v2.5 app library bundled in
+`packages/design-agent/references/app-screens/` (styles, shells and screen patterns as data, no
+images) and every phase works from that sheet and quoted sections of tasteskill's app-screen
+chapter; see [DESIGN-REFERENCES.md](./DESIGN-REFERENCES.md). `APP_SCREENS_ENABLED` in
+`packages/design-agent/src/app-screen-mode.ts` is the switch. The sheet is dealt by the server
+and persisted with the run, so every provider gets the same deal and nothing depends on running
+tasteskill's scripts inside a provider; the kit files reach the provider through `.taste/app-kit/`
+in the workspace, which every provider can read with ordinary file tools.
+
+_Rejected:_ running tasteskill's `draw.mjs` and `inspect.mjs` inside the provider (needs Node,
+Chrome and shell access in every provider, and the deal would not survive a resume) · inlining
+`charts.js` into the Build prompt (the model would have to retype 60 KB).
+
+**The dashboard image catalog has been parked since 2026-10-16 (owner decision).** The dashboard
+asset set is not good enough to ship. Its switch, `DASHBOARD_REFERENCES_ENABLED` in
+`packages/design-agent/src/dashboard-references.ts`, keeps every dashboard catalog unloaded and
+no dashboard image deck is sampled. While it is off, the website Page protocol does not offer the
+`operate_monitor` mode or the `dashboard` family, and an `operate_monitor` plan on a website run
+routes nothing into dashboard prompts; app screens reach theirs through the dealt sheet and the
+dashboard brief. With both switches off, `isDashboardBrief` routes nothing either, and a dashboard
+request becomes a normal website run. The 400 dashboard WebPs,
+their catalog and provenance left the packaged library (about 42 MB) and stay in git history. The
+history below describes the parked image path.
 
 Nightly dashboard support is integrated through
 [PR #1393](https://github.com/Leonxlnx/tastecode/pull/1393), following
@@ -874,3 +980,11 @@ registry entry, which is deliberately a good first outside contribution.
 | 2026-10-11 | Ended a closed terminal's foreground job after a grace period, and a shell ignoring SIGHUP; background jobs stay.                                                              |
 | 2026-10-14 | Background writing reads only the model sources its choice needs, caches each source separately, and reuses Grok's sign-in `grok models` output for its model list.            |
 | 2026-10-19 | Made Claude Code's newest Haiku at medium the automatic background model, ahead of Codex Luna, which moved from low to medium effort.                                          |
+| 2026-10-22 | Added phone access: a Noise IK link on the LAN or a tailnet, one-time pairing codes, a phone method allowlist, `projects.changed`, and the Expo + SwiftUI phone app.           |
+| 2026-10-22 | Phone app screens moved from React-composed Expo UI to one SwiftUI hierarchy in Swift; TypeScript words the content and sends changed rows only.                               |
+| 2026-10-23 | Each chat's setup moved from every client's own storage to the server (`thread.settings`); the desktop shares its hidden models.                                               |
+| 2026-10-25 | Claude Code can also run through `claude -p` (stream-json, same protocol); engines declare `capabilities.runtimes`, the server keeps the choice.                               |
+| 2026-10-25 | Phone app screens moved from SwiftUI to UIKit view controllers under one native view; Expo UI is no longer a dependency.                                                       |
+| 2026-10-25 | Dashboards run again as app screens dealt from the bundled tasteskill v2.1.5 app library, without reference images; the dashboard image catalog stays parked.                  |
+| 2026-10-31 | Phone access became dev-only: offered only with `HARNESS_PHONE_ACCESS=1` (set by `pnpm dev`); other builds never open the phone port.                                          |
+| 2026-11-01 | Each build offers its edition's providers: release offers Claude Code, Codex, Grok, Cursor and Antigravity, dev every provider; missing means release.                         |

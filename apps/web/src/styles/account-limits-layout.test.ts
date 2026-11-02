@@ -15,7 +15,11 @@ describe('account limits layout', () => {
     expect(usage).toContain('font-size: var(--t-xs)')
     expect(usage).toContain('border-radius: var(--r-lg)')
     expect(usage).toContain('background: color-mix(in srgb, var(--text) 4%, var(--menu-bg))')
-    expect(usage).toContain('max-height: min(360px, calc(100vh - 150px))')
+    // No height of its own: a fixed cap made the well scroll with the window
+    // nowhere near full once a provider listed several accounts. The popup's
+    // viewport bound and the well's flex shrink are what limit it.
+    expect(usage).not.toContain('max-height')
+    expect(usage).toContain('flex: 0 1 auto')
     expect(usage).toContain('overflow-y: auto')
     expect(usage).toContain('overscroll-behavior: contain')
     expect(usage).toContain('min-height: 0')
@@ -32,6 +36,8 @@ describe('account limits layout', () => {
     const status = rule('.account-menu__source-status')
     expect(status).toContain('color: var(--text-3)')
     expect(status).toContain('text-overflow: ellipsis')
+    // It takes the room the name leaves, so it shortens before the name does.
+    expect(status).toContain('flex: 1 1 0')
     const retry = rule('.account-menu__retry')
     expect(retry).toContain('background: none')
     expect(retry).toContain('border: 0')
@@ -43,15 +49,22 @@ describe('account limits layout', () => {
     )
   })
 
-  it('draws each bar as a red-to-green gauge and leaves the number in text ink', () => {
+  it('draws each bar as one quiet fill, red only when nearly spent, with the number in text ink', () => {
     expect(rule('.account-menu__source')).toContain('gap: 8px')
     expect(rule('.account-menu__limit')).toContain('gap: 5px')
     const bar = rule('.account-menu__limit-bar')
-    expect(bar).toContain('height: 6px')
+    expect(bar).toContain('height: 4px')
+    expect(rule('.account-menu__account-gauge')).toContain('height: 4px')
     expect(bar).toContain('border-radius: var(--r-pill)')
     const fill = rule('.account-menu__limit-bar > span')
-    expect(fill).toMatch(
-      /linear-gradient\(\s*to right in oklch,\s*var\(--gauge-empty\),\s*var\(--gauge-half\),\s*var\(--gauge-full\)\s*\)/,
+    // A red-to-green gradient read as noise; the fill matches the card's meter.
+    expect(css).not.toContain('gradient')
+    expect(fill).toContain('background: color-mix(in srgb, var(--text) 52%, transparent)')
+    expect(rule('.account-menu__account-gauge > span')).toContain(
+      'background: color-mix(in srgb, var(--text) 52%, transparent)',
+    )
+    expect(css).toMatch(
+      /\.account-menu__limit\[data-low\] \.account-menu__limit-bar > span:not\(\.account-menu__limit-pace\),\s*\.account-menu__account-gauge\[data-low\] > span \{\s*background: var\(--error\);/,
     )
     expect(fill).toContain('clip-path: inset(0 calc((1 - var(--limit-fill)) * 100%) 0 0')
     expect(rule('.account-menu__limit[data-gauge]')).toContain('--limit-fill: var(--left)')
@@ -62,10 +75,42 @@ describe('account limits layout', () => {
     expect(css).not.toMatch(/#[0-9a-f]{3,8}\b/i)
   })
 
-  it('fills the gauges once when the popup opens, and not at all with reduced motion', () => {
+  it('closes a source to its heading and one line, the bar between label and value', () => {
+    // Closer than an open source's rows, so the closed popup stays short.
+    expect(rule('.account-menu__source.is-closed')).toContain('gap: 4px')
+    expect(rule('.account-menu__source-body')).toContain('gap: 8px')
+    const toggle = rule('.account-menu__source-toggle')
+    expect(toggle).toContain('background: none')
+    expect(toggle).toContain('cursor: pointer')
+    expect(rule('.account-menu__source-toggle:hover')).toContain('background: var(--menu-hover)')
+    expect(rule('.account-menu__source-toggle:focus-visible')).toContain(
+      'outline: var(--focus-ring)',
+    )
+    expect(
+      rule(".account-menu__source-toggle[aria-expanded='true'] > .account-menu__source-chevron"),
+    ).toContain('rotate: 90deg')
+    // The inline bar is the same 4px bar, short, and gives way before the label.
+    const bar = rule('.account-menu__limit.is-inline .account-menu__limit-bar')
+    expect(bar).toContain('flex: 0 100 48px')
+    expect(bar).toContain('min-width: 24px')
+    expect(rule('.account-menu__limit.is-inline .account-menu__limit-label')).toContain(
+      'text-overflow: ellipsis',
+    )
+    expect(css).toMatch(
+      /\.account-menu__account-line > svg,\s*\.account-menu__source \.account-menu__source-chevron \{\s*transition: none;/,
+    )
+  })
+
+  it('fills every gauge at once when the popup opens, and not at all with reduced motion', () => {
     const gauge = rule('.account-menu__limit[data-gauge]')
-    expect(gauge).toContain('animation: account-limit-fill')
-    expect(gauge).toContain('animation-delay: calc(80ms + var(--order) * 70ms)')
+    expect(gauge).toContain('animation: account-limit-fill 520ms var(--ease-out) both')
+    expect(rule('.account-menu__account-gauge')).toContain(
+      'animation: account-limit-fill 520ms var(--ease-out) both',
+    )
+    // Bars filling one row after another read as a cascade; no delay, no overshoot.
+    expect(css).not.toContain('animation-delay')
+    expect(css).not.toContain('--order')
+    expect(css).not.toContain('--ease-overshoot')
     expect(css).toMatch(/@keyframes account-limit-fill \{\s*from \{\s*--limit-fill: 0;/)
     expect(css).toMatch(
       /@media \(prefers-reduced-motion: reduce\) \{\s*\.account-menu__limit\[data-gauge\] \{\s*animation: none;\s*transition: none;/,

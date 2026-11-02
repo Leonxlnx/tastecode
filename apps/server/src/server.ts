@@ -1,7 +1,7 @@
 import path from 'node:path'
-import { timingSafeEqual } from 'node:crypto'
+import { createHash, timingSafeEqual } from 'node:crypto'
 import { isIPv4 } from 'node:net'
-import { WebSocketServer, type WebSocket } from 'ws'
+import { WebSocketServer } from 'ws'
 import {
   DEFAULT_ACCOUNT_ID,
   ErrorCode,
@@ -11,12 +11,14 @@ import {
   type ProviderHistorySource,
   type ProviderId,
   type ProviderStatus,
+  type ThreadSettings,
 } from '@harness/contracts'
 import { applyDesktopPath } from '@harness/proc/desktop-path'
 import { cliProbe, invalidateCliProbes } from './cli-probe.js'
 import { stopModelListings } from './runtime-loader.js'
 import { readWorkspaceDiff, StaleDiffSnapshotError } from './diff-review.js'
 import { Orchestrator, resolveWorkspacePath, type LifecycleScheduleHint } from './orchestrator.js'
+import { defaultSkillsRoot } from './default-skills.js'
 import { checkForUpdates } from './update-check.js'
 import type { FeedbackConfig } from './feedback-config.js'
 import { FeedbackService, providerVersionLabel } from './feedback.js'
@@ -28,10 +30,22 @@ import type { CheckoutPullRequests } from './checkout-pull-request.js'
 import type { PullRequestService } from './pull-requests.js'
 import { sourceAccount } from './account-directory.js'
 import { ProviderAccounts } from './provider-accounts.js'
+import { providerOffered } from './provider-edition.js'
 import { DEFAULT_PORT } from './server-config.js'
 import { Store } from './store.js'
 import { createProjectListProjector, type ProjectListState } from './project-list.js'
-import { imageFileName, materializeAttachment } from './uploaded-attachment.js'
+import { browseFolders } from './project-browser.js'
+import {
+  DEFAULT_PHONE_PORT,
+  PHONE_METHODS,
+  PhoneAccess,
+  phoneAccessAvailable,
+  type PhoneLinkSocket,
+} from './phone-access.js'
+import { readCredential, writeCredential } from './credentials.js'
+import type { PushSocket } from './push-bus.js'
+import { showsImage } from './markdown-images.js'
+import { imageFileName, materializeAttachment, readAttachmentImage } from './uploaded-attachment.js'
 import type { UsageHistoryService } from './usage-history.js'
 import { usageSummaryWithLimits } from './usage-summary.js'
 import { listWorkspaceBranches, readWorkspace } from './workspace.js'
@@ -76,6 +90,24 @@ const PROVIDER_READS: ReadonlySet<MethodName> = new Set<MethodName>([
   'usage.summary',
   'voice.status',
 ])
+/**
+ * Requests that change the project or chat list in a way no other push
+ * carries. Every client hears `projects.changed` after one succeeds, so a chat
+ * started on a phone shows up on the desktop and the other way round.
+ */
+const LIST_CHANGES: ReadonlySet<MethodName> = new Set<MethodName>([
+  'thread.start',
+  'thread.rename',
+  'thread.pin',
+  'thread.delete',
+  'thread.changeProvider',
+  'projects.add',
+  'projects.pin',
+  'projects.rename',
+  'projects.remove',
+])
+/** A connection the server answers: a renderer's WebSocket or a paired phone's link. */
+type ClientSocket = PushSocket
 export { DEFAULT_PORT } from './server-config.js'
 
 const startupStartedAt = Number(process.env['HARNESS_STARTUP_STARTED_AT'])
@@ -132,7 +164,7 @@ export function startServer(
     }
     throw error
   }
-  const push = new PushBus()
+  const push = new PushBus<ClientSocket>()
   const accounts = new ProviderAccounts(store, {
     root: path.join(path.dirname(databasePath), 'accounts'),
     onChanged: (provider) => push.broadcast('accounts.changed', { provider }),
@@ -150,7 +182,7 @@ export function startServer(
     (updatesService ??= import('./provider-updates.js').then(
       ({ ProviderUpdateService }) => new ProviderUpdateService(),
     ))
-  const previewCapture = new PreviewCaptureCoordinator(
+  const previewCapture = new PreviewCaptureCoordinator<ClientSocket>(
     (socket, request) => push.send(socket, 'preview.captureRequested', request),
     35_000,
     (socket, requestId) => push.send(socket, 'preview.captureCancelled', { requestId }),
@@ -229,7 +261,10 @@ export function startServer(
   const orchestrator = new Orchestrator(store, {
     onEvent: (threadId, event, seq, serializedEvent) => {
       if (event.type === 'item.delta') streamQuiet.noteDelta()
-      else if (event.type === 'turn.completed') turnEndedInCheckout(threadId)
+      else if (event.type === 'turn.completed') {
+        turnEndedInCheckout(threadId)
+        if (orchestrator.awaitsProviderTitle(threadId)) void nameUnnamedChat(threadId)
+      }
       if (serializedEvent === undefined) {
         push.broadcast('thread.event', { threadId, event, seq })
       } else {
@@ -268,6 +303,7 @@ export function startServer(
       push.broadcast('usage.changed', accountId ? { provider, accountId } : { provider }),
     onLimitsChanged: (source) => push.broadcast('usage.limits', { source }),
     providerBinary: async (provider) => (await providerService).providerBinary(provider),
+    defaultSkillsRoot: defaultSkillsRoot(),
     onModelsChanged: (provider, agent, accountId) =>
       push.broadcast('models.changed', {
         provider,
@@ -529,10 +565,96 @@ export function startServer(
       socket.close(1008, 'Access denied')
       return
     }
-    acceptConnection(socket)
+    acceptConnection(socket, (message, closed) => {
+      socket.on('message', (raw) => message(raw.toString()))
+      socket.on('close', closed)
+      socket.on('error', closed)
+    })
   })
 
-  function acceptConnection(socket: WebSocket): void {
+  /** Phone links may call only `PHONE_METHODS`. */
+  const phoneLinks = new WeakSet<ClientSocket>()
+  // One identity per data folder: a second profile pairs its own phones.
+  const phoneKeyCredential = `phone-link.server-key.${createHash('sha256').update(databasePath).digest('hex').slice(0, 12)}`
+  const phoneAccess = new PhoneAccess({
+    available: phoneAccessAvailable(process.env),
+    store,
+    keys: {
+      read: () => {
+        try {
+          return readCredential(phoneKeyCredential)
+        } catch {
+          return undefined
+        }
+      },
+      write: (value) => writeCredential(phoneKeyCredential, value),
+    },
+    port: Number(process.env['HARNESS_PHONE_PORT'] ?? DEFAULT_PHONE_PORT),
+    onConnection: (link: PhoneLinkSocket) => {
+      phoneLinks.add(link)
+      acceptConnection(link, (message, closed) => {
+        link.onMessage(message)
+        link.onClose(closed)
+      })
+    },
+    onChanged: (status) => push.broadcast('phone.changed', status),
+  })
+  wss.once('listening', () => {
+    void phoneAccess.resume().catch(() => undefined)
+  })
+
+  let listChange: ReturnType<typeof setTimeout> | undefined
+  /** Coalesces a burst (a new chat is started, renamed and titled within moments). */
+  /**
+   * A chat left for its provider to name still has its stand-in title after a
+   * turn: history is read first, so a name the provider did write wins, and
+   * only then does the title model write one.
+   */
+  async function nameUnnamedChat(threadId: string): Promise<void> {
+    try {
+      if (providerHistory && !historyClosing) await (await providerHistory).refresh()
+      if (await orchestrator.nameUnnamedChat(threadId)) announceListChange()
+    } catch {
+      // The chat keeps its first-prompt title; renaming it settles that too.
+    }
+  }
+
+  function announceListChange(): void {
+    listChange ??= setTimeout(() => {
+      listChange = undefined
+      push.broadcast('projects.changed', {})
+    }, 50)
+  }
+
+  /** Tells every client a chat's setup, after any change to it. */
+  function announceSettings(threadId: string): ThreadSettings {
+    const settings = store.threadSettings(threadId)
+    push.broadcast('thread.settings', { threadId, settings })
+    // The project list names each chat's model, so lists filtered by it follow.
+    announceListChange()
+    return settings
+  }
+
+  /** Keeps the shared setup on what a turn actually ran with, announcing only a change. */
+  function adoptTurnSettings(
+    threadId: string,
+    turn: Pick<ThreadSettings, 'model' | 'effort' | 'serviceTier'>,
+  ): void {
+    const current = store.threadSettings(threadId)
+    if (
+      current.model === turn.model &&
+      current.effort === turn.effort &&
+      current.serviceTier === turn.serviceTier
+    )
+      return
+    store.setThreadSettings(threadId, turn)
+    announceSettings(threadId)
+  }
+
+  function acceptConnection(
+    socket: ClientSocket,
+    listen: (message: (raw: string) => void, closed: () => void) => void,
+  ): void {
     const welcome = {
       serverVersion: SERVER_VERSION,
       protocolVersion: PROTOCOL_VERSION,
@@ -541,20 +663,20 @@ export function startServer(
     push.add(socket)
     push.send(socket, 'server.welcome', welcome)
 
-    socket.on('message', (raw) =>
-      handleMessage(socket, raw.toString()).catch((error) =>
-        console.error(`[server] request handling failed: ${String(error)}`),
-      ),
-    )
     const removeSocket = () => {
       previewCapture.remove(socket)
       push.remove(socket)
     }
-    socket.on('close', removeSocket)
-    socket.on('error', removeSocket)
+    listen(
+      (raw) =>
+        void handleMessage(socket, raw).catch((error) =>
+          console.error(`[server] request handling failed: ${String(error)}`),
+        ),
+      removeSocket,
+    )
   }
 
-  async function handleMessage(socket: WebSocket, raw: string): Promise<void> {
+  async function handleMessage(socket: ClientSocket, raw: string): Promise<void> {
     let parsed: unknown
     try {
       parsed = JSON.parse(raw)
@@ -577,12 +699,17 @@ export function startServer(
       respondError(socket, id, ErrorCode.BAD_REQUEST, `unknown method: ${method}`)
       return
     }
+    if (phoneLinks.has(socket) && !PHONE_METHODS.has(method)) {
+      respondError(socket, id, ErrorCode.FORBIDDEN, `${method} is not available from a phone`)
+      return
+    }
     // Store reads that arrived in the same batch answer first; see PROVIDER_READS.
     if (PROVIDER_READS.has(method)) await new Promise<void>((resolve) => setImmediate(resolve))
     const createsSession = method === 'thread.start' || method === 'sideChat.start'
     if (createsSession) historySessionStarts += 1
     try {
       const result = await route(socket, method, params)
+      if (LIST_CHANGES.has(method) || titleApplied(method, result)) announceListChange()
       if (socket.readyState === socket.OPEN) {
         push.reply(socket, serializeSuccessResponse(id, result))
         if (method === 'projects.list') reportStartupMilestone('server-projects-sent')
@@ -613,7 +740,11 @@ export function startServer(
     }
   }
 
-  async function route(socket: WebSocket, method: MethodName, params: unknown): Promise<unknown> {
+  async function route(
+    socket: ClientSocket,
+    method: MethodName,
+    params: unknown,
+  ): Promise<unknown> {
     switch (method) {
       case 'client.capabilities':
         previewCapture.setCapability(socket, parseParams(method, params).previewCapture)
@@ -735,6 +866,15 @@ export function startServer(
       case 'providers.updateContextSettings': {
         const p = parseParams(method, params)
         return orchestrator.updateContextSettings(p.provider, p.settings)
+      }
+
+      case 'providers.runtimeSettings':
+        parseParams(method, params)
+        return orchestrator.runtimeSettings()
+
+      case 'providers.updateRuntimeSettings': {
+        const p = parseParams(method, params)
+        return orchestrator.updateRuntimeSettings(p.provider, p.runtime)
       }
 
       case 'providers.accountContextSettings':
@@ -1049,6 +1189,7 @@ export function startServer(
       }
 
       case 'acp.agents': {
+        if (!providerOffered('acp')) return { agents: [] }
         const { acpCanSignOut, detectAgents } = await import('@harness/adapter-acp/agents')
         const agents = await detectAgents()
         return {
@@ -1082,6 +1223,13 @@ export function startServer(
         const serialized = serializeProjectList(projected)
         reportStartupMilestone('server-projects-serialized')
         return serialized
+      }
+
+      case 'projects.browse': {
+        const p = parseParams(method, params)
+        return browseFolders(p.path, {
+          projects: new Set(store.projects().map((project) => project.path)),
+        })
       }
 
       case 'projects.add': {
@@ -1170,6 +1318,28 @@ export function startServer(
         return {
           path: await materializeAttachment({ name: imageFileName(p.mimeType), data: p.data }),
         }
+      }
+
+      case 'attachments.read': {
+        const p = parseParams(method, params)
+        // Only a picture this chat's messages attached, or one its replies
+        // show as a Markdown image (agents show screenshots that way); never
+        // any file by name.
+        await loadProviderHistoryForRead(p.threadId)
+        const history = await orchestrator.history(p.threadId)
+        const named = history.some(({ event }) => {
+          if (event.type !== 'item.started' && event.type !== 'item.completed') return false
+          const { item } = event
+          if (item.attachments?.includes(p.path)) return true
+          return (
+            event.type === 'item.completed' &&
+            item.type === 'message' &&
+            item.role === 'assistant' &&
+            showsImage(item.text ?? '', p.path)
+          )
+        })
+        if (!named) throw new Error('This chat has no such image.')
+        return readAttachmentImage(p.path)
       }
 
       case 'thread.rename': {
@@ -1302,9 +1472,10 @@ export function startServer(
           reasoningTokens: 0,
           totalTokens: 0,
         }
+        // A provider this build does not offer counts toward no day's total.
         const totals =
           'threadId' in p
-            ? store.usageSummary(p.threadId, startOfToday.getTime())
+            ? store.usageSummary(p.threadId, startOfToday.getTime(), providerOffered)
             : { session: empty, today: empty }
         return usageSummaryWithLimits(
           totals,
@@ -1369,6 +1540,7 @@ export function startServer(
           isolate: p.isolate,
         })
         startedThisRun.add(thread.id)
+        store.setThreadSettings(thread.id, p)
         const earlierChanges = orchestrator.earlierChanges(thread.id)
         return { threadId: thread.id, ...(earlierChanges ? { earlierChanges } : {}) }
       }
@@ -1391,6 +1563,8 @@ export function startServer(
         providerHistoryReady?.forget(p.threadId)
         startedThisRun.add(p.threadId)
         historySchedule.activity()
+        store.setThreadSettings(p.threadId, p)
+        announceSettings(p.threadId)
         return {}
       }
 
@@ -1443,9 +1617,10 @@ export function startServer(
 
       case 'thread.sendTurn': {
         const p = parseParams(method, params)
-        await loadProviderHistory(p.threadId)
-        return {
-          ...(await orchestrator.submitTurn(
+        // A Stop sent right behind the prompt waits for it, history read included.
+        const result = await orchestrator.trackSubmission(p.threadId, async () => {
+          await loadProviderHistory(p.threadId)
+          return orchestrator.submitTurn(
             p.threadId,
             p.text,
             p.attachments,
@@ -1455,8 +1630,11 @@ export function startServer(
               serviceTier: p.serviceTier,
             },
             p.clientSubmissionId,
-          )),
-        }
+          )
+        })
+        // A client that names its model sent with that setup; the others follow it.
+        if (p.model !== undefined) adoptTurnSettings(p.threadId, p)
+        return result
       }
 
       case 'thread.queue': {
@@ -1503,7 +1681,46 @@ export function startServer(
       case 'thread.setApproval': {
         const p = parseParams(method, params)
         await orchestrator.setThreadApproval(p.threadId, p.approval)
+        announceSettings(p.threadId)
         return {}
+      }
+
+      case 'models.hidden':
+        return { keys: store.hiddenModels() }
+
+      case 'models.setHidden': {
+        const p = parseParams(method, params)
+        const keys = [...new Set(p.keys)].sort()
+        if (JSON.stringify(keys) !== JSON.stringify(store.hiddenModels())) {
+          store.setHiddenModels(keys)
+          push.broadcast('models.hidden', { keys })
+        }
+        return {}
+      }
+
+      case 'providers.roster':
+        return { keys: store.providerRoster() }
+
+      case 'providers.setRoster': {
+        const p = parseParams(method, params)
+        const keys = [...new Set(p.keys)]
+        if (JSON.stringify(keys) !== JSON.stringify(store.providerRoster())) {
+          store.setProviderRoster(keys)
+          push.broadcast('providers.roster', { keys })
+        }
+        return {}
+      }
+
+      case 'thread.settings': {
+        const p = parseParams(method, params)
+        return store.threadSettings(p.threadId)
+      }
+
+      case 'thread.setSettings': {
+        const p = parseParams(method, params)
+        if (!store.thread(p.threadId)) throw new Error(`Unknown chat: ${p.threadId}`)
+        store.setThreadSettings(p.threadId, p)
+        return announceSettings(p.threadId)
       }
 
       case 'thread.close': {
@@ -1514,6 +1731,21 @@ export function startServer(
 
       case 'sidebar.settings':
         return store.sidebarSettings()
+
+      case 'phone.status':
+        return phoneAccess.status()
+
+      case 'phone.setEnabled':
+        return phoneAccess.setEnabled(parseParams(method, params).enabled)
+
+      case 'phone.startPairing':
+        return phoneAccess.startPairing()
+
+      case 'phone.cancelPairing':
+        return phoneAccess.cancelPairing()
+
+      case 'phone.removeDevice':
+        return phoneAccess.removeDevice(parseParams(method, params).deviceId)
 
       case 'sidebar.updateSettings': {
         const update = parseParams(method, params)
@@ -1535,7 +1767,7 @@ export function startServer(
   }
 
   function respondError(
-    socket: WebSocket,
+    socket: ClientSocket,
     id: string,
     code: string,
     message: string,
@@ -1568,6 +1800,8 @@ export function startServer(
       usageHistoryClosing = true
       await usageHistory?.then((service) => service.dispose()).catch(() => undefined)
       const orchestratorClosed = orchestrator.disposeAll()
+      clearTimeout(listChange)
+      await phoneAccess.close().catch(() => undefined)
       for (const socket of wss.clients) socket.terminate()
       const results = await Promise.allSettled([
         orchestratorClosed,
@@ -1586,6 +1820,16 @@ export function startServer(
       if (errors.length > 0) throw new AggregateError(errors, 'server shutdown failed')
     },
   }
+}
+
+function titleApplied(method: MethodName, result: unknown): boolean {
+  return (
+    method === 'backgroundModel.generateTitle' &&
+    typeof result === 'object' &&
+    result !== null &&
+    'applied' in result &&
+    result.applied === true
+  )
 }
 
 /**

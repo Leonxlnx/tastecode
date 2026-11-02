@@ -2,9 +2,10 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { DatabaseSync } from './sqlite.js'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import { ItemTypeSchema, type DomainEvent, type ItemType } from '@harness/contracts'
+import { providerOffered, takeEdition } from './provider-edition.js'
 import { Store } from './store.js'
 
 let store: Store
@@ -249,6 +250,7 @@ describe('sidebar thread snapshots', () => {
         pinned: true,
         unread: true,
         worktreeBranch: 'feature/work',
+        lastActiveAt: 10,
       }),
     ])
     expect(store.sidebarThreads()).not.toBe(initial)
@@ -354,6 +356,65 @@ describe('retained thread metadata', () => {
     })
 
     expect(store.thread('later')).toBe(added)
+  })
+})
+
+describe('chat settings', () => {
+  it('keeps one setup per chat beside its access level, and drops it with the chat', () => {
+    store.addProject('/repo')
+    store.addThread({ id: 'main', projectPath: '/repo', provider: 'codex', title: 'Main' })
+    expect(store.threadSettings('main')).toEqual({})
+
+    store.setThreadSettings('main', { model: 'gpt-5.5', effort: 'high', serviceTier: 'fast' })
+    store.setThreadApproval('main', 'auto')
+    expect(store.threadSettings('main')).toEqual({
+      model: 'gpt-5.5',
+      effort: 'high',
+      serviceTier: 'fast',
+      approval: 'auto',
+    })
+
+    // A new setup replaces the old one whole: no effort means the model's default.
+    store.setThreadSettings('main', { model: '' })
+    expect(store.threadSettings('main')).toEqual({ model: '', approval: 'auto' })
+
+    store.deleteThread('main')
+    expect(store.threadSettings('main')).toEqual({})
+  })
+})
+
+it("names each chat's model in the sidebar list and follows a change", () => {
+  store.addProject('/repo')
+  store.addThread({ id: 'main', projectPath: '/repo', provider: 'codex', title: 'Main' })
+  store.addThread({ id: 'other', projectPath: '/repo', provider: 'codex', title: 'Other' })
+  expect(store.sidebarThreads().find((thread) => thread.id === 'main')).not.toHaveProperty('model')
+  store.setThreadSettings('main', { model: 'gpt-5.5' })
+  expect(store.sidebarThreads().find((thread) => thread.id === 'main')?.model).toBe('gpt-5.5')
+  store.setThreadSettings('main', { model: 'gpt-5.4-mini' })
+  expect(store.sidebarThreads().find((thread) => thread.id === 'main')?.model).toBe('gpt-5.4-mini')
+  // An empty model is the provider's own default; the list names none.
+  store.setThreadSettings('main', { model: '' })
+  expect(store.sidebarThreads().find((thread) => thread.id === 'main')).not.toHaveProperty('model')
+  expect(store.sidebarThreads().find((thread) => thread.id === 'other')).not.toHaveProperty('model')
+})
+
+describe('hidden models', () => {
+  it('keeps the picker’s hidden choice keys and survives a damaged record', () => {
+    expect(store.hiddenModels()).toEqual([])
+    store.setHiddenModels(['claude-code:claude-sonnet-5', 'codex:gpt-5.4'])
+    expect(store.hiddenModels()).toEqual(['claude-code:claude-sonnet-5', 'codex:gpt-5.4'])
+    store.setHiddenModels([])
+    expect(store.hiddenModels()).toEqual([])
+  })
+})
+
+describe('provider roster', () => {
+  it('is null until a desktop saves one, and keeps an empty one', () => {
+    expect(store.providerRoster()).toBeNull()
+    store.setProviderRoster(['codex', 'acp:kimi'])
+    expect(store.providerRoster()).toEqual(['codex', 'acp:kimi'])
+    store.setProviderRoster([])
+    expect(store.providerRoster()).toEqual([])
   })
 })
 
@@ -1566,6 +1627,26 @@ describe('threads', () => {
       expect(reopened.updateProviderContextSettings('grok', {})).toEqual({
         'claude-code': { window: 1_000_000, compactAt: 'off' },
       })
+    } finally {
+      reopened.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps the chosen provider runtimes across a restart and forgets a reset one', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-runtime-'))
+    const file = path.join(dir, 'runtime.db')
+    const persistent = new Store(file)
+    expect(persistent.providerRuntimeSettings()).toEqual({})
+    const saved = persistent.updateProviderRuntimeSettings('claude-code', 'cli')
+    expect(Object.isFrozen(saved)).toBe(true)
+    expect(persistent.providerRuntimeSettings()).toBe(saved)
+    persistent.close()
+
+    const reopened = new Store(file)
+    try {
+      expect(reopened.providerRuntimeSettings()).toEqual({ 'claude-code': 'cli' })
+      expect(reopened.updateProviderRuntimeSettings('claude-code', null)).toEqual({})
     } finally {
       reopened.close()
       rmSync(dir, { recursive: true, force: true })
@@ -2809,5 +2890,26 @@ describe('usage totals across providers', () => {
     const summary = store.usageSummary('one', 0)
     expect(summary.session).toEqual(expect.objectContaining({ totalTokens: 100 }))
     expect(summary.today).toEqual(expect.objectContaining({ totalTokens: 140 }))
+  })
+})
+
+describe('usage totals in a release build', () => {
+  afterEach(() => takeEdition({}))
+
+  it("leaves a provider the build does not offer out of today's total", () => {
+    takeEdition({ HARNESS_EDITION: 'release' })
+    store.addProject('/repo')
+    store.addThread({ id: 'one', projectPath: '/repo', provider: 'codex', title: 'One' })
+    store.addThread({ id: 'two', projectPath: '/repo', provider: 'opencode', title: 'Two' })
+    store.append('one', usage(100))
+    store.append('two', usage(40))
+
+    expect(store.usageSummary('one', 0, providerOffered).today).toEqual(
+      expect.objectContaining({ totalTokens: 100 }),
+    )
+    // An old chat on that provider stays readable with its own total.
+    const hidden = store.usageSummary('two', 0, providerOffered)
+    expect(hidden.session).toEqual(expect.objectContaining({ totalTokens: 40 }))
+    expect(hidden.today).toEqual(expect.objectContaining({ totalTokens: 100 }))
   })
 })

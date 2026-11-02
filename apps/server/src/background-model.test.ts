@@ -552,6 +552,16 @@ describe('background output shaping', () => {
     )
   })
 
+  it('strips the markdown a model wraps a title in', () => {
+    expect(cleanGeneratedTitle('**Create notes.md with phone testing tips**', 'Fallback')).toBe(
+      'Create notes.md with phone testing tips',
+    )
+    expect(cleanGeneratedTitle('## Title: _Fix queue ordering_', 'Fallback')).toBe(
+      'Fix queue ordering',
+    )
+    expect(cleanGeneratedTitle('Keep snake_case_names', 'Fallback')).toBe('Keep snake_case_names')
+  })
+
   it('drops the high surrogate when a generated title is cut inside an emoji', () => {
     expect(cleanGeneratedTitle('z'.repeat(59) + '🌊 tail', 'Fallback')).toBe('z'.repeat(59))
   })

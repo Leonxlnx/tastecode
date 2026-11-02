@@ -21,9 +21,11 @@ import { KEYBINDING_DEFINITIONS, type Shortcut } from './shortcuts.js'
 import { TERMINAL_PLACEMENT_KEY } from './terminal-placement.js'
 import { IndeterminateRequestError, type ConnectionState, type Transport } from './transport.js'
 import { resetInstalls } from './provider-install.js'
+import { PROVIDER_RECHECK_INTERVAL_MS } from './provider-recheck.js'
 import { providerUpdatesStore } from './provider-updates.js'
 import { mockKeyboardModifierState } from './test-keyboard.js'
 import { NEWEST_HISTORY_TURNS } from './thread-controller.js'
+import { composerWireText } from './ui/composer-chips.js'
 
 const NEWEST_PAGE = { turnLimit: NEWEST_HISTORY_TURNS }
 const PENDING_CHAT_DELETES_KEY = 'harness.pendingChatDeletes.v1'
@@ -111,6 +113,8 @@ const threadCallbacks = vi.hoisted<ThreadCallbacks>(() => ({
   searchJump: undefined,
   searchJumpDone: undefined,
 }))
+/** The last props each chat's transcript rendered with, for split view's two transcripts. */
+const threadPropsById = vi.hoisted(() => new Map<string, ThreadProps>())
 const pickFolder = vi.hoisted(() => vi.fn<() => Promise<string | undefined>>())
 const droppedProjectFolderPaths = vi.hoisted(() =>
   vi.fn<(files: ArrayLike<File>) => Promise<string[]>>(),
@@ -186,8 +190,10 @@ vi.mock('./ui/Thread.js', async () => {
       return (
         <div
           data-testid="thread"
+          data-thread-id={props.threadId}
           data-started-at={frame.activeTurn?.startedAt}
           ref={() => {
+            if (props.threadId) threadPropsById.set(props.threadId, props)
             threadCallbacks.decideApproval = props.onDecide
             threadCallbacks.answerUserInput = props.onAnswerUserInput
             threadCallbacks.undoChanges = props.onUndoChanges
@@ -417,6 +423,7 @@ beforeEach(() => {
   threadCallbacks.threadId = undefined
   threadCallbacks.searchJump = undefined
   threadCallbacks.searchJumpDone = undefined
+  threadPropsById.clear()
   window.location.hash = ''
   document.documentElement.removeAttribute('data-theme')
   document.documentElement.classList.remove('dark')
@@ -1366,6 +1373,23 @@ describe('web client', () => {
         { provider: 'codex', state: 'loading', remembered: true },
       ),
     ).toBe('setup-required')
+    // The provider's status is its default account's; a further account's own
+    // check decides for that account, signed out or in.
+    const team = { provider: 'codex' as const, accountId: 'team-9z8y7x' }
+    expect(resolve({ auth: 'unauthenticated' }, { ...team, state: 'loading' })).toBe('loading')
+    expect(resolve({ auth: 'unauthenticated' }, { ...team, state: 'loading', slow: true })).toBe(
+      'ready',
+    )
+    expect(resolve({ auth: 'authenticated' }, { ...team, state: 'loading' })).toBe('loading')
+    expect(
+      resolve(
+        { auth: 'unauthenticated' },
+        { ...team, state: 'ready', account: { signedIn: true } },
+      ),
+    ).toBe('ready')
+    expect(
+      resolve({ auth: 'authenticated' }, { ...team, state: 'ready', account: { signedIn: false } }),
+    ).toBe('setup-required')
   })
 
   it('cuts a prompt title before an emoji split at 40 code units', () => {
@@ -1499,7 +1523,8 @@ describe('web client', () => {
     await screen.findByRole('button', { name: /^New session,/ })
     expect(composer().value).toBe('New chat idea')
     fireEvent.click(screen.getByRole('button', { name: /^New session,/ }))
-    expect(composer().value).toBe('Half-typed reply')
+    // A skill saved apart from the text comes back as a chip inside it.
+    expect(composerWireText(composer().value)).toBe('$docs Half-typed reply')
     expect(screen.getByRole('button', { name: 'Remove later.png' })).toBeTruthy()
     expect(composerProps().draftRequest?.resources).toEqual([docs])
   })
@@ -2434,6 +2459,82 @@ describe('web client', () => {
     }
   })
 
+  it('leaves a provider known to be signed out out of the picker until a read says otherwise', async () => {
+    serverProviders = [
+      ...serverProviders,
+      { ...claudeCodeServerProvider(), auth: 'unknown' },
+      { ...grokServerProvider(), auth: 'unknown' },
+    ]
+    // Claude Code's last account read said signed out; Grok's was never read.
+    localStorage.setItem('harness.signedOutProviders', JSON.stringify(['claude-code']))
+    mockLiveDiscovery()
+    let claudeAccount = { signedIn: false }
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'auth.status' &&
+      methods['auth.status'].params.parse(params).provider === 'claude-code'
+        ? Promise.resolve(claudeAccount)
+        : request(method, params),
+    )
+    const claudeReads = () =>
+      transport.request.mock.calls.filter(
+        ([method, params]) =>
+          method === 'auth.status' &&
+          methods['auth.status'].params.parse(params).provider === 'claude-code',
+      ).length
+
+    render(<App />)
+
+    await waitFor(() => expect(offeredModelNames('grok')).toEqual(['Grok 4.7']))
+    await waitFor(() => expect(offeredModelNames('codex').length).toBeGreaterThan(0))
+    expect(offeredModelNames('claude-code')).toEqual([])
+
+    // Opening the picker asks again; still signed out, it stays away.
+    act(() => composerProps().onModelSelectorOpen?.())
+    await waitFor(() => expect(claudeReads()).toBe(1))
+    await act(async () => undefined)
+    expect(offeredModelNames('claude-code')).toEqual([])
+    // A second opening within the recheck interval does not start the CLI again.
+    act(() => composerProps().onModelSelectorOpen?.())
+    await act(async () => undefined)
+    expect(claudeReads()).toBe(1)
+
+    // Signed in from its own terminal since: back once a read says so.
+    claudeAccount = { signedIn: true }
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + PROVIDER_RECHECK_INTERVAL_MS + 1)
+    act(() => composerProps().onModelSelectorOpen?.())
+    await waitFor(() =>
+      expect(offeredModelNames('claude-code')).toEqual([
+        'Fable 5.1',
+        'Opus 5.5',
+        'Sonnet 5.5',
+        'Haiku 5.5',
+      ]),
+    )
+    expect(claudeReads()).toBe(2)
+  })
+
+  it('keeps the provider the composer is on in the picker while it is signed out', async () => {
+    serverProviders = [...serverProviders, { ...claudeCodeServerProvider(), auth: 'unknown' }]
+    localStorage.setItem('harness.provider', 'claude-code')
+    mockLiveDiscovery()
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'auth.status' &&
+      methods['auth.status'].params.parse(params).provider === 'claude-code'
+        ? Promise.resolve({ signedIn: false })
+        : request(method, params),
+    )
+
+    render(<App />)
+
+    await waitFor(() =>
+      expect(localStorage.getItem('harness.signedOutProviders')).toContain('claude-code'),
+    )
+    await waitFor(() => expect(offeredModelNames('claude-code').length).toBeGreaterThan(0))
+    expect(composerProps().provider).toBe('claude-code')
+  })
+
   it('returns an older build’s list to the current lineups from the cached catalog', async () => {
     serverProviders = [...serverProviders, claudeCodeServerProvider()]
     // Version 4 predates Claude Code's reset (7) and Codex's (8), so every
@@ -3115,6 +3216,7 @@ describe('web client', () => {
     })
 
     it('lists an agent that registers after the picker opened', async () => {
+      serverProviders = [...serverProviders, { ...serverProviders[0]!, id: 'acp' }]
       const kimi = { id: 'kimi', name: 'Kimi CLI' }
       localStorage.setItem('harness.providerRoster.v1', JSON.stringify(['codex', 'acp:kimi']))
       localStorage.setItem(
@@ -3741,60 +3843,8 @@ describe('web client', () => {
     )
   })
 
-  it('offers no account choice for a new chat on a custom harness, which keeps its own sign-in', async () => {
-    const codex = serverProviders[0]!
-    serverProviders = [
-      { ...codex, capabilities: { ...codex.capabilities!, multipleAccounts: true } },
-    ]
-    const request = transport.request.getMockImplementation()
-    if (!request) throw new Error('missing request mock')
-    transport.request.mockImplementation((method: string, params: unknown) => {
-      if (method === 'harnesses.list') {
-        return Promise.resolve({
-          harnesses: [
-            {
-              id: 'codex-fork',
-              displayName: 'Codex Fork',
-              provider: 'codex',
-              command: 'codex-fork',
-              args: [],
-            },
-          ],
-        })
-      }
-      if (method === 'models.list') {
-        const { agent } = methods['models.list'].params.parse(params)
-        const id = agent === 'codex-fork' ? 'fork-model' : 'codex-model'
-        return Promise.resolve({
-          models: [
-            { id, displayName: id, isDefault: true, reasoningEfforts: ['low'], serviceTiers: [] },
-          ],
-        })
-      }
-      return request(method, params)
-    })
-    render(<App />)
-    act(() => composerProps().onModelSelectorOpen?.())
-    await waitFor(() =>
-      expect(composerProps().models.map((choice) => choice.model.id)).toEqual(
-        expect.arrayContaining(['codex-model', 'fork-model']),
-      ),
-    )
-    const pick = (id: string) =>
-      act(() =>
-        composerProps().onModelChange(
-          composerProps().models.find((choice) => choice.model.id === id)!.key,
-        ),
-      )
-
-    // Codex itself runs as the chosen account, so the choice is offered.
-    pick('codex-model')
-    await waitFor(() => expect(composerProps().accountProvider).toBe('codex'))
-    pick('fork-model')
-    await waitFor(() => expect(composerProps().accountProvider).toBeUndefined())
-  })
-
   it('discovers a custom Pi source and binds new sessions to its harness id', async () => {
+    serverProviders = [...serverProviders, { ...serverProviders[0]!, id: 'pi', displayName: 'Pi' }]
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
     transport.request.mockImplementation((method: string, params: unknown) => {
@@ -4182,7 +4232,7 @@ describe('web client', () => {
     expect(screen.queryByText('Loading models…')).toBeNull()
     fireEvent.click(await screen.findByRole('button', { name: 'Model and reasoning' }))
     expect(
-      await screen.findByRole('button', { name: 'Use gpt-6.1-sol through Codex' }),
+      await screen.findByRole('button', { name: 'Use Gpt-6.1-Sol through Codex' }),
     ).toBeTruthy()
     expect(document.querySelector('.model-selector__effort-title')?.textContent).toBe(
       'Effort: High',
@@ -4386,6 +4436,7 @@ describe('web client', () => {
   })
 
   it('fetches models only for the ACP agents added to Providers', async () => {
+    serverProviders = [...serverProviders, { ...serverProviders[0]!, id: 'acp' }]
     localStorage.setItem('harness.providerRoster.v1', JSON.stringify(['codex', 'acp:kimi']))
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
@@ -4427,6 +4478,70 @@ describe('web client', () => {
     expect(await screen.findByRole('heading', { name: 'Add providers' })).toBeTruthy()
   })
 
+  it("never shows the composer's last provider's sign-in as the next one's in Settings", async () => {
+    await import('./ui/Settings.js')
+    serverProjects = []
+    localStorage.setItem('harness.provider', 'claude-code')
+    localStorage.setItem('harness.providerRoster.v1', '[]')
+    serverProviders.unshift({
+      ...serverProviders[0]!,
+      id: 'claude-code',
+      displayName: 'Claude Code',
+      auth: 'unknown',
+    })
+    let answerCodex!: (account: { signedIn: boolean }) => void
+    const codexAccount = new Promise<{ signedIn: boolean }>((resolve) => {
+      answerCodex = resolve
+    })
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'auth.status') {
+        // Claude Code's CLI is signed out; Codex's read is still running.
+        return methods['auth.status'].params.parse(params).provider === 'codex'
+          ? codexAccount
+          : Promise.resolve({ signedIn: false })
+      }
+      if (method === 'models.list') {
+        return Promise.resolve({
+          models:
+            methods['models.list'].params.parse(params).provider === 'codex'
+              ? [cachedCodexChoice().model]
+              : [],
+        })
+      }
+      return request(method, params)
+    })
+    render(<App />)
+
+    expect(await screen.findByText('Add a provider to start chatting.')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Add provider' }))
+    expect(await screen.findByRole('heading', { name: 'Add providers' })).toBeTruthy()
+    const codexRow = () =>
+      screen.getByRole('button', { name: /^(Add|Remove) Codex$/ }).closest('.provider-row')!
+    expect(codexRow().textContent).toContain('Signed in')
+
+    // Adding Codex lists its models, and the composer moves to it.
+    fireEvent.click(screen.getByRole('button', { name: 'Add Codex' }))
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('models.list', { provider: 'codex' }),
+    )
+    // Settings' read of the row and the composer's own read of its new provider.
+    await waitFor(() =>
+      expect(
+        transport.request.mock.calls.filter(
+          ([method, params]) =>
+            method === 'auth.status' && (params as { provider?: string }).provider === 'codex',
+        ),
+      ).toHaveLength(2),
+    )
+    await act(async () => undefined)
+    expect(codexRow().textContent).not.toContain('Not signed in')
+
+    await act(async () => answerCodex({ signedIn: true }))
+    expect(codexRow().textContent).toContain('Signed in')
+    expect(codexRow().textContent).not.toContain('Not signed in')
+  })
+
   it('starts the roster from what was in use: installed providers and agents with chats', async () => {
     serverProjects = [
       {
@@ -4442,6 +4557,11 @@ describe('web client', () => {
           },
         ],
       },
+    ]
+    // The server lists ACP agents under its ACP entry.
+    serverProviders = [
+      ...serverProviders,
+      { ...serverProviders[0]!, id: 'acp', displayName: 'ACP agents', version: 'Kimi CLI, Devin' },
     ]
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
@@ -5026,6 +5146,51 @@ describe('new chats', () => {
     expect(transport.request).not.toHaveBeenCalledWith('usage.summary', expect.anything())
   })
 
+  it('shows the card figure of the provider the model picker is on', async () => {
+    serverProviders = [...serverProviders, claudeCodeServerProvider()]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    const listed = (id: string) => ({
+      id,
+      displayName: id,
+      isDefault: true,
+      reasoningEfforts: [],
+      serviceTiers: [],
+    })
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'models.list') {
+        const { provider } = methods['models.list'].params.parse(params)
+        return Promise.resolve({ models: [listed(provider === 'codex' ? 'gpt-6.1-sol' : 'opus')] })
+      }
+      if (
+        method === 'usage.summary' &&
+        (params as { provider: string }).provider === 'claude-code'
+      ) {
+        return (request(method, params) as Promise<ResultOf<'usage.summary'>>).then((summary) => ({
+          ...summary,
+          limits: [{ label: '5 hours', usedPercent: 90 }],
+        }))
+      }
+      return request(method, params)
+    })
+    const card = () => document.querySelector('.account__usage')?.getAttribute('title')
+    render(<App />)
+
+    await waitFor(() => expect(card()).toBe('Codex · 5 hours · 75% left'))
+    // The popup reads Claude Code too, whose limit is tighter.
+    fireEvent.click(screen.getByRole('button', { name: 'Account' }))
+    const claude = await screen.findByRole('region', { name: 'Claude Code' })
+    await waitFor(() => expect(within(claude).getByText('10% left')).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', { name: 'Account' }))
+    expect(card()).toBe('Codex · 5 hours · 75% left')
+
+    await waitFor(() =>
+      expect(composerProps().models.map((choice) => choice.key)).toContain('claude-code:opus'),
+    )
+    act(() => composerProps().onModelChange('claude-code:opus'))
+    await waitFor(() => expect(card()).toBe('Claude Code · 5 hours · 10% left'))
+  })
+
   it('keeps installed provider limit sources separate in the account overview', async () => {
     serverProviders = [
       ...serverProviders,
@@ -5449,6 +5614,102 @@ describe('new chats', () => {
     expect(note()).toBeUndefined()
   })
 
+  it("brings back a model's last effort on another provider, not on another account", async () => {
+    const claude = claudeCodeServerProvider()
+    serverProviders = [
+      serverProviders[0]!,
+      { ...claude, capabilities: { ...claude.capabilities!, multipleAccounts: true } },
+    ]
+    serverProjects[0]!.sessions = [
+      { id: 'chat-1', title: 'Webhook retries', provider: 'claude-code', createdAt: 1 },
+    ]
+    const listed = (id: string, isDefault = false): Model => ({
+      id,
+      displayName: id,
+      isDefault,
+      reasoningEfforts: ['low', 'medium', 'high', 'xhigh'],
+      defaultReasoningEffort: 'medium',
+      serviceTiers: [],
+    })
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'accounts.list') {
+        return Promise.resolve({
+          accounts: [
+            { id: 'default', provider: 'claude-code', label: 'Personal', managed: false },
+            {
+              id: 'team-9z8y7x',
+              provider: 'claude-code',
+              label: 'Team',
+              home: 'C:\\TasteCode\\accounts\\claude-code\\team-9z8y7x',
+              managed: true,
+              email: 'team@example.test',
+            },
+          ],
+          active: {},
+        })
+      }
+      if (method === 'models.list') {
+        const { provider, accountId } = methods['models.list'].params.parse(params)
+        return Promise.resolve({
+          models:
+            provider === 'codex'
+              ? [listed('luna', true), listed('sol')]
+              : accountId === 'team-9z8y7x'
+                ? [listed('sonnet', true)]
+                : [listed('opus', true)],
+        })
+      }
+      return request(method, params)
+    })
+    // Codex was last used on Luna, but Sol last ran at high.
+    localStorage.setItem(
+      'harness.modelBySource',
+      JSON.stringify({
+        codex: { modelKey: 'codex:luna', effort: 'low' },
+        'claude-code': { modelKey: 'claude-code:opus', effort: 'xhigh' },
+      }),
+    )
+    localStorage.setItem(
+      'harness.effortByModel',
+      JSON.stringify({
+        'codex:luna': 'low',
+        'codex:sol': 'high',
+        'claude-code:opus': 'xhigh',
+        'claude-code:sonnet': 'low',
+      }),
+    )
+    const note = () =>
+      (composerProps().errors ?? []).find((error) =>
+        error.message.startsWith('Your next message switches'),
+      )
+    render(<App />)
+
+    fireEvent.click(await waitFor(() => treeChatRow('Webhook retries')))
+    await waitFor(() => expect(composerProps().modelId).toBe('claude-code:opus'))
+    expect(composerProps().effort).toBe('xhigh')
+
+    act(() => composerProps().onModelChange('codex:sol'))
+    await waitFor(() => expect(composerProps().modelId).toBe('codex:sol'))
+    expect(composerProps().effort).toBe('high')
+
+    await waitFor(() => expect(note()?.action?.label).toBe('Stay on Claude Code (Personal)'))
+    act(() => note()!.action!.run())
+    await waitFor(() => expect(composerProps().modelId).toBe('claude-code:opus'))
+    expect(composerProps().effort).toBe('xhigh')
+
+    // Another account of the same provider keeps the effort the chat is on.
+    await waitFor(() =>
+      expect(composerProps().models.map((choice) => choice.key)).toContain(
+        'claude-code@team-9z8y7x:sonnet',
+      ),
+    )
+    act(() => composerProps().onModelChange('claude-code@team-9z8y7x:sonnet'))
+    await waitFor(() => expect(composerProps().modelId).toBe('claude-code@team-9z8y7x:sonnet'))
+    expect(composerProps().effort).toBe('xhigh')
+  })
+
   it("offers a provider's other signed-in account as a source a chat can switch to", async () => {
     const codex = serverProviders[0]!
     serverProviders = [
@@ -5513,7 +5774,7 @@ describe('new chats', () => {
     render(<App />)
 
     // A new chat offers both accounts; picking Team's model makes Team the one
-    // new chats start on, as the account chip does.
+    // new chats start on.
     await waitFor(() =>
       expect(offered()).toEqual([
         'Codex (Personal): codex:gpt-6.1',
@@ -5571,6 +5832,66 @@ describe('new chats', () => {
     )
     expect(composerProps().modelId).toBe('codex:gpt-6.1-team')
     expect(note()).toBeUndefined()
+  })
+
+  it("checks the sign-in of the chat's own account, not the default one", async () => {
+    const codex = serverProviders[0]!
+    // The default account is signed out; the chat runs on Team, which is not.
+    serverProviders = [
+      {
+        ...codex,
+        auth: 'unauthenticated',
+        capabilities: { ...codex.capabilities!, multipleAccounts: true },
+      },
+    ]
+    serverProjects[0]!.sessions = [
+      {
+        id: 'chat-1',
+        title: 'Webhook retries',
+        provider: 'codex',
+        accountId: 'team-9z8y7x',
+        createdAt: 1,
+      },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'accounts.list') {
+        return Promise.resolve({
+          accounts: [
+            { id: 'default', provider: 'codex', label: 'Personal', managed: false },
+            {
+              id: 'team-9z8y7x',
+              provider: 'codex',
+              label: 'Team',
+              home: 'C:\\TasteCode\\accounts\\codex\\team-9z8y7x',
+              managed: true,
+              email: 'team@example.test',
+            },
+          ],
+          active: {},
+        })
+      }
+      if (method === 'auth.status') {
+        const { accountId } = methods['auth.status'].params.parse(params)
+        return Promise.resolve(
+          accountId === 'team-9z8y7x'
+            ? { signedIn: true, email: 'team@example.test' }
+            : { signedIn: false },
+        )
+      }
+      return request(method, params)
+    })
+    render(<App />)
+
+    fireEvent.click(await waitFor(() => treeChatRow('Webhook retries')))
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('auth.status', {
+        provider: 'codex',
+        accountId: 'team-9z8y7x',
+      }),
+    )
+    await waitFor(() => expect(composerProps().sendAvailability).toBe('ready'))
   })
 
   it('keeps the message and the chat where they were when a switch fails', async () => {
@@ -6523,6 +6844,196 @@ describe('new chats', () => {
     expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(true)
   })
 
+  it("holds setup's agent list until the server says which providers it offers", async () => {
+    desktopShell.enabled = true
+    serverProjects = []
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    const waiting: Array<() => void> = []
+    let answered = false
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method !== 'providers.list' || answered
+        ? request(method, params)
+        : new Promise((resolve) => waiting.push(() => resolve(request(method, params)))),
+    )
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^Get started/ }, { timeout: 5_000 }))
+    fireEvent.click(screen.getByRole('button', { name: /^Continue/ }))
+    fireEvent.click(screen.getByRole('button', { name: /^Continue/ }))
+    const setup = screen.getByRole('dialog', { name: 'Choose your coding agents' })
+    const list = () => setup.querySelector('.onboarding__pick')
+
+    expect(list()?.querySelector('[aria-busy="true"]')).toBeTruthy()
+    expect(list()?.textContent).not.toMatch(/\b(Claude Code|Codex|Grok|Cursor|OpenCode|Pi)\b/)
+
+    await act(async () => {
+      answered = true
+      for (const answer of waiting) answer()
+    })
+    await waitFor(() =>
+      expect(within(setup).getByRole('region', { name: 'Providers' }).textContent).toBe(
+        'ProvidersCodexSigned in',
+      ),
+    )
+    expect(list()?.querySelector('[aria-busy="true"]')).toBeNull()
+  })
+
+  it("ends setup's agent list in the provider error when the list fails", async () => {
+    desktopShell.enabled = true
+    serverProjects = []
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'providers.list'
+        ? Promise.reject(new Error('server offline'))
+        : request(method, params),
+    )
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^Get started/ }, { timeout: 5_000 }))
+    fireEvent.click(screen.getByRole('button', { name: /^Continue/ }))
+    fireEvent.click(screen.getByRole('button', { name: /^Continue/ }))
+    const setup = screen.getByRole('dialog', { name: 'Choose your coding agents' })
+
+    await waitFor(() =>
+      expect(setup.querySelector('.onboarding__lead')?.textContent).toBe(
+        'Could not load providers. server offline',
+      ),
+    )
+    expect(setup.querySelector('[aria-busy="true"]')).toBeNull()
+    expect(setup.querySelector('.onboarding__pick')?.textContent).toBe('')
+  })
+
+  it("shows setup's ACP group with the list when a retry follows a failed list", async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      desktopShell.enabled = true
+      serverProjects = []
+      serverProviders = [...serverProviders, { ...serverProviders[0]!, id: 'acp' }]
+      const request = transport.request.getMockImplementation()
+      if (!request) throw new Error('missing request mock')
+      let retrying = false
+      let releaseAgents: (() => void) | undefined
+      transport.request.mockImplementation((method: string, params: unknown) => {
+        if (method === 'providers.list' && !retrying) {
+          return Promise.reject(new Error('server offline'))
+        }
+        if (method === 'acp.agents' && retrying) {
+          return new Promise((resolve) => {
+            releaseAgents = () =>
+              resolve({
+                agents: [{ id: 'kimi', name: 'Kimi CLI', installed: true, verified: true }],
+              })
+          })
+        }
+        return request(method, params)
+      })
+
+      render(<App />)
+      fireEvent.click(
+        await screen.findByRole('button', { name: /^Get started/ }, { timeout: 5_000 }),
+      )
+      fireEvent.click(screen.getByRole('button', { name: /^Continue/ }))
+      fireEvent.click(screen.getByRole('button', { name: /^Continue/ }))
+      const setup = screen.getByRole('dialog', { name: 'Choose your coding agents' })
+      const list = () => setup.querySelector('.onboarding__pick')
+      await waitFor(() =>
+        expect(setup.querySelector('.onboarding__lead')?.textContent).toBe(
+          'Could not load providers. server offline',
+        ),
+      )
+
+      // Focus retries the failed list; this time the providers answer first.
+      retrying = true
+      vi.setSystemTime(Date.now() + 31_000)
+      act(() => window.dispatchEvent(new Event('focus')))
+      await waitFor(() =>
+        expect(
+          transport.request.mock.calls.filter(([method]) => method === 'providers.list'),
+        ).toHaveLength(2),
+      )
+      await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0)))
+      expect(list()?.querySelector('[aria-busy="true"]')).toBeTruthy()
+      expect(list()?.textContent).not.toMatch(/\bCodex\b/)
+
+      await act(async () => releaseAgents?.())
+      await waitFor(() =>
+        expect(within(setup).getByRole('region', { name: 'ACP agents' }).textContent).toMatch(
+          /Kimi CLI/,
+        ),
+      )
+      expect(within(setup).getByRole('region', { name: 'Providers' }).textContent).toBe(
+        'ProvidersCodexSigned in',
+      )
+      expect(list()?.querySelector('[aria-busy="true"]')).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it("settles setup's ACP group from a replaced run when its replacement fails", async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      desktopShell.enabled = true
+      serverProjects = []
+      serverProviders = [...serverProviders, { ...serverProviders[0]!, id: 'acp' }]
+      const request = transport.request.getMockImplementation()
+      if (!request) throw new Error('missing request mock')
+      let providerLists = 0
+      let releaseAgents: (() => void) | undefined
+      transport.request.mockImplementation((method: string, params: unknown) => {
+        // Only the first run's providers answer.
+        if (method === 'providers.list' && ++providerLists > 1) {
+          return Promise.reject(new Error('server offline'))
+        }
+        // The first run's agents are held; later runs never hear back.
+        if (method === 'acp.agents') {
+          return new Promise((resolve) => {
+            releaseAgents ??= () =>
+              resolve({
+                agents: [{ id: 'kimi', name: 'Kimi CLI', installed: true, verified: true }],
+              })
+          })
+        }
+        return request(method, params)
+      })
+
+      render(<App />)
+      fireEvent.click(
+        await screen.findByRole('button', { name: /^Get started/ }, { timeout: 5_000 }),
+      )
+      fireEvent.click(screen.getByRole('button', { name: /^Continue/ }))
+      fireEvent.click(screen.getByRole('button', { name: /^Continue/ }))
+      const setup = screen.getByRole('dialog', { name: 'Choose your coding agents' })
+      const list = () => setup.querySelector('.onboarding__pick')
+      await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0)))
+      expect(providerLists).toBe(1)
+      expect(list()?.querySelector('[aria-busy="true"]')).toBeTruthy()
+
+      // A later focus replaces the first run before its agents answer, and
+      // the replacement's provider list fails.
+      vi.setSystemTime(Date.now() + 6 * 60 * 60_000 + 1_000)
+      act(() => window.dispatchEvent(new Event('focus')))
+      await waitFor(() => expect(providerLists).toBeGreaterThan(1))
+      await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0)))
+      expect(list()?.querySelector('[aria-busy="true"]')).toBeTruthy()
+
+      await act(async () => releaseAgents?.())
+      await waitFor(() =>
+        expect(within(setup).getByRole('region', { name: 'ACP agents' }).textContent).toMatch(
+          /Kimi CLI/,
+        ),
+      )
+      expect(within(setup).getByRole('region', { name: 'Providers' }).textContent).toBe(
+        'ProvidersCodexSigned in',
+      )
+      expect(list()?.querySelector('[aria-busy="true"]')).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it.each(['success', 'failure', 'cancel'] as const)(
     'restores Settings after Claude sign-in ends with %s',
     async (outcome) => {
@@ -7150,6 +7661,42 @@ describe('new chats', () => {
     expect(transport.request).toHaveBeenCalledWith(
       'thread.start',
       expect.objectContaining({ baseRef: 'main' }),
+    )
+    expect(transport.request).not.toHaveBeenCalledWith('workspace.switchBranch', expect.anything())
+  })
+
+  it('starts on the checked-out branch while the shared checkout has uncommitted changes', async () => {
+    localStorage.setItem('harness.branch:/work/project', 'main')
+    serverProjects = [
+      { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },
+    ]
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'workspace.info'
+        ? Promise.resolve({ branch: 'feature/shelf', added: 4, removed: 1, dirtyFiles: 2 })
+        : method === 'workspace.branches'
+          ? Promise.resolve({ branches: ['feature/shelf', 'main'] })
+          : request(method, params),
+    )
+    render(<App />)
+    const picker = await screen.findByRole('button', { name: 'Choose branch' })
+    await waitFor(() => expect(rpcCount('workspace.branches')).toBe(1))
+    await waitFor(() => expect(picker.textContent).toContain('feature/shelf'))
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace mode' }))
+    fireEvent.click(await screen.findByRole('menuitemradio', { name: 'Isolated' }))
+    await waitFor(() => expect(picker.textContent).toContain('main'))
+    fireEvent.click(screen.getByRole('button', { name: 'Workspace mode' }))
+    fireEvent.click(await screen.findByRole('menuitemradio', { name: 'Local' }))
+    await waitFor(() => expect(picker.textContent).toContain('feature/shelf'))
+
+    submitTurn('Keep my changes where they are')
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('thread.start', expect.anything()),
+    )
+    expect(transport.request).toHaveBeenCalledWith(
+      'thread.start',
+      expect.not.objectContaining({ baseRef: expect.anything() }),
     )
     expect(transport.request).not.toHaveBeenCalledWith('workspace.switchBranch', expect.anything())
   })
@@ -10238,6 +10785,156 @@ describe('new chats', () => {
     await waitFor(() => expect(savedTier()).not.toBe('priority'))
   })
 
+  it('tells the server which models the picker hides, for the phone', async () => {
+    localStorage.setItem(
+      'harness.modelVisibility.v2',
+      JSON.stringify({
+        overrides: { 'codex:gpt-5.6-mini': { visible: false, at: 1 } },
+        firstSeen: {},
+      }),
+    )
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method, params) => {
+      if (method === 'models.list') {
+        return Promise.resolve({
+          models: [
+            cachedCodexChoice().model,
+            {
+              ...cachedCodexChoice().model,
+              id: 'gpt-5.6-mini',
+              displayName: 'GPT-5.6 Mini',
+              isDefault: false,
+            },
+          ],
+        })
+      }
+      if (method === 'models.setHidden') return Promise.resolve({})
+      return request(method, params)
+    })
+    render(<App />)
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('models.setHidden', {
+        keys: expect.arrayContaining(['codex:gpt-5.6-mini']),
+      }),
+    )
+    const sent = transport.request.mock.calls.filter(([method]) => method === 'models.setHidden')
+    expect(sent.at(-1)?.[1]).not.toEqual({ keys: expect.arrayContaining(['codex:gpt-6.1-sol']) })
+  })
+
+  it('keeps a chat on a shown model when the server names one the picker hides', async () => {
+    localStorage.setItem(
+      'harness.modelVisibility.v2',
+      JSON.stringify({
+        overrides: { 'codex:gpt-5.6-mini': { visible: false, at: 1 } },
+        firstSeen: {},
+      }),
+    )
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method, params) => {
+      if (method === 'models.list') {
+        return Promise.resolve({
+          models: [
+            cachedCodexChoice().model,
+            {
+              ...cachedCodexChoice().model,
+              id: 'gpt-5.6-mini',
+              displayName: 'GPT-5.6 Mini',
+              isDefault: false,
+            },
+          ],
+        })
+      }
+      if (method === 'thread.settings')
+        return Promise.resolve({ model: 'gpt-5.6-mini', effort: 'high' })
+      if (method === 'thread.setSettings' || method === 'models.setHidden')
+        return Promise.resolve({})
+      return request(method, params)
+    })
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('thread.setSettings', {
+        threadId: 'untouched-thread',
+        model: 'gpt-6.1-sol',
+        effort: 'low',
+      }),
+    )
+    expect(
+      (await screen.findByRole('button', { name: 'Model and reasoning' }, { timeout: 10_000 }))
+        .textContent,
+    ).toContain('5.6 Sol')
+  })
+
+  it('follows a chat setup another client chose and shares its own changes', async () => {
+    const mini = {
+      ...cachedCodexChoice().model,
+      id: 'gpt-5.6-mini',
+      displayName: 'GPT-5.6 Mini',
+      isDefault: false,
+    }
+    localStorage.setItem(
+      'harness.modelByThread:untouched-thread',
+      JSON.stringify({ modelKey: 'codex:gpt-5.6-mini', effort: 'high' }),
+    )
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method, params) => {
+      if (method === 'models.list')
+        return Promise.resolve({ models: [cachedCodexChoice().model, mini] })
+      if (method === 'thread.settings')
+        return Promise.resolve({ model: 'gpt-5.6-mini', effort: 'high', approval: 'ask' })
+      if (method === 'thread.setSettings') return Promise.resolve({})
+      return request(method, params)
+    })
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Model and reasoning' }, { timeout: 10_000 }),
+    )
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Model and reasoning' }).textContent).toContain(
+        '5.6 Mini',
+      ),
+    )
+
+    // The phone moves the open chat to another model, a lower effort and auto access.
+    const sharedBefore = transport.request.mock.calls.filter(
+      ([method]) => method === 'thread.setSettings',
+    ).length
+    act(() =>
+      transport.listeners.get('thread.settings')?.({
+        threadId: 'untouched-thread',
+        settings: { model: 'gpt-6.1-sol', effort: 'low', approval: 'auto' },
+      }),
+    )
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Model and reasoning' }).textContent).toContain(
+        '5.6 Sol',
+      )
+      expect(document.querySelector('.model-selector__effort-title')?.textContent).toBe(
+        'Effort: Low',
+      )
+      expect(screen.getByRole('button', { name: 'Permissions' }).textContent).toContain('Auto')
+    })
+    expect(JSON.parse(localStorage.getItem('harness.modelByThread:untouched-thread')!)).toEqual({
+      modelKey: 'codex:gpt-6.1-sol',
+      effort: 'low',
+    })
+    // Following a push never echoes it back.
+    expect(
+      transport.request.mock.calls.filter(([method]) => method === 'thread.setSettings'),
+    ).toHaveLength(sharedBefore)
+
+    // The desktop raises the effort; the server, and through it the phone, hears it.
+    fireEvent.keyDown(screen.getByRole('slider', { name: 'Reasoning effort' }), { key: 'End' })
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('thread.setSettings', {
+        threadId: 'untouched-thread',
+        model: 'gpt-6.1-sol',
+        effort: 'high',
+      }),
+    )
+  })
+
   it('opens a chat saved on a model Codex no longer ships and continues on the default', async () => {
     localStorage.setItem('harness.model', 'codex:gpt-5.4')
     serverProjects[0]!.sessions = [
@@ -10743,22 +11440,7 @@ describe('sidebar chat ordering', () => {
 
     const source = (await screen.findByRole('button', { name: 'First' })).closest('section')!
     const target = screen.getByRole('button', { name: 'Second' }).closest('section')!
-    vi.spyOn(target, 'getBoundingClientRect').mockReturnValue({
-      bottom: 80,
-      height: 30,
-      left: 0,
-      right: 200,
-      top: 50,
-      width: 200,
-      x: 0,
-      y: 50,
-      toJSON: () => ({}),
-    })
-    const dataTransfer = { dropEffect: 'none', effectAllowed: 'none', setData: vi.fn() }
-
-    fireEvent.dragStart(source, { dataTransfer })
-    fireEvent.dragOver(target, { clientY: 75, dataTransfer })
-    fireEvent.drop(target, { clientY: 75, dataTransfer })
+    dragRow(source, target, 'after')
 
     await waitFor(() => {
       expect(JSON.parse(localStorage.getItem('harness.projectOrder') ?? '[]')).toEqual([
@@ -10787,26 +11469,7 @@ describe('sidebar chat ordering', () => {
 
     const source = (await screen.findByRole('button', { name: /^First chat,/ })).closest('li')!
     const target = screen.getByRole('button', { name: /^Third chat,/ }).closest('li')!
-    vi.spyOn(target, 'getBoundingClientRect').mockReturnValue({
-      bottom: 88,
-      height: 28,
-      left: 0,
-      right: 200,
-      top: 60,
-      width: 200,
-      x: 0,
-      y: 60,
-      toJSON: () => ({}),
-    })
-    const dataTransfer = {
-      dropEffect: 'none',
-      effectAllowed: 'none',
-      setData: vi.fn(),
-    }
-
-    fireEvent.dragStart(source, { dataTransfer })
-    fireEvent.dragOver(target, { clientY: 80, dataTransfer })
-    fireEvent.drop(target, { clientY: 80, dataTransfer })
+    dragRow(source, target, 'after')
 
     await waitFor(() => {
       const order = SessionOrderSchema.parse(
@@ -13320,15 +13983,41 @@ function sessionTitles(): string[] {
 
 function dropChatRow(sourceTitle: string, targetTitle: string, position: 'before' | 'after') {
   const row = (title: string) => treeChatRow(title).closest('li')!
-  const source = row(sourceTitle)
-  const target = row(targetTitle)
-  vi.spyOn(target, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 60, 200, 28))
-  const dataTransfer = { dropEffect: 'none', effectAllowed: 'none', setData: vi.fn() }
-  const clientY = position === 'before' ? 65 : 85
+  dragRow(row(sourceTitle), row(targetTitle), position)
+}
 
-  fireEvent.dragStart(source, { dataTransfer })
-  fireEvent.dragOver(target, { clientY, dataTransfer })
-  fireEvent.drop(target, { clientY, dataTransfer })
+/**
+ * Drag a sidebar row (a chat `li` or a project `section`) with the pointer
+ * until it sits before or after another row of the same list, then release.
+ * happy-dom lays nothing out, so every row gets a 30px slot in list order.
+ */
+function dragRow(source: HTMLElement, target: HTMLElement, position: 'before' | 'after') {
+  const attribute = source.hasAttribute('data-project-path')
+    ? 'data-project-path'
+    : 'data-archive-session-id'
+  const rows = Array.from(source.parentElement!.children).filter((node): node is HTMLElement =>
+    node.hasAttribute(attribute),
+  )
+  const height = 30
+  rows.forEach((node, index) =>
+    vi
+      .spyOn(node, 'getBoundingClientRect')
+      .mockReturnValue(new DOMRect(0, index * height, 200, height)),
+  )
+  const from = rows.indexOf(source)
+  const to = rows.indexOf(target)
+  const down = to > from
+  const slot = down ? (position === 'after' ? to : to - 1) : position === 'before' ? to : to + 1
+  const handle = source.querySelector<HTMLElement>('.proj__head') ?? source
+  const start = from * height + height / 2
+  fireEvent.pointerDown(handle, { button: 0, pointerId: 1, clientY: start })
+  // The first move past the threshold only picks the row up where it lies.
+  fireEvent.pointerMove(handle, { pointerId: 1, clientY: start + (down ? 6 : -6) })
+  fireEvent.pointerMove(handle, {
+    pointerId: 1,
+    clientY: slot * height + height / 2 + (down ? 7 : -7),
+  })
+  fireEvent.pointerUp(handle, { pointerId: 1 })
 }
 
 describe('reopening a session', () => {
@@ -14419,6 +15108,361 @@ describe('connection recovery regressions', () => {
       threadId: 'untouched-thread',
       approvalId: 'approval-1',
       decision: 'approve',
+    })
+  })
+})
+
+describe('split view', () => {
+  function useTwoChats(extra: TestServerSession[] = []) {
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'project',
+        pinned: false,
+        createdAt: 0,
+        sessions: [
+          { id: 'left-thread', title: 'Left chat', provider: 'codex', createdAt: 3 },
+          { id: 'right-thread', title: 'Right chat', provider: 'codex', createdAt: 2 },
+          ...extra,
+        ],
+      },
+    ]
+  }
+  const pane = (title: string) => screen.getByRole('region', { name: title })
+  const transcriptIn = (title: string) => within(pane(title)).getByTestId('thread')
+  const isFocused = (title: string) => pane(title).classList.contains('is-focused')
+
+  async function openSplit(extra?: TestServerSession[]) {
+    useTwoChats(extra)
+    render(<App />)
+    fireEvent.click(await waitFor(() => treeChatRow('Left chat')))
+    await screen.findByTestId('thread')
+    fireEvent.contextMenu(treeChatRow('Right chat'))
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Open beside' }))
+    await waitFor(() => expect(screen.getAllByTestId('thread')).toHaveLength(2))
+  }
+
+  function streamText(threadId: string, text: string) {
+    emitThreadEvent(threadId, {
+      type: 'item.started',
+      item: {
+        id: `${threadId}-item`,
+        turnId: 'turn-1',
+        type: 'message',
+        role: 'assistant',
+        status: 'started',
+        text: '',
+        createdAt: 1,
+      },
+    })
+    emitThreadEvent(threadId, {
+      type: 'item.delta',
+      turnId: 'turn-1',
+      itemId: `${threadId}-item`,
+      textDelta: text,
+    })
+  }
+
+  it('opens a chat beside the active one from the chat menu, and the opened pane has focus', async () => {
+    await openSplit()
+    expect(transcriptIn('Left chat').dataset.threadId).toBe('left-thread')
+    expect(transcriptIn('Right chat').dataset.threadId).toBe('right-thread')
+    expect(isFocused('Right chat')).toBe(true)
+    expect(isFocused('Left chat')).toBe(false)
+    expect(sidebarProps().activeSessionId).toBe('right-thread')
+    expect(sidebarProps().besideSessionId).toBe('left-thread')
+    // Each pane has its own header; the stage-wide one is not shown.
+    expect(within(pane('Left chat')).getByRole('button', { name: 'Close Left chat pane' }))
+    expect(within(pane('Right chat')).getByRole('button', { name: 'Close Right chat pane' }))
+    expect(document.querySelector('.stage__body')!.classList.contains('is-split')).toBe(true)
+  })
+
+  it('opens a chat beside with Alt+click and keeps the open chat mounted', async () => {
+    useTwoChats()
+    render(<App />)
+    fireEvent.click(await waitFor(() => treeChatRow('Left chat')))
+    const first = await screen.findByTestId('thread')
+    fireEvent.click(treeChatRow('Right chat'), { altKey: true })
+    await waitFor(() => expect(screen.getAllByTestId('thread')).toHaveLength(2))
+    expect(isFocused('Right chat')).toBe(true)
+    // Opening the split keeps the chat that was open mounted.
+    expect(transcriptIn('Left chat')).toBe(first)
+  })
+
+  it('streams both chats into their own panes', async () => {
+    await openSplit()
+    streamText('left-thread', 'from the left')
+    streamText('right-thread', 'from the right')
+    await waitFor(() => {
+      expect(within(transcriptIn('Left chat')).getByText('from the left')).toBeTruthy()
+      expect(within(transcriptIn('Right chat')).getByText('from the right')).toBeTruthy()
+    })
+    expect(within(transcriptIn('Left chat')).queryByText('from the right')).toBeNull()
+  })
+
+  it('moves focus on a press in the other pane without remounting either transcript', async () => {
+    await openSplit()
+    const left = transcriptIn('Left chat')
+    const right = transcriptIn('Right chat')
+    const leftComposer = pane('Left chat').querySelector('.composer')!
+    expect(leftComposer.classList.contains('is-dormant')).toBe(true)
+    expect(leftComposer.hasAttribute('inert')).toBe(true)
+
+    fireEvent.pointerDown(left, { button: 0 })
+
+    await waitFor(() => expect(isFocused('Left chat')).toBe(true))
+    expect(sidebarProps().activeSessionId).toBe('left-thread')
+    expect(sidebarProps().besideSessionId).toBe('right-thread')
+    expect(transcriptIn('Left chat')).toBe(left)
+    expect(transcriptIn('Right chat')).toBe(right)
+    expect(pane('Left chat').querySelector('.composer')).toBe(leftComposer)
+    expect(leftComposer.classList.contains('is-dormant')).toBe(false)
+    expect(pane('Right chat').querySelector('.composer')!.classList.contains('is-dormant')).toBe(
+      true,
+    )
+  })
+
+  it('gives the focused pane the live composer and keeps the other one as it was', async () => {
+    await openSplit()
+    type ComposerCall = ComponentProps<typeof import('./ui/Composer.js').Composer>
+    const lastComposer = (dormant: boolean) =>
+      shellRenders.composer.mock.calls
+        .map(([props]) => props as ComposerCall)
+        .findLast((props) => (props.dormant === true) === dormant)!
+    expect(lastComposer(false).threadId).toBe('right-thread')
+    expect(lastComposer(true).threadId).toBe('left-thread')
+    expect(lastComposer(true).errorsVisible).toBe(false)
+
+    fireEvent.pointerDown(transcriptIn('Left chat'), { button: 0 })
+
+    await waitFor(() => expect(lastComposer(false).threadId).toBe('left-thread'))
+    expect(lastComposer(true).threadId).toBe('right-thread')
+  })
+  it('answers an approval in the unfocused pane on that pane’s chat', async () => {
+    await openSplit()
+    act(() => threadPropsById.get('left-thread')!.onDecide('approval-1', 'approve'))
+    expect(transport.request).toHaveBeenCalledWith('thread.respondToApproval', {
+      threadId: 'left-thread',
+      approvalId: 'approval-1',
+      decision: 'approve',
+    })
+  })
+
+  it('replaces the focused pane’s chat from the sidebar, and a chat shown beside only takes focus', async () => {
+    await openSplit([{ id: 'third-thread', title: 'Third chat', provider: 'codex', createdAt: 1 }])
+    fireEvent.click(treeChatRow('Third chat'))
+    await waitFor(() => expect(transcriptIn('Third chat').dataset.threadId).toBe('third-thread'))
+    expect(screen.queryByRole('region', { name: 'Right chat' })).toBeNull()
+    expect(isFocused('Third chat')).toBe(true)
+    const left = transcriptIn('Left chat')
+
+    fireEvent.click(treeChatRow('Left chat'))
+
+    await waitFor(() => expect(isFocused('Left chat')).toBe(true))
+    expect(screen.getAllByTestId('thread')).toHaveLength(2)
+    expect(transcriptIn('Left chat')).toBe(left)
+    expect(sidebarProps().besideSessionId).toBe('third-thread')
+  })
+
+  it('keeps the chat beside read when its turn completes', async () => {
+    await openSplit()
+    startTurn('left-thread', 'turn-1')
+    completeTurn('left-thread', 'turn-1')
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('thread.history', {
+        threadId: 'left-thread',
+        afterSeq: Number.MAX_SAFE_INTEGER,
+      }),
+    )
+    const left = sidebarProps()
+      .projects.flatMap((project) => project.sessions)
+      .find((session) => session.id === 'left-thread')
+    expect(left?.unread).toBe(false)
+  })
+
+  it('closes a pane and returns to the single chat layout with the other chat still mounted', async () => {
+    await openSplit()
+    const left = transcriptIn('Left chat')
+    fireEvent.click(
+      within(pane('Right chat')).getByRole('button', { name: 'Close Right chat pane' }),
+    )
+    await waitFor(() => expect(screen.getAllByTestId('thread')).toHaveLength(1))
+    expect(screen.getByTestId('thread')).toBe(left)
+    expect(sidebarProps().activeSessionId).toBe('left-thread')
+    expect(sidebarProps().besideSessionId).toBeUndefined()
+    expect(document.querySelector('.stage__body')!.classList.contains('is-split')).toBe(false)
+    expect(screen.queryByRole('region', { name: 'Left chat' })).toBeNull()
+    expect(screen.queryByRole('button', { name: /^Close .* pane$/ })).toBeNull()
+  })
+
+  it('closes the pane of a chat that is deleted', async () => {
+    await openSplit()
+    await chooseChatMenuItem('Left chat', 'Delete chat')
+    await waitFor(() => expect(screen.getAllByTestId('thread')).toHaveLength(1))
+    expect(screen.getByTestId('thread').dataset.threadId).toBe('right-thread')
+    expect(sidebarProps().besideSessionId).toBeUndefined()
+  })
+
+  it('draws the chat beside without rendering the app for its streamed text', async () => {
+    await openSplit()
+    streamText('left-thread', '')
+    await waitFor(() => expect(within(transcriptIn('Left chat')).queryByText('x')).toBeNull())
+    const frames: FrameRequestCallback[] = []
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      frames.push(callback)
+      return frames.length
+    })
+    appRenders.mockClear()
+    for (let index = 0; index < 200; index += 1) {
+      emitThreadEvent('left-thread', {
+        type: 'item.delta',
+        turnId: 'turn-1',
+        itemId: 'left-thread-item',
+        textDelta: 'x',
+      })
+    }
+    act(() => frames[0]?.(16))
+    expect(within(transcriptIn('Left chat')).getByText('x'.repeat(200))).toBeTruthy()
+    expect(appRenders).not.toHaveBeenCalled()
+  })
+
+  describe('dropping a chat dragged from the sidebar', () => {
+    /** happy-dom has no layout: a 1000 by 800 chat area, split down the middle. */
+    function layOutStage() {
+      const rect = (left: number, right: number, bottom = 800) =>
+        ({
+          left,
+          right,
+          top: 0,
+          bottom,
+          x: left,
+          y: 0,
+          width: right - left,
+          height: bottom,
+          toJSON: () => ({}),
+        }) as DOMRect
+      vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+        this: HTMLElement,
+      ) {
+        if (this.classList.contains('stage__body')) return rect(0, 1000)
+        if (this.matches('.split__pane[data-split-slot]')) {
+          return this.classList.contains('is-start') ? rect(0, 500) : rect(500, 1000)
+        }
+        return rect(0, 0, 0)
+      })
+      return sidebarProps().sessionDropTarget!
+    }
+    const dropZone = () => document.querySelector<HTMLElement>('.chat-drop')
+    const composerIn = (title: string) =>
+      within(pane(title)).getByPlaceholderText('Do anything') as HTMLTextAreaElement
+
+    it('opens a chat dropped on the right half beside the current one', async () => {
+      useTwoChats()
+      render(<App />)
+      fireEvent.click(await waitFor(() => treeChatRow('Left chat')))
+      const first = await screen.findByTestId('thread')
+      fireEvent.change(screen.getByPlaceholderText('Do anything'), {
+        target: { value: 'left draft' },
+      })
+      const target = layOutStage()
+
+      // The left half would replace the open chat; the right half opens beside it.
+      act(() => target.move('right-thread', 200, 400))
+      expect(dropZone()?.dataset.zone).toBe('pane')
+      expect(dropZone()?.style.width).toBe('1000px')
+      act(() => target.move('right-thread', 800, 400))
+      expect(dropZone()?.dataset.zone).toBe('beside')
+      expect([dropZone()?.style.left, dropZone()?.style.width]).toEqual(['500px', '500px'])
+      // The open chat has nowhere to go.
+      act(() => target.move('left-thread', 800, 400))
+      expect(dropZone()).toBeNull()
+
+      act(() => target.drop('right-thread', 800, 400))
+      expect(dropZone()).toBeNull()
+      await waitFor(() => expect(screen.getAllByTestId('thread')).toHaveLength(2))
+      expect(isFocused('Right chat')).toBe(true)
+      expect(pane('Left chat').classList.contains('is-start')).toBe(true)
+      expect(transcriptIn('Left chat')).toBe(first)
+      expect(composerIn('Left chat').value).toBe('left draft')
+    })
+
+    it('replaces the chat of the pane it is dropped on, keeping every draft', async () => {
+      await openSplit([
+        { id: 'third-thread', title: 'Third chat', provider: 'codex', createdAt: 1 },
+      ])
+      fireEvent.change(composerIn('Right chat'), { target: { value: 'right draft' } })
+      fireEvent.pointerDown(transcriptIn('Left chat'), { button: 0 })
+      await waitFor(() => expect(isFocused('Left chat')).toBe(true))
+      fireEvent.change(composerIn('Left chat'), { target: { value: 'left draft' } })
+      const left = transcriptIn('Left chat')
+      startTurn('right-thread', 'turn-1')
+      const target = layOutStage()
+
+      // The pointer moving over the panes redraws only the highlight.
+      appRenders.mockClear()
+      shellRenders.threadFrame.mockClear()
+      act(() => {
+        target.move('third-thread', 700, 300)
+        target.move('third-thread', 720, 320)
+        target.move('third-thread', 200, 300)
+        target.move('third-thread', 800, 300)
+      })
+      expect(appRenders).not.toHaveBeenCalled()
+      expect(shellRenders.threadFrame).not.toHaveBeenCalled()
+      expect([dropZone()?.style.left, dropZone()?.style.width]).toEqual(['500px', '500px'])
+
+      act(() => target.drop('third-thread', 800, 300))
+      await waitFor(() => expect(transcriptIn('Third chat').dataset.threadId).toBe('third-thread'))
+      expect(screen.queryByRole('region', { name: 'Right chat' })).toBeNull()
+      expect(isFocused('Third chat')).toBe(true)
+      expect(pane('Third chat').classList.contains('is-end')).toBe(true)
+      expect(transcriptIn('Left chat')).toBe(left)
+      expect(composerIn('Left chat').value).toBe('left draft')
+      // The replaced chat keeps running and keeps its draft for later.
+      expect(transport.request).not.toHaveBeenCalledWith('thread.interrupt', expect.anything())
+      fireEvent.click(treeChatRow('Right chat'))
+      await waitFor(() => expect(composerIn('Right chat').value).toBe('right draft'))
+    })
+
+    it('swaps the panes when a chat on screen is dropped on the other one', async () => {
+      await openSplit()
+      fireEvent.change(composerIn('Right chat'), { target: { value: 'right draft' } })
+      const left = transcriptIn('Left chat')
+      const right = transcriptIn('Right chat')
+      streamText('right-thread', 'from the right')
+      await waitFor(() => expect(within(right).getByText('from the right')).toBeTruthy())
+      const target = layOutStage()
+
+      // The focused chat, onto the other pane: the two trade sides and it keeps focus.
+      act(() => target.move('right-thread', 200, 400))
+      expect(dropZone()?.dataset.zone).toBe('pane')
+      act(() => target.drop('right-thread', 200, 400))
+      await waitFor(() => expect(pane('Right chat').classList.contains('is-start')).toBe(true))
+      expect(pane('Left chat').classList.contains('is-end')).toBe(true)
+      expect(isFocused('Right chat')).toBe(true)
+      expect(transcriptIn('Left chat')).toBe(left)
+      expect(transcriptIn('Right chat')).toBe(right)
+      expect(composerIn('Right chat').value).toBe('right draft')
+      // Its answer keeps streaming into the same transcript.
+      emitThreadEvent('right-thread', {
+        type: 'item.delta',
+        turnId: 'turn-1',
+        itemId: 'right-thread-item',
+        textDelta: ' and on',
+      })
+      await waitFor(() => expect(within(right).getByText('from the right and on')).toBeTruthy())
+
+      // The chat beside, onto the focused pane: they trade back and it takes focus.
+      act(() => target.drop('left-thread', 200, 400))
+      await waitFor(() => expect(isFocused('Left chat')).toBe(true))
+      expect(pane('Left chat').classList.contains('is-start')).toBe(true)
+      expect(transcriptIn('Left chat')).toBe(left)
+      expect(transcriptIn('Right chat')).toBe(right)
+      expect(composerIn('Right chat').value).toBe('right draft')
+      expect(transport.request).not.toHaveBeenCalledWith('thread.interrupt', expect.anything())
+      // Dropped where it already is: nothing lights up and nothing changes.
+      act(() => target.move('left-thread', 200, 400))
+      expect(dropZone()).toBeNull()
     })
   })
 })

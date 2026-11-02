@@ -269,6 +269,44 @@ describe('background title source discovery', () => {
     expect(vendor.calls).toEqual(['account:claude-code', 'models:claude-code'])
   })
 
+  it.each(['claude-code', 'grok'] as const)(
+    'leaves naming a %s chat to its provider and reads no source',
+    async (provider) => {
+      const { title, started, store } = harness()
+
+      await expect(title({ provider })).resolves.toEqual({ title: 'New chat', applied: false })
+
+      expect(started).toEqual([])
+      expect(vendor.calls).toEqual([])
+      expect(store.provisionalTitle('thread-1')).toBe('New chat')
+    },
+  )
+
+  it('writes the title itself when the provider never named the chat', async () => {
+    const { title, started, store, orchestrator } = harness()
+    await title({ provider: 'claude-code' })
+    expect(orchestrator.awaitsProviderTitle('thread-1')).toBe(true)
+
+    await expect(orchestrator.nameUnnamedChat('thread-1')).resolves.toBe(true)
+
+    expect(store.thread('thread-1')?.title).toBe('Generated title')
+    expect(store.provisionalTitle('thread-1')).toBeUndefined()
+    expect(started).toEqual([{ provider: 'claude-code', model: 'claude-haiku-5-5' }])
+    expect(orchestrator.awaitsProviderTitle('thread-1')).toBe(false)
+  })
+
+  it("keeps the provider's name when it arrived first", async () => {
+    const { title, started, store, orchestrator } = harness()
+    await title({ provider: 'claude-code' })
+    store.renameThread('thread-1', 'Queue order fix')
+
+    expect(orchestrator.awaitsProviderTitle('thread-1')).toBe(false)
+    await expect(orchestrator.nameUnnamedChat('thread-1')).resolves.toBe(false)
+
+    expect(store.thread('thread-1')?.title).toBe('Queue order fix')
+    expect(started).toEqual([])
+  })
+
   it('reads Codex next, and only then, when Claude Code is signed out', async () => {
     signedOut('claude-code')
     const { title, started } = harness()
@@ -583,14 +621,16 @@ describe('background writing for a chat on another account', () => {
   const accounts: AccountDirectory = {
     home: (provider, accountId) => {
       if (accountId === undefined || accountId === 'default') return undefined
-      if (provider === 'codex' && accountId === 'work') return workHome
+      if ((provider === 'codex' || provider === 'claude-code') && accountId === 'work')
+        return workHome
       throw new AccountNotFoundError()
     },
     active: () => 'default',
   }
 
   beforeEach(() => {
-    signIn('claude-code', [model('claude-haiku-4-5')])
+    // Automatic writing tries Claude Code first; signed out, it reaches the Codex chats' own provider.
+    signedOut('claude-code')
     signIn('codex', [model('gpt-5.6-luna')], { plan: 'Pro' })
     signIn('grok', [model('grok-4.6')])
     workHome = mkdtempSync(path.join(os.tmpdir(), 'tastecode-background-work-'))
@@ -610,6 +650,21 @@ describe('background writing for a chat on another account', () => {
       { provider: 'codex', model: 'gpt-5.6-luna', accountHome: workHome },
       { provider: 'codex', model: 'gpt-5.6-luna' },
     ])
+  })
+
+  it('still writes a title for a Work Claude chat, whose own name history cannot read', async () => {
+    signIn('claude-code', [model('claude-haiku-4-5')])
+    const { title, started, store } = harness({ mode: 'automatic' }, undefined, accounts)
+
+    await expect(title({ provider: 'claude-code', accountId: 'work' })).resolves.toEqual({
+      title: 'Generated title',
+      applied: true,
+    })
+
+    expect(started).toEqual([
+      { provider: 'claude-code', model: 'claude-haiku-4-5', accountHome: workHome },
+    ])
+    expect(store.provisionalTitle('thread-1')).toBeUndefined()
   })
 
   it("drafts a Work chat's commit message through the Work account", async () => {
@@ -644,6 +699,15 @@ describe('background writing for a chat on another account', () => {
     await title({ accountId: 'work' })
 
     expect(started).toEqual([{ provider: 'grok', model: 'grok-4.6' }])
+  })
+
+  it("writes a Work Codex chat's title through Claude Code's own sign-in when it comes first", async () => {
+    signIn('claude-code', [model('claude-haiku-4-5')])
+    const { title, started } = harness({ mode: 'automatic' }, undefined, accounts)
+
+    await title({ accountId: 'work' })
+
+    expect(started).toEqual([{ provider: 'claude-code', model: 'claude-haiku-4-5' }])
   })
 
   it('refuses rather than writing through the default account once the account is removed', async () => {

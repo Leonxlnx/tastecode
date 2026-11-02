@@ -15,7 +15,9 @@
 
 .notice--provider-update {
   display: block;
-  width: min(312px, calc(100vw - 36px));
+  /* Widens rather than break a release line, up to the notice's own limit. */
+  width: max-content;
+  min-width: min(312px, calc(100vw - 36px));
   /* Lifted above a docked composer, it still ends below the window top. */
   max-height: min(520px, calc(100dvh - var(--notice-bottom, 18px) - 18px));
   overflow-y: auto;
@@ -32,11 +34,16 @@
   width: min(440px, calc(100vw - 36px));
 }
 
+/* Every release shares the name column, so the versions start on one line. */
 .update-slip {
   --reel-line: 18px;
+  display: grid;
+  grid-template-columns: minmax(0, max-content) minmax(0, 1fr);
+  column-gap: 8px;
 }
 
 .update-slip__head {
+  grid-column: 1 / -1;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -66,16 +73,18 @@
   color: var(--text-3);
 }
 
+/* Only the release line takes the row height: shared with the empty note and
+   terminal rows, it would leave the line off centre. */
 .update-slip__item {
+  grid-column: 1 / -1;
   display: grid;
-  grid-template-columns: minmax(0, max-content) minmax(0, 1fr) max-content;
+  grid-template-columns: subgrid;
+  grid-template-rows: minmax(32px, auto) auto auto;
   grid-template-areas:
-    'name versions action'
-    'note note note'
-    'terminal terminal terminal';
+    'name line'
+    'note note'
+    'terminal terminal';
   align-items: center;
-  column-gap: 8px;
-  min-height: 32px;
   transition:
     opacity var(--dur-slow) var(--ease-out),
     translate var(--dur-slow) var(--ease-out);
@@ -109,9 +118,17 @@
   color: var(--text-2);
 }
 
+.update-slip__line {
+  grid-area: line;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
 .update-slip__versions {
   --reel-line: 20px;
-  grid-area: versions;
+  flex: 1 1 0;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -139,7 +156,7 @@
 }
 
 .update-slip__action {
-  grid-area: action;
+  flex: none;
   display: flex;
   align-items: center;
 }
@@ -182,8 +199,9 @@
   color: var(--text);
 }
 
+/* Ends where the button's label does. */
 .update-slip__state {
-  padding-right: 4px;
+  padding-right: 9px;
   color: var(--text-3);
   font-size: var(--t-xs);
 }
@@ -205,9 +223,11 @@
   color: var(--error);
 }
 
-/* Notes start under the name, past the mark. */
+/* Notes start under the name, past the mark, and wrap to the lines above
+   instead of widening the notice. */
 .update-slip__note {
   grid-area: note;
+  contain: inline-size;
   display: flex;
   align-items: baseline;
   flex-wrap: wrap;

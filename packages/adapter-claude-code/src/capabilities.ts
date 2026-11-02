@@ -1,4 +1,9 @@
-import type { Capabilities, McpCapabilities, McpServerConfig } from '@harness/contracts'
+import type {
+  Capabilities,
+  McpCapabilities,
+  McpServerConfig,
+  ProviderRuntimeOption,
+} from '@harness/contracts'
 
 /**
  * Claude reports the servers its own settings, plugins and claude.ai load.
@@ -37,6 +42,29 @@ export function validateClaudeMcpServer(
     )
 }
 
+/**
+ * Both drive the same `claude` executable over its stream-json protocol, so a
+ * session offers the same things through either. The SDK is the default.
+ */
+export const CLAUDE_RUNTIMES = [
+  {
+    id: 'sdk',
+    label: 'Agent SDK',
+    description: "Anthropic's Agent SDK runs Claude Code",
+  },
+  {
+    id: 'cli',
+    label: 'claude -p',
+    description: 'TasteCode runs claude -p itself',
+  },
+] as const satisfies readonly ProviderRuntimeOption[]
+
+export type ClaudeRuntime = (typeof CLAUDE_RUNTIMES)[number]['id']
+
+export function isClaudeRuntime(value: string | undefined): value is ClaudeRuntime {
+  return CLAUDE_RUNTIMES.some((runtime) => runtime.id === value)
+}
+
 export const CLAUDE_CAPABILITIES: Capabilities = {
   steer: true,
   fork: false,
@@ -51,6 +79,7 @@ export const CLAUDE_CAPABILITIES: Capabilities = {
   // Every process can run in another CLAUDE_CONFIG_DIR, which holds that
   // account's sign-in, settings and transcripts (account-home.ts).
   multipleAccounts: true,
+  runtimes: [...CLAUDE_RUNTIMES],
   // Claude Code compacts about 13K tokens short of a 200K window by default,
   // and ignores an override later than that. 1M applies only where the model
   // offers it.

@@ -22,6 +22,7 @@ import {
   getEffortIndexFromPointer,
   getFastModeOffValue,
   getFastServiceTier,
+  formatModelName,
   getFriendlyEffortLabel,
   getSelectedChoice,
   getSelectedEffort,
@@ -117,10 +118,12 @@ function ProviderModelList(props: {
                     type="button"
                     className={`model-selector__model${selected ? ' is-selected' : ''}`}
                     aria-pressed={selected}
-                    aria-label={`Use ${entry.model.displayName} through ${entry.sourceName}`}
+                    aria-label={`Use ${formatModelName(entry.model.displayName)} through ${entry.sourceName}`}
                     onClick={() => props.onModelSelect(entry)}
                   >
-                    <span className="model-selector__model-name">{entry.model.displayName}</span>
+                    <span className="model-selector__model-name">
+                      {formatModelName(entry.model.displayName)}
+                    </span>
                     {selected ? <Check size={14} aria-hidden /> : null}
                   </button>
                 )
@@ -182,10 +185,12 @@ function FlatModelList(props: {
                 type="button"
                 className={`model-selector__model${selected ? ' is-selected' : ''}`}
                 aria-pressed={selected}
-                aria-label={`Use ${entry.model.displayName} through ${entry.sourceName}`}
+                aria-label={`Use ${formatModelName(entry.model.displayName)} through ${entry.sourceName}`}
                 onClick={() => props.onModelSelect(entry)}
               >
-                <span className="model-selector__model-name">{entry.model.displayName}</span>
+                <span className="model-selector__model-name">
+                  {formatModelName(entry.model.displayName)}
+                </span>
                 {selected ? <Check size={14} aria-hidden /> : null}
               </button>
             )

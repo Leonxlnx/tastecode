@@ -517,7 +517,7 @@ describe('completed activity disclosure', () => {
     fireEvent.click(commands)
     expect(container.querySelectorAll('.aux--command')).toHaveLength(8)
     expect(screen.queryByText('output-0')).toBeNull()
-    fireEvent.click(screen.getByRole('button', { name: 'Ran check-0' }))
+    fireEvent.click(screen.getByRole('button', { name: 'check-0' }))
     expect(screen.getByText('output-0')).toBeTruthy()
 
     const reveal = commands.parentElement?.querySelector('.activity__reveal')
@@ -1028,7 +1028,7 @@ describe('completed activity disclosure', () => {
     ])
 
     fireEvent.click(screen.getByRole('button', { name: /Worked for/ }))
-    expect(screen.getByText('Ran cat src/motion.js')).toBeTruthy()
+    expect(screen.getByText('cat src/motion.js')).toBeTruthy()
     expect(screen.getByText('Command failed: pnpm test')).toBeTruthy()
   })
 
@@ -1047,12 +1047,12 @@ describe('completed activity disclosure', () => {
     ])
 
     fireEvent.click(screen.getByRole('button', { name: /Worked for/ }))
-    expect(screen.getByText('Ran cat package.json | head -50')).toBeTruthy()
-    expect(screen.getByText('Ran dir')).toBeTruthy()
-    expect(screen.getByText('Ran ls')).toBeTruthy()
+    expect(screen.getByText('cat package.json | head -50')).toBeTruthy()
+    expect(screen.getByText('dir')).toBeTruthy()
+    expect(screen.getByText('ls')).toBeTruthy()
     // A relative cd says where the command runs; a bare cd is the command.
-    expect(screen.getByText('Ran cd packages/web && pnpm test')).toBeTruthy()
-    expect(screen.getByText('Ran cd src')).toBeTruthy()
+    expect(screen.getByText('cd packages/web && pnpm test')).toBeTruthy()
+    expect(screen.getByText('cd src')).toBeTruthy()
   })
 
   it('counts generated images as generated, not viewed', () => {
@@ -1080,7 +1080,7 @@ describe('completed activity disclosure', () => {
     ])
 
     fireEvent.click(screen.getByRole('button', { name: /Worked for/ }))
-    fireEvent.click(screen.getByRole('button', { name: 'Ran ls -la' }))
+    fireEvent.click(screen.getByRole('button', { name: 'ls -la' }))
     expect(container.querySelector('.aux__out')?.textContent).toBe('total 0\ndrwxr-xr-x .')
   })
 
@@ -1208,10 +1208,10 @@ describe('completed activity disclosure', () => {
       fireEvent.click(group)
       act(() => vi.advanceTimersByTime(200))
       expect(group.getAttribute('aria-expanded')).toBe('true')
-      expect(screen.getByRole('button', { name: 'Ran one' })).toBeTruthy()
+      expect(screen.getByRole('button', { name: 'one' })).toBeTruthy()
       fireEvent.click(group)
       act(() => vi.advanceTimersByTime(200))
-      expect(screen.queryByRole('button', { name: 'Ran one' })).toBeNull()
+      expect(screen.queryByRole('button', { name: 'one' })).toBeNull()
     } finally {
       vi.useRealTimers()
     }
@@ -1279,7 +1279,7 @@ describe('completed activity disclosure', () => {
     fireEvent.click(disclosure)
 
     const firstNarration = screen.getByText('I found the cause.')
-    const command = screen.getByText('Ran pnpm test')
+    const command = screen.getByText('pnpm test')
     const secondNarration = screen.getByText('The focused test passes.')
     const file = screen.getByText('Edited src/chat.ts')
     const answer = screen.getByText('Fixed.')
@@ -1287,7 +1287,7 @@ describe('completed activity disclosure', () => {
     expect(firstNarration.closest('.activity__reveal')).toBe(reveal)
     expect(secondNarration.closest('.activity__reveal')).toBe(reveal)
     expect(screen.queryByText(/12 passed/)).toBeNull()
-    fireEvent.click(screen.getByRole('button', { name: 'Ran pnpm test' }))
+    fireEvent.click(screen.getByRole('button', { name: 'pnpm test' }))
     expect(screen.getByText(/12 passed/)).toBeTruthy()
     expect(screen.queryByText('2 lines added')).toBeNull()
     const fileDisclosure = screen.getByRole('button', { name: 'Edited src/chat.ts' })
@@ -1380,9 +1380,14 @@ describe('completed activity disclosure', () => {
     expect(view.container.querySelector('.activity__body')).toBeNull()
     expect(screen.getByText('All done.')).toBeTruthy()
     fireEvent.click(summary)
-    expect(screen.getByRole('button', { name: 'Ran pnpm test' })).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: 'Thought' }))
-    expect(screen.getByText('The checks passed.')).toBeTruthy()
+    // The call and the thought after it are one batch, the thought named by its line.
+    fireEvent.click(screen.getByRole('button', { name: 'Ran 1 command' }))
+    expect(screen.getByRole('button', { name: 'pnpm test' })).toBeTruthy()
+    const thought = screen.getByRole('button', { name: 'The checks passed.' })
+    fireEvent.click(thought)
+    expect(thought.parentElement?.querySelector('.aux__reveal')?.textContent).toBe(
+      'The checks passed.',
+    )
     fireEvent.click(summary)
     expect(summary.getAttribute('aria-expanded')).toBe('false')
     expect(screen.getByText('All done.')).toBeTruthy()
@@ -1402,10 +1407,12 @@ describe('completed activity disclosure', () => {
     ]
     renderCompleted(items.map((entry) => ({ ...entry })))
 
-    expect(screen.queryByRole('button', { name: 'Thought' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Inspecting state' })).toBeNull()
     expect(screen.getByText('Built.')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: /Worked for/ }))
-    const thought = screen.getByRole('button', { name: 'Thought' })
+    // The thought counts for nothing in the summary, but opens with the calls.
+    fireEvent.click(screen.getByRole('button', { name: 'Ran 1 command and searched once' }))
+    const thought = screen.getByRole('button', { name: 'Inspecting state' })
     expect(thought.parentElement?.querySelector('.aux__reveal')?.getAttribute('aria-hidden')).toBe(
       'true',
     )
@@ -1413,9 +1420,7 @@ describe('completed activity disclosure', () => {
     expect(thought.parentElement?.querySelector('.aux__reveal')?.getAttribute('aria-hidden')).toBe(
       'false',
     )
-    expect(screen.getByText('Inspecting state')).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: 'Ran 1 command and searched once' }))
-    expect(screen.getByText('Ran pnpm test')).toBeTruthy()
+    expect(screen.getByText('pnpm test')).toBeTruthy()
     expect(screen.getByText('Searched 4 files')).toBeTruthy()
   })
 
@@ -1432,23 +1437,18 @@ describe('completed activity disclosure', () => {
       turnItem('answer-1', 6, { role: 'assistant', text: 'Done.' }),
     ])
 
-    expect(screen.queryByRole('button', { name: 'Thought' })).toBeNull()
-    expect(screen.queryByText('Ran git status --short')).toBeNull()
+    expect(screen.queryByText('git status --short')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: /Worked for/ }))
-    const thought = screen.getByRole('button', { name: 'Thought' })
-    expect(thought).toBeTruthy()
+    expect(screen.queryByText('Planning manual multi-package checks')).toBeNull()
+    expect(screen.queryByText('git status --short')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Read 1 file and ran 2 commands' }))
+    const thought = screen.getByRole('button', { name: 'Planning manual multi-package checks' })
     expect(thought.parentElement?.querySelector('.aux__reveal')?.getAttribute('aria-hidden')).toBe(
       'true',
     )
-    expect(screen.queryByText('Planning manual multi-package checks')).toBeNull()
-    expect(screen.queryByText('Ran git status --short')).toBeNull()
-
-    fireEvent.click(thought)
-    expect(screen.getByText('Planning manual multi-package checks')).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: 'Read 1 file and ran 2 commands' }))
-    const firstCommand = screen.getByText('Ran git status --short')
+    const firstCommand = screen.getByText('git status --short')
     expect(firstCommand.closest('.activity__reveal')?.getAttribute('aria-hidden')).toBe('false')
-    expect(screen.getByText('Ran pnpm test')).toBeTruthy()
+    expect(screen.getByText('pnpm test')).toBeTruthy()
   })
 
   it('shows a human tool headline instead of dumped JSON payloads', () => {
@@ -1521,7 +1521,7 @@ describe('completed activity disclosure', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Worked for 1s' }))
 
     expect(screen.getByText('Edited src/chat.ts')).toBeTruthy()
-    expect(screen.getByText('Ran git status --short')).toBeTruthy()
+    expect(screen.getByText('git status --short')).toBeTruthy()
     expect(screen.getByText('read files')).toBeTruthy()
   })
 

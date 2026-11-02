@@ -17,6 +17,7 @@ const threads: StoredSidebarThread[] = [
     createdAt: 2,
     lifecycle: { state: 'active', keepActive: false },
     unread: false,
+    lastActiveAt: 5,
   },
   {
     id: 'b',
@@ -27,6 +28,7 @@ const threads: StoredSidebarThread[] = [
     createdAt: 1,
     lifecycle: { state: 'settled', settledAt: 3, reason: 'manual' },
     unread: true,
+    lastActiveAt: 3,
   },
 ]
 
@@ -64,6 +66,7 @@ describe('projects.list projector', () => {
       provider: 'codex',
       createdAt: 2,
       running: false,
+      lastActiveAt: 5,
     })
     expect(result.projects[1]?.sessions[0]).toMatchObject({
       pinned: true,

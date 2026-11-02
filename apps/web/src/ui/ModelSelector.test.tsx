@@ -195,8 +195,8 @@ describe('ModelSelector', () => {
       ['GPT-5.6-Terra', 'GPT-5.6 Terra'],
       ['GPT-5.5', 'GPT-5.5'],
       ['GPT-5.3-Codex-Spark', 'GPT-5.3 Codex Spark'],
-      ['gpt-5.4-mini', 'GPT-5.4 mini'],
-      ['gpt-oss-120b', 'GPT oss 120b'],
+      ['gpt-5.4-mini', 'GPT-5.4 Mini'],
+      ['gpt-oss-120b', 'GPT Oss 120b'],
       ['Fable 5.1', 'Fable 5.1'],
       ['Sonnet 5.5', 'Sonnet 5.5'],
       ['Opus 5', 'Opus 5'],
@@ -226,7 +226,7 @@ describe('ModelSelector', () => {
     const { onModelChange } = renderSelector({ modelId: placeholder.key, choice: placeholder })
 
     const trigger = screen.getByRole('button', { name: 'Model and reasoning' })
-    expect(trigger.textContent).toContain('Provider default')
+    expect(trigger.textContent).toContain('Provider Default')
     expect(trigger.textContent).not.toContain('5.6 Sol')
 
     // The list default is not the current choice, so picking it must commit.

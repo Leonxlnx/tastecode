@@ -32,6 +32,7 @@ function createResourceTransport(
     loading: false,
   }),
   skills: unknown[] = [ANIMATE_SKILL],
+  mcpAuth: unknown = { status: 'not_required' },
 ) {
   return new TestTransport(async (method) => {
     if (method === 'skills.list') {
@@ -59,7 +60,7 @@ function createResourceTransport(
             description: 'Search official product documentation',
             scope: 'global',
             enabled: true,
-            auth: { status: 'not_required' },
+            auth: mcpAuth,
             startup: { state: 'ready' },
             tools: [],
             resources: [],
@@ -92,7 +93,7 @@ function renderPicker(
       projectPath="/work/project"
       threadId={extra.threadId}
       trigger={next}
-      selectedKeys={new Set()}
+      selectedTokens={new Set()}
       onSelect={onSelect}
     />
   )
@@ -111,6 +112,49 @@ function optionNames(): string[] {
 }
 
 describe('ComposerResourcePicker', () => {
+  it('gives each row an icon of what it is', async () => {
+    renderPicker(
+      createResourceTransport(() => ({
+        commands: [
+          { name: 'goal', description: 'Set the goal' },
+          { name: 'init', description: 'Create AGENTS.md' },
+          { name: 'review', description: 'Review changes' },
+          { name: 'my-script', description: 'A custom command', source: 'custom' },
+          { name: 'design', description: 'A bundled skill', kind: 'skill' },
+        ],
+        loading: false,
+      })),
+      slash(''),
+      { provider: 'codex' },
+    )
+
+    await screen.findByRole('option', { name: /\/goal/ })
+    const icon = (name: RegExp) =>
+      screen.getByRole('option', { name }).querySelector('svg')?.getAttribute('class')
+    expect(icon(/\/goal/)).toContain('tabler-icon-target')
+    expect(icon(/\/init/)).toContain('tabler-icon-file-plus')
+    expect(icon(/\/review/)).toContain('tabler-icon-zoom-code')
+    expect(icon(/\/my-script/)).toContain('tabler-icon-slash')
+    expect(icon(/\/design/)).toContain('tabler-icon-blocks')
+    expect(icon(/Animate/)).toContain('tabler-icon-blocks')
+  })
+
+  it('leaves out what the draft already holds as a chip', async () => {
+    const onSelect = vi.fn()
+    render(
+      <ComposerResourcePicker
+        transport={createResourceTransport()}
+        provider="codex"
+        projectPath="/work/project"
+        trigger={{ marker: '$', query: '', start: 0, end: 1 }}
+        selectedTokens={new Set(['$animate'])}
+        onSelect={onSelect}
+      />,
+    )
+
+    expect(await screen.findByText('No more skills are available.')).toBeTruthy()
+  })
+
   it('keeps hover highlight and selectActive in sync', async () => {
     const { onSelect, pickerRef } = renderPicker(
       createResourceTransport(),
@@ -126,6 +170,19 @@ describe('ComposerResourcePicker', () => {
     expect(onSelect).toHaveBeenCalledWith(
       expect.objectContaining({ key: 'mcp:officialDocs', name: 'Official Docs' }),
     )
+  })
+
+  it('says a server needs sign-in outside TasteCode when TasteCode cannot start it', async () => {
+    renderPicker(
+      createResourceTransport(undefined, undefined, {
+        status: 'sign_in_required',
+        method: 'oauth',
+      }),
+      { marker: '@', query: '', start: 0, end: 1 },
+      { provider: 'claude-code' },
+    )
+    const docs = await screen.findByRole('option', { name: /Official Docs/ })
+    expect(docs.textContent).toContain('Sign in outside TasteCode')
   })
 
   it('lists provider commands before skills and asks the open chat for them', async () => {
@@ -149,6 +206,41 @@ describe('ComposerResourcePicker', () => {
       projectPath: '/work/project',
       threadId: 'thread-1',
     })
+  })
+
+  it('groups commands by source: built-in, custom, skills, plugins, then MCP prompts', async () => {
+    const transport = createResourceTransport(() => ({
+      commands: [
+        { name: 'docs-search', description: '', source: 'mcp' },
+        { name: 'acme:lint', description: 'Lint with Acme rules', source: 'plugin' },
+        { name: 'pdf', description: 'Work with PDF files', kind: 'skill', source: 'plugin' },
+        { name: 'standup', description: '', source: 'custom' },
+        { name: 'simplify', description: 'Simplify the diff', kind: 'skill', source: 'builtin' },
+        { name: 'context', description: 'Show current context usage', source: 'builtin' },
+        { name: 'legacy', description: 'No source reported' },
+      ],
+      loading: false,
+    }))
+    renderPicker(transport, slash(''), { threadId: 'thread-1' })
+
+    await screen.findByRole('option', { name: /\/context/ })
+    expect(optionNames()).toEqual([
+      '/context',
+      '/legacy',
+      '/standup',
+      '/simplify',
+      '/acme:lint',
+      '/pdf',
+      '/docs-search',
+      'Animate',
+    ])
+    // An empty description says what kind of command it is, as Claude Code's menu does.
+    expect(screen.getByRole('option', { name: /\/standup/ }).textContent).toContain(
+      'Custom command',
+    )
+    expect(screen.getByRole('option', { name: /\/docs-search/ }).textContent).toContain(
+      'MCP prompt',
+    )
   })
 
   it('ranks exact names, then name prefixes, then aliases, then other matches', async () => {
@@ -272,7 +364,7 @@ describe('ComposerResourcePicker', () => {
         projectPath="/work/project"
         appCommands={appCommands({ sideChat: true, feedback: true })}
         trigger={slash('')}
-        selectedKeys={new Set()}
+        selectedTokens={new Set()}
         onSelect={onSelect}
       />,
     )
@@ -297,7 +389,7 @@ describe('ComposerResourcePicker', () => {
         projectPath={undefined}
         appCommands={appCommands({ sideChat: false, feedback: true })}
         trigger={slash('fee')}
-        selectedKeys={new Set()}
+        selectedTokens={new Set()}
         onSelect={vi.fn()}
       />,
     )

@@ -23,21 +23,33 @@ const row = (pid, ppid, command, started = 'Fri Oct  3 12:00:00 2026') => ({
 const snapshot = (...rows) => new Map(rows.map((process) => [process.pid, process]))
 const listeners = new Map([[5183, new Set([3])]])
 
-test('the dev server trusts the same HTTP origin that Electron loads', () => {
+function serverLaunch() {
   const source = readFileSync(new URL('./dev.js', import.meta.url), 'utf8')
-  const launch = source.match(/^run\('server'.*$/m)?.[0]
+  const launch = source.match(/^run\('server'.*?\)$/ms)?.[0]
   assert.ok(launch)
+  return launch
+}
+
+function serverEnvironment(VITE_URL) {
+  let environment
+  vm.runInNewContext(serverLaunch(), {
+    VITE_URL,
+    URL,
+    run: (_name, _package, _args, env) => {
+      environment = env
+    },
+  })
+  return environment
+}
+
+test('the dev server trusts the same HTTP origin that Electron loads', () => {
   for (const VITE_URL of ['http://127.0.0.1:5183', 'http://127.0.0.1:5510']) {
-    let environment
-    vm.runInNewContext(launch, {
-      VITE_URL,
-      URL,
-      run: (_name, _package, _args, env) => {
-        environment = env
-      },
-    })
-    assert.equal(environment.HARNESS_RENDERER_ORIGIN, VITE_URL)
+    assert.equal(serverEnvironment(VITE_URL).HARNESS_RENDERER_ORIGIN, VITE_URL)
   }
+})
+
+test('the dev server offers phone access, which other builds leave off', () => {
+  assert.equal(serverEnvironment('http://127.0.0.1:5183').HARNESS_PHONE_ACCESS, '1')
 })
 
 test('refuses unrelated listeners and generic Vite or tsx watchers', () => {

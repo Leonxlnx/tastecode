@@ -2,6 +2,7 @@ import type {
   Capabilities,
   MethodName,
   ProviderId,
+  ProviderRuntimeOption,
   ProviderSetup,
   ProviderSourceShape,
   ProviderStatus,
@@ -100,6 +101,11 @@ const isContextControl = objectValidator<NonNullable<Capabilities['context']>>({
     (value) => typeof value === 'number' && Number.isInteger(value) && value >= 10 && value <= 99,
   ),
 })
+const isRuntimeOption = objectValidator<ProviderRuntimeOption>({
+  id: isNonEmptyString,
+  label: isNonEmptyString,
+  description: optional(isString),
+})
 const isCapabilities = objectValidator<Capabilities>({
   steer: isBoolean,
   fork: isBoolean,
@@ -109,11 +115,15 @@ const isCapabilities = objectValidator<Capabilities>({
   userInput: optional(isBoolean),
   autoReview: optional(isBoolean),
   images: isBoolean,
+  imageFiles: optional(isBoolean),
   context: optional(isContextControl),
   subagents: optional(
     enumValidator<NonNullable<Capabilities['subagents']>>({ summary: true, progress: true }),
   ),
   multipleAccounts: optional(isBoolean),
+  runtimes: optional(
+    (value) => Array.isArray(value) && value.length > 0 && value.every(isRuntimeOption),
+  ),
 })
 const isSetup = objectValidator<ProviderSetup>({
   installUrl: isUrl,
@@ -162,6 +172,8 @@ const isSession = objectValidator<Project['sessions'][number]>({
   lifecycle: optional(isLifecycle),
   closedAt: optional(isFiniteNumber),
   worktreeBranch: optional(isString),
+  model: optional(isNonEmptyString),
+  lastActiveAt: optional(isFiniteNumber),
 })
 const isProject = objectValidator<Project>({
   path: isString,

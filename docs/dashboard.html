@@ -287,16 +287,132 @@
         <nav>
           <a href="#scope">Scope</a>
           <a href="#ready">Checklist</a>
-          <a href="#parked">Nightly only</a>
+          <a href="#parked">Dev builds only</a>
           <a href="./feature-inventory.html">Inventory</a>
           <a href="./CLAUDE-HANDOFF.md">Claude handoff</a>
         </nav>
-        <span class="meta">2026-10-20 nightly 3adcd24a · includes main 094eac47 (PR #1921)</span>
+        <span class="meta">2026-11-02 dev 90183641 · nightly 2347d870 · main 936c6d76</span>
       </div>
     </div>
 
     <div class="wrap">
       <section id="scope">
+        <p>
+          November 2 on dev (90183641): the provider list per build and four app changes for v0.5.0
+          merged. Since October 25 the branches run dev → nightly → main: PRs target dev, and
+          nightly and main receive only promotions. main is still the public beta v0.1.1 with Codex,
+          Claude Code and Grok. v0.5.0 is being prepared for release on the evening of November 2
+          from a promotion; the version bump to 0.5.0 (#2016) and the promotion are still open. With
+          PRs #2006 to #2009, a release build offers exactly Claude Code, Codex, Grok, Cursor and
+          Antigravity, and a dev build (pnpm dev and other unpackaged runs, or a local package from
+          pnpm run dist or dist:dir) offers every provider, OpenCode, Pi and the ACP agents
+          included. The package records its edition at packaging time (#2006), the server offers and
+          starts only that edition's providers (#2007), the release asset check refuses a
+          dev-edition package (#2008), and the renderer offers only what providers.list returns
+          (#2009). Also merged: the sidebar drawer of a narrow window stays solid over the chat
+          (#2010), the plan-limits popup opens each provider closed to one line (#2011), a chat
+          dragged from the sidebar opens in split view (#2012), and Stop always settles the turn
+          (#2013). Each set of four passed lint, typecheck, build and the root tests on a combined
+          merge on Windows; the remaining Vitest failures there were timeouts under load, two
+          split-view tests that also fail on dev, a locale-dependent Codex test and tests that read
+          the machine's real Cursor install. A live server with HARNESS_EDITION=release listed only
+          the five release providers. Not verified yet: a real dist:release or dist package reading
+          its edition from app.asar, macOS, and the promotion. Still open on dev: usage history
+          without hidden providers (#2018), inline skill and command chips (#2014), an update notice
+          that waits for running agents (#2015), onboarding without flashes (#2017), the window
+          background setting (#1954) and design-agent dashboards from tasteskill app screens
+          (#1941). Sub-agents (#1956, #1957, #1959, #1968, #1969, #1972, #1973) come after v0.5, as
+          Leon decided.
+        </p>
+        <p>
+          November 1, evening, on dev (903bd694): slash commands for the five providers planned for
+          v0.5 and a calmer limits view merged, PRs #1995 to #2004. Commands carry their source
+          (built-in, custom, plugin, MCP) and the / menu groups by it; typed alone, /permissions,
+          /resume, /settings, /mcp, /skills, /usage and /login open TasteCode's own screens for
+          every provider; Codex adds /init; a Grok or ACP chat that opens with a command no longer
+          sends it to the model as text; Cursor lists its custom commands and skills from disk;
+          Antigravity runs the read-only commands agy answers itself. The limits popup shows an
+          unused allowance as one quiet line, and Cursor's plan limits come from the request
+          cursor-agent's own /usage screen makes, with its stored sign-in read only at that moment
+          (checked against fixtures, never against Cursor's server). Typecheck, lint, the packaged
+          installer and targeted tests passed on the identical combined tree; installed on Leon's
+          laptop. Not done: real-provider checks, the full pnpm test, macOS, the v0.5 provider list
+          per build, and the promotion to nightly.
+        </p>
+        <p>
+          November 1 on dev (aa5a4adc): default skills, provider commands, MCP for ACP agents, image
+          upload for more providers and split view merged, PRs #1961, #1977 to #1993. TasteCode now
+          ships cinetic, taste-skill v2.5 and cook for every provider (Claude Code loads them as the
+          tastecode plugin, the others get a short catalog in the first prompt). Codex gets /goal,
+          /compact and /review as app-server requests, OpenCode runs its listed commands through the
+          command route, and /new, /clear and /model run TasteCode's own actions. ACP agents receive
+          the project's MCP servers, filtered by the transports they advertise, and providers that
+          cannot start MCP sign-in say so. Images reach OpenCode and Cursor as pixels, Antigravity
+          and ACP agents without image prompts as files they open, and the composer gate matches
+          each provider's declared capability. Split view opens a second chat beside the first.
+          Checked on Windows on the identical combined tree: typecheck, lint and the packaged
+          installer passed, plus targeted tests on the merge-resolved files; each PR's own tests
+          passed; everything was exercised only against fake CLIs. Installed on Leon's laptop for
+          his test. Not done yet: real-provider checks, the full pnpm test on the combined tree,
+          macOS, and the promotion to nightly. Sub-agents (#1956, #1957, #1959, #1968, #1969, #1972,
+          #1973) and the window background setting (#1954) stay open on dev.
+        </p>
+        <p>
+          October 31 on dev (0966790d): the set for the next beta merged, PRs #1949 to #1951, #1953,
+          #1955, #1958, #1960, #1962 to #1967, #1970, #1971 and #1974. Phone access is kept to dev
+          builds: the server offers it only with HARNESS_PHONE_ACCESS=1, which pnpm dev sets, and
+          Settings shows no Phone page without it. Composer and side-panel text keeps its subpixel
+          antialiasing on Windows, the account popup is darker with plain limit bars, the open
+          project loses its guide line, Settings › Providers opens on each account's last answer,
+          the model picker offers only providers that can run, account folders beside the built-in
+          CLI folder are found, the composer checks the sign-in of the account its chat runs on,
+          Antigravity reports plan limits from agy's own /usage, and entrances, the sidebar, the
+          side panel and the chat column move on one clock. Lint, typecheck and build passed on the
+          combined set on Windows; pnpm test there still has timeouts and EBUSY temp cleanups, each
+          failure compared with dev 5cd8820e, where the same classes fail. Not done yet: an
+          installer from this commit, Leon's test of it, and the promotion to nightly. Sub-agents
+          (#1956, #1957, #1959, #1968, #1969, #1972, #1973) stayed open on dev; split view followed
+          on November 1.
+        </p>
+        <p>
+          October 26 on dev (draft PR #1941, not merged): Design mode builds dashboards and other
+          app screens again, now from the app-screen part of tasteskill v2.1.5 instead of reference
+          images. A dashboard brief is dealt one of seven styles, a shell and a pattern per screen
+          from tasteskill's app library; Brand, Page, Build and Review follow the dealt sheet and
+          quoted sections of tasteskill's app-screen chapter, and Build copies tasteskill's app.css
+          and charts.js from .taste/app-kit. The dashboard image catalog stays parked. The library
+          adds about 0.24 MB to the package and no images.
+        </p>
+        <p>
+          October 23 on nightly (local commits, not pushed yet): a chat's setup is the same on every
+          device. Model, reasoning effort, service tier and access level are kept by the server
+          (thread.settings, pushed to every client), the desktop shares which models its picker
+          hides so the phone offers the same ones, and a pairing link can be copied on the computer
+          and pasted on the phone when the code cannot be scanned. Checked live with the desktop
+          renderer and the phone on one chat: each change on one side showed on the other, a prompt
+          queued on the desktop showed on the phone, and prompts reordered and removed on the phone
+          changed on the desktop too.
+        </p>
+        <p>
+          October 22 on nightly (local commits, not pushed yet): phone access and the iPhone app.
+          Settings › Phone turns on a second listener that speaks only a Noise IK handshake, pinned
+          to a key in the OS credential store, and shows a one-time pairing code; a paired phone is
+          one more client of the same protocol, limited to reading and driving chats, and a new
+          projects.changed push puts a chat started on either device in both lists. The app
+          (apps/mobile, Expo with every screen in SwiftUI written in Swift, Liquid Glass, its own
+          npm install) pairs, lists and continues every chat, starts new ones with a project, model,
+          reasoning level and access level, answers approvals and questions, attaches photos,
+          browses folders to add projects and shows a chat's changes. Verified on the iOS 27
+          simulator against a private server with Claude Code: pairing from the desktop's QR code, a
+          desktop-sent turn streaming on the phone, a phone-approved file write, reconnect after a
+          server restart. Not verified yet: a real iPhone (camera scan, Local Network prompt, a
+          phone on Wi-Fi or Tailscale) and Windows. Later the same day every screen was redrawn as
+          native SwiftUI in Swift (one list instead of three tabs, approvals and questions in place
+          of the composer) and checked again on the simulator: pairing by paste, an approval and two
+          agent questions answered on the phone, the queue, a photo, Changes and dark mode. Two
+          server bugs found on the way are fixed: generated titles kept the model's Markdown
+          asterisks, and a prompt with a picture showed twice once Claude's own history was read.
+        </p>
         <p>
           October 20, evening on nightly (3adcd24a): all four gates passed on 3de247b3 (web 3,028
           tests, server 1,721, desktop 484 and every package, no failure). The Windows taskbar
@@ -356,17 +472,17 @@
           is a CLI folder of its own (CODEX_HOME, CLAUDE_CONFIG_DIR); Settings &gt; Providers &gt;
           Accounts adds a new, empty folder or brings an existing one, signs each account in in its
           own folder, and removes or deletes it; a chat is pinned to the account it started on and
-          resumes there; the composer picks the account for a new chat; plan limits, reset credits,
-          model lists and usage are read per account, and the account popup, the Usage sheets and
-          Profile list them by account. An adversarial review found three medium issues, fixed
-          before the merge: a chat's title and commit message went through the default account, the
-          model picker only listed the default account's models, and a project's MCP sign-in could
-          land in another account's folder. Also fixed: a brought folder that is, holds or sits in a
-          folder in use is refused; removal stops resolving the account before its folder goes; new
-          folders no longer copy the default account's settings, which can hold keys and login pins.
-          Checked with the four gates and in the Electron shell with stand-in CLIs only; real
-          sign-ins, macOS and Linux are not verified yet. The chunk PRs #1854 to #1890 show as
-          merged or closed.
+          resumes there; the model picker picks the account for a new chat; plan limits, reset
+          credits, model lists and usage are read per account, and the account popup, the Usage
+          sheets and Profile list them by account. An adversarial review found three medium issues,
+          fixed before the merge: a chat's title and commit message went through the default
+          account, the model picker only listed the default account's models, and a project's MCP
+          sign-in could land in another account's folder. Also fixed: a brought folder that is,
+          holds or sits in a folder in use is refused; removal stops resolving the account before
+          its folder goes; new folders no longer copy the default account's settings, which can hold
+          keys and login pins. Checked with the four gates and in the Electron shell with stand-in
+          CLIs only; real sign-ins, macOS and Linux are not verified yet. The chunk PRs #1854 to
+          #1890 show as merged or closed.
         </p>
         <p>
           October 19, second main into nightly (PR #1909): main 58d89955, the seven commits of PRs
@@ -1127,15 +1243,20 @@
           <a href="./verification/pr-quality-2026-09-09.md">scope, evidence, and release limits</a>.
         </p>
         <p class="sub">
-          The first release ships three subscription plans and nothing else: Codex, Claude Code, and
-          Grok. Everything below either exists and is checked, is being worked on, or must happen
-          before the beta goes out. Every other provider lives only on the nightly branch.
+          The public beta on main (v0.1.1) ships three subscription plans and nothing else: Codex,
+          Claude Code, and Grok. v0.5.0 is next: its release builds offer exactly Claude Code,
+          Codex, Grok, Cursor and Antigravity, while OpenCode, Pi and the ACP agents stay in the
+          code and appear only in dev builds. Everything below either exists and is checked, is
+          being worked on, or must happen before the beta goes out.
         </p>
         <div class="hero">
           <div class="kpi">
-            <b>3</b>
-            <span>providers in the beta</span>
-            <small>Claude Code, Codex, Grok. Every visible model answered on 2026-10-12</small>
+            <b>5</b>
+            <span>providers in v0.5 release builds</span>
+            <small
+              >Claude Code, Codex, Grok, Cursor, Antigravity; the v0.1.1 beta has the first
+              three</small
+            >
           </div>
           <div class="kpi">
             <b>Ready</b>
@@ -1145,7 +1266,7 @@
           <div class="kpi">
             <b>2</b>
             <span>workstreams running</span>
-            <small>design, v0.1.3 from nightly</small>
+            <small>design, v0.5.0 from dev</small>
           </div>
           <div class="kpi">
             <b>6</b>
@@ -1652,20 +1773,36 @@
           </div>
 
           <div class="lane l-active">
-            <header>In progress <span class="count">3</span></header>
+            <header>In progress <span class="count">4</span></header>
             <ul>
               <li>
                 <i class="tick">●</i>
                 <span
-                  >v0.1.3 from nightly
+                  >v0.5.0 from dev
                   <span class="d"
-                    >the October 16 improvement round is on nightly through PR #1841 (172 lane PRs
-                    in ten lanes, merge 54ee3536) and passed the local gates and the Electron shell
-                    checks on a copy of real data; next are Leon's own test, an installer from the
-                    newest nightly, the remaining nightly refactors so shared code never branches on
-                    provider names, version 0.1.3 and its release notes, then the promotion PR that
-                    brings every provider to main; multiple accounts per provider are on nightly for
-                    Codex and Claude Code (contracts PR #1675, the rest PR #1913)</span
+                    >the next public release after 0.1.1, in place of the planned 0.1.3; being
+                    prepared for release on the evening of 2026-11-02 from a promotion dev → nightly
+                    → main, which has not happened yet; the version bump (#2016) is open; release
+                    builds offer Claude Code, Codex, Grok, Cursor and Antigravity; merged on dev for
+                    it on November 2: the provider list per build (#2006 to #2009), the solid
+                    narrow-window sidebar drawer (#2010), the compact plan-limits popup (#2011),
+                    dragging a chat into split view (#2012) and a Stop that always settles (#2013);
+                    open: #2014, #2015, #2017, #2018, #1954 and #1941; sub-agents (#1956, #1957,
+                    #1959, #1968, #1969, #1972, #1973) come after v0.5</span
+                  >
+                </span>
+              </li>
+              <li>
+                <i class="tick">●</i>
+                <span
+                  >Provider list per build
+                  <span class="d"
+                    >merged on dev: the package records its edition (#2006), the server offers and
+                    starts only that edition's providers (#2007), the release asset check refuses a
+                    dev-edition package (#2008), and the renderer follows providers.list (#2009); a
+                    live server with HARNESS_EDITION=release listed only the five release providers;
+                    usage history without hidden providers is open (#2018); not verified yet: a real
+                    dist:release or dist package reading its edition from app.asar, and macOS</span
                   >
                 </span>
               </li>
@@ -1701,7 +1838,8 @@
                     runs; ordinary follow-ups retained both API identities, models and tool context
                     across an owned restart, with no browser exceptions or queued work left. Live
                     image-capable dashboard generation, packaged Electron, macOS and real-keyring
-                    acceptance remain unverified</span
+                    acceptance remain unverified; building dashboards from tasteskill v2.1 app
+                    screens is open on dev in #1941</span
                   >
                 </span>
               </li>
@@ -1823,20 +1961,20 @@
       </section>
 
       <section id="parked">
-        <h2>Nightly only</h2>
+        <h2>Dev builds only</h2>
         <p class="sub">
-          Built and tested, and absent from main's code since 2026-10-03. All of it runs on the
-          nightly branch; bringing one back to main is a port from nightly, not a roster switch. On
-          2026-10-16 Leon decided that all of it returns to main with v0.1.3, promoted from nightly
-          after testing.
+          In the code on dev but not on main, and left out of release builds. A dev build (pnpm dev
+          and other unpackaged runs, or a local package from pnpm run dist or dist:dir) offers the
+          providers below; a release build offers only Claude Code, Codex, Grok, Cursor and
+          Antigravity. Cursor and Antigravity left this list with v0.5 (#2007). Phone access is
+          separate: it needs HARNESS_PHONE_ACCESS=1, which pnpm dev sets.
         </p>
         <div class="parked">
-          <span>Cursor adapter</span>
-          <span>OpenCode adapter</span>
-          <span>Antigravity adapter</span>
+          <span>OpenCode adapter, also for a user's own API key</span>
           <span>Pi over RPC</span>
           <span>ACP agent library, 12 agents</span>
-          <span>GLM and Z.ai coding plans</span>
+          <span>GLM and Z.ai coding plans through OpenCode</span>
+          <span>Phone access and the iPhone app</span>
         </div>
       </section>
 

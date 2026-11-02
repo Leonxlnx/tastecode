@@ -8,11 +8,11 @@ import {
   useState,
 } from 'react'
 import type { McpServer, ProviderCommand, ProviderId, ResultOf, Skill } from '@harness/contracts'
-import { IconBox as Box, IconServer as Server, IconSlash as Slash } from '@tabler/icons-react'
 import type { AppCommand } from '../app-commands.js'
 import { providerDisplayName } from '../provider-presentation.js'
 import type { Transport } from '../transport.js'
 import '../styles/composer-resource-picker.css'
+import { commandIcon, MCP_ICON, SKILL_ICON } from './chip-icons.js'
 import { SkeletonRows, SkeletonStatus } from './Skeleton.js'
 import {
   COMPOSER_RESOURCE_LIST_ID,
@@ -78,7 +78,8 @@ export const ComposerResourcePicker = forwardRef<
     /** TasteCode's own commands, listed before the provider's under `/`. */
     appCommands?: readonly AppCommand[] | undefined
     trigger: ComposerResourceTrigger | undefined
-    selectedKeys: ReadonlySet<string>
+    /** Tokens already in the draft as chips, which the menu leaves out. */
+    selectedTokens: ReadonlySet<string>
     onSelect: (resource: ComposerResource) => void
   }
 >(function ComposerResourcePicker(props, ref) {
@@ -196,8 +197,8 @@ export const ComposerResourcePicker = forwardRef<
   const markerEntries = entries[marker]
   const query = props.trigger?.query.trim().toLocaleLowerCase() ?? ''
   const filtered = useMemo(
-    () => rankedRows(markerEntries, query, props.selectedKeys),
-    [markerEntries, query, props.selectedKeys],
+    () => rankedRows(markerEntries, query, props.selectedTokens),
+    [markerEntries, query, props.selectedTokens],
   )
   const resourceSignature = filtered
     .map(({ resource }) => `${resource.key}:${resource.available ? '1' : '0'}`)
@@ -290,13 +291,14 @@ export const ComposerResourcePicker = forwardRef<
         aria-label={labels.label}
       >
         {filtered.map(({ resource }, index) => {
+          // The same icon the resource's chip shows once it is picked.
           const Icon =
             resource.icon ??
             (resource.kind === 'mcp'
-              ? Server
+              ? MCP_ICON
               : resource.kind === 'command' && resource.commandKind !== 'skill'
-                ? Slash
-                : Box)
+                ? commandIcon(resource.id)
+                : SKILL_ICON)
           const selected = index === resolvedActiveIndex
           return (
             <button
@@ -373,7 +375,8 @@ function menuEntries(inventory: Inventory, ownCommands: readonly AppCommand[]) {
   }
   for (const command of ownCommands) addCommand(appCommandResource(command))
   const providerCommands = [...(inventory.commands?.commands ?? [])]
-  // The provider's own order, but its commands before its skills.
+  // The provider's own order within groups: its built-ins, custom commands,
+  // skills, plugin commands and skills, then MCP prompts.
   providerCommands.sort((left, right) => commandOrder(left) - commandOrder(right))
   for (const command of providerCommands) addCommand(commandResource(command))
   const skills = (inventory.skills?.skills ?? []).map((skill) =>
@@ -385,7 +388,10 @@ function menuEntries(inventory: Inventory, ownCommands: readonly AppCommand[]) {
     '/': [...commands, ...slashSkills],
     $: skills,
     '@': (inventory.mcp?.servers ?? []).map((server) =>
-      menuEntry(mcpResource(server), [server.displayName ?? server.id, server.id].map(lowercase)),
+      menuEntry(
+        mcpResource(server, inventory.mcp?.capabilities.startOAuth === true),
+        [server.displayName ?? server.id, server.id].map(lowercase),
+      ),
     ),
   }
 }
@@ -408,11 +414,11 @@ function menuEntry(resource: ComposerResource, names: string[]): MenuEntry {
 function rankedRows(
   entries: readonly MenuEntry[],
   query: string,
-  selectedKeys: ReadonlySet<string>,
+  selectedTokens: ReadonlySet<string>,
 ): MenuRow[] {
   const rows: MenuRow[] = []
   for (const entry of entries) {
-    if (selectedKeys.has(entry.resource.key)) continue
+    if (selectedTokens.has(entry.resource.token)) continue
     if (query === '') {
       rows.push({ resource: entry.resource, rank: 0 })
       continue
@@ -454,8 +460,8 @@ function commandResource(command: ProviderCommand): ComposerResource {
     kind: 'command',
     id: command.name,
     name: `/${command.name}`,
-    description: command.description.trim() || (command.kind === 'skill' ? 'Skill' : 'Command'),
-    scope: command.kind === 'skill' ? 'Skill' : 'Command',
+    description: command.description.trim() || commandScope(command),
+    scope: commandScope(command),
     token: `/${command.name}`,
     available: true,
     commandKind: command.kind ?? 'command',
@@ -487,7 +493,18 @@ function appCommandResource(command: AppCommand): ComposerResource {
 }
 
 function commandOrder(command: ProviderCommand): number {
-  return command.kind === 'skill' ? 1 : 0
+  if (command.source === 'mcp') return 4
+  if (command.source === 'plugin') return 3
+  if (command.kind === 'skill') return 2
+  return command.source === 'custom' ? 1 : 0
+}
+
+/** What the provider says it is, in the words Claude Code's own menu uses. */
+function commandScope(command: ProviderCommand): string {
+  if (command.source === 'mcp') return 'MCP prompt'
+  if (command.kind === 'skill') return command.source === 'plugin' ? 'Plugin skill' : 'Skill'
+  if (command.source === 'plugin') return 'Plugin command'
+  return command.source === 'custom' ? 'Custom command' : 'Command'
 }
 
 function skillResource(skill: Skill): ComposerResource {
@@ -506,11 +523,14 @@ function skillResource(skill: Skill): ComposerResource {
   }
 }
 
-function mcpResource(server: McpServer): ComposerResource {
+/** `canSignIn`: TasteCode can start this provider's MCP sign-in from MCP settings. */
+function mcpResource(server: McpServer, canSignIn: boolean): ComposerResource {
   const unavailableReason = !server.enabled
     ? 'Disabled'
     : server.auth?.status === 'sign_in_required'
-      ? 'Sign in required'
+      ? canSignIn
+        ? 'Sign in required'
+        : 'Sign in outside TasteCode'
       : server.startup?.state === 'failed'
         ? server.startup.message
         : undefined

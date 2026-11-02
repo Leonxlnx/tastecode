@@ -15,6 +15,7 @@ export function ArchiveToast(props: {
       visible={props.visible}
       onDismiss={props.onDismiss}
       dismissKey={props.count}
+      followComposer={false}
     >
       <IconTrash size={16} stroke={1.7} aria-hidden />
       <span className="notice__text">
