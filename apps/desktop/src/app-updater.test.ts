@@ -1,6 +1,10 @@
 import { EventEmitter } from 'node:events'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createAppUpdateController, parseRunningAgents } from './app-updater.js'
+import {
+  createAppUpdateController,
+  installsUpdateOnQuit,
+  parseRunningAgents,
+} from './app-updater.js'
 
 function fakeUpdater() {
   const emitter = new EventEmitter()
@@ -532,6 +536,13 @@ describe('app update controller', () => {
       expect(updater.quitAndInstall).not.toHaveBeenCalled()
       expect(controller.install()).toBe(true)
       expect(updater.quitAndInstall).toHaveBeenCalledWith(false, true)
+    })
+
+    it('installs on quit only outside a dev build', () => {
+      // A dev build would otherwise trade its extra providers for the release's.
+      expect(installsUpdateOnQuit('dev')).toBe(false)
+      expect(installsUpdateOnQuit('release')).toBe(true)
+      expect(installsUpdateOnQuit(undefined)).toBe(true)
     })
 
     it('accepts only a whole, non-negative running agent count', () => {

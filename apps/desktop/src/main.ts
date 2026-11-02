@@ -39,6 +39,7 @@ import {
 import { shouldHideWindowOnClose } from './background-lifecycle.js'
 import {
   createAppUpdateController,
+  installsUpdateOnQuit,
   parseRunningAgents,
   type AppUpdateController,
   type AppUpdateState,
@@ -1268,9 +1269,7 @@ if (ownsSingleInstance) {
         }),
       currentVersion: app.getVersion(),
       enabled: app.isPackaged && !devServer && ['darwin', 'win32'].includes(process.platform),
-      // Updates come from the public release, which offers fewer providers than
-      // a dev build. A dev build offers them, but installs one only on Update.
-      installOnQuit: !app.isPackaged || readPackagedEdition() !== 'dev',
+      installOnQuit: installsUpdateOnQuit(app.isPackaged ? readPackagedEdition() : undefined),
       onError: (cause) => void diagnostics?.record('updater', cause),
     })
     appUpdater.subscribe((state) => {

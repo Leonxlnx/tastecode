@@ -1,4 +1,5 @@
 import type { AppUpdater, UpdateInfo } from 'electron-updater'
+import type { BuildEdition } from './owned-server-env.js'
 
 export type UpdateClient = Pick<
   AppUpdater,
@@ -278,6 +279,16 @@ export function createAppUpdateController(
 }
 
 export type AppUpdateController = ReturnType<typeof createAppUpdateController>
+
+/**
+ * Whether a build's downloaded update may install by itself when the app
+ * quits. Updates come from the public release, which offers fewer providers
+ * than a dev build: a dev build offers them, but installs one only on Update.
+ * An unpackaged run has no edition (and no updater).
+ */
+export function installsUpdateOnQuit(edition: BuildEdition | undefined): boolean {
+  return edition !== 'dev'
+}
 
 /**
  * How many chats the renderer reports with a running turn (starting, working,
