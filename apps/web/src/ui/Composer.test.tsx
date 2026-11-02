@@ -8,6 +8,7 @@ import { Composer, composerResourceTriggerAt } from './Composer.js'
 import { composerChipText, composerWireText, hasComposerChips } from './composer-chips.js'
 
 const bridge = vi.hoisted(() => ({
+  isMacOS: vi.fn(() => false),
   pickFiles: vi.fn(),
   previewViewedImage: vi.fn(),
   revealPath: vi.fn(),
@@ -16,6 +17,7 @@ const bridge = vi.hoisted(() => ({
 const preloadThread = vi.hoisted(() => vi.fn())
 
 vi.mock('../bridge.js', () => ({
+  isMacOS: bridge.isMacOS,
   pickFiles: bridge.pickFiles,
   previewViewedImage: bridge.previewViewedImage,
   revealPath: bridge.revealPath,
@@ -40,6 +42,7 @@ function legacyComposerResourceTriggerAt(text: string, cursor: number) {
 beforeEach(() => {
   localStorage.clear()
   resetRememberedChipTokens()
+  bridge.isMacOS.mockReturnValue(false)
   bridge.pickFiles.mockResolvedValue([])
   bridge.previewViewedImage.mockResolvedValue(undefined)
   bridge.savePastedFile.mockResolvedValue({
@@ -2603,6 +2606,58 @@ describe('Composer inline chips', () => {
     expect(composer.value).toBe('a Zook b')
   })
 
+  describe('through the editor', () => {
+    afterEach(() => {
+      Reflect.deleteProperty(document, 'execCommand')
+    })
+
+    it('repairs a cut chip as an edit of its own, and leaves undo to bring the chip back', () => {
+      renderComposer(vi.fn())
+      const composer = draftWith(`${goal} a ${cook}abc`)
+      const execCommand = fakeEditor(composer)
+      // A word deletion took the name together with the word typed against it.
+      const cut = `${goal} a ${cook.slice(0, 3)}`
+
+      editNatively(composer, cut, 'deleteWordBackward')
+      expect(composer.value).toBe(`${goal} a `)
+      expect(execCommand.mock.calls).toEqual([['delete']])
+
+      // Ctrl+Z puts the cut back; the next Ctrl+Z restores the chip.
+      editNatively(composer, cut, 'historyUndo')
+      expect(composer.value).toBe(cut)
+      expect(execCommand).toHaveBeenCalledOnce()
+    })
+
+    it.each([
+      ['Windows and Linux', false, { ctrlKey: true }],
+      ['macOS', true, { altKey: true }],
+    ])('deletes a chip and the space after it as one word on %s', (_, macOS, modifier) => {
+      bridge.isMacOS.mockReturnValue(macOS)
+      renderComposer(vi.fn())
+      const composer = draftWith(`a ${cook}  `)
+      const execCommand = fakeEditor(composer)
+
+      fireEvent.keyDown(composer, { key: 'Backspace', ...modifier })
+      expect(composer.value).toBe('a ')
+      expect(execCommand).toHaveBeenCalledWith('delete')
+
+      draftWith(` ${cook} b`, 0)
+      fireEvent.keyDown(composer, { key: 'Delete', ...modifier })
+      expect(composer.value).toBe(' b')
+    })
+
+    it('pastes over the whole of a chip the selection cuts into', () => {
+      renderComposer(vi.fn())
+      const composer = draftWith(`a ${cook} b`)
+      const execCommand = fakeEditor(composer)
+
+      composer.setSelectionRange(4, composer.value.length)
+      fireEvent.paste(composer, { clipboardData: { files: [], getData: () => 'X' } })
+      expect(composer.value).toBe('a X')
+      expect(execCommand).toHaveBeenCalledWith('insertText', false, 'X')
+    })
+  })
+
   it('copies and cuts the tokens the selected chips stand for', () => {
     renderComposer(vi.fn())
     const composer = draftWith(`${goal} fix ${cook}`)
@@ -2868,6 +2923,41 @@ function renderComposer(
       view.rerender(composer())
     },
   })
+}
+
+const setNativeValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!
+
+/** An edit the browser made itself, reported with its input type as Chromium does. */
+function editNatively(area: HTMLTextAreaElement, value: string, inputType: string) {
+  setNativeValue.call(area, value)
+  area.setSelectionRange(value.length, value.length)
+  area.dispatchEvent(new InputEvent('input', { bubbles: true, inputType }))
+}
+
+/**
+ * Stands in for the browser's editing commands, which happy-dom lacks: `delete`
+ * and `insertText` replace the textarea's selection and report an input event.
+ */
+function fakeEditor(area: HTMLTextAreaElement) {
+  const execCommand = vi.fn((command: string, _showUi?: boolean, text = '') => {
+    if (command !== 'delete' && command !== 'insertText') return false
+    const start = area.selectionStart
+    const end = area.selectionEnd
+    const from = command === 'delete' && start === end ? Math.max(0, start - 1) : start
+    const inserted = command === 'insertText' ? text : ''
+    setNativeValue.call(area, area.value.slice(0, from) + inserted + area.value.slice(end))
+    area.setSelectionRange(from + inserted.length, from + inserted.length)
+    area.dispatchEvent(
+      new InputEvent('input', {
+        bubbles: true,
+        inputType: command === 'delete' ? 'deleteContentBackward' : 'insertText',
+        data: command === 'insertText' ? text : null,
+      }),
+    )
+    return true
+  })
+  Object.defineProperty(document, 'execCommand', { configurable: true, value: execCommand })
+  return execCommand
 }
 
 /** The overlay is lazy, so its chips arrive a tick after the pick. */

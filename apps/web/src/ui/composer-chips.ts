@@ -153,6 +153,22 @@ export function composerChipTouching(
 }
 
 /**
+ * The chip that only spaces separate from the position, before it (a word
+ * deletion backward) or after it (forward). The editor's own word deletion
+ * there would take the name and leave the chip's invisible marks behind.
+ */
+export function composerChipPastSpaces(
+  text: string,
+  index: number,
+  side: 'before' | 'after',
+): ComposerChip | undefined {
+  let position = index
+  if (side === 'before') while (position > 0 && /[ \t]/.test(text[position - 1]!)) position -= 1
+  else while (position < text.length && /[ \t]/.test(text[position]!)) position += 1
+  return composerChipTouching(text, position, side)
+}
+
+/**
  * Whether a slash typed at `index` can still lead the prompt. Providers read a
  * command only at the start, so only whitespace and `$skill` or `@server`
  * chips may come before it: the composer puts a picked command in front of

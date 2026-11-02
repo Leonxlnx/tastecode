@@ -33,6 +33,7 @@ import {
 } from '@tabler/icons-react'
 import { APPROVAL_MODES } from './approval-modes.js'
 import {
+  isMacOS,
   pickFiles,
   previewViewedImage,
   revealPath,
@@ -58,6 +59,8 @@ import {
 } from './composer-resource.js'
 import {
   composerChipAround,
+  composerChipFragments,
+  composerChipPastSpaces,
   composerChipText,
   composerChipTokens,
   composerChips,
@@ -108,6 +111,14 @@ const ContextUsage = lazy(() =>
 const DRAFT_HAS_CONTENT = /\S/u
 const RESOURCE_SKELETON_WIDTHS = [108, 76, 132, 92]
 const NO_CHIP_TOKENS: ReadonlySet<string> = new Set()
+/** Undo and redo put back a state the editor held; a chip repair must not redo itself on them. */
+const HISTORY_INPUT_TYPES: ReadonlySet<string> = new Set(['historyUndo', 'historyRedo'])
+
+/** Ctrl+Backspace and Ctrl+Delete delete a word, or Option with them on macOS. */
+function deletesWord(event: KeyboardEvent<HTMLTextAreaElement>): boolean {
+  if (event.metaKey || event.shiftKey) return false
+  return isMacOS() ? event.altKey && !event.ctrlKey : event.ctrlKey && !event.altKey
+}
 
 function ModelTriggerSkeleton() {
   return (
@@ -631,6 +642,8 @@ function ComposerComponent(props: {
   // The overlay mounts once a menu opened or a chip arrived, and stays.
   const [chipsSeen, setChipsSeen] = useState(false)
   const chipsSeenRef = useRef(false)
+  // Set while a chip repair edits through the editor, whose own input events must not repair again.
+  const repairingChips = useRef(false)
   const area = useRef<HTMLTextAreaElement>(null)
   const resourcePicker = useRef<ComposerResourcePickerHandle>(null)
   const sendAvailabilityRef = useRef(props.sendAvailability)
@@ -1667,6 +1680,29 @@ function ComposerComponent(props: {
   }
 
   /**
+   * Removes what an edit left of a cut chip through the editor, last range
+   * first, so the repair sits on the undo stack after the edit that caused it
+   * and Ctrl+Z can step back to the whole chip. False when the editor is not
+   * there or refused, as it does for an edit the composer itself made through
+   * it; the caller then writes the text.
+   */
+  const removeChipFragments = (el: HTMLTextAreaElement, text: string): boolean => {
+    if (el.disabled || typeof document.execCommand !== 'function') return false
+    const fragments = composerChipFragments(text)
+    repairingChips.current = true
+    try {
+      for (let index = fragments.length - 1; index >= 0; index -= 1) {
+        const [from, to] = fragments[index]!
+        el.setSelectionRange(from, to)
+        if (!document.execCommand('delete')) return false
+      }
+      return true
+    } finally {
+      repairingChips.current = false
+    }
+  }
+
+  /**
    * A chip moves and deletes as one character: Backspace after it or Delete
    * before it removes all of it, the arrows step over it, and typing over a
    * selection that cuts through it replaces the whole chip.
@@ -1677,17 +1713,30 @@ function ComposerComponent(props: {
     const start = el.selectionStart
     const end = el.selectionEnd
     if (event.key === 'Backspace' || event.key === 'Delete') {
+      const backward = event.key === 'Backspace'
       if (start !== end) {
         const [from, to] = composerSelectionOverChips(text, start, end)
         if (from !== start || to !== end) el.setSelectionRange(from, to)
         return false
       }
       const chip =
-        composerChipTouching(text, start, event.key === 'Backspace' ? 'before' : 'after') ??
+        composerChipTouching(text, start, backward ? 'before' : 'after') ??
         composerChipAround(text, start)
-      if (!chip) return false
+      if (chip) {
+        event.preventDefault()
+        deleteRange(chip.start, chip.end)
+        return true
+      }
+      // A word deletion across the space after a pick takes the chip with the
+      // space, as it takes a word with the space after it.
+      const spaced =
+        (event.ctrlKey || event.altKey) && deletesWord(event)
+          ? composerChipPastSpaces(text, start, backward ? 'before' : 'after')
+          : undefined
+      if (!spaced) return false
       event.preventDefault()
-      deleteRange(chip.start, chip.end)
+      if (backward) deleteRange(spaced.start, start)
+      else deleteRange(start, spaced.end)
       return true
     }
     if (
@@ -1736,6 +1785,20 @@ function ComposerComponent(props: {
     event.preventDefault()
     event.clipboardData.setData('text/plain', composerWireText(selected))
     if (cut) deleteRange(from, to)
+  }
+
+  /** Text pasted over a selection that cuts into a chip replaces the whole chip. */
+  const pasteOverChips = (event: ClipboardEvent<HTMLTextAreaElement>) => {
+    if (chipStore.get() === '') return
+    const el = event.currentTarget
+    const [from, to] = composerSelectionOverChips(el.value, el.selectionStart, el.selectionEnd)
+    if (from === el.selectionStart && to === el.selectionEnd) return
+    el.setSelectionRange(from, to)
+    // Inserted through the editor, so Ctrl+Z takes it out as it would a paste.
+    // Without it, the browser's own paste lands on the widened selection.
+    if (typeof document.execCommand !== 'function') return
+    if (document.execCommand('insertText', false, event.clipboardData.getData('text/plain')))
+      event.preventDefault()
   }
 
   const selectResource = (resource: ComposerResource) => {
@@ -2168,14 +2231,21 @@ function ComposerComponent(props: {
                   onFocus={preloadThread}
                   onPointerEnter={preloadThread}
                   onChange={(e) => {
+                    const input = e.nativeEvent as InputEvent
                     let value = e.target.value
-                    // An edit that cut through a chip leaves no invisible mark behind.
+                    // An edit that cut through a chip leaves no invisible mark
+                    // behind. Undo and redo only put back what the editor held,
+                    // so Ctrl+Z can step back past the repair to the whole chip.
                     const repaired =
-                      chipStore.get() !== '' && !(e.nativeEvent as InputEvent).isComposing
+                      chipStore.get() !== '' &&
+                      !input.isComposing &&
+                      !repairingChips.current &&
+                      !HISTORY_INPUT_TYPES.has(input.inputType)
                         ? repairComposerChips(value, e.target.selectionStart ?? value.length)
                         : undefined
                     if (repaired) {
-                      e.target.value = repaired.text
+                      removeChipFragments(e.target, value)
+                      if (e.target.value !== repaired.text) e.target.value = repaired.text
                       e.target.setSelectionRange(repaired.caret, repaired.caret)
                       value = repaired.text
                     }
@@ -2301,7 +2371,9 @@ function ComposerComponent(props: {
                       }
                       attachFiles(paths)
                       addPastedFiles(materialized, 'paste')
+                      return
                     }
+                    pasteOverChips(e)
                   }}
                   placeholder={props.placeholder ?? 'Do anything'}
                 />
