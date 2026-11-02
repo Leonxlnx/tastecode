@@ -1306,16 +1306,19 @@
                   floating composer's dock paints the pane background, so the transcript never shows
                   under or beside it; the placeholder says Stopping… while a turn stops; window
                   toasts open above the docked composer and its Jump to latest lane, right-aligned
-                  with the composer box, instead of over the model button and Send; the in-pane
-                  header names the current session or New chat and exposes the shared session menu
-                  plus direct Workspace and Terminal controls, and its Rename opens a visible
-                  bordered field with the title selected, handing focus back to the chat menu
-                  afterwards; the Design chip takes the same hover tint as the other composer chips
-                  instead of fading; Arrow Up in an empty composer puts the last prompt sent in the
-                  chat back to edit, and Escape clears it again; each newly submitted queued turn
-                  gets a stable transcript anchor; the prompt takes focus only for a new focus
-                  request, so a finished Stop no longer pulls focus back from the terminal, a rename
-                  field or find</span
+                  with the composer box, instead of over the model button and Send, and follow it
+                  while open when a chat or split opens, focus moves to the other pane or the chat
+                  comes back from another view; in a split whose focused pane is a new chat they sit
+                  above the right pane's composer, which keeps the window corner; the in-pane header
+                  names the current session or New chat and exposes the shared session menu plus
+                  direct Workspace and Terminal controls, and its Rename opens a visible bordered
+                  field with the title selected, handing focus back to the chat menu afterwards; the
+                  Design chip takes the same hover tint as the other composer chips instead of
+                  fading; Arrow Up in an empty composer puts the last prompt sent in the chat back
+                  to edit, and Escape clears it again; each newly submitted queued turn gets a
+                  stable transcript anchor; the prompt takes focus only for a new focus request, so
+                  a finished Stop no longer pulls focus back from the terminal, a rename field or
+                  find</span
                 ></span
               ></label
             >
@@ -3342,14 +3345,20 @@
                 denied writes, preserving real download and stream-error checks across platforms
                 (#1394). On macOS, a DMG image that cannot be detached afterwards no longer fails a
                 prepared update, and a refused DMG keeps its real reason and is discarded (#1487,
-                not yet run on a real Mac). On nightly, installing no longer cuts off running chats:
-                while chats run, the sidebar button (an hourglass with the count) and Restart to
-                update in About read “Installs when 2 chats finish” and install by themselves once
-                the last one ends, after the server confirms no turn still runs or starts (a chat
-                waiting on an approval or a question counts; one that only holds queued prompts, as
-                after a restart, does not, since they come back after the update); Install now stops
-                them after one confirmation that names how many and keeps every queued prompt for
-                after the restart, and Install later puts it off</span
+                not yet run on a real Mac). On dev, an update never installs while chats run. A
+                ready update shows a small notice under the header (“TasteCode 0.5.0 is ready”,
+                Update, close; once per version) and the sidebar button stays. Update while chats
+                run asks first, in that notice or in About, never with a browser dialog: Stop and
+                update stops them and restarts at once, keeping every queued prompt for after the
+                restart; When they finish installs by itself once the last one ends, after the
+                server confirms no turn still runs or starts (a chat waiting on an approval or a
+                question counts; one that only holds queued prompts, as after a restart, does not,
+                since they come back after the update), with the sidebar hourglass and Install later
+                as before; closing the question stops nothing. A release build installs a ready
+                update on quit only when no chat ran as the quit began (on Windows; macOS applies a
+                ready update after exit either way). A dev build offers updates the same way but
+                never installs one on quit, only after Update (not yet run in a packaged
+                build)</span
               ></label
             >
           </li>

@@ -55,6 +55,7 @@ type Bridge = {
   getUpdateState?: () => Promise<AppUpdateState>
   checkForUpdates?: () => Promise<AppUpdateState>
   installUpdate?: () => Promise<boolean>
+  reportRunningAgents?: (count: number) => void
   setMenuShortcuts?: (shortcuts: NativeMenuShortcuts) => void
   onMenuAction?: (
     listener: (action: NativeMenuAction, source: NativeMenuActionSource) => void,
@@ -497,6 +498,18 @@ export function installAppUpdate(): Promise<boolean> {
     return Promise.resolve(simulated.status === 'ready')
   }
   return bridge?.installUpdate?.() ?? Promise.resolve(false)
+}
+
+let reportedRunningAgents: number | undefined
+
+/**
+ * Chats with a running turn, for the desktop shell: a quit that begins while
+ * any runs leaves a ready update for later. Sent only when the count changes.
+ */
+export function reportRunningAgents(count: number): void {
+  if (count === reportedRunningAgents) return
+  reportedRunningAgents = count
+  bridge?.reportRunningAgents?.(count)
 }
 
 export function onAppUpdateState(listener: (state: AppUpdateState) => void): () => void {

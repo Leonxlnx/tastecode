@@ -85,6 +85,8 @@ const api = {
   getUpdateState: (): Promise<AppUpdateState> => ipcRenderer.invoke('harness:getUpdateState'),
   checkForUpdates: (): Promise<AppUpdateState> => ipcRenderer.invoke('harness:checkForUpdates'),
   installUpdate: (): Promise<boolean> => ipcRenderer.invoke('harness:installUpdate'),
+  /** Chats with a running turn; a quit that begins while any runs installs no update. */
+  reportRunningAgents: (count: number): void => ipcRenderer.send('harness:runningAgents', count),
   setMenuShortcuts: (shortcuts: unknown): void =>
     ipcRenderer.send('harness:setMenuShortcuts', shortcuts),
   onMenuAction: (

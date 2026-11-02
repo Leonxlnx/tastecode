@@ -60,6 +60,7 @@ import { readTerminalPlacement, subscribeTerminalPlacement } from './terminal-pl
 import { useChatNotifications } from './use-chat-notifications.js'
 import { useAppUpdateInstallGate } from './app-update-install.js'
 import { ProviderUpdateNotice } from './ui/ProviderUpdates.js'
+import { AppUpdateToast } from './ui/AppUpdateToast.js'
 import { IndeterminateRequestError, Transport } from './transport.js'
 import { OptimisticMutations } from './optimistic-mutations.js'
 import {
@@ -8024,6 +8025,12 @@ export function App() {
         onUpdated={refreshCatalog}
         suppressed={offline || Boolean(notice) || Boolean(actionError)}
       />
+      {isDesktop ? (
+        <AppUpdateToast
+          hidden={settingsOpen}
+          quiet={pendingArchives.length > 0 && !archiveToastDismissed}
+        />
+      ) : null}
       {pendingArchives.length > 0 ? (
         <Suspense fallback={null}>
           <ArchiveToast

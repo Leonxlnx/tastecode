@@ -505,6 +505,32 @@ describe('app update install', () => {
     return gate
   }
 
+  it('asks in About before stopping running chats, and restarts at once on Stop', async () => {
+    settingsLoading.desktop = true
+    vi.spyOn(bridge, 'appUpdateState').mockResolvedValue(ready)
+    const confirm = vi.fn(() => true)
+    vi.stubGlobal('confirm', confirm)
+    const calls: string[] = []
+    serverGate(calls)
+    reportRunningChats(2)
+    renderSettings({ initialSection: 'about' })
+    fireEvent.click(await screen.findByRole('button', { name: 'Restart to update' }))
+    expect(
+      await screen.findByRole('status', { name: 'Ready · 2 chats still running' }),
+    ).toBeTruthy()
+    // The safe choice takes the focus, so a stray Enter stops nothing.
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'When they finish' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Not now' }))
+    expect(screen.getByRole('status', { name: 'Ready · 1.0.1 ready' })).toBeTruthy()
+    expect(calls).toEqual([])
+
+    fireEvent.click(screen.getByRole('button', { name: 'Restart to update' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Stop 2 chats and update' }))
+    await waitFor(() => expect(calls).toEqual(['stop', 'install']))
+    expect(confirm).not.toHaveBeenCalled()
+    vi.unstubAllGlobals()
+  })
+
   it('waits in About while chats run and stops them after one confirmation', async () => {
     settingsLoading.desktop = true
     vi.spyOn(bridge, 'appUpdateState').mockResolvedValue(ready)
@@ -513,6 +539,7 @@ describe('app update install', () => {
     reportRunningChats(1)
     renderSettings({ initialSection: 'about' })
     fireEvent.click(await screen.findByRole('button', { name: 'Restart to update' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'When they finish' }))
     expect(
       await screen.findByRole('status', { name: 'Ready · Installs when 1 chat finishes' }),
     ).toBeTruthy()
@@ -539,6 +566,7 @@ describe('app update install', () => {
     reportRunningChats(2)
     renderSettings({ initialSection: 'about' })
     fireEvent.click(await screen.findByRole('button', { name: 'Restart to update' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'When they finish' }))
     expect(
       await screen.findByRole('status', { name: 'Ready · Installs when 2 chats finish' }),
     ).toBeTruthy()
@@ -546,6 +574,7 @@ describe('app update install', () => {
     expect(screen.getByRole('status', { name: 'Ready · 1.0.1 ready' })).toBeTruthy()
 
     fireEvent.click(screen.getByRole('button', { name: 'Restart to update' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'When they finish' }))
     vi.useFakeTimers()
     act(() => reportRunningChats(0))
     await act(async () => vi.advanceTimersByTimeAsync(INSTALL_SETTLE_MS))
