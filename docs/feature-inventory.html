@@ -225,26 +225,28 @@
       <div class="topbar-inner">
         <h1>Feature Inventory</h1>
         <span class="total" id="total">0 checked</span>
-        <span class="meta">2026-10-20 nightly 5da77ebc · includes main 094eac47 (PR #1921)</span>
+        <span class="meta">2026-11-02 dev 90183641 · includes main 936c6d76</span>
       </div>
     </div>
 
     <div class="wrap">
       <p class="intro">
         <a href="./CLAUDE-HANDOFF.md">October 9 Claude handoff</a>: current source, branches,
-        references and verification limits. This nightly source includes main through 094eac47,
-        synchronized on 2026-10-20 (PR #1921), and the October 16 improvement round, which landed on
-        2026-10-18 through PR #1841 (172 lane PRs in ten lanes: streaming, chat column, models, MCP
-        and slash commands, providers, plan limits, usage, Settings, performance, subagents and pull
-        requests). Published desktop 0.1.1 and the old 0.1.2 draft are separate from the source
-        features listed below.
+        references and verification limits. This source is dev (branch model since 2026-10-25: dev →
+        nightly → main). It includes main through 936c6d76 and the October 16 improvement round,
+        which landed on 2026-10-18 through PR #1841 (172 lane PRs in ten lanes: streaming, chat
+        column, models, MCP and slash commands, providers, plan limits, usage, Settings,
+        performance, subagents and pull requests). Published desktop 0.1.1 and the old 0.1.2 draft
+        are separate from the source features listed below.
       </p>
       <p class="intro">
         Every feature the app has today, as concrete as it gets. This is the working checklist for
         deciding the first release scope: tick a box to mark a feature as keep. Ticks are saved in
         this browser only. Checklist entries describe implemented features; pending notes are
-        explicitly marked and are not shipped. Sections marked nightly only are built and tested but
-        absent from main's code (see dashboard.html).
+        explicitly marked and are not shipped. Providers marked dev builds only are in this source
+        but left out of release builds: a release build offers Claude Code, Codex, Grok, Cursor and
+        Antigravity, a dev build every provider (see Provider management and dashboard.html). main,
+        the public beta 0.1.1, has only Codex, Claude Code and Grok in its code.
       </p>
 
       <div class="toc">
@@ -530,7 +532,7 @@
           </li>
         </ul>
 
-        <h3>Cursor (cursor-agent stream-json) <span class="pill-parked">nightly only</span></h3>
+        <h3>Cursor (cursor-agent stream-json)</h3>
         <ul class="check">
           <li>
             <label
@@ -598,7 +600,7 @@
           </li>
         </ul>
 
-        <h3>OpenCode (local server, HTTP/SSE) <span class="pill-parked">nightly only</span></h3>
+        <h3>OpenCode (local server, HTTP/SSE) <span class="pill-parked">dev builds only</span></h3>
         <ul class="check">
           <li>
             <label
@@ -676,7 +678,7 @@
           </li>
         </ul>
 
-        <h3>Antigravity (agy, stream-json) <span class="pill-parked">nightly only</span></h3>
+        <h3>Antigravity (agy, stream-json)</h3>
         <ul class="check">
           <li>
             <label
@@ -824,7 +826,7 @@
           </li>
         </ul>
 
-        <h3>Pi (RPC) <span class="pill-parked">nightly only</span></h3>
+        <h3>Pi (RPC) <span class="pill-parked">dev builds only</span></h3>
         <ul class="check">
           <li>
             <label
@@ -840,7 +842,7 @@
           </li>
         </ul>
 
-        <h3>ACP agents (one shared adapter) <span class="pill-parked">nightly only</span></h3>
+        <h3>ACP agents (one shared adapter) <span class="pill-parked">dev builds only</span></h3>
         <ul class="check">
           <li>
             <label
@@ -907,6 +909,29 @@
 
         <h3>Provider management</h3>
         <ul class="check">
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Each build offers the providers of its edition
+                <span class="d"
+                  >a release build offers exactly Claude Code, Codex, Grok, Cursor and Antigravity;
+                  a dev build offers every provider, OpenCode, Pi and the ACP agents included. pnpm
+                  dev and other unpackaged runs are dev builds, and so are local packages from pnpm
+                  run dist or dist:dir, which write tastecodeEdition=dev into the packaged
+                  package.json; dist:release and every other packaging path write nothing, and a
+                  missing or unknown value means release. The desktop passes the edition to the
+                  server as HARNESS_EDITION, after its inherited environment so a machine variable
+                  cannot widen a release build. In a release build providers.list and acp.agents
+                  leave the other providers out; installing, launching, MCP changes and new or
+                  resumed chats on them are refused; custom harnesses on them stay in the shared
+                  file but are not listed; an old chat on one stays readable, and a new turn there
+                  is refused. The renderer shows ACP agents, custom harnesses and model rows only
+                  for providers that providers.list returns. The release asset check refuses a
+                  package that records any edition other than release</span
+                ></span
+              ></label
+            >
+          </li>
           <li>
             <label
               ><input type="checkbox" /><span
