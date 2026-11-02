@@ -152,6 +152,41 @@ export function composerChipTouching(
   )
 }
 
+/**
+ * Whether a slash typed at `index` can still lead the prompt. Providers read a
+ * command only at the start, so only whitespace and `$skill` or `@server`
+ * chips may come before it: the composer puts a picked command in front of
+ * those. Walks back from the slash and stops at the first other character, so
+ * it costs a step per leading character, never the whole draft.
+ */
+export function composerSlashCanLead(text: string, index: number): boolean {
+  let position = index
+  while (position > 0) {
+    const character = text[position - 1]!
+    if (character === GLUE) {
+      // A chip ends here: step over its name to the mark that says what it is.
+      let mark = position - 2
+      while (mark >= 0 && !/[\s⁠-⁤]/.test(text[mark]!)) mark -= 1
+      const chip = mark < position - 2 ? markedChip(text[mark]) : undefined
+      if (!chip || chip.marker === '/') return false
+      if (text[mark - 1] !== GLUE || text[mark - 2] !== ICON_ROOM) return false
+      position = mark - 2
+      continue
+    }
+    if (!/\s/.test(character)) return false
+    position -= 1
+  }
+  return true
+}
+
+function markedChip(
+  character: string | undefined,
+): { marker: ComposerChipMarker; kind: ComposerChipKind } | undefined {
+  return character !== undefined && Object.hasOwn(MARKS, character)
+    ? MARKS[character as Mark]
+    : undefined
+}
+
 /** Widens a selection that cuts through a chip so it takes the whole chip. */
 export function composerSelectionOverChips(
   text: string,

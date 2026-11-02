@@ -63,6 +63,7 @@ import {
   composerChips,
   composerChipTouching,
   composerSelectionOverChips,
+  composerSlashCanLead,
   composerWireText,
   createComposerChipTextStore,
   hasComposerChips,
@@ -433,7 +434,7 @@ export function composerResourceTriggerAt(
 
   const marker = text[markerIndex]
   if (marker !== '/' && marker !== '$' && marker !== '@') return undefined
-  if (marker === '/' && !onlySpaceBefore(text, markerIndex)) return undefined
+  if (marker === '/' && !composerSlashCanLead(text, markerIndex)) return undefined
   const query = text.slice(queryStart, position)
   let end = position
   while (end < text.length && isResourceQueryCharacter(text.charCodeAt(end))) end += 1
@@ -451,22 +452,10 @@ function composerResourceTriggerAtLongToken(
   if (marker !== '/' && marker !== '$' && marker !== '@') return undefined
   const query = match[3] ?? ''
   const start = cursor - query.length - 1
-  if (marker === '/' && !onlySpaceBefore(text, start)) return undefined
+  if (marker === '/' && !composerSlashCanLead(text, start)) return undefined
   let end = cursor
   while (end < text.length && isResourceQueryCharacter(text.charCodeAt(end))) end += 1
   return { marker, query, start, end }
-}
-
-/**
- * A slash names a command only at the start of the message, as providers read
- * it. The walk stops at the first other character, so a long draft costs one
- * step.
- */
-function onlySpaceBefore(text: string, index: number): boolean {
-  for (let position = index - 1; position >= 0; position -= 1) {
-    if (!/\s/.test(text[position]!)) return false
-  }
-  return true
 }
 
 function isResourceQueryCharacter(code: number): boolean {
@@ -1726,14 +1715,21 @@ function ComposerComponent(props: {
     const text = textRef.current
     const before = text.slice(0, trigger.start)
     const replaceEnd = text.startsWith(' ', trigger.end) ? trigger.end + 1 : trigger.end
-    const inserted = `${composerChipText(resource.token, chipKind(resource))} `
-    const next = before + inserted + text.slice(replaceEnd)
-    const caret = before.length + inserted.length
+    const chip = composerChipText(resource.token, chipKind(resource))
+    // Providers read a slash command only at the start of the prompt, so one
+    // picked after skill or server chips goes in front of them. The chips are
+    // written again after it in the same edit, so one Ctrl+Z undoes the pick.
+    const firstChip = resource.token.startsWith('/') ? composerChips(before)[0] : undefined
+    const from = firstChip ? 0 : trigger.start
+    // Only whitespace comes before the first chip; the chip's own icon room stays.
+    const inserted = firstChip ? `${chip} ${before.slice(firstChip.start)}` : `${chip} `
+    const next = text.slice(0, from) + inserted + text.slice(replaceEnd)
+    const caret = from + inserted.length
     setResourceTrigger(undefined)
     const el = area.current
     if (el && !el.disabled && typeof document.execCommand === 'function') {
       el.focus()
-      el.setSelectionRange(trigger.start, replaceEnd)
+      el.setSelectionRange(from, replaceEnd)
       // Inserted through the editor so Ctrl+Z takes the chip back out; the
       // input event runs onChange, which records the new text.
       if (document.execCommand('insertText', false, inserted) && el.value === next) return
@@ -2177,7 +2173,13 @@ function ComposerComponent(props: {
                         return
                       }
                       if (e.key === 'Enter') {
-                        if (resourcePicker.current?.selectActive('Enter') === 'selected') {
+                        // Behind chips a command cannot run as typed: Enter
+                        // picks it, which puts it in front, as Tab does.
+                        const behindChips =
+                          resourceTrigger.marker === '/' &&
+                          hasComposerChips(textRef.current.slice(0, resourceTrigger.start))
+                        const key = behindChips ? 'Tab' : 'Enter'
+                        if (resourcePicker.current?.selectActive(key) === 'selected') {
                           e.preventDefault()
                           return
                         }

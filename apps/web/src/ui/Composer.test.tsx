@@ -99,6 +99,30 @@ describe('composer resource triggers', () => {
     expect(composerResourceTriggerAt('Ask @docs', 9)).toMatchObject({ marker: '@' })
   })
 
+  it('opens slash commands after skill and server chips, but not after a command or text', () => {
+    const cook = composerChipText('$cook', 'skill')
+    const docs = composerChipText('@docs', 'mcp')
+    const goal = composerChipText('/goal', 'command')
+    const design = composerChipText('/design', 'skill')
+    const atEnd = (text: string) => composerResourceTriggerAt(text, text.length)
+
+    const picks = `${cook} ${docs}\n /go`
+    expect(atEnd(picks)).toEqual({
+      marker: '/',
+      query: 'go',
+      start: picks.length - 3,
+      end: picks.length,
+    })
+    // A slash token already leads, or words come first.
+    expect(atEnd(`${goal} /go`)).toBeUndefined()
+    expect(atEnd(`${design} /go`)).toBeUndefined()
+    expect(atEnd(`${cook} fix /go`)).toBeUndefined()
+    expect(atEnd(`fix ${cook} /go`)).toBeUndefined()
+    // What an edit left of a cut chip is no chip.
+    expect(atEnd(`${cook.slice(0, 3)} /go`)).toBeUndefined()
+    expect(atEnd(`${cook.slice(3)} /go`)).toBeUndefined()
+  })
+
   it('extends the replacement range past a cursor inside the token', () => {
     expect(composerResourceTriggerAt('Ask @skill-more now', 10)).toEqual({
       marker: '@',
@@ -1744,6 +1768,46 @@ describe('Composer provider commands', () => {
     fireEvent.change(composer, { target: { value: '/code-review high', selectionStart: 17 } })
     fireEvent.keyDown(composer, { key: 'Enter' })
     expect(onSend).toHaveBeenCalledWith('/code-review high', [])
+  })
+
+  it('puts a command picked after skill chips in front of them', async () => {
+    const onSend = vi.fn()
+    renderComposer(onSend, { transport: commandResourceTransport(), provider: 'claude-code' })
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+    const cook = composerChipText('$cook', 'skill')
+    const docs = composerChipText('@docs', 'mcp')
+    const picks = `${cook} ${docs} `
+
+    fireEvent.change(composer, {
+      target: { value: `${picks}/comp`, selectionStart: picks.length + 5 },
+    })
+    await screen.findByRole('option', { name: /\/compact/ })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
+    expect(onSend).not.toHaveBeenCalled()
+    expect(composer.value).toBe(`${composerChipText('/compact', 'command')} ${picks}`)
+    await waitFor(() => expect(composer.selectionStart).toBe(composer.value.length))
+    fireEvent.change(composer, { target: { value: `${composer.value}keep the plan` } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    expect(onSend).toHaveBeenCalledWith('/compact $cook @docs keep the plan', [])
+  })
+
+  it('picks an exactly typed command behind chips instead of sending it after them', async () => {
+    const onSend = vi.fn()
+    renderComposer(onSend, { transport: commandResourceTransport(), provider: 'claude-code' })
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+    const cook = composerChipText('$cook', 'skill')
+
+    fireEvent.change(composer, {
+      target: { value: `${cook} /context`, selectionStart: cook.length + 9 },
+    })
+    await screen.findByRole('option', { name: /\/context/ })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
+    expect(onSend).not.toHaveBeenCalled()
+    expect(composerWireText(composer.value)).toBe('/context $cook ')
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    expect(onSend).toHaveBeenCalledWith('/context $cook', [])
   })
 
   it('sends an exactly typed command without arguments on the first Enter', async () => {
