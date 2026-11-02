@@ -2510,8 +2510,6 @@ export function App() {
     setCatalogError(undefined)
     const discoveryErrors: Record<string, ComposerError> = {}
     setCatalogAvailability((current) => (current === 'ready' ? current : 'loading'))
-    // Once this run asks for the ACP agents, that request settles them.
-    let listingAgents = false
     void (async () => {
       const agentsCatalog = transport.request('acp.agents', {}).catch(() => ({ agents: [] }))
       const harnessesCatalog = transport
@@ -2522,6 +2520,16 @@ export function App() {
       if (cancelled) return
       setProviderStatuses(providers)
       setCatalogAvailability('ready')
+      // ACP agents belong to the ACP entry; a build without it lists none.
+      // Setup shows its list once these are in as well, so they are settled
+      // here, before anything below can cut the run short. A run that fails
+      // before this point leaves them as they were for the next run to settle:
+      // an empty stand-in would let a retry show the list without them first.
+      const offeredAgents = agentsCatalog.then((result) => {
+        const agents = providers.some((status) => status.id === 'acp') ? (result?.agents ?? []) : []
+        if (!cancelled) setAcpAgents(agents)
+        return agents
+      })
       // Only the first answer may move an unchosen launch; later refreshes
       // must not override what the user picked since.
       const unchosen = providerUnchosenAtLaunch.current
@@ -2816,12 +2824,8 @@ export function App() {
           return preserveCatalog()
         }
       }
-      listingAgents = true
-      const acpPromise = agentsCatalog.then(async (result) => {
+      const acpPromise = offeredAgents.then(async (agents) => {
         if (cancelled) return []
-        // ACP agents belong to the ACP entry; a build without it lists none.
-        const agents = providers.some((status) => status.id === 'acp') ? (result?.agents ?? []) : []
-        setAcpAgents(agents)
         // Only agents added under Settings › Providers start for their models.
         const listed = agents.filter(
           (agent) =>
@@ -3046,10 +3050,6 @@ export function App() {
         )
         setModelCatalog((current) => ({ ...current, loaded: true }))
         setCatalogAvailability((current) => (current === 'ready' ? current : 'failed'))
-        // A run cut short before it asked for the agents must not leave setup
-        // waiting for them. One that already asked lets that answer set them,
-        // so setup never shows the list without them and then again with.
-        if (!listingAgents) setAcpAgents((current) => current ?? [])
       }
     })
     return () => {

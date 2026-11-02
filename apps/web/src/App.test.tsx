@@ -6903,6 +6903,71 @@ describe('new chats', () => {
     expect(setup.querySelector('.onboarding__pick')?.textContent).toBe('')
   })
 
+  it("shows setup's ACP group with the list when a retry follows a failed list", async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      desktopShell.enabled = true
+      serverProjects = []
+      serverProviders = [...serverProviders, { ...serverProviders[0]!, id: 'acp' }]
+      const request = transport.request.getMockImplementation()
+      if (!request) throw new Error('missing request mock')
+      let retrying = false
+      let releaseAgents: (() => void) | undefined
+      transport.request.mockImplementation((method: string, params: unknown) => {
+        if (method === 'providers.list' && !retrying) {
+          return Promise.reject(new Error('server offline'))
+        }
+        if (method === 'acp.agents' && retrying) {
+          return new Promise((resolve) => {
+            releaseAgents = () =>
+              resolve({
+                agents: [{ id: 'kimi', name: 'Kimi CLI', installed: true, verified: true }],
+              })
+          })
+        }
+        return request(method, params)
+      })
+
+      render(<App />)
+      fireEvent.click(await screen.findByRole('button', { name: /^Get started/ }))
+      fireEvent.click(screen.getByRole('button', { name: /^Continue/ }))
+      fireEvent.click(screen.getByRole('button', { name: /^Continue/ }))
+      const setup = screen.getByRole('dialog', { name: 'Choose your coding agents' })
+      const list = () => setup.querySelector('.onboarding__pick')
+      await waitFor(() =>
+        expect(setup.querySelector('.onboarding__lead')?.textContent).toBe(
+          'Could not load providers. server offline',
+        ),
+      )
+
+      // Focus retries the failed list; this time the providers answer first.
+      retrying = true
+      vi.setSystemTime(Date.now() + 31_000)
+      act(() => window.dispatchEvent(new Event('focus')))
+      await waitFor(() =>
+        expect(
+          transport.request.mock.calls.filter(([method]) => method === 'providers.list'),
+        ).toHaveLength(2),
+      )
+      await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0)))
+      expect(list()?.querySelector('[aria-busy="true"]')).toBeTruthy()
+      expect(list()?.textContent).not.toMatch(/\bCodex\b/)
+
+      await act(async () => releaseAgents?.())
+      await waitFor(() =>
+        expect(within(setup).getByRole('region', { name: 'ACP agents' }).textContent).toMatch(
+          /Kimi CLI/,
+        ),
+      )
+      expect(within(setup).getByRole('region', { name: 'Providers' }).textContent).toBe(
+        'ProvidersCodexSigned in',
+      )
+      expect(list()?.querySelector('[aria-busy="true"]')).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it.each(['success', 'failure', 'cancel'] as const)(
     'restores Settings after Claude sign-in ends with %s',
     async (outcome) => {
