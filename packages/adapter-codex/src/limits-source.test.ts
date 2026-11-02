@@ -176,7 +176,7 @@ describe('Codex rate-limit source', () => {
             resetsAt: 1_792_673_856_000,
             windowMinutes: 10_080,
           },
-          { id: 'credits', label: 'Credits', usedPercent: 0, valueLabel: '$50.00 · 1250 credits' },
+          { id: 'credits', label: 'Credits', usedPercent: 0, valueLabel: '$50.00 · 1,250 credits' },
         ],
       })
 
@@ -190,7 +190,7 @@ describe('Codex rate-limit source', () => {
           resetsAt: 1_792_673_856_000,
           windowMinutes: 10_080,
         },
-        { id: 'credits', label: 'Credits', usedPercent: 0, valueLabel: '$49.96 · 1249 credits' },
+        { id: 'credits', label: 'Credits', usedPercent: 0, valueLabel: '$49.96 · 1,249 credits' },
       ])
       // The values arrived; nothing has to be read again.
       expect(changed).not.toHaveBeenCalled()

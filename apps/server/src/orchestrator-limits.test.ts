@@ -13,6 +13,7 @@ const sources = vi.hoisted(() => ({
   claude: vi.fn(),
   grok: vi.fn(),
   antigravity: vi.fn(),
+  cursor: vi.fn(),
   consume: vi.fn(),
   constructed: 0,
   disposed: [] as number[],
@@ -60,6 +61,13 @@ vi.mock('@harness/adapter-antigravity', async (importOriginal) => {
   return { ...original, antigravityLimitSource: () => sources.antigravity() }
 })
 
+// Without this the real source reads the machine's Cursor sign-in
+// (%APPDATA%\Cursor\auth.json) and asks Cursor for the usage over HTTPS.
+vi.mock('@harness/adapter-cursor', async (importOriginal) => {
+  const original = await importOriginal<typeof import('@harness/adapter-cursor')>()
+  return { ...original, cursorLimitSource: () => sources.cursor() }
+})
+
 const { Orchestrator } = await import('./orchestrator.js')
 
 const orchestrator = () =>
@@ -74,6 +82,7 @@ beforeEach(() => {
   sources.claude.mockReset()
   sources.grok.mockReset()
   sources.antigravity.mockReset()
+  sources.cursor.mockReset()
   sources.consume.mockReset()
   sources.constructed = 0
   sources.disposed = []
@@ -85,6 +94,7 @@ describe('provider limit sources', () => {
     ['claude-code', 'claude'],
     ['grok', 'grok'],
     ['antigravity', 'antigravity'],
+    ['cursor', 'cursor'],
   ] as const)('keeps %s source state authoritative', async (provider, reader) => {
     sources[reader].mockResolvedValue({
       status: 'ready',
@@ -195,7 +205,7 @@ describe('provider limit sources', () => {
 
   it.each(
     ProviderIdSchema.options.filter(
-      (provider) => !['codex', 'claude-code', 'grok', 'antigravity'].includes(provider),
+      (provider) => !['codex', 'claude-code', 'grok', 'antigravity', 'cursor'].includes(provider),
     ),
   )('marks %s unavailable without querying a subscription source', async (provider) => {
     const instance = orchestrator()
@@ -208,6 +218,7 @@ describe('provider limit sources', () => {
     expect(sources.claude).not.toHaveBeenCalled()
     expect(sources.grok).not.toHaveBeenCalled()
     expect(sources.antigravity).not.toHaveBeenCalled()
+    expect(sources.cursor).not.toHaveBeenCalled()
     await instance.disposeAll()
   })
 

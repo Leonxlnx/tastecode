@@ -1836,7 +1836,7 @@
   left: 5px;
   height: 2px;
   border-radius: var(--r-pill);
-  background: var(--accent);
+  background: var(--light);
   pointer-events: none;
 }
 

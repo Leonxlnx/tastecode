@@ -914,6 +914,36 @@ describe('a database written by a newer build', () => {
     }
   })
 
+  it('warns once about an unknown provider, however many of its rows are read', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-unknown-provider-warning-'))
+    const file = path.join(dir, 'harness.db')
+    const seeded = new Store(file)
+    seeded.addProject('/repo')
+    seeded.addThread({ id: 'alien', projectPath: '/repo', provider: 'codex', title: 'Alien' })
+    for (let index = 1; index <= 5; index += 1) seeded.append('alien', usage(index * 10))
+    seeded.close()
+
+    const raw = new DatabaseSync(file)
+    raw.prepare(`UPDATE threads SET provider = ? WHERE id = ?`).run('provider-warned-once', 'alien')
+    raw.close()
+
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const reopened = new Store(file)
+    try {
+      expect(reopened.usageEvents()).toEqual([])
+      expect(reopened.usageEvents()).toEqual([])
+      expect(reopened.threads()).toEqual([])
+      const warnings = warn.mock.calls.filter(([line]) =>
+        String(line).includes("unknown provider 'provider-warned-once'"),
+      )
+      expect(warnings).toHaveLength(1)
+    } finally {
+      reopened.close()
+      warn.mockRestore()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('degrades rows a schema-divergent build could leave behind', () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-forward-schema-'))
     const file = path.join(dir, 'harness.db')

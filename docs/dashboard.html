@@ -291,12 +291,36 @@
           <a href="./feature-inventory.html">Inventory</a>
           <a href="./CLAUDE-HANDOFF.md">Claude handoff</a>
         </nav>
-        <span class="meta">2026-11-02 dev 90183641 · nightly 2347d870 · main 936c6d76</span>
+        <span class="meta">2026-11-02 dev 6e620402 · nightly 3eade190 · main 936c6d76</span>
       </div>
     </div>
 
     <div class="wrap">
       <section id="scope">
+        <p>
+          November 2, evening, on dev (6e620402 plus #2026 to #2030): everything planned for v0.5.0
+          is merged. The state before the polish round below reached nightly with #2024 (synced back
+          with #2025); the polish round reaches nightly and main with tonight's promotions, followed
+          by the release. Merged since the previous entry: the version 0.5.0 (#2016), inline skill
+          and command chips (#2014), an update that waits until no agent runs (#2015), the window
+          background setting (#1954), setup that waits for the server's agent list (#2017), usage
+          history without hidden providers in a release build (#2018), design-agent dashboards from
+          tasteskill app screens (#1941), and two packaging fixes found by building the release
+          candidate (#2022, #2023). A Windows release candidate from 03b97b38 built with
+          dist:release passed the release asset check, and with empty data folders it offered
+          exactly the five release providers. In a browser against a release-edition server with
+          empty data, Settings › Providers listed the same five, usage history loaded and the
+          narrow-window drawer stayed solid. A last polish round fixed the invisible queue drop line
+          (#2026), a false "Your draft was replaced" notice after editing a prompt with chips
+          (#2027), one warning per row for a provider the build does not know (#2028), two tests
+          that failed on Leon's machine, one of which read the real Cursor sign-in (#2029), and a
+          held-back chip overlay for a recalled draft (#2030). Not verified: macOS (Karol builds,
+          signs and notarizes it), real provider turns in the release candidate, and the CI package
+          proof, which runs from main at release. Open after the release: long chip names can
+          overflow a narrow message bubble (four layout options wait for Leon), a draft restored at
+          startup can show raw chip text until the overlay loads, and sub-agents (#1956, #1957,
+          #1959, #1968, #1969, #1972, #1973).
+        </p>
         <p>
           November 2 on dev (90183641): the provider list per build and four app changes for v0.5.0
           merged. Since October 25 the branches run dev → nightly → main: PRs target dev, and
@@ -1780,15 +1804,15 @@
                 <span
                   >v0.5.0 from dev
                   <span class="d"
-                    >the next public release after 0.1.1, in place of the planned 0.1.3; being
-                    prepared for release on the evening of 2026-11-02 from a promotion dev → nightly
-                    → main, which has not happened yet; the version bump (#2016) is open; release
-                    builds offer Claude Code, Codex, Grok, Cursor and Antigravity; merged on dev for
-                    it on November 2: the provider list per build (#2006 to #2009), the solid
-                    narrow-window sidebar drawer (#2010), the compact plan-limits popup (#2011),
-                    dragging a chat into split view (#2012) and a Stop that always settles (#2013);
-                    open: #2014, #2015, #2017, #2018, #1954 and #1941; sub-agents (#1956, #1957,
-                    #1959, #1968, #1969, #1972, #1973) come after v0.5</span
+                    >the next public release after 0.1.1, in place of the planned 0.1.3; everything
+                    planned for it is merged on dev, most of it promoted to nightly (#2024); the
+                    promotion to main and the release on the evening of 2026-11-02 are next; release
+                    builds offer Claude Code, Codex, Grok, Cursor and Antigravity; merged for it on
+                    November 2: the provider list per build (#2006 to #2009), #2010 to #2018, #1954,
+                    #1941, two packaging fixes (#2022, #2023) and a polish round (#2026 to #2030); a
+                    Windows release candidate passed the release asset check; macOS, real provider
+                    turns in the candidate and the CI package proof are not verified; sub-agents
+                    (#1956, #1957, #1959, #1968, #1969, #1972, #1973) come after v0.5</span
                   >
                 </span>
               </li>
