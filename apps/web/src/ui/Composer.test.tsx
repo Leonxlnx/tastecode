@@ -1,9 +1,11 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { rememberedChipTokens, resetRememberedChipTokens } from '../composer-chip-memory.js'
 import { emptyThread, reduce } from '../thread-store.js'
 import type { Transport } from '../transport.js'
 import { Composer, composerResourceTriggerAt } from './Composer.js'
+import { composerChipText, composerWireText, hasComposerChips } from './composer-chips.js'
 
 const bridge = vi.hoisted(() => ({
   pickFiles: vi.fn(),
@@ -36,6 +38,8 @@ function legacyComposerResourceTriggerAt(text: string, cursor: number) {
 }
 
 beforeEach(() => {
+  localStorage.clear()
+  resetRememberedChipTokens()
   bridge.pickFiles.mockResolvedValue([])
   bridge.previewViewedImage.mockResolvedValue(undefined)
   bridge.savePastedFile.mockResolvedValue({
@@ -1540,8 +1544,10 @@ describe('Composer prompts', () => {
     await screen.findByRole('option', { name: /Airtable CLI/ })
     fireEvent.keyDown(composer, { key: 'Enter' })
 
-    expect(screen.getByText('Airtable CLI').closest('.chip--resource')).toBeTruthy()
-    expect((composer as HTMLTextAreaElement).value).toBe('')
+    expect((composer as HTMLTextAreaElement).value).toBe(
+      `${composerChipText('$airtable-cli', 'skill')} `,
+    )
+    expect((await findChip('skill')).textContent).toContain('airtable-cli')
     fireEvent.keyDown(composer, { key: 'Enter' })
     expect(onSend).toHaveBeenCalledWith('$airtable-cli', [])
   })
@@ -1560,8 +1566,8 @@ describe('Composer prompts', () => {
     fireEvent.keyDown(composer, { key: 'Tab' })
 
     expect(screen.queryByRole('listbox', { name: 'MCP servers' })).toBeNull()
-    expect(screen.getByText('Official Docs').closest('.chip--resource')).toBeTruthy()
-    expect((composer as HTMLTextAreaElement).value).toBe('')
+    expect((await findChip('mcp')).textContent).toContain('officialDocs')
+    expect(composerWireText((composer as HTMLTextAreaElement).value)).toBe('@officialDocs ')
     fireEvent.keyDown(composer, { key: 'Enter' })
     expect(onSend).toHaveBeenCalledWith('@officialDocs', [])
   })
@@ -1577,11 +1583,52 @@ describe('Composer prompts', () => {
     expect(screen.queryByRole('option', { name: /Official Docs/ })).toBeNull()
     fireEvent.click(skill)
 
-    const chip = screen.getByText('Airtable CLI').closest('.chip--resource')
-    expect(chip?.classList.contains('chip--resource')).toBe(true)
-    expect(chip?.querySelector('svg')).toBeTruthy()
+    const chip = await findChip('skill')
+    expect(chip.querySelector('svg')).toBeTruthy()
     fireEvent.keyDown(composer, { key: 'Enter' })
     expect(onSend).toHaveBeenCalledWith('$airtable-cli', [])
+  })
+
+  it('keeps several picks inline in the order they were typed, with the text between them', async () => {
+    const onSend = vi.fn()
+    renderComposer(onSend, { transport: populatedResourceTransport() })
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+
+    fireEvent.change(composer, { target: { value: 'use $air', selectionStart: 8 } })
+    fireEvent.click(await screen.findByRole('option', { name: /Airtable CLI/ }))
+    fireEvent.change(composer, {
+      target: { value: `${composer.value}and @off`, selectionStart: composer.value.length + 8 },
+    })
+    fireEvent.click(await screen.findByRole('option', { name: /Official Docs/ }))
+    fireEvent.change(composer, {
+      target: {
+        value: `${composer.value}for the docs`,
+        selectionStart: composer.value.length + 12,
+      },
+    })
+
+    expect(composerWireText(composer.value)).toBe(
+      'use $airtable-cli and @officialDocs for the docs',
+    )
+    await findChip('mcp')
+    expect(document.querySelectorAll('.composer-chip')).toHaveLength(2)
+    expect(document.querySelector('.chips .chip')).toBeNull()
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    expect(onSend).toHaveBeenCalledWith('use $airtable-cli and @officialDocs for the docs', [])
+    // The transcript can draw these tokens as chips wherever they sit.
+    expect(rememberedChipTokens().get('$airtable-cli')).toBe('skill')
+    expect(rememberedChipTokens().get('@officialDocs')).toBe('mcp')
+  })
+
+  it('leaves a skill that is already a chip out of the menu', async () => {
+    renderComposer(vi.fn(), { transport: populatedResourceTransport() })
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+    const chip = composerChipText('$airtable-cli', 'skill')
+
+    fireEvent.change(composer, { target: { value: `${chip} $`, selectionStart: chip.length + 2 } })
+
+    expect(await screen.findByText('No more skills are available.')).toBeTruthy()
+    expect(screen.queryByRole('option', { name: /Airtable CLI/ })).toBeNull()
   })
 
   it('lists skills under slash and dollar and MCP servers only under at', async () => {
@@ -1669,7 +1716,7 @@ describe('Composer prompts', () => {
 })
 
 describe('Composer provider commands', () => {
-  it('offers commands only at the start of the message and inserts the chosen one as text', async () => {
+  it('offers commands only at the start of the message and inserts the chosen one as a chip', async () => {
     const onSend = vi.fn()
     const transport = commandResourceTransport()
     renderComposer(onSend, { transport, provider: 'claude-code', threadId: 'thread-1' })
@@ -1690,8 +1737,8 @@ describe('Composer provider commands', () => {
     fireEvent.keyDown(composer, { key: 'Enter' })
 
     expect(onSend).not.toHaveBeenCalled()
-    expect(composer.value).toBe('/code-review ')
-    expect(document.querySelector('.chip--resource')).toBeNull()
+    expect(composer.value).toBe(`${composerChipText('/code-review', 'command')} `)
+    expect((await findChip('command')).textContent).toContain('code-review')
     expect(screen.queryByRole('listbox')).toBeNull()
 
     fireEvent.change(composer, { target: { value: '/code-review high', selectionStart: 17 } })
@@ -1722,7 +1769,18 @@ describe('Composer provider commands', () => {
     fireEvent.keyDown(composer, { key: 'Enter' })
 
     expect(onSend).not.toHaveBeenCalled()
-    expect(composer.value).toBe('/compact ')
+    expect(composerWireText(composer.value)).toBe('/compact ')
+    expect(hasComposerChips(composer.value)).toBe(true)
+
+    // Arguments typed after the chip go out after the command.
+    fireEvent.change(composer, {
+      target: {
+        value: `${composer.value}keep the plan`,
+        selectionStart: composer.value.length + 13,
+      },
+    })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    expect(onSend).toHaveBeenCalledWith('/compact keep the plan', [])
   })
 
   it("lists TasteCode's own commands first and in place of a provider's namesake", async () => {
@@ -1793,12 +1851,12 @@ describe('Composer provider commands', () => {
     fireEvent.change(composer, { target: { value: '/si', selectionStart: 3 } })
     await screen.findByRole('option', { name: /\/side/ })
     fireEvent.keyDown(composer, { key: 'Enter' })
-    expect(composer.value).toBe('/side ')
+    expect(composerWireText(composer.value)).toBe('/side ')
 
     fireEvent.change(composer, { target: { value: '/bt', selectionStart: 3 } })
     await screen.findByRole('option', { name: /\/side/ })
     fireEvent.keyDown(composer, { key: 'Tab' })
-    expect(composer.value).toBe('/btw ')
+    expect(composerWireText(composer.value)).toBe('/btw ')
 
     fireEvent.change(composer, { target: { value: '/btw', selectionStart: 4 } })
     await screen.findByRole('option', { name: /\/side/ })
@@ -2209,28 +2267,68 @@ describe('Composer branch shelf', () => {
 })
 
 describe('Composer draft replacement', () => {
-  it.each(['remove', 'send'])(
-    'publishes an empty resource list after %s returns to the hydrated value',
-    async (action) => {
-      const onResourcesChange = vi.fn()
-      renderComposer(vi.fn(), {
-        transport: populatedResourceTransport(),
-        draftRequest: { text: '', attachments: [], resources: [], request: 1 },
-        onResourcesChange,
-      })
-      fireEvent.change(screen.getByPlaceholderText('Do anything'), { target: { value: '/air' } })
-      fireEvent.click(await screen.findByRole('option', { name: /Airtable CLI/ }))
-      await waitFor(() =>
-        expect(onResourcesChange).toHaveBeenLastCalledWith([
-          expect.objectContaining({ name: 'Airtable CLI' }),
-        ]),
-      )
-      if (action === 'remove')
-        fireEvent.click(screen.getByRole('button', { name: 'Remove Airtable CLI' }))
-      else fireEvent.click(screen.getByRole('button', { name: 'Send' }))
-      expect(onResourcesChange).toHaveBeenLastCalledWith([])
-    },
-  )
+  it('saves a picked chip as part of the draft text', async () => {
+    const onDraftChange = vi.fn()
+    const onResourcesChange = vi.fn()
+    renderComposer(vi.fn(), {
+      transport: populatedResourceTransport(),
+      draftRequest: { text: '', attachments: [], resources: [], request: 1 },
+      onDraftChange,
+      onResourcesChange,
+    })
+    fireEvent.change(screen.getByPlaceholderText('Do anything'), { target: { value: '/air' } })
+    fireEvent.click(await screen.findByRole('option', { name: /Airtable CLI/ }))
+
+    expect(onDraftChange).toHaveBeenLastCalledWith(`${composerChipText('$airtable-cli', 'skill')} `)
+    expect(onResourcesChange).not.toHaveBeenCalled()
+  })
+
+  it('brings skills of a draft saved before chips sat inline into its text', async () => {
+    const onSend = vi.fn()
+    const onDraftChange = vi.fn()
+    const onResourcesChange = vi.fn()
+    renderComposer(onSend, {
+      draftRequest: {
+        text: 'Use the docs',
+        attachments: [],
+        resources: [
+          {
+            key: 'skill:docs',
+            kind: 'skill',
+            id: '/skills/docs/SKILL.md',
+            name: 'Docs',
+            description: 'Project docs',
+            scope: 'Project',
+            token: '$docs',
+            available: true,
+          },
+        ],
+        request: 1,
+      },
+      onDraftChange,
+      onResourcesChange,
+    })
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+
+    await waitFor(() => expect(composerWireText(composer.value)).toBe('$docs Use the docs'))
+    expect(onDraftChange).toHaveBeenCalledWith(composer.value)
+    expect(onResourcesChange).toHaveBeenCalledWith([])
+    expect((await findChip('skill')).textContent).toContain('docs')
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    expect(onSend).toHaveBeenCalledWith('$docs Use the docs', [])
+  })
+
+  it('puts a sent prompt back with its chips when it is edited again', async () => {
+    renderComposer(vi.fn(), {
+      draftRequest: { text: '/goal $cook ship it', undoable: true, request: 1 },
+    })
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+
+    await waitFor(() => expect(hasComposerChips(composer.value)).toBe(true))
+    expect(composerWireText(composer.value)).toBe('/goal $cook ship it')
+    await findChip('command')
+    expect(document.querySelectorAll('.composer-chip')).toHaveLength(2)
+  })
 
   it('loads a previous prompt for editing and focuses it', async () => {
     renderComposer(vi.fn(), {
@@ -2250,18 +2348,7 @@ describe('Composer draft replacement', () => {
       draftRequest: {
         text: 'Keep this',
         attachments: ['/work/notes.md'],
-        resources: [
-          {
-            key: 'skill:docs',
-            kind: 'skill',
-            id: '/skills/docs/SKILL.md',
-            name: 'Docs',
-            description: 'Project docs',
-            scope: 'Project',
-            token: '$docs',
-            available: true,
-          },
-        ],
+        resources: [],
         request: 1,
       },
       onDraftChange,
@@ -2312,7 +2399,7 @@ describe('Composer draft replacement', () => {
     expect(onAttachmentsChange).toHaveBeenLastCalledWith([])
   })
 
-  it('replaces resource chips when a draft request includes them', async () => {
+  it('replaces the chips when another draft arrives', async () => {
     const view = renderComposer(vi.fn(), {
       draftRequest: {
         text: 'Use the docs',
@@ -2333,7 +2420,7 @@ describe('Composer draft replacement', () => {
       },
     })
 
-    expect(screen.getByText('Docs').closest('.chip--resource')).toBeTruthy()
+    expect((await findChip('skill')).textContent).toContain('docs')
 
     view.rerenderComposer({
       draftRequest: { text: '', attachments: [], resources: [], request: 2 },
@@ -2342,7 +2429,120 @@ describe('Composer draft replacement', () => {
     await waitFor(() => {
       expect((screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement).value).toBe('')
     })
-    expect(screen.queryByText('Docs')).toBeNull()
+    expect(document.querySelector('.composer-chip')).toBeNull()
+  })
+})
+
+describe('Composer inline chips', () => {
+  const cook = composerChipText('$cook', 'skill')
+  const goal = composerChipText('/goal', 'command')
+
+  function draftWith(value: string, caret = value.length) {
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+    fireEvent.change(composer, { target: { value, selectionStart: caret } })
+    composer.setSelectionRange(caret, caret)
+    return composer
+  }
+
+  it('draws no overlay while the draft has no chips', async () => {
+    renderComposer(vi.fn())
+    draftWith('plain words only')
+    await act(async () => undefined)
+    expect(document.querySelector('.composer__chips')).toBeNull()
+  })
+
+  it('draws each chip over the same characters the textarea holds', async () => {
+    renderComposer(vi.fn())
+    const composer = draftWith(`${goal} ship it with ${cook}`)
+
+    const overlay = await waitFor(() => {
+      const node = document.querySelector('.composer__chips')
+      expect(node).toBeTruthy()
+      return node!
+    })
+    expect(overlay.getAttribute('aria-hidden')).toBe('true')
+    expect(overlay.textContent).toBe(composer.value)
+    const chips = overlay.querySelectorAll('.composer-chip')
+    expect([...chips].map((chip) => chip.className)).toEqual([
+      'composer-chip composer-chip--command',
+      'composer-chip composer-chip--skill',
+    ])
+    expect(chips[0]!.querySelector('svg')).toBeTruthy()
+  })
+
+  it('deletes a whole chip with Backspace after it and Delete before it', () => {
+    renderComposer(vi.fn())
+    const composer = draftWith(`${goal} fix ${cook}`)
+
+    fireEvent.keyDown(composer, { key: 'Backspace' })
+    expect(composerWireText(composer.value)).toBe('/goal fix ')
+
+    composer.setSelectionRange(0, 0)
+    fireEvent.keyDown(composer, { key: 'Delete' })
+    expect(composer.value).toBe(' fix ')
+  })
+
+  it('steps over a chip with the arrow keys and widens a selection across it', () => {
+    renderComposer(vi.fn())
+    const composer = draftWith(`a ${cook} b`, 2 + cook.length)
+
+    fireEvent.keyDown(composer, { key: 'ArrowLeft' })
+    expect([composer.selectionStart, composer.selectionEnd]).toEqual([2, 2])
+    fireEvent.keyDown(composer, { key: 'ArrowRight' })
+    expect([composer.selectionStart, composer.selectionEnd]).toEqual([
+      2 + cook.length,
+      2 + cook.length,
+    ])
+    fireEvent.keyDown(composer, { key: 'ArrowLeft', shiftKey: true })
+    expect([composer.selectionStart, composer.selectionEnd]).toEqual([2, 2 + cook.length])
+  })
+
+  it('moves a caret that lands inside a chip to its nearer edge', () => {
+    renderComposer(vi.fn())
+    const composer = draftWith(`a ${cook} b`)
+
+    // React reports a selection change on the key or pointer release that made it.
+    composer.focus()
+    composer.setSelectionRange(4, 4)
+    fireEvent.keyUp(composer)
+    expect(composer.selectionStart).toBe(2)
+    composer.setSelectionRange(2 + cook.length - 1, 2 + cook.length - 1)
+    fireEvent.keyUp(composer)
+    expect(composer.selectionStart).toBe(2 + cook.length)
+  })
+
+  it('widens a deletion that cuts into a chip to the whole chip', () => {
+    renderComposer(vi.fn())
+    const composer = draftWith(`a ${cook} b`)
+
+    composer.setSelectionRange(0, 5)
+    fireEvent.keyDown(composer, { key: 'Backspace' })
+    expect([composer.selectionStart, composer.selectionEnd]).toEqual([0, 2 + cook.length])
+  })
+
+  it('removes the marks an edit left of a cut chip', () => {
+    renderComposer(vi.fn())
+    const composer = draftWith(`a ${cook} b`)
+
+    // An edit the keys did not see, such as a drop, replaced half the chip.
+    fireEvent.change(composer, { target: { value: `a Zook⁠ b`, selectionStart: 3 } })
+    expect(composer.value).toBe('a Zook b')
+  })
+
+  it('copies and cuts the tokens the selected chips stand for', () => {
+    renderComposer(vi.fn())
+    const composer = draftWith(`${goal} fix ${cook}`)
+    const copied = vi.fn()
+
+    composer.setSelectionRange(0, composer.value.length)
+    fireEvent.copy(composer, { clipboardData: { setData: copied } })
+    expect(copied).toHaveBeenCalledWith('text/plain', '/goal fix $cook')
+    expect(composerWireText(composer.value)).toBe('/goal fix $cook')
+
+    composer.setSelectionRange(goal.length + 1, composer.value.length)
+    fireEvent.cut(composer, { clipboardData: { setData: copied } })
+    expect(copied).toHaveBeenLastCalledWith('text/plain', 'fix $cook')
+    expect(composerWireText(composer.value)).toBe('/goal ')
   })
 })
 
@@ -2539,6 +2739,15 @@ function renderComposer(
       currentOverrides = { ...currentOverrides, ...next }
       view.rerender(composer())
     },
+  })
+}
+
+/** The overlay is lazy, so its chips arrive a tick after the pick. */
+async function findChip(kind: 'skill' | 'mcp' | 'command'): Promise<Element> {
+  return waitFor(() => {
+    const chip = document.querySelector(`.composer__chips .composer-chip--${kind}`)
+    expect(chip).toBeTruthy()
+    return chip!
   })
 }
 

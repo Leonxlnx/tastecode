@@ -12,7 +12,7 @@ import {
   IconTarget,
   IconZoomCode,
 } from '@tabler/icons-react'
-import { commandIcon, MCP_ICON, SKILL_ICON } from './chip-icons.js'
+import { chipIcon, commandIcon } from './chip-icons.js'
 
 describe('chip icons', () => {
   it('gives the built-in commands a picture of what they do', () => {
@@ -38,8 +38,10 @@ describe('chip icons', () => {
     expect(commandIcon('mcp__docs__search')).toBe(IconNetwork)
   })
 
-  it('gives every skill and every MCP server one icon', () => {
-    expect(SKILL_ICON).toBe(IconBlocks)
-    expect(MCP_ICON).toBe(IconNetwork)
+  it('gives every skill and every MCP server one icon, whatever its name', () => {
+    expect(chipIcon('skill', 'goal')).toBe(IconBlocks)
+    expect(chipIcon('skill', 'design-taste-frontend')).toBe(IconBlocks)
+    expect(chipIcon('mcp', 'officialDocs')).toBe(IconNetwork)
+    expect(chipIcon('command', 'goal')).toBe(IconTarget)
   })
 })

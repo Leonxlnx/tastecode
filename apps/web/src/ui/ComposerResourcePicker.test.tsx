@@ -93,7 +93,7 @@ function renderPicker(
       projectPath="/work/project"
       threadId={extra.threadId}
       trigger={next}
-      selectedKeys={new Set()}
+      selectedTokens={new Set()}
       onSelect={onSelect}
     />
   )
@@ -137,6 +137,22 @@ describe('ComposerResourcePicker', () => {
     expect(icon(/\/my-script/)).toContain('tabler-icon-slash')
     expect(icon(/\/design/)).toContain('tabler-icon-blocks')
     expect(icon(/Animate/)).toContain('tabler-icon-blocks')
+  })
+
+  it('leaves out what the draft already holds as a chip', async () => {
+    const onSelect = vi.fn()
+    render(
+      <ComposerResourcePicker
+        transport={createResourceTransport()}
+        provider="codex"
+        projectPath="/work/project"
+        trigger={{ marker: '$', query: '', start: 0, end: 1 }}
+        selectedTokens={new Set(['$animate'])}
+        onSelect={onSelect}
+      />,
+    )
+
+    expect(await screen.findByText('No more skills are available.')).toBeTruthy()
   })
 
   it('keeps hover highlight and selectActive in sync', async () => {
@@ -348,7 +364,7 @@ describe('ComposerResourcePicker', () => {
         projectPath="/work/project"
         appCommands={appCommands({ sideChat: true, feedback: true })}
         trigger={slash('')}
-        selectedKeys={new Set()}
+        selectedTokens={new Set()}
         onSelect={onSelect}
       />,
     )
@@ -373,7 +389,7 @@ describe('ComposerResourcePicker', () => {
         projectPath={undefined}
         appCommands={appCommands({ sideChat: false, feedback: true })}
         trigger={slash('fee')}
-        selectedKeys={new Set()}
+        selectedTokens={new Set()}
         onSelect={vi.fn()}
       />,
     )

@@ -1,0 +1,201 @@
+/**
+ * Picked skills, MCP servers and commands sit inline in the composer as chips.
+ *
+ * The textarea stays the editor, so caret, selection, undo, paste and IME keep
+ * working as the platform made them. A chip is therefore text the textarea can
+ * hold: an em space that reserves room for the icon, a word joiner that keeps
+ * the icon on the name's line, an invisible mark that says what the chip is,
+ * the name, and a closing word joiner. The marks are default-ignorable, so they
+ * take no room; an overlay draws the icon and the coloured name over the same
+ * characters.
+ *
+ * What the provider receives never changes: `composerWireText` turns each chip
+ * back into the `$skill`, `@server` or `/command` token it stands for.
+ */
+
+export type ComposerChipKind = 'skill' | 'mcp' | 'command'
+export type ComposerChipMarker = '$' | '@' | '/'
+
+export type ComposerChip = {
+  kind: ComposerChipKind
+  marker: ComposerChipMarker
+  /** The name without its marker, as the chip shows it. */
+  name: string
+  /** What the provider receives: the marker followed by the name. */
+  token: string
+  /** Where the chip's characters start and end in the draft. */
+  start: number
+  end: number
+}
+
+export type ComposerChipSegment =
+  { type: 'text'; text: string } | ({ type: 'chip'; mark: string } & ComposerChip)
+
+const ICON_ROOM = ' '
+const GLUE = '⁠'
+const MARKS = {
+  '⁡': { marker: '$', kind: 'skill' },
+  '⁢': { marker: '@', kind: 'mcp' },
+  '⁣': { marker: '/', kind: 'command' },
+  // A skill the provider runs as a slash command, such as Claude Code's.
+  '⁤': { marker: '/', kind: 'skill' },
+} as const satisfies Record<string, { marker: ComposerChipMarker; kind: ComposerChipKind }>
+type Mark = keyof typeof MARKS
+
+const CHIP = / ⁠([⁡-⁤])([^\s⁠-⁤]+)⁠/g
+// A chip's leftovers after an edit cut through it: an opener or a lone mark.
+const FRAGMENT = / ⁠|[⁠-⁤]/g
+
+/** The characters the draft holds for a picked resource. */
+export function composerChipText(token: string, kind: ComposerChipKind): string {
+  const marker = token[0] as ComposerChipMarker
+  const name = token.slice(1)
+  const mark = (Object.keys(MARKS) as Mark[]).find(
+    (candidate) => MARKS[candidate].marker === marker && MARKS[candidate].kind === kind,
+  )
+  // A combination no provider uses stays the plain token it would be sent as.
+  if (!mark || !/^[^\s⁠-⁤]+$/.test(name)) return token
+  return `${ICON_ROOM}${GLUE}${mark}${name}${GLUE}`
+}
+
+/** Cheap enough for every keystroke: a draft without a word joiner has no chips. */
+export function hasComposerChips(text: string): boolean {
+  return text.includes(GLUE)
+}
+
+export function composerChips(text: string): ComposerChip[] {
+  if (!hasComposerChips(text)) return []
+  const chips: ComposerChip[] = []
+  for (const match of text.matchAll(CHIP)) {
+    const { marker, kind } = MARKS[match[1] as Mark]
+    const name = match[2]!
+    chips.push({
+      kind,
+      marker,
+      name,
+      token: `${marker}${name}`,
+      start: match.index,
+      end: match.index + match[0].length,
+    })
+  }
+  return chips
+}
+
+export function composerChipSegments(text: string): ComposerChipSegment[] {
+  const segments: ComposerChipSegment[] = []
+  let position = 0
+  for (const chip of composerChips(text)) {
+    if (chip.start > position)
+      segments.push({ type: 'text', text: text.slice(position, chip.start) })
+    segments.push({ type: 'chip', mark: text[chip.start + 2]!, ...chip })
+    position = chip.end
+  }
+  if (position < text.length) segments.push({ type: 'text', text: text.slice(position) })
+  return segments
+}
+
+/** The prompt as the provider receives it: every chip back to its token. */
+export function composerWireText(text: string): string {
+  if (!hasComposerChips(text)) return text
+  return composerChipSegments(text)
+    .map((segment) =>
+      segment.type === 'chip' ? segment.token : segment.text.replace(FRAGMENT, ''),
+    )
+    .join('')
+}
+
+/** The chip the position falls strictly inside, where no caret belongs. */
+export function composerChipAround(text: string, index: number): ComposerChip | undefined {
+  return composerChips(text).find((chip) => chip.start < index && index < chip.end)
+}
+
+/** The chip that ends exactly at the position (Backspace) or starts there (Delete). */
+export function composerChipTouching(
+  text: string,
+  index: number,
+  side: 'before' | 'after',
+): ComposerChip | undefined {
+  return composerChips(text).find((chip) =>
+    side === 'before' ? chip.end === index : chip.start === index,
+  )
+}
+
+/** Widens a selection that cuts through a chip so it takes the whole chip. */
+export function composerSelectionOverChips(
+  text: string,
+  start: number,
+  end: number,
+): [number, number] {
+  let from = start
+  let to = end
+  for (const chip of composerChips(text)) {
+    if (chip.start < from && from < chip.end) from = chip.start
+    if (chip.start < to && to < chip.end) to = chip.end
+  }
+  return [from, to]
+}
+
+/**
+ * Removes what is left of a chip that an edit cut through, so no invisible
+ * mark lingers in the draft. Returns the text and where the caret moves.
+ */
+export function repairComposerChips(
+  text: string,
+  caret: number,
+): { text: string; caret: number } | undefined {
+  if (!/[⁠-⁤]/.test(text)) return undefined
+  let repaired = ''
+  let nextCaret = caret
+  let changed = false
+  let position = 0
+  for (const segment of composerChipSegments(text)) {
+    const start = position
+    position += segment.type === 'chip' ? segment.end - segment.start : segment.text.length
+    if (segment.type === 'chip') {
+      repaired += text.slice(segment.start, segment.end)
+      continue
+    }
+    const kept = segment.text.replace(FRAGMENT, (fragment, offset: number) => {
+      changed = true
+      if (start + offset < caret) nextCaret -= Math.min(fragment.length, caret - start - offset)
+      return ''
+    })
+    repaired += kept
+  }
+  return changed ? { text: repaired, caret: nextCaret } : undefined
+}
+
+/** The tokens of the chips in a draft, so the menu can leave them out. */
+export function composerChipTokens(text: string): ReadonlySet<string> {
+  return new Set(composerChips(text).map((chip) => chip.token))
+}
+
+/**
+ * The draft as the chip overlay needs it. It only changes while the draft has
+ * chips, so ordinary typing never wakes the overlay.
+ */
+export type ComposerChipTextStore = {
+  get: () => string
+  set: (text: string) => void
+  subscribe: (listener: () => void) => () => void
+}
+
+export function createComposerChipTextStore(): ComposerChipTextStore {
+  let shown = ''
+  const listeners = new Set<() => void>()
+  return {
+    get: () => shown,
+    set(text) {
+      const next = hasComposerChips(text) ? text : ''
+      if (next === shown) return
+      shown = next
+      for (const listener of listeners) listener()
+    },
+    subscribe(listener) {
+      listeners.add(listener)
+      return () => {
+        listeners.delete(listener)
+      }
+    },
+  }
+}

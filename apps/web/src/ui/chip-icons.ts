@@ -39,6 +39,7 @@ import {
   type TablerIcon,
 } from '@tabler/icons-react'
 import { appCommandIcon } from '../app-commands.js'
+import type { ComposerChipKind } from './composer-chips.js'
 
 /** Every skill shows the icon of the Skills screen, whichever provider lists it. */
 export const SKILL_ICON: TablerIcon = IconBlocks
@@ -105,4 +106,10 @@ export function commandIcon(name: string): TablerIcon {
   if (hasCommandIcon(key)) return COMMAND_ICONS[key]
   // Claude Code lists an MCP server's prompts as `mcp__server__prompt`.
   return key.startsWith('mcp__') ? MCP_ICON : COMMAND_ICON
+}
+
+export function chipIcon(kind: ComposerChipKind, name: string): TablerIcon {
+  if (kind === 'skill') return SKILL_ICON
+  if (kind === 'mcp') return MCP_ICON
+  return commandIcon(name)
 }

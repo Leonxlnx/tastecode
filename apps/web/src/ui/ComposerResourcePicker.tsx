@@ -78,7 +78,8 @@ export const ComposerResourcePicker = forwardRef<
     /** TasteCode's own commands, listed before the provider's under `/`. */
     appCommands?: readonly AppCommand[] | undefined
     trigger: ComposerResourceTrigger | undefined
-    selectedKeys: ReadonlySet<string>
+    /** Tokens already in the draft as chips, which the menu leaves out. */
+    selectedTokens: ReadonlySet<string>
     onSelect: (resource: ComposerResource) => void
   }
 >(function ComposerResourcePicker(props, ref) {
@@ -196,8 +197,8 @@ export const ComposerResourcePicker = forwardRef<
   const markerEntries = entries[marker]
   const query = props.trigger?.query.trim().toLocaleLowerCase() ?? ''
   const filtered = useMemo(
-    () => rankedRows(markerEntries, query, props.selectedKeys),
-    [markerEntries, query, props.selectedKeys],
+    () => rankedRows(markerEntries, query, props.selectedTokens),
+    [markerEntries, query, props.selectedTokens],
   )
   const resourceSignature = filtered
     .map(({ resource }) => `${resource.key}:${resource.available ? '1' : '0'}`)
@@ -290,6 +291,7 @@ export const ComposerResourcePicker = forwardRef<
         aria-label={labels.label}
       >
         {filtered.map(({ resource }, index) => {
+          // The same icon the resource's chip shows once it is picked.
           const Icon =
             resource.icon ??
             (resource.kind === 'mcp'
@@ -412,11 +414,11 @@ function menuEntry(resource: ComposerResource, names: string[]): MenuEntry {
 function rankedRows(
   entries: readonly MenuEntry[],
   query: string,
-  selectedKeys: ReadonlySet<string>,
+  selectedTokens: ReadonlySet<string>,
 ): MenuRow[] {
   const rows: MenuRow[] = []
   for (const entry of entries) {
-    if (selectedKeys.has(entry.resource.key)) continue
+    if (selectedTokens.has(entry.resource.token)) continue
     if (query === '') {
       rows.push({ resource: entry.resource, rank: 0 })
       continue

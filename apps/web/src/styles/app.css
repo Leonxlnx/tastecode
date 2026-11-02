@@ -2177,19 +2177,6 @@
   padding-right: 3px;
 }
 
-.chip--resource {
-  max-width: 260px;
-  padding: 5px 4px 5px 7px;
-  background: color-mix(in srgb, var(--attention) 10%, var(--surface-2));
-  border: 1px solid color-mix(in srgb, var(--attention) 35%, var(--line-strong));
-  color: color-mix(in srgb, var(--attention) 62%, var(--text));
-  font-size: var(--t-md);
-}
-
-.chip--resource > svg {
-  color: var(--attention);
-}
-
 .attachment-preview {
   position: relative;
   display: block;

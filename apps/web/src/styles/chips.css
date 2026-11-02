@@ -1,0 +1,69 @@
+/* Skills, MCP servers and commands as inline chips: an icon and the name in
+   the accent colour, flowing with the text. The composer draws them on an
+   overlay behind its textarea. */
+
+.composer__field:has(> .composer__chips) {
+  position: relative;
+}
+
+/* Same box and text metrics as `.composer textarea`, so every glyph, line
+   break and caret position lands where the textarea has it. */
+.composer__chips {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  overflow: hidden;
+  padding: 12px calc(var(--chat-text-inset) - 1px) 6px;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--t-lg);
+  line-height: 1.45;
+  letter-spacing: normal;
+  word-spacing: normal;
+  text-align: start;
+  text-indent: 0;
+  text-transform: none;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  pointer-events: none;
+  user-select: none;
+}
+
+@media (max-width: 700px) {
+  .composer__chips {
+    font-size: 16px;
+  }
+}
+
+.composer__field:has(> .composer__chips) > textarea {
+  position: relative;
+  z-index: 1;
+  color: transparent;
+  caret-color: var(--text);
+}
+
+.composer__field:has(> .composer__chips) > textarea::selection {
+  color: transparent;
+  background: color-mix(in srgb, var(--attention) 28%, transparent);
+}
+
+.composer-chip {
+  color: var(--attention);
+}
+
+/* The em space in front of a chip's name is the icon's room. */
+.composer-chip__room {
+  position: relative;
+}
+
+/* Reaches a hair into the space before the chip, so the gap to the name
+   matches the gap in a sent prompt. */
+.composer-chip__icon {
+  position: absolute;
+  top: 50%;
+  left: -0.06em;
+  width: 0.86em;
+  height: 0.86em;
+  margin-top: 0.04em;
+  transform: translateY(-50%);
+}
