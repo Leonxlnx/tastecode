@@ -43,6 +43,7 @@
     "vitest": "^4.1.10"
   },
   "build": {
+    "afterPack": "./scripts/after-pack.cjs",
     "appId": "dev.tastecode.desktop",
     "icon": "assets/tastecode-app-icon.png",
     "asar": true,
