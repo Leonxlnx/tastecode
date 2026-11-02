@@ -2620,6 +2620,60 @@ describe('Composer inline chips', () => {
   })
 })
 
+describe('Composer picks on a provider or project switch', () => {
+  const cook = composerChipText('$cook', 'skill')
+  const docs = composerChipText('@docs', 'mcp')
+  const compact = composerChipText('/compact', 'command')
+  const draft = `${compact} ${cook} use ${docs} now`
+
+  function typeDraft() {
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+    fireEvent.change(composer, { target: { value: draft } })
+    return composer
+  }
+
+  it.each([
+    ['provider', { provider: 'claude-code' }],
+    ['project', { projectPath: '/work/other' }],
+  ] as const)('drops skill and server chips when the new chat changes %s', (_, change) => {
+    const onDraftChange = vi.fn()
+    const view = renderComposer(vi.fn(), { onDraftChange })
+    const composer = typeDraft()
+
+    view.rerenderComposer(change)
+
+    expect(composer.value).toBe(`${compact} use now`)
+    expect(onDraftChange).toHaveBeenLastCalledWith(`${compact} use now`)
+  })
+
+  it('leaves the text to the draft that comes with the switch', () => {
+    const onDraftChange = vi.fn()
+    const view = renderComposer(vi.fn(), { onDraftChange })
+    const composer = typeDraft()
+    onDraftChange.mockClear()
+
+    // Another chat opens, with its own provider and project.
+    view.rerenderComposer({ provider: 'claude-code', projectPath: '/work/other', threadId: 't2' })
+    expect(composer.value).toBe(draft)
+    // A draft handed to the new chat of another project.
+    view.rerenderComposer({ threadId: undefined })
+    view.rerenderComposer({
+      projectPath: '/work/third',
+      draftRequest: { text: draft, request: 1 },
+    })
+    expect(composer.value).toBe(draft)
+    expect(onDraftChange).not.toHaveBeenCalled()
+  })
+
+  it('keeps picks when the new chat gets its first project', () => {
+    const view = renderComposer(vi.fn(), { projectPath: undefined })
+    const composer = typeDraft()
+
+    view.rerenderComposer({ projectPath: '/work/harness' })
+    expect(composer.value).toBe(draft)
+  })
+})
+
 describe('Composer transcript warm-up', () => {
   it('starts loading the transcript from pointer and keyboard intent', () => {
     renderComposer(vi.fn())

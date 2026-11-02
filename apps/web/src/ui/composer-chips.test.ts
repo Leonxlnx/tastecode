@@ -7,6 +7,7 @@ import {
   composerChipTokens,
   composerChipTouching,
   composerSelectionOverChips,
+  composerTextWithoutPicks,
   composerWireText,
   createComposerChipTextStore,
   hasComposerChips,
@@ -112,6 +113,14 @@ describe('composer chips', () => {
     expect(repairComposerChips('plain', 2)).toBeUndefined()
     // A chip whose name was deleted: its marks go, the caret stays before "b".
     expect(repairComposerChips('a  ⁠⁡⁠ b', 7)).toEqual({ text: 'a  b', caret: 3 })
+  })
+
+  it('drops skill and server chips with the space after them and keeps commands', () => {
+    expect(composerTextWithoutPicks(`${goal} ${cook} use ${docs} now ${design}`)).toBe(
+      `${goal} use now `,
+    )
+    expect(composerTextWithoutPicks(`${goal} only`)).toBe(`${goal} only`)
+    expect(composerTextWithoutPicks('plain $cook text')).toBe('plain $cook text')
   })
 
   it('only wakes the overlay while the draft has chips', () => {

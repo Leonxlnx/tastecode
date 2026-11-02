@@ -64,6 +64,7 @@ import {
   composerChipTouching,
   composerSelectionOverChips,
   composerSlashCanLead,
+  composerTextWithoutPicks,
   composerWireText,
   createComposerChipTextStore,
   hasComposerChips,
@@ -1061,9 +1062,39 @@ function ComposerComponent(props: {
     if (props.focusRequest > 0) area.current?.focus()
   }, [props.focusRequest, props.disabled])
 
+  // The new-chat composer keeps its draft when its provider or project
+  // changes, but skills and MCP servers belong to the place they were picked
+  // for and may not exist in the new one, so their chips go. Command chips
+  // stay, as typed commands always did. A switch that comes with another
+  // draft (another chat, a draft handed to a new chat) leaves the text to it.
+  const pickPlace = useRef({
+    provider: props.provider,
+    projectPath: props.projectPath,
+    threadId: props.threadId,
+    draftRequest: props.draftRequest?.request,
+  })
   useEffect(() => {
+    const previous = pickPlace.current
+    pickPlace.current = {
+      provider: props.provider,
+      projectPath: props.projectPath,
+      threadId: props.threadId,
+      draftRequest: props.draftRequest?.request,
+    }
+    if (previous.provider === props.provider && previous.projectPath === props.projectPath) return
     setResourceTrigger(undefined)
-  }, [props.provider, props.projectPath])
+    if (
+      previous.threadId !== props.threadId ||
+      previous.draftRequest !== props.draftRequest?.request
+    )
+      return
+    // A first project only adds to what the picks could come from.
+    if (previous.provider === props.provider && previous.projectPath === undefined) return
+    const kept = composerTextWithoutPicks(textRef.current)
+    if (kept === textRef.current) return
+    updateText(kept)
+    grow()
+  }, [props.provider, props.projectPath, props.threadId, props.draftRequest?.request])
 
   // A provider that cannot enumerate models shows nothing once discovery finishes.
   const showModelPlaceholder = props.models.length === 0 && !props.modelsLoaded

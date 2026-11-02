@@ -238,6 +238,22 @@ export function composerChipTokens(text: string): ReadonlySet<string> {
 }
 
 /**
+ * The draft without its skill and MCP server chips, each with the space typed
+ * after it. Skills and servers belong to the provider and project they were
+ * picked for; command chips stay, as typed commands always did.
+ */
+export function composerTextWithoutPicks(text: string): string {
+  let kept = ''
+  let position = 0
+  for (const chip of composerChips(text)) {
+    if (chip.kind === 'command') continue
+    kept += text.slice(position, chip.start)
+    position = text[chip.end] === ' ' ? chip.end + 1 : chip.end
+  }
+  return position === 0 ? text : kept + text.slice(position)
+}
+
+/**
  * The draft as the chip overlay needs it. It only changes while the draft has
  * chips, so ordinary typing never wakes the overlay.
  */
