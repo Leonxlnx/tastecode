@@ -60,3 +60,28 @@ export function withDefaultSkills(
 ): NodeJS.ProcessEnv {
   return directory ? { ...env, HARNESS_DEFAULT_SKILLS_DIR: directory } : env
 }
+
+export type BuildEdition = 'release' | 'dev'
+
+/**
+ * Which providers a packaged build offers, from the `tastecodeEdition` field
+ * electron-builder writes into the packaged package.json. Only the dev scripts
+ * set it, so a package built any other way, or with a value we do not know,
+ * is a release build.
+ */
+export function packagedEdition(packageJson: { tastecodeEdition?: unknown }): BuildEdition {
+  return packageJson.tastecodeEdition === 'dev' ? 'dev' : 'release'
+}
+
+/**
+ * Hands the build's edition to the server. Applied after the inherited
+ * environment, unlike the feedback endpoint, so a variable set on the machine
+ * cannot widen a release build. An unpackaged run passes nothing and keeps
+ * whatever the developer set.
+ */
+export function withEdition(
+  env: NodeJS.ProcessEnv,
+  edition: BuildEdition | undefined,
+): NodeJS.ProcessEnv {
+  return edition ? { ...env, HARNESS_EDITION: edition } : env
+}

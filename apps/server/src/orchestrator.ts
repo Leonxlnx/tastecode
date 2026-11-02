@@ -56,6 +56,7 @@ import {
 } from './provider-controls.js'
 import { ModelListCache } from './model-list-cache.js'
 import { PROVIDER_CAPABILITIES } from './provider-capabilities.js'
+import { assertProviderOffered } from './provider-edition.js'
 import {
   contextForLaunch,
   providerContextControl,
@@ -1777,6 +1778,7 @@ export class Orchestrator {
   }
 
   #requireMcpManagement(provider: ProviderId): void {
+    assertProviderOffered(provider)
     if (!PROVIDER_CAPABILITIES[provider].managedMcp)
       throw new Error(`provider "${provider}" cannot manage MCP servers yet`)
   }
@@ -1911,6 +1913,9 @@ export class Orchestrator {
   ): Promise<Thread> {
     const resolved = resolveWorkspacePath(workspacePath)
     if (this.#panicStopping) throw new Error('task start cancelled by panic stop')
+    // Before the base-branch switch below, which would move the user's checkout
+    // for a chat that can never start.
+    assertProviderOffered(provider)
     const generation = {
       dispose: this.#disposeGeneration,
       panic: this.#panicGeneration,
