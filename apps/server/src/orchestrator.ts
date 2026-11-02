@@ -1,4 +1,5 @@
 import type {
+  AppDirection,
   AssetManifest,
   BrandSystem,
   BriefingQuestion,
@@ -296,6 +297,7 @@ const StoredDesignFlowSchema = z.object({
     .record(z.enum(['sans', 'serif', 'display', 'mono']), z.array(z.string()).length(10))
     .optional(),
   referenceDeckSnapshot: DesignFileSnapshotSchema.optional(),
+  appDirection: JsonValueSchema.optional(),
   assetSnapshot: DesignFileSnapshotSchema.optional(),
   options: z
     .object({
@@ -349,6 +351,8 @@ type DesignFlow = {
   referenceDeck?: ReferenceDirection[]
   typographyCandidates?: TypographyCandidates
   referenceDeckSnapshot?: DesignFileSnapshot[]
+  /** The tasteskill app sheet a dashboard run was dealt; websites have none. */
+  appDirection?: AppDirection
   assetSnapshot?: DesignFileSnapshot[]
   options: TurnOptions
   phase: DesignFlowPhase
@@ -433,7 +437,10 @@ function parseStoredDesignFlow(value: unknown, workspacePath: string): DesignFlo
   let approvedBrand: BrandSystem | undefined
   let approvedPage: PageBlueprint | undefined
   let approvedAssets: AssetManifest | undefined
+  let appDirection: AppDirection | undefined
   try {
+    if (stored.appDirection !== undefined)
+      appDirection = designAgent().parseAppDirection(stored.appDirection)
     if (stored.previewPlan !== undefined)
       previewPlan = designAgent().parsePreviewPlan(stored.previewPlan)
     if (stored.review !== undefined) {
@@ -472,6 +479,7 @@ function parseStoredDesignFlow(value: unknown, workspacePath: string): DesignFlo
     ...(stored.referenceDeckSnapshot
       ? { referenceDeckSnapshot: stored.referenceDeckSnapshot }
       : {}),
+    ...(appDirection ? { appDirection } : {}),
     ...(stored.assetSnapshot ? { assetSnapshot: stored.assetSnapshot } : {}),
     options,
     phase,
@@ -5026,6 +5034,7 @@ ${JSON.stringify(deck, null, 2)}
         brief,
         flow.referenceAttachments,
         flow.typographyCandidates,
+        flow.appDirection,
       )
     const brand = flow.approvedBrand!
     if (flow.phase === 'page')
@@ -5034,10 +5043,14 @@ ${JSON.stringify(deck, null, 2)}
         brand,
         flow.referenceAttachments,
         flow.referenceDeck,
+        flow.appDirection,
       )
     const page = flow.approvedPage!
     if (flow.phase === 'assets')
       return designAgent().designAssetPrompt(brief, brand, page, flow.referenceAttachments)
+    // Build and Repair copy from the kit; rewrite it in case the workspace lost it since Brief.
+    if (flow.appDirection && (flow.phase === 'build' || flow.phase === 'repair'))
+      designAgent().writeAppScreenKit(flow.workspacePath)
     if (flow.phase === 'build') {
       return designAgent().designBuildPrompt(
         brief,
@@ -5045,6 +5058,7 @@ ${JSON.stringify(deck, null, 2)}
         page,
         flow.approvedAssets!,
         flow.referenceAttachments,
+        flow.appDirection,
       )
     }
     if (flow.phase === 'preview') return designAgent().designPreviewPrompt()
@@ -5057,6 +5071,7 @@ ${JSON.stringify(deck, null, 2)}
         flow.referenceAttachments,
         flow.referenceDeck,
         flow.previewPlan?.viewports,
+        flow.appDirection,
       )
     }
     if (flow.phase === 'repair' && flow.review) {
@@ -5070,6 +5085,7 @@ ${JSON.stringify(deck, null, 2)}
         flow.approvedAssets!,
         flow.referenceAttachments,
         flow.screenshots ?? [],
+        flow.appDirection,
       )
     }
     throw new Error(`cannot resume design phase ${flow.phase}`)
@@ -5223,6 +5239,7 @@ ${JSON.stringify(deck, null, 2)}
           flow.approvedBrand,
           flow.designConsistencyBaseline,
         ),
+        { radii: !flow.appDirection },
       )
     } catch (error) {
       this.#onLog(`[design] consistency audit skipped: ${errorMessage(error)}`)
@@ -5733,6 +5750,12 @@ ${JSON.stringify(deck, null, 2)}
     flow.referenceDeckSnapshot = designAgent().snapshotDesignFiles(
       designAgent().referenceDirectionAttachments(flow.referenceDeck),
     )
+    // A dashboard without reference images is dealt a tasteskill app sheet instead.
+    const appDirection = designAgent().appDirectionForRun(saved, flow.referenceDeck)
+    if (appDirection) {
+      flow.appDirection = appDirection
+      designAgent().writeAppScreenKit(flow.workspacePath)
+    } else delete flow.appDirection
     this.#recordDesignNote(threadId, turnId, 'Brief locked in. Starting the design.')
     flow.phase = 'brand'
     const prompt = this.#designPromptFor(flow)
@@ -5757,6 +5780,7 @@ ${JSON.stringify(deck, null, 2)}
           flow.approvedBrief!,
           output,
           flow.typographyCandidates,
+          flow.appDirection,
         )
       const brand = designAgent().writeBrandSystem(flow.workspacePath, output)
       flow.correcting = false
@@ -5773,6 +5797,7 @@ ${JSON.stringify(deck, null, 2)}
           designAgent().selectReferenceDirectionDeck(flow.approvedBrief!, flow.approvedBrand!),
         flow.referenceAttachments.map((_, index) => `user-reference-${index + 1}`),
         flow.referenceDeck !== undefined,
+        flow.appDirection,
       )
       const page = designAgent().writePageBlueprint(flow.workspacePath, output)
       flow.correcting = false

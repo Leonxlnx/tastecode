@@ -760,16 +760,30 @@ manual.
 
 ## Dashboard design references (nightly)
 
-**Parked since 2026-10-16 (owner decision).** The dashboard asset set is not good enough to ship,
-so Design mode builds websites only until better assets arrive. One switch,
-`DASHBOARD_REFERENCES_ENABLED` in `packages/design-agent/src/dashboard-references.ts`, turns the
-whole surface off: no dashboard catalog is loaded from any library, no dashboard deck is sampled,
-`isDashboardBrief` and a saved `operate_monitor` page route nothing into dashboard prompts, and
-the Page protocol stops offering that mode and family. A dashboard or app-screen request becomes a
-normal website run built from website references, with the limitation recorded in the brief's
-assumptions; it never fails and never claims a dashboard library. The 400 dashboard WebPs, their
-catalog and provenance left the packaged library (about 42 MB) and stay in git history. The
-history below describes the parked path.
+**Dashboards run as tasteskill app screens since 2026-10-25 (owner request).** A dashboard brief
+is dealt an app sheet from the tasteskill v2.5 app library bundled in
+`packages/design-agent/references/app-screens/` (styles, shells and screen patterns as data, no
+images) and every phase works from that sheet and quoted sections of tasteskill's app-screen
+chapter; see [DESIGN-REFERENCES.md](./DESIGN-REFERENCES.md). `APP_SCREENS_ENABLED` in
+`packages/design-agent/src/app-screen-mode.ts` is the switch. The sheet is dealt by the server
+and persisted with the run, so every provider gets the same deal and nothing depends on running
+tasteskill's scripts inside a provider; the kit files reach the provider through `.taste/app-kit/`
+in the workspace, which every provider can read with ordinary file tools.
+
+_Rejected:_ running tasteskill's `draw.mjs` and `inspect.mjs` inside the provider (needs Node,
+Chrome and shell access in every provider, and the deal would not survive a resume) · inlining
+`charts.js` into the Build prompt (the model would have to retype 60 KB).
+
+**The dashboard image catalog has been parked since 2026-10-16 (owner decision).** The dashboard
+asset set is not good enough to ship. Its switch, `DASHBOARD_REFERENCES_ENABLED` in
+`packages/design-agent/src/dashboard-references.ts`, keeps every dashboard catalog unloaded and
+no dashboard image deck is sampled. While it is off, the website Page protocol does not offer the
+`operate_monitor` mode or the `dashboard` family, and an `operate_monitor` plan on a website run
+routes nothing into dashboard prompts; app screens reach theirs through the dealt sheet and the
+dashboard brief. With both switches off, `isDashboardBrief` routes nothing either, and a dashboard
+request becomes a normal website run. The 400 dashboard WebPs,
+their catalog and provenance left the packaged library (about 42 MB) and stay in git history. The
+history below describes the parked image path.
 
 Nightly dashboard support is integrated through
 [PR #1393](https://github.com/Leonxlnx/tastecode/pull/1393), following
@@ -953,4 +967,5 @@ registry entry, which is deliberately a good first outside contribution.
 | 2026-10-23 | Each chat's setup moved from every client's own storage to the server (`thread.settings`); the desktop shares its hidden models.                                               |
 | 2026-10-25 | Claude Code can also run through `claude -p` (stream-json, same protocol); engines declare `capabilities.runtimes`, the server keeps the choice.                               |
 | 2026-10-25 | Phone app screens moved from SwiftUI to UIKit view controllers under one native view; Expo UI is no longer a dependency.                                                       |
+| 2026-10-25 | Dashboards run again as app screens dealt from the bundled tasteskill v2.1.5 app library, without reference images; the dashboard image catalog stays parked.                  |
 | 2026-10-31 | Phone access became dev-only: offered only with `HARNESS_PHONE_ACCESS=1` (set by `pnpm dev`); other builds never open the phone port.                                          |
