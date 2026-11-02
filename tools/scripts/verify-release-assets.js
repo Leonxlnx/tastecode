@@ -67,6 +67,15 @@ export function packagingAsar() {
   return createRequire(builder.resolve('app-builder-lib'))('@electron/asar')
 }
 
+// Reference files that are neither images nor data: the reveal script, and the tasteskill
+// app-screen kit (stylesheet, chart helpers and its MIT license) that app-screen runs copy.
+const REFERENCE_CODE_FILES = new Set([
+  path.join('motion', 'reveal.js'),
+  path.join('app-screens', 'LICENSE'),
+  path.join('app-screens', 'app.css'),
+  path.join('app-screens', 'charts.js'),
+])
+
 export async function verifyBundledDesignReferences(
   archive,
   source = path.join(repositoryRoot, 'packages', 'design-agent', 'references'),
@@ -80,8 +89,7 @@ export async function verifyBundledDesignReferences(
       if (entry.isDirectory()) await collect(path.join(directory, entry.name), child)
       else if (
         entry.isFile() &&
-        (/\.(webp|png|jpe?g|json|md)$/.test(entry.name) ||
-          child === path.join('motion', 'reveal.js'))
+        (/\.(webp|png|jpe?g|json|md)$/.test(entry.name) || REFERENCE_CODE_FILES.has(child))
       )
         expected.push(child)
       else throw new Error('Unexpected design reference asset')
