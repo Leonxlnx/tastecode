@@ -628,6 +628,14 @@ test('real ASAR resources retain every reference byte, license file, and the res
     path.join(references, 'motion', 'reveal.js'),
     'export function installReferenceReveals() {}',
   )
+  await mkdir(path.join(references, 'app-screens'))
+  for (const [name, text] of [
+    ['app-screens.md', '# App screens'],
+    ['app.css', '.app {}'],
+    ['charts.js', 'export function sparkline() {}'],
+    ['LICENSE', 'MIT License'],
+  ])
+    await writeFile(path.join(references, 'app-screens', name), text)
   await mkdir(packedReferences, { recursive: true })
   await cp(references, packedReferences, { recursive: true })
   await writeFile(path.join(archiveInput, 'package.json'), '{"name":"@harness/desktop"}')
@@ -639,7 +647,7 @@ test('real ASAR resources retain every reference byte, license file, and the res
       unpackDir: 'node_modules/@harness/design-agent/references/library',
     })
   await pack()
-  assert.equal(await verifyBundledDesignReferences(archive, references), 4)
+  assert.equal(await verifyBundledDesignReferences(archive, references), 8)
   verifyReleaseEdition(archive)
   await writeFile(
     path.join(archiveInput, 'package.json'),
