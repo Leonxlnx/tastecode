@@ -1,6 +1,6 @@
 /* Skills, MCP servers and commands as inline chips: an icon and the name in
    the accent colour, flowing with the text. The composer draws them on an
-   overlay behind its textarea. */
+   overlay behind its textarea; sent prompts draw them in place. */
 
 .composer__field:has(> .composer__chips) {
   position: relative;
@@ -47,7 +47,8 @@
   background: color-mix(in srgb, var(--attention) 28%, transparent);
 }
 
-.composer-chip {
+.composer-chip,
+.prompt-chip {
   color: var(--attention);
 }
 
@@ -66,4 +67,30 @@
   height: 0.86em;
   margin-top: 0.04em;
   transform: translateY(-50%);
+}
+
+.prompt-chip {
+  white-space: nowrap;
+}
+
+/* A blank line between two leading chips folds to one space. */
+.prompt-chip__gap {
+  white-space: normal;
+}
+
+.prompt-chip__icon {
+  width: 0.92em;
+  height: 0.92em;
+  margin-right: 0.22em;
+  vertical-align: -0.15em;
+}
+
+/* The marker stays in the text for copying and screen readers, unseen. */
+.prompt-chip__marker {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }

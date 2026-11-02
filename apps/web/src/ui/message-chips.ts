@@ -24,7 +24,9 @@ export type MessageChip = {
   token: string
 }
 
-export type MessageChipSegment = { type: 'text'; text: string } | ({ type: 'chip' } & MessageChip)
+export type MessageChipSegment =
+  /** `gap`: whitespace that only separates two leading chips, drawn as one space. */
+  { type: 'text'; text: string; gap?: true } | ({ type: 'chip' } & MessageChip)
 
 /** Token → what it is, for tokens picked from the menu on this device. */
 export type KnownChipTokens = ReadonlyMap<string, ComposerChipKind>
@@ -55,7 +57,14 @@ export function messageChipSegments(text: string, known: KnownChipTokens): Messa
       leading = false
       continue
     }
-    if (start > position) segments.push({ type: 'text', text: text.slice(position, start) })
+    if (start > position) {
+      const between = text.slice(position, start)
+      // Earlier versions put a blank line after picked skills (`$cook\n\n/goal`);
+      // between two leading chips it shows as the one space typed today.
+      if (leading && between !== ' ' && segments.at(-1)?.type === 'chip')
+        segments.push({ type: 'text', text: between, gap: true })
+      else segments.push({ type: 'text', text: between })
+    }
     segments.push({ type: 'chip', kind, marker, name, token })
     position = start + token.length
     if (leading) expected = position + LEADING_SPACE.exec(text.slice(position))![0].length

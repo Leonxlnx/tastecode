@@ -66,6 +66,24 @@ describe('message chips', () => {
     expect(chips('then /design-taste-frontend', known)).toEqual([])
   })
 
+  it('marks only the blank space between two leading chips as a gap', () => {
+    expect(messageChipSegments('$cook\n\n/design-taste-frontend\n\nmake it calm', NONE)).toEqual([
+      { type: 'chip', kind: 'skill', marker: '$', name: 'cook', token: '$cook' },
+      { type: 'text', text: '\n\n', gap: true },
+      {
+        type: 'chip',
+        kind: 'command',
+        marker: '/',
+        name: 'design-taste-frontend',
+        token: '/design-taste-frontend',
+      },
+      // The line break before the user's own words stays theirs.
+      { type: 'text', text: '\n\nmake it calm' },
+    ])
+    // A single space needs no folding.
+    expect(messageChipSegments('$cook $cinetic go', NONE)[1]).toEqual({ type: 'text', text: ' ' })
+  })
+
   it('stops the leading run at the first word that is not a chip', () => {
     expect(chips('please $cook this')).toEqual([])
     expect(chips('$cook please /goal')).toEqual(['skill:$cook'])
