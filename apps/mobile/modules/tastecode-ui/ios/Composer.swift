@@ -1,5 +1,4 @@
 import PhotosUI
-import SwiftUI
 import UIKit
 
 /// What the composer changes: a chat's setup, or the next new chat's.
@@ -19,158 +18,400 @@ struct PendingImage: Identifiable {
   var failed = false
 }
 
-/// The input: one glass surface holding what you type, what you attach, where
-/// it goes (the model and its reasoning in one chip, access) and the button
-/// that sends or stops.
-struct Composer: View {
-  @Environment(AppModel.self) private var model
-  let draftKey: String
-  let placeholder: String
-  let setup: SetupView
-  let running: Bool
-  let enabled: Bool
+/// What the composer shows, as a chat or the new chat hands it over.
+struct ComposerState: Equatable {
+  var placeholder: String
+  var setup: SetupView
+  var running = false
+  var enabled = false
   var queue: [QueuedView] = []
   var canSteer = false
-  let actions: SetupActions
+}
+
+/// The input: what you type, what you attach, where it goes (the model and its
+/// reasoning in one chip, access) and the button that sends or stops. It sits
+/// on the bar's glass.
+final class ComposerView: UIView, UITextViewDelegate {
+  private let model = AppModel.shared
+  /// Where what is typed is kept while it is not sent.
+  var draftKey: String
+  private let actions: SetupActions
   /// Sends text and the saved pictures' paths; throws to give the text back.
-  let onSend: (String, [String]) async throws -> Void
+  private let onSend: (String, [String]) async throws -> Void
   var onStop: () -> Void = {}
   var onSteer: (String) -> Void = { _ in }
   var onUnqueue: (String) -> Void = { _ in }
   var onReorder: (String, _ index: Int) -> Void = { _, _ in }
   /// Takes a queued prompt out of the queue, for the composer to hold again.
-  var onEdit: ((String) async throws -> TakenPrompt)?
+  var onEdit: ((String) async throws -> TakenPrompt)? {
+    didSet { queueView.canEdit = onEdit != nil }
+  }
+  /// The screen it sits on, to present pickers, the setup panel and problems from.
+  weak var host: UIViewController?
+  /// The setup as it is now, for the panel to follow while it is open.
+  var liveSetup: () -> SetupView = { .empty }
 
-  @State private var text = ""
-  @State private var images: [PendingImage] = []
-  @State private var sending = false
-  @State private var picking = false
-  @State private var picked: [PhotosPickerItem] = []
-  @State private var takingPhoto = false
-  @State private var problem: String?
-  @FocusState private var focused: Bool
+  private var state: ComposerState
+  private var images: [PendingImage] = []
+  private var sending = false
 
-  private var trimmed: String { text.trimmingCharacters(in: .whitespacesAndNewlines) }
+  private let queueView = QueueView()
+  private let queueBox = UIView()
+  /// What shows and hides with the queue: the box, or its own glass in the floating layouts.
+  private lazy var queueHolder: UIView = queueBox
+  /// What shows and hides with the send button.
+  private lazy var sendHolder: UIView = sendButton
+  private let strip = ImageStripView()
+  private let stripBox = UIView()
+  private let field = UITextView()
+  private let placeholder = UILabel()
+  private let attach = UIButton(type: .system)
+  private let chip = SetupChip()
+  private let access = UIButton(type: .system)
+  private let sendButton = PressableButton(type: .custom)
+  private var fieldHeight: NSLayoutConstraint!
+  private lazy var photos = PhotoSource(composer: self)
+
+  init(
+    draftKey: String, state: ComposerState, actions: SetupActions,
+    onSend: @escaping (String, [String]) async throws -> Void
+  ) {
+    self.draftKey = draftKey
+    self.state = state
+    self.actions = actions
+    self.onSend = onSend
+    super.init(frame: .zero)
+    build()
+    field.text = model.drafts[draftKey] ?? ""
+    show(state, force: true)
+    textChanged()
+    registerForTraitChanges([
+      UITraitPreferredContentSizeCategory.self, UITraitLegibilityWeight.self, FontDesignTrait.self,
+    ]) { (composer: ComposerView, _: UITraitCollection) in
+      composer.applyFonts()
+    }
+    registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (composer: ComposerView, _: UITraitCollection) in
+      composer.paint()
+      composer.sendShown = nil
+      composer.refreshSend()
+    }
+  }
+
+  @available(*, unavailable)
+  required init?(coder: NSCoder) { fatalError() }
+
+  /// The model capsule's and the access circle's height.
+  static let control: CGFloat = 34
+
+  private var trimmed: String { field.text.trimmingCharacters(in: .whitespacesAndNewlines) }
   private var uploading: Bool { images.contains { $0.path == nil && !$0.failed } }
   private var canSend: Bool {
-    enabled && !sending && !uploading && (!trimmed.isEmpty || images.contains { $0.path != nil })
+    state.enabled && !sending && !uploading && (!trimmed.isEmpty || images.contains { $0.path != nil })
   }
-  /// Brings a queued prompt back into the input, ahead of anything typed since.
-  private func edit(_ id: String) {
-    guard let onEdit else { return }
-    Task {
-      do {
-        let taken = try await onEdit(id)
-        let typed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        text = typed.isEmpty ? taken.text : "\(taken.text)\n\n\(text)"
-        let placeholder = UIImage(systemName: "photo") ?? UIImage()
-        for path in taken.attachments where !images.contains(where: { $0.path == path }) {
-          images.append(PendingImage(image: model.images[path] ?? placeholder, path: path))
+  private var showsStop: Bool { state.running && trimmed.isEmpty && images.isEmpty }
+
+  // MARK: Building
+
+  private func build() {
+    queueView.onSteer = { [weak self] in self?.onSteer($0) }
+    queueView.onUnqueue = { [weak self] in self?.onUnqueue($0) }
+    queueView.onReorder = { [weak self] in self?.onReorder($0, $1) }
+    queueView.onEdit = { [weak self] in self?.edit($0) }
+    queueBox.addPinned(queueView, insets: UIEdgeInsets(top: 14, left: 16, bottom: 0, right: 16))
+
+    strip.onRemove = { [weak self] id in
+      self?.images.removeAll { $0.id == id }
+      self?.imagesChanged()
+    }
+    stripBox.addPinned(strip, insets: UIEdgeInsets(top: 12, left: 12, bottom: 0, right: 12))
+    strip.heightAnchor.constraint(equalToConstant: 64).isActive = true
+
+    field.backgroundColor = .clear
+    field.textContainerInset = .zero
+    field.textContainer.lineFragmentPadding = 0
+    field.isScrollEnabled = false
+    field.delegate = self
+    field.adjustsFontForContentSizeCategory = false
+    placeholder.textColor = .placeholderText
+    placeholder.isUserInteractionEnabled = false
+    let fieldBox = UIView()
+    // One line sits in the middle of the 44-point capsule.
+    fieldBox.addPinned(field, insets: UIEdgeInsets(top: 11, left: 16, bottom: 11, right: 6))
+    fieldBox.addSubview(placeholder)
+    placeholder.translatesAutoresizingMaskIntoConstraints = false
+    fieldHeight = field.heightAnchor.constraint(equalToConstant: 22)
+    NSLayoutConstraint.activate([
+      fieldHeight,
+      placeholder.leadingAnchor.constraint(equalTo: field.leadingAnchor),
+      placeholder.trailingAnchor.constraint(lessThanOrEqualTo: field.trailingAnchor),
+      placeholder.topAnchor.constraint(equalTo: field.topAnchor),
+    ])
+
+    attach.showsMenuAsPrimaryAction = true
+    attach.preferredMenuElementOrder = .fixed
+    attach.accessibilityLabel = "Attach"
+    attach.menu = UIMenu(children: [
+      UIDeferredMenuElement.uncached { [weak self] completion in completion(self?.attachMenu() ?? []) }
+    ])
+
+    chip.addAction(UIAction { [weak self] _ in self?.openSetup() }, for: .touchUpInside)
+
+    access.showsMenuAsPrimaryAction = true
+    access.preferredMenuElementOrder = .fixed
+    access.menu = UIMenu(children: [
+      UIDeferredMenuElement.uncached { [weak self] completion in completion(self?.accessMenu() ?? []) }
+    ])
+
+    sendButton.addAction(UIAction { [weak self] _ in self?.sendOrStop() }, for: .touchUpInside)
+
+    let column = buildPieces(fieldBox)
+    column.axis = .vertical
+    addPinned(column)
+    queueHolder.isHidden = true
+    stripBox.isHidden = true
+    applyFonts()
+    paint()
+  }
+
+  private func square(_ view: UIView, _ side: CGFloat) {
+    view.translatesAutoresizingMaskIntoConstraints = false
+    NSLayoutConstraint.activate([
+      view.widthAnchor.constraint(equalToConstant: side), view.heightAnchor.constraint(equalToConstant: side),
+    ])
+  }
+
+  /// iOS 26's own way, as in Messages and Safari: separate pieces of glass.
+  /// Attach in a round one beside the text's capsule, send inside it once
+  /// there is something to send; the model's capsule and the access circle
+  /// above them.
+  private func buildPieces(_ fieldBox: UIView) -> UIStackView {
+    func glass(radius: CGFloat?, interactive: Bool) -> UIVisualEffectView {
+      let effect = UIGlassEffect(style: .regular)
+      effect.isInteractive = interactive
+      let view = UIVisualEffectView(effect: effect)
+      view.cornerConfiguration = radius.map { .corners(radius: .fixed($0)) } ?? .capsule()
+      return view
+    }
+    sendButton.layer.cornerRadius = 16
+    square(sendButton, 32)
+
+    let queueGlass = glass(radius: 22, interactive: false)
+    queueGlass.contentView.addPinned(queueBox, insets: UIEdgeInsets(top: 0, left: 0, bottom: 12, right: 0))
+    queueHolder = queueGlass
+
+    let chipGlass = glass(radius: nil, interactive: true)
+    chipGlass.contentView.addPinned(chip)
+    chip.heightAnchor.constraint(equalToConstant: Self.control).isActive = true
+    let accessGlass = glass(radius: nil, interactive: true)
+    accessGlass.contentView.addPinned(access)
+    square(access, Self.control)
+    let top = UIStackView(arrangedSubviews: [chipGlass, accessGlass, UIView()])
+    top.spacing = 8
+    top.axis = .horizontal
+    top.alignment = .center
+
+    let attachGlass = glass(radius: nil, interactive: true)
+    attachGlass.contentView.addPinned(attach)
+    square(attach, 44)
+    let text = UIStackView(arrangedSubviews: [stripBox, fieldBox])
+    text.axis = .vertical
+    let sendBox = UIView()
+    sendButton.translatesAutoresizingMaskIntoConstraints = false
+    sendBox.addSubview(sendButton)
+    // Held by its right edge: as the box folds away, the button fades where it
+    // stands instead of sliding out past the glass.
+    let lead = sendButton.leadingAnchor.constraint(equalTo: sendBox.leadingAnchor)
+    lead.priority = .required - 1
+    NSLayoutConstraint.activate([
+      lead,
+      sendButton.topAnchor.constraint(equalTo: sendBox.topAnchor),
+      sendButton.trailingAnchor.constraint(equalTo: sendBox.trailingAnchor, constant: -6),
+      sendButton.bottomAnchor.constraint(equalTo: sendBox.bottomAnchor, constant: -6),
+    ])
+    sendHolder = sendBox
+    let inside = UIStackView(arrangedSubviews: [text, sendBox])
+    inside.axis = .horizontal
+    inside.alignment = .bottom
+    let fieldGlass = glass(radius: 22, interactive: false)
+    fieldGlass.contentView.addPinned(inside)
+    fieldGlass.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
+    let bottom = UIStackView(arrangedSubviews: [attachGlass, fieldGlass])
+    bottom.axis = .horizontal
+    bottom.alignment = .bottom
+    bottom.spacing = 8
+
+    let column = UIStackView(arrangedSubviews: [queueGlass, top, bottom])
+    column.spacing = 8
+    return column
+  }
+
+  /// Colours drawn as they are, resolved for light or dark: on the glass,
+  /// dynamic ones turn into vibrancy and lose their tone.
+  private func paint() {
+    let traits = traitCollection
+    attach.setImage(
+      Tabler.image("plus", size: 21).withTintColor(UIColor.label.resolvedColor(with: traits), renderingMode: .alwaysOriginal),
+      for: .normal)
+    chip.paint(traits)
+    refreshAccess()
+  }
+
+  private func applyFonts() {
+    let font = UIFont.app(.body, traits: traitCollection)
+    field.font = font
+    field.textColor = .label
+    placeholder.font = font
+    chip.applyFonts(traitCollection)
+    queueView.applyFonts(traitCollection)
+    textChanged()
+  }
+
+  // MARK: State
+
+  /// Takes what the chat or new chat says now.
+  func show(_ next: ComposerState, force: Bool = false) {
+    guard force || next != state else { return }
+    let queueChanged = next.queue != state.queue || next.canSteer != state.canSteer
+    state = next
+    placeholder.text = next.placeholder
+    attach.isHidden = !next.setup.images
+    refreshChip()
+    refreshAccess()
+    if queueChanged || force {
+      let animate = window != nil && !force
+      queueView.show(next.queue, canSteer: next.canSteer, animated: animate)
+      let hidden = next.queue.isEmpty
+      if queueHolder.isHidden != hidden {
+        if animate {
+          queueHolder.alpha = hidden ? 1 : 0
+          UIView.animate(springDuration: 0.32, bounce: 0) {
+            self.queueHolder.isHidden = hidden
+            self.queueHolder.alpha = hidden ? 0 : 1
+            self.window?.layoutIfNeeded()
+          }
+        } else {
+          queueHolder.isHidden = hidden
         }
-        focused = true
-      } catch {
-        problem = error.localizedDescription
+      }
+    }
+    refreshSend()
+  }
+
+  /// UIKit runs this again when the catalog changes: the chip names the
+  /// model's levels and the access menu its modes from it.
+  override func updateProperties() {
+    super.updateProperties()
+    _ = model.catalog
+    refreshChip()
+  }
+
+  private func refreshChip() {
+    let setup = state.setup
+    let efforts = model.catalog.source(setup.sourceKey)?.models.first { $0.id == setup.model }?.efforts ?? []
+    let name = setup.modelName ?? setup.sourceName ?? "Model"
+    chip.show(
+      mark: setup.mark ?? "custom", name: name, fast: setup.tier != nil, effort: efforts.isEmpty ? nil : setup.effortLabel)
+    chip.accessibilityLabel = [name, setup.tierName, efforts.isEmpty ? nil : setup.effortLabel]
+      .compactMap { $0 }.joined(separator: ", ")
+  }
+
+  private func refreshAccess() {
+    // The desktop's icon for each level, coloured where it reaches further than asking.
+    let symbol: String
+    let ink: UIColor
+    switch state.setup.access {
+    case "ask": (symbol, ink) = ("shield-question", ComposerInk.glyph)
+    case "auto": (symbol, ink) = ("shield-check", ComposerInk.glyph)
+    case "auto-review": (symbol, ink) = ("scan-eye", ComposerInk.review)
+    case "full": (symbol, ink) = ("lock-open", ComposerInk.danger)
+    default: (symbol, ink) = ("shield", ComposerInk.glyph)
+    }
+    access.setImage(
+      Tabler.image(symbol, size: 18).withTintColor(ink.resolvedColor(with: traitCollection), renderingMode: .alwaysOriginal),
+      for: .normal)
+    access.accessibilityLabel = "Access: \(state.setup.accessTitle)"
+  }
+
+  private var sendShown: (stop: Bool, active: Bool)?
+
+  private func refreshSend() {
+    let stop = showsStop
+    let active = stop || canSend
+    // Not disabled, which would dim it: it simply takes no touch until it can act.
+    sendButton.isUserInteractionEnabled = active
+    sendButton.accessibilityTraits = active ? .button : [.button, .notEnabled]
+    sendButton.accessibilityLabel = stop ? "Stop" : "Send"
+    guard sendShown?.stop != stop || sendShown?.active != active else { return }
+    let first = sendShown == nil
+    sendShown = (stop, active)
+    // Fixed colours, the glyph drawn in its own: on the glass, tinted ones turn into muted vibrancy.
+    let traits = traitCollection
+    let glyph = Tabler.image(stop ? "player-stop-filled" : "arrow-up", size: stop ? 14 : 19)
+      .withTintColor(UIColor.systemBackground.resolvedColor(with: traits), renderingMode: .alwaysOriginal)
+    let apply = {
+      self.sendButton.setImage(glyph, for: .normal)
+      self.sendButton.backgroundColor = .label
+      // It shows only when there is something to send or stop.
+      self.sendHolder.isHidden = !active
+      self.sendHolder.alpha = active ? 1 : 0
+      self.window?.layoutIfNeeded()
+    }
+    if first || window == nil {
+      apply()
+    } else {
+      UIView.animate(springDuration: 0.22, bounce: 0.15, animations: apply)
+    }
+  }
+
+  // MARK: Typing
+
+  func textViewDidChange(_ textView: UITextView) {
+    model.drafts[draftKey] = field.text
+    textChanged()
+  }
+
+  private var laidOutWidth: CGFloat = 0
+
+  override func layoutSubviews() {
+    super.layoutSubviews()
+    if field.bounds.width != laidOutWidth {
+      laidOutWidth = field.bounds.width
+      textChanged()
+    }
+  }
+
+  /// One to seven lines tall; past seven it scrolls.
+  private func textChanged() {
+    placeholder.isHidden = !field.text.isEmpty
+    refreshSend()
+    guard let font = field.font else { return }
+    let width = field.bounds.width > 0 ? field.bounds.width : 300
+    let fits = ceil(field.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude)).height)
+    let line = ceil(font.lineHeight)
+    let most = ceil(font.lineHeight * 7)
+    let height = min(max(fits, line), most)
+    field.isScrollEnabled = fits > most
+    if fieldHeight.constant != height {
+      fieldHeight.constant = height
+      if window != nil {
+        UIView.animate(withDuration: 0.15) { self.window?.layoutIfNeeded() }
       }
     }
   }
 
-  private var showsStop: Bool { running && trimmed.isEmpty && images.isEmpty }
-
-  var body: some View {
-    VStack(alignment: .leading, spacing: 0) {
-      if !queue.isEmpty {
-        QueueLines(
-          items: queue, canSteer: canSteer, canEdit: onEdit != nil, onSteer: onSteer, onUnqueue: onUnqueue,
-          onReorder: onReorder, onEdit: edit)
-          .padding(.horizontal, 16)
-          .padding(.top, 14)
-          .transition(.opacity.combined(with: .move(edge: .bottom)))
-      }
-      if !images.isEmpty {
-        ImageStrip(images: $images)
-          .padding(.horizontal, 12)
-          .padding(.top, 12)
-      }
-      TextField(placeholder, text: $text, axis: .vertical)
-        .font(.body)
-        .lineLimit(1...7)
-        .focused($focused)
-        .padding(.horizontal, 16)
-        .padding(.top, 14)
-        .padding(.bottom, 4)
-      // Everything but the send button is quiet text and glyphs, so the one
-      // filled thing in the bar is the one that sends.
-      HStack(spacing: 0) {
-        if setup.images {
-          attachMenu
-        }
-        SetupChip(setup: setup, actions: actions) { focused = false }
-        AccessMenu(setup: setup, actions: actions)
-        Spacer(minLength: 8)
-        sendButton
-      }
-      .padding(.leading, 8)
-      .padding(.trailing, 10)
-      .padding(.bottom, 10)
-    }
-    .animation(.smooth(duration: 0.32), value: queue.isEmpty)
-    .glassEffect(.regular, in: .rect(cornerRadius: 26, style: .continuous))
-    .onAppear { text = model.drafts[draftKey] ?? "" }
-    .onChange(of: text) { model.drafts[draftKey] = text }
-    .photosPicker(isPresented: $picking, selection: $picked, maxSelectionCount: 4, matching: .images)
-    .onChange(of: picked) {
-      let items = picked
-      picked = []
-      for item in items { load(item) }
-    }
-    .fullScreenCover(isPresented: $takingPhoto) {
-      CameraPicker { image in add(image) }
-        .ignoresSafeArea()
-    }
-    .problemAlert($problem)
+  func focus() {
+    field.becomeFirstResponder()
   }
 
-  private var attachMenu: some View {
-    Menu {
-      Button("Photo Library", systemImage: "photo.on.rectangle") { picking = true }
-      if UIImagePickerController.isSourceTypeAvailable(.camera) {
-        Button("Take Photo", systemImage: "camera") { takingPhoto = true }
-      }
-    } label: {
-      Image(systemName: "plus")
-        .font(.system(size: 18, weight: .medium))
-        .frame(width: 32, height: 34)
-        .contentShape(.rect)
-    }
-    .menuOrder(.fixed)
-    .foregroundStyle(.secondary)
-    .accessibilityLabel("Attach")
-  }
+  // MARK: Sending
 
-  private var sendButton: some View {
-    Button {
-      if showsStop {
-        UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
-        onStop()
-      } else {
-        send()
-      }
-    } label: {
-      let active = showsStop || canSend
-      Image(systemName: showsStop ? "stop.fill" : "arrow.up")
-        .font(.system(size: showsStop ? 11 : 15, weight: .bold))
-        .contentTransition(.symbolEffect(.replace))
-        .foregroundStyle(active ? AnyShapeStyle(Color(.systemBackground)) : AnyShapeStyle(.tertiary))
-        .frame(width: 32, height: 32)
-        // A fixed colour, not `.primary`: the glass turns hierarchical styles
-        // inside it into muted vibrancy, and a solid white would read grey.
-        .background(active ? AnyShapeStyle(Color(uiColor: .label)) : AnyShapeStyle(.fill.tertiary), in: .circle)
-        .animation(.snappy(duration: 0.22), value: active)
+  private func sendOrStop() {
+    if showsStop {
+      UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
+      onStop()
+    } else {
+      send()
     }
-    .buttonStyle(Pressable())
-    .disabled(!showsStop && !canSend)
-    .animation(.snappy(duration: 0.2), value: showsStop)
-    .accessibilityLabel(showsStop ? "Stop" : "Send")
   }
 
   private func send() {
@@ -182,36 +423,72 @@ struct Composer: View {
       if let path = image.path { model.images[path] = image.image }
     }
     sending = true
-    text = ""
+    setText("")
     images = []
+    imagesChanged()
     UIImpactFeedbackGenerator(style: .light).impactOccurred()
     Task {
       do {
         try await onSend(value, paths)
       } catch {
         // Nothing is lost: the prompt goes back into the field.
-        text = value
+        setText(value)
         images = kept
-        problem = error.localizedDescription
+        imagesChanged()
+        problem(error.localizedDescription)
         UINotificationFeedbackGenerator().notificationOccurred(.error)
       }
       sending = false
+      refreshSend()
     }
   }
 
-  private func load(_ item: PhotosPickerItem) {
+  private func setText(_ text: String) {
+    field.text = text
+    model.drafts[draftKey] = text
+    textChanged()
+  }
+
+  /// Brings a queued prompt back into the input, ahead of anything typed since.
+  private func edit(_ id: String) {
+    guard let onEdit else { return }
     Task {
-      guard let data = try? await item.loadTransferable(type: Data.self), let image = UIImage(data: data) else {
-        problem = "That picture could not be read."
-        return
+      do {
+        let taken = try await onEdit(id)
+        let typed = trimmed
+        setText(typed.isEmpty ? taken.text : "\(taken.text)\n\n\(field.text ?? "")")
+        let placeholder = Tabler.image("photo")
+        for path in taken.attachments where !images.contains(where: { $0.path == path }) {
+          images.append(PendingImage(image: model.images[path] ?? placeholder, path: path))
+        }
+        imagesChanged()
+        focus()
+      } catch {
+        problem(error.localizedDescription)
       }
-      add(image)
     }
   }
 
-  private func add(_ image: UIImage) {
+  private func problem(_ message: String) {
+    host?.showProblem(message)
+  }
+
+  // MARK: Pictures
+
+  private func attachMenu() -> [UIMenuElement] {
+    var items = [
+      UIAction(title: "Photo Library", image: Tabler.image("photo")) { [weak self] _ in self?.photos.pickFromLibrary() }
+    ]
+    if UIImagePickerController.isSourceTypeAvailable(.camera) {
+      items.append(UIAction(title: "Take Photo", image: Tabler.image("camera")) { [weak self] _ in self?.photos.takePhoto() })
+    }
+    return items
+  }
+
+  fileprivate func add(_ image: UIImage) {
     let pending = PendingImage(image: image)
     images.append(pending)
+    imagesChanged()
     Task {
       do {
         guard let data = image.scaledForUpload().jpegData(compressionQuality: 0.8) else {
@@ -226,660 +503,259 @@ struct Composer: View {
         }
       } catch {
         images.removeAll { $0.id == pending.id }
-        problem = error.localizedDescription
+        problem(error.localizedDescription)
+      }
+      imagesChanged()
+    }
+  }
+
+  fileprivate func couldNotRead() {
+    problem("That picture could not be read.")
+  }
+
+  private func imagesChanged() {
+    strip.show(images)
+    let hidden = images.isEmpty
+    if stripBox.isHidden != hidden {
+      stripBox.isHidden = hidden
+      if window != nil {
+        UIView.animate(springDuration: 0.3, bounce: 0) { self.window?.layoutIfNeeded() }
       }
     }
-  }
-}
-
-/// Gives a little under the finger, as iOS's own buttons do.
-private struct Pressable: ButtonStyle {
-  func makeBody(configuration: Configuration) -> some View {
-    configuration.label
-      .scaleEffect(configuration.isPressed ? 0.9 : 1)
-      .animation(.snappy(duration: 0.18), value: configuration.isPressed)
-  }
-}
-
-/// The model and how hard it thinks, as quiet text: the model's name and the
-/// reasoning level's. It opens the panel that changes both.
-struct SetupChip: View {
-  @Environment(AppModel.self) private var model
-  let setup: SetupView
-  let actions: SetupActions
-  /// Puts the keyboard away before the panel covers it.
-  var onOpen: () -> Void = {}
-  @State private var open = false
-
-  var body: some View {
-    let efforts = model.catalog.source(setup.sourceKey)?.models.first(where: { $0.id == setup.model })?.efforts ?? []
-    Button {
-      onOpen()
-      present(true)
-    } label: {
-      HStack(spacing: 5) {
-        Text(name)
-          .lineLimit(1)
-          .foregroundStyle(.primary)
-        if !efforts.isEmpty, let effort = setup.effortLabel {
-          Text(effort)
-            .lineLimit(1)
-            .fixedSize()
-        }
-        Image(systemName: "chevron.down")
-          .font(.system(size: 10, weight: .bold))
-          .foregroundStyle(.tertiary)
-      }
-      .font(.subheadline.weight(.medium))
-      .foregroundStyle(.secondary)
-      .padding(.trailing, 6)
-      .frame(height: 34)
-      .contentShape(.rect)
-    }
-    .buttonStyle(.plain)
-    .padding(.horizontal, 4)
-    .layoutPriority(1)
-    .sensoryFeedback(.impact(weight: .light, intensity: 0.6), trigger: open) { _, opened in opened }
-    .accessibilityLabel([name, setup.effortLabel].compactMap { $0 }.joined(separator: ", "))
-    .accessibilityHint("Changes the model and how hard it thinks")
-    .fullScreenCover(isPresented: $open) {
-      SetupPanel(setup: setup, actions: actions) { present(false) }
-        .presentationBackground(.clear)
-    }
+    refreshSend()
   }
 
-  private var name: String {
-    guard let name = setup.modelName ?? setup.sourceName else { return "Model" }
-    return ([name] + [setup.tierName].compactMap { $0 }).joined(separator: " · ")
+  // MARK: Setup
+
+  private func openSetup() {
+    UIImpactFeedbackGenerator(style: .light).impactOccurred(intensity: 0.6)
+    // The keyboard goes away before the panel covers it.
+    endEditing(true)
+    host?.present(SetupPanelController(setup: liveSetup, actions: actions), animated: false)
   }
 
-  /// The panel draws its own entrance over the chat, so the cover's slide is off.
-  private func present(_ value: Bool) {
-    var transaction = Transaction()
-    transaction.disablesAnimations = true
-    withTransaction(transaction) { open = value }
-  }
-}
-
-/// Over the blurred chat, in its middle: the model's name, which opens every
-/// model, speed and provider, and right under it the reasoning slider and the
-/// level's name. The X, a tap on the blur or a swipe down puts it away.
-///
-/// The chat goes out of focus as the panel rises into it, sharp all the way;
-/// putting it away reverses both at once.
-private struct SetupPanel: View {
-  @Environment(AppModel.self) private var model
-  let setup: SetupView
-  let actions: SetupActions
-  let onClose: () -> Void
-  @State private var shown = false
-  @State private var closing = false
-  /// The level under the thumb, named while it is dragged.
-  @State private var level: String?
-
-  var body: some View {
-    let current = model.catalog.source(setup.sourceKey)?.models.first { $0.id == setup.model }
-    let efforts = current?.efforts ?? []
-    ZStack {
-      FocusBlur(shown: shown)
-        .ignoresSafeArea()
-        .contentShape(.rect)
-        .onTapGesture(perform: close)
-        .gesture(
-          DragGesture(minimumDistance: 24).onEnded { value in
-            if value.translation.height > 60 { close() }
-          })
-        .accessibilityHidden(true)
-      VStack(spacing: 12) {
-        ModelTitle(setup: setup, actions: actions, tiers: current?.tiers ?? [])
-          .modifier(Rise(shown: shown, order: 0))
-        if efforts.isEmpty {
-          Text("This model has no reasoning levels.")
-            .font(.subheadline)
-            .foregroundStyle(.secondary)
-            .modifier(Rise(shown: shown, order: 1))
-        } else {
-          VStack(spacing: 12) {
-            EffortSlider(efforts: efforts, selected: setup.effort, onPick: actions.effort) { level = $0 }
-              .modifier(Rise(shown: shown, order: 1))
-            LevelName(label: level ?? setup.effortLabel ?? "")
-              .modifier(Rise(shown: shown, order: 2))
-          }
-        }
-      }
-      .frame(maxWidth: 360)
-      .padding(.horizontal, 32)
-      .scaleEffect(shown ? 1 : 0.96)
-      .animation(shown ? .spring(duration: 0.44, bounce: 0.16) : .easeIn(duration: 0.16), value: shown)
-    }
-    .overlay(alignment: .topLeading) {
-      Button(action: close) {
-        Image(systemName: "xmark")
-          .font(.system(size: 15, weight: .semibold))
-          .frame(width: 30, height: 30)
-      }
-      .buttonStyle(.glass)
-      .buttonBorderShape(.circle)
-      .padding(.leading, 16)
-      .padding(.top, 6)
-      .scaleEffect(shown ? 1 : 0.85)
-      .opacity(shown ? 1 : 0)
-      .animation(shown ? .spring(duration: 0.44, bounce: 0.16).delay(0.06) : .easeIn(duration: 0.14), value: shown)
-      .accessibilityLabel("Close")
-    }
-    .task {
-      // One frame on screen first, so the entrance animates from its start.
-      try? await Task.sleep(for: .milliseconds(16))
-      shown = true
-    }
-  }
-
-  private func close() {
-    guard !closing else { return }
-    closing = true
-    shown = false
-    Task {
-      try? await Task.sleep(for: .milliseconds(320))
-      onClose()
-    }
-  }
-}
-
-/// A row of the panel rising into place a beat after the one above it; all
-/// of them leave together.
-private struct Rise: ViewModifier {
-  let shown: Bool
-  let order: Int
-
-  func body(content: Content) -> some View {
-    content
-      .offset(y: shown ? 0 : 12)
-      .opacity(shown ? 1 : 0)
-      .animation(
-        shown ? .spring(duration: 0.44, bounce: 0.16).delay(0.04 * Double(order)) : .easeIn(duration: 0.14),
-        value: shown)
-  }
-}
-
-/// A blur over whatever is under it whose strength grows in and fades out,
-/// as iOS blurs behind its own panels. Fading a finished blur in instead
-/// shows the sharp chat and its blurred copy at once, half over each other.
-private struct FocusBlur: UIViewRepresentable {
-  let shown: Bool
-
-  func makeUIView(context: Context) -> UIVisualEffectView {
-    UIVisualEffectView(effect: nil)
-  }
-
-  func updateUIView(_ view: UIVisualEffectView, context: Context) {
-    guard shown != (view.effect != nil) else { return }
-    UIView.animate(
-      withDuration: shown ? 0.4 : 0.3, delay: 0, options: [.curveEaseOut, .beginFromCurrentState]
-    ) {
-      view.effect = shown ? UIBlurEffect(style: .systemUltraThinMaterial) : nil
-    }
-  }
-}
-
-/// The model's name over the provider it runs on; it opens that provider's
-/// models, the model's speeds, and the other providers.
-private struct ModelTitle: View {
-  @Environment(AppModel.self) private var model
-  let setup: SetupView
-  let actions: SetupActions
-  let tiers: [TierView]
-
-  var body: some View {
-    let source = model.catalog.source(setup.sourceKey)
-    let others = model.catalog.sources.filter { $0.key != setup.sourceKey && !$0.models.isEmpty }
-    Menu {
-      if let source {
-        ModelPicker(source: source, selected: setup.model, actions: actions)
-      }
-      if !tiers.isEmpty {
-        Picker(
-          selection: Binding(get: { setup.tier ?? "" }, set: { actions.tier($0.isEmpty ? nil : $0) })
-        ) {
-          Text("Standard").tag("")
-          ForEach(tiers) { tier in
-            Text(tier.name).tag(tier.id)
-          }
-        } label: {
-          Label("Speed", systemImage: "hare")
-          Text(setup.tierName ?? "Standard")
-        }
-        .pickerStyle(.menu)
-      }
-      if setup.switchable && !others.isEmpty {
-        Section("Other Providers") {
-          ForEach(others) { other in
-            Menu(other.name) {
-              ModelPicker(source: other, selected: nil, actions: actions)
-            }
-          }
-        }
-      }
-    } label: {
-      VStack(spacing: 3) {
-        HStack(spacing: 6) {
-          Text(setup.modelName ?? "Choose a Model")
-            .font(.title2.weight(.semibold))
-            .foregroundStyle(.primary)
-            .lineLimit(1)
-            .contentTransition(.opacity)
-          Image(systemName: "chevron.up.chevron.down")
-            .font(.footnote.weight(.semibold))
-            .foregroundStyle(.tertiary)
-        }
-        Text([setup.sourceName, setup.tierName].compactMap { $0 }.joined(separator: " · "))
-          .font(.subheadline)
-          .foregroundStyle(.secondary)
-          .lineLimit(1)
-      }
-      .padding(.horizontal, 16)
-      .padding(.vertical, 6)
-      .contentShape(.rect)
-    }
-    .menuOrder(.fixed)
-    .animation(.smooth(duration: 0.25), value: setup.modelName)
-  }
-}
-
-/// The level's name under the slider, sliding as it changes.
-private struct LevelName: View {
-  let label: String
-
-  var body: some View {
-    Text(label)
-      .font(.subheadline.weight(.semibold))
-      .foregroundStyle(.secondary)
-      .id(label)
-      .transition(.asymmetric(
-        insertion: .offset(y: 6).combined(with: .opacity),
-        removal: .offset(y: -6).combined(with: .opacity)))
-      .animation(.snappy(duration: 0.2), value: label)
-      .accessibilityHidden(true)
-  }
-}
-
-/// How hard the model thinks, drawn like the desktop's slider but bigger: a
-/// pill track with a dot per level, filled up to a round thumb. Like iOS's
-/// own slider, the thumb is Liquid Glass whenever it moves: held and following
-/// the finger, stretching as it moves fast, gliding to a tap elsewhere on the
-/// track or to a level the computer picked. It turns solid once it has landed.
-private struct EffortSlider: View {
-  let efforts: [EffortView]
-  let selected: String?
-  let onPick: (String) -> Void
-  var onLevel: (String) -> Void = { _ in }
-
-  @Environment(\.colorScheme) private var scheme
-  @State private var level = 0
-  /// Where the held thumb is, from 0 on the first level to 1 on the last;
-  /// a little past either end while pulled beyond it.
-  @State private var held: CGFloat?
-  /// The finger's distance from the thumb's centre when it took hold, so the thumb does not jump.
-  @State private var grip: CGFloat = 0
-  /// Until when a thumb called from elsewhere on the track is still gliding to the finger.
-  @State private var glide = Date.distantPast
-  /// How fast the thumb moves, which stretches the glass along the track.
-  @State private var stretch: CGFloat = 0
-  /// Whether the let-go thumb is still gliding onto its level.
-  @State private var moving = false
-  /// Counts glides, so only the latest one's landing turns the thumb solid.
-  @State private var glides = 0
-  @State private var beyond = false
-  @State private var clicks = 0
-  @State private var bumps = 0
-
-  private let thumb: CGFloat = 40
-  private let inset: CGFloat = 3
-
-  var body: some View {
-    GeometryReader { geometry in
-      track(width: geometry.size.width)
-    }
-    .frame(height: thumb + inset * 2)
-    .sensoryFeedback(.selection, trigger: clicks)
-    .sensoryFeedback(.impact(weight: .light, intensity: 0.7), trigger: bumps)
-    .disabled(efforts.count < 2)
-    .accessibilityElement()
-    .accessibilityLabel("Effort")
-    .accessibilityValue(label)
-    .accessibilityAdjustableAction { direction in
-      let next = direction == .increment ? level + 1 : level - 1
-      guard efforts.indices.contains(next) else { return }
-      settle { level = next }
-      pick()
-    }
-    .onAppear {
-      level = chosen
-      onLevel(label)
-    }
-    .onChange(of: level) { onLevel(label) }
-    .onChange(of: selected) {
-      let next = chosen
-      if held == nil && next != level { settle { level = next } }
-    }
-    .onChange(of: efforts) { level = chosen }
-  }
-
-  private var chosen: Int { efforts.firstIndex { $0.id == selected } ?? 0 }
-  private var label: String { efforts.indices.contains(level) ? efforts[level].label : "" }
-
-  private func track(width: CGFloat) -> some View {
-    let travel = max(1, width - inset * 2 - thumb)
-    let center = inset + thumb / 2 + (held ?? stop(level)) * travel
-    let face = TrackFace(
-      count: efforts.count, thumb: thumb, inset: inset, travel: travel, center: center,
-      colors: SliderColors(scheme))
-    return ZStack(alignment: .leading) {
-      face
-      Knob(glass: held != nil || moving, stretch: stretch, face: face, width: width)
-        .position(x: center, y: inset + thumb / 2)
-    }
-    .frame(width: width, height: thumb + inset * 2)
-    .contentShape(.rect)
-    .gesture(drag(travel: travel, center: center))
-  }
-
-  private func drag(travel: CGFloat, center: CGFloat) -> some Gesture {
-    DragGesture(minimumDistance: 0)
-      .onChanged { value in
-        let taking = held == nil
-        if taking {
-          // Taking hold of the thumb keeps it where the finger touched it;
-          // a touch elsewhere on the track brings it there.
-          let offset = value.startLocation.x - center
-          let onThumb = abs(offset) <= thumb / 2 + 8
-          grip = onThumb ? offset : 0
-          glide = onThumb ? .distantPast : .now + 0.22
-        }
-        let raw = (value.location.x - grip - inset - thumb / 2) / travel
-        let share = raw < 0 ? -give(-raw) : raw > 1 ? 1 + give(raw - 1) : raw
-        if Date.now < glide {
-          withAnimation(.spring(duration: 0.24, bounce: 0.15)) { held = share }
-        } else {
-          held = share
-        }
-        stretch = min(abs(value.velocity.width) / 3200, 0.14)
-        let next = nearest(share)
-        if next != level {
-          level = next
-          clicks += 1
-        }
-        let past = raw < 0 || raw > 1
-        if past && !beyond { bumps += 1 }
-        beyond = past
-      }
-      .onEnded { _ in
-        settle {
-          held = nil
-          stretch = 0
-        }
-        beyond = false
-        pick()
-      }
-  }
-
-  /// Glides the thumb on a spring as glass, and turns it solid as it lands.
-  /// Timed rather than told by the animation's completion: a quick tap's touch
-  /// and release arrive in one update, and that completion came at once.
-  private func settle(_ change: () -> Void) {
-    moving = true
-    glides += 1
-    let glide = glides
-    withAnimation(.spring(duration: 0.36, bounce: 0.2), change)
-    Task {
-      try? await Task.sleep(for: .milliseconds(300))
-      if glides == glide { moving = false }
-    }
-  }
-
-  private func pick() {
-    guard efforts.indices.contains(level), efforts[level].id != selected else { return }
-    onPick(efforts[level].id)
-  }
-
-  private func stop(_ level: Int) -> CGFloat {
-    efforts.count > 1 ? CGFloat(level) / CGFloat(efforts.count - 1) : 0
-  }
-
-  private func nearest(_ share: CGFloat) -> Int {
-    guard efforts.count > 1 else { return 0 }
-    return Int((min(max(share, 0), 1) * CGFloat(efforts.count - 1)).rounded())
-  }
-
-  /// How far the thumb follows a finger past an end: less the further it goes.
-  private func give(_ distance: CGFloat) -> CGFloat {
-    let limit: CGFloat = 0.04
-    return limit * (1 - 1 / (distance / limit + 1))
-  }
-}
-
-/// The track: a pill with a dot per level, filled up to the thumb's centre.
-private struct TrackFace: View {
-  let count: Int
-  let thumb: CGFloat
-  let inset: CGFloat
-  let travel: CGFloat
-  let center: CGFloat
-  let colors: SliderColors
-
-  var body: some View {
-    let dots = Dots(count: count, start: inset + thumb / 2, travel: travel)
-    ZStack(alignment: .leading) {
-      Capsule()
-        .fill(colors.track)
-        .overlay(Capsule().strokeBorder(colors.line, lineWidth: 1))
-      dots.fill(colors.dot)
-      Capsule()
-        .fill(colors.fill)
-        .frame(width: max(thumb, center + thumb / 2 - inset), height: thumb)
-        .offset(x: inset)
-      dots
-        .fill(colors.lit)
-        .mask(alignment: .leading) {
-          Rectangle().frame(width: max(0, center + thumb / 2))
-        }
-    }
-  }
-}
-
-/// The thumb: plain and solid at rest. Moving, it grows into a glass lens:
-/// the track shows through it sharp and a little magnified, and the glass
-/// bends it at the rim.
-private struct Knob: View {
-  let glass: Bool
-  let stretch: CGFloat
-  let face: TrackFace
-  /// The whole track's width, to line the lens's copy of it up with the track.
-  let width: CGFloat
-
-  var body: some View {
-    let size = face.thumb
-    let grow: CGFloat = glass ? 1.35 : 1
-    // Each animation reaches only its own modifiers: the lens's copy of the
-    // track must move exactly with the track, never on a spring of its own.
-    // The solid gives way to the glass before it has grown.
-    ZStack {
-      lens(size: size, grow: grow)
-        .animation(.easeOut(duration: 0.12)) { $0.opacity(glass ? 1 : 0) }
-      Circle()
-        .fill(face.colors.thumb)
-        .shadow(color: .black.opacity(0.24), radius: 3, y: 1.5)
-        .animation(.easeOut(duration: 0.12)) { $0.opacity(glass ? 0 : 1) }
-    }
-    .frame(width: size, height: size)
-    .glassEffect(.clear, in: .circle)
-    .animation(Self.grow) { content in
-      content
-        .shadow(color: .black.opacity(glass ? 0.3 : 0), radius: 8, y: 3)
-        .scaleEffect(grow)
-    }
-    .animation(.interactiveSpring(duration: 0.2)) { content in
-      content.scaleEffect(x: 1 + stretch, y: 1 - stretch * 0.5)
-    }
-  }
-
-  private static let grow = Animation.spring(duration: 0.34, bounce: 0.32)
-
-  /// The track seen through the glass: sharp, a fifth larger, giving way to the glass only at the rim.
-  private func lens(size: CGFloat, grow: CGFloat) -> some View {
-    let height = face.thumb + face.inset * 2
-    return face
-      .frame(width: width, height: height)
-      .offset(x: size / 2 - face.center, y: size / 2 - height / 2)
-      .frame(width: size, height: size, alignment: .topLeading)
-      // Undoes the thumb's growth on the same spring, so the magnification stays put.
-      .animation(Self.grow) { $0.scaleEffect(1.2 / grow) }
-      .mask {
-        RadialGradient(
-          stops: [.init(color: .black, location: 0), .init(color: .black, location: 0.9), .init(color: .clear, location: 1)],
-          center: .center, startRadius: 0, endRadius: size / 2)
-      }
-  }
-}
-
-/// One dot per level, centred on the track's middle line.
-private struct Dots: Shape {
-  let count: Int
-  let start: CGFloat
-  let travel: CGFloat
-
-  func path(in rect: CGRect) -> Path {
-    var path = Path()
-    let size: CGFloat = 5
-    for index in 0..<count {
-      let x = start + (count > 1 ? travel * CGFloat(index) / CGFloat(count - 1) : 0)
-      path.addEllipse(in: CGRect(x: x - size / 2, y: rect.midY - size / 2, width: size, height: size))
-    }
-    return path
-  }
-}
-
-/// The desktop's slider colours: a dark track, grey fill and light thumb in
-/// dark mode; a light track, near-black fill and white thumb in light mode.
-private struct SliderColors {
-  let track: Color
-  let line: Color
-  let fill: Color
-  let dot: Color
-  let lit: Color
-  let thumb: Color
-
-  init(_ scheme: ColorScheme) {
-    let ink = Color(red: 0.153, green: 0.153, blue: 0.165)
-    if scheme == .dark {
-      track = .black.opacity(0.36)
-      line = .white.opacity(0.07)
-      fill = .white.opacity(0.22)
-      dot = .white.opacity(0.28)
-      lit = .white.opacity(0.8)
-      thumb = .white
-    } else {
-      track = ink.opacity(0.08)
-      line = ink.opacity(0.1)
-      fill = ink
-      dot = ink.opacity(0.4)
-      lit = .white.opacity(0.78)
-      thumb = .white
-    }
-  }
-}
-
-private struct ModelPicker: View {
-  let source: SourceView
-  let selected: String?
-  let actions: SetupActions
-
-  var body: some View {
-    let main = source.models.filter { !$0.more }
-    let more = source.models.filter(\.more)
-    Section(source.name) {
-      if source.models.isEmpty {
-        Text(source.status == .loading ? "Loading models…" : "No models")
-      }
-      picker(main)
-      if !more.isEmpty {
-        Menu("More Models") {
-          picker(more)
-        }
-      }
-    }
-  }
-
-  private func picker(_ models: [ModelView]) -> some View {
-    ForEach(models) { entry in
-      Toggle(
-        entry.name,
-        isOn: Binding(get: { selected == entry.id }, set: { if $0 { actions.model(source.key, entry.id) } })
-      )
-    }
-  }
-}
-
-/// How freely the agent may act: ask first, approve itself, or full access.
-struct AccessMenu: View {
-  @Environment(AppModel.self) private var model
-  let setup: SetupView
-  let actions: SetupActions
-
-  var body: some View {
+  private func accessMenu() -> [UIMenuElement] {
+    let setup = state.setup
     let levels = model.catalog.source(setup.sourceKey)?.access ?? []
-    Menu {
-      Section("Access") {
-        ForEach(levels) { level in
-          Toggle(
-            isOn: Binding(
-              get: { setup.access == level.mode },
-              set: { if $0 { actions.access(level.mode) } }
-            )
-          ) {
-            Text(level.title)
-            Text(level.detail)
-          }
-        }
+    let items = levels.map { level in
+      let action = UIAction(title: level.title, state: setup.access == level.mode ? .on : .off) { [weak self] _ in
+        self?.actions.access(level.mode)
       }
-    } label: {
-      Image(systemName: symbol)
-        .font(.system(size: 15, weight: .medium))
-        .foregroundStyle(.secondary)
-        .frame(width: 34, height: 34)
-        .contentShape(.rect)
+      action.subtitle = level.detail
+      return action
     }
-    .menuOrder(.fixed)
-    .accessibilityLabel("Access: \(setup.accessTitle)")
+    return [UIMenu(title: "Access", options: .displayInline, children: items)]
+  }
+}
+
+/// The model in its glass capsule: the provider's logo, the model's name, a
+/// bolt for a faster tier, the reasoning level and a chevron. It opens the
+/// panel that changes them.
+private final class SetupChip: UIControl {
+  private let mark = ProviderMarkView()
+  private let name = UILabel()
+  private let fast = UIImageView()
+  private let effort = UILabel()
+  private let chevron = UIImageView()
+
+  override init(frame: CGRect) {
+    super.init(frame: frame)
+    name.lineBreakMode = .byTruncatingTail
+    name.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+    for fixed in [mark, fast, effort, chevron] as [UIView] {
+      fixed.setContentCompressionResistancePriority(.required, for: .horizontal)
+      fixed.setContentHuggingPriority(.required, for: .horizontal)
+    }
+    NSLayoutConstraint.activate([
+      mark.widthAnchor.constraint(equalToConstant: 14),
+      mark.heightAnchor.constraint(equalToConstant: 14),
+    ])
+    let row = UIStackView(arrangedSubviews: [mark, name, fast, effort, chevron])
+    row.axis = .horizontal
+    row.alignment = .center
+    row.spacing = 5
+    row.isUserInteractionEnabled = false
+    row.translatesAutoresizingMaskIntoConstraints = false
+    addSubview(row)
+    NSLayoutConstraint.activate([
+      row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 13),
+      row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -11),
+      row.centerYAnchor.constraint(equalTo: centerYAnchor),
+    ])
+    setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
+    isAccessibilityElement = true
+    accessibilityTraits = .button
+    accessibilityHint = "Changes the model and how hard it thinks"
   }
 
-  /// One symbol per level, so the level reads without its name.
-  private var symbol: String {
-    switch setup.access {
-    case "ask": return "hand.raised"
-    case "auto", "auto-review": return "checkmark.shield"
-    case "full": return "exclamationmark.shield"
-    default: return "shield"
+  @available(*, unavailable)
+  required init?(coder: NSCoder) { fatalError() }
+
+  /// `traits` come from the composer: inside its trait change, this view's own are not updated yet.
+  func applyFonts(_ traits: UITraitCollection) {
+    let font = UIFont.app(.subheadline, weight: .medium, traits: traits)
+    name.font = font
+    effort.font = font
+  }
+
+  func paint(_ traits: UITraitCollection) {
+    let ink = UIColor.label.resolvedColor(with: traits)
+    name.textColor = ink
+    effort.textColor = UIColor.secondaryLabel.resolvedColor(with: traits)
+    mark.tintColor = ink
+    fast.image = Tabler.image("bolt", size: 13).withTintColor(ink, renderingMode: .alwaysOriginal)
+    chevron.image = Tabler.image("chevron-down", size: 13)
+      .withTintColor(UIColor.tertiaryLabel.resolvedColor(with: traits), renderingMode: .alwaysOriginal)
+  }
+
+  func show(mark logo: String, name text: String, fast faster: Bool, effort label: String?) {
+    mark.mark = logo
+    name.text = text
+    fast.isHidden = !faster
+    effort.text = label
+    effort.isHidden = label == nil
+  }
+
+  override var isHighlighted: Bool {
+    didSet {
+      UIView.animate(withDuration: isHighlighted ? 0.05 : 0.2) { self.alpha = self.isHighlighted ? 0.5 : 1 }
     }
+  }
+}
+
+/// The composer's colours, the access ones the desktop's.
+enum ComposerInk {
+  /// The controls' icons: the desktop's text colour mixed a little toward its secondary one.
+  static let glyph = UIColor {
+    $0.userInterfaceStyle == .dark ? UIColor(white: 0.8, alpha: 1) : UIColor(red: 0.2, green: 0.2, blue: 0.22, alpha: 1)
+  }
+  /// Auto-review and full access, in the desktop's colours for them.
+  static let review = UIColor { $0.userInterfaceStyle == .dark ? UIColor(rgb: 0x65B8FF) : UIColor(rgb: 0x2D72DC) }
+  static let danger = UIColor { $0.userInterfaceStyle == .dark ? UIColor(rgb: 0xFE8549) : UIColor(rgb: 0xEF4D05) }
+}
+
+extension UIColor {
+  convenience init(rgb: UInt32) {
+    self.init(
+      red: CGFloat((rgb >> 16) & 0xFF) / 255, green: CGFloat((rgb >> 8) & 0xFF) / 255, blue: CGFloat(rgb & 0xFF) / 255,
+      alpha: 1)
+  }
+}
+
+/// A button that gives a little under the finger, as iOS's own buttons do.
+final class PressableButton: UIButton {
+  override var isHighlighted: Bool {
+    didSet {
+      UIView.animate(springDuration: 0.18, bounce: 0) {
+        self.transform = self.isHighlighted ? CGAffineTransform(scaleX: 0.9, y: 0.9) : .identity
+      }
+    }
+  }
+}
+
+/// The photo library and the camera, handing the composer what was picked.
+@MainActor
+private final class PhotoSource: NSObject, PHPickerViewControllerDelegate, UIImagePickerControllerDelegate,
+  UINavigationControllerDelegate
+{
+  private weak var composer: ComposerView?
+
+  init(composer: ComposerView) {
+    self.composer = composer
+  }
+
+  func pickFromLibrary() {
+    var configuration = PHPickerConfiguration()
+    configuration.selectionLimit = 4
+    configuration.filter = .images
+    let picker = PHPickerViewController(configuration: configuration)
+    picker.delegate = self
+    composer?.host?.present(picker, animated: true)
+  }
+
+  func takePhoto() {
+    let picker = UIImagePickerController()
+    picker.sourceType = .camera
+    picker.delegate = self
+    picker.modalPresentationStyle = .fullScreen
+    composer?.host?.present(picker, animated: true)
+  }
+
+  func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
+    picker.dismiss(animated: true)
+    for result in results {
+      let provider = result.itemProvider
+      guard provider.canLoadObject(ofClass: UIImage.self) else {
+        composer?.couldNotRead()
+        continue
+      }
+      provider.loadObject(ofClass: UIImage.self) { [weak self] object, _ in
+        let image = object as? UIImage
+        Task { @MainActor in
+          guard let composer = self?.composer else { return }
+          if let image { composer.add(image) } else { composer.couldNotRead() }
+        }
+      }
+    }
+  }
+
+  func imagePickerController(
+    _ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]
+  ) {
+    if let image = info[.originalImage] as? UIImage { composer?.add(image) }
+    picker.dismiss(animated: true)
+  }
+
+  func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+    picker.dismiss(animated: true)
   }
 }
 
 /// What waits behind the running turn, in the order it will run. Drag a
-/// prompt by its handle to reorder, tap it to edit, long-press for the rest.
-private struct QueueLines: View {
-  let items: [QueuedView]
-  let canSteer: Bool
-  let canEdit: Bool
-  let onSteer: (String) -> Void
-  let onUnqueue: (String) -> Void
-  let onReorder: (String, _ index: Int) -> Void
-  let onEdit: (String) -> Void
+/// prompt by its handle to reorder, tap it to edit, hold it for the rest.
+private final class QueueView: UIView, UIContextMenuInteractionDelegate {
+  var canSteer = false
+  var canEdit = false
+  var onSteer: (String) -> Void = { _ in }
+  var onUnqueue: (String) -> Void = { _ in }
+  var onReorder: (String, _ index: Int) -> Void = { _, _ in }
+  var onEdit: (String) -> Void = { _ in }
 
-  @State private var dragging: String?
-  @State private var dragOffset: CGFloat = 0
-  @State private var heights: [String: CGFloat] = [:]
+  private let header = UILabel()
+  private let list = UIStackView()
+  private let divider = UIView()
+  private var items: [QueuedView] = []
+  private var rows: [String: QueueRow] = [:]
   /// The order a drop chose, shown until the queue itself arrives in it.
-  @State private var dropped: [String]?
+  private var dropped: [String]?
+  private var dragging: String?
+  private var dragOffset: CGFloat = 0
+  private var traits = UITraitCollection.current
   private let spacing: CGFloat = 2
+
+  override init(frame: CGRect) {
+    super.init(frame: frame)
+    header.textColor = .secondaryLabel
+    list.axis = .vertical
+    list.spacing = spacing
+    divider.backgroundColor = .separator
+    let column = UIStackView(arrangedSubviews: [header, list, divider])
+    column.axis = .vertical
+    column.setCustomSpacing(6, after: header)
+    column.setCustomSpacing(10, after: list)
+    divider.heightAnchor.constraint(equalToConstant: 1 / max(1, traitCollection.displayScale)).isActive = true
+    addPinned(column)
+  }
+
+  @available(*, unavailable)
+  required init?(coder: NSCoder) { fatalError() }
+
+  /// `traits` come from the composer, whose trait change reaches this view later.
+  func applyFonts(_ traits: UITraitCollection) {
+    self.traits = traits
+    header.font = .app(.caption1, weight: .semibold, traits: traits)
+    for row in rows.values { row.applyFonts(traits) }
+  }
 
   private var shown: [QueuedView] {
     guard let dropped else { return items }
@@ -888,179 +764,144 @@ private struct QueueLines: View {
     return ordered.count == items.count ? ordered : items
   }
 
-  var body: some View {
-    let rows = shown
-    VStack(alignment: .leading, spacing: 0) {
-      Text(rows.count == 1 ? "Up next" : "Up next · \(rows.count)")
-        .font(.caption.weight(.semibold))
-        .foregroundStyle(.secondary)
-        .padding(.bottom, 6)
-      VStack(alignment: .leading, spacing: spacing) {
-        ForEach(rows) { item in
-          row(item, in: rows)
-            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { heights[item.id] = $0 }
-            .offset(y: offset(of: item.id, in: rows))
-            .zIndex(dragging == item.id ? 1 : 0)
-            .transition(
-              .asymmetric(
-                insertion: .opacity.combined(with: .offset(y: 10)),
-                removal: .opacity.combined(with: .scale(scale: 0.96, anchor: .leading))))
-        }
+  func show(_ next: [QueuedView], canSteer: Bool, animated: Bool) {
+    if next.map(\.id) != items.map(\.id) { dropped = nil }
+    items = next
+    self.canSteer = canSteer
+    let order = shown
+    header.text = order.count == 1 ? "Up next" : "Up next · \(order.count)"
+    let keep = Set(order.map(\.id))
+    for (id, row) in rows where !keep.contains(id) {
+      rows[id] = nil
+      guard animated else {
+        row.removeFromSuperview()
+        continue
       }
-      Divider()
-        .padding(.top, 10)
+      UIView.animate(springDuration: 0.32, bounce: 0) {
+        row.alpha = 0
+        row.transform = CGAffineTransform(scaleX: 0.96, y: 0.96)
+        row.isHidden = true
+      } completion: { _ in
+        row.removeFromSuperview()
+      }
     }
-    .animation(.smooth(duration: 0.32), value: items)
-    .onChange(of: items.map(\.id)) { dropped = nil }
-  }
-
-  private func row(_ item: QueuedView, in rows: [QueuedView]) -> some View {
-    let lifted = dragging == item.id
-    return HStack(alignment: .center, spacing: 6) {
-      Image(systemName: "line.3.horizontal")
-        .font(.footnote.weight(.medium))
-        .foregroundStyle(.tertiary)
-        .frame(width: 28, height: 36)
-        .contentShape(.rect)
-        .gesture(item.pending || rows.count < 2 ? nil : drag(item, in: rows))
-        .accessibilityLabel("Reorder")
-      Button {
-        onEdit(item.id)
-      } label: {
-        VStack(alignment: .leading, spacing: 3) {
-          if !item.text.isEmpty {
-            Text(item.text)
-              .font(.subheadline)
-              .foregroundStyle(.primary)
-              .lineLimit(2)
-              .multilineTextAlignment(.leading)
-          }
-          if item.images > 0 {
-            Label(item.images == 1 ? "1 picture" : "\(item.images) pictures", systemImage: "photo")
-              .font(.caption)
-              .foregroundStyle(.secondary)
-          }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .contentShape(.rect)
-      }
-      .buttonStyle(.plain)
-      .disabled(!canEdit || item.pending)
-      .accessibilityHint("Edit")
-      if canSteer && !item.pending {
-        Button {
-          onSteer(item.id)
-        } label: {
-          Image(systemName: "arrow.up.circle")
-            .font(.body)
-            .frame(width: 30, height: 30)
-            .contentShape(.rect)
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(.secondary)
-        .accessibilityLabel("Send now")
-      }
-      Button {
-        onUnqueue(item.id)
-      } label: {
-        Image(systemName: "xmark")
-          .font(.caption.weight(.semibold))
-          .frame(width: 30, height: 30)
-          .contentShape(.rect)
-      }
-      .buttonStyle(.plain)
-      .foregroundStyle(.tertiary)
-      .disabled(item.pending)
-      .accessibilityLabel("Remove from the queue")
+    var inserted: [QueueRow] = []
+    for item in order {
+      let row = rows[item.id] ?? makeRow(item.id, inserted: &inserted, animated: animated)
+      row.show(
+        item, canSteer: canSteer && !item.pending, canEdit: canEdit && !item.pending,
+        canDrag: !item.pending && order.count > 1)
     }
-    .padding(.vertical, 2)
-    .padding(.trailing, 4)
-    .background {
-      RoundedRectangle(cornerRadius: 12, style: .continuous)
-        .fill(Color(.systemBackground))
-        .shadow(color: .black.opacity(0.12), radius: 10, y: 4)
-        .opacity(lifted ? 1 : 0)
+    // The rows in the queue's order, after any still fading out.
+    let live = order.compactMap { rows[$0.id] }
+    if list.arrangedSubviews.compactMap({ $0 as? QueueRow }).filter(live.contains) != live {
+      for row in live {
+        list.removeArrangedSubview(row)
+        list.addArrangedSubview(row)
+      }
     }
-    .scaleEffect(lifted ? 1.02 : 1)
-    .opacity(item.pending ? 0.5 : 1)
-    .contentShape(.rect)
-    .contextMenu {
-      if canEdit && !item.pending {
-        Button("Edit", systemImage: "pencil") { onEdit(item.id) }
+    guard animated, !inserted.isEmpty else { return }
+    for row in inserted {
+      row.alpha = 0
+      row.transform = CGAffineTransform(translationX: 0, y: 10)
+    }
+    UIView.animate(springDuration: 0.32, bounce: 0) {
+      for row in inserted {
+        row.isHidden = false
+        row.alpha = 1
+        row.transform = .identity
       }
-      if canSteer && !item.pending {
-        Button("Send Now", systemImage: "arrow.up.circle") { onSteer(item.id) }
-      }
-      if item.id != rows.first?.id && !item.pending {
-        Button("Move to Top", systemImage: "arrow.up.to.line") { reorder(item.id, to: 0, in: rows) }
-      }
-      Button("Remove", systemImage: "trash", role: .destructive) { onUnqueue(item.id) }
-        .disabled(item.pending)
-    } preview: {
-      // The row lives on the composer's glass; lifted alone it needs its own ground.
-      VStack(alignment: .leading, spacing: 4) {
-        Text("Queued \((rows.firstIndex(of: item) ?? 0) + 1) of \(rows.count)")
-          .font(.caption.weight(.semibold))
-          .foregroundStyle(.secondary)
-        Text(item.text.isEmpty ? "Pictures only" : item.text)
-          .font(.subheadline)
-      }
-      .padding(16)
-      .frame(width: 300, alignment: .leading)
-      .background(Color(.systemBackground))
+      self.window?.layoutIfNeeded()
     }
   }
 
-  private func drag(_ item: QueuedView, in rows: [QueuedView]) -> some Gesture {
-    // Measured on the screen: the handle moves with the finger, so its own space would halve the drag.
-    DragGesture(minimumDistance: 2, coordinateSpace: .global)
-      .onChanged { value in
-        if dragging == nil {
-          withAnimation(.smooth(duration: 0.2)) { dragging = item.id }
-          UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        }
-        let before = target(of: item.id, in: rows)
-        dragOffset = value.translation.height
-        if target(of: item.id, in: rows) != before {
-          UISelectionFeedbackGenerator().selectionChanged()
-        }
-      }
-      .onEnded { _ in
-        let to = target(of: item.id, in: rows)
-        withAnimation(.smooth(duration: 0.28)) {
-          if to != rows.firstIndex(of: item) {
-            reorder(item.id, to: to, in: rows)
-          }
-          dragging = nil
-          dragOffset = 0
-        }
-      }
+  private func makeRow(_ id: String, inserted: inout [QueueRow], animated: Bool) -> QueueRow {
+    let row = QueueRow()
+    row.applyFonts(traits)
+    row.onEdit = { [weak self] in self?.onEdit(id) }
+    row.onSteer = { [weak self] in self?.onSteer(id) }
+    row.onRemove = { [weak self] in self?.onUnqueue(id) }
+    row.handle.addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(dragged(_:))))
+    row.addInteraction(UIContextMenuInteraction(delegate: self))
+    row.queueId = id
+    rows[id] = row
+    if animated {
+      row.isHidden = true
+      inserted.append(row)
+    }
+    return row
   }
 
-  private func reorder(_ id: String, to index: Int, in rows: [QueuedView]) {
-    var order = rows.map(\.id)
-    guard let from = order.firstIndex(of: id) else { return }
-    order.remove(at: from)
-    order.insert(id, at: min(index, order.count))
-    dropped = order
+  // MARK: Dragging
+
+  @objc private func dragged(_ pan: UIPanGestureRecognizer) {
+    guard let row = pan.view?.superview(of: QueueRow.self), let id = row.queueId else { return }
+    let order = shown
+    switch pan.state {
+    case .began:
+      dragging = id
+      dragOffset = 0
+      list.bringSubviewToFront(row)
+      UIImpactFeedbackGenerator(style: .light).impactOccurred()
+      UIView.animate(springDuration: 0.2, bounce: 0) { row.lifted = true }
+    case .changed:
+      let before = target(of: id, in: order)
+      dragOffset = pan.translation(in: self).y
+      row.transform = CGAffineTransform(translationX: 0, y: dragOffset).scaledBy(x: 1.02, y: 1.02)
+      let after = target(of: id, in: order)
+      if after != before {
+        UISelectionFeedbackGenerator().selectionChanged()
+        UIView.animate(springDuration: 0.25, bounce: 0) { self.stepAside(order) }
+      }
+    case .ended, .cancelled, .failed:
+      let to = target(of: id, in: order)
+      let from = order.firstIndex { $0.id == id }
+      UIView.animate(springDuration: 0.28, bounce: 0) {
+        if to != from { self.reorder(id, to: to, in: order) }
+        self.dragging = nil
+        self.dragOffset = 0
+        for other in self.rows.values { other.transform = .identity }
+        row.lifted = false
+        self.layoutIfNeeded()
+      }
+    default:
+      break
+    }
+  }
+
+  private func reorder(_ id: String, to index: Int, in order: [QueuedView]) {
+    var ids = order.map(\.id)
+    guard let from = ids.firstIndex(of: id) else { return }
+    ids.remove(at: from)
+    ids.insert(id, at: min(index, ids.count))
+    dropped = ids
+    for (position, each) in ids.enumerated() {
+      guard let row = rows[each] else { continue }
+      list.removeArrangedSubview(row)
+      list.insertArrangedSubview(row, at: position)
+    }
     onReorder(id, index)
   }
 
+  private func height(_ id: String) -> CGFloat {
+    (rows[id]?.bounds.height ?? 40) + spacing
+  }
+
   /// Where the dragged prompt would land: past every neighbour it has moved halfway over.
-  private func target(of id: String, in rows: [QueuedView]) -> Int {
-    guard let from = rows.firstIndex(where: { $0.id == id }) else { return 0 }
+  private func target(of id: String, in order: [QueuedView]) -> Int {
+    guard let from = order.firstIndex(where: { $0.id == id }) else { return 0 }
     var index = from
     var left = dragOffset
     if left > 0 {
-      while index + 1 < rows.count {
-        let next = (heights[rows[index + 1].id] ?? 40) + spacing
+      while index + 1 < order.count {
+        let next = height(order[index + 1].id)
         guard left > next / 2 else { break }
         left -= next
         index += 1
       }
     } else {
       while index > 0 {
-        let previous = (heights[rows[index - 1].id] ?? 40) + spacing
+        let previous = height(order[index - 1].id)
         guard -left > previous / 2 else { break }
         left += previous
         index -= 1
@@ -1069,58 +910,290 @@ private struct QueueLines: View {
     return index
   }
 
-  /// The dragged prompt follows the finger; the ones it passes step aside.
-  private func offset(of id: String, in rows: [QueuedView]) -> CGFloat {
-    guard let dragging, let from = rows.firstIndex(where: { $0.id == dragging }) else { return 0 }
-    if id == dragging { return dragOffset }
-    guard let index = rows.firstIndex(where: { $0.id == id }) else { return 0 }
-    let to = target(of: dragging, in: rows)
-    let gap = (heights[dragging] ?? 40) + spacing
-    if from < index && index <= to { return -gap }
-    if to <= index && index < from { return gap }
-    return 0
+  /// The prompts the dragged one passes step aside for it.
+  private func stepAside(_ order: [QueuedView]) {
+    guard let dragging, let from = order.firstIndex(where: { $0.id == dragging }) else { return }
+    let to = target(of: dragging, in: order)
+    let gap = height(dragging)
+    for (index, item) in order.enumerated() where item.id != dragging {
+      let shift: CGFloat = from < index && index <= to ? -gap : to <= index && index < from ? gap : 0
+      rows[item.id]?.transform = CGAffineTransform(translationX: 0, y: shift)
+    }
+  }
+
+  // MARK: Menu
+
+  func contextMenuInteraction(
+    _ interaction: UIContextMenuInteraction, configurationForMenuAtLocation location: CGPoint
+  ) -> UIContextMenuConfiguration? {
+    guard dragging == nil, let row = interaction.view as? QueueRow, let id = row.queueId,
+      let item = items.first(where: { $0.id == id })
+    else { return nil }
+    let order = shown
+    let position = (order.firstIndex { $0.id == id } ?? 0) + 1
+    let count = order.count
+    let traits = traits
+    return UIContextMenuConfiguration(identifier: id as NSString) {
+      QueuePreview(
+        title: "Queued \(position) of \(count)", text: item.text.isEmpty ? "Pictures only" : item.text, traits: traits)
+    } actionProvider: { [weak self] _ in
+      guard let self else { return nil }
+      var actions: [UIMenuElement] = []
+      if self.canEdit && !item.pending {
+        actions.append(UIAction(title: "Edit", image: Tabler.image("pencil")) { _ in self.onEdit(id) })
+      }
+      if self.canSteer && !item.pending {
+        actions.append(UIAction(title: "Send Now", image: Tabler.image("circle-arrow-up")) { _ in self.onSteer(id) })
+      }
+      if id != order.first?.id && !item.pending {
+        actions.append(
+          UIAction(title: "Move to Top", image: Tabler.image("arrow-bar-to-up")) { _ in
+            UIView.animate(springDuration: 0.28, bounce: 0) {
+              self.reorder(id, to: 0, in: self.shown)
+              self.layoutIfNeeded()
+            }
+          })
+      }
+      actions.append(
+        UIAction(
+          title: "Remove", image: Tabler.image("trash"), attributes: item.pending ? [.destructive, .disabled] : .destructive
+        ) { _ in self.onUnqueue(id) })
+      return UIMenu(children: actions)
+    }
   }
 }
 
-private struct ImageStrip: View {
-  @Binding var images: [PendingImage]
+/// One queued prompt: the handle to drag it by, its words, and its buttons.
+private final class QueueRow: UIView {
+  var queueId: String?
+  var onEdit: () -> Void = {}
+  var onSteer: () -> Void = {}
+  var onRemove: () -> Void = {}
+  let handle = UIImageView(image: Tabler.image("grip-horizontal", size: 17))
+  private let text = UILabel()
+  private let pictures = UILabel()
+  private let body = UIControl()
+  private let steer = UIButton(type: .system)
+  private let remove = UIButton(type: .system)
+  private let ground = UIView()
 
-  var body: some View {
-    ScrollView(.horizontal, showsIndicators: false) {
-      HStack(spacing: 8) {
-        ForEach(images) { pending in
-          Image(uiImage: pending.image)
-            .resizable()
-            .scaledToFill()
-            .frame(width: 58, height: 58)
-            .clipShape(.rect(cornerRadius: 14, style: .continuous))
-            .overlay {
-              if pending.path == nil {
-                ProgressView()
-                  .controlSize(.small)
-                  .frame(maxWidth: .infinity, maxHeight: .infinity)
-                  .background(.ultraThinMaterial, in: .rect(cornerRadius: 14, style: .continuous))
-              }
-            }
-            .overlay(alignment: .topTrailing) {
-              Button {
-                images.removeAll { $0.id == pending.id }
-              } label: {
-                Image(systemName: "xmark.circle.fill")
-                  .symbolRenderingMode(.palette)
-                  .foregroundStyle(.white, .black.opacity(0.55))
-                  .font(.system(size: 18))
-              }
-              .buttonStyle(.plain)
-              .offset(x: 5, y: -5)
-              .accessibilityLabel("Remove picture")
-            }
-        }
-      }
-      .padding(.top, 5)
-      .padding(.trailing, 5)
+  /// Picked up and following the finger, on its own ground.
+  var lifted = false {
+    didSet { ground.alpha = lifted ? 1 : 0 }
+  }
+
+  override init(frame: CGRect) {
+    super.init(frame: frame)
+    ground.backgroundColor = .systemBackground
+    ground.layer.cornerRadius = 12
+    ground.layer.cornerCurve = .continuous
+    ground.layer.shadowColor = UIColor.black.cgColor
+    ground.layer.shadowOpacity = 0.12
+    ground.layer.shadowRadius = 10
+    ground.layer.shadowOffset = CGSize(width: 0, height: 4)
+    ground.alpha = 0
+    addPinned(ground)
+
+    handle.tintColor = .tertiaryLabel
+    handle.contentMode = .center
+    handle.isUserInteractionEnabled = true
+    handle.accessibilityLabel = "Reorder"
+    text.textColor = .label
+    text.numberOfLines = 2
+    pictures.textColor = .secondaryLabel
+    let words = UIStackView(arrangedSubviews: [text, pictures])
+    words.axis = .vertical
+    words.spacing = 3
+    words.alignment = .leading
+    words.isUserInteractionEnabled = false
+    body.addPinned(words)
+    body.addAction(UIAction { [weak self] _ in self?.onEdit() }, for: .touchUpInside)
+    body.accessibilityHint = "Edit"
+    steer.setImage(Tabler.image("circle-arrow-up", size: 21), for: .normal)
+    steer.tintColor = .secondaryLabel
+    steer.accessibilityLabel = "Send now"
+    steer.addAction(UIAction { [weak self] _ in self?.onSteer() }, for: .touchUpInside)
+    remove.setImage(Tabler.image("x", size: 15), for: .normal)
+    remove.tintColor = .tertiaryLabel
+    remove.accessibilityLabel = "Remove from the queue"
+    remove.addAction(UIAction { [weak self] _ in self?.onRemove() }, for: .touchUpInside)
+
+    let row = UIStackView(arrangedSubviews: [handle, body, steer, remove])
+    row.axis = .horizontal
+    row.alignment = .center
+    row.spacing = 6
+    addPinned(row, insets: UIEdgeInsets(top: 2, left: 0, bottom: 2, right: 4))
+    NSLayoutConstraint.activate([
+      handle.widthAnchor.constraint(equalToConstant: 28),
+      handle.heightAnchor.constraint(equalToConstant: 36),
+      steer.widthAnchor.constraint(equalToConstant: 30),
+      steer.heightAnchor.constraint(equalToConstant: 30),
+      remove.widthAnchor.constraint(equalToConstant: 30),
+      remove.heightAnchor.constraint(equalToConstant: 30),
+    ])
+  }
+
+  @available(*, unavailable)
+  required init?(coder: NSCoder) { fatalError() }
+
+  func applyFonts(_ traits: UITraitCollection) {
+    text.font = .app(.subheadline, traits: traits)
+    pictures.font = .app(.caption1, traits: traits)
+  }
+
+  func show(_ item: QueuedView, canSteer: Bool, canEdit: Bool, canDrag: Bool) {
+    text.text = item.text
+    text.isHidden = item.text.isEmpty
+    if item.images > 0 {
+      let line = NSMutableAttributedString(attachment: NSTextAttachment(image: Tabler.image("photo", size: 13)))
+      line.append(NSAttributedString(string: item.images == 1 ? " 1 picture" : " \(item.images) pictures"))
+      pictures.attributedText = line
+      pictures.isHidden = false
+    } else {
+      pictures.isHidden = true
     }
-    .frame(height: 64)
+    steer.isHidden = !canSteer
+    body.isEnabled = canEdit
+    remove.isEnabled = !item.pending
+    handle.gestureRecognizers?.forEach { $0.isEnabled = canDrag }
+    alpha = item.pending ? 0.5 : 1
+  }
+}
+
+/// A queued prompt held up on its own, since the row lives on the composer's glass.
+private final class QueuePreview: UIViewController {
+  private let heading: String
+  private let text: String
+  /// The chat's, as a preview is drawn outside it.
+  private let traits: UITraitCollection
+
+  init(title: String, text: String, traits: UITraitCollection) {
+    heading = title
+    self.text = text
+    self.traits = traits
+    super.init(nibName: nil, bundle: nil)
+  }
+
+  @available(*, unavailable)
+  required init?(coder: NSCoder) { fatalError() }
+
+  override func viewDidLoad() {
+    super.viewDidLoad()
+    view.backgroundColor = .systemBackground
+    let title = UILabel()
+    title.text = heading
+    title.font = .app(.caption1, weight: .semibold, traits: traits)
+    title.textColor = .secondaryLabel
+    let body = UILabel()
+    body.text = text
+    body.font = .app(.subheadline, traits: traits)
+    body.numberOfLines = 0
+    let column = UIStackView(arrangedSubviews: [title, body])
+    column.axis = .vertical
+    column.spacing = 4
+    view.addPinned(column, insets: UIEdgeInsets(top: 16, left: 16, bottom: 16, right: 16))
+    let size = view.systemLayoutSizeFitting(
+      CGSize(width: 300, height: UIView.layoutFittingCompressedSize.height),
+      withHorizontalFittingPriority: .required, verticalFittingPriority: .fittingSizeLevel)
+    preferredContentSize = CGSize(width: 300, height: size.height)
+  }
+}
+
+/// The pictures waiting to go with the message, each with a way to take it back.
+private final class ImageStripView: UIScrollView {
+  var onRemove: (UUID) -> Void = { _ in }
+  private let row = UIStackView()
+  private var thumbs: [UUID: ImageThumb] = [:]
+
+  override init(frame: CGRect) {
+    super.init(frame: frame)
+    showsHorizontalScrollIndicator = false
+    alwaysBounceHorizontal = false
+    row.axis = .horizontal
+    row.spacing = 8
+    row.alignment = .bottom
+    row.translatesAutoresizingMaskIntoConstraints = false
+    addSubview(row)
+    NSLayoutConstraint.activate([
+      row.leadingAnchor.constraint(equalTo: contentLayoutGuide.leadingAnchor),
+      row.trailingAnchor.constraint(equalTo: contentLayoutGuide.trailingAnchor, constant: -5),
+      row.topAnchor.constraint(equalTo: contentLayoutGuide.topAnchor, constant: 5),
+      row.bottomAnchor.constraint(equalTo: contentLayoutGuide.bottomAnchor),
+      row.heightAnchor.constraint(equalTo: frameLayoutGuide.heightAnchor, constant: -5),
+    ])
+  }
+
+  @available(*, unavailable)
+  required init?(coder: NSCoder) { fatalError() }
+
+  func show(_ images: [PendingImage]) {
+    let keep = Set(images.map(\.id))
+    for (id, thumb) in thumbs where !keep.contains(id) {
+      thumb.removeFromSuperview()
+      thumbs[id] = nil
+    }
+    for (index, pending) in images.enumerated() {
+      let thumb = thumbs[pending.id] ?? {
+        let made = ImageThumb()
+        made.onRemove = { [weak self] in self?.onRemove(pending.id) }
+        thumbs[pending.id] = made
+        return made
+      }()
+      thumb.show(pending)
+      if row.arrangedSubviews.firstIndex(of: thumb) != index {
+        row.removeArrangedSubview(thumb)
+        row.insertArrangedSubview(thumb, at: min(index, row.arrangedSubviews.count))
+      }
+    }
+  }
+}
+
+private final class ImageThumb: UIView {
+  var onRemove: () -> Void = {}
+  private let picture = UIImageView()
+  private let veil = UIVisualEffectView(effect: UIBlurEffect(style: .systemUltraThinMaterial))
+  private let spinner = UIActivityIndicatorView(style: .medium)
+  private let remove = UIButton(type: .custom)
+
+  override init(frame: CGRect) {
+    super.init(frame: frame)
+    picture.contentMode = .scaleAspectFill
+    picture.clipsToBounds = true
+    picture.layer.cornerRadius = 14
+    picture.layer.cornerCurve = .continuous
+    addPinned(picture)
+    veil.layer.cornerRadius = 14
+    veil.layer.cornerCurve = .continuous
+    veil.clipsToBounds = true
+    addPinned(veil)
+    spinner.transform = CGAffineTransform(scaleX: 0.8, y: 0.8)
+    veil.contentView.addPinned(spinner)
+    remove.setImage(Tabler.image("x", size: 13, fixed: true), for: .normal)
+    remove.tintColor = .white
+    remove.backgroundColor = UIColor.black.withAlphaComponent(0.55)
+    remove.layer.cornerRadius = 10
+    remove.accessibilityLabel = "Remove picture"
+    remove.addAction(UIAction { [weak self] _ in self?.onRemove() }, for: .touchUpInside)
+    remove.translatesAutoresizingMaskIntoConstraints = false
+    addSubview(remove)
+    NSLayoutConstraint.activate([
+      widthAnchor.constraint(equalToConstant: 58),
+      heightAnchor.constraint(equalToConstant: 58),
+      remove.widthAnchor.constraint(equalToConstant: 20),
+      remove.heightAnchor.constraint(equalToConstant: 20),
+      remove.centerXAnchor.constraint(equalTo: trailingAnchor, constant: -5),
+      remove.centerYAnchor.constraint(equalTo: topAnchor, constant: 5),
+    ])
+  }
+
+  @available(*, unavailable)
+  required init?(coder: NSCoder) { fatalError() }
+
+  func show(_ pending: PendingImage) {
+    picture.image = pending.image
+    let uploading = pending.path == nil
+    veil.isHidden = !uploading
+    if uploading { spinner.startAnimating() } else { spinner.stopAnimating() }
   }
 }
 
@@ -1139,41 +1212,26 @@ extension UIImage {
   }
 }
 
-/// The system camera, for a photo to attach.
-struct CameraPicker: UIViewControllerRepresentable {
-  let onPick: (UIImage) -> Void
-  @Environment(\.dismiss) private var dismiss
-
-  func makeUIViewController(context: Context) -> UIImagePickerController {
-    let picker = UIImagePickerController()
-    picker.sourceType = .camera
-    picker.delegate = context.coordinator
-    return picker
+extension UIView {
+  /// Adds `view` filling this one, inset by `insets`.
+  func addPinned(_ view: UIView, insets: UIEdgeInsets = .zero) {
+    view.translatesAutoresizingMaskIntoConstraints = false
+    addSubview(view)
+    NSLayoutConstraint.activate([
+      view.leadingAnchor.constraint(equalTo: leadingAnchor, constant: insets.left),
+      view.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -insets.right),
+      view.topAnchor.constraint(equalTo: topAnchor, constant: insets.top),
+      view.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -insets.bottom),
+    ])
   }
 
-  func updateUIViewController(_ controller: UIImagePickerController, context: Context) {}
-
-  func makeCoordinator() -> Coordinator {
-    Coordinator(parent: self)
-  }
-
-  final class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
-    let parent: CameraPicker
-
-    init(parent: CameraPicker) {
-      self.parent = parent
+  /// The nearest view of `type` this one sits in, itself included.
+  func superview<T: UIView>(of type: T.Type) -> T? {
+    var current: UIView? = self
+    while let view = current {
+      if let match = view as? T { return match }
+      current = view.superview
     }
-
-    func imagePickerController(
-      _ picker: UIImagePickerController,
-      didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]
-    ) {
-      if let image = info[.originalImage] as? UIImage { parent.onPick(image) }
-      parent.dismiss()
-    }
-
-    func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
-      parent.dismiss()
-    }
+    return nil
   }
 }

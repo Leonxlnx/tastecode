@@ -1,9 +1,12 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { Server } from 'node:net'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { WebSocket } from 'ws'
 import { PhonePairingPayloadSchema, type PhoneAccessStatus } from '@harness/contracts'
 import {
   isReachableAddress,
+  PHONE_ACCESS_UNAVAILABLE,
   PhoneAccess,
+  phoneAccessAvailable,
   phoneAddresses,
   type PhoneLinkSocket,
 } from './phone-access.js'
@@ -32,18 +35,21 @@ type Harness = {
   links: PhoneLinkSocket[]
   changes: PhoneAccessStatus[]
   state: StoredValue
+  keyWrites: string[]
 }
 
 type StoredValue = { value: string | undefined }
 
 const opened: PhoneAccess[] = []
 
-function harness(): Harness {
+function harness(options: { available?: boolean; stored?: string } = {}): Harness {
   const links: PhoneLinkSocket[] = []
   const changes: PhoneAccessStatus[] = []
-  const state: StoredValue = { value: undefined }
+  const state: StoredValue = { value: options.stored }
+  const keyWrites: string[] = []
   let key: string | undefined
   const access = new PhoneAccess({
+    available: options.available ?? true,
     store: {
       phoneAccessState: () => state.value,
       setPhoneAccessState: (value) => {
@@ -54,6 +60,7 @@ function harness(): Harness {
       read: () => key,
       write: (value) => {
         key = value
+        keyWrites.push(value)
       },
     },
     port: 0,
@@ -64,10 +71,11 @@ function harness(): Harness {
     onChanged: (status) => changes.push(status),
   })
   opened.push(access)
-  return { access, links, changes, state }
+  return { access, links, changes, state, keyWrites }
 }
 
 afterEach(async () => {
+  vi.restoreAllMocks()
   await Promise.all(opened.splice(0).map((access) => access.close()))
 })
 
@@ -256,6 +264,68 @@ describe('phone access', () => {
     linked.socket.send(forged)
     await linked.closed
     expect(links[0]?.readyState).toBe(3)
+  })
+})
+
+describe('phone access in a build without it', () => {
+  // What an earlier dev build left behind: access on and one paired phone.
+  const leftOn = JSON.stringify({
+    enabled: true,
+    devices: [{ id: 'd1', name: 'iPhone', publicKey: 'A'.repeat(43), pairedAt: 1 }],
+  })
+
+  it('is offered only when HARNESS_PHONE_ACCESS is exactly 1', () => {
+    expect(phoneAccessAvailable({ HARNESS_PHONE_ACCESS: '1' })).toBe(true)
+    expect(phoneAccessAvailable({})).toBe(false)
+    expect(phoneAccessAvailable({ HARNESS_PHONE_ACCESS: '' })).toBe(false)
+    expect(phoneAccessAvailable({ HARNESS_PHONE_ACCESS: '0' })).toBe(false)
+    expect(phoneAccessAvailable({ HARNESS_PHONE_ACCESS: 'true' })).toBe(false)
+  })
+
+  it('never opens the listener, even when an earlier build left access on', async () => {
+    const listen = vi.spyOn(Server.prototype, 'listen')
+    const { access, state, keyWrites } = harness({ available: false, stored: leftOn })
+
+    await expect(access.resume()).rejects.toThrow(PHONE_ACCESS_UNAVAILABLE)
+    await expect(access.setEnabled(true)).rejects.toThrow(PHONE_ACCESS_UNAVAILABLE)
+    await expect(access.startPairing()).rejects.toThrow(PHONE_ACCESS_UNAVAILABLE)
+
+    expect(listen).not.toHaveBeenCalled()
+    // No phone link key is read or made, so nothing touches the keychain either.
+    expect(keyWrites).toEqual([])
+    // The refusals change nothing a later dev build would read.
+    expect(state.value).toBe(leftOn)
+    expect(access.status()).toEqual({
+      available: false,
+      enabled: false,
+      listening: false,
+      port: 0,
+      serverName: 'Studio Mac',
+      addresses: [],
+      devices: [{ id: 'd1', name: 'iPhone', pairedAt: 1, connected: false }],
+    })
+  })
+
+  it('still turns access off, cancels a code and forgets a phone', async () => {
+    const listen = vi.spyOn(Server.prototype, 'listen')
+    const { access, state, changes } = harness({ available: false, stored: leftOn })
+
+    expect(access.cancelPairing()).toMatchObject({ available: false, listening: false })
+    expect(access.removeDevice('d1').devices).toEqual([])
+    const off = await access.setEnabled(false)
+    expect(off).toMatchObject({ available: false, enabled: false, listening: false })
+    expect(JSON.parse(state.value ?? '')).toEqual({ enabled: false, devices: [] })
+    expect(changes.every((status) => status.available === false && !status.listening)).toBe(true)
+    expect(listen).not.toHaveBeenCalled()
+  })
+
+  it('says it is available when it is, and only then listens', async () => {
+    const listen = vi.spyOn(Server.prototype, 'listen')
+    const { access } = harness()
+    expect(access.status()).toMatchObject({ available: true, listening: false })
+    const { status } = await access.startPairing()
+    expect(status).toMatchObject({ available: true, enabled: true, listening: true })
+    expect(listen).toHaveBeenCalledTimes(1)
   })
 })
 

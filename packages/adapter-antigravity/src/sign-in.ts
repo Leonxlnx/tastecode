@@ -1,8 +1,6 @@
-import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import type { Account } from '@harness/contracts'
-import { spawnOwned } from '@harness/proc'
 import { captureCli, type CapturedCli } from '@harness/proc/cli'
-import { antigravityCommand } from './command.js'
+import { ANTIGRAVITY_ENVIRONMENT, antigravityCommand, spawnAgy, type AgySpawn } from './command.js'
 
 /**
  * Whether agy is signed in, from its public `agy models` output. agy has no
@@ -19,12 +17,6 @@ import { antigravityCommand } from './command.js'
  * Every agy start launches its language server and may launch its
  * self-updater, so the sign-in check and the model picker share one read.
  */
-
-type AgySpawn = (
-  command: string,
-  args: string[],
-  options: { stdio: ['pipe', 'pipe', 'pipe']; windowsHide: boolean },
-) => ChildProcessWithoutNullStreams
 
 /**
  * `agy models` answered in 4 s on a quiet machine, 12.8 s cold under load and
@@ -45,8 +37,9 @@ type SharedRead = { output: Promise<CapturedCli>; sharedUntil: number }
 let shared: SharedRead | undefined
 
 /** One `agy models` run. The CLI waits forever on a piped stdin that stays open. */
-export function readAgyModels(spawn: AgySpawn = spawnOwned): Promise<CapturedCli> {
+export function readAgyModels(spawn: AgySpawn = spawnAgy): Promise<CapturedCli> {
   const child = spawn(antigravityCommand(), ['models'], {
+    env: ANTIGRAVITY_ENVIRONMENT,
     stdio: ['pipe', 'pipe', 'pipe'],
     windowsHide: true,
   })

@@ -414,6 +414,116 @@ describe('Composer draft state', () => {
     expect(onSend).toHaveBeenCalledWith('/feedback hello', [])
   })
 
+  it.each(['/clear', '/new', ' /CLEAR '])(
+    'starts a new chat for %s instead of sending it',
+    (text) => {
+      const onSend = vi.fn()
+      const onNewChatCommand = vi.fn()
+      renderComposer(onSend, { onNewChatCommand, projectPath: undefined })
+      const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+      fireEvent.change(composer, { target: { value: text } })
+      fireEvent.keyDown(composer, { key: 'Enter' })
+      expect(onNewChatCommand).toHaveBeenCalledTimes(1)
+      expect(onSend).not.toHaveBeenCalled()
+      expect(composer.value).toBe('')
+    },
+  )
+
+  it('sends /clear with more words, or with no handler, to the provider as typed', () => {
+    const onSend = vi.fn()
+    const onNewChatCommand = vi.fn()
+    renderComposer(onSend, { onNewChatCommand })
+    const composer = screen.getByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: '/clear the build cache' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    expect(onSend).toHaveBeenCalledWith('/clear the build cache', [])
+    expect(onNewChatCommand).not.toHaveBeenCalled()
+  })
+
+  it('opens the model picker for /model instead of sending it', async () => {
+    const onSend = vi.fn()
+    const onModelSelectorOpen = vi.fn()
+    renderComposer(onSend, {
+      onModelSelectorOpen,
+      models: [
+        {
+          key: 'codex:model',
+          provider: 'codex',
+          sourceName: 'Codex',
+          mark: 'openai',
+          model: {
+            id: 'model',
+            displayName: 'Test model',
+            isDefault: true,
+            reasoningEfforts: [],
+            serviceTiers: [],
+          },
+        },
+      ],
+    })
+    await screen.findByRole('button', { name: 'Model and reasoning' })
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+    fireEvent.change(composer, { target: { value: '/model' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    expect(onModelSelectorOpen).toHaveBeenCalledTimes(1)
+    expect(onSend).not.toHaveBeenCalled()
+    expect(composer.value).toBe('')
+  })
+
+  it.each([
+    ['/resume', 'resume'],
+    ['/continue', 'resume'],
+    ['/config', 'settings'],
+    ['/mcp', 'mcp'],
+    ['/skills', 'skills'],
+    ['/status', 'usage'],
+    ['/cost', 'usage'],
+    ['/logout', 'login'],
+  ])('opens TasteCode’s own screen for %s instead of sending it', (text, screenName) => {
+    const onSend = vi.fn()
+    const onAppScreenCommand = vi.fn()
+    renderComposer(onSend, { onAppScreenCommand })
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+    fireEvent.change(composer, { target: { value: text } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    expect(onAppScreenCommand).toHaveBeenCalledWith(screenName)
+    expect(onSend).not.toHaveBeenCalled()
+    expect(composer.value).toBe('')
+  })
+
+  it('sends /mcp with arguments, or with no handler, to the provider as typed', () => {
+    const onSend = vi.fn()
+    const onAppScreenCommand = vi.fn()
+    const { unmount } = renderComposer(onSend, { onAppScreenCommand })
+    const composer = screen.getByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: '/mcp login github' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    expect(onSend).toHaveBeenCalledWith('/mcp login github', [])
+    expect(onAppScreenCommand).not.toHaveBeenCalled()
+    unmount()
+    renderComposer(onSend)
+    fireEvent.change(screen.getByPlaceholderText('Do anything'), { target: { value: '/mcp' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    expect(onSend).toHaveBeenLastCalledWith('/mcp', [])
+  })
+
+  it.each(['/permissions', '/approvals'])(
+    'opens the permissions picker for %s instead of sending it',
+    async (text) => {
+      const onSend = vi.fn()
+      renderComposer(onSend)
+      const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+      fireEvent.change(composer, { target: { value: text } })
+      fireEvent.keyDown(composer, { key: 'Enter' })
+      expect(onSend).not.toHaveBeenCalled()
+      expect(composer.value).toBe('')
+      await waitFor(() =>
+        expect(
+          screen.getByRole('button', { name: 'Permissions' }).getAttribute('aria-expanded'),
+        ).toBe('true'),
+      )
+    },
+  )
   it('clears the saved draft before handing the text over', () => {
     const events: string[] = []
     renderComposer((text) => events.push(`send ${text}`), {
@@ -474,7 +584,7 @@ describe('Composer docking motion', () => {
       expect(animate.mock.instances[0]).toBe(box)
       expect(animate).toHaveBeenCalledWith(
         [{ transform: 'translate3d(0px, 420px, 0)' }, { transform: 'translate3d(0, 0, 0)' }],
-        { duration: 320, easing: 'cubic-bezier(0.23, 1, 0.32, 1)' },
+        { duration: 260, easing: 'cubic-bezier(0.32, 0.72, 0, 1)' },
       )
     } finally {
       if (originalAnimate) {
@@ -1631,7 +1741,7 @@ describe('Composer provider commands', () => {
       screen
         .getAllByRole('option')
         .map((option) => option.querySelector('.composer-resource-picker__name')?.textContent),
-    ).toEqual(['/side', '/feedback', '/code-review', '/context', '/compact'])
+    ).toEqual(['/permissions', '/side', '/feedback', '/code-review', '/context', '/compact'])
     expect(screen.getByRole('option', { name: /\/feedback/ }).textContent).toContain(
       'Send feedback to the TasteCode team',
     )
@@ -1919,17 +2029,20 @@ describe('Composer height', () => {
     const cappedText = 'line\n'.repeat(11)
     fireEvent.change(composer, { target: { value: cappedText } })
     await waitFor(() => expect(composer.style.height).toBe('242px'))
-    resize?.([{ contentRect: { width: 500 } } as ResizeObserverEntry], {} as ResizeObserver)
-    resize?.([{ contentRect: { width: 700 } } as ResizeObserverEntry], {} as ResizeObserver)
-
-    contentHeight = 120
     const readsAtCap = layoutReads
-    fireEvent.input(composer, {
-      target: { value: `${cappedText}x` },
-      inputType: 'insertText',
-      data: 'x',
-    })
+    const resizeTo = (width: number) =>
+      resize?.([{ contentRect: { width } } as ResizeObserverEntry], {} as ResizeObserver)
+    // The first report is where it starts; then it widens over a few frames.
+    resizeTo(500)
+    contentHeight = 120
+    resizeTo(640)
+    resizeTo(700)
+    // Nothing is measured while the width is still moving.
+    expect(layoutReads).toBe(readsAtCap)
+
+    // Once it holds still, the draft is fitted again without a key press.
     await waitFor(() => expect(composer.style.height).toBe('120px'))
+    expect(composer.style.overflowY).toBe('hidden')
     expect(layoutReads).toBe(readsAtCap + 2)
   })
 

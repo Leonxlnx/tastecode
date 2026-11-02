@@ -4,6 +4,8 @@ import UIKit
 /// What a transcript's views ask of the screen that holds them.
 @MainActor
 protocol TranscriptContext: AnyObject {
+  /// The type the rows were laid out in, for the few labels a cell sets itself.
+  var style: TranscriptStyle { get }
   func image(for key: String) -> UIImage?
   /// Whether a picture could not be had, so a row stops waiting for it.
   func imageMissing(_ key: String) -> Bool
@@ -390,8 +392,7 @@ final class CodeBlockView: UIView {
     scroll.alwaysBounceHorizontal = false
     scroll.isDirectionalLockEnabled = true
     addSubview(scroll)
-    copy.setImage(UIImage(systemName: "square.on.square"), for: .normal)
-    copy.setPreferredSymbolConfiguration(UIImage.SymbolConfiguration(textStyle: .footnote), forImageIn: .normal)
+    copy.setImage(Tabler.image("copy", size: 16), for: .normal)
     copy.tintColor = .tertiaryLabel
     copy.addTarget(self, action: #selector(copyCode), for: .touchUpInside)
     addSubview(copy)
@@ -433,11 +434,11 @@ final class CodeBlockView: UIView {
   @objc private func copyCode() {
     UIPasteboard.general.string = code
     UIImpactFeedbackGenerator(style: .light).impactOccurred()
-    copy.setImage(UIImage(systemName: "checkmark"), for: .normal)
+    copy.setImage(Tabler.image("check", size: 16), for: .normal)
     copy.accessibilityLabel = "Copied"
     DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) { [weak self] in
       guard let self else { return }
-      self.copy.setImage(UIImage(systemName: "square.on.square"), for: .normal)
+      self.copy.setImage(Tabler.image("copy", size: 16), for: .normal)
       self.copy.accessibilityLabel = "Copy \(self.language.isEmpty ? "code" : self.language)"
     }
   }
@@ -495,7 +496,7 @@ final class ImageBlockView: UIView {
   private let picture = UIImageView()
   private let placeholder = UIView()
   private let spinner = UIActivityIndicatorView(style: .medium)
-  private let icon = UIImageView(image: UIImage(systemName: "photo"))
+  private let icon = UIImageView(image: Tabler.image("photo", size: 18))
   private let label = TextBlockView()
   private weak var context: TranscriptContext?
   private var layout: ImageLayout?
@@ -515,7 +516,6 @@ final class ImageBlockView: UIView {
     spinner.hidesWhenStopped = true
     icon.tintColor = .secondaryLabel
     icon.contentMode = .scaleAspectFit
-    icon.preferredSymbolConfiguration = UIImage.SymbolConfiguration(textStyle: .subheadline)
     [placeholder, spinner, picture, icon, label].forEach(addSubview)
     registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (view: ImageBlockView, _: UITraitCollection) in
       view.updateBorder()

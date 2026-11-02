@@ -373,7 +373,8 @@ function menuEntries(inventory: Inventory, ownCommands: readonly AppCommand[]) {
   }
   for (const command of ownCommands) addCommand(appCommandResource(command))
   const providerCommands = [...(inventory.commands?.commands ?? [])]
-  // The provider's own order, but its commands before its skills.
+  // The provider's own order within groups: its built-ins, custom commands,
+  // skills, plugin commands and skills, then MCP prompts.
   providerCommands.sort((left, right) => commandOrder(left) - commandOrder(right))
   for (const command of providerCommands) addCommand(commandResource(command))
   const skills = (inventory.skills?.skills ?? []).map((skill) =>
@@ -385,7 +386,10 @@ function menuEntries(inventory: Inventory, ownCommands: readonly AppCommand[]) {
     '/': [...commands, ...slashSkills],
     $: skills,
     '@': (inventory.mcp?.servers ?? []).map((server) =>
-      menuEntry(mcpResource(server), [server.displayName ?? server.id, server.id].map(lowercase)),
+      menuEntry(
+        mcpResource(server, inventory.mcp?.capabilities.startOAuth === true),
+        [server.displayName ?? server.id, server.id].map(lowercase),
+      ),
     ),
   }
 }
@@ -454,8 +458,8 @@ function commandResource(command: ProviderCommand): ComposerResource {
     kind: 'command',
     id: command.name,
     name: `/${command.name}`,
-    description: command.description.trim() || (command.kind === 'skill' ? 'Skill' : 'Command'),
-    scope: command.kind === 'skill' ? 'Skill' : 'Command',
+    description: command.description.trim() || commandScope(command),
+    scope: commandScope(command),
     token: `/${command.name}`,
     available: true,
     commandKind: command.kind ?? 'command',
@@ -487,7 +491,18 @@ function appCommandResource(command: AppCommand): ComposerResource {
 }
 
 function commandOrder(command: ProviderCommand): number {
-  return command.kind === 'skill' ? 1 : 0
+  if (command.source === 'mcp') return 4
+  if (command.source === 'plugin') return 3
+  if (command.kind === 'skill') return 2
+  return command.source === 'custom' ? 1 : 0
+}
+
+/** What the provider says it is, in the words Claude Code's own menu uses. */
+function commandScope(command: ProviderCommand): string {
+  if (command.source === 'mcp') return 'MCP prompt'
+  if (command.kind === 'skill') return command.source === 'plugin' ? 'Plugin skill' : 'Skill'
+  if (command.source === 'plugin') return 'Plugin command'
+  return command.source === 'custom' ? 'Custom command' : 'Command'
 }
 
 function skillResource(skill: Skill): ComposerResource {
@@ -506,11 +521,14 @@ function skillResource(skill: Skill): ComposerResource {
   }
 }
 
-function mcpResource(server: McpServer): ComposerResource {
+/** `canSignIn`: TasteCode can start this provider's MCP sign-in from MCP settings. */
+function mcpResource(server: McpServer, canSignIn: boolean): ComposerResource {
   const unavailableReason = !server.enabled
     ? 'Disabled'
     : server.auth?.status === 'sign_in_required'
-      ? 'Sign in required'
+      ? canSignIn
+        ? 'Sign in required'
+        : 'Sign in outside TasteCode'
       : server.startup?.state === 'failed'
         ? server.startup.message
         : undefined

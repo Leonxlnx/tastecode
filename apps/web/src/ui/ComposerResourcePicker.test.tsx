@@ -32,6 +32,7 @@ function createResourceTransport(
     loading: false,
   }),
   skills: unknown[] = [ANIMATE_SKILL],
+  mcpAuth: unknown = { status: 'not_required' },
 ) {
   return new TestTransport(async (method) => {
     if (method === 'skills.list') {
@@ -59,7 +60,7 @@ function createResourceTransport(
             description: 'Search official product documentation',
             scope: 'global',
             enabled: true,
-            auth: { status: 'not_required' },
+            auth: mcpAuth,
             startup: { state: 'ready' },
             tools: [],
             resources: [],
@@ -128,6 +129,19 @@ describe('ComposerResourcePicker', () => {
     )
   })
 
+  it('says a server needs sign-in outside TasteCode when TasteCode cannot start it', async () => {
+    renderPicker(
+      createResourceTransport(undefined, undefined, {
+        status: 'sign_in_required',
+        method: 'oauth',
+      }),
+      { marker: '@', query: '', start: 0, end: 1 },
+      { provider: 'claude-code' },
+    )
+    const docs = await screen.findByRole('option', { name: /Official Docs/ })
+    expect(docs.textContent).toContain('Sign in outside TasteCode')
+  })
+
   it('lists provider commands before skills and asks the open chat for them', async () => {
     const transport = createResourceTransport(() => ({
       commands: [
@@ -149,6 +163,41 @@ describe('ComposerResourcePicker', () => {
       projectPath: '/work/project',
       threadId: 'thread-1',
     })
+  })
+
+  it('groups commands by source: built-in, custom, skills, plugins, then MCP prompts', async () => {
+    const transport = createResourceTransport(() => ({
+      commands: [
+        { name: 'docs-search', description: '', source: 'mcp' },
+        { name: 'acme:lint', description: 'Lint with Acme rules', source: 'plugin' },
+        { name: 'pdf', description: 'Work with PDF files', kind: 'skill', source: 'plugin' },
+        { name: 'standup', description: '', source: 'custom' },
+        { name: 'simplify', description: 'Simplify the diff', kind: 'skill', source: 'builtin' },
+        { name: 'context', description: 'Show current context usage', source: 'builtin' },
+        { name: 'legacy', description: 'No source reported' },
+      ],
+      loading: false,
+    }))
+    renderPicker(transport, slash(''), { threadId: 'thread-1' })
+
+    await screen.findByRole('option', { name: /\/context/ })
+    expect(optionNames()).toEqual([
+      '/context',
+      '/legacy',
+      '/standup',
+      '/simplify',
+      '/acme:lint',
+      '/pdf',
+      '/docs-search',
+      'Animate',
+    ])
+    // An empty description says what kind of command it is, as Claude Code's menu does.
+    expect(screen.getByRole('option', { name: /\/standup/ }).textContent).toContain(
+      'Custom command',
+    )
+    expect(screen.getByRole('option', { name: /\/docs-search/ }).textContent).toContain(
+      'MCP prompt',
+    )
   })
 
   it('ranks exact names, then name prefixes, then aliases, then other matches', async () => {

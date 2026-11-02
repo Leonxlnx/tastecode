@@ -18,6 +18,7 @@ import { cliProbe, invalidateCliProbes } from './cli-probe.js'
 import { stopModelListings } from './runtime-loader.js'
 import { readWorkspaceDiff, StaleDiffSnapshotError } from './diff-review.js'
 import { Orchestrator, resolveWorkspacePath, type LifecycleScheduleHint } from './orchestrator.js'
+import { defaultSkillsRoot } from './default-skills.js'
 import { checkForUpdates } from './update-check.js'
 import type { FeedbackConfig } from './feedback-config.js'
 import { FeedbackService, providerVersionLabel } from './feedback.js'
@@ -29,6 +30,7 @@ import type { CheckoutPullRequests } from './checkout-pull-request.js'
 import type { PullRequestService } from './pull-requests.js'
 import { sourceAccount } from './account-directory.js'
 import { ProviderAccounts } from './provider-accounts.js'
+import { providerOffered } from './provider-edition.js'
 import { DEFAULT_PORT } from './server-config.js'
 import { Store } from './store.js'
 import { createProjectListProjector, type ProjectListState } from './project-list.js'
@@ -37,6 +39,7 @@ import {
   DEFAULT_PHONE_PORT,
   PHONE_METHODS,
   PhoneAccess,
+  phoneAccessAvailable,
   type PhoneLinkSocket,
 } from './phone-access.js'
 import { readCredential, writeCredential } from './credentials.js'
@@ -258,7 +261,10 @@ export function startServer(
   const orchestrator = new Orchestrator(store, {
     onEvent: (threadId, event, seq, serializedEvent) => {
       if (event.type === 'item.delta') streamQuiet.noteDelta()
-      else if (event.type === 'turn.completed') turnEndedInCheckout(threadId)
+      else if (event.type === 'turn.completed') {
+        turnEndedInCheckout(threadId)
+        if (orchestrator.awaitsProviderTitle(threadId)) void nameUnnamedChat(threadId)
+      }
       if (serializedEvent === undefined) {
         push.broadcast('thread.event', { threadId, event, seq })
       } else {
@@ -297,6 +303,7 @@ export function startServer(
       push.broadcast('usage.changed', accountId ? { provider, accountId } : { provider }),
     onLimitsChanged: (source) => push.broadcast('usage.limits', { source }),
     providerBinary: async (provider) => (await providerService).providerBinary(provider),
+    defaultSkillsRoot: defaultSkillsRoot(),
     onModelsChanged: (provider, agent, accountId) =>
       push.broadcast('models.changed', {
         provider,
@@ -570,6 +577,7 @@ export function startServer(
   // One identity per data folder: a second profile pairs its own phones.
   const phoneKeyCredential = `phone-link.server-key.${createHash('sha256').update(databasePath).digest('hex').slice(0, 12)}`
   const phoneAccess = new PhoneAccess({
+    available: phoneAccessAvailable(process.env),
     store,
     keys: {
       read: () => {
@@ -597,6 +605,20 @@ export function startServer(
 
   let listChange: ReturnType<typeof setTimeout> | undefined
   /** Coalesces a burst (a new chat is started, renamed and titled within moments). */
+  /**
+   * A chat left for its provider to name still has its stand-in title after a
+   * turn: history is read first, so a name the provider did write wins, and
+   * only then does the title model write one.
+   */
+  async function nameUnnamedChat(threadId: string): Promise<void> {
+    try {
+      if (providerHistory && !historyClosing) await (await providerHistory).refresh()
+      if (await orchestrator.nameUnnamedChat(threadId)) announceListChange()
+    } catch {
+      // The chat keeps its first-prompt title; renaming it settles that too.
+    }
+  }
+
   function announceListChange(): void {
     listChange ??= setTimeout(() => {
       listChange = undefined
@@ -844,6 +866,15 @@ export function startServer(
       case 'providers.updateContextSettings': {
         const p = parseParams(method, params)
         return orchestrator.updateContextSettings(p.provider, p.settings)
+      }
+
+      case 'providers.runtimeSettings':
+        parseParams(method, params)
+        return orchestrator.runtimeSettings()
+
+      case 'providers.updateRuntimeSettings': {
+        const p = parseParams(method, params)
+        return orchestrator.updateRuntimeSettings(p.provider, p.runtime)
       }
 
       case 'providers.accountContextSettings':
@@ -1158,6 +1189,7 @@ export function startServer(
       }
 
       case 'acp.agents': {
+        if (!providerOffered('acp')) return { agents: [] }
         const { acpCanSignOut, detectAgents } = await import('@harness/adapter-acp/agents')
         const agents = await detectAgents()
         return {
@@ -1584,18 +1616,21 @@ export function startServer(
 
       case 'thread.sendTurn': {
         const p = parseParams(method, params)
-        await loadProviderHistory(p.threadId)
-        const result = await orchestrator.submitTurn(
-          p.threadId,
-          p.text,
-          p.attachments,
-          {
-            model: p.model,
-            effort: p.effort,
-            serviceTier: p.serviceTier,
-          },
-          p.clientSubmissionId,
-        )
+        // A Stop sent right behind the prompt waits for it, history read included.
+        const result = await orchestrator.trackSubmission(p.threadId, async () => {
+          await loadProviderHistory(p.threadId)
+          return orchestrator.submitTurn(
+            p.threadId,
+            p.text,
+            p.attachments,
+            {
+              model: p.model,
+              effort: p.effort,
+              serviceTier: p.serviceTier,
+            },
+            p.clientSubmissionId,
+          )
+        })
         // A client that names its model sent with that setup; the others follow it.
         if (p.model !== undefined) adoptTurnSettings(p.threadId, p)
         return result

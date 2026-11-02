@@ -101,8 +101,15 @@ describe('ACP agent library', () => {
   })
 
   it('installs from the vendor script on each platform it publishes one for', () => {
-    const devin = findAgentSpec('devin')!
-    expect(devin.setup.installCommand).toContain('bash')
+    const command = findAgentSpec('devin')!.setup.installCommand ?? ''
+    // Devin publishes a PowerShell setup for Windows, which runs as an encoded
+    // command, and a script for bash elsewhere.
+    const script = command.startsWith('powershell.exe')
+      ? Buffer.from(command.slice(command.lastIndexOf(' ') + 1), 'base64').toString('utf16le')
+      : command
+    expect(script).toContain(
+      process.platform === 'win32' ? 'https://static.devin.ai/cli/setup.ps1' : 'bash',
+    )
     expect(findAgentSpec('copilot')!.setup.installCommand).toBe('npm install -g @github/copilot')
   })
 })

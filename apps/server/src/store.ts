@@ -19,6 +19,7 @@ import {
   DomainEventSchema,
   ProviderContextSettingsMapSchema,
   ProviderIdSchema,
+  ProviderRuntimeSettingsSchema,
   SidebarSettingsSchema,
 } from '@harness/contracts'
 import type {
@@ -31,6 +32,7 @@ import type {
   ProviderContextSettingsMap,
   ProviderId,
   ProviderHistorySession,
+  ProviderRuntimeSettings,
   SidebarSettings,
   SessionSearchResult,
   ThreadLifecycle,
@@ -59,6 +61,8 @@ const BACKGROUND_MODEL_SETTING = 'background-model'
 const PROVIDER_CONTEXT_SETTING = 'provider-context'
 /** Further accounts' own context settings; the rest follow their provider's. */
 const ACCOUNT_CONTEXT_SETTING = 'provider-account-context'
+/** The runtime each provider launches through; a provider without one uses its default. */
+const PROVIDER_RUNTIME_SETTING = 'provider-runtime'
 const FEEDBACK_LEDGER_SETTING = 'feedback-ledger'
 const MODEL_LISTS_SETTING = 'model-lists'
 const PHONE_ACCESS_SETTING = 'phone-access'
@@ -1004,6 +1008,7 @@ export class Store {
   #backgroundModelPreferenceCache: BackgroundModelPreference | undefined
   #providerContextSettingsCache: ProviderContextSettingsMap | undefined
   #accountContextSettingsCache: readonly AccountContextSettings[] | undefined
+  #providerRuntimeSettingsCache: ProviderRuntimeSettings | undefined
   /**
    * Compact replays by thread. `tail` is false once an event lands after the
    * snapshot: the entry still serves as a base and for older history pages.
@@ -2429,6 +2434,35 @@ export class Store {
     this.#writeAppSetting.run(PROVIDER_CONTEXT_SETTING, JSON.stringify(next))
     this.#providerContextSettingsCache = Object.freeze(next)
     return this.#providerContextSettingsCache
+  }
+
+  providerRuntimeSettings(): ProviderRuntimeSettings {
+    if (this.#providerRuntimeSettingsCache) return this.#providerRuntimeSettingsCache
+    const row = sqliteRow<StringValueRow>(this.#readAppSetting, PROVIDER_RUNTIME_SETTING)
+    let settings: ProviderRuntimeSettings = {}
+    if (row) {
+      try {
+        settings = ProviderRuntimeSettingsSchema.parse(JSON.parse(row.value))
+      } catch {
+        // A shape a newer build wrote leaves every engine on its default runtime.
+        console.warn('[store] unreadable provider runtime settings, using engine defaults')
+      }
+    }
+    this.#providerRuntimeSettingsCache = Object.freeze(settings)
+    return this.#providerRuntimeSettingsCache
+  }
+
+  /** `null` returns the provider to its default runtime. */
+  updateProviderRuntimeSettings(
+    provider: ProviderId,
+    runtime: string | null,
+  ): ProviderRuntimeSettings {
+    const next: ProviderRuntimeSettings = { ...this.providerRuntimeSettings() }
+    if (runtime === null) delete next[provider]
+    else next[provider] = runtime
+    this.#writeAppSetting.run(PROVIDER_RUNTIME_SETTING, JSON.stringify(next))
+    this.#providerRuntimeSettingsCache = Object.freeze(next)
+    return this.#providerRuntimeSettingsCache
   }
 
   accountContextSettings(): readonly AccountContextSettings[] {

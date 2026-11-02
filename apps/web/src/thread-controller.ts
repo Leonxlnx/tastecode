@@ -57,11 +57,21 @@ const BACKGROUND_COMPACTION_CHECK_CHARACTERS = 64 * 1024
 export const NEWEST_HISTORY_TURNS = 10
 /** Whole turns per older page while scrolling up. */
 export const OLDER_HISTORY_TURNS = 20
+/** A visible transcript column. Column 0 is the only one without a split. */
+export type PaneSlot = 0 | 1
 
 /** Owns transcript, replay, submission, queue and draft lifetimes. React reads
- * snapshots and issues commands; streaming updates publish through the frame store. */
+ * snapshots and issues commands; streaming updates publish through the frame store
+ * of the column that shows the chat. */
 export class ThreadController {
-  readonly frames = new ThreadFrameStore(emptyThread)
+  /** One frame store per visible column. A mounted transcript keeps its column's
+   * store for life, so moving focus between columns never swaps a store under it. */
+  readonly columns: readonly [ThreadFrameStore, ThreadFrameStore] = [
+    new ThreadFrameStore(emptyThread),
+    new ThreadFrameStore(emptyThread),
+  ]
+  #shown: [string | undefined, string | undefined] = [undefined, undefined]
+  #focused: PaneSlot = 0
   #states = new Map<string, ThreadState>()
   #sequences = new Map<string, number>()
   #submissions = new Map<string, Map<string, PendingSubmission>>()
@@ -80,7 +90,10 @@ export class ThreadController {
   #queueReads = new Map<string, number>()
   #recoveries = new Map<string, Set<object>>()
   #olderReads = new Map<string, { cursor: string; read: Promise<void> }>()
+  /** The focused column's chat: the one App's single-chat state follows. */
   #activeId: string | undefined
+  /** The other column's chat, streamed like the active one while it is shown. */
+  #besideId: string | undefined
   #frame: number | undefined
   #recoveryRevision = 0
   #partialThreadIds = { has: (id: string) => !this.#sequences.has(id) }
@@ -93,8 +106,54 @@ export class ThreadController {
     this.#drafts = parseComposerDrafts(draftStorage?.read() ?? null)
   }
 
+  /** The focused column's frame store. */
+  get frames(): ThreadFrameStore {
+    return this.columns[this.#focused]
+  }
+  get focusedSlot(): PaneSlot {
+    return this.#focused
+  }
+  /** Show `id` in the focused column. */
   activate(id: string | undefined): void {
+    this.#shown[this.#focused] = id
     this.#activeId = id
+  }
+  /** Show `id` in a column and publish what is cached for it there. */
+  show(slot: PaneSlot, id: string | undefined): void {
+    this.#shown[slot] = id
+    this.#syncVisible()
+    if (id === undefined) return
+    this.#backgroundCharacters.delete(id)
+    this.columns[slot].publish(this.flush(id))
+  }
+  /** Move focus to a column; its chat becomes the active one. */
+  focus(slot: PaneSlot): void {
+    this.#focused = slot
+    this.#syncVisible()
+  }
+  shown(slot: PaneSlot): string | undefined {
+    return this.#shown[slot]
+  }
+  #syncVisible(): void {
+    this.#activeId = this.#shown[this.#focused]
+    this.#besideId = this.#shown[this.#focused === 0 ? 1 : 0]
+  }
+  /** True for a chat shown in either column. Hidden chats keep the lighter buffers. */
+  isVisible(id: string): boolean {
+    return id === this.#activeId || id === this.#besideId
+  }
+  /** The frame store of the column showing `id`, if one does. */
+  storeFor(id: string): ThreadFrameStore | undefined {
+    if (id === this.#shown[0]) return this.columns[0]
+    if (id === this.#shown[1]) return this.columns[1]
+    return undefined
+  }
+  /** Draw a state into the column showing its chat; a hidden chat is not drawn. */
+  publish(id: string, state: ThreadState): void {
+    this.storeFor(id)?.publish(state)
+  }
+  #besideIds(): ReadonlySet<string> | undefined {
+    return this.#besideId === undefined ? undefined : new Set([this.#besideId])
   }
   snapshot(id: string): ThreadState | undefined {
     return this.#states.get(id)
@@ -292,9 +351,10 @@ export class ThreadController {
   }
   prune(isProtected: (id: string) => boolean): void {
     for (const id of this.#deltas.keys())
-      if (id !== this.#activeId) this.flush(id, () => isProtected(id))
+      if (!this.isVisible(id)) this.flush(id, () => isProtected(id))
     const evicted = pruneInactiveThreadStates(this.#states, this.#sequences, {
       activeId: this.#activeId,
+      protectedIds: this.#besideIds(),
       isProtected,
       isPartial: (id) => !this.#sequences.has(id),
       onCompact: (id) => this.#releaseCompactedHistory(id),
@@ -307,13 +367,13 @@ export class ThreadController {
       this.#localQueueRevisions,
       this.#serverQueueRevisions,
       this.#queueReads,
-      { activeId: this.#activeId, isProtected },
+      { activeId: this.#activeId, protectedIds: this.#besideIds(), isProtected },
     )
   }
   compact(id: string, protectedState: boolean): boolean {
     const compacted = compactInactiveRunningThreadState(this.#states, this.#sequences, id, {
       activeId: this.#activeId,
-      protected: protectedState,
+      protected: protectedState || id === this.#besideId,
     })
     if (compacted) this.#releaseCompactedHistory(id)
     return compacted
@@ -344,7 +404,7 @@ export class ThreadController {
     const current = this.snapshot(id) ?? emptyThread
     if (!pending?.events.length) return current
     const next = drainPendingThreadDeltas(this.#states, this.#deltas, this.#sequences, id)
-    if (id !== this.#activeId) {
+    if (!this.isVisible(id)) {
       const characters = (this.#backgroundCharacters.get(id) ?? 0) + pending.textLength
       if (characters >= BACKGROUND_COMPACTION_CHECK_CHARACTERS) {
         const compacted = this.compact(id, protectedState())
@@ -372,22 +432,19 @@ export class ThreadController {
     const buffers = this.#histories.get(id)
     if (buffers) for (const buffer of buffers) buffer.push({ seq, event })
     if (event.type === 'item.delta') {
-      if (!shouldRetainThreadTranscript(id, this.#activeId, this.#partialThreadIds)) {
+      // The per-delta path: one comparison more than a single column needed.
+      const visible = id === this.#activeId || id === this.#besideId
+      if (!visible && !shouldRetainThreadTranscript(id, this.#activeId, this.#partialThreadIds)) {
         this.#deltas.delete(id)
         return
       }
       const cursor = seq !== undefined && sequence !== undefined ? seq : undefined
-      const next =
-        id === this.#activeId
-          ? appendThreadDelta(pending, event, cursor)
-          : appendBackgroundThreadDelta(pending, event, cursor)
+      const next = visible
+        ? appendThreadDelta(pending, event, cursor)
+        : appendBackgroundThreadDelta(pending, event, cursor)
       this.#deltas.set(id, next)
-      if (id === this.#activeId) {
-        this.#frame ??= requestAnimationFrame(() => {
-          this.#frame = undefined
-          if (this.#activeId) this.frames.publish(this.flush(this.#activeId))
-        })
-      } else if (shouldDrainBackgroundDeltas(next)) this.flush(id, () => isProtected(id))
+      if (visible) this.#frame ??= requestAnimationFrame(this.#drawColumns)
+      else if (shouldDrainBackgroundDeltas(next)) this.flush(id, () => isProtected(id))
       return
     }
     const next = reduce(
@@ -405,16 +462,29 @@ export class ThreadController {
       event.item.role === 'user'
     )
       this.forgetSubmission(id, event.item.id)
-    if (id === this.#activeId) {
-      if (this.#frame !== undefined) cancelAnimationFrame(this.#frame)
-      this.#frame = undefined
-      this.frames.publish(next)
+    const store = this.storeFor(id)
+    if (store) {
+      // The frame may still owe the other column its streamed text.
+      const other = id === this.#activeId ? this.#besideId : this.#activeId
+      if (this.#frame !== undefined && (other === undefined || !this.#deltas.has(other))) {
+        cancelAnimationFrame(this.#frame)
+        this.#frame = undefined
+      }
+      store.publish(next)
     } else if (event.type === 'item.started' || event.type === 'item.completed') {
       // Completed tool payloads can be large even when all their deltas were
       // dropped from a partial background transcript. Bound those stores too.
       this.prune(isProtected)
     }
     return next
+  }
+  /** One animation frame draws every visible column that has streamed text waiting. */
+  #drawColumns = (): void => {
+    this.#frame = undefined
+    for (const slot of [0, 1] as const) {
+      const id = this.#shown[slot]
+      if (id !== undefined && this.#deltas.has(id)) this.columns[slot].publish(this.flush(id))
+    }
   }
   suspend(): void {
     if (this.#frame !== undefined) cancelAnimationFrame(this.#frame)
@@ -476,7 +546,7 @@ export class ThreadController {
       this.#deltas.delete(id)
       this.update(id, visible)
       this.#historyBases.delete(id)
-      if (id === this.#activeId) this.frames.publish(visible)
+      this.publish(id, visible)
       if (afterSeq === undefined) return { visible, authority: live, approval }
       const suffix = reduceEventLog(reduceEventLog(emptyThread, events), buffer, lastSeq)
       const crossedBoundary = [...events, ...buffer].some(
@@ -527,7 +597,7 @@ export class ThreadController {
       base.state = prependOlderHistory(base.state, events, olderCursor)
     const next = prependOlderHistory(current, events, olderCursor)
     this.update(id, next)
-    if (id === this.#activeId) this.frames.publish(next)
+    this.publish(id, next)
   }
   /**
    * Load every turn above the loaded transcript in one unpaged read, for find
@@ -556,7 +626,7 @@ export class ThreadController {
     if (base?.state.olderCursor)
       base.state = prependCompleteHistory(base.state, events) ?? base.state
     this.update(id, next)
-    if (id === this.#activeId) this.frames.publish(next)
+    this.publish(id, next)
   }
   settleSubmissions(id: string, items: QueuedTurn[], snapshot?: ThreadState): PendingSubmission[] {
     const pending = this.#submissions.get(id)

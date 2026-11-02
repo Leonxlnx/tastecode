@@ -50,11 +50,18 @@ The table below is generated from `licenses/direct-runtime-dependencies.json` an
 
 ## Incorporated material
 
-| Project       | Use                                                         | License                                 | Source                                                                      |
-| ------------- | ----------------------------------------------------------- | --------------------------------------- | --------------------------------------------------------------------------- |
-| Codex         | Generated app-server protocol types                         | Apache-2.0                              | [openai/codex](https://github.com/openai/codex)                             |
-| Thinking Orbs | Adapted activity-indicator source                           | [MIT](./licenses/thinking-orbs-MIT.txt) | [Jakubantalik/thinking-orbs](https://github.com/Jakubantalik/thinking-orbs) |
-| tasteskill    | Design app-screen library, rules, `app.css` and `charts.js` | [MIT](./licenses/taste-skill-MIT.txt)   | [Leonxlnx/taste-skill](https://github.com/Leonxlnx/taste-skill) v2.1.5      |
+| Project       | Use                                                             | License                                 | Source                                                                      |
+| ------------- | --------------------------------------------------------------- | --------------------------------------- | --------------------------------------------------------------------------- |
+| Codex         | Generated app-server protocol types                             | Apache-2.0                              | [openai/codex](https://github.com/openai/codex)                             |
+| Thinking Orbs | Adapted activity-indicator source                               | [MIT](./licenses/thinking-orbs-MIT.txt) | [Jakubantalik/thinking-orbs](https://github.com/Jakubantalik/thinking-orbs) |
+| cinetic       | Default Agent Skill `cinetic`, shipped unmodified               | [MIT](./licenses/cinetic-MIT.txt)       | [Leonxlnx/cinetic](https://github.com/Leonxlnx/cinetic)                     |
+| taste-skill   | Default Agent Skill `design-taste-frontend`, shipped unmodified | [MIT](./licenses/taste-skill-MIT.txt)   | [Leonxlnx/taste-skill](https://github.com/Leonxlnx/taste-skill)             |
+| taste-skill   | Design app-screen library, rules, `app.css` and `charts.js`     | [MIT](./licenses/taste-skill-MIT.txt)   | [Leonxlnx/taste-skill](https://github.com/Leonxlnx/taste-skill) v2.1.5      |
+| cook          | Default Agent Skill `cook`, shipped unmodified                  | [MIT](./licenses/cook-MIT.txt)          | [Leonxlnx/cook](https://github.com/Leonxlnx/cook)                           |
+
+The default Agent Skills are pinned to exact commits in `packages/default-skills/skills.json`
+and ship as real files in the app's `resources/default-skills` folder, each with its own
+`LICENSE`.
 
 The release gate requires a complete top-level Apache-2.0 `LICENSE`, a clean production install,
 and a license or notice file for every package in the resolved production graph. It emits only

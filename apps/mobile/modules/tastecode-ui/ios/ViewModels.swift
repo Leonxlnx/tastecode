@@ -36,6 +36,8 @@ struct ChatView: Decodable, Equatable, Identifiable {
   var at: Double
   var branch: String?
   var sourceName: String
+  /// Which provider logo the row shows, as the desktop names its marks.
+  var mark: String
   var modelName: String?
 
   var date: Date { Date(timeIntervalSince1970: at / 1000) }
@@ -114,6 +116,8 @@ struct CatalogView: Decodable, Equatable {
 struct SetupView: Decodable, Equatable {
   var sourceKey: String?
   var sourceName: String?
+  /// The logo the desktop draws for the source.
+  var mark: String?
   var model: String?
   var modelName: String?
   var effort: String?
@@ -126,7 +130,7 @@ struct SetupView: Decodable, Equatable {
   var switchable: Bool
 
   static let empty = SetupView(
-    sourceKey: nil, sourceName: nil, model: nil, modelName: nil, effort: nil, effortLabel: nil,
+    sourceKey: nil, sourceName: nil, mark: nil, model: nil, modelName: nil, effort: nil, effortLabel: nil,
     tier: nil, tierName: nil, access: "ask", accessTitle: "Ask first", images: true, switchable: true)
 }
 

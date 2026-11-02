@@ -1,4 +1,4 @@
-/** Number and date formats shared by the Usage page's sections. */
+/** Number and date formats shared by the Usage page's sections and the account popup. */
 
 const integer = new Intl.NumberFormat('en-US')
 const money = new Intl.NumberFormat('en-US', {
@@ -37,4 +37,50 @@ export function formatTokens(value: number): string {
 export function dateFromKey(value: string): Date {
   const [year = 1970, month = 1, day = 1] = value.split('-').map(Number)
   return new Date(year, month - 1, day, 12)
+}
+
+const weekday = new Intl.DateTimeFormat('en-US', { weekday: 'short' })
+const monthDay = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' })
+const monthDayYear = new Intl.DateTimeFormat('en-US', {
+  month: 'short',
+  day: 'numeric',
+  year: 'numeric',
+})
+const clock = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' })
+
+/**
+ * A moment in the words of a reset line: "Nov 30, 9:24 PM", with the year
+ * only when it is not this year's.
+ */
+export function dateTimeText(at: number, now: number): string | undefined {
+  const date = new Date(at)
+  if (Number.isNaN(date.getTime())) return undefined
+  const day =
+    date.getFullYear() === new Date(now).getFullYear()
+      ? monthDay.format(date)
+      : monthDayYear.format(date)
+  return `${day}, ${clock.format(date)}`
+}
+
+/**
+ * "resets in 42m" and "resets in 3h 12m" within a day, the weekday and time
+ * within the week, the date after that. The exact time is kept for hover.
+ */
+export function resetText(at: number, now: number): { label: string; title: string } | undefined {
+  const date = new Date(at)
+  if (Number.isNaN(date.getTime())) return undefined
+  const title = `${weekday.format(date)}, ${monthDay.format(date)}, ${clock.format(date)}`
+  const minutes = Math.ceil((at - now) / 60_000)
+  if (minutes <= 0) return { label: 'resets now', title }
+  if (minutes < 60) return { label: `resets in ${minutes}m`, title }
+  if (minutes < 24 * 60) {
+    const hours = Math.floor(minutes / 60)
+    const rest = minutes % 60
+    return { label: `resets in ${hours}h${rest > 0 ? ` ${rest}m` : ''}`, title }
+  }
+  const label =
+    at - now < 6 * 86_400_000
+      ? `${weekday.format(date)} ${clock.format(date)}`
+      : monthDay.format(date)
+  return { label: `resets ${label}`, title }
 }

@@ -1,6 +1,7 @@
-import { modelLabel, sourceKey, type Source } from '../state/catalog'
+import { defaultModel, modelLabel, sourceKey, type Source } from '../state/catalog'
 import type { ProjectsState, Session } from '../state/projects'
 import { isArchived, lastActivity } from '../state/projects'
+import { providerLook } from './provider-mark'
 import type { ChatState, ChatsView, ChatView } from './types'
 
 /** Waiting for you, then working, then the rest: what each chat's place in the list starts from. */
@@ -55,12 +56,12 @@ export function chatsView(state: ProjectsState, sources: readonly Source[] = [])
     for (const session of project.sessions) {
       if (session.lifecycle?.state === 'snoozed') continue
       const source = sourceOf(session, sources)
-      const model = session.model
-        ? modelLabel(
-            source?.models.find((entry) => entry.id === session.model)?.displayName ??
-              session.model,
-          )
-        : null
+      const look = providerLook(session.provider, session.agent)
+      // A chat with no model of its own runs its agent's default, as its composer shows.
+      const chosen = session.model
+        ? (source?.models.find((entry) => entry.id === session.model)?.displayName ?? session.model)
+        : source && defaultModel(source.models)?.displayName
+      const model = chosen ? modelLabel(chosen) : null
       chats.push({
         id: session.id,
         title: session.title.trim() || 'New chat',
@@ -72,7 +73,8 @@ export function chatsView(state: ProjectsState, sources: readonly Source[] = [])
         archived: isArchived(session),
         at: lastActivity(session, state.activity),
         branch: session.worktreeBranch ?? null,
-        sourceName: source?.name ?? session.provider,
+        sourceName: source?.name ?? look.label,
+        mark: look.mark,
         modelName: model,
       })
     }

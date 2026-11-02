@@ -1,7 +1,8 @@
 import UIKit
 
-/// The transcript's type and spacing, read from UIKit once per text size so the
-/// layout queue never has to ask it. Immutable, so it crosses threads freely.
+/// The transcript's type and spacing, read from UIKit once per text size,
+/// weight and typeface so the layout queue never has to ask it. Immutable, so
+/// it crosses threads freely.
 final class TranscriptStyle: @unchecked Sendable {
   let body: UIFont
   let bodyDigits: UIFont
@@ -15,8 +16,8 @@ final class TranscriptStyle: @unchecked Sendable {
   let footnoteMono: UIFont
   let caption: UIFont
   let caption2Bold: UIFont
-  /// Identifies the text size, so a cached measurement is never reused at another one.
-  let sizeCategory: UIContentSizeCategory
+  /// Identifies the size, weight and typeface, so a cached measurement is never reused at others.
+  let key: String
 
   /// Between rows, and between a reply's blocks.
   let rowSpacing: CGFloat = 22
@@ -25,17 +26,15 @@ final class TranscriptStyle: @unchecked Sendable {
 
   init(traits: UITraitCollection) {
     func font(_ style: UIFont.TextStyle, weight: UIFont.Weight? = nil) -> UIFont {
-      let base = UIFont.preferredFont(forTextStyle: style, compatibleWith: traits)
-      guard let weight else { return base }
-      let descriptor = base.fontDescriptor.addingAttributes([.traits: [UIFontDescriptor.TraitKey.weight: weight]])
-      return UIFont(descriptor: descriptor, size: base.pointSize)
+      .app(style, weight: weight, traits: traits)
     }
+    // Code keeps its monospaced face whatever the typeface.
     func mono(_ style: UIFont.TextStyle) -> UIFont {
       UIFont.monospacedSystemFont(
         ofSize: UIFont.preferredFont(forTextStyle: style, compatibleWith: traits).pointSize, weight: .regular)
     }
     body = font(.body)
-    bodyDigits = UIFont.monospacedDigitSystemFont(ofSize: body.pointSize, weight: .regular)
+    bodyDigits = body.monospacedDigits
     title2 = font(.title2, weight: .bold)
     title3 = font(.title3, weight: .semibold)
     headline = font(.headline)
@@ -46,7 +45,11 @@ final class TranscriptStyle: @unchecked Sendable {
     footnoteMono = mono(.footnote)
     caption = font(.caption1)
     caption2Bold = font(.caption2, weight: .bold)
-    sizeCategory = traits.preferredContentSizeCategory
+    key = Self.key(traits)
+  }
+
+  static func key(_ traits: UITraitCollection) -> String {
+    "\(traits.preferredContentSizeCategory.rawValue)|\(traits.legibilityWeight.rawValue)|\(traits[FontDesignTrait.self])"
   }
 }
 

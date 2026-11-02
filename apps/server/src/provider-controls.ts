@@ -20,6 +20,7 @@ import { validateAcpMcpServer } from '@harness/adapter-acp/mcp'
 import { withClaudeAccount } from '@harness/adapter-claude-code/account-home'
 import {
   CLAUDE_MCP_CAPABILITIES,
+  isClaudeRuntime,
   validateClaudeMcpServer,
 } from '@harness/adapter-claude-code/capabilities'
 import { GROK_MCP_CAPABILITIES } from '@harness/adapter-grok/mcp'
@@ -36,6 +37,7 @@ import {
 import type { ModelListRead } from './model-list-cache.js'
 import { ProjectInventoryCache, type ProjectInventoryService } from './project-inventory-cache.js'
 import { PROVIDER_CAPABILITIES, type ProviderControlCapabilities } from './provider-capabilities.js'
+import { providerOffered } from './provider-edition.js'
 import { retryableLazy } from './retryable-lazy.js'
 import { WatchLeases } from './watch-leases.js'
 
@@ -56,8 +58,8 @@ type LoginResponse = { loginId: string; authUrl?: string }
 type LoginHandle = LoginResponse & { cancel: () => Promise<void> }
 type LimitSource = { status: 'ready'; limits: ProviderLimit[] } | { status: 'unavailable' }
 /**
- * The Codex control process serves no commands, so a `commands` watch holds no
- * process lease. It does watch a project inventory's configuration folders,
+ * The Codex control process serves no commands (its list is static), so a
+ * `commands` watch holds no process lease. It does watch a project inventory's configuration folders,
  * and services report command changes through `InventoryRead.changed`.
  */
 type WatchTarget = ParamsOf<'providers.watch'>['targets'][number]
@@ -114,7 +116,7 @@ export type CodexControlAdapter = Pick<
 export type ProviderServices = {
   validateMcpServer?: (server: McpServerConfig) => void
   account?: (agent?: string) => Promise<Account>
-  usageLimitSource?: () => Promise<LimitSource>
+  usageLimitSource?: (launch: ProviderLaunch) => Promise<LimitSource>
   startLogin?: (
     onComplete: (result: ProviderLoginResult) => void,
   ) => LoginHandle | Promise<LoginHandle>
@@ -220,7 +222,15 @@ export type ProviderControlsOptions = {
   accountHome?: string | undefined
   /** The providers these controls serve; absent, every provider. */
   providers?: readonly ProviderId[] | undefined
+  /**
+   * The runtime the user chose for a provider's sessions, if not its default.
+   * Reads that start the engine (limits, a project's inventory) start it so too.
+   */
+  chosenRuntime?: ((provider: ProviderId) => string | undefined) | undefined
 }
+
+/** How a read that starts the engine starts it. */
+export type ProviderLaunch = { runtime?: string | undefined }
 
 type ProcessEntry = {
   creating: Promise<CodexControlAdapter>
@@ -396,9 +406,21 @@ type AccountEntry = {
   reading?: Promise<Account> | undefined
 }
 
+/** Only a runtime Claude Code declared reaches it; anything else runs its default. */
+function claudeLaunch(runtime: string | undefined) {
+  return isClaudeRuntime(runtime) ? { runtime } : {}
+}
+
 const defaultServices = {
   antigravity: {
+    // agy answers its read-only commands itself and expands skills from
+    // folders, so the list needs no process.
+    listCommands: async (projectPath) => ({
+      commands: await (await loadAntigravity()).listAntigravityCommands(projectPath),
+      loading: false,
+    }),
     account: async () => (await loadAntigravity()).antigravityAccount(),
+    usageLimitSource: async () => (await loadAntigravity()).antigravityLimitSource(),
     // agy keeps its Google sign-in in the OS keyring and drops it only from
     // its own TUI; doing nothing here would show a sign-out that never happened.
     signOut: async () => {
@@ -406,7 +428,14 @@ const defaultServices = {
     },
   },
   api: {},
-  codex: {},
+  codex: {
+    // Codex's slash commands are app-server actions its chats route typed
+    // commands to, so the list needs no process.
+    listCommands: async () => ({
+      commands: (await loadCodex()).CODEX_COMMANDS.map((command) => ({ ...command })),
+      loading: false,
+    }),
+  },
   opencode: {
     // OpenCode reports these from a running server. A project without a chat
     // starts one without a session (4-12 s), cached.
@@ -432,18 +461,30 @@ const defaultServices = {
     // project without a chat starts one without a prompt (10-15 s), cached.
     projectInventory: {
       mcpCapabilities: CLAUDE_MCP_CAPABILITIES,
-      discover: async (projectPath, options) =>
-        (await loadClaude()).discoverClaudeProject(projectPath, options),
+      discover: async (projectPath, { runtime, ...options }) =>
+        (await loadClaude()).discoverClaudeProject(projectPath, {
+          ...options,
+          ...claudeLaunch(runtime),
+        }),
       watchPaths: async (projectPath) =>
         (await loadClaude()).claudeInventoryWatchPaths(projectPath),
     },
     account: async () => (await loadClaude()).claudeAccount(),
-    usageLimitSource: async () => (await loadClaude()).claudeLimitSource(),
+    usageLimitSource: async ({ runtime }) =>
+      (await loadClaude()).claudeLimitSource(claudeLaunch(runtime)),
     startLogin: async (complete) => (await loadClaude()).startClaudeLogin(complete),
     signOut: async () => (await loadClaude()).signOutClaude(),
   },
   cursor: {
+    // A print-mode turn expands the custom commands and skills it finds on
+    // disk, so the list is read from the same folders without a process.
+    listCommands: async (projectPath) => ({
+      commands: await (await loadCursor()).listCursorCommands(projectPath),
+      loading: false,
+    }),
     account: async () => (await loadCursor()).cursorAccount(),
+    // One HTTPS request with cursor-agent's stored sign-in; see the adapter.
+    usageLimitSource: async () => (await loadCursor()).cursorLimitSource(),
     startLogin: async (complete) => (await loadCursor()).startCursorLogin(complete),
     signOut: async () => (await loadCursor()).signOutCursor(),
   },
@@ -465,6 +506,8 @@ const defaultServices = {
     signOut: async () => (await loadGrok()).signOutGrok(),
   },
   acp: {
+    // ACP sessions can only add servers.
+    validateMcpServer: validateAcpMcpServer,
     account: async (agent) => (agent ? (await loadAcp()).acpAccount(agent) : { signedIn: false }),
     signOut: async (agent) => {
       if (agent) await (await loadAcp()).acpSignOut(agent)
@@ -485,8 +528,12 @@ const accountServices = new Map<ProviderId, (accountHome: string) => ProviderSer
       ...defaultServices['claude-code'],
       projectInventory: {
         ...defaultServices['claude-code'].projectInventory,
-        discover: async (projectPath, options) =>
-          (await loadClaude()).discoverClaudeProject(projectPath, { ...options, accountHome }),
+        discover: async (projectPath, { runtime, ...options }) =>
+          (await loadClaude()).discoverClaudeProject(projectPath, {
+            ...options,
+            ...claudeLaunch(runtime),
+            accountHome,
+          }),
         watchPaths: async (projectPath) =>
           (await loadClaude()).claudeInventoryWatchPaths(
             projectPath,
@@ -494,7 +541,8 @@ const accountServices = new Map<ProviderId, (accountHome: string) => ProviderSer
           ),
       },
       account: async () => (await loadClaude()).claudeAccount({ accountHome }),
-      usageLimitSource: async () => (await loadClaude()).claudeLimitSource({ accountHome }),
+      usageLimitSource: async ({ runtime }) =>
+        (await loadClaude()).claudeLimitSource({ ...claudeLaunch(runtime), accountHome }),
       startLogin: async (complete) =>
         (await loadClaude()).startClaudeLogin(complete, { accountHome }),
       signOut: async () => (await loadClaude()).signOutClaude({ accountHome }),
@@ -737,10 +785,17 @@ export class ProviderControls {
   }
 
   #makeControl(provider: ProviderId): ProviderControl {
-    const capabilities = PROVIDER_CAPABILITIES[provider]
+    // A provider this build does not offer answers like a removed API
+    // connection: signed out, no limits, models or inventories, and it never
+    // starts its CLI. Old chats on it still get a usage summary.
+    const offered = providerOffered(provider)
+    const capabilities = PROVIDER_CAPABILITIES[offered ? provider : 'api']
     const home = this.#options.accountHome
-    const ownServices =
-      home === undefined ? defaultServices[provider] : accountServices.get(provider)?.(home)
+    const ownServices = !offered
+      ? {}
+      : home === undefined
+        ? defaultServices[provider]
+        : accountServices.get(provider)?.(home)
     // The default account's calls would act on the user's own sign-in instead.
     if (!ownServices) throw new Error(`${provider} cannot run as another account`)
     const services: ProviderServices = { ...ownServices, ...this.#options.services?.[provider] }
@@ -759,7 +814,7 @@ export class ProviderControls {
               provider,
               () =>
                 this.#read(async () => {
-                  const source = await services.usageLimitSource?.()
+                  const source = await services.usageLimitSource?.(this.#launch(provider))
                   return source?.status === 'ready'
                     ? { provider, status: 'ready', limits: source.limits }
                     : { provider, status: 'unavailable' }
@@ -1376,13 +1431,23 @@ export class ProviderControls {
     return account
   }
 
+  #launch(provider: ProviderId): ProviderLaunch {
+    const runtime = this.#options.chosenRuntime?.(provider)
+    return runtime === undefined ? {} : { runtime }
+  }
+
   #projectInventory(
     provider: ProviderId,
     services: ProviderServices,
   ): ProjectInventoryCache | undefined {
     if (!services.projectInventory) return undefined
+    const service = services.projectInventory
     const inventory = new ProjectInventoryCache({
-      service: services.projectInventory,
+      service: {
+        ...service,
+        discover: (projectPath, options) =>
+          service.discover(projectPath, { ...options, ...this.#launch(provider) }),
+      },
       watchTtlMs: this.#skills.ttlMs,
       onChanged: (projectPath, parts) => {
         if (this.#closed) return

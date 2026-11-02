@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { CapabilitiesSchema, DomainEventSchema, ItemSchema } from './domain.js'
+import { CapabilitiesSchema, DomainEventSchema, ItemSchema, ModelSchema } from './domain.js'
 import {
   channels,
   DiffFileSchema,
@@ -1779,8 +1779,10 @@ describe('provider command contracts', () => {
           argumentHint: '<page>',
           aliases: ['taste'],
           kind: 'skill',
+          source: 'plugin',
         },
-        { name: 'review', description: '', kind: 'command' },
+        { name: 'review', description: '', kind: 'command', source: 'builtin' },
+        { name: 'mcp__docs__search', description: '', source: 'mcp' },
       ],
       loading: false,
     }
@@ -1799,6 +1801,7 @@ describe('provider command contracts', () => {
     { name: 'context', aliases: ['/ctx'] },
     { name: 'context', argumentHint: '' },
     { name: 'context', kind: 'prompt' },
+    { name: 'context', source: 'user' },
   ])('rejects malformed commands: %j', (command) => {
     expect(
       list.result.safeParse({ commands: [{ description: '', ...command }], loading: false })
@@ -2387,6 +2390,26 @@ describe('provider account contracts', () => {
     expect(CapabilitiesSchema.safeParse({ ...capabilities, multipleAccounts: 'yes' }).success).toBe(
       false,
     )
+  })
+
+  it('keeps image files apart from pixels and lets a model narrow images', () => {
+    const capabilities = {
+      steer: false,
+      fork: false,
+      interrupt: true,
+      reasoningItems: false,
+      approvals: false,
+      images: false,
+    }
+    expect(CapabilitiesSchema.parse(capabilities).imageFiles).toBeUndefined()
+    expect(CapabilitiesSchema.parse({ ...capabilities, imageFiles: true })).toMatchObject({
+      images: false,
+      imageFiles: true,
+    })
+    expect(CapabilitiesSchema.safeParse({ ...capabilities, imageFiles: 'yes' }).success).toBe(false)
+    const model = { id: 'm', displayName: 'M', isDefault: true, reasoningEfforts: [] }
+    expect(ModelSchema.parse(model).images).toBeUndefined()
+    expect(ModelSchema.parse({ ...model, images: false }).images).toBe(false)
   })
 })
 

@@ -1,6 +1,7 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
   "ignorePatterns": [
+    "packages/default-skills/bundle/**",
     ".agent/**",
     ".agents/**",
     ".claude/**",

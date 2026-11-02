@@ -1,8 +1,7 @@
 # TasteCode for iPhone
 
-The phone client: Expo, with every screen written in Swift as one SwiftUI hierarchy (Liquid
-Glass, iOS 26 and later) inside an [`@expo/ui`](https://docs.expo.dev/versions/latest/sdk/ui/swift-ui/)
-host. It pairs with the desktop and speaks the same protocol over an end-to-end encrypted link
+The phone client: Expo, with every screen written in Swift as UIKit view controllers (Liquid
+Glass, iOS 26 and later) under one native view that fills the React root. It pairs with the desktop and speaks the same protocol over an end-to-end encrypted link
 (see "Phones connect over an end-to-end encrypted link" in `docs/ARCHITECTURE.md`).
 
 This folder is outside the pnpm workspace and has its own npm install, so React Native and
@@ -43,12 +42,12 @@ also works away from home. The listener uses port 4317 (`HARNESS_PHONE_PORT`).
 | Path                     | What it holds                                                        |
 | ------------------------ | -------------------------------------------------------------------- |
 | `modules/tastecode-link` | The link in Swift: Noise IK (CryptoKit), Keychain, Network.framework |
-| `modules/tastecode-ui`   | Every screen in SwiftUI, and `AppModel`, which holds what they show  |
+| `modules/tastecode-ui`   | Every screen in UIKit, and `AppModel`, which holds what they show    |
 | `src/link`               | Pairing links and the protocol connection, with its reconnect rules  |
 | `src/state`              | Projects, model sources, open chats and their event reducer          |
 | `src/view`               | What the screens say, worded once for every platform (JSON shapes)   |
 | `src/bridge`             | Sends those shapes to the screens and performs what the screens ask  |
-| `src/ui`                 | The React root: one `Host` around the native app, and deep links     |
+| `src/ui`                 | The React root: the native view that holds the app, and deep links   |
 
 The screens never compute: TypeScript sends `link`, `chats`, `catalog`, `newChat` and one
 `thread:<id>` patch per open chat (only the rows that changed) through `TasteUI.update`, and the

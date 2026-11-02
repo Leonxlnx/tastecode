@@ -24,7 +24,12 @@ export type ProjectInventoryPart = 'commands' | 'mcp' | 'skills'
  */
 export type ProjectInventoryProbe = (
   projectPath: string,
-  options: { signal: AbortSignal; onUpdate: (inventory: ProjectInventory) => void },
+  options: {
+    signal: AbortSignal
+    onUpdate: (inventory: ProjectInventory) => void
+    /** The runtime the user's sessions start the engine with, if not its default. */
+    runtime?: string | undefined
+  },
 ) => Promise<ProjectInventory>
 
 /** A provider that can read a project's commands and MCP servers without a chat. */

@@ -341,6 +341,19 @@ export const ContextControlSchema = z.object({
 export type ContextControl = z.infer<typeof ContextControlSchema>
 
 /**
+ * One way TasteCode can run an engine, such as through its vendor's SDK or
+ * straight through its own CLI. An engine declares these only when each one
+ * offers everything its capabilities say, so a choice changes how the engine
+ * is started and never what a chat can do.
+ */
+export const ProviderRuntimeOptionSchema = z.object({
+  id: z.string().min(1),
+  label: z.string().min(1),
+  description: z.string().optional(),
+})
+export type ProviderRuntimeOption = z.infer<typeof ProviderRuntimeOptionSchema>
+
+/**
  * What an engine can actually do. The UI reads this and hides what is
  * unavailable rather than showing a button that fails — capability negotiation
  * is the difference between a wrapper that feels solid and one that lies.
@@ -355,7 +368,14 @@ export const CapabilitiesSchema = z.object({
   userInput: z.boolean().optional(),
   /** Can route elevated approval requests through an automatic risk reviewer. */
   autoReview: z.boolean().optional(),
+  /** The model receives attached images as pixels in the prompt itself. */
   images: z.boolean(),
+  /**
+   * Attached images can be handed to the agent as saved files it opens with
+   * its own tools. Unlike `images`, nothing guarantees the model sees the
+   * pixels, so features that depend on vision read `images` only.
+   */
+  imageFiles: z.boolean().optional(),
   /** Absent when the engine decides its context on its own. */
   context: ContextControlSchema.optional(),
   /**
@@ -369,6 +389,8 @@ export const CapabilitiesSchema = z.object({
    * config folder, so a user can add accounts beyond the default one.
    */
   multipleAccounts: z.boolean().optional(),
+  /** The ways the engine can be run, its default first. Absent: one way, nothing to choose. */
+  runtimes: z.array(ProviderRuntimeOptionSchema).min(1).optional(),
 })
 export type Capabilities = z.infer<typeof CapabilitiesSchema>
 
@@ -396,6 +418,11 @@ export const ModelSchema = z.object({
     )
     .default([]),
   defaultServiceTier: z.string().nullable().optional(),
+  /**
+   * Whether this model, or the agent serving it, receives attached images as
+   * pixels. Absent: the engine's `images` capability decides.
+   */
+  images: z.boolean().optional(),
   /**
    * Display name of the model's creator, such as "DeepSeek" or "Anthropic".
    * Groups rows inside one source; a routing provider is not a lab.

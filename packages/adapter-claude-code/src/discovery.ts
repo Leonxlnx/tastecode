@@ -2,6 +2,8 @@ import type { McpServerStatus } from '@anthropic-ai/claude-agent-sdk'
 import type { McpServer, ProviderCommand } from '@harness/contracts'
 import { killTree, spawnCli } from '@harness/proc'
 import { withClaudeAccount } from './account-home.js'
+import type { ClaudeRuntime } from './capabilities.js'
+import { createClaudeCliQuery } from './cli-runtime.js'
 import { mapClaudeCommands, mapClaudeMcpServers } from './inventory.js'
 import {
   claudeSdkSpawner,
@@ -23,6 +25,8 @@ export type ClaudeProjectDiscoveryOptions = {
   /** Claude answered init while servers still start; the final answer follows. */
   onUpdate?: ((inventory: ClaudeProjectInventory) => void) | undefined
   createQuery?: ClaudeQueryFactory
+  /** The runtime the user's sessions run through; the probe uses it too. */
+  runtime?: ClaudeRuntime | undefined
   spawn?: ClaudeSpawn
   environment?: NodeJS.ProcessEnv
   /** Load what the account in this config folder loads. Absent: the default account. */
@@ -56,7 +60,9 @@ export async function discoverClaudeProject(
   let query: ClaudeQueryRuntime | undefined
   try {
     abort.signal.throwIfAborted()
-    query = (options.createQuery ?? createClaudeQuery)({
+    const createQuery =
+      options.createQuery ?? (options.runtime === 'cli' ? createClaudeCliQuery : createClaudeQuery)
+    query = createQuery({
       prompt: waitForAbort(abort.signal),
       options: {
         cwd: projectPath,

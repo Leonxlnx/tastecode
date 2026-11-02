@@ -41,6 +41,7 @@ import {
   packagingAsar,
   verifyBundledDesignReferences,
   verifyPackagedResources,
+  verifyReleaseEdition,
 } from './verify-release-assets.js'
 
 const approvedSha = '1234567890abcdef1234567890abcdef12345678'
@@ -629,6 +630,7 @@ test('real ASAR resources retain every reference byte, license file, and the res
   )
   await mkdir(packedReferences, { recursive: true })
   await cp(references, packedReferences, { recursive: true })
+  await writeFile(path.join(archiveInput, 'package.json'), '{"name":"@harness/desktop"}')
   await mkdir(resources)
   const archive = path.join(resources, 'app.asar')
   const asar = packagingAsar()
@@ -638,6 +640,18 @@ test('real ASAR resources retain every reference byte, license file, and the res
     })
   await pack()
   assert.equal(await verifyBundledDesignReferences(archive, references), 4)
+  verifyReleaseEdition(archive)
+  await writeFile(
+    path.join(archiveInput, 'package.json'),
+    '{"name":"@harness/desktop","tastecodeEdition":"dev"}',
+  )
+  await pack()
+  assert.throws(
+    () => verifyReleaseEdition(archive),
+    /dev build; package releases with dist:release/,
+  )
+  await writeFile(path.join(archiveInput, 'package.json'), '{"name":"@harness/desktop"}')
+  await pack()
   await mkdir(path.join(source, 'release'))
   await mkdir(path.join(source, 'licenses'))
   await writeFile(path.join(source, 'licenses', 'reviewed.txt'), 'Reviewed dependency license')
@@ -658,6 +672,26 @@ test('real ASAR resources retain every reference byte, license file, and the res
   }
   const updaterFile = path.join(resources, 'app-update.yml')
   await writeFile(updaterFile, dump(updater))
+  const skillsManifest = { plugin: { name: 'tastecode' }, skills: [] }
+  await mkdir(path.join(source, 'packages', 'default-skills'), { recursive: true })
+  await writeFile(
+    path.join(source, 'packages', 'default-skills', 'skills.json'),
+    JSON.stringify(skillsManifest),
+  )
+  await assert.rejects(
+    verifyPackagedResources(resources, releaseConfig, source),
+    /default skills do not match/,
+  )
+  await mkdir(path.join(resources, 'default-skills', '.claude-plugin'), { recursive: true })
+  await mkdir(path.join(resources, 'default-skills', 'skills'))
+  await writeFile(
+    path.join(resources, 'default-skills', '.claude-plugin', 'plugin.json'),
+    `${JSON.stringify(skillsManifest.plugin, null, 2)}\n`,
+  )
+  await writeFile(
+    path.join(resources, 'default-skills', 'skills.json'),
+    JSON.stringify(skillsManifest),
+  )
   await verifyPackagedResources(resources, releaseConfig, source)
   await writeFile(updaterFile, dump({ ...updater, channel: 'wrong' }))
   await assert.rejects(verifyPackagedResources(resources, releaseConfig, source), /configured feed/)

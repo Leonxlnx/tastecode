@@ -306,6 +306,84 @@ describe('settings panel names', () => {
     expect(current.textContent).toBe(section === 'workflows' ? 'General' : title)
   })
 })
+describe('phone access in settings', () => {
+  const phoneStatus = {
+    enabled: false,
+    listening: false,
+    port: 4317,
+    serverName: 'Studio Mac',
+    addresses: [],
+    devices: [],
+  }
+
+  function phoneNav() {
+    const categories = screen.getByRole('navigation', { name: 'Settings categories' })
+    return within(categories).queryByRole('button', { name: 'Phone' })
+  }
+
+  it('shows Phone once the server says this build offers it, and hides it until then', async () => {
+    let answer: (status: typeof phoneStatus & { available?: boolean }) => void = () => {}
+    const transport = new TestTransport((method) => {
+      if (method !== 'phone.status') return new Promise(() => {})
+      return new Promise((resolve) => {
+        answer = resolve
+      })
+    })
+    renderSettings({ transport })
+
+    expect(transport.requests.map((request) => request.method)).toEqual(['phone.status'])
+    expect(phoneNav()).toBeNull()
+    await act(async () => answer({ ...phoneStatus, available: true }))
+
+    fireEvent.click(phoneNav()!)
+    expect(await screen.findByRole('heading', { level: 1, name: 'Phone' })).toBeTruthy()
+  })
+
+  it.each([
+    ['says it has no phone access', () => ({ ...phoneStatus, available: false })],
+    [
+      'cannot be asked',
+      () => {
+        throw new Error('offline')
+      },
+    ],
+  ])('leaves Phone out when the server %s', async (_case, status) => {
+    const transport = new TestTransport((method) =>
+      method === 'phone.status' ? status() : new Promise(() => {}),
+    )
+    renderSettings({ transport })
+
+    await waitFor(() =>
+      expect(transport.requests.map((request) => request.method)).toContain('phone.status'),
+    )
+    await act(async () => {})
+    expect(phoneNav()).toBeNull()
+  })
+
+  it('treats a server from before the flag as offering phone access', async () => {
+    const transport = new TestTransport((method) =>
+      method === 'phone.status' ? phoneStatus : new Promise(() => {}),
+    )
+    renderSettings({ transport })
+
+    await waitFor(() => expect(phoneNav()).toBeTruthy())
+  })
+
+  it('opens General instead when asked for Phone in a build without it', async () => {
+    const transport = new TestTransport((method) =>
+      method === 'phone.status' ? { ...phoneStatus, available: false } : new Promise(() => {}),
+    )
+    renderSettings({ initialSection: 'phone', transport })
+
+    expect(screen.getByRole('heading', { level: 1, name: 'General' })).toBeTruthy()
+    await act(async () => {})
+    expect(screen.getByRole('heading', { level: 1, name: 'General' })).toBeTruthy()
+    expect(screen.queryByRole('heading', { level: 1, name: 'Phone' })).toBeNull()
+    // Only the availability check: the Phone page never mounted to ask again.
+    expect(transport.requests.map((request) => request.method)).toEqual(['phone.status'])
+  })
+})
+
 describe('settings v1 pages', () => {
   it.each([
     ['data', ['Reset app preferences']],

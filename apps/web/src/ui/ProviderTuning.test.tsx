@@ -18,6 +18,7 @@ import {
   ProviderTuning,
   ProviderTuningSkeleton,
   useProviderContextSettings,
+  useProviderRuntimeSettings,
 } from './ProviderTuning.js'
 
 type TuningProps = Parameters<typeof ProviderTuning>[0]
@@ -475,6 +476,163 @@ describe('provider context', () => {
     expect(defaults.hasAttribute('aria-busy')).toBe(false)
     expect(screen.queryByRole('button', { name: /^Claude Code context/ })).toBeNull()
     expect(screen.getByText('Unavailable').getAttribute('title')).toBe('server is gone')
+  })
+})
+
+const claudeRuntimes: ProviderStatus = {
+  ...claude,
+  capabilities: {
+    ...claude.capabilities!,
+    runtimes: [
+      { id: 'sdk', label: 'Agent SDK', description: 'The SDK starts Claude Code' },
+      { id: 'cli', label: 'claude -p', description: 'TasteCode starts claude -p itself' },
+    ],
+  },
+}
+
+describe('provider runtime', () => {
+  it('offers the declared runtimes and keeps the default as no setting', () => {
+    const onChange = vi.fn()
+    const { rerender } = renderTuning({
+      provider: claudeRuntimes,
+      runtime: { state: { phase: 'ready', settings: {} }, onChange },
+    })
+    const defaults = screen.getByRole('group', { name: 'Claude Code defaults' })
+    expect(
+      Array.from(defaults.querySelectorAll('.set-subrow__name'), (label) => label.textContent),
+    ).toEqual(['Model', 'Access', 'Context', 'Runtime'])
+    expect(trigger('Claude Code runtime').textContent).toBe('Agent SDK')
+    expect(trigger('Claude Code runtime').querySelector('[data-quiet]')).not.toBeNull()
+
+    const menu = openPanel('Claude Code runtime', 'menu')
+    const choices = within(menu).getAllByRole('menuitemradio')
+    expect(
+      choices.map((choice) => [choice.textContent, choice.getAttribute('aria-checked')]),
+    ).toEqual([
+      ['Agent SDKThe SDK starts Claude Code', 'true'],
+      ['claude -pTasteCode starts claude -p itself', 'false'],
+    ])
+    fireEvent.click(choices[1]!)
+    expect(onChange).toHaveBeenLastCalledWith('cli')
+
+    rerender({
+      runtime: { state: { phase: 'ready', settings: { 'claude-code': 'cli' } }, onChange },
+    })
+    expect(trigger('Claude Code runtime').textContent).toBe('claude -p')
+    expect(trigger('Claude Code runtime').querySelector('[data-quiet]')).toBeNull()
+    fireEvent.click(
+      within(openPanel('Claude Code runtime', 'menu')).getAllByRole('menuitemradio')[0]!,
+    )
+    expect(onChange).toHaveBeenLastCalledWith(null)
+    expect(onChange).toHaveBeenCalledTimes(2)
+  })
+
+  it("shows no runtime for a provider with one way to run, or on an account's rows", () => {
+    const runtime = { state: { phase: 'ready' as const, settings: {} }, onChange: vi.fn() }
+    renderTuning({ provider: claude, runtime })
+    expect(screen.queryByRole('button', { name: /^Claude Code runtime/ })).toBeNull()
+    cleanup()
+    renderTuning({ provider: claudeRuntimes })
+    expect(screen.queryByRole('button', { name: /^Claude Code runtime/ })).toBeNull()
+  })
+
+  it('holds a placeholder while loading and says so when the choice cannot be read', () => {
+    const onChange = vi.fn()
+    const { rerender } = renderTuning({
+      provider: claudeRuntimes,
+      runtime: { state: { phase: 'loading' }, onChange },
+    })
+    const defaults = screen.getByRole('group', { name: 'Claude Code defaults' })
+    expect(screen.queryByRole('button', { name: /^Claude Code runtime/ })).toBeNull()
+    expect(defaults.querySelectorAll('.tune-skeleton')).toHaveLength(1)
+
+    rerender({ runtime: { state: { phase: 'error', message: 'unknown method' }, onChange } })
+    expect(screen.getByText('Unavailable').getAttribute('title')).toBe('unknown method')
+  })
+})
+
+function ConnectedRuntime(props: { transport: TestTransport }) {
+  const runtimes = useProviderRuntimeSettings(props.transport, true)
+  return (
+    <ProviderTuning
+      provider={claudeRuntimes}
+      models={claudeModels}
+      pinned={undefined}
+      onPinnedChange={() => {}}
+      access="ask"
+      onAccessChange={() => {}}
+      context={{ phase: 'ready', settings: {} }}
+      onContextChange={() => {}}
+      runtime={{
+        state: runtimes.state,
+        error: runtimes.errors['claude-code'],
+        onChange: (runtime) => runtimes.update('claude-code', runtime),
+      }}
+    />
+  )
+}
+
+describe('useProviderRuntimeSettings', () => {
+  it('reads nothing until enabled', () => {
+    const transport = new TestTransport()
+    renderHook(() => useProviderRuntimeSettings(transport, false))
+    expect(transport.requests).toEqual([])
+  })
+
+  it('shows a choice at once and keeps what the server saved', async () => {
+    const transport = new TestTransport((method, params) => {
+      if (method === 'providers.runtimeSettings') return {}
+      if (method === 'providers.updateRuntimeSettings') {
+        const { provider, runtime } = params as { provider: ProviderId; runtime: string | null }
+        return runtime === null ? {} : { [provider]: runtime }
+      }
+      throw new Error(`unexpected ${method}`)
+    })
+    render(<ConnectedRuntime transport={transport} />)
+    await waitFor(() => expect(trigger('Claude Code runtime').textContent).toBe('Agent SDK'))
+
+    fireEvent.click(
+      within(openPanel('Claude Code runtime', 'menu')).getByRole('menuitemradio', {
+        name: /claude -p/,
+      }),
+    )
+    expect(trigger('Claude Code runtime').textContent).toBe('claude -p')
+    await waitFor(() =>
+      expect(transport.requests).toContainEqual({
+        method: 'providers.updateRuntimeSettings',
+        params: { provider: 'claude-code', runtime: 'cli' },
+      }),
+    )
+    expect(trigger('Claude Code runtime').textContent).toBe('claude -p')
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('falls back to the saved choice and says why when the server refuses', async () => {
+    let reject!: (error: Error) => void
+    const transport = new TestTransport((method) => {
+      if (method === 'providers.runtimeSettings') return { 'claude-code': 'cli' }
+      if (method === 'providers.updateRuntimeSettings') {
+        return new Promise((_, rejectUpdate) => {
+          reject = rejectUpdate
+        })
+      }
+      throw new Error(`unexpected ${method}`)
+    })
+    render(<ConnectedRuntime transport={transport} />)
+    await waitFor(() => expect(trigger('Claude Code runtime').textContent).toBe('claude -p'))
+
+    fireEvent.click(
+      within(openPanel('Claude Code runtime', 'menu')).getByRole('menuitemradio', {
+        name: /Agent SDK/,
+      }),
+    )
+    expect(trigger('Claude Code runtime').textContent).toBe('Agent SDK')
+    await act(async () => reject(new Error('This provider cannot run through "sdk".')))
+
+    expect(trigger('Claude Code runtime').textContent).toBe('claude -p')
+    expect(screen.getByRole('alert').textContent).toBe(
+      'Could not save the runtime. This provider cannot run through "sdk".',
+    )
   })
 })
 

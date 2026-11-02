@@ -224,6 +224,32 @@ describe('Cursor adapter', () => {
     adapter.dispose()
   })
 
+  it('sends images through --image and names other files in the prompt', async () => {
+    let args: string[] = []
+    const adapter = new CursorAdapter({
+      spawn: (_command, value) => {
+        args = value
+        return new FakeChild()
+      },
+    })
+    const folder = path.join(tmpdir(), 'TasteCode', 'attachments')
+    const image = path.join(folder, 'Shot.PNG')
+    const notes = path.join(folder, 'spec.pdf')
+    const thread = await adapter.startThread('C:\\repo')
+
+    await adapter.sendTurn(thread.id, 'What is wrong here?', [image, notes])
+
+    expect(CURSOR_CAPABILITIES.images).toBe(true)
+    expect(args.slice(-5)).toEqual([
+      '--image',
+      image,
+      '--add-dir',
+      folder,
+      `What is wrong here?\n\nAttached files:\n- ${notes}`,
+    ])
+    adapter.dispose()
+  })
+
   it('resumes, force-maps trusted modes and interrupts honestly', async () => {
     const child = new FakeChild()
     let args: string[] = []

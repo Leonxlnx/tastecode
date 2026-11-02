@@ -362,6 +362,11 @@ export const ProviderCommandSchema = z.object({
   aliases: z.array(ProviderCommandNameSchema).max(20).optional(),
   /** Absent means a plain command. */
   kind: z.enum(['command', 'skill']).optional(),
+  /**
+   * Who defined it, so a menu can group it: the provider itself, the user or
+   * project, a plugin, or an MCP server's prompt. Absent means unknown.
+   */
+  source: z.enum(['builtin', 'custom', 'plugin', 'mcp']).optional(),
 })
 export type ProviderCommand = z.infer<typeof ProviderCommandSchema>
 
@@ -468,6 +473,13 @@ export const ProviderContextSettingsMapSchema = z.partialRecord(
   ProviderContextSettingsSchema,
 )
 export type ProviderContextSettingsMap = z.infer<typeof ProviderContextSettingsMapSchema>
+
+/**
+ * The runtime each provider runs through, by id from its declared `runtimes`.
+ * A provider without an entry runs through its default.
+ */
+export const ProviderRuntimeSettingsSchema = z.partialRecord(ProviderIdSchema, z.string().min(1))
+export type ProviderRuntimeSettings = z.infer<typeof ProviderRuntimeSettingsSchema>
 
 /**
  * A further provider account's own context settings. An account without an
@@ -965,6 +977,19 @@ export const methods = {
       settings: ProviderContextSettingsSchema,
     }),
     result: ProviderContextSettingsMapSchema,
+  },
+  /** The runtime each provider's sessions launch through; applies to every account. */
+  'providers.runtimeSettings': {
+    params: z.object({}),
+    result: ProviderRuntimeSettingsSchema,
+  },
+  /**
+   * Chooses one of the provider's declared runtimes; null returns it to its
+   * default. Sessions already running keep theirs.
+   */
+  'providers.updateRuntimeSettings': {
+    params: z.object({ provider: ProviderIdSchema, runtime: z.string().min(1).nullable() }),
+    result: ProviderRuntimeSettingsSchema,
   },
   /** Every further account that has context settings of its own. */
   'providers.accountContextSettings': {

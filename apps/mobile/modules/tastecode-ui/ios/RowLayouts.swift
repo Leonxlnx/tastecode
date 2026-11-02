@@ -346,15 +346,15 @@ enum RowLayouts {
 
   static func symbol(_ kind: StepView.Kind) -> String {
     switch kind {
-    case .command: return "terminal"
+    case .command: return "terminal-2"
     case .file: return "pencil"
     case .read: return "eye"
-    case .tool: return "wrench.adjustable"
-    case .agent: return "person.2"
+    case .tool: return "tool"
+    case .agent: return "users"
     case .thinking: return "brain"
-    case .plan: return "list.bullet"
-    case .note: return "text.alignleft"
-    case .other: return "circle.dashed"
+    case .plan: return "list"
+    case .note: return "align-left"
+    case .other: return "circle-dashed"
     }
   }
 }

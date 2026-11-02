@@ -291,12 +291,62 @@
           <a href="./feature-inventory.html">Inventory</a>
           <a href="./CLAUDE-HANDOFF.md">Claude handoff</a>
         </nav>
-        <span class="meta">2026-10-20 nightly 3adcd24a · includes main 094eac47 (PR #1921)</span>
+        <span class="meta">2026-11-01 dev 903bd694 · nightly 2347d870 · main 936c6d76</span>
       </div>
     </div>
 
     <div class="wrap">
       <section id="scope">
+        <p>
+          November 1, evening, on dev (903bd694): slash commands for the five providers planned for
+          v0.5 and a calmer limits view merged, PRs #1995 to #2004. Commands carry their source
+          (built-in, custom, plugin, MCP) and the / menu groups by it; typed alone, /permissions,
+          /resume, /settings, /mcp, /skills, /usage and /login open TasteCode's own screens for
+          every provider; Codex adds /init; a Grok or ACP chat that opens with a command no longer
+          sends it to the model as text; Cursor lists its custom commands and skills from disk;
+          Antigravity runs the read-only commands agy answers itself. The limits popup shows an
+          unused allowance as one quiet line, and Cursor's plan limits come from the request
+          cursor-agent's own /usage screen makes, with its stored sign-in read only at that moment
+          (checked against fixtures, never against Cursor's server). Typecheck, lint, the packaged
+          installer and targeted tests passed on the identical combined tree; installed on Leon's
+          laptop. Not done: real-provider checks, the full pnpm test, macOS, the v0.5 provider list
+          per build, and the promotion to nightly.
+        </p>
+        <p>
+          November 1 on dev (aa5a4adc): default skills, provider commands, MCP for ACP agents, image
+          upload for more providers and split view merged, PRs #1961, #1977 to #1993. TasteCode now
+          ships cinetic, taste-skill v2.5 and cook for every provider (Claude Code loads them as the
+          tastecode plugin, the others get a short catalog in the first prompt). Codex gets /goal,
+          /compact and /review as app-server requests, OpenCode runs its listed commands through the
+          command route, and /new, /clear and /model run TasteCode's own actions. ACP agents receive
+          the project's MCP servers, filtered by the transports they advertise, and providers that
+          cannot start MCP sign-in say so. Images reach OpenCode and Cursor as pixels, Antigravity
+          and ACP agents without image prompts as files they open, and the composer gate matches
+          each provider's declared capability. Split view opens a second chat beside the first.
+          Checked on Windows on the identical combined tree: typecheck, lint and the packaged
+          installer passed, plus targeted tests on the merge-resolved files; each PR's own tests
+          passed; everything was exercised only against fake CLIs. Installed on Leon's laptop for
+          his test. Not done yet: real-provider checks, the full pnpm test on the combined tree,
+          macOS, and the promotion to nightly. Sub-agents (#1956, #1957, #1959, #1968, #1969, #1972,
+          #1973) and the window background setting (#1954) stay open on dev.
+        </p>
+        <p>
+          October 31 on dev (0966790d): the set for the next beta merged, PRs #1949 to #1951, #1953,
+          #1955, #1958, #1960, #1962 to #1967, #1970, #1971 and #1974. Phone access is kept to dev
+          builds: the server offers it only with HARNESS_PHONE_ACCESS=1, which pnpm dev sets, and
+          Settings shows no Phone page without it. Composer and side-panel text keeps its subpixel
+          antialiasing on Windows, the account popup is darker with plain limit bars, the open
+          project loses its guide line, Settings › Providers opens on each account's last answer,
+          the model picker offers only providers that can run, account folders beside the built-in
+          CLI folder are found, the composer checks the sign-in of the account its chat runs on,
+          Antigravity reports plan limits from agy's own /usage, and entrances, the sidebar, the
+          side panel and the chat column move on one clock. Lint, typecheck and build passed on the
+          combined set on Windows; pnpm test there still has timeouts and EBUSY temp cleanups, each
+          failure compared with dev 5cd8820e, where the same classes fail. Not done yet: an
+          installer from this commit, Leon's test of it, and the promotion to nightly. Sub-agents
+          (#1956, #1957, #1959, #1968, #1969, #1972, #1973) stayed open on dev; split view followed
+          on November 1.
+        </p>
         <p>
           October 26 on dev (draft PR #1941, not merged): Design mode builds dashboards and other
           app screens again, now from the app-screen part of tasteskill v2.1.5 instead of reference

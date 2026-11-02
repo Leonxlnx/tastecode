@@ -109,7 +109,7 @@ describe('what a chat runs on', () => {
         name: 'Claude Code',
         capabilities: undefined,
         status: 'ready',
-        models: [{ id: 'claude-opus-5-5', displayName: 'Opus 5.5' }],
+        models: [{ id: 'claude-opus-5-5', displayName: 'Opus 5.5', isDefault: true }],
       },
     ] as unknown as Source[]
     const view = chatsView(
@@ -126,7 +126,8 @@ describe('what a chat runs on', () => {
             sessions: [
               session('listed', { provider: 'claude-code', model: 'claude-opus-5-5' }),
               session('own', { provider: 'claude-code', model: 'my-model', accountId: 'work' }),
-              session('default', { provider: 'codex' }),
+              session('default', { provider: 'claude-code' }),
+              session('unknown', { provider: 'codex' }),
             ],
           },
         ],
@@ -134,12 +135,13 @@ describe('what a chat runs on', () => {
       sources,
     )
     const named = Object.fromEntries(
-      view.chats.map((chat) => [chat.id, [chat.sourceName, chat.modelName]]),
+      view.chats.map((chat) => [chat.id, [chat.sourceName, chat.modelName, chat.mark]]),
     )
     expect(named).toEqual({
-      listed: ['Claude Code', 'Opus 5.5'],
-      own: ['Claude Code', 'My-Model'],
-      default: ['codex', null],
+      listed: ['Claude Code', 'Opus 5.5', 'anthropic'],
+      own: ['Claude Code', 'My-Model', 'anthropic'],
+      default: ['Claude Code', 'Opus 5.5', 'anthropic'],
+      unknown: ['Codex', null, 'openai'],
     })
   })
 })
