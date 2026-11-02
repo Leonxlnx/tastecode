@@ -24,8 +24,17 @@ const DOCKED_COMPOSER = '.stage__conversation:not(.is-new-session) > .composer:n
 export const NOTICE_COMPOSER_CLEARANCE = 56
 const NOTICE_EDGE = 12
 
+// A split whose focused pane holds a new chat (its composer centred in that
+// pane) leaves the window corner to the right pane's composer, which stays
+// docked there, dormant but visible.
+const CORNER_COMPOSER =
+  '.split__pane.is-end > .stage__conversation:not(.is-new-session) > .composer'
+
 function dockedComposer(): HTMLElement | null {
-  return document.querySelector<HTMLElement>(DOCKED_COMPOSER)
+  return (
+    document.querySelector<HTMLElement>(DOCKED_COMPOSER) ??
+    document.querySelector<HTMLElement>(CORNER_COMPOSER)
+  )
 }
 
 /**

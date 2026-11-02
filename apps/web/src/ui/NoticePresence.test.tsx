@@ -478,6 +478,42 @@ describe('NoticePresence', () => {
       expect(notice.style.getPropertyValue('--notice-bottom')).toBe('216px')
     })
 
+    it("sits above the right pane's composer while a new chat has focus in a split", () => {
+      setWindow(1280, 860)
+      const { start, end } = splitStage()
+      dockComposer({ into: start, newSession: true, left: 300, width: 490 })
+      dockComposer({ into: end, dormant: true, left: 790, width: 490 })
+      render(
+        <NoticePresence className="notice" role="status" visible>
+          1 update
+        </NoticePresence>,
+      )
+
+      const notice = screen.getByRole('status')
+      // The window corner is on that composer's Send.
+      expect(notice.style.getPropertyValue('--notice-bottom')).toBe('216px')
+      // 1280 - (790 + 24 + 410)
+      expect(notice.style.getPropertyValue('--notice-right')).toBe('56px')
+    })
+
+    it('keeps the corner when the new chat is the right pane', () => {
+      setWindow(1280, 860)
+      const { start, end } = splitStage()
+      start.className = 'split__pane is-dormant is-start'
+      end.className = 'split__pane is-focused is-end'
+      dockComposer({ into: start, dormant: true, left: 300, width: 490 })
+      dockComposer({ into: end, newSession: true, left: 790, width: 490 })
+      render(
+        <NoticePresence className="notice" role="status" visible>
+          1 update
+        </NoticePresence>,
+      )
+
+      const notice = screen.getByRole('status')
+      expect(notice.style.getPropertyValue('--notice-bottom')).toBe('')
+      expect(notice.style.getPropertyValue('--notice-right')).toBe('')
+    })
+
     it('measures nothing again while the transcript streams', async () => {
       setWindow(1280, 860)
       const { conversation, measured } = dockComposer()
