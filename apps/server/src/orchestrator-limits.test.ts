@@ -60,6 +60,14 @@ vi.mock('@harness/adapter-antigravity', async (importOriginal) => {
   return { ...original, antigravityLimitSource: () => sources.antigravity() }
 })
 
+// Without this the real source reads the machine's Cursor sign-in
+// (%APPDATA%\Cursor\auth.json) and asks Cursor for the usage over HTTPS, so a
+// signed-in machine reports real limits. A signed-out machine is the case here.
+vi.mock('@harness/adapter-cursor', async (importOriginal) => {
+  const original = await importOriginal<typeof import('@harness/adapter-cursor')>()
+  return { ...original, cursorLimitSource: async () => ({ status: 'unavailable' as const }) }
+})
+
 const { Orchestrator } = await import('./orchestrator.js')
 
 const orchestrator = () =>
