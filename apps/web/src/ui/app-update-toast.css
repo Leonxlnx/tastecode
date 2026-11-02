@@ -17,6 +17,15 @@
   box-shadow: var(--shadow-flyout);
   font-size: 13px;
   line-height: 20px;
+  /* The notice's own timing, plus the move below. */
+  transition-property: opacity, transform, top;
+}
+
+/* A question about running chats can open while the deleted-chat toast holds
+   this spot (it renders after this notice): it waits just below that toast,
+   38px tall plus an 8px gap, until the toast leaves. */
+.notice.notice--app-update:has(~ .notice--archive[data-state='open']) {
+  top: 100px;
 }
 
 .notice--app-update > svg {
