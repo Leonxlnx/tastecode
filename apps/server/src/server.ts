@@ -30,6 +30,7 @@ import type { CheckoutPullRequests } from './checkout-pull-request.js'
 import type { PullRequestService } from './pull-requests.js'
 import { sourceAccount } from './account-directory.js'
 import { ProviderAccounts } from './provider-accounts.js'
+import { providerOffered } from './provider-edition.js'
 import { DEFAULT_PORT } from './server-config.js'
 import { Store } from './store.js'
 import { createProjectListProjector, type ProjectListState } from './project-list.js'
@@ -1188,6 +1189,7 @@ export function startServer(
       }
 
       case 'acp.agents': {
+        if (!providerOffered('acp')) return { agents: [] }
         const { acpCanSignOut, detectAgents } = await import('@harness/adapter-acp/agents')
         const agents = await detectAgents()
         return {

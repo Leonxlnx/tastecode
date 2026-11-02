@@ -37,6 +37,7 @@ import {
 import type { ModelListRead } from './model-list-cache.js'
 import { ProjectInventoryCache, type ProjectInventoryService } from './project-inventory-cache.js'
 import { PROVIDER_CAPABILITIES, type ProviderControlCapabilities } from './provider-capabilities.js'
+import { providerOffered } from './provider-edition.js'
 import { retryableLazy } from './retryable-lazy.js'
 import { WatchLeases } from './watch-leases.js'
 
@@ -784,10 +785,17 @@ export class ProviderControls {
   }
 
   #makeControl(provider: ProviderId): ProviderControl {
-    const capabilities = PROVIDER_CAPABILITIES[provider]
+    // A provider this build does not offer answers like a removed API
+    // connection: signed out, no limits, models or inventories, and it never
+    // starts its CLI. Old chats on it still get a usage summary.
+    const offered = providerOffered(provider)
+    const capabilities = PROVIDER_CAPABILITIES[offered ? provider : 'api']
     const home = this.#options.accountHome
-    const ownServices =
-      home === undefined ? defaultServices[provider] : accountServices.get(provider)?.(home)
+    const ownServices = !offered
+      ? {}
+      : home === undefined
+        ? defaultServices[provider]
+        : accountServices.get(provider)?.(home)
     // The default account's calls would act on the user's own sign-in instead.
     if (!ownServices) throw new Error(`${provider} cannot run as another account`)
     const services: ProviderServices = { ...ownServices, ...this.#options.services?.[provider] }
