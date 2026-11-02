@@ -71,6 +71,65 @@
   height: 13px;
 }
 
+/* A closed source is its heading and one line under it, closer together than
+   the rows of an open one. */
+.account-menu__source.is-closed {
+  gap: 4px;
+}
+
+.account-menu__source-body {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* The heading of a source with values opens its full rows. The hover wash
+   reaches past the text without moving it, as on an account line. */
+.account-menu__source-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin: -3px -5px;
+  padding: 3px 5px;
+  background: none;
+  border: 0;
+  border-radius: var(--r-sm);
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+
+.account-menu__source-toggle:hover {
+  background: var(--menu-hover);
+}
+
+.account-menu__source-toggle:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.account-menu__source-toggle > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-menu__source .account-menu__source-chevron {
+  width: 12px;
+  height: 12px;
+  margin-left: -2px;
+  color: var(--text-3);
+  transition: rotate var(--dur-fast) var(--ease-out);
+}
+
+.account-menu__source-toggle[aria-expanded='true'] > .account-menu__source-chevron {
+  rotate: 90deg;
+}
+
 /* A provider with more than one account: its name once, then each account
    as a quieter heading over its own limits, at the space between rows. */
 .account-menu__provider {
@@ -119,11 +178,14 @@
 /* One muted word, never an alert colour: a provider that cannot report is a
    missing number, not something that went wrong for the person. */
 .account-menu__source-status {
-  flex: 0 1 auto;
+  /* Takes only the room the name leaves, so the provider's name stays whole
+     and the status is what shortens. */
+  flex: 1 1 0;
   min-width: 0;
   margin-left: auto;
   overflow: hidden;
   color: var(--text-3);
+  text-align: right;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -237,6 +299,29 @@
 /* An untouched allowance has no bar; its number steps back with it. */
 .account-menu__limit[data-full] .account-menu__limit-value {
   color: var(--text-3);
+}
+
+/* The one line under a closed heading: label, a short bar, then the value. The
+   bar gives way before the label does, down to a stub. */
+.account-menu__limit.is-inline .account-menu__limit-row {
+  justify-content: flex-start;
+  align-items: center;
+}
+
+.account-menu__limit.is-inline .account-menu__limit-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-menu__limit.is-inline .account-menu__limit-bar {
+  flex: 0 100 48px;
+  min-width: 24px;
+  margin-left: auto;
+}
+
+.account-menu__limit.is-inline .account-menu__limit-label + .account-menu__limit-value {
+  margin-left: auto;
 }
 
 .account-menu__limit-btn {
@@ -572,7 +657,8 @@ button.account-menu__account-line:focus-visible {
     transition: none;
   }
 
-  .account-menu__account-line > svg {
+  .account-menu__account-line > svg,
+  .account-menu__source .account-menu__source-chevron {
     transition: none;
   }
 }
