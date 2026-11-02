@@ -193,6 +193,7 @@ describe('Codex live reasoning', () => {
     const ids = { threadId: 'thread-1', turnId: 'turn-1', itemId: 'reasoning-1' }
     try {
       await adapter.start()
+      await adapter.startThread('C:\\repo')
       for (const [summaryIndex, delta] of ['**Plan**', '**Check**'].entries()) {
         rpc.emitNotification('item/reasoning/summaryPartAdded', { ...ids, summaryIndex })
         rpc.emitNotification('item/reasoning/summaryTextDelta', { ...ids, delta, summaryIndex })

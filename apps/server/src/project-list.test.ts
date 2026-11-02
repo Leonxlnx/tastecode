@@ -17,6 +17,7 @@ const threads: StoredSidebarThread[] = [
     createdAt: 2,
     lifecycle: { state: 'active', keepActive: false },
     unread: false,
+    lastActiveAt: 5,
   },
   {
     id: 'b',
@@ -27,10 +28,30 @@ const threads: StoredSidebarThread[] = [
     createdAt: 1,
     lifecycle: { state: 'settled', settledAt: 3, reason: 'manual' },
     unread: true,
+    lastActiveAt: 3,
   },
 ]
 
 describe('projects.list projector', () => {
+  it('keeps distinct API connections in the project session response', () => {
+    const project = createProjectListProjector()
+    const apiThreads: StoredSidebarThread[] = ['first', 'second'].map((connectionId) => ({
+      ...threads[0]!,
+      id: connectionId,
+      provider: 'api',
+      connectionId,
+    }))
+    const result = project(projects, apiThreads, new Set(), {
+      isTurnRunning: () => false,
+      inboxStatus: () => 'idle',
+      revision: () => 0,
+    })
+    expect(result.projects[0]?.sessions.map((session) => session.connectionId)).toEqual([
+      'first',
+      'second',
+    ])
+  })
+
   it('omits renderer defaults but keeps non-default sidebar state', () => {
     const project = createProjectListProjector()
     const result = project(projects, threads, new Set(), {
@@ -45,6 +66,7 @@ describe('projects.list projector', () => {
       provider: 'codex',
       createdAt: 2,
       running: false,
+      lastActiveAt: 5,
     })
     expect(result.projects[1]?.sessions[0]).toMatchObject({
       pinned: true,

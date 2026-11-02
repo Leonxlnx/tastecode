@@ -4,7 +4,7 @@
   "description": "A local desktop workspace for coding agents.",
   "author": "Tasteskill Team",
   "copyright": "made by @blueemi99 and @lexnlin on X :)",
-  "version": "0.1.2",
+  "version": "0.5.0",
   "private": true,
   "type": "module",
   "main": "./dist/main.js",
@@ -19,8 +19,9 @@
     "typecheck": "tsc -b",
     "start": "tsc -b && node scripts/build-main.js && node scripts/build-preload.js && node scripts/start.js",
     "test": "vitest run src --passWithNoTests",
-    "dist": "pnpm -w licenses:verify && pnpm -w build && node scripts/build-preload.js && electron-builder",
-    "dist:dir": "pnpm -w licenses:verify && pnpm -w build && node scripts/build-preload.js && electron-builder --dir",
+    "dist": "pnpm -w licenses:verify && pnpm --filter @harness/default-skills sync && pnpm -w build && node scripts/build-preload.js && electron-builder -c.extraMetadata.tastecodeEdition=dev",
+    "dist:dir": "pnpm -w licenses:verify && pnpm --filter @harness/default-skills sync && pnpm -w build && node scripts/build-preload.js && electron-builder --dir -c.extraMetadata.tastecodeEdition=dev",
+    "dist:release": "pnpm -w licenses:verify && pnpm --filter @harness/default-skills sync && pnpm -w build && node scripts/build-preload.js && electron-builder",
     "verify:native-bindings": "node scripts/run-native-binding-proof.js"
   },
   "dependencies": {
@@ -42,6 +43,7 @@
     "vitest": "^4.1.10"
   },
   "build": {
+    "afterPack": "./scripts/after-pack.cjs",
     "appId": "dev.tastecode.desktop",
     "icon": "assets/tastecode-app-icon.png",
     "asar": true,
@@ -109,6 +111,17 @@
       {
         "from": "../../release/THIRD_PARTY_LICENSES.txt",
         "to": "THIRD_PARTY_LICENSES.txt"
+      },
+      {
+        "from": "../../packages/default-skills/bundle",
+        "to": "default-skills"
+      },
+      {
+        "from": "dist/feedback",
+        "to": "feedback",
+        "filter": [
+          "feedback.env"
+        ]
       }
     ],
     "directories": {

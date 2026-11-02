@@ -1,4 +1,5 @@
 import { useArchiveMotion } from './useArchiveMotion.js'
+import { useRowDrag, type RowDrag, type RowDropTarget } from './useRowDrag.js'
 import {
   lazy,
   memo,
@@ -10,6 +11,7 @@ import {
   type ReactNode,
   type RefObject,
   useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -19,19 +21,27 @@ import {
 } from 'react'
 import type {
   Account,
+  AccountId,
   ProviderId,
   ResultOf,
   ThreadInboxStatus,
   ThreadLifecycle,
 } from '@harness/contracts'
+import type { AccountLabel } from '../provider-accounts-state.js'
 import {
+  IconArchive as Archive,
+  IconArrowBackUp as Restore,
+  IconCheck as Check,
+  IconChevronRight as ChevronRight,
   IconTrash as Trash,
   IconDots as Ellipsis,
   IconFolderOpen as FolderOpen,
   IconFolderPlus as FolderPen,
   IconGitPullRequest as GitPullRequest,
+  IconLayoutColumns as SplitColumns,
   IconLayoutSidebarLeftCollapse as PanelLeftClose,
   IconLoader2 as LoaderCircle,
+  IconMessage as MessageSquare,
   IconPencil as Pencil,
   IconPinned as Pin,
   IconPinnedOff as PinOff,
@@ -58,10 +68,18 @@ import {
 import {
   providerDisplayName,
   providerMark,
-  providerPresentation,
+  sessionSourcePresentation,
 } from '../provider-presentation.js'
 import { avatarSeedName, type ProfileIdentityPreferences } from '../profile-preferences.js'
-import { sidebarRail } from '../sidebar-order.js'
+import {
+  foldedProjectSessions,
+  needsYouSessions,
+  projectAttention,
+  sidebarRail,
+  type Attention,
+  type NeedsYouEntry,
+  type PinnedSession,
+} from '../sidebar-order.js'
 import {
   DEFAULT_KEYBINDINGS,
   isComposingKey,
@@ -69,15 +87,18 @@ import {
   shortcutAria,
   type Keybindings,
 } from '../shortcuts.js'
+import { USAGE_LOW_PERCENT } from '../usage-limits-state.js'
 import { GeneratedAvatar } from './GeneratedAvatar.js'
 import { AppUpdateNotice } from './AppUpdateNotice.js'
 import { Menu, MenuItem } from './Menu.js'
 import type { AccountLimitsState } from './AccountLimits.js'
 import type { InboxActions } from './InboxSidebar.js'
 import { ProviderIcon } from './ProviderIcon.js'
+import { SplitSidebarContext, type SplitSidebar } from './split-view-context.js'
 import { activeIndicatorRef } from './active-indicator.js'
 import { compactRelativeTime, readSessionClock, subscribeSessionClock } from './session-clock.js'
 import '../styles/account-card.css'
+import '../styles/rail-motion.css'
 import { InboxRailSkeleton, SidebarTreeSkeleton } from './SurfaceSkeletons.js'
 
 type AccountLimitsModule = typeof import('./AccountLimits.js')
@@ -138,6 +159,11 @@ export type Session = {
   title: string
   provider: ProviderId
   agent?: string | undefined
+  connectionId?: string | undefined
+  /** The provider account the chat is pinned to. Absent means default. */
+  accountId?: string | undefined
+  /** The earlier chat this one carries on, such as after a plan limit on another account. */
+  continuedFrom?: string | undefined
   createdAt: number
   /** Client-observed start of the current status, used for elapsed/relative labels. */
   statusSince?: number | undefined
@@ -157,7 +183,6 @@ export type Project = {
 }
 
 type DropPosition = 'before' | 'after'
-type ProjectDropTarget = { path: string; position: DropPosition }
 
 /** Narrowest width at which the New chat row and the chat rows stay
  *  roomy — the narrowest rail still looks deliberate, never squeezed. */
@@ -186,8 +211,9 @@ const REVEAL_COOLDOWN_MS = 1250
 /** Matches the .rail__edge hit strip. */
 const REVEAL_EDGE_WIDTH = 6
 const MAX_RAIL_WIDTH = 420
-/** Matches the account menu's own limit bars, which turn red at the same point. */
-const USAGE_LOW_PERCENT = 15
+/** Below this a rail (an older saved width) keeps a Needs you or Archived row
+ *  to its title: the project name beside it would be cut to a few letters. */
+const NARROW_RAIL_WIDTH = 220
 const INITIAL_PROJECT_RENDER_COUNT = 30
 const DEFERRED_PROJECT_RENDER_COUNT = 20
 const DEFERRED_PROJECT_RENDER_TIMEOUT_MS = 100
@@ -214,12 +240,23 @@ function SidebarComponent(props: {
   providerName: string
   keybindings?: Keybindings | undefined
   usageStates?: AccountLimitsState[] | undefined
-  onRetryUsage?: ((provider: ProviderId) => void) | undefined
+  /** The sources the card's one figure is taken from; every source by default. */
+  usageCardStates?: AccountLimitsState[] | undefined
+  /** Names a provider account in the popup's plan limits. */
+  accountLabel?: AccountLabel | undefined
+  /** The account a new chat with each provider starts on, marked in the plan limits. */
+  activeAccount?: ((provider: ProviderId) => AccountId) | undefined
+  /** The account popup shows plan limits; returns the release for when it closes. */
+  onShowUsage?: (() => () => void) | undefined
+  onRetryUsage?: ((provider: ProviderId, accountId?: AccountId) => void) | undefined
+  /** Reads every plan-limit source in the popup again. */
+  onRefreshUsage?: (() => void) | undefined
   onConsumeReset?:
     | ((
         provider: ProviderId,
         idempotencyKey: string,
         creditId?: string,
+        accountId?: AccountId,
       ) => Promise<ResultOf<'usage.consumeReset'>>)
     | undefined
   mode?: 'classic' | 'inbox'
@@ -232,12 +269,23 @@ function SidebarComponent(props: {
   onAddDroppedProjects?: ((paths: string[]) => void) | undefined
   onNewSession: (projectPath?: string, chooseProject?: boolean) => void
   onSelectSession: (id: string) => void
+  /** The chat open in split view beside the active one. */
+  besideSessionId?: string | undefined
+  /** Opens a chat in split view beside the active one. */
+  onOpenSessionBeside?: ((id: string) => void) | undefined
+  /** Where a chat row dragged out of the rail can be dropped. Keep it stable. */
+  sessionDropTarget?: RowDropTarget | undefined
   onRenameProject: (path: string, name: string) => void
   onRemoveProject: (path: string) => void
   onTogglePin: (path: string) => void
   onRenameSession: (id: string, title: string) => void
   onToggleSessionPin?: (id: string) => void
   onDeleteSession: (id: string) => void
+  /** Moves a chat to Archived without deleting it; sending to it later brings it back. */
+  onArchiveSession?: ((id: string) => void) | undefined
+  onRestoreSession?: ((id: string) => void) | undefined
+  /** Reads a failed chat without opening it, which clears it from Needs you. */
+  onMarkSessionRead?: ((id: string) => void) | undefined
   onArchiveProject: (sessionIds: string[]) => void
   onReorderProject?: (sourcePath: string, targetPath: string, position: DropPosition) => void
   onReorderSession: (
@@ -250,10 +298,13 @@ function SidebarComponent(props: {
   pullRequestsActive?: boolean | undefined
   onOpenPullRequests?: (() => void) | undefined
   onOpenSettings: (section?: 'profile') => void
+  /** Present only when this build can send feedback. */
+  onSendFeedback?: (() => void) | undefined
 }) {
   const keybindings = props.keybindings ?? DEFAULT_KEYBINDINGS
   const profileDisplayName = props.profileIdentity?.displayName.trim() || 'Local profile'
-  const usageLimit = useMemo(() => tightestUsageLimit(props.usageStates), [props.usageStates])
+  const cardStates = props.usageCardStates ?? props.usageStates
+  const usageLimit = useMemo(() => tightestUsageLimit(cardStates), [cardStates])
   const usageRemaining = usageLimit
     ? Math.round(Math.min(100, Math.max(0, 100 - usageLimit.usedPercent)))
     : undefined
@@ -487,6 +538,12 @@ function SidebarComponent(props: {
     (id: string) => actionsRef.current.onToggleSessionPin?.(id),
     [],
   )
+  const markSessionRead = useCallback(
+    (id: string) => actionsRef.current.onMarkSessionRead?.(id),
+    [],
+  )
+  const archiveSession = useCallback((id: string) => actionsRef.current.onArchiveSession?.(id), [])
+  const restoreSession = useCallback((id: string) => actionsRef.current.onRestoreSession?.(id), [])
   const animateArchive = useArchiveMotion()
   const deleteSession = useCallback(
     (id: string) => {
@@ -528,18 +585,56 @@ function SidebarComponent(props: {
 
   // A status push replaces one project in an otherwise retained tree. Keep
   // every unchanged projection stable so React only reconciles that project.
-  const { orderedProjects, pinnedSessions } = useMemo(
+  const { orderedProjects, pinnedSessions, archivedSessions } = useMemo(
     () => sidebarRail(props.projects),
     [props.projects],
   )
-  const [draggedProjectPath, setDraggedProjectPath] = useState<string>()
+  const needsYou = useMemo(
+    () => needsYouSessions(props.projects, props.activeSessionId),
+    [props.projects, props.activeSessionId],
+  )
+  const projectNames = useMemo(
+    () => new Map(props.projects.map((project) => [project.path, displayName(project)])),
+    [props.projects],
+  )
   const [folderDropActive, setFolderDropActive] = useState(false)
   const folderDragDepth = useRef(0)
-  const [projectDropTarget, setProjectDropTarget] = useState<ProjectDropTarget>()
-  const draggedProjectPathRef = useRef<string | undefined>(undefined)
-  const projectDropTargetRef = useRef<ProjectDropTarget | undefined>(undefined)
   const orderedProjectsRef = useRef(orderedProjects)
   orderedProjectsRef.current = orderedProjects
+  const railBody = useRef<HTMLDivElement>(null)
+  const projectDrag = useRowDrag({
+    attribute: 'data-project-path',
+    // A project only trades places inside its own group: pinned ones sit
+    // together at the top, and a drop across the line would be refused.
+    rows: (sourcePath) => {
+      const projects = orderedProjectsRef.current
+      const pinned = Boolean(projects.find((project) => project.path === sourcePath)?.pinned)
+      const group = new Set(
+        projects.filter((project) => Boolean(project.pinned) === pinned).map((p) => p.path),
+      )
+      return Array.from(
+        railBody.current?.querySelectorAll<HTMLElement>('[data-project-path]') ?? [],
+      ).filter((node) => group.has(node.getAttribute('data-project-path')!))
+    },
+    onReorder: props.onReorderProject
+      ? (source, target, position) =>
+          actionsRef.current.onReorderProject?.(source, target, position)
+      : undefined,
+    ignore: '.menuwrap, .rename',
+  })
+  // Pinned chats keep their order, but can still be dragged out to the chat area.
+  const { dragOut } = useContext(SplitSidebarContext)
+  const pinnedList = useRef<HTMLUListElement>(null)
+  const pinnedDrag = useRowDrag({
+    attribute: 'data-archive-session-id',
+    rows: () =>
+      Array.from(
+        pinnedList.current?.querySelectorAll<HTMLElement>('[data-archive-session-id]') ?? [],
+      ),
+    onReorder: undefined,
+    ignore: '.sess__actions',
+    away: dragOut,
+  })
   const [projectRenderLimit, setProjectRenderLimit] = useState(INITIAL_PROJECT_RENDER_COUNT)
   const { renderedProjects, renderedProjectCount } = useMemo(() => {
     let count = Math.min(projectRenderLimit, orderedProjects.length)
@@ -581,53 +676,6 @@ function SidebarComponent(props: {
     const timeout = window.setTimeout(revealNextProjects, 0)
     return () => window.clearTimeout(timeout)
   }, [inbox, orderedProjects.length, renderedProjectCount])
-
-  const endProjectDrag = useCallback(() => {
-    draggedProjectPathRef.current = undefined
-    projectDropTargetRef.current = undefined
-    setDraggedProjectPath(undefined)
-    setProjectDropTarget(undefined)
-  }, [])
-
-  const startProjectDrag = useCallback((event: DragEvent<HTMLElement>, project: Project) => {
-    if (event.target !== event.currentTarget || !actionsRef.current.onReorderProject) return
-    prepareAppHaptics()
-    event.dataTransfer.effectAllowed = 'move'
-    event.dataTransfer.setData('text/plain', project.path)
-    draggedProjectPathRef.current = project.path
-    setDraggedProjectPath(project.path)
-  }, [])
-
-  const dragOverProject = useCallback((event: DragEvent<HTMLElement>, project: Project) => {
-    const draggedPath = draggedProjectPathRef.current
-    if (!draggedPath || draggedPath === project.path) return
-    const source = orderedProjectsRef.current.find((candidate) => candidate.path === draggedPath)
-    if (source?.pinned !== project.pinned) return
-    event.preventDefault()
-    event.dataTransfer.dropEffect = 'move'
-    const bounds = event.currentTarget.getBoundingClientRect()
-    const position: DropPosition =
-      event.clientY < bounds.top + bounds.height / 2 ? 'before' : 'after'
-    const current = projectDropTargetRef.current
-    if (current?.path === project.path && current.position === position) return
-    const next = { path: project.path, position }
-    projectDropTargetRef.current = next
-    setProjectDropTarget(next)
-    performAppHaptic('alignment')
-  }, [])
-
-  const dropProject = useCallback(
-    (event: DragEvent<HTMLElement>, project: Project) => {
-      event.preventDefault()
-      const draggedPath = draggedProjectPathRef.current
-      const target = projectDropTargetRef.current
-      if (draggedPath && target?.path === project.path) {
-        actionsRef.current.onReorderProject?.(draggedPath, project.path, target.position)
-      }
-      endProjectDrag()
-    },
-    [endProjectDrag],
-  )
 
   const folderDropEnabled = canDropProjectFolders && props.onAddDroppedProjects !== undefined
   const hasDroppedFiles = (event: DragEvent<HTMLElement>) =>
@@ -787,13 +835,28 @@ function SidebarComponent(props: {
             </div>
 
             <div
+              ref={railBody}
               className="rail__body"
+              data-narrow={props.width < NARROW_RAIL_WIDTH ? '' : undefined}
               onScroll={(event) => setBodyScrolled(event.currentTarget.scrollTop > 0)}
+              onClickCapture={projectDrag.onClickCapture}
             >
+              {needsYou.length > 0 ? (
+                <NeedsYouBand
+                  entries={needsYou}
+                  projectNames={projectNames}
+                  onSelectSession={selectSession}
+                  onMarkSessionRead={props.onMarkSessionRead ? markSessionRead : undefined}
+                />
+              ) : null}
               {pinnedSessions.length > 0 ? (
                 <>
                   <p className="section">Pinned</p>
-                  <ul className="proj__sessions pinned-sessions">
+                  <ul
+                    ref={pinnedList}
+                    className="proj__sessions pinned-sessions"
+                    onClickCapture={pinnedDrag.onClickCapture}
+                  >
                     {pinnedSessions.map(({ projectPath, session }) => (
                       <SessionRow
                         key={session.id}
@@ -805,13 +868,7 @@ function SidebarComponent(props: {
                         onDelete={() => props.onDeleteSession(session.id)}
                         onTogglePin={() => props.onToggleSessionPin?.(session.id)}
                         onOpenInExplorer={() => void revealPath(projectPath)}
-                        reorderable={false}
-                        dragging={false}
-                        dropPosition={undefined}
-                        onDragStart={() => undefined}
-                        onDragOver={() => undefined}
-                        onDrop={() => undefined}
-                        onDragEnd={() => undefined}
+                        drag={dragOut ? pinnedDrag : undefined}
                       />
                     ))}
                   </ul>
@@ -847,17 +904,7 @@ function SidebarComponent(props: {
                       project.path === props.activeProjectPath ? props.activeSessionId : undefined
                     }
                     active={project.path === props.activeProjectPath}
-                    reorderable={Boolean(props.onReorderProject)}
-                    dragging={project.path === draggedProjectPath}
-                    dropPosition={
-                      projectDropTarget?.path === project.path
-                        ? projectDropTarget.position
-                        : undefined
-                    }
-                    onProjectDragStart={startProjectDrag}
-                    onProjectDragOver={dragOverProject}
-                    onProjectDrop={dropProject}
-                    onProjectDragEnd={endProjectDrag}
+                    drag={props.onReorderProject ? projectDrag : undefined}
                     onNewSession={newSession}
                     onSelectSession={selectSession}
                     onRenameProject={renameProject}
@@ -866,11 +913,22 @@ function SidebarComponent(props: {
                     onRenameSession={renameSession}
                     onToggleSessionPin={props.onToggleSessionPin ? toggleSessionPin : undefined}
                     onDeleteSession={deleteSession}
+                    onArchiveSession={props.onArchiveSession ? archiveSession : undefined}
                     onArchiveProject={archiveProject}
                     onReorderSession={reorderSession}
                   />
                 ))
               )}
+              {archivedSessions.length > 0 ? (
+                <ArchivedSection
+                  entries={archivedSessions}
+                  projectNames={projectNames}
+                  activeSessionId={props.activeSessionId}
+                  onSelectSession={selectSession}
+                  onRestoreSession={props.onRestoreSession ? restoreSession : undefined}
+                  onDeleteSession={deleteSession}
+                />
+              ) : null}
             </div>
           </>
         )}
@@ -899,7 +957,14 @@ function SidebarComponent(props: {
                     {usageLimit && usageRemaining !== undefined ? (
                       <span
                         className="account__usage"
-                        title={`${providerDisplayName(usageLimit.provider)} · ${usageLimit.label} · ${usageRemaining}% left`}
+                        title={[
+                          providerDisplayName(usageLimit.provider),
+                          usageLimit.label,
+                          `${usageRemaining}% left`,
+                          ...(usageLimit.unknown.length > 0
+                            ? [unknownLimitsLabel(usageLimit.unknown)]
+                            : []),
+                        ].join(' · ')}
                       >
                         <ProviderIcon
                           className="account__usage-mark"
@@ -914,6 +979,9 @@ function SidebarComponent(props: {
                           <span style={{ transform: `scaleX(${usageRemaining / 100})` }} />
                         </span>
                         <span className="account__usage-value">{usageRemaining}% left</span>
+                        {usageLimit.unknown.length > 0 ? (
+                          <span className="account__usage-unknown" aria-hidden />
+                        ) : null}
                       </span>
                     ) : null}
                   </span>
@@ -928,7 +996,11 @@ function SidebarComponent(props: {
                       <Suspense fallback={<AccountLimitsLoading states={props.usageStates} />}>
                         <RenderedAccountLimits
                           states={props.usageStates}
+                          accountLabel={props.accountLabel}
+                          activeAccount={props.activeAccount}
+                          onShow={props.onShowUsage}
                           onRetry={props.onRetryUsage ?? noop}
+                          onRefresh={props.onRefreshUsage}
                           onConsumeReset={props.onConsumeReset}
                         />
                       </Suspense>
@@ -948,6 +1020,22 @@ function SidebarComponent(props: {
                           title="Edit profile"
                         />
                       </button>
+                      {props.onSendFeedback ? (
+                        <button
+                          type="button"
+                          className="menu__item"
+                          onClick={() => {
+                            props.onSendFeedback?.()
+                            closeOnNarrowViewport()
+                            close()
+                          }}
+                        >
+                          <DialogAction
+                            icon={<MessageSquare size={14} aria-hidden />}
+                            title="Send feedback"
+                          />
+                        </button>
+                      ) : null}
                       <button
                         type="button"
                         className="menu__item"
@@ -1214,13 +1302,7 @@ const ProjectRow = memo(function ProjectRow(props: {
   project: Project
   activeSessionId: string | undefined
   active: boolean
-  reorderable: boolean
-  dragging: boolean
-  dropPosition: DropPosition | undefined
-  onProjectDragStart: (event: DragEvent<HTMLElement>, project: Project) => void
-  onProjectDragOver: (event: DragEvent<HTMLElement>, project: Project) => void
-  onProjectDrop: (event: DragEvent<HTMLElement>, project: Project) => void
-  onProjectDragEnd: () => void
+  drag: RowDrag | undefined
   onNewSession: (path: string) => void
   onSelectSession: (id: string) => void
   onRenameProject: (path: string, name: string) => void
@@ -1229,6 +1311,7 @@ const ProjectRow = memo(function ProjectRow(props: {
   onRenameSession: (id: string, title: string) => void
   onToggleSessionPin: ((id: string) => void) | undefined
   onDeleteSession: (id: string) => void
+  onArchiveSession: ((id: string) => void) | undefined
   onArchiveProject: (sessionIds: string[]) => void
   onReorderSession: (
     projectPath: string,
@@ -1238,6 +1321,7 @@ const ProjectRow = memo(function ProjectRow(props: {
   ) => void
 }) {
   const count = props.project.sessions.length
+  const attention = useMemo(() => projectAttention(props.project), [props.project])
   const [open, setOpen] = useState(props.active)
   const [sessionsMounted, setSessionsMounted] = useState(props.active)
   const [showAllSessions, setShowAllSessions] = useState(false)
@@ -1250,6 +1334,7 @@ const ProjectRow = memo(function ProjectRow(props: {
   const openRef = useRef(props.active)
   const sessionUnmountTimer = useRef<number | undefined>(undefined)
   const expanded = open
+  const folded = expanded ? undefined : attention
 
   const cancelSessionUnmount = useCallback(() => {
     if (sessionUnmountTimer.current === undefined) return
@@ -1293,20 +1378,22 @@ const ProjectRow = memo(function ProjectRow(props: {
 
   return (
     <section
-      className={`proj${props.dragging ? ' is-dragging' : ''}`}
+      className={`proj${props.drag ? ' is-reorderable' : ''}`}
       data-open={expanded}
-      data-drop-position={props.dropPosition}
-      draggable={props.reorderable}
-      onDragStart={(event) => props.onProjectDragStart(event, props.project)}
-      onDragOver={(event) => props.onProjectDragOver(event, props.project)}
-      onDrop={(event) => props.onProjectDrop(event, props.project)}
-      onDragEnd={props.onProjectDragEnd}
+      data-project-path={props.project.path}
     >
       <div
         className="proj__head"
         onMouseEnter={() => setActionsReady(true)}
         onFocusCapture={() => setActionsReady(true)}
         onContextMenuCapture={() => setActionsReady(true)}
+        onPointerDown={
+          props.drag ? (event) => props.drag?.onPointerDown(props.project.path, event) : undefined
+        }
+        onPointerMove={props.drag?.onPointerMove}
+        onPointerUp={props.drag?.onPointerUp}
+        onPointerCancel={props.drag?.onPointerCancel}
+        onLostPointerCapture={props.drag?.onLostPointerCapture}
       >
         {renaming ? (
           <InlineRename
@@ -1332,10 +1419,22 @@ const ProjectRow = memo(function ProjectRow(props: {
                 setProjectOpen(!expanded)
               }}
               aria-expanded={expanded}
+              aria-label={
+                folded
+                  ? `${displayName(props.project)}, ${folded.count} ${folded.count === 1 ? 'needs' : 'need'} you`
+                  : undefined
+              }
               title={props.project.path}
             >
               <span className="proj__mark" aria-hidden />
               <span className="proj__name">{displayName(props.project)}</span>
+              {/* A folded project still says when something inside needs the user. */}
+              {folded ? (
+                <span className="proj__attention" data-attention={folded.attention} aria-hidden>
+                  <span className={`sess__status-dot ${attentionTone(folded.attention)}`} />
+                  {folded.count}
+                </span>
+              ) : null}
             </button>
 
             <Menu
@@ -1461,6 +1560,7 @@ const ProjectRow = memo(function ProjectRow(props: {
             onSelectSession={props.onSelectSession}
             onRenameSession={props.onRenameSession}
             onDeleteSession={props.onDeleteSession}
+            onArchiveSession={props.onArchiveSession}
             onToggleSessionPin={props.onToggleSessionPin}
             onReorderSession={props.onReorderSession}
           />
@@ -1479,6 +1579,7 @@ const ProjectSessions = memo(function ProjectSessions(props: {
   onRenameSession: (id: string, title: string) => void
   onToggleSessionPin: ((id: string) => void) | undefined
   onDeleteSession: (id: string) => void
+  onArchiveSession: ((id: string) => void) | undefined
   onReorderSession: (
     projectPath: string,
     sourceId: string,
@@ -1487,36 +1588,51 @@ const ProjectSessions = memo(function ProjectSessions(props: {
   ) => void
 }) {
   const count = props.project.sessions.length
-  const [draggedSessionId, setDraggedSessionId] = useState<string>()
-  const [dropTarget, setDropTarget] = useState<{
-    id: string
-    position: DropPosition
-  }>()
-  const draggedSessionIdRef = useRef<string | undefined>(undefined)
-  const dropTargetRef = useRef<{ id: string; position: DropPosition } | undefined>(undefined)
   const virtualSessionList = useRef<HTMLUListElement>(null)
-  const virtualized = props.showAll && count > VIRTUALIZED_PROJECT_SESSION_COUNT
-  const [virtualRange, setVirtualRange] = useState(() =>
-    virtualSessionRange(0, props.project.sessions.length),
+  const { dragOut } = useContext(SplitSidebarContext)
+  const sessionDrag = useRowDrag({
+    attribute: 'data-archive-session-id',
+    rows: () =>
+      Array.from(
+        virtualSessionList.current?.querySelectorAll<HTMLElement>('[data-archive-session-id]') ??
+          [],
+      ),
+    onReorder: (sourceId, targetId, position) =>
+      props.onReorderSession(props.project.path, sourceId, targetId, position),
+    ignore: '.sess__actions',
+    away: dragOut,
+  })
+  // Folded to its first rows, a project still lists each later chat with news.
+  const foldedSessions = useMemo(
+    () =>
+      foldedProjectSessions(
+        props.project.sessions,
+        props.activeSessionId,
+        COLLAPSED_PROJECT_SESSION_COUNT,
+      ),
+    [props.activeSessionId, props.project.sessions],
   )
+  const hiddenCount = count - foldedSessions.length
+  const listedSessions = props.showAll ? props.project.sessions : foldedSessions
+  const listedCount = listedSessions.length
+  const virtualized = listedCount > VIRTUALIZED_PROJECT_SESSION_COUNT
+  const [virtualRange, setVirtualRange] = useState(() => virtualSessionRange(0, listedCount))
   const virtualRangeRef = useRef(virtualRange)
   const updateVirtualRange = useCallback(
     (scrollTop: number) => {
-      const next = virtualSessionRange(scrollTop, count)
+      const next = virtualSessionRange(scrollTop, listedCount)
       const current = virtualRangeRef.current
       if (current.start === next.start && current.end === next.end) return
       virtualRangeRef.current = next
       setVirtualRange(next)
     },
-    [count],
+    [listedCount],
   )
   const visibleStart = virtualized ? virtualRange.start : 0
-  const visibleSessions = props.showAll
-    ? virtualized
-      ? props.project.sessions.slice(virtualRange.start, virtualRange.end)
-      : props.project.sessions
-    : props.project.sessions.slice(0, COLLAPSED_PROJECT_SESSION_COUNT)
-  const virtualHeight = (count + 1) * VIRTUAL_SESSION_ROW_HEIGHT
+  const visibleSessions = virtualized
+    ? listedSessions.slice(virtualRange.start, virtualRange.end)
+    : listedSessions
+  const virtualHeight = (listedCount + 1) * VIRTUAL_SESSION_ROW_HEIGHT
   const virtualListStyle = virtualized
     ? ({
         '--virtual-session-height': `${virtualHeight}px`,
@@ -1537,7 +1653,7 @@ const ProjectSessions = memo(function ProjectSessions(props: {
     if (centredSessionId.current !== props.activeSessionId) {
       centredSessionId.current = props.activeSessionId
       const activeIndex = props.activeSessionId
-        ? props.project.sessions.findIndex((session) => session.id === props.activeSessionId)
+        ? listedSessions.findIndex((session) => session.id === props.activeSessionId)
         : -1
       const target = Math.max(
         0,
@@ -1551,50 +1667,6 @@ const ProjectSessions = memo(function ProjectSessions(props: {
     updateVirtualRange(list.scrollTop)
   }, [props.activeSessionId, updateVirtualRange, virtualHeight, virtualized])
 
-  const endDrag = useCallback(() => {
-    draggedSessionIdRef.current = undefined
-    setDraggedSessionId(undefined)
-    setDropTarget(undefined)
-    dropTargetRef.current = undefined
-  }, [])
-
-  const startSessionDrag = useCallback((event: DragEvent<HTMLLIElement>, sessionId: string) => {
-    prepareAppHaptics()
-    event.dataTransfer.effectAllowed = 'move'
-    event.dataTransfer.setData('text/plain', sessionId)
-    draggedSessionIdRef.current = sessionId
-    setDraggedSessionId(sessionId)
-  }, [])
-
-  const dragOverSession = useCallback((event: DragEvent<HTMLLIElement>, targetId: string) => {
-    const draggedSessionId = draggedSessionIdRef.current
-    if (!draggedSessionId || draggedSessionId === targetId) return
-    event.preventDefault()
-    event.dataTransfer.dropEffect = 'move'
-    const bounds = event.currentTarget.getBoundingClientRect()
-    const position: DropPosition =
-      event.clientY < bounds.top + bounds.height / 2 ? 'before' : 'after'
-    const current = dropTargetRef.current
-    if (current?.id === targetId && current.position === position) return
-    const next = { id: targetId, position }
-    dropTargetRef.current = next
-    setDropTarget(next)
-    performAppHaptic('alignment')
-  }, [])
-
-  const dropSession = useCallback(
-    (event: DragEvent<HTMLLIElement>, targetId: string) => {
-      event.preventDefault()
-      const draggedSessionId = draggedSessionIdRef.current
-      const target = dropTargetRef.current
-      if (draggedSessionId && target?.id === targetId && draggedSessionId !== targetId) {
-        props.onReorderSession(props.project.path, draggedSessionId, targetId, target.position)
-      }
-      endDrag()
-    },
-    [endDrag, props.onReorderSession, props.project.path],
-  )
-
   return (
     <ul
       ref={virtualSessionList}
@@ -1605,6 +1677,7 @@ const ProjectSessions = memo(function ProjectSessions(props: {
       onScroll={
         virtualized ? (event) => updateVirtualRange(event.currentTarget.scrollTop) : undefined
       }
+      onClickCapture={sessionDrag.onClickCapture}
     >
       {count === 0 ? <li className="rail__hint">No chats</li> : null}
       {visibleSessions.map((session, visibleIndex) => {
@@ -1618,26 +1691,21 @@ const ProjectSessions = memo(function ProjectSessions(props: {
             onSelectSession={props.onSelectSession}
             onRenameSession={props.onRenameSession}
             onDeleteSession={props.onDeleteSession}
+            onArchiveSession={props.onArchiveSession}
             onToggleSessionPin={props.onToggleSessionPin}
-            reorderable
-            dragging={session.id === draggedSessionId}
-            dropPosition={dropTarget?.id === session.id ? dropTarget.position : undefined}
-            onDragStart={startSessionDrag}
-            onDragOver={dragOverSession}
-            onDrop={dropSession}
-            onDragEnd={endDrag}
+            drag={sessionDrag}
             virtualTop={virtualized ? sessionIndex * VIRTUAL_SESSION_ROW_HEIGHT : undefined}
             virtualPosition={virtualized ? sessionIndex + 1 : undefined}
-            virtualSetSize={virtualized ? count : undefined}
+            virtualSetSize={virtualized ? listedCount : undefined}
           />
         )
       })}
-      {count > COLLAPSED_PROJECT_SESSION_COUNT ? (
+      {hiddenCount > 0 ? (
         <li
           className="proj__sessions-toggle-row"
           style={
             virtualized
-              ? { transform: `translateY(${count * VIRTUAL_SESSION_ROW_HEIGHT}px)` }
+              ? { transform: `translateY(${listedCount * VIRTUAL_SESSION_ROW_HEIGHT}px)` }
               : undefined
           }
         >
@@ -1647,7 +1715,7 @@ const ProjectSessions = memo(function ProjectSessions(props: {
             aria-expanded={props.showAll}
             onClick={() => props.onShowAllChange(!props.showAll)}
           >
-            {props.showAll ? 'Show less' : 'Show more'}
+            {props.showAll ? 'Show less' : `Show ${hiddenCount} more`}
           </button>
         </li>
       ) : null}
@@ -1662,14 +1730,9 @@ const ProjectSessionRow = memo(function ProjectSessionRow(props: {
   onSelectSession: (id: string) => void
   onRenameSession: (id: string, title: string) => void
   onDeleteSession: (id: string) => void
+  onArchiveSession: ((id: string) => void) | undefined
   onToggleSessionPin: ((id: string) => void) | undefined
-  reorderable: boolean
-  dragging: boolean
-  dropPosition: DropPosition | undefined
-  onDragStart: (event: DragEvent<HTMLLIElement>, sessionId: string) => void
-  onDragOver: (event: DragEvent<HTMLLIElement>, targetId: string) => void
-  onDrop: (event: DragEvent<HTMLLIElement>, targetId: string) => void
-  onDragEnd: () => void
+  drag: RowDrag
   virtualTop: number | undefined
   virtualPosition: number | undefined
   virtualSetSize: number | undefined
@@ -1682,15 +1745,10 @@ const ProjectSessionRow = memo(function ProjectSessionRow(props: {
       onSelect={() => props.onSelectSession(session.id)}
       onRename={(title) => props.onRenameSession(session.id, title)}
       onDelete={() => props.onDeleteSession(session.id)}
+      onArchive={props.onArchiveSession ? () => props.onArchiveSession?.(session.id) : undefined}
       onTogglePin={() => props.onToggleSessionPin?.(session.id)}
       onOpenInExplorer={() => void revealPath(props.projectPath)}
-      reorderable={props.reorderable}
-      dragging={props.dragging}
-      dropPosition={props.dropPosition}
-      onDragStart={(event) => props.onDragStart(event, session.id)}
-      onDragOver={(event) => props.onDragOver(event, session.id)}
-      onDrop={(event) => props.onDrop(event, session.id)}
-      onDragEnd={props.onDragEnd}
+      drag={props.drag}
       virtualTop={props.virtualTop}
       virtualPosition={props.virtualPosition}
       virtualSetSize={props.virtualSetSize}
@@ -1704,16 +1762,13 @@ function SessionRow(props: {
   onSelect: () => void
   onRename: (title: string) => void
   onDelete: () => void
+  /** Absent where a chat cannot be archived from, such as the Pinned section. */
+  onArchive?: (() => void) | undefined
   onTogglePin: () => void
   onOpenInExplorer: () => void
   standalone?: boolean
-  reorderable: boolean
-  dragging: boolean
-  dropPosition: DropPosition | undefined
-  onDragStart: (event: DragEvent<HTMLLIElement>) => void
-  onDragOver: (event: DragEvent<HTMLLIElement>) => void
-  onDrop: (event: DragEvent<HTMLLIElement>) => void
-  onDragEnd: () => void
+  /** Absent where the row cannot be dragged, into a new order or out to the chat area. */
+  drag: RowDrag | undefined
   virtualTop?: number | undefined
   virtualPosition?: number | undefined
   virtualSetSize?: number | undefined
@@ -1721,6 +1776,17 @@ function SessionRow(props: {
   const [renaming, setRenaming] = useState(false)
   const contextMenuTarget = useRef<HTMLButtonElement>(null)
   const finishRename = useRenameFocusReturn(renaming, setRenaming, contextMenuTarget)
+  // A running or waiting chat cannot be archived, and its state is never
+  // covered: the hover action only takes the place of a quiet time.
+  const archive =
+    props.onArchive && !isLiveStatus(props.session.status) ? props.onArchive : undefined
+  const archiveOnHover = archive && props.session.status !== 'failed' ? archive : undefined
+  const split = useContext(SplitSidebarContext)
+  const beside = !props.active && split.besideSessionId === props.session.id
+  const openBeside =
+    split.openBeside && !props.active && !beside
+      ? () => split.openBeside?.(props.session.id)
+      : undefined
 
   if (renaming) {
     return (
@@ -1747,16 +1813,17 @@ function SessionRow(props: {
 
   return (
     <li
-      className={`sessrow ${props.active ? 'is-active' : ''} ${props.standalone ? 'is-pinned' : ''} ${
-        props.reorderable ? 'is-reorderable' : ''
-      } ${props.dragging ? 'is-dragging' : ''} ${props.session.unread ? 'is-unread' : ''}`}
+      className={`sessrow ${props.active ? 'is-active' : ''} ${beside ? 'is-beside' : ''} ${props.standalone ? 'is-pinned' : ''} ${
+        props.drag ? 'is-reorderable' : ''
+      } ${props.session.unread ? 'is-unread' : ''} ${archiveOnHover ? 'has-action' : ''}`}
       data-archive-session-id={props.session.id}
-      draggable={props.reorderable}
-      data-drop-position={props.dropPosition}
-      onDragStart={props.onDragStart}
-      onDragOver={props.onDragOver}
-      onDrop={props.onDrop}
-      onDragEnd={props.onDragEnd}
+      onPointerDown={
+        props.drag ? (event) => props.drag?.onPointerDown(props.session.id, event) : undefined
+      }
+      onPointerMove={props.drag?.onPointerMove}
+      onPointerUp={props.drag?.onPointerUp}
+      onPointerCancel={props.drag?.onPointerCancel}
+      onLostPointerCapture={props.drag?.onLostPointerCapture}
       style={virtualSessionStyle(props.virtualTop)}
       aria-posinset={props.virtualPosition}
       aria-setsize={props.virtualSetSize}
@@ -1765,13 +1832,20 @@ function SessionRow(props: {
       <button
         ref={contextMenuTarget}
         className={`sess ${props.active ? 'is-active' : ''}`}
-        onClick={props.onSelect}
+        onClick={(event) => {
+          // Alt+click opens the chat beside the active one, as in Claude desktop.
+          if (event.altKey && openBeside) openBeside()
+          else props.onSelect()
+        }}
         onDoubleClick={() => setRenaming(true)}
         aria-label={sessionLabel(props.session)}
         title={sessionLabel(props.session)}
       >
         <span className="sess__provider" aria-hidden>
-          <ProviderIcon mark={providerPresentation(props.session.provider).mark} size={12} />
+          <ProviderIcon
+            mark={sessionSourcePresentation(props.session.provider, props.session.agent).mark}
+            size={12}
+          />
         </span>
         <span className="sess__title">{props.session.title}</span>
         <span className="sess__meta">
@@ -1779,32 +1853,22 @@ function SessionRow(props: {
             status={props.session.status}
             since={props.session.statusSince ?? props.session.createdAt}
           />
-          {props.session.unread && props.session.status !== 'ready' ? (
-            <span className="sess__unread-dot" aria-hidden />
-          ) : null}
         </span>
       </button>
 
-      <span className="sess__actions">
-        <button
-          type="button"
-          className="sess__action"
-          onClick={() => setRenaming(true)}
-          aria-label={`Rename ${props.session.title}`}
-          title="Rename chat"
-        >
-          <Pencil size={13} aria-hidden />
-        </button>
-        <button
-          type="button"
-          className="sess__action"
-          onClick={props.onDelete}
-          aria-label={`Delete ${props.session.title}`}
-          title="Delete chat"
-        >
-          <Trash size={14} aria-hidden />
-        </button>
-      </span>
+      {archiveOnHover ? (
+        <span className="sess__actions">
+          <button
+            type="button"
+            className="sess__action"
+            onClick={archiveOnHover}
+            aria-label={`Archive ${props.session.title}`}
+            title="Archive chat"
+          >
+            <Archive size={14} aria-hidden />
+          </button>
+        </span>
+      ) : null}
 
       <Menu
         drop="down"
@@ -1816,6 +1880,16 @@ function SessionRow(props: {
       >
         {(close) => (
           <>
+            {openBeside ? (
+              <MenuItem
+                title="Open beside"
+                icon={<SplitColumns size={14} aria-hidden />}
+                onClick={() => {
+                  openBeside()
+                  close()
+                }}
+              />
+            ) : null}
             <MenuItem
               title={props.session.pinned ? 'Unpin chat' : 'Pin chat'}
               icon={
@@ -1838,14 +1912,16 @@ function SessionRow(props: {
                 close()
               }}
             />
-            <MenuItem
-              title="Delete chat"
-              icon={<Trash size={14} aria-hidden />}
-              onClick={() => {
-                props.onDelete()
-                close()
-              }}
-            />
+            {archive ? (
+              <MenuItem
+                title="Archive chat"
+                icon={<Archive size={14} aria-hidden />}
+                onClick={() => {
+                  archive()
+                  close()
+                }}
+              />
+            ) : null}
             {isDesktop ? (
               <MenuItem
                 title="Open in Explorer"
@@ -1856,11 +1932,321 @@ function SessionRow(props: {
                 }}
               />
             ) : null}
+            <MenuItem
+              title="Delete chat"
+              icon={<Trash size={14} aria-hidden />}
+              className="menu__item--danger"
+              onClick={() => {
+                props.onDelete()
+                close()
+              }}
+            />
           </>
         )}
       </Menu>
     </li>
   )
+}
+
+/** A chat in one of these states is running or waiting on the user. */
+function isLiveStatus(status: Session['status']): boolean {
+  return (
+    status === 'starting' ||
+    status === 'working' ||
+    status === 'queued' ||
+    status === 'approval' ||
+    status === 'input'
+  )
+}
+
+/** Archived rows mount in batches as the section is read, never all at once. */
+const ARCHIVED_BATCH = 10
+
+/**
+ * Chats that are done but kept: folded at the end of the rail and found by
+ * search. Opening one reads it where it is; sending to it brings it back to
+ * its project.
+ */
+const ArchivedSection = memo(function ArchivedSection(props: {
+  entries: PinnedSession[]
+  projectNames: ReadonlyMap<string, string>
+  activeSessionId: string | undefined
+  onSelectSession: (id: string) => void
+  onRestoreSession: ((id: string) => void) | undefined
+  onDeleteSession: (id: string) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [limit, setLimit] = useState(ARCHIVED_BATCH)
+  const activeIndex = props.entries.findIndex(({ session }) => session.id === props.activeSessionId)
+  // The open chat is never hidden inside a folded section.
+  const expanded = open || activeIndex >= 0
+  const shown = props.entries.slice(0, Math.max(limit, activeIndex + 1))
+  return (
+    <section className="archived" aria-label="Archived">
+      <button
+        type="button"
+        className="section archived__toggle"
+        aria-expanded={expanded}
+        aria-label={`Archived, ${chatCount(props.entries.length)}`}
+        onClick={() => {
+          setOpen(!expanded)
+          setLimit(ARCHIVED_BATCH)
+        }}
+      >
+        <span>Archived</span>
+        <span className="archived__count">{props.entries.length}</span>
+        <ChevronRight className="archived__chevron" size={12} aria-hidden />
+      </button>
+      {expanded ? (
+        <ul className="proj__sessions archived__list">
+          {shown.map(({ projectPath, session }) => (
+            <ArchivedRow
+              key={session.id}
+              session={session}
+              projectPath={projectPath}
+              projectName={props.projectNames.get(projectPath) ?? basename(projectPath)}
+              active={session.id === props.activeSessionId}
+              onSelectSession={props.onSelectSession}
+              onRestoreSession={props.onRestoreSession}
+              onDeleteSession={props.onDeleteSession}
+            />
+          ))}
+          {shown.length < props.entries.length ? (
+            <li className="proj__sessions-toggle-row">
+              <button
+                type="button"
+                className="proj__sessions-toggle"
+                onClick={() => setLimit(shown.length + ARCHIVED_BATCH)}
+              >
+                Show more
+              </button>
+            </li>
+          ) : null}
+        </ul>
+      ) : null}
+    </section>
+  )
+})
+
+const ArchivedRow = memo(function ArchivedRow(props: {
+  session: Session
+  projectPath: string
+  projectName: string
+  active: boolean
+  onSelectSession: (id: string) => void
+  onRestoreSession: ((id: string) => void) | undefined
+  onDeleteSession: (id: string) => void
+}) {
+  const { session } = props
+  const contextMenuTarget = useRef<HTMLButtonElement>(null)
+  const restore = props.onRestoreSession
+  const label = `${sessionLabel(session)}, archived, ${props.projectName}`
+  return (
+    <li
+      className={`sessrow archived__row${props.active ? ' is-active' : ''}${session.unread ? ' is-unread' : ''}${restore ? ' has-action' : ''}`}
+    >
+      {props.active ? <ActiveIndicator /> : null}
+      <button
+        ref={contextMenuTarget}
+        type="button"
+        className={`sess ${props.active ? 'is-active' : ''}`}
+        onClick={() => props.onSelectSession(session.id)}
+        aria-label={label}
+        title={label}
+      >
+        <span className="sess__provider" aria-hidden>
+          <ProviderIcon
+            mark={sessionSourcePresentation(session.provider, session.agent).mark}
+            size={12}
+          />
+        </span>
+        <span className="sess__title">{session.title}</span>
+        <span className="sess__project">
+          <span>{props.projectName}</span>
+        </span>
+      </button>
+      {restore ? (
+        <span className="sess__actions">
+          <button
+            type="button"
+            className="sess__action"
+            onClick={() => restore(session.id)}
+            aria-label={`Restore ${session.title}`}
+            title="Restore to project"
+          >
+            <Restore size={14} aria-hidden />
+          </button>
+        </span>
+      ) : null}
+      <Menu
+        drop="down"
+        align="right"
+        label={`Options for ${session.title}`}
+        panelClassName="menu--sidebar"
+        contextMenuTargetRef={contextMenuTarget}
+        contextMenuOnly
+      >
+        {(close) => (
+          <>
+            {restore ? (
+              <MenuItem
+                title="Restore to project"
+                icon={<Restore size={14} aria-hidden />}
+                onClick={() => {
+                  restore(session.id)
+                  close()
+                }}
+              />
+            ) : null}
+            <MenuItem
+              title="Delete chat"
+              icon={<Trash size={14} aria-hidden />}
+              className="menu__item--danger"
+              onClick={() => {
+                props.onDeleteSession(session.id)
+                close()
+              }}
+            />
+          </>
+        )}
+      </Menu>
+    </li>
+  )
+})
+
+/** Rows the band shows before it folds the rest behind "+N more". A short
+ *  window keeps fewer, so the tree below still has room. */
+const NEEDS_YOU_VISIBLE = 5
+const NEEDS_YOU_VISIBLE_SHORT = 3
+const SHORT_WINDOW = '(max-height: 799px)'
+
+function subscribeShortWindow(onChange: () => void): () => void {
+  const query = window.matchMedia?.(SHORT_WINDOW)
+  query?.addEventListener('change', onChange)
+  return () => query?.removeEventListener('change', onChange)
+}
+
+function readShortWindow(): boolean {
+  return window.matchMedia?.(SHORT_WINDOW).matches ?? false
+}
+
+/**
+ * The chats waiting for the user, above everything else. It lists each one a
+ * second time, beside its place in the tree, so it stays short: an entry
+ * leaves once the chat is answered or read, and with nothing waiting the band
+ * takes no space at all.
+ */
+const NeedsYouBand = memo(function NeedsYouBand(props: {
+  entries: NeedsYouEntry[]
+  projectNames: ReadonlyMap<string, string>
+  onSelectSession: (id: string) => void
+  onMarkSessionRead: ((id: string) => void) | undefined
+}) {
+  const [expanded, setExpanded] = useState(false)
+  const short = useSyncExternalStore(subscribeShortWindow, readShortWindow, () => false)
+  const visible = short ? NEEDS_YOU_VISIBLE_SHORT : NEEDS_YOU_VISIBLE
+  const shown = expanded ? props.entries : props.entries.slice(0, visible)
+  const folded = props.entries.length - shown.length
+  return (
+    <section className="needs-band" aria-label="Needs you">
+      <p className="section" aria-hidden>
+        Needs you
+      </p>
+      <ul className="proj__sessions needs-band__list">
+        {shown.map((entry) => (
+          <NeedsYouRow
+            key={entry.session.id}
+            entry={entry}
+            projectName={props.projectNames.get(entry.projectPath) ?? basename(entry.projectPath)}
+            onSelectSession={props.onSelectSession}
+            onMarkSessionRead={props.onMarkSessionRead}
+          />
+        ))}
+        {folded > 0 || (expanded && props.entries.length > visible) ? (
+          <li className="proj__sessions-toggle-row">
+            <button
+              type="button"
+              className="proj__sessions-toggle"
+              aria-expanded={expanded}
+              onClick={() => setExpanded(!expanded)}
+            >
+              {expanded ? 'Show less' : `+${folded} more`}
+            </button>
+          </li>
+        ) : null}
+      </ul>
+    </section>
+  )
+})
+
+const NeedsYouRow = memo(function NeedsYouRow(props: {
+  entry: NeedsYouEntry
+  projectName: string
+  onSelectSession: (id: string) => void
+  onMarkSessionRead: ((id: string) => void) | undefined
+}) {
+  const { session, attention } = props.entry
+  // Approvals and questions leave only once they are answered, in the chat.
+  const markRead =
+    props.onMarkSessionRead && attention === 'failed' ? props.onMarkSessionRead : undefined
+  const label = `${session.title}, ${attentionLabel(attention)}, ${props.projectName}`
+  return (
+    <li
+      className={`sessrow needs-band__row${session.unread ? ' is-unread' : ''}${markRead ? ' has-action' : ''}`}
+      data-attention={attention}
+    >
+      <button
+        type="button"
+        className="sess"
+        onClick={() => props.onSelectSession(session.id)}
+        aria-label={label}
+        title={label}
+      >
+        <AttentionMark attention={attention} />
+        <span className="sess__title">{session.title}</span>
+        <span className="sess__project">
+          <span>{props.projectName}</span>
+        </span>
+      </button>
+      {markRead ? (
+        <span className="sess__actions">
+          <button
+            type="button"
+            className="sess__action"
+            onClick={() => markRead(session.id)}
+            aria-label={`Mark ${session.title} as read`}
+            title="Mark as read"
+          >
+            <Check size={14} aria-hidden />
+          </button>
+        </span>
+      ) : null}
+    </li>
+  )
+})
+
+/** One dot per reason, in the colour that names it; the same dots the tree uses. */
+function AttentionMark(props: { attention: Attention }) {
+  return (
+    <span className="sess__mark" aria-hidden>
+      <span className={`sess__status-dot ${attentionTone(props.attention)}`} />
+    </span>
+  )
+}
+
+function attentionTone(attention: Attention): string {
+  return attention === 'failed' ? 'is-failed' : 'is-attention'
+}
+
+function attentionLabel(attention: Attention): string {
+  switch (attention) {
+    case 'approval':
+      return 'waiting for approval'
+    case 'input':
+      return 'waiting for an answer'
+    case 'failed':
+      return 'failed'
+  }
 }
 
 type ConfirmCopy = { title: string; body: string; action: string; destructive: boolean }
@@ -1914,7 +2300,13 @@ function ActiveIndicator() {
  *  the news, and how long ago it started is not. */
 function SessionStatus(props: { status: Session['status']; since: number }) {
   if (props.status === 'starting' || props.status === 'working') {
-    return <LoaderCircle className="sess__spinner" size={14} aria-hidden />
+    // The rotation sits on an HTML box, which the compositor can turn on its
+    // own; a rotating <svg> is repainted on the main thread every frame.
+    return (
+      <span className="sess__spinner" aria-hidden>
+        <LoaderCircle size={14} />
+      </span>
+    )
   }
 
   if (props.status === 'approval' || props.status === 'input' || props.status === 'queued') {
@@ -1943,7 +2335,7 @@ function SessionTime(props: { at: number }) {
 }
 
 function sessionLabel(session: Session): string {
-  const source = providerPresentation(session.provider).label
+  const source = sessionSourcePresentation(session.provider, session.agent).label
   const unread = session.unread ? ', unread' : ''
   const branch = session.worktreeBranch ? `, isolated on ${session.worktreeBranch}` : ''
   switch (session.status) {
@@ -2060,20 +2452,30 @@ function basename(path: string): string {
   return parts[parts.length - 1] ?? path
 }
 
-type CardUsageLimit = { provider: ProviderId; label: string; usedPercent: number }
+type CardUsageLimit = {
+  provider: ProviderId
+  label: string
+  usedPercent: number
+  /** Providers whose limits could not be read; any of them could be tighter. */
+  unknown: ProviderId[]
+}
 
 /**
  * The card's one usage figure: the tightest percentage limit any provider
  * reports, shown with that provider's mark so it says what it measures. A
- * provider whose read failed with nothing on record could be the tighter one,
- * so the card then shows no figure rather than a reassuring "100% left".
+ * provider whose limits are unknown could be the tighter one, so the figure
+ * then carries a muted marker that names it instead of disappearing.
  */
 function tightestUsageLimit(
   states: readonly AccountLimitsState[] | undefined,
 ): CardUsageLimit | undefined {
-  let tightest: CardUsageLimit | undefined
+  let tightest: Omit<CardUsageLimit, 'unknown'> | undefined
+  const unknown: ProviderId[] = []
   for (const state of states ?? []) {
-    if (state.status === 'error' && !state.summary) return undefined
+    if (limitsUnknown(state)) {
+      unknown.push(state.provider)
+      continue
+    }
     const source = state.summary?.limitSource
     const limits = source
       ? source.status === 'ready'
@@ -2086,7 +2488,24 @@ function tightestUsageLimit(
       tightest = { provider: state.provider, label: limit.label, usedPercent: limit.usedPercent }
     }
   }
-  return tightest
+  return tightest ? { ...tightest, unknown } : undefined
+}
+
+/**
+ * A read that failed with nothing on record, or a source not read yet. A
+ * first read still running is not counted, so the marker does not flash.
+ */
+function limitsUnknown(state: AccountLimitsState): boolean {
+  if (state.status === 'error' && !state.summary) return true
+  const source = state.summary?.limitSource
+  return source?.status === 'unavailable' && source.reason === 'failed'
+}
+
+function unknownLimitsLabel(providers: readonly ProviderId[]): string {
+  const names = providers.map(providerDisplayName)
+  const listed =
+    names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names.at(-1)}` : (names[0] ?? '')
+  return `${listed} limits unknown`
 }
 
 function DialogAction(props: { icon: ReactNode; title: string }) {
@@ -2102,9 +2521,48 @@ function DialogAction(props: { icon: ReactNode; title: string }) {
 
 function noop() {}
 
+/** A chat row reorders while the pointer stays over the rail; past it, the row is dragged out. */
+function railArea(row: HTMLElement): DOMRect | undefined {
+  return row.closest('.rail')?.getBoundingClientRect()
+}
+
+type SidebarProps = Parameters<typeof SidebarComponent>[0]
+
+/** Gives every chat row split view's state without threading it through each row. */
+function SplitAwareSidebar(props: SidebarProps) {
+  const actions = useRef(props)
+  useLayoutEffect(() => {
+    actions.current = props
+  })
+  const openBeside = useCallback((id: string) => {
+    actions.current.onOpenSessionBeside?.(id)
+    if (globalThis.matchMedia?.('(max-width: 700px)').matches) actions.current.onClose()
+  }, [])
+  const canOpenBeside = props.onOpenSessionBeside !== undefined
+  const dropTarget = props.sessionDropTarget
+  // A folded rail only shows as a flyout over the chat area; nothing is dragged out of it.
+  const dragOut = useMemo(
+    () => (dropTarget && !props.collapsed ? { area: railArea, target: dropTarget } : undefined),
+    [dropTarget, props.collapsed],
+  )
+  const split = useMemo<SplitSidebar>(
+    () => ({
+      besideSessionId: props.besideSessionId,
+      openBeside: canOpenBeside ? openBeside : undefined,
+      dragOut,
+    }),
+    [props.besideSessionId, canOpenBeside, openBeside, dragOut],
+  )
+  return (
+    <SplitSidebarContext.Provider value={split}>
+      <SidebarComponent {...props} />
+    </SplitSidebarContext.Provider>
+  )
+}
+
 /**
  * Memoised: the app root re-renders on every streamed frame, and this subtree
  * does not change while an answer arrives. The owner keeps every callback and
  * composite prop stable, so streamed text does not reconcile the session rail.
  */
-export const Sidebar = memo(SidebarComponent)
+export const Sidebar = memo(SplitAwareSidebar)

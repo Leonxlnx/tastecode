@@ -4,7 +4,17 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { CustomHarness } from '@harness/contracts'
 import type { StartOptions } from './adapters.js'
 
+/**
+ * Listing OpenCode models spawns a real `opencode serve` process for the
+ * duration of the call. These tests pin the property that made a renderer
+ * refresh loop harmless again: concurrent listings share one adapter run
+ * instead of forking one process each.
+ */
+
+const constructed: FakeOpenCodeAdapter[] = []
+let failOpenCodeThreadStart = false
 let openingFailure: 'initialize' | 'session' | undefined
+let release: (() => void) | undefined
 const turnAdapters: FakeTurnAdapter[] = []
 
 class FakeTurnAdapter {
@@ -16,7 +26,7 @@ class FakeTurnAdapter {
     approvals: false,
     images: false,
   }
-  readonly provider: 'grok' | 'claude-code' | 'codex'
+  readonly provider: 'grok' | 'antigravity' | 'claude-code' | 'cursor' | 'opencode' | 'codex' | 'pi'
   disposed = false
   approval: string | undefined
   disconnected: (() => void) | undefined
@@ -91,9 +101,19 @@ class FakeResumableAdapter extends FakeTurnAdapter {
   }
 }
 
+class FakeCursorAdapter extends FakeResumableAdapter {
+  constructor(options?: Record<string, unknown>) {
+    super('cursor', options)
+  }
+}
+
 class FakeCodexAdapter extends FakeResumableAdapter {
   constructor(options?: Record<string, unknown>) {
     super('codex', options)
+  }
+
+  async listModels() {
+    return []
   }
 }
 
@@ -133,11 +153,98 @@ class FakeAcpAdapter extends FakeResumableAdapter {
   respondToApproval(): void {}
 }
 
+class FakeAntigravityAdapter extends FakeTurnAdapter {
+  readonly promptLimit = 15_000
+
+  constructor(options?: Record<string, unknown>) {
+    super('antigravity', options)
+  }
+}
+
 class FakeClaudeCodeAdapter extends FakeResumableAdapter {
+  readonly inventoryListeners = new Map<string, Set<() => void>>()
+  readonly inventoryReads: Array<[string, string | undefined]> = []
+
   constructor(options?: Record<string, unknown>) {
     super('claude-code', options)
   }
+
+  async listModels() {
+    return []
+  }
+
+  override on(event?: string, listener?: (value: string) => void): this {
+    if ((event === 'mcpChanged' || event === 'commandsChanged') && listener) {
+      const listeners = this.inventoryListeners.get(event) ?? new Set()
+      listeners.add(listener as () => void)
+      this.inventoryListeners.set(event, listeners)
+      return this
+    }
+    return super.on(event, listener)
+  }
+
+  off(event: string, listener: () => void): this {
+    this.inventoryListeners.get(event)?.delete(listener)
+    return this
+  }
+
+  emitInventory(event: 'mcpChanged' | 'commandsChanged'): void {
+    for (const listener of this.inventoryListeners.get(event) ?? []) listener()
+  }
+
+  async listMcpServers(threadId?: string) {
+    this.inventoryReads.push(['mcp', threadId])
+    return []
+  }
+
+  isMcpLoading(): boolean {
+    return true
+  }
+
+  async listCommands(threadId?: string) {
+    this.inventoryReads.push(['commands', threadId])
+    return [{ name: 'context', description: 'Show current context usage' }]
+  }
 }
+
+class FakePiAdapter extends FakeTurnAdapter {
+  constructor(options?: Record<string, unknown>) {
+    super('pi', options)
+  }
+
+  async listModels() {
+    return [{ id: 'pi-model', name: 'Pi model' }]
+  }
+}
+
+class FakeOpenCodeAdapter extends FakeResumableAdapter {
+  constructor(options?: Record<string, unknown>) {
+    super('opencode', options)
+    constructed.push(this)
+  }
+  override async startThread(workspacePath: string, options: Record<string, unknown>) {
+    if (failOpenCodeThreadStart) throw new Error('openCode startThread failed')
+    return super.startThread(workspacePath, options)
+  }
+  async listModels() {
+    await new Promise<void>((resolve) => {
+      release = resolve
+    })
+    return []
+  }
+}
+
+vi.mock('@harness/adapter-opencode', () => ({
+  OpenCodeAdapter: FakeOpenCodeAdapter,
+  OPENCODE_CAPABILITIES: {
+    steer: false,
+    fork: false,
+    interrupt: true,
+    reasoningItems: true,
+    approvals: true,
+    images: false,
+  },
+}))
 
 vi.mock('@harness/adapter-grok', () => ({
   GrokAdapter: FakeGrokAdapter,
@@ -152,7 +259,12 @@ vi.mock('@harness/adapter-acp', () => ({
 vi.mock('@harness/adapter-claude-code', () => ({
   ClaudeCodeAdapter: FakeClaudeCodeAdapter,
 }))
+vi.mock('@harness/adapter-antigravity', () => ({
+  AntigravityAdapter: FakeAntigravityAdapter,
+}))
+vi.mock('@harness/adapter-cursor', () => ({ CursorAdapter: FakeCursorAdapter }))
 vi.mock('@harness/adapter-codex', () => ({ CodexAdapter: FakeCodexAdapter }))
+vi.mock('@harness/adapter-pi', () => ({ PiAdapter: FakePiAdapter }))
 const spawnedCli = vi.hoisted(() => [] as Array<{ cwd: string | undefined; env: unknown }>)
 vi.mock('@harness/proc/cli', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@harness/proc/cli')>()),
@@ -162,11 +274,14 @@ vi.mock('@harness/proc/cli', async (importOriginal) => ({
   },
 }))
 
-const { providerRuntime } = await import('./adapters.js')
+const { providerRuntime, stopModelListings } = await import('./adapters.js')
 
 afterEach(() => {
+  constructed.length = 0
+  failOpenCodeThreadStart = false
   openingFailure = undefined
   turnAdapters.length = 0
+  release = undefined
   vi.restoreAllMocks()
   vi.useRealTimers()
 })
@@ -191,6 +306,123 @@ describe('resumable provider setup', () => {
     },
   )
 
+  it.each([
+    ['cursor', {}],
+    ['opencode', {}],
+    ['acp', { agent: 'gemini' }],
+  ] as const)(
+    'resumes a %s chat that moved here by its own session, under the chat id',
+    async (provider, options) => {
+      const runtime = providerRuntime(provider, () => {})
+      const moved = await runtime.resume!('codex-chat', '/repo', {
+        ...options,
+        providerSessionId: `${provider}-native`,
+      })
+      expect(moved.thread.id).toBe('codex-chat')
+      expect(turnAdapters.at(-1)!.acpResume).toEqual({
+        threadId: `${provider}-native`,
+        workspacePath: '/repo',
+      })
+
+      // A chat that started here resumes by its own id, as before.
+      const own = await runtime.resume!(`${provider}-chat`, '/repo', options)
+      expect(own.thread.id).toBe(`${provider}-chat`)
+      expect(turnAdapters.at(-1)!.acpResume?.threadId).toBe(`${provider}-chat`)
+    },
+  )
+
+  it('passes on how long a prompt a command-line engine can take', async () => {
+    const { session } = await providerRuntime('antigravity', () => {}).start('/repo', {})
+    expect(session.promptLimit).toBe(15_000)
+    const codex = await providerRuntime('codex', () => {}).start('/repo', {})
+    expect(codex.session.promptLimit).toBeUndefined()
+  })
+
+  it('resumes an MCP-enabled Grok session a chat moved to, under the chat id', async () => {
+    const runtime = providerRuntime('grok', () => {})
+    const { thread } = await runtime.resume!('codex-chat', '/repo', {
+      providerSessionId: 'acp-grok-native-session',
+    })
+    expect(thread.id).toBe('codex-chat')
+    expect(turnAdapters.at(-1)).toBeInstanceOf(FakeAcpAdapter)
+    expect(turnAdapters.at(-1)!.acpResume?.threadId).toBe('acp-grok-native-session')
+  })
+
+  it('reports live limit windows only from a Claude session on the default account', async () => {
+    const harness: CustomHarness = {
+      id: 'claude-wrapper',
+      displayName: 'Claude wrapper',
+      provider: 'claude-code',
+      command: process.execPath,
+      args: [],
+    }
+    const runtime = providerRuntime(
+      'claude-code',
+      () => {},
+      () => harness,
+    )
+    // A wrapper runs from a real project folder.
+    const workspace = realpathSync(os.tmpdir())
+    const own = await runtime.start(workspace, {})
+    expect(own.session.onLimitsUpdated).toBeTypeOf('function')
+    expect(own.session.onUsageChanged).toBeUndefined()
+    // A wrapper may run another account, whose windows are not the default account's.
+    const wrapped = await runtime.start(workspace, { agent: harness.id })
+    expect(wrapped.session.onLimitsUpdated).toBeUndefined()
+  })
+
+  it.each(['codex', 'claude-code'] as const)(
+    'starts, resumes and lists %s models as the account in its folder',
+    async (provider) => {
+      const home = 'D:\\accounts\\codex-work'
+      const runtime = providerRuntime(
+        provider,
+        () => {},
+        () => undefined,
+        home,
+      )
+      await runtime.start('/repo', {})
+      await runtime.resume!('existing-thread', '/repo', {})
+      await runtime.listModels()
+      expect(turnAdapters.map((adapter) => adapter.launchOptions?.['accountHome'])).toEqual([
+        home,
+        home,
+        home,
+      ])
+
+      // The default account gets exactly the options it always had.
+      turnAdapters.length = 0
+      await providerRuntime(provider, () => {}).start('/repo', {})
+      expect(turnAdapters[0]?.launchOptions).not.toHaveProperty('accountHome')
+    },
+  )
+
+  it("forwards the live Claude session's MCP servers and commands", async () => {
+    const { thread, session } = await providerRuntime('claude-code', () => {}).start('/repo', {})
+    const adapter = turnAdapters.at(-1) as FakeClaudeCodeAdapter
+    await expect(session.listMcpServers!(thread.id)).resolves.toEqual([])
+    expect(session.isMcpLoading!(thread.id)).toBe(true)
+    await expect(session.listCommands!(thread.id)).resolves.toEqual([
+      { name: 'context', description: 'Show current context usage' },
+    ])
+    expect(adapter.inventoryReads).toEqual([
+      ['mcp', thread.id],
+      ['commands', thread.id],
+    ])
+
+    const mcp = vi.fn()
+    const commands = vi.fn()
+    const offMcp = session.onMcpChanged!(mcp)
+    const offCommands = session.onCommandsChanged!(commands)
+    adapter.emitInventory('mcpChanged')
+    adapter.emitInventory('commandsChanged')
+    offMcp?.()
+    offCommands?.()
+    adapter.emitInventory('mcpChanged')
+    adapter.emitInventory('commandsChanged')
+    expect([mcp.mock.calls.length, commands.mock.calls.length]).toEqual([1, 1])
+  })
+
   it.each([false, true])(
     'passes Claude MCP options and cleans up a failed open (resume: %s)',
     async (resume) => {
@@ -212,7 +444,7 @@ describe('resumable provider setup', () => {
       expect(turnAdapters.at(-1)!.disposed).toBe(true)
     },
   )
-  it.each(['codex'] as const)(
+  it.each(['cursor', 'opencode', 'codex', 'acp'] as const)(
     'preserves %s source, session identity, and option forwarding on start and resume',
     async (provider) => {
       const source: CustomHarness = {
@@ -244,9 +476,19 @@ describe('resumable provider setup', () => {
             ? await runtime.resume!('existing-thread', 'C:\\repo', options)
             : await runtime.start('C:\\repo', options)
           const adapter = turnAdapters.at(-1)!
-          const { approval, instructions } = options
-          const expected = populated ? { approval, instructions } : {}
-          if (!resume) expect(adapter.startOptions).toBe(options)
+          const { model, approval, instructions } = options
+          const expected =
+            provider === 'acp'
+              ? { model, approval, instructions }
+              : populated
+                ? {
+                    approval,
+                    instructions,
+                    ...(provider === 'codex' ? {} : { model, effort: 'high' }),
+                    ...(provider === 'cursor' ? { serviceTier: 'fast' } : {}),
+                  }
+                : {}
+          if (provider === 'codex' && !resume) expect(adapter.startOptions).toBe(options)
           else expect(adapter.startOptions).toStrictEqual(expected)
           expect(result.session).toBe(adapter)
           expect(adapter.acpResume).toStrictEqual(
@@ -255,9 +497,15 @@ describe('resumable provider setup', () => {
           if (resume) expect(result.thread.id).toBe('existing-thread')
           expect(adapter.launchOptions).toStrictEqual({
             spawn: expect.any(Function),
-            mcpServers: [],
-            mcpCredentials: {},
+            ...(provider === 'cursor' ? { run: expect.any(Function) } : {}),
+            ...(provider === 'acp' ? { name: 'Custom', command: 'custom-agent', args: [] } : {}),
+            ...(provider === 'codex' || provider === 'opencode'
+              ? { mcpServers: [], mcpCredentials: {} }
+              : {}),
+            // A wrapper may run another account, so its limit windows stay out of the default's.
+            ...(provider === 'codex' ? { liveLimits: false } : {}),
           })
+          if (adapter instanceof FakeAcpAdapter) expect(adapter.agentId).toBe(source.id)
         }
       }
     },
@@ -299,6 +547,9 @@ describe('resumable provider setup', () => {
   it.each([
     ['codex', 'initialize', 'initialize app-server', 'initialize app-server'],
     ['codex', 'session', undefined, undefined],
+    ['opencode', 'initialize', 'start its server', 'start its server'],
+    ['opencode', 'session', 'create a session', 'resume its session'],
+    ['acp', 'session', 'complete the ACP session handshake', 'resume the ACP session'],
   ] as const)(
     'disposes %s on %s failure and keeps phase errors',
     async (provider, stage, startPhase, resumePhase) => {
@@ -326,10 +577,144 @@ describe('resumable provider setup', () => {
       }
     },
   )
+
+  it('disposes a custom OpenCode session when its resume deadline expires', async () => {
+    vi.useFakeTimers()
+    const resume = vi
+      .spyOn(FakeOpenCodeAdapter.prototype, 'resumeThread')
+      .mockImplementation(() => new Promise(() => {}))
+    const runtime = providerRuntime(
+      'opencode',
+      () => {},
+      () => ({
+        id: 'custom-source',
+        displayName: 'Custom',
+        provider: 'opencode',
+        command: 'custom-agent',
+        args: [],
+      }),
+    )
+    const failed = expect(
+      runtime.resume!('existing-thread', '/repo', { agent: 'custom-source' }),
+    ).rejects.toThrow('Custom timed out while trying to resume its session')
+    await vi.waitFor(() => expect(resume).toHaveBeenCalled())
+    await vi.advanceTimersByTimeAsync(25_000)
+    await failed
+    expect(constructed.at(-1)?.disposed).toBe(true)
+  })
+})
+
+describe('Pi runtime setup', () => {
+  const harness: CustomHarness = {
+    id: 'custom-pi',
+    displayName: 'Custom Pi',
+    provider: 'pi',
+    command: 'my-pi',
+    args: ['--profile', 'work'],
+  }
+
+  it('starts the installed Pi CLI without a custom harness', async () => {
+    const runtime = providerRuntime('pi', () => {})
+    const options = {
+      model: 'pi-model',
+      effort: 'high',
+      approval: 'full' as const,
+      instructions: 'Help',
+    }
+    const { thread, session } = await runtime.start('/repo', options)
+    const adapter = turnAdapters.at(-1)!
+    expect(thread.provider).toBe('pi')
+    expect(session).toBe(adapter)
+    expect(adapter.launchOptions).toEqual({ command: 'pi', workspacePath: '/repo' })
+    expect(adapter.startOptions).toEqual(options)
+    expect(adapter.disposed).toBe(false)
+  })
+
+  it('lists native Pi models and disposes its discovery session', async () => {
+    const models = await providerRuntime('pi', () => {}).listModels()
+    expect(models).toEqual([{ id: 'pi-model', name: 'Pi model' }])
+    expect(turnAdapters.at(-1)!.launchOptions).toEqual({ command: 'pi' })
+    expect(turnAdapters.at(-1)!.disposed).toBe(true)
+  })
+
+  it.each(['start', 'listModels'] as const)(
+    'cleans up a failed native Pi %s',
+    async (operation) => {
+      const method = operation === 'start' ? 'startThread' : 'listModels'
+      vi.spyOn(FakePiAdapter.prototype, method).mockRejectedValueOnce(new Error('Pi unavailable'))
+      const runtime = providerRuntime('pi', () => {})
+      await expect(
+        operation === 'start' ? runtime.start('/repo', {}) : runtime.listModels(),
+      ).rejects.toThrow('Pi unavailable')
+      expect(turnAdapters.at(-1)!.disposed).toBe(true)
+    },
+  )
+
+  it('keeps explicit custom Pi launches for start and model discovery', async () => {
+    const runtime = providerRuntime(
+      'pi',
+      () => {},
+      () => harness,
+    )
+    await runtime.start('/repo', { agent: harness.id })
+    await runtime.listModels(harness.id)
+    expect(turnAdapters).toHaveLength(2)
+    for (const adapter of turnAdapters) {
+      expect(adapter.launchOptions).toMatchObject({
+        command: 'my-pi',
+        args: [],
+        displayName: 'Custom Pi',
+        spawn: expect.any(Function),
+      })
+    }
+    expect(turnAdapters[0]!.disposed).toBe(false)
+    expect(turnAdapters[1]!.disposed).toBe(true)
+  })
+
+  it.each([undefined, { ...harness, provider: 'codex' as const }])(
+    'rejects a missing or incompatible explicit Pi source instead of using the native CLI',
+    async (source) => {
+      const runtime = providerRuntime(
+        'pi',
+        () => {},
+        () => source,
+      )
+      const expected = source ? 'configured for codex' : 'no longer exists'
+      await expect(runtime.start('/repo', { agent: harness.id })).rejects.toThrow(expected)
+      await expect(runtime.listModels(harness.id)).rejects.toThrow(expected)
+      expect(turnAdapters).toHaveLength(0)
+    },
+  )
+
+  it.each(['start', 'listModels'] as const)(
+    'retains the custom Pi %s protocol deadline',
+    async (operation) => {
+      vi.useFakeTimers()
+      const method = operation === 'start' ? 'startThread' : 'listModels'
+      const pending = vi
+        .spyOn(FakePiAdapter.prototype, method)
+        .mockImplementation(() => new Promise(() => {}))
+      const runtime = providerRuntime(
+        'pi',
+        () => {},
+        () => harness,
+      )
+      const phase = operation === 'start' ? 'complete the Pi RPC handshake' : 'list Pi models'
+      const failed = expect(
+        operation === 'start'
+          ? runtime.start('/repo', { agent: harness.id })
+          : runtime.listModels(harness.id),
+      ).rejects.toThrow(`Custom Pi timed out while trying to ${phase}`)
+      await vi.waitFor(() => expect(pending).toHaveBeenCalled())
+      await vi.advanceTimersByTimeAsync(25_000)
+      await failed
+      expect(turnAdapters.at(-1)!.disposed).toBe(true)
+    },
+  )
 })
 
 describe('one-shot provider turn options', () => {
-  it.each(['grok', 'claude-code'] as const)(
+  it.each(['grok', 'antigravity', 'claude-code'] as const)(
     'forwards model and effort changes to %s on every turn',
     async (provider) => {
       const runtime = providerRuntime(provider, () => {})
@@ -503,5 +888,61 @@ describe('one-shot provider turn options', () => {
     await expect(runtime.start('/repo', { agent: 'removed-grok' })).rejects.toThrow(
       'custom harness "removed-grok" no longer exists',
     )
+  })
+})
+
+describe('openCodeRuntime', () => {
+  it('disposes the adapter if session creation fails', async () => {
+    failOpenCodeThreadStart = true
+    const runtime = providerRuntime('opencode', () => {})
+
+    await expect(runtime.start('/repo', {})).rejects.toThrow('openCode startThread failed')
+
+    expect(constructed).toHaveLength(1)
+    expect(constructed[0]?.disposed).toBe(true)
+  })
+
+  it('shares one adapter run between concurrent listings', async () => {
+    const runtime = providerRuntime('opencode', () => {})
+    const first = runtime.listModels()
+    const second = runtime.listModels()
+    // A second runtime instance must join the same run too — requests from
+    // different clients do not know about each other.
+    const third = providerRuntime('opencode', () => {}).listModels()
+
+    await vi.waitFor(() => expect(constructed).toHaveLength(1))
+    release?.()
+    await Promise.all([first, second, third])
+    expect(constructed[0]?.disposed).toBe(true)
+  })
+
+  it('runs again after the previous listing finished', async () => {
+    const runtime = providerRuntime('opencode', () => {})
+    const first = runtime.listModels()
+    await vi.waitFor(() => expect(constructed).toHaveLength(1))
+    release?.()
+    await first
+
+    const second = runtime.listModels()
+    await vi.waitFor(() => expect(constructed).toHaveLength(2))
+    release?.()
+    await second
+    expect(constructed[1]?.disposed).toBe(true)
+  })
+
+  it('stops a listing that is still running when the server closes', async () => {
+    const listing = providerRuntime('opencode', () => {}).listModels()
+    await vi.waitFor(() => expect(constructed).toHaveLength(1))
+    expect(constructed[0]?.disposed).toBe(false)
+
+    await stopModelListings()
+    expect(constructed[0]?.disposed).toBe(true)
+
+    release?.()
+    await listing
+    // A finished listing is not stopped again.
+    constructed[0]!.disposed = false
+    await stopModelListings()
+    expect(constructed[0]?.disposed).toBe(false)
   })
 })

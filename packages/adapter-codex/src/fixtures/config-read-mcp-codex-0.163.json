@@ -1,0 +1,50 @@
+{
+  "config": {
+    "model": "gpt-5.5",
+    "mcp_servers": {
+      "hosted-docs": {
+        "url": "https://docs.example.test/mcp",
+        "environment_id": "local",
+        "enabled": true,
+        "tool_timeout_sec": null
+      },
+      "local-tools": {
+        "command": "node",
+        "args": ["tools.mjs", "--stdio", "--quiet"],
+        "environment_id": "local",
+        "enabled": true,
+        "tool_timeout_sec": null
+      },
+      "retired": {
+        "command": "python",
+        "args": [],
+        "environment_id": "local",
+        "enabled": false,
+        "tool_timeout_sec": null
+      },
+      "repl": {
+        "command": "repl-server",
+        "args": [],
+        "env": { "REPL_HOME": "C:\\fixture\\repl", "REPL_MODE": "browser" },
+        "env_vars": ["PATH"],
+        "environment_id": "local",
+        "enabled": true,
+        "startup_timeout_sec": 120,
+        "tool_timeout_sec": null
+      },
+      "signed-api": {
+        "url": "https://api.example.test/mcp",
+        "bearer_token_env_var": "FIXTURE_TOKEN_VARIABLE",
+        "environment_id": "local",
+        "enabled": true,
+        "tool_timeout_sec": null
+      }
+    }
+  },
+  "origins": {
+    "mcp_servers.local-tools.command": {
+      "name": { "type": "user", "file": "C:\\fixture\\.codex\\config.toml", "profile": null },
+      "version": "fixture-version"
+    }
+  }
+}

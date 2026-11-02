@@ -1,11 +1,14 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { rememberedChipTokens, resetRememberedChipTokens } from '../composer-chip-memory.js'
 import { emptyThread, reduce } from '../thread-store.js'
 import type { Transport } from '../transport.js'
 import { Composer, composerResourceTriggerAt } from './Composer.js'
+import { composerChipText, composerWireText, hasComposerChips } from './composer-chips.js'
 
 const bridge = vi.hoisted(() => ({
+  isMacOS: vi.fn(() => false),
   pickFiles: vi.fn(),
   previewViewedImage: vi.fn(),
   revealPath: vi.fn(),
@@ -14,6 +17,7 @@ const bridge = vi.hoisted(() => ({
 const preloadThread = vi.hoisted(() => vi.fn())
 
 vi.mock('../bridge.js', () => ({
+  isMacOS: bridge.isMacOS,
   pickFiles: bridge.pickFiles,
   previewViewedImage: bridge.previewViewedImage,
   revealPath: bridge.revealPath,
@@ -28,14 +32,17 @@ function legacyComposerResourceTriggerAt(text: string, cursor: number) {
   const marker = match[2]
   if (marker !== '/' && marker !== '$' && marker !== '@') return undefined
   const query = match[3] ?? ''
-  if (marker === '/' && /^(?:side|btw)$/i.test(query)) return undefined
   const start = cursor - query.length - 1
+  if (marker === '/' && text.slice(0, start).trim() !== '') return undefined
   let end = cursor
   while (end < text.length && /[\w.:-]/.test(text[end]!)) end += 1
   return { marker, query, start, end }
 }
 
 beforeEach(() => {
+  localStorage.clear()
+  resetRememberedChipTokens()
+  bridge.isMacOS.mockReturnValue(false)
   bridge.pickFiles.mockResolvedValue([])
   bridge.previewViewedImage.mockResolvedValue(undefined)
   bridge.savePastedFile.mockResolvedValue({
@@ -73,12 +80,50 @@ describe('composer resource triggers', () => {
       start: 5,
       end: 24,
     })
-    expect(composerResourceTriggerAt('Run /command-name', 17)).toEqual({
+    expect(composerResourceTriggerAt('/command-name', 13)).toEqual({
       marker: '/',
       query: 'command-name',
-      start: 4,
-      end: 17,
+      start: 0,
+      end: 13,
     })
+  })
+
+  it('opens slash commands only at the start of the message', () => {
+    expect(composerResourceTriggerAt('Run /command-name', 17)).toBeUndefined()
+    expect(composerResourceTriggerAt('Use (/context', 13)).toBeUndefined()
+    expect(composerResourceTriggerAt('first line\n/context', 19)).toBeUndefined()
+    expect(composerResourceTriggerAt('  \n /con', 8)).toEqual({
+      marker: '/',
+      query: 'con',
+      start: 4,
+      end: 8,
+    })
+    expect(composerResourceTriggerAt('Ask $skill', 10)).toMatchObject({ marker: '$' })
+    expect(composerResourceTriggerAt('Ask @docs', 9)).toMatchObject({ marker: '@' })
+  })
+
+  it('opens slash commands after skill and server chips, but not after a command or text', () => {
+    const cook = composerChipText('$cook', 'skill')
+    const docs = composerChipText('@docs', 'mcp')
+    const goal = composerChipText('/goal', 'command')
+    const design = composerChipText('/design', 'skill')
+    const atEnd = (text: string) => composerResourceTriggerAt(text, text.length)
+
+    const picks = `${cook} ${docs}\n /go`
+    expect(atEnd(picks)).toEqual({
+      marker: '/',
+      query: 'go',
+      start: picks.length - 3,
+      end: picks.length,
+    })
+    // A slash token already leads, or words come first.
+    expect(atEnd(`${goal} /go`)).toBeUndefined()
+    expect(atEnd(`${design} /go`)).toBeUndefined()
+    expect(atEnd(`${cook} fix /go`)).toBeUndefined()
+    expect(atEnd(`fix ${cook} /go`)).toBeUndefined()
+    // What an edit left of a cut chip is no chip.
+    expect(atEnd(`${cook.slice(0, 3)} /go`)).toBeUndefined()
+    expect(atEnd(`${cook.slice(3)} /go`)).toBeUndefined()
   })
 
   it('extends the replacement range past a cursor inside the token', () => {
@@ -90,10 +135,21 @@ describe('composer resource triggers', () => {
     })
   })
 
-  it('rejects embedded markers and reserved slash commands', () => {
+  it('rejects embedded markers and lists TasteCode commands like any other', () => {
     expect(composerResourceTriggerAt('email@example.com', 17)).toBeUndefined()
     expect(composerResourceTriggerAt('Run /side', 9)).toBeUndefined()
-    expect(composerResourceTriggerAt('Run /btw', 8)).toBeUndefined()
+    expect(composerResourceTriggerAt('/btw', 4)).toEqual({
+      marker: '/',
+      query: 'btw',
+      start: 0,
+      end: 4,
+    })
+    expect(composerResourceTriggerAt('/feedback', 9)).toEqual({
+      marker: '/',
+      query: 'feedback',
+      start: 0,
+      end: 9,
+    })
   })
 
   it('preserves resource names longer than the fast scan window', () => {
@@ -109,7 +165,18 @@ describe('composer resource triggers', () => {
   it('matches the previous parser across token boundaries and cursor positions', () => {
     const prefixes = ['', ' ', '\t', '(', '[', '{', 'a', '.', ')']
     const markers = ['/', '$', '@']
-    const queries = ['', 'a', 'side', 'btw', 'foo.bar', 'foo-bar', 'foo:bar', 'foo/bar', 'é']
+    const queries = [
+      '',
+      'a',
+      'side',
+      'btw',
+      'feedback',
+      'foo.bar',
+      'foo-bar',
+      'foo:bar',
+      'foo/bar',
+      'é',
+    ]
     const suffixes = ['', ' rest', '-tail', ')']
     for (const prefix of prefixes) {
       for (const marker of markers) {
@@ -299,10 +366,14 @@ describe('Composer loading controls', () => {
     renderComposer(vi.fn(), { transport: populatedResourceTransport() })
     const textarea = screen.getByRole('textbox', { name: 'Message' })
     textarea.focus()
-    for (const marker of ['/', '$', '@']) {
+    for (const [marker, name, loading] of [
+      ['/', 'Commands and skills', 'Loading commands and skills…'],
+      ['$', 'Skills', 'Loading skills…'],
+      ['@', 'MCP servers', 'Loading MCP servers…'],
+    ] as const) {
       fireEvent.change(textarea, { target: { value: marker } })
-      const status = expectSkeleton('Loading skills and MCP servers…', 'skeleton-group')
-      const list = screen.getByRole('listbox', { name: 'Skills and MCP servers' })
+      const status = expectSkeleton(loading, 'skeleton-group')
+      const list = screen.getByRole('listbox', { name })
       expect(list.classList.contains('composer-skeleton-picker__list')).toBe(true)
       expect(list.parentElement?.classList.contains('composer-skeleton-picker')).toBe(true)
       expect(textarea.getAttribute('aria-controls')).toBe(list.id)
@@ -315,13 +386,13 @@ describe('Composer loading controls', () => {
       expect(document.activeElement).toBe(textarea)
       expect(fireEvent.keyDown(textarea, { key: 'Tab' })).toBe(true)
       fireEvent.keyDown(textarea, { key: 'Escape' })
-      expect(screen.queryByText('Loading skills and MCP servers…')).toBeNull()
+      expect(screen.queryByText(loading)).toBeNull()
     }
 
-    fireEvent.change(textarea, { target: { value: '@skill' } })
-    fireEvent.change(textarea, { target: { value: '@' } })
+    fireEvent.change(textarea, { target: { value: '$skill' } })
+    fireEvent.change(textarea, { target: { value: '$' } })
     expect(await screen.findByRole('option', { name: /Airtable CLI/ })).toBeTruthy()
-    expect(screen.queryByText('Loading skills and MCP servers…')).toBeNull()
+    expect(screen.queryByText('Loading skills…')).toBeNull()
     expect(document.activeElement).toBe(textarea)
   })
 })
@@ -343,6 +414,147 @@ describe('Composer draft state', () => {
     expect(composer.value).toBe('')
   })
 
+  it('opens feedback for /feedback instead of sending it, even when no provider can send', () => {
+    const onSend = vi.fn()
+    const onFeedbackCommand = vi.fn()
+    const onProjectRequired = vi.fn()
+    renderComposer(onSend, {
+      onFeedbackCommand,
+      onProjectRequired,
+      sendAvailability: 'setup-required',
+      projectPath: undefined,
+    })
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+
+    fireEvent.change(composer, { target: { value: '/feedback the export button does nothing' } })
+    expect(screen.queryByRole('listbox')).toBeNull()
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
+    expect(onFeedbackCommand).toHaveBeenCalledWith('the export button does nothing')
+    expect(onSend).not.toHaveBeenCalled()
+    expect(onProjectRequired).not.toHaveBeenCalled()
+    expect(composer.value).toBe('')
+  })
+
+  it('sends /feedback to the provider when the app does not handle it', () => {
+    const onSend = vi.fn()
+    renderComposer(onSend)
+    const composer = screen.getByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: '/feedback hello' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    expect(onSend).toHaveBeenCalledWith('/feedback hello', [])
+  })
+
+  it.each(['/clear', '/new', ' /CLEAR '])(
+    'starts a new chat for %s instead of sending it',
+    (text) => {
+      const onSend = vi.fn()
+      const onNewChatCommand = vi.fn()
+      renderComposer(onSend, { onNewChatCommand, projectPath: undefined })
+      const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+      fireEvent.change(composer, { target: { value: text } })
+      fireEvent.keyDown(composer, { key: 'Enter' })
+      expect(onNewChatCommand).toHaveBeenCalledTimes(1)
+      expect(onSend).not.toHaveBeenCalled()
+      expect(composer.value).toBe('')
+    },
+  )
+
+  it('sends /clear with more words, or with no handler, to the provider as typed', () => {
+    const onSend = vi.fn()
+    const onNewChatCommand = vi.fn()
+    renderComposer(onSend, { onNewChatCommand })
+    const composer = screen.getByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: '/clear the build cache' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    expect(onSend).toHaveBeenCalledWith('/clear the build cache', [])
+    expect(onNewChatCommand).not.toHaveBeenCalled()
+  })
+
+  it('opens the model picker for /model instead of sending it', async () => {
+    const onSend = vi.fn()
+    const onModelSelectorOpen = vi.fn()
+    renderComposer(onSend, {
+      onModelSelectorOpen,
+      models: [
+        {
+          key: 'codex:model',
+          provider: 'codex',
+          sourceName: 'Codex',
+          mark: 'openai',
+          model: {
+            id: 'model',
+            displayName: 'Test model',
+            isDefault: true,
+            reasoningEfforts: [],
+            serviceTiers: [],
+          },
+        },
+      ],
+    })
+    await screen.findByRole('button', { name: 'Model and reasoning' })
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+    fireEvent.change(composer, { target: { value: '/model' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    expect(onModelSelectorOpen).toHaveBeenCalledTimes(1)
+    expect(onSend).not.toHaveBeenCalled()
+    expect(composer.value).toBe('')
+  })
+
+  it.each([
+    ['/resume', 'resume'],
+    ['/continue', 'resume'],
+    ['/config', 'settings'],
+    ['/mcp', 'mcp'],
+    ['/skills', 'skills'],
+    ['/status', 'usage'],
+    ['/cost', 'usage'],
+    ['/logout', 'login'],
+  ])('opens TasteCode’s own screen for %s instead of sending it', (text, screenName) => {
+    const onSend = vi.fn()
+    const onAppScreenCommand = vi.fn()
+    renderComposer(onSend, { onAppScreenCommand })
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+    fireEvent.change(composer, { target: { value: text } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    expect(onAppScreenCommand).toHaveBeenCalledWith(screenName)
+    expect(onSend).not.toHaveBeenCalled()
+    expect(composer.value).toBe('')
+  })
+
+  it('sends /mcp with arguments, or with no handler, to the provider as typed', () => {
+    const onSend = vi.fn()
+    const onAppScreenCommand = vi.fn()
+    const { unmount } = renderComposer(onSend, { onAppScreenCommand })
+    const composer = screen.getByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: '/mcp login github' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    expect(onSend).toHaveBeenCalledWith('/mcp login github', [])
+    expect(onAppScreenCommand).not.toHaveBeenCalled()
+    unmount()
+    renderComposer(onSend)
+    fireEvent.change(screen.getByPlaceholderText('Do anything'), { target: { value: '/mcp' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    expect(onSend).toHaveBeenLastCalledWith('/mcp', [])
+  })
+
+  it.each(['/permissions', '/approvals'])(
+    'opens the permissions picker for %s instead of sending it',
+    async (text) => {
+      const onSend = vi.fn()
+      renderComposer(onSend)
+      const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+      fireEvent.change(composer, { target: { value: text } })
+      fireEvent.keyDown(composer, { key: 'Enter' })
+      expect(onSend).not.toHaveBeenCalled()
+      expect(composer.value).toBe('')
+      await waitFor(() =>
+        expect(
+          screen.getByRole('button', { name: 'Permissions' }).getAttribute('aria-expanded'),
+        ).toBe('true'),
+      )
+    },
+  )
   it('clears the saved draft before handing the text over', () => {
     const events: string[] = []
     renderComposer((text) => events.push(`send ${text}`), {
@@ -403,7 +615,7 @@ describe('Composer docking motion', () => {
       expect(animate.mock.instances[0]).toBe(box)
       expect(animate).toHaveBeenCalledWith(
         [{ transform: 'translate3d(0px, 420px, 0)' }, { transform: 'translate3d(0, 0, 0)' }],
-        { duration: 320, easing: 'cubic-bezier(0.23, 1, 0.32, 1)' },
+        { duration: 260, easing: 'cubic-bezier(0.32, 0.72, 0, 1)' },
       )
     } finally {
       if (originalAnimate) {
@@ -1338,25 +1550,13 @@ describe('Composer prompts', () => {
     expect(screen.queryByRole('menu')).toBeNull()
   })
 
-  it('keeps the built-in side-chat slash commands out of the resource picker', () => {
-    const onSend = vi.fn()
-    renderComposer(onSend, { transport: populatedResourceTransport() })
-
-    const composer = screen.getByPlaceholderText('Do anything')
-    fireEvent.change(composer, { target: { value: '/side' } })
-    expect(screen.queryByRole('listbox')).toBeNull()
-    fireEvent.keyDown(composer, { key: 'Enter' })
-
-    expect(onSend).toHaveBeenCalledWith('/side', [])
-  })
-
   it('sends on the first Enter when the resource picker has nothing to select', async () => {
     const onSend = vi.fn()
     renderComposer(onSend, { transport: populatedResourceTransport() })
     const composer = screen.getByPlaceholderText('Do anything')
 
     fireEvent.change(composer, { target: { value: 'echo $HOME', selectionStart: 10 } })
-    await screen.findByText('No skills or MCP servers match “HOME”.')
+    await screen.findByText('No skills match “HOME”.')
     fireEvent.keyDown(composer, { key: 'Enter' })
 
     expect(onSend).toHaveBeenCalledWith('echo $HOME', [])
@@ -1371,56 +1571,94 @@ describe('Composer prompts', () => {
     await screen.findByRole('option', { name: /Airtable CLI/ })
     fireEvent.keyDown(composer, { key: 'Enter' })
 
-    expect(screen.getByText('Airtable CLI').closest('.chip--resource')).toBeTruthy()
-    expect((composer as HTMLTextAreaElement).value).toBe('')
+    expect((composer as HTMLTextAreaElement).value).toBe(
+      `${composerChipText('$airtable-cli', 'skill')} `,
+    )
+    expect((await findChip('skill')).textContent).toContain('airtable-cli')
     fireEvent.keyDown(composer, { key: 'Enter' })
     expect(onSend).toHaveBeenCalledWith('$airtable-cli', [])
   })
 
-  it('opens skills and MCP servers from dollar and selects the active row with Tab', async () => {
+  it('opens MCP servers from at and selects the active row with Tab', async () => {
     const onSend = vi.fn()
     const transport = populatedResourceTransport()
     renderComposer(onSend, { transport })
     const composer = screen.getByPlaceholderText('Do anything')
 
-    fireEvent.change(composer, { target: { value: '$', selectionStart: 1 } })
+    fireEvent.change(composer, { target: { value: '@', selectionStart: 1 } })
 
-    const list = await screen.findByRole('listbox', { name: 'Skills and MCP servers' })
-    const skill = screen.getByRole('option', { name: /Airtable CLI/ })
-    const mcp = screen.getByRole('option', { name: /Official Docs/ })
-    expect(list).toBeTruthy()
-    expect(skill.getAttribute('aria-selected')).toBe('true')
-
-    fireEvent.keyDown(composer, { key: 'ArrowDown' })
-    await waitFor(() => expect(mcp.getAttribute('aria-selected')).toBe('true'))
+    const mcp = await screen.findByRole('option', { name: /Official Docs/ })
+    expect(screen.queryByRole('option', { name: /Airtable CLI/ })).toBeNull()
+    expect(mcp.getAttribute('aria-selected')).toBe('true')
     fireEvent.keyDown(composer, { key: 'Tab' })
 
-    expect(screen.queryByRole('listbox', { name: 'Skills and MCP servers' })).toBeNull()
-    expect(screen.getByText('Official Docs').closest('.chip--resource')).toBeTruthy()
-    expect((composer as HTMLTextAreaElement).value).toBe('')
+    expect(screen.queryByRole('listbox', { name: 'MCP servers' })).toBeNull()
+    expect((await findChip('mcp')).textContent).toContain('officialDocs')
+    expect(composerWireText((composer as HTMLTextAreaElement).value)).toBe('@officialDocs ')
     fireEvent.keyDown(composer, { key: 'Enter' })
     expect(onSend).toHaveBeenCalledWith('@officialDocs', [])
   })
 
-  it('opens the combined picker from at, filters it, and highlights a clicked skill as a chip', async () => {
+  it('opens skills from dollar, filters them, and highlights a clicked skill as a chip', async () => {
     const onSend = vi.fn()
     renderComposer(onSend, { transport: populatedResourceTransport() })
     const composer = screen.getByPlaceholderText('Do anything')
 
-    fireEvent.change(composer, { target: { value: '@air', selectionStart: 4 } })
+    fireEvent.change(composer, { target: { value: '$air', selectionStart: 4 } })
 
     const skill = await screen.findByRole('option', { name: /Airtable CLI/ })
     expect(screen.queryByRole('option', { name: /Official Docs/ })).toBeNull()
     fireEvent.click(skill)
 
-    const chip = screen.getByText('Airtable CLI').closest('.chip--resource')
-    expect(chip?.classList.contains('chip--resource')).toBe(true)
-    expect(chip?.querySelector('svg')).toBeTruthy()
+    const chip = await findChip('skill')
+    expect(chip.querySelector('svg')).toBeTruthy()
     fireEvent.keyDown(composer, { key: 'Enter' })
     expect(onSend).toHaveBeenCalledWith('$airtable-cli', [])
   })
 
-  it('names user skills and global MCP servers from slash, at, and dollar', async () => {
+  it('keeps several picks inline in the order they were typed, with the text between them', async () => {
+    const onSend = vi.fn()
+    renderComposer(onSend, { transport: populatedResourceTransport() })
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+
+    fireEvent.change(composer, { target: { value: 'use $air', selectionStart: 8 } })
+    fireEvent.click(await screen.findByRole('option', { name: /Airtable CLI/ }))
+    fireEvent.change(composer, {
+      target: { value: `${composer.value}and @off`, selectionStart: composer.value.length + 8 },
+    })
+    fireEvent.click(await screen.findByRole('option', { name: /Official Docs/ }))
+    fireEvent.change(composer, {
+      target: {
+        value: `${composer.value}for the docs`,
+        selectionStart: composer.value.length + 12,
+      },
+    })
+
+    expect(composerWireText(composer.value)).toBe(
+      'use $airtable-cli and @officialDocs for the docs',
+    )
+    await findChip('mcp')
+    expect(document.querySelectorAll('.composer-chip')).toHaveLength(2)
+    expect(document.querySelector('.chips .chip')).toBeNull()
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    expect(onSend).toHaveBeenCalledWith('use $airtable-cli and @officialDocs for the docs', [])
+    // The transcript can draw these tokens as chips wherever they sit.
+    expect(rememberedChipTokens().get('$airtable-cli')).toBe('skill')
+    expect(rememberedChipTokens().get('@officialDocs')).toBe('mcp')
+  })
+
+  it('leaves a skill that is already a chip out of the menu', async () => {
+    renderComposer(vi.fn(), { transport: populatedResourceTransport() })
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+    const chip = composerChipText('$airtable-cli', 'skill')
+
+    fireEvent.change(composer, { target: { value: `${chip} $`, selectionStart: chip.length + 2 } })
+
+    expect(await screen.findByText('No more skills are available.')).toBeTruthy()
+    expect(screen.queryByRole('option', { name: /Airtable CLI/ })).toBeNull()
+  })
+
+  it('lists skills under slash and dollar and MCP servers only under at', async () => {
     const transport = createResourceTransport(async (method) => {
       if (method === 'skills.list') {
         return {
@@ -1467,17 +1705,21 @@ describe('Composer prompts', () => {
           ],
         }
       }
+      if (method === 'commands.list') return { commands: [], loading: false }
       throw new Error(`Unexpected request: ${method}`)
     })
     renderComposer(vi.fn(), { transport })
     const composer = screen.getByPlaceholderText('Do anything')
 
-    for (const marker of ['/', '@', '$'] as const) {
+    for (const marker of ['/', '$'] as const) {
       fireEvent.change(composer, { target: { value: marker, selectionStart: 1 } })
       expect(await screen.findByRole('option', { name: /Animate/ })).toBeTruthy()
-      expect(screen.getByRole('option', { name: /Official Docs/ })).toBeTruthy()
+      expect(screen.queryByRole('option', { name: /Official Docs/ })).toBeNull()
       fireEvent.keyDown(composer, { key: 'Escape' })
     }
+    fireEvent.change(composer, { target: { value: '@', selectionStart: 1 } })
+    expect(await screen.findByRole('option', { name: /Official Docs/ })).toBeTruthy()
+    expect(screen.queryByRole('option', { name: /Animate/ })).toBeNull()
   })
 
   it('closes the resource picker before Escape interrupts a running turn', async () => {
@@ -1489,14 +1731,216 @@ describe('Composer prompts', () => {
     })
     const composer = screen.getByPlaceholderText('Do anything')
     fireEvent.change(composer, { target: { value: '$', selectionStart: 1 } })
-    await screen.findByRole('listbox', { name: 'Skills and MCP servers' })
+    await screen.findByRole('listbox', { name: 'Skills' })
 
     fireEvent.keyDown(composer, { key: 'Escape' })
     expect(onInterrupt).not.toHaveBeenCalled()
-    expect(screen.queryByRole('listbox', { name: 'Skills and MCP servers' })).toBeNull()
+    expect(screen.queryByRole('listbox', { name: 'Skills' })).toBeNull()
 
     fireEvent.keyDown(composer, { key: 'Escape' })
     expect(onInterrupt).toHaveBeenCalledOnce()
+  })
+})
+
+describe('Composer provider commands', () => {
+  it('offers commands only at the start of the message and inserts the chosen one as a chip', async () => {
+    const onSend = vi.fn()
+    const transport = commandResourceTransport()
+    renderComposer(onSend, { transport, provider: 'claude-code', threadId: 'thread-1' })
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+
+    fireEvent.change(composer, { target: { value: 'Explain /code', selectionStart: 13 } })
+    expect(screen.queryByRole('listbox')).toBeNull()
+
+    fireEvent.change(composer, { target: { value: '/code', selectionStart: 5 } })
+    const option = await screen.findByRole('option', { name: /\/code-review/ })
+    expect(option.getAttribute('aria-selected')).toBe('true')
+    expect(option.getAttribute('title')).toBe('/code-review [low|high] [<pr#>]')
+    expect(transport.request).toHaveBeenCalledWith('commands.list', {
+      provider: 'claude-code',
+      projectPath: '/work/harness',
+      threadId: 'thread-1',
+    })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
+    expect(onSend).not.toHaveBeenCalled()
+    expect(composer.value).toBe(`${composerChipText('/code-review', 'command')} `)
+    expect((await findChip('command')).textContent).toContain('code-review')
+    expect(screen.queryByRole('listbox')).toBeNull()
+
+    fireEvent.change(composer, { target: { value: '/code-review high', selectionStart: 17 } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    expect(onSend).toHaveBeenCalledWith('/code-review high', [])
+  })
+
+  it('puts a command picked after skill chips in front of them', async () => {
+    const onSend = vi.fn()
+    renderComposer(onSend, { transport: commandResourceTransport(), provider: 'claude-code' })
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+    const cook = composerChipText('$cook', 'skill')
+    const docs = composerChipText('@docs', 'mcp')
+    const picks = `${cook} ${docs} `
+
+    fireEvent.change(composer, {
+      target: { value: `${picks}/comp`, selectionStart: picks.length + 5 },
+    })
+    await screen.findByRole('option', { name: /\/compact/ })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
+    expect(onSend).not.toHaveBeenCalled()
+    expect(composer.value).toBe(`${composerChipText('/compact', 'command')} ${picks}`)
+    await waitFor(() => expect(composer.selectionStart).toBe(composer.value.length))
+    fireEvent.change(composer, { target: { value: `${composer.value}keep the plan` } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    expect(onSend).toHaveBeenCalledWith('/compact $cook @docs keep the plan', [])
+  })
+
+  it('picks an exactly typed command behind chips instead of sending it after them', async () => {
+    const onSend = vi.fn()
+    renderComposer(onSend, { transport: commandResourceTransport(), provider: 'claude-code' })
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+    const cook = composerChipText('$cook', 'skill')
+
+    fireEvent.change(composer, {
+      target: { value: `${cook} /context`, selectionStart: cook.length + 9 },
+    })
+    await screen.findByRole('option', { name: /\/context/ })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
+    expect(onSend).not.toHaveBeenCalled()
+    expect(composerWireText(composer.value)).toBe('/context $cook ')
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    expect(onSend).toHaveBeenCalledWith('/context $cook', [])
+  })
+
+  it('sends an exactly typed command without arguments on the first Enter', async () => {
+    const onSend = vi.fn()
+    renderComposer(onSend, { transport: commandResourceTransport(), provider: 'claude-code' })
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+
+    fireEvent.change(composer, { target: { value: '/context', selectionStart: 8 } })
+    await screen.findByRole('option', { name: /\/context/ })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
+    expect(onSend).toHaveBeenCalledWith('/context', [])
+    expect(composer.value).toBe('')
+  })
+
+  it('completes an exactly typed command that takes arguments instead of sending it', async () => {
+    const onSend = vi.fn()
+    renderComposer(onSend, { transport: commandResourceTransport(), provider: 'claude-code' })
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+
+    fireEvent.change(composer, { target: { value: '/compact', selectionStart: 8 } })
+    await screen.findByRole('option', { name: /\/compact/ })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
+    expect(onSend).not.toHaveBeenCalled()
+    expect(composerWireText(composer.value)).toBe('/compact ')
+    expect(hasComposerChips(composer.value)).toBe(true)
+
+    // Arguments typed after the chip go out after the command.
+    fireEvent.change(composer, {
+      target: {
+        value: `${composer.value}keep the plan`,
+        selectionStart: composer.value.length + 13,
+      },
+    })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    expect(onSend).toHaveBeenCalledWith('/compact keep the plan', [])
+  })
+
+  it("lists TasteCode's own commands first and in place of a provider's namesake", async () => {
+    renderComposer(vi.fn(), {
+      transport: commandResourceTransport(),
+      provider: 'claude-code',
+      threadId: 'thread-1',
+      onFeedbackCommand: vi.fn(),
+    })
+    const composer = screen.getByPlaceholderText('Do anything')
+
+    fireEvent.change(composer, { target: { value: '/', selectionStart: 1 } })
+    await screen.findByRole('option', { name: /\/code-review/ })
+
+    expect(
+      screen
+        .getAllByRole('option')
+        .map((option) => option.querySelector('.composer-resource-picker__name')?.textContent),
+    ).toEqual(['/permissions', '/side', '/feedback', '/code-review', '/context', '/compact'])
+    expect(screen.getByRole('option', { name: /\/feedback/ }).textContent).toContain(
+      'Send feedback to the TasteCode team',
+    )
+  })
+
+  it('offers /side only in a started chat and /feedback only while feedback works', async () => {
+    renderComposer(vi.fn(), { transport: commandResourceTransport(), provider: 'claude-code' })
+    const composer = screen.getByPlaceholderText('Do anything')
+
+    fireEvent.change(composer, { target: { value: '/', selectionStart: 1 } })
+    await screen.findByRole('option', { name: /\/code-review/ })
+
+    expect(screen.queryByRole('option', { name: /\/side/ })).toBeNull()
+    expect(screen.getByRole('option', { name: /\/feedback/ }).textContent).toContain(
+      'Send feedback to the provider',
+    )
+  })
+
+  it('runs an exactly typed TasteCode command on the first Enter', async () => {
+    const onSend = vi.fn()
+    const onFeedbackCommand = vi.fn()
+    renderComposer(onSend, {
+      transport: commandResourceTransport(),
+      provider: 'claude-code',
+      threadId: 'thread-1',
+      onFeedbackCommand,
+      sendAvailability: 'setup-required',
+    })
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+
+    fireEvent.change(composer, { target: { value: '/feedback', selectionStart: 9 } })
+    await screen.findByRole('option', { name: /\/feedback/ })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
+    expect(onFeedbackCommand).toHaveBeenCalledWith('')
+    expect(onSend).not.toHaveBeenCalled()
+    expect(composer.value).toBe('')
+  })
+
+  it('completes /side from its prefix or alias and keeps the side-chat send', async () => {
+    const onSend = vi.fn()
+    renderComposer(onSend, {
+      transport: commandResourceTransport(),
+      provider: 'claude-code',
+      threadId: 'thread-1',
+    })
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+
+    fireEvent.change(composer, { target: { value: '/si', selectionStart: 3 } })
+    await screen.findByRole('option', { name: /\/side/ })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    expect(composerWireText(composer.value)).toBe('/side ')
+
+    fireEvent.change(composer, { target: { value: '/bt', selectionStart: 3 } })
+    await screen.findByRole('option', { name: /\/side/ })
+    fireEvent.keyDown(composer, { key: 'Tab' })
+    expect(composerWireText(composer.value)).toBe('/btw ')
+
+    fireEvent.change(composer, { target: { value: '/btw', selectionStart: 4 } })
+    await screen.findByRole('option', { name: /\/side/ })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    expect(onSend).toHaveBeenCalledWith('/btw', [])
+  })
+
+  it('sends a fully typed command the picker has not listed yet', () => {
+    const onSend = vi.fn()
+    const transport = createResourceTransport(() => new Promise(() => undefined))
+    renderComposer(onSend, { transport, provider: 'claude-code' })
+    const composer = screen.getByPlaceholderText('Do anything')
+
+    fireEvent.change(composer, { target: { value: '/usage', selectionStart: 6 } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
+    expect(onSend).toHaveBeenCalledWith('/usage', [])
   })
 })
 
@@ -1710,17 +2154,20 @@ describe('Composer height', () => {
     const cappedText = 'line\n'.repeat(11)
     fireEvent.change(composer, { target: { value: cappedText } })
     await waitFor(() => expect(composer.style.height).toBe('242px'))
-    resize?.([{ contentRect: { width: 500 } } as ResizeObserverEntry], {} as ResizeObserver)
-    resize?.([{ contentRect: { width: 700 } } as ResizeObserverEntry], {} as ResizeObserver)
-
-    contentHeight = 120
     const readsAtCap = layoutReads
-    fireEvent.input(composer, {
-      target: { value: `${cappedText}x` },
-      inputType: 'insertText',
-      data: 'x',
-    })
+    const resizeTo = (width: number) =>
+      resize?.([{ contentRect: { width } } as ResizeObserverEntry], {} as ResizeObserver)
+    // The first report is where it starts; then it widens over a few frames.
+    resizeTo(500)
+    contentHeight = 120
+    resizeTo(640)
+    resizeTo(700)
+    // Nothing is measured while the width is still moving.
+    expect(layoutReads).toBe(readsAtCap)
+
+    // Once it holds still, the draft is fitted again without a key press.
     await waitFor(() => expect(composer.style.height).toBe('120px'))
+    expect(composer.style.overflowY).toBe('hidden')
     expect(layoutReads).toBe(readsAtCap + 2)
   })
 
@@ -1887,28 +2334,68 @@ describe('Composer branch shelf', () => {
 })
 
 describe('Composer draft replacement', () => {
-  it.each(['remove', 'send'])(
-    'publishes an empty resource list after %s returns to the hydrated value',
-    async (action) => {
-      const onResourcesChange = vi.fn()
-      renderComposer(vi.fn(), {
-        transport: populatedResourceTransport(),
-        draftRequest: { text: '', attachments: [], resources: [], request: 1 },
-        onResourcesChange,
-      })
-      fireEvent.change(screen.getByPlaceholderText('Do anything'), { target: { value: '/air' } })
-      fireEvent.click(await screen.findByRole('option', { name: /Airtable CLI/ }))
-      await waitFor(() =>
-        expect(onResourcesChange).toHaveBeenLastCalledWith([
-          expect.objectContaining({ name: 'Airtable CLI' }),
-        ]),
-      )
-      if (action === 'remove')
-        fireEvent.click(screen.getByRole('button', { name: 'Remove Airtable CLI' }))
-      else fireEvent.click(screen.getByRole('button', { name: 'Send' }))
-      expect(onResourcesChange).toHaveBeenLastCalledWith([])
-    },
-  )
+  it('saves a picked chip as part of the draft text', async () => {
+    const onDraftChange = vi.fn()
+    const onResourcesChange = vi.fn()
+    renderComposer(vi.fn(), {
+      transport: populatedResourceTransport(),
+      draftRequest: { text: '', attachments: [], resources: [], request: 1 },
+      onDraftChange,
+      onResourcesChange,
+    })
+    fireEvent.change(screen.getByPlaceholderText('Do anything'), { target: { value: '/air' } })
+    fireEvent.click(await screen.findByRole('option', { name: /Airtable CLI/ }))
+
+    expect(onDraftChange).toHaveBeenLastCalledWith(`${composerChipText('$airtable-cli', 'skill')} `)
+    expect(onResourcesChange).not.toHaveBeenCalled()
+  })
+
+  it('brings skills of a draft saved before chips sat inline into its text', async () => {
+    const onSend = vi.fn()
+    const onDraftChange = vi.fn()
+    const onResourcesChange = vi.fn()
+    renderComposer(onSend, {
+      draftRequest: {
+        text: 'Use the docs',
+        attachments: [],
+        resources: [
+          {
+            key: 'skill:docs',
+            kind: 'skill',
+            id: '/skills/docs/SKILL.md',
+            name: 'Docs',
+            description: 'Project docs',
+            scope: 'Project',
+            token: '$docs',
+            available: true,
+          },
+        ],
+        request: 1,
+      },
+      onDraftChange,
+      onResourcesChange,
+    })
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+
+    await waitFor(() => expect(composerWireText(composer.value)).toBe('$docs Use the docs'))
+    expect(onDraftChange).toHaveBeenCalledWith(composer.value)
+    expect(onResourcesChange).toHaveBeenCalledWith([])
+    expect((await findChip('skill')).textContent).toContain('docs')
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    expect(onSend).toHaveBeenCalledWith('$docs Use the docs', [])
+  })
+
+  it('puts a sent prompt back with its chips when it is edited again', async () => {
+    renderComposer(vi.fn(), {
+      draftRequest: { text: '/goal $cook ship it', undoable: true, request: 1 },
+    })
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+
+    await waitFor(() => expect(hasComposerChips(composer.value)).toBe(true))
+    expect(composerWireText(composer.value)).toBe('/goal $cook ship it')
+    await findChip('command')
+    expect(document.querySelectorAll('.composer-chip')).toHaveLength(2)
+  })
 
   it('loads a previous prompt for editing and focuses it', async () => {
     renderComposer(vi.fn(), {
@@ -1928,18 +2415,7 @@ describe('Composer draft replacement', () => {
       draftRequest: {
         text: 'Keep this',
         attachments: ['/work/notes.md'],
-        resources: [
-          {
-            key: 'skill:docs',
-            kind: 'skill',
-            id: '/skills/docs/SKILL.md',
-            name: 'Docs',
-            description: 'Project docs',
-            scope: 'Project',
-            token: '$docs',
-            available: true,
-          },
-        ],
+        resources: [],
         request: 1,
       },
       onDraftChange,
@@ -1990,7 +2466,7 @@ describe('Composer draft replacement', () => {
     expect(onAttachmentsChange).toHaveBeenLastCalledWith([])
   })
 
-  it('replaces resource chips when a draft request includes them', async () => {
+  it('replaces the chips when another draft arrives', async () => {
     const view = renderComposer(vi.fn(), {
       draftRequest: {
         text: 'Use the docs',
@@ -2011,7 +2487,7 @@ describe('Composer draft replacement', () => {
       },
     })
 
-    expect(screen.getByText('Docs').closest('.chip--resource')).toBeTruthy()
+    expect((await findChip('skill')).textContent).toContain('docs')
 
     view.rerenderComposer({
       draftRequest: { text: '', attachments: [], resources: [], request: 2 },
@@ -2020,7 +2496,236 @@ describe('Composer draft replacement', () => {
     await waitFor(() => {
       expect((screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement).value).toBe('')
     })
-    expect(screen.queryByText('Docs')).toBeNull()
+    expect(document.querySelector('.composer-chip')).toBeNull()
+  })
+})
+
+describe('Composer inline chips', () => {
+  const cook = composerChipText('$cook', 'skill')
+  const goal = composerChipText('/goal', 'command')
+
+  function draftWith(value: string, caret = value.length) {
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+    fireEvent.change(composer, { target: { value, selectionStart: caret } })
+    composer.setSelectionRange(caret, caret)
+    return composer
+  }
+
+  it('draws no overlay while the draft has no chips', async () => {
+    renderComposer(vi.fn())
+    draftWith('plain words only')
+    await act(async () => undefined)
+    expect(document.querySelector('.composer__chips')).toBeNull()
+  })
+
+  it('draws each chip over the same characters the textarea holds', async () => {
+    renderComposer(vi.fn())
+    const composer = draftWith(`${goal} ship it with ${cook}`)
+
+    const overlay = await waitFor(() => {
+      const node = document.querySelector('.composer__chips')
+      expect(node).toBeTruthy()
+      return node!
+    })
+    expect(overlay.getAttribute('aria-hidden')).toBe('true')
+    expect(overlay.textContent).toBe(composer.value)
+    const chips = overlay.querySelectorAll('.composer-chip')
+    expect([...chips].map((chip) => chip.className)).toEqual([
+      'composer-chip composer-chip--command',
+      'composer-chip composer-chip--skill',
+    ])
+    expect(chips[0]!.querySelector('svg')).toBeTruthy()
+  })
+
+  it('sends a chip that touches a word as its own token', () => {
+    const onSend = vi.fn()
+    renderComposer(onSend)
+    // The space after the pick was deleted and typing went on.
+    const composer = draftWith(`use${cook}x`)
+
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    expect(onSend).toHaveBeenCalledWith('use $cook x', [])
+  })
+
+  it('deletes a whole chip with Backspace after it and Delete before it', () => {
+    renderComposer(vi.fn())
+    const composer = draftWith(`${goal} fix ${cook}`)
+
+    fireEvent.keyDown(composer, { key: 'Backspace' })
+    expect(composerWireText(composer.value)).toBe('/goal fix ')
+
+    composer.setSelectionRange(0, 0)
+    fireEvent.keyDown(composer, { key: 'Delete' })
+    expect(composer.value).toBe(' fix ')
+  })
+
+  it('steps over a chip with the arrow keys and widens a selection across it', () => {
+    renderComposer(vi.fn())
+    const composer = draftWith(`a ${cook} b`, 2 + cook.length)
+
+    fireEvent.keyDown(composer, { key: 'ArrowLeft' })
+    expect([composer.selectionStart, composer.selectionEnd]).toEqual([2, 2])
+    fireEvent.keyDown(composer, { key: 'ArrowRight' })
+    expect([composer.selectionStart, composer.selectionEnd]).toEqual([
+      2 + cook.length,
+      2 + cook.length,
+    ])
+    fireEvent.keyDown(composer, { key: 'ArrowLeft', shiftKey: true })
+    expect([composer.selectionStart, composer.selectionEnd]).toEqual([2, 2 + cook.length])
+  })
+
+  it('moves a caret that lands inside a chip to its nearer edge', () => {
+    renderComposer(vi.fn())
+    const composer = draftWith(`a ${cook} b`)
+
+    // React reports a selection change on the key or pointer release that made it.
+    composer.focus()
+    composer.setSelectionRange(4, 4)
+    fireEvent.keyUp(composer)
+    expect(composer.selectionStart).toBe(2)
+    composer.setSelectionRange(2 + cook.length - 1, 2 + cook.length - 1)
+    fireEvent.keyUp(composer)
+    expect(composer.selectionStart).toBe(2 + cook.length)
+  })
+
+  it('widens a deletion that cuts into a chip to the whole chip', () => {
+    renderComposer(vi.fn())
+    const composer = draftWith(`a ${cook} b`)
+
+    composer.setSelectionRange(0, 5)
+    fireEvent.keyDown(composer, { key: 'Backspace' })
+    expect([composer.selectionStart, composer.selectionEnd]).toEqual([0, 2 + cook.length])
+  })
+
+  it('removes the marks an edit left of a cut chip', () => {
+    renderComposer(vi.fn())
+    const composer = draftWith(`a ${cook} b`)
+
+    // An edit the keys did not see, such as a drop, replaced half the chip.
+    fireEvent.change(composer, { target: { value: `a Zook⁠ b`, selectionStart: 3 } })
+    expect(composer.value).toBe('a Zook b')
+  })
+
+  describe('through the editor', () => {
+    afterEach(() => {
+      Reflect.deleteProperty(document, 'execCommand')
+    })
+
+    it('repairs a cut chip as an edit of its own, and leaves undo to bring the chip back', () => {
+      renderComposer(vi.fn())
+      const composer = draftWith(`${goal} a ${cook}abc`)
+      const execCommand = fakeEditor(composer)
+      // A word deletion took the name together with the word typed against it.
+      const cut = `${goal} a ${cook.slice(0, 3)}`
+
+      editNatively(composer, cut, 'deleteWordBackward')
+      expect(composer.value).toBe(`${goal} a `)
+      expect(execCommand.mock.calls).toEqual([['delete']])
+
+      // Ctrl+Z puts the cut back; the next Ctrl+Z restores the chip.
+      editNatively(composer, cut, 'historyUndo')
+      expect(composer.value).toBe(cut)
+      expect(execCommand).toHaveBeenCalledOnce()
+    })
+
+    it.each([
+      ['Windows and Linux', false, { ctrlKey: true }],
+      ['macOS', true, { altKey: true }],
+    ])('deletes a chip and the space after it as one word on %s', (_, macOS, modifier) => {
+      bridge.isMacOS.mockReturnValue(macOS)
+      renderComposer(vi.fn())
+      const composer = draftWith(`a ${cook}  `)
+      const execCommand = fakeEditor(composer)
+
+      fireEvent.keyDown(composer, { key: 'Backspace', ...modifier })
+      expect(composer.value).toBe('a ')
+      expect(execCommand).toHaveBeenCalledWith('delete')
+
+      draftWith(` ${cook} b`, 0)
+      fireEvent.keyDown(composer, { key: 'Delete', ...modifier })
+      expect(composer.value).toBe(' b')
+    })
+
+    it('pastes over the whole of a chip the selection cuts into', () => {
+      renderComposer(vi.fn())
+      const composer = draftWith(`a ${cook} b`)
+      const execCommand = fakeEditor(composer)
+
+      composer.setSelectionRange(4, composer.value.length)
+      fireEvent.paste(composer, { clipboardData: { files: [], getData: () => 'X' } })
+      expect(composer.value).toBe('a X')
+      expect(execCommand).toHaveBeenCalledWith('insertText', false, 'X')
+    })
+  })
+
+  it('copies and cuts the tokens the selected chips stand for', () => {
+    renderComposer(vi.fn())
+    const composer = draftWith(`${goal} fix ${cook}`)
+    const copied = vi.fn()
+
+    composer.setSelectionRange(0, composer.value.length)
+    fireEvent.copy(composer, { clipboardData: { setData: copied } })
+    expect(copied).toHaveBeenCalledWith('text/plain', '/goal fix $cook')
+    expect(composerWireText(composer.value)).toBe('/goal fix $cook')
+
+    composer.setSelectionRange(goal.length + 1, composer.value.length)
+    fireEvent.cut(composer, { clipboardData: { setData: copied } })
+    expect(copied).toHaveBeenLastCalledWith('text/plain', 'fix $cook')
+    expect(composerWireText(composer.value)).toBe('/goal ')
+  })
+})
+
+describe('Composer picks on a provider or project switch', () => {
+  const cook = composerChipText('$cook', 'skill')
+  const docs = composerChipText('@docs', 'mcp')
+  const compact = composerChipText('/compact', 'command')
+  const draft = `${compact} ${cook} use ${docs} now`
+
+  function typeDraft() {
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+    fireEvent.change(composer, { target: { value: draft } })
+    return composer
+  }
+
+  it.each([
+    ['provider', { provider: 'claude-code' }],
+    ['project', { projectPath: '/work/other' }],
+  ] as const)('drops skill and server chips when the new chat changes %s', (_, change) => {
+    const onDraftChange = vi.fn()
+    const view = renderComposer(vi.fn(), { onDraftChange })
+    const composer = typeDraft()
+
+    view.rerenderComposer(change)
+
+    expect(composer.value).toBe(`${compact} use now`)
+    expect(onDraftChange).toHaveBeenLastCalledWith(`${compact} use now`)
+  })
+
+  it('leaves the text to the draft that comes with the switch', () => {
+    const onDraftChange = vi.fn()
+    const view = renderComposer(vi.fn(), { onDraftChange })
+    const composer = typeDraft()
+    onDraftChange.mockClear()
+
+    // Another chat opens, with its own provider and project.
+    view.rerenderComposer({ provider: 'claude-code', projectPath: '/work/other', threadId: 't2' })
+    expect(composer.value).toBe(draft)
+    // A draft handed to the new chat of another project.
+    view.rerenderComposer({ threadId: undefined })
+    view.rerenderComposer({
+      projectPath: '/work/third',
+      draftRequest: { text: draft, request: 1 },
+    })
+    expect(composer.value).toBe(draft)
+    expect(onDraftChange).not.toHaveBeenCalled()
+  })
+
+  it('keeps picks when the new chat gets its first project', () => {
+    const view = renderComposer(vi.fn(), { projectPath: undefined })
+    const composer = typeDraft()
+
+    view.rerenderComposer({ projectPath: '/work/harness' })
+    expect(composer.value).toBe(draft)
   })
 })
 
@@ -2160,11 +2865,12 @@ function deferred() {
 function renderComposer(
   onSend: (text: string, attachments: string[]) => void,
   overrides: Partial<Parameters<typeof Composer>[0]> = {},
+  Component: typeof Composer = Composer,
 ) {
   let currentOverrides = overrides
   const transport = overrides.transport ?? createResourceTransport()
   const composer = () => (
-    <Composer
+    <Component
       transport={transport}
       provider="codex"
       projects={[{ path: '/work/harness', name: 'TasteCode' }]}
@@ -2220,6 +2926,50 @@ function renderComposer(
   })
 }
 
+const setNativeValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!
+
+/** An edit the browser made itself, reported with its input type as Chromium does. */
+function editNatively(area: HTMLTextAreaElement, value: string, inputType: string) {
+  setNativeValue.call(area, value)
+  area.setSelectionRange(value.length, value.length)
+  area.dispatchEvent(new InputEvent('input', { bubbles: true, inputType }))
+}
+
+/**
+ * Stands in for the browser's editing commands, which happy-dom lacks: `delete`
+ * and `insertText` replace the textarea's selection and report an input event.
+ */
+function fakeEditor(area: HTMLTextAreaElement) {
+  const execCommand = vi.fn((command: string, _showUi?: boolean, text = '') => {
+    if (command !== 'delete' && command !== 'insertText') return false
+    const start = area.selectionStart
+    const end = area.selectionEnd
+    const from = command === 'delete' && start === end ? Math.max(0, start - 1) : start
+    const inserted = command === 'insertText' ? text : ''
+    setNativeValue.call(area, area.value.slice(0, from) + inserted + area.value.slice(end))
+    area.setSelectionRange(from + inserted.length, from + inserted.length)
+    area.dispatchEvent(
+      new InputEvent('input', {
+        bubbles: true,
+        inputType: command === 'delete' ? 'deleteContentBackward' : 'insertText',
+        data: command === 'insertText' ? text : null,
+      }),
+    )
+    return true
+  })
+  Object.defineProperty(document, 'execCommand', { configurable: true, value: execCommand })
+  return execCommand
+}
+
+/** The overlay is lazy, so its chips arrive a tick after the pick. */
+async function findChip(kind: 'skill' | 'mcp' | 'command'): Promise<Element> {
+  return waitFor(() => {
+    const chip = document.querySelector(`.composer__chips .composer-chip--${kind}`)
+    expect(chip).toBeTruthy()
+    return chip!
+  })
+}
+
 function queueRect(top: number, height = 22): DOMRect {
   return {
     x: 0,
@@ -2257,6 +3007,7 @@ function createResourceTransport(
         servers: [],
       }
     }
+    if (method === 'commands.list') return { commands: [], loading: false }
     throw new Error(`Unexpected request: ${method}`)
   },
 ): Transport {
@@ -2315,6 +3066,40 @@ function populatedResourceTransport(): Transport {
         ],
       }
     }
+    if (method === 'commands.list') return { commands: [], loading: false }
+    throw new Error(`Unexpected request: ${method}`)
+  })
+}
+
+/** Claude-shaped commands as the server lists them after the adapter filters built-ins. */
+function commandResourceTransport(): Transport {
+  return createResourceTransport(async (method) => {
+    if (method === 'skills.list') {
+      return {
+        capabilities: { inventory: false, configure: false, install: false },
+        skills: [],
+        errors: [],
+      }
+    }
+    if (method === 'commands.list') {
+      return {
+        commands: [
+          {
+            name: 'code-review',
+            description: 'Review the current diff',
+            argumentHint: '[low|high] [<pr#>]',
+          },
+          { name: 'context', description: 'Show current context usage' },
+          {
+            name: 'compact',
+            description: 'Free up context by summarizing the conversation so far',
+            argumentHint: '<optional custom summarization instructions>',
+          },
+          { name: 'feedback', description: 'Send feedback to the provider' },
+        ],
+        loading: false,
+      }
+    }
     throw new Error(`Unexpected request: ${method}`)
   })
 }
@@ -2341,5 +3126,75 @@ describe('Composer error dismissal', () => {
     view.rerenderComposer({ sendAvailability: 'ready' })
     view.rerenderComposer({ sendAvailability: 'setup-required' })
     expect(screen.getByText('Sign in to use this provider.')).toBeTruthy()
+  })
+})
+
+describe('Composer Enter while Send is loading', () => {
+  it('sends the words once Send is ready', () => {
+    const onSend = vi.fn()
+    const view = renderComposer(onSend, { sendAvailability: 'loading' })
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+    fireEvent.change(composer, { target: { value: 'Ship it' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    expect(onSend).not.toHaveBeenCalled()
+    expect(composer.value).toBe('Ship it')
+
+    view.rerenderComposer({ sendAvailability: 'ready' })
+    expect(onSend).toHaveBeenCalledTimes(1)
+    expect(onSend).toHaveBeenCalledWith('Ship it', [])
+    expect(composer.value).toBe('')
+  })
+
+  it('does not send after the words changed or the check asked for setup', () => {
+    const onSend = vi.fn()
+    const view = renderComposer(onSend, { sendAvailability: 'loading' })
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+    fireEvent.change(composer, { target: { value: 'First' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    fireEvent.change(composer, { target: { value: 'First, then more' } })
+    view.rerenderComposer({ sendAvailability: 'ready' })
+    expect(onSend).not.toHaveBeenCalled()
+
+    view.rerenderComposer({ sendAvailability: 'loading' })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    view.rerenderComposer({ sendAvailability: 'setup-required' })
+    view.rerenderComposer({ sendAvailability: 'ready' })
+    expect(onSend).not.toHaveBeenCalled()
+    expect(composer.value).toBe('First, then more')
+  })
+
+  it('does not carry an Enter over to another chat', () => {
+    const onSend = vi.fn()
+    const view = renderComposer(onSend, { sendAvailability: 'loading', threadId: 'thread-a' })
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+    fireEvent.change(composer, { target: { value: 'Same words' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    view.rerenderComposer({ threadId: 'thread-b' })
+    view.rerenderComposer({ sendAvailability: 'ready' })
+    expect(onSend).not.toHaveBeenCalled()
+  })
+})
+
+// Last in the file: it swaps in a fresh module registry, so later imports would see it too.
+describe('Composer chip drawing for a draft that brings chips', () => {
+  it('draws the chips once their module is there, without a Suspense hold', async () => {
+    vi.resetModules()
+    // Evaluated up front, so the wait below measures the composer, not the transform.
+    await import('./ComposerChipOverlay.js')
+    const { Composer: FreshComposer } = await import('./Composer.js')
+    const cook = composerChipText('$cook', 'skill')
+    renderComposer(vi.fn(), { draftRequest: { text: `${cook} go`, request: 1 } }, FreshComposer)
+
+    // Outside act, as in the app: Suspense would commit its empty fallback
+    // first and React would then hold the reveal back for about 300 ms.
+    const actEnvironment = globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean | undefined }
+    const previous = actEnvironment.IS_REACT_ACT_ENVIRONMENT
+    actEnvironment.IS_REACT_ACT_ENVIRONMENT = false
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 60))
+    } finally {
+      actEnvironment.IS_REACT_ACT_ENVIRONMENT = previous
+    }
+    expect(document.querySelector('.composer__chips')).not.toBeNull()
   })
 })

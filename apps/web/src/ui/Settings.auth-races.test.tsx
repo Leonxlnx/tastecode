@@ -103,3 +103,154 @@ describe('provider account revisions', () => {
     },
   )
 })
+
+describe('returning to the page', () => {
+  it("opens on a row's last answer and reads it again behind it", async () => {
+    const reread = deferred<Account>()
+    let reads = 0
+    const transport = new TestTransport((method) => {
+      if (method === 'providers.updates') return { updates: [] }
+      if (method === 'auth.status') return ++reads === 1 ? { signedIn: true } : reread.promise
+      throw new Error(`Unexpected ${method}`)
+    })
+    // The composer is on another provider, so it does not hand this row an account.
+    const props = {
+      provider: 'claude-code' as const,
+      account: undefined,
+      providerStatuses: statuses,
+      transport,
+      onConnectionsChanged,
+      onAccountChange: vi.fn(),
+    }
+    const first = render(<ProviderSettings {...props} />)
+    expect(screen.getByText('Checking account…')).toBeTruthy()
+    await act(async () => undefined)
+    expect(screen.getByRole('button', { name: 'Sign out' })).toBeTruthy()
+    first.unmount()
+
+    render(<ProviderSettings {...props} />)
+    expect(screen.queryByText('Checking account…')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Sign out' })).toBeTruthy()
+    expect(reads).toBe(2)
+    await act(async () => reread.resolve({ signedIn: false }))
+    expect(screen.getByRole('button', { name: 'Sign in' })).toBeTruthy()
+  })
+
+  it('opens on a sign-out made on an earlier visit', async () => {
+    const reread = deferred<Account>()
+    let reads = 0
+    const transport = new TestTransport((method) => {
+      if (method === 'providers.updates') return { updates: [] }
+      if (method === 'auth.status') return ++reads === 1 ? account : reread.promise
+      if (method === 'auth.signOut') return {}
+      throw new Error(`Unexpected ${method}`)
+    })
+    const props = {
+      provider: 'claude-code' as const,
+      account: undefined,
+      providerStatuses: statuses,
+      transport,
+      onConnectionsChanged,
+      onAccountChange: vi.fn(),
+    }
+    const first = render(<ProviderSettings {...props} />)
+    await act(async () => undefined)
+    fireEvent.click(screen.getByRole('button', { name: 'Sign out' }))
+    await act(async () => undefined)
+    expect(screen.getByRole('button', { name: 'Sign in' })).toBeTruthy()
+    first.unmount()
+
+    render(<ProviderSettings {...props} />)
+    expect(screen.getByRole('button', { name: 'Sign in' })).toBeTruthy()
+    expect(reads).toBe(2)
+  })
+})
+
+describe('background account re-checks', () => {
+  it('keeps a known sign-in when a re-check fails and marks the row until one succeeds', async () => {
+    const known = { signedIn: true, email: 'person@example.test', plan: 'Pro' }
+    let reads = 0
+    const transport = new TestTransport((method) => {
+      if (method === 'providers.updates') return { updates: [] }
+      if (method === 'auth.status') {
+        reads += 1
+        return reads === 1
+          ? Promise.reject(new Error('CLI did not respond within the time limit'))
+          : known
+      }
+      throw new Error(`Unexpected ${method}`)
+    })
+    const props = {
+      provider: 'codex' as const,
+      account: known,
+      providerStatuses: statuses,
+      transport,
+      onConnectionsChanged,
+      onAccountChange: vi.fn(),
+    }
+    const view = render(<ProviderSettings {...props} />)
+    await act(async () => undefined)
+    expect(reads).toBe(1)
+    expect(screen.queryByText('Account unavailable')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Sign out' })).toBeTruthy()
+    expect(document.querySelector('.settings__account-plan')?.textContent).toContain('Pro')
+    const issue = screen.getByRole('button', { name: 'Problem details' })
+    fireEvent.focus(issue)
+    expect(screen.getByRole('tooltip').textContent).toBe(
+      'Could not refresh this account. CLI did not respond within the time limit',
+    )
+    view.rerender(<ProviderSettings {...props} authRefreshRevision={1} />)
+    await act(async () => undefined)
+    expect(reads).toBe(2)
+    expect(screen.queryByRole('button', { name: 'Problem details' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Sign out' })).toBeTruthy()
+  })
+
+  it("re-checks the provider row for its own sign-in, not another account's", async () => {
+    let reads = 0
+    const transport = new TestTransport((method) => {
+      if (method === 'providers.updates') return { updates: [] }
+      if (method === 'auth.status') {
+        reads += 1
+        return account
+      }
+      throw new Error(`Unexpected ${method}`)
+    })
+    render(
+      <ProviderSettings
+        provider="codex"
+        account={account}
+        providerStatuses={statuses}
+        transport={transport}
+        onConnectionsChanged={onConnectionsChanged}
+        onAccountChange={vi.fn()}
+      />,
+    )
+    await act(async () => undefined)
+    expect(reads).toBe(1)
+
+    // Work's sign-in finished in its own folder; the default row stays as it is.
+    act(() =>
+      transport.emit('auth.event', {
+        provider: 'codex',
+        loginId: 'work-login',
+        success: true,
+        error: null,
+        accountId: 'work-1a2b3c',
+      }),
+    )
+    await act(async () => undefined)
+    expect(reads).toBe(1)
+
+    act(() =>
+      transport.emit('auth.event', {
+        provider: 'codex',
+        loginId: 'default-login',
+        success: true,
+        error: null,
+      }),
+    )
+    await act(async () => undefined)
+    expect(reads).toBe(2)
+  })
+})

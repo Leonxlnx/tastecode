@@ -8,15 +8,18 @@ import type { ProviderHistorySession, ProviderHistorySource } from '@harness/con
 import { parseCodexHistory } from './history-transcript.js'
 import { object, timestamp } from './history-values.js'
 import { transcriptRecords } from './rollout-records.js'
+import {
+  previewTitle,
+  readStateIndex,
+  type IndexedSession,
+  type StateIndex,
+} from './state-index.js'
 
 type JsonObject = Record<string, unknown>
 type SavedFile = { file: string; archived: boolean; size: number; mtimeMs: number }
-/** `internal` is known only when the index records each thread's source. */
-type IndexedSession = { session: ProviderHistorySession; name?: string; internal?: boolean }
 type SessionName = { title: string; updatedAt: number }
 type SessionNames = Map<string, SessionName>
 type Signature = { signature: string; racy: boolean }
-const PREVIEW_LENGTH = 200
 const SESSION_NAMES_FILE = 'session_index.jsonl'
 // Codex commits to its state index whenever a session changes. While the index
 // is unchanged, indexed rollouts reuse their last file stats for this long.
@@ -36,7 +39,7 @@ export function createCodexHistorySource(options: CodexHistoryOptions = {}): Pro
   const headers = new Map<string, { revision: string; session: ProviderHistorySession | null }>()
   // The server lists again on every background refresh. Unchanged stores and rollouts
   // reuse their previous results instead of re-reading the index and rehashing sessions.
-  let index: (Signature & { digest: string; byFile: Map<string, IndexedSession> }) | undefined
+  let index: (Signature & { state: StateIndex | undefined }) | undefined
   let sidecar: (Signature & { names: SessionNames }) | undefined
   const results = new Map<string, { inputs: readonly unknown[]; session: ProviderHistorySession }>()
   let stats: { at: number; files: Map<string, SavedFile> } | undefined
@@ -49,39 +52,26 @@ export function createCodexHistorySource(options: CodexHistoryOptions = {}): Pro
       home,
       databases.flatMap((file) => [file, `${file}-wal`]),
     )
-    let indexChanged = false
+    // Rollouts whose index entries changed; their stats are taken again.
+    let changedFiles = new Set<string>()
     if (index?.signature !== indexFiles.signature || index.racy) {
-      const rows = await indexedSessions(home, databases)
       // A racy index is read again, but unchanged rows keep their sessions.
-      const digest = createHash('sha256').update(JSON.stringify(rows)).digest('hex')
-      indexChanged = index?.signature !== indexFiles.signature || index.digest !== digest
-      index = {
-        ...indexFiles,
-        digest,
-        byFile:
-          indexChanged || !index
-            ? new Map(
-                rows.flatMap((entry) =>
-                  entry.session.locator
-                    ? [[path.resolve(entry.session.locator), entry] as const]
-                    : [],
-                ),
-              )
-            : index.byFile,
-      }
+      const read = await readStateIndex(home, databases, index?.state)
+      changedFiles = read.changedFiles
+      index = { ...indexFiles, state: read.index }
     }
-    const byFile = index.byFile
+    const byFile = index.state?.byFile ?? new Map<string, IndexedSession>()
     const namesFile = await filesSignature(home, [SESSION_NAMES_FILE])
     if (sidecar?.signature !== namesFile.signature || sidecar.racy)
       sidecar = { ...namesFile, names: await sessionNames(home) }
     const names = sidecar.names
     const now = Date.now()
     const reusable =
-      !indexChanged && databases.length > 0 && stats && now - stats.at < INDEXED_STAT_REUSE_MS
+      databases.length > 0 && stats && now - stats.at < INDEXED_STAT_REUSE_MS
         ? stats.files
         : undefined
     const files = await savedFiles(home, (file) =>
-      reusable && byFile.has(file) ? reusable.get(file) : undefined,
+      reusable && byFile.has(file) && !changedFiles.has(file) ? reusable.get(file) : undefined,
     )
     if (!reusable) stats = { at: now, files: new Map() }
     for (const saved of files) stats!.files.set(saved.file, saved)
@@ -272,64 +262,6 @@ async function stateFiles(home: string): Promise<string[]> {
   }
 }
 
-async function indexedSessions(home: string, files: string[]): Promise<IndexedSession[]> {
-  for (const file of files) {
-    let db: import('node:sqlite').DatabaseSync | undefined
-    try {
-      const { DatabaseSync } = await import('node:sqlite')
-      db = new DatabaseSync(path.join(home, file), { readOnly: true })
-      const columns = new Set(
-        db
-          .prepare('PRAGMA table_info(threads)')
-          .all()
-          .map((row) => row.name),
-      )
-      const created = columns.has('created_at_ms')
-        ? 'COALESCE(created_at_ms, created_at * 1000)'
-        : 'created_at * 1000'
-      const updated = columns.has('updated_at_ms')
-        ? 'COALESCE(updated_at_ms, updated_at * 1000)'
-        : 'updated_at * 1000'
-      const name = columns.has('name') ? 'name' : 'NULL'
-      const preview = columns.has('preview') ? "COALESCE(NULLIF(preview, ''), title)" : 'title'
-      const hasSource = columns.has('source')
-      return db
-        .prepare(
-          `SELECT id, rollout_path, cwd, ${name} AS name, substr(${preview}, 1, ${PREVIEW_LENGTH}) AS preview, ${created} AS created, ${updated} AS updated, ${hasSource ? 'source' : 'NULL'} AS source FROM threads`,
-        )
-        .all()
-        .flatMap((row) => {
-          if (
-            typeof row.id !== 'string' ||
-            typeof row.rollout_path !== 'string' ||
-            typeof row.cwd !== 'string'
-          )
-            return []
-          return [
-            {
-              ...(typeof row.name === 'string' && row.name.trim() ? { name: row.name } : {}),
-              ...(hasSource ? { internal: subagentSource(row.source) } : {}),
-              session: {
-                id: row.id,
-                workspacePath: row.cwd,
-                title: previewTitle(row.preview),
-                createdAt: Number(row.created),
-                updatedAt: Number(row.updated),
-                revision: String(row.updated),
-                locator: row.rollout_path,
-              },
-            },
-          ]
-        })
-    } catch {
-      /* Older, unavailable, or locked indexes fall back to rollout metadata. */
-    } finally {
-      db?.close()
-    }
-  }
-  return []
-}
-
 async function sessionNames(home: string): Promise<SessionNames> {
   const result: SessionNames = new Map()
   for await (const record of jsonLines(path.join(home, SESSION_NAMES_FILE))) {
@@ -373,22 +305,6 @@ async function readHeader(saved: SavedFile): Promise<ProviderHistorySession | nu
     }
   }
   return null
-}
-
-/** The index stores a plain label (`cli`) or the rollout's JSON source object. */
-function subagentSource(value: unknown): boolean {
-  if (typeof value !== 'string' || !value.startsWith('{')) return false
-  try {
-    return 'subagent' in object(JSON.parse(value))
-  } catch {
-    return false
-  }
-}
-
-function previewTitle(value: unknown): string {
-  return typeof value === 'string'
-    ? value.slice(0, PREVIEW_LENGTH).replace(/\s+/g, ' ').trim() || 'Codex chat'
-    : 'Codex chat'
 }
 
 async function* jsonLines(file: string): AsyncGenerator<JsonObject> {

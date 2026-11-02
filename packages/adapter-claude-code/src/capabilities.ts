@@ -1,4 +1,25 @@
-import type { Capabilities, McpServerConfig } from '@harness/contracts'
+import type {
+  Capabilities,
+  McpCapabilities,
+  McpServerConfig,
+  ProviderRuntimeOption,
+} from '@harness/contracts'
+
+/**
+ * Claude reports the servers its own settings, plugins and claude.ai load.
+ * TasteCode adds project servers to new sessions; inherited ones stay
+ * read-only, because hiding one would change Claude's own configuration.
+ */
+export const CLAUDE_MCP_CAPABILITIES: McpCapabilities = {
+  inventory: true,
+  add: true,
+  update: true,
+  remove: true,
+  reload: false,
+  startOAuth: false,
+  cancelOAuth: false,
+  hideInherited: false,
+}
 
 /** Keep unsupported provider operations out of saved project configuration too. */
 export function validateClaudeMcpServer(
@@ -21,6 +42,29 @@ export function validateClaudeMcpServer(
     )
 }
 
+/**
+ * Both drive the same `claude` executable over its stream-json protocol, so a
+ * session offers the same things through either. The SDK is the default.
+ */
+export const CLAUDE_RUNTIMES = [
+  {
+    id: 'sdk',
+    label: 'Agent SDK',
+    description: "Anthropic's Agent SDK runs Claude Code",
+  },
+  {
+    id: 'cli',
+    label: 'claude -p',
+    description: 'TasteCode runs claude -p itself',
+  },
+] as const satisfies readonly ProviderRuntimeOption[]
+
+export type ClaudeRuntime = (typeof CLAUDE_RUNTIMES)[number]['id']
+
+export function isClaudeRuntime(value: string | undefined): value is ClaudeRuntime {
+  return CLAUDE_RUNTIMES.some((runtime) => runtime.id === value)
+}
+
 export const CLAUDE_CAPABILITIES: Capabilities = {
   steer: true,
   fork: false,
@@ -30,6 +74,12 @@ export const CLAUDE_CAPABILITIES: Capabilities = {
   userInput: true,
   autoReview: true,
   images: true,
+  // task_progress messages count each agent's tool calls and tokens while it runs.
+  subagents: 'progress',
+  // Every process can run in another CLAUDE_CONFIG_DIR, which holds that
+  // account's sign-in, settings and transcripts (account-home.ts).
+  multipleAccounts: true,
+  runtimes: [...CLAUDE_RUNTIMES],
   // Claude Code compacts about 13K tokens short of a 200K window by default,
   // and ignores an override later than that. 1M applies only where the model
   // offers it.

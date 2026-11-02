@@ -59,6 +59,15 @@ credentials stay with the provider or operating-system credential store, and the
 does not receive raw credentials. See [SECURITY.md](./SECURITY.md) and
 [rules/security.md](./rules/security.md).
 
+**Privacy: feedback is sent only when you press Send.** Nothing goes to a server the
+TasteCode team controls except feedback you choose to send. **Send feedback** (account
+menu, command palette or `/feedback`) and **Report** on an error open a dialog that shows
+the exact payload before anything leaves your machine. App details (TasteCode version, OS,
+provider, model and an anonymous install id) and the attached error are included by
+default and can be switched off. Attached errors lose file paths, URL query strings and
+secret-shaped values; your own text is sent as you typed it, minus secret-shaped values and
+your home folder name. Builds without a feedback inbox hide every entry point.
+
 ## Documentation
 
 | Document                                        | Purpose                                      |

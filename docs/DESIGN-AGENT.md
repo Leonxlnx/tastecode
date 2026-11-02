@@ -151,7 +151,8 @@ Implemented mechanics:
 - one correction attempt for malformed phase output;
 - persisted in-progress flow state and restart recovery;
 - phase-specific activity items and human labels;
-- direct API workspace tools with path and credential boundaries;
+- direct API workspace tools with path and credential boundaries (removed with API connections
+  on 2026-10-20);
 - an allowlisted local preview runner;
 - one dedicated sidebar Browser tab that opens on capture and reloads for repair passes;
 - a serialized, capability-negotiated Electron screenshot bridge that waits within fixed deadlines
@@ -432,7 +433,10 @@ provider's file report. A persisted baseline captured before the first Design tu
 unrelated existing user code while making newly introduced violations enforceable. The gate rejects card-edge borders,
 pseudo-elements, inset shadows, narrow hard-stop gradients, child strips, equivalent utility
 classes, and standalone or inline SVG substitutes not backed by an explicit functional asset in
-`assets.json`, then permits one bounded source edit to remove the new output. Representative
+`assets.json`, then permits one bounded source edit to remove the new output. A reference-bound
+operating dashboard draws its own charts and icons, so it may keep inline SVG and standalone icon
+files: at most 6 KB, an aspect ratio between 1:2 and 2:1, and no raster image, text, gradient,
+pattern or filter. Larger or decorated standalone SVG still needs the asset manifest. Representative
 interface or operational data may make a one-shot page feel complete, but Build returns it in a
 `Verify before publishing:` summary that the final Harness message surfaces after Preview instead
 of adding a disclaimer to the website.
@@ -504,6 +508,16 @@ A passing review cannot contain findings. A repair verdict must contain at least
 practice, and TasteCode stops after at most two Repair attempts. The final artifact is the latest
 review, not a history of every review iteration.
 
+After the model's review and the DOM audit findings, TasteCode audits the generated source for
+design-language drift and adds at most two automated findings. `font_family_drift` names font
+families the source declares or loads outside the approved `brand.json` typefaces, ignoring generic
+families, system-ui keywords and icon fonts. `radius_scale_drift` reports corner radii outside the brand radius tokens or,
+without tokens, more than five distinct non-zero, non-pill radii. A run records which fonts and radii
+each file already declared before the first Design turn, so a redesign is never blamed for the
+project's existing fonts; runs saved before the audit have no such baseline and are not audited.
+These findings only turn a pass into a repair, which the two-attempt limit bounds. A scan that
+cannot run is logged and skipped, never failing the run.
+
 This phase deliberately makes only claims supported by screenshots and attached DOM audits. It
 does not infer factual accuracy, working interactions, conversion, user comprehension, loading
 performance, or provenance. Those require source, runtime, user, analytics, or performance
@@ -568,17 +582,16 @@ name.
 
 The current product surface is provider-neutral for briefing but capability-gated for visual review.
 
-| Provider path      | Briefing UI today | Visual review today       | Important detail                                                               |
-| ------------------ | ----------------- | ------------------------- | ------------------------------------------------------------------------------ |
-| Codex app-server   | Available         | Available                 | Accepts native screenshot attachments.                                         |
-| Claude Code CLI    | Available         | Available                 | Accepts native image attachments.                                              |
-| Grok CLI           | Available         | Available                 | Accepts native image attachments.                                              |
-| Cursor CLI         | Available         | Skipped                   | Does not declare image input.                                                  |
-| Native OpenCode    | Available         | Skipped                   | Does not declare image input.                                                  |
-| Antigravity CLI    | Available         | Skipped                   | Does not declare image input.                                                  |
-| Pi RPC             | Available         | Skipped                   | Does not declare image input.                                                  |
-| Direct API runtime | Available         | Skipped                   | Workspace tools exist, but image attachments are not implemented.              |
-| ACP                | Available         | Available when negotiated | Sends ACP image blocks only when the agent advertised image prompt capability. |
+| Provider path    | Briefing UI today | Visual review today       | Important detail                                                               |
+| ---------------- | ----------------- | ------------------------- | ------------------------------------------------------------------------------ |
+| Codex app-server | Available         | Available                 | Accepts native screenshot attachments.                                         |
+| Claude Code CLI  | Available         | Available                 | Accepts native image attachments.                                              |
+| Grok CLI         | Available         | Available                 | Accepts native image attachments.                                              |
+| Cursor CLI       | Available         | Skipped                   | Does not declare image input.                                                  |
+| Native OpenCode  | Available         | Skipped                   | Does not declare image input.                                                  |
+| Antigravity CLI  | Available         | Skipped                   | Does not declare image input.                                                  |
+| Pi RPC           | Available         | Skipped                   | Does not declare image input.                                                  |
+| ACP              | Available         | Available when negotiated | Sends ACP image blocks only when the agent advertised image prompt capability. |
 
 Autonomous Design briefing uses ordinary text turns and does not require structured-input support.
 Provider-originated Design questions are answered through the adapter when it supports input responses.
@@ -592,24 +605,10 @@ Providers without real image input currently finish after Preview with an explic
 visual review was skipped. This is honest degradation, but it does not satisfy M4's full definition
 of done.
 
-## Direct API workspace tools
+## Direct API sessions
 
-OpenAI, Anthropic, and compatible model endpoints do not provide a complete coding-agent runtime.
-TasteCode supplies its own bounded workspace tools so Design phases can still use the shared session
-model.
-
-The current tool layer can list files, read text files with content hashes, perform guarded writes,
-and run an allowlisted non-interactive project command. It:
-
-- confines real and symlink-resolved paths to the workspace;
-- rejects stale writes using the prior SHA-256;
-- omits common credential files from listings and reads;
-- rejects shell composition in argv;
-- supplies a credential-free child environment;
-- routes mutation through the normal approval mode.
-
-Direct API image attachments remain unimplemented, so these providers can build but cannot yet
-perform the screenshot Review phase.
+Removed with API connections on 2026-10-20. A user's own key now runs through OpenCode's
+sign-in, so such a session is a native OpenCode session above.
 
 ## Preview and screenshot safety
 
@@ -716,8 +715,10 @@ them.
 
 The blueprint records visitor questions, decision stages, information dependencies, final copy,
 selected reference IDs, responsive behavior, interactions, acceptance criteria, and one
-purposeful motion decision per section. New runs sample uniformly across the configured catalog
-and labeled complete generated candidates, with pending inspection recorded honestly. They require
+purposeful motion decision per section. New runs draw a random anchor composition from the
+configured catalog and labeled complete generated candidates, then fill later sections from the
+anchor's source site and close profiled sites so one page keeps one design language
+(see [DESIGN-REFERENCES.md](./DESIGN-REFERENCES.md)), with pending inspection recorded honestly. They require
 a visible hero entrance and distinct scroll reveals unless the user explicitly requests no animation.
 Build and Review receive the same motion requirements, including trigger and reduced-motion checks;
 still screenshots alone cannot validate playback. Ordinary follow-ups after Design ends clear the
@@ -782,7 +783,7 @@ judgment rules, and UI design.
 
 ### 1. Finish provider verification
 
-- add real Design fixtures for a direct API session and non-Codex adapters;
+- add real Design fixtures for non-Codex adapters;
 - capture one negotiated ACP image-review run against a real ACP agent;
 - add image attachments to another adapter only after its real protocol is captured;
 - verify that a future adapter works through capabilities without a provider-name branch.
@@ -861,7 +862,6 @@ The implementation should not silently decide these product questions:
 | Activity presentation                                   | `apps/web/src/ui/Thread.tsx`                                                             |
 | Client capture relay                                    | `apps/web/src/bridge.ts`, `apps/web/src/transport.ts`                                    |
 | ACP screenshot prompt blocks                            | `packages/adapter-acp/src/`                                                              |
-| Direct API workspace tools                              | `apps/server/src/api-workspace-tools.ts`                                                 |
 | Durable product scope                                   | `docs/ROADMAP.md`, `docs/FEATURES.md`, this document                                     |
 
 Tests are colocated with each package or application. Important coverage includes artifact parser

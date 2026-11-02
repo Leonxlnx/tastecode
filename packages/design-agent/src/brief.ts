@@ -1,4 +1,6 @@
+import { APP_SCREENS_ENABLED } from './app-screen-mode.js'
 import { readDesignArtifact, writeDesignArtifact } from './artifact-store.js'
+import { DASHBOARD_REFERENCES_ENABLED } from './dashboard-references.js'
 import { record, string, stringsAllowEmpty } from './parse.js'
 
 export interface ExplicitBriefAnswer {
@@ -22,6 +24,62 @@ export interface DesignBrief {
   explicitAnswers: ExplicitBriefAnswer[]
   assumptions: string[]
   unresolved: string[]
+}
+
+/** Words that name a marketing surface: a site or page about a product rather than the product. */
+const MARKETING_SURFACE =
+  /\b(?:landing ?(?:pages?)?|launch ?pages?|marketing|portfolio|(?:web|micro)? ?sites?|(?:web|start|internet)? ?seiten?|webauftritt|home ?pages?|web ?pages?|one ?pagers?)\b/u
+/** Pages of a product's website rather than views of the product ("pricing page"). */
+const MARKETING_PAGE_NAMES =
+  'pricing|about(?: us)?|wait ?list|careers?|blog|contact(?: us)?|features?|changelog'
+/** A page type naming one of those pages; page types are labels, not prose. */
+const MARKETING_PAGE_TYPE = new RegExp(`\\b(?:${MARKETING_PAGE_NAMES}) ?pages?\\b`, 'u')
+/**
+ * A standalone page that presents a product ("a page for our analytics app", "a pricing page
+ * for our app") rather than operating it. "Settings page for the admin app" names an app view
+ * and stays a dashboard.
+ */
+const PAGE_ABOUT_PRODUCT = new RegExp(
+  `\\b(?:a|one|single|simple|marketing|product|promo|promotional|${MARKETING_PAGE_NAMES})\\s+page\\s+(?:about|for|showcasing|promoting|presenting|introducing)\\b`,
+  'u',
+)
+const APPLICATION_SURFACE =
+  /\b(?:dashboards?|admin|analytics|applications?|apps?|webapps?|product interface)\b/u
+
+/** Dashboards run as tasteskill app screens, or from the parked image catalog when it returns. */
+export function dashboardModeEnabled(): boolean {
+  return APP_SCREENS_ENABLED || DASHBOARD_REFERENCES_ENABLED
+}
+
+export function isDashboardBrief(
+  brief: Pick<DesignBrief, 'pageType' | 'originalRequest'>,
+): boolean {
+  // With both dashboard paths off, every request runs as a website.
+  if (!dashboardModeEnabled()) return false
+  // The requested surface wins over the product being advertised on it: a site,
+  // one-pager or Webseite for an analytics app is still a website.
+  const pageType = surfaceText(brief.pageType)
+  if (isMarketingSurface(pageType) || MARKETING_PAGE_TYPE.test(pageType)) return false
+  if (APPLICATION_SURFACE.test(pageType)) return true
+  const request = surfaceText(brief.originalRequest)
+  return !isMarketingSurface(request) && APPLICATION_SURFACE.test(request)
+}
+
+/**
+ * A website-prompt plan in the dashboard mode. Only the parked image catalog plans dashboards
+ * through the website prompts; an app screen is routed by its dealt sheet and its dashboard brief,
+ * so while the catalog is off an operate_monitor plan on a website run stays a website.
+ */
+export function isDashboardPageMode(mode: string | undefined): boolean {
+  return DASHBOARD_REFERENCES_ENABLED && mode === 'operate_monitor'
+}
+
+function isMarketingSurface(text: string): boolean {
+  return MARKETING_SURFACE.test(text) || PAGE_ABOUT_PRODUCT.test(text)
+}
+
+function surfaceText(value: string | undefined): string {
+  return (value ?? '').toLowerCase().replace(/[_-]/gu, ' ')
 }
 
 const STRING_FIELDS = [

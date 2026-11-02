@@ -2,7 +2,7 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import * as bridge from '../bridge.js'
 import { NoticePresence } from './NoticePresence.js'
@@ -295,36 +295,60 @@ describe('NoticePresence', () => {
       Object.defineProperty(window, 'innerWidth', { configurable: true, value: width })
       Object.defineProperty(window, 'innerHeight', { configurable: true, value: height })
     }
-    const dockComposer = (options: { newSession?: boolean } = {}) => {
+    const dockComposer = (
+      options: {
+        newSession?: boolean
+        dormant?: boolean
+        into?: Element
+        left?: number
+        width?: number
+      } = {},
+    ) => {
       const conversation = document.createElement('div')
       conversation.className = `stage__conversation${options.newSession ? ' is-new-session' : ''}`
       const composer = document.createElement('div')
-      composer.className = 'composer'
+      composer.className = `composer${options.dormant ? ' is-dormant' : ''}`
       const box = document.createElement('div')
       box.className = 'composer__box'
       composer.append(box)
       conversation.append(composer)
-      document.body.append(conversation)
+      ;(options.into ?? document.body).append(conversation)
+      let measured = 0
       const place = (rect: { top: number; left: number; width: number; height: number }) => {
-        composer.getBoundingClientRect = () =>
-          ({
+        composer.getBoundingClientRect = () => {
+          measured += 1
+          return {
             ...rect,
             x: rect.left,
             y: rect.top,
             right: rect.left + rect.width,
             bottom: rect.top + rect.height,
             toJSON: () => rect,
-          }) as DOMRect
+          } as DOMRect
+        }
       }
-      // An 800px column, 24px of composer padding, a 720px box.
-      place({ top: 700, left: 300, width: 800, height: 160 })
+      // By default an 800px column, 24px of composer padding, a 720px box.
+      const width = options.width ?? 800
+      place({ top: 700, left: options.left ?? 300, width, height: 160 })
       Object.defineProperty(box, 'offsetLeft', { configurable: true, value: 24 })
-      Object.defineProperty(box, 'offsetWidth', { configurable: true, value: 720 })
-      return { conversation, place }
+      Object.defineProperty(box, 'offsetWidth', { configurable: true, value: width - 80 })
+      return { conversation, composer, place, measured: () => measured }
+    }
+    // Two panes as split view lays them out: the start pane on the left.
+    const splitStage = () => {
+      const split = document.createElement('div')
+      split.className = 'split'
+      const start = document.createElement('section')
+      start.className = 'split__pane is-focused is-start'
+      const end = document.createElement('section')
+      end.className = 'split__pane is-dormant is-end'
+      split.append(start, end)
+      document.body.append(split)
+      return { start, end }
     }
 
     afterEach(() => {
-      document.querySelectorAll('.stage__conversation').forEach((node) => node.remove())
+      document.querySelectorAll('.split, .stage__conversation').forEach((node) => node.remove())
       setWindow(windowSize.width, windowSize.height)
     })
 
@@ -366,6 +390,20 @@ describe('NoticePresence', () => {
       expect(notice.style.getPropertyValue('--notice-right')).toBe('12px')
     })
 
+    it('measures nothing for a notice pinned away from the corner', () => {
+      setWindow(1280, 860)
+      dockComposer()
+      render(
+        <NoticePresence className="notice" role="status" visible followComposer={false}>
+          TasteCode 0.5.0 is ready
+        </NoticePresence>,
+      )
+
+      const notice = screen.getByRole('status')
+      expect(notice.style.getPropertyValue('--notice-bottom')).toBe('')
+      expect(notice.style.getPropertyValue('--notice-right')).toBe('')
+    })
+
     it('keeps the window corner when no composer is docked', () => {
       setWindow(1280, 860)
       dockComposer({ newSession: true })
@@ -378,6 +416,128 @@ describe('NoticePresence', () => {
       const notice = screen.getByRole('alert')
       expect(notice.style.getPropertyValue('--notice-bottom')).toBe('')
       expect(notice.style.getPropertyValue('--notice-right')).toBe('')
+    })
+
+    it('moves above a composer that docks while it is open', async () => {
+      setWindow(1280, 860)
+      const { conversation } = dockComposer({ newSession: true })
+      render(
+        <NoticePresence className="notice" role="status" visible>
+          1 update
+        </NoticePresence>,
+      )
+      const notice = screen.getByRole('status')
+      expect(notice.style.getPropertyValue('--notice-bottom')).toBe('')
+
+      // A chat opens, and its composer docks in the corner the notice holds.
+      conversation.classList.remove('is-new-session')
+
+      await waitFor(() => expect(notice.style.getPropertyValue('--notice-bottom')).toBe('216px'))
+      expect(notice.style.getPropertyValue('--notice-right')).toBe('236px')
+    })
+
+    it('follows a composer that mounts while it is open, and the corner once it leaves', async () => {
+      setWindow(1280, 860)
+      render(
+        <NoticePresence className="notice" role="status" visible>
+          1 update
+        </NoticePresence>,
+      )
+      const notice = screen.getByRole('status')
+
+      // Back from another view: the chat stage mounts again.
+      const { conversation } = dockComposer()
+      await waitFor(() => expect(notice.style.getPropertyValue('--notice-bottom')).toBe('216px'))
+
+      conversation.remove()
+      await waitFor(() => expect(notice.style.getPropertyValue('--notice-bottom')).toBe(''))
+      expect(notice.style.getPropertyValue('--notice-right')).toBe('')
+    })
+
+    it('moves to the other pane when focus moves in a split', async () => {
+      setWindow(1280, 860)
+      const { start, end } = splitStage()
+      const left = dockComposer({ into: start, left: 300, width: 490 })
+      const right = dockComposer({ into: end, dormant: true, left: 790, width: 490 })
+      render(
+        <NoticePresence className="notice" role="status" visible>
+          1 update
+        </NoticePresence>,
+      )
+      const notice = screen.getByRole('status')
+      // 1280 - (300 + 24 + 410): above the focused left composer.
+      expect(notice.style.getPropertyValue('--notice-right')).toBe('546px')
+
+      start.className = 'split__pane is-dormant is-start'
+      left.composer.classList.add('is-dormant')
+      end.className = 'split__pane is-focused is-end'
+      right.composer.classList.remove('is-dormant')
+
+      // 1280 - (790 + 24 + 410)
+      await waitFor(() => expect(notice.style.getPropertyValue('--notice-right')).toBe('56px'))
+      expect(notice.style.getPropertyValue('--notice-bottom')).toBe('216px')
+    })
+
+    it("sits above the right pane's composer while a new chat has focus in a split", () => {
+      setWindow(1280, 860)
+      const { start, end } = splitStage()
+      dockComposer({ into: start, newSession: true, left: 300, width: 490 })
+      dockComposer({ into: end, dormant: true, left: 790, width: 490 })
+      render(
+        <NoticePresence className="notice" role="status" visible>
+          1 update
+        </NoticePresence>,
+      )
+
+      const notice = screen.getByRole('status')
+      // The window corner is on that composer's Send.
+      expect(notice.style.getPropertyValue('--notice-bottom')).toBe('216px')
+      // 1280 - (790 + 24 + 410)
+      expect(notice.style.getPropertyValue('--notice-right')).toBe('56px')
+    })
+
+    it('keeps the corner when the new chat is the right pane', () => {
+      setWindow(1280, 860)
+      const { start, end } = splitStage()
+      start.className = 'split__pane is-dormant is-start'
+      end.className = 'split__pane is-focused is-end'
+      dockComposer({ into: start, dormant: true, left: 300, width: 490 })
+      dockComposer({ into: end, newSession: true, left: 790, width: 490 })
+      render(
+        <NoticePresence className="notice" role="status" visible>
+          1 update
+        </NoticePresence>,
+      )
+
+      const notice = screen.getByRole('status')
+      expect(notice.style.getPropertyValue('--notice-bottom')).toBe('')
+      expect(notice.style.getPropertyValue('--notice-right')).toBe('')
+    })
+
+    it('measures nothing again while the transcript streams', async () => {
+      setWindow(1280, 860)
+      const { conversation, measured } = dockComposer()
+      const transcript = document.createElement('div')
+      transcript.className = 'thread'
+      conversation.prepend(transcript)
+      render(
+        <NoticePresence className="notice" role="status" visible>
+          1 update
+        </NoticePresence>,
+      )
+      const before = measured()
+
+      for (let delta = 0; delta < 50; delta += 1) {
+        const line = document.createElement('p')
+        line.textContent = `delta ${delta}`
+        transcript.append(line)
+        line.classList.toggle('is-streaming')
+      }
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0))
+      })
+
+      expect(measured()).toBe(before)
     })
   })
 

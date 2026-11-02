@@ -79,24 +79,47 @@ describe('useWindowChrome', () => {
     return <div data-frame={props.frame} />
   }
 
+  /** Animation frames run only when the test paints one. */
+  function frames() {
+    const queue = new Map<number, FrameRequestCallback>()
+    let next = 0
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      queue.set(++next, callback)
+      return next
+    })
+    vi.spyOn(window, 'cancelAnimationFrame').mockImplementation((id) => void queue.delete(id))
+    return {
+      paint() {
+        const due = [...queue.values()]
+        queue.clear()
+        for (const callback of due) callback(performance.now())
+      },
+    }
+  }
+
   it('reports once per change of theme or surface, not per render', () => {
+    const frame = frames()
     const bar = document.createElement('div')
     bar.style.backgroundColor = 'rgb(252, 252, 252)'
     document.body.append(bar)
     vi.spyOn(document, 'elementFromPoint').mockReturnValue(bar)
     const view = render(<Shell theme="light" surface="chat" frame={0} />)
+    frame.paint()
     expect(bridge.setChrome).toHaveBeenCalledTimes(1)
     expect(bridge.setChrome).toHaveBeenLastCalledWith(
       expect.objectContaining({ theme: 'light', caption: '#fcfcfc' }),
     )
 
     // A streamed frame re-renders the app root; nothing changed, nothing is sent.
-    for (let frame = 1; frame <= 50; frame++)
-      view.rerender(<Shell theme="light" surface="chat" frame={frame} />)
+    for (let index = 1; index <= 50; index++) {
+      view.rerender(<Shell theme="light" surface="chat" frame={index} />)
+      frame.paint()
+    }
     expect(bridge.setChrome).toHaveBeenCalledTimes(1)
 
     bar.style.backgroundColor = 'rgb(245, 245, 246)'
     view.rerender(<Shell theme="light" surface="settings" frame={51} />)
+    frame.paint()
     expect(bridge.setChrome).toHaveBeenCalledTimes(2)
     expect(bridge.setChrome).toHaveBeenLastCalledWith(
       expect.objectContaining({ caption: '#f5f5f6' }),
@@ -104,8 +127,25 @@ describe('useWindowChrome', () => {
 
     bar.style.backgroundColor = 'rgb(19, 19, 19)'
     view.rerender(<Shell theme="dark" surface="settings" frame={52} />)
+    frame.paint()
     expect(bridge.setChrome).toHaveBeenLastCalledWith(
       expect.objectContaining({ theme: 'dark', caption: '#131313' }),
     )
+  })
+
+  it('reads the page in the frame that paints a change, never inside the commit', () => {
+    const frame = frames()
+    const point = vi.spyOn(document, 'elementFromPoint').mockReturnValue(null)
+    const view = render(<Shell theme="light" surface="chat" frame={0} />)
+    frame.paint()
+    point.mockClear()
+
+    // Opening Settings: the commit must not force style and layout for the caption.
+    view.rerender(<Shell theme="light" surface="settings" frame={1} />)
+    expect(point).not.toHaveBeenCalled()
+    // Closing it again before the frame: only the surface that is painted is read.
+    view.rerender(<Shell theme="light" surface="chat" frame={2} />)
+    frame.paint()
+    expect(point).toHaveBeenCalledTimes(1)
   })
 })

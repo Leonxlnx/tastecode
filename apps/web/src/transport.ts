@@ -129,6 +129,22 @@ export const TRANSPORT_LIMITS = {
   requestTimeoutMs: 120_000,
 } as const
 
+/**
+ * A frame this recent proves the socket still delivers, so a focus does not
+ * have to ask. Wall-clock time on purpose: it jumps across a sleep, which is
+ * when a socket can be left half-dead.
+ */
+export const HEALTHY_TRAFFIC_MS = 5_000
+/**
+ * How long the liveness probe may go unanswered, with no other frame either,
+ * before the socket counts as dead. The server stops answering while Windows
+ * starts a process for it (0.2-3.5 s each, stalls of 5.7 s measured on a busy
+ * machine); 500 ms replaced a busy server's socket and failed every request
+ * in flight. A server that really went away closes the socket, which
+ * reconnects without this check.
+ */
+export const HEALTH_CHECK_TIMEOUT_MS = 10_000
+
 /** The server may have accepted a transmitted mutation before its reply was lost. */
 export class IndeterminateRequestError extends Error {
   override name = 'IndeterminateRequestError'
@@ -151,6 +167,8 @@ class WebSocketTransport implements Transport {
   #reconnectDelayMs = 0
   #hasOpened = false
   #healthCheck: Promise<void> | undefined
+  /** When the current socket last delivered a frame; 0 until it has. */
+  #lastFrameAt = 0
   #validation: TransportValidation | undefined
   #validationLoad: Promise<void> | undefined
   #validationQueue: Array<{ source: WebSocket; channel: string; data: unknown }> = []
@@ -214,11 +232,11 @@ class WebSocketTransport implements Transport {
 
   /**
    * Browser sockets can remain OPEN after a laptop wakes even though the TCP
-   * connection underneath is gone. A cheap loopback request confirms liveness;
-   * if it cannot answer promptly, replace the socket instead of leaving every
-   * later request stranded on a half-dead connection.
+   * connection underneath is gone. Recent traffic, or a cheap loopback request,
+   * confirms liveness; only a socket that stays silent for the whole timeout is
+   * replaced, instead of leaving every later request stranded on it.
    */
-  ensureHealthy(timeoutMs = 500): Promise<void> {
+  ensureHealthy(timeoutMs = HEALTH_CHECK_TIMEOUT_MS): Promise<void> {
     if (this.#closedByUs || this.#state === 'closed' || this.#state === 'connecting') {
       return Promise.resolve()
     }
@@ -227,8 +245,10 @@ class WebSocketTransport implements Transport {
       return Promise.resolve()
     }
     if (this.#healthCheck) return this.#healthCheck
+    if (Date.now() - this.#lastFrameAt < HEALTHY_TRAFFIC_MS) return Promise.resolve()
 
     const socket = this.#socket
+    const frameBefore = this.#lastFrameAt
     let timer: ReturnType<typeof setTimeout> | undefined
     let checking!: Promise<void>
     checking = Promise.race([
@@ -238,7 +258,11 @@ class WebSocketTransport implements Transport {
       }),
     ])
       .catch(() => {
-        if (!this.#closedByUs && this.#socket === socket) this.#restartSocket()
+        // Any frame during the wait, a stream delta or another reply, shows a
+        // live socket on a server that is only slow to answer this one.
+        if (!this.#closedByUs && this.#socket === socket && this.#lastFrameAt === frameBefore) {
+          this.#restartSocket()
+        }
       })
       .finally(() => {
         clearTimeout(timer)
@@ -390,6 +414,7 @@ class WebSocketTransport implements Transport {
     // on every successful reconnect — a false alarm that would have trained us
     // to ignore the one warning that actually matters.
     this.#lastSequence = 0
+    this.#lastFrameAt = 0
     const socket = new WebSocket(this.#url)
     this.#socket = socket
     this.#connectTimer = setTimeout(() => {
@@ -434,6 +459,7 @@ class WebSocketTransport implements Transport {
       // briefly open before an auth close; resetting in onopen made that case
       // reconnect in a zero-delay loop forever.
       this.#reconnectDelayMs = 0
+      this.#lastFrameAt = Date.now()
       this.#receive(String(event.data), socket)
     }
 

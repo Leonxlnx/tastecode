@@ -1,0 +1,329 @@
+import { useEffect } from 'react'
+import { installAppUpdate, reportRunningAgents } from './bridge.js'
+import type { Transport } from './transport.js'
+import type { Project, Session } from './ui/Sidebar.js'
+
+/**
+ * Installing an app update quits TasteCode, and quitting cuts off every chat
+ * that is still working. So Update asks first while chats run: stop them and
+ * install now, or wait and install by itself once the last one ends.
+ *
+ * Which chats run is the server's state. The sidebar status it pushes is the
+ * live count (it changes on status changes, never per streamed delta), and
+ * the server's own chat list has the last word before anything installs,
+ * because a queued prompt starts the next turn a moment after the last one
+ * ended. Nothing here looks at providers, so every agent and API connection
+ * is treated the same.
+ *
+ * Only a turn holds the install. Queued prompts on their own do not: they are
+ * saved and come back after the restart, and a chat can hold them for good
+ * with no turn running (after a restart, or when the server could not start
+ * the next one), which would keep the update waiting forever.
+ */
+export type AppUpdateInstallState =
+  | { phase: 'idle'; failed?: boolean }
+  /** Asking the server whether chats are running before a click installs. */
+  | { phase: 'checking' }
+  /** Update was clicked while chats run: stop them now, or wait for them? */
+  | { phase: 'confirming'; running: number }
+  /** Installs by itself once `running` reaches zero. */
+  | { phase: 'waiting'; running: number }
+  /** Install now: stopping the running chats, then installing. */
+  | { phase: 'stopping'; running: number }
+  | { phase: 'installing' }
+
+export type AppUpdateInstallGate = {
+  /** How many chats the server still runs a turn in, or is starting one in. */
+  runningChats: () => Promise<number>
+  /** Ends the running turns; queued prompts stay for after the restart. */
+  stopRunningChats: () => Promise<void>
+}
+
+/**
+ * Inside a turn (also when it waits on an approval or a question: its agent is
+ * live, and the restart would lose the turn), or starting one. Not 'queued':
+ * the server reports that only while no turn runs or starts.
+ */
+const RUNNING = new Set<Session['status']>(['starting', 'working', 'approval', 'input'])
+
+/** A chat that ends sends its next queued prompt within a moment; wait that long first. */
+export const INSTALL_SETTLE_MS = 750
+const MAX_RECHECK_MS = 8_000
+/** As long as the server's Stop all gives an agent; after that the restart ends its turn. */
+const STOP_TURNS_TIMEOUT_MS = 5_000
+
+let state: AppUpdateInstallState = { phase: 'idle' }
+let live = 0
+let gate: AppUpdateInstallGate | undefined
+let timer: ReturnType<typeof setTimeout> | undefined
+let recheck = INSTALL_SETTLE_MS
+const listeners = new Set<() => void>()
+
+function publish(next: AppUpdateInstallState) {
+  state = next
+  for (const listener of listeners) listener()
+}
+
+function clearTimer() {
+  if (timer) clearTimeout(timer)
+  timer = undefined
+}
+
+export function appUpdateInstallState(): AppUpdateInstallState {
+  return state
+}
+
+export function subscribeAppUpdateInstall(listener: () => void): () => void {
+  listeners.add(listener)
+  return () => {
+    listeners.delete(listener)
+  }
+}
+
+export function chatCount(running: number): string {
+  return `${running} ${running === 1 ? 'chat' : 'chats'}`
+}
+
+/** The chats a restart would stop, while Update asks about them. */
+export function runningLabel(running: number): string {
+  return `${chatCount(running)} still running`
+}
+
+export function waitingLabel(running: number): string {
+  return `Installs when ${chatCount(running)} ${running === 1 ? 'finishes' : 'finish'}`
+}
+
+const projectCounts = new WeakMap<Project, string[]>()
+
+function runningIds(project: Project): string[] {
+  const cached = projectCounts.get(project)
+  if (cached) return cached
+  const ids = project.sessions
+    .filter((session) => RUNNING.has(session.status))
+    .map((session) => session.id)
+  projectCounts.set(project, ids)
+  return ids
+}
+
+/** Running chats in the sidebar. A status change replaces only its own project. */
+export function runningChatCount(projects: readonly Project[]): number {
+  const ids = new Set<string>()
+  for (const project of projects) for (const id of runningIds(project)) ids.add(id)
+  return ids.size
+}
+
+/** Running chats in the server's own list; `running` is its turn state. */
+export function serverRunningChatCount(
+  projects: ReadonlyArray<{
+    sessions: ReadonlyArray<{
+      id: string
+      running: boolean
+      status?: Session['status'] | undefined
+    }>
+  }>,
+): number {
+  const ids = new Set<string>()
+  for (const project of projects) {
+    for (const session of project.sessions) {
+      if (session.running || (session.status && RUNNING.has(session.status))) ids.add(session.id)
+    }
+  }
+  return ids.size
+}
+
+export function setAppUpdateInstallGate(next: AppUpdateInstallGate | undefined): void {
+  gate = next
+}
+
+/** Undefined when the server could not say; the sidebar count is all there is then. */
+async function serverRunning(): Promise<number | undefined> {
+  if (!gate) return undefined
+  try {
+    return await gate.runningChats()
+  } catch {
+    return undefined
+  }
+}
+
+async function install(): Promise<void> {
+  clearTimer()
+  recheck = INSTALL_SETTLE_MS
+  publish({ phase: 'installing' })
+  let installed = false
+  try {
+    installed = await installAppUpdate()
+  } catch {
+    installed = false
+  }
+  // A successful install quits the app; until then this window keeps the spinner.
+  if (!installed) publish({ phase: 'idle', failed: true })
+}
+
+function scheduleSettle() {
+  if (timer) return
+  timer = setTimeout(() => {
+    timer = undefined
+    void settle()
+  }, recheck)
+}
+
+async function settle(): Promise<void> {
+  if (state.phase !== 'waiting' || live > 0) return
+  const running = await serverRunning()
+  if (state.phase !== 'waiting' || live > 0) return
+  if (!running) {
+    await install()
+    return
+  }
+  // The server still runs a chat the sidebar does not show yet (a queued
+  // prompt starting); look again until its status arrives.
+  if (state.running !== running) publish({ phase: 'waiting', running })
+  recheck = Math.min(recheck * 2, MAX_RECHECK_MS)
+  scheduleSettle()
+}
+
+/** The sidebar's running count, after every status change. */
+export function reportRunningChats(count: number): void {
+  const before = live
+  live = count
+  if (state.phase === 'confirming') {
+    // Once the last chat it asked about ends there is nothing left to stop;
+    // Update installs at once again. Nothing installs without a click.
+    if (count === 0) {
+      if (before > 0) publish({ phase: 'idle' })
+    } else if (state.running !== count) publish({ phase: 'confirming', running: count })
+    return
+  }
+  if (state.phase !== 'waiting') return
+  if (count > 0) {
+    clearTimer()
+    recheck = INSTALL_SETTLE_MS
+    if (state.running !== count) publish({ phase: 'waiting', running: count })
+    return
+  }
+  scheduleSettle()
+}
+
+/** Update: installs now when no chat runs, otherwise asks what to do with them. */
+export async function requestAppUpdateInstall(): Promise<void> {
+  if (state.phase !== 'idle') return
+  if (live > 0) {
+    publish({ phase: 'confirming', running: live })
+    return
+  }
+  if (!gate) {
+    await install()
+    return
+  }
+  publish({ phase: 'checking' })
+  const server = await serverRunning()
+  // Install later or a second click may have moved on meanwhile.
+  if (appUpdateInstallState().phase !== 'checking') return
+  // A turn the sidebar saw start while the server answered counts too.
+  const running = Math.max(server ?? 0, live)
+  if (running === 0) {
+    await install()
+    return
+  }
+  publish({ phase: 'confirming', running })
+}
+
+/** The answer to Update: wait, and install by itself once the running chats end. */
+export function installWhenChatsFinish(): void {
+  if (state.phase !== 'confirming') return
+  publish({ phase: 'waiting', running: state.running })
+  // Only the server knows of a chat that is still starting; look again until
+  // its status arrives.
+  if (live === 0) scheduleSettle()
+}
+
+/**
+ * The answer to Update, or Install now while waiting: stops the running chats,
+ * then installs at once.
+ */
+export async function stopChatsAndInstall(): Promise<void> {
+  if (state.phase !== 'confirming' && state.phase !== 'waiting') return
+  clearTimer()
+  publish({ phase: 'stopping', running: state.running })
+  try {
+    await gate?.stopRunningChats()
+  } catch {
+    // Quitting ends those chats too; the user asked for the install now.
+  }
+  await install()
+}
+
+/** Install later: stop waiting and forget a failed install. */
+export function cancelAppUpdateInstall(): void {
+  clearTimer()
+  recheck = INSTALL_SETTLE_MS
+  if (state.phase === 'idle' && !state.failed) return
+  publish({ phase: 'idle' })
+}
+
+/**
+ * Install now ends the running turns and keeps every queued prompt. Queued
+ * prompts are saved and come back after the restart, so the update must not
+ * delete them, which the server's Stop all would do in every chat.
+ *
+ * A chat is stopped the way its own Stop button stops it, unless it also
+ * holds queued prompts: when a turn ends the server sends the next queued
+ * prompt at once, and the restart would cut that one off. The restart ends
+ * such a chat's turn instead, and its queue stays as it is.
+ */
+function stopRunningTurns(transport: Pick<Transport, 'request'>): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const stopped = (async () => {
+    const { projects } = await transport.request('projects.list', {})
+    const running = new Set<string>()
+    for (const project of projects) {
+      for (const session of project.sessions) if (session.running) running.add(session.id)
+    }
+    await Promise.allSettled(
+      [...running].map(async (threadId) => {
+        const { items } = await transport.request('thread.queue', { threadId })
+        if (items.length === 0) await transport.request('thread.interrupt', { threadId })
+      }),
+    )
+  })().finally(() => clearTimeout(timer))
+  const late = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, STOP_TURNS_TIMEOUT_MS)
+  })
+  return Promise.race([stopped, late])
+}
+
+/**
+ * Feeds the install gate from the app: the sidebar's running count after
+ * each status change, and the server for the final word and for stopping.
+ * Nothing is counted before the chat list has loaded.
+ */
+export function useAppUpdateInstallGate(
+  transport: Pick<Transport, 'request'>,
+  projects: readonly Project[],
+  loaded: boolean,
+): void {
+  useEffect(() => {
+    setAppUpdateInstallGate({
+      runningChats: async () =>
+        serverRunningChatCount((await transport.request('projects.list', {})).projects),
+      stopRunningChats: () => stopRunningTurns(transport),
+    })
+    return () => setAppUpdateInstallGate(undefined)
+  }, [transport])
+  useEffect(() => {
+    if (!loaded) return
+    const running = runningChatCount(projects)
+    reportRunningChats(running)
+    // The desktop shell installs nothing on a quit that begins while one runs.
+    reportRunningAgents(running)
+  }, [projects, loaded])
+}
+
+/** Tests only: back to a fresh window. */
+export function resetAppUpdateInstallForTests(): void {
+  clearTimer()
+  recheck = INSTALL_SETTLE_MS
+  live = 0
+  gate = undefined
+  state = { phase: 'idle' }
+}

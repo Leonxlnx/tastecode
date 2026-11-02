@@ -61,12 +61,13 @@ describe('Agent Skills settings', () => {
       />,
     )
 
-    expect(await screen.findByText('Design Taste')).toBeTruthy()
-    expect(screen.getByText('Codex · Agent Skills inventory available')).toBeTruthy()
-    expect(screen.getByRole('status').getAttribute('aria-live')).toBe('polite')
-    expect(screen.queryByText('Available in Project')).toBeNull()
-    expect(screen.getByText('Project')).toBeTruthy()
-    expect(screen.getByText(/screenshots/)).toBeTruthy()
+    expect(await screen.findByRole('heading', { name: 'Design Taste', level: 2 })).toBeTruthy()
+    // The page names the provider and the project instead of an inventory status.
+    expect(screen.getByText('Codex · Project')).toBeTruthy()
+    expect(screen.queryByText(/inventory/)).toBeNull()
+    expect(screen.queryByRole('status')).toBeNull()
+    expect(screen.getByText('Review interface decisions.')).toBeTruthy()
+    expect(screen.getByText(/screenshots/).closest('.set-entity__detail--error')).toBeTruthy()
     fireEvent.click(screen.getByRole('switch', { name: 'Disable Design Taste' }))
     await waitFor(() => {
       expect(transport.request).toHaveBeenCalledWith('skills.setEnabled', {
@@ -86,6 +87,40 @@ describe('Agent Skills settings', () => {
     })
   })
 
+  it('lists the skills included with TasteCode read-only, also without a provider inventory', async () => {
+    const included = {
+      ...skill,
+      id: 'tastecode:cook',
+      name: 'cook',
+      displayName: undefined,
+      description: 'Runs the Cook Loop.',
+      source: { type: 'folder' as const, path: '/app/resources/default-skills/skills/cook' },
+      scope: 'system' as const,
+      dependencyErrors: [],
+    }
+    const vendorSystem = { ...included, id: '/codex/system/SKILL.md', name: 'skill-creator' }
+    const transport = client(async () => ({
+      capabilities: { inventory: false, configure: false, install: false },
+      skills: [vendorSystem, included],
+      errors: [],
+    }))
+    render(
+      <SkillsSettings
+        transport={transport}
+        provider="cursor"
+        providerName="Cursor"
+        projectPath="/work/project"
+        projectName="Project"
+      />,
+    )
+
+    expect(await screen.findByRole('heading', { name: 'Included with TasteCode' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'cook', level: 2 })).toBeTruthy()
+    expect(screen.getByText('Runs the Cook Loop.')).toBeTruthy()
+    expect(screen.queryByText('skill-creator')).toBeNull()
+    expect(screen.queryByRole('switch')).toBeNull()
+  })
+
   it('hides unsupported-provider actions', async () => {
     const transport = client(async () => ({
       capabilities: { inventory: false, configure: false, install: false },
@@ -102,8 +137,12 @@ describe('Agent Skills settings', () => {
       />,
     )
 
-    expect(await screen.findByText(/does not expose Agent Skills/)).toBeTruthy()
-    expect(screen.getByText('Claude Code · Agent Skills inventory unavailable')).toBeTruthy()
+    expect(
+      await screen.findByText(
+        'Skills from Claude Code’s own settings are loaded in chats but can’t be listed here.',
+      ),
+    ).toBeTruthy()
+    expect(screen.queryByText(/No Agent Skills/)).toBeNull()
     expect(screen.queryByRole('button', { name: 'Install from folder' })).toBeNull()
     expect(screen.queryByRole('switch')).toBeNull()
   })
@@ -145,8 +184,10 @@ describe('Agent Skills settings', () => {
       />,
     )
 
-    expect((await screen.findByRole('alert')).textContent).toContain('Skill discovery failed')
-    expect(screen.getByText('Codex · Agent Skills status unavailable')).toBeTruthy()
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toContain('Skill discovery failed')
+    expect(alert.classList.contains('set-notice')).toBe(true)
+    expect(screen.getByText('Codex · Project')).toBeTruthy()
     expect(screen.queryByText('Discovering skills…')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
     await waitFor(() => expect(transport.request).toHaveBeenCalledTimes(2))
@@ -277,7 +318,8 @@ describe('Agent Skills settings', () => {
         projectName="Beta"
       />,
     )
-    expect(screen.getByText('Checking Codex Agent Skills support…')).toBeTruthy()
+    expect(screen.getByText('Codex · Beta')).toBeTruthy()
+    expect(screen.getByText('Discovering skills…')).toBeTruthy()
     const beta = await screen.findByRole('switch', { name: 'Disable Beta Skill' })
     expect((beta as HTMLButtonElement).disabled).toBe(false)
 
@@ -385,5 +427,64 @@ describe('Agent Skills settings', () => {
     await act(async () => resolveRefresh?.(inventory))
 
     expect(screen.getByRole('switch', { name: 'Enable Design Taste' })).toBeTruthy()
+  })
+
+  it('asks for a project with the shared empty line, not a card', () => {
+    const transport = client(async () => {
+      throw new Error('unexpected request')
+    })
+    render(
+      <SkillsSettings
+        transport={transport}
+        provider="codex"
+        providerName="Codex"
+        projectPath={undefined}
+        projectName={undefined}
+      />,
+    )
+
+    expect(screen.getByRole('heading', { name: 'Skills', level: 1 })).toBeTruthy()
+    expect(screen.getByText('Codex')).toBeTruthy()
+    expect(
+      screen.getByText('Select a project in the sidebar first.').closest('.set-empty'),
+    ).toBeTruthy()
+    expect(transport.request).not.toHaveBeenCalled()
+  })
+
+  it('states each skill on its row and lists discovery failures in one notice', async () => {
+    const transport = client(async () => ({
+      capabilities: { inventory: true, configure: false, install: false },
+      skills: [
+        { ...skill, dependencyErrors: [] },
+        { ...skill, id: 'off', displayName: 'Release Notes', enabled: false, dependencyErrors: [] },
+      ],
+      errors: [
+        { path: '/work/project/.agents/skills/broken', message: 'SKILL.md has no name' },
+        { path: '/work/project/.agents/skills/empty', message: 'SKILL.md is empty' },
+      ],
+    }))
+    render(
+      <SkillsSettings
+        transport={transport}
+        provider="codex"
+        providerName="Codex"
+        projectPath="/work/project"
+        projectName="Project"
+      />,
+    )
+
+    const design = (await screen.findByText('Design Taste')).closest('.set-entity')!
+    const notes = screen.getByText('Release Notes').closest('.set-entity')!
+    // Without a switch the row says the state itself; a skill that is off reads quieter.
+    expect(design.querySelector('.set-entity__status')?.textContent).toBe('Enabled')
+    expect(design.hasAttribute('data-tone')).toBe(false)
+    expect(notes.querySelector('.set-entity__status')?.textContent).toBe('Disabled')
+    expect(notes.getAttribute('data-tone')).toBe('muted')
+    expect(screen.queryByRole('switch')).toBeNull()
+
+    const failures = screen.getByRole('alert')
+    expect(failures.textContent).toContain('Some skills could not be loaded.')
+    expect(failures.querySelectorAll('.set-notice__line')).toHaveLength(2)
+    expect(failures.textContent).toContain('SKILL.md is empty · /work/project/.agents/skills/empty')
   })
 })

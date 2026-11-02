@@ -1,0 +1,359 @@
+/* The feedback dialog shares the prompt bar's surface and 20px corner, like
+   the sidebar confirmation. Controls dock 10px in so their corners nest
+   inside the panel curve. */
+.feedback {
+  display: flex;
+  flex-direction: column;
+  width: min(520px, 100%);
+  max-width: 520px;
+  padding: 16px 20px 0;
+  background: var(--bg-prompt);
+  border: 1px solid var(--line);
+  border-radius: var(--r-composer);
+  outline: none;
+}
+
+/* On a short window the panel scrolls; its fields keep their size instead of
+   being squeezed by the column. */
+.feedback > * {
+  flex-shrink: 0;
+}
+
+.feedback__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.feedback__title {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--t-lg);
+  font-weight: 560;
+  letter-spacing: -0.012em;
+  line-height: 1.3;
+}
+
+.feedback__close {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  margin-right: -8px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: var(--r-md);
+  color: var(--text-3);
+  cursor: pointer;
+}
+
+.feedback__close:is(:hover, :focus-visible) {
+  background: var(--composer-control-bg);
+  color: var(--text);
+}
+
+/* One quiet segmented row: the checked kind takes the light surface. */
+.feedback__kinds {
+  display: flex;
+  gap: 2px;
+  margin-bottom: 14px;
+  padding: 2px;
+  background: var(--composer-control-bg);
+  border: 1px solid var(--composer-control-border);
+  border-radius: var(--r-xl);
+}
+
+.feedback__kind {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 5px 6px;
+  border-radius: calc(var(--r-xl) - 2px);
+  color: var(--text-2);
+  cursor: pointer;
+  font-size: var(--t-sm);
+  font-weight: 500;
+  text-align: center;
+  white-space: nowrap;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+.feedback__kind input {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.feedback__kind:hover {
+  color: var(--text);
+}
+
+.feedback__kind.is-on {
+  background: var(--bg-prompt);
+  box-shadow: 0 0 0 1px var(--line-strong);
+  color: var(--text);
+}
+
+.feedback__kind:has(input:focus-visible) {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-inset);
+}
+
+.feedback__label {
+  margin-bottom: 6px;
+  color: var(--text-2);
+  font-size: var(--t-sm);
+  font-weight: 500;
+}
+
+.feedback__label span {
+  color: var(--text-3);
+  font-weight: 400;
+}
+
+.feedback__message,
+.feedback__email {
+  width: 100%;
+  min-width: 0;
+  background: var(--bg);
+  border: 1px solid var(--chrome-border);
+  border-radius: var(--r-md);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--t-md);
+  outline: none;
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out);
+}
+
+.feedback__message {
+  min-height: clamp(76px, 13vh, 108px);
+  max-height: 40vh;
+  margin-bottom: 12px;
+  padding: 9px 11px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.feedback__email {
+  height: 32px;
+  padding: 0 11px;
+}
+
+.feedback__message::placeholder,
+.feedback__email::placeholder {
+  color: var(--text-3);
+}
+
+.feedback__message:focus,
+.feedback__email:focus {
+  border-color: var(--text-3);
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--text) 8%, transparent);
+}
+
+.feedback__email[aria-invalid='true'] {
+  border-color: color-mix(in srgb, var(--error) 55%, var(--chrome-border));
+}
+
+.feedback__counter,
+.feedback__hint {
+  margin: -6px 0 10px;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+}
+
+.feedback__counter {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.feedback__hint {
+  margin: 6px 0 0;
+  color: var(--error);
+}
+
+.feedback__options {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.feedback__toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.feedback__toggle-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  color: var(--text);
+  font-size: var(--t-sm);
+  font-weight: 500;
+}
+
+.feedback__toggle-text small {
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  font-weight: 400;
+  line-height: 1.4;
+}
+
+.feedback__disclosure {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  align-self: flex-start;
+  margin: 12px 0 0 -6px;
+  padding: 4px 6px;
+  background: transparent;
+  border: 0;
+  border-radius: var(--r-md);
+  color: var(--text-2);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--t-sm);
+}
+
+.feedback__disclosure svg {
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+
+.feedback__disclosure[aria-expanded='true'] svg {
+  transform: rotate(90deg);
+}
+
+.feedback__disclosure:is(:hover, :focus-visible) {
+  background: var(--composer-control-bg);
+  color: var(--text);
+}
+
+.feedback__payload {
+  margin-top: 6px;
+}
+
+.feedback__payload pre {
+  max-height: clamp(120px, 18vh, 200px);
+  margin: 0;
+  padding: 10px 12px;
+  overflow: auto;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.feedback__payload pre:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-inset);
+}
+
+.feedback__payload-empty,
+.feedback__redactions {
+  margin: 6px 0 0;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+}
+
+.feedback__failure {
+  margin: 12px 0 0;
+  color: var(--error);
+  font-size: var(--t-sm);
+  line-height: 1.45;
+}
+
+.feedback__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 16px -10px 0;
+  padding: 0 0 10px 10px;
+}
+
+.feedback__where {
+  min-width: 0;
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  line-height: 1.4;
+}
+
+.feedback__actions {
+  display: flex;
+  flex: none;
+  gap: 6px;
+}
+
+.feedback__actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 76px;
+  height: 32px;
+  padding: 0 14px;
+  border: 1px solid transparent;
+  border-radius: var(--r-xl);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--t-sm);
+  font-weight: 500;
+  white-space: nowrap;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    opacity var(--dur-fast) var(--ease-out);
+}
+
+.feedback__cancel {
+  background: transparent;
+  color: var(--text-2);
+}
+
+.feedback__cancel:is(:hover, :focus-visible) {
+  background: var(--composer-control-bg);
+  color: var(--text);
+}
+
+.feedback__send {
+  background: var(--light);
+  color: var(--on-light);
+  font-variant-numeric: tabular-nums;
+}
+
+.feedback__send:not(:disabled):is(:hover, :focus-visible) {
+  background: color-mix(in srgb, var(--light) 88%, var(--bg-prompt));
+}
+
+.feedback__send:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+@media (max-width: 520px) {
+  .feedback {
+    padding: 14px 14px 0;
+  }
+
+  .feedback__foot {
+    flex-wrap: wrap;
+  }
+}

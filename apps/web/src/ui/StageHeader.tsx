@@ -1,4 +1,5 @@
 import { memo, useEffect, useRef, useState } from 'react'
+import type { CheckoutPullRequest, PullRequestTarget } from '@harness/contracts'
 import {
   IconTrash as Trash,
   IconCommand as Command,
@@ -19,6 +20,7 @@ import {
   IconSettings as Settings,
   IconEdit as SquarePen,
   IconTerminal2 as SquareTerminal,
+  IconX as Close,
 } from '@tabler/icons-react'
 import { isDesktop, revealPath } from '../bridge.js'
 import {
@@ -31,6 +33,7 @@ import {
 } from '../shortcuts.js'
 import { IconMorph } from './IconMorph.js'
 import { Menu, MenuItem } from './Menu.js'
+import { StagePullRequestChip } from './StagePullRequestChip.js'
 
 type StageHeaderMenuActions = Pick<
   Record<KeybindingId, () => void>,
@@ -130,12 +133,17 @@ function StageHeaderComponent(props: {
   projectPath: string | undefined
   checkpointCount: number
   worktreeBranch: string | undefined
+  /** The pull request whose head is this chat's checkout branch. */
+  pullRequest?: CheckoutPullRequest | undefined
+  onOpenPullRequest?: ((target: PullRequestTarget) => void) | undefined
   keybindings?: Keybindings | undefined
   menuActions: StageHeaderMenuActions
   onOpenRollback: () => void
   onRenameSession: (id: string, title: string) => void
   onToggleSessionPin: (id: string) => void
   onArchiveSession: (id: string) => void
+  /** Present in split view: closes this pane and keeps the other chat. */
+  onClosePane?: (() => void) | undefined
 }) {
   const keybindings = props.keybindings ?? DEFAULT_KEYBINDINGS
   const [renameTarget, setRenameTarget] = useState<RenameTarget>()
@@ -361,6 +369,20 @@ function StageHeaderComponent(props: {
           )}
         </Menu>
       </div>
+      {props.pullRequest && props.onOpenPullRequest ? (
+        <StagePullRequestChip pullRequest={props.pullRequest} onOpen={props.onOpenPullRequest} />
+      ) : null}
+      {props.onClosePane ? (
+        <button
+          type="button"
+          className="stagehead__action stagehead__close-pane"
+          aria-label={`Close ${props.title ?? 'New chat'} pane`}
+          title="Close pane"
+          onClick={props.onClosePane}
+        >
+          <Close size={16} aria-hidden />
+        </button>
+      ) : null}
     </header>
   )
 }

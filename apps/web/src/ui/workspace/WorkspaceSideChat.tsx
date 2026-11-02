@@ -6,6 +6,7 @@ import {
   IconSquare as Square,
   IconX as X,
 } from '@tabler/icons-react'
+import { parseFeedbackCommand } from '../../feedback-command.js'
 import { parseSideChatCommand } from '../../side-chat-command.js'
 import {
   appendBackgroundThreadDelta,
@@ -361,6 +362,11 @@ export function WorkspaceSideChat(props: {
       if (parseSideChatCommand(text)) {
         if (!fromDraft) restoreDraft(rawText, attachments)
         setError('You are already in a temporary chat. Nested temporary chats are not available.')
+        return
+      }
+      if (parseFeedbackCommand(text)) {
+        if (!fromDraft) restoreDraft(rawText, attachments)
+        setError('Use /feedback in the main chat.')
         return
       }
 

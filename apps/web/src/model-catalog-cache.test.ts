@@ -3,6 +3,8 @@ import { choicesFor } from './model-catalog.js'
 import {
   freshModelCatalogChoices,
   isModelCatalogSourceFresh,
+  MAX_CACHE_CHARACTERS,
+  MAX_CACHED_MODELS,
   MODEL_CATALOG_CACHE_FRESH_MS,
   parseModelCatalogCache,
   serializeModelCatalogCache,
@@ -20,21 +22,30 @@ const catalog = [
   ...choicesFor({ provider: 'codex', sourceName: 'Codex', mark: 'openai' }, [model]),
   ...choicesFor(
     {
-      provider: 'grok',
-      sourceName: 'Work Grok',
-      mark: 'grok',
-      agent: { id: 'work-grok', name: 'Work Grok' },
+      provider: 'acp',
+      sourceName: 'Kimi CLI',
+      mark: 'kimi',
+      agent: { id: 'kimi', name: 'Kimi CLI' },
     },
-    [{ ...model, id: 'grok-4.6' }],
+    [{ ...model, id: 'kimi/model' }],
   ),
   ...choicesFor(
     {
-      provider: 'claude-code',
-      sourceName: 'Claude Fork',
-      mark: 'anthropic',
-      agent: { id: 'claude-fork', name: 'Claude Fork' },
+      provider: 'api',
+      connectionId: 'work-openrouter',
+      sourceName: 'Work OpenRouter',
+      mark: 'openrouter',
     },
-    [{ ...model, id: 'opus' }],
+    [{ ...model, id: 'openai/gpt-5.6-sol' }],
+  ),
+  ...choicesFor(
+    {
+      provider: 'pi',
+      sourceName: 'DeepSeek Pi',
+      mark: 'pi',
+      agent: { id: 'deepseek-pi', name: 'DeepSeek Pi' },
+    },
+    [{ ...model, id: 'openrouter/deepseek-v3.2' }],
   ),
 ]
 
@@ -46,8 +57,9 @@ describe('model catalog cache', () => {
       models: catalog,
       validatedSources: new Map([
         ['codex', 1_000],
-        ['grok:work-grok', 1_000],
-        ['claude-code:claude-fork', 1_000],
+        ['acp:kimi', 1_000],
+        ['api:work-openrouter', 1_000],
+        ['pi:deepseek-pi', 1_000],
       ]),
     })
   })
@@ -65,7 +77,7 @@ describe('model catalog cache', () => {
     expect(isModelCatalogSourceFresh(cache, 'codex', 1_001 + MODEL_CATALOG_CACHE_FRESH_MS)).toBe(
       false,
     )
-    expect(isModelCatalogSourceFresh(cache, 'grok:work-grok', 1_000)).toBe(false)
+    expect(isModelCatalogSourceFresh(cache, 'acp:kimi', 1_000)).toBe(false)
     expect(
       isModelCatalogSourceFresh(
         parseModelCatalogCache(JSON.stringify({ version: 1, models: catalog })),
@@ -79,12 +91,6 @@ describe('model catalog cache', () => {
 
   it('rejects corrupt, unknown-version, and inconsistent snapshots', () => {
     expect(parseModelCatalogCache('{')).toBeUndefined()
-    // A snapshot from a build that still had API connections is stale, not partly valid.
-    const withConnection = JSON.parse(serializeModelCatalogCache([catalog[0]!])) as {
-      models: Array<Record<string, unknown>>
-    }
-    withConnection.models[0]!['connectionId'] = 'work-openrouter'
-    expect(parseModelCatalogCache(JSON.stringify(withConnection))).toBeUndefined()
     expect(parseModelCatalogCache(JSON.stringify({ version: 3, models: catalog }))).toBeUndefined()
     expect(parseModelCatalogCache(JSON.stringify({ version: 2, models: catalog }))).toBeUndefined()
     expect(
@@ -94,8 +100,40 @@ describe('model catalog cache', () => {
     ).toBeUndefined()
   })
 
+  it('never serializes a snapshot the reader would reject', () => {
+    const codexRows = (count: number, description = '') =>
+      choicesFor(
+        { provider: 'codex', sourceName: 'Codex', mark: 'openai' },
+        Array.from({ length: count }, (_, index) => ({
+          ...model,
+          id: `gpt-model-${index}`,
+          description,
+          isDefault: index === 0,
+        })),
+      )
+
+    const largest = serializeModelCatalogCache(codexRows(MAX_CACHED_MODELS))
+    expect(parseModelCatalogCache(largest)?.models).toHaveLength(MAX_CACHED_MODELS)
+    expect(serializeModelCatalogCache(codexRows(MAX_CACHED_MODELS + 1))).toBeUndefined()
+    // Few rows, but each one carries a long description.
+    const wordy = codexRows(3, 'x'.repeat(Math.ceil(MAX_CACHE_CHARACTERS / 3)))
+    expect(serializeModelCatalogCache(wordy)).toBeUndefined()
+    expect(serializeModelCatalogCache(catalog, { validatedAt: Number.NaN })).toBeUndefined()
+  })
+
+  it('leaves out a validated source that has no rows', () => {
+    // A connection that listed nothing used to make the whole snapshot unreadable.
+    const cache = parseModelCatalogCache(
+      serializeModelCatalogCache([catalog[0]!], {
+        validatedSources: ['codex', 'api:empty-connection'],
+        validatedAt: 1_000,
+      }),
+    )
+    expect(cache?.validatedSources).toEqual(new Map([['codex', 1_000]]))
+  })
+
   it('keeps schema defaults and rejects invalid nested model data', () => {
-    const cached = JSON.parse(serializeModelCatalogCache([catalog[0]!])) as {
+    const cached = JSON.parse(serializeModelCatalogCache([catalog[0]!])!) as {
       models: Array<{ model: Record<string, unknown> }>
     }
     delete cached.models[0]!.model['serviceTiers']
@@ -105,5 +143,50 @@ describe('model catalog cache', () => {
 
     cached.models[0]!.model['reasoningEfforts'] = ['high', 1]
     expect(parseModelCatalogCache(JSON.stringify(cached))).toBeUndefined()
+  })
+
+  it('keeps the lineage and curation an adapter declared', () => {
+    const declared = choicesFor(
+      { provider: 'opencode', sourceName: 'OpenCode', mark: 'opencode' },
+      [
+        {
+          ...model,
+          id: 'deepseek/deepseek-v4.1-flash',
+          lab: 'DeepSeek',
+          family: 'deepseek-flash',
+          generation: '4.1',
+          released: '2026-09-30',
+          recommended: true,
+          deprecated: false,
+        },
+        { ...model, id: 'minimax/MiniMax-M2.5', isDefault: false, deprecated: true },
+      ],
+    )
+    expect(parseModelCatalogCache(serializeModelCatalogCache(declared))?.models).toEqual(declared)
+    // A snapshot written before the fields existed reads as before.
+    expect(parseModelCatalogCache(serializeModelCatalogCache([catalog[0]!]))?.models).toEqual([
+      catalog[0],
+    ])
+  })
+
+  it('drops only the declared fields the protocol would not accept', () => {
+    const cached = JSON.parse(serializeModelCatalogCache([catalog[0]!])!) as {
+      models: Array<{ model: Record<string, unknown> }>
+    }
+    Object.assign(cached.models[0]!.model, {
+      lab: '',
+      family: 'x'.repeat(121),
+      generation: 6,
+      released: '2026-9-30',
+      recommended: 'yes',
+      deprecated: 1,
+    })
+    expect(parseModelCatalogCache(JSON.stringify(cached))?.models).toEqual([catalog[0]])
+    Object.assign(cached.models[0]!.model, { family: 'gpt-sol', generation: '5.6' })
+    expect(parseModelCatalogCache(JSON.stringify(cached))?.models[0]?.model).toEqual({
+      ...model,
+      family: 'gpt-sol',
+      generation: '5.6',
+    })
   })
 })

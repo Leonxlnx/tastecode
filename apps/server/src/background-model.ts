@@ -26,10 +26,13 @@ export type AvailableBackgroundModelSource = BackgroundModelSource & {
 }
 
 /** A source whose identity is known before its account and models are read. */
-export type BackgroundModelSourceLoader = Pick<BackgroundModelSource, 'provider' | 'agent'> & {
+export type BackgroundModelSourceLoader = Pick<
+  BackgroundModelSource,
+  'provider' | 'connectionId' | 'agent'
+> & {
   /**
-   * The source with this provider and agent, or undefined when it is signed out,
-   * has no models, or cannot be read.
+   * The source with this provider, connection and agent, or undefined when it
+   * is signed out, has no models, or cannot be read.
    */
   load: () => Promise<AvailableBackgroundModelSource | undefined>
 }
@@ -58,7 +61,7 @@ function lowestReasoningEffort(model: Model): string | undefined {
   return lowest?.effort
 }
 
-type SourceKey = Pick<BackgroundModelSource, 'provider' | 'agent'>
+type SourceKey = Pick<BackgroundModelSource, 'provider' | 'connectionId' | 'agent'>
 
 /** One step of the priority order. Its pick sees only the sources it reads, in source order. */
 type ResolutionStage = {
@@ -72,12 +75,16 @@ function resolutionStages(preference: BackgroundModelPreference): ResolutionStag
     const { target } = preference
     return [
       {
-        reads: (source) => source.provider === target.provider && source.agent === target.agent,
+        reads: (source) =>
+          source.provider === target.provider &&
+          source.connectionId === target.connectionId &&
+          source.agent === target.agent,
         pick: (sources) => resolveManual(target, sources),
       },
     ]
   }
   return [
+    { reads: isBuiltIn('claude-code'), pick: pickClaudeHaiku },
     { reads: isBuiltIn('codex'), pick: pickCodexLuna },
     { reads: isBuiltIn('grok'), pick: pickGrok46 },
     { pick: pickCheapest },
@@ -126,7 +133,19 @@ export async function resolveBackgroundModelFrom(
 }
 
 function isBuiltIn(provider: BackgroundModelSource['provider']): (source: SourceKey) => boolean {
-  return (source) => source.provider === provider && !source.agent
+  return (source) => source.provider === provider && !source.agent && !source.connectionId
+}
+
+function pickClaudeHaiku(
+  sources: AvailableBackgroundModelSource[],
+): BackgroundModelSelection | undefined {
+  const claude = sources[0]
+  const haiku = claude?.models
+    .filter((model) => isHaiku(model))
+    .sort((left, right) => compareVersions(right, left))[0]
+  if (!claude || !haiku) return undefined
+  const medium = haiku.reasoningEfforts.find((effort) => normalize(effort) === 'medium')
+  return selection(claude, haiku, medium ?? lowestReasoningEffort(haiku), true)
 }
 
 function pickCodexLuna(
@@ -137,8 +156,8 @@ function pickCodexLuna(
     .filter((model) => isLuna(model))
     .sort((left, right) => compareVersions(right, left))[0]
   if (!codex || !luna) return undefined
-  const low = luna.reasoningEfforts.find((effort) => normalize(effort) === 'low')
-  return selection(codex, luna, low ?? lowestReasoningEffort(luna), true)
+  const medium = luna.reasoningEfforts.find((effort) => normalize(effort) === 'medium')
+  return selection(codex, luna, medium ?? lowestReasoningEffort(luna), true)
 }
 
 function pickGrok46(
@@ -178,7 +197,10 @@ function resolveManual(
   sources: AvailableBackgroundModelSource[],
 ): BackgroundModelSelection | undefined {
   const source = sources.find(
-    (candidate) => candidate.provider === target.provider && candidate.agent === target.agent,
+    (candidate) =>
+      candidate.provider === target.provider &&
+      candidate.connectionId === target.connectionId &&
+      candidate.agent === target.agent,
   )
   const model = source?.models.find((candidate) => candidate.id === target.model)
   if (!source || !model) return undefined
@@ -204,12 +226,17 @@ function selection(
 ): BackgroundModelSelection {
   return {
     provider: source.provider,
+    ...(source.connectionId ? { connectionId: source.connectionId } : {}),
     ...(source.agent ? { agent: source.agent } : {}),
     model: model.id,
     ...(effort ? { effort } : {}),
     sourceName: source.displayName,
     automatic,
   }
+}
+
+function isHaiku(model: Model): boolean {
+  return /\bhaiku\b/i.test(`${model.id} ${model.displayName}`)
 }
 
 function isLuna(model: Model): boolean {
@@ -276,6 +303,7 @@ export async function runBackgroundCompletion(input: {
     ...(input.selection.effort ? { effort: input.selection.effort } : {}),
     ...(input.selection.serviceTier ? { serviceTier: input.selection.serviceTier } : {}),
     ...(input.selection.agent ? { agent: input.selection.agent } : {}),
+    ...(input.selection.connectionId ? { connectionId: input.selection.connectionId } : {}),
     approval: 'ask',
     ephemeral: true,
     instructions: BACKGROUND_INSTRUCTIONS,
@@ -392,8 +420,10 @@ export function cleanGeneratedTitle(output: string, fallback: string): string {
     .split(/\r?\n/)
     .find((line) => line.trim())
     ?.trim()
+    .replace(/^#+\s*/, '')
     .replace(/^(?:title\s*:\s*)/i, '')
-    .replace(/^["'`]+|["'`.]+$/g, '')
+    // Models asked for plain text still wrap titles in bold or quotes.
+    .replace(/^[*_"'`]+|[*_"'`.]+$/g, '')
     .trim()
   return sliceCodeUnits(title || fallback, 60).trim() || fallback
 }

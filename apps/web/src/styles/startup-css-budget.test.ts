@@ -103,6 +103,38 @@ describe('startup CSS budget', () => {
     expect(dialog).toContain("import '../styles/sidebar-confirm.css'")
   })
 
+  it('keeps the dialog frame and the switch behind the modules that draw them', () => {
+    const appCss = readSource('./app.css')
+    expect(appCss).not.toMatch(/^\.sheet(__[a-z]+)? \{/m)
+    expect(appCss).not.toMatch(/\.switch(__thumb)? \{/)
+    for (const eager of ['../main.tsx', '../App.tsx', '../ui/Sidebar.tsx', '../ui/Composer.tsx']) {
+      expect(readSource(eager)).not.toMatch(/styles\/(sheet|switch)\.css/)
+    }
+
+    for (const path of [
+      '../ui/CheckoutDiscardDialog.tsx',
+      '../ui/FeedbackDialog.tsx',
+      '../ui/RollbackDialog.tsx',
+      '../ui/SidebarConfirmDialog.tsx',
+      '../ui/Settings.tsx',
+    ]) {
+      expect(readSource(path)).toContain("import '../styles/sheet.css'")
+    }
+    // The build may load a dialog's own stylesheet first; its panel class must
+    // still win over the shared frame.
+    expect(readSource('./sheet.css')).toMatch(/^:where\(\.sheet__panel\) \{/m)
+    for (const path of [
+      '../ui/FeedbackDialog.tsx',
+      '../ui/McpSettings.tsx',
+      '../ui/ModelVisibilityControls.tsx',
+      '../ui/ProviderTuning.tsx',
+      '../ui/Settings.tsx',
+      '../ui/SkillsSettings.tsx',
+    ]) {
+      expect(readSource(path)).toContain("import '../styles/switch.css'")
+    }
+  })
+
   it('warms account limits at startup without adding them to the main bundle', () => {
     const sidebar = readSource('../ui/Sidebar.tsx')
     const limits = readSource('../ui/AccountLimits.tsx')
@@ -113,6 +145,25 @@ describe('startup CSS budget', () => {
     expect(sidebar).toContain('void loadAccountLimits()')
     expect(sidebar).not.toContain('import { AccountLimits')
     expect(limits).toContain("import '../styles/account-limits.css'")
+  })
+
+  it('loads split view styles with the first split, not at startup', () => {
+    const context = readSource('../ui/split-view-context.ts')
+    const styles = readSource('../ui/split-view-styles.ts')
+
+    expect(context).toContain("import('./split-view-styles.js')")
+    expect(styles).toContain("import './split-view.css'")
+    for (const eager of [
+      '../main.tsx',
+      '../App.tsx',
+      '../ui/Sidebar.tsx',
+      '../ui/SplitPane.tsx',
+      '../ui/StageHeader.tsx',
+      '../ui/Composer.tsx',
+    ]) {
+      expect(readSource(eager)).not.toContain('split-view.css')
+      expect(readSource(eager)).not.toMatch(/from ['"]\.\/(ui\/)?split-view-styles\.js['"]/)
+    }
   })
 
   it('keeps optional thread overlays behind their user actions', () => {

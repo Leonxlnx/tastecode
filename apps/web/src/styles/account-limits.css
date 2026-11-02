@@ -1,10 +1,13 @@
 /* Plan limits sit in one soft well above the account actions, grouped by
-   provider and separated by space instead of rules. The well scrolls on its
-   own so Edit profile and Settings stay pinned beside the card. */
+   provider and separated by space instead of rules. Neither the well nor the
+   popup (.menu--settings) has a fixed height: the limits grow with the
+   accounts they list, and a pixel cap made them scroll with room still above.
+   The window alone bounds the popup; the well takes what it leaves beside
+   the actions and scrolls only then, so Edit profile and Settings stay
+   pinned beside the card. */
 .account-menu__usage {
   flex: 0 1 auto;
   min-height: 0;
-  max-height: min(360px, calc(100vh - 150px));
   display: grid;
   align-content: start;
   gap: 14px;
@@ -68,14 +71,121 @@
   height: 13px;
 }
 
+/* A closed source is its heading and one line under it, closer together than
+   the rows of an open one. */
+.account-menu__source.is-closed {
+  gap: 4px;
+}
+
+.account-menu__source-body {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* The heading of a source with values opens its full rows. The hover wash
+   reaches past the text without moving it, as on an account line. */
+.account-menu__source-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin: -3px -5px;
+  padding: 3px 5px;
+  background: none;
+  border: 0;
+  border-radius: var(--r-sm);
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+
+.account-menu__source-toggle:hover {
+  background: var(--menu-hover);
+}
+
+.account-menu__source-toggle:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.account-menu__source-toggle > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-menu__source .account-menu__source-chevron {
+  width: 12px;
+  height: 12px;
+  margin-left: -2px;
+  color: var(--text-3);
+  transition: rotate var(--dur-fast) var(--ease-out);
+}
+
+.account-menu__source-toggle[aria-expanded='true'] > .account-menu__source-chevron {
+  rotate: 90deg;
+}
+
+/* A provider with more than one account: its name once, then each account
+   as a quieter heading over its own limits, at the space between rows. */
+.account-menu__provider {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.account-menu__provider-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  min-height: 18px;
+  margin: 0;
+  color: var(--text);
+  font-size: var(--t-xs);
+  font-weight: 560;
+  line-height: 1.3;
+}
+
+.account-menu__provider-name > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-menu__provider-name svg {
+  flex: none;
+  width: 13px;
+  height: 13px;
+}
+
+.account-menu__source h4 {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--text-2);
+  font-size: var(--t-xs);
+  font-weight: 500;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* One muted word, never an alert colour: a provider that cannot report is a
    missing number, not something that went wrong for the person. */
 .account-menu__source-status {
-  flex: 0 1 auto;
+  /* Takes only the room the name leaves, so the provider's name stays whole
+     and the status is what shortens. */
+  flex: 1 1 0;
   min-width: 0;
   margin-left: auto;
   overflow: hidden;
   color: var(--text-3);
+  text-align: right;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -99,6 +209,65 @@
 .account-menu__retry:hover {
   background: var(--menu-hover);
   color: var(--text);
+}
+
+.account-menu__provider-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.account-menu__provider-head > .account-menu__provider-name {
+  flex: 1 1 auto;
+}
+
+/* Reads every source again: a quiet icon at the end of the first heading's
+   line, flush with the values below, that turns while the sources read. */
+.account-menu__refresh {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  margin: -1px -4px -1px 0;
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: var(--r-sm);
+  color: var(--text-3);
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+.account-menu__source-head > :is(h3, h4) + .account-menu__refresh {
+  margin-left: auto;
+}
+
+.account-menu__refresh:hover:not([aria-disabled='true']) {
+  background: var(--menu-hover);
+  color: var(--text);
+}
+
+.account-menu__refresh:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.account-menu__refresh[aria-disabled='true'] {
+  cursor: default;
+}
+
+.account-menu__refresh.is-busy svg {
+  animation: account-menu-refresh 1.2s linear infinite;
+}
+
+@keyframes account-menu-refresh {
+  to {
+    rotate: 360deg;
+  }
 }
 
 .account-menu__limit {
@@ -125,6 +294,34 @@
   flex: none;
   color: var(--text);
   white-space: nowrap;
+}
+
+/* An untouched allowance has no bar; its number steps back with it. */
+.account-menu__limit[data-full] .account-menu__limit-value {
+  color: var(--text-3);
+}
+
+/* The one line under a closed heading: label, a short bar, then the value. The
+   bar gives way before the label does, down to a stub. */
+.account-menu__limit.is-inline .account-menu__limit-row {
+  justify-content: flex-start;
+  align-items: center;
+}
+
+.account-menu__limit.is-inline .account-menu__limit-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-menu__limit.is-inline .account-menu__limit-bar {
+  flex: 0 100 48px;
+  min-width: 24px;
+  margin-left: auto;
+}
+
+.account-menu__limit.is-inline .account-menu__limit-label + .account-menu__limit-value {
+  margin-left: auto;
 }
 
 .account-menu__limit-btn {
@@ -169,10 +366,6 @@
   min-width: 0;
 }
 
-.account-menu__reset-time {
-  display: block;
-}
-
 .account-menu__reset-credit .account-menu__limit-use {
   grid-area: 1 / 2;
 }
@@ -211,13 +404,13 @@
   initial-value: 0;
 }
 
-/* Each bar is a little fuel gauge. The whole red-to-green scale is painted
-   across the track and the fill uncovers it from the empty end, so the
-   colour at the tip says how much is left. */
+/* Each bar is one quiet fill in text ink, the same as the card's meter: the
+   number says how much is left, and only an allowance that is nearly spent
+   turns the error colour. Every bar fills at once, in one calm movement,
+   rather than one row after another. */
 .account-menu__limit[data-gauge] {
   --limit-fill: var(--left);
-  animation: account-limit-fill 820ms var(--ease-overshoot) both;
-  animation-delay: calc(80ms + var(--order) * 70ms);
+  animation: account-limit-fill 520ms var(--ease-out) both;
   transition: --limit-fill var(--dur-slow) var(--ease-out);
 }
 
@@ -227,8 +420,10 @@
   }
 }
 
+/* As thin as the Usage page's meters and the closed account gauges, so a
+   limit is one bar wherever it shows. */
 .account-menu__limit-bar {
-  height: 6px;
+  height: 4px;
   border-radius: var(--r-pill);
   background: color-mix(in srgb, var(--text) 9%, transparent);
   overflow: hidden;
@@ -238,13 +433,13 @@
   display: block;
   height: 100%;
   border-radius: inherit;
-  background: linear-gradient(
-    to right in oklch,
-    var(--gauge-empty),
-    var(--gauge-half),
-    var(--gauge-full)
-  );
+  background: color-mix(in srgb, var(--text) 52%, transparent);
   clip-path: inset(0 calc((1 - var(--limit-fill)) * 100%) 0 0 round var(--r-pill));
+}
+
+.account-menu__limit[data-low] .account-menu__limit-bar > span:not(.account-menu__limit-pace),
+.account-menu__account-gauge[data-low] > span {
+  background: var(--error);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -252,6 +447,29 @@
     animation: none;
     transition: none;
   }
+}
+
+/* Even pace: where the fill would end if the window were spent evenly. One
+   hairline tick, a little taller than the bar, so it reads on the fill and on
+   the empty track alike without becoming a second bar. */
+.account-menu__limit-bar:has(> .account-menu__limit-pace) {
+  position: relative;
+  overflow: visible;
+}
+
+.account-menu__limit-bar > .account-menu__limit-pace {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 1px;
+  height: auto;
+  /* A pill radius on a 1px-wide tick clamps to 0.5px, the same round ends. */
+  border-radius: var(--r-pill);
+  background: color-mix(in srgb, var(--text) 62%, transparent);
+  /* The gauge clips its fill span to what is left; the tick is never clipped. */
+  clip-path: none;
+  translate: -0.5px 0;
+  pointer-events: none;
 }
 
 .account-menu__limit-reset {
@@ -273,4 +491,174 @@
 
 .account-menu__reset-expiries [data-expiring-soon] {
   color: var(--error);
+}
+
+/* A provider with several accounts: a line per account that opens to its
+   limits. The chevron hangs where the provider's mark sits, so account names
+   start on the provider name's edge and an open account's limits sit under
+   its name. A closed line carries what is left of each window, Session and
+   Weekly, under its name: a row each, on short gauges drawn like the full
+   bars, set in columns so the gauges line up. */
+.account-menu__account {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.account-menu__account-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  min-height: 18px;
+}
+
+/* Retry stays level with the name when the windows add rows under it. */
+.account-menu__account-head:has(.account-menu__account-glance) {
+  align-items: flex-start;
+}
+
+.account-menu__account-line {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  /* The hover wash reaches past the text without moving it. */
+  margin: -3px -5px;
+  padding: 3px 5px 3px 0;
+  /* Room for the chevron's column when the line cannot open. */
+  padding-left: 24px;
+  background: none;
+  border: 0;
+  border-radius: var(--r-sm);
+  color: var(--text-2);
+  font: inherit;
+  text-align: left;
+}
+
+button.account-menu__account-line {
+  /* The windows wrap onto their own rows under the name. */
+  flex-wrap: wrap;
+  row-gap: 4px;
+  padding-left: 5px;
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+button.account-menu__account-line:hover {
+  background: var(--menu-hover);
+  color: var(--text);
+}
+
+button.account-menu__account-line:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.account-menu__account-line > svg {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  color: var(--text-3);
+  transition: rotate var(--dur-fast) var(--ease-out);
+}
+
+.account-menu__account-line[aria-expanded='true'] > svg {
+  rotate: 90deg;
+}
+
+.account-menu__account-name {
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-menu__account-line[aria-expanded='true'] .account-menu__account-name {
+  color: var(--text);
+}
+
+.account-menu__account-status {
+  flex: 0 1 auto;
+  min-width: 0;
+  margin-left: auto;
+  overflow: hidden;
+  color: var(--text-3);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-menu__account-glance {
+  display: grid;
+  flex-basis: 100%;
+  /* Room for "100%", so the gauges line up from one account to the next. */
+  grid-template-columns: minmax(0, 1fr) 36px minmax(2.7em, auto);
+  align-items: center;
+  gap: 3px 8px;
+  min-width: 0;
+  /* Under the name, past the chevron's column. */
+  padding-left: 19px;
+}
+
+.account-menu__account-label {
+  grid-column: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-3);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-menu__account-value {
+  grid-column: 3;
+  justify-self: end;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* A count or balance has no gauge and takes its column too. */
+.account-menu__account-value.is-text {
+  grid-column: 2 / -1;
+}
+
+.account-menu__account-gauge {
+  --limit-fill: var(--left);
+  grid-column: 2;
+  height: 4px;
+  border-radius: var(--r-pill);
+  background: color-mix(in srgb, var(--text) 9%, transparent);
+  animation: account-limit-fill 520ms var(--ease-out) both;
+  transition: --limit-fill var(--dur-slow) var(--ease-out);
+}
+
+.account-menu__account-gauge > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: color-mix(in srgb, var(--text) 52%, transparent);
+  clip-path: inset(0 calc((1 - var(--limit-fill)) * 100%) 0 0 round var(--r-pill));
+}
+
+.account-menu__account-body {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding-left: 19px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .account-menu__account-gauge {
+    animation: none;
+    transition: none;
+  }
+
+  .account-menu__account-line > svg,
+  .account-menu__source .account-menu__source-chevron {
+    transition: none;
+  }
 }

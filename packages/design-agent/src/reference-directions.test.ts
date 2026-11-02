@@ -1,14 +1,19 @@
 import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { BrandSystem } from './brand.js'
 import type { DesignBrief } from './brief.js'
-import { PAGE_LAYOUT_FAMILIES } from './page.js'
+import { WEBSITE_LAYOUT_FAMILIES } from './page.js'
 import {
   REFERENCE_DIRECTIONS,
   lockPageReferenceDirections,
+  referenceDirectionsForBrand,
   selectReferenceDirectionDeck,
+  type ReferenceDirection,
 } from './reference-directions.js'
+
+// Dashboards are parked behind DASHBOARD_REFERENCES_ENABLED; these tests keep that path working.
+vi.mock('./dashboard-references.js', () => ({ DASHBOARD_REFERENCES_ENABLED: true }))
 
 const brief: DesignBrief = {
   originalRequest: 'Build a calm launch page for a material research studio.',
@@ -80,7 +85,7 @@ describe('reference directions', () => {
     expect(new Set(REFERENCE_DIRECTIONS.map(({ id }) => id)).size).toBe(132)
     expect(new Set(REFERENCE_DIRECTIONS.map(({ imagePath }) => imagePath)).size).toBe(132)
     expect(new Set(REFERENCE_DIRECTIONS.map(({ family }) => family))).toEqual(
-      new Set(PAGE_LAYOUT_FAMILIES),
+      new Set(WEBSITE_LAYOUT_FAMILIES),
     )
 
     for (const entry of REFERENCE_DIRECTIONS) {
@@ -96,9 +101,9 @@ describe('reference directions', () => {
     const secondDeck = selectReferenceDirectionDeck(brief, brand)
 
     expect(firstDeck).toEqual(secondDeck)
-    expect(firstDeck).toHaveLength(PAGE_LAYOUT_FAMILIES.length)
-    expect(firstDeck.map(({ family }) => family)).toEqual(PAGE_LAYOUT_FAMILIES)
-    expect(new Set(firstDeck.map(({ family }) => family)).size).toBe(PAGE_LAYOUT_FAMILIES.length)
+    expect(firstDeck).toHaveLength(WEBSITE_LAYOUT_FAMILIES.length)
+    expect(firstDeck.map(({ family }) => family)).toEqual(WEBSITE_LAYOUT_FAMILIES)
+    expect(new Set(firstDeck.map(({ family }) => family)).size).toBe(WEBSITE_LAYOUT_FAMILIES.length)
   })
 
   it('does not reshuffle composition references when only brand styling changes', () => {
@@ -123,6 +128,12 @@ describe('reference directions', () => {
     )
   })
 
+  it('does not substitute legacy marketing directions for a dashboard', () => {
+    expect(() => selectReferenceDirectionDeck({ ...brief, pageType: 'dashboard' }, brand)).toThrow(
+      'reviewed dashboard reference library',
+    )
+  })
+
   it('locks either an attached user reference or a family-matched internal direction', () => {
     const deck = selectReferenceDirectionDeck(brief, brand)
     const page = {
@@ -138,5 +149,51 @@ describe('reference directions', () => {
     expect(() => lockPageReferenceDirections(page, deck)).toThrow(
       'must identify an attached user reference or internal direction',
     )
+  })
+
+  describe('Brand references', () => {
+    const entry = (
+      id: string,
+      family: ReferenceDirection['family'],
+      extra: Partial<ReferenceDirection> = {},
+    ): ReferenceDirection => ({ id, family, cue: id, imagePath: `${id}.webp`, ...extra })
+
+    it('keeps the anchor and at most two same-site compositions in deck order', () => {
+      const deck = [
+        entry('hero', 'hero', { site: 'a.example', role: 'anchor', style: 'Quiet serif.' }),
+        entry('feature-b', 'feature', { site: 'b.example', role: 'similar-site' }),
+        entry('feature-a', 'feature', { site: 'a.example', role: 'same-site' }),
+        entry('about-c', 'about', { site: 'c.example', role: 'fallback' }),
+        entry('about-a', 'about', { site: 'a.example', role: 'same-site' }),
+        entry('pricing-a', 'pricing', { site: 'a.example', role: 'same-site' }),
+      ]
+
+      expect(referenceDirectionsForBrand(deck).map(({ id }) => id)).toEqual([
+        'hero',
+        'feature-a',
+        'about-a',
+      ])
+    })
+
+    it('gives Brand only the anchor when no other composition shares its site', () => {
+      const deck = [
+        entry('feature-b', 'feature', { site: 'b.example', role: 'fallback' }),
+        entry('hero', 'hero', { role: 'anchor' }),
+        entry('about-b', 'about', { site: 'b.example', role: 'fallback' }),
+      ]
+
+      expect(referenceDirectionsForBrand(deck).map(({ id }) => id)).toEqual(['hero'])
+    })
+
+    it('keeps the full deck for decks saved before anchor sampling', () => {
+      const deck = [
+        entry('hero', 'hero', { source: 'https://a.example' }),
+        entry('feature', 'feature', { source: 'https://b.example' }),
+        entry('about', 'about'),
+      ]
+
+      expect(referenceDirectionsForBrand(deck)).toEqual(deck)
+      expect(referenceDirectionsForBrand([])).toEqual([])
+    })
   })
 })

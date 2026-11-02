@@ -12,6 +12,7 @@ import { build } from 'esbuild'
 import { rmSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
+import { writeFeedbackResource } from './feedback-endpoint.js'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const outdir = path.join(here, '../dist')
@@ -32,3 +33,7 @@ await build({
   sourcemap: true,
   logLevel: 'warning',
 })
+
+// The packaged app's feedback endpoint, from the environment or the maintainer's
+// local file. Only the host is printed; the file is gitignored build output.
+console.log(writeFeedbackResource(outdir))

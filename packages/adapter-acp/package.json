@@ -8,9 +8,21 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
+    "./agents": {
+      "types": "./dist/agents.d.ts",
+      "default": "./dist/agents.js"
+    },
+    "./capabilities": {
+      "types": "./dist/capabilities.d.ts",
+      "default": "./dist/capabilities.js"
+    },
     "./mcp": {
       "types": "./dist/mcp.d.ts",
       "default": "./dist/mcp.js"
+    },
+    "./commands": {
+      "types": "./dist/commands.d.ts",
+      "default": "./dist/commands.js"
     }
   },
   "main": "./dist/index.js",

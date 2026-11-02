@@ -1,4 +1,3 @@
-import type { ProviderId } from '@harness/contracts'
 import {
   IconArrowUp as ArrowUp,
   IconChevronDown as ChevronDown,
@@ -19,12 +18,18 @@ import {
   IconSearch as Search,
 } from '@tabler/icons-react'
 import { type CSSProperties, Fragment } from 'react'
-import { providerMark } from '../model-catalog.js'
+import type { ProviderMark } from '../model-catalog.js'
 import { GeneratedAvatar } from './GeneratedAvatar.js'
 import { ProviderIcon } from './ProviderIcon.js'
 
 export type PreviewHint = 'profile' | 'model'
-export type PreviewAgent = { id: ProviderId; name: string; arriving?: boolean }
+export type PreviewAgent = {
+  /** The roster key, which the flight into the picker aims at. */
+  id: string
+  name: string
+  mark: ProviderMark
+  arriving?: boolean | undefined
+}
 
 const ANSWER =
   'Done. The toggle sits in Settings › Appearance and follows the system until someone picks a side.'
@@ -239,7 +244,7 @@ export function OnboardingPreview(props: {
                         data-land={`agent-${agent.id}`}
                         key={agent.id}
                       >
-                        <ProviderIcon mark={providerMark(agent.id)} />
+                        <ProviderIcon mark={agent.mark} />
                       </span>
                     ))
                   ) : (

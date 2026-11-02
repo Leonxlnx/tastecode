@@ -2,9 +2,10 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { DatabaseSync } from './sqlite.js'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import { ItemTypeSchema, type DomainEvent, type ItemType } from '@harness/contracts'
+import { providerOffered, takeEdition } from './provider-edition.js'
 import { Store } from './store.js'
 
 let store: Store
@@ -144,6 +145,64 @@ describe('ephemeral Side chats', () => {
   })
 })
 
+describe('feedback ledger', () => {
+  it('keeps the send ledger across a restart in the shared settings table', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-feedback-ledger-'))
+    const file = path.join(dir, 'harness.db')
+    const seeded = new Store(file)
+    expect(seeded.feedbackLedger()).toBeUndefined()
+    seeded.setFeedbackLedger('{"sent":[1]}')
+    seeded.setFeedbackLedger('{"sent":[1,2]}')
+    seeded.close()
+
+    const reopened = new Store(file)
+    try {
+      expect(reopened.feedbackLedger()).toBe('{"sent":[1,2]}')
+    } finally {
+      reopened.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('model list snapshot', () => {
+  it('keeps the last good model lists across a restart in the shared settings table', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-model-lists-'))
+    const file = path.join(dir, 'harness.db')
+    const seeded = new Store(file)
+    expect(seeded.modelListSnapshot()).toBeUndefined()
+    seeded.setModelListSnapshot('{"version":1,"lists":[]}')
+    seeded.close()
+
+    const reopened = new Store(file)
+    try {
+      expect(reopened.modelListSnapshot()).toBe('{"version":1,"lists":[]}')
+    } finally {
+      reopened.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('limit snapshot', () => {
+  it('keeps the last full limit reads across a restart in the shared settings table', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-limit-snapshot-'))
+    const file = path.join(dir, 'harness.db')
+    const seeded = new Store(file)
+    expect(seeded.limitSnapshot()).toBeUndefined()
+    seeded.setLimitSnapshot('{"version":1,"sources":[]}')
+    seeded.close()
+
+    const reopened = new Store(file)
+    try {
+      expect(reopened.limitSnapshot()).toBe('{"version":1,"sources":[]}')
+    } finally {
+      reopened.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
 describe('sidebar thread snapshots', () => {
   it('keeps earlier snapshots immutable across a batch and a mid-batch read', () => {
     store.addProject('/repo')
@@ -191,6 +250,7 @@ describe('sidebar thread snapshots', () => {
         pinned: true,
         unread: true,
         worktreeBranch: 'feature/work',
+        lastActiveAt: 10,
       }),
     ])
     expect(store.sidebarThreads()).not.toBe(initial)
@@ -299,6 +359,65 @@ describe('retained thread metadata', () => {
   })
 })
 
+describe('chat settings', () => {
+  it('keeps one setup per chat beside its access level, and drops it with the chat', () => {
+    store.addProject('/repo')
+    store.addThread({ id: 'main', projectPath: '/repo', provider: 'codex', title: 'Main' })
+    expect(store.threadSettings('main')).toEqual({})
+
+    store.setThreadSettings('main', { model: 'gpt-5.5', effort: 'high', serviceTier: 'fast' })
+    store.setThreadApproval('main', 'auto')
+    expect(store.threadSettings('main')).toEqual({
+      model: 'gpt-5.5',
+      effort: 'high',
+      serviceTier: 'fast',
+      approval: 'auto',
+    })
+
+    // A new setup replaces the old one whole: no effort means the model's default.
+    store.setThreadSettings('main', { model: '' })
+    expect(store.threadSettings('main')).toEqual({ model: '', approval: 'auto' })
+
+    store.deleteThread('main')
+    expect(store.threadSettings('main')).toEqual({})
+  })
+})
+
+it("names each chat's model in the sidebar list and follows a change", () => {
+  store.addProject('/repo')
+  store.addThread({ id: 'main', projectPath: '/repo', provider: 'codex', title: 'Main' })
+  store.addThread({ id: 'other', projectPath: '/repo', provider: 'codex', title: 'Other' })
+  expect(store.sidebarThreads().find((thread) => thread.id === 'main')).not.toHaveProperty('model')
+  store.setThreadSettings('main', { model: 'gpt-5.5' })
+  expect(store.sidebarThreads().find((thread) => thread.id === 'main')?.model).toBe('gpt-5.5')
+  store.setThreadSettings('main', { model: 'gpt-5.4-mini' })
+  expect(store.sidebarThreads().find((thread) => thread.id === 'main')?.model).toBe('gpt-5.4-mini')
+  // An empty model is the provider's own default; the list names none.
+  store.setThreadSettings('main', { model: '' })
+  expect(store.sidebarThreads().find((thread) => thread.id === 'main')).not.toHaveProperty('model')
+  expect(store.sidebarThreads().find((thread) => thread.id === 'other')).not.toHaveProperty('model')
+})
+
+describe('hidden models', () => {
+  it('keeps the picker’s hidden choice keys and survives a damaged record', () => {
+    expect(store.hiddenModels()).toEqual([])
+    store.setHiddenModels(['claude-code:claude-sonnet-5', 'codex:gpt-5.4'])
+    expect(store.hiddenModels()).toEqual(['claude-code:claude-sonnet-5', 'codex:gpt-5.4'])
+    store.setHiddenModels([])
+    expect(store.hiddenModels()).toEqual([])
+  })
+})
+
+describe('provider roster', () => {
+  it('is null until a desktop saves one, and keeps an empty one', () => {
+    expect(store.providerRoster()).toBeNull()
+    store.setProviderRoster(['codex', 'acp:kimi'])
+    expect(store.providerRoster()).toEqual(['codex', 'acp:kimi'])
+    store.setProviderRoster([])
+    expect(store.providerRoster()).toEqual([])
+  })
+})
+
 describe('durable queued turns', () => {
   const queued = (id: string, text = 'Repeat this.') => ({
     id,
@@ -369,7 +488,7 @@ describe('durable queued turns', () => {
 
   it('restores rejected claims and permanently completes accepted ones', () => {
     store.addProject('/repo')
-    store.addThread({ id: 'thread-1', projectPath: '/repo', provider: 'codex', title: 'Queue' })
+    store.addThread({ id: 'thread-1', projectPath: '/repo', provider: 'api', title: 'Queue' })
     store.enqueueQueuedTurn(queued('submission-1', 'Try this.'))
     expect(store.queuedThreadIds()).toEqual(new Set(['thread-1']))
 
@@ -795,6 +914,36 @@ describe('a database written by a newer build', () => {
     }
   })
 
+  it('warns once about an unknown provider, however many of its rows are read', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-unknown-provider-warning-'))
+    const file = path.join(dir, 'harness.db')
+    const seeded = new Store(file)
+    seeded.addProject('/repo')
+    seeded.addThread({ id: 'alien', projectPath: '/repo', provider: 'codex', title: 'Alien' })
+    for (let index = 1; index <= 5; index += 1) seeded.append('alien', usage(index * 10))
+    seeded.close()
+
+    const raw = new DatabaseSync(file)
+    raw.prepare(`UPDATE threads SET provider = ? WHERE id = ?`).run('provider-warned-once', 'alien')
+    raw.close()
+
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const reopened = new Store(file)
+    try {
+      expect(reopened.usageEvents()).toEqual([])
+      expect(reopened.usageEvents()).toEqual([])
+      expect(reopened.threads()).toEqual([])
+      const warnings = warn.mock.calls.filter(([line]) =>
+        String(line).includes("unknown provider 'provider-warned-once'"),
+      )
+      expect(warnings).toHaveLength(1)
+    } finally {
+      reopened.close()
+      warn.mockRestore()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('degrades rows a schema-divergent build could leave behind', () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-forward-schema-'))
     const file = path.join(dir, 'harness.db')
@@ -1155,6 +1304,65 @@ describe('threads', () => {
     expect(() => store.setProviderSessionId('missing', 'grok-native')).toThrow('thread not found')
   })
 
+  it('moves a chat to another provider and keeps the session it left as its own', () => {
+    store.addProject('/repo')
+    store.addThread({
+      id: 'claude-chat',
+      projectPath: '/repo',
+      provider: 'claude-code',
+      accountId: 'work',
+      title: 'One',
+    })
+    store.setProviderSessionId('claude-chat', 'claude-session')
+    store.saveThreadRuntimeState('claude-chat', { claude: true })
+    store.saveProviderHistory('claude-code', 'claude-chat', {
+      id: 'claude-session',
+      title: 'One',
+      workspacePath: '/repo',
+      createdAt: 1,
+      updatedAt: 2,
+      revision: 'r1',
+    })
+    // The sidebar row is cached before the move, as it is in a running app.
+    expect(store.sidebarThreads().find((thread) => thread.id === 'claude-chat')).toMatchObject({
+      provider: 'claude-code',
+      accountId: 'work',
+    })
+
+    store.moveThreadToProvider('claude-chat', {
+      provider: 'acp',
+      agent: 'gemini',
+      providerSessionId: 'acp-gemini-session',
+    })
+
+    expect(store.thread('claude-chat')).toMatchObject({
+      id: 'claude-chat',
+      provider: 'acp',
+      agent: 'gemini',
+      providerSessionId: 'acp-gemini-session',
+      title: 'One',
+    })
+    expect(store.thread('claude-chat')?.accountId).toBeUndefined()
+    const row = store.sidebarThreads().find((thread) => thread.id === 'claude-chat')
+    expect(row).toMatchObject({ provider: 'acp', agent: 'gemini' })
+    expect(row?.accountId).toBeUndefined()
+    expect(store.threadNeedsHandover('claude-chat')).toBe(true)
+    expect(store.threadRuntimeState('claude-chat')).toBeUndefined()
+    expect(store.providerHistories()).toEqual([])
+    expect(store.leftProviderSessions('claude-code')).toEqual(['claude-session'])
+    expect(store.leftProviderSessions('acp')).toEqual([])
+    store.clearThreadHandover('claude-chat')
+    expect(store.threadNeedsHandover('claude-chat')).toBe(false)
+
+    // A chat that never reported a session of its own left the one its id names.
+    store.addThread({ id: 'codex-chat', projectPath: '/repo', provider: 'codex', title: 'Two' })
+    store.moveThreadToProvider('codex-chat', {
+      provider: 'claude-code',
+      providerSessionId: 'claude-two',
+    })
+    expect(store.leftProviderSessions('codex')).toEqual(['codex-chat'])
+  })
+
   it('refuses to delete an isolated checkout before it is discarded', () => {
     store.addThread({
       id: 'isolated',
@@ -1391,6 +1599,44 @@ describe('threads', () => {
     expect(manual.mode === 'manual' && Object.isFrozen(manual.target)).toBe(true)
   })
 
+  it('keeps further accounts’ own context settings across a restart and forgets a cleared one', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-account-context-'))
+    const file = path.join(dir, 'context.db')
+    const persistent = new Store(file)
+    expect(persistent.accountContextSettings()).toEqual([])
+    persistent.updateAccountContextSettings({
+      provider: 'claude-code',
+      accountId: 'work-1a2b3c',
+      settings: { compactAt: 60 },
+    })
+    const saved = persistent.updateAccountContextSettings({
+      provider: 'codex',
+      accountId: 'side-4d5e6f',
+      settings: { compactAt: 'off' },
+    })
+    expect(Object.isFrozen(saved)).toBe(true)
+    expect(persistent.accountContextSettings()).toBe(saved)
+    persistent.close()
+
+    const reopened = new Store(file)
+    try {
+      expect(reopened.accountContextSettings()).toEqual([
+        { provider: 'claude-code', accountId: 'work-1a2b3c', settings: { compactAt: 60 } },
+        { provider: 'codex', accountId: 'side-4d5e6f', settings: { compactAt: 'off' } },
+      ])
+      expect(
+        reopened.updateAccountContextSettings({
+          provider: 'claude-code',
+          accountId: 'work-1a2b3c',
+          settings: {},
+        }),
+      ).toEqual([{ provider: 'codex', accountId: 'side-4d5e6f', settings: { compactAt: 'off' } }])
+    } finally {
+      reopened.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('keeps provider context settings across a restart and forgets a cleared provider', () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-context-'))
     const file = path.join(dir, 'context.db')
@@ -1411,6 +1657,26 @@ describe('threads', () => {
       expect(reopened.updateProviderContextSettings('grok', {})).toEqual({
         'claude-code': { window: 1_000_000, compactAt: 'off' },
       })
+    } finally {
+      reopened.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps the chosen provider runtimes across a restart and forgets a reset one', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-runtime-'))
+    const file = path.join(dir, 'runtime.db')
+    const persistent = new Store(file)
+    expect(persistent.providerRuntimeSettings()).toEqual({})
+    const saved = persistent.updateProviderRuntimeSettings('claude-code', 'cli')
+    expect(Object.isFrozen(saved)).toBe(true)
+    expect(persistent.providerRuntimeSettings()).toBe(saved)
+    persistent.close()
+
+    const reopened = new Store(file)
+    try {
+      expect(reopened.providerRuntimeSettings()).toEqual({ 'claude-code': 'cli' })
+      expect(reopened.updateProviderRuntimeSettings('claude-code', null)).toEqual({})
     } finally {
       reopened.close()
       rmSync(dir, { recursive: true, force: true })
@@ -2654,5 +2920,26 @@ describe('usage totals across providers', () => {
     const summary = store.usageSummary('one', 0)
     expect(summary.session).toEqual(expect.objectContaining({ totalTokens: 100 }))
     expect(summary.today).toEqual(expect.objectContaining({ totalTokens: 140 }))
+  })
+})
+
+describe('usage totals in a release build', () => {
+  afterEach(() => takeEdition({}))
+
+  it("leaves a provider the build does not offer out of today's total", () => {
+    takeEdition({ HARNESS_EDITION: 'release' })
+    store.addProject('/repo')
+    store.addThread({ id: 'one', projectPath: '/repo', provider: 'codex', title: 'One' })
+    store.addThread({ id: 'two', projectPath: '/repo', provider: 'opencode', title: 'Two' })
+    store.append('one', usage(100))
+    store.append('two', usage(40))
+
+    expect(store.usageSummary('one', 0, providerOffered).today).toEqual(
+      expect.objectContaining({ totalTokens: 100 }),
+    )
+    // An old chat on that provider stays readable with its own total.
+    const hidden = store.usageSummary('two', 0, providerOffered)
+    expect(hidden.session).toEqual(expect.objectContaining({ totalTokens: 40 }))
+    expect(hidden.today).toEqual(expect.objectContaining({ totalTokens: 100 }))
   })
 })

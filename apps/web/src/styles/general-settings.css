@@ -1,12 +1,13 @@
 /* General is chosen by picture, as Appearance chooses a theme. Each setting is
-   a name in the roster's weight, a line on what it decides, and its two choices
-   drawn as the window they make. Nothing is a card: the pictures are the only
-   painted surfaces, and the chosen one is ringed a step outside its edge. */
+   a name and a line on what it decides, set in the Settings rows' own type,
+   and its two choices drawn as the window they make. Nothing is a card: the
+   pictures are the only painted surfaces, and the chosen one is ringed a step
+   outside its edge. Settings sit the section step apart. */
 
 .general {
   display: flex;
   flex-direction: column;
-  gap: 34px;
+  gap: 36px;
 }
 
 .general-setting {
@@ -28,21 +29,27 @@
   padding-top: 2px;
 }
 
+/* The row name and note (settings-system.css): the name takes full ink while
+   its setting is pointed at or focused. The note keeps its narrow measure, so
+   each sentence holds its own line beside the pictures. */
 .general-setting__name {
   margin: 0;
+  color: var(--text-2);
+  font-size: var(--t-md);
+  font-weight: 500;
+  line-height: 1.35;
+  transition: color var(--dur-fast) var(--ease-out);
+}
+
+.general-setting:is(:hover, :focus-within) .general-setting__name {
   color: var(--text);
-  font-size: var(--t-lg);
-  font-weight: 550;
-  letter-spacing: -0.012em;
-  line-height: 1.3;
 }
 
 .general-setting__note {
   max-width: 34ch;
-  margin: 6px 0 0;
+  margin: 2px 0 0;
   color: var(--text-3);
   font-size: var(--t-sm);
-  letter-spacing: -0.003em;
   line-height: 1.45;
 }
 
@@ -50,6 +57,8 @@
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
+  /* A label that runs to two lines must not push its neighbours' pictures down. */
+  align-items: start;
   min-width: 0;
 }
 
@@ -98,7 +107,7 @@
   margin-top: 10px;
   font-size: var(--t-sm);
   font-weight: 500;
-  letter-spacing: -0.003em;
+  line-height: 1.4;
   transition: color var(--dur-fast) var(--ease-out);
 }
 
@@ -147,12 +156,12 @@
   gap: 16px;
 }
 
+/* A row in small: the row name and value. */
 .general-settle__name,
 .general-settle__value {
   margin: 0;
-  font-size: var(--t-sm);
-  letter-spacing: -0.003em;
-  line-height: 1.3;
+  font-size: var(--t-md);
+  line-height: 1.35;
 }
 
 .general-settle__name {
@@ -163,7 +172,6 @@
 .general-settle__value {
   color: var(--text);
   font-variant-numeric: tabular-nums;
-  font-weight: 500;
 }
 
 /* A measuring scale, not a slider track: hairline run, ticks and a needle. The
@@ -594,7 +602,66 @@
   opacity: 0.6;
 }
 
+/* notifications: the window sits behind, the OS notifications come in over its
+   corner, drawn as the picker's raised panel. Their dots are the sidebar's:
+   amber for a chat that needs you, green for one that finished. */
+
+.general-setting__options[data-count='3'] {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.gwin[data-focus='notify'] > :not(.gwin__toasts) {
+  opacity: 0.55;
+}
+
+.gwin__toasts {
+  position: absolute;
+  right: 6%;
+  bottom: 8%;
+  width: 58%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.gwin__toast {
+  position: relative;
+  display: block;
+  height: 17px;
+  background: var(--gw-panel);
+  border-radius: var(--r-sm);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--text) 16%, transparent),
+    0 6px 14px -8px rgb(0 0 0 / 50%);
+}
+
+.gwin__toast b {
+  top: 50%;
+  left: 7px;
+  width: 5px;
+  height: 5px;
+  translate: 0 -50%;
+  border-radius: var(--r-circle);
+  background: var(--warning);
+}
+
+.gwin__toast[data-kind='finished'] b {
+  background: var(--success);
+}
+
+.gwin__toast i {
+  left: 18px;
+  top: calc(4.5px + var(--row) * 6px);
+  width: calc(var(--w) * (100% - 26px));
+  background: var(--gw-ink);
+}
+
+.gwin__toast i + i {
+  background: var(--gw-quiet);
+}
 @media (prefers-reduced-motion: reduce) {
+  .general-setting__name,
   .general-settle,
   .general-option__picture,
   .general-option__label,

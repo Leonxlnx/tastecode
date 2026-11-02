@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { captureCli } from './cli.js'
+import { setTaskkillLauncherForTests } from './kill.js'
 import { EventEmitter } from 'node:events'
 import {
   chmodSync,
@@ -122,6 +123,51 @@ describe('runCli', () => {
     },
   )
 
+  it('names the command and the limit when a short command times out', async () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), 'harness-cli-timeout-'))
+    try {
+      // Slow, not stuck: a command that misses the limit is left to finish.
+      const command = writeFakeCli(directory, 'setTimeout(() => {}, 3000)')
+      await expect(runCli(command, ['status'], 1_000)).rejects.toThrow(
+        'fake-agent did not answer within 1 second.',
+      )
+    } finally {
+      rmSync(directory, { recursive: true, force: true, maxRetries: 10 })
+    }
+  })
+
+  it('leaves a short command that missed its limit to finish by itself', async () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), 'harness-cli-slow-'))
+    const done = path.join(directory, 'done')
+    const launches: number[] = []
+    setTaskkillLauncherForTests((pid) => {
+      launches.push(pid)
+      return { exit: Promise.resolve(0), release: () => undefined }
+    })
+    try {
+      const command = writeFakeCli(
+        directory,
+        `setTimeout(() => require('node:fs').writeFileSync(${JSON.stringify(done)}, 'done'), 2500)`,
+      )
+      await expect(runCli(command, ['status'], 500)).rejects.toThrow(
+        'fake-agent did not answer within 500 ms.',
+      )
+      const deadline = Date.now() + 20_000
+      while (!existsSync(done) && Date.now() < deadline) await sleep(100)
+      expect(existsSync(done)).toBe(true)
+      // No taskkill: on a loaded PC each one holds the event loop.
+      expect(launches).toEqual([])
+    } finally {
+      setTaskkillLauncherForTests()
+      rmSync(directory, { recursive: true, force: true, maxRetries: 10 })
+    }
+  }, 30_000)
+
+  it('says which limit an unnamed capture missed', async () => {
+    const child = spawnCli(process.execPath, ['-e', 'setInterval(() => {}, 1000)'])
+    await expect(captureCli(child, 50)).rejects.toThrow('The CLI did not answer within 50 ms.')
+  })
+
   it('counts UTF-8 bytes across both pipes before retaining output', async () => {
     const child = spawnCli(process.execPath, [
       '-e',
@@ -156,6 +202,22 @@ describe('runCli', () => {
     const result = await runCli(process.execPath, ['-e', script], 2_000)
 
     expect(result).toEqual({ code: 0, signal: null, stdout: 'early-late', stderr: '' })
+  })
+
+  it('lays an extra environment over the inherited one and keeps the desktop PATH', async () => {
+    const script =
+      'process.stdout.write(JSON.stringify([process.env.HARNESS_RUNCLI_HOME, process.env.PATH]))'
+    const result = await runCli(process.execPath, ['-e', script], 10_000, {
+      env: { HARNESS_RUNCLI_HOME: 'account-home' },
+    })
+
+    expect(result.code).toBe(0)
+    const [home, childPath] = JSON.parse(result.stdout) as [string, string]
+    expect(home).toBe('account-home')
+    const same = (left: string, right: string) =>
+      process.platform === 'win32' ? left.toLowerCase() === right.toLowerCase() : left === right
+    const userBin = path.join(os.homedir(), '.local', 'bin')
+    expect(childPath.split(path.delimiter).some((entry) => same(entry, userBin))).toBe(true)
   })
 
   it('captures provider status text written to stderr', async () => {

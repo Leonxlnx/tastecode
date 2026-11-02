@@ -1,11 +1,22 @@
 import type { ProviderId, ProviderUpdate } from '@harness/contracts'
-import { commandVersion, isInstalled } from '@harness/proc/cli'
 import { cliVersion, isNewerVersion } from '@harness/proc/updates'
+import { cliProbe } from './cli-probe.js'
 import { providerUpdateSources } from './providers.js'
 
 type Sources = ReturnType<typeof providerUpdateSources>
 type CheckResult = { update: ProviderUpdate; command?: string | undefined }
+type UpdateSystem = {
+  isInstalled(command: string): Promise<boolean>
+  /** `fresh` must not answer from a read made before an update finished. */
+  version(command: string, options?: { fresh?: boolean }): Promise<string | undefined>
+}
 const CACHE_MS = 60 * 60_000
+
+/** The same install and version answers providers.list uses, so no CLI is asked twice. */
+const SHARED_SYSTEM: UpdateSystem = {
+  isInstalled: (command) => cliProbe.installed(command),
+  version: (command, options) => cliProbe.version(command, options),
+}
 
 export class ProviderUpdateService {
   #cached = new Map<ProviderId, { result: CheckResult; expires: number }>()
@@ -13,7 +24,7 @@ export class ProviderUpdateService {
 
   constructor(
     private sources: Sources = providerUpdateSources(),
-    private system = { isInstalled, version: commandVersion },
+    private system: UpdateSystem = SHARED_SYSTEM,
   ) {}
 
   async list(refresh = false): Promise<ProviderUpdate[]> {
@@ -40,7 +51,7 @@ export class ProviderUpdateService {
     if (pending) return refresh ? pending.then(() => this.#check(source, true)) : pending
     const cached = this.#cached.get(source.provider)
     if (!refresh && cached && cached.expires > Date.now()) return Promise.resolve(cached.result)
-    const request = this.#probe(source)
+    const request = this.#probe(source, refresh)
       .then((result) => {
         this.#cached.set(source.provider, {
           result,
@@ -53,7 +64,7 @@ export class ProviderUpdateService {
     return request
   }
 
-  async #probe(source: Sources[number]): Promise<CheckResult> {
+  async #probe(source: Sources[number], fresh: boolean): Promise<CheckResult> {
     const update: ProviderUpdate = {
       provider: source.provider,
       displayName: source.displayName,
@@ -63,7 +74,7 @@ export class ProviderUpdateService {
     }
     try {
       if (!(await this.system.isInstalled(source.updater.command))) return { update }
-      const current = await this.system.version(source.updater.command)
+      const current = await this.system.version(source.updater.command, { fresh })
       const currentVersion = current && cliVersion(current)
       if (!currentVersion) throw new Error('Could not read the installed version. Try again later.')
       update.currentVersion = currentVersion

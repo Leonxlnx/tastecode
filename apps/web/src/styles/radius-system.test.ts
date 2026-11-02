@@ -9,6 +9,7 @@ const settingsCss = readFileSync(new URL('./settings.css', import.meta.url), 'ut
 const commandPaletteCss = readFileSync(new URL('./command-palette.css', import.meta.url), 'utf8')
 const sessionSearchCss = readFileSync(new URL('./session-search.css', import.meta.url), 'utf8')
 const rollbackCss = readFileSync(new URL('./rollback.css', import.meta.url), 'utf8')
+const sheetCss = readFileSync(new URL('./sheet.css', import.meta.url), 'utf8')
 const inboxCss = readFileSync(new URL('./inbox-sidebar.css', import.meta.url), 'utf8')
 const resourcePickerCss = readFileSync(
   new URL('./composer-resource-picker.css', import.meta.url),
@@ -95,7 +96,7 @@ describe('radius system', () => {
       /\.workspace-side-chat__composer \{[^}]*border-radius: var\(--r-composer\)/s,
     )
     expect(pullRequestsCss).toMatch(/\.pr-dialog \{[^}]*border-radius: var\(--r-dialog\)/s)
-    expect(appCss).toMatch(/\.sheet__panel \{[^}]*border-radius: var\(--r-dialog\)/s)
+    expect(sheetCss).toMatch(/:where\(\.sheet__panel\) \{[^}]*border-radius: var\(--r-dialog\)/s)
     expect(rollbackCss).toMatch(/\.rollback__sheet \{[^}]*border-radius: var\(--r-dialog\)/s)
     expect(appCss).toMatch(/\.attachment-preview__open \{[^}]*border-radius: var\(--r-xl\)/s)
     expect(threadCss).toMatch(/\.said \{[^}]*border-radius: var\(--r-lg\)/s)

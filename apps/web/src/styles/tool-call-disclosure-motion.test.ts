@@ -54,13 +54,13 @@ describe('tool-call disclosure motion', () => {
   )
 
   it('runs every disclosure clock on the tokens Thread.tsx mirrors for its slides', () => {
-    const thread = readFileSync(new URL('../ui/Thread.tsx', import.meta.url), 'utf8')
+    const disclosure = readFileSync(new URL('../ui/disclosure.ts', import.meta.url), 'utf8')
     const tokens = readFileSync(new URL('./tokens.css', import.meta.url), 'utf8')
     const token = (name: string) => tokens.match(new RegExp(`${name}: ([^;]+);`))?.[1]
 
-    expect(thread).toContain(`REVEAL_OPEN_MS = ${Number.parseInt(token('--dur-fast') ?? '')}`)
-    expect(thread).toContain(`REVEAL_CLOSE_MS = ${Number.parseInt(token('--dur-press') ?? '')}`)
-    expect(thread).toContain(`REVEAL_EASING = '${token('--ease-out')}'`)
+    expect(disclosure).toContain(`REVEAL_OPEN_MS = ${Number.parseInt(token('--dur-fast') ?? '')}`)
+    expect(disclosure).toContain(`REVEAL_CLOSE_MS = ${Number.parseInt(token('--dur-press') ?? '')}`)
+    expect(disclosure).toContain(`REVEAL_EASING = '${token('--ease-out')}'`)
     expect(css).toMatch(
       /^\.activity__chevron \{\s*flex: none;\s*transition:\s*transform var\(--dur-fast\) var\(--ease-out\)/m,
     )
@@ -153,7 +153,7 @@ describe('tool-call disclosure motion', () => {
   it('keeps completed work close to its summary and neighboring items', () => {
     expect(rule('.activity__body')).toContain('gap: 2px')
     expect(rule('.activity__body')).toContain('margin: 4px 0')
-    expect(rule('.activity__body .aux__out')).toContain('margin: 3px 0 6px 21px')
+    expect(rule('.activity__body .aux__out')).toContain('margin: 3px 0 6px var(--tool-label-x)')
     expect(rule('.reply > .activity')).toContain('margin-bottom: 8px')
   })
 })

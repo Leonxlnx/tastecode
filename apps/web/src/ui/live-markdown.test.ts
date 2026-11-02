@@ -148,35 +148,25 @@ describe('LiveMarkdownParser', () => {
     expect(parser.complete().source).toBe(source)
   })
 
-  it('shows a streamed table only once its delimiter row confirms it, then row by row', () => {
+  it('shows a streamed table once its delimiter row confirms it, with its first row, then row by row', () => {
     const parser = new LiveMarkdownParser()
     const before = parser.append('Results:\n\n| Suite | Before | After |\n| --- | ---: | :-: ')
     expect(nodes(before.operations)).toEqual(['paragraph'])
     expect(leafText(before.operations)).toBe('Results:\n')
 
+    // Confirmed, but a header alone would lay its columns out for its own words.
     const header = parser.append('|\n| `api` | 14 ')
-    expect(nodes(header.operations)).toEqual([
+    expect(nodes(header.operations)).toEqual([])
+    expect(header.carryCharacters).toBeGreaterThan('| Suite | Before | After |'.length)
+
+    const row = parser.append('| 19 |\n| db | 6')
+    expect(nodes(row.operations)).toEqual([
       'table',
       'table-head',
       'table-row',
       'table-header-cell',
       'table-header-cell',
       'table-header-cell',
-    ])
-    expect(header.operations).toContainEqual({
-      type: 'node.open',
-      node: 'table-header-cell',
-      align: 'right',
-    })
-    expect(header.operations).toContainEqual({
-      type: 'node.open',
-      node: 'table-header-cell',
-      align: 'center',
-    })
-    expect(leafText(header.operations)).toBe('SuiteBeforeAfter')
-
-    const row = parser.append('| 19 |\n| db | 6')
-    expect(nodes(row.operations)).toEqual([
       'table-body',
       'table-row',
       'table-cell',
@@ -184,7 +174,17 @@ describe('LiveMarkdownParser', () => {
       'table-cell',
       'table-cell',
     ])
-    expect(leafText(row.operations)).toBe('api1419')
+    expect(row.operations).toContainEqual({
+      type: 'node.open',
+      node: 'table-header-cell',
+      align: 'right',
+    })
+    expect(row.operations).toContainEqual({
+      type: 'node.open',
+      node: 'table-header-cell',
+      align: 'center',
+    })
+    expect(leafText(row.operations)).toBe('SuiteBeforeAfterapi1419')
 
     const end = parser.append(' | 7 |\n\nDone.')
     expect(nodes(end.operations)).toEqual([
@@ -197,6 +197,26 @@ describe('LiveMarkdownParser', () => {
     expect(JSON.stringify(end.operations)).toMatch(
       /"node.close","node":"table-body"}.*"node.close","node":"table"}.*"node":"paragraph"/,
     )
+  })
+
+  it('shows a header whose next line is no row as a table of its own', () => {
+    const parser = new LiveMarkdownParser()
+    expect(parser.append('| Name | Value |\n| --- | --- |\n').operations).toEqual([])
+
+    const after = parser.append('\nDone.')
+    expect(nodes(after.operations)).toEqual([
+      'table',
+      'table-head',
+      'table-row',
+      'table-header-cell',
+      'table-header-cell',
+      'paragraph',
+    ])
+    expect(JSON.stringify(after.operations)).toMatch(
+      /"node.close","node":"table"}.*"node":"paragraph"/,
+    )
+    expect(leafText(after.operations)).toBe('NameValueDone.')
+    expect(after.carryCharacters).toBe(0)
   })
 
   it('fills short rows and drops extra cells to the header width', () => {
@@ -301,6 +321,75 @@ describe('LiveMarkdownParser', () => {
       normalizeLeafAppends(incrementalOperations),
     )
     expect(batched.complete()).toEqual(incremental.complete())
+  })
+
+  it('keeps ordered and nested lists and rules equal across chunkings', () => {
+    const source =
+      'Steps:\n\n3. first `a`\n4. second\n   - detail **b**\n     continued\n   - more\n5. third\n\n---\n\n- x\n  1. y\n- z\n***\n2024 was long\n'
+    const batched = new LiveMarkdownParser()
+    const incremental = new LiveMarkdownParser()
+    const batchedOperations = batched.append(source).operations
+    const incrementalOperations = Array.from(source).flatMap(
+      (character) => incremental.append(character).operations,
+    )
+
+    expect(normalizeLeafAppends(batchedOperations)).toEqual(
+      normalizeLeafAppends(incrementalOperations),
+    )
+    expect(nodes(batchedOperations)).toEqual([
+      'paragraph',
+      'ordered-list',
+      'list-item',
+      'inline-code',
+      'list-item',
+      'list',
+      'list-item',
+      'strong',
+      'list-item',
+      'list-item',
+      'thematic-break',
+      'list',
+      'list-item',
+      'ordered-list',
+      'list-item',
+      'list-item',
+      'thematic-break',
+      'paragraph',
+    ])
+    expect(batchedOperations).toContainEqual({ type: 'node.open', node: 'ordered-list', start: 3 })
+    // Every opened node is closed again, in order.
+    const open: string[] = []
+    for (const operation of batchedOperations) {
+      if (operation.type === 'node.open') open.push(operation.node)
+      else if (operation.type === 'node.close') expect(operation.node).toBe(open.pop())
+    }
+    expect(open).toEqual(['paragraph'])
+  })
+
+  it('keeps a line that could have become a marker or a rule as text', () => {
+    const source = 'Total:\n42\nitems\n\n--\n\n- a\n  7\n- b\n\nCount\n1.\nmore\n'
+    const batched = new LiveMarkdownParser()
+    const incremental = new LiveMarkdownParser()
+    const batchedOperations = batched.append(source).operations
+    const incrementalOperations = Array.from(source).flatMap(
+      (character) => incremental.append(character).operations,
+    )
+
+    expect(normalizeLeafAppends(batchedOperations)).toEqual(
+      normalizeLeafAppends(incrementalOperations),
+    )
+    expect(nodes(batchedOperations)).toEqual([
+      'paragraph',
+      'paragraph',
+      'list',
+      'list-item',
+      'list-item',
+      'paragraph',
+    ])
+    const text = batchedOperations
+      .flatMap((operation) => (operation.type === 'leaf.append' ? [operation.text] : []))
+      .join('')
+    expect(text).toBe('Total:\n42\nitems\n--\na\n7bCount\n1.\nmore\n')
   })
 
   it('keeps the work of completing a table row independent of the rows before it', () => {

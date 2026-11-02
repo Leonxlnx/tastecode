@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ProviderRow } from './ProviderRow.js'
 
 afterEach(cleanup)
@@ -26,10 +26,16 @@ describe('provider row grammar', () => {
     expect(Array.from(row.children).map((child) => child.className)).toEqual([
       'provider-row__mark',
       'provider-row__identity',
-      'provider-row__status',
+      'set-leader',
+      'provider-row__status set-entity__status',
       'provider-row__secondary',
       'provider-row__primary',
     ])
+    // A settings entity row: its name in the entity role, its wire the shared leader.
+    expect(row.querySelector('.provider-row__identity > .set-entity__name')?.textContent).toBe(
+      'Codex',
+    )
+    expect(row.querySelector('.set-leader')?.getAttribute('aria-hidden')).toBe('true')
     expect(row.querySelector('.provider-row__mark svg')?.getAttribute('width')).toBe('18')
     expect(row.querySelector('.provider-row__mark')?.getAttribute('title')).toBe('codex-cli 1.4.0')
     expect(within(row).queryByText('codex-cli 1.4.0')).toBeNull()
@@ -62,9 +68,33 @@ describe('provider row grammar', () => {
       />,
     )
     const signOut = screen.getByRole('button', { name: 'Sign out' })
-    expect(signOut.className).toContain('is-primary')
-    expect(signOut.className).toContain('is-danger')
-    expect(signOut.className).not.toContain('is-quiet')
+    expect(signOut.className).toBe('set-button set-button--danger')
+  })
+
+  it('draws sign-out as the danger button in either slot, and other secondary actions quiet', () => {
+    const { rerender } = render(
+      <ProviderRow
+        provider={{ id: 'acp', displayName: 'Kimi CLI', installed: true, auth: 'unknown' }}
+        status="Signed in"
+        secondary={{ label: 'Sign out', danger: true }}
+      />,
+    )
+    expect(screen.getByRole('button', { name: 'Sign out' }).className).toBe(
+      'set-button set-button--danger',
+    )
+
+    rerender(
+      <ProviderRow
+        provider={{ id: 'grok', displayName: 'Grok', installed: true, auth: 'unknown' }}
+        status="Installing…"
+        primary={{ label: 'Install' }}
+        secondary={{ label: 'Details' }}
+      />,
+    )
+    expect(screen.getByRole('button', { name: 'Install' }).className).toBe('set-button')
+    expect(screen.getByRole('button', { name: 'Details' }).className).toBe(
+      'set-button set-button--quiet',
+    )
   })
 
   it('keeps secondary actions before primary actions in focus order', () => {
@@ -111,5 +141,84 @@ describe('provider row grammar', () => {
       />,
     )
     expect(row().dataset['fault']).toBe('true')
+  })
+})
+
+const codex = { id: 'codex', displayName: 'Codex', installed: true, auth: 'unknown' } as const
+
+describe('a done action that undoes itself', () => {
+  it('waits for the pointer that just did it to leave before undoing', () => {
+    const undo = vi.fn()
+    render(
+      <ProviderRow
+        provider={codex}
+        status="OpenAI · Signed in"
+        primary={{
+          label: 'Added',
+          done: true,
+          undo: 'Remove',
+          ariaLabel: 'Remove Codex',
+          fresh: true,
+          onClick: undo,
+        }}
+      />,
+    )
+    const button = screen.getByRole('button', { name: 'Remove Codex' })
+    expect(button.dataset['fresh']).toBe('true')
+    // The second click of a double click lands here and does nothing.
+    fireEvent.click(button)
+    expect(undo).not.toHaveBeenCalled()
+
+    fireEvent.pointerLeave(button)
+    expect(button.dataset['fresh']).toBeUndefined()
+    fireEvent.click(button)
+    expect(undo).toHaveBeenCalledOnce()
+  })
+
+  it('undoes at once when it was done before, and from the keyboard', () => {
+    const undo = vi.fn()
+    render(
+      <ProviderRow
+        provider={codex}
+        status="OpenAI"
+        primary={{
+          label: 'Added',
+          done: true,
+          undo: 'Remove',
+          ariaLabel: 'Remove Codex',
+          onClick: undo,
+        }}
+      />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Codex' }))
+    expect(undo).toHaveBeenCalledOnce()
+
+    cleanup()
+    render(
+      <ProviderRow
+        provider={codex}
+        status="OpenAI"
+        primary={{
+          label: 'Added',
+          done: true,
+          undo: 'Remove',
+          ariaLabel: 'Remove Codex',
+          fresh: true,
+          onClick: undo,
+        }}
+      />,
+    )
+    const fresh = screen.getByRole('button', { name: 'Remove Codex' })
+    fireEvent.keyDown(fresh, { key: 'Enter' })
+    fireEvent.click(fresh)
+    expect(undo).toHaveBeenCalledTimes(2)
+  })
+
+  it('stays a plain label with nothing to undo', () => {
+    render(
+      <ProviderRow provider={codex} status="OpenAI" primary={{ label: 'Added', done: true }} />,
+    )
+    expect(screen.queryByRole('button')).toBeNull()
+    expect(screen.getByText('Added')).toBeTruthy()
   })
 })

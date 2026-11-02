@@ -84,8 +84,14 @@ describe('focus outline', () => {
 
   it('keeps the provider login terminal inside its neutral frame', () => {
     expect(settingsCss).toMatch(
-      /\.install-terminal\s*\{[^}]*box-sizing: border-box;[^}]*overflow: hidden;/s,
+      /\.install-terminal\s*\{[^}]*box-sizing: border-box;[^}]*overflow: hidden;[^}]*background: var\(--terminal-workspace-bg\);[^}]*border: 1px solid var\(--line\);[^}]*border-radius: var\(--r-lg\);/s,
     )
+    // One rule draws the frame; no second copy redraws it.
+    expect(settingsCss.match(/(^|\n)\.install-terminal \{/g)).toHaveLength(1)
+    // xterm fits its rows to the frame and subtracts only its own padding, so
+    // the inset sits on the opened terminal, never on the frame around it.
+    expect(settingsCss).toMatch(/\.install-terminal:has\(> \.xterm\) \{\s*padding: 0;/)
+    expect(settingsCss).toMatch(/\.install-terminal > \.xterm \{\s*padding: 12px;/)
     expect(settingsCss).not.toMatch(/\.install-terminal:focus-within\s*\{/)
   })
 })

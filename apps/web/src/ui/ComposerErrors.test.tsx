@@ -42,4 +42,61 @@ describe('ComposerErrors', () => {
     view.rerender(<ComposerErrors errors={errors} />)
     expect(screen.queryByRole('alert')).toBeNull()
   })
+
+  it('offers Report on errors the app made reportable, but never on status rows', () => {
+    const report = vi.fn()
+    render(
+      <ComposerErrors
+        errors={[
+          { id: 'turn:1', message: 'Codex exited unexpectedly', report },
+          { id: 'offline', message: 'Reconnecting to the server…', role: 'status', report },
+          { id: 'plain', message: 'Attachment too large' },
+        ]}
+      />,
+    )
+    const buttons = screen.getAllByRole('button', { name: 'Report' })
+    expect(buttons).toHaveLength(1)
+    fireEvent.click(buttons[0]!)
+    expect(report).toHaveBeenCalledOnce()
+  })
+
+  it('offers several places to go as a menu and runs the one chosen', async () => {
+    const work = vi.fn()
+    const spare = vi.fn()
+    render(
+      <ComposerErrors
+        errors={[
+          {
+            id: 'turn:1',
+            message: "You've hit your usage limit.",
+            choices: {
+              label: 'Continue on another account',
+              options: [
+                { id: 'work', label: 'Work', detail: 'work@example.test', run: work },
+                { id: 'spare', label: 'Spare', run: spare },
+              ],
+            },
+          },
+        ]}
+      />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Continue on another account' }))
+    expect(await screen.findByText('work@example.test')).toBeTruthy()
+    fireEvent.click(await screen.findByRole('menuitem', { name: /Spare/ }))
+    expect(spare).toHaveBeenCalledOnce()
+    expect(work).not.toHaveBeenCalled()
+  })
+
+  it('draws a shelf of notes neutral and one with an error in the error tint', () => {
+    const note = {
+      id: 'note',
+      message: 'Continues “Webhook retries” on Work.',
+      tone: 'info' as const,
+    }
+    const view = render(<ComposerErrors errors={[note]} />)
+    const shelf = () => screen.getByLabelText('Errors')
+    expect(shelf().classList.contains('composer__provider-shelf--info')).toBe(true)
+    view.rerender(<ComposerErrors errors={[note, { id: 'turn:1', message: 'Request failed' }]} />)
+    expect(shelf().classList.contains('composer__provider-shelf--info')).toBe(false)
+  })
 })

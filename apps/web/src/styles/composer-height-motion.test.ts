@@ -22,7 +22,7 @@ describe('composer height motion', () => {
 
     expect(composer).toContain('min-height: 48px')
     expect(composer).toContain('max-height: 242px')
-    expect(composer).toContain('padding: 12px 16px 6px')
+    expect(composer).toContain('padding: 12px calc(var(--chat-text-inset) - 1px) 6px')
     expect(composerSource).toContain('const COMPOSER_MIN_HEIGHT = 48')
     expect(composerSource).toContain('rows={1}')
     expect(composer).not.toContain('transition:')

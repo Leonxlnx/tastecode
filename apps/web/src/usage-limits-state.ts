@@ -1,23 +1,69 @@
-import type { ParamsOf, ProviderId, ResultOf } from '@harness/contracts'
+import {
+  DEFAULT_ACCOUNT_ID,
+  type AccountId,
+  type ParamsOf,
+  type ProviderId,
+  type ProviderLimitSource,
+  type ResultOf,
+  type UsageReadIntent,
+} from '@harness/contracts'
 import { UsageSummaryController, type UsageSummaryState } from './usage-summary-state.js'
 
-type Target = { provider: ProviderId; threadId?: string | undefined }
+/** One provider account's limits. Absent `accountId` means the default account. */
+export type LimitTarget = { provider: ProviderId; accountId?: AccountId | undefined }
+type Target = LimitTarget & { threadId?: string | undefined }
 type LoadSummary = (params: ParamsOf<'usage.summary'>) => Promise<ResultOf<'usage.summary'>>
+
+/** How often every source is read in the background, so a view opens on recent values. */
+export const USAGE_POLL_MS = 15 * 60_000
+
+/**
+ * At or below this share left a window runs low: the card's meter, the
+ * popup's bars and the Usage page's meters turn red.
+ */
+export const USAGE_LOW_PERCENT = 15
 
 type Entry = {
   controller: UsageSummaryController
   unsubscribe: () => void
+  /** Asked only while a view shows the limits; pushes still update it. */
+  onDemand: boolean
 }
+
+/**
+ * Plan limits belong to an account, so each provider account is its own
+ * source. The default account keeps the provider's own key.
+ */
+export function limitKey(provider: ProviderId, accountId?: AccountId): string {
+  return accountId === undefined || accountId === DEFAULT_ACCOUNT_ID
+    ? provider
+    : `${provider}/${accountId}`
+}
+
+/** The provider account a `limitKey` names; the default account has no `accountId`. */
+export function limitTargetOf(key: string): LimitTarget {
+  const slash = key.indexOf('/')
+  return slash < 0
+    ? { provider: key as ProviderId }
+    : { provider: key.slice(0, slash) as ProviderId, accountId: key.slice(slash + 1) }
+}
+
+const keyOf = (target: LimitTarget): string => limitKey(target.provider, target.accountId)
 
 /** Combines the existing race-safe single-source owners without merging source truth. */
 export class UsageLimitsController {
   readonly #load: LoadSummary
   readonly #coalesceMs: number
-  readonly #entries = new Map<ProviderId, Entry>()
+  readonly #entries = new Map<string, Entry>()
   readonly #listeners = new Set<() => void>()
-  #order: ProviderId[] = []
+  #active: LimitTarget[] = []
+  #onDemand: LimitTarget[] = []
   #snapshot: UsageSummaryState[] = []
   #disposed = false
+  /** Views that show the limits now, such as the account popup or the Usage page. */
+  #shown = 0
+  #showRefresh = false
+  readonly #intent = (): UsageReadIntent => (this.#shown > 0 ? 'visible' : 'background')
 
   constructor(load: LoadSummary, coalesceMs = 100) {
     this.#load = load
@@ -33,39 +79,137 @@ export class UsageLimitsController {
     return () => this.#listeners.delete(listener)
   }
 
-  select(targets: Target[]): void {
+  /**
+   * `targets` are asked at once and kept current. `onDemand` sources (a
+   * provider's default account, or a named account) are asked only when a
+   * view shows the limits, so a launch does not start a vendor read for every
+   * installed provider or account; once known, their values stay and follow
+   * the server's pushes.
+   */
+  select(targets: Target[], onDemand: ReadonlyArray<ProviderId | LimitTarget> = []): void {
     if (this.#disposed) return
     const unique = targets.filter(
       (target, index) =>
-        targets.findIndex((candidate) => candidate.provider === target.provider) === index,
+        targets.findIndex((candidate) => keyOf(candidate) === keyOf(target)) === index,
     )
-    const providers = new Set(unique.map((target) => target.provider))
-    for (const [provider, entry] of this.#entries) {
-      if (providers.has(provider)) continue
+    const active = new Set(unique.map(keyOf))
+    const later: LimitTarget[] = []
+    for (const each of onDemand) {
+      const target = typeof each === 'string' ? { provider: each } : each
+      const key = keyOf(target)
+      if (active.has(key) || later.some((candidate) => keyOf(candidate) === key)) continue
+      later.push(target)
+    }
+    const kept = new Set([...active, ...later.map(keyOf)])
+    for (const [key, entry] of this.#entries) {
+      if (kept.has(key)) continue
       entry.unsubscribe()
       entry.controller.dispose()
-      this.#entries.delete(provider)
+      this.#entries.delete(key)
     }
-    this.#order = unique.map((target) => target.provider)
+    this.#active = unique.map((target) => ({
+      provider: target.provider,
+      accountId: target.accountId,
+    }))
+    this.#onDemand = later
     for (const target of unique) {
-      let entry = this.#entries.get(target.provider)
+      const entry = this.#entries.get(keyOf(target))
       if (!entry) {
-        const controller = new UsageSummaryController(this.#load, this.#coalesceMs)
-        entry = { controller, unsubscribe: controller.subscribe(() => this.#publish()) }
-        this.#entries.set(target.provider, entry)
+        this.#add(target, false).controller.select(target)
+        continue
       }
+      const promoted = entry.onDemand
+      entry.onDemand = false
       entry.controller.select(target)
+      // Its values came from an open view or a push; as the active source it
+      // catches up once, unless a request is already running.
+      if (promoted && entry.controller.snapshot()?.status !== 'loading') {
+        entry.controller.refresh()
+      }
+    }
+    for (const target of later) {
+      const entry = this.#entries.get(keyOf(target))
+      if (entry) entry.onDemand = true
+      // A source installed while a view is open joins it at once.
+      else if (this.#shown > 0) this.#add(target, true).controller.select(target)
     }
     this.#publish()
   }
 
-  refresh(provider?: ProviderId): void {
-    if (provider) this.#entries.get(provider)?.controller.refresh()
-    else for (const entry of this.#entries.values()) entry.controller.refresh()
+  /** Without a provider, every source a request may ask now. */
+  refresh(provider?: ProviderId, intent?: UsageReadIntent, accountId?: AccountId): void {
+    if (provider) {
+      const entry = this.#entries.get(limitKey(provider, accountId))
+      if (entry && this.#asks(entry)) entry.controller.refresh(intent)
+      return
+    }
+    for (const entry of this.#entries.values()) {
+      if (this.#asks(entry)) entry.controller.refresh(intent)
+    }
   }
 
-  changed(provider: ProviderId): void {
-    this.#entries.get(provider)?.controller.changed(provider)
+  /**
+   * A view that shows the limits opened. While any is open, requests say so,
+   * which lets the server read sources it otherwise reads only on view; the
+   * opening itself reads every source afresh, on-demand sources included.
+   * Returns the release for when the view closes.
+   */
+  show(): () => void {
+    if (this.#disposed) return () => {}
+    this.#shown += 1
+    // A view that closes and opens again in the same task, as under
+    // StrictMode, asks only once.
+    if (this.#shown === 1 && !this.#showRefresh) {
+      this.#showRefresh = true
+      // Sources not asked yet start now, so the view lists them as checking
+      // from its first paint instead of popping them in later, and show what
+      // the server holds while their fresh read runs.
+      if (this.#join()) this.#publish()
+      queueMicrotask(() => {
+        this.#showRefresh = false
+        if (this.#shown === 0 || this.#disposed) return
+        for (const entry of this.#entries.values()) entry.controller.refresh('refresh')
+      })
+    }
+    let released = false
+    return () => {
+      if (released) return
+      released = true
+      this.#shown -= 1
+    }
+  }
+
+  /**
+   * The periodic read: every source, on-demand ones included, whether or not
+   * a view shows them, so the next view opens on recent values.
+   */
+  poll(): void {
+    if (this.#disposed) return
+    if (this.#join()) this.#publish()
+    for (const entry of this.#entries.values()) entry.controller.refresh('refresh')
+  }
+
+  changed(provider: ProviderId, accountId?: AccountId): void {
+    const entry = this.#entries.get(limitKey(provider, accountId))
+    if (entry && this.#asks(entry)) entry.controller.changed(provider, accountId)
+  }
+
+  /**
+   * A pushed snapshot replaces that provider account's limits without a
+   * request; it never touches another account's. An on-demand source not
+   * asked yet takes it too: what the server sends for free is known.
+   */
+  applySource(source: ProviderLimitSource): void {
+    if (this.#disposed) return
+    const key = limitKey(source.provider, source.accountId)
+    let entry = this.#entries.get(key)
+    if (!entry) {
+      const target = this.#onDemand.find((candidate) => keyOf(candidate) === key)
+      if (!target) return
+      entry = this.#add(target, true)
+      entry.controller.select(target, false)
+    }
+    entry.controller.applySource(source)
   }
 
   dispose(): void {
@@ -78,11 +222,67 @@ export class UsageLimitsController {
     this.#listeners.clear()
   }
 
+  /** Starts every on-demand source not asked yet; says whether there was one. */
+  #join(): boolean {
+    let joined = false
+    for (const target of this.#onDemand) {
+      if (this.#entries.has(keyOf(target))) continue
+      this.#add(target, true).controller.select(target)
+      joined = true
+    }
+    return joined
+  }
+
+  #add(target: LimitTarget, onDemand: boolean): Entry {
+    const controller = new UsageSummaryController(this.#load, this.#coalesceMs, this.#intent)
+    const entry = { controller, unsubscribe: controller.subscribe(() => this.#publish()), onDemand }
+    this.#entries.set(keyOf(target), entry)
+    return entry
+  }
+
+  /** On-demand sources are asked only while a view shows them. */
+  #asks(entry: Entry): boolean {
+    return !entry.onDemand || this.#shown > 0
+  }
+
   #publish(): void {
-    this.#snapshot = this.#order.map(
-      (provider) =>
-        this.#entries.get(provider)?.controller.snapshot() ?? { status: 'loading', provider },
-    )
+    this.#snapshot = [...this.#active, ...this.#onDemand].flatMap((target) => {
+      const entry = this.#entries.get(keyOf(target))
+      if (!entry) return []
+      return [entry.controller.snapshot() ?? loadingState(target)]
+    })
     for (const listener of this.#listeners) listener()
+  }
+}
+
+function loadingState(target: LimitTarget): UsageSummaryState {
+  return target.accountId === undefined || target.accountId === DEFAULT_ACCOUNT_ID
+    ? { status: 'loading', provider: target.provider }
+    : { status: 'loading', provider: target.provider, accountId: target.accountId }
+}
+
+/**
+ * Reads every source each `intervalMs` while the window shows. A window that
+ * was hidden past a read catches up when it shows again. Returns the stop.
+ */
+export function pollUsageLimits(
+  controller: UsageLimitsController,
+  intervalMs = USAGE_POLL_MS,
+): () => void {
+  let polledAt = Date.now()
+  const poll = () => {
+    polledAt = Date.now()
+    controller.poll()
+  }
+  const timer = setInterval(() => {
+    if (document.visibilityState !== 'hidden') poll()
+  }, intervalMs)
+  const shown = () => {
+    if (document.visibilityState !== 'hidden' && Date.now() - polledAt >= intervalMs) poll()
+  }
+  document.addEventListener('visibilitychange', shown)
+  return () => {
+    clearInterval(timer)
+    document.removeEventListener('visibilitychange', shown)
   }
 }

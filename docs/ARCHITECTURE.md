@@ -12,8 +12,8 @@ add a change-log row.
 typed WebSocket protocol.**
 
 ```
-desktop renderer · web                   thin clients
-        │  WebSocket, typed contracts
+desktop renderer · web     phone (Expo + UIKit)       thin clients
+        │  WebSocket, typed contracts   │ same protocol, end-to-end encrypted link
         │  req/res { id, method, params } · push { channel, sequence, data }
    core server (Node, local, long-lived)
         │  orchestration · adapters · SQLite event log · checkpoints · worktrees · PTY
@@ -84,6 +84,98 @@ _Rejected:_ sweeping the whole PTY session (#1162): it also kills `nohup` and di
 a terminal emulator leaves running. SIGTERM straight after the hangup: it cut off jobs that need
 more than a moment to shut down cleanly. Waiting for the job in the close itself: closing a chat
 took up to nine seconds and its terminal could not be reopened meanwhile.
+
+### User feedback goes through the server
+
+**Outbound feedback goes through the local server; the inbox key lives only in the server
+process.** The renderer's CSP allows only the local server, so the feedback dialog calls
+`feedback.status`, `feedback.preview` and `feedback.submit`, and the server builds, redacts and
+sends the Trecko request. Preview and submit share one builder, so the preview is exactly what
+is sent, and only `feedback.submit` (the dialog's Send) sends anything. The key is injected at
+build time: `apps/desktop/scripts/feedback-endpoint.js` writes the gitignored
+`dist/feedback/feedback.env`, which ships as an extra resource outside `app.asar`. Desktop main
+passes the server only that file's path; the server reads it once at startup and deletes every
+feedback variable from `process.env`, so agent CLIs, terminals and git never inherit the key.
+`pnpm dev` reads `~/.tastecode/trecko-feedback.env` instead. Builds without a key answer
+`not_configured`, and every entry point stays hidden. The local limits (one send at a time,
+waits after each attempt, daily caps, duplicate refusal) only stop the app itself from spamming
+the inbox. The key can be extracted from any packaged build, so real abuse protection belongs
+in Trecko.
+
+_Rejected:_ a renderer `fetch` to Trecko (widens the CSP and puts the key in the renderer).
+Leaving the key in the server's environment (every child process would inherit it). Compiling
+the key into desktop main (main never needs it).
+
+### Phones connect over an end-to-end encrypted link
+
+**A paired phone is one more client of the same protocol, reached directly over the local
+network or a tailnet, with every frame encrypted end to end.** For now phone access is a dev
+feature: a build offers it only when the server runs with `HARNESS_PHONE_ACCESS=1`, which
+`pnpm dev` sets. Without it nothing can open the phone listener (resuming a state an earlier dev
+build stored as on, turning access on and pairing all refuse with "Phone access is not part of
+this build."), `phone.status` answers `available: false`, and the desktop hides Settings › Phone.
+The packaged desktop passes its own environment to the server it starts, so a tester of a dev
+installer turns it on with a user environment variable (on Windows `setx HARNESS_PHONE_ACCESS 1`
+or System Properties › Environment Variables) and then quits and restarts TasteCode. Where it is
+offered, phone access is off until the user turns it on in Settings › Phone. Then a second listener (`HARNESS_PHONE_PORT`, default 4317) accepts WebSockets on `/link` from private, link-local, loopback and tailnet
+(100.64.0.0/10) addresses only, refuses any request carrying an `Origin` header (no page can
+reach it), and speaks nothing but a **Noise IK** handshake (`Noise_IK_25519_ChaChaPoly_SHA256`,
+prologue `tastecode-link/1`) until the phone has proved its key. The pairing code is a
+`tastecode://pair` link holding the computer's static X25519 key, its port, its addresses (local
+name, Wi-Fi, Tailscale) and a one-time secret that expires after ten minutes; the first phone to
+present it is registered by its public key, and the code closes. The phone pins the computer's
+key, so no address in the code has to be trusted and nothing can stand in the middle. After the
+handshake each WebSocket message is one ChaCha20-Poly1305 frame, larger than Noise's own 64 KiB
+limit when a history page needs it; a frame that fails authentication closes the link. Both
+implementations (Node's crypto in `apps/server/src/phone-noise.ts`, CryptoKit in
+`apps/mobile/modules/tastecode-link`) reproduce the published cacophony vector byte for byte.
+
+The server's private key lives in the OS credential store, one per data folder; paired phones
+are stored as public keys in `app_settings`. A phone may call only `PHONE_METHODS`: reading and
+driving chats, choosing models and access levels, browsing folders to add a project, attaching
+images. Terminals, installs, credentials, MCP and further pairing stay on the desktop, and
+phone links never receive `phone.*` or preview pushes. A paired phone sees every push the
+desktop sees, so a turn started on either streams on both; `projects.changed` tells every client
+when another one started, renamed or moved a chat. A chat's setup (model, reasoning effort,
+service tier, access level) is kept by the server, not by each client: `thread.settings` reads
+it, `thread.setSettings` and `thread.setApproval` change it, and the `thread.settings` push
+carries every change, so a pick on one device shows on the other at once. The desktop publishes
+the choice keys its picker hides (`models.hidden`) and the phone offers only the rest, because
+the desktop never runs a chat on a hidden model.
+
+The phone app is Expo with its interface written in Swift: UIKit view controllers (iOS 26, Liquid
+Glass) under one native view that the React root fills the screen with, in the local
+`tastecode-ui` module, beside the `tastecode-link` module (Network.framework and CryptoKit, keys in the Keychain). Protocol logic,
+reconnects and state are TypeScript and import the shared contracts' types. TypeScript also
+words what the screens show (`src/view`: chat rows, step summaries, approval subjects) and sends
+it to Swift as JSON; an open chat sends only the rows that changed, so a streaming reply carries
+its own text and nothing else; Swift reads that JSON off the main thread. Swift draws and asks
+back through one action event. The chat transcript is a collection view whose layout knows every
+row's exact height, rows laid out on a background queue from Markdown blocks
+measured once and cached, and in a long reply only the blocks near the screen built. Text is
+drawn off the main thread into IOSurfaces (also a screen and a half ahead of a scroll), which the
+main thread hands to Core Animation as they are; a streaming row moves only itself and the rows
+below it. An Android build replaces the two native modules with Kotlin and Compose and keeps
+everything else. The phone app has its own npm install, outside the pnpm workspace.
+
+_Rejected:_ the earlier phone design's bearer tokens in a plaintext WebSocket URL (safe only on
+Tailscale, readable by anyone on a café Wi-Fi). TLS with a pinned self-signed certificate
+(React Native's WebSocket cannot pin, and Node needs a certificate generator). A relay server
+(traffic and metadata would leave the user's machines; a relay can come later, carrying the same
+encrypted frames). A fully native Swift app (Android would share nothing). Screens composed in
+React from `@expo/ui`'s SwiftUI components (the first version): menus, toolbars, the composer's
+glass and scrolling could not be shaped as iOS draws them, and every streamed delta re-rendered
+React. Screens as one SwiftUI hierarchy inside an `@expo/ui` host (the second version): a held
+chat's grey highlight stayed about 0.8 s after its menu closed, with no way to end it; the chosen
+typeface replaced the monospaced face of keys and diffs; and the UIKit transcript sat behind a
+representable. The transcript in SwiftUI (a lazy stack of `Text`): every streamed delta parsed and laid out
+the whole reply again on the main thread: streaming the same reply in a simulator, it used about
+three times the main thread's time the UIKit transcript does. Transcript text drawn in
+`draw(_:)`, even with `drawsAsynchronously`: the main thread typeset every changed block and then
+waited at each commit for Core Animation's drawing queue, about 60% of its busy time while
+streaming. Text as plain `CGImage` contents: it cost the main thread 5–10% more CPU while
+scrolling than IOSurfaces, which Core Animation shares with the render server rather than
+sending over.
 
 ---
 
@@ -246,6 +338,9 @@ a user override. Claude Code now runs through Anthropic's Agent SDK while keepin
 installed `claude` executable and account, so the adapter gets a persistent prompt stream,
 interactive permissions and questions, and live control calls without making shared behavior
 depend on that vendor. A different Claude surface can still replace it without touching the UI.
+The user can instead run it through `claude -p` with stream-json on both pipes, where the adapter
+speaks the same control protocol itself (`cli-runtime.ts`); an engine declares such choices as
+`capabilities.runtimes`, and the server stores the choice and applies it at every launch.
 Because the adapter always names that executable, the SDK's optional per-platform CLI packages
 (about 290 MB each) are removed from the dependency graph in `pnpm-workspace.yaml` and excluded
 from the desktop package; the app ships no Claude binary of its own.
@@ -318,6 +413,24 @@ Every other adapter in this document, the ACP agent roster and the direct API ru
 only on `nightly`; on `main`, `packages/adapter-acp` remains solely as the protocol client
 behind project-enabled Grok MCP sessions. The decisions below still bind both branches.
 
+**Each build offers the providers of its edition (2026-11-01).** Promotions `dev` → `nightly`
+→ `main` merge whole branches, so the provider code on `dev` reaches `main` with a promotion;
+the build, not the branch, decides what a user is offered. A release build offers exactly Claude Code, Codex,
+Grok, Cursor and Antigravity; a dev build offers every provider. The edition is decided at
+package time through electron-builder `extraMetadata`: `dist` and `dist:dir` write
+`tastecodeEdition=dev` into the packaged `package.json`, and `dist:release` writes nothing.
+Desktop main reads that field; a missing, unknown or unreadable value means release, so a
+package built any other way fails closed. It passes the edition to the server as
+`HARNESS_EDITION`, applied after the inherited environment so a variable set on the machine
+cannot widen a release build; unpackaged runs (`pnpm dev`) pass nothing and offer everything.
+The server reads `HARNESS_EDITION` once at startup, deletes it from `process.env` so agent CLIs
+and terminals do not inherit it, and refuses to start on any value other than `release` or
+`dev`. It enforces the edition at `providers.list` (and `acp.agents`), at provider install and
+launch, in the runtime loader every session passes through, in `startThread` before the
+base-branch switch, and in the custom-harness listing. The renderer only follows
+`providers.list`; shared code never checks a provider by name. The release asset check refuses
+a package whose `tastecodeEdition` is anything other than `release`.
+
 **The product must work with only a direct API provider configured.** TasteCode owns the
 shared session model, persistence, orchestration, queueing, review, worktrees, terminal and
 UI. Provider integrations supply inference and declare optional capabilities; they do not
@@ -333,13 +446,16 @@ The side event channel and transcript are independent, the row stays out of proj
 and search, and closing the panel disposes and deletes it. A provider may expose native fork,
 but shared Side chat semantics cannot depend on that optional capability.
 
-**Direct model APIs use one small TasteCode-owned agent runtime.** OpenAI, Anthropic and
-OpenAI-compatible endpoints provide inference and tool calls, not a complete coding-agent
-session. The API runtime drives the same server-owned tools, approvals, persistence and
-checkpoints as every other adapter; only request and stream translation varies by API
-transport. This is the fallback that keeps TasteCode functional with only an API key. It is
-not used when a richer vendor agent surface is available. The concrete transport matrix and
-delivery order live in [PROVIDERS.md](./PROVIDERS.md).
+**Direct model API connections were removed (2026-10-20).** TasteCode no longer stores API
+keys or runs chats on them itself. Its own small agent loop (four workspace tools, a 64 KiB
+request budget) made a key-backed chat a far weaker agent than any CLI, and the OpenCode-backed
+replacement tried the same day was dropped before it shipped. To use their own key, users sign
+in to OpenCode with it and chat through the OpenCode provider. The `api` provider id and the
+`connections.*` methods remain in `packages/contracts` until a contracts change removes them;
+the server answers those methods as unknown, and a saved API chat stays readable but cannot
+start again. The principle above, and the matching hard rule in `AGENTS.md`, named the direct
+API provider as the one every shared feature is checked against; which provider takes that
+place is Leon's decision.
 
 _Rejected:_ ACP-only (gives up Codex's richest-in-class surface) · native-only (caps us at
 4 engines) · a TasteCode agent loop as the only integration path (throws away richer vendor
@@ -562,8 +678,9 @@ Change notifications to clients are coalesced to one leading and one trailing no
 provider every 30 seconds. Repeated reads, such as switching threads, reuse the cached result
 until something changes instead of starting a limit-reading process each time.
 Background writing (chat titles, commit messages) reads only the sources its model choice
-needs: a manual target alone, otherwise Codex, then Grok, and every source only for the
-cheapest-model fallback. Each source's account and model read is cached for 60 seconds and
+needs: a manual target alone, otherwise Claude Code, then Codex, then Grok, and every source
+only for the cheapest-model fallback. Automatic writing prefers Claude Code's newest Haiku at
+medium effort, then a Codex subscription's newest Luna at medium, then Grok 4.6 at low. Each source's account and model read is cached for 60 seconds and
 shared with the Settings listing; a sign-in change or harness edit drops them. Reading every
 source per task was rejected: it started six vendor processes per new chat.
 `ThreadController` owns web transcript, replay, queue, submission
@@ -577,15 +694,7 @@ most disposable process) · whole-DB encryption (the DB holds no credentials by 
 
 ### Direct API request retention
 
-Direct API sessions keep a bounded request context independently of the durable transcript.
-Known GPT-4.1/GPT-4o/GPT-5 and Claude families use a conservative 64 KiB serialized request cap;
-unknown model ids use 8 KiB. These are application safety budgets, not tokenizer estimates
-or advertised vendor context windows. Each transport checks its final JSON body too.
-Older turns are removed as complete user/assistant/tool groups; current-turn data and
-shared instructions are retained. A visible transcript notice identifies omission. If the
-current turn or tool definitions alone exceed the cap, the turn fails with an actionable
-message before network I/O. Provider errors can still impose a smaller model-specific limit.
-No transcript events are deleted by this policy.
+Removed with API connections on 2026-10-20.
 
 ## Long threads must feel instant
 
@@ -667,6 +776,138 @@ manual.
 
 ---
 
+## Dashboard design references (nightly)
+
+**Dashboards run as tasteskill app screens since 2026-10-25 (owner request).** A dashboard brief
+is dealt an app sheet from the tasteskill v2.5 app library bundled in
+`packages/design-agent/references/app-screens/` (styles, shells and screen patterns as data, no
+images) and every phase works from that sheet and quoted sections of tasteskill's app-screen
+chapter; see [DESIGN-REFERENCES.md](./DESIGN-REFERENCES.md). `APP_SCREENS_ENABLED` in
+`packages/design-agent/src/app-screen-mode.ts` is the switch. The sheet is dealt by the server
+and persisted with the run, so every provider gets the same deal and nothing depends on running
+tasteskill's scripts inside a provider; the kit files reach the provider through `.taste/app-kit/`
+in the workspace, which every provider can read with ordinary file tools.
+
+_Rejected:_ running tasteskill's `draw.mjs` and `inspect.mjs` inside the provider (needs Node,
+Chrome and shell access in every provider, and the deal would not survive a resume) · inlining
+`charts.js` into the Build prompt (the model would have to retype 60 KB).
+
+**The dashboard image catalog has been parked since 2026-10-16 (owner decision).** The dashboard
+asset set is not good enough to ship. Its switch, `DASHBOARD_REFERENCES_ENABLED` in
+`packages/design-agent/src/dashboard-references.ts`, keeps every dashboard catalog unloaded and
+no dashboard image deck is sampled. While it is off, the website Page protocol does not offer the
+`operate_monitor` mode or the `dashboard` family, and an `operate_monitor` plan on a website run
+routes nothing into dashboard prompts; app screens reach theirs through the dealt sheet and the
+dashboard brief. With both switches off, `isDashboardBrief` routes nothing either, and a dashboard
+request becomes a normal website run. The 400 dashboard WebPs,
+their catalog and provenance left the packaged library (about 42 MB) and stay in git history. The
+history below describes the parked image path.
+
+Nightly dashboard support is integrated through
+[PR #1393](https://github.com/Leonxlnx/tastecode/pull/1393), following
+[PR #1392](https://github.com/Leonxlnx/tastecode/pull/1392) merged at `17aa22a3`.
+The integrated source includes main through `3e67df35`, retaining the complete nightly provider
+roster and usage history. Windows cleanup
+[PR #1394](https://github.com/Leonxlnx/tastecode/pull/1394), task authorization
+[PR #1403](https://github.com/Leonxlnx/tastecode/pull/1403), and checkpoint identity
+[PR #1404](https://github.com/Leonxlnx/tastecode/pull/1404) are merged on main; the API connection
+contract in [PR #1395](https://github.com/Leonxlnx/tastecode/pull/1395) is merged on nightly.
+This feature is not a public-beta release.
+The asset import is complete: a separate dashboard catalog and provenance record contain
+200 reviewed generated desktop/mobile pairs, stored as 400 WebPs. The existing 172 website
+references and 316 WebPs are unchanged. The combined bundle has 372 references and 716 WebPs:
+344 paired references and 28 desktop-only references.
+Sampling chooses a layout group uniformly, then one variant within that group, so retries do
+not give a composition extra votes. Since 2026-10-12 the dashboard draw is uniform only among the
+screens whose domain, tags, product name, cue or motifs best match the request's domain words,
+and over all screens when nothing matches. One complete app-shell reference preserves navigation,
+content density and responsive hierarchy. The compiled default-bundle checks passed for all
+200 selectable dashboard groups, saved-deck roundtrips and both image attachments. All 400
+dashboard WebPs have unique matching hashes and valid viewport metadata. The catalog differs
+from the private import only in formatting and is deeply JSON-equal; the other 401 imported
+files are byte-identical. Website selection still yields 14 website-only references, and
+marketing-page classification checks pass.
+
+Briefing distinguishes an operating interface from a marketing page about a dashboard product.
+The former plans `operate_monitor` views with functional filters, sorting, tabs, navigation,
+drawers and charts. Motion follows those state changes, with keyboard access, focus restoration
+and reduced-motion equivalents. Native inline chart SVG in reference-bound dashboard views and
+visibly identified demo values avoid website-only validation blockers; asserted product claims
+still require evidence. Website hero entrances and scroll reveals keep their existing behavior.
+
+Since 2026-10-12, every phase keeps one design language per page: references set each
+section's composition, and one anchor reference sets the type, palette, radius, spacing and
+component language. See [One design language per page](./DESIGN-REFERENCES.md#one-design-language-per-page).
+Dashboards use one family plus optional monospace data, taken from the anchor screen's own
+type, and never add a display face. They are reviewed for shell
+consistency, data density, table and chart readability, visible control states and focus.
+A site, one-pager or Webseite about an app classifies as a website.
+
+Reference-driven Design requires the session's declared image input capability. Unsupported
+sessions reject before inference or persisted Design state; ordinary coding remains available.
+The workflow never substitutes an unannounced text-only build for the requested image copying.
+
+Fresh [Windows verification](https://github.com/Leonxlnx/tastecode/actions/runs/37228489532)
+passed lint, typecheck, the full test command and build at exact feature source
+`edc92ea9c82c40b1c7e0b6f12aa329b2fa05f79e`: 4,445 passed, 18 existing skips, zero failures.
+Desktop tests ran: 368 passed and 10 existing skips, included in that total. No deadlines were
+overridden. Follow-up integration changes only documentation and recorded screenshots.
+Historical local verification at `0ccdb67d` passed all four gates with 4,432 passed and 18 skips.
+Thirty-six focused cases cover nine provider IDs: 18 synthetic-vision website/dashboard flows
+and 18 capability-rejection/ordinary-follow-up cases.
+
+The isolated browser smoke passed at `a02c6ab3490e55003aa2a95f977b8ccca690bea9`, exercising the
+former direct-API runtime (removed 2026-10-20) against a synthetic endpoint. Two unsupported Design attempts made no
+additional inference requests and persisted no Design runs. Ordinary follow-ups retained both
+API identities, models, messages and tool context across an owned server restart. Four completed
+synthetic turns used six fake API requests and 72 synthetic tokens. All 14 source/build
+fingerprints stayed stable during the run; the queue was empty, no browser exceptions occurred,
+and owned processes were stopped. This proves capability rejection and ordinary API recovery.
+Live image-capable dashboard generation, packaged Electron, macOS and real-keyring acceptance
+remain unverified. Synthetic flows and a separate external demo do not replace these checks.
+
+_Rejected:_ composing dashboards from marketing sections, treating generation retries as new
+layout votes, or requiring static screenshots in place of working native charts and controls.
+
+---
+
+## One design language per generated page (nightly)
+
+Owner decision, 2026-10-12: a generated website must not switch design language between sections.
+Randomness stays, but one page keeps one type system (at most two families), one palette, one
+radius and spacing scale, and one button, card and label language. This supersedes the uniform,
+site-agnostic website sampling from
+[PR #1176](https://github.com/Leonxlnx/tastecode/pull/1176), which drew every layout family
+independently and put about eleven source sites into one 14-reference deck.
+
+The first drawn section, normally the hero, is still chosen uniformly by group and becomes the
+anchor; its source host defines the page's language. Each later section takes the requested
+family from the anchor site, then from the three most similar close sites in the optional per-site
+`style-profiles.json` (style score at least 10 of 14). Only a sparse family, one with fewer than
+ten composition groups, may then borrow a compatible family from those sites; otherwise the
+section comes from the uniform pool the family always used. The requested family always beats
+borrowed geometry, and the minimum score stops a few broadly similar sites from supplying a rare
+section to most pages. Profile outliers never anchor a page or count as their site's language. A
+missing or malformed profile file degrades to same-site and uniform sampling rather than failing a
+run. Saved deck entries record `site` and `role`; the anchor also carries a one-line `style`
+summary. Older decks parse unchanged. Details are in [DESIGN-REFERENCES.md](./DESIGN-REFERENCES.md).
+
+Brand derives the language from the anchor and at most two same-site references instead of the
+whole deck, and every phase is told that the anchor sets type, palette, radii, spacing, controls
+and surfaces while other references give composition only. Review then audits the generated source
+and adds bounded, non-fatal findings for fonts outside the brand and radius drift
+([DESIGN-AGENT.md](./DESIGN-AGENT.md)). The audit is a Review finding rather than a hard source
+gate because Build and Repair get one correction each, so a false positive must never fail a run.
+
+_Rejected:_ narrowing by style tags (the catalogs carry almost none), drawing every section from
+the anchor site only (most sites lack some families, which would shrink the deck), a uniform
+draw per family (the source of the mixed-language pages), the anchor site's compatible family
+before a close site's own family (it put other section types into a third of FAQ slots), and
+similar sites with no minimum score or only half the maximum (a few broadly similar sites then
+supplied a rare section, such as the library's only stats section, to a third or more of pages).
+
+---
+
 ## Layout
 
 ```
@@ -685,10 +926,15 @@ registry entry, which is deliberately a good first outside contribution.
 
 | Date       | Change                                                                                                                                                                         |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 2026-10-20 | Removed direct API connections; a user's own key runs through OpenCode's sign-in.                                                                                              |
+| 2026-10-16 | Sent user-initiated feedback to the team's Trecko inbox through the local server; the inbox key stays in the server process and out of git.                                    |
+| 2026-10-16 | Parked dashboard references behind `DASHBOARD_REFERENCES_ENABLED`; dashboard requests build as websites and the 42 MB dashboard set left the package.                          |
 | 2026-10-14 | Read cold newest history pages from the end of the event log, checked against a derived per-thread index of first turn and item rows (#957).                                   |
 | 2026-10-14 | Seeded checkpoint snapshots from the checkout's own index so a turn start re-reads only changed files instead of hashing every tracked file.                                   |
 | 2026-10-14 | Kept a provider's "unavailable" limits answer for 30 minutes through usage updates, so Claude's minute-long transcript scan no longer reruns after every turn.                 |
+| 2026-10-12 | Sample website references from one anchor site, then similar profiled sites, to keep one design language per page; prefer dashboards matching the requested domain.            |
 | 2026-10-11 | Paged thread history by whole turns over the cached compact replay instead of sending the full replay on every open; a store-level reader for cold opens remains (#957).       |
+| 2026-10-04 | Added nightly dashboard references and image-capability preflight; Windows gates passed. Live-vision and packaged acceptance remain separate.                                  |
 | 2026-10-04 | Canonicalized checkpoint Git storage with native filesystem paths so Windows long/8.3 aliases retain the combined refs of linked worktrees (#1404).                            |
 | 2026-10-03 | Trust exact WebSocket origins only; keep isolated checkouts and pasted files out of the OS temp folder; bind pull-request reviews and merges to the inspected head commit.     |
 | 2026-10-03 | Removed every provider except Codex, Claude Code and Grok from `main`; the rest, including the direct API runtime, live only on `nightly`.                                     |
@@ -733,3 +979,12 @@ registry entry, which is deliberately a good first outside contribution.
 | 2026-10-11 | Kept closed activity rows from building their detail and gated a collapsed 300-call activity's heap locally.                                                                   |
 | 2026-10-11 | Ended a closed terminal's foreground job after a grace period, and a shell ignoring SIGHUP; background jobs stay.                                                              |
 | 2026-10-14 | Background writing reads only the model sources its choice needs, caches each source separately, and reuses Grok's sign-in `grok models` output for its model list.            |
+| 2026-10-19 | Made Claude Code's newest Haiku at medium the automatic background model, ahead of Codex Luna, which moved from low to medium effort.                                          |
+| 2026-10-22 | Added phone access: a Noise IK link on the LAN or a tailnet, one-time pairing codes, a phone method allowlist, `projects.changed`, and the Expo + SwiftUI phone app.           |
+| 2026-10-22 | Phone app screens moved from React-composed Expo UI to one SwiftUI hierarchy in Swift; TypeScript words the content and sends changed rows only.                               |
+| 2026-10-23 | Each chat's setup moved from every client's own storage to the server (`thread.settings`); the desktop shares its hidden models.                                               |
+| 2026-10-25 | Claude Code can also run through `claude -p` (stream-json, same protocol); engines declare `capabilities.runtimes`, the server keeps the choice.                               |
+| 2026-10-25 | Phone app screens moved from SwiftUI to UIKit view controllers under one native view; Expo UI is no longer a dependency.                                                       |
+| 2026-10-25 | Dashboards run again as app screens dealt from the bundled tasteskill v2.1.5 app library, without reference images; the dashboard image catalog stays parked.                  |
+| 2026-10-31 | Phone access became dev-only: offered only with `HARNESS_PHONE_ACCESS=1` (set by `pnpm dev`); other builds never open the phone port.                                          |
+| 2026-11-01 | Each build offers its edition's providers: release offers Claude Code, Codex, Grok, Cursor and Antigravity, dev every provider; missing means release.                         |

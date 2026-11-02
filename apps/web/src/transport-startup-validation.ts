@@ -2,7 +2,9 @@ import type {
   Capabilities,
   MethodName,
   ProviderId,
+  ProviderRuntimeOption,
   ProviderSetup,
+  ProviderSourceShape,
   ProviderStatus,
   ResultOf,
   ThreadInboxStatus,
@@ -34,6 +36,12 @@ const isProviderId = enumValidator<ProviderId>({
   codex: true,
   'claude-code': true,
   grok: true,
+  cursor: true,
+  opencode: true,
+  antigravity: true,
+  pi: true,
+  acp: true,
+  api: true,
 })
 const isInboxStatus = enumValidator<ThreadInboxStatus>({
   starting: true,
@@ -93,6 +101,11 @@ const isContextControl = objectValidator<NonNullable<Capabilities['context']>>({
     (value) => typeof value === 'number' && Number.isInteger(value) && value >= 10 && value <= 99,
   ),
 })
+const isRuntimeOption = objectValidator<ProviderRuntimeOption>({
+  id: isNonEmptyString,
+  label: isNonEmptyString,
+  description: optional(isString),
+})
 const isCapabilities = objectValidator<Capabilities>({
   steer: isBoolean,
   fork: isBoolean,
@@ -102,13 +115,30 @@ const isCapabilities = objectValidator<Capabilities>({
   userInput: optional(isBoolean),
   autoReview: optional(isBoolean),
   images: isBoolean,
+  imageFiles: optional(isBoolean),
   context: optional(isContextControl),
+  subagents: optional(
+    enumValidator<NonNullable<Capabilities['subagents']>>({ summary: true, progress: true }),
+  ),
+  multipleAccounts: optional(isBoolean),
+  runtimes: optional(
+    (value) => Array.isArray(value) && value.length > 0 && value.every(isRuntimeOption),
+  ),
 })
 const isSetup = objectValidator<ProviderSetup>({
   installUrl: isUrl,
   installCommand: optional(isString),
   login: enumValidator<ProviderSetup['login']>({ app: true, provider: true }),
   loginOpensBrowser: optional(isBoolean),
+})
+const isSourceShape = objectValidator<ProviderSourceShape>({
+  agent: enumValidator<ProviderSourceShape['agent']>({
+    none: true,
+    optional: true,
+    required: true,
+  }),
+  connection: isBoolean,
+  direct: isBoolean,
 })
 const isProvider = objectValidator<ProviderStatus>({
   id: isProviderId,
@@ -123,6 +153,7 @@ const isProvider = objectValidator<ProviderStatus>({
   capabilities: optional(isCapabilities),
   setup: optional(isSetup),
   problem: optional(isString),
+  source: optional(isSourceShape),
 })
 type Project = ResultOf<'projects.list'>['projects'][number]
 const isSession = objectValidator<Project['sessions'][number]>({
@@ -130,6 +161,9 @@ const isSession = objectValidator<Project['sessions'][number]>({
   title: isString,
   provider: isProviderId,
   agent: optional(isString),
+  connectionId: optional(isString),
+  accountId: optional(isNonEmptyString),
+  continuedFrom: optional(isNonEmptyString),
   createdAt: isFiniteNumber,
   running: isBoolean,
   pinned: optional(isBoolean),
@@ -138,6 +172,8 @@ const isSession = objectValidator<Project['sessions'][number]>({
   lifecycle: optional(isLifecycle),
   closedAt: optional(isFiniteNumber),
   worktreeBranch: optional(isString),
+  model: optional(isNonEmptyString),
+  lastActiveAt: optional(isFiniteNumber),
 })
 const isProject = objectValidator<Project>({
   path: isString,
@@ -157,6 +193,9 @@ export function parseProjectsListResult(value: unknown): ResultOf<'projects.list
 }
 export function parseProvidersListResult(value: unknown): ResultOf<'providers.list'> | undefined {
   return isProvidersList(value) ? value : undefined
+}
+function isNonEmptyString(value: unknown): boolean {
+  return typeof value === 'string' && value.length > 0
 }
 function isUrl(value: unknown): boolean {
   if (typeof value !== 'string') return false

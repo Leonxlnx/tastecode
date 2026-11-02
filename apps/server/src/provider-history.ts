@@ -4,12 +4,13 @@ import path from 'node:path'
 import type {
   DomainEvent,
   Item,
+  ProviderHistoryListOptions,
   ProviderHistorySession,
   ProviderHistorySource,
   ProviderId,
 } from '@harness/contracts'
-import { Store } from './store.js'
-import { projectHistoryItems } from './side-chat.js'
+import { Store, type ProviderHistoryListing } from './store.js'
+import { projectHistoryItems, withoutContinuationContext } from './side-chat.js'
 import { DESIGN_PHASE_NOTICE, RESTORE_CONTEXT_NOTICE } from './provider-session.js'
 
 type Source = { provider: ProviderId; history: ProviderHistorySource }
@@ -24,10 +25,14 @@ type Imported = {
 export class ProviderHistory {
   #entries = new Map<string, Imported>()
   #byThread = new Map<string, Imported>()
-  #refreshing: Promise<void> | undefined
+  #refreshing: Promise<boolean> | undefined
   #reading = new Map<string, Promise<boolean>>()
   /** Internal sessions are never imported, so one absent copy stays absent. */
   #internalWithoutCopy = new Set<string>()
+  /** Settles once each provider's first scan is done, whether it found anything or failed. */
+  #scanned = new Map<ProviderId, { done: Promise<void>; settle: () => void }>()
+  /** Each source's stored listings, read from the store at its first scan. */
+  #listings = new Map<ProviderId, Map<string, ProviderHistoryListing>>()
   #closed = false
 
   constructor(
@@ -41,6 +46,41 @@ export class ProviderHistory {
     },
   ) {
     for (const entry of store.providerHistories()) this.#remember(entry)
+    for (const { provider } of sources) {
+      let settle!: () => void
+      const done = new Promise<void>((resolve) => (settle = resolve))
+      this.#scanned.set(provider, { done, settle })
+    }
+  }
+
+  /**
+   * Resolves once this provider's saved sessions were scanned for the first
+   * time. A chat of one provider needs only its own scan before it is read or
+   * continued; a large Claude history took 30-180 s, and a Codex turn waited
+   * for all of it.
+   */
+  scanned(provider: ProviderId): Promise<void> {
+    if (this.#closed) return Promise.resolve()
+    return this.#scanned.get(provider)?.done ?? Promise.resolve()
+  }
+
+  /** Whether a saved provider session is linked to this chat, so a load may merge outside turns. */
+  hasCopy(threadId: string): boolean {
+    const entry = this.#byThread.get(threadId)
+    return entry !== undefined && !entry.session.internal
+  }
+
+  /**
+   * Drops what links a chat to a provider's saved session, after the chat
+   * moved to another provider. That session stays the chat's own (the store
+   * keeps it as one the chat left), so a later scan neither imports nor reads it.
+   */
+  forget(threadId: string): void {
+    const entry = this.#byThread.get(threadId)
+    if (!entry) return
+    this.#byThread.delete(threadId)
+    const key = `${entry.provider}:${entry.session.id}`
+    if (this.#entries.get(key)?.threadId === threadId) this.#entries.delete(key)
   }
 
   #remember(entry: Imported): void {
@@ -50,18 +90,73 @@ export class ProviderHistory {
     this.#byThread.set(entry.threadId, entry)
   }
 
-  refresh(): Promise<void> {
-    if (this.#closed) return Promise.resolve()
+  /**
+   * Callbacks that let a source skip transcripts it listed before, also across
+   * restarts: a cold Claude listing read 3 GB. `save` stores what the source
+   * computed and, after a complete listing, forgets transcripts it no longer named.
+   */
+  #listing(provider: ProviderId) {
+    const stored = this.#listings.get(provider) ?? this.store.providerHistoryMetadata(provider)
+    this.#listings.set(provider, stored)
+    const named = new Set<string>()
+    const remembered = new Map<string, ProviderHistoryListing>()
+    return {
+      options: {
+        cached: (locator, revision) => {
+          named.add(locator)
+          const entry = stored.get(locator)
+          return entry?.revision === revision ? entry.session : undefined
+        },
+        remember: (locator, revision, session) => {
+          named.add(locator)
+          const entry = stored.get(locator)
+          if (
+            entry?.revision !== revision ||
+            JSON.stringify(entry.session) !== JSON.stringify(session)
+          )
+            remembered.set(locator, { revision, session })
+        },
+      } satisfies ProviderHistoryListOptions,
+      save: (complete: boolean) => {
+        const forgotten = complete ? [...stored.keys()].filter((key) => !named.has(key)) : []
+        if (!remembered.size && !forgotten.length) return
+        try {
+          this.store.saveProviderHistoryMetadata(provider, remembered, forgotten)
+        } catch {
+          // Unsaved listings are only read again after the next restart.
+          this.hooks.log(`${provider} history metadata could not be saved`)
+          return
+        }
+        for (const [locator, entry] of remembered) stored.set(locator, entry)
+        for (const locator of forgotten) stored.delete(locator)
+      },
+    }
+  }
+
+  /** Resolves whether any chat changed, so a caller can poll less while nothing does. */
+  refresh(): Promise<boolean> {
+    if (this.#closed) return Promise.resolve(false)
     return (this.#refreshing ??= this.#refresh().finally(() => {
       this.#refreshing = undefined
     }))
   }
 
-  async #refresh(): Promise<void> {
+  async #refresh(): Promise<boolean> {
+    let anyChanged = false
     await Promise.all(
       this.sources.map(async ({ provider, history }) => {
         try {
-          const sessions = await history.list()
+          const listing = this.#listing(provider)
+          const sessions = await history.list(listing.options).then(
+            (sessions) => {
+              listing.save(true)
+              return sessions
+            },
+            (error: unknown) => {
+              listing.save(false)
+              throw error
+            },
+          )
           if (this.#closed || this.hooks.canImport?.() === false) return
           // Temporary sessions can close between scans, or disappear on restart.
           // Their durable marker must win even before discovery has seen a row.
@@ -82,6 +177,12 @@ export class ProviderHistory {
               const id = thread.providerSessionId ?? thread.id
               return [history.resolveSessionId?.(id) ?? id, thread]
             }),
+          )
+          // Sessions chats ran on before they moved to another provider.
+          const left = new Set(
+            this.store
+              .leftProviderSessions(provider)
+              .map((id) => history.resolveSessionId?.(id) ?? id),
           )
           const changed: string[] = []
           const imported: Imported[] = []
@@ -132,7 +233,7 @@ export class ProviderHistory {
               return project
             }
             for (const session of sessions) {
-              if (session.internal || !session.id) continue
+              if (session.internal || !session.id || left.has(session.id)) continue
               if (!path.isAbsolute(session.workspacePath) || !Number.isFinite(session.createdAt))
                 continue
               const native = nativeThreads.get(session.id)
@@ -184,12 +285,18 @@ export class ProviderHistory {
                 this.store.addProviderThread(threadId, provider, session, projectPath)
                 this.#internalWithoutCopy.delete(threadId)
               } else if (
-                previous?.threadId === threadId &&
-                existing.title === previous.session.title &&
-                session.title
+                (previous?.threadId === threadId &&
+                  existing.title === previous.session.title &&
+                  session.title) ||
+                // The title taken from the chat's first prompt waited for this name.
+                (session.named && this.store.provisionalTitle(threadId) !== undefined)
               ) {
                 this.store.renameThread(threadId, session.title)
               }
+              // A session run outside TasteCode keeps the access level it last ran with
+              // there, until the chat has one of its own.
+              if (session.approval && this.store.threadApproval(threadId) === undefined)
+                this.store.setThreadApproval(threadId, session.approval)
               // An archived chat is imported closed, because its provider will
               // not resume it. Once unarchived there, it can be continued again.
               if (
@@ -215,14 +322,20 @@ export class ProviderHistory {
             }
           })
           for (const entry of imported) this.#remember(entry)
-          if (changed.length) this.hooks.changed(changed)
+          if (changed.length) {
+            anyChanged = true
+            this.hooks.changed(changed)
+          }
           for (const threadId of repair) await this.load(threadId)
         } catch {
           // Never log source content or paths from a malformed provider record.
           this.hooks.log(`${provider} history could not be refreshed; will retry`)
+        } finally {
+          this.#scanned.get(provider)?.settle()
         }
       }),
     )
+    return anyChanged
   }
 
   async load(threadId: string): Promise<boolean> {
@@ -230,10 +343,16 @@ export class ProviderHistory {
     const pending = this.#reading.get(threadId)
     if (pending) return pending
     let entry = this.#byThread.get(threadId)
+    const thread = this.store.thread(threadId)
+    // A session the chat has left since: its turns are already the chat's own.
+    if (entry && thread && entry.provider !== thread.provider) {
+      this.forget(threadId)
+      return false
+    }
     if (
       !entry ||
       entry.session.internal ||
-      !this.store.thread(threadId) ||
+      !thread ||
       entry.loadedRevision === entry.session.revision
     )
       return false
@@ -262,11 +381,29 @@ export class ProviderHistory {
           (this.hooks.isBusy(duplicateId) || this.store.queuedTurns(duplicateId).length)
         )
           return changed
-        if (events.length === 0) throw new Error('Saved provider chat is unavailable; try again')
+        if (events.length === 0) {
+          // An imported chat has no transcript but this copy, so the reader retries.
+          if (duplicateId === threadId)
+            throw new Error('Saved provider chat is unavailable; try again')
+          // A native chat keeps its own transcript; the copy only adds turns taken
+          // outside TasteCode. A copy that is gone (Codex archived the session and
+          // its rollout was deleted) must not keep the chat from opening. This
+          // revision is not read again; a changed copy is.
+          current.loadedRevision = current.session.revision
+          break
+        }
         // A turn that finished during the read is local too; its echo must still be dropped.
         if (this.store.lastSeq(threadId) !== seq)
           local = this.store.localHistory(threadId).map(({ event }) => event)
-        const entries = importedEvents(events, threadId, local)
+        // A chat that continues another starts as a copy of that chat's saved
+        // session. The turns from before it existed are the earlier chat's.
+        const entries = importedEvents(
+          thread.continuedFrom === undefined || duplicateId === threadId
+            ? events
+            : turnsSince(events, thread.createdAt),
+          threadId,
+          local,
+        )
         const duplicate =
           duplicateId !== threadId &&
           this.store.thread(duplicateId) !== undefined &&
@@ -306,6 +443,7 @@ export class ProviderHistory {
 
   async close(): Promise<void> {
     this.#closed = true
+    for (const scan of this.#scanned.values()) scan.settle()
     await Promise.allSettled([this.#refreshing, ...this.#reading.values()])
     await Promise.allSettled(this.sources.map(({ history }) => history.dispose?.()))
   }
@@ -327,6 +465,19 @@ function folderIdentity(folder: string): string | undefined {
 
 function startedTurnIds(events: DomainEvent[]): Set<string> {
   return new Set(events.flatMap((event) => (event.type === 'turn.started' ? [event.turn.id] : [])))
+}
+
+/** The events of turns that started at `since` or later, and those of no turn. */
+function turnsSince(events: DomainEvent[], since: number): DomainEvent[] {
+  const earlier = new Set(
+    events.flatMap((event) =>
+      event.type === 'turn.started' && event.turn.createdAt < since ? [event.turn.id] : [],
+    ),
+  )
+  return events.filter((event) => {
+    const id = turnId(event)
+    return id === undefined || !earlier.has(id)
+  })
 }
 
 function turnId(event: DomainEvent): string | undefined {
@@ -472,6 +623,9 @@ function withoutRestoreNotice(text: string | undefined): string | undefined {
 
 function sameUserMessage(left: Item, right: Item): boolean {
   let text = withoutRestoreNotice(right.text)
+  // A continued chat's first prompt carries the earlier conversation before the
+  // user's words; local history keeps only the words.
+  if (text !== undefined) text = withoutContinuationContext(text)
   // Native logs contain our Design follow-up envelope; local history keeps only
   // the user's submission. Unwrap solely for echo matching, never arbitrary prose.
   if (text?.startsWith('This is an ordinary user turn, not an active TasteCode Design phase. ')) {
@@ -481,6 +635,14 @@ function sameUserMessage(left: Item, right: Item): boolean {
   }
   return (
     (left.text === right.text || left.text === text) &&
-    JSON.stringify(left.attachments ?? []) === JSON.stringify(right.attachments ?? [])
+    sameAttachments(left.attachments ?? [], right.attachments ?? [])
+  )
+}
+
+/** A provider such as Claude saves an attached picture's bytes, not the path it came from. */
+function sameAttachments(local: readonly string[], native: readonly string[]): boolean {
+  return (
+    local.length === native.length &&
+    local.every((path, index) => path === native[index] || native[index]?.startsWith('data:'))
   )
 }

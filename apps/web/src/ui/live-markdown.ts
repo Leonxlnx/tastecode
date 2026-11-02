@@ -15,7 +15,9 @@ export type LiveMarkdownNode =
   | `heading-${HeadingLevel}`
   | 'blockquote'
   | 'list'
+  | 'ordered-list'
   | 'list-item'
+  | 'thematic-break'
   | 'strong'
   | 'emphasis'
   | 'inline-code'
@@ -38,6 +40,8 @@ export type LiveMarkdownOperation =
       language?: string
       align?: LiveMarkdownAlign
       href?: string
+      /** An ordered list's first number, when it is not 1. */
+      start?: number
     }
   | { type: 'node.close'; node: LiveMarkdownNode }
   | { type: 'task'; checked: boolean }
@@ -73,6 +77,38 @@ const HEADING_NODES = [
   'heading-6',
 ] as const
 const TASK_MARKERS = ['[ ] ', '[x] ', '[X] '] as const
+/** A list item's marker and the space after it: a bullet, or a number and its delimiter. */
+const LIST_MARKER = /^(?:([-+*])|(\d{1,9})([.)])) $/
+/** The start of a line that may still become a list marker. */
+const LIST_MARKER_PENDING = /^(?:[-+*]|\d{1,9}[.)]?)$/
+/** A line of three or more `-`, `*` or `_`: a thematic break, once the line ends. */
+const THEMATIC_BREAK = /^(?:-{3,}|\*{3,}|_{3,})$/
+const THEMATIC_BREAK_PENDING = /^(?:-+|\*+|_+)$/
+/** A whole line that waited to become a list marker or a rule, but is text. */
+const PENDING_TEXT_LINE = /^(?:\d{1,9}|--|\*\*|__?)$/
+/** An empty list item, which cannot interrupt a paragraph: there it is text. */
+const EMPTY_ITEM_IN_PARAGRAPH = /^(?:\d{1,9}[.)]|[+*])$/
+
+/**
+ * A list the parser is inside. Its current item stays open past the item's
+ * line, so a nested list or a continuation line can still go into it.
+ */
+type OpenList = {
+  /** The bullet character, or an ordered list's delimiter. */
+  marker: string
+  ordered: boolean
+  /** The column of the marker. */
+  indent: number
+  /** The column the item's text starts at; a nested item is indented at least this far. */
+  content: number
+  itemOpen: boolean
+}
+
+function leadingSpaces(text: string): number {
+  let count = 0
+  while (text.charCodeAt(count) === 32) count += 1
+  return count
+}
 const FLOW_SPECIAL_CHARACTER = /[\n`*_[]/g
 const INLINE_CODE_SPECIAL_CHARACTER = /[\n`]/g
 const TABLE_DELIMITER_CELL = /^(:?)-+(:?)$/
@@ -161,7 +197,8 @@ export class LiveMarkdownParser {
   private operations: LiveMarkdownOperation[] = []
   private block: LiveMarkdownNode | undefined
   private inline: LiveMarkdownNode[] = []
-  private listOpen = false
+  /** Open lists, outermost first. */
+  private lists: OpenList[] = []
   private mode: 'flow' | 'fence-info' | 'code' | 'table-line' = 'flow'
   private atLineStart = true
   private prefix = ''
@@ -174,6 +211,13 @@ export class LiveMarkdownParser {
   private tableLine = ''
   /** A complete first table line, waiting for the delimiter row that confirms it. */
   private tableHeader: string | undefined
+  /**
+   * A confirmed header, waiting for its first row. Laid out alone, the
+   * columns fit the header's words, and the first row then reshaped every
+   * one of them; together they start where the table goes on.
+   */
+  private tableHead:
+    { characters: number; cells: string[]; align: Array<LiveMarkdownAlign | undefined> } | undefined
   private tableAlign: Array<LiveMarkdownAlign | undefined> = []
   private tableBodyOpen = false
   /** Set while a held line is replayed as prose, so it cannot start a table again. */
@@ -267,6 +311,7 @@ export class LiveMarkdownParser {
         Number(this.pendingStar) +
         this.tableLine.length +
         (this.tableHeader?.length ?? 0) +
+        (this.tableHead?.characters ?? 0) +
         heldLinkCharacters(this.link) +
         (this.task?.length ?? 0),
       bufferedSourceChunks: this.sourceChunks.length,
@@ -279,7 +324,7 @@ export class LiveMarkdownParser {
     this.sourceLength = 0
     this.block = undefined
     this.inline = []
-    this.listOpen = false
+    this.lists = []
     this.mode = 'flow'
     this.atLineStart = true
     this.prefix = ''
@@ -290,6 +335,7 @@ export class LiveMarkdownParser {
     this.completed = false
     this.tableLine = ''
     this.tableHeader = undefined
+    this.tableHead = undefined
     this.tableAlign = []
     this.tableBodyOpen = false
     this.tablesSuppressed = false
@@ -449,6 +495,11 @@ export class LiveMarkdownParser {
     if (this.prefix === '') {
       // A table ends at the first line that is not one of its rows.
       if (this.block === 'table' && character !== '|') this.closeBlock()
+      // A header whose next line is no row is a table of its own.
+      if (this.tableHead && character !== '|') {
+        this.openTable()
+        this.closeBlock()
+      }
       if (this.tableHeader !== undefined) {
         if (character !== '\n' && isTableDelimiterCharacter(character)) {
           this.mode = 'table-line'
@@ -464,8 +515,29 @@ export class LiveMarkdownParser {
       }
     }
     if (character === '\n') {
+      // A line that ends while it could still have become a list marker or a
+      // rule (`42`, `--`) is text, as in the finished renderer. Its markers
+      // stand alone on their line, so they open no emphasis: literal text.
+      const marker = this.prefix.slice(leadingSpaces(this.prefix))
+      if (
+        PENDING_TEXT_LINE.test(marker) ||
+        (this.block === 'paragraph' && EMPTY_ITEM_IN_PARAGRAPH.test(marker))
+      ) {
+        const buffered = this.prefix
+        this.finishPrefix()
+        const line = this.continueListItem() ? marker : buffered
+        this.write(line)
+        this.previous = line.at(-1) ?? this.previous
+        this.consume(character)
+        return
+      }
       this.flushPendingStar()
+      const rule = this.block === undefined && THEMATIC_BREAK.test(this.prefix)
       this.closeBlock()
+      if (rule) {
+        this.operations.push({ type: 'node.open', node: 'thematic-break' })
+        this.closeNode('thematic-break')
+      }
       this.prefix = ''
       return
     }
@@ -489,21 +561,42 @@ export class LiveMarkdownParser {
       this.finishPrefix()
       return
     }
-    if (this.prefix === '- ' || this.prefix === '* ') {
-      this.openListItem()
-      this.finishPrefix()
-      this.task = ''
-      return
-    }
     if (this.prefix === '> ') {
       this.openBlock('blockquote')
       this.finishPrefix()
       return
     }
-    if (this.prefix === '-' || this.prefix === '*' || this.prefix === '>') return
-    this.ensureParagraph()
+    if (this.prefix === '>') return
+    // List items may be indented: nested under an open item, or by up to
+    // three spaces at the top. Only spaces so far: wait for what follows.
+    const indent = leadingSpaces(this.prefix)
+    const listable = indent <= 3 || this.lists.length > 0
+    const marker = this.prefix.slice(indent)
+    if (marker === '' && listable) return
+    const item = listable ? LIST_MARKER.exec(marker) : null
+    // A numbered line interrupts a paragraph only when it starts a list at 1.
+    if (item && (item[1] || this.block !== 'paragraph' || item[2] === '1')) {
+      this.openListItem(
+        indent,
+        marker.length - 1,
+        item[1] ?? item[3]!,
+        item[1] ? undefined : Number(item[2]),
+      )
+      this.finishPrefix()
+      this.task = ''
+      return
+    }
+    if (listable && LIST_MARKER_PENDING.test(marker)) return
+    // A line of dashes, stars or underscores is a rule once it ends, unless
+    // it underlines a paragraph.
+    if (indent === 0 && this.block === undefined && THEMATIC_BREAK_PENDING.test(marker)) return
     const buffered = this.prefix
     this.finishPrefix()
+    if (this.continueListItem()) {
+      this.consumeInline(buffered.slice(indent))
+      return
+    }
+    this.ensureParagraph()
     this.consumeInline(buffered)
   }
 
@@ -511,7 +604,8 @@ export class LiveMarkdownParser {
    * A line that starts with a pipe stays hidden until it ends. The first such
    * line becomes a table header only once the delimiter row below it is
    * complete; until then neither line is shown, so a table never appears as
-   * raw pipes. Each later row renders whole when its line ends.
+   * raw pipes. The header waits for its first row (see tableHead); each later
+   * row renders whole when its line ends.
    */
   private consumeTableLine(character: string): void {
     if (character !== '\n') {
@@ -535,6 +629,11 @@ export class LiveMarkdownParser {
       this.emitTableRow(tableCells(line))
       return
     }
+    if (this.tableHead) {
+      this.openTable()
+      this.emitTableRow(tableCells(line))
+      return
+    }
     if (this.tableHeader === undefined) {
       this.tableHeader = line
       return
@@ -546,14 +645,25 @@ export class LiveMarkdownParser {
       this.consumeText(`${line}\n`)
       return
     }
+    this.tableHead = {
+      characters: this.tableHeader.length + line.length + 2,
+      cells: header,
+      align: alignment,
+    }
     this.tableHeader = undefined
     this.closeBlock()
+  }
+
+  private openTable(): void {
+    const head = this.tableHead
+    if (!head) return
+    this.tableHead = undefined
     this.operations.push({ type: 'node.open', node: 'table' })
     this.block = 'table'
-    this.tableAlign = alignment
+    this.tableAlign = head.align
     this.tableBodyOpen = false
     this.operations.push({ type: 'node.open', node: 'table-head' })
-    this.emitTableCells('table-header-cell', header)
+    this.emitTableCells('table-header-cell', head.cells)
     this.closeNode('table-head')
   }
 
@@ -564,6 +674,7 @@ export class LiveMarkdownParser {
     const held = this.tableLine
     this.tableLine = ''
     this.mode = 'flow'
+    if (this.tableHead) this.openTable()
     if (this.block === 'table') this.closeBlock()
     this.rejectTableHeader()
     this.replayAsProse(held)
@@ -773,7 +884,7 @@ export class LiveMarkdownParser {
   }
 
   private openBlock(node: LiveMarkdownNode, language?: string): void {
-    if (this.block || this.listOpen) this.closeBlock()
+    if (this.block || this.lists.length > 0) this.closeBlock()
     this.operations.push({
       type: 'node.open',
       node,
@@ -782,18 +893,69 @@ export class LiveMarkdownParser {
     this.block = node
   }
 
-  private openListItem(): void {
-    if (this.block) this.closeBlock()
-    if (!this.listOpen) {
-      this.operations.push({ type: 'node.open', node: 'list' })
-      this.listOpen = true
+  /**
+   * A list item whose marker (`width` characters before its space) is
+   * `indent` spaces in: an item of an open list at that depth, the first
+   * item of a list nested in the open item it is indented into, or the first
+   * item of a new list. `start` is an ordered item's number. A different
+   * bullet or delimiter starts a new list.
+   */
+  private openListItem(
+    indent: number,
+    width: number,
+    marker: string,
+    start: number | undefined,
+  ): void {
+    if (this.block) this.closeBlock(true)
+    while (this.lists.length > 0 && indent < this.lists.at(-1)!.indent) {
+      this.closeLists(this.lists.length - 1)
+    }
+    const ordered = start !== undefined
+    let list = this.lists.at(-1)
+    if (list && indent < list.content) {
+      if (list.itemOpen) this.closeNode('list-item')
+      list.itemOpen = false
+      if (list.marker !== marker || list.ordered !== ordered) {
+        this.closeLists(this.lists.length - 1)
+        list = undefined
+      }
+    } else list = undefined
+    if (!list) {
+      this.operations.push({
+        type: 'node.open',
+        node: ordered ? 'ordered-list' : 'list',
+        ...(ordered && start !== 1 ? { start } : {}),
+      })
+      list = { marker, ordered, indent, content: indent + width + 1, itemOpen: false }
+      this.lists.push(list)
     }
     this.operations.push({ type: 'node.open', node: 'list-item' })
+    // Nesting is measured from the open item's own marker.
+    list.indent = indent
+    list.content = indent + width + 1
+    list.itemOpen = true
     this.block = 'list-item'
   }
 
+  /** A text line right after a list item's line continues that item's text. */
+  private continueListItem(): boolean {
+    if (this.block || !this.lists.at(-1)?.itemOpen) return false
+    this.block = 'list-item'
+    this.write('\n')
+    return true
+  }
+
+  /** Closes the open lists deeper than `depth`, with their open items. */
+  private closeLists(depth: number): void {
+    while (this.lists.length > depth) {
+      const list = this.lists.pop()!
+      if (list.itemOpen) this.closeNode('list-item')
+      this.closeNode(list.ordered ? 'ordered-list' : 'list')
+    }
+  }
+
   private openCode(language: string): void {
-    if (this.block || this.listOpen) this.closeBlock()
+    if (this.block || this.lists.length > 0) this.closeBlock()
     this.operations.push({
       type: 'node.open',
       node: 'code-block',
@@ -802,6 +964,11 @@ export class LiveMarkdownParser {
     this.block = 'code-block'
   }
 
+  /**
+   * Ends the current block. A list item's line ends without closing the
+   * item, which stays open for a nested list or a continuation line; the
+   * lists end too unless `keepList` is set.
+   */
   private closeBlock(keepList = false): void {
     this.settleInline()
     this.flushPendingStar()
@@ -809,12 +976,9 @@ export class LiveMarkdownParser {
     this.sealLeaf()
     if (this.block === 'table' && this.tableBodyOpen) this.closeNode('table-body')
     this.tableBodyOpen = false
-    if (this.block) this.closeNode(this.block)
+    if (this.block && this.block !== 'list-item') this.closeNode(this.block)
     this.block = undefined
-    if (this.listOpen && !keepList) {
-      this.closeNode('list')
-      this.listOpen = false
-    }
+    if (!keepList) this.closeLists(0)
   }
 
   private toggleInline(node: 'strong' | 'emphasis' | 'inline-code', marker: string): void {

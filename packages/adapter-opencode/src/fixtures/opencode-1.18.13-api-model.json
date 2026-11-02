@@ -1,0 +1,532 @@
+{
+  "location": {
+    "directory": "C:\\repo",
+    "project": {
+      "id": "global",
+      "directory": "C:\\"
+    }
+  },
+  "data": [
+    {
+      "id": "ll-alpha-free",
+      "providerID": "opencode",
+      "name": "LL Alpha Free",
+      "variants": [],
+      "time": {
+        "released": 1792022400000
+      },
+      "status": "deprecated",
+      "enabled": true
+    },
+    {
+      "id": "nemotron-3.5-super-vl-free",
+      "providerID": "opencode",
+      "name": "Nemotron 3.5 Super VL Free",
+      "family": "nemotron-free",
+      "variants": [],
+      "time": {
+        "released": 1792022400000
+      },
+      "status": "active",
+      "enabled": true
+    },
+    {
+      "id": "cat-jam-free",
+      "providerID": "opencode",
+      "name": "Cat Jam Free",
+      "variants": [],
+      "time": {
+        "released": 1791763200000
+      },
+      "status": "deprecated",
+      "enabled": true
+    },
+    {
+      "id": "exo-free",
+      "providerID": "opencode",
+      "name": "Exo Free",
+      "variants": [],
+      "time": {
+        "released": 1791244800000
+      },
+      "status": "deprecated",
+      "enabled": true
+    },
+    {
+      "id": "beam-free",
+      "providerID": "opencode",
+      "name": "Beam Free",
+      "family": "beam",
+      "variants": [],
+      "time": {
+        "released": 1791158400000
+      },
+      "status": "active",
+      "enabled": true
+    },
+    {
+      "id": "fledge-alpha-free",
+      "providerID": "opencode",
+      "name": "Fledge Alpha Free",
+      "variants": [],
+      "time": {
+        "released": 1790812800000
+      },
+      "status": "deprecated",
+      "enabled": true
+    },
+    {
+      "id": "ling-3.1-flash-free",
+      "providerID": "opencode",
+      "name": "Ling 3.1 Flash Free",
+      "family": "ling",
+      "variants": [],
+      "time": {
+        "released": 1790640000000
+      },
+      "status": "deprecated",
+      "enabled": true
+    },
+    {
+      "id": "longcat-2.5-preview-free",
+      "providerID": "opencode",
+      "name": "LongCat 2.5 Preview Free",
+      "family": "longcat",
+      "variants": [],
+      "time": {
+        "released": 1790294400000
+      },
+      "status": "active",
+      "enabled": true
+    },
+    {
+      "id": "space-bunny-free",
+      "providerID": "opencode",
+      "name": "Space Bunny Free",
+      "variants": [],
+      "time": {
+        "released": 1790121600000
+      },
+      "status": "active",
+      "enabled": true
+    },
+    {
+      "id": "mimo-v2.6-flash-free",
+      "providerID": "opencode",
+      "name": "MiMo-V2.6-Flash Free",
+      "family": "mimo",
+      "variants": [],
+      "time": {
+        "released": 1790035200000
+      },
+      "status": "active",
+      "enabled": true
+    },
+    {
+      "id": "step-5-preview-free",
+      "providerID": "opencode",
+      "name": "Step 5 Preview Free",
+      "variants": [],
+      "time": {
+        "released": 1789516800000
+      },
+      "status": "deprecated",
+      "enabled": true
+    },
+    {
+      "id": "deepseek-v4.1-flash-free",
+      "providerID": "opencode",
+      "name": "DeepSeek V4.1 Flash Free",
+      "family": "deepseek-flash",
+      "variants": [],
+      "time": {
+        "released": 1788998400000
+      },
+      "status": "active",
+      "enabled": true
+    },
+    {
+      "id": "muse-spark-1.3-contributor-free",
+      "providerID": "opencode",
+      "name": "Muse Spark 1.3 Free",
+      "family": "muse-free",
+      "variants": [],
+      "time": {
+        "released": 1788307200000
+      },
+      "status": "deprecated",
+      "enabled": true
+    },
+    {
+      "id": "ling-3.0-flash-fin-free",
+      "providerID": "opencode",
+      "name": "Ling 3.0 Flash Fin Free",
+      "family": "ling",
+      "variants": [],
+      "time": {
+        "released": 1787788800000
+      },
+      "status": "deprecated",
+      "enabled": true
+    },
+    {
+      "id": "glm-5.3-flash-free",
+      "providerID": "opencode",
+      "name": "GLM-5.3-Flash Free",
+      "family": "glm-flash",
+      "variants": [],
+      "time": {
+        "released": 1787702400000
+      },
+      "status": "active",
+      "enabled": true
+    },
+    {
+      "id": "x-preview-f-free",
+      "providerID": "opencode",
+      "name": "Ox Alpha Free (Unlimited)",
+      "variants": [],
+      "time": {
+        "released": 1787270400000
+      },
+      "status": "deprecated",
+      "enabled": true
+    },
+    {
+      "id": "nemotron-3.5-lightning-free",
+      "providerID": "opencode",
+      "name": "Nemotron 3.5 Lightning Free",
+      "family": "nemotron-free",
+      "variants": [],
+      "time": {
+        "released": 1786406400000
+      },
+      "status": "active",
+      "enabled": true
+    },
+    {
+      "id": "ling-3.0-tiny-free",
+      "providerID": "opencode",
+      "name": "Ling-3.0-tiny Free",
+      "family": "ling",
+      "variants": [],
+      "time": {
+        "released": 1785974400000
+      },
+      "status": "deprecated",
+      "enabled": true
+    },
+    {
+      "id": "muse-spark-1.2-contributor-free",
+      "providerID": "opencode",
+      "name": "Muse Spark 1.2 Free",
+      "family": "muse-free",
+      "variants": [],
+      "time": {
+        "released": 1785888000000
+      },
+      "status": "deprecated",
+      "enabled": true
+    },
+    {
+      "id": "deepseek-v4-flash-free",
+      "providerID": "opencode",
+      "name": "DeepSeek V4 Flash Free",
+      "family": "deepseek-flash",
+      "variants": [],
+      "time": {
+        "released": 1785456000000
+      },
+      "status": "deprecated",
+      "enabled": true
+    },
+    {
+      "id": "ling-3.0-flash-free",
+      "providerID": "opencode",
+      "name": "Ling-3.0-flash Free",
+      "family": "ling",
+      "variants": [],
+      "time": {
+        "released": 1784764800000
+      },
+      "status": "deprecated",
+      "enabled": true
+    },
+    {
+      "id": "laguna-s-2.1-free",
+      "providerID": "opencode",
+      "name": "Laguna S 2.1 Free",
+      "family": "laguna",
+      "variants": [],
+      "time": {
+        "released": 1784592000000
+      },
+      "status": "deprecated",
+      "enabled": true
+    },
+    {
+      "id": "hy3-free",
+      "providerID": "opencode",
+      "name": "Hy3 Free",
+      "family": "hy3-free",
+      "variants": [],
+      "time": {
+        "released": 1783296000000
+      },
+      "status": "deprecated",
+      "enabled": true
+    },
+    {
+      "id": "longcat-2.0-free",
+      "providerID": "opencode",
+      "name": "LongCat-2.0 Free",
+      "family": "longcat",
+      "variants": [],
+      "time": {
+        "released": 1782777600000
+      },
+      "status": "deprecated",
+      "enabled": true
+    },
+    {
+      "id": "north-mini-code-free",
+      "providerID": "opencode",
+      "name": "North Mini Code Free",
+      "family": "north-free",
+      "variants": [],
+      "time": {
+        "released": 1780963200000
+      },
+      "status": "deprecated",
+      "enabled": true
+    },
+    {
+      "id": "nemotron-3-ultra-free",
+      "providerID": "opencode",
+      "name": "Nemotron 3 Ultra Free",
+      "family": "nemotron-free",
+      "variants": [],
+      "time": {
+        "released": 1780531200000
+      },
+      "status": "active",
+      "enabled": true
+    },
+    {
+      "id": "minimax-m3-free",
+      "providerID": "opencode",
+      "name": "MiniMax-M3 Free",
+      "family": "minimax-m3-free",
+      "variants": [],
+      "time": {
+        "released": 1780185600000
+      },
+      "status": "deprecated",
+      "enabled": true
+    },
+    {
+      "id": "ring-2.6-1t-free",
+      "providerID": "opencode",
+      "name": "Ring 2.6 1T Free",
+      "family": "ring-1t-free",
+      "variants": [],
+      "time": {
+        "released": 1778198400000
+      },
+      "status": "deprecated",
+      "enabled": true
+    },
+    {
+      "id": "mimo-v2.5-free",
+      "providerID": "opencode",
+      "name": "MiMo V2.5 Free",
+      "family": "mimo-v2.5-free",
+      "variants": [],
+      "time": {
+        "released": 1776988800000
+      },
+      "status": "deprecated",
+      "enabled": true
+    },
+    {
+      "id": "ling-2.6-flash-free",
+      "providerID": "opencode",
+      "name": "Ling 2.6 Flash Free",
+      "family": "ling-flash-free",
+      "variants": [],
+      "time": {
+        "released": 1776729600000
+      },
+      "status": "deprecated",
+      "enabled": true
+    },
+    {
+      "id": "hy3-preview-free",
+      "providerID": "opencode",
+      "name": "Hy3 preview Free",
+      "family": "hy3-free",
+      "variants": [],
+      "time": {
+        "released": 1776643200000
+      },
+      "status": "deprecated",
+      "enabled": true
+    },
+    {
+      "id": "qwen3.6-plus-free",
+      "providerID": "opencode",
+      "name": "Qwen3.6 Plus Free",
+      "family": "qwen-free",
+      "variants": [],
+      "time": {
+        "released": 1775088000000
+      },
+      "status": "deprecated",
+      "enabled": true
+    },
+    {
+      "id": "mimo-v2-pro-free",
+      "providerID": "opencode",
+      "name": "MiMo V2 Pro Free",
+      "family": "mimo-pro-free",
+      "variants": [],
+      "time": {
+        "released": 1773792000000
+      },
+      "status": "deprecated",
+      "enabled": true
+    },
+    {
+      "id": "mimo-v2-omni-free",
+      "providerID": "opencode",
+      "name": "MiMo V2 Omni Free",
+      "family": "mimo-omni-free",
+      "variants": [],
+      "time": {
+        "released": 1773792000000
+      },
+      "status": "deprecated",
+      "enabled": true
+    },
+    {
+      "id": "nemotron-3-super-free",
+      "providerID": "opencode",
+      "name": "Nemotron 3 Super Free",
+      "family": "nemotron-free",
+      "variants": [],
+      "time": {
+        "released": 1773187200000
+      },
+      "status": "deprecated",
+      "enabled": true
+    },
+    {
+      "id": "minimax-m2.5-free",
+      "providerID": "opencode",
+      "name": "MiniMax-M2.5 Free",
+      "family": "minimax-free",
+      "variants": [],
+      "time": {
+        "released": 1770854400000
+      },
+      "status": "deprecated",
+      "enabled": true
+    },
+    {
+      "id": "glm-5-free",
+      "providerID": "opencode",
+      "name": "GLM-5 Free",
+      "family": "glm-free",
+      "variants": [],
+      "time": {
+        "released": 1770768000000
+      },
+      "status": "deprecated",
+      "enabled": true
+    },
+    {
+      "id": "trinity-large-preview-free",
+      "providerID": "opencode",
+      "name": "Trinity Large Preview",
+      "family": "trinity",
+      "variants": [],
+      "time": {
+        "released": 1769472000000
+      },
+      "status": "deprecated",
+      "enabled": true
+    },
+    {
+      "id": "kimi-k2.5-free",
+      "providerID": "opencode",
+      "name": "Kimi K2.5 Free",
+      "family": "kimi-free",
+      "variants": [],
+      "time": {
+        "released": 1769472000000
+      },
+      "status": "deprecated",
+      "enabled": true
+    },
+    {
+      "id": "minimax-m2.1-free",
+      "providerID": "opencode",
+      "name": "MiniMax-M2.1 Free",
+      "family": "minimax-free",
+      "variants": [],
+      "time": {
+        "released": 1766448000000
+      },
+      "status": "deprecated",
+      "enabled": true
+    },
+    {
+      "id": "glm-4.7-free",
+      "providerID": "opencode",
+      "name": "GLM-4.7 Free",
+      "family": "glm-free",
+      "variants": [],
+      "time": {
+        "released": 1766361600000
+      },
+      "status": "deprecated",
+      "enabled": true
+    },
+    {
+      "id": "mimo-v2-flash-free",
+      "providerID": "opencode",
+      "name": "MiMo V2 Flash Free",
+      "family": "mimo-flash-free",
+      "variants": [],
+      "time": {
+        "released": 1765843200000
+      },
+      "status": "deprecated",
+      "enabled": true
+    },
+    {
+      "id": "big-pickle",
+      "providerID": "opencode",
+      "name": "Big Pickle",
+      "family": "big-pickle",
+      "variants": [],
+      "time": {
+        "released": 1760659200000
+      },
+      "status": "active",
+      "enabled": true
+    },
+    {
+      "id": "grok-code",
+      "providerID": "opencode",
+      "name": "Grok Code Fast 1",
+      "family": "grok",
+      "variants": [],
+      "time": {
+        "released": 1755648000000
+      },
+      "status": "deprecated",
+      "enabled": true
+    }
+  ]
+}

@@ -1,29 +1,55 @@
-import { timingSafeEqual } from 'node:crypto'
+import path from 'node:path'
+import { createHash, timingSafeEqual } from 'node:crypto'
 import { isIPv4 } from 'node:net'
-import { WebSocketServer, type WebSocket } from 'ws'
+import { WebSocketServer } from 'ws'
 import {
+  DEFAULT_ACCOUNT_ID,
   ErrorCode,
   methods,
   PROTOCOL_VERSION,
   type MethodName,
   type ProviderHistorySource,
   type ProviderId,
+  type ProviderStatus,
+  type ThreadSettings,
 } from '@harness/contracts'
 import { applyDesktopPath } from '@harness/proc/desktop-path'
+import { cliProbe, invalidateCliProbes } from './cli-probe.js'
+import { stopModelListings } from './runtime-loader.js'
 import { readWorkspaceDiff, StaleDiffSnapshotError } from './diff-review.js'
 import { Orchestrator, resolveWorkspacePath, type LifecycleScheduleHint } from './orchestrator.js'
+import { defaultSkillsRoot } from './default-skills.js'
 import { checkForUpdates } from './update-check.js'
+import type { FeedbackConfig } from './feedback-config.js'
+import { FeedbackService, providerVersionLabel } from './feedback.js'
 import { PushBus } from './push-bus.js'
 import { storeLocation } from './data-location.js'
 import { acquireDataLease } from './data-lease.js'
 import { PreviewCaptureCoordinator } from './preview-capture.js'
+import type { CheckoutPullRequests } from './checkout-pull-request.js'
 import type { PullRequestService } from './pull-requests.js'
+import { sourceAccount } from './account-directory.js'
+import { ProviderAccounts } from './provider-accounts.js'
+import { providerOffered } from './provider-edition.js'
 import { DEFAULT_PORT } from './server-config.js'
 import { Store } from './store.js'
 import { createProjectListProjector, type ProjectListState } from './project-list.js'
-import { imageFileName, materializeAttachment } from './uploaded-attachment.js'
+import { browseFolders } from './project-browser.js'
+import {
+  DEFAULT_PHONE_PORT,
+  PHONE_METHODS,
+  PhoneAccess,
+  phoneAccessAvailable,
+  type PhoneLinkSocket,
+} from './phone-access.js'
+import { readCredential, writeCredential } from './credentials.js'
+import type { PushSocket } from './push-bus.js'
+import { showsImage } from './markdown-images.js'
+import { imageFileName, materializeAttachment, readAttachmentImage } from './uploaded-attachment.js'
+import type { UsageHistoryService } from './usage-history.js'
 import { usageSummaryWithLimits } from './usage-summary.js'
 import { listWorkspaceBranches, readWorkspace } from './workspace.js'
+import { commitCheckout, pushCheckout } from './workspace-git.js'
 import {
   listWorkspaceDirectory,
   readWorkspaceTextFile,
@@ -35,9 +61,53 @@ import { createHistoryResponseProjector } from './history-response.js'
 import { InvalidHistoryCursorError } from './history-page.js'
 import { createSerializedResultCache, serializeSuccessResponse } from './response-serializer.js'
 import { ProviderHistory } from './provider-history.js'
+import { HistoryRefreshSchedule } from './history-refresh-schedule.js'
+import { STREAM_QUIET_BACKGROUND_WAIT_MS, StreamQuiet } from './stream-quiet.js'
 
 const SERVER_VERSION = '0.0.0'
 const DEFAULT_RENDERER_ORIGIN = 'http://127.0.0.1:5183'
+/** When no client has asked for its projects by then, background work starts anyway. */
+const BACKGROUND_WORK_DELAY_MS = 1_500
+/**
+ * Reads of provider state that may load an adapter or start a vendor CLI on
+ * first use. The desktop's Node (24) loads and compiles an imported module
+ * graph synchronously inside `import()`, so the first of these held the event
+ * loop for 0.2 to 0.6 s while the renderer's first batch was handled, and the
+ * store reads behind it in that batch (the project list among them) waited as
+ * long. They start one turn later, once the replies to the rest of their batch
+ * went out. None of them changes what a store read answers.
+ */
+const PROVIDER_READS: ReadonlySet<MethodName> = new Set<MethodName>([
+  'acp.agents',
+  'auth.status',
+  'commands.list',
+  'mcp.list',
+  'models.list',
+  'providers.list',
+  'providers.updates',
+  'skills.list',
+  'usage.history',
+  'usage.summary',
+  'voice.status',
+])
+/**
+ * Requests that change the project or chat list in a way no other push
+ * carries. Every client hears `projects.changed` after one succeeds, so a chat
+ * started on a phone shows up on the desktop and the other way round.
+ */
+const LIST_CHANGES: ReadonlySet<MethodName> = new Set<MethodName>([
+  'thread.start',
+  'thread.rename',
+  'thread.pin',
+  'thread.delete',
+  'thread.changeProvider',
+  'projects.add',
+  'projects.pin',
+  'projects.rename',
+  'projects.remove',
+])
+/** A connection the server answers: a renderer's WebSocket or a paired phone's link. */
+type ClientSocket = PushSocket
 export { DEFAULT_PORT } from './server-config.js'
 
 const startupStartedAt = Number(process.env['HARNESS_STARTUP_STARTED_AT'])
@@ -64,6 +134,8 @@ export function startServer(
     host?: string
     accessToken?: string | undefined
     rendererOrigin?: string
+    /** Resolved by the entry point, which also removes it from the environment. */
+    feedback?: FeedbackConfig
   } = {},
 ) {
   applyDesktopPath()
@@ -92,15 +164,25 @@ export function startServer(
     }
     throw error
   }
-  const push = new PushBus()
+  const push = new PushBus<ClientSocket>()
+  const accounts = new ProviderAccounts(store, {
+    root: path.join(path.dirname(databasePath), 'accounts'),
+    onChanged: (provider) => push.broadcast('accounts.changed', { provider }),
+  })
+
+  // Install, update and sign-in terminals can add, replace or update a CLI.
+  const setupTerminals = new Set<string>()
+  const setupTerminal = (terminalId: string) => {
+    setupTerminals.add(terminalId)
+    return terminalId
+  }
   const providerService = import('./providers.js')
   let updatesService: Promise<import('./provider-updates.js').ProviderUpdateService> | undefined
   const providerUpdates = () =>
     (updatesService ??= import('./provider-updates.js').then(
       ({ ProviderUpdateService }) => new ProviderUpdateService(),
     ))
-  void providerService.then(({ prewarmProviders }) => prewarmProviders()).catch(() => undefined)
-  const previewCapture = new PreviewCaptureCoordinator(
+  const previewCapture = new PreviewCaptureCoordinator<ClientSocket>(
     (socket, request) => push.send(socket, 'preview.captureRequested', request),
     35_000,
     (socket, requestId) => push.send(socket, 'preview.captureCancelled', { requestId }),
@@ -129,9 +211,60 @@ export function startServer(
     (pullRequests ??= import('./pull-requests.js').then(
       ({ PullRequestService }) => new PullRequestService(),
     ))
+  let checkoutPullRequests: Promise<CheckoutPullRequests> | undefined
+  const checkoutPullRequestService = () =>
+    (checkoutPullRequests ??= Promise.all([
+      pullRequestService(),
+      import('./checkout-pull-request.js'),
+    ]).then(
+      ([service, { CheckoutPullRequests }]) =>
+        new CheckoutPullRequests({ account: (refresh) => service.account(refresh) }),
+    ))
+  /** The checkout's pull request may have changed on GitHub. */
+  const checkoutChanged = (checkout: string) => {
+    void checkoutPullRequests?.then(
+      (service) => service.invalidateCheckout(checkout),
+      () => {},
+    )
+  }
+  /** A finished turn may have pushed or opened a pull request from its checkout. */
+  const turnEndedInCheckout = (threadId: string) => {
+    if (!checkoutPullRequests) return
+    const thread = store.thread(threadId)
+    if (!thread) return
+    checkoutChanged(resolveWorkspacePath(thread.worktreePath ?? thread.projectPath))
+  }
   let notifyLifecycleScheduleChanged: (hint?: LifecycleScheduleHint) => void = () => {}
+  let usageHistory: Promise<UsageHistoryService> | undefined
+  let usageHistoryClosing = false
+  const usageHistoryService = () =>
+    (usageHistory ??= import('./usage-history.js').then(({ UsageHistoryService }) => {
+      const service = new UsageHistoryService({
+        cacheFile: path.join(path.dirname(databasePath), 'usage-history.json'),
+        // Every other provider account keeps its history in its own folder.
+        accountHomes: () => {
+          const { accounts: listed } = accounts.list()
+          return listed.flatMap(({ provider, id, home }) =>
+            home === undefined || id === DEFAULT_ACCOUNT_ID
+              ? []
+              : [{ provider, accountId: id, home }],
+          )
+        },
+        harnessUsage: () => store.usageEvents(),
+      })
+      if (usageHistoryClosing) service.dispose()
+      else void service.startBackgroundRefresh()
+      return service
+    }))
+  const streamQuiet = new StreamQuiet()
+  cliProbe.waitBeforeReads(() => streamQuiet.whenQuiet(STREAM_QUIET_BACKGROUND_WAIT_MS))
   const orchestrator = new Orchestrator(store, {
     onEvent: (threadId, event, seq, serializedEvent) => {
+      if (event.type === 'item.delta') streamQuiet.noteDelta()
+      else if (event.type === 'turn.completed') {
+        turnEndedInCheckout(threadId)
+        if (orchestrator.awaitsProviderTitle(threadId)) void nameUnnamedChat(threadId)
+      }
       if (serializedEvent === undefined) {
         push.broadcast('thread.event', { threadId, event, seq })
       } else {
@@ -139,6 +272,7 @@ export function startServer(
       }
     },
     onSideEvent: (threadId, event, seq, serializedEvent) => {
+      if (event.type === 'item.delta') streamQuiet.noteDelta()
       if (serializedEvent === undefined) {
         push.broadcast('sideChat.event', { threadId, event, seq })
       } else {
@@ -147,21 +281,45 @@ export function startServer(
     },
     onQueue: (threadId, state) => push.broadcast('thread.queue', { threadId, ...state }),
     onLog: (line) => console.log(`[agent] ${line}`),
-    onLogin: (provider, result) => push.broadcast('auth.event', { provider, ...result }),
+    onLogin: (provider, result, accountId) => {
+      push.broadcast('auth.event', { provider, ...(accountId ? { accountId } : {}), ...result })
+      // Whoever just signed in is that account's identity from now on.
+      if (result.success && accounts.supports(provider)) {
+        void orchestrator
+          .account(provider, undefined, accountId)
+          .then((account) => accounts.recordIdentity(provider, accountId, account))
+          .catch(() => undefined)
+      }
+    },
     onMcpOAuth: (provider, projectPath, result) =>
       push.broadcast('mcp.oauth', { provider, projectPath, ...result }),
     onMcpChanged: (provider, projectPath) =>
       push.broadcast('mcp.changed', { provider, projectPath }),
     onSkillsChanged: (provider, projectPath) =>
       push.broadcast('skills.changed', { provider, projectPath }),
-    onUsageChanged: (provider) => push.broadcast('usage.changed', { provider }),
+    onCommandsChanged: (provider, projectPath) =>
+      push.broadcast('commands.changed', { provider, projectPath }),
+    onUsageChanged: (provider, accountId) =>
+      push.broadcast('usage.changed', accountId ? { provider, accountId } : { provider }),
+    onLimitsChanged: (source) => push.broadcast('usage.limits', { source }),
+    providerBinary: async (provider) => (await providerService).providerBinary(provider),
+    defaultSkillsRoot: defaultSkillsRoot(),
+    onModelsChanged: (provider, agent, accountId) =>
+      push.broadcast('models.changed', {
+        provider,
+        ...(agent === undefined ? {} : { agent }),
+        ...(accountId ? { accountId } : {}),
+      }),
     onLifecycle: (threadId, lifecycle) =>
       push.broadcast('thread.lifecycle', { threadId, lifecycle }),
     onLifecycleScheduleChanged: (hint) => notifyLifecycleScheduleChanged(hint),
     onTerminalOutput: (terminalId, data, outputOffset) =>
       push.broadcast('terminal.output', { terminalId, data, outputOffset }),
-    onTerminalExit: (terminalId, exitCode) =>
-      push.broadcast('terminal.exit', { terminalId, exitCode }),
+    onTerminalExit: (terminalId, exitCode) => {
+      // Before the exit reaches a client, which re-lists providers right away.
+      if (setupTerminals.delete(terminalId)) invalidateCliProbes()
+      push.broadcast('terminal.exit', { terminalId, exitCode })
+    },
     capturePreview: (url, viewports, signal) =>
       previewCapture.available
         ? previewCapture.capture(url, viewports, signal)
@@ -169,8 +327,30 @@ export function startServer(
     // A preview on the control port or the trusted renderer's port would pass
     // the Origin check whenever nothing else holds that port.
     reservedPreviewPorts: new Set([port, ...httpOriginPort(rendererOrigin)]),
+    beforeLimitRead: () => streamQuiet.whenQuiet(),
+    accounts,
   })
   reportStartupMilestone('server-orchestrator-ready')
+  let providerStatuses: readonly ProviderStatus[] = []
+  const feedback = new FeedbackService({
+    config: options.feedback,
+    ledger: {
+      read: () => store.feedbackLedger(),
+      write: (value) => store.setFeedbackLedger(value),
+    },
+    appVersion: process.env['HARNESS_APP_VERSION'],
+    knownPaths: (threadId) => {
+      const thread = threadId ? store.thread(threadId) : undefined
+      return [
+        ...store.projects().map((project) => project.path),
+        ...(thread?.worktreePath ? [thread.worktreePath] : []),
+      ]
+    },
+    providerLabel: (provider) => {
+      const status = providerStatuses.find((entry) => entry.id === provider)
+      return status ? providerVersionLabel(status.displayName, status.version) : undefined
+    },
+  })
   const checkpointProtection = orchestrator.protectStoredCheckpoints()
   const projectList = createProjectListProjector({
     includeDefaults: process.env['HARNESS_PROJECT_LIST_INCLUDE_DEFAULTS'] === '1',
@@ -214,42 +394,53 @@ export function startServer(
   ] satisfies Array<{ provider: ProviderId; load(): Promise<ProviderHistorySource> }>
   /** Why a source failed to load, keyed by the id prefix of the chats it imports. */
   const unavailableHistory = new Map<string, unknown>()
-  const providerHistory = Promise.allSettled(historySources.map(({ load }) => load())).then(
-    (results) =>
-      new ProviderHistory(
-        store,
-        historySources.flatMap(({ provider }, index) => {
-          const result = results[index]!
-          if (result.status === 'fulfilled') return [{ provider, history: result.value }]
-          unavailableHistory.set(`external:${provider}:`, result.reason)
-          console.log(`[history] ${provider} history could not be loaded`)
-          return []
-        }),
-        {
-          isBusy: (threadId) => orchestrator.isTurnRunning(threadId),
-          canImport: () => historySessionStarts === 0,
-          changed: (threadIds) => {
-            if (!historyClosing) {
-              lifecycleScheduler.changed()
-              push.broadcast('providerHistory.changed', { threadIds })
-            }
+  const loadHistoryService = () =>
+    Promise.allSettled(historySources.map(({ load }) => load())).then(
+      (results) =>
+        new ProviderHistory(
+          store,
+          historySources.flatMap(({ provider }, index) => {
+            const result = results[index]!
+            if (result.status === 'fulfilled') return [{ provider, history: result.value }]
+            unavailableHistory.set(`external:${provider}:`, result.reason)
+            console.log(`[history] ${provider} history could not be loaded`)
+            return []
+          }),
+          {
+            isBusy: (threadId) => orchestrator.isTurnRunning(threadId),
+            canImport: () => historySessionStarts === 0,
+            changed: (threadIds) => {
+              if (!historyClosing) {
+                lifecycleScheduler.changed()
+                push.broadcast('providerHistory.changed', { threadIds })
+              }
+            },
+            log: (message) => console.log(`[history] ${message}`),
           },
-          log: (message) => console.log(`[history] ${message}`),
-        },
-      ),
-  )
-  const refreshProviderHistory = () => {
-    if (!historyClosing)
-      void providerHistory.then((history) => history.refresh()).catch(() => undefined)
-  }
-  const providerHistoryTimer = setInterval(refreshProviderHistory, 15_000)
-  providerHistoryTimer.unref()
-  // Opening a task during startup must not replay an obsolete imported transcript
-  // before adapter revisions and ownership have been refreshed.
-  const initialProviderHistory = providerHistory.then(async (history) => {
-    await history.refresh()
-    return history
+        ),
+    )
+  /** Set once background work starts; see startBackgroundWork. */
+  let providerHistory: Promise<ProviderHistory> | undefined
+  /** The same service once it exists, for checks that must not wait for it. */
+  let providerHistoryReady: ProviderHistory | undefined
+  /**
+   * Chats this server run started. Their provider sessions began after the
+   * launch, so until a scan links one to its saved session there are no turns
+   * taken outside TasteCode to merge, and a turn need not wait for the scan.
+   */
+  const startedThisRun = new Set<string>()
+  const historySchedule = new HistoryRefreshSchedule(async () => {
+    if (historyClosing || !providerHistory) return false
+    // A timed refresh can read an index for hundreds of milliseconds; not mid-stream.
+    await streamQuiet.whenQuiet(STREAM_QUIET_BACKGROUND_WAIT_MS)
+    return historyClosing ? false : (await providerHistory).refresh()
   })
+  const refreshProviderHistory = () => {
+    // Before background work starts, its first scan will pick the change up.
+    if (historyClosing) return
+    historySchedule.activity()
+    void providerHistory?.then((history) => history.refresh()).catch(() => undefined)
+  }
   // That first scan reads every saved provider session and can take seconds
   // (about 10 s on a large ~/.claude). A native chat's transcript is already
   // in the store, so reading it does not wait: the import a read would have
@@ -257,30 +448,68 @@ export function startServer(
   // chat so open clients reload it.
   let initialProviderHistorySettled = false
   const importsAfterInitialScan = new Set<string>()
-  void initialProviderHistory
-    .then(async (history) => {
-      initialProviderHistorySettled = true
-      const changed: string[] = []
-      for (const threadId of importsAfterInitialScan) {
-        importsAfterInitialScan.delete(threadId)
-        try {
-          if (await history.load(threadId)) {
-            orchestrator.invalidateImportedHistory(threadId)
-            changed.push(threadId)
+
+  function startProviderHistory(): void {
+    const service = loadHistoryService()
+    providerHistory = service
+    // Opening a task during startup must not replay an obsolete imported transcript
+    // before adapter revisions and ownership have been refreshed.
+    const initial = service.then(async (history) => {
+      providerHistoryReady = history
+      await history.refresh()
+      return history
+    })
+    historySchedule.start()
+    void initial
+      .then(async (history) => {
+        initialProviderHistorySettled = true
+        const changed: string[] = []
+        for (const threadId of importsAfterInitialScan) {
+          importsAfterInitialScan.delete(threadId)
+          try {
+            if (await history.load(threadId)) {
+              orchestrator.invalidateImportedHistory(threadId)
+              changed.push(threadId)
+            }
+          } catch {
+            // The chat's next read or turn retries the import.
           }
-        } catch {
-          // The chat's next read or turn retries the import.
         }
-      }
-      if (changed.length && !historyClosing) {
-        lifecycleScheduler.changed()
-        push.broadcast('providerHistory.changed', { threadIds: changed })
-      }
-    })
-    .catch(() => {
-      initialProviderHistorySettled = true
-      importsAfterInitialScan.clear()
-    })
+        if (changed.length && !historyClosing) {
+          lifecycleScheduler.changed()
+          push.broadcast('providerHistory.changed', { threadIds: changed })
+        }
+      })
+      .catch(() => {
+        initialProviderHistorySettled = true
+        importsAfterInitialScan.clear()
+      })
+  }
+
+  // Background startup work starts CLIs for their versions, reads the Windows
+  // PATH from the registry, scans every saved provider session and recovers
+  // worktrees. Much of it holds the event loop for seconds (a Codex index read,
+  // version probes, adapter modules loading), and the renderer's first
+  // requests waited behind all of it. It now starts once the first client has
+  // its project list, or shortly after listening when no client comes.
+  let backgroundStarted = false
+  let backgroundTimer: ReturnType<typeof setTimeout> | undefined
+  wss.once('listening', () => {
+    if (backgroundStarted || historyClosing) return
+    backgroundTimer = setTimeout(startBackgroundWork, BACKGROUND_WORK_DELAY_MS)
+    backgroundTimer.unref()
+  })
+  function startBackgroundWork(): void {
+    if (backgroundStarted || historyClosing) return
+    backgroundStarted = true
+    clearTimeout(backgroundTimer)
+    void providerService.then(({ prewarmProviders }) => prewarmProviders()).catch(() => undefined)
+    startProviderHistory()
+    // A previous run killed mid-session leaves git believing in checkouts that
+    // are gone. Clearing that up at startup means the next session on that path
+    // starts instead of failing with a message about our own leftovers.
+    void orchestrator.recoverWorktrees().catch(() => undefined)
+  }
 
   /** Import outside changes before a history read, without holding a native chat on the first scan. */
   async function loadProviderHistoryForRead(threadId: string): Promise<void> {
@@ -292,9 +521,16 @@ export function startServer(
   }
 
   async function loadProviderHistory(threadId: string): Promise<void> {
+    // An imported chat or a turn needs the scan now, not after the start delay.
+    startBackgroundWork()
+    historySchedule.activity()
+    // A first scan of a large history took minutes, and a new chat's first
+    // message waited for it although it had nothing to merge.
+    if (startedThisRun.has(threadId) && !providerHistoryReady?.hasCopy(threadId)) return
     let history: ProviderHistory
     try {
-      history = await initialProviderHistory
+      if (!providerHistory) throw new Error('Provider history is closed')
+      history = await providerHistory
     } catch (error) {
       // Only an imported chat depends on the history service for its transcript.
       if (threadId.startsWith('external:')) throw error
@@ -303,12 +539,19 @@ export function startServer(
     for (const [prefix, reason] of unavailableHistory) {
       if (threadId.startsWith(prefix)) throw reason
     }
+    // Revisions and ownership must be fresh before a read or turn, but only for
+    // the chat's own provider: a turn waited for every provider's first scan,
+    // which took 30-180 s on a large Claude history.
+    const provider = historyProvider(threadId)
+    if (provider) await history.scanned(provider)
     if (await history.load(threadId)) orchestrator.invalidateImportedHistory(threadId)
   }
-  // A previous run killed mid-session leaves git believing in checkouts that
-  // are gone. Clearing that up at startup means the next session on that path
-  // starts instead of failing with a message about our own leftovers.
-  void orchestrator.recoverWorktrees().catch(() => undefined)
+
+  function historyProvider(threadId: string): ProviderId | undefined {
+    const imported = /^external:([^:]+):/.exec(threadId)?.[1]
+    if (imported === undefined) return store.thread(threadId)?.provider
+    return historySources.find(({ provider }) => provider === imported)?.provider
+  }
 
   wss.on('connection', (socket, request) => {
     // Rejected sockets remain live until their close handshake ends. Handle
@@ -322,10 +565,96 @@ export function startServer(
       socket.close(1008, 'Access denied')
       return
     }
-    acceptConnection(socket)
+    acceptConnection(socket, (message, closed) => {
+      socket.on('message', (raw) => message(raw.toString()))
+      socket.on('close', closed)
+      socket.on('error', closed)
+    })
   })
 
-  function acceptConnection(socket: WebSocket): void {
+  /** Phone links may call only `PHONE_METHODS`. */
+  const phoneLinks = new WeakSet<ClientSocket>()
+  // One identity per data folder: a second profile pairs its own phones.
+  const phoneKeyCredential = `phone-link.server-key.${createHash('sha256').update(databasePath).digest('hex').slice(0, 12)}`
+  const phoneAccess = new PhoneAccess({
+    available: phoneAccessAvailable(process.env),
+    store,
+    keys: {
+      read: () => {
+        try {
+          return readCredential(phoneKeyCredential)
+        } catch {
+          return undefined
+        }
+      },
+      write: (value) => writeCredential(phoneKeyCredential, value),
+    },
+    port: Number(process.env['HARNESS_PHONE_PORT'] ?? DEFAULT_PHONE_PORT),
+    onConnection: (link: PhoneLinkSocket) => {
+      phoneLinks.add(link)
+      acceptConnection(link, (message, closed) => {
+        link.onMessage(message)
+        link.onClose(closed)
+      })
+    },
+    onChanged: (status) => push.broadcast('phone.changed', status),
+  })
+  wss.once('listening', () => {
+    void phoneAccess.resume().catch(() => undefined)
+  })
+
+  let listChange: ReturnType<typeof setTimeout> | undefined
+  /** Coalesces a burst (a new chat is started, renamed and titled within moments). */
+  /**
+   * A chat left for its provider to name still has its stand-in title after a
+   * turn: history is read first, so a name the provider did write wins, and
+   * only then does the title model write one.
+   */
+  async function nameUnnamedChat(threadId: string): Promise<void> {
+    try {
+      if (providerHistory && !historyClosing) await (await providerHistory).refresh()
+      if (await orchestrator.nameUnnamedChat(threadId)) announceListChange()
+    } catch {
+      // The chat keeps its first-prompt title; renaming it settles that too.
+    }
+  }
+
+  function announceListChange(): void {
+    listChange ??= setTimeout(() => {
+      listChange = undefined
+      push.broadcast('projects.changed', {})
+    }, 50)
+  }
+
+  /** Tells every client a chat's setup, after any change to it. */
+  function announceSettings(threadId: string): ThreadSettings {
+    const settings = store.threadSettings(threadId)
+    push.broadcast('thread.settings', { threadId, settings })
+    // The project list names each chat's model, so lists filtered by it follow.
+    announceListChange()
+    return settings
+  }
+
+  /** Keeps the shared setup on what a turn actually ran with, announcing only a change. */
+  function adoptTurnSettings(
+    threadId: string,
+    turn: Pick<ThreadSettings, 'model' | 'effort' | 'serviceTier'>,
+  ): void {
+    const current = store.threadSettings(threadId)
+    if (
+      current.model === turn.model &&
+      current.effort === turn.effort &&
+      current.serviceTier === turn.serviceTier
+    )
+      return
+    store.setThreadSettings(threadId, turn)
+    announceSettings(threadId)
+  }
+
+  function acceptConnection(
+    socket: ClientSocket,
+    listen: (message: (raw: string) => void, closed: () => void) => void,
+  ): void {
     const welcome = {
       serverVersion: SERVER_VERSION,
       protocolVersion: PROTOCOL_VERSION,
@@ -334,20 +663,20 @@ export function startServer(
     push.add(socket)
     push.send(socket, 'server.welcome', welcome)
 
-    socket.on('message', (raw) =>
-      handleMessage(socket, raw.toString()).catch((error) =>
-        console.error(`[server] request handling failed: ${String(error)}`),
-      ),
-    )
     const removeSocket = () => {
       previewCapture.remove(socket)
       push.remove(socket)
     }
-    socket.on('close', removeSocket)
-    socket.on('error', removeSocket)
+    listen(
+      (raw) =>
+        void handleMessage(socket, raw).catch((error) =>
+          console.error(`[server] request handling failed: ${String(error)}`),
+        ),
+      removeSocket,
+    )
   }
 
-  async function handleMessage(socket: WebSocket, raw: string): Promise<void> {
+  async function handleMessage(socket: ClientSocket, raw: string): Promise<void> {
     let parsed: unknown
     try {
       parsed = JSON.parse(raw)
@@ -370,10 +699,17 @@ export function startServer(
       respondError(socket, id, ErrorCode.BAD_REQUEST, `unknown method: ${method}`)
       return
     }
+    if (phoneLinks.has(socket) && !PHONE_METHODS.has(method)) {
+      respondError(socket, id, ErrorCode.FORBIDDEN, `${method} is not available from a phone`)
+      return
+    }
+    // Store reads that arrived in the same batch answer first; see PROVIDER_READS.
+    if (PROVIDER_READS.has(method)) await new Promise<void>((resolve) => setImmediate(resolve))
     const createsSession = method === 'thread.start' || method === 'sideChat.start'
     if (createsSession) historySessionStarts += 1
     try {
       const result = await route(socket, method, params)
+      if (LIST_CHANGES.has(method) || titleApplied(method, result)) announceListChange()
       if (socket.readyState === socket.OPEN) {
         push.reply(socket, serializeSuccessResponse(id, result))
         if (method === 'projects.list') reportStartupMilestone('server-projects-sent')
@@ -381,6 +717,10 @@ export function startServer(
     } catch (error) {
       if (error instanceof InvalidParamsError) {
         respondError(socket, id, ErrorCode.BAD_REQUEST, error.message, error.detail)
+        return
+      }
+      if (error instanceof UnknownMethodError) {
+        respondError(socket, id, ErrorCode.BAD_REQUEST, error.message)
         return
       }
       if (error instanceof InvalidHistoryCursorError) {
@@ -395,10 +735,16 @@ export function startServer(
       )
     } finally {
       if (createsSession) historySessionStarts -= 1
+      // One turn of the event loop first, so the answer leaves before the work starts.
+      if (method === 'projects.list' && !backgroundStarted) setImmediate(startBackgroundWork)
     }
   }
 
-  async function route(socket: WebSocket, method: MethodName, params: unknown): Promise<unknown> {
+  async function route(
+    socket: ClientSocket,
+    method: MethodName,
+    params: unknown,
+  ): Promise<unknown> {
     switch (method) {
       case 'client.capabilities':
         previewCapture.setCapability(socket, parseParams(method, params).previewCapture)
@@ -421,6 +767,15 @@ export function startServer(
       case 'system.updateCheck':
         return checkForUpdates()
 
+      case 'feedback.status':
+        return feedback.status()
+
+      case 'feedback.preview':
+        return feedback.preview(parseParams(method, params))
+
+      case 'feedback.submit':
+        return feedback.submit(parseParams(method, params))
+
       case 'search.sessions':
         return store.searchSessions(parseParams(method, params))
 
@@ -437,10 +792,11 @@ export function startServer(
         const { githubSetupCommand } = await import('./pull-requests.js')
         const command = githubSetupCommand(p.action)
         return {
-          terminalId:
+          terminalId: setupTerminal(
             p.action === 'install'
               ? orchestrator.installProvider('github-cli', command, p.columns, p.rows)
               : orchestrator.launchProviderLogin('github-cli', command, p.columns, p.rows),
+          ),
         }
       }
 
@@ -472,14 +828,37 @@ export function startServer(
 
       case 'pullRequests.action': {
         const p = parseParams(method, params)
-        return (await pullRequestService()).action(p.repository, p.number, p.action)
+        try {
+          return await (await pullRequestService()).action(p.repository, p.number, p.action)
+        } finally {
+          // Even a failed action may have changed the pull request on GitHub.
+          void checkoutPullRequests?.then(
+            (service) => service.invalidateRepository(p.repository),
+            () => {},
+          )
+        }
+      }
+
+      case 'pullRequests.forCheckout': {
+        const p = parseParams(method, params)
+        const checkout = workspaceForRequest(store, p)
+        return (await checkoutPullRequestService()).forCheckout(checkout, p.refresh ?? false)
+      }
+
+      case 'pullRequests.create': {
+        const p = parseParams(method, params)
+        const checkout = workspaceForRequest(store, p)
+        return (await checkoutPullRequestService()).create(checkout, p)
       }
 
       case 'pullRequests.image':
         return (await pullRequestService()).images.image(parseParams(method, params).url)
 
-      case 'providers.list':
-        return { providers: await (await providerService).detectProviders() }
+      case 'providers.list': {
+        const providers = await (await providerService).detectProviders()
+        providerStatuses = providers
+        return { providers }
+      }
 
       case 'providers.contextSettings':
         return orchestrator.contextSettings()
@@ -488,6 +867,24 @@ export function startServer(
         const p = parseParams(method, params)
         return orchestrator.updateContextSettings(p.provider, p.settings)
       }
+
+      case 'providers.runtimeSettings':
+        parseParams(method, params)
+        return orchestrator.runtimeSettings()
+
+      case 'providers.updateRuntimeSettings': {
+        const p = parseParams(method, params)
+        return orchestrator.updateRuntimeSettings(p.provider, p.runtime)
+      }
+
+      case 'providers.accountContextSettings':
+        parseParams(method, params)
+        return { accounts: [...orchestrator.accountContextSettings()] }
+
+      case 'providers.updateAccountContextSettings':
+        return {
+          accounts: [...orchestrator.updateAccountContextSettings(parseParams(method, params))],
+        }
 
       case 'providers.updates':
         return {
@@ -498,11 +895,8 @@ export function startServer(
         const p = parseParams(method, params)
         const command = await (await providerUpdates()).commandFor(p.provider)
         return {
-          terminalId: orchestrator.installProvider(
-            `update:${p.provider}`,
-            command,
-            p.columns,
-            p.rows,
+          terminalId: setupTerminal(
+            orchestrator.installProvider(`update:${p.provider}`, command, p.columns, p.rows),
           ),
         }
       }
@@ -531,24 +925,42 @@ export function startServer(
       case 'providers.install': {
         const p = parseParams(method, params)
         const { installCommandFor } = await import('./providers.js')
-        const command = await installCommandFor(p.provider)
+        const command = await installCommandFor(p.provider, p.agent)
+        const target = p.agent ? `${p.provider}:${p.agent}` : p.provider
         return {
-          terminalId: orchestrator.installProvider(p.provider, command, p.columns, p.rows),
+          terminalId: setupTerminal(
+            orchestrator.installProvider(target, command, p.columns, p.rows),
+          ),
         }
       }
 
       case 'providers.launch': {
         const p = parseParams(method, params)
+        // The CLI signs in as the account in its folder; a custom harness has no other.
+        const accountId = sourceAccount(p.agent, p.accountId)
+        const environment = accounts.environment(p.provider, accountId)
         const { launchCommandFor } = await import('./providers.js')
-        const command = await launchCommandFor(p.provider)
+        const command = await launchCommandFor(p.provider, p.agent)
+        const target = p.agent ? `${p.provider}:${p.agent}` : p.provider
+        const account =
+          accountId === undefined || accountId === DEFAULT_ACCOUNT_ID
+            ? undefined
+            : { id: accountId, environment }
         return {
-          terminalId: orchestrator.launchProviderLogin(p.provider, command, p.columns, p.rows),
+          terminalId: setupTerminal(
+            orchestrator.launchProviderLogin(target, command, p.columns, p.rows, account),
+          ),
         }
       }
 
       case 'mcp.list': {
         const p = parseParams(method, params)
         return orchestrator.listMcpServers(p.provider, p.projectPath)
+      }
+
+      case 'commands.list': {
+        const p = parseParams(method, params)
+        return orchestrator.listCommands(p.provider, p.projectPath, p.threadId)
       }
 
       case 'mcp.add': {
@@ -611,28 +1023,78 @@ export function startServer(
 
       case 'auth.status': {
         const p = parseParams(method, params)
-        return orchestrator.account(p.provider, p.agent)
+        const account = await orchestrator.account(p.provider, p.agent, p.accountId)
+        // A custom harness may sign in as someone else; only the CLI's own check names the account.
+        if (p.agent === undefined) accounts.recordIdentity(p.provider, p.accountId, account)
+        return account
       }
 
       case 'auth.startLogin': {
         const p = parseParams(method, params)
-        return orchestrator.startLogin(p.provider)
+        return orchestrator.startLogin(p.provider, p.accountId)
       }
 
       case 'auth.cancelLogin': {
         const p = parseParams(method, params)
-        await orchestrator.cancelLogin(p.provider, p.loginId)
+        await orchestrator.cancelLogin(p.provider, p.loginId, p.accountId)
         return {}
       }
 
       case 'auth.useApiKey': {
         const p = parseParams(method, params)
-        return orchestrator.useApiKey(p.provider, p.apiKey)
+        const account = await orchestrator.useApiKey(p.provider, p.apiKey, p.accountId)
+        accounts.recordIdentity(p.provider, p.accountId, account)
+        return account
       }
 
       case 'auth.signOut': {
         const p = parseParams(method, params)
-        await orchestrator.signOut(p.provider, p.agent)
+        await orchestrator.signOut(p.provider, p.agent, p.accountId)
+        return {}
+      }
+
+      case 'accounts.list':
+        return accounts.list(parseParams(method, params).provider)
+
+      case 'accounts.detect':
+        parseParams(method, params)
+        return { found: accounts.detect() }
+
+      case 'accounts.create': {
+        const p = parseParams(method, params)
+        const account = accounts.create(p.provider, p.label, p.home)
+        // A folder the user brought may already hold a sign-in. Ask it once who
+        // that is, as after a sign-in, so the account does not read as signed
+        // out until someone signs in there again. A new folder holds none.
+        if (!account.managed) {
+          void orchestrator
+            .account(p.provider, undefined, account.id)
+            .then((read) => accounts.recordIdentity(p.provider, account.id, read))
+            .catch(() => undefined)
+        }
+        return { account }
+      }
+
+      case 'accounts.rename': {
+        const p = parseParams(method, params)
+        return { account: accounts.rename(p.provider, p.accountId, p.label) }
+      }
+
+      case 'accounts.remove': {
+        const p = parseParams(method, params)
+        // Refused before anything stops: the default account, a gone one, a brought folder to delete.
+        const removal = accounts.removal(p.provider, p.accountId, p.deleteHome ?? false)
+        // Refused while a chat on it works. Otherwise the account stops resolving
+        // first, so nothing new starts in its folder; then what runs as it stops
+        // (Windows would not let the folder go), and the folder is deleted last.
+        await orchestrator.releaseAccount(p.provider, p.accountId, removal.unregister)
+        await removal.deleteFolder()
+        return {}
+      }
+
+      case 'accounts.setActive': {
+        const p = parseParams(method, params)
+        accounts.setActive(p.provider, p.accountId)
         return {}
       }
 
@@ -656,6 +1118,25 @@ export function startServer(
         return readWorkspaceDiff(workspaceForRequest(store, p))
       }
 
+      case 'workspace.commit': {
+        const p = parseParams(method, params)
+        const checkout = workspaceForRequest(store, p)
+        return orchestrator.whileCheckoutIdle(checkout, () =>
+          commitCheckout(checkout, { message: p.message, includeUntracked: p.includeUntracked }),
+        )
+      }
+
+      case 'workspace.push': {
+        const p = parseParams(method, params)
+        const checkout = workspaceForRequest(store, p)
+        try {
+          return await pushCheckout(checkout)
+        } finally {
+          // New commits on a pull request's head restart its checks.
+          checkoutChanged(checkout)
+        }
+      }
+
       case 'workspace.listDirectory': {
         const p = parseParams(method, params)
         return listWorkspaceDirectory(workspaceForRequest(store, p), p.directory)
@@ -673,7 +1154,7 @@ export function startServer(
 
       case 'models.list': {
         const p = parseParams(method, params)
-        return { models: await orchestrator.listModels(p.provider, p.agent) }
+        return { models: await orchestrator.listModels(p.provider, p.agent, p.accountId) }
       }
 
       case 'backgroundModel.settings':
@@ -690,7 +1171,7 @@ export function startServer(
       case 'backgroundModel.generateCommitMessage': {
         const p = parseParams(method, params)
         const diff = await readWorkspaceDiff(workspaceForRequest(store, p))
-        return { message: await orchestrator.generateBackgroundCommitMessage(diff) }
+        return { message: await orchestrator.generateBackgroundCommitMessage(diff, p.threadId) }
       }
 
       case 'voice.status': {
@@ -707,8 +1188,31 @@ export function startServer(
         return {}
       }
 
+      case 'acp.agents': {
+        if (!providerOffered('acp')) return { agents: [] }
+        const { acpCanSignOut, detectAgents } = await import('@harness/adapter-acp/agents')
+        const agents = await detectAgents()
+        return {
+          agents: agents.map((agent) => {
+            const { id, name, installed, verified, install, setup, problem, maker } = agent
+            return {
+              id,
+              name,
+              installed,
+              verified,
+              setup,
+              signOut: acpCanSignOut(agent),
+              ...(!(install === undefined) ? { install } : {}),
+              ...(!(problem === undefined) ? { problem } : {}),
+              ...(!(maker === undefined) ? { maker } : {}),
+            }
+          }),
+        }
+      }
+
       case 'projects.list': {
         reportStartupMilestone('server-projects-requested')
+        historySchedule.activity()
         lifecycleScheduler.refreshIfDue()
         const projects = store.projects()
         const threads = store.sidebarThreads()
@@ -719,6 +1223,13 @@ export function startServer(
         const serialized = serializeProjectList(projected)
         reportStartupMilestone('server-projects-serialized')
         return serialized
+      }
+
+      case 'projects.browse': {
+        const p = parseParams(method, params)
+        return browseFolders(p.path, {
+          projects: new Set(store.projects().map((project) => project.path)),
+        })
       }
 
       case 'projects.add': {
@@ -809,6 +1320,28 @@ export function startServer(
         }
       }
 
+      case 'attachments.read': {
+        const p = parseParams(method, params)
+        // Only a picture this chat's messages attached, or one its replies
+        // show as a Markdown image (agents show screenshots that way); never
+        // any file by name.
+        await loadProviderHistoryForRead(p.threadId)
+        const history = await orchestrator.history(p.threadId)
+        const named = history.some(({ event }) => {
+          if (event.type !== 'item.started' && event.type !== 'item.completed') return false
+          const { item } = event
+          if (item.attachments?.includes(p.path)) return true
+          return (
+            event.type === 'item.completed' &&
+            item.type === 'message' &&
+            item.role === 'assistant' &&
+            showsImage(item.text ?? '', p.path)
+          )
+        })
+        if (!named) throw new Error('This chat has no such image.')
+        return readAttachmentImage(p.path)
+      }
+
       case 'thread.rename': {
         const p = parseParams(method, params)
         store.renameThread(p.threadId, p.title)
@@ -860,6 +1393,7 @@ export function startServer(
 
       case 'thread.history': {
         const p = parseParams(method, params)
+        historySchedule.activity()
         await loadProviderHistoryForRead(p.threadId)
         if (p.page) {
           const history = await orchestrator.historyPage(p.threadId, p.page)
@@ -926,6 +1460,9 @@ export function startServer(
         if ('threadId' in p && !thread) throw new Error('thread not found')
         const provider = thread?.provider ?? ('provider' in p ? p.provider : undefined)
         if (!provider) throw new Error('provider not found')
+        // A chat's limits are those of the account it runs as; otherwise the
+        // named account's, which the orchestrator refuses if it cannot run.
+        const accountId = thread ? thread.accountId : 'accountId' in p ? p.accountId : undefined
         const startOfToday = new Date()
         startOfToday.setHours(0, 0, 0, 0)
         const empty = {
@@ -935,18 +1472,40 @@ export function startServer(
           reasoningTokens: 0,
           totalTokens: 0,
         }
+        // A provider this build does not offer counts toward no day's total.
         const totals =
           'threadId' in p
-            ? store.usageSummary(p.threadId, startOfToday.getTime())
+            ? store.usageSummary(p.threadId, startOfToday.getTime(), providerOffered)
             : { session: empty, today: empty }
-        return usageSummaryWithLimits(totals, provider, (requestedProvider) =>
-          orchestrator.usageLimitSource(requestedProvider),
+        return usageSummaryWithLimits(
+          totals,
+          provider,
+          (requestedProvider) =>
+            orchestrator.usageLimitSource(requestedProvider, p.intent, accountId),
+          (requestedProvider) =>
+            orchestrator.heldLimitSource(requestedProvider, p.intent, accountId),
         )
       }
 
+      case 'usage.history': {
+        const p = parseParams(method, params)
+        // An account the provider cannot have, or one that is gone, is refused.
+        if (p.account) accounts.home(p.account.provider, p.account.accountId)
+        return (await usageHistoryService()).history(p.range, p.refresh ?? false, p.account)
+      }
+
+      case 'usage.resetHistory':
+        await (await usageHistoryService()).resetAndRefresh()
+        return { started: true as const }
+
       case 'usage.consumeReset': {
         const p = parseParams(method, params)
-        return orchestrator.consumeRateLimitReset(p.provider, p.idempotencyKey, p.creditId)
+        return orchestrator.consumeRateLimitReset(
+          p.provider,
+          p.idempotencyKey,
+          p.creditId,
+          p.accountId,
+        )
       }
 
       case 'sideChat.start': {
@@ -957,6 +1516,7 @@ export function startServer(
           effort: p.effort,
           approval: p.approval,
         })
+        startedThisRun.add(thread.id)
         return { threadId: thread.id }
       }
 
@@ -975,9 +1535,37 @@ export function startServer(
           effort: p.effort,
           approval: p.approval,
           agent: p.agent,
+          accountId: p.accountId,
+          continueFrom: p.continueFrom,
           isolate: p.isolate,
         })
-        return { threadId: thread.id }
+        startedThisRun.add(thread.id)
+        store.setThreadSettings(thread.id, p)
+        const earlierChanges = orchestrator.earlierChanges(thread.id)
+        return { threadId: thread.id, ...(earlierChanges ? { earlierChanges } : {}) }
+      }
+
+      case 'thread.changeProvider': {
+        const p = parseParams(method, params)
+        await orchestrator.changeProvider(p.threadId, {
+          provider: p.provider,
+          agent: p.agent,
+          accountId: p.accountId,
+          model: p.model,
+          serviceTier: p.serviceTier,
+          effort: p.effort,
+          approval: p.approval,
+        })
+        // The saved copy of the session the chat left stays its own; the new
+        // session's copy is linked by the next scan. That scan is scheduled,
+        // not run now: it reads every saved session, and the first turn on
+        // the new provider is about to start.
+        providerHistoryReady?.forget(p.threadId)
+        startedThisRun.add(p.threadId)
+        historySchedule.activity()
+        store.setThreadSettings(p.threadId, p)
+        announceSettings(p.threadId)
+        return {}
       }
 
       case 'thread.checkpoints': {
@@ -1029,9 +1617,10 @@ export function startServer(
 
       case 'thread.sendTurn': {
         const p = parseParams(method, params)
-        await loadProviderHistory(p.threadId)
-        return {
-          ...(await orchestrator.submitTurn(
+        // A Stop sent right behind the prompt waits for it, history read included.
+        const result = await orchestrator.trackSubmission(p.threadId, async () => {
+          await loadProviderHistory(p.threadId)
+          return orchestrator.submitTurn(
             p.threadId,
             p.text,
             p.attachments,
@@ -1041,8 +1630,11 @@ export function startServer(
               serviceTier: p.serviceTier,
             },
             p.clientSubmissionId,
-          )),
-        }
+          )
+        })
+        // A client that names its model sent with that setup; the others follow it.
+        if (p.model !== undefined) adoptTurnSettings(p.threadId, p)
+        return result
       }
 
       case 'thread.queue': {
@@ -1089,7 +1681,46 @@ export function startServer(
       case 'thread.setApproval': {
         const p = parseParams(method, params)
         await orchestrator.setThreadApproval(p.threadId, p.approval)
+        announceSettings(p.threadId)
         return {}
+      }
+
+      case 'models.hidden':
+        return { keys: store.hiddenModels() }
+
+      case 'models.setHidden': {
+        const p = parseParams(method, params)
+        const keys = [...new Set(p.keys)].sort()
+        if (JSON.stringify(keys) !== JSON.stringify(store.hiddenModels())) {
+          store.setHiddenModels(keys)
+          push.broadcast('models.hidden', { keys })
+        }
+        return {}
+      }
+
+      case 'providers.roster':
+        return { keys: store.providerRoster() }
+
+      case 'providers.setRoster': {
+        const p = parseParams(method, params)
+        const keys = [...new Set(p.keys)]
+        if (JSON.stringify(keys) !== JSON.stringify(store.providerRoster())) {
+          store.setProviderRoster(keys)
+          push.broadcast('providers.roster', { keys })
+        }
+        return {}
+      }
+
+      case 'thread.settings': {
+        const p = parseParams(method, params)
+        return store.threadSettings(p.threadId)
+      }
+
+      case 'thread.setSettings': {
+        const p = parseParams(method, params)
+        if (!store.thread(p.threadId)) throw new Error(`Unknown chat: ${p.threadId}`)
+        store.setThreadSettings(p.threadId, p)
+        return announceSettings(p.threadId)
       }
 
       case 'thread.close': {
@@ -1101,6 +1732,21 @@ export function startServer(
       case 'sidebar.settings':
         return store.sidebarSettings()
 
+      case 'phone.status':
+        return phoneAccess.status()
+
+      case 'phone.setEnabled':
+        return phoneAccess.setEnabled(parseParams(method, params).enabled)
+
+      case 'phone.startPairing':
+        return phoneAccess.startPairing()
+
+      case 'phone.cancelPairing':
+        return phoneAccess.cancelPairing()
+
+      case 'phone.removeDevice':
+        return phoneAccess.removeDevice(parseParams(method, params).deviceId)
+
       case 'sidebar.updateSettings': {
         const update = parseParams(method, params)
         const settings = store.updateSidebarSettings({
@@ -1111,11 +1757,17 @@ export function startServer(
         lifecycleScheduler.refreshNow()
         return settings
       }
+
+      default:
+        // The contract can declare a method before this server routes it (a
+        // newer client, or a contract that landed ahead of its handler). Say
+        // so instead of replying with an empty result the client would trust.
+        throw new UnknownMethodError(method)
     }
   }
 
   function respondError(
-    socket: WebSocket,
+    socket: ClientSocket,
     id: string,
     code: string,
     message: string,
@@ -1137,16 +1789,23 @@ export function startServer(
     port,
     close: async () => {
       historyClosing = true
-      clearInterval(providerHistoryTimer)
+      clearTimeout(backgroundTimer)
+      historySchedule.stop()
+      cliProbe.waitBeforeReads(undefined)
       // Terminal jobs get a fixed shutdown budget; waiting on provider history
       // first would spend it. disposeAll below waits for the same close.
       void orchestrator.closeAllTerminals().catch(() => undefined)
-      await providerHistory.then((history) => history.close()).catch(() => undefined)
+      await providerHistory?.then((history) => history.close()).catch(() => undefined)
       lifecycleScheduler.dispose()
+      usageHistoryClosing = true
+      await usageHistory?.then((service) => service.dispose()).catch(() => undefined)
       const orchestratorClosed = orchestrator.disposeAll()
+      clearTimeout(listChange)
+      await phoneAccess.close().catch(() => undefined)
       for (const socket of wss.clients) socket.terminate()
       const results = await Promise.allSettled([
         orchestratorClosed,
+        stopModelListings(),
         checkpointProtection,
         new Promise<void>((resolve) => wss.close(() => resolve())),
       ])
@@ -1161,6 +1820,16 @@ export function startServer(
       if (errors.length > 0) throw new AggregateError(errors, 'server shutdown failed')
     },
   }
+}
+
+function titleApplied(method: MethodName, result: unknown): boolean {
+  return (
+    method === 'backgroundModel.generateTitle' &&
+    typeof result === 'object' &&
+    result !== null &&
+    'applied' in result &&
+    result.applied === true
+  )
 }
 
 /**
@@ -1239,6 +1908,13 @@ class InvalidParamsError extends Error {
     readonly detail?: string,
   ) {
     super(`invalid params for ${method}`)
+  }
+}
+
+/** A declared method that `route` has no case for yet. */
+class UnknownMethodError extends Error {
+  constructor(method: string) {
+    super(`unknown method: ${method}`)
   }
 }
 

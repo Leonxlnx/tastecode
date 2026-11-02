@@ -1,9 +1,13 @@
 import { chmodSync, mkdirSync, readFileSync, statSync, symlinkSync } from 'node:fs'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { materializeAttachment, MAX_ATTACHMENT_BYTES } from './uploaded-attachment.js'
+import {
+  materializeAttachment,
+  MAX_ATTACHMENT_BYTES,
+  readAttachmentImage,
+} from './uploaded-attachment.js'
 
 const directories: string[] = []
 
@@ -88,3 +92,22 @@ async function temporaryDirectory(): Promise<string> {
   directories.push(directory)
   return directory
 }
+
+describe('reading an attached image', () => {
+  it('returns an image with its type and refuses anything else', async () => {
+    const directory = await temporaryDirectory()
+    const image = path.join(directory, 'Shot.PNG')
+    await writeFile(image, 'png')
+    await expect(readAttachmentImage(image)).resolves.toEqual({
+      mimeType: 'image/png',
+      data: Buffer.from('png').toString('base64'),
+    })
+    const text = path.join(directory, 'notes.txt')
+    await writeFile(text, 'secret')
+    await expect(readAttachmentImage(text)).rejects.toThrow('only images')
+    mkdirSync(path.join(directory, 'folder.png'))
+    await expect(readAttachmentImage(path.join(directory, 'folder.png'))).rejects.toThrow(
+      'not a file',
+    )
+  })
+})

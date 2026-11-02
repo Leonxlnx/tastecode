@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events'
-import { readFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, statSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import type {
@@ -7,10 +8,13 @@ import type {
   ApprovalMode,
   Capabilities,
   DomainEvent,
+  Model,
+  ProviderCommand,
   ProviderId,
   Thread,
 } from '@harness/contracts'
 import {
+  JsonRpcError,
   spawnCli,
   StdioJsonRpc,
   type JsonRpcRequestOptions,
@@ -18,9 +22,13 @@ import {
   type ParsedJsonRpcRequestOptions,
   type ServerRequestHandler,
 } from '@harness/proc'
+import { discoverAgentModels, findAgentSpec, type AcpAgentSpec } from './agents.js'
 import { optionFor, type PermissionOption } from './approvals.js'
+import { ACP_CAPABILITIES } from './capabilities.js'
+import { mapAcpCommands, startsWithAcpCommand } from './commands.js'
 import { Streamer } from './events.js'
 import type { AcpMcpServer } from './mcp.js'
+import { modelConfigOption, sessionModels } from './session-models.js'
 import { acpSessionUsage, acpTurnUsage } from './usage.js'
 import {
   PROTOCOL_VERSION,
@@ -38,9 +46,8 @@ import {
 /**
  * Client for the Agent Client Protocol.
  *
- * On main this is not a provider: Grok runs over it when a project has MCP
- * servers, because Grok's ACP mode accepts MCP servers per session. The ACP
- * agent roster (Gemini, Kimi, Qwen) lives on the nightly branch only.
+ * The registered agents and Grok's MCP mode share this client. Agent-specific
+ * launch commands and model discovery stay in the registry in agents.ts.
  *
  * Verified against gemini-cli in `--experimental-acp` mode; the fixtures in
  * the tests are those captured frames.
@@ -53,6 +60,8 @@ export type AcpAdapterEvents = {
   event: [DomainEvent]
   log: [string]
   disconnected: []
+  /** The agent advertised a different command list; read it with `listCommands()`. */
+  commandsChanged: []
 }
 
 export type AcpStartOptions = {
@@ -79,11 +88,18 @@ export type AcpLaunchOptions = {
   /** The settings `argsFor` launches with first. */
   settings?: AcpTurnSettings
   spawn?: typeof spawnCli
-  provider: ProviderId
+  provider?: ProviderId
   mcpServers?: AcpMcpServer[]
   /** Added to the inherited environment, for engines tuned through it. */
   env?: Record<string, string> | undefined
 }
+
+/**
+ * TasteCode-managed MCP servers for an agent that advertises its transports.
+ * Stdio servers always go; http servers only when the agent's initialize
+ * answer says it accepts them, as ACP requires.
+ */
+export type AcpManagedMcp = { servers: AcpMcpServer[] }
 
 export interface AcpRpc {
   onStderr(handler: (text: string) => void): void
@@ -103,18 +119,64 @@ export interface AcpRpc {
   dispose(): void | Promise<void>
 }
 
-type AcpLaunchSpec = {
-  id: string
-  name: string
-  /** Executable, resolved on PATH. May be an npm shim on Windows. */
-  command: string
-  args: string[]
-  /** Wire version captured while verifying this agent. */
-  supportedVersion?: string
-  /** CLI flag used to select a model before the ACP handshake. */
-  modelArg?: string
-  /** ACP config option used to select a model after creating a session. */
-  modelConfigId?: string
+type AcpLaunchSpec = Pick<
+  AcpAgentSpec,
+  | 'id'
+  | 'name'
+  | 'command'
+  | 'args'
+  | 'supportedVersion'
+  | 'modelArg'
+  | 'modelConfigId'
+  | 'loginArgs'
+  | 'sessionModels'
+>
+
+/** What a session started without a prompt says about the agent. */
+export type AcpSessionProbe = { signedIn: boolean; models: Model[] }
+
+/** Longest wait for an agent to start and open a probe session. */
+const PROBE_TIMEOUT_MS = 30_000
+/**
+ * How long a signed-in probe answers the next sign-in check or model list,
+ * which the app asks for together. A signed-out answer is never reused, so a
+ * sign-in just finished in the agent's terminal shows at the next check.
+ */
+const PROBE_REUSE_MS = 30_000
+const probes = new Map<
+  string,
+  { running: Promise<AcpSessionProbe> } | { at: number; value: AcpSessionProbe }
+>()
+
+/**
+ * Start a session without a prompt and close the agent again: the session
+ * names the models, and an agent that is not signed in refuses it. Runs in a
+ * folder of its own, so no project collects these sessions.
+ */
+export function probeAgentSession(agentId: string): Promise<AcpSessionProbe> {
+  const known = probes.get(agentId)
+  if (known && 'running' in known) return known.running
+  if (known && Date.now() - known.at < PROBE_REUSE_MS) return Promise.resolve(known.value)
+  const running = new AcpAdapter(agentId).probeSession()
+  const entry = { running }
+  probes.set(agentId, entry)
+  void running.then(
+    (value) => {
+      if (probes.get(agentId) !== entry) return
+      if (value.signedIn) probes.set(agentId, { at: Date.now(), value })
+      else probes.delete(agentId)
+    },
+    () => {
+      if (probes.get(agentId) === entry) probes.delete(agentId)
+    },
+  )
+  return running
+}
+
+/** ACP's `auth_required` error, or an older agent that only says so in words. */
+function isAuthRequired(cause: unknown): boolean {
+  if (cause instanceof JsonRpcError && cause.code === -32000) return true
+  return /auth/i.test(cause instanceof Error ? cause.message : String(cause))
 }
 
 const IMAGE_MIME_TYPES = new Map([
@@ -125,22 +187,37 @@ const IMAGE_MIME_TYPES = new Map([
   ['.webp', 'image/webp'],
 ])
 
+/** A prompt block: ACP's resource link also carries a name and size. */
+export type AcpPromptBlock = ContentBlock & { name?: string; size?: number }
+
+/**
+ * Builds a session/prompt body. Images go as pixels when the agent negotiated
+ * image prompts; otherwise, and for every other file, as resource links,
+ * which ACP requires every agent to accept ("Baseline agent functionality
+ * requires support for ContentBlock::Text and ContentBlock::ResourceLink").
+ */
 export function acpPromptContent(
   text: string,
   attachments: string[] = [],
   images = false,
-): ContentBlock[] {
-  if (attachments.length > 0 && !images) throw new Error('ACP agent does not support images')
+): AcpPromptBlock[] {
   return [
     { type: 'text', text },
-    ...attachments.map((file) => {
+    ...attachments.map((file): AcpPromptBlock => {
       const mimeType = IMAGE_MIME_TYPES.get(path.extname(file).toLowerCase())
-      if (!mimeType) throw new Error(`ACP image type is not supported: ${path.extname(file)}`)
+      const uri = pathToFileURL(file).href
+      if (images && mimeType) {
+        return { type: 'image', data: readFileSync(file).toString('base64'), mimeType, uri }
+      }
+      // Stat it now so a vanished file fails before the turn opens, as an
+      // image read would.
+      const { size } = statSync(file)
       return {
-        type: 'image',
-        data: readFileSync(file).toString('base64'),
-        mimeType,
-        uri: pathToFileURL(file).href,
+        type: 'resource_link',
+        name: path.basename(file),
+        uri,
+        size,
+        ...(mimeType ? { mimeType } : {}),
       }
     }),
   ]
@@ -152,6 +229,7 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
   readonly #spawn: typeof spawnCli
   readonly #provider: ProviderId
   readonly #mcpServers: AcpMcpServer[]
+  readonly #managedMcp: AcpMcpServer[]
   readonly #env: Record<string, string> | undefined
   readonly #argsFor: ((settings: AcpTurnSettings) => string[]) | undefined
   #settings: AcpTurnSettings
@@ -161,6 +239,8 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
   #sessionId: string | undefined
   #workspacePath = ''
   #model: string | undefined
+  /** The session's model select, read from the session itself where it names one. */
+  #modelConfigId: string | undefined
   #streamer: Streamer | undefined
   #activeTurn: { threadId: string; turnId: string } | undefined
   #turnCounter = 0
@@ -179,21 +259,31 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
   #pendingApprovals = new Map<string, (result: JsonRpcValue) => void>()
   /** The options the agent offered, kept until the user answers. */
   #optionsById = new Map<string, PermissionOption[]>()
+  /** The agent's last advertised commands; it sends them right after session/new. */
+  #commands: ProviderCommand[] = []
+  #commandsKey = '[]'
 
-  constructor(agentId: string, launch: AcpLaunchOptions) {
+  constructor(agentId: string, launch?: AcpLaunchOptions, managedMcp?: AcpManagedMcp) {
     super()
-    this.#spawn = launch.spawn ?? spawnCli
-    this.#provider = launch.provider
-    this.#mcpServers = launch.mcpServers ?? []
-    this.#env = launch.env
-    this.#argsFor = launch.argsFor
-    this.#settings = { ...launch.settings }
-    this.#spec = {
-      id: agentId,
-      name: launch.name,
-      command: launch.command,
-      args: launch.args ?? [],
+    this.#managedMcp = managedMcp?.servers ?? []
+    this.#spawn = launch?.spawn ?? spawnCli
+    this.#provider = launch?.provider ?? 'acp'
+    this.#mcpServers = launch?.mcpServers ?? []
+    this.#env = launch?.env
+    this.#argsFor = launch?.argsFor
+    this.#settings = { ...launch?.settings }
+    if (launch) {
+      this.#spec = {
+        id: agentId,
+        name: launch.name,
+        command: launch.command,
+        args: launch.args ?? [],
+      }
+      return
     }
+    const spec = findAgentSpec(agentId)
+    if (!spec) throw new Error(`unknown ACP agent "${agentId}"`)
+    this.#spec = spec
   }
 
   /** Whether the connected agent can reload this session after its process ends. */
@@ -202,16 +292,7 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
   }
 
   get capabilities(): Capabilities {
-    return {
-      // ACP has no steer or fork. It does have cancellation and thinking, and
-      // permission requests are core to it rather than optional.
-      steer: false,
-      fork: false,
-      interrupt: true,
-      reasoningItems: true,
-      approvals: true,
-      images: this.#images,
-    }
+    return { ...ACP_CAPABILITIES, images: this.#images, imageFiles: true }
   }
 
   async startThread(workspacePath: string, options: AcpStartOptions = {}): Promise<Thread> {
@@ -226,7 +307,7 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
         'session/new',
         {
           cwd: workspacePath,
-          mcpServers: this.#mcpServers,
+          mcpServers: this.#sessionMcpServers(),
         },
         { result: NewSessionResultSchema },
       )
@@ -234,17 +315,18 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
         // Agents report an expired or missing login as a bare protocol error.
         // Passing that through gives the user two words and no way forward, so
         // it becomes the one instruction that actually fixes it.
-        const message = cause instanceof Error ? cause.message : String(cause)
-        if (/auth/i.test(message)) {
+        if (isAuthRequired(cause)) {
+          const login = [this.#spec.command, ...(this.#spec.loginArgs ?? [])].join(' ')
           throw new Error(
-            `${this.#spec.name} is not signed in. Run \`${this.#spec.command}\` once in a ` +
-              `terminal and sign in there — we deliberately never handle its credentials.`,
+            `${this.#spec.name} is not signed in. Sign in under Settings › Providers, or run ` +
+              `\`${login}\` in a terminal — we deliberately never handle its credentials.`,
           )
         }
         throw cause
       })
     if (!session.sessionId) throw new Error(`${this.#spec.name} started no session`)
     this.#sessionId = session.sessionId
+    this.#modelConfigId = modelConfigOption(session)?.id ?? this.#spec.modelConfigId
     await this.#selectSessionModel(options.model)
 
     return {
@@ -270,12 +352,16 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
       await this.dispose()
       throw new Error(`${this.#spec.name} does not support session resume`)
     }
-    await rpc.request('session/load', {
+    const loaded = await rpc.request('session/load', {
       sessionId,
       cwd: workspacePath,
-      mcpServers: this.#mcpServers,
+      mcpServers: this.#sessionMcpServers(),
     })
     this.#sessionId = sessionId
+    const reloaded = NewSessionResultSchema.safeParse(loaded ?? {})
+    this.#modelConfigId =
+      (reloaded.success ? modelConfigOption(reloaded.data)?.id : undefined) ??
+      this.#spec.modelConfigId
     await this.#selectSessionModel(options.model)
     return {
       id: `acp-${this.#spec.id}-${sessionId}`,
@@ -297,10 +383,14 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     const rpc = this.#rpc
     if (!rpc || !this.#sessionId) throw new Error('session not started')
 
-    const prompt =
-      this.#instructionsPending && this.#instructions
-        ? `<system-instructions>\n${this.#instructions}\n</system-instructions>\n\n${text}`
-        : text
+    // An agent runs a slash command only when the prompt starts with it, so a
+    // command goes alone and the instructions wait for the next prompt.
+    const withInstructions = Boolean(
+      this.#instructionsPending && this.#instructions && !startsWithAcpCommand(text),
+    )
+    const prompt = withInstructions
+      ? `<system-instructions>\n${this.#instructions}\n</system-instructions>\n\n${text}`
+      : text
     // Read and validate attachments before opening the turn. A preparation
     // error must reject sendTurn without leaving a started turn orphaned.
     const promptContent = acpPromptContent(prompt, attachments, this.#images)
@@ -320,7 +410,7 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
 
     // Deliberately not awaited inline: updates stream in while this is pending,
     // and the caller needs the turn id now to route them.
-    this.#instructionsPending = false
+    if (withInstructions) this.#instructionsPending = false
     void rpc
       .request(
         'session/prompt',
@@ -333,7 +423,7 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
       .then((result) => this.#finishTurn(threadId, turnId, result, streamer))
       .catch((cause) => {
         if (this.#streamer !== streamer) return
-        this.#clearTurn()
+        this.#clearTurn('failed')
         this.emit('event', {
           type: 'thread.error',
           threadId,
@@ -384,24 +474,59 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     return () => this.off('disconnected', listener)
   }
 
-  #clearTurn(): void {
-    const streamer = this.#streamer
-    this.#streamer = undefined
-    this.#activeTurn = undefined
-    for (const event of streamer?.finish() ?? []) this.emit('event', event)
-    this.#cancelPendingApprovals()
+  async listModels(): Promise<Model[]> {
+    if (!this.#spec.sessionModels) return discoverAgentModels(this.#spec.id)
+    // Not signed in: no models yet. Signing in invalidates the list.
+    return (await probeAgentSession(this.#spec.id)).models
   }
 
-  #cancelPendingApprovals(): void {
-    // Anything still waiting is now unanswerable. The agent is still blocked on
-    // its request, so it must hear "cancelled", not silence; the UI must hear
-    // "resolved".
-    for (const [id, respond] of this.#pendingApprovals) {
-      respond({ outcome: { outcome: 'cancelled' } })
-      this.emit('event', { type: 'approval.resolved', id })
+  /** One session without a prompt, then the agent is closed; see `probeAgentSession`. */
+  async probeSession(): Promise<AcpSessionProbe> {
+    const folder = path.join(tmpdir(), 'tastecode-acp-probe')
+    mkdirSync(folder, { recursive: true })
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const deadline = new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () => reject(new Error(`${this.#spec.name} did not open a session in time`)),
+        PROBE_TIMEOUT_MS,
+      )
+    })
+    const probe = async (): Promise<AcpSessionProbe> => {
+      const rpc = await this.#connect(folder, undefined)
+      try {
+        const session = await rpc.request(
+          'session/new',
+          { cwd: folder, mcpServers: [] },
+          { result: NewSessionResultSchema },
+        )
+        return { signedIn: true, models: sessionModels(session) }
+      } catch (cause) {
+        if (isAuthRequired(cause)) return { signedIn: false, models: [] }
+        throw cause
+      }
     }
-    this.#pendingApprovals.clear()
-    this.#optionsById.clear()
+    try {
+      return await Promise.race([probe(), deadline])
+    } finally {
+      clearTimeout(timer)
+      await this.dispose()
+    }
+  }
+
+  /** Commands and skills the agent runs itself when a message starts with `/name`. */
+  async listCommands(_threadId?: string): Promise<ProviderCommand[]> {
+    return [...this.#commands]
+  }
+
+  onCommandsChanged(listener: () => void): () => void {
+    this.on('commandsChanged', listener)
+    return () => this.off('commandsChanged', listener)
+  }
+
+  #clearTurn(toolStatus: 'completed' | 'failed' = 'failed'): void {
+    this.#finishStreamer(toolStatus)
+    this.#activeTurn = undefined
+    this.#cancelPendingApprovals()
   }
 
   /** Complete the ACP initialize handshake without creating a paid session. */
@@ -429,15 +554,26 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     this.#initialize = undefined
     this.#sessionId = undefined
     this.#model = undefined
+    this.#modelConfigId = undefined
     this.#loadSession = false
     this.#pendingApprovals.clear()
+    this.#commands = []
+    this.#commandsKey = '[]'
     this.#processStop = stopped
     return stopped
   }
 
   /** Restart with launch-only settings, keeping the session through `session/load`. */
   async #applySettings(settings: AcpTurnSettings): Promise<void> {
-    if (!this.#argsFor) return
+    if (!this.#argsFor) {
+      // An agent that selects its model in-session (Kimi) switches without a
+      // relaunch; skipping this silently kept every turn on the start model.
+      if (settings.model && settings.model !== this.#model && this.#modelConfigId) {
+        await this.#selectSessionModel(settings.model)
+        this.#model = settings.model
+      }
+      return
+    }
     const next = {
       model: settings.model ?? this.#settings.model,
       effort: settings.effort ?? this.#settings.effort,
@@ -462,7 +598,7 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
       await rpc.request('session/load', {
         sessionId,
         cwd: this.#workspacePath,
-        mcpServers: this.#mcpServers,
+        mcpServers: this.#sessionMcpServers(),
       })
       this.#sessionId = sessionId
       this.#model = next.model
@@ -548,11 +684,27 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     return rpc
   }
 
+  /** The launch's servers as given, plus the managed ones this agent's transports allow. */
+  #sessionMcpServers(): AcpMcpServer[] {
+    if (this.#managedMcp.length === 0) return this.#mcpServers
+    const http = this.#initialize?.agentCapabilities?.mcpCapabilities?.http === true
+    const accepted = this.#managedMcp.filter((server) => !('type' in server) || http)
+    for (const server of this.#managedMcp) {
+      if (!accepted.includes(server)) {
+        this.emit(
+          'log',
+          `${this.#spec.name} does not accept HTTP MCP servers; "${server.name}" was left out of this session`,
+        )
+      }
+    }
+    return [...this.#mcpServers, ...accepted]
+  }
+
   async #selectSessionModel(model: string | undefined): Promise<void> {
-    if (!model || !this.#spec.modelConfigId || !this.#rpc || !this.#sessionId) return
+    if (!model || !this.#modelConfigId || !this.#rpc || !this.#sessionId) return
     await this.#rpc.request('session/set_config_option', {
       sessionId: this.#sessionId,
-      configId: this.#spec.modelConfigId,
+      configId: this.#modelConfigId,
       value: model,
     })
   }
@@ -577,18 +729,35 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
       return
     }
 
-    if (!this.#streamer) return
-
+    // Agents advertise commands right after session/new, before any turn and
+    // before that request even answers, so this runs without a streamer. The
+    // older draft name is still accepted.
     if (
-      update.sessionUpdate === 'available_commands' ||
-      update.sessionUpdate === 'current_mode_update'
+      update.sessionUpdate === 'available_commands_update' ||
+      update.sessionUpdate === 'available_commands'
     ) {
+      const sessionId = notification.data.sessionId
+      if (sessionId && this.#sessionId && sessionId !== this.#sessionId) return
+      this.#setCommands(mapAcpCommands(update.availableCommands ?? []))
       return
     }
+
+    if (!this.#streamer) return
+
+    if (update.sessionUpdate === 'current_mode_update') return
 
     for (const event of this.#streamer.translate(update)) {
       this.emit('event', event)
     }
+  }
+
+  /** Grok repeats an identical list within milliseconds; only a change is announced. */
+  #setCommands(commands: ProviderCommand[]): void {
+    const key = JSON.stringify(commands)
+    if (key === this.#commandsKey) return
+    this.#commands = commands
+    this.#commandsKey = key
+    this.emit('commandsChanged')
   }
 
   #onRequest(
@@ -689,11 +858,13 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
 
   #finishTurn(threadId: string, turnId: string, result: PromptResult, streamer?: Streamer): void {
     const stopReason = result.stopReason
+    const status =
+      stopReason === 'cancelled' ? 'interrupted' : stopReason === 'refusal' ? 'failed' : 'completed'
     // Finish the streamer this turn owns, never whichever one is current —
     // a late completion must not close the next turn's open items.
     const owned = streamer ?? this.#streamer
     if (owned !== this.#streamer) return
-    this.#clearTurn()
+    this.#clearTurn(status === 'completed' ? 'completed' : 'failed')
     const usage = acpTurnUsage(result.usage, this.#model)
     if (usage) this.emit('event', { type: 'usage.updated', usage })
 
@@ -715,16 +886,27 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
       this.emit('log', `turn ended: ${stopReason}`)
     }
 
-    this.emit('event', {
-      type: 'turn.completed',
-      turnId,
-      status:
-        stopReason === 'cancelled'
-          ? 'interrupted'
-          : stopReason === 'refusal'
-            ? 'failed'
-            : 'completed',
-    })
+    this.emit('event', { type: 'turn.completed', turnId, status })
+  }
+
+  #finishStreamer(toolStatus: 'completed' | 'failed', streamer?: Streamer): void {
+    // Finish the streamer this turn owns, never whichever one is current —
+    // a late completion must not close the next turn's open items.
+    const owned = streamer ?? this.#streamer
+    if (owned === this.#streamer) this.#streamer = undefined
+    for (const event of owned?.finish(toolStatus) ?? []) this.emit('event', event)
+  }
+
+  #cancelPendingApprovals(): void {
+    // Anything still waiting is now unanswerable — the turn it belonged to is
+    // over. The agent is still blocked on its request, so it must hear
+    // "cancelled", not silence; the UI must hear "resolved".
+    for (const [id, respond] of this.#pendingApprovals) {
+      respond({ outcome: { outcome: 'cancelled' } })
+      this.emit('event', { type: 'approval.resolved', id })
+    }
+    this.#pendingApprovals.clear()
+    this.#optionsById.clear()
   }
 }
 

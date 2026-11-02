@@ -206,6 +206,64 @@ describe('StageHeader', () => {
   })
 })
 
+describe('StageHeader pull request chip', () => {
+  const pullRequest = {
+    repository: 'Leonxlnx/tastecode',
+    number: 1778,
+    title: "feat(server): find the pull request for a chat's checkout",
+    url: 'https://github.com/Leonxlnx/tastecode/pull/1778',
+    state: 'OPEN' as const,
+    isDraft: false,
+    checks: 'passing' as const,
+    headRefName: 'n16/agents-j3-pr-for-checkout',
+  }
+
+  it('names the pull request, its state and checks, and opens it', () => {
+    const onOpenPullRequest = vi.fn()
+    render(
+      <StageHeader {...props()} pullRequest={pullRequest} onOpenPullRequest={onOpenPullRequest} />,
+    )
+    const chip = screen.getByRole('button', {
+      name: 'Pull request #1778: Open, Checks passing. Show in Pull requests',
+    })
+    expect(chip.textContent).toBe('#1778Open')
+    expect(chip.classList.contains('is-open')).toBe(true)
+    expect(chip.querySelector('.stagehead__pr-checks.is-passing')).not.toBeNull()
+    expect(chip.getAttribute('title')).toBe(`${pullRequest.title}\n#1778 · Open, Checks passing`)
+
+    fireEvent.click(chip)
+    expect(onOpenPullRequest).toHaveBeenCalledWith({
+      repository: 'Leonxlnx/tastecode',
+      number: 1778,
+    })
+  })
+
+  it.each([
+    [{ isDraft: true, checks: 'failing' as const }, 'Draft, Checks failing', 'is-draft'],
+    [{ checks: 'pending' as const }, 'Open, Checks running', 'is-open'],
+    [{ checks: 'none' as const }, 'Open', 'is-open'],
+    [{ state: 'MERGED' as const }, 'Merged', 'is-merged'],
+    [{ state: 'CLOSED' as const, checks: 'failing' as const }, 'Closed', 'is-closed'],
+  ])('reads %o as "%s"', (change, summary, tone) => {
+    render(
+      <StageHeader
+        {...props()}
+        pullRequest={{ ...pullRequest, ...change }}
+        onOpenPullRequest={vi.fn()}
+      />,
+    )
+    const chip = screen.getByRole('button', {
+      name: `Pull request #1778: ${summary}. Show in Pull requests`,
+    })
+    expect(chip.classList.contains(tone)).toBe(true)
+  })
+
+  it('is absent without a pull request', () => {
+    render(<StageHeader {...props()} onOpenPullRequest={vi.fn()} />)
+    expect(screen.queryByRole('button', { name: /^Pull request #/ })).toBeNull()
+  })
+})
+
 describe('PanelToggles', () => {
   it('keeps both controls mounted while their open state changes', () => {
     const panels = panelProps()

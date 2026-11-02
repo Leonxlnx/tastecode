@@ -23,6 +23,8 @@ const HEALTHY_RUN_MS = 30_000
 /** After this many failures in a row the server is not coming back on its own. */
 export const MAX_CONSECUTIVE_FAILURES = 8
 export const SERVER_SHUTDOWN_TIMEOUT_MS = 3_000
+/** How long a forced stop may wait for the server's process tree to end. */
+export const SERVER_TREE_STOP_BUDGET_MS = 5_000
 const MAX_LOG_LINE = 64 * 1024
 
 type SupervisorCallbacks = {
@@ -43,6 +45,12 @@ export type SupervisedServerProcess = {
   stdout: NodeJS.ReadableStream | null
   stderr: NodeJS.ReadableStream | null
   kill: () => boolean
+  /**
+   * A forced stop of the server and every process it started. kill() ends the
+   * server alone; on Windows the agent CLIs behind its .cmd shims, and what
+   * they started, would run on without it.
+   */
+  killTree?: () => Promise<void>
   requestShutdown?: () => void | Promise<void>
   onError: (listener: (error: unknown) => void) => void
   onExit: (listener: (code: number | null, signal: NodeJS.Signals | null) => void) => void
@@ -167,6 +175,7 @@ export class ServerSupervisor {
       resolve = done
     })
     let finished = false
+    let forced = false
     const finish = () => {
       if (finished) return
       finished = true
@@ -175,7 +184,23 @@ export class ServerSupervisor {
       resolve()
     }
     const forceStop = () => {
-      if (finished) return
+      if (finished || forced) return
+      forced = true
+      clearTimeout(timer)
+      if (child.killTree) {
+        // The app still quits when taskkill is slow on a loaded PC.
+        const budget = setTimeout(finish, SERVER_TREE_STOP_BUDGET_MS)
+        void child
+          .killTree()
+          .catch((error: unknown) => {
+            this.#options.onLog(`server could not be stopped: ${String(error)}`)
+          })
+          .finally(() => {
+            clearTimeout(budget)
+            finish()
+          })
+        return
+      }
       try {
         child.kill()
       } catch (error) {

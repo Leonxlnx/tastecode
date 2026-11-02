@@ -1,6 +1,7 @@
 import { useId } from 'react'
 import { createPortal } from 'react-dom'
 import { useDialogFocus } from './dialog-focus.js'
+import '../styles/sheet.css'
 import '../styles/sidebar-confirm.css'
 
 /** Splits on either separator so Windows paths keep their folder name too. */

@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { DomainEventSchema, type DomainEvent } from '@harness/contracts'
 import { canCreateSymlinks } from '@harness/proc/symlink.test-support'
 import { createGrokHistorySource } from './history.js'
+import { withInstructions } from './prompt-instructions.js'
 
 const canSymlink = canCreateSymlinks()
 
@@ -88,6 +89,33 @@ describe('Grok native history', () => {
       expect(await source.read(session!)).toEqual([])
     },
   )
+
+  it('replays the first prompt as the user sent it, without TasteCode instructions', async () => {
+    const { source, directory } = await fixture()
+    const block = withInstructions('Read the README', 'Use TasteCode conventions.')
+    await save(directory, 'updates.jsonl', [
+      // The CLI may split the prompt anywhere, the block included.
+      update('user_message_chunk', { content: { type: 'text', text: block.slice(0, 30) } }, 1),
+      update('user_message_chunk', { content: { type: 'text', text: block.slice(30) } }, 2),
+      update('agent_message_chunk', { content: { type: 'text', text: 'Done.' } }, 3),
+      update('turn_completed', { stop_reason: 'end_turn' }, 4),
+    ])
+    await save(directory, 'chat_history.jsonl', [{ type: 'user', content: block }])
+    const [session] = await source.list()
+    const user = items(await source.read(session!)).filter((item) => item.role === 'user')
+    expect(user.map((item) => item.text)).toEqual(['Read the README'])
+  })
+
+  it('replays chat-history prompts without TasteCode instructions too', async () => {
+    const { source, directory } = await fixture()
+    await save(directory, 'chat_history.jsonl', [
+      { type: 'user', content: withInstructions('hello', 'Be brief.'), prompt_index: 0 },
+      { type: 'assistant', content: 'Hi.' },
+    ])
+    const [session] = await source.list()
+    const user = items(await source.read(session!)).filter((item) => item.role === 'user')
+    expect(user.map((item) => item.text)).toEqual(['hello'])
+  })
 
   it('keeps reused native tool ids and late background results distinct', async () => {
     const { source, directory } = await fixture()
@@ -183,17 +211,44 @@ describe('Grok native history', () => {
     })
   })
 
+  it('leaves out a session nobody wrote in, such as a command and MCP probe', async () => {
+    const { source, directory, root } = await fixture()
+    await save(directory, 'updates.jsonl', [
+      update('user_message_chunk', { content: { type: 'text', text: 'hello' } }),
+    ])
+    // grok 1.0.62 writes this for session/new without a prompt; its chat
+    // history holds only the system prompt and the skills reminder.
+    const probe = path.join(root, 'sessions', encodeURIComponent(root), 'probe-session')
+    await mkdir(probe, { recursive: true })
+    await writeFile(
+      path.join(probe, 'summary.json'),
+      JSON.stringify({ info: { id: 'probe-session', cwd: root }, num_messages: 0 }),
+    )
+    await save(probe, 'chat_history.jsonl', [{ type: 'system', content: 'You are Grok.' }])
+    expect((await source.list()).map(({ id }) => id)).toEqual(['saved-session'])
+    await writeFile(
+      path.join(probe, 'summary.json'),
+      JSON.stringify({ info: { id: 'probe-session', cwd: root }, num_messages: 12 }),
+    )
+    expect((await source.list()).map(({ id }) => id).sort()).toEqual([
+      'probe-session',
+      'saved-session',
+    ])
+  })
+
   it('reads a session summary again only after it changes', async () => {
     const { source, directory } = await fixture()
     await save(directory, 'updates.jsonl', [
       update('user_message_chunk', { content: { type: 'text', text: 'hello' } }),
     ])
-    expect((await source.list())[0]?.title).toBe('Native Grok chat')
+    expect((await source.list())[0]).toMatchObject({ title: 'Native Grok chat', named: true })
     const summary = path.join(directory, 'summary.json')
     await writeFile(summary, JSON.stringify({ generated_title: 'Renamed Grok chat' }))
     expect((await source.list())[0]?.title).toBe('Renamed Grok chat')
     await rm(summary)
-    expect((await source.list())[0]?.title).toBe('Grok chat')
+    const [unnamed] = await source.list()
+    expect(unnamed?.title).toBe('Grok chat')
+    expect(unnamed?.named).toBeUndefined()
   })
 
   it('replays exact Markdown, thought text, tools, command output, diffs, images and turns', async () => {

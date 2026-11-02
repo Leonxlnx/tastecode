@@ -8,7 +8,17 @@ import { z } from 'zod'
  * engine-specific may leak past an adapter.
  */
 
-export const ProviderIdSchema = z.enum(['codex', 'claude-code', 'grok'])
+export const ProviderIdSchema = z.enum([
+  'codex',
+  'claude-code',
+  'grok',
+  'cursor',
+  'opencode',
+  'antigravity',
+  'pi',
+  'acp',
+  'api',
+])
 export type ProviderId = z.infer<typeof ProviderIdSchema>
 
 /**
@@ -25,6 +35,11 @@ export const ItemTypeSchema = z.enum([
   'error',
   /** An event an adapter did not recognise. Rendered as raw text, never dropped. */
   'unknown',
+  /**
+   * A line TasteCode adds to the conversation between turns, such as the chat
+   * moving to another provider. Adapters never produce it; it belongs to no turn.
+   */
+  'notice',
 ])
 export type ItemType = z.infer<typeof ItemTypeSchema>
 
@@ -33,6 +48,56 @@ export type ItemStatus = z.infer<typeof ItemStatusSchema>
 
 export const AssistantPhaseSchema = z.enum(['commentary', 'final_answer'])
 export type AssistantPhase = z.infer<typeof AssistantPhaseSchema>
+
+export const SubagentStateSchema = z.enum(['running', 'completed', 'failed', 'interrupted'])
+export type SubagentState = z.infer<typeof SubagentStateSchema>
+
+/**
+ * A helper agent the main agent started for part of the turn. Its own steps
+ * stay out of the transcript; adapters fold them into these counters and send
+ * the whole snapshot again on the spawning `tool_call` item when it changes.
+ */
+export const SubagentSchema = z.object({
+  /** The provider's identity for this run, stable across updates. */
+  id: z.string().min(1),
+  /** The agent type or nickname the provider reports, such as "Explore". */
+  name: z.string().min(1).optional(),
+  /** What the main agent asked it to do, in the main agent's words. */
+  description: z.string().optional(),
+  /** Can still be `running` after the spawning call completed, for a background agent. */
+  state: SubagentStateSchema,
+  /** The main agent continued without waiting for the result. */
+  background: z.boolean().optional(),
+  /** Tool calls the subagent has made so far. */
+  toolUses: z.number().int().nonnegative().optional(),
+  /** Tokens the subagent has used so far, as the provider counts them. */
+  tokens: z.number().int().nonnegative().optional(),
+  durationMs: z.number().nonnegative().optional(),
+  /** Name of the newest tool the subagent called. */
+  lastTool: z.string().min(1).optional(),
+  /** The provider's short account of progress or of the result. */
+  summary: z.string().optional(),
+})
+export type Subagent = z.infer<typeof SubagentSchema>
+
+/**
+ * The chat moved to another provider, agent or account; the turns after it run
+ * there. The conversation before it went along as context.
+ */
+export const ProviderNoticeSchema = z.object({
+  kind: z.literal('provider'),
+  provider: ProviderIdSchema,
+  /** The ACP agent or custom harness, when the provider runs several. */
+  agent: z.string().min(1).optional(),
+  /** The account the chat now runs as. Absent means the default account. */
+  accountId: z.string().min(1).optional(),
+  /** The model chosen for the first turn there, as the provider names it. */
+  model: z.string().min(1).optional(),
+})
+export type ProviderNotice = z.infer<typeof ProviderNoticeSchema>
+
+export const NoticeSchema = z.discriminatedUnion('kind', [ProviderNoticeSchema])
+export type Notice = z.infer<typeof NoticeSchema>
 
 export const ItemSchema = z.object({
   /**
@@ -60,6 +125,13 @@ export const ItemSchema = z.object({
   path: z.string().optional(),
   linesAdded: z.number().optional(),
   linesRemoved: z.number().optional(),
+  /**
+   * Present on a `tool_call` that started a subagent. Absent on engines that
+   * only report subagents as plain tool calls.
+   */
+  subagent: SubagentSchema.optional(),
+  /** Present on `notice`: what happened, for the renderer to word and mark. */
+  notice: NoticeSchema.optional(),
   createdAt: z.number(),
 })
 export type Item = z.infer<typeof ItemSchema>
@@ -72,14 +144,43 @@ export const TurnSchema = z.object({
 })
 export type Turn = z.infer<typeof TurnSchema>
 
-export const ThreadSchema = z.object({
-  id: z.string(),
-  provider: ProviderIdSchema,
-  /** Absolute path to the workspace this thread operates on. */
-  workspacePath: z.string(),
-  title: z.string().optional(),
-  createdAt: z.number(),
-})
+/** The account that uses the provider CLI's own config folder. Every provider has one. */
+export const DEFAULT_ACCOUNT_ID = 'default'
+
+/**
+ * A provider account's identity, unique within its provider. Server-chosen;
+ * `default` is reserved for the CLI's own config folder.
+ */
+export const AccountIdSchema = z
+  .string()
+  .regex(/^[a-z0-9][a-z0-9-]{0,63}$/, 'expected a lowercase account id')
+export type AccountId = z.infer<typeof AccountIdSchema>
+
+export const ThreadSchema = z
+  .object({
+    id: z.string(),
+    provider: ProviderIdSchema,
+    /** Selects a server-owned model connection for the Harness API runtime. */
+    connectionId: z.string().min(1).optional(),
+    /**
+     * The provider account this chat is pinned to; its sessions live in that
+     * account's folder. Absent means the default account.
+     */
+    accountId: AccountIdSchema.optional(),
+    /** Absolute path to the workspace this thread operates on. */
+    workspacePath: z.string(),
+    title: z.string().optional(),
+    createdAt: z.number(),
+  })
+  .superRefine((thread, context) => {
+    if ((thread.provider === 'api') !== Boolean(thread.connectionId)) {
+      context.addIssue({
+        code: 'custom',
+        path: ['connectionId'],
+        message: 'connectionId is required only for api threads',
+      })
+    }
+  })
 export type Thread = z.infer<typeof ThreadSchema>
 
 /**
@@ -240,6 +341,19 @@ export const ContextControlSchema = z.object({
 export type ContextControl = z.infer<typeof ContextControlSchema>
 
 /**
+ * One way TasteCode can run an engine, such as through its vendor's SDK or
+ * straight through its own CLI. An engine declares these only when each one
+ * offers everything its capabilities say, so a choice changes how the engine
+ * is started and never what a chat can do.
+ */
+export const ProviderRuntimeOptionSchema = z.object({
+  id: z.string().min(1),
+  label: z.string().min(1),
+  description: z.string().optional(),
+})
+export type ProviderRuntimeOption = z.infer<typeof ProviderRuntimeOptionSchema>
+
+/**
  * What an engine can actually do. The UI reads this and hides what is
  * unavailable rather than showing a button that fails — capability negotiation
  * is the difference between a wrapper that feels solid and one that lies.
@@ -254,9 +368,29 @@ export const CapabilitiesSchema = z.object({
   userInput: z.boolean().optional(),
   /** Can route elevated approval requests through an automatic risk reviewer. */
   autoReview: z.boolean().optional(),
+  /** The model receives attached images as pixels in the prompt itself. */
   images: z.boolean(),
+  /**
+   * Attached images can be handed to the agent as saved files it opens with
+   * its own tools. Unlike `images`, nothing guarantees the model sees the
+   * pixels, so features that depend on vision read `images` only.
+   */
+  imageFiles: z.boolean().optional(),
   /** Absent when the engine decides its context on its own. */
   context: ContextControlSchema.optional(),
+  /**
+   * How the engine reports subagents on their spawning tool call. `summary`:
+   * identity and the final state only. `progress`: also live counters while
+   * one runs. Absent: subagents appear only as plain tool calls.
+   */
+  subagents: z.enum(['summary', 'progress']).optional(),
+  /**
+   * The engine runs signed in as any of several accounts, each with its own
+   * config folder, so a user can add accounts beyond the default one.
+   */
+  multipleAccounts: z.boolean().optional(),
+  /** The ways the engine can be run, its default first. Absent: one way, nothing to choose. */
+  runtimes: z.array(ProviderRuntimeOptionSchema).min(1).optional(),
 })
 export type Capabilities = z.infer<typeof CapabilitiesSchema>
 
@@ -284,21 +418,66 @@ export const ModelSchema = z.object({
     )
     .default([]),
   defaultServiceTier: z.string().nullable().optional(),
+  /**
+   * Whether this model, or the agent serving it, receives attached images as
+   * pixels. Absent: the engine's `images` capability decides.
+   */
+  images: z.boolean().optional(),
+  /**
+   * Display name of the model's creator, such as "DeepSeek" or "Anthropic".
+   * Groups rows inside one source; a routing provider is not a lab.
+   */
+  lab: z.string().min(1).max(80).optional(),
+  /**
+   * Lineage key, unique within one source, such as "gpt-terra" or
+   * "deepseek-flash". Generations of one family replace each other.
+   */
+  family: z.string().min(1).max(120).optional(),
+  /** Dotted numeric version inside the family, compared part by part ("6.1" > "6"). */
+  generation: z
+    .string()
+    .max(32)
+    .regex(/^\d+(?:\.\d+)*$/, 'expected a dotted numeric version')
+    .optional(),
+  /** Release date as an ISO calendar date (YYYY-MM-DD). */
+  released: z.iso.date().optional(),
+  /** Part of the source's curated set that is visible before the user picks. */
+  recommended: z.boolean().optional(),
+  /** Still listed by the source but superseded or retiring; starts hidden. */
+  deprecated: z.boolean().optional(),
 })
 export type Model = z.infer<typeof ModelSchema>
 
 /**
  * The small model TasteCode uses for short product-owned writing such as thread
  * titles and commit-message drafts. Source identity stays explicit because
- * model ids are not globally unique across custom harnesses.
+ * model ids are not globally unique and API connections have their own bill.
  */
-export const BackgroundModelTargetSchema = z.object({
-  provider: ProviderIdSchema,
-  agent: z.string().min(1).optional(),
-  model: z.string().min(1),
-  effort: z.string().min(1).optional(),
-  serviceTier: z.string().min(1).optional(),
-})
+export const BackgroundModelTargetSchema = z
+  .object({
+    provider: ProviderIdSchema,
+    connectionId: z.string().min(1).optional(),
+    agent: z.string().min(1).optional(),
+    model: z.string().min(1),
+    effort: z.string().min(1).optional(),
+    serviceTier: z.string().min(1).optional(),
+  })
+  .superRefine((target, context) => {
+    if ((target.provider === 'api') !== Boolean(target.connectionId)) {
+      context.addIssue({
+        code: 'custom',
+        path: ['connectionId'],
+        message: 'connectionId is required only for api background models',
+      })
+    }
+    if (target.provider === 'api' && target.agent) {
+      context.addIssue({
+        code: 'custom',
+        path: ['agent'],
+        message: 'api background models cannot select an agent',
+      })
+    }
+  })
 export type BackgroundModelTarget = z.infer<typeof BackgroundModelTargetSchema>
 
 export const BackgroundModelPreferenceSchema = z.discriminatedUnion('mode', [
@@ -311,6 +490,7 @@ export const BackgroundModelSourceSchema = z.object({
   id: z.string().min(1),
   displayName: z.string().min(1),
   provider: ProviderIdSchema,
+  connectionId: z.string().min(1).optional(),
   agent: z.string().min(1).optional(),
   models: z.array(ModelSchema),
 })
@@ -363,6 +543,86 @@ export const AccountSchema = z.object({
 })
 export type Account = z.infer<typeof AccountSchema>
 
+/** An absolute folder path on Windows or POSIX, as the user picked it. */
+const AbsoluteFolderSchema = z
+  .string()
+  .min(1)
+  .max(4096)
+  .refine(
+    (value) => !value.includes('\0') && /^(?:[A-Za-z]:[\\/]|\\\\|\/)/.test(value),
+    'expected an absolute folder path',
+  )
+
+/**
+ * One sign-in a provider CLI can run as, kept apart by its own config folder.
+ * Chats stay pinned to the account they started on. Nothing secret lives
+ * here: the vendor CLI writes its own credentials into `home`, and TasteCode
+ * never reads them (rules/security.md).
+ */
+export const ProviderAccountSchema = z
+  .object({
+    id: AccountIdSchema,
+    provider: ProviderIdSchema,
+    label: z.string().trim().min(1).max(80),
+    /** The account's config folder. Absent for the default account, which uses the CLI's own. */
+    home: AbsoluteFolderSchema.optional(),
+    /**
+     * TasteCode created `home` under its data folder. False for the default
+     * account and for a folder the user brought, which TasteCode never deletes.
+     */
+    managed: z.boolean(),
+    /** Last known identity from this account's own sign-in check. */
+    email: z.string().min(1).optional(),
+    plan: z.string().min(1).optional(),
+    createdAt: z.number().int().nonnegative().optional(),
+  })
+  .superRefine((account, context) => {
+    const isDefault = account.id === DEFAULT_ACCOUNT_ID
+    if (isDefault === (account.home !== undefined)) {
+      context.addIssue({
+        code: 'custom',
+        path: ['home'],
+        message: 'every account except the default one has its own folder',
+      })
+    }
+    if (isDefault && account.managed) {
+      context.addIssue({
+        code: 'custom',
+        path: ['managed'],
+        message: 'the default account uses the CLI folder, which TasteCode does not manage',
+      })
+    }
+  })
+export type ProviderAccount = z.infer<typeof ProviderAccountSchema>
+
+/** Where a new account keeps its config: a folder TasteCode creates, or one the user has. */
+export const ProviderAccountHomeSchema = z.discriminatedUnion('kind', [
+  /** A new folder under the TasteCode data folder, seeded with the default account's non-secret settings. */
+  z.object({ kind: z.literal('managed') }),
+  /**
+   * A folder the user picked, such as one that already holds a second login.
+   * Used as it is: nothing is copied into it and TasteCode never deletes it.
+   */
+  z.object({ kind: z.literal('existing'), path: AbsoluteFolderSchema }),
+])
+export type ProviderAccountHome = z.infer<typeof ProviderAccountHomeSchema>
+
+/**
+ * A config folder on this machine that a provider's CLI has used and that is
+ * not an account here yet, such as a second `~/.claude_work` or
+ * `~/.codex-personal` the user or another tool set up. Found from folder
+ * names and dates alone: nothing inside it is read and no CLI runs in it.
+ */
+export const DetectedAccountHomeSchema = z.object({
+  provider: ProviderIdSchema,
+  home: AbsoluteFolderSchema,
+  /** A name taken from the folder's own, free among the provider's accounts. */
+  label: z.string().trim().min(1).max(80),
+  /** When the CLI last wrote there, in epoch milliseconds. */
+  lastUsed: z.number().int().nonnegative().optional(),
+})
+export type DetectedAccountHome = z.infer<typeof DetectedAccountHomeSchema>
+
 /** Actionable setup information supplied by the provider adapter. */
 export const ProviderSetupSchema = z.object({
   installUrl: z.url(),
@@ -383,7 +643,16 @@ export type ProviderSetup = z.infer<typeof ProviderSetupSchema>
 export const CustomHarnessSchema = z.object({
   id: z.string().trim().min(1).max(128),
   displayName: z.string().trim().min(1).max(80),
-  provider: z.enum(['codex', 'claude-code', 'grok']),
+  provider: z.enum([
+    'codex',
+    'claude-code',
+    'grok',
+    'cursor',
+    'opencode',
+    'antigravity',
+    'pi',
+    'acp',
+  ]),
   command: z
     .string()
     .trim()
@@ -448,6 +717,28 @@ export const CustomHarnessVerificationSchema = z.object({
 })
 export type CustomHarnessVerification = z.infer<typeof CustomHarnessVerificationSchema>
 
+/**
+ * What a chat source of this provider must name, so clients read it instead
+ * of comparing provider ids.
+ */
+export const ProviderSourceShapeSchema = z.object({
+  /**
+   * Whether a source names an `agent`. `none`: never. `optional`: a custom
+   * harness may be chosen. `required`: every source names one, such as an ACP
+   * agent or a Pi harness.
+   */
+  agent: z.enum(['none', 'optional', 'required']),
+  /** Every source names a server-owned model connection (`connectionId`). */
+  connection: z.boolean(),
+  /**
+   * The provider itself answers `models.list` and `auth.status` without an
+   * agent or connection. When false, the agent or connection is what the
+   * user talks to, and it names the source.
+   */
+  direct: z.boolean(),
+})
+export type ProviderSourceShape = z.infer<typeof ProviderSourceShapeSchema>
+
 export const ProviderStatusSchema = z.object({
   id: ProviderIdSchema,
   displayName: z.string(),
@@ -463,6 +754,8 @@ export const ProviderStatusSchema = z.object({
   setup: ProviderSetupSchema.optional(),
   /** Why it is unusable, in language we can show the user directly. */
   problem: z.string().optional(),
+  /** Absent on older servers; clients fall back to their own table. */
+  source: ProviderSourceShapeSchema.optional(),
 })
 export type ProviderStatus = z.infer<typeof ProviderStatusSchema>
 

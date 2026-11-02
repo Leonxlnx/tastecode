@@ -6,6 +6,10 @@ import type {
   ServerRequestHandler,
 } from '@harness/proc'
 import { spawnCli } from '@harness/proc'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { describe, expect, it, vi } from 'vitest'
 import { AcpAdapter, type AcpRpc } from './adapter.js'
 import type { ToolKind } from './protocol.js'
@@ -35,14 +39,20 @@ class FakeAcpRpc implements AcpRpc {
   #rejectPrompt: ((error: Error) => void) | undefined
   failTransport: ((error: Error) => void) | undefined
   loadSession = false
+  promptImages = true
+  prompts: unknown[] = []
   methods: string[] = []
+  configOptions: unknown[] = []
   /** Client-to-agent notifications and permission answers, in wire order. */
   wire: string[] = []
 
   onStderr(): void {}
-
   onNotification(handler: (method: string, params: JsonRpcValue | undefined) => void): void {
     this.#onNotification = handler
+  }
+
+  emitNotification(method: string, params: JsonRpcValue): void {
+    this.#onNotification(method, params)
   }
 
   onServerRequest(handler: ServerRequestHandler): void {
@@ -61,25 +71,27 @@ class FakeAcpRpc implements AcpRpc {
   ): Promise<Result>
   request<Result>(
     method: string,
-    _params: unknown = {},
+    params: unknown = {},
     options: JsonRpcRequestOptions | ParsedJsonRpcRequestOptions<Result> = {},
   ): Promise<JsonRpcValue | undefined | Result> {
     const parse = (value: JsonRpcValue) =>
       'result' in options ? options.result.parse(value) : value
     this.methods.push(method)
+    if (method === 'session/set_config_option') this.configOptions.push(params)
     if (method === 'initialize') {
       return Promise.resolve(
         parse({
           protocolVersion: 1,
           agentCapabilities: {
             loadSession: this.loadSession,
-            promptCapabilities: { image: true },
+            promptCapabilities: { image: this.promptImages },
           },
         }),
       )
     }
     if (method === 'session/new') return Promise.resolve(parse({ sessionId: 'sess-1' }))
     if (method === 'session/prompt') {
+      this.prompts.push(params)
       return new Promise<JsonRpcValue>((resolve, reject) => {
         this.#resolvePrompt = resolve
         this.#rejectPrompt = reject
@@ -128,8 +140,8 @@ class FakeAcpRpc implements AcpRpc {
     resolve(result)
   }
 
-  rejectPrompt(): void {
-    this.#rejectPrompt?.(new Error('prompt failed'))
+  rejectPrompt(error = new Error('prompt failed')): void {
+    this.#rejectPrompt?.(error)
   }
 }
 
@@ -238,6 +250,29 @@ describe('ACP approval lifecycle', () => {
     expect(events).toEqual([])
   })
 
+  it('sends an image as a file link to an agent without image prompts', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'harness-acp-turn-'))
+    const image = join(directory, 'shot.png')
+    writeFileSync(image, Buffer.from([1, 2]))
+    try {
+      const current = adapter()
+      activeRpc().promptImages = false
+      await current.startThread('C:\repo')
+      expect(current.capabilities).toMatchObject({ images: false, imageFiles: true })
+      await current.sendTurn('acp-grok-sess-1', 'what is this?', [image])
+      expect(activeRpc().prompts.at(-1)).toMatchObject({
+        prompt: [
+          { type: 'text', text: 'what is this?' },
+          { type: 'resource_link', name: 'shot.png', uri: pathToFileURL(image).href },
+        ],
+      })
+      activeRpc().resolvePrompt({ stopReason: 'end_turn' })
+      await current.dispose()
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
   it('answers an abandoned approval with cancelled when the turn ends', async () => {
     const { events, turnId } = await startedAdapter('ask')
     const answered = activeRpc().requestPermission('execute')
@@ -272,6 +307,51 @@ describe('ACP approval lifecycle', () => {
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(events.filter((event) => event.type === 'approval.resolved')).toHaveLength(1)
     expect(events).toContainEqual({ type: 'turn.completed', turnId, status: 'interrupted' })
+  })
+
+  it('settles text, tool and approval exactly once when the prompt request rejects', async () => {
+    const { events, turnId } = await startedAdapter('ask')
+    const update = (value: JsonRpcValue) =>
+      activeRpc().emitNotification('session/update', { sessionId: 'sess-1', update: value })
+    update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'partial' } })
+    update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: ' answer' } })
+    update({
+      sessionUpdate: 'tool_call',
+      toolCallId: 'tc-run',
+      status: 'in_progress',
+      title: 'pnpm test',
+      kind: 'execute',
+    })
+    const answered = activeRpc().requestPermission('execute')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const settledFrom = events.length
+
+    activeRpc().rejectPrompt(new Error('Internal error: MCP server exited'))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    // A frame that arrives after the turn ended must not reopen it.
+    update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'late' } })
+
+    // The agent, still blocked on its permission request, hears "cancelled".
+    await expect(answered).resolves.toEqual({ outcome: { outcome: 'cancelled' } })
+    expect(events).toContainEqual({
+      type: 'item.completed',
+      item: expect.objectContaining({ type: 'message', text: 'partial answer' }),
+    })
+    // Every open item and approval is terminal before the turn is, each once,
+    // then the reason, then the turn itself — and nothing after it.
+    expect(events.slice(settledFrom)).toEqual([
+      {
+        type: 'item.completed',
+        item: expect.objectContaining({ id: 'tc-run', status: 'failed', command: 'pnpm test' }),
+      },
+      { type: 'approval.resolved', id: expect.any(String) },
+      {
+        type: 'thread.error',
+        threadId: 'acp-grok-sess-1',
+        message: 'Internal error: MCP server exited',
+      },
+      { type: 'turn.completed', turnId, status: 'failed' },
+    ])
   })
 
   it('auto mode only waves through reads — mutations stay questions', async () => {
@@ -376,6 +456,26 @@ describe('ACP spec-valid null fields', () => {
       }),
     )
     await adapter.dispose()
+  })
+})
+
+describe('ACP in-session model selection', () => {
+  it('switches the model of a running chat through its config option', async () => {
+    rpc = new FakeAcpRpc()
+    // The built-in Kimi spec selects its model through a session config option.
+    const current = new AcpAdapter('kimi')
+    await current.startThread('C:\\repo', { model: 'model-a' })
+    const transport = activeRpc()
+    vi.mocked(spawnCli).mockClear()
+
+    await current.sendTurn('acp-kimi-sess-1', 'go', [], { model: 'model-b' })
+
+    expect(spawnCli).not.toHaveBeenCalled()
+    expect(transport.configOptions).toEqual([
+      { sessionId: 'sess-1', configId: 'model', value: 'model-a' },
+      { sessionId: 'sess-1', configId: 'model', value: 'model-b' },
+    ])
+    expect(transport.methods.slice(-2)).toEqual(['session/set_config_option', 'session/prompt'])
   })
 })
 

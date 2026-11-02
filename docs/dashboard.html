@@ -287,17 +287,441 @@
         <nav>
           <a href="#scope">Scope</a>
           <a href="#ready">Checklist</a>
-          <a href="#parked">Nightly only</a>
+          <a href="#parked">Dev builds only</a>
           <a href="./feature-inventory.html">Inventory</a>
+          <a href="./CLAUDE-HANDOFF.md">Claude handoff</a>
         </nav>
-        <span class="meta"
-          >2026-10-16 main 0ad74ec3 · Full-width replies, context ring, model order</span
-        >
+        <span class="meta">2026-11-02 dev 6e620402 · nightly 3eade190 · main 936c6d76</span>
       </div>
     </div>
 
     <div class="wrap">
       <section id="scope">
+        <p>
+          November 2, evening, on dev (6e620402 plus #2026 to #2030): everything planned for v0.5.0
+          is merged. The state before the polish round below reached nightly with #2024 (synced back
+          with #2025); the polish round reaches nightly and main with tonight's promotions, followed
+          by the release. Merged since the previous entry: the version 0.5.0 (#2016), inline skill
+          and command chips (#2014), an update that waits until no agent runs (#2015), the window
+          background setting (#1954), setup that waits for the server's agent list (#2017), usage
+          history without hidden providers in a release build (#2018), design-agent dashboards from
+          tasteskill app screens (#1941), and two packaging fixes found by building the release
+          candidate (#2022, #2023). A Windows release candidate from 03b97b38 built with
+          dist:release passed the release asset check, and with empty data folders it offered
+          exactly the five release providers. In a browser against a release-edition server with
+          empty data, Settings › Providers listed the same five, usage history loaded and the
+          narrow-window drawer stayed solid. A last polish round fixed the invisible queue drop line
+          (#2026), a false "Your draft was replaced" notice after editing a prompt with chips
+          (#2027), one warning per row for a provider the build does not know (#2028), two tests
+          that failed on Leon's machine, one of which read the real Cursor sign-in (#2029), and a
+          held-back chip overlay for a recalled draft (#2030). Not verified: macOS (Karol builds,
+          signs and notarizes it), real provider turns in the release candidate, and the CI package
+          proof, which runs from main at release. Open after the release: long chip names can
+          overflow a narrow message bubble (four layout options wait for Leon), a draft restored at
+          startup can show raw chip text until the overlay loads, and sub-agents (#1956, #1957,
+          #1959, #1968, #1969, #1972, #1973).
+        </p>
+        <p>
+          November 2 on dev (90183641): the provider list per build and four app changes for v0.5.0
+          merged. Since October 25 the branches run dev → nightly → main: PRs target dev, and
+          nightly and main receive only promotions. main is still the public beta v0.1.1 with Codex,
+          Claude Code and Grok. v0.5.0 is being prepared for release on the evening of November 2
+          from a promotion; the version bump to 0.5.0 (#2016) and the promotion are still open. With
+          PRs #2006 to #2009, a release build offers exactly Claude Code, Codex, Grok, Cursor and
+          Antigravity, and a dev build (pnpm dev and other unpackaged runs, or a local package from
+          pnpm run dist or dist:dir) offers every provider, OpenCode, Pi and the ACP agents
+          included. The package records its edition at packaging time (#2006), the server offers and
+          starts only that edition's providers (#2007), the release asset check refuses a
+          dev-edition package (#2008), and the renderer offers only what providers.list returns
+          (#2009). Also merged: the sidebar drawer of a narrow window stays solid over the chat
+          (#2010), the plan-limits popup opens each provider closed to one line (#2011), a chat
+          dragged from the sidebar opens in split view (#2012), and Stop always settles the turn
+          (#2013). Each set of four passed lint, typecheck, build and the root tests on a combined
+          merge on Windows; the remaining Vitest failures there were timeouts under load, two
+          split-view tests that also fail on dev, a locale-dependent Codex test and tests that read
+          the machine's real Cursor install. A live server with HARNESS_EDITION=release listed only
+          the five release providers. Not verified yet: a real dist:release or dist package reading
+          its edition from app.asar, macOS, and the promotion. Still open on dev: usage history
+          without hidden providers (#2018), inline skill and command chips (#2014), an update notice
+          that waits for running agents (#2015), onboarding without flashes (#2017), the window
+          background setting (#1954) and design-agent dashboards from tasteskill app screens
+          (#1941). Sub-agents (#1956, #1957, #1959, #1968, #1969, #1972, #1973) come after v0.5, as
+          Leon decided.
+        </p>
+        <p>
+          November 1, evening, on dev (903bd694): slash commands for the five providers planned for
+          v0.5 and a calmer limits view merged, PRs #1995 to #2004. Commands carry their source
+          (built-in, custom, plugin, MCP) and the / menu groups by it; typed alone, /permissions,
+          /resume, /settings, /mcp, /skills, /usage and /login open TasteCode's own screens for
+          every provider; Codex adds /init; a Grok or ACP chat that opens with a command no longer
+          sends it to the model as text; Cursor lists its custom commands and skills from disk;
+          Antigravity runs the read-only commands agy answers itself. The limits popup shows an
+          unused allowance as one quiet line, and Cursor's plan limits come from the request
+          cursor-agent's own /usage screen makes, with its stored sign-in read only at that moment
+          (checked against fixtures, never against Cursor's server). Typecheck, lint, the packaged
+          installer and targeted tests passed on the identical combined tree; installed on Leon's
+          laptop. Not done: real-provider checks, the full pnpm test, macOS, the v0.5 provider list
+          per build, and the promotion to nightly.
+        </p>
+        <p>
+          November 1 on dev (aa5a4adc): default skills, provider commands, MCP for ACP agents, image
+          upload for more providers and split view merged, PRs #1961, #1977 to #1993. TasteCode now
+          ships cinetic, taste-skill v2.5 and cook for every provider (Claude Code loads them as the
+          tastecode plugin, the others get a short catalog in the first prompt). Codex gets /goal,
+          /compact and /review as app-server requests, OpenCode runs its listed commands through the
+          command route, and /new, /clear and /model run TasteCode's own actions. ACP agents receive
+          the project's MCP servers, filtered by the transports they advertise, and providers that
+          cannot start MCP sign-in say so. Images reach OpenCode and Cursor as pixels, Antigravity
+          and ACP agents without image prompts as files they open, and the composer gate matches
+          each provider's declared capability. Split view opens a second chat beside the first.
+          Checked on Windows on the identical combined tree: typecheck, lint and the packaged
+          installer passed, plus targeted tests on the merge-resolved files; each PR's own tests
+          passed; everything was exercised only against fake CLIs. Installed on Leon's laptop for
+          his test. Not done yet: real-provider checks, the full pnpm test on the combined tree,
+          macOS, and the promotion to nightly. Sub-agents (#1956, #1957, #1959, #1968, #1969, #1972,
+          #1973) and the window background setting (#1954) stay open on dev.
+        </p>
+        <p>
+          October 31 on dev (0966790d): the set for the next beta merged, PRs #1949 to #1951, #1953,
+          #1955, #1958, #1960, #1962 to #1967, #1970, #1971 and #1974. Phone access is kept to dev
+          builds: the server offers it only with HARNESS_PHONE_ACCESS=1, which pnpm dev sets, and
+          Settings shows no Phone page without it. Composer and side-panel text keeps its subpixel
+          antialiasing on Windows, the account popup is darker with plain limit bars, the open
+          project loses its guide line, Settings › Providers opens on each account's last answer,
+          the model picker offers only providers that can run, account folders beside the built-in
+          CLI folder are found, the composer checks the sign-in of the account its chat runs on,
+          Antigravity reports plan limits from agy's own /usage, and entrances, the sidebar, the
+          side panel and the chat column move on one clock. Lint, typecheck and build passed on the
+          combined set on Windows; pnpm test there still has timeouts and EBUSY temp cleanups, each
+          failure compared with dev 5cd8820e, where the same classes fail. Not done yet: an
+          installer from this commit, Leon's test of it, and the promotion to nightly. Sub-agents
+          (#1956, #1957, #1959, #1968, #1969, #1972, #1973) stayed open on dev; split view followed
+          on November 1.
+        </p>
+        <p>
+          October 26 on dev (draft PR #1941, not merged): Design mode builds dashboards and other
+          app screens again, now from the app-screen part of tasteskill v2.1.5 instead of reference
+          images. A dashboard brief is dealt one of seven styles, a shell and a pattern per screen
+          from tasteskill's app library; Brand, Page, Build and Review follow the dealt sheet and
+          quoted sections of tasteskill's app-screen chapter, and Build copies tasteskill's app.css
+          and charts.js from .taste/app-kit. The dashboard image catalog stays parked. The library
+          adds about 0.24 MB to the package and no images.
+        </p>
+        <p>
+          October 23 on nightly (local commits, not pushed yet): a chat's setup is the same on every
+          device. Model, reasoning effort, service tier and access level are kept by the server
+          (thread.settings, pushed to every client), the desktop shares which models its picker
+          hides so the phone offers the same ones, and a pairing link can be copied on the computer
+          and pasted on the phone when the code cannot be scanned. Checked live with the desktop
+          renderer and the phone on one chat: each change on one side showed on the other, a prompt
+          queued on the desktop showed on the phone, and prompts reordered and removed on the phone
+          changed on the desktop too.
+        </p>
+        <p>
+          October 22 on nightly (local commits, not pushed yet): phone access and the iPhone app.
+          Settings › Phone turns on a second listener that speaks only a Noise IK handshake, pinned
+          to a key in the OS credential store, and shows a one-time pairing code; a paired phone is
+          one more client of the same protocol, limited to reading and driving chats, and a new
+          projects.changed push puts a chat started on either device in both lists. The app
+          (apps/mobile, Expo with every screen in SwiftUI written in Swift, Liquid Glass, its own
+          npm install) pairs, lists and continues every chat, starts new ones with a project, model,
+          reasoning level and access level, answers approvals and questions, attaches photos,
+          browses folders to add projects and shows a chat's changes. Verified on the iOS 27
+          simulator against a private server with Claude Code: pairing from the desktop's QR code, a
+          desktop-sent turn streaming on the phone, a phone-approved file write, reconnect after a
+          server restart. Not verified yet: a real iPhone (camera scan, Local Network prompt, a
+          phone on Wi-Fi or Tailscale) and Windows. Later the same day every screen was redrawn as
+          native SwiftUI in Swift (one list instead of three tabs, approvals and questions in place
+          of the composer) and checked again on the simulator: pairing by paste, an approval and two
+          agent questions answered on the phone, the queue, a photo, Changes and dark mode. Two
+          server bugs found on the way are fixed: generated titles kept the model's Markdown
+          asterisks, and a prompt with a picture showed twice once Claude's own history was read.
+        </p>
+        <p>
+          October 20, evening on nightly (3adcd24a): all four gates passed on 3de247b3 (web 3,028
+          tests, server 1,721, desktop 484 and every package, no failure). The Windows taskbar
+          button shows the sidebar's amber needs-you dot with a thin dark ring instead of a drawn
+          count; the count is the button's tooltip and what a screen reader announces, and macOS and
+          Linux keep the native badge count (PR #1923). Install now no longer goes through Stop all,
+          which deleted the queued prompts of every chat: it stops each running turn the way the
+          chat's own Stop does, leaves a turn with prompts queued behind it to the restart, and
+          every queue survives the update (PR #1924). Landed after Leon's go, each with a test that
+          fails on 3de247b3: an update no longer waits forever on a chat that only holds queued
+          prompts (PR #1926); a project's five-row fold keeps working, unread, needs-you and open
+          chats in sight (PR #1927); continuing a chat that has its own checkout carries its
+          uncommitted changes into the new one and says where they are (PR #1928, contracts PR
+          #1929, PR #1932, which replaced PR #1930). Still open: Continue on another account keeps
+          the early messages of a long chat (PR #1925), whose branch has taken further commits since
+          the go. Not verified yet: the dot on a real Windows taskbar and a real update install.
+        </p>
+        <p>
+          October 20 on nightly (local commits, not pushed yet): API connections are removed.
+          Settings › Providers has no API connections section, the model picker offers no connection
+          models, and the server no longer stores keys or runs chats on them; a user's own key goes
+          into OpenCode's sign-in and runs as an OpenCode chat. Chats saved under an API connection
+          stay readable but cannot start again. TasteCode's own API loop went first, and an
+          OpenCode-backed replacement built the same day went with the feature. Five OpenCode
+          adapter fixes for OpenCode 1.18.31 from that work stay and help the OpenCode provider: v1
+          is preferred because 1.18.31's v2 never runs a turn, resumed chats keep their model, the
+          user's prompt no longer repeats as a reply, replies stream again, and v1 permission asks
+          reach the user instead of hanging the turn. The api provider id and the connection methods
+          remain in the contracts until a contracts change removes them.
+        </p>
+        <p>
+          October 20, overnight on nightly (5da77ebc): what landed, each checked in its own PR with
+          stand-in CLIs only; all four gates passed on 5da77ebc (web 3,026 tests, server 1,721,
+          desktop 487 and every package, no failure). Sidebar direction B (PR #1914): a Needs you
+          band above Pinned for chats waiting on an approval or a question or failed and unread,
+          chats keep their place in the tree, and Archive is the row's hover action with a folded
+          Archived section. Chat notifications (PR #1915): while the window is away, one OS
+          notification per chat that needs the user and a dot on the taskbar button, chosen in
+          General as Off, Needs me or Also finished. An app update waits for running chats (PR
+          #1916): the sidebar button and About read Installs when 2 chats finish, and Install now
+          stops them after one confirmation. Multiple accounts for Codex and Claude Code (PR #1913,
+          below), and at a plan limit a failed turn offers Continue on Work, a new chat on that
+          account that carries the conversation (contracts PR #1917, then PR #1918). Settings pauses
+          only the app's endless loops behind it (PR #1912; with Settings open and a chat working in
+          the sidebar the renderer went from 14.9 to 8.5 % and the GPU from 25.3 to 4.8 % of a
+          core). Grok's sign-in and billing reads start together (PR #1919; Profile accounts ready
+          12.3 to 8.9 s after launch with stand-in delays), and saved model lists follow the CLI
+          build that listed them, so after a CLI update its models reach the open picker about 4 s
+          after the next launch, where they did not within 40 s before (PR #1920). Main's four fixes
+          from the same night (PRs #1884, #1896 to #1898) reach nightly through the sync PR #1921,
+          which changes no file because each already had its nightly counterpart. Not verified yet:
+          real sign-ins, a real update install, the real Windows toast on screen, and macOS.
+        </p>
+        <p>
+          October 20 on nightly (PR #1913, merged on top of 4870f6af): multiple accounts per
+          provider, for Codex and Claude Code, the providers whose adapters declare it. Each account
+          is a CLI folder of its own (CODEX_HOME, CLAUDE_CONFIG_DIR); Settings &gt; Providers &gt;
+          Accounts adds a new, empty folder or brings an existing one, signs each account in in its
+          own folder, and removes or deletes it; a chat is pinned to the account it started on and
+          resumes there; the model picker picks the account for a new chat; plan limits, reset
+          credits, model lists and usage are read per account, and the account popup, the Usage
+          sheets and Profile list them by account. An adversarial review found three medium issues,
+          fixed before the merge: a chat's title and commit message went through the default
+          account, the model picker only listed the default account's models, and a project's MCP
+          sign-in could land in another account's folder. Also fixed: a brought folder that is,
+          holds or sits in a folder in use is refused; removal stops resolving the account before
+          its folder goes; new folders no longer copy the default account's settings, which can hold
+          keys and login pins. Checked with the four gates and in the Electron shell with stand-in
+          CLIs only; real sign-ins, macOS and Linux are not verified yet. The chunk PRs #1854 to
+          #1890 show as merged or closed.
+        </p>
+        <p>
+          October 19, second main into nightly (PR #1909): main 58d89955, the seven commits of PRs
+          #1902 to #1907, merged with a merge commit while nightly keeps every provider. Plan limits
+          draw as red-to-green gauges that fill when the popup opens, with nightly's even-pace tick
+          kept on top; a failed limits request with nothing to show retries three times as Retrying…
+          before it leaves the list, on top of nightly's server backoff and pushed limits, and the
+          Usage sheets hide their Retry while that runs; finished, waiting and failed chats get
+          green, yellow and red dots; the workspace mode menu fits its labels; Grok's failed billing
+          read has a stable message. Nightly keeps its Settings v1 type, so main's Settings
+          type-scale fix (#1903) is left out here.
+        </p>
+        <p>
+          October 19, main into nightly (PR #1899): main b86daab1, the 99 commits since the last
+          sync at 0ad74ec3, merged with a merge commit while nightly keeps every provider, API
+          connections and the dashboard reference library. It brings chat replies that show raw HTML
+          as text and single line breaks, bold as strong, chat deletes that survive a quit, composer
+          drafts that survive a restart, the restore dialog's cut, Claude task plans, background
+          writing that falls through to the next source, Command-only keybinds on macOS and main's
+          dead-code cleanup. Background writing remembers a failed API connection on its own, so the
+          other connections are still tried.
+        </p>
+        <p>
+          October 19 on nightly (d8925ba3): what landed on October 18 and 19 after the round; the
+          figures are from each PR's own measurement against nightly with fake CLIs. October 18: the
+          October 16 round in one merge (PR #1841) and the performance fixes PRs #1843, #1844, #1846
+          to #1848 and #1851, all described below; PR #1857 keeps a failed plan-limit read across
+          launches, so the first Usage view or account popup answers at once with Last known values
+          or Unavailable and the reason, and the backoff continues instead of restarting; test fixes
+          PRs #1849 and #1853. October 19, starting a chat: a chat started since the launch sends
+          its first turn without waiting for the provider's first history scan (PR #1873); a new
+          chat asks for a branch switch only when the shelf names a branch other than the checkout,
+          the server then reads only the branch, and a branch it cannot read starts the chat in
+          place (PR #1883; Enter to thread.start for Claude 3.8 to 1.3 s); a clean checkout's turn
+          checkpoint is answered from HEAD with both refs in one git run (PR #1882; 11 to 5 git runs
+          before a turn); Claude history finds its two title keys in one search (PR #1878). Send:
+          providers.list at launch no longer waits for codex login status or the registry PATH (PR
+          #1867; Send enabled 7.3 to 3.8 s with a 4 s login check), Send stays available while a
+          provider that was signed in is read again (PR #1876), an Enter pressed while Send loads is
+          sent once it is ready (PR #1881), and dictation shows the last voice status at once (PR
+          #1880). Shell: Settings and the model picker load in an idle moment after launch (PR
+          #1868; first Settings open 402 to 89 ms), a focus health check keeps a busy server's
+          socket (PR #1869), and the working chat spinner turns on the compositor (PR #1874;
+          renderer 57.4 to 15.5 % of a core while a turn streams in a background chat), with two
+          app.css comments shortened so the startup stylesheet fits its budget again (PR #1891).
+          Processes: an exiting process stops the trees it still owns, and a forced stop at quit
+          ends the server's whole tree, so no CLI outlives the server (PR #1872; the main process
+          may wait up to 5 s longer for that, after the window has closed); a short check that
+          missed its limit finishes by itself instead of being taskkilled (PR #1879). Closed with
+          their numbers, no measurable gain: PRs #1866, #1870 and #1871. Open for Leon: PR #1875
+          (sidebar direction B), PR #1877 (pause animations while Settings covers the app), PR #1884
+          (start a new chat in place on main) and the multiple-accounts stack (PRs #1854 to #1856,
+          #1858 to #1865, #1885 to #1890). Closing gates on Windows: on b32d2602 lint, typecheck and
+          build passed, and the tests stopped at one failing web test, the startup CSS budget, which
+          PR #1874 had taken 288 bytes over (Grok's suite did not run there; server and desktop, run
+          alone, passed); PR #1891 shortened two comments. On d8925ba3 all four gates passed: lint
+          (the two known warnings), typecheck, build and every test suite (web 2,858 tests, server
+          1,641, desktop 436, every package).
+        </p>
+        <p>
+          October 18 on nightly (54ee3536): the October 16 improvement round landed in one merge
+          commit (PR #1841). Every lane top was merged into one integration branch, checked with the
+          four gates and in the Electron shell on a copy of real data, and fixed there; nightly's
+          tree is identical to that tested tree, and all 172 lane PRs show as merged. The round's
+          contracts (PRs #1637, #1638, #1640, #1643, #1659, #1661, #1662, #1675, #1680) and in-app
+          feedback (PRs #1604 to #1607, #1690) were merged on October 16. Streaming (PRs #1676,
+          #1677, #1735 to #1738, #1790 to #1792, #1820 to #1823): text is revealed a character at a
+          time behind a soft edge, a finished reply is rendered ahead so completion neither moves
+          nor freezes it, a new turn pins its prompt near the top, the follow glides, and one
+          breathing dot marks a working turn. Chat column (PRs #1670 to #1673, #1711 to #1714): the
+          transcript sits inside the prompt bar's text edges, code blocks get ghost actions on hover
+          or focus, a real Copied state and a text label, and tables sit in a rounded card. Models
+          (PRs #1641, #1642, #1682 to #1685, #1770 to #1777, #1802 to #1804, #1828 to #1830, #1833
+          to #1835): visibility keeps only explicit choices and a newer generation hides the older
+          one; one model list per source answers from the last launch, and models.changed brings new
+          CLI models without a restart; OpenCode offers only its connected providers with up to four
+          recommended models, Cursor waits up to 60 s and starts six models ordered by lab,
+          Antigravity uses agy's own names, and large sources in Settings are grouped by lab. MCP
+          and slash commands (PRs #1686 to #1688, #1733, #1734, #1779 to #1782, #1813 to #1819,
+          #1831, #1832): Claude Code, Grok and OpenCode list their own MCP servers, commands and
+          skills, also without an open chat, and / lists TasteCode commands first, then the
+          provider's commands and skills.
+        </p>
+        <p>
+          Providers (PRs #1654 to #1658, #1689, #1691, #1692, #1694, #1710, #1719 to #1721, #1744 to
+          #1747): shared account reads keep a confirmed sign-in through a slow re-check, Send stays
+          available when an account cannot be confirmed, Cursor has no version gate, Antigravity and
+          OpenCode report their real sign-in, and Install runs the vendor's official installer for
+          Claude Code, Grok, Cursor and Antigravity. Plan limits (PRs #1644 to #1647, #1693, #1695
+          to #1697, #1739 to #1743, #1759 to #1763): Claude reads skip the transcript scan and stop
+          at 20 s, live Codex and Claude windows reach the bars within about a second, a failed
+          refresh keeps the last known values with a freshness label, limits survive chat switches,
+          and bars get an even-pace tick. Usage (PRs #1660, #1704 to #1706, #1722 to #1725, #1748 to
+          #1752, #1784 to #1789, #1836 to #1839): the usage index is compacted and read
+          incrementally, cost comes from cited list prices and reads Partial estimate below 95%
+          priced tokens, and Usage and Profile are new pages. Settings (PRs #1648 to #1653, #1707 to
+          #1709, #1716 to #1718, #1754 to #1757, #1807 to #1812): one Settings v1 layout with one
+          button, switch, select and field family on all 11 tabs, and one terminal look. Performance
+          (PRs #1663 to #1667, #1726 to #1732, #1753, #1758, #1793 to #1795): CLI discovery without
+          where.exe, startup answers the first project list before background work, background reads
+          wait for pauses in streaming, the history refresh backs off while idle, history metadata
+          is kept in the database, Claude Code and Codex histories are read incrementally, and no
+          opencode serve is left behind. After the round was measured (PRs #1843, #1844), the first
+          Usage page or account popup after a launch opens on the last session's plan limits instead
+          of waiting for each CLI, and Profile's accounts open on the plans the last launch read.
+          PRs #1846 to #1848 followed: a model list the last launch read less than 10 minutes ago is
+          not listed again at startup and older ones are listed again 5 s apart, store reads in the
+          first request batch answer before provider reads, a long chat measures the rows a commit
+          mounts in one layout instead of one per row (open, switch back, first scroll up), and the
+          streaming reveal replaces only the highlight ranges that moved. PR #1851 followed: an
+          account read that names no email or plan, as Grok's does when its subscription lookup
+          fails under load, no longer counts as an account switch, so it keeps the held and saved
+          plan limits and the model list. Subagents and pull requests (PRs #1764 to #1767, #1778,
+          #1783, #1801, #1805, #1806, #1824 to #1827): Claude Code, Codex and Grok subagents get
+          live rows, the chat header shows its pull request, and Review can commit, push and create
+          a pull request.
+        </p>
+        <p>
+          Checks on the integration tree (ed488891, Windows): <code>pnpm lint</code>,
+          <code>pnpm typecheck</code> and <code>pnpm build</code> passed, every package suite and
+          the desktop suite passed, web passed 2,832 of 2,833 tests with one failure that nightly
+          had before, and the server's remaining failures were load timeouts and Windows EBUSY on
+          temp cleanup that pass alone, the same classes that fail on nightly without the round.
+          Twenty commits came out of the gates and the Electron shell checks, including fixes for
+          two Grok bugs nightly already had; PR #1841 lists them. On nightly with the five
+          performance fixes (3163b9ad) the gates passed again: lint, typecheck, build, every
+          package, desktop and all 2,841 web tests; the server had one failure, a test that fixed
+          the start order of two concurrent background titles, made order-independent in PR #1849.
+          Not verified live yet: the Last known label, the one terminal look, the OS clipboard after
+          Copy and a hanging Grok in chat. As of October 18 no installer has been built from this
+          nightly. The release checklist below still describes main; once Leon has tested nightly,
+          it is promoted to main as v0.1.3 with every provider.
+        </p>
+        <p>
+          October 16 on nightly (04580dfe): main is synchronized through 0ad74ec3 (PR #1632) with
+          every nightly provider, API connection and the usage history kept, bringing main's October
+          16 round: full-width replies, aligned code block controls, square composer chips, steady
+          streamed text, tier-ordered Codex and Claude Code catalogs with one generation rule, the
+          context ring for Codex and Claude Code, the inherited MCP servers list, settings and
+          terminal polish and the design agent fixes. The sync hand-merged main's staged background
+          model sources with nightly's API connections, which load through the same per-source cache
+          and run on their connection runtime. Dashboard references are parked behind one switch:
+          dashboard requests build as websites and the 42 MB dashboard set left the package (PR
+          #1611); the design-taste plugin 0.5.0 ships without them.
+        </p>
+        <p>
+          October 15, evening on nightly (98bb0fba): main is synchronized through f8425b39 by two
+          more sync PRs, with every nightly provider, API connection and the usage history kept: the
+          non-blocking Windows taskkill (PR #1588, main's PR #1556) and Leon's design picks with
+          main's docs update (PR #1609). Neither sync changed nightly-only code; PR #1609 needed a
+          hand merge only in the two docs pages. The picks are shared UI, so they reach every
+          nightly provider without provider-specific code.
+        </p>
+        <p>
+          October 15 on nightly (a8b85315): main is synchronized through b003509f by two sync PRs,
+          with every nightly provider, API connection and the usage history kept, bringing main's
+          October 15 merges below: the round-5 batch through 3c7168fb (PR #1581) and the streaming,
+          GPT short name, toast and test fixes with main's docs update (PR #1586). In PR #1581 the
+          app shell kept nightly's full provider roster, its preferred-source default-model fallback
+          and its send-availability inputs while taking main's draft notice and its loading state
+          for a model choice whose source is still listing. PR #1586 changed no nightly-only code;
+          only the two docs pages needed a hand merge.
+        </p>
+        <p>
+          October 14 on nightly (2a6c7e1c): main is synchronized through 16b95be9 with every nightly
+          provider, API connection and the usage history kept, bringing main's October 12 to 14
+          merges below; on nightly a new profile's first visibility choice also covers ACP, API
+          connection and custom harness rows. An expired Cursor sign-in now reads as signed out, so
+          Settings and the composer offer Sign in, and Cursor model discovery says "Your Cursor
+          sign-in has expired or is missing. Sign in to Cursor again." instead of "Cursor model
+          discovery failed". The Cursor CLI's status counts any stored sign-in as logged in, while
+          its model list and turns refuse an expired one (PR #1547).
+        </p>
+        <p>
+          October 13 on nightly (0d93b349): main is synchronized through 4794e048 by three sync PRs,
+          with every nightly provider, API connection and the usage history kept (PRs #1533, #1541,
+          #1545). Chat rows take main's new sidebar layout and keep each ACP agent's own mark. No
+          nightly-only provider gets main's new Ultra or Ultracode efforts by hand; OpenCode, Pi and
+          ACP agents show the levels their runtimes report (PR #1541). Model visibility moves each
+          row once across nightly's whole catalog, so a source that fails discovery, such as Cursor,
+          no longer holds the other sources back. In the account popup a failed OpenCode read shows
+          Unavailable with Retry, and an API connection whose refresh failed shows Last known (PR
+          #1545).
+        </p>
+        <p>
+          Late October 12 on nightly (f1a65a4e): a search hit's jump runs once instead of again on
+          every return to the chat (PR #1498, the same fix as main's PR #1532). Cursor on Windows
+          starts its bundled node.exe instead of the cmd.exe shim, so multi-line prompts and the
+          first turn of a new chat no longer fail, and session instructions are kept until the CLI
+          starts (PR #1499). A chat that switches model runs its next turn on that model for API
+          connections and for ACP agents that choose a model through a session option, such as Kimi;
+          Gemini CLI and Qwen Code still keep their starting model (PR #1520). API connections
+          answer a tool call whose arguments fail review with a tool error instead of failing the
+          turn (PR #1504), stop the remaining tool calls of a batch on Stop (PR #1508), give
+          router-prefixed ids and current families such as claude-*, o3, Kimi K2 and GLM 4.x the 64
+          KB context budget instead of 8 KB (PR #1523), and no longer rewrite saved history for a
+          placeholder key shorter than four characters (PR #1528). OpenCode rejects a v1 model id
+          without its provider before the turn opens instead of blocking every later turn (PR
+          #1525). The Design agent reads named Tailwind radii through the workspace theme, so
+          token-correct pages no longer get false radius findings (PR #1506), and pricing, about and
+          waitlist pages for an app stay on website references (PR #1510).
+        </p>
+        <p>
+          October 12 on nightly (abb78ddf): main is synchronized through 0e792a64 with every nightly
+          provider kept (PR #1494), and Claude Code is first across nightly's longer provider lists
+          (PR #1495). Cursor, Antigravity and Pi keep reading past a frame that fails its schema or
+          a listener that throws (PR #1494). The Design agent keeps one design language per page: it
+          samples website references from one anchor site and then similar profiled sites (53 style
+          profiles), matches a dashboard screen to the request's domain (PR #1485), tells every
+          phase to follow the anchor's shared designTokens with at most two font families (PR
+          #1478), and audits generated fonts and radii as bounded Review findings while Brand sees
+          only the anchor and up to two same-site references; finished dashboards say "Dashboard
+          built." (PR #1493). A bad providers.json entry no longer breaks every API connection, and
+          Antigravity is found in %LOCALAPPDATA%\agy\bin (PR #1489).
+        </p>
         <p>
           October 16 (main 0ad74ec3): Leon's overnight round landed. Assistant replies use the full
           transcript width (PR #1616), code block controls line up with the label and the block
@@ -431,13 +855,48 @@
           were closed on GitHub and moved to the team's own roadmap tool.
         </p>
         <p>
+          <a href="./CLAUDE-HANDOFF.md">October 9 Claude handoff</a> records the completed reference
+          work, exact verification, local workspace risks and every open PR/issue. Nightly includes
+          main through 16b95be9, synchronized on 2026-10-14. The latest published desktop remains
+          0.1.1. The existing 0.1.2 draft is an older packaging proof, not a release of this nightly
+          source.
+        </p>
+        <p>
+          Nightly synchronization retains the complete provider roster and usage history while
+          integrating main through 16b95be9. OpenCode shares concurrent starts, rejects interrupted
+          session opening, recovers disconnected streams, and grants automatic permissions for one
+          request only. ACP prompt rejection settles pending work and approvals. New API chats
+          preserve their model, connection, and complete tool context across restart; older API
+          chats without saved context cannot resume. Standalone Pi works without a custom harness.
+        </p>
+        <p>
+          <a href="https://github.com/Leonxlnx/tastecode/pull/1392">Synchronization PR #1392</a>
+          merged into nightly at 17aa22a3. Dashboard support is integrated on nightly through
+          <a href="https://github.com/Leonxlnx/tastecode/pull/1393">PR #1393</a>; this is not a
+          public release. Windows cleanup
+          <a href="https://github.com/Leonxlnx/tastecode/pull/1394">#1394</a>, task authorization
+          <a href="https://github.com/Leonxlnx/tastecode/pull/1403">#1403</a> and checkpoint
+          identity <a href="https://github.com/Leonxlnx/tastecode/pull/1404">#1404</a> are merged on
+          main. The standalone API connection contract
+          <a href="https://github.com/Leonxlnx/tastecode/pull/1395">#1395</a> is merged on nightly.
+        </p>
+        <p>
+          <a href="https://github.com/Leonxlnx/tastecode/actions/runs/37228489532"
+            >Windows CI run 37228489532</a
+          >
+          passed lint, typecheck, the full test command and build for feature candidate edc92ea9:
+          4,445 tests passed, 18 existing skips, zero failures. Desktop tests ran with 368 passed
+          and 10 existing skips, included in that total; the real Windows alias regression passed.
+          No deadlines were overridden. Product source, tests, configuration, dependencies and
+          bundled images match that tested candidate; follow-up changes are documentation and
+          recorded screenshots only. Parent 67c7383c separately passed 4,395 tests in the same run.
+          Packaged Windows and macOS verification remains pending.
+        </p>
+        <p>
           <a href="https://github.com/Leonxlnx/tastecode/pull/1404">Checkpoint identity (#1404)</a>:
           Windows long paths and 8.3 aliases share one Git common-directory identity, preserving
-          linked worktrees' combined checkpoint refs during history cleanup. A real alias regression
-          and all 36 checkpoint/audit tests passed locally; the fix is also covered by
-          <a href="https://github.com/Leonxlnx/tastecode/actions/runs/37228489532"
-            >Windows integration verification</a
-          >.
+          linked worktrees' combined checkpoint refs during history cleanup. Resolution errors
+          propagate and separate repositories remain distinct.
         </p>
         <p>
           <a href="https://github.com/Leonxlnx/tastecode/pull/1394"
@@ -733,7 +1192,8 @@
           >. <a href="./DESIGN-REFERENCES.md">Reference workflow and local library setup</a>.
         </p>
         <p class="sub">
-          New Design runs sample the full eligible library without source-site or style filtering.
+          New Design runs sampled the full eligible library without source-site or style filtering
+          until 2026-10-12, when nightly moved website decks to anchor-site sampling (PR #1485).
           Complete generated candidates expand the local pool to 172 compositions and 24 heroes;
           their visual inspection remains part of the consuming run. Hero entrances and distinct
           scroll reveals are required by default. Normal follow-ups clear completed Design JSON
@@ -807,15 +1267,20 @@
           <a href="./verification/pr-quality-2026-09-09.md">scope, evidence, and release limits</a>.
         </p>
         <p class="sub">
-          The first release ships three subscription plans and nothing else: Codex, Claude Code, and
-          Grok. Everything below either exists and is checked, is being worked on, or must happen
-          before the beta goes out. Every other provider lives only on the nightly branch.
+          The public beta on main (v0.1.1) ships three subscription plans and nothing else: Codex,
+          Claude Code, and Grok. v0.5.0 is next: its release builds offer exactly Claude Code,
+          Codex, Grok, Cursor and Antigravity, while OpenCode, Pi and the ACP agents stay in the
+          code and appear only in dev builds. Everything below either exists and is checked, is
+          being worked on, or must happen before the beta goes out.
         </p>
         <div class="hero">
           <div class="kpi">
-            <b>3</b>
-            <span>providers in the beta</span>
-            <small>Claude Code, Codex, Grok. Every visible model answered on 2026-10-12</small>
+            <b>5</b>
+            <span>providers in v0.5 release builds</span>
+            <small
+              >Claude Code, Codex, Grok, Cursor, Antigravity; the v0.1.1 beta has the first
+              three</small
+            >
           </div>
           <div class="kpi">
             <b>Ready</b>
@@ -823,9 +1288,9 @@
             <small>thread, review, sessions, git, settings, TasteCode identity</small>
           </div>
           <div class="kpi">
-            <b>1</b>
+            <b>2</b>
             <span>workstreams running</span>
-            <small>design</small>
+            <small>design, v0.5.0 from dev</small>
           </div>
           <div class="kpi">
             <b>6</b>
@@ -1003,8 +1468,9 @@
                 <span
                   >Lifecycle hardening
                   <span class="d"
-                    >reply guidance survives resume, Windows PTY cleanup waits for exit, and a
-                    server run as a legacy Node child exits when the main process dies</span
+                    >reply guidance survives resume, stale usage indexes rebuild, failed scans
+                    recover without retry storms, Windows PTY cleanup waits for exit, and a server
+                    run as a legacy Node child exits when the main process dies</span
                   >
                 </span>
               </li>
@@ -1063,17 +1529,17 @@
                     names and marks stay consistent; flat and rail pickers share search; Settings
                     keeps the short catalog lists search-free while every model and its switch
                     remain picker inclusion; the flat list is the first-run layout; Claude Code,
-                    Codex and Grok groups keep that order while models load, and new users start on
-                    Claude Code; both catalogs list the newest generation of each tier first (Astra,
-                    Sol, Terra, Luna; Fable, Opus, Sonnet, Haiku), and every row older than its
-                    family's newest generation starts hidden by one rule, also when a saved profile
-                    meets it for the first time; visibility updates move each row once from the
-                    first paint, so later choices stay even while a source fails discovery, and a
-                    new profile's first choice is kept; long model names no longer clip the picker;
-                    Claude account labels include the available Max multiplier, and Grok 4.5 and 4.6
-                    remain discoverable, provider readiness stays silent during new-chat source
-                    changes, and saved custom ids remain usable while their management UI is
-                    parked</span
+                    Codex and Grok groups keep that order while models load, followed on nightly by
+                    the other CLIs and ACP agents, and new users start on Claude Code; both catalogs
+                    list the newest generation of each tier first (Astra, Sol, Terra, Luna; Fable,
+                    Opus, Sonnet, Haiku), and every row older than its family's newest generation
+                    starts hidden by one rule, also when a saved profile meets it for the first
+                    time; visibility updates move each row once from the first paint, so later
+                    choices stay even while a source fails discovery, and a new profile's first
+                    choice is kept; long model names no longer clip the picker; Claude account
+                    labels include the available Max multiplier, and Grok 4.5 and 4.6 remain
+                    discoverable, provider readiness stays silent during new-chat source changes,
+                    and saved custom ids remain usable while their management UI is parked</span
                   >
                 </span>
               </li>
@@ -1159,10 +1625,9 @@
                 <span
                   >Provider stream lifecycles
                   <span class="d"
-                    >Claude Code, Grok, and direct API sessions settle every partial message,
-                    reasoning block, and tool before the turn terminal; streamed text survives
-                    failures, stops, process exits, replacements, and closes without a permanently
-                    live row</span
+                    >Claude Code and Grok sessions settle every partial message, reasoning block,
+                    and tool before the turn terminal; streamed text survives failures, stops,
+                    process exits, replacements, and closes without a permanently live row</span
                   >
                 </span>
               </li>
@@ -1332,8 +1797,76 @@
           </div>
 
           <div class="lane l-active">
-            <header>In progress <span class="count">1</span></header>
+            <header>In progress <span class="count">4</span></header>
             <ul>
+              <li>
+                <i class="tick">●</i>
+                <span
+                  >v0.5.0 from dev
+                  <span class="d"
+                    >the next public release after 0.1.1, in place of the planned 0.1.3; everything
+                    planned for it is merged on dev, most of it promoted to nightly (#2024); the
+                    promotion to main and the release on the evening of 2026-11-02 are next; release
+                    builds offer Claude Code, Codex, Grok, Cursor and Antigravity; merged for it on
+                    November 2: the provider list per build (#2006 to #2009), #2010 to #2018, #1954,
+                    #1941, two packaging fixes (#2022, #2023) and a polish round (#2026 to #2030); a
+                    Windows release candidate passed the release asset check; macOS, real provider
+                    turns in the candidate and the CI package proof are not verified; sub-agents
+                    (#1956, #1957, #1959, #1968, #1969, #1972, #1973) come after v0.5</span
+                  >
+                </span>
+              </li>
+              <li>
+                <i class="tick">●</i>
+                <span
+                  >Provider list per build
+                  <span class="d"
+                    >merged on dev: the package records its edition (#2006), the server offers and
+                    starts only that edition's providers (#2007), the release asset check refuses a
+                    dev-edition package (#2008), and the renderer follows providers.list (#2009); a
+                    live server with HARNESS_EDITION=release listed only the five release providers;
+                    usage history without hidden providers is open (#2018); not verified yet: a real
+                    dist:release or dist package reading its edition from app.asar, and macOS</span
+                  >
+                </span>
+              </li>
+              <li>
+                <i class="tick">●</i>
+                <span
+                  >Dashboard design support, nightly
+                  <span class="d"
+                    >integrated on nightly in
+                    <a href="https://github.com/Leonxlnx/tastecode/pull/1393">PR #1393</a>
+                    after merged
+                    <a href="https://github.com/Leonxlnx/tastecode/pull/1392">PR #1392</a>; not
+                    released on public beta. The 200 reviewed generated desktop/mobile dashboard
+                    pairs (400 WebPs) are imported in a separate catalog with provenance. One
+                    complete app shell is chosen by matching the request's domain, uniformly among
+                    the best matches; pricing, about and waitlist pages for an app stay on website
+                    references; finished runs say "Dashboard built." Plans use operate_monitor and
+                    functional filters, sorting, tabs, navigation, drawers and charts, including
+                    keyboard access, focus restoration and reduced motion. Native charts and visibly
+                    identified demo values avoid website-only validation blockers. Image capability
+                    is checked before inference; unsupported sessions retain ordinary coding. The
+                    172 shipped website references and 316 WebPs are unchanged; the combined bundle
+                    has 372 references, 344 paired, and 716 WebPs. Default-bundle selection,
+                    saved-deck, attachment and hash checks passed for all 200 dashboard groups and
+                    400 distinct WebPs. The catalog is deeply JSON-equal to the private import after
+                    formatting; the other 401 files are byte-identical. Fresh Windows CI at edc92ea9
+                    passed all four gates with 4,445 tests passed, 18 existing skips and zero
+                    failures. Historical local gates at 0ccdb67d passed with 4,432 tests and 18
+                    skips. Thirty-six focused cases across nine provider IDs cover 18
+                    synthetic-vision flows and 18 capability rejections/ordinary follow-ups. The
+                    isolated browser/API smoke at a02c6ab3 used a synthetic endpoint: two
+                    unsupported Design attempts added no inference requests or persisted Design
+                    runs; ordinary follow-ups retained both API identities, models and tool context
+                    across an owned restart, with no browser exceptions or queued work left. Live
+                    image-capable dashboard generation, packaged Electron, macOS and real-keyring
+                    acceptance remain unverified; building dashboards from tasteskill v2.1 app
+                    screens is open on dev in #1941</span
+                  >
+                </span>
+              </li>
               <li>
                 <i class="tick">●</i>
                 <span
@@ -1356,8 +1889,12 @@
                     review can pass; every new page section records one of the human-authored beta
                     layout families and exact case IDs, invalid or adjacent duplicate compositions
                     fail before Build, and Build plus Review must preserve the selected geometry;
-                    new runs sample catalog and complete generated candidates uniformly, with
-                    distinct feature/about compositions before reuse; the legacy 132-direction deck
+                    new website runs sample one anchor site first, then the closest profiled sites,
+                    then the uniform pool, with distinct feature/about compositions before reuse;
+                    every phase keeps the anchor's one design language through shared designTokens
+                    and at most two font families, Brand sees only the anchor and same-site
+                    references, and a font and radius audit that reads named Tailwind radii through
+                    the workspace theme adds bounded Review findings; the legacy 132-direction deck
                     remains for older saved runs; supplied reference pixels and selected direction
                     IDs persist across phases; approved artifacts and assets are checked before
                     reuse, duplicate briefing IDs are rejected, and exact output rules inspect
@@ -1448,19 +1985,20 @@
       </section>
 
       <section id="parked">
-        <h2>Nightly only</h2>
+        <h2>Dev builds only</h2>
         <p class="sub">
-          Built and tested, and absent from main's code since 2026-10-03. All of it runs on the
-          nightly branch; bringing one back to main is a port from nightly, not a roster switch.
+          In the code on dev but not on main, and left out of release builds. A dev build (pnpm dev
+          and other unpackaged runs, or a local package from pnpm run dist or dist:dir) offers the
+          providers below; a release build offers only Claude Code, Codex, Grok, Cursor and
+          Antigravity. Cursor and Antigravity left this list with v0.5 (#2007). Phone access is
+          separate: it needs HARNESS_PHONE_ACCESS=1, which pnpm dev sets.
         </p>
         <div class="parked">
-          <span>Cursor adapter</span>
-          <span>OpenCode adapter</span>
-          <span>Antigravity adapter</span>
+          <span>OpenCode adapter, also for a user's own API key</span>
           <span>Pi over RPC</span>
-          <span>Kimi CLI over ACP</span>
-          <span>API connections, 6 presets</span>
-          <span>GLM and Z.ai coding plans</span>
+          <span>ACP agent library, 12 agents</span>
+          <span>GLM and Z.ai coding plans through OpenCode</span>
+          <span>Phone access and the iPhone app</span>
         </div>
       </section>
 

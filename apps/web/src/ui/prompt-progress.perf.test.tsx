@@ -59,6 +59,10 @@ describe('prompt progress lifecycle', () => {
     expect(run.canonicalRail).toBe(run.optimisticRail)
     expect(run.deltaReply).toBe(run.startedReply)
     expect(run.rendered.container.querySelectorAll('.activity--duration')).toHaveLength(1)
+    // One working dot, from the optimistic prompt through the streamed reply.
+    const pulses = run.rendered.container.querySelectorAll('.activity__pulse')
+    expect(pulses).toHaveLength(1)
+    expect(run.optimisticRail.contains(pulses[0]!)).toBe(true)
     expect(threadItems(run.finalState).at(-1)?.text).toHaveLength(scenario.liveCharacters)
     expect(run.deltaReply.textContent).toHaveLength(scenario.liveCharacters)
 

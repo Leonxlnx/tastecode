@@ -13,7 +13,7 @@ const OPEN_ROW = 300
 const layout = vi.hoisted(() => ({
   count: 0,
   sizes: [] as { size: number }[],
-  /** The runway height the last render committed; the scroll height follows it. */
+  /** The runway height last written (a render, or a resize); the scroll height follows it. */
   committed: 0,
   /** Scrollable overflow a sliding runway adds below the committed height. */
   overflow: 0,
@@ -24,7 +24,7 @@ const layout = vi.hoisted(() => ({
   openRow: 0,
   summaryTop: 0,
   scrollTop: 0,
-  rerender: () => undefined as void,
+  onChange: undefined as (() => void) | undefined,
 }))
 
 /** The scroll end once every slide has settled. */
@@ -36,8 +36,7 @@ const scrollHeight = () =>
   (document.querySelector("[data-open='closing']") ? layout.closingOverflow : 0)
 const clampScrollTop = (top: number) => Math.max(0, Math.min(top, scrollHeight() - VIEWPORT))
 
-vi.mock('@tanstack/react-virtual', async () => {
-  const { useReducer } = await import('react')
+vi.mock('@tanstack/react-virtual', () => {
   const total = () => layout.sizes.reduce((sum, row) => sum + row.size, 1_000)
   const virtualizer = {
     getVirtualItems: () =>
@@ -52,21 +51,23 @@ vi.mock('@tanstack/react-virtual', async () => {
       return layout.sizes
     },
     indexFromElement: (element: Element) => Number(element.getAttribute('data-index')),
-    // Like the real virtualizer: the new size reaches the DOM on the next render.
+    // Like the real virtualizer with directDomUpdates: it corrects the scroll
+    // first, then writes the runway's new height and notifies, all before
+    // the transcript renders again (it does not, for a resize alone).
     resizeItem: (index: number, size: number) => {
       const delta = size - (layout.sizes[index]?.size ?? size)
       layout.sizes[index] = { size }
       // The runway has not grown yet, so the browser clamps this write.
       if (layout.correctScroll) layout.scrollTop = clampScrollTop(layout.scrollTop + delta)
-      layout.rerender()
+      layout.committed = total()
+      if (delta !== 0) layout.onChange?.()
     },
     getOffsetForIndex: () => [0],
     scrollToIndex: () => undefined,
   }
   return {
-    useVirtualizer: ({ count }: { count: number }) => {
-      const [, rerender] = useReducer((version: number) => version + 1, 0)
-      layout.rerender = rerender
+    useVirtualizer: ({ count, onChange }: { count: number; onChange?: () => void }) => {
+      layout.onChange = onChange
       if (layout.sizes.length !== count) {
         layout.sizes = Array.from(
           { length: count },

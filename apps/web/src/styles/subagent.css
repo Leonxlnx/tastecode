@@ -1,0 +1,93 @@
+/* ---------- subagents ----------
+
+   A subagent's row keeps the rhythm of the tool rows around it: the same
+   glyph column, label and quiet mono figures. Its name leads, its task
+   follows in the muted tone, and only a running or failed state says so in
+   words. */
+
+.aux--subagent .subagent__name {
+  font-weight: 500;
+}
+
+.aux--subagent .subagent__task {
+  margin-left: 6px;
+  color: var(--text-3);
+}
+
+.subagent__tag {
+  flex: none;
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  line-height: 16px;
+}
+
+.subagent__status {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.subagent__part + .subagent__part::before {
+  content: '·' / '';
+  padding-inline: 5px;
+  color: var(--text-3);
+}
+
+/* A narrow chat keeps the name and the task readable: the token count goes first. */
+@container chat-stage (max-width: 620px) {
+  .subagent__part--tokens {
+    display: none;
+  }
+
+  .subagent__part--tokens:first-child + .subagent__part::before {
+    content: none;
+  }
+}
+
+.subagent__state {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-2);
+  font-family: var(--font-ui);
+}
+
+.subagent__state.is-failed {
+  color: color-mix(in srgb, var(--error) 80%, var(--text-2));
+}
+
+/* Breathes while the subagent works: opacity only, so it stays on the compositor. */
+.subagent__pulse {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--r-circle);
+  background: var(--running);
+  animation: subagent-pulse 1.6s var(--ease-in-out) infinite;
+}
+
+@keyframes subagent-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .subagent__pulse {
+    animation: none;
+  }
+}
+
+/* The task and the report are prose, so they wrap like prose inside the mono card. */
+.subagent__detail .tool-detail__args dd,
+.subagent__detail .tool-detail__output {
+  font-family: var(--font-ui);
+  line-height: 1.55;
+}

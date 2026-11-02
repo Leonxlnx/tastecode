@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { memo, useState } from 'react'
 import type { PlanStep } from '@harness/contracts'
 import {
   IconCheck as Check,
@@ -13,8 +13,17 @@ import { IconMorph } from './IconMorph.js'
  * Pinned above the composer rather than buried in the transcript: it is the
  * answer to "what is it doing and how far along", which is the question you ask
  * while it works — and a row that scrolls away cannot answer it.
+ *
+ * Memoized: the transcript renders it while a turn runs, and the steps keep
+ * their identity until the plan changes.
  */
-export function Plan({ steps, compact = false }: { steps: PlanStep[]; compact?: boolean }) {
+export const Plan = memo(function Plan({
+  steps,
+  compact = false,
+}: {
+  steps: PlanStep[]
+  compact?: boolean
+}) {
   // Owned state, not a hardcoded `open` attribute: re-applying `open` on
   // every plan-step update cancelled the user's collapse mid-turn.
   const [open, setOpen] = useState(true)
@@ -54,4 +63,4 @@ export function Plan({ steps, compact = false }: { steps: PlanStep[]; compact?: 
       </ol>
     </details>
   )
-}
+})

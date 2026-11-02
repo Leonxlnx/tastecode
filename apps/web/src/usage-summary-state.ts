@@ -1,8 +1,63 @@
-import type { ParamsOf, ProviderId, ResultOf } from '@harness/contracts'
+import {
+  DEFAULT_ACCOUNT_ID,
+  type AccountId,
+  type ParamsOf,
+  type ProviderId,
+  type ProviderLimitSource,
+  type ResultOf,
+  type UsageReadIntent,
+} from '@harness/contracts'
 import { errorMessage } from './boundary.js'
 
 type Summary = ResultOf<'usage.summary'>
-type Target = { provider: ProviderId; threadId?: string | undefined }
+type Target = {
+  provider: ProviderId
+  /** Absent means the default account. */
+  accountId?: AccountId | undefined
+  threadId?: string | undefined
+}
+
+/** Absent and default both name the CLI's own account. */
+export function sameAccount(left: AccountId | undefined, right: AccountId | undefined): boolean {
+  return (left ?? DEFAULT_ACCOUNT_ID) === (right ?? DEFAULT_ACCOUNT_ID)
+}
+
+/** The account a state or request names; the default account is left out, as on the wire. */
+function accountOf(target: Pick<Target, 'accountId'>): { accountId?: AccountId } {
+  return target.accountId === undefined || target.accountId === DEFAULT_ACCOUNT_ID
+    ? {}
+    : { accountId: target.accountId }
+}
+
+/** Token totals for a summary that so far holds only pushed limits. */
+const NO_TOKENS: Summary['session'] = {
+  inputTokens: 0,
+  cachedInputTokens: 0,
+  outputTokens: 0,
+  reasoningTokens: 0,
+  totalTokens: 0,
+}
+
+function withLimitSource(summary: Summary | undefined, source: ProviderLimitSource): Summary {
+  return {
+    session: summary?.session ?? NO_TOKENS,
+    today: summary?.today ?? NO_TOKENS,
+    limits: source.status === 'ready' ? source.limits : [],
+    limitSource: source,
+  }
+}
+
+/**
+ * An answer that left the server before a pushed snapshot arrived can land
+ * after it; it keeps the newer pushed limits and brings only its totals.
+ */
+function newerLimits(current: Summary | undefined, next: Summary): Summary {
+  const held = current?.limitSource
+  const answered = next.limitSource
+  if (held?.status !== 'ready' || answered?.status !== 'ready') return next
+  if ((held.checkedAt ?? 0) <= (answered.checkedAt ?? 0)) return next
+  return withLimitSource(next, held)
+}
 
 /** An automatic retry after a failed read that left no values to show. */
 export type UsageRetry = { attempt: number; of: number; message: string }
@@ -13,14 +68,33 @@ export type UsageRetry = { attempt: number; of: number; message: string }
  */
 type Retrying = { retry?: UsageRetry; gaveUp?: true }
 
+/** `accountId` is present only for an account other than the default one. */
 export type UsageSummaryState =
-  | ({ status: 'loading'; provider: ProviderId; summary?: Summary } & Retrying)
-  | { status: 'ready'; provider: ProviderId; summary: Summary }
-  | ({ status: 'error'; provider: ProviderId; message: string; summary?: Summary } & Retrying)
+  | ({
+      status: 'loading'
+      provider: ProviderId
+      accountId?: AccountId
+      summary?: Summary
+    } & Retrying)
+  | { status: 'ready'; provider: ProviderId; accountId?: AccountId; summary: Summary }
+  | ({
+      status: 'error'
+      provider: ProviderId
+      accountId?: AccountId
+      message: string
+      summary?: Summary
+    } & Retrying)
 
 type LoadSummary = (params: ParamsOf<'usage.summary'>) => Promise<Summary>
 
 const ERROR_MESSAGE_LIMIT = 300
+/** How strong a reason to read is; a stronger one a caller gave survives a weaker one. */
+const INTENT_STRENGTH = {
+  background: 0,
+  visible: 1,
+  refresh: 2,
+  retry: 3,
+} satisfies Record<UsageReadIntent, number>
 const RETRY_DELAYS_MS = [5_000, 15_000, 30_000]
 
 function messageOf(error: Parameters<typeof errorMessage>[0]): string {
@@ -28,27 +102,39 @@ function messageOf(error: Parameters<typeof errorMessage>[0]): string {
   return (message || 'Plan limits could not be loaded.').slice(0, ERROR_MESSAGE_LIMIT)
 }
 
-function sameTarget(left: Target | undefined, right: Target): boolean {
-  return left?.provider === right.provider && left.threadId === right.threadId
+function sameSource(left: Target | undefined, right: Target): boolean {
+  return left?.provider === right.provider && sameAccount(left.accountId, right.accountId)
 }
 
-function paramsOf(target: Target): ParamsOf<'usage.summary'> {
-  return target.threadId ? { threadId: target.threadId } : { provider: target.provider }
+function sameTarget(left: Target | undefined, right: Target): boolean {
+  return sameSource(left, right) && left?.threadId === right.threadId
+}
+
+function paramsOf(target: Target, intent: UsageReadIntent): ParamsOf<'usage.summary'> {
+  return target.threadId
+    ? { threadId: target.threadId, intent }
+    : { provider: target.provider, ...accountOf(target), intent }
 }
 
 /**
  * Owns the asynchronous account-usage state independently from React.
  *
- * One revision belongs to one provider/thread target. That makes stale reads
- * harmless and lets same-target refresh failures retain useful last-known
- * values without carrying them across a provider or session switch.
+ * One revision belongs to one provider/account/thread target. That makes
+ * stale reads harmless and lets refresh failures retain useful last-known
+ * values. Plan limits belong to the account, so they survive a switch between
+ * threads on the same account and are cleared only by a switch to another
+ * provider or account.
  */
 export class UsageSummaryController {
   readonly #load: LoadSummary
   readonly #coalesceMs: number
+  /** Why the next request is made unless a caller names a reason; see UsageReadIntent. */
+  readonly #intent: () => UsageReadIntent
   readonly #retryDelaysMs: readonly number[]
   readonly #listeners = new Set<() => void>()
   #target: Target | undefined
+  /** A reason a caller gave that the next request has not carried yet. */
+  #requestedIntent: UsageReadIntent | undefined
   #state: UsageSummaryState | undefined
   #revision = 0
   #request: { revision: number; id: number } | undefined
@@ -60,9 +146,15 @@ export class UsageSummaryController {
   #failures = 0
   #disposed = false
 
-  constructor(load: LoadSummary, coalesceMs = 100, retryDelaysMs = RETRY_DELAYS_MS) {
+  constructor(
+    load: LoadSummary,
+    coalesceMs = 100,
+    intent: () => UsageReadIntent = () => 'visible',
+    retryDelaysMs = RETRY_DELAYS_MS,
+  ) {
     this.#load = load
     this.#coalesceMs = coalesceMs
+    this.#intent = intent
     this.#retryDelaysMs = retryDelaysMs
   }
 
@@ -75,20 +167,29 @@ export class UsageSummaryController {
     return () => this.#listeners.delete(listener)
   }
 
-  select(target: Target): void {
+  /** `ask: false` only holds the target, for values pushed without a request. */
+  select(target: Target, ask = true): void {
     if (this.#disposed || sameTarget(this.#target, target)) return
+    const sameAccountLimits = sameSource(this.#target, target)
     this.#revision += 1
     this.#target = target
-    this.#state = undefined
+    // The next read reports the same account's limits; until it lands, the
+    // last ones stay on screen instead of reading as "Checking…" again.
+    if (!sameAccountLimits) this.#state = undefined
     this.#dirty = false
+    this.#requestedIntent = undefined
     this.#failures = 0
     this.#clearTimer()
-    this.#start(this.#revision)
+    if (ask) this.#start(this.#revision)
   }
 
   /** Manual retry, reconnect, and ordinary polling all use the same guarded path. */
-  refresh(): void {
+  refresh(intent?: UsageReadIntent): void {
     if (this.#disposed || !this.#target) return
+    const requested = this.#requestedIntent
+    if (intent && (!requested || INTENT_STRENGTH[intent] > INTENT_STRENGTH[requested])) {
+      this.#requestedIntent = intent
+    }
     if (this.#request?.revision === this.#revision) {
       this.#dirty = true
       return
@@ -98,9 +199,27 @@ export class UsageSummaryController {
     this.#start(this.#revision)
   }
 
-  /** Ignore inactive providers and collapse a burst into one trailing read. */
-  changed(provider: ProviderId): void {
-    if (this.#disposed || provider !== this.#target?.provider) return
+  /**
+   * Takes a limit snapshot the server pushed for this provider account,
+   * without a request. A read in flight still shows as loading until it
+   * answers. Another account's snapshot is not this one's.
+   */
+  applySource(source: ProviderLimitSource): void {
+    const target = this.#target
+    if (this.#disposed || !target || !sameSource(target, source)) return
+    const summary = withLimitSource(this.#state?.summary, source)
+    this.#setState({
+      status: this.#state?.status === 'loading' ? 'loading' : 'ready',
+      provider: target.provider,
+      ...accountOf(target),
+      summary,
+    })
+  }
+
+  /** Ignore other sources and collapse a burst into one trailing read. */
+  changed(provider: ProviderId, accountId?: AccountId): void {
+    const target = this.#target
+    if (this.#disposed || !target || !sameSource(target, { provider, accountId })) return
     this.#dirty = true
     this.#scheduleTrailing(this.#revision)
   }
@@ -144,31 +263,42 @@ export class UsageSummaryController {
     this.#setState({
       status: 'loading',
       provider: target.provider,
+      ...accountOf(target),
       ...(summary ? { summary } : {}),
       ...this.#retrying(),
     })
     const request = { revision, id: ++this.#nextRequestId }
     this.#request = request
+    const intent = this.#requestedIntent ?? this.#intent()
+    this.#requestedIntent = undefined
     void Promise.resolve()
-      .then(() => this.#load(paramsOf(target)))
+      .then(() => this.#load(paramsOf(target, intent)))
       .then(
         (next) => {
           if (!this.#isCurrent(request)) return
           this.#request = undefined
           this.#failures = 0
-          this.#setState({ status: 'ready', provider: target.provider, summary: next })
+          this.#setState({
+            status: 'ready',
+            provider: target.provider,
+            ...accountOf(target),
+            summary: newerLimits(this.#state?.summary, next),
+          })
           this.#flushAfterRequest(revision)
         },
         (error) => {
           if (!this.#isCurrent(request)) return
           this.#request = undefined
+          // Values pushed while the request ran are the newest known ones.
+          const held = this.#state?.summary
           const message = messageOf(error)
           this.#setState({
             status: 'error',
             provider: target.provider,
+            ...accountOf(target),
             message,
-            ...(summary ? { summary } : {}),
-            ...this.#failed(revision, message, summary),
+            ...(held ? { summary: held } : {}),
+            ...this.#failed(revision, message, held),
           })
           this.#flushAfterRequest(revision)
         },

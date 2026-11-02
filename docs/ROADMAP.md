@@ -66,8 +66,9 @@ M2 proved the multi-engine architecture with Codex, Claude Code and ACP; it did 
 the complete v1 provider list. Provider completion runs alongside M4 and M5 without
 reopening the finished milestone:
 
-- one TasteCode-owned direct API runtime for OpenAI, Anthropic, OpenRouter, Kimi, GLM / Z.ai
-  and custom OpenAI-compatible endpoints,
+- direct API connections for OpenAI, Anthropic, OpenRouter, Kimi, GLM / Z.ai and custom
+  OpenAI-compatible endpoints (removed 2026-10-20; a user's own key now runs through
+  OpenCode's sign-in),
 - native OpenCode and Cursor adapters, and
 - Kimi Code and GLM coding-plan support through ACP or captured structured CLI surfaces.
 
@@ -113,6 +114,14 @@ CODE_OF_CONDUCT, CONTRIBUTING, templates, dependency license audit. Launch: GitH
 → Show HN → Reddit → X.
 → _Public, with signed installers and the landing page already live. Never announce into an
 empty repo._
+
+### M8 — Phone (nightly)
+
+An iPhone app (Expo + UIKit, Liquid Glass) paired to the desktop over an end-to-end encrypted
+link on the local network or a tailnet. Pairing, chats across devices, new chats with model,
+reasoning and access choices, approvals, questions, queue, photos, folder browsing and change
+review are built; push notifications, a TestFlight build and Android finish the milestone.
+→ _Approve a change from your phone while the agent keeps working at your desk._
 
 ---
 

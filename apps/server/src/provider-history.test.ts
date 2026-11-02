@@ -9,6 +9,7 @@ import { compactHistoryReplay } from './history-replay.js'
 import { orderProviderHistory } from './provider-history-order.js'
 import { createProjectListProjector, type ProjectListState } from './project-list.js'
 import { DESIGN_PHASE_NOTICE, RESTORE_CONTEXT_NOTICE } from './provider-session.js'
+import { continuationPromptFromReplay } from './side-chat.js'
 
 let store: Store
 const histories: ProviderHistory[] = []
@@ -85,6 +86,155 @@ const messages = (id: string) =>
   )
 
 describe('provider history integration', () => {
+  it('reports whether a refresh changed any chat, so the server can poll less', async () => {
+    const sessions = [metadata()]
+    const { history, source } = setup(sessions)
+    await expect(history.refresh()).resolves.toBe(true)
+    await expect(history.refresh()).resolves.toBe(false)
+    sessions[0] = { ...metadata(), revision: '2', updatedAt: 3000 }
+    await expect(history.refresh()).resolves.toBe(true)
+    vi.mocked(source.list).mockRejectedValueOnce(new Error('locked'))
+    await expect(history.refresh()).resolves.toBe(false)
+    await history.close()
+    await expect(history.refresh()).resolves.toBe(false)
+  })
+
+  it("says when one provider's first scan is done while another still runs", async () => {
+    let finishClaude!: (sessions: ProviderHistorySession[]) => void
+    const claude: ProviderHistorySource = {
+      list: vi.fn(
+        () => new Promise<ProviderHistorySession[]>((resolve) => (finishClaude = resolve)),
+      ),
+      read: vi.fn(async () => []),
+    }
+    const codex: ProviderHistorySource = {
+      list: vi.fn(async () => [metadata()]),
+      read: vi.fn(async (session) => transcript(session.id)),
+    }
+    const history = new ProviderHistory(
+      store,
+      [
+        { provider: 'codex', history: codex },
+        { provider: 'claude-code', history: claude },
+      ],
+      { isBusy: () => false, changed: vi.fn(), log: vi.fn() },
+    )
+    histories.push(history)
+    const done = { codex: false, claude: false }
+    void history.scanned('codex').then(() => (done.codex = true))
+    void history.scanned('claude-code').then(() => (done.claude = true))
+    const refresh = history.refresh()
+    await vi.waitFor(() => expect(done.codex).toBe(true))
+    expect(done.claude).toBe(false)
+    expect(store.thread('external:codex:native')).toBeDefined()
+
+    finishClaude([])
+    await refresh
+    expect(done.claude).toBe(true)
+    // A provider without a source and a closed history never hold anyone.
+    await expect(history.scanned('grok')).resolves.toBeUndefined()
+  })
+
+  it('tells which chats a scan linked to a saved session', async () => {
+    store.addThread({ id: 'native', projectPath: process.cwd(), provider: 'codex', title: 'Local' })
+    store.addThread({ id: 'fresh', projectPath: process.cwd(), provider: 'codex', title: 'New' })
+    const { history } = setup([metadata('native')])
+    expect(history.hasCopy('native')).toBe(false)
+
+    await history.refresh()
+    expect(history.hasCopy('native')).toBe(true)
+    // A chat whose session the provider has not saved yet has nothing to merge.
+    expect(history.hasCopy('fresh')).toBe(false)
+  })
+
+  it('keeps what a source listed across restarts and forgets transcripts it no longer names', async () => {
+    const transcripts = new Map([
+      ['a.jsonl', 'a1'],
+      ['b.jsonl', 'b1'],
+      ['empty.jsonl', 'e1'],
+    ])
+    let fail = false
+    const reads: string[] = []
+    const source = (): ProviderHistorySource => ({
+      list: vi.fn(async (options) => {
+        const sessions: ProviderHistorySession[] = []
+        for (const [locator, revision] of transcripts) {
+          let session = options?.cached?.(locator, revision)
+          if (session === undefined) {
+            reads.push(locator)
+            session =
+              locator === 'empty.jsonl'
+                ? null
+                : { ...metadata(locator.slice(0, -6)), locator, revision }
+            options?.remember?.(locator, revision, session)
+          }
+          if (session) sessions.push(session)
+        }
+        if (fail) throw new Error('locked')
+        return sessions
+      }),
+      read: vi.fn(async () => []),
+    })
+    const start = () => {
+      const history = new ProviderHistory(store, [{ provider: 'codex', history: source() }], {
+        isBusy: () => false,
+        changed: vi.fn(),
+        log: vi.fn(),
+      })
+      histories.push(history)
+      return history
+    }
+
+    await start().refresh()
+    expect(reads.splice(0)).toEqual(['a.jsonl', 'b.jsonl', 'empty.jsonl'])
+    expect(store.thread('external:codex:a')).toBeDefined()
+
+    // After a restart only the transcript that changed meanwhile is read.
+    transcripts.set('b.jsonl', 'b2')
+    await start().refresh()
+    expect(reads.splice(0)).toEqual(['b.jsonl'])
+
+    // A failed listing keeps every row; a complete one forgets what it did not name.
+    transcripts.delete('a.jsonl')
+    fail = true
+    const history = start()
+    await history.refresh()
+    expect([...store.providerHistoryMetadata('codex').keys()].sort()).toEqual([
+      'a.jsonl',
+      'b.jsonl',
+      'empty.jsonl',
+    ])
+    fail = false
+    await history.refresh()
+    expect(store.providerHistoryMetadata('codex')).toEqual(
+      new Map([
+        [
+          'b.jsonl',
+          { revision: 'b2', session: { ...metadata('b'), locator: 'b.jsonl', revision: 'b2' } },
+        ],
+        ['empty.jsonl', { revision: 'e1', session: null }],
+      ]),
+    )
+    expect(reads).toEqual([])
+    expect(store.providerHistoryMetadata('claude-code').size).toBe(0)
+  })
+
+  it('lets nobody wait on a first scan after close', async () => {
+    const source: ProviderHistorySource = {
+      list: vi.fn(() => new Promise<ProviderHistorySession[]>(() => undefined)),
+      read: vi.fn(async () => []),
+    }
+    const history = new ProviderHistory(store, [{ provider: 'codex', history: source }], {
+      isBusy: () => false,
+      changed: vi.fn(),
+      log: vi.fn(),
+    })
+    const waiting = history.scanned('codex')
+    void history.refresh()
+    void history.close()
+    await expect(waiting).resolves.toBeUndefined()
+  })
+
   it('honors a temporary-session tombstone created after discovery started and before its first scan', async () => {
     const { history, source } = setup()
     source.resolveSessionId = (id) => id.replace(/^local-/, '')
@@ -125,6 +275,78 @@ describe('provider history integration', () => {
         .filter((item) => item.role === 'user')
         .map((item) => item.text),
     ).toEqual(['Hello'])
+  })
+
+  it('does not reimport the first prompt of a continued chat with its earlier conversation', async () => {
+    store.addThread({
+      id: 'local',
+      projectPath: process.cwd(),
+      provider: 'codex',
+      providerSessionId: 'native',
+      title: 'Local',
+    })
+    for (const event of transcript('local-turn')) store.append('local', event)
+    const { history, source } = setup()
+    const wrapped = (text: string) =>
+      continuationPromptFromReplay(
+        [
+          {
+            event: {
+              type: 'item.completed',
+              item: {
+                id: 'earlier',
+                turnId: 'earlier-turn',
+                type: 'message',
+                role: 'user',
+                status: 'completed',
+                text: 'Earlier request',
+                createdAt: 1,
+              },
+            },
+          },
+        ],
+        text,
+      ) ?? text
+    vi.mocked(source.read).mockResolvedValue(
+      transcript().map((event): DomainEvent =>
+        event.type === 'item.completed' && event.item.role === 'user'
+          ? { ...event, item: { ...event.item, text: wrapped(event.item.text ?? '') } }
+          : event,
+      ),
+    )
+    await history.refresh()
+    await history.load('local')
+    expect(
+      messages('local')
+        .filter((item) => item.role === 'user')
+        .map((item) => item.text),
+    ).toEqual(['Hello'])
+  })
+
+  it("leaves out the turns a continued chat's session copied from the chat it continues", async () => {
+    store.addThread({ id: 'earlier', projectPath: process.cwd(), provider: 'codex', title: 'E' })
+    store.addThread({
+      id: 'later',
+      projectPath: process.cwd(),
+      provider: 'codex',
+      providerSessionId: 'native',
+      title: 'Later',
+      createdAt: 5000,
+      continuedFrom: 'earlier',
+    })
+    const { history, source } = setup()
+    // The session starts as a copy of the earlier chat's, then a turn is taken outside.
+    vi.mocked(source.read).mockResolvedValue([
+      ...transcript('native', 'Copied answer', 1000),
+      ...transcript('outside', 'Outside answer', 6000).slice(1),
+    ])
+    await history.refresh()
+    await history.load('later')
+    expect(
+      messages('later')
+        .filter((item) => item.role === 'assistant')
+        .map((item) => item.text),
+    ).toEqual(['Outside answer'])
   })
 
   it('imports outside turns of an isolated chat whose provider runs in its private worktree', async () => {
@@ -214,6 +436,35 @@ describe('provider history integration', () => {
         .filter((item) => item.role === 'user')
         .map((item) => item.text),
     ).toEqual(['Hello'])
+  })
+
+  it('recognizes the echo of a prompt whose picture the provider saved inline', async () => {
+    store.addThread({
+      id: 'local',
+      projectPath: process.cwd(),
+      provider: 'codex',
+      providerSessionId: 'native',
+      title: 'Local',
+    })
+    const withPicture = (events: DomainEvent[], attachment: string) =>
+      events.map((event) =>
+        event.type === 'item.completed' && event.item.role === 'user'
+          ? { ...event, item: { ...event.item, attachments: [attachment] } }
+          : event,
+      )
+    for (const event of withPicture(transcript('local', 'Answer'), '/tmp/attachments/a-image.jpg'))
+      store.append('local', event)
+    const { history, source } = setup()
+    vi.mocked(source.read).mockResolvedValue(
+      withPicture(transcript('native', 'Answer'), 'data:image/jpeg;base64,/9j/4AAQ'),
+    )
+    await history.refresh()
+    await history.load('local')
+    expect(
+      messages('local')
+        .filter((item) => item.role === 'user')
+        .map((item) => item.attachments),
+    ).toEqual([['/tmp/attachments/a-image.jpg']])
   })
 
   it('recognizes a steer that the provider saved as a turn of its own', async () => {
@@ -875,6 +1126,24 @@ describe('provider history integration', () => {
     await history.load('local')
     expect(store.usageSummary('local', 0).session.totalTokens).toBe(200)
   })
+  it('gives an imported chat the access level its session ran with, and keeps one it has', async () => {
+    const sessions: ProviderHistorySession[] = [
+      { ...metadata(), approval: 'full' },
+      metadata('unknown'),
+    ]
+    const { history } = setup(sessions)
+    await history.refresh()
+    expect(store.threadApproval('external:codex:native')).toBe('full')
+    expect(store.threadApproval('external:codex:unknown')).toBeUndefined()
+
+    store.setThreadApproval('external:codex:native', 'ask')
+    sessions[0] = { ...metadata(), approval: 'auto', revision: '2', updatedAt: 3000 }
+    sessions[1] = { ...metadata('unknown'), approval: 'auto', revision: '2', updatedAt: 3000 }
+    await history.refresh()
+    expect(store.threadApproval('external:codex:native')).toBe('ask')
+    expect(store.threadApproval('external:codex:unknown')).toBe('auto')
+  })
+
   it('imports archived chats in the same metadata batch with their native activity time', async () => {
     const { history } = setup([
       metadata(),
@@ -1102,6 +1371,38 @@ describe('provider history integration', () => {
     expect(store.threads()).toEqual([])
   })
 
+  it("gives a chat its provider's name while the first prompt's title stands in", async () => {
+    store.addThread({
+      id: 'native',
+      projectPath: process.cwd(),
+      provider: 'codex',
+      title: 'Fix it',
+    })
+    store.addThread({ id: 'renamed', projectPath: process.cwd(), provider: 'codex', title: 'Go' })
+    store.setProvisionalTitle('native', 'Fix it')
+    store.setProvisionalTitle('renamed', 'Go')
+    store.renameThread('renamed', 'Cache work')
+    const sessions = [
+      { ...metadata('native'), title: 'Fix it please, the queue drops jobs' },
+      { ...metadata('renamed'), title: 'Cache invalidation fix', named: true },
+    ]
+    const { history } = setup(sessions)
+
+    await history.refresh()
+    // Until the provider names the chat, its title is the first prompt again.
+    expect(store.thread('native')?.title).toBe('Fix it')
+    expect(store.thread('renamed')?.title).toBe('Cache work')
+
+    sessions[0] = { ...sessions[0]!, title: 'Queue drops jobs', named: true, revision: '2' }
+    await history.refresh()
+    expect(store.thread('native')?.title).toBe('Queue drops jobs')
+    expect(store.provisionalTitle('native')).toBeUndefined()
+
+    sessions[0] = { ...sessions[0]!, title: 'Queue drops retried jobs', revision: '3' }
+    await history.refresh()
+    expect(store.thread('native')?.title).toBe('Queue drops retried jobs')
+  })
+
   it('deduplicates TasteCode sessions by native identity and imports only outside turns', async () => {
     store.addProject(process.cwd())
     store.addThread({
@@ -1126,6 +1427,99 @@ describe('provider history integration', () => {
       'Hello',
       'From outside',
     ])
+  })
+
+  it('keeps the session a chat left when it moved to another provider as its own', async () => {
+    store.addThread({
+      id: 'local',
+      provider: 'codex',
+      providerSessionId: 'native',
+      projectPath: process.cwd(),
+      title: 'Existing',
+    })
+    for (const event of transcript('native')) store.append('local', event)
+    const sessions = [metadata()]
+    const { history, source } = setup(sessions)
+    await history.refresh()
+    await history.load('local')
+    expect(source.read).toHaveBeenCalledTimes(1)
+
+    store.moveThreadToProvider('local', { provider: 'claude-code', providerSessionId: 'claude' })
+    // The Codex copy goes on changing, for example when someone resumes it in the CLI.
+    sessions[0] = { ...metadata(), revision: '2', updatedAt: 3000 }
+    await history.refresh()
+
+    expect(store.threads().map((thread) => thread.id)).toEqual(['local'])
+    await expect(history.load('local')).resolves.toBe(false)
+    expect(source.read).toHaveBeenCalledTimes(1)
+    expect(history.hasCopy('local')).toBe(false)
+  })
+
+  it('links an imported chat that moved to the session it runs on now', async () => {
+    const codex: ProviderHistorySource = {
+      list: vi.fn(async () => [metadata('orig')]),
+      read: vi.fn(async (session) => transcript(session.id)),
+    }
+    const claudeSessions: ProviderHistorySession[] = []
+    const claude: ProviderHistorySource = {
+      list: vi.fn(async () => claudeSessions),
+      read: vi.fn(async (session) => transcript(session.id)),
+    }
+    const history = new ProviderHistory(
+      store,
+      [
+        { provider: 'codex', history: codex },
+        { provider: 'claude-code', history: claude },
+      ],
+      { isBusy: () => false, changed: vi.fn(), log: vi.fn() },
+    )
+    histories.push(history)
+    await history.refresh()
+    expect(store.threads().map((thread) => thread.id)).toEqual(['external:codex:orig'])
+
+    store.moveThreadToProvider('external:codex:orig', {
+      provider: 'claude-code',
+      providerSessionId: 'claude-new',
+    })
+    history.forget('external:codex:orig')
+    claudeSessions.push(metadata('claude-new'))
+    await history.refresh()
+
+    expect(store.threads().map((thread) => thread.id)).toEqual(['external:codex:orig'])
+    expect(history.hasCopy('external:codex:orig')).toBe(true)
+  })
+
+  it('opens a native chat whose provider copy is gone, and reads the copy again once it changes', async () => {
+    store.addThread({
+      id: 'local',
+      provider: 'codex',
+      providerSessionId: 'native',
+      projectPath: process.cwd(),
+      title: 'Existing',
+    })
+    for (const event of transcript('native')) store.append('local', event)
+    const { history, source } = setup()
+    vi.mocked(source.read).mockResolvedValue([])
+    await history.refresh()
+
+    expect(await history.load('local')).toBe(false)
+    expect(messages('local').map((item) => item.text)).toEqual([
+      'Hello',
+      '**Bold**\n\n```ts\nconst x = 1\n```',
+    ])
+    // The same revision is not read on every open.
+    expect(await history.load('local')).toBe(false)
+    expect(source.read).toHaveBeenCalledTimes(1)
+
+    vi.mocked(source.list).mockResolvedValue([{ ...metadata(), revision: '2' }])
+    vi.mocked(source.read).mockResolvedValue([
+      ...transcript('native'),
+      ...transcript('later', 'From outside', 90000).slice(1),
+    ])
+    await history.refresh()
+    await history.load('local')
+    expect(source.read).toHaveBeenCalledTimes(2)
+    expect(messages('local').at(-1)?.text).toBe('From outside')
   })
 
   it('matches local turns whose provider IDs differ using user content and native time', async () => {

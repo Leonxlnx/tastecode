@@ -56,8 +56,9 @@ const SavedComposerDraftsSchema = z.record(
     resources: z.array(
       z.object({
         key: z.string(),
+        // A command is typed into the text as `/name`, never kept as a chip.
         kind: z.enum({ skill: 'skill', mcp: 'mcp' } satisfies {
-          [Kind in ComposerResource['kind']]: Kind
+          [Kind in Exclude<ComposerResource['kind'], 'command'>]: Kind
         }),
         id: z.string(),
         name: z.string(),

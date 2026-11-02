@@ -38,6 +38,110 @@ const message = (text: string, createdAt = 1): DomainEvent => ({
 })
 
 describe('durable history ownership', () => {
+  it('retains distinct direct API connection identities after reopening and sidebar projection', () => {
+    const { store, root, location } = setup()
+    for (const connectionId of ['first', 'second']) {
+      store.addThread({
+        id: connectionId,
+        projectPath: root,
+        provider: 'api',
+        connectionId,
+        title: connectionId,
+      })
+    }
+    const reopened = new Store(location)
+    stores.push(reopened)
+    for (const connectionId of ['first', 'second']) {
+      expect(reopened.thread(connectionId)).toMatchObject({ provider: 'api', connectionId })
+      expect(reopened.sidebarThreads().find((thread) => thread.id === connectionId)).toMatchObject({
+        connectionId,
+      })
+    }
+    expect(reopened.thread('thread')?.connectionId).toBeUndefined()
+  })
+
+  it("remembers where a continued chat's earlier uncommitted changes went", () => {
+    const { store, root, location } = setup()
+    for (const continuedChanges of ['carried', 'kept'] as const) {
+      store.addThread({
+        id: continuedChanges,
+        projectPath: root,
+        provider: 'codex',
+        title: 'Continued',
+        continuedFrom: 'thread',
+        continuedChanges,
+      })
+    }
+    const reopened = new Store(location)
+    stores.push(reopened)
+
+    expect(reopened.thread('carried')?.continuedChanges).toBe('carried')
+    expect(reopened.thread('kept')?.continuedChanges).toBe('kept')
+    expect(reopened.thread('thread')?.continuedChanges).toBeUndefined()
+  })
+
+  it('keeps nightly usage history available through the indexed event log', () => {
+    const { store, root, location } = setup()
+    store.addThread({
+      id: 'api',
+      projectPath: root,
+      provider: 'api',
+      connectionId: 'first',
+      title: 'API',
+    })
+    store.append('thread', message('ordinary message'))
+    store.append('thread', {
+      type: 'usage.updated',
+      usage: {
+        inputTokens: 10,
+        cachedInputTokens: 0,
+        outputTokens: 20,
+        reasoningTokens: 0,
+        totalTokens: 30,
+      },
+    })
+    store.append('api', {
+      type: 'usage.updated',
+      usage: {
+        inputTokens: 30,
+        cachedInputTokens: 0,
+        outputTokens: 40,
+        reasoningTokens: 0,
+        totalTokens: 70,
+      },
+    })
+    const reopened = new Store(location)
+    stores.push(reopened)
+    expect(
+      reopened
+        .usageEvents()
+        .map(({ threadId, provider, usage }) => ({ threadId, provider, usage })),
+    ).toEqual([
+      {
+        threadId: 'api',
+        provider: 'api',
+        usage: {
+          inputTokens: 30,
+          cachedInputTokens: 0,
+          outputTokens: 40,
+          reasoningTokens: 0,
+          totalTokens: 70,
+        },
+      },
+      {
+        threadId: 'thread',
+        provider: 'codex',
+        usage: {
+          inputTokens: 10,
+          cachedInputTokens: 0,
+          outputTokens: 20,
+          reasoningTokens: 0,
+          totalTokens: 30,
+        },
+      },
+    ])
+  })
+
   it.each(['before', 'between'])(
     'fills search pages after removing a project %s page requests',
     (when) => {
@@ -98,6 +202,50 @@ describe('durable history ownership', () => {
     } finally {
       raw.close()
     }
+  })
+
+  it('keeps provider listing metadata across reopening, also in a database that predates it', () => {
+    const { store, root, location } = setup()
+    store.close()
+    stores.splice(stores.indexOf(store), 1)
+    // A database written before the table existed.
+    const raw = new DatabaseSync(location)
+    raw.exec('DROP TABLE provider_history_metadata')
+    raw.close()
+    const reopened = new Store(location)
+    const session = {
+      id: 'native',
+      workspacePath: root,
+      title: 'Native',
+      createdAt: 1,
+      updatedAt: 2,
+      revision: '3:10:2:2',
+      locator: path.join(root, 'native.jsonl'),
+    }
+    reopened.saveProviderHistoryMetadata(
+      'claude-code',
+      new Map([
+        [session.locator, { revision: 'one', session }],
+        ['empty', { revision: 'one', session: null }],
+        ['gone', { revision: 'one', session: null }],
+      ]),
+      [],
+    )
+    reopened.saveProviderHistoryMetadata(
+      'claude-code',
+      new Map([['empty', { revision: 'two', session: null }]]),
+      ['gone'],
+    )
+    reopened.close()
+    const again = new Store(location)
+    stores.push(again)
+    expect(again.providerHistoryMetadata('claude-code')).toEqual(
+      new Map([
+        [session.locator, { revision: 'one', session }],
+        ['empty', { revision: 'two', session: null }],
+      ]),
+    )
+    expect(again.providerHistoryMetadata('codex')).toEqual(new Map())
   })
 
   it('archives provider import metadata and active membership before pruning', () => {

@@ -13,7 +13,10 @@ import {
 } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
+import { CLAUDE_MCP_CAPABILITIES } from '@harness/adapter-claude-code/capabilities'
+import { GROK_MCP_CAPABILITIES } from '@harness/adapter-grok/mcp'
+import { OPENCODE_MCP_CAPABILITIES } from '@harness/adapter-opencode/inventory'
 import { ProviderIdSchema } from '@harness/contracts'
 import type {
   ApprovalMode,
@@ -21,6 +24,7 @@ import type {
   DomainEvent,
   McpServer,
   McpServerConfig,
+  ProviderCommand,
   ProviderId,
   ThreadLifecycle,
 } from '@harness/contracts'
@@ -41,16 +45,24 @@ import {
   readPageBlueprint,
   writeAssetManifest,
   readAssetManifest,
+  designConsistencyBaseline,
   designSourceQualityBaseline,
   designWorkspaceFileBaseline,
   snapshotDesignFiles,
   parseAssetManifest,
   validateResolvedDesignAssets,
+  APP_SCREENS_ENABLED,
+  appDirectionTypefaces,
+  DASHBOARD_REFERENCES_ENABLED,
+  parseAppDirection,
 } from '@harness/design-agent'
 import { encodeHistoryCursor, readHistoryPage } from './history-page.js'
 import { compactHistoryReplay } from './history-replay.js'
+import { writeDefaultSkillsFixture } from './default-skills.test-support.js'
 import { McpConfigStore } from './mcp-config.js'
 import { Orchestrator } from './orchestrator.js'
+import { PROVIDER_CAPABILITIES } from './provider-capabilities.js'
+import type { ProviderControlsOptions } from './provider-controls.js'
 import { StartupCleanupError } from './provider-session.js'
 import { DatabaseSync } from './sqlite.js'
 import { Store } from './store.js'
@@ -69,6 +81,20 @@ const previewStarts = vi.hoisted(() => ({
   barriers: [] as Promise<void>[],
   failures: [] as unknown[],
 }))
+
+/** Lets one test prove that a failing consistency audit never fails a Design run. */
+const consistencyAuditFailure = vi.hoisted(() => ({ current: undefined as Error | undefined }))
+
+vi.mock('@harness/design-agent', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@harness/design-agent')>()
+  return {
+    ...actual,
+    designConsistencyAudit: (...args: Parameters<typeof actual.designConsistencyAudit>) => {
+      if (consistencyAuditFailure.current) throw consistencyAuditFailure.current
+      return actual.designConsistencyAudit(...args)
+    },
+  }
+})
 
 vi.mock('./design-preview-runner.js', () => ({
   startDesignPreview: vi.fn(
@@ -149,6 +175,9 @@ class FakeSession implements AgentSession {
   lateSendError: Error | undefined
   emitUsageChanged: () => void = () => {}
   emitMcpChanged: () => void = () => {}
+  commands: ProviderCommand[] = []
+  commandReads: Array<string | undefined> = []
+  emitCommandsChanged: () => void = () => {}
   emitDisconnected: () => void = () => {}
   emitProviderSessionId: (providerSessionId: string) => void = () => {}
   afterEventBarrier: Promise<void> | undefined
@@ -190,6 +219,10 @@ class FakeSession implements AgentSession {
   }
   async listMcpServers(): Promise<McpServer[]> {
     return this.mcpServers
+  }
+  mcpLoading = false
+  isMcpLoading(): boolean {
+    return this.mcpLoading
   }
   async reloadMcpServers(
     threadId: string,
@@ -234,6 +267,15 @@ class FakeSession implements AgentSession {
     this.emitMcpChanged = listener
   }
 
+  async listCommands(threadId?: string): Promise<ProviderCommand[]> {
+    this.commandReads.push(threadId)
+    return this.commands
+  }
+
+  onCommandsChanged(listener: () => void): void {
+    this.emitCommandsChanged = listener
+  }
+
   onDisconnected(listener: () => void): () => void {
     this.emitDisconnected = listener
     return () => {
@@ -248,6 +290,29 @@ class FakeSession implements AgentSession {
   onMcpOAuth(listener: Parameters<NonNullable<AgentSession['onMcpOAuth']>>[0]): void {
     this.emitMcpOAuth = listener
   }
+}
+
+/** Claude's project probe would start the real CLI; without a chat it finds nothing here. */
+const quietClaudeInventory: NonNullable<ProviderControlsOptions['services']>['claude-code'] = {
+  projectInventory: {
+    mcpCapabilities: CLAUDE_MCP_CAPABILITIES,
+    discover: async () => ({ commands: [], servers: [] }),
+  },
+}
+/** The same for Grok's and OpenCode's probes. */
+const quietGrokInventory: NonNullable<ProviderControlsOptions['services']>['grok'] = {
+  projectInventory: {
+    mcpCapabilities: GROK_MCP_CAPABILITIES,
+    skillCapabilities: { inventory: true, configure: false, install: false },
+    discover: async () => ({ commands: [], servers: [], skills: [] }),
+  },
+}
+const quietOpenCodeInventory: NonNullable<ProviderControlsOptions['services']>['opencode'] = {
+  projectInventory: {
+    mcpCapabilities: OPENCODE_MCP_CAPABILITIES,
+    skillCapabilities: { inventory: true, configure: false, install: false },
+    discover: async () => ({ commands: [], servers: [], skills: [] }),
+  },
 }
 
 // Every orchestrator under test gets its own MCP config folder. Remove them when the file is done:
@@ -275,6 +340,8 @@ function harness(
   store = new Store(':memory:'),
   maxIdleThreadRuntimes?: number,
   idleThreadRuntimeMs?: number,
+  providerServices?: ProviderControlsOptions['services'],
+  defaultSkillsRoot?: string,
 ) {
   const sessions: FakeSession[] = []
   const received: Array<{
@@ -291,6 +358,7 @@ function harness(
   const queueStates: Array<{ threadId: string; itemIds: string[]; canSteer: boolean }> = []
   const usageChanges: ProviderId[] = []
   const mcpChanges: Array<{ provider: ProviderId; projectPath: string }> = []
+  const commandChanges: Array<{ provider: ProviderId; projectPath: string }> = []
   const queueNotificationError: QueueNotificationError = {}
   const lifecycleHook: LifecycleHook = {}
 
@@ -327,6 +395,9 @@ function harness(
         thread: {
           id: `thread-${sessions.length}`,
           provider,
+          ...(provider === 'api'
+            ? { connectionId: options.connectionId ?? 'test-connection' }
+            : {}),
           workspacePath,
           createdAt: Date.now(),
         },
@@ -384,6 +455,7 @@ function harness(
     onLogin: () => {},
     onUsageChanged: (provider) => usageChanges.push(provider),
     onMcpChanged: (provider, projectPath) => mcpChanges.push({ provider, projectPath }),
+    onCommandsChanged: (provider, projectPath) => commandChanges.push({ provider, projectPath }),
     mcpConfig: temporaryMcpConfig(),
     readCredential: (reference) => {
       if (credentialFailure.current) throw credentialFailure.current
@@ -393,7 +465,14 @@ function harness(
     runtimeFor,
     ...(maxIdleThreadRuntimes === undefined ? {} : { maxIdleThreadRuntimes }),
     ...(idleThreadRuntimeMs === undefined ? {} : { idleThreadRuntimeMs }),
+    providerServices: {
+      ...providerServices,
+      'claude-code': { ...quietClaudeInventory, ...providerServices?.['claude-code'] },
+      grok: { ...quietGrokInventory, ...providerServices?.grok },
+      opencode: { ...quietOpenCodeInventory, ...providerServices?.opencode },
+    },
     ...(worktreeRoot ? { worktreeRoot } : {}),
+    ...(defaultSkillsRoot ? { defaultSkillsRoot } : {}),
   })
 
   return {
@@ -408,6 +487,7 @@ function harness(
     queueStates,
     usageChanges,
     mcpChanges,
+    commandChanges,
     queueNotificationError,
     lifecycleHook,
     orchestrator,
@@ -1421,6 +1501,71 @@ describe('reply style', () => {
   )
 })
 
+describe('default skills', () => {
+  const skillsHarness = async () => {
+    const parent = mkdtempSync(path.join(os.tmpdir(), 'tc-orchestrator-skills-'))
+    onTestFinished(() => rmSync(parent, { recursive: true, force: true }))
+    const root = await writeDefaultSkillsFixture(parent)
+    return { root, ...harness(undefined, undefined, undefined, undefined, undefined, root) }
+  }
+
+  it.each(ProviderIdSchema.options)('lists the bundled skills for %s', async (provider) => {
+    const { orchestrator } = await skillsHarness()
+    const inventory = await orchestrator.listSkills(provider, process.cwd())
+
+    expect(
+      inventory.skills
+        .filter((skill) => skill.id.startsWith('tastecode:'))
+        .map((skill) => [skill.name, skill.scope]),
+    ).toEqual([
+      ['cinetic', 'system'],
+      ['design-taste-frontend', 'system'],
+      ['cook', 'system'],
+    ])
+    await orchestrator.disposeAll()
+  })
+
+  it.each(ProviderIdSchema.options)(
+    'gives %s chats the default skills, but not a Side chat',
+    async (provider) => {
+      const { orchestrator, startedOptions, store, root } = await skillsHarness()
+      const parent = await orchestrator.startThread(provider, process.cwd())
+      store.append(parent.id, userMessage(`user-${provider}`, 'Question', 'parent-turn'))
+      await orchestrator.startSideThread(parent.id)
+
+      expect(startedOptions[0]?.instructions).toContain('Do not use em dashes')
+      if (PROVIDER_CAPABILITIES[provider].defaultSkillsPlugin) {
+        // Loaded natively as a plugin, so the catalog would only repeat it.
+        expect(startedOptions[0]?.skillPlugin).toBe(root)
+        expect(startedOptions[0]?.instructions).not.toContain('Skills included with TasteCode')
+      } else {
+        expect(startedOptions[0]?.instructions).toContain('Skills included with TasteCode')
+        expect(startedOptions[0]?.instructions).toContain(path.join(root, 'skills'))
+        expect(startedOptions[0]?.instructions).toContain('- cook: long reference-matching loops')
+        expect(startedOptions[0]?.skillPlugin).toBeUndefined()
+      }
+      expect(startedOptions[1]?.instructions).not.toContain('Skills included with TasteCode')
+      expect(startedOptions[1]?.skillPlugin).toBeUndefined()
+      await orchestrator.disposeAll()
+    },
+  )
+
+  it('starts without a catalog when no bundle was given', async () => {
+    const { orchestrator, startedOptions } = harness()
+    await orchestrator.startThread('cursor', process.cwd())
+    expect(startedOptions[0]?.instructions).not.toContain('Skills included with TasteCode')
+    await orchestrator.disposeAll()
+  })
+
+  it('refuses to switch off a bundled skill through a provider', async () => {
+    const { orchestrator } = await skillsHarness()
+    await expect(
+      orchestrator.setSkillEnabled('codex', process.cwd(), 'tastecode:cook', false),
+    ).rejects.toThrow(/included with TasteCode/)
+    await orchestrator.disposeAll()
+  })
+})
+
 describe('provider-neutral Side chat', () => {
   it('does not attach a Side chat whose startup crossed Stop all', async () => {
     const { orchestrator, sessions, startBarriers, startedIn, store } = harness()
@@ -1515,7 +1660,7 @@ describe('provider-neutral Side chat', () => {
 
   it('reuses the compact replay snapshot for a long parent boundary', async () => {
     const { orchestrator, store } = harness()
-    const parent = await orchestrator.startThread('claude-code', process.cwd())
+    const parent = await orchestrator.startThread('api', process.cwd())
     store.append(parent.id, userMessage('parent-user', 'Explain this failure.', 'parent-turn'))
     for (let index = 0; index < 100; index += 1) {
       store.append(parent.id, {
@@ -1793,7 +1938,7 @@ describe('workspace paths', () => {
     await orchestrator.sendTurn(thread.id, 'hello')
 
     expect(startedIn).toEqual([resolvedPath])
-    expect(snapshot).toHaveBeenCalledWith(resolvedPath)
+    expect(snapshot).toHaveBeenCalledWith(resolvedPath, { retainIn: expect.any(String) })
     expect(store.thread(thread.id)?.projectPath).toBe(projectPath)
     await orchestrator.disposeAll()
   })
@@ -1805,7 +1950,7 @@ describe('durable turn timing', () => {
     const optimistic = beginOptimisticTurn(emptyThread, 'Do the work.')
     const { orchestrator, sessions, store } = harness()
     try {
-      const thread = await orchestrator.startThread('claude-code', '/repo')
+      const thread = await orchestrator.startThread('api', '/repo')
       const session = sessions[0]!
       session.turnIds.push('turn-replay')
       await orchestrator.sendTurn(thread.id, 'Do the work.')
@@ -1842,7 +1987,7 @@ describe('durable turn timing', () => {
     const now = vi.spyOn(Date, 'now').mockReturnValue(1_000)
     const { orchestrator, sessions, store } = harness()
     try {
-      const thread = await orchestrator.startThread('claude-code', '/repo')
+      const thread = await orchestrator.startThread('api', '/repo')
       const session = sessions[0]!
       session.turnIds.push('turn-sync')
       session.eventDuringSend = {
@@ -1862,7 +2007,7 @@ describe('durable turn timing', () => {
     }
   })
 
-  it.each(['codex', 'claude-code'] as const)(
+  it.each(['codex', 'api'] as const)(
     'records server-owned lifecycle boundaries for %s turns',
     async (provider) => {
       const now = vi.spyOn(Date, 'now').mockReturnValue(1_000)
@@ -2664,6 +2809,7 @@ describe('durable user submissions', () => {
     ['codex', true],
     ['claude-code', false],
     ['grok', false],
+    ['api', false],
   ] as const)('owns exact repeated user messages for %s', async (provider, emitsUserEcho) => {
     const { orchestrator, sessions, store } = harness()
     try {
@@ -2712,7 +2858,7 @@ describe('durable user submissions', () => {
     let release = () => {}
     let submitting = Promise.resolve<unknown>(undefined)
     try {
-      const thread = await orchestrator.startThread('claude-code', '/repo')
+      const thread = await orchestrator.startThread('api', '/repo')
       const session = sessions[0]!
       session.turnIds.push('turn-in-flight')
       session.eventDuringSend = turnStarted(thread.id, 'turn-in-flight')
@@ -2801,7 +2947,7 @@ describe('durable user submissions', () => {
   it('releases rejected identities but rejects a durable reuse', async () => {
     const { orchestrator, sessions } = harness()
     try {
-      const thread = await orchestrator.startThread('claude-code', '/repo')
+      const thread = await orchestrator.startThread('api', '/repo')
       const session = sessions[0]!
       session.sendError = new Error('provider rejected')
       await expect(
@@ -2987,7 +3133,7 @@ describe('provider-neutral design briefing', () => {
         path.join(workspace, 'comparison-mobile.html'),
         `<img src="data:image/png;base64,${'A'.repeat(2_100_000)}">`,
       )
-      const thread = await orchestrator.startThread('claude-code', workspace)
+      const thread = await orchestrator.startThread('api', workspace)
       await orchestrator.sendTurn(thread.id, 'Build a site.', [DESIGN_BRIEF_ATTACHMENT])
       expect(sessions[0]?.sent).toHaveLength(1)
       expect(store.designRun(thread.id)).toMatchObject({
@@ -3631,31 +3777,46 @@ describe('provider-neutral design briefing', () => {
     }
   })
 
-  it('rejects supplied references when the selected session cannot inspect images', async () => {
-    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-no-images-'))
-    const reference = path.join(workspace, 'reference.png')
-    writeFileSync(reference, 'reference bytes')
-    const { orchestrator, sessions, store } = harness()
-    try {
-      const thread = await orchestrator.startThread('claude-code', workspace)
-      Object.defineProperty(sessions[0], 'capabilities', {
-        value: { ...CAPABILITIES, images: false },
-      })
-      await expect(
-        orchestrator.sendTurn(thread.id, 'Build from this reference.', [
-          DESIGN_BRIEF_ATTACHMENT,
-          reference,
-        ]),
-      ).rejects.toThrow('cannot inspect the supplied Design reference images')
-      expect(store.designRun(thread.id)).toBeUndefined()
-      expect(sessions[0]?.sent).toEqual([])
-      await orchestrator.sendTurn(thread.id, 'Continue as a normal task.')
-      expect(sessions[0]?.sent).toEqual(['Continue as a normal task.'])
-    } finally {
-      await orchestrator.disposeAll()
-      rmSync(workspace, { recursive: true, force: true })
-    }
-  })
+  it.each(
+    ProviderIdSchema.options.flatMap((provider) =>
+      [false, true].map((supplied) => ({ provider, supplied })),
+    ),
+  )(
+    'rejects visual Design before inference when $provider lacks images (supplied: $supplied)',
+    async ({ provider, supplied }) => {
+      const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-no-images-'))
+      const reference = path.join(workspace, 'reference.png')
+      writeFileSync(reference, 'reference bytes')
+      const { orchestrator, sessions, store, received } = harness()
+      try {
+        const thread = await orchestrator.startThread(provider, workspace)
+        Object.defineProperty(sessions[0], 'capabilities', {
+          value: { ...CAPABILITIES, images: false },
+        })
+        await expect(
+          orchestrator.sendTurn(thread.id, 'Build a finance dashboard.', [
+            DESIGN_BRIEF_ATTACHMENT,
+            ...(supplied ? [reference] : []),
+          ]),
+        ).rejects.toThrow(
+          'Choose a provider/model that supports images, or turn off Design mode to continue ordinary coding',
+        )
+        expect(store.designRun(thread.id)).toBeUndefined()
+        expect(sessions[0]?.sent).toEqual([])
+        expect(orchestrator.isTurnRunning(thread.id)).toBe(false)
+        expect(
+          received.some(
+            ({ event }) => event.type === 'item.started' && event.item.text?.startsWith('design:'),
+          ),
+        ).toBe(false)
+        await orchestrator.sendTurn(thread.id, 'Continue as a normal task.')
+        expect(sessions[0]?.sent).toEqual(['Continue as a normal task.'])
+      } finally {
+        await orchestrator.disposeAll()
+        rmSync(workspace, { recursive: true, force: true })
+      }
+    },
+  )
 
   it('restores trusted artifacts on resume instead of accepting workspace edits as approval', async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-trusted-'))
@@ -4079,10 +4240,13 @@ describe('provider-neutral design briefing', () => {
     error: unknown,
     phase: 'preview' | 'review' | 'repair' = 'preview',
     screenshots: Array<{ path: string; width: number; height: number }> = [],
+    /** Runs before the run is saved; returns extra saved run fields. */
+    prepare: (workspace: string) => Record<string, unknown> = () => ({}),
   ) {
     const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-preview-recovery-'))
     const taste = path.join(workspace, '.taste')
     writePreviewArtifacts(workspace)
+    const extra = prepare(workspace)
     writeFileSync(path.join(taste, 'build.txt'), 'built implementation')
     const artifacts = ['brand.json', 'page.json', 'build.txt'].map((name) => {
       const file = path.join(taste, name)
@@ -4128,6 +4292,7 @@ describe('provider-neutral design briefing', () => {
       askedQuestions: false,
       finalAsked: false,
       explicitAnswers: [],
+      ...extra,
     })
     const result = harness(undefined, store)
     // A restored Review or Repair recaptures before it prompts again.
@@ -4697,10 +4862,17 @@ describe('provider-neutral design briefing', () => {
     }
   })
 
-  it.each(ProviderIdSchema.options)(
-    'builds without questions through the same workflow with %s',
-    async (provider) => {
+  it.each(
+    ProviderIdSchema.options.flatMap((provider) => [
+      { provider, dashboard: false },
+      { provider, dashboard: true },
+    ]),
+  )(
+    'builds without questions through the same workflow with synthetic image-capable $provider (dashboard: $dashboard)',
+    async ({ provider, dashboard }) => {
       const model = 'future-provider/model-that-needs-no-design-code'
+      // A dashboard runs as a tasteskill app screen while the image catalog stays parked.
+      const appScreen = dashboard && APP_SCREENS_ENABLED && !DASHBOARD_REFERENCES_ENABLED
       const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-flow-'))
       const referencePath = path.join(workspace, 'reference-home.png')
       writeFileSync(referencePath, 'reference image bytes')
@@ -4710,7 +4882,7 @@ describe('provider-neutral design briefing', () => {
         const thread = await orchestrator.startThread(provider, workspace, {})
         await orchestrator.sendTurn(
           thread.id,
-          'Create a website.',
+          dashboard ? 'Create an operating dashboard.' : 'Create a website.',
           [DESIGN_BRIEF_ATTACHMENT, referencePath],
           {
             model,
@@ -4798,9 +4970,9 @@ describe('provider-neutral design briefing', () => {
               message: 'Brief complete.',
               questions: [],
               brief: {
-                originalRequest: 'Create a website.',
+                originalRequest: dashboard ? 'Create an operating dashboard.' : 'Create a website.',
                 subject: 'Independent studio',
-                pageType: 'Marketing site',
+                pageType: dashboard ? 'Dashboard' : 'Marketing site',
                 scope: 'Single responsive page',
                 primaryGoal: 'Generate enquiries',
                 audience: 'Prospective clients',
@@ -4823,12 +4995,33 @@ describe('provider-neutral design briefing', () => {
         )
         sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
         await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(2))
-        expect(store.designRun(thread.id)).toMatchObject({ phase: 'brand' })
+        // The workspace held no source at run start, so every later font or radius is new.
+        expect(store.designRun(thread.id)).toMatchObject({
+          phase: 'brand',
+          designConsistencyBaseline: [],
+        })
         const typography = (
           store.designRun(thread.id) as { typographyCandidates: { sans: string[] } }
         ).typographyCandidates
         expect(typography.sans).toHaveLength(10)
-        expect(sessions[0]?.sent[1]).toContain(JSON.stringify(typography))
+        const stored = store.designRun(thread.id) as { appDirection?: unknown }
+        // An app screen takes its face from the dealt sheet; a website from the draw.
+        const face = appScreen
+          ? appDirectionTypefaces(parseAppDirection(stored.appDirection))[0]
+          : typography.sans[0]
+        if (appScreen) {
+          expect(sessions[0]?.sent[1]).toContain('APP SHEET: dealt by TasteCode')
+          expect(sessions[0]?.sent[1]).not.toContain(JSON.stringify(typography))
+          expect(readdirSync(path.join(workspace, '.taste', 'app-kit')).sort()).toEqual([
+            'LICENSE',
+            'app-screens.md',
+            'app.css',
+            'charts.js',
+          ])
+        } else {
+          expect(stored.appDirection).toBeUndefined()
+          expect(sessions[0]?.sent[1]).toContain(JSON.stringify(typography))
+        }
         const brief = JSON.parse(readFileSync(path.join(workspace, '.taste', 'brief.json'), 'utf8'))
         expect(brief.subject).toBe('Independent studio')
         expect(brief.explicitAnswers).toEqual([])
@@ -4858,7 +5051,7 @@ describe('provider-neutral design briefing', () => {
               colorPalette: [{ name: 'Ink', value: '#171717', usage: 'Primary text' }],
               typefaces: [
                 {
-                  family: typography.sans[0],
+                  family: face,
                   source: 'Google Fonts',
                   roles: ['body'],
                   weights: [400, 600],
@@ -4885,6 +5078,12 @@ describe('provider-neutral design briefing', () => {
         await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(3))
         expect(store.designRun(thread.id)).toMatchObject({ phase: 'page' })
         expect(sessions[0]?.sent[2]).toContain('Page Blueprint phase')
+        if (appScreen) {
+          expect(sessions[0]?.sent[2]).toContain('for an app screen')
+          expect(sessions[0]?.sent[2]).toContain('"mode":"operate_monitor"')
+          expect(sessions[0]?.sent[2]).toContain('APP SHEET: dealt by TasteCode')
+          expect(sessions[0]?.sent[2]).not.toContain('normally plan at least eight')
+        }
         expect(sessions[0]?.sent[2]).toContain('user-reference-1')
         expect(sessions[0]?.sentAttachments[2]?.[0]).toBe(referencePath)
         expect(sessions[0]?.sentAttachments[2]).toEqual([referencePath])
@@ -4894,6 +5093,14 @@ describe('provider-neutral design briefing', () => {
             JSON.stringify({
               version: 1,
               page: { title: 'Studio', route: '/', description: 'Studio services' },
+              architecture: {
+                contract: 'Review the current workspace.',
+                mode: appScreen ? 'operate_monitor' : 'persuade_convert',
+                novelty: 'low',
+                grid: 'Reference geometry.',
+                signatureRule: 'Preserve the selected reference.',
+                rhythm: 'Reference density.',
+              },
               navigation: [{ label: 'Work', target: '#work' }],
               navigationDesign: {
                 layoutCase: 'navigation-1',
@@ -4908,13 +5115,15 @@ describe('provider-neutral design briefing', () => {
               sections: [
                 {
                   id: 'hero',
-                  layoutFamily: 'hero',
+                  layoutFamily: appScreen ? 'dashboard' : 'hero',
                   layoutCases: ['hero-text-5', 'hero-visual-2'],
                   referenceDirectionId: 'user-reference-1',
                   purpose: 'Introduce the offer',
                   copy: {
-                    heading: 'Design that earns attention',
-                    body: ['A focused independent studio.'],
+                    heading: appScreen ? 'Balance $12,400' : 'Design that earns attention',
+                    body: appScreen
+                      ? ['Demo data', '26 orders']
+                      : ['A focused independent studio.'],
                     callsToAction: [{ label: 'Start a project', target: '#contact' }],
                   },
                   layout: 'Split editorial hero',
@@ -4938,11 +5147,20 @@ describe('provider-neutral design briefing', () => {
         sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
         await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(5))
         expect(sessions[0]?.sent[4]).toContain('Build phase')
+        if (appScreen) {
+          expect(sessions[0]?.sent[4]).toContain(
+            'Build phase of TasteCode Design Mode for an app screen',
+          )
+          expect(sessions[0]?.sent[4]).toContain('DASHBOARD INTERACTION AND MOTION')
+          expect(sessions[0]?.sent[4]).not.toContain('<reference-reveal-source>')
+        }
         expect(sessions[0]?.sentAttachments[4]).toEqual([referencePath])
         mkdirSync(path.join(workspace, 'src'))
         writeFileSync(
           path.join(workspace, 'src', 'page.tsx'),
-          'export const Page = () => <main>Studio</main>',
+          appScreen
+            ? 'export const Page = () => <main><h1>Balance</h1><svg role="img" aria-label="Demo revenue"><path d="M0 20L20 10L40 15" /></svg></main>'
+            : 'export const Page = () => <main>Studio</main>',
         )
 
         sessions[0]?.emit(
@@ -4977,6 +5195,7 @@ describe('provider-neutral design briefing', () => {
         )
         await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(7))
         expect(sessions[0]?.sent[6]).toContain('visual Review phase')
+        if (appScreen) expect(sessions[0]?.sent[6]).toContain('DASHBOARD INTERACTION AND MOTION')
         expect(sessions[0]?.sentAttachments[6]).toHaveLength(3)
         expect(sessions[0]?.sentAttachments[6]).toContain(referencePath)
         sessions[0]?.emit(
@@ -5001,6 +5220,7 @@ describe('provider-neutral design briefing', () => {
         sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
         await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(8))
         expect(sessions[0]?.sent[7]).toContain('repair attempt 1 of 2')
+        if (appScreen) expect(sessions[0]?.sent[7]).toContain('DASHBOARD INTERACTION AND MOTION')
         expect(sessions[0]?.sent[7]).toContain('<screenshots>')
         expect(sessions[0]?.sentAttachments[7]).toHaveLength(3)
         expect(sessions[0]?.sentAttachments[7]).toContain(referencePath)
@@ -5041,7 +5261,7 @@ describe('provider-neutral design briefing', () => {
               ({ event }) =>
                 event.type === 'item.completed' &&
                 event.item.text ===
-                  'Website built. Preview ready at http://127.0.0.1:5173/. Visual review passed after 1 repair attempt. Verify before publishing: confirm the representative studio address.',
+                  `${appScreen ? 'Dashboard' : 'Website'} built. Preview ready at http://127.0.0.1:5173/. Visual review passed after 1 repair attempt. Verify before publishing: confirm the representative studio address.`,
             ),
           ).toBe(true),
         )
@@ -5052,6 +5272,7 @@ describe('provider-neutral design briefing', () => {
           ...Array.from({ length: 8 }, () => ({ model, effort: 'xhigh' })),
         ])
         expect(readdirSync(path.join(workspace, '.taste')).sort()).toEqual([
+          ...(appScreen ? ['app-kit'] : []),
           'assets.json',
           'brand.json',
           'brief.json',
@@ -5213,7 +5434,10 @@ describe('provider-neutral design briefing', () => {
 
       await vi.waitFor(() => expect(store.designRun(threadId)).toMatchObject({ phase: 'brand' }))
       expect(store.designRun(threadId)).toMatchObject({
-        referenceDeck: [{ id: 'reviewed-hero' }, { id: 'reviewed-pricing' }],
+        referenceDeck: [
+          { id: 'reviewed-hero', site: 'example.com', role: 'anchor' },
+          { id: 'reviewed-pricing', site: 'example.com', role: 'same-site' },
+        ],
       })
       await vi.waitFor(() =>
         expect(sessions[0]?.sent.at(-1)).toContain('selected-reference-workflow'),
@@ -5226,6 +5450,198 @@ describe('provider-neutral design briefing', () => {
       if (priorLibrary === undefined) delete process.env.TASTECODE_REFERENCE_LIBRARY
       else process.env.TASTECODE_REFERENCE_LIBRARY = priorLibrary
       await orchestrator.disposeAll()
+      rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
+    }
+  })
+
+  it('shows Brand the anchor and two same-site references while Page keeps the deck', async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-brand-anchor-'))
+    const priorLibrary = process.env.TASTECODE_REFERENCE_LIBRARY
+    process.env.TASTECODE_REFERENCE_LIBRARY = workspace
+    const source = path.resolve(
+      '../../packages/design-agent/references/directions/hero/direction-001.webp',
+    )
+    const image = (name: string) => {
+      const file = path.join(workspace, `${name}.webp`)
+      copyFileSync(source, file)
+      return realpathSync(file)
+    }
+    const entry = (id: string, family: string, site: string) => ({
+      id,
+      family,
+      group: id,
+      imagePath: `${id}.webp`,
+      source: `https://${site}/`,
+      tags: ['calm'],
+      cue: `Test ${family} composition`,
+      reviewStatus: 'reviewed',
+      reviewNotes: 'Synthetic catalog fixture',
+    })
+    // One hero makes a.example the anchor; b.example only supplies the FAQ fallback.
+    const images = {
+      hero: image('a-hero'),
+      heroMobile: image('a-hero-mobile'),
+      about: image('a-about'),
+      social: image('a-social'),
+      faq: image('b-faq'),
+      footer: image('a-footer'),
+    }
+    writeFileSync(
+      path.join(workspace, 'catalog.json'),
+      JSON.stringify({
+        version: 1,
+        references: [
+          {
+            ...entry('a-hero', 'hero', 'a.example'),
+            mobileImagePath: 'a-hero-mobile.webp',
+            pairEvidence: 'Test fixture for paired attachment transport',
+          },
+          entry('a-about', 'about', 'a.example'),
+          entry('a-social', 'social_proof', 'a.example'),
+          entry('b-faq', 'faq', 'b.example'),
+          entry('a-footer', 'footer', 'a.example'),
+        ],
+      }),
+    )
+    const { orchestrator, sessions, store } = harness()
+    try {
+      const thread = await orchestrator.startThread('codex', workspace)
+      await orchestrator.sendTurn(thread.id, 'Create a website.', [DESIGN_BRIEF_ATTACHMENT])
+      const session = sessions[0]!
+      session.emit(turnStarted(thread.id, 's1-turn'))
+      session.emit(
+        message(
+          JSON.stringify({
+            status: 'complete',
+            message: 'Brief complete.',
+            questions: [],
+            brief: {
+              originalRequest: 'Create a website.',
+              subject: 'Independent studio',
+              pageType: 'Marketing site',
+              scope: 'Single responsive page',
+              primaryGoal: 'Generate enquiries',
+              audience: 'Prospective clients',
+              offer: 'Design services',
+              primaryAction: 'Start a project',
+              requiredContent: [],
+              constraints: [],
+              brandInputs: [],
+              creativeControl: 'Agent-led',
+              explicitAnswers: [],
+              assumptions: [],
+              unresolved: [],
+            },
+          }),
+          's1-turn',
+        ),
+      )
+      session.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+      await vi.waitFor(() => expect(session.sent).toHaveLength(2))
+      const run = store.designRun(thread.id) as {
+        referenceDeck: Array<{ id: string; role: string }>
+        typographyCandidates: { sans: string[] }
+      }
+      expect(run.referenceDeck.map(({ id, role }) => [id, role])).toEqual([
+        ['a-hero', 'anchor'],
+        ['a-about', 'same-site'],
+        ['a-social', 'same-site'],
+        ['b-faq', 'fallback'],
+        ['a-footer', 'same-site'],
+      ])
+      expect(session.sent[1]).toContain('Brand phase')
+      expect(session.sentAttachments[1]).toEqual([
+        images.hero,
+        images.heroMobile,
+        images.about,
+        images.social,
+      ])
+      for (const id of ['a-hero', 'a-about', 'a-social'])
+        expect(session.sent[1]).toContain(`"id": "${id}"`)
+      for (const id of ['b-faq', 'a-footer']) expect(session.sent[1]).not.toContain(`"id": "${id}"`)
+      const anchorLanguage =
+        'The reference with role "anchor" (a-hero) defines the page\'s one design language: typefaces and type scale, palette, corner radii, spacing scale, buttons and controls, and surface treatment. Every other reference contributes its composition only'
+      expect(session.sent[1]).toContain(anchorLanguage)
+
+      session.emit(
+        message(
+          JSON.stringify({
+            version: 1,
+            creativeDirection: { summary: 'Calm', keywords: ['calm'], avoid: [] },
+            colorPalette: [{ name: 'Ink', value: '#171717', usage: 'Primary text' }],
+            typefaces: [
+              {
+                family: run.typographyCandidates.sans[0],
+                source: 'Google Fonts',
+                roles: ['body'],
+                weights: [400, 600],
+              },
+            ],
+            interfaceDirection: 'Quiet grid.',
+            imageDirection: { summary: 'None', subjects: [], treatment: 'None', avoid: [] },
+            motionDirection: { summary: 'Minimal', principles: [], avoid: [] },
+            voice: { summary: 'Direct', avoid: [] },
+          }),
+          's1-turn',
+        ),
+      )
+      session.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+      await vi.waitFor(() => expect(session.sent).toHaveLength(3))
+      expect(session.sent[2]).toContain('Page Blueprint phase')
+      expect(session.sentAttachments[2]).toEqual(Object.values(images))
+      for (const id of ['b-faq', 'a-footer']) expect(session.sent[2]).toContain(`"id": "${id}"`)
+      expect(session.sent[2]).toContain(anchorLanguage)
+    } finally {
+      if (priorLibrary === undefined) delete process.env.TASTECODE_REFERENCE_LIBRARY
+      else process.env.TASTECODE_REFERENCE_LIBRARY = priorLibrary
+      await orchestrator.disposeAll()
+      rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
+    }
+  })
+
+  it('keeps the full Brand input and wording for a deck saved before anchor sampling', async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-legacy-deck-'))
+    writePreviewArtifacts(workspace)
+    const deck = ['hero', 'feature', 'about'].map((family) => {
+      const file = path.join(workspace, `${family}.png`)
+      writeFileSync(file, family)
+      return { id: `legacy-${family}`, family, cue: `Legacy ${family}`, imagePath: file }
+    })
+    const store = new Store(':memory:')
+    store.addProject(workspace)
+    store.addThread({
+      id: 'legacy-deck',
+      projectPath: workspace,
+      provider: 'codex',
+      title: 'Legacy deck',
+    })
+    store.setDesignRun('legacy-deck', {
+      ...approvalSnapshot(workspace),
+      referenceAttachments: [],
+      referenceDeck: deck,
+      referenceDeckSnapshot: snapshotDesignFiles(deck.map(({ imagePath }) => imagePath)),
+      originalRequest: 'Build a site.',
+      options: {},
+      phase: 'brand',
+      askedQuestions: false,
+      finalAsked: true,
+      explicitAnswers: [],
+    })
+    const { orchestrator, sessions } = harness(undefined, store)
+    try {
+      const queued = await orchestrator.submitTurn('legacy-deck', 'Continue afterward.')
+      if (queued.queued) orchestrator.deleteQueuedTurn('legacy-deck', queued.queuedTurn.id)
+      await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(1))
+      expect(sessions[0]?.sent[0]).toContain('Brand phase')
+      expect(sessions[0]?.sent[0]).toContain(
+        'preserve their reference compositions, and unify project branding across them. Build real accessible',
+      )
+      expect(sessions[0]?.sent[0]).not.toContain('role "anchor"')
+      for (const { id } of deck) expect(sessions[0]?.sent[0]).toContain(`"id": "${id}"`)
+      expect(sessions[0]?.sentAttachments[0]).toEqual(deck.map(({ imagePath }) => imagePath))
+    } finally {
+      await orchestrator.disposeAll()
+      store.close()
       rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
     }
   })
@@ -5628,6 +6044,119 @@ describe('provider-neutral design briefing', () => {
       await result.orchestrator.disposeAll()
       result.store.close()
       rmSync(result.workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
+    }
+  })
+
+  /** A Review run whose project already used Georgia before Design started. */
+  function consistencyReviewHarness(audited = true) {
+    return previewRecoveryHarness(undefined, 'review', [], (workspace) => {
+      mkdirSync(path.join(workspace, 'src'))
+      writeFileSync(path.join(workspace, 'src', 'legacy.css'), 'body { font-family: Georgia }')
+      return audited ? { designConsistencyBaseline: designConsistencyBaseline(workspace) } : {}
+    })
+  }
+
+  function writeDriftingBuild(workspace: string) {
+    writeFileSync(
+      path.join(workspace, 'src', 'page.css'),
+      [
+        'h1 { font-family: "Playfair Display", serif }',
+        'body { font-family: Arial, sans-serif }',
+        ...[2, 4, 6, 8, 10, 12].map((radius) => `.r${radius} { border-radius: ${radius}px }`),
+      ].join('\n'),
+    )
+  }
+
+  const passingReview = JSON.stringify({
+    version: 1,
+    verdict: 'pass',
+    summary: 'Matches the references.',
+    findings: [],
+  })
+
+  function designCompletion(received: Array<{ event: DomainEvent }>): string | undefined {
+    const completion = received.find(
+      ({ event }) =>
+        event.type === 'item.completed' &&
+        event.item.phase === 'final_answer' &&
+        event.item.text?.startsWith('Website built.'),
+    )?.event
+    return completion?.type === 'item.completed' ? completion.item.text : undefined
+  }
+
+  it('reports introduced off-brand fonts and radius drift as bounded Review findings', async () => {
+    const { orchestrator, sessions, received, store, workspace } = await consistencyReviewHarness()
+    const session = sessions[0]!
+    try {
+      writeDriftingBuild(workspace)
+      const repaired = JSON.stringify({
+        status: 'complete',
+        summary: 'Repaired.',
+        files: ['src/page.css'],
+        checks: ['pnpm build — passed'],
+      })
+      for (const attempt of [1, 2]) {
+        session.emit(message(passingReview, 's1-turn'))
+        session.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+        await vi.waitFor(() => expect(session.sent).toHaveLength(attempt * 2))
+        const repair = session.sent.at(-1)!
+        expect(repair).toContain(`repair attempt ${attempt} of 2`)
+        expect(repair).toContain('"id":"font_family_drift"')
+        expect(repair).toContain('outside the approved brand fonts Arial: Playfair Display')
+        expect(repair).toContain('"id":"radius_scale_drift"')
+        expect(repair).not.toContain('Georgia')
+        expect(store.designRun('preview-recovery')).toMatchObject({
+          phase: 'repair',
+          repairAttempt: attempt,
+        })
+        session.emit(message(repaired, 's1-turn'))
+        session.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+        await vi.waitFor(() => expect(session.sent).toHaveLength(attempt * 2 + 1))
+        expect(session.sent.at(-1)).toContain('visual Review phase')
+      }
+      session.emit(message(passingReview, 's1-turn'))
+      session.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+      await vi.waitFor(() =>
+        expect(designCompletion(received)).toContain(
+          'Visual review stopped after 2 repair attempts with 2 findings remaining.',
+        ),
+      )
+      expect(session.sent).toHaveLength(5)
+      expect(store.designRun('preview-recovery')).toBeUndefined()
+      expect(received.some(({ event }) => event.type === 'thread.error')).toBe(false)
+      expect(
+        JSON.parse(readFileSync(path.join(workspace, '.taste', 'review.json'), 'utf8')),
+      ).toMatchObject({
+        verdict: 'repair',
+        findings: [{ id: 'font_family_drift' }, { id: 'radius_scale_drift' }],
+      })
+    } finally {
+      await orchestrator.disposeAll()
+      store.close()
+      rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
+    }
+  })
+
+  it.each([
+    { name: 'a run saved before the audit', audited: false },
+    { name: 'an audit that cannot scan', audited: true },
+  ])('passes Review without consistency findings for $name', async ({ audited }) => {
+    const { orchestrator, sessions, received, store, workspace, logs } =
+      await consistencyReviewHarness(audited)
+    if (audited) consistencyAuditFailure.current = new Error('Design source scan exceeds 32 MB')
+    try {
+      writeDriftingBuild(workspace)
+      sessions[0]?.emit(message(passingReview, 's1-turn'))
+      sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+      await vi.waitFor(() => expect(designCompletion(received)).toContain('Visual review passed.'))
+      expect(sessions[0]?.sent).toHaveLength(1)
+      expect(received.some(({ event }) => event.type === 'thread.error')).toBe(false)
+      expect(logs.some((line) => line.includes('consistency audit skipped'))).toBe(audited)
+    } finally {
+      consistencyAuditFailure.current = undefined
+      await orchestrator.disposeAll()
+      store.close()
+      rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
     }
   })
 
@@ -6621,7 +7150,9 @@ describe('MCP inventory', () => {
       expect(() =>
         orchestrator.updateMcpServer('claude-code', '/repo', { id: 'docs', enabled: false }),
       ).toThrow('cannot hide an inherited MCP server')
-      expect(await orchestrator.listMcpServers('claude-code', '/repo')).toEqual(saved)
+      expect((await orchestrator.listMcpServers('claude-code', '/repo')).servers).toEqual(
+        saved.servers,
+      )
       expect(sessions).toEqual([])
     } finally {
       await orchestrator.disposeAll()
@@ -6648,21 +7179,121 @@ describe('MCP inventory', () => {
     }
   })
 
-  it('reports provider MCP capabilities without starting one', async () => {
-    const { orchestrator } = harness()
+  it("reads Claude's servers for a project without a chat from a cached probe", async () => {
+    const inherited: McpServer = {
+      id: 'plugin:acme-docs:acme-docs',
+      displayName: 'acme-docs',
+      description: 'Plugin acme-docs',
+      scope: 'global',
+      enabled: true,
+      auth: { status: 'not_required' },
+      startup: { state: 'ready' },
+      tools: [],
+      resources: [],
+      resourceTemplates: [],
+    }
+    let finish: (() => void) | undefined
+    const discover = vi.fn(
+      () =>
+        new Promise<{ commands: ProviderCommand[]; servers: McpServer[] }>((resolve) => {
+          finish = () =>
+            resolve({
+              commands: [{ name: 'context', description: 'Show context' }],
+              servers: [inherited],
+            })
+        }),
+    )
+    const { orchestrator, sessions, mcpChanges, commandChanges } = harness(
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      {
+        'claude-code': {
+          projectInventory: { mcpCapabilities: CLAUDE_MCP_CAPABILITIES, discover },
+        },
+      },
+    )
+    try {
+      orchestrator.addMcpServer('claude-code', '/repo', {
+        id: 'docs',
+        enabled: true,
+        transport: { type: 'http', url: 'https://example.com/mcp' },
+      })
+      await expect(orchestrator.listMcpServers('claude-code', '/repo')).resolves.toMatchObject({
+        capabilities: { inventory: true, add: true, hideInherited: false },
+        servers: [{ id: 'docs', scope: 'project' }],
+        loading: true,
+      })
+      await expect(orchestrator.listCommands('claude-code', '/repo')).resolves.toEqual({
+        commands: [],
+        loading: true,
+      })
+      await vi.waitFor(() => expect(finish).toBeDefined())
+      finish!()
+      await vi.waitFor(() =>
+        expect(mcpChanges).toEqual([{ provider: 'claude-code', projectPath: '/repo' }]),
+      )
+      expect(commandChanges).toEqual([{ provider: 'claude-code', projectPath: '/repo' }])
+
+      const settled = await orchestrator.listMcpServers('claude-code', '/repo')
+      expect(settled.loading).toBeUndefined()
+      expect(settled.servers.map(({ id, scope }) => [id, scope])).toEqual([
+        ['plugin:acme-docs:acme-docs', 'global'],
+        ['docs', 'project'],
+      ])
+      await expect(orchestrator.listCommands('claude-code', '/repo')).resolves.toEqual({
+        commands: [{ name: 'context', description: 'Show context' }],
+        loading: false,
+      })
+      // One probe served every read, and no chat was started for it.
+      expect(discover).toHaveBeenCalledOnce()
+      expect(sessions).toEqual([])
+    } finally {
+      await orchestrator.disposeAll()
+    }
+  })
+
+  it("reads Claude's servers from a live chat in the project", async () => {
+    const { orchestrator, sessions } = harness()
+    await orchestrator.startThread('claude-code', '/repo')
+    sessions[0]!.mcpServers = [
+      {
+        id: 'plugin:acme-docs:acme-docs',
+        displayName: 'acme-docs',
+        description: 'Plugin acme-docs',
+        scope: 'global',
+        enabled: true,
+        auth: { status: 'not_required' },
+        startup: { state: 'starting' },
+        tools: [],
+        resources: [],
+        resourceTemplates: [],
+      },
+    ]
+    sessions[0]!.mcpLoading = true
 
     await expect(orchestrator.listMcpServers('claude-code', '/repo')).resolves.toEqual({
       capabilities: {
-        inventory: false,
+        inventory: true,
         add: true,
         update: true,
         remove: true,
         reload: false,
         startOAuth: false,
         cancelOAuth: false,
+        hideInherited: false,
       },
-      servers: [],
+      servers: sessions[0]!.mcpServers,
+      loading: true,
     })
+    // Another project has no Claude chat, so a probe starts for it.
+    await expect(orchestrator.listMcpServers('claude-code', '/other')).resolves.toMatchObject({
+      capabilities: { inventory: true },
+      servers: [],
+      loading: true,
+    })
+    await orchestrator.disposeAll()
   })
 
   it('reads live startup state from the project session', async () => {
@@ -6684,6 +7315,11 @@ describe('MCP inventory', () => {
     await expect(orchestrator.listMcpServers('codex', '/repo')).resolves.toMatchObject({
       capabilities: { inventory: true },
       servers: [{ id: 'docs', startup: { state: 'failed' } }],
+    })
+    expect((await orchestrator.listMcpServers('codex', '/repo')).loading).toBeUndefined()
+    sessions[0]!.mcpLoading = true
+    await expect(orchestrator.listMcpServers('codex', '/repo')).resolves.toMatchObject({
+      loading: true,
     })
   })
 
@@ -6817,8 +7453,16 @@ describe('MCP inventory', () => {
       transport: { type: 'stdio', command: 'node', args: ['test-mcp.js'] },
     })
 
+    // Grok's own servers come from its project probe; inherited ones cannot be hidden.
     await expect(orchestrator.listMcpServers('grok', '/repo')).resolves.toMatchObject({
-      capabilities: { inventory: false, add: true, update: true, remove: true, reload: false },
+      capabilities: {
+        inventory: true,
+        add: true,
+        update: true,
+        remove: true,
+        reload: false,
+        hideInherited: false,
+      },
       servers: [
         {
           id: 'test-tools',
@@ -6834,11 +7478,154 @@ describe('MCP inventory', () => {
       mcpServers: [{ id: 'test-tools', enabled: true }],
     })
   })
+
+  it('passes a service inventory and its loading state through with project overrides', async () => {
+    const listMcpServers = vi.fn(async () => ({
+      capabilities: {
+        inventory: true,
+        add: true,
+        update: true,
+        remove: true,
+        reload: false,
+        startOAuth: false,
+        cancelOAuth: false,
+        hideInherited: false,
+      },
+      servers: [],
+      loading: true,
+    }))
+    const { orchestrator } = harness(undefined, undefined, undefined, undefined, {
+      'claude-code': { listMcpServers },
+    })
+    orchestrator.addMcpServer('claude-code', '/repo', {
+      id: 'docs',
+      enabled: true,
+      transport: { type: 'http', url: 'https://example.com/mcp' },
+    })
+
+    await expect(orchestrator.listMcpServers('claude-code', '/repo')).resolves.toMatchObject({
+      capabilities: { inventory: true, hideInherited: false },
+      servers: [{ id: 'docs', scope: 'project' }],
+      loading: true,
+    })
+    expect(listMcpServers).toHaveBeenCalledWith('/repo', expect.anything())
+  })
+})
+
+describe('provider commands', () => {
+  const command = (name: string): ProviderCommand => ({ name, description: `${name} command` })
+
+  it('answers from the chat, then the project, then the service, then nothing', async () => {
+    const listCommands = vi.fn(
+      async (
+        _projectPath: string,
+        read: { readActive?: (() => Promise<ProviderCommand[]>) | undefined },
+      ) =>
+        read.readActive
+          ? { commands: await read.readActive(), loading: false }
+          : { commands: [command('probe')], loading: true },
+    )
+    const { orchestrator, sessions } = harness(undefined, undefined, undefined, undefined, {
+      'claude-code': { listCommands },
+    })
+    try {
+      await expect(orchestrator.listCommands('claude-code', '/repo')).resolves.toEqual({
+        commands: [command('probe')],
+        loading: true,
+      })
+      const first = await orchestrator.startThread('claude-code', '/repo')
+      const second = await orchestrator.startThread('claude-code', '/repo')
+      const elsewhere = await orchestrator.startThread('claude-code', '/other')
+      sessions[0]!.commands = [command('first')]
+      sessions[1]!.commands = [command('second')]
+      sessions[2]!.commands = [command('elsewhere')]
+
+      await expect(orchestrator.listCommands('claude-code', '/repo', second.id)).resolves.toEqual({
+        commands: [command('second')],
+        loading: false,
+      })
+      expect(sessions[1]!.commandReads).toEqual([second.id])
+      // Another project's chat or an unknown chat falls back to this project's runtime.
+      for (const threadId of [elsewhere.id, 'missing-thread', undefined]) {
+        await expect(orchestrator.listCommands('claude-code', '/repo', threadId)).resolves.toEqual({
+          commands: [command('first')],
+          loading: false,
+        })
+      }
+      expect(sessions[0]!.commandReads).toEqual([first.id, first.id, first.id])
+      expect(sessions[2]!.commandReads).toEqual([])
+      await expect(orchestrator.listCommands('claude-code', '/empty')).resolves.toEqual({
+        commands: [command('probe')],
+        loading: true,
+      })
+
+      // Without a service only a running chat can answer.
+      await expect(orchestrator.listCommands('cursor', '/repo')).resolves.toEqual({
+        commands: [],
+        loading: false,
+      })
+      await orchestrator.startThread('cursor', '/repo')
+      sessions[3]!.commands = [command('cursor')]
+      await expect(orchestrator.listCommands('cursor', '/repo')).resolves.toEqual({
+        commands: [command('cursor')],
+        loading: false,
+      })
+    } finally {
+      await orchestrator.disposeAll()
+    }
+  })
+
+  it('relays command changes from live chats and from services', async () => {
+    let changed: (() => void) | undefined
+    const { orchestrator, sessions, commandChanges } = harness(
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      {
+        grok: {
+          listCommands: async (_projectPath, read) => {
+            changed = read.changed
+            return { commands: [], loading: true }
+          },
+        },
+      },
+    )
+    try {
+      await orchestrator.startThread('claude-code', '/repo')
+      sessions[0]!.emitCommandsChanged()
+      await orchestrator.listCommands('grok', '/other')
+      changed!()
+      expect(commandChanges).toEqual([
+        { provider: 'claude-code', projectPath: '/repo' },
+        { provider: 'grok', projectPath: '/other' },
+      ])
+    } finally {
+      await orchestrator.disposeAll()
+    }
+  })
 })
 
 describe('skills inventory', () => {
-  it('lists local Agent Skills when the provider has no vendor inventory', async () => {
-    const { orchestrator } = harness()
+  it('lists .agents skills only for providers whose CLI loads them', async () => {
+    const vendorSkill = {
+      id: 'grok:user:review',
+      name: 'review',
+      description: 'Review the change',
+      source: { type: 'provider' as const },
+      scope: 'user' as const,
+      enabled: true,
+      dependencyErrors: [],
+    }
+    const { orchestrator } = harness(undefined, undefined, undefined, undefined, {
+      grok: {
+        listSkills: async () => ({
+          capabilities: { inventory: true, configure: false, install: false },
+          skills: [vendorSkill],
+          errors: [],
+        }),
+      },
+    })
     const project = mkdtempSync(path.join(os.tmpdir(), 'harness-skills-project-'))
     const home = mkdtempSync(path.join(os.tmpdir(), 'harness-skills-home-'))
     const skillDir = path.join(home, '.agents', 'skills', 'animate')
@@ -6847,30 +7634,35 @@ describe('skills inventory', () => {
       path.join(skillDir, 'SKILL.md'),
       '---\nname: animate\ndescription: Build an animation from scratch\n---\n',
     )
+    mkdirSync(path.join(project, '.agents', 'skills', 'local'), { recursive: true })
+    writeFileSync(
+      path.join(project, '.agents', 'skills', 'local', 'SKILL.md'),
+      '---\nname: local\ndescription: A project skill\n---\n',
+    )
     const homedir = vi.spyOn(os, 'homedir').mockReturnValue(home)
 
     try {
+      // Claude Code loads ~/.claude/skills, never .agents; its skills come with its commands.
       await expect(orchestrator.listSkills('claude-code', project)).resolves.toEqual({
-        capabilities: { inventory: true, configure: false, install: false },
-        skills: [
-          {
-            id: path.join(skillDir, 'SKILL.md'),
-            name: 'animate',
-            description: 'Build an animation from scratch',
-            source: { type: 'folder', path: skillDir },
-            scope: 'user',
-            enabled: true,
-            dependencyErrors: [],
-          },
-        ],
+        capabilities: { inventory: false, configure: false, install: false },
+        skills: [],
         errors: [],
       })
-      await expect(orchestrator.listSkills('grok', project)).resolves.toMatchObject({
-        capabilities: { inventory: true },
-        skills: [expect.objectContaining({ name: 'animate', scope: 'user' })],
+      // OpenCode's own skills come from its project probe, also without .agents.
+      await expect(orchestrator.listSkills('opencode', project)).resolves.toEqual({
+        capabilities: { inventory: true, configure: false, install: false },
+        skills: [],
+        errors: [],
+      })
+      // A provider's own skill inventory comes without the .agents folders.
+      await expect(orchestrator.listSkills('grok', project)).resolves.toEqual({
+        capabilities: { inventory: true, configure: false, install: false },
+        skills: [vendorSkill],
+        errors: [],
       })
     } finally {
       homedir.mockRestore()
+      await orchestrator.disposeAll()
       rmSync(project, { recursive: true, force: true })
       rmSync(home, { recursive: true, force: true })
     }
@@ -6931,6 +7723,70 @@ describe('several sessions at once', () => {
     await expect(sending).resolves.toMatchObject({ queued: false })
     await expect(stopping).resolves.toBeUndefined()
     await vi.waitFor(() => expect(sessions[0]!.interrupted).toBe(true))
+  })
+
+  it('delivers a Stop sent right behind its prompt after the turn started', async () => {
+    // A new chat stopped while it starts sends the prompt and the Stop back to back. An agent
+    // asked to stop before its turn exists has nothing to stop, and drops the request.
+    const { sessions, orchestrator } = harness()
+    const thread = await orchestrator.startThread('codex', '/repo')
+    const session = sessions[0]!
+    const promptsWhenStopped: number[] = []
+    vi.spyOn(session, 'interrupt').mockImplementation(async () => {
+      promptsWhenStopped.push(session.sent.length)
+    })
+
+    const sending = orchestrator.submitTurn(thread.id, 'stop me')
+    const stopping = orchestrator.interrupt(thread.id)
+
+    await expect(sending).resolves.toMatchObject({ queued: false })
+    await expect(stopping).resolves.toBeUndefined()
+    expect(promptsWhenStopped).toEqual([1])
+  })
+
+  it('holds a Stop for a prompt that is still being prepared', async () => {
+    const { sessions, orchestrator } = harness()
+    const thread = await orchestrator.startThread('codex', '/repo')
+    const session = sessions[0]!
+    const promptsWhenStopped: number[] = []
+    vi.spyOn(session, 'interrupt').mockImplementation(async () => {
+      promptsWhenStopped.push(session.sent.length)
+    })
+    let prepared!: () => void
+    const preparing = new Promise<void>((resolve) => (prepared = resolve))
+
+    // The server reads outside history before it hands the prompt over.
+    const sending = orchestrator.trackSubmission(thread.id, async () => {
+      await preparing
+      return orchestrator.submitTurn(thread.id, 'stop me')
+    })
+    const stopping = orchestrator.interrupt(thread.id)
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(promptsWhenStopped).toEqual([])
+
+    prepared()
+    await expect(sending).resolves.toMatchObject({ queued: false })
+    await expect(stopping).resolves.toBeUndefined()
+    expect(promptsWhenStopped).toEqual([1])
+  })
+
+  it('does not hold a Stop for a prompt sent after it', async () => {
+    const { sessions, orchestrator } = harness()
+    const thread = await orchestrator.startThread('codex', '/repo')
+    await orchestrator.submitTurn(thread.id, 'running')
+    let prepared!: () => void
+    const preparing = new Promise<void>((resolve) => (prepared = resolve))
+
+    const stopping = orchestrator.interrupt(thread.id)
+    const later = orchestrator.trackSubmission(thread.id, async () => {
+      await preparing
+      return orchestrator.submitTurn(thread.id, 'later')
+    })
+    await expect(stopping).resolves.toBeUndefined()
+    expect(sessions[0]!.interrupted).toBe(true)
+
+    prepared()
+    await expect(later).resolves.toMatchObject({ queued: true })
   })
 
   it('cancels a cold resume on Stop and allows a later submission', async () => {

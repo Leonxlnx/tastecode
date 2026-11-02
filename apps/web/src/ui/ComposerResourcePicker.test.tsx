@@ -1,28 +1,44 @@
 // @vitest-environment happy-dom
 import { createRef } from 'react'
-import { fireEvent, render, screen } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { ResultOf } from '@harness/contracts'
+import { appCommands } from '../app-commands.js'
 import { TestTransport } from '../test-transport.js'
 import { ComposerResourcePicker, type ComposerResource } from './ComposerResourcePicker.js'
-import type { ComposerResourcePickerHandle } from './composer-resource.js'
+import type { ComposerResourcePickerHandle, ComposerResourceTrigger } from './composer-resource.js'
 
-function createResourceTransport() {
+type CommandInventory = ResultOf<'commands.list'>
+
+afterEach(() => {
+  cleanup()
+  vi.restoreAllMocks()
+})
+
+const ANIMATE_SKILL = {
+  id: '/Users/me/.agents/skills/animate/SKILL.md',
+  name: 'animate',
+  displayName: 'Animate',
+  description: 'Build an animation from scratch',
+  source: { type: 'folder', path: '/Users/me/.agents/skills/animate' },
+  scope: 'user',
+  enabled: true,
+  dependencyErrors: [],
+}
+
+function createResourceTransport(
+  commands: () => CommandInventory = () => ({
+    commands: [],
+    loading: false,
+  }),
+  skills: unknown[] = [ANIMATE_SKILL],
+  mcpAuth: unknown = { status: 'not_required' },
+) {
   return new TestTransport(async (method) => {
     if (method === 'skills.list') {
       return {
         capabilities: { inventory: true, configure: false, install: false },
-        skills: [
-          {
-            id: '/Users/me/.agents/skills/animate/SKILL.md',
-            name: 'animate',
-            displayName: 'Animate',
-            description: 'Build an animation from scratch',
-            source: { type: 'folder', path: '/Users/me/.agents/skills/animate' },
-            scope: 'user',
-            enabled: true,
-            dependencyErrors: [],
-          },
-        ],
+        skills,
         errors: [],
       }
     }
@@ -44,7 +60,7 @@ function createResourceTransport() {
             description: 'Search official product documentation',
             scope: 'global',
             enabled: true,
-            auth: { status: 'not_required' },
+            auth: mcpAuth,
             startup: { state: 'ready' },
             tools: [],
             resources: [],
@@ -53,34 +69,369 @@ function createResourceTransport() {
         ],
       }
     }
+    if (method === 'commands.list') return commands()
     throw new Error(`Unexpected request: ${method}`)
   })
 }
 
-describe('ComposerResourcePicker', () => {
-  it('keeps hover highlight and selectActive in sync', async () => {
-    const onSelect = vi.fn<(resource: ComposerResource) => void>()
-    const pickerRef = createRef<ComposerResourcePickerHandle>()
+function slash(query: string): ComposerResourceTrigger {
+  return { marker: '/', query, start: 0, end: query.length + 1 }
+}
 
+function renderPicker(
+  transport: TestTransport,
+  trigger: ComposerResourceTrigger,
+  extra: { provider?: 'codex' | 'claude-code'; threadId?: string } = {},
+) {
+  const onSelect = vi.fn<(resource: ComposerResource) => void>()
+  const pickerRef = createRef<ComposerResourcePickerHandle>()
+  const element = (next: ComposerResourceTrigger) => (
+    <ComposerResourcePicker
+      ref={pickerRef}
+      transport={transport}
+      provider={extra.provider ?? 'claude-code'}
+      projectPath="/work/project"
+      threadId={extra.threadId}
+      trigger={next}
+      selectedTokens={new Set()}
+      onSelect={onSelect}
+    />
+  )
+  const view = render(element(trigger))
+  return {
+    onSelect,
+    pickerRef,
+    retrigger: (next: ComposerResourceTrigger) => view.rerender(element(next)),
+  }
+}
+
+function optionNames(): string[] {
+  return screen
+    .getAllByRole('option')
+    .map((option) => option.querySelector('.composer-resource-picker__name')?.textContent ?? '')
+}
+
+describe('ComposerResourcePicker', () => {
+  it('gives each row an icon of what it is', async () => {
+    renderPicker(
+      createResourceTransport(() => ({
+        commands: [
+          { name: 'goal', description: 'Set the goal' },
+          { name: 'init', description: 'Create AGENTS.md' },
+          { name: 'review', description: 'Review changes' },
+          { name: 'my-script', description: 'A custom command', source: 'custom' },
+          { name: 'design', description: 'A bundled skill', kind: 'skill' },
+        ],
+        loading: false,
+      })),
+      slash(''),
+      { provider: 'codex' },
+    )
+
+    await screen.findByRole('option', { name: /\/goal/ })
+    const icon = (name: RegExp) =>
+      screen.getByRole('option', { name }).querySelector('svg')?.getAttribute('class')
+    expect(icon(/\/goal/)).toContain('tabler-icon-target')
+    expect(icon(/\/init/)).toContain('tabler-icon-file-plus')
+    expect(icon(/\/review/)).toContain('tabler-icon-zoom-code')
+    expect(icon(/\/my-script/)).toContain('tabler-icon-slash')
+    expect(icon(/\/design/)).toContain('tabler-icon-blocks')
+    expect(icon(/Animate/)).toContain('tabler-icon-blocks')
+  })
+
+  it('leaves out what the draft already holds as a chip', async () => {
+    const onSelect = vi.fn()
     render(
       <ComposerResourcePicker
-        ref={pickerRef}
         transport={createResourceTransport()}
         provider="codex"
         projectPath="/work/project"
-        trigger={{ marker: '@', query: '', start: 0, end: 1 }}
-        selectedKeys={new Set()}
+        trigger={{ marker: '$', query: '', start: 0, end: 1 }}
+        selectedTokens={new Set(['$animate'])}
         onSelect={onSelect}
       />,
+    )
+
+    expect(await screen.findByText('No more skills are available.')).toBeTruthy()
+  })
+
+  it('keeps hover highlight and selectActive in sync', async () => {
+    const { onSelect, pickerRef } = renderPicker(
+      createResourceTransport(),
+      { marker: '@', query: '', start: 0, end: 1 },
+      { provider: 'codex' },
     )
 
     const docs = await screen.findByRole('option', { name: /Official Docs/ })
     fireEvent.mouseEnter(docs)
 
     expect(docs.getAttribute('aria-selected')).toBe('true')
-    expect(pickerRef.current?.selectActive()).toBe(true)
+    expect(pickerRef.current?.selectActive()).toBe('selected')
     expect(onSelect).toHaveBeenCalledWith(
       expect.objectContaining({ key: 'mcp:officialDocs', name: 'Official Docs' }),
     )
+  })
+
+  it('says a server needs sign-in outside TasteCode when TasteCode cannot start it', async () => {
+    renderPicker(
+      createResourceTransport(undefined, undefined, {
+        status: 'sign_in_required',
+        method: 'oauth',
+      }),
+      { marker: '@', query: '', start: 0, end: 1 },
+      { provider: 'claude-code' },
+    )
+    const docs = await screen.findByRole('option', { name: /Official Docs/ })
+    expect(docs.textContent).toContain('Sign in outside TasteCode')
+  })
+
+  it('lists provider commands before skills and asks the open chat for them', async () => {
+    const transport = createResourceTransport(() => ({
+      commands: [
+        { name: 'pdf', description: 'Work with PDF files', kind: 'skill' },
+        { name: 'context', description: 'Show current context usage' },
+      ],
+      loading: false,
+    }))
+    renderPicker(transport, slash(''), { threadId: 'thread-1' })
+
+    await screen.findByRole('option', { name: /\/context/ })
+    expect(optionNames()).toEqual(['/context', '/pdf', 'Animate'])
+    expect(transport.requests.map(({ method }) => method).sort()).toEqual([
+      'commands.list',
+      'skills.list',
+    ])
+    expect(transport.requests.find(({ method }) => method === 'commands.list')?.params).toEqual({
+      provider: 'claude-code',
+      projectPath: '/work/project',
+      threadId: 'thread-1',
+    })
+  })
+
+  it('groups commands by source: built-in, custom, skills, plugins, then MCP prompts', async () => {
+    const transport = createResourceTransport(() => ({
+      commands: [
+        { name: 'docs-search', description: '', source: 'mcp' },
+        { name: 'acme:lint', description: 'Lint with Acme rules', source: 'plugin' },
+        { name: 'pdf', description: 'Work with PDF files', kind: 'skill', source: 'plugin' },
+        { name: 'standup', description: '', source: 'custom' },
+        { name: 'simplify', description: 'Simplify the diff', kind: 'skill', source: 'builtin' },
+        { name: 'context', description: 'Show current context usage', source: 'builtin' },
+        { name: 'legacy', description: 'No source reported' },
+      ],
+      loading: false,
+    }))
+    renderPicker(transport, slash(''), { threadId: 'thread-1' })
+
+    await screen.findByRole('option', { name: /\/context/ })
+    expect(optionNames()).toEqual([
+      '/context',
+      '/legacy',
+      '/standup',
+      '/simplify',
+      '/acme:lint',
+      '/pdf',
+      '/docs-search',
+      'Animate',
+    ])
+    // An empty description says what kind of command it is, as Claude Code's menu does.
+    expect(screen.getByRole('option', { name: /\/standup/ }).textContent).toContain(
+      'Custom command',
+    )
+    expect(screen.getByRole('option', { name: /\/docs-search/ }).textContent).toContain(
+      'MCP prompt',
+    )
+  })
+
+  it('ranks exact names, then name prefixes, then aliases, then other matches', async () => {
+    const transport = createResourceTransport(
+      () => ({
+        commands: [
+          { name: 'security-review', description: 'Complete a security review' },
+          { name: 'plan-review', description: 'Review a plan', aliases: ['rv'] },
+          { name: 'review', description: 'Review a pull request' },
+          { name: 'reviewer', description: 'Pick a reviewer' },
+          { name: 'notes', description: 'Write review notes' },
+        ],
+        loading: false,
+      }),
+      [],
+    )
+    const { onSelect, pickerRef, retrigger } = renderPicker(transport, slash('review'))
+
+    await screen.findByRole('option', { name: /\/security-review/ })
+    expect(optionNames()).toEqual([
+      '/review',
+      '/reviewer',
+      '/security-review',
+      '/plan-review',
+      '/notes',
+    ])
+
+    retrigger(slash('rv'))
+    await waitFor(() => expect(optionNames()).toEqual(['/plan-review']))
+    expect(pickerRef.current?.selectActive('Tab')).toBe('selected')
+    expect(onSelect).toHaveBeenLastCalledWith(expect.objectContaining({ token: '/rv' }))
+  })
+
+  it('offers a skill that is also a provider command once, as the command', async () => {
+    const transport = createResourceTransport(() => ({
+      commands: [{ name: 'animate', description: 'Animate a page', kind: 'skill' }],
+      loading: false,
+    }))
+    renderPicker(transport, slash(''))
+
+    await screen.findByRole('option', { name: /\/animate/ })
+    expect(optionNames()).toEqual(['/animate'])
+  })
+
+  it('runs an exactly typed command without arguments and completes everything else', async () => {
+    const transport = createResourceTransport(
+      () => ({
+        commands: [
+          { name: 'context', description: 'Show current context usage' },
+          { name: 'compact', description: 'Summarize', argumentHint: '<instructions>' },
+          { name: 'pdf', description: 'Work with PDF files', kind: 'skill' },
+        ],
+        loading: false,
+      }),
+      [],
+    )
+    const { onSelect, pickerRef, retrigger } = renderPicker(transport, slash('context'))
+
+    await screen.findByRole('option', { name: /\/context/ })
+    expect(pickerRef.current?.selectActive('Enter')).toBe('run')
+    expect(pickerRef.current?.selectActive('Tab')).toBe('selected')
+    retrigger(slash('compact'))
+    await waitFor(() => expect(optionNames()[0]).toBe('/compact'))
+    expect(pickerRef.current?.selectActive('Enter')).toBe('selected')
+    retrigger(slash('pdf'))
+    await waitFor(() => expect(optionNames()[0]).toBe('/pdf'))
+    expect(pickerRef.current?.selectActive('Enter')).toBe('selected')
+    retrigger(slash('cont'))
+    await waitFor(() => expect(optionNames()[0]).toBe('/context'))
+    expect(pickerRef.current?.selectActive('Enter')).toBe('selected')
+    expect(onSelect).toHaveBeenCalledTimes(4)
+  })
+
+  it('shows loading rows while discovery runs and refreshes on commands.changed', async () => {
+    let commands: CommandInventory = {
+      commands: [{ name: 'context', description: 'Show current context usage' }],
+      loading: true,
+    }
+    const transport = createResourceTransport(() => commands, [])
+    renderPicker(transport, slash(''))
+
+    await screen.findByRole('option', { name: /\/context/ })
+    expect(screen.getByText('Loading commands and skills…')).toBeTruthy()
+
+    commands = {
+      commands: [...commands.commands, { name: 'init', description: 'Initialize a CLAUDE.md' }],
+      loading: false,
+    }
+    act(() =>
+      transport.emit('commands.changed', { provider: 'grok', projectPath: '/work/project' }),
+    )
+    act(() =>
+      transport.emit('commands.changed', { provider: 'claude-code', projectPath: '/work/project' }),
+    )
+
+    await screen.findByRole('option', { name: /\/init/ })
+    expect(optionNames()).toEqual(['/context', '/init'])
+    expect(screen.queryByText('Loading commands and skills…')).toBeNull()
+    expect(transport.requests.filter(({ method }) => method === 'commands.list')).toHaveLength(2)
+  })
+
+  it("puts TasteCode's commands first and leaves out provider commands with their names", async () => {
+    const transport = createResourceTransport(
+      () => ({
+        commands: [
+          { name: 'init', description: 'Initialize a CLAUDE.md' },
+          { name: 'side', description: 'Provider side command' },
+          { name: 'aside', description: 'Provider aside', aliases: ['btw', 'as'] },
+        ],
+        loading: false,
+      }),
+      [{ ...ANIMATE_SKILL, name: 'feedback', displayName: undefined }],
+    )
+    const onSelect = vi.fn<(resource: ComposerResource) => void>()
+    const pickerRef = createRef<ComposerResourcePickerHandle>()
+    render(
+      <ComposerResourcePicker
+        ref={pickerRef}
+        transport={transport}
+        provider="grok"
+        projectPath="/work/project"
+        appCommands={appCommands({ sideChat: true, feedback: true })}
+        trigger={slash('')}
+        selectedTokens={new Set()}
+        onSelect={onSelect}
+      />,
+    )
+
+    await screen.findByRole('option', { name: /\/init/ })
+    expect(optionNames()).toEqual(['/side', '/feedback', '/init', '/aside'])
+    expect(screen.getByRole('option', { name: /\/side/ }).getAttribute('title')).toBe(
+      '/side [question]',
+    )
+    expect(pickerRef.current?.selectActive('Tab')).toBe('selected')
+    expect(onSelect).toHaveBeenLastCalledWith(
+      expect.objectContaining({ key: 'app:side', token: '/side', aliases: ['btw'] }),
+    )
+  })
+
+  it('lists TasteCode commands without a project, before any inventory', () => {
+    const transport = createResourceTransport()
+    render(
+      <ComposerResourcePicker
+        transport={transport}
+        provider="codex"
+        projectPath={undefined}
+        appCommands={appCommands({ sideChat: false, feedback: true })}
+        trigger={slash('fee')}
+        selectedTokens={new Set()}
+        onSelect={vi.fn()}
+      />,
+    )
+
+    expect(optionNames()).toEqual(['/feedback'])
+    expect(transport.requests).toEqual([])
+    expect(screen.queryByRole('status')).toBeNull()
+  })
+
+  it('treats a server without provider commands as having none', async () => {
+    const transport = new TestTransport(async (method) => {
+      if (method === 'skills.list') {
+        return {
+          capabilities: { inventory: true, configure: false, install: false },
+          skills: [],
+          errors: [],
+        }
+      }
+      throw new Error(`unknown method: ${method}`)
+    })
+    renderPicker(transport, slash(''))
+
+    expect(
+      await screen.findByText('Claude Code has no commands or skills for this project.'),
+    ).toBeTruthy()
+  })
+
+  it('says the commands could not be loaded when the provider could not list them', async () => {
+    const transport = new TestTransport(async (method) => {
+      if (method === 'skills.list') {
+        return {
+          capabilities: { inventory: true, configure: false, install: false },
+          skills: [],
+          errors: [],
+        }
+      }
+      // The server's answer after a project probe failed with nothing known.
+      throw new Error('The provider could not list its commands for this project yet.')
+    })
+    renderPicker(transport, slash(''))
+
+    expect(await screen.findByText('Couldn’t load commands.')).toBeTruthy()
+    expect(screen.queryByText(/has no commands or skills/)).toBeNull()
   })
 })

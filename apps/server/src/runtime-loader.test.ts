@@ -44,12 +44,60 @@ describe('provider runtime loading', () => {
     expect(listModels).toHaveBeenCalledTimes(2)
   })
 
+  it('tells the loaded runtime when a model read refreshes a kept list', async () => {
+    const loaded = fakeRuntime()
+    const listModels = vi.spyOn(loaded, 'listModels')
+    adapters.providerRuntime.mockReturnValue(loaded)
+
+    await providerRuntime('claude-code', () => {}).listModels(undefined, { refresh: true })
+
+    expect(listModels).toHaveBeenCalledExactlyOnceWith(undefined, { refresh: true }, undefined)
+  })
+
+  it('tells the loaded runtime how the read starts the engine', async () => {
+    const loaded = fakeRuntime()
+    const listModels = vi.spyOn(loaded, 'listModels')
+    adapters.providerRuntime.mockReturnValue(loaded)
+
+    await providerRuntime('claude-code', () => {}).listModels(
+      undefined,
+      { refresh: false },
+      { runtime: 'cli' },
+    )
+
+    expect(listModels).toHaveBeenCalledExactlyOnceWith(
+      undefined,
+      { refresh: false },
+      { runtime: 'cli' },
+    )
+  })
+
   it('preserves which providers support restart resume', () => {
     adapters.providerRuntime.mockReturnValue(fakeRuntime())
 
-    expect(providerRuntime('codex', () => {}).resume).toEqual(expect.any(Function))
-    expect(providerRuntime('claude-code', () => {}).resume).toEqual(expect.any(Function))
-    expect(providerRuntime('grok', () => {}).resume).toEqual(expect.any(Function))
+    for (const provider of ['codex', 'claude-code', 'grok', 'cursor', 'opencode', 'acp'] as const) {
+      expect(providerRuntime(provider, () => {}).resume).toEqual(expect.any(Function))
+    }
+    for (const provider of ['pi', 'antigravity'] as const) {
+      expect(providerRuntime(provider, () => {}).resume).toBeUndefined()
+    }
+  })
+
+  it('offers to carry a saved session on only for providers that can', () => {
+    adapters.providerRuntime.mockReturnValue(fakeRuntime())
+
+    for (const provider of ['codex', 'claude-code'] as const) {
+      expect(providerRuntime(provider, () => {}).fork).toEqual(expect.any(Function))
+    }
+    for (const provider of ['grok', 'cursor', 'opencode', 'acp', 'pi', 'antigravity'] as const) {
+      expect(providerRuntime(provider, () => {}).fork).toBeUndefined()
+    }
+  })
+
+  it('says API connections were removed when an old API chat starts again', () => {
+    expect(() => providerRuntime('api', () => {})).toThrow(
+      'API key connections were removed from TasteCode',
+    )
   })
 
   it('retries runtime construction after a temporary failure', async () => {

@@ -14,6 +14,7 @@ interface CopySurface {
   path: string
   text: string
   evidence: string[]
+  demoData?: boolean
 }
 
 const NUMERIC_CLAIM_PATTERNS = [
@@ -134,32 +135,44 @@ function collectCopy(page: PageBlueprint): CopySurface[] {
       text: label,
       evidence: pageEvidence,
     })),
-    ...page.sections.flatMap((section, sectionIndex) => [
-      ...(section.copy.eyebrow
-        ? [
-            {
-              path: `sections[${sectionIndex}].copy.eyebrow`,
-              text: section.copy.eyebrow,
-              evidence: section.evidence,
-            },
-          ]
-        : []),
-      {
-        path: `sections[${sectionIndex}].copy.heading`,
-        text: section.copy.heading,
-        evidence: section.evidence,
-      },
-      ...section.copy.body.map((text, bodyIndex) => ({
-        path: `sections[${sectionIndex}].copy.body[${bodyIndex}]`,
-        text,
-        evidence: section.evidence,
-      })),
-      ...section.copy.callsToAction.map(({ label }, actionIndex) => ({
-        path: `sections[${sectionIndex}].copy.callsToAction[${actionIndex}].label`,
-        text: label,
-        evidence: section.evidence,
-      })),
-    ]),
+    ...page.sections.flatMap((section, sectionIndex) => {
+      const demoData =
+        page.architecture?.mode === 'operate_monitor' &&
+        section.layoutFamily === 'dashboard' &&
+        /\b(?:demo|sample|illustrative|representative|fictional) data\b/iu.test(
+          [section.copy.eyebrow, section.copy.heading, ...section.copy.body].join(' '),
+        )
+      return [
+        ...(section.copy.eyebrow
+          ? [
+              {
+                path: `sections[${sectionIndex}].copy.eyebrow`,
+                text: section.copy.eyebrow,
+                evidence: section.evidence,
+                demoData,
+              },
+            ]
+          : []),
+        {
+          path: `sections[${sectionIndex}].copy.heading`,
+          text: section.copy.heading,
+          evidence: section.evidence,
+          demoData,
+        },
+        ...section.copy.body.map((text, bodyIndex) => ({
+          path: `sections[${sectionIndex}].copy.body[${bodyIndex}]`,
+          text,
+          evidence: section.evidence,
+          demoData,
+        })),
+        ...section.copy.callsToAction.map(({ label }, actionIndex) => ({
+          path: `sections[${sectionIndex}].copy.callsToAction[${actionIndex}].label`,
+          text: label,
+          evidence: section.evidence,
+          demoData,
+        })),
+      ]
+    }),
   ]
 }
 
@@ -177,7 +190,8 @@ function lintClaims(surfaces: CopySurface[]): CopyLintFinding[] {
     // Numeric terms in visibly fictional examples are content, not product proof.
     // Keep assertions such as "trusted by" subject to the evidence requirement.
     const illustrativeValue =
-      !assertedClaim && /\b(?:fictional|illustrative|representative)\b/iu.test(surface.text)
+      !assertedClaim &&
+      (surface.demoData || /\b(?:fictional|illustrative|representative)\b/iu.test(surface.text))
     return [
       finding(
         'copy/objective-claim',

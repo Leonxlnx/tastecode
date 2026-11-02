@@ -73,7 +73,7 @@ describe('beginInstall', () => {
 
   it('tracks one run per target and does not start a second while one is going', async () => {
     const transport = fakeTransport()
-    const target = { provider: 'codex' as const }
+    const target = { provider: 'acp' as const, agent: 'gemini' }
     await beginInstall(transport, target)
     await beginInstall(transport, target)
     expect(
@@ -84,7 +84,7 @@ describe('beginInstall', () => {
 
   it('keeps the log and marks failure with the exit code when the command dies', async () => {
     const transport = fakeTransport()
-    const target = { provider: 'claude-code' as const }
+    const target = { provider: 'opencode' as const }
     await beginInstall(transport, target)
 
     transport.emit('terminal.output', { terminalId: 'term-1', data: 'npm ERR! EACCES\r\n' })
@@ -99,7 +99,7 @@ describe('beginInstall', () => {
 
   it('marks success on a clean exit so the UI can refresh the provider list', async () => {
     const transport = fakeTransport()
-    const target = { provider: 'claude-code' as const }
+    const target = { provider: 'opencode' as const }
     await beginInstall(transport, target)
 
     transport.emit('terminal.exit', { terminalId: 'term-1', exitCode: 0 })
@@ -119,16 +119,33 @@ describe('beginLogin', () => {
 
   it('asks the server to launch the sign-in CLI, never naming a command', async () => {
     const transport = fakeTransport()
-    await beginLogin(transport, { provider: 'grok' })
+    await beginLogin(transport, { provider: 'acp', agent: 'gemini' })
     expect(transport.requests).toContainEqual({
       method: 'providers.launch',
-      params: { provider: 'grok', columns: 320, rows: 30 },
+      params: { provider: 'acp', agent: 'gemini', columns: 320, rows: 30 },
     })
+  })
+
+  it('signs in as a further account in a terminal of its own', async () => {
+    const transport = fakeTransport()
+    await beginLogin(transport, { provider: 'codex', accountId: 'work' }, () => {})
+    await beginLogin(transport, { provider: 'codex', accountId: 'default' }, () => {})
+    const launches = transport.requests.filter((request) => request.method === 'providers.launch')
+    expect(launches.map((request) => request.params)).toEqual([
+      { provider: 'codex', accountId: 'work', columns: 320, rows: 30 },
+      { provider: 'codex', columns: 320, rows: 30 },
+    ])
+    expect(loginKey({ provider: 'codex', accountId: 'work' })).toBe('login:codex@work')
+    expect(loginKey({ provider: 'codex', accountId: 'default' })).toBe(
+      loginKey({ provider: 'codex' }),
+    )
+    expect(installState('login:codex@work')?.phase).toBe('running')
+    expect(installState(loginKey({ provider: 'codex' }))?.phase).toBe('running')
   })
 
   it('keeps a login and an install for the same target apart in the store', async () => {
     const transport = fakeTransport()
-    const target = { provider: 'claude-code' as const }
+    const target = { provider: 'opencode' as const }
     await beginInstall(transport, target)
     await beginLogin(transport, target)
     expect(loginKey(target)).not.toBe(installKey(target))
@@ -141,7 +158,7 @@ describe('beginLogin', () => {
 
   it('reattaches instead of launching twice while a login is running', async () => {
     const transport = fakeTransport()
-    const target = { provider: 'grok' as const }
+    const target = { provider: 'acp' as const, agent: 'kimi' }
     await beginLogin(transport, target, () => {})
     await beginLogin(transport, target, () => {})
     expect(
@@ -156,7 +173,7 @@ describe('beginLogin', () => {
     })
     const opened: string[] = []
 
-    await beginLogin(transport, { provider: 'claude-code' }, (url) => opened.push(url))
+    await beginLogin(transport, { provider: 'acp', agent: 'gemini' }, (url) => opened.push(url))
     transport.emit('terminal.output', {
       terminalId: 'term-login-2',
       data: 'Starting sign-in...\r\n',
@@ -171,7 +188,7 @@ describe('beginLogin', () => {
     })
 
     expect(opened).toEqual(['https://accounts.example.test/auth?code=abc'])
-    expect(installState(loginKey({ provider: 'claude-code' }))?.openedAuthUrl).toBe(
+    expect(installState(loginKey({ provider: 'acp', agent: 'gemini' }))?.openedAuthUrl).toBe(
       'https://accounts.example.test/auth?code=abc',
     )
   })
@@ -256,6 +273,48 @@ describe('cancelInstall', () => {
     expect(transport.requests.filter(({ method }) => method === 'terminal.close')).toEqual([
       { method: 'terminal.close', params: { terminalId: 'login-1' } },
     ])
+  })
+
+  it('stays canceled when the stopped CLI exits before the stop answers', async () => {
+    let finishClose!: () => void
+    let answerStatus!: () => void
+    let closing = false
+    const transport = new TestTransport(async (method) => {
+      if (method === 'providers.launch') return { terminalId: 'login-hangup' }
+      if (method === 'terminal.status') {
+        if (!closing) return { status: 'running', output: '', outputOffset: 0, exitCode: null }
+        await new Promise<void>((resolve) => {
+          answerStatus = resolve
+        })
+        return { status: 'exited', output: '', outputOffset: 0, exitCode: 129 }
+      }
+      if (method === 'terminal.close') {
+        closing = true
+        await new Promise<void>((resolve) => {
+          finishClose = resolve
+        })
+        return {}
+      }
+      throw new Error(`unexpected ${method}`)
+    })
+    const target = { provider: 'claude-code' as const }
+    const key = loginKey(target)
+    await beginLogin(transport, target, () => {})
+    const cancel = cancelInstall(transport, key)
+    await vi.waitFor(() => expect(installState(key)?.canceling).toBe(true))
+    transport.emit('terminal.exit', { terminalId: 'login-hangup', exitCode: 129 })
+    // Nothing is left to stop once the CLI is gone, even before the stop answers.
+    expect(installState(key)).toMatchObject({ phase: 'canceled', canceling: false })
+    finishClose()
+    await cancel
+    answerStatus()
+    await vi.waitFor(() =>
+      expect(transport.requests.filter(({ method }) => method === 'terminal.status')).toHaveLength(
+        2,
+      ),
+    )
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(installState(key)).toMatchObject({ phase: 'canceled', canceling: false, exitCode: 129 })
   })
 
   it('keeps a failed stop available for retry', async () => {

@@ -411,6 +411,114 @@ describe('PullRequestsView', () => {
     expect(listPane().queryByText('Authored change')).toBeNull()
   })
 
+  it('opens on the requested pull request instead of the newest', async () => {
+    const transport = new TestTransport(async (method, params) => {
+      if (method === 'pullRequests.list') return result
+      if (method === 'pullRequests.detail') {
+        const { number } = params as { number: number }
+        return detailOf(result.items.find((entry) => entry.number === number)!)
+      }
+      throw new Error(`Unexpected request: ${method}`)
+    })
+
+    render(
+      <PullRequestsView
+        transport={transport}
+        initialSelection={{ repository: 'blueemi/HARNESS', number: 5 }}
+        onOpenChat={vi.fn()}
+        onSetupTerminalOpen={vi.fn()}
+      />,
+    )
+
+    await waitFor(() =>
+      expect(document.querySelector('.pr-detail-pane h2')?.textContent).toBe('Merged change'),
+    )
+    expect(document.querySelector('.pr-list-item.is-selected')?.textContent).toContain(
+      'Merged change',
+    )
+    // The newest pull request never opened on the way.
+    expect(
+      transport.requests
+        .filter((entry) => entry.method === 'pullRequests.detail')
+        .map((entry) => (entry.params as { number: number }).number),
+    ).toEqual([5])
+  })
+
+  it('reads and lists a requested pull request that the viewer neither authored nor reviews', async () => {
+    const outside: PullRequestListItem = {
+      ...result.items[1]!,
+      id: 'PR_outside',
+      repository: 'team/service',
+      number: 42,
+      title: 'Branch a teammate opened',
+      url: 'https://github.com/team/service/pull/42',
+      updatedAt: '2026-08-10T09:00:00Z',
+    }
+    const transport = new TestTransport(async (method, params) => {
+      if (method === 'pullRequests.list') return result
+      if (method === 'pullRequests.detail') {
+        const { number } = params as { number: number }
+        return detailOf(
+          number === 42 ? outside : result.items.find((entry) => entry.number === number)!,
+        )
+      }
+      throw new Error(`Unexpected request: ${method}`)
+    })
+
+    render(
+      <PullRequestsView
+        transport={transport}
+        initialSelection={{ repository: 'team/service', number: 42 }}
+        onOpenChat={vi.fn()}
+        onSetupTerminalOpen={vi.fn()}
+      />,
+    )
+
+    expect(await listPane().findByText('Branch a teammate opened')).toBeTruthy()
+    await waitFor(() =>
+      expect(document.querySelector('.pr-detail-pane h2')?.textContent).toBe(
+        'Branch a teammate opened',
+      ),
+    )
+    expect(document.querySelector('.pr-list-item.is-selected')?.textContent).toContain(
+      'Branch a teammate opened',
+    )
+    expect(transport.requests).toContainEqual({
+      method: 'pullRequests.detail',
+      params: { repository: 'team/service', number: 42 },
+    })
+  })
+
+  it('still opens the requested pull request when the list fails', async () => {
+    const transport = new TestTransport(async (method, params) => {
+      // Seen live: GitHub's search answered 502 while single pull requests loaded.
+      if (method === 'pullRequests.list') throw new Error('gh: HTTP 502')
+      if (method === 'pullRequests.detail') {
+        const { number } = params as { number: number }
+        return detailOf(result.items.find((entry) => entry.number === number)!)
+      }
+      throw new Error(`Unexpected request: ${method}`)
+    })
+
+    render(
+      <PullRequestsView
+        transport={transport}
+        initialSelection={{ repository: 'Blueemi/harness', number: 7 }}
+        onOpenChat={vi.fn()}
+        onSetupTerminalOpen={vi.fn()}
+      />,
+    )
+
+    await waitFor(() =>
+      expect(document.querySelector('.pr-detail-pane h2')?.textContent).toBe('Authored change'),
+    )
+    expect(listPane().getByRole('alert').textContent).toContain('gh: HTTP 502')
+    expect(listPane().getByRole('button', { name: 'Try again' })).toBeTruthy()
+    expect(document.querySelector('.pr-list-item.is-selected')?.textContent).toContain(
+      'Authored change',
+    )
+  })
+
   it('adds an authored pull request that only the reviewed search returned to Authored', async () => {
     const reviewedOnly: PullRequestListItem = {
       ...result.items[0]!,

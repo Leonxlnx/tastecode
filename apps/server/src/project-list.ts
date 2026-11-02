@@ -219,6 +219,9 @@ function projectSession(
     title: thread.title,
     provider: thread.provider,
     ...(thread.agent === undefined ? {} : { agent: thread.agent }),
+    ...(thread.connectionId === undefined ? {} : { connectionId: thread.connectionId }),
+    ...(thread.accountId === undefined ? {} : { accountId: thread.accountId }),
+    ...(thread.continuedFrom === undefined ? {} : { continuedFrom: thread.continuedFrom }),
     createdAt: thread.createdAt,
     running,
   }
@@ -235,5 +238,7 @@ function projectSession(
   }
   if (thread.worktreeBranch !== undefined) session.worktreeBranch = thread.worktreeBranch
   if (thread.closedAt !== undefined) session.closedAt = thread.closedAt
+  if (thread.model !== undefined) session.model = thread.model
+  session.lastActiveAt = thread.lastActiveAt
   return session
 }

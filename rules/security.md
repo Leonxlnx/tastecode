@@ -18,6 +18,13 @@ If we ever add telemetry it is opt-in, aggregate-only, documented in the README,
 default. This is a public promise and it constrains future cloud or team product decisions.
 Accept that now, or renegotiate it explicitly with users later.
 
+**User-initiated feedback is the one exception.** It is sent only when the user presses Send
+in the feedback dialog, after the dialog has shown the exact payload. Details TasteCode
+attaches on its own never contain prompts, source code, file paths or keys: paths and
+secret-shaped strings are redacted, and the user's own text is sent as typed apart from
+secret-shaped strings and the home folder name. It goes to the TasteCode team's Trecko inbox.
+Nothing is ever sent in the background, on a crash, or automatically after an error.
+
 ## Loopback is not a trust boundary
 
 Binding the server to `127.0.0.1` keeps other machines out. It does **not** keep other

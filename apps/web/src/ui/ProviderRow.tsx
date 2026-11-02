@@ -1,32 +1,48 @@
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import type { ProviderStatus } from '@harness/contracts'
-import { IconExternalLink as ExternalLink } from '@tabler/icons-react'
+import { IconCheck as Check, IconExternalLink as ExternalLink } from '@tabler/icons-react'
 import { RowIssue } from './RowIssue.js'
-import { providerMark } from '../model-catalog.js'
+import { providerMark, type ProviderMark } from '../model-catalog.js'
 import { ProviderIcon } from './ProviderIcon.js'
 import { Skeleton } from './Skeleton.js'
 
 export type ProviderIssue = { message: string; announce?: boolean | undefined }
 export type ProviderAction = {
   label: string
+  /** Names the action with its subject, where several rows offer the same label. */
+  ariaLabel?: string | undefined
   onClick?: (() => void) | undefined
   href?: string | undefined
   disabled?: boolean | undefined
   danger?: boolean | undefined
   expanded?: boolean | undefined
   controls?: string | undefined
+  /**
+   * Already done: drawn in the action's place as a settled label. With
+   * `onClick` it undoes itself, saying so while pointed at or focused.
+   */
+  done?: boolean | undefined
+  /** What the done label says while it offers to undo itself. */
+  undo?: string | undefined
+  /** Just done by a click, so it sits under that pointer until it leaves. */
+  fresh?: boolean | undefined
 }
 
 /**
  * How the provider is wired to an account. The row draws it as the line
- * between the name and the status: solid when an account is attached, a
- * dotted leader while the provider waits for one, nothing when the provider
+ * between the name and the status: solid when an account is attached, the
+ * settings leader while the provider waits for one, nothing when the provider
  * is not on this machine.
  */
 export type ProviderLink = 'connected' | 'open' | 'none'
 
+/** A settings entity row: the provider's mark and name, its wire, status and actions. */
 export function ProviderRow(props: {
   provider: ProviderStatus
+  /** Overrides the provider's own mark, for an ACP agent drawn as itself. */
+  mark?: ProviderMark | undefined
+  /** Overrides the provider's name, as the default account's editable "Codex · Work". */
+  name?: ReactNode
   status: ReactNode
   link?: ProviderLink | undefined
   live?: boolean
@@ -36,19 +52,20 @@ export function ProviderRow(props: {
 }) {
   return (
     <div
-      className="settings__row provider-row"
+      className="provider-row"
       data-link={props.link ?? 'open'}
       data-live={props.live || undefined}
       data-fault={props.issue?.announce || undefined}
     >
       <div className="provider-row__mark" title={props.provider.version}>
-        <ProviderIcon mark={providerMark(props.provider.id)} size={18} />
+        <ProviderIcon mark={props.mark ?? providerMark(props.provider.id)} size={18} />
       </div>
       <div className="provider-row__identity">
-        <p className="settings__row-title">{props.provider.displayName}</p>
+        <p className="set-entity__name">{props.name ?? props.provider.displayName}</p>
       </div>
+      <span className="set-leader" aria-hidden />
       <div
-        className="provider-row__status"
+        className="provider-row__status set-entity__status"
         role={props.live ? 'status' : undefined}
         aria-atomic={props.live || undefined}
       >
@@ -73,17 +90,47 @@ const SKELETON_STATUS_WIDTHS = [148, 136, 64] as const
 export function ProviderRowSkeleton(props: { index: number }) {
   const at = props.index % SKELETON_NAME_WIDTHS.length
   return (
-    <div className="settings__row provider-row provider-row--skeleton" data-link="open" aria-hidden>
+    <div className="provider-row provider-row--skeleton" data-link="open" aria-hidden>
       <div className="provider-row__mark">
         <Skeleton className="skeleton--block" width={16} height={16} />
       </div>
       <div className="provider-row__identity">
         <Skeleton className="provider-row__skeleton-name" width={SKELETON_NAME_WIDTHS[at]} />
       </div>
-      <div className="provider-row__status">
+      <span className="set-leader" />
+      <div className="provider-row__status set-entity__status">
         <Skeleton className="provider-row__skeleton-status" width={SKELETON_STATUS_WIDTHS[at]} />
       </div>
     </div>
+  )
+}
+
+/**
+ * A done action that undoes itself. Just done by a click, it sits under the
+ * pointer that clicked, so it waits for that pointer to leave (or for the
+ * keyboard) before it offers to undo: a double click must not add and
+ * remove at once.
+ */
+function UndoButton(props: { action: ProviderAction; settled: ReactNode }) {
+  const [fresh, setFresh] = useState(props.action.fresh === true)
+  return (
+    <button
+      className="provider-row__done provider-row__done--undo"
+      type="button"
+      data-fresh={fresh || undefined}
+      aria-label={props.action.ariaLabel}
+      disabled={props.action.disabled}
+      onPointerLeave={() => setFresh(false)}
+      onKeyDown={() => setFresh(false)}
+      onClick={() => {
+        if (!fresh) props.action.onClick?.()
+      }}
+    >
+      {props.settled}
+      <span className="provider-row__undo-label" aria-hidden>
+        {props.action.undo}
+      </span>
+    </button>
   )
 }
 
@@ -93,9 +140,30 @@ function ProviderRowAction(props: {
 }) {
   const action = props.action
   if (!action) return null
-  const className = `settings__action is-${props.tone}${action.danger ? ' is-danger' : ''}`
+  if (action.done) {
+    const settled = (
+      <span className="provider-row__done-label">
+        <Check size={13} aria-hidden />
+        {action.label}
+      </span>
+    )
+    if (!action.onClick) return <span className="provider-row__done">{settled}</span>
+    return <UndoButton action={action} settled={settled} />
+  }
+  // Signing out reads the same in either slot; otherwise the secondary slot is quiet.
+  const className = action.danger
+    ? 'set-button set-button--danger'
+    : props.tone === 'secondary'
+      ? 'set-button set-button--quiet'
+      : 'set-button'
   return action.href ? (
-    <a className={className} href={action.href} target="_blank" rel="noopener noreferrer">
+    <a
+      className={className}
+      href={action.href}
+      target="_blank"
+      rel="noopener noreferrer"
+      aria-label={action.ariaLabel}
+    >
       {action.label}
       <ExternalLink size={12} aria-hidden />
     </a>
@@ -104,6 +172,7 @@ function ProviderRowAction(props: {
       className={className}
       type="button"
       disabled={action.disabled}
+      aria-label={action.ariaLabel}
       aria-expanded={action.expanded}
       aria-controls={action.controls}
       onClick={action.onClick}

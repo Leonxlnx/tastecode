@@ -4,80 +4,52 @@ TasteCode supports two different things that must not be conflated:
 
 - **Agent engines** already own a coding loop, tools and sessions. TasteCode adapts their
   native protocol, SDK, ACP surface or structured CLI output.
-- **Model connections** expose inference APIs but no complete coding agent. The
-  TasteCode-owned API runtime supplies the shared coding loop and tools.
+- **Model connections** expose inference APIs but no complete coding agent. TasteCode
+  removed them on 2026-10-20: a user's own API key goes into an agent engine that supports
+  keys, today OpenCode's sign-in, and runs as that engine's session.
 
 The UI presents both as ways to start a session, while the adapter boundary keeps their
 implementation details out of shared contracts and components.
 
-Since 2026-10-03 `main` ships only Codex, Claude Code and Grok. Everything else in this plan,
-model connections included, lives on the `nightly` branch only.
+Since 2026-10-03 `main` ships only Codex, Claude Code and Grok. Everything else in this plan
+lives on the `nightly` branch only.
 
 ## Integration matrix
 
-| User-facing option     | Integration                                        | Shared implementation                              |
-| ---------------------- | -------------------------------------------------- | -------------------------------------------------- |
-| Codex subscription     | Codex app-server                                   | Existing native adapter                            |
-| Claude subscription    | Claude Code structured CLI                         | Existing CLI adapter                               |
-| ACP agents             | Agent Client Protocol                              | Existing ACP adapter                               |
-| Cursor                 | `cursor-agent --print --output-format stream-json` | Structured CLI adapter                             |
-| OpenCode               | Local server and generated TypeScript SDK          | Native HTTP/SSE adapter                            |
-| Kimi Code              | Verified `kimi acp` surface                        | Shared ACP adapter                                 |
-| GLM / Z.ai coding plan | Provider configured inside OpenCode or Claude Code | Existing OpenCode or Claude Code adapter           |
-| OpenAI API             | Responses API                                      | TasteCode API runtime + native OpenAI transport    |
-| Anthropic API          | Messages API                                       | TasteCode API runtime + native Anthropic transport |
-| OpenRouter             | OpenAI-compatible API                              | TasteCode API runtime + compatible transport       |
-| Kimi API               | OpenAI-compatible Chat Completions                 | TasteCode API runtime + compatible transport       |
-| GLM / Z.ai API         | OpenAI-compatible Chat Completions                 | TasteCode API runtime + compatible transport       |
-| Custom API             | User-supplied OpenAI-compatible base URL           | TasteCode API runtime + compatible transport       |
-
-OpenRouter, Kimi and Z.ai are presets over one compatible transport, not three copied
-adapters. Anthropic uses its native Messages API because Anthropic documents its OpenAI
-compatibility layer as an evaluation path rather than the production interface.
+| User-facing option     | Integration                                        | Shared implementation                    |
+| ---------------------- | -------------------------------------------------- | ---------------------------------------- |
+| Codex subscription     | Codex app-server                                   | Existing native adapter                  |
+| Claude subscription    | Claude Code structured CLI                         | Existing CLI adapter                     |
+| ACP agents             | Agent Client Protocol                              | Existing ACP adapter                     |
+| Cursor                 | `cursor-agent --print --output-format stream-json` | Structured CLI adapter                   |
+| OpenCode               | Local server and generated TypeScript SDK          | Native HTTP/SSE adapter                  |
+| Own API key            | Signed in inside OpenCode                          | Existing OpenCode adapter                |
+| Kimi Code              | Verified `kimi acp` surface                        | Shared ACP adapter                       |
+| GLM / Z.ai coding plan | Provider configured inside OpenCode or Claude Code | Existing OpenCode or Claude Code adapter |
 
 The GLM Coding Plan is not a separate agent or the general Z.ai API preset. It is a
 subscription credential and model route used by supported coding agents. TasteCode therefore
-runs it through the configured OpenCode or Claude Code agent; the direct Z.ai API option
-continues to use the general API endpoint and the TasteCode-owned agent loop.
+runs it through the configured OpenCode or Claude Code agent.
 
-## TasteCode API runtime
+## API connections were removed
 
-The API runtime makes the product useful when no vendor agent CLI is installed. TasteCode
-owns the session history, tool loop, approvals, filesystem edits, commands, MCP tools,
-skills, queueing, checkpoints, worktrees, review and terminal. A model connection only
-streams model output and tool calls.
-
-The first runtime is intentionally small:
-
-1. Send normalized conversation items and tool definitions to the selected transport.
-2. Validate every tool call against the same approval and sandbox policy used elsewhere.
-3. Execute tools through existing TasteCode services, then return results to the model.
-4. Persist every normalized item before continuing the loop.
-5. Stop on completion, interruption, a bounded tool limit or a non-retryable error.
-
-Capabilities remain honest. A direct API session can implement local resume and fork from
-TasteCode history, but it must not claim vendor-hosted history, subscription usage or native
-mid-generation steering when those do not exist.
-
-## Configuration and credentials
-
-- API keys live only in Windows Credential Manager or macOS Keychain.
-- The renderer receives connection names and status, never secret values.
-- Non-secret base URLs, model defaults and optional headers live in server-owned user
-  configuration, not project files or browser storage.
-- Custom endpoints require HTTPS unless they bind to `127.0.0.1`.
-- Provider-specific request fields are capability-gated transport options, not additions to
-  the shared thread model.
+Until 2026-10-20 a model connection ran on a small TasteCode-owned loop with four workspace
+tools and a 64 KiB request budget, which made a key-backed chat a much weaker agent than any
+CLI. An OpenCode-backed replacement was built the same day and removed with the feature. A
+user signs in to OpenCode with their key and chats through the OpenCode provider. Chats saved
+under an API connection stay readable but cannot start again.
 
 ## Delivery order
 
 Each line ships as a separate, short-lived PR. Shared contracts land before consumers.
 
-1. Connection contracts and credential references.
-2. TasteCode API runtime with deterministic fake-transport tests.
-3. OpenAI Responses transport and a real local end-to-end session.
-4. Anthropic Messages transport.
-5. OpenAI-compatible transport plus OpenRouter, Kimi, Z.ai and custom presets.
+1. Connection contracts and credential references (the feature was removed 2026-10-20; the
+   contracts remain until a contracts change removes them).
+2. TasteCode API runtime with deterministic fake-transport tests (removed 2026-10-20).
+3. OpenAI Responses transport and a real local end-to-end session (removed 2026-10-20).
+4. Anthropic Messages transport (removed 2026-10-20).
+5. OpenAI-compatible transport plus OpenRouter, Kimi, Z.ai and custom presets (removed
+   2026-10-20).
 6. OpenCode native adapter against captured HTTP/SSE traffic.
 7. Cursor adapter against captured `stream-json` output.
 8. Kimi Code through ACP; GLM Coding Plan through configured OpenCode or Claude Code.

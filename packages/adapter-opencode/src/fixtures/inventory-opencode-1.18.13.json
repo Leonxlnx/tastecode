@@ -1,0 +1,93 @@
+{
+  "opencode": "1.18.13",
+  "directory": "C:\\work\\project",
+  "command": [
+    {
+      "name": "init",
+      "description": "guided AGENTS.md setup",
+      "source": "command",
+      "template": "TEMPLATE-TEXT-MUST-NOT-LEAK Create or update AGENTS.md for $ARGUMENTS",
+      "hints": ["$ARGUMENTS"]
+    },
+    {
+      "name": "review",
+      "description": "review changes [commit|branch|pr], defaults to uncommitted",
+      "source": "command",
+      "template": "TEMPLATE-TEXT-MUST-NOT-LEAK Review $ARGUMENTS",
+      "subtask": true,
+      "hints": ["$ARGUMENTS"]
+    },
+    {
+      "name": "customize-opencode",
+      "description": "Use only when editing opencode's own configuration",
+      "source": "skill",
+      "template": "SKILL-BODY-MUST-NOT-LEAK",
+      "hints": []
+    },
+    {
+      "name": "release-notes",
+      "description": "Draft release notes from merged changes",
+      "source": "skill",
+      "template": "SKILL-BODY-MUST-NOT-LEAK",
+      "hints": []
+    },
+    {
+      "name": "greet",
+      "description": "Greet someone by name",
+      "agent": null,
+      "model": null,
+      "source": "command",
+      "template": "TEMPLATE-TEXT-MUST-NOT-LEAK Say hello to $ARGUMENTS.",
+      "subtask": null,
+      "hints": ["$ARGUMENTS"]
+    },
+    {
+      "name": "lint-rules",
+      "description": "A project skill",
+      "source": "skill",
+      "template": "SKILL-BODY-MUST-NOT-LEAK",
+      "hints": []
+    },
+    {
+      "name": "team-style",
+      "description": "A project skill kept with Claude Code's",
+      "source": "skill",
+      "template": "SKILL-BODY-MUST-NOT-LEAK",
+      "hints": []
+    }
+  ],
+  "skill": [
+    {
+      "name": "customize-opencode",
+      "description": "Use only when editing opencode's own configuration",
+      "location": "<built-in>",
+      "content": "SKILL-BODY-MUST-NOT-LEAK"
+    },
+    {
+      "name": "release-notes",
+      "description": "Draft release notes from merged changes",
+      "location": "C:\\Users\\example\\.claude\\skills\\release-notes\\SKILL.md",
+      "content": "SKILL-BODY-MUST-NOT-LEAK"
+    },
+    {
+      "name": "lint-rules",
+      "description": "A project skill",
+      "location": "C:\\work\\project\\.opencode\\skills\\lint-rules\\SKILL.md",
+      "content": "SKILL-BODY-MUST-NOT-LEAK"
+    },
+    {
+      "name": "team-style",
+      "description": "A project skill kept with Claude Code's",
+      "location": "C:\\work\\project\\.claude\\skills\\team-style\\SKILL.md",
+      "content": "SKILL-BODY-MUST-NOT-LEAK"
+    }
+  ],
+  "mcp": {
+    "demo": { "status": "connected" },
+    "broken": {
+      "status": "failed",
+      "error": "SSE error: Unable to connect. Is the computer able to access the url?"
+    },
+    "off": { "status": "disabled" }
+  }
+}

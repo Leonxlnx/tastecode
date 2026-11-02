@@ -169,6 +169,41 @@ export function mcpStartupInventory(
   )
 }
 
+export type ConfiguredMcpServer = { id: string; enabled: boolean }
+
+/**
+ * Codex answers its status list only after every server has started, which
+ * took 50-85 s in a captured 0.163 setup. Until then the configured servers
+ * show as starting, with any startup state Codex already reported. A server
+ * the config turns off shows as stopped, as the status list reports it.
+ */
+export function configuredMcpInventory(
+  configured: readonly ConfiguredMcpServer[],
+  startupByKey: ReadonlyMap<string, McpStartupStatus>,
+  threadId?: string,
+): McpServer[] {
+  const started = mcpStartupInventory(startupByKey, threadId)
+  const reported = new Map(started.map((server) => [server.id, server]))
+  const ids = new Set(configured.map(({ id }) => id))
+  return [
+    ...configured.map(
+      ({ id, enabled }): McpServer =>
+        reported.get(id) ?? {
+          id,
+          scope: 'global',
+          // As in the status list, `enabled` is the project's choice, not the config's.
+          enabled: true,
+          startup: enabled ? { state: 'starting' } : { state: 'stopped' },
+          tools: [],
+          resources: [],
+          resourceTemplates: [],
+        },
+    ),
+    ...started.filter((server) => !ids.has(server.id)),
+    // The status list arrives sorted by name; matching it keeps rows in place when it lands.
+  ].sort((left, right) => (left.id < right.id ? -1 : left.id > right.id ? 1 : 0))
+}
+
 export function mapMcpServerStatus(
   status: ParsedMcpServerStatus,
   startup?: McpStartupStatus,

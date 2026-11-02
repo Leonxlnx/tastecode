@@ -1,0 +1,110 @@
+{
+  "configOptions": [
+    {
+      "currentValue": "default",
+      "options": [
+        {
+          "description": "Requires approval for tool executions",
+          "name": "Default",
+          "value": "default"
+        },
+        {
+          "description": "Read-only agent for exploration and planning",
+          "name": "Plan",
+          "value": "plan"
+        },
+        {
+          "description": "Auto-approves file edits only",
+          "name": "Accept Edits",
+          "value": "accept-edits"
+        },
+        {
+          "description": "Auto-approves all tool executions",
+          "name": "Auto Approve",
+          "value": "auto-approve"
+        },
+        {
+          "description": "Read-only conversational mode for questions and discussions",
+          "name": "Chat",
+          "value": "chat"
+        }
+      ],
+      "category": "mode",
+      "id": "mode",
+      "name": "Session Mode",
+      "type": "select"
+    },
+    {
+      "currentValue": "devstral-2",
+      "options": [
+        {
+          "description": "mistral-vibe-cli-latest",
+          "name": "devstral-2",
+          "value": "devstral-2"
+        },
+        {
+          "description": "devstral-small-latest",
+          "name": "devstral-small",
+          "value": "devstral-small"
+        },
+        {
+          "description": "devstral",
+          "name": "local",
+          "value": "local"
+        }
+      ],
+      "category": "model",
+      "id": "model",
+      "name": "Model",
+      "type": "select"
+    }
+  ],
+  "models": {
+    "availableModels": [
+      {
+        "modelId": "devstral-2",
+        "name": "devstral-2"
+      },
+      {
+        "modelId": "devstral-small",
+        "name": "devstral-small"
+      },
+      {
+        "modelId": "local",
+        "name": "local"
+      }
+    ],
+    "currentModelId": "devstral-2"
+  },
+  "modes": {
+    "availableModes": [
+      {
+        "description": "Requires approval for tool executions",
+        "id": "default",
+        "name": "Default"
+      },
+      {
+        "description": "Read-only agent for exploration and planning",
+        "id": "plan",
+        "name": "Plan"
+      },
+      {
+        "description": "Auto-approves file edits only",
+        "id": "accept-edits",
+        "name": "Accept Edits"
+      },
+      {
+        "description": "Auto-approves all tool executions",
+        "id": "auto-approve",
+        "name": "Auto Approve"
+      },
+      {
+        "description": "Read-only conversational mode for questions and discussions",
+        "id": "chat",
+        "name": "Chat"
+      }
+    ],
+    "currentModeId": "default"
+  },
+  "sessionId": "8b85472e-cc77-46ce-a596-5dbbcb7a32bd"
+}

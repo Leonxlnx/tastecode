@@ -136,6 +136,11 @@ export function ProviderUpdateNotice(props: {
   const waiting = entries.filter(
     (entry) => state.operations[entry.provider]?.phase !== 'succeeded',
   ).length
+  // The releases whose own row still offers Update or Retry.
+  const startable = entries.filter((entry) => {
+    const operation = state.operations[entry.provider]
+    return entry.canUpdate && !isBusy(operation) && operation?.phase !== 'succeeded'
+  })
   return (
     <NoticePresence
       className="notice notice--provider-update"
@@ -162,14 +167,27 @@ export function ProviderUpdateNotice(props: {
           ) : (
             <span>Up to date</span>
           )}
-          <button
-            className="ghost icon-button"
-            type="button"
-            aria-label="Dismiss provider updates"
-            onClick={dismiss}
-          >
-            <X size={13} aria-hidden />
-          </button>
+          <span className="update-slip__head-actions">
+            {startable.length > 1 ? (
+              <button
+                className="update-slip__button"
+                type="button"
+                onClick={() => {
+                  for (const entry of startable) void store.start(entry.provider)
+                }}
+              >
+                Update all
+              </button>
+            ) : null}
+            <button
+              className="ghost icon-button"
+              type="button"
+              aria-label="Dismiss provider updates"
+              onClick={dismiss}
+            >
+              <X size={13} aria-hidden />
+            </button>
+          </span>
         </div>
         {entries.map((entry, index) => (
           <ProviderUpdateItem
@@ -237,42 +255,44 @@ function ProviderUpdateItem(props: {
         <ProviderIcon mark={providerMark(update.provider)} size={14} />
         {update.displayName}
       </span>
-      <span className="update-slip__versions">
-        {from && to ? (
-          <>
-            <VersionReel
-              from={from}
-              to={to}
-              turn={busy ? 'turning' : succeeded ? 'turned' : 'rest'}
-            />
-            <span className="update-slip__arrow" aria-hidden>
-              →
+      <span className="update-slip__line">
+        <span className="update-slip__versions">
+          {from && to ? (
+            <>
+              <VersionReel
+                from={from}
+                to={to}
+                turn={busy ? 'turning' : succeeded ? 'turned' : 'rest'}
+              />
+              <span className="update-slip__arrow" aria-hidden>
+                →
+              </span>
+              <VersionTarget from={from} to={to} />
+            </>
+          ) : null}
+        </span>
+        <span className="visually-hidden">{status}</span>
+        <span className="update-slip__action">
+          {busy || succeeded ? (
+            <span className="update-slip__state" aria-hidden>
+              {operation?.phase === 'verifying' ? 'Checking' : busy ? 'Updating' : 'Updated'}
             </span>
-            <VersionTarget from={from} to={to} />
-          </>
-        ) : null}
-      </span>
-      <span className="visually-hidden">{status}</span>
-      <span className="update-slip__action">
-        {busy || succeeded ? (
-          <span className="update-slip__state" aria-hidden>
-            {operation?.phase === 'verifying' ? 'Checking' : busy ? 'Updating' : 'Updated'}
-          </span>
-        ) : update.canUpdate ? (
-          <button className="update-slip__button" type="button" onClick={props.onStart}>
-            {failed ? 'Retry' : 'Update'}
-          </button>
-        ) : (
-          <a
-            className="update-slip__link"
-            href={update.updateUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Update guide
-            <ArrowUpRight size={12} aria-hidden />
-          </a>
-        )}
+          ) : update.canUpdate ? (
+            <button className="update-slip__button" type="button" onClick={props.onStart}>
+              {failed ? 'Retry' : 'Update'}
+            </button>
+          ) : (
+            <a
+              className="update-slip__link"
+              href={update.updateUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Update guide
+              <ArrowUpRight size={12} aria-hidden />
+            </a>
+          )}
+        </span>
       </span>
       {operation?.error || hasLog ? (
         <span className="update-slip__note">
@@ -302,6 +322,7 @@ function ProviderUpdateItem(props: {
             <InstallTerminal
               transport={props.transport}
               installKey={key}
+              profile="workspace"
               appearance="notice"
               ariaLabel={`${update.displayName} update terminal`}
             />
@@ -335,7 +356,7 @@ export function ProviderUpdateCheck(props: { transport: Transport }) {
     <div className="provider-updates-check">
       {review ? (
         <button
-          className="ghost provider-updates-check__review"
+          className="set-button set-button--quiet provider-updates-check__review"
           type="button"
           onClick={store.showNotice}
         >
@@ -356,7 +377,7 @@ export function ProviderUpdateCheck(props: { transport: Transport }) {
         </span>
       )}
       <button
-        className="ghost provider-updates-check__refresh"
+        className="set-button set-button--quiet provider-updates-check__refresh"
         type="button"
         disabled={state.checking}
         onClick={() => void store.refresh(true)}

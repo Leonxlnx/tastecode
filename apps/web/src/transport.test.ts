@@ -3,6 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import * as bridge from './bridge.js'
 import {
+  HEALTH_CHECK_TIMEOUT_MS,
+  HEALTHY_TRAFFIC_MS,
   IndeterminateRequestError,
   parseIncomingFrame,
   parseResponseFrame,
@@ -606,6 +608,68 @@ describe('Transport', () => {
     expect(transport.state).toBe('reconnecting')
   })
 
+  it('replaces a socket that stays silent for the whole default health check', async () => {
+    const transport = new Transport('ws://test')
+    transport.connect()
+    const first = FakeSocket.instances[0]!
+    first.open()
+
+    const checking = transport.ensureHealthy()
+    await vi.advanceTimersByTimeAsync(HEALTH_CHECK_TIMEOUT_MS - 1)
+    expect(transport.state).toBe('open')
+    await vi.advanceTimersByTimeAsync(1)
+    await checking
+    expect(transport.state).toBe('reconnecting')
+    await vi.runOnlyPendingTimersAsync()
+    expect(FakeSocket.instances).toHaveLength(2)
+  })
+
+  it('does not ask a socket that delivered a frame moments ago', async () => {
+    const transport = new Transport('ws://test')
+    transport.connect()
+    const socket = FakeSocket.instances[0]!
+    socket.open()
+    socket.onmessage?.({
+      data: JSON.stringify({
+        channel: 'thread.event',
+        sequence: 1,
+        data: completedThreadEvent('a'),
+      }),
+    })
+
+    await transport.ensureHealthy()
+    expect(userFrames(socket)).toHaveLength(0)
+
+    vi.advanceTimersByTime(HEALTHY_TRAFFIC_MS)
+    const checking = transport.ensureHealthy()
+    expect(JSON.parse(userFrames(socket)[0]!)).toMatchObject({ method: 'system.info' })
+    transport.close()
+    await checking
+  })
+
+  it('keeps a busy server and its requests in flight while the probe waits', async () => {
+    const transport = new Transport('ws://test')
+    transport.connect()
+    const socket = FakeSocket.instances[0]!
+    socket.open()
+    const models = transport.request('models.list', { provider: 'codex' })
+
+    const checking = transport.ensureHealthy()
+    // The old 500 ms limit replaced the socket here and failed models.list.
+    await vi.advanceTimersByTimeAsync(2_000)
+    expect(transport.state).toBe('open')
+    const frame = RequestFrameSchema.parse(JSON.parse(userFrames(socket)[0]!))
+    socket.onmessage?.({ data: JSON.stringify({ id: frame.id, result: { models: [] } }) })
+    await expect(models).resolves.toEqual({ models: [] })
+
+    // The probe itself stays unanswered, but the reply above proved the socket.
+    await vi.advanceTimersByTimeAsync(HEALTH_CHECK_TIMEOUT_MS)
+    await checking
+    expect(FakeSocket.instances).toHaveLength(1)
+    expect(transport.state).toBe('open')
+    transport.close()
+  })
+
   it('keeps a healthy socket when the wake-up probe answers', async () => {
     const transport = new Transport('ws://test')
     transport.connect()
@@ -825,6 +889,7 @@ describe('Transport', () => {
       }),
     })
 
+    vi.advanceTimersByTime(HEALTHY_TRAFFIC_MS)
     const checking = transport.ensureHealthy(1)
     await vi.advanceTimersByTimeAsync(1)
     await checking

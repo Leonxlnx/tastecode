@@ -47,10 +47,11 @@ describe('provider update service', () => {
     expect(check).not.toHaveBeenCalled()
   })
 
-  it('does not downgrade newer installations and rejects unknown or current targets', async () => {
+  it('does not downgrade newer installations and rejects unknown or unconfigured targets', async () => {
     const { service, system } = fixture()
     system.version.mockResolvedValue('0.12.0')
     await expect(service.commandFor('codex')).rejects.toThrow('no newer version')
+    await expect(service.commandFor('opencode')).rejects.toThrow('does not support')
     await expect(service.commandFor('unlisted-cli' as never)).rejects.toThrow('does not support')
   })
 
@@ -62,6 +63,14 @@ describe('provider update service', () => {
     system.version.mockResolvedValue('0.11.0')
     expect(await service.list(true)).toMatchObject([{ updateAvailable: false }])
     expect(check).toHaveBeenCalledTimes(2)
+  })
+
+  it('asks the shared probe for a fresh version only when a refresh is requested', async () => {
+    const { service, system } = fixture()
+    await service.list()
+    expect(system.version).toHaveBeenLastCalledWith('codex', { fresh: false })
+    await service.list(true)
+    expect(system.version).toHaveBeenLastCalledWith('codex', { fresh: true })
   })
 
   it('does not use an in-flight old version read to verify a completed update', async () => {

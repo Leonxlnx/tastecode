@@ -9,19 +9,30 @@ import {
   useState,
   useSyncExternalStore,
 } from 'react'
-import type { CSSProperties, TransitionEvent as ReactTransitionEvent } from 'react'
+import type {
+  AnimationEvent as ReactAnimationEvent,
+  ComponentProps,
+  CSSProperties,
+  TransitionEvent as ReactTransitionEvent,
+} from 'react'
 import { IconLoader2 as LoaderCircle } from '@tabler/icons-react'
 import type {
   Account,
+  AccountId,
   ApprovalDecision,
   ApprovalMode,
   DomainEvent,
+  Model,
   ProviderId,
   ProviderStatus,
   PullRequestListItem,
+  PullRequestTarget,
   QueuedTurn,
+  ResultOf,
   SidebarSettings,
+  ThreadSettings,
 } from '@harness/contracts'
+import { DEFAULT_ACCOUNT_ID } from '@harness/contracts'
 import {
   isDesktop,
   isMacOS,
@@ -46,7 +57,10 @@ import {
 } from './shortcuts.js'
 import { sliceCodeUnits } from './slice-code-units.js'
 import { readTerminalPlacement, subscribeTerminalPlacement } from './terminal-placement.js'
+import { useChatNotifications } from './use-chat-notifications.js'
+import { useAppUpdateInstallGate } from './app-update-install.js'
 import { ProviderUpdateNotice } from './ui/ProviderUpdates.js'
+import { AppUpdateToast } from './ui/AppUpdateToast.js'
 import { IndeterminateRequestError, Transport } from './transport.js'
 import { OptimisticMutations } from './optimistic-mutations.js'
 import {
@@ -61,6 +75,7 @@ import {
 import {
   ThreadController,
   removePendingSubmission,
+  type PaneSlot,
   type PendingSubmission,
   type RecoverableDraft,
 } from './thread-controller.js'
@@ -80,6 +95,7 @@ import {
   promoteSession,
   reconcileProjectList,
   removeSession,
+  sessionOnProvider,
   updateSession,
   updateSessions,
 } from './project-store.js'
@@ -92,16 +108,28 @@ import {
 } from './sidebar-order.js'
 import { createSessionOrderSerializer } from './session-order-serializer.js'
 import type { CommandScope, PaletteCommand } from './ui/CommandPalette.js'
+import type { AppScreen } from './app-commands.js'
 import { Composer, type SendAvailability, type WorkspaceInfo } from './ui/Composer.js'
+import { composerWireText } from './ui/composer-chips.js'
 import {
+  formatModelName,
   getFastModeOffValue,
   getFastServiceTier,
   getNextServiceTierForModel,
 } from './ui/model-selector-utils.js'
 import type { Checkpoint } from './ui/RollbackDialog.js'
 import { SessionSearchHost, type SessionSearchHandle } from './ui/SessionSearchHost.js'
+import { useStageGlide } from './ui/stage-glide.js'
 import type { SettingsSection } from './ui/Settings.js'
-import { Sidebar, type Project } from './ui/Sidebar.js'
+import { Sidebar, type Project, type Session } from './ui/Sidebar.js'
+import {
+  accountAtLimit,
+  continueAccounts,
+  continuationNote,
+  continuedIn,
+  type EarlierChanges,
+  lastRequest,
+} from './continue-account.js'
 import { Skeleton, SkeletonStatus, ThreadSkeleton } from './ui/Skeleton.js'
 import {
   PullRequestsSkeleton,
@@ -109,8 +137,13 @@ import {
   WorkspacePanelSkeleton,
 } from './ui/SurfaceSkeletons.js'
 import { PanelToggles, StageHeader } from './ui/StageHeader.js'
+import { PaneComposer, SplitPane } from './ui/SplitPane.js'
+import { loadSplitViewStyles } from './ui/split-view-context.js'
+import { useChatDrop } from './ui/chat-drop.js'
+import { ChatDropOverlay } from './ui/ChatDropOverlay.js'
 import { SurfaceErrorBoundary } from './ui/SurfaceErrorBoundary.js'
 import { surfaceLoadFailed } from './surface-load-error.js'
+import { preloadWhenIdle } from './idle-preload.js'
 import { NoticePresence } from './ui/NoticePresence.js'
 import type { ComposerError } from './ui/ComposerErrors.js'
 import { LazyThread } from './ui/LazyThread.js'
@@ -121,26 +154,43 @@ import { serverBaseUrl } from './server-url.js'
 import { addDesignBriefing } from './design-agent/briefing.js'
 import { sourceSupportsAttachments } from './attachment-capability.js'
 import { canCaptureVoice, type VoiceRecording } from './voice-capability.js'
-import { UsageLimitsController } from './usage-limits-state.js'
+import { pollUsageLimits, UsageLimitsController, type LimitTarget } from './usage-limits-state.js'
+import { sameAccount } from './usage-summary-state.js'
 import {
+  AccountLabelContext,
+  accountLabelOf,
+  accountsOf,
+  activeAccountOf,
+  useProviderAccounts,
+  type AccountLabel,
+  type ProviderAccountsSnapshot,
+} from './provider-accounts-state.js'
+import {
+  agentMark,
   choicesFor,
   customModelChoice,
   customModelKey,
-  defaultHiddenModelKeys,
-  defaultHiddenModels,
   isCustomModelChoice,
-  migratePendingHiddenModels,
-  MODEL_VISIBILITY_VERSION,
   modelChoiceKey,
+  modelVisibilityDefaults,
   providerDisplayName,
   providerMark,
   resolveReasoningEffort,
   sourceKey,
-  unlistedHiddenModels,
   type ModelChoice,
-  type ModelVisibilityMigration,
-  type ModelVisibilityProgress,
 } from './model-catalog.js'
+import {
+  chooseModelsVisibility,
+  EMPTY_MODEL_VISIBILITY,
+  hiddenModelKeys,
+  importLegacyModelVisibility,
+  legacyHiddenChoices,
+  parseModelVisibility,
+  recordModelSuccessors,
+  serializeModelVisibility,
+  settleModelVisibilitySource,
+  type ModelVisibilityRecord,
+} from './model-catalog-visibility.js'
 import {
   freshModelCatalogChoices,
   isModelCatalogSourceFresh,
@@ -148,6 +198,7 @@ import {
   serializeModelCatalogCache,
 } from './model-catalog-cache.js'
 import { parseSideChatCommand } from './side-chat-command.js'
+import { FEEDBACK_SENT_NOTICE, useFeedbackStatus, type FeedbackRequest } from './feedback-state.js'
 import {
   composerDraftKey,
   isEmptyComposerDraft,
@@ -163,9 +214,26 @@ import {
   type ProviderLoginTerminalTarget,
 } from './provider-install.js'
 import {
+  PROVIDER_RECHECK_INTERVAL_MS,
+  providerScanChanged,
+  useRecheckOnFocus,
+} from './provider-recheck.js'
+import {
+  lastSignIn,
+  rememberedSignIn,
+  rememberedSignInsVersion,
+  rememberSignIn,
+  subscribeRememberedSignIns,
+} from './remembered-sign-in.js'
+import { knownSignIn, providerCanRun } from './provider-availability.js'
+import {
+  defaultsScope,
+  isDefaultsScope,
   pinnedModelChoice,
   readProviderDefaults,
+  scopedDefault,
   writeProviderDefaults,
+  type DefaultsScope,
   type ProviderDefault,
   type ProviderDefaults,
 } from './provider-defaults.js'
@@ -176,17 +244,29 @@ import type {
 } from './ui/workspace/WorkspaceSideChat.js'
 import type { BrowserNavigationRequest } from './ui/workspace/WorkspaceBrowser.js'
 import type { WorkspaceTool } from './ui/workspace/WorkspacePanel.js'
+import { useCheckoutPullRequest } from './ui/pull-requests/useCheckoutPullRequest.js'
 import {
   DEFAULT_BOTTOM_PANEL_HEIGHT,
   restoreWorkspacePanelWidth,
 } from './ui/workspace/workspace-panel-width.js'
 import { useWindowChrome } from './window-chrome.js'
+import { AppBackground } from './ui/AppBackground.js'
 import { backdropColorScheme } from './theme-colors.js'
+import { adoptedSelection, shareSavedSetups, sharedSetup } from './thread-settings.js'
 import {
   readProfileIdentityPreferences,
   writeProfileIdentityPreferences,
   type ProfileIdentityPreferences,
 } from './profile-preferences.js'
+import {
+  agentRosterKey,
+  readProviderRoster,
+  rosterAgent,
+  rosterAllows,
+  seedProviderRoster,
+  writeProviderRoster,
+  type ProviderRoster,
+} from './provider-roster.js'
 import {
   ACCENT_KEY,
   applyAccentPreference,
@@ -213,10 +293,23 @@ const SERVER_BASE_URL = serverBaseUrl(import.meta.env.VITE_HARNESS_SERVER_URL)
 const SETUP_KEY = 'harness.provider'
 const ONBOARDING_KEY = 'harness.onboarding.v1'
 const DRAFT_REPLACED_NOTICE = 'Your draft was replaced.'
-const PROVIDER_IDS = ['claude-code', 'codex', 'grok'] as const satisfies readonly ProviderId[]
+const PROVIDER_IDS = [
+  'claude-code',
+  'codex',
+  'grok',
+  'cursor',
+  'opencode',
+  'antigravity',
+  'pi',
+  'acp',
+  'api',
+] as const satisfies readonly ProviderId[]
 const PROVIDER_ID_SET = new Set<ProviderId>(PROVIDER_IDS)
-/** Which custom harness source was chosen. The key names predate custom
- *  harnesses; renaming them would forget every stored choice. */
+/** Engines a custom model can be attached to — ACP agents and API
+ *  connections carry their own roster concepts and stay out of this list. */
+const DIRECT_PROVIDER_IDS = PROVIDER_IDS.filter((id) => id !== 'acp' && id !== 'api' && id !== 'pi')
+const DIRECT_PROVIDER_ID_SET = new Set<ProviderId>(DIRECT_PROVIDER_IDS)
+/** Which named agent or custom harness source was chosen. */
 const AGENT_KEY = 'harness.acpAgent'
 const AGENT_NAME_KEY = 'harness.acpAgentName'
 const PROJECTS_KEY = 'harness.projects'
@@ -230,19 +323,33 @@ const STARTUP_PROJECT_NAME_KEY = 'harness.startupProjectName'
 const PENDING_CHAT_DELETES_KEY = 'harness.pendingChatDeletes.v1'
 const MODEL_KEY = 'harness.model'
 const MODEL_CATALOG_KEY = 'harness.modelCatalog.v1'
+const MODEL_CATALOG_CACHE_WRITE_DELAY_MS = 1_000
+/** How old the last listing may get before focusing the window lists every model again. */
+const MODEL_CATALOG_REVALIDATE_MS = 6 * 60 * 60_000
 const CUSTOM_MODELS_KEY = 'harness.customModels.v1'
 /** Last model/effort/tier used per source, so returning to a provider
  *  restores the exact working setup instead of a best-guess translation. */
 const MODEL_BY_SOURCE_KEY = 'harness.modelBySource'
+/** Last effort used per model of a source, whichever of its accounts ran it. */
+const EFFORT_BY_MODEL_KEY = 'harness.effortByModel'
 const MODEL_BY_THREAD_PREFIX = 'harness.modelByThread:'
 const COMPOSER_DRAFTS_KEY = 'harness.composerDrafts.v1'
 const EMPTY_PALETTE_COMMANDS: PaletteCommand[] = []
-const HIDDEN_MODELS_KEY = 'harness.hiddenModels'
-const MODEL_VISIBILITY_VERSION_KEY = 'harness.modelVisibilityVersion'
-/** Rows a pending visibility migration already moved, while other sources have not answered yet. */
-const MODEL_VISIBILITY_ROWS_KEY = 'harness.modelVisibilityRows'
-/** Every direct-provider model key the profile has listed, so a later arrival gets its default. */
-const LISTED_MODELS_KEY = 'harness.listedModels'
+const EMPTY_PROVIDER_ROSTER: ProviderRoster = []
+/** Only the user's own visibility choices; the defaults follow the catalog. */
+const MODEL_VISIBILITY_KEY = 'harness.modelVisibility.v2'
+/** One complete hidden list, which mixed the defaults of the build that saved it with choices. */
+const LEGACY_HIDDEN_MODELS_KEY = 'harness.hiddenModels'
+/** The list's format version, and the version rows reached on their own. */
+const LEGACY_MODEL_VISIBILITY_VERSION_KEY = 'harness.modelVisibilityVersion'
+const LEGACY_MODEL_VISIBILITY_ROWS_KEY = 'harness.modelVisibilityRows'
+/** That list and its records, removed once the record above is saved. */
+const LEGACY_MODEL_VISIBILITY_KEYS = [
+  LEGACY_HIDDEN_MODELS_KEY,
+  LEGACY_MODEL_VISIBILITY_VERSION_KEY,
+  LEGACY_MODEL_VISIBILITY_ROWS_KEY,
+  'harness.listedModels',
+] as const
 const PALETTE_CHAT_SEARCH_CACHE = createPaletteChatSearchCache()
 const EFFORT_KEY = 'harness.effort'
 const SERVICE_TIER_KEY = 'harness.serviceTier'
@@ -253,11 +360,35 @@ const MACOS_FONT_SMOOTHING_KEY = 'harness.macosFontSmoothing'
 const DEBUG_SETTINGS_KEY = 'harness.debugSettings'
 const TERMINAL_HEIGHT_KEY = 'harness.terminal.height'
 const BOTTOM_TERMINAL_MOTION_MS = 260
+/** How long a project's branch list answers the new-chat branch menu without git. */
+const BRANCH_LIST_TTL_MS = 30_000
+const NO_BRANCHES: string[] = []
 const RAIL_WIDTH_KEY = 'harness.rail.width'
 const DEFAULT_RAIL_WIDTH = 256
 const WORKSPACE_PANEL_WIDTH_KEY = 'harness.workspacePanel.width'
 const DEFAULT_SIDEBAR_SETTINGS: SidebarSettings = { mode: 'classic', autoSettleDays: 3 }
 type BottomTerminalPhase = 'closed' | 'opening' | 'open' | 'closing'
+type ComposerProps = ComponentProps<typeof Composer>
+/** What the pane beside the focused one shows: a chat, or a new chat not yet started. */
+type BesidePane = { kind: 'chat'; id: string } | { kind: 'new'; projectPath: string | undefined }
+/**
+ * Split view: a second chat beside the focused one. The focused pane is App's
+ * active chat; the other pane keeps what it showed when it lost focus, so a
+ * focus swap moves nothing on screen.
+ */
+type SplitView = {
+  beside: BesidePane
+  /** The pane shown on the left; the one opened later sits to its right. */
+  start: PaneSlot
+  /** The unfocused pane's view, put back when it takes focus again. */
+  frozen: { composer: ComposerProps; entryKey: number; revealRequest: number }
+}
+const otherSlot = (slot: PaneSlot): PaneSlot => (slot === 0 ? 1 : 0)
+const splitBesideId = (split: SplitView | undefined): string | undefined =>
+  split?.beside.kind === 'chat' ? split.beside.id : undefined
+const PANE_SLOTS: readonly PaneSlot[] = [0, 1]
+const SPLIT_CONTENTS: CSSProperties = { display: 'contents' }
+const NO_CHECKPOINTS: Checkpoint[] = []
 const PullRequestsView = lazy(() =>
   import('./ui/pull-requests/PullRequestsView.js').then((module) => ({
     default: module.PullRequestsView,
@@ -277,11 +408,22 @@ const loadWorkspacePanel = (): Promise<LazyWorkspacePanelModule> =>
     return { default: module.WorkspacePanel }
   }))
 const WorkspacePanel = lazy(loadWorkspacePanel)
-const Settings = lazy(() =>
-  import('./ui/Settings.js')
-    .then((module) => ({ default: module.Settings }))
-    .catch(surfaceLoadFailed),
-)
+type SettingsComponent = (typeof import('./ui/Settings.js'))['Settings']
+let settingsPromise: Promise<{ default: SettingsComponent }> | undefined
+let resolvedSettings: SettingsComponent | undefined
+/** One import for the idle preload and the first open; a failed one is tried again by the next caller. */
+const loadSettings = (): Promise<{ default: SettingsComponent }> =>
+  (settingsPromise ??= import('./ui/Settings.js').then(
+    (module) => {
+      resolvedSettings = module.Settings
+      return { default: module.Settings }
+    },
+    (error: unknown) => {
+      settingsPromise = undefined
+      throw error
+    },
+  ))
+const LazySettings = lazy(() => loadSettings().catch(surfaceLoadFailed))
 const CommandPalette = lazy(() =>
   import('./ui/CommandPalette.js').then((module) => ({ default: module.CommandPalette })),
 )
@@ -292,6 +434,9 @@ const CheckoutDiscardDialog = lazy(() =>
 )
 const RollbackDialog = lazy(() =>
   import('./ui/RollbackDialog.js').then((module) => ({ default: module.RollbackDialog })),
+)
+const FeedbackDialog = lazy(() =>
+  import('./ui/FeedbackDialog.js').then((module) => ({ default: module.FeedbackDialog })),
 )
 const Onboarding = lazy(() =>
   import('./ui/Onboarding.js').then((module) => ({ default: module.Onboarding })),
@@ -337,13 +482,32 @@ type CustomModel = {
 type CatalogAvailability = 'loading' | 'ready' | 'failed'
 type AccountCheck = {
   provider: ProviderId
+  /** The further account the check is for; absent for the default account. */
+  accountId?: AccountId
   state: CatalogAvailability
   account?: Account
   error?: ComposerError
+  /** Set on a read that is still running after ACCOUNT_CHECK_SEND_GRACE_MS. */
+  slow?: true
+  /** Set on a read of a provider whose last read said signed in (remembered-sign-in.ts). */
+  remembered?: true
 }
 
+/**
+ * How long a running account read keeps Send waiting. Some CLIs need far
+ * longer to answer on a busy machine (cursor-agent `status` took up to 13 s),
+ * and their reads may now run that long; past this point the composer treats
+ * the read like one that could not answer and lets the user send.
+ */
+export const ACCOUNT_CHECK_SEND_GRACE_MS = 5_000
+
 /** The counter makes a repeated request for the open section navigate again. */
-type SettingsSectionRequest = { section: SettingsSection; request: number }
+type SettingsSectionRequest = {
+  section: SettingsSection
+  request: number
+  /** Opens Providers on its picker rather than on the added providers. */
+  view?: 'add-providers' | undefined
+}
 
 type WorkspaceIdleProbe = {
   inFlight: Promise<void> | undefined
@@ -386,17 +550,19 @@ function workspaceLayoutStyle(width: number): WorkspaceLayoutStyle {
   return { '--workspace-panel-w': `${width}px` }
 }
 
-function requestSettingsSection(section: SettingsSection) {
-  return (current: SettingsSectionRequest) => ({ section, request: current.request + 1 })
+function requestSettingsSection(section: SettingsSection, view?: SettingsSectionRequest['view']) {
+  return (current: SettingsSectionRequest) => ({ section, view, request: current.request + 1 })
 }
 
 export function resolveSendAvailability(input: {
   catalog: CatalogAvailability
+  serverBoundSession: boolean
   activeProvider?: ProviderId | undefined
   selectedChoice?: ModelChoice | undefined
   providerStatuses: ProviderStatus[]
   accountCheck: AccountCheck
 }): SendAvailability {
+  if (input.serverBoundSession && !input.selectedChoice) return 'ready'
   if (input.catalog === 'loading') return 'loading'
   if (input.catalog === 'failed') return 'unavailable'
 
@@ -409,7 +575,7 @@ export function resolveSendAvailability(input: {
       : 'unavailable'
   }
 
-  if (input.selectedChoice?.agent) return 'ready'
+  if (input.selectedChoice?.agent && input.selectedChoice.provider !== 'acp') return 'ready'
 
   const status = input.providerStatuses.find((entry) => entry.id === provider)
   if (!status) return 'unavailable'
@@ -418,12 +584,22 @@ export function resolveSendAvailability(input: {
   if (input.accountCheck.provider === provider && input.accountCheck.state === 'ready') {
     return input.accountCheck.account?.signedIn ? 'ready' : 'setup-required'
   }
-  if (status.auth === 'unauthenticated') return 'setup-required'
-  if (status.auth === 'authenticated') return 'ready'
-  if (input.accountCheck.provider !== provider || input.accountCheck.state === 'loading') {
-    return 'loading'
+  // The provider's status is its default account's; a further account's own
+  // check speaks for it.
+  const furtherAccount =
+    input.accountCheck.provider === provider && input.accountCheck.accountId !== undefined
+  if (!furtherAccount && status.auth === 'unauthenticated') return 'setup-required'
+  if (!furtherAccount && status.auth === 'authenticated') return 'ready'
+  if (input.accountCheck.provider !== provider) return 'loading'
+  // A check that could not answer in time, or still has not after the grace
+  // period, confirms nothing either way. Send stays available: a CLI that
+  // really is signed out says so in the turn.
+  // A read of a provider that was signed in last time keeps Send available
+  // too; an answer that it is signed out turns it off.
+  if (input.accountCheck.state === 'loading') {
+    return input.accountCheck.slow || input.accountCheck.remembered ? 'ready' : 'loading'
   }
-  if (input.accountCheck.state === 'failed') return 'unavailable'
+  if (input.accountCheck.state === 'failed') return 'ready'
   return input.accountCheck.account?.signedIn ? 'ready' : 'setup-required'
 }
 
@@ -438,7 +614,11 @@ function readCustomModels(): CustomModel[] {
       if (!isRecord(entry)) continue
       const provider = entry['provider']
       const storedModelId = entry['modelId']
-      if (!isProviderId(provider) || typeof storedModelId !== 'string') {
+      if (
+        !isProviderId(provider) ||
+        !DIRECT_PROVIDER_ID_SET.has(provider) ||
+        typeof storedModelId !== 'string'
+      ) {
         continue
       }
       const modelId = storedModelId.trim()
@@ -461,13 +641,47 @@ function readCustomModels(): CustomModel[] {
  *  choice, so the same model can never appear twice. */
 function mergeCustomModels(catalog: ModelChoice[], custom: CustomModel[]): ModelChoice[] {
   if (custom.length === 0) return catalog
-  const customChoices = custom.map((entry) => customModelChoice(entry))
+  const customChoices = custom.map((entry) =>
+    customModelChoice(entry, providerDisplayName(entry.provider), providerMark(entry.provider)),
+  )
   const customKeys = new Set(customChoices.map((choice) => choice.key))
   return [...catalog.filter((choice) => !customKeys.has(choice.key)), ...customChoices]
 }
 
 function modelSource(choice: ModelChoice): string {
-  return sourceKey({ provider: choice.provider, agentId: choice.agent?.id })
+  return sourceKey({
+    provider: choice.provider,
+    connectionId: choice.connectionId,
+    agentId: choice.agent?.id,
+    accountId: choice.accountId,
+  })
+}
+
+/** A choice's source without its account: every account of a provider is the same provider. */
+function providerSource(choice: ModelChoice): string {
+  return sourceKey({
+    provider: choice.provider,
+    connectionId: choice.connectionId,
+    agentId: choice.agent?.id,
+  })
+}
+
+type CatalogSourceControls = {
+  relist: (source: string) => void
+  /** Without a source, every source the run left for later. */
+  discover: (source?: string) => void
+}
+
+/** Replaces one source's rows where they stood, so a source listed again does not move. */
+function replaceSourceRows(
+  catalog: ModelChoice[],
+  source: string,
+  rows: ModelChoice[],
+): ModelChoice[] {
+  const at = catalog.findIndex((choice) => modelSource(choice) === source)
+  const others = catalog.filter((choice) => modelSource(choice) !== source)
+  // Every row before the first one of this source belongs to another source.
+  return at < 0 ? [...others, ...rows] : [...others.slice(0, at), ...rows, ...others.slice(at)]
 }
 
 export function App() {
@@ -485,19 +699,36 @@ export function App() {
   const readUsage = useCallback(() => usageController.snapshot(), [usageController])
   const usageState = useSyncExternalStore(subscribeUsage, readUsage, readUsage)
   const refreshUsage = useCallback(
-    (requestedProvider?: ProviderId) => usageController.refresh(requestedProvider),
+    (requestedProvider?: ProviderId, accountId?: AccountId) =>
+      usageController.refresh(requestedProvider, undefined, accountId),
     [usageController],
   )
+  const retryUsage = useCallback(
+    (requestedProvider: ProviderId, accountId?: AccountId) =>
+      usageController.refresh(requestedProvider, 'retry', accountId),
+    [usageController],
+  )
+  const refreshAllUsage = useCallback(
+    () => usageController.refresh(undefined, 'retry'),
+    [usageController],
+  )
+  const showUsage = useCallback(() => usageController.show(), [usageController])
   const consumeReset = useCallback(
-    async (requestedProvider: ProviderId, idempotencyKey: string, creditId?: string) => {
+    async (
+      requestedProvider: ProviderId,
+      idempotencyKey: string,
+      creditId?: string,
+      accountId?: AccountId,
+    ) => {
       try {
         return await transport.request('usage.consumeReset', {
           provider: requestedProvider,
+          ...(accountId === undefined || accountId === DEFAULT_ACCOUNT_ID ? {} : { accountId }),
           idempotencyKey,
           ...(creditId === undefined ? {} : { creditId }),
         })
       } finally {
-        refreshUsage(requestedProvider)
+        refreshUsage(requestedProvider, accountId)
       }
     },
     [transport, refreshUsage],
@@ -536,7 +767,8 @@ export function App() {
   )
   const sourceAgentRef = useRef(sourceAgent)
   sourceAgentRef.current = sourceAgent
-  // The custom harness's own name, so the composer can show what the user called it.
+  // Kept so the sidebar can say "Gemini CLI" rather than "acp". The name lives
+  // in the adapter package, which the renderer deliberately cannot import.
   const [sourceAgentName, setSourceAgentName] = useState<string | undefined>(
     () => readSetting(AGENT_NAME_KEY) ?? undefined,
   )
@@ -609,14 +841,47 @@ export function App() {
     [threadController],
   )
   const [activePath, setActivePath] = useState<string | undefined>()
-  const threadFrameStore = threadController.frames
+  const [split, setSplitState] = useState<SplitView>()
+  const splitRef = useRef(split)
+  const setSplit = useCallback((next: SplitView | undefined) => {
+    splitRef.current = next
+    setSplitState(next)
+  }, [])
+  /** The column with focus. Without a split it is the only one shown. */
+  const [focusedSlot, setFocusedSlotState] = useState<PaneSlot>(0)
+  const focusedSlotRef = useRef<PaneSlot>(0)
+  const setFocusedSlot = useCallback(
+    (slot: PaneSlot) => {
+      focusedSlotRef.current = slot
+      threadController.focus(slot)
+      setFocusedSlotState(slot)
+    },
+    [threadController],
+  )
+  const besideId = split?.beside.kind === 'chat' ? split.beside.id : undefined
+  const [besideQueue, setBesideQueue] = useState<{ items: QueuedTurn[]; canSteer: boolean }>()
+  /** The composer props the focused pane rendered last, frozen when it loses focus. */
+  const liveComposerProps = useRef<ComposerProps | undefined>(undefined)
+  /** Set further down, where the split's actions are defined: a chat or project
+   * going away closes the pane that shows it. True when that was the focused pane. */
+  const splitRemovals = useRef({
+    chats: (_ids: readonly string[]): boolean => false,
+    project: (_path: string): boolean => false,
+  })
+  const threadFrameStore = threadController.columns[focusedSlot]
   const thread = useSyncExternalStore(
     threadFrameStore.subscribeStructure,
     threadFrameStore.getStructureSnapshot,
   )
+  /** Draw into the focused column, whatever it shows. */
   const setThread = useCallback(
-    (next: ThreadState) => threadFrameStore.publish(next),
-    [threadFrameStore],
+    (next: ThreadState) => threadController.frames.publish(next),
+    [threadController],
+  )
+  /** Draw a chat's state if a column shows it; a hidden chat is only cached. */
+  const publishThread = useCallback(
+    (threadId: string, next: ThreadState) => threadController.publish(threadId, next),
+    [threadController],
   )
   const [loadingThreadId, setLoadingThreadId] = useState<string | undefined>()
   const [historyFailure, setHistoryFailure] = useState<
@@ -669,7 +934,34 @@ export function App() {
       }
     })
   const [providerStatuses, setProviderStatuses] = useState<ProviderStatus[]>([])
+  // The provider accounts, kept while an installed provider can have more
+  // than one: plan limits are read per account, and the views name them.
+  const { store: providerAccountsStore, snapshot: providerAccounts } = useProviderAccounts(
+    transport,
+    providerStatuses.some(
+      (status) => status.installed && status.capabilities?.multipleAccounts === true,
+    ),
+  )
+  /** For the model catalog's runs, which outlive a render. */
+  const providerAccountsRef = useRef(providerAccounts)
+  providerAccountsRef.current = providerAccounts
+  // Undefined until the first catalog run has listed them, so setup can tell
+  // an empty library from one that has not answered yet.
+  const [acpAgents, setAcpAgents] = useState<ResultOf<'acp.agents'>['agents'] | undefined>()
+  const [providerRoster, setProviderRoster] = useState(readProviderRoster)
+  // Read by the catalog run, which must not restart when a provider is added.
+  const providerRosterRef = useRef(providerRoster)
+  providerRosterRef.current = providerRoster
   const [catalogRequest, setCatalogRequest] = useState(0)
+  /** When the catalog was last listed, however that started. */
+  const catalogRequestedAt = useRef(Date.now())
+  /**
+   * The current catalog run's sources: `relist` lists one again when the server
+   * says it changed, `discover` lists one (or every) source the run left for later.
+   */
+  const catalogSources = useRef<CatalogSourceControls | undefined>(undefined)
+  /** Set once the picker or Settings needed every source; later runs list them all at once. */
+  const everyModelSourceWanted = useRef(false)
   const [pendingModelSources, setPendingModelSources] = useState<ReadonlySet<string>>(new Set())
   const [providerCatalogSource, setProviderCatalogSource] = useState<
     { transport: Transport; request: number } | undefined
@@ -694,35 +986,27 @@ export function App() {
       reportStartupMilestone('catalog-ready')
     }
   }, [catalogAvailability, projectsStatus])
-  const [initialModelVisibility] = useState<ModelVisibilityMigration>(() => {
-    const saved = readSetting(HIDDEN_MODELS_KEY)
-    let hidden: Set<string>
-    try {
-      const stored: unknown = JSON.parse(saved ?? '[]')
-      hidden = new Set(isStringArray(stored) ? stored : [])
-    } catch {
-      hidden = new Set()
-    }
-    if (saved === null) return { hidden, migrated: [] }
-    // Apply a pending visibility migration to the cached catalog already, so
-    // the picker never opens on models it is about to hide or reveal. Rows a
-    // source lists later get it when discovery first shows them.
-    return migratePendingHiddenModels(
-      hidden,
-      readModelVisibilityProgress(),
-      catalogModels.filter((choice) => !choice.agent && !isCustomModelChoice(choice)),
-    )
-  })
-  const [hiddenModels, setHiddenModels] = useState(initialModelVisibility.hidden)
-  const modelVisibilityInitialized = useRef(readSetting(HIDDEN_MODELS_KEY) !== null)
-  /** Rows a first visibility click saved on their defaults, recorded with that list. */
-  const pendingVisibilityRows = useRef<string[] | undefined>(undefined)
-  const [initialListedModels] = useState(readListedModels)
-  const listedModelsRef = useRef(initialListedModels)
-  // Read via ref inside the catalog effect so toggling visibility does not
-  // refetch every provider's model list.
-  const hiddenModelsRef = useRef(hiddenModels)
-  hiddenModelsRef.current = hiddenModels
+  // Settings is the largest lazy surface. Once the sidebar is up, its chunk
+  // loads in an idle moment, so the first open does not compile it on the click.
+  useEffect(() => {
+    if (projectsStatus !== 'ready') return
+    return preloadWhenIdle(loadSettings)
+  }, [projectsStatus])
+  const [modelVisibility, setModelVisibility] = useState(readModelVisibility)
+  // The catalog effect reads and settles the record per source without
+  // depending on it, so a visibility click never refetches any model list.
+  // Every update goes through `updateModelVisibility`, which keeps this
+  // current before React renders it.
+  const modelVisibilityRef = useRef(modelVisibility)
+  const updateModelVisibility = useCallback(
+    (update: (record: ModelVisibilityRecord) => ModelVisibilityRecord) => {
+      const next = update(modelVisibilityRef.current)
+      if (next === modelVisibilityRef.current) return
+      modelVisibilityRef.current = next
+      setModelVisibility(next)
+    },
+    [],
+  )
   const [modelId, setModelId] = useState<string | undefined>(
     () => readSetting(MODEL_KEY) ?? undefined,
   )
@@ -765,6 +1049,31 @@ export function App() {
   const [branches, setBranches] = useState<string[]>([])
   const [branchesPath, setBranchesPath] = useState<string>()
   const projectBranches = useRef(new Map<string, string>())
+  /** Each project's checked-out branch, as workspace.info last said. */
+  const checkedOutBranches = useRef(new Map<string, string | undefined>())
+  /** Projects whose checkout had uncommitted changes when workspace.info last read it. */
+  const dirtyCheckouts = useRef(new Set<string>())
+  /** Branch lists by project, reused for BRANCH_LIST_TTL_MS. */
+  const branchLists = useRef(
+    new Map<string, { at: number; revision: number; branches: string[] }>(),
+  )
+  const [branchMenuOpened, setBranchMenuOpened] = useState(0)
+  const openBranchMenu = useCallback(() => setBranchMenuOpened((count) => count + 1), [])
+  const recordCheckout = useCallback((path: string, info: WorkspaceInfo | undefined) => {
+    checkedOutBranches.current.set(path, info?.branch)
+    if (info?.dirtyFiles) dirtyCheckouts.current.add(path)
+    else dirtyCheckouts.current.delete(path)
+  }, [])
+  // A new chat in the shared checkout starts where it is while the checkout
+  // has uncommitted changes. Switching it then fails when a change touches a
+  // file the branches differ in, and otherwise carries the changes along. An
+  // isolated chat gets its own worktree, so any branch works as its base.
+  const newChatBranch = useCallback((path: string, isolate: boolean) => {
+    const checkedOut = checkedOutBranches.current.get(path)
+    return !isolate && checkedOut && dirtyCheckouts.current.has(path)
+      ? checkedOut
+      : projectBranches.current.get(path)
+  }, [])
   const [workspaceRefreshRevision, setWorkspaceRefreshRevision] = useState(0)
   const [account, setAccount] = useState<Account | undefined>()
   const [profileIdentity, setProfileIdentity] = useState(readProfileIdentityPreferences)
@@ -778,9 +1087,14 @@ export function App() {
   const [accountCheck, setAccountCheck] = useState<AccountCheck>({ provider, state: 'loading' })
   const accountRequestRevision = useRef(0)
   const [authStatusRequest, setAuthStatusRequest] = useState(0)
-  const [voiceAvailable, setVoiceAvailable] = useState(false)
-  const [voiceStatusLoading, setVoiceStatusLoading] = useState(true)
+  const [voiceAvailable, setVoiceAvailable] = useState(() => rememberedVoice(provider) ?? false)
+  const [voiceStatusLoading, setVoiceStatusLoading] = useState(
+    () => rememberedVoice(provider) === undefined,
+  )
   const [settingsOpen, setSettingsOpen] = useState(false)
+  // Settings that comes back in place of a provider login terminal skips its
+  // fade: while it faded in, the chat settling underneath showed through.
+  const [settingsReturning, setSettingsReturning] = useState(false)
   const [keybindings, setKeybindings] = useState(readKeybindings)
   const [surface, setSurface] = useState<'chat' | 'pull-requests'>('chat')
   const [settingsSection, setSettingsSection] = useState<SettingsSectionRequest>({
@@ -805,25 +1119,60 @@ export function App() {
   }>()
   const searchJumpRequests = useRef(0)
   const [composerFocusRequest, setComposerFocusRequest] = useState(0)
-  const [composerDraft, setComposerDraft] = useState<
-    | {
-        text: string
-        attachments?: string[] | undefined
-        resources?: ComposerResource[] | undefined
-        request: number
-      }
-    | undefined
-  >()
+  const [composerDraft, setComposerDraft] = useState<ComposerProps['draftRequest']>()
   const [threadRevealRequest, setThreadRevealRequest] = useState(0)
   // Session entry gets a fresh virtualizer at the latest message. A pending
   // session becoming durable keeps this key and preserves its live view.
   const [threadEntryKey, setThreadEntryKey] = useState(0)
+  // Keys and requests only ever grow: a split pane put back into focus brings
+  // its own older values back, and a new one must differ from both panes'.
+  const threadEntryKeys = useRef(0)
+  const composerDraftRequests = useRef(0)
+  const threadEntryKeyRef = useRef(threadEntryKey)
+  threadEntryKeyRef.current = threadEntryKey
+  const threadRevealRequestRef = useRef(threadRevealRequest)
+  threadRevealRequestRef.current = threadRevealRequest
   const [notice, setNotice] = useState<string | undefined>()
   /** The unsent draft an "Edit as new prompt" replaced, offered back in the notice. */
   const [replacedDraft, setReplacedDraft] = useState<{ owner: string; text: string } | undefined>()
   const [actionError, setActionError] = useState<ComposerError>()
   const reportError = useCallback((message: string) => {
     setActionError({ id: crypto.randomUUID(), message })
+  }, [])
+  const feedback = useFeedbackStatus(transport)
+  const refreshFeedback = feedback.refresh
+  const [feedbackRequest, setFeedbackRequest] = useState<FeedbackRequest>()
+  /** The chat the dialog describes, read when it opens. Kept in a ref so openers stay stable. */
+  const feedbackContext = useRef<FeedbackRequest['context']>({})
+  const feedbackOpens = useRef(0)
+  const openFeedback = useCallback(
+    (
+      source: FeedbackRequest['source'],
+      options: { message?: string; error?: NonNullable<FeedbackRequest['context']['error']> } = {},
+    ) => {
+      setFeedbackRequest({
+        source,
+        ...(options.message ? { message: options.message } : {}),
+        context: {
+          ...feedbackContext.current,
+          ...(options.error ? { error: options.error } : {}),
+        },
+        id: ++feedbackOpens.current,
+      })
+      // A wait that started earlier is counted from the server's current answer.
+      refreshFeedback()
+    },
+    [refreshFeedback],
+  )
+  const openAccountFeedback = useCallback(() => openFeedback('account_menu'), [openFeedback])
+  const openCommandFeedback = useCallback(
+    (message: string) => openFeedback('slash_command', { message }),
+    [openFeedback],
+  )
+  const closeFeedback = useCallback(() => setFeedbackRequest(undefined), [])
+  const finishFeedback = useCallback(() => {
+    setFeedbackRequest(undefined)
+    setNotice(FEEDBACK_SENT_NOTICE)
   }, [])
   const [archiveToastDismissed, setArchiveToastDismissed] = useState(false)
   const pendingDeletionChecks = useRef(new Map<string, object>())
@@ -963,22 +1312,65 @@ export function App() {
   )
   const [sideChatPromptRequest, setSideChatPromptRequest] = useState<SideChatPromptRequest>()
   const providerSignInState = useSyncExternalStore(subscribeInstalls, () =>
-    installState(loginKey({ provider })),
+    installState(loginKey({ provider, ...(sourceAgent ? { agent: sourceAgent } : {}) })),
   )
   /** The live catalog with user-defined models appended. Everything below
    *  reads this merged list; the cache only ever stores the server catalog. */
   const models = useMemo(
-    () => mergeCustomModels(catalogModels, customModels),
-    [catalogModels, customModels],
+    () =>
+      mergeCustomModels(catalogModels, customModels).filter(
+        (choice) =>
+          rosterAllows(providerRoster, modelSource(choice)) &&
+          // Once the server has answered, a cached or custom row for a provider
+          // this build does not offer is left out.
+          (providerStatuses.length === 0 ||
+            providerStatuses.some((status) => status.id === choice.provider)),
+      ),
+    [catalogModels, customModels, providerRoster, providerStatuses],
   )
   const catalogModelsRef = useRef(catalogModels)
   catalogModelsRef.current = catalogModels
   const modelsRef = useRef(models)
   modelsRef.current = models
+  /** How every listed model starts, recomputed only when the catalog changes. */
+  const modelDefaults = useMemo(() => modelVisibilityDefaults(catalogModels), [catalogModels])
+  const modelDefaultsRef = useRef(modelDefaults)
+  modelDefaultsRef.current = modelDefaults
+  const hiddenModels = useMemo(
+    () => hiddenModelKeys(models, modelDefaults, modelVisibility),
+    [models, modelDefaults, modelVisibility],
+  )
   const visibleModels = useMemo(
     () => models.filter((choice) => !hiddenModels.has(choice.key)),
     [models, hiddenModels],
   )
+  // The phone offers the models this picker offers, so neither moves a chat
+  // to a model the other hides. Compared as text: the set is rebuilt often.
+  const hiddenModelList = useMemo(() => JSON.stringify([...hiddenModels].sort()), [hiddenModels])
+  useEffect(() => {
+    if (!modelsLoaded) return
+    const timer = window.setTimeout(() => {
+      void transport
+        .request('models.setHidden', { keys: JSON.parse(hiddenModelList) as string[] })
+        .catch(() => undefined)
+    }, 500)
+    return () => window.clearTimeout(timer)
+  }, [hiddenModelList, modelsLoaded, transport])
+  // The phone offers only the providers added here, so it never shows one
+  // this app removed. Nothing is shared before the roster is first saved.
+  // Shared again on every connection: one closed before the request left
+  // drops it, and the server keeps only what last arrived.
+  useEffect(() => {
+    if (providerRoster === undefined) return
+    const share = () =>
+      void transport
+        .request('providers.setRoster', { keys: [...providerRoster] })
+        .catch(() => undefined)
+    if (transport.state === 'open') share()
+    return transport.onState((state) => {
+      if (state === 'open') share()
+    })
+  }, [providerRoster, transport])
   const visibleModelsRef = useRef(visibleModels)
   visibleModelsRef.current = visibleModels
   // Memoised for identity: while the catalog is empty this is the selected
@@ -986,20 +1378,23 @@ export function App() {
   // (including effects that write settings) a new dependency each frame.
   const implicitChoice = useMemo(
     () =>
-      choicesFor(
-        {
-          provider,
-          sourceName: providerName(provider, sourceAgentName),
-          mark: providerMark(provider),
-          ...(sourceAgent
-            ? {
-                agent: { id: sourceAgent, name: sourceAgentName ?? sourceAgent },
-              }
-            : {}),
-        },
-        [],
-        true,
-      )[0],
+      provider !== 'api' && (provider !== 'pi' || sourceAgent)
+        ? choicesFor(
+            {
+              provider,
+              sourceName: providerName(provider, sourceAgentName),
+              mark:
+                provider === 'acp' && sourceAgent ? agentMark(sourceAgent) : providerMark(provider),
+              ...(sourceAgent
+                ? {
+                    agent: { id: sourceAgent, name: sourceAgentName ?? sourceAgent },
+                  }
+                : {}),
+            },
+            [],
+            true,
+          )[0]
+        : undefined,
     [provider, sourceAgent, sourceAgentName],
   )
   const activeSession = useMemo(
@@ -1010,17 +1405,68 @@ export function App() {
     return activeSession
       ? sourceKey({
           provider: activeSession.provider,
+          connectionId: activeSession.connectionId,
           agentId: activeSession.agent,
         })
       : undefined
   }, [activeSession])
-  const selectableModels = useMemo(
-    () =>
-      activeModelSource
-        ? visibleModels.filter((choice) => modelSource(choice) === activeModelSource)
-        : visibleModels,
-    [activeModelSource, visibleModels],
-  )
+  // An open chat runs on its own account. When that is not the account the
+  // catalog lists for its provider, the chat is offered its own account's
+  // models, whose plan may differ; the catalog's stay until they arrive.
+  const chatModelAccount =
+    activeSession &&
+    // A chat still starting runs on the active account, which the catalog lists.
+    !activeSession.id.startsWith('pending:') &&
+    !activeSession.agent &&
+    !activeSession.connectionId &&
+    !sameAccount(
+      activeSession.accountId,
+      modelListAccount(providerAccounts, activeSession.provider),
+    )
+      ? chatAccountKey(activeSession.provider, activeSession.accountId)
+      : undefined
+  const chatModelAccountRef = useRef(chatModelAccount)
+  chatModelAccountRef.current = chatModelAccount
+  const [chatModels, setChatModels] = useState<{ account: string; models: ModelChoice[] }>()
+  const [chatModelsRevision, setChatModelsRevision] = useState(0)
+  useEffect(() => {
+    if (!chatModelAccount) return
+    const [id = '', accountId = DEFAULT_ACCOUNT_ID] = chatModelAccount.split('\u0000')
+    const chatProvider = id as ProviderId
+    let cancelled = false
+    void transport
+      .request('models.list', {
+        provider: chatProvider,
+        ...(accountId === DEFAULT_ACCOUNT_ID ? {} : { accountId }),
+      })
+      .then(
+        (result) => {
+          if (cancelled) return
+          const sourceName = providerName(chatProvider)
+          setChatModels({
+            account: chatModelAccount,
+            models: choicesFor(
+              { provider: chatProvider, sourceName, mark: providerMark(chatProvider) },
+              result.models,
+              false,
+            ),
+          })
+        },
+        // The catalog's list stays offered.
+        () => undefined,
+      )
+    return () => {
+      cancelled = true
+    }
+  }, [chatModelAccount, chatModelsRevision, transport])
+  const selectableModels = useMemo(() => {
+    if (chatModelAccount && chatModels?.account === chatModelAccount && chatModels.models.length) {
+      return chatModels.models.filter((choice) => !hiddenModels.has(choice.key))
+    }
+    return activeModelSource
+      ? visibleModels.filter((choice) => modelSource(choice) === activeModelSource)
+      : visibleModels
+  }, [activeModelSource, visibleModels, chatModelAccount, chatModels, hiddenModels])
   const storedModelChoice = models.find((choice) => choice.key === modelId)
   const sourceHasCatalogModels = useMemo(
     () =>
@@ -1029,24 +1475,216 @@ export function App() {
         : false,
     [activeModelSource, models],
   )
-  const preferredModelSource = activeModelSource ?? sourceKey({ provider, agentId: sourceAgent })
+  // An open chat can move to another provider: its next message goes there.
+  const movableChat =
+    activeSession !== undefined &&
+    activeModelSource !== undefined &&
+    !activeSession.id.startsWith('pending:')
+  /**
+   * A provider's other signed-in accounts, each offered as a source of its
+   * own: an open chat moves to the account picked, a new chat starts on it.
+   * The provider's own entry stands for an open chat's account, else for the
+   * account new chats start on.
+   */
+  const otherAccountSources = useMemo(() => {
+    const sources: Array<{ provider: ProviderId; accountId: AccountId; primary: AccountId }> = []
+    if (activeSession && !movableChat) return sources
+    for (const status of providerStatuses) {
+      if (status.capabilities?.multipleAccounts !== true) continue
+      if (!rosterAllows(providerRoster, sourceKey({ provider: status.id }))) continue
+      const primary =
+        activeSession?.provider === status.id && !activeSession.agent && !activeSession.connectionId
+          ? ((activeSession.accountId as AccountId | undefined) ?? DEFAULT_ACCOUNT_ID)
+          : activeAccountOf(providerAccounts, status.id)
+      const signedIn = status.auth === 'authenticated'
+      for (const account of continueAccounts(providerAccounts, status.id, primary, signedIn)) {
+        sources.push({ provider: status.id, accountId: account.id, primary })
+      }
+    }
+    return sources
+  }, [activeSession, movableChat, providerStatuses, providerRoster, providerAccounts])
+  const otherAccountKeys = otherAccountSources
+    .map(({ provider: id, accountId }) => chatAccountKey(id, accountId))
+    .join('\u0001')
+  const otherAccountKeysRef = useRef(otherAccountKeys)
+  otherAccountKeysRef.current = otherAccountKeys
+  const [otherAccountModels, setOtherAccountModels] = useState<ReadonlyMap<string, Model[]>>(
+    () => new Map(),
+  )
+  const [otherAccountModelsRevision, setOtherAccountModelsRevision] = useState(0)
+  useEffect(() => {
+    if (!otherAccountKeys) return
+    let cancelled = false
+    for (const key of otherAccountKeys.split('\u0001')) {
+      const [id = '', accountId = DEFAULT_ACCOUNT_ID] = key.split('\u0000')
+      void transport
+        .request('models.list', {
+          provider: id as ProviderId,
+          ...(accountId === DEFAULT_ACCOUNT_ID ? {} : { accountId }),
+        })
+        .then(
+          (result) => {
+            if (!cancelled)
+              setOtherAccountModels((current) => new Map(current).set(key, result.models))
+          },
+          // The account is offered once its list arrives.
+          () => undefined,
+        )
+    }
+    return () => {
+      cancelled = true
+    }
+  }, [otherAccountKeys, otherAccountModelsRevision, transport])
+  const otherAccountChoices = useMemo(
+    () =>
+      otherAccountSources.flatMap(({ provider: id, accountId }) =>
+        choicesFor(
+          { provider: id, accountId, sourceName: providerName(id), mark: providerMark(id) },
+          otherAccountModels.get(chatAccountKey(id, accountId)) ?? [],
+          false,
+        ).filter((choice) => !hiddenModels.has(modelChoiceKey(id, choice.model.id))),
+      ),
+    [otherAccountSources, otherAccountModels, hiddenModels],
+  )
+  /** "Claude Code (Team)", once a provider offers more than one of its accounts. */
+  const withAccountName = useCallback(
+    (choice: ModelChoice): ModelChoice => {
+      if (choice.agent || choice.connectionId) return choice
+      const offered = otherAccountSources.find((entry) => entry.provider === choice.provider)
+      if (!offered) return choice
+      const account = accountLabelOf(
+        providerAccounts,
+        choice.provider,
+        choice.accountId ?? offered.primary,
+      )
+      return { ...choice, sourceName: `${choice.sourceName} (${account})` }
+    },
+    [otherAccountSources, providerAccounts],
+  )
+  const signInsVersion = useSyncExternalStore(
+    subscribeRememberedSignIns,
+    rememberedSignInsVersion,
+    rememberedSignInsVersion,
+  )
+  /**
+   * Providers whose own models cannot run now: not installed, nothing
+   * declared, or signed out as far as the app knows (provider-availability.ts).
+   * `signedOut` is the part a sign-in elsewhere would change.
+   */
+  const unavailableProviders = useMemo(() => {
+    void signInsVersion // A kept sign-in answer changed.
+    const blocked = new Set<ProviderId>()
+    const signedOut = new Set<ProviderId>()
+    for (const status of providerStatuses) {
+      // A kept read is of the default account; another account may be the one new chats use.
+      const kept =
+        activeAccountOf(providerAccounts, status.id) === DEFAULT_ACCOUNT_ID
+          ? lastSignIn(status.id)
+          : undefined
+      if (providerCanRun(status, kept)) continue
+      blocked.add(status.id)
+      if (status.installed && status.capabilities && knownSignIn(status, kept) === false) {
+        signedOut.add(status.id)
+      }
+    }
+    return { blocked, signedOut }
+  }, [providerStatuses, providerAccounts, signInsVersion])
+  const composerSource = sourceKey({ provider, agentId: sourceAgent })
+  /**
+   * What the picker offers: the chat's own models, then every other provider's,
+   * and every other signed-in account's. Models the user hid from the chat's
+   * own source keep the picker away, as before; a source that lists none at
+   * all still lets the chat move on. A provider that cannot run is left out,
+   * except the source the composer is on, which says itself why it cannot send.
+   * Agents, connections and further accounts answer for their own sign-in.
+   */
+  const pickerModels = useMemo(
+    () =>
+      (movableChat && (selectableModels.length > 0 || !sourceHasCatalogModels)
+        ? [
+            ...selectableModels,
+            ...visibleModels.filter(
+              (choice) => modelSource(choice) !== activeModelSource && choice.provider !== 'api',
+            ),
+            ...otherAccountChoices,
+          ]
+        : [...selectableModels, ...otherAccountChoices]
+      )
+        .filter(
+          (choice) =>
+            !unavailableProviders.blocked.has(choice.provider) ||
+            choice.agent !== undefined ||
+            choice.connectionId !== undefined ||
+            choice.accountId !== undefined ||
+            modelSource(choice) === activeModelSource ||
+            modelSource(choice) === composerSource,
+        )
+        .map(withAccountName),
+    [
+      movableChat,
+      selectableModels,
+      sourceHasCatalogModels,
+      visibleModels,
+      activeModelSource,
+      otherAccountChoices,
+      withAccountName,
+      unavailableProviders,
+      composerSource,
+    ],
+  )
+  // Only the user's own pick moves a chat; a fallback never leaves its provider.
+  const moveChoice = movableChat
+    ? pickerModels.find(
+        (choice) => choice.key === modelId && modelSource(choice) !== activeModelSource,
+      )
+    : undefined
+  const preferredModelSource =
+    activeModelSource ??
+    (storedModelChoice
+      ? modelSource(storedModelChoice)
+      : sourceKey({ provider, agentId: sourceAgent }))
   const preferredModelKey = useMemo(
     () => readSourceSelections()[preferredModelSource]?.modelKey,
     [preferredModelSource, selectableModels],
   )
   const preferredSourcePending = pendingModelSources.has(preferredModelSource)
+  // A source left for later is listed as soon as the composer is on it.
+  useEffect(() => {
+    catalogSources.current?.discover(preferredModelSource)
+  }, [preferredModelSource])
+  // Stable identity on purpose: the composer passes it to the picker's menu.
+  const discoverEveryModelSource = useCallback(() => {
+    everyModelSourceWanted.current = true
+    catalogSources.current?.discover()
+  }, [])
+  useEffect(() => {
+    if (settingsOpen) discoverEveryModelSource()
+  }, [settingsOpen, discoverEveryModelSource])
   const selectableImplicitChoice =
     implicitChoice &&
-    (!activeModelSource || modelSource(implicitChoice) === activeModelSource) &&
+    (activeModelSource
+      ? modelSource(implicitChoice) === activeModelSource
+      : rosterAllows(providerRoster, modelSource(implicitChoice))) &&
     (models.length === 0 ||
       preferredSourcePending ||
       (activeModelSource && !sourceHasCatalogModels))
       ? implicitChoice
       : undefined
   const resolvedModelChoice =
+    moveChoice ??
     selectableModels.find((choice) => choice.key === modelId) ??
     selectableModels.find((choice) => choice.key === preferredModelKey) ??
+    selectableModels.find(
+      (choice) => modelSource(choice) === preferredModelSource && choice.model.isDefault,
+    ) ??
     selectableModels.find((choice) => modelSource(choice) === preferredModelSource)
+  /** The model the chat would use on its own provider, for undoing a pick that moves it. */
+  const chatOwnModel = moveChoice
+    ? (selectableModels.find((choice) => choice.key === preferredModelKey) ??
+      selectableModels.find((choice) => choice.model.isDefault) ??
+      selectableModels[0])
+    : undefined
+  const chatOwnChoice = chatOwnModel && withAccountName(chatOwnModel)
   // The preferred source has not listed its models yet, so the model a send
   // would use is not known. The placeholder below keeps that source, but it is
   // only the provider default: the picker waits and Send stays off instead of
@@ -1055,17 +1693,26 @@ export function App() {
   const selectedModelChoice =
     resolvedModelChoice ??
     (preferredSourcePending ? selectableImplicitChoice : undefined) ??
+    selectableModels.find((choice) => choice.model.isDefault) ??
     selectableModels[0] ??
     selectableImplicitChoice
-  const sendAvailability = modelChoicePending
-    ? 'loading'
-    : resolveSendAvailability({
-        catalog: catalogAvailability,
-        activeProvider: activeSession?.provider,
-        selectedChoice: selectedModelChoice,
-        providerStatuses,
-        accountCheck,
-      })
+  // A new chat with nothing added has no provider to start on.
+  const noProviderAdded = !activeSession && providerRoster?.length === 0 && models.length === 0
+  const sendAvailability: SendAvailability = noProviderAdded
+    ? 'no-provider'
+    : modelChoicePending
+      ? 'loading'
+      : resolveSendAvailability({
+          catalog: catalogAvailability,
+          serverBoundSession: Boolean(
+            activeSession && activeSession.provider === provider && !implicitChoice,
+          ),
+          // A message that switches the chat goes to the provider it switches to.
+          activeProvider: moveChoice ? undefined : activeSession?.provider,
+          selectedChoice: selectedModelChoice,
+          providerStatuses,
+          accountCheck,
+        })
   // One effective setup drives both the picker and requests. State can briefly
   // contain values from storage or the model that was just hidden; resolving
   // in render prevents that transition from leaking into an immediate send.
@@ -1091,7 +1738,9 @@ export function App() {
         selectedModelChoice
           ? {
               provider: selectedModelChoice.provider,
+              connectionId: selectedModelChoice.connectionId,
               agentId: selectedModelChoice.agent?.id,
+              modelImages: selectedModelChoice.model.images,
             }
           : { provider, agentId: sourceAgent },
         providerStatuses,
@@ -1103,16 +1752,30 @@ export function App() {
       providerStatuses.find((entry) => entry.id === provider)?.capabilities?.autoReview === true,
     [provider, providerStatuses],
   )
+  // A new chat with such a provider runs as one of its accounts.
+  const providerHasAccounts = useMemo(
+    () =>
+      providerStatuses.find((entry) => entry.id === provider)?.capabilities?.multipleAccounts ===
+      true,
+    [provider, providerStatuses],
+  )
 
-  const defaultApproval =
-    approvalByProvider[provider] ?? (autoReviewSupported ? 'auto-review' : 'full')
+  // A new chat starts on the provider's active account, with that account's
+  // own defaults, else its provider's.
+  const newChatAccount = providerHasAccounts
+    ? activeAccountOf(providerAccounts, provider)
+    : undefined
+  const newChatAccountRef = useRef(newChatAccount)
+  newChatAccountRef.current = newChatAccount
+  const storedApproval = scopedDefault(approvalByProvider, provider, newChatAccount)
+  const defaultApproval = storedApproval ?? (autoReviewSupported ? 'auto-review' : 'full')
   const approval = activeId ? (activeThreadApproval ?? 'ask') : defaultApproval
   // Auto-review support arrives with the provider list. Until then a saved
   // auto-review choice, or the default, would show as full access and flip.
   const approvalWaitsForProvider =
     catalogAvailability === 'loading' &&
     !providerStatuses.some((entry) => entry.id === provider) &&
-    (approval === 'auto-review' || (!activeId && approvalByProvider[provider] === undefined))
+    (approval === 'auto-review' || (!activeId && storedApproval === undefined))
   const approvalLoading =
     Boolean(activeId && activeThreadApproval === undefined) || approvalWaitsForProvider
   // While waiting, the mode only sizes the placeholder; auto-review is what it
@@ -1250,12 +1913,12 @@ export function App() {
     }
   }, [threadController])
   const publishComposerDraft = useCallback((draft: ComposerDraft) => {
-    setComposerDraft((current) => ({
+    setComposerDraft({
       text: draft.text,
       attachments: draft.attachments,
       resources: draft.resources,
-      request: (current?.request ?? 0) + 1,
-    }))
+      request: ++composerDraftRequests.current,
+    })
   }, [])
   const restoreRejectedDraft = useCallback(
     (threadId: string, rejected: RecoverableDraft) => {
@@ -1484,7 +2147,7 @@ export function App() {
   // prettier-ignore
   const releaseDirectStart = useCallback((threadId: string) => { const probe = workspaceIdleProbe.current, queued = new Set([...probe.queuedStarts.entriesForThread(threadId)].map(([, owner]) => owner.token)), token = probe.pendingStarts.get(threadId)?.tokens.find((candidate) => !queued.has(candidate)); if (token === undefined) return; for (const [id, start] of probe.submissionStarts.entriesForThread(threadId)) if (start.token === token) probe.submissionStarts.delete(id); releaseWorkspaceStart(threadId, token) }, [releaseWorkspaceStart])
   // prettier-ignore
-  const clearWorkspaceThread = useCallback((threadId: string) => { pendingProviderHistoryIds.current.delete(threadId); providerHistoryReads.current.delete(threadId); const probe = workspaceIdleProbe.current, path = probe.pendingStarts.get(threadId)?.path ?? findSession(projectsRef.current, threadId)?.project.path; probe.pendingStarts.delete(threadId); probe.unknownQueues.delete(threadId); threadController.forget(threadId); for (const [id] of probe.submissionStarts.entriesForThread(threadId)) probe.submissionStarts.delete(id); for (const [id] of probe.queuedStarts.entriesForThread(threadId)) { probe.queuedStarts.delete(id); probe.claimedStarts.delete(id) }; for (const [id] of probe.queueActions.entriesForThread(threadId)) probe.queueActions.delete(id); if (activeIdRef.current === threadId) { activeIdRef.current = undefined; setActiveId(undefined); setThread(emptyThread) }; return path }, [])
+  const clearWorkspaceThread = useCallback((threadId: string) => { pendingProviderHistoryIds.current.delete(threadId); providerHistoryReads.current.delete(threadId); const probe = workspaceIdleProbe.current, path = probe.pendingStarts.get(threadId)?.path ?? findSession(projectsRef.current, threadId)?.project.path; probe.pendingStarts.delete(threadId); probe.unknownQueues.delete(threadId); threadController.forget(threadId); for (const [id] of probe.submissionStarts.entriesForThread(threadId)) probe.submissionStarts.delete(id); for (const [id] of probe.queuedStarts.entriesForThread(threadId)) { probe.queuedStarts.delete(id); probe.claimedStarts.delete(id) }; for (const [id] of probe.queueActions.entriesForThread(threadId)) probe.queueActions.delete(id); if (!splitRemovals.current.chats([threadId]) && activeIdRef.current === threadId) { activeIdRef.current = undefined; setActiveId(undefined); setThread(emptyThread) }; return path }, [])
   /** Refetch after an outage. Held in a ref because the transport effect is
    *  set up before the fetchers it needs are declared. */
   const resync = useRef<(retry?: boolean) => void>(() => {})
@@ -1499,7 +2162,7 @@ export function App() {
       }
       pendingProviderHistoryIds.current.delete(threadId)
       threadController.invalidateHistory(threadId)
-      if (threadId !== activeIdRef.current) {
+      if (!threadController.isVisible(threadId)) {
         threadController.discardSnapshot(threadId)
         return
       }
@@ -1546,11 +2209,10 @@ export function App() {
   const settleQueuedSubmissions = useCallback(
     (threadId: string, items: QueuedTurn[], snapshot?: ThreadState) => {
       const rejected = threadController.settleSubmissions(threadId, items, snapshot)
-      if (threadId === activeIdRef.current)
-        setThread(threadController.snapshot(threadId) ?? emptyThread)
+      publishThread(threadId, threadController.snapshot(threadId) ?? emptyThread)
       for (const submission of rejected) restoreRejectedDraft(threadId, submission)
     },
-    [restoreRejectedDraft],
+    [restoreRejectedDraft, publishThread],
   )
   const acceptSidebarSettings = useCallback(
     (settings: SidebarSettings) => {
@@ -1591,6 +2253,15 @@ export function App() {
       if (endsDesignBriefing(event)) setThreadDesignMode(threadId, false)
       const next = threadController.receive(data, isThreadCacheProtected)
       if (!next) return
+      // Every window that hears of a move shows the chat on its new provider.
+      if (event.type === 'item.completed' && event.item.notice?.kind === 'provider') {
+        const { provider, agent, accountId } = event.item.notice
+        setProjects((current) =>
+          updateSession(current, threadId, (session) =>
+            sessionOnProvider(session, { provider, agent, accountId }),
+          ),
+        )
+      }
       if (
         event.type === 'turn.started' ||
         event.type === 'turn.completed' ||
@@ -1618,25 +2289,26 @@ export function App() {
       }
 
       if (affectsSessionStatus(event)) {
-        setProjects((current) => {
-          const updated = updateSession(current, threadId, (session) => {
-            const status = statusFor(next, event, threadId !== activeIdRef.current)
+        // A status change never moves the chat in the sidebar; only a new chat,
+        // a pin or a drag does.
+        setProjects((current) =>
+          updateSession(current, threadId, (session) => {
+            // A chat in either split pane is in view, so it never turns unread.
+            const shown = threadController.isVisible(threadId)
+            const status = statusFor(next, event, !shown)
             return {
               ...session,
               status,
               statusSince: status === session.status ? session.statusSince : Date.now(),
               ...(event.type === 'turn.completed'
                 ? {
-                    unread: threadId !== activeIdRef.current,
+                    unread: !shown,
                   }
                 : {}),
             }
-          })
-          return event.type === 'turn.started' && sidebarSettingsRef.current.mode === 'classic'
-            ? promoteSession(updated, threadId)
-            : updated
-        })
-        if (event.type === 'turn.completed' && threadId === activeIdRef.current) {
+          }),
+        )
+        if (event.type === 'turn.completed' && threadController.isVisible(threadId)) {
           // Only here for the server's mark-as-read side effect — the live event
           // stream already delivered the turn. afterSeq skips serializing,
           // shipping, and parsing the full log just to throw it away.
@@ -1676,12 +2348,16 @@ export function App() {
       if (items.length === 0 && probe.blockedPath === projectPath)
         refreshWorkspaceAfterCompletion(projectPath)
       if (threadId !== activeIdRef.current) {
-        if (items.length === 0) pruneQueueMetadata()
+        if (threadId === splitBesideId(splitRef.current)) setBesideQueue({ items, canSteer })
+        else if (items.length === 0) pruneQueueMetadata()
         return
       }
       setQueuedTurns(items)
       setCanSteerQueue(canSteer)
     })
+    const offSettings = transport.on('thread.settings', ({ threadId, settings }) =>
+      adoptThreadSettingsRef.current(threadId, settings),
+    )
     const offLifecycle = transport.on('thread.lifecycle', ({ threadId, lifecycle }) => {
       pendingLifecycles.set(threadId, lifecycle)
       if (lifecycleFlush !== undefined) return
@@ -1695,8 +2371,13 @@ export function App() {
       setWorkspaceDesignPreviewRequest({ requestId: request.requestId, url: request.url })
     })
     const offSidebarSettings = transport.on('sidebar.settings', acceptSidebarSettings)
-    const offUsageChanged = transport.on('usage.changed', ({ provider }) => {
-      usageController.changed(provider)
+    const offUsageChanged = transport.on('usage.changed', ({ provider, accountId }) => {
+      usageController.changed(provider, accountId)
+    })
+    // Live windows reach the bars as the server folds them in, not only after
+    // the spaced usage.changed signal and a new request.
+    const offUsageLimits = transport.on('usage.limits', ({ source }) => {
+      usageController.applySource(source)
     })
     const offSequenceGap = transport.onSequenceGap(() => {
       threadController.markHistoriesForRecovery()
@@ -1760,10 +2441,12 @@ export function App() {
       probe.inFlight = probe.pendingPath = probe.idlePath = probe.blockedPath = undefined
       offEvents()
       offQueue()
+      offSettings()
       offLifecycle()
       offPreviewCapture()
       offSidebarSettings()
       offUsageChanged()
+      offUsageLimits()
       offSequenceGap()
       offState()
       transport.close()
@@ -1780,12 +2463,14 @@ export function App() {
     refreshWorkspaceAfterCompletion,
     refreshUsage,
     usageController,
-    threadFrameStore,
     pruneThreadStateCache,
     pruneQueueMetadata,
     isThreadCacheProtected,
     refreshProviderThreadHistory,
     setThreadDesignMode,
+    // The controller, not a column's frame store: a store that changed identity
+    // here would close the transport in this effect's cleanup.
+    threadController,
   ])
 
   useEffect(() => {
@@ -1805,13 +2490,31 @@ export function App() {
   }, [transport, acceptSidebarSettings])
 
   // Build one catalog from every connected source. Model ids are not globally
-  // unique, so each choice keeps the provider or custom harness that runs it.
+  // unique, so each choice keeps the provider/connection that will pay for it.
   useEffect(() => {
     let cancelled = false
+    catalogRequestedAt.current = Date.now()
+    let runSources: CatalogSourceControls | undefined
+    const controls: CatalogSourceControls = {
+      relist: (source) => runSources?.relist(source),
+      discover: (source) => runSources?.discover(source),
+    }
+    catalogSources.current = controls
+    // Sources settle one by one, and a large catalog costs a full serialize
+    // per write, so their snapshots are coalesced into one trailing write
+    // that the final catalog write replaces.
+    let pendingCacheWrite: { timer: number; write: () => void } | undefined
+    const takePendingCacheWrite = () => {
+      const pending = pendingCacheWrite
+      if (pending) window.clearTimeout(pending.timer)
+      pendingCacheWrite = undefined
+      return pending?.write
+    }
     setCatalogError(undefined)
     const discoveryErrors: Record<string, ComposerError> = {}
     setCatalogAvailability((current) => (current === 'ready' ? current : 'loading'))
     void (async () => {
+      const agentsCatalog = transport.request('acp.agents', {}).catch(() => ({ agents: [] }))
       const harnessesCatalog = transport
         .request('harnesses.list', {})
         .catch(() => ({ harnesses: [] }))
@@ -1820,27 +2523,80 @@ export function App() {
       if (cancelled) return
       setProviderStatuses(providers)
       setCatalogAvailability('ready')
+      // ACP agents belong to the ACP entry; a build without it lists none.
+      // Setup shows its list once these are in as well, so they are settled
+      // here, before anything below can cut the run short. A run that fails
+      // before this point leaves them as they were for the next run to settle:
+      // an empty stand-in would let a retry show the list without them first.
+      // A run replaced before they answer still settles them while no other
+      // run has, so a replacement that fails does not leave setup waiting.
+      const offeredAgents = agentsCatalog.then((result) => {
+        const agents = providers.some((status) => status.id === 'acp') ? (result?.agents ?? []) : []
+        setAcpAgents((current) => (cancelled && current !== undefined ? current : agents))
+        return agents
+      })
       // Only the first answer may move an unchosen launch; later refreshes
       // must not override what the user picked since.
       const unchosen = providerUnchosenAtLaunch.current
       providerUnchosenAtLaunch.current = false
+      let launchSource = sourceKey({
+        provider: providerRef.current,
+        agentId: sourceAgentRef.current,
+      })
       if (!activeIdRef.current && unchosen) {
         const fallback = providers.find(
           (status) =>
             status.installed &&
             status.capabilities &&
             !status.problem &&
-            status.auth !== 'unauthenticated',
+            status.auth !== 'unauthenticated' &&
+            rosterAllows(providerRosterRef.current, status.id),
         )
         if (fallback) {
           setProvider(fallback.id)
+          launchSource = sourceKey({ provider: fallback.id })
         }
       }
+      // Until the picker or Settings first needs the others, a source the
+      // composer cannot use right now shows its cached rows instead of being
+      // listed, so its CLI (cursor-agent, agy, opencode serve) does not start
+      // with the app.
+      const launchSession = activeIdRef.current
+        ? findSession(projectsRef.current, activeIdRef.current)?.session
+        : undefined
+      const launchSetup = readStoredModelChoice(customModelsRef.current)
+      const launchSources = new Set([
+        launchSource,
+        ...(launchSession
+          ? [
+              sourceKey({
+                provider: launchSession.provider,
+                connectionId: launchSession.connectionId,
+                agentId: launchSession.agent,
+              }),
+            ]
+          : []),
+        ...(launchSetup ? [modelSource(launchSetup)] : []),
+      ])
+      const installedProviders = new Set(
+        providers
+          .filter((entry) => entry.installed)
+          .map((entry) => sourceKey({ provider: entry.id })),
+      )
+      // A provider's own source (a key without an agent or connection part)
+      // that is not installed cannot list anything, and a new chat then falls
+      // back to whatever else is listed, so everything is listed at once.
+      const launchListable = [...launchSources].some(
+        (source) => source.includes(':') || installedProviders.has(source),
+      )
+      // A profile with nothing cached yet lists every source once, so the
+      // picker does not open on providers without rows.
+      const listEverySource = !launchListable || catalogModelsRef.current.length === 0
       setProviderCatalogSource({ transport, request: catalogRequest })
       setPendingModelSources(
         new Set([
           ...providers
-            .filter((entry) => entry.installed)
+            .filter((entry) => entry.installed && rosterAllows(providerRosterRef.current, entry.id))
             .map((entry) => sourceKey({ provider: entry.id })),
           ...(sourceAgentRef.current
             ? [sourceKey({ provider: providerRef.current, agentId: sourceAgentRef.current })]
@@ -1851,6 +2607,10 @@ export function App() {
       const unknownKeys = new Set(unvalidatedModelKeys)
       const validatedSources = new Map<string, number>()
       let publishedCatalog = catalogModelsRef.current
+      /** Each source's rows as last settled, in this run. */
+      const settledRows = new Map<string, ModelChoice[]>()
+      /** Every source of this run in catalog order, once all of them have answered. */
+      let catalogOrder: readonly string[] | undefined
       const settleSource = <T extends { discovered: boolean; models: ModelChoice[] }>(
         source: string,
         result: T,
@@ -1868,93 +2628,235 @@ export function App() {
         else if (!isModelCatalogSourceFresh(cached, source)) {
           for (const choice of result.models) unknownKeys.add(choice.key)
         }
-        publishedCatalog = [
-          ...publishedCatalog.filter((choice) => modelSource(choice) !== source),
-          ...result.models,
-        ]
+        settledRows.set(source, result.models)
+        // A source first listed after the run (one left for the picker with
+        // nothing cached) goes where the run would have put it, not last.
+        publishedCatalog = catalogOrder
+          ? catalogOrder.flatMap((key) => settledRows.get(key) ?? [])
+          : replaceSourceRows(publishedCatalog, source, result.models)
         setModelCatalog({
           models: publishedCatalog,
           loaded: true,
           unvalidatedModelKeys: new Set(unknownKeys),
         })
         setModelErrors({ ...discoveryErrors })
+        // Per source, so a source that fails never holds back the others.
         if (result.discovered) {
-          writeSetting(
-            MODEL_CATALOG_KEY,
-            serializeModelCatalogCache(publishedCatalog, {
-              validatedSources: validatedSources.keys(),
-              // A later completion must not refresh an earlier source's age.
-              validatedAt: Math.min(...validatedSources.values()),
-            }),
+          updateModelVisibility((record) =>
+            settleModelVisibilitySource(record, source, result.models, Date.now()),
           )
+        }
+        if (result.discovered && !pendingCacheWrite) {
+          // Reads the catalog and source ages as they are when it runs.
+          const write = () => writeModelCatalogCache(publishedCatalog, validatedSources)
+          const timer = window.setTimeout(() => {
+            pendingCacheWrite = undefined
+            write()
+          }, MODEL_CATALOG_CACHE_WRITE_DELAY_MS)
+          pendingCacheWrite = { timer, write }
         }
         return result
       }
-      // A profile without saved visibility gets its curated defaults below,
-      // once every direct source has answered. Until then, hide each source's
-      // older models as soon as that source answers, so a picker opened during
-      // discovery never lists a model it is about to drop. Nothing is saved
-      // here: the first full catalog still decides and persists the profile.
-      // A saved profile only gets this for models it has never listed.
-      const hideDefaultHiddenModels = (models: readonly ModelChoice[]) => {
-        if (cancelled) return
-        const current = hiddenModelsRef.current
-        const candidates = modelVisibilityInitialized.current
-          ? unlistedHiddenModels(models, listedModelsRef.current)
-          : defaultHiddenModels(models)
-        const additions = candidates.filter((choice) => !current.has(choice.key))
-        if (additions.length === 0) return
-        const next = new Set(current)
-        for (const choice of additions) next.add(choice.key)
-        hiddenModelsRef.current = next
-        setHiddenModels(next)
+      // One run per source at a time: a change announced while that source is
+      // still listing lists it once more afterwards.
+      type SourceRun = {
+        discover: () => Promise<unknown>
+        running: boolean
+        again: boolean
+        /** Left for later: shows its cached rows until something needs it. */
+        deferred: boolean
+      }
+      const sourceRuns = new Map<string, SourceRun>()
+      const finishRun = (source: string, run: SourceRun, done: Promise<unknown>) => {
+        void done
+          .catch(() => undefined)
+          .then(() => {
+            run.running = false
+            if (!run.again) return
+            run.again = false
+            runSources?.relist(source)
+          })
+      }
+      const trackSource = (
+        source: string,
+        discover: () => Promise<unknown>,
+      ): Promise<{ source: string }> => {
+        // Read when each source registers: the picker may open while the run
+        // is still waiting for agents or harnesses.
+        if (!listEverySource && !everyModelSourceWanted.current && !launchSources.has(source)) {
+          sourceRuns.set(source, { discover, running: false, again: false, deferred: true })
+          settleSource(source, {
+            discovered: false,
+            models: catalogModelsRef.current.filter(
+              (choice) => !isCustomModelChoice(choice) && modelSource(choice) === source,
+            ),
+          })
+          return Promise.resolve({ source })
+        }
+        const run: SourceRun = { discover, running: true, again: false, deferred: false }
+        sourceRuns.set(source, run)
+        const done = discover()
+        finishRun(source, run, done)
+        return done.then(
+          () => ({ source }),
+          () => ({ source }),
+        )
+      }
+      const startRun = (source: string, run: SourceRun) => {
+        run.running = true
+        delete discoveryErrors[source]
+        finishRun(source, run, run.discover())
+      }
+      const startDeferred = (source: string, run: SourceRun) => {
+        if (!run.deferred) return
+        run.deferred = false
+        setPendingModelSources((current) => new Set([...current, source]))
+        startRun(source, run)
+      }
+      runSources = {
+        relist: (source) => {
+          const run = sourceRuns.get(source)
+          // A source left for later lists its newest models when it is needed.
+          if (cancelled || !run || run.deferred) return
+          if (run.running) {
+            run.again = true
+            return
+          }
+          startRun(source, run)
+        },
+        discover: (source) => {
+          if (cancelled) return
+          if (source === undefined) {
+            for (const [key, run] of sourceRuns) startDeferred(key, run)
+            return
+          }
+          const run = sourceRuns.get(source)
+          if (run) startDeferred(source, run)
+        },
+      }
+      const discoverProvider = async (entry: ProviderStatus) => {
+        const preserveCatalog = () => {
+          const source = sourceKey({ provider: entry.id })
+          const preserved = catalogModelsRef.current.filter(
+            (choice) => !isCustomModelChoice(choice) && modelSource(choice) === source,
+          )
+          return settleSource(source, {
+            provider: entry.id,
+            discovered: false,
+            models: preserved,
+          })
+        }
+        try {
+          const accountId = modelListAccount(providerAccountsRef.current, entry.id)
+          const result = await transport.request('models.list', {
+            provider: entry.id,
+            ...(accountId ? { accountId } : {}),
+          })
+          const models = choicesFor(
+            {
+              provider: entry.id,
+              sourceName: entry.displayName,
+              mark: providerMark(entry.id),
+            },
+            result.models,
+            false,
+          )
+          if (models.length === 0) return preserveCatalog()
+          return settleSource(sourceKey({ provider: entry.id }), {
+            provider: entry.id,
+            discovered: true,
+            models,
+          })
+        } catch (cause) {
+          discoveryErrors[sourceKey({ provider: entry.id })] = {
+            id: `models:${entry.id}:${catalogRequest}`,
+            message: `Could not load ${entry.displayName} models. ${cause instanceof Error ? cause.message : String(cause)}`,
+          }
+          return preserveCatalog()
+        }
       }
       const directPromise = Promise.all(
         providers
-          .filter((entry) => entry.installed)
-          .map(async (entry) => {
-            const preserveCatalog = () => {
-              const source = sourceKey({ provider: entry.id })
-              const preserved = catalogModelsRef.current.filter(
-                (choice) => !isCustomModelChoice(choice) && modelSource(choice) === source,
-              )
-              hideDefaultHiddenModels(preserved)
-              return settleSource(source, {
-                provider: entry.id,
-                discovered: false,
-                models: preserved,
-              })
-            }
-            try {
-              const result = await transport.request('models.list', { provider: entry.id })
-              const models = choicesFor(
-                {
-                  provider: entry.id,
-                  sourceName: entry.displayName,
-                  mark: providerMark(entry.id),
-                },
-                result.models,
-                false,
-              )
-              if (models.length === 0) return preserveCatalog()
-              hideDefaultHiddenModels(models)
-              return settleSource(sourceKey({ provider: entry.id }), {
-                provider: entry.id,
-                discovered: true,
-                models,
-              })
-            } catch (cause) {
-              discoveryErrors[sourceKey({ provider: entry.id })] = {
-                id: `models:${entry.id}:${catalogRequest}`,
-                message: `Could not load ${entry.displayName} models. ${cause instanceof Error ? cause.message : String(cause)}`,
-              }
-              return preserveCatalog()
-            }
-          }),
+          .filter(
+            (entry) =>
+              entry.installed &&
+              entry.id !== 'acp' &&
+              entry.id !== 'api' &&
+              // Only added providers start for their models.
+              rosterAllows(providerRosterRef.current, entry.id),
+          )
+          .map((entry) =>
+            trackSource(sourceKey({ provider: entry.id }), () => discoverProvider(entry)),
+          ),
       )
+      const discoverAgent = async (agent: ResultOf<'acp.agents'>['agents'][number]) => {
+        const source = sourceKey({ provider: 'acp', agentId: agent.id })
+        const preserveCatalog = () =>
+          settleSource(source, {
+            source,
+            discovered: false,
+            models: catalogModelsRef.current.filter(
+              (choice) => !isCustomModelChoice(choice) && modelSource(choice) === source,
+            ),
+          })
+        try {
+          const result = await transport.request('models.list', {
+            provider: 'acp',
+            agent: agent.id,
+          })
+          const models = choicesFor(
+            {
+              provider: 'acp',
+              sourceName: agent.name,
+              mark: agentMark(agent.id),
+              agent: { id: agent.id, name: agent.name },
+            },
+            result.models,
+            false,
+          )
+          return models.length
+            ? settleSource(source, { source, discovered: true, models })
+            : preserveCatalog()
+        } catch (cause) {
+          discoveryErrors[source] = {
+            id: 'models:' + source + ':' + catalogRequest,
+            message:
+              'Could not load ' +
+              agent.name +
+              ' models. ' +
+              (cause instanceof Error ? cause.message : String(cause)),
+          }
+          return preserveCatalog()
+        }
+      }
+      const acpPromise = offeredAgents.then(async (agents) => {
+        if (cancelled) return []
+        // Only agents added under Settings › Providers start for their models.
+        const listed = agents.filter(
+          (agent) =>
+            agent.installed && rosterAllows(providerRosterRef.current, agentRosterKey(agent.id)),
+        )
+        setPendingModelSources(
+          (current) =>
+            new Set([
+              ...current,
+              ...listed.map((agent) => sourceKey({ provider: 'acp', agentId: agent.id })),
+            ]),
+        )
+        return Promise.all(
+          listed.map((agent) =>
+            trackSource(sourceKey({ provider: 'acp', agentId: agent.id }), () =>
+              discoverAgent(agent),
+            ),
+          ),
+        )
+      })
       const harnessesResult = await harnessesCatalog
       if (cancelled) return
-      const harnesses = harnessesResult?.harnesses ?? []
+      // A harness runs through its provider, so it is offered only with it.
+      const harnesses = (harnessesResult?.harnesses ?? []).filter((harness) =>
+        providers.some((status) => status.id === harness.provider),
+      )
       setPendingModelSources(
         (current) =>
           new Set([
@@ -1964,101 +2866,94 @@ export function App() {
             ),
           ]),
       )
-      const customSourcesPromise = Promise.all(
-        harnesses.map(async (harness) => {
-          const source = sourceKey({ provider: harness.provider, agentId: harness.id })
-          const input = {
+      const discoverHarness = async (harness: ResultOf<'harnesses.list'>['harnesses'][number]) => {
+        const source = sourceKey({ provider: harness.provider, agentId: harness.id })
+        const input = {
+          provider: harness.provider,
+          sourceName: harness.displayName,
+          mark: providerMark(harness.provider),
+          agent: { id: harness.id, name: harness.displayName },
+        }
+        try {
+          const result = await transport.request('models.list', {
             provider: harness.provider,
-            sourceName: harness.displayName,
-            mark: providerMark(harness.provider),
-            agent: { id: harness.id, name: harness.displayName },
+            agent: harness.id,
+          })
+          return settleSource(source, {
+            source,
+            discovered: true,
+            models: choicesFor(input, result.models, true),
+          })
+        } catch (cause) {
+          discoveryErrors[source] = {
+            id: `models:${source}:${catalogRequest}`,
+            message: `Could not load ${harness.displayName} models. ${cause instanceof Error ? cause.message : String(cause)}`,
           }
-          try {
-            const result = await transport.request('models.list', {
-              provider: harness.provider,
-              agent: harness.id,
-            })
-            return settleSource(source, {
-              source,
-              discovered: true,
-              models: choicesFor(input, result.models, true),
-            })
-          } catch (cause) {
-            discoveryErrors[source] = {
-              id: `models:${source}:${catalogRequest}`,
-              message: `Could not load ${harness.displayName} models. ${cause instanceof Error ? cause.message : String(cause)}`,
-            }
-            const preserved = catalogModelsRef.current.filter(
-              (choice) => !isCustomModelChoice(choice) && modelSource(choice) === source,
-            )
-            if (preserved.length > 0)
-              return settleSource(source, { source, discovered: false, models: preserved })
-            const fallback = choicesFor(input, [], true)
-            return settleSource(source, { source, discovered: false, models: fallback })
-          }
-        }),
+          const preserved = catalogModelsRef.current.filter(
+            (choice) => !isCustomModelChoice(choice) && modelSource(choice) === source,
+          )
+          if (preserved.length > 0)
+            return settleSource(source, { source, discovered: false, models: preserved })
+          const fallback = choicesFor(input, [], true)
+          return settleSource(source, { source, discovered: false, models: fallback })
+        }
+      }
+      const customSourcesPromise = Promise.all(
+        harnesses.map((harness) =>
+          trackSource(sourceKey({ provider: harness.provider, agentId: harness.id }), () =>
+            discoverHarness(harness),
+          ),
+        ),
       )
-      const [direct, customSources] = await Promise.all([directPromise, customSourcesPromise])
+      const [direct, acp, customSources] = await Promise.all([
+        directPromise,
+        acpPromise,
+        customSourcesPromise,
+      ])
       if (cancelled) return
       setPendingModelSources(new Set())
-      const directCatalog = direct.flatMap((entry) => entry.models)
-      const catalog = [...directCatalog, ...customSources.flatMap((entry) => entry.models)]
-      const directCatalogReady = direct.length > 0 && direct.every((entry) => entry.discovered)
+      // In source order, with each source's latest rows: one listed again
+      // before this point keeps its newer list.
+      const listedSources = new Set(
+        [...direct, ...acp, ...customSources].map((entry) => entry.source),
+      )
+      catalogOrder = [...listedSources]
+      const catalog = catalogOrder.flatMap((source) => settledRows.get(source) ?? [])
+      publishedCatalog = catalog
+      // The full catalog supersedes whatever snapshot is still pending.
+      takePendingCacheWrite()
+      if (validatedSources.size > 0) writeModelCatalogCache(catalog, validatedSources)
       setModelCatalog({ models: catalog, loaded: true, unvalidatedModelKeys: unknownKeys })
       setModelErrors(discoveryErrors)
       const stored = readSetting(MODEL_KEY)
+      const customPool = customModelsRef.current
+        .filter((entry) => rosterAllows(providerRosterRef.current, entry.provider))
+        .map((entry) =>
+          customModelChoice(
+            entry,
+            providerDisplayName(entry.provider),
+            providerMark(entry.provider),
+          ),
+        )
+      const all = [...catalog, ...customPool]
       // A hidden model cannot remain the internal selection. Otherwise the
       // picker shows no such choice while a turn can still silently use it.
-      let hidden = hiddenModelsRef.current
-      let hiddenChanged = false
-      if (!modelVisibilityInitialized.current && directCatalogReady && directCatalog.length > 0) {
-        hidden = defaultHiddenModelKeys(directCatalog)
-        modelVisibilityInitialized.current = true
-        hiddenChanged = true
-      } else if (directCatalogReady) {
-        const additions = unlistedHiddenModels(directCatalog, listedModelsRef.current).filter(
-          (choice) => !hidden.has(choice.key),
-        )
-        if (additions.length > 0) {
-          hidden = new Set([...hidden, ...additions.map((choice) => choice.key)])
-          hiddenChanged = true
-        }
-      }
-      if (directCatalogReady && modelVisibilityInitialized.current) {
-        const listed = listedModelsRef.current
-        if (!listed || directCatalog.some((choice) => !listed.has(choice.key))) {
-          const next = new Set([...(listed ?? []), ...directCatalog.map((choice) => choice.key)])
-          listedModelsRef.current = next
-          writeSetting(LISTED_MODELS_KEY, JSON.stringify([...next]))
-        }
-      }
-      if (modelVisibilityInitialized.current) {
-        // Each row gets a pending migration once, even while another source
-        // fails. The moved list is saved together with the record of what moved.
-        const migration = migratePendingHiddenModels(
-          hidden,
-          readModelVisibilityProgress(),
-          directCatalog,
-        )
-        if (migration.migrated.length > 0) {
-          hidden = migration.hidden
-          hiddenChanged = true
-          writeSetting(HIDDEN_MODELS_KEY, JSON.stringify([...hidden]))
-        }
-        recordModelVisibilityProgress(migration.migrated, directCatalogReady)
-      }
-      if (hiddenChanged) {
-        hiddenModelsRef.current = hidden
-        setHiddenModels(hidden)
-      }
-      const customPool = customModelsRef.current.map((entry) => customModelChoice(entry))
-      const all = [...catalog, ...customPool]
+      // Every source has settled its visibility above, so the record is current.
+      const hidden = hiddenModelKeys(
+        all,
+        modelVisibilityDefaults(catalog),
+        modelVisibilityRef.current,
+      )
       const visible = all.filter((choice) => !hidden.has(choice.key))
       const currentSession = activeIdRef.current
         ? findSession(projectsRef.current, activeIdRef.current)?.session
         : undefined
       const currentSource = currentSession
-        ? sourceKey({ provider: currentSession.provider, agentId: currentSession.agent })
+        ? sourceKey({
+            provider: currentSession.provider,
+            connectionId: currentSession.connectionId,
+            agentId: currentSession.agent,
+          })
         : undefined
       const storedSetup = readStoredModelChoice(customModelsRef.current)
       const preferredSource = currentSource ?? (storedSetup ? modelSource(storedSetup) : undefined)
@@ -2114,7 +3009,7 @@ export function App() {
         writeSetting(AGENT_KEY, selected.agent.id)
         writeSetting(AGENT_NAME_KEY, selected.agent.name)
       } else {
-        // A stale harness id under the stock provider is the same boot split
+        // A stale agent id under a non-ACP provider is the same boot split
         // this block exists to prevent.
         removeSetting(AGENT_KEY)
         removeSetting(AGENT_NAME_KEY)
@@ -2164,14 +3059,95 @@ export function App() {
     })
     return () => {
       cancelled = true
+      if (catalogSources.current === controls) catalogSources.current = undefined
+      // Sources this run validated stay cached for the next run to start from.
+      takePendingCacheWrite()?.()
     }
   }, [transport, catalogRequest])
+
+  // The server answers model lists from what it knew and reads them again in
+  // the background; a list that changed is announced so it appears without a
+  // restart.
+  useEffect(
+    () =>
+      transport.on('models.changed', ({ provider, agent, accountId }) => {
+        // An open chat on another account lists that account's models itself.
+        if (
+          agent === undefined &&
+          chatModelAccountRef.current === chatAccountKey(provider, accountId)
+        ) {
+          setChatModelsRevision((revision) => revision + 1)
+        }
+        // So does every other account the picker offers.
+        if (
+          agent === undefined &&
+          otherAccountKeysRef.current.split('\u0001').includes(chatAccountKey(provider, accountId))
+        ) {
+          setOtherAccountModelsRevision((revision) => revision + 1)
+        }
+        // A provider's own list is its active account's; a custom harness keeps its own sign-in.
+        const listed =
+          agent === undefined ? modelListAccount(providerAccountsRef.current, provider) : undefined
+        if (!sameAccount(accountId, listed)) return
+        catalogSources.current?.relist(sourceKey({ provider, agentId: agent }))
+      }),
+    [transport],
+  )
+
+  // A provider whose active account changed lists that account's models, so
+  // a new chat is offered what its plan has.
+  const modelListAccounts = useMemo(
+    () =>
+      [...new Set(providerAccounts.accounts.map((account) => account.provider))]
+        .sort()
+        .map((id) => `${id}=${activeAccountOf(providerAccounts, id)}`)
+        .join(','),
+    [providerAccounts],
+  )
+  const listedModelAccounts = useRef(new Map<string, string>())
+  useEffect(() => {
+    for (const entry of modelListAccounts ? modelListAccounts.split(',') : []) {
+      const [id = '', accountId = DEFAULT_ACCOUNT_ID] = entry.split('=')
+      const before = listedModelAccounts.current.get(id) ?? DEFAULT_ACCOUNT_ID
+      listedModelAccounts.current.set(id, accountId)
+      // A provider's own source key is its id.
+      if (before !== accountId) catalogSources.current?.relist(id)
+    }
+  }, [modelListAccounts])
+
+  // A window left open for hours lists its models again when it comes back,
+  // so a CLI updated outside the app brings its new releases (and retires the
+  // generations they replace) without a restart. An update the app ran
+  // refreshes through the update notice already.
+  useEffect(() => {
+    const revalidate = () => {
+      if (document.visibilityState === 'hidden' || transport.state !== 'open') return
+      const now = Date.now()
+      if (now - catalogRequestedAt.current < MODEL_CATALOG_REVALIDATE_MS) return
+      catalogRequestedAt.current = now
+      setCatalogRequest((request) => request + 1)
+    }
+    window.addEventListener('focus', revalidate)
+    document.addEventListener('visibilitychange', revalidate)
+    return () => {
+      window.removeEventListener('focus', revalidate)
+      document.removeEventListener('visibilitychange', revalidate)
+    }
+  }, [transport])
 
   useEffect(() => {
     if (!isDesktop || !canCaptureVoice() || selectedModelChoice?.agent) {
       setVoiceAvailable(false)
       setVoiceStatusLoading(false)
       return
+    }
+    // Until this provider's status answers, its last answer stands in, so the
+    // composer is not held on that read (`codex login status`, 5-9 s on a busy
+    // machine); the answer corrects it.
+    const remembered = rememberedVoice(provider)
+    if (remembered !== undefined) {
+      setVoiceAvailable(remembered)
+      setVoiceStatusLoading(false)
     }
     // Wait until the same catalog revision has resolved the provider fallback,
     // so either startup order produces one status request.
@@ -2185,6 +3161,7 @@ export function App() {
     void transport
       .request('voice.status', { provider })
       .then((status) => {
+        writeSetting(`${VOICE_AVAILABLE_KEY}:${provider}`, String(status.available))
         if (!cancelled) setVoiceAvailable(status.available)
       })
       .catch(() => {
@@ -2202,69 +3179,177 @@ export function App() {
   useEffect(() => {
     if (!activePath) {
       setWorkspace(undefined)
-      setBranches([])
       return
     }
     let cancelled = false
-    void Promise.all([
-      transport.request('workspace.info', { path: activePath }).catch(() => undefined),
-      transport.request('workspace.branches', { path: activePath }).catch(() => undefined),
-    ]).then(([info, result]) => {
-      if (cancelled) return
-      setWorkspace(info)
-      setBranches(result?.branches ?? (info?.branch ? [info.branch] : []))
-      setBranchesPath(activePath)
-      const available = result?.branches ?? (info?.branch ? [info.branch] : [])
-      const remembered =
-        projectBranches.current.get(activePath) ?? readSetting(`harness.branch:${activePath}`)
-      const branch =
-        remembered && available.includes(remembered)
-          ? remembered
-          : available.includes('main')
-            ? 'main'
-            : info?.branch
-      if (branch) projectBranches.current.set(activePath, branch)
-    })
+    void transport
+      .request('workspace.info', { path: activePath })
+      .catch(() => undefined)
+      .then((info) => {
+        recordCheckout(activePath, info)
+        if (!cancelled) setWorkspace(info)
+      })
     return () => {
       cancelled = true
     }
-  }, [transport, activePath, workspaceRefreshRevision])
+  }, [transport, activePath, workspaceRefreshRevision, recordCheckout])
+
+  // Listing branches runs git twice, and only a new chat's shelf offers them, so
+  // an open chat never asks. A list stays good for 30 s; opening the menu after
+  // that, or a finished turn, lists them again.
+  const branchShelfPath = activeId ? undefined : activePath
+  // A list loaded for another project must not name this one's branch.
+  const pathBranches = branchesPath === activePath ? branches : NO_BRANCHES
+  useEffect(() => {
+    if (!activePath) {
+      setBranches([])
+      return
+    }
+    if (!branchShelfPath) return
+    const path = branchShelfPath
+    const known = branchLists.current.get(path)
+    if (
+      known &&
+      known.revision === workspaceRefreshRevision &&
+      Date.now() - known.at < BRANCH_LIST_TTL_MS
+    ) {
+      setBranches(known.branches)
+      setBranchesPath(path)
+      return
+    }
+    let cancelled = false
+    void transport
+      .request('workspace.branches', { path })
+      .catch(() => undefined)
+      .then((result) => {
+        if (cancelled) return
+        const checkedOut = checkedOutBranches.current.get(path)
+        const available = result?.branches ?? (checkedOut ? [checkedOut] : [])
+        if (result) {
+          branchLists.current.set(path, {
+            at: Date.now(),
+            revision: workspaceRefreshRevision,
+            branches: available,
+          })
+        }
+        setBranches(available)
+        setBranchesPath(path)
+        const remembered =
+          projectBranches.current.get(path) ?? readSetting(`harness.branch:${path}`)
+        // Without a remembered branch or main, the chat starts on the checkout.
+        const branch =
+          remembered && available.includes(remembered)
+            ? remembered
+            : available.includes('main')
+              ? 'main'
+              : checkedOut
+        if (branch) projectBranches.current.set(path, branch)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [transport, activePath, branchShelfPath, workspaceRefreshRevision, branchMenuOpened])
+
+  // The account the model picker's provider runs on: another account picked
+  // there, else an open chat's own, else the one new chats start on.
+  const composerAccount: AccountId =
+    selectedModelChoice?.accountId ??
+    (activeSession?.provider === provider && !activeSession.agent && !activeSession.connectionId
+      ? ((activeSession.accountId as AccountId | undefined) ?? DEFAULT_ACCOUNT_ID)
+      : activeAccountOf(providerAccounts, provider))
+  // The composer's sign-in check asks a further account itself: the default
+  // account being signed in or out says nothing about the account the next
+  // message runs on. A custom harness keeps its own sign-in.
+  const checkedAccount: AccountId | undefined =
+    composerAccount !== DEFAULT_ACCOUNT_ID && !selectedModelChoice?.agent && !sourceAgent
+      ? composerAccount
+      : undefined
+  const checkedAccountRef = useRef(checkedAccount)
+  checkedAccountRef.current = checkedAccount
 
   useEffect(() => {
     let cancelled = false
     const revision = ++accountRequestRevision.current
     setAccount(undefined)
-    if (selectedModelChoice?.agent) {
+    if (selectedModelChoice?.connectionId || (selectedModelChoice?.agent && provider !== 'acp')) {
       setAccountCheck({ provider, state: 'ready', account: { signedIn: true } })
       return () => {
         cancelled = true
       }
     }
-    setAccountCheck({ provider, state: 'loading' })
+    const accountId = checkedAccount
+    const forAccount = accountId === undefined ? {} : { accountId }
+    // Retrying a check that could not answer keeps Send available until the
+    // new answer arrives; it would otherwise lock the composer for the read.
+    // So does a provider whose last read said signed in. ACP reads are per
+    // agent, and further accounts are per account, so neither is remembered
+    // per provider.
+    const remembers = provider !== 'acp' && accountId === undefined
+    const remembered = remembers && rememberedSignIn(provider)
+    setAccountCheck((current) =>
+      current.provider === provider && current.accountId === accountId && current.state === 'failed'
+        ? current
+        : {
+            provider,
+            ...forAccount,
+            state: 'loading',
+            ...(remembered ? { remembered: true as const } : {}),
+          },
+    )
+    const grace = setTimeout(() => {
+      if (cancelled || revision !== accountRequestRevision.current) return
+      setAccountCheck((current) =>
+        current.provider === provider && current.state === 'loading'
+          ? { ...current, slow: true }
+          : current,
+      )
+    }, ACCOUNT_CHECK_SEND_GRACE_MS)
     void transport
-      .request('auth.status', { provider })
+      .request('auth.status', {
+        provider,
+        ...(provider === 'acp' && (selectedModelChoice?.agent?.id ?? sourceAgent)
+          ? { agent: selectedModelChoice?.agent?.id ?? sourceAgent }
+          : {}),
+        ...forAccount,
+      })
+      .finally(() => clearTimeout(grace))
       .then((nextAccount) => {
+        if (remembers) rememberSignIn(provider, nextAccount.signedIn)
         if (cancelled || revision !== accountRequestRevision.current) return
         setAccount(nextAccount)
-        setAccountCheck({ provider, state: 'ready', account: nextAccount })
+        setAccountCheck({ provider, ...forAccount, state: 'ready', account: nextAccount })
       })
       .catch((cause) => {
         if (cancelled || revision !== accountRequestRevision.current) return
         setAccount(undefined)
         setAccountCheck({
           provider,
+          ...forAccount,
           state: 'failed',
+          // Send stays available, so this informs rather than interrupts.
           error: {
             id: `account:${provider}:${revision}`,
-            message: `Could not check this account. ${cause instanceof Error ? cause.message : String(cause)}`,
+            role: 'status',
+            message: `Could not confirm this account, but you can still send. ${cause instanceof Error ? cause.message : String(cause)}`,
           },
         })
       })
     return () => {
       cancelled = true
+      clearTimeout(grace)
     }
-  }, [transport, provider, selectedModelChoice?.agent, authStatusRequest])
+  }, [
+    transport,
+    provider,
+    sourceAgent,
+    selectedModelChoice?.agent,
+    selectedModelChoice?.connectionId,
+    checkedAccount,
+    authStatusRequest,
+  ])
 
+  // Once per window: chats set up before the server kept setups share theirs.
+  const savedSetupsShared = useRef(false)
   const refreshProjects = useCallback(async () => {
     if (!startupMilestones.current.projectsRequested) {
       startupMilestones.current.projectsRequested = true
@@ -2272,6 +3357,14 @@ export function App() {
     }
     const result = await transport.request('projects.list', {})
     const list = result.projects.filter((project) => !removedProjectPaths.current.has(project.path))
+    if (!savedSetupsShared.current) {
+      savedSetupsShared.current = true
+      void shareSavedSetups(
+        list.flatMap((project) => project.sessions),
+        readThreadModelSelection,
+        (threadId, setup) => transport.request('thread.setSettings', { threadId, ...setup }),
+      )
+    }
     if (!startupMilestones.current.projectsReceived) {
       startupMilestones.current.projectsReceived = true
       reportStartupMilestone('projects-received')
@@ -2313,10 +3406,26 @@ export function App() {
     [transport, refreshProviderThreadHistory, refreshProjects],
   )
 
+  // Another client (a paired phone, a second window) started, renamed or moved
+  // a chat. A burst of changes reloads the list once.
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const off = transport.on('projects.changed', () => {
+      clearTimeout(timer)
+      timer = setTimeout(() => void refreshProjects().catch(() => undefined), 150)
+    })
+    return () => {
+      off()
+      clearTimeout(timer)
+    }
+  }, [transport, refreshProjects])
+
   const loadHistory = useCallback(
     async (threadId: string, afterSeq?: number) => {
       try {
         const loaded = await threadController.loadHistory(threadId, afterSeq)
+        if (loaded && activeIdRef.current !== threadId && threadController.isVisible(threadId))
+          setProjects((current) => updateSession(current, threadId, markSessionRead))
         if (loaded && activeIdRef.current === threadId) {
           setActiveThreadApproval(loaded.approval ?? 'ask')
           setHistoryFailure((current) => (current?.threadId === threadId ? undefined : current))
@@ -2372,6 +3481,8 @@ export function App() {
       )
         threadIds.add(session.id)
     if (activeId && !activeId.startsWith('pending:')) threadIds.add(activeId)
+    const besideId = splitBesideId(splitRef.current)
+    if (besideId && !besideId.startsWith('pending:')) threadIds.add(besideId)
     const resyncThread = async (
       id: string,
     ): Promise<{ id: string; thread: ThreadState; queue: QueuedTurn[] } | undefined> => {
@@ -2401,6 +3512,7 @@ export function App() {
         const start = probe.submissionStarts.get(item.id)
         if (start?.threadId === id) probe.queuedStarts.set(item.id, start)
       }
+      if (id === splitBesideId(splitRef.current)) setBesideQueue(state)
       if (activeIdRef.current === id) {
         setQueuedTurns(state.items)
         setCanSteerQueue(state.canSteer)
@@ -2586,29 +3698,76 @@ export function App() {
     })
   }, [activeId, thread.running, refreshCheckpoints])
 
-  const usageThreadId = activeId && !activeId.startsWith('pending:') ? activeId : undefined
-  const usageProviders = useMemo(
-    () => [
-      provider,
-      ...providerStatuses
+  // Plan limits belong to the account, so a chat switch neither asks again nor
+  // resets them; the thread token totals the request could carry are unused.
+  // Other installed providers are read when the account popup shows them,
+  // not at launch, where each would start its own vendor process.
+  const otherUsageProviders = useMemo(
+    () =>
+      providerStatuses
         .filter((status) => status.installed && status.id !== provider)
         .map((status) => status.id),
-    ],
     [provider, providerStatuses],
   )
+  // Each provider account is a limit source of its own. The account the
+  // composer is on is read for the current provider; its other accounts join
+  // the other providers, read when a view shows them.
+  const limitTargets = useMemo(() => {
+    const targetsOf = (id: ProviderId, first?: AccountId): LimitTarget[] => {
+      const listed = accountsOf(providerAccounts, id)
+      if (listed.length < 2) return [{ provider: id }]
+      const active =
+        first !== undefined && listed.some((account) => account.id === first)
+          ? first
+          : activeAccountOf(providerAccounts, id)
+      // A further account is read once it has named who it is: before its
+      // first sign-in every read fails, and the views would offer a Retry.
+      const others = listed
+        .filter(
+          (account) =>
+            account.id !== active &&
+            (account.id === DEFAULT_ACCOUNT_ID ||
+              account.email !== undefined ||
+              account.plan !== undefined),
+        )
+        .map((account) => account.id)
+      return [active, ...others].map((accountId) =>
+        accountId === DEFAULT_ACCOUNT_ID ? { provider: id } : { provider: id, accountId },
+      )
+    }
+    const [main = { provider }, ...rest] = targetsOf(provider, composerAccount)
+    return {
+      main,
+      onDemand: [...rest, ...otherUsageProviders.flatMap((id) => targetsOf(id))],
+    }
+  }, [provider, composerAccount, otherUsageProviders, providerAccounts])
 
   useLayoutEffect(() => {
-    usageController.select(
-      usageProviders.map((sourceProvider) => ({
-        provider: sourceProvider,
-        ...(sourceProvider === provider && usageThreadId
-          ? {
-              threadId: usageThreadId,
-            }
-          : {}),
-      })),
-    )
-  }, [usageController, usageThreadId, provider, usageProviders])
+    usageController.select([limitTargets.main], limitTargets.onDemand)
+  }, [usageController, limitTargets])
+  // Every source is read again every 15 minutes, so the popup opens on recent values.
+  useEffect(() => pollUsageLimits(usageController), [usageController])
+
+  // The account card's one figure is about where the next message runs: the
+  // provider and account the model picker is on. The popup lists every account.
+  const cardUsageState = useMemo(
+    () =>
+      usageState.filter(
+        (state) =>
+          state.provider === limitTargets.main.provider &&
+          sameAccount(state.accountId, limitTargets.main.accountId),
+      ),
+    [usageState, limitTargets],
+  )
+  const accountLabel = useCallback<AccountLabel>(
+    (requestedProvider, accountId) =>
+      accountLabelOf(providerAccounts, requestedProvider, accountId),
+    [providerAccounts],
+  )
+  const activeAccount = useCallback(
+    (requestedProvider: ProviderId) => activeAccountOf(providerAccounts, requestedProvider),
+    [providerAccounts],
+  )
 
   // First load, plus the one-time handover from localStorage. Anything found
   // there stays recoverable until the server acknowledges that project.
@@ -2663,24 +3822,21 @@ export function App() {
 
   usePersistedSettingChange(MODEL_KEY, modelId || undefined)
 
+  // Note each newer generation as soon as the catalog lists it, from the
+  // cache or from discovery: an older one shown before that gives way once.
   useEffect(() => {
-    if (!modelVisibilityInitialized.current) return
-    writeSetting(HIDDEN_MODELS_KEY, JSON.stringify([...hiddenModels]))
-    // The rows a first click saved on their defaults are recorded only once
-    // that list is saved.
-    const rows = pendingVisibilityRows.current
-    if (rows) {
-      pendingVisibilityRows.current = undefined
-      recordModelVisibilityProgress(rows, false)
-    }
-  }, [hiddenModels])
+    updateModelVisibility((record) => recordModelSuccessors(record, modelDefaults, Date.now()))
+  }, [modelDefaults, updateModelVisibility])
 
-  // Record what the first paint migrated only after the effect above saved
-  // the moved list, so the next launch does not move those rows again over
-  // the user's later choices.
   useEffect(() => {
-    recordModelVisibilityProgress(initialModelVisibility.migrated, false)
-  }, [initialModelVisibility])
+    writeSetting(MODEL_VISIBILITY_KEY, serializeModelVisibility(modelVisibility))
+  }, [modelVisibility])
+
+  // Declared after the write above, so it runs once the record is saved.
+  useEffect(() => {
+    if (readSetting(MODEL_VISIBILITY_KEY) === null) return
+    for (const key of LEGACY_MODEL_VISIBILITY_KEYS) removeSetting(key)
+  }, [])
 
   usePersistedSettingChange(EFFORT_KEY, effort)
 
@@ -2696,14 +3852,31 @@ export function App() {
       selectedModelChoice.key !== modelId
     )
       return
-    writeThreadModelSelection(activeId, {
+    const selection = {
       modelKey: selectedModelChoice.key,
       designMode,
       ...(selectedEffort ? { effort: selectedEffort } : {}),
       ...(selectedServiceTier ? { serviceTier: selectedServiceTier } : {}),
-    })
+    }
+    // A chat opened here for the first time saves this window's fallback; the
+    // server's setup, read on opening, replaces it. Only a change to a setup
+    // this window already had is one the other clients should follow.
+    const firstSetup = readThreadModelSelection(activeId) === undefined
+    writeThreadModelSelection(activeId, selection)
     pendingThreadModelSave.current = undefined
-  }, [activeId, modelId, selectedModelChoice, selectedEffort, selectedServiceTier, designMode])
+    if (firstSetup) return
+    void transport
+      .request('thread.setSettings', { threadId: activeId, ...sharedSetup(selection) })
+      .catch(() => undefined)
+  }, [
+    activeId,
+    modelId,
+    selectedModelChoice,
+    selectedEffort,
+    selectedServiceTier,
+    designMode,
+    transport,
+  ])
 
   // Remember the active source's exact setup, so returning to a provider
   // restores what was last used there instead of a best-guess translation.
@@ -2724,8 +3897,17 @@ export function App() {
     }
     const source = sourceKey({
       provider: selectedModelChoice.provider,
+      connectionId: selectedModelChoice.connectionId,
       agentId: selectedModelChoice.agent?.id,
     })
+    if (selectedEffort) {
+      const efforts = readModelEfforts()
+      const key = modelChoiceKey(source, selectedModelChoice.model.id)
+      if (efforts[key] !== selectedEffort) {
+        efforts[key] = selectedEffort
+        writeSetting(EFFORT_BY_MODEL_KEY, JSON.stringify(efforts))
+      }
+    }
     const selections = readSourceSelections()
     const entry: SourceSelection = {
       modelKey: selectedModelChoice.key,
@@ -2762,7 +3944,7 @@ export function App() {
         writeSetting(AGENT_KEY, selected.agent.id)
         writeSetting(AGENT_NAME_KEY, selected.agent.name)
       } else {
-        // A stale harness id under the stock provider is the same boot split
+        // A stale agent id under a non-ACP provider is the same boot split
         // this block exists to prevent.
         removeSetting(AGENT_KEY)
         removeSetting(AGENT_NAME_KEY)
@@ -2775,6 +3957,7 @@ export function App() {
         readSourceSelections()[
           sourceKey({
             provider: selected.provider,
+            connectionId: selected.connectionId,
             agentId: selected.agent?.id,
           })
         ]
@@ -2794,12 +3977,22 @@ export function App() {
         )
         return
       }
+      // A model on another provider comes back at the effort it was last
+      // used with. Another model or account of the same provider carries the
+      // current effort over.
+      const leaving = storedModelChoice ?? selectedModelChoice
+      const lastEffort =
+        leaving && providerSource(leaving) !== providerSource(selected)
+          ? readModelEfforts()[modelChoiceKey(providerSource(selected), selected.model.id)]
+          : undefined
       setEffort((current) =>
-        resolveReasoningEffort({
-          currentEffort: current,
-          currentModel: storedModelChoice?.model ?? selectedModelChoice?.model,
-          nextModel: selected.model,
-        }),
+        lastEffort && selected.model.reasoningEfforts.includes(lastEffort)
+          ? lastEffort
+          : resolveReasoningEffort({
+              currentEffort: current,
+              currentModel: storedModelChoice?.model ?? selectedModelChoice?.model,
+              nextModel: selected.model,
+            }),
       )
       // Not a bare id check: fast tiers are named differently per provider
       // (Codex 'priority', Cursor 'fast'), and fast intent must survive the
@@ -2818,6 +4011,68 @@ export function App() {
   )
   const commitModelChoiceRef = useRef(commitModelChoice)
   commitModelChoiceRef.current = commitModelChoice
+
+  // A chat's setup as the server keeps it: chosen on another client, or read
+  // on opening the chat. Mirrored here, and applied at once to the open chat.
+  const adoptThreadSettingsRef = useRef((_threadId: string, _settings: ThreadSettings) => {})
+  adoptThreadSettingsRef.current = (threadId, settings) => {
+    const open = threadId === activeIdRef.current
+    if (settings.approval) {
+      threadApprovals.current.set(threadId, settings.approval)
+      if (open) setActiveThreadApproval(settings.approval)
+    }
+    const session = findSession(projectsRef.current, threadId)?.session
+    if (open && settings.model !== undefined && session && modelsLoaded && selectedModelChoice) {
+      const source = sourceKey({
+        provider: session.provider,
+        connectionId: session.connectionId,
+        agentId: session.agent,
+      })
+      if (hiddenModels.has(modelChoiceKey(source, settings.model))) {
+        // This picker hides that model and never runs a chat on one it hides,
+        // so the chat stays on the model shown here, for every client.
+        void transport
+          .request('thread.setSettings', {
+            threadId,
+            ...sharedSetup({
+              modelKey: selectedModelChoice.key,
+              ...(selectedEffort ? { effort: selectedEffort } : {}),
+              ...(selectedServiceTier ? { serviceTier: selectedServiceTier } : {}),
+            }),
+          })
+          .catch(() => undefined)
+        return
+      }
+    }
+    const next = adoptedSelection(
+      settings,
+      readThreadModelSelection(threadId),
+      session,
+      visibleModelsRef.current,
+    )
+    if (!next) return
+    writeThreadModelSelection(threadId, next)
+    const choice = open
+      ? visibleModelsRef.current.find((candidate) => candidate.key === next.modelKey)
+      : undefined
+    if (choice) commitModelChoiceRef.current(choice, next)
+  }
+  const readSharedSettings = useCallback(
+    (threadId: string, local: ReturnType<typeof readThreadModelSelection>) => {
+      void transport
+        .request('thread.settings', { threadId })
+        .then((settings) => {
+          // A chat set up before the server kept setups shares this window's choice.
+          if (settings.model === undefined && local) {
+            return transport.request('thread.setSettings', { threadId, ...sharedSetup(local) })
+          }
+          adoptThreadSettingsRef.current(threadId, settings)
+          return undefined
+        })
+        .catch(() => undefined)
+    },
+    [transport],
+  )
 
   useEffect(() => writeProviderDefaults(providerDefaults), [providerDefaults])
 
@@ -2842,23 +4097,36 @@ export function App() {
   )
 
   const changeProviderDefault = useCallback(
-    (target: ProviderId, pin: ProviderDefault | undefined) => {
-      setProviderDefaults((current) => {
-        const next = { ...current }
-        if (pin) next[target] = pin
-        else delete next[target]
-        return next
-      })
+    (target: DefaultsScope, pin: ProviderDefault | undefined) => {
+      const next = { ...providerDefaultsRef.current }
+      if (pin) next[target] = pin
+      else delete next[target]
+      providerDefaultsRef.current = next
+      setProviderDefaults(next)
       // A new chat that has not started yet is exactly what the pin
       // describes, so it should not wait for the next one to show it.
-      if (!activeIdRef.current && !sourceAgentRef.current && providerRef.current === target) {
-        applyProviderDefault(target, pin)
+      const current = providerRef.current
+      if (!activeIdRef.current && !sourceAgentRef.current && target.split('@')[0] === current) {
+        applyProviderDefault(current, scopedDefault(next, current, newChatAccountRef.current))
       }
     },
     [applyProviderDefault],
   )
 
-  const changeApprovalDefault = useCallback((target: ProviderId, mode: ApprovalMode) => {
+  // Switching the account a new chat starts on brings that account's pin.
+  const newChatScope = defaultsScope(provider, newChatAccount)
+  const appliedScope = useRef(newChatScope)
+  useEffect(() => {
+    if (appliedScope.current === newChatScope) return
+    appliedScope.current = newChatScope
+    if (activeIdRef.current || sourceAgentRef.current) return
+    applyProviderDefault(
+      providerRef.current,
+      scopedDefault(providerDefaultsRef.current, providerRef.current, newChatAccountRef.current),
+    )
+  }, [newChatScope, applyProviderDefault])
+
+  const changeApprovalDefault = useCallback((target: DefaultsScope, mode: ApprovalMode) => {
     setApprovalByProvider((current) =>
       current[target] === mode ? current : { ...current, [target]: mode },
     )
@@ -2914,12 +4182,35 @@ export function App() {
 
   const selectModel = useCallback(
     (id: string) => {
-      const selected = models.find((model) => model.key === id)
+      const selected =
+        models.find((model) => model.key === id) ??
+        otherAccountChoices.find((choice) => choice.key === id)
       if (!selected) return
       pendingThreadModelSave.current = activeIdRef.current
+      if (selected.accountId !== undefined && !activeIdRef.current) {
+        // A new chat starts on its provider's active account, so another
+        // account's model makes that account the active one.
+        const own = modelChoiceKey(selected.provider, selected.model.id)
+        void providerAccountsStore
+          .setActive(selected.provider, selected.accountId)
+          .catch((error: unknown) =>
+            setActionError({
+              id: crypto.randomUUID(),
+              message: error instanceof Error ? error.message : String(error),
+            }),
+          )
+        commitModelChoice(
+          models.find((model) => model.key === own) ?? {
+            ...selected,
+            accountId: undefined,
+            key: own,
+          },
+        )
+        return
+      }
       commitModelChoice(selected)
     },
-    [models, commitModelChoice],
+    [models, otherAccountChoices, commitModelChoice, providerAccountsStore],
   )
 
   const changeEffort = useCallback((value: string | undefined) => {
@@ -3019,19 +4310,15 @@ export function App() {
       setRollbackOpen(false)
       setActivePath(projectPath)
       try {
-        let branch = projectBranches.current.get(projectPath)
-        if (!branch) {
-          const { branches: available } = await transport.request('workspace.branches', {
-            path: projectPath,
-          })
-          const remembered = readSetting(`harness.branch:${projectPath}`)
-          branch =
-            remembered && available.includes(remembered)
-              ? remembered
-              : available.includes('main')
-                ? 'main'
-                : undefined
-        }
+        // The shelf names the branch a new chat starts on. Only one other than
+        // the checked-out branch needs the server to check and switch; asking
+        // every time ran git before the agent started, and waiting here for a
+        // branch list held the chat for seconds on a busy machine.
+        const shown = newChatBranch(projectPath, isolateSession)
+        const branch =
+          shown !== undefined && shown !== checkedOutBranches.current.get(projectPath)
+            ? shown
+            : undefined
         if (projectRemoved())
           throw new Error('The project was removed before the chat could start.')
         let sessionApproval = approval === 'auto-review' && !autoReviewSupported ? 'full' : approval
@@ -3041,6 +4328,11 @@ export function App() {
           ...(branch ? { baseRef: branch } : {}),
           approval: sessionApproval,
           ...(choice.agent ? { agent: choice.agent.id } : {}),
+          ...(choice.connectionId
+            ? {
+                connectionId: choice.connectionId,
+              }
+            : {}),
           ...(choice.model.id ? { model: choice.model.id } : {}),
           ...(selectedServiceTier
             ? {
@@ -3105,6 +4397,7 @@ export function App() {
                             id: threadId,
                             title: canonicalTitle,
                             provider: choice.provider,
+                            ...(choice.connectionId ? { connectionId: choice.connectionId } : {}),
                             ...(choice.agent
                               ? {
                                   agent: choice.agent.id,
@@ -3129,6 +4422,10 @@ export function App() {
           setActiveId(threadId)
           setActiveThreadApproval(sessionApproval)
           setThread(provisional)
+        } else if (splitBesideId(splitRef.current) === provisionalId) {
+          // The chat lost focus to the other split pane before its id arrived.
+          threadController.show(otherSlot(focusedSlotRef.current), threadId)
+          setSplit({ ...splitRef.current!, beside: { kind: 'chat', id: threadId } })
         }
         // A pin made while the chat was starting has only been shown locally.
         // Send it ahead of the rename so the refresh below already includes it.
@@ -3187,6 +4484,7 @@ export function App() {
       approval,
       autoReviewSupported,
       isolateSession,
+      newChatBranch,
       refreshProjects,
       generateSessionTitle,
       releaseWorkspaceStart,
@@ -3216,7 +4514,14 @@ export function App() {
       setThread(emptyThread)
       // A custom harness is a source of its own; the provider's pin is not its to follow.
       if (!sourceAgentRef.current) {
-        applyProviderDefault(providerRef.current, providerDefaultsRef.current[providerRef.current])
+        applyProviderDefault(
+          providerRef.current,
+          scopedDefault(
+            providerDefaultsRef.current,
+            providerRef.current,
+            newChatAccountRef.current,
+          ),
+        )
       }
       setComposerFocusRequest((request) => request + 1)
     },
@@ -3229,6 +4534,7 @@ export function App() {
       const next = { ...current, items: update(current.items) }
       threadController.setQueue(threadId, next, 'local')
       if (activeIdRef.current === threadId) setQueuedTurns(next.items)
+      else if (threadId === splitBesideId(splitRef.current)) setBesideQueue(next)
     },
     [],
   )
@@ -3291,6 +4597,15 @@ export function App() {
       }
       if (sendAvailability !== 'ready') {
         restoreDraft()
+        return
+      }
+      // A model of another provider moves the chat there before this message.
+      const moving = activeId && !activeId.startsWith('pending:') ? moveChoice : undefined
+      if (moving && activeId && threadController.snapshot(activeId)?.running) {
+        restoreDraft()
+        reportError(
+          `Wait for the current turn to finish, or stop it, before this chat switches to ${moving.sourceName}.`,
+        )
         return
       }
       // Design briefing questions are TasteCode-owned and answered by the server,
@@ -3359,6 +4674,7 @@ export function App() {
                       id: provisionalId,
                       title: titleFrom(titlePrompt),
                       provider: choice.provider,
+                      ...(choice.connectionId ? { connectionId: choice.connectionId } : {}),
                       ...(choice.agent
                         ? {
                             agent: choice.agent.id,
@@ -3399,7 +4715,7 @@ export function App() {
           if (current !== undefined && current.activeTurn?.id === optimisticTurnId) {
             const next: ThreadState = { ...current, running: false, activeTurn: undefined }
             threadController.update(provisionalId, next)
-            if (activeIdRef.current === provisionalId) setThread(next)
+            publishThread(provisionalId, next)
           }
           releasePendingStart()
           restoreDraftAfterFailedStart()
@@ -3420,7 +4736,7 @@ export function App() {
           attachments,
         )
         threadController.update(targetId, provisional)
-        if (activeIdRef.current === targetId) setThread(provisional)
+        publishThread(targetId, provisional)
         setThreadRevealRequest((request) => request + 1)
         threadId = await pending.promise
         if (!threadId) {
@@ -3450,10 +4766,8 @@ export function App() {
         )
         optimisticTurnId = next.activeTurn?.id
         threadController.update(threadId, next)
-        if (threadId === activeIdRef.current) {
-          setThread(next)
-          setThreadRevealRequest((request) => request + 1)
-        }
+        publishThread(threadId, next)
+        if (threadId === activeIdRef.current) setThreadRevealRequest((request) => request + 1)
       } else if (wasRunning && steering) {
         const next = appendUserMessage(
           before,
@@ -3463,7 +4777,7 @@ export function App() {
           attachments,
         )
         threadController.update(threadId, next)
-        if (threadId === activeIdRef.current) setThread(next)
+        publishThread(threadId, next)
       }
       if (optimisticQueueId) {
         updateQueue(threadId, (items) => [
@@ -3515,14 +4829,17 @@ export function App() {
           .catch(() => undefined)
       }
       const turnChoice =
+        moving ||
         !existingSession ||
         (selectedModelChoice &&
           sourceKey({
             provider: selectedModelChoice.provider,
+            connectionId: selectedModelChoice.connectionId,
             agentId: selectedModelChoice.agent?.id,
           }) ===
             sourceKey({
               provider: existingSession.provider,
+              connectionId: existingSession.connectionId,
               agentId: existingSession.agent,
             }))
           ? selectedModelChoice
@@ -3530,6 +4847,50 @@ export function App() {
       let turnAccepted = false
       let queuedActionId: string | undefined
       try {
+        if (moving) {
+          const movingThreadId = threadId
+          try {
+            await transport.request('thread.changeProvider', {
+              threadId: movingThreadId,
+              provider: moving.provider,
+              ...(moving.agent ? { agent: moving.agent.id } : {}),
+              ...(moving.accountId ? { accountId: moving.accountId } : {}),
+              ...(moving.model.id ? { model: moving.model.id } : {}),
+              ...(selectedEffort ? { effort: selectedEffort } : {}),
+              ...(selectedServiceTier ? { serviceTier: selectedServiceTier } : {}),
+              approval: displayedApproval,
+            })
+          } catch (error) {
+            // Whether the chat moved is unknown: the sidebar asks the server again.
+            void refreshProjects().catch(() => undefined)
+            throw error instanceof IndeterminateRequestError
+              ? new Error(
+                  `The connection dropped while this chat switched to ${moving.sourceName}. Check which provider the chat shows, then send again.`,
+                )
+              : error
+          }
+          setProjects((current) =>
+            updateSession(current, movingThreadId, (session) =>
+              sessionOnProvider(session, {
+                provider: moving.provider,
+                agent: moving.agent?.id,
+                ...(moving.accountId && moving.accountId !== DEFAULT_ACCOUNT_ID
+                  ? { accountId: moving.accountId }
+                  : {}),
+              }),
+            ),
+          )
+          // The account it moved to is the chat's own now, which the
+          // provider's own entry stands for.
+          if (moving.accountId !== undefined) {
+            commitModelChoiceRef.current({
+              ...moving,
+              accountId: undefined,
+              key: modelChoiceKey(moving.provider, moving.model.id),
+            })
+          }
+          void refreshProjects().catch(() => undefined)
+        }
         const turnRequest = transport.request('thread.sendTurn', {
           threadId,
           text,
@@ -3591,7 +4952,7 @@ export function App() {
             if (!wasRunning) {
               const reconciled = pending ? removePendingSubmission(current, pending) : current
               threadController.update(threadId, reconciled)
-              if (threadId === activeIdRef.current) setThread(reconciled)
+              publishThread(threadId, reconciled)
             }
             threadController.forgetSubmission(threadId, optimisticItemId)
           }
@@ -3623,7 +4984,7 @@ export function App() {
               next = { ...next, running: false, activeTurn: undefined }
             }
             threadController.update(threadId, next)
-            if (threadId === activeIdRef.current) setThread(next)
+            publishThread(threadId, next)
           }
           restoreRejectedDraft(threadId, { text, attachments })
         } else if (steering) {
@@ -3631,7 +4992,7 @@ export function App() {
           if (current) {
             const next = removeOptimisticMessage(current, optimisticItemId)
             threadController.update(threadId, next)
-            if (threadId === activeIdRef.current) setThread(next)
+            publishThread(threadId, next)
           }
         }
         reportError(error instanceof Error ? error.message : String(error))
@@ -3658,6 +5019,9 @@ export function App() {
       sendAvailability,
       publishComposerDraft,
       cancelArchive,
+      moveChoice,
+      displayedApproval,
+      refreshProjects,
     ],
   )
 
@@ -3706,9 +5070,44 @@ export function App() {
     setCatalogRequest((request) => request + 1)
   }, [])
 
+  const changeProviderRoster = useCallback(
+    (roster: ProviderRoster) => {
+      providerRosterRef.current = roster
+      writeProviderRoster(roster)
+      setProviderRoster(roster)
+      refreshCatalog()
+    },
+    [refreshCatalog],
+  )
+  // The roster is saved the first time the app knows enough to start it: a
+  // first run starts with nothing added and picks in setup, while someone who
+  // used the app before keeps what they saw and every source with a chat.
+  useEffect(() => {
+    if (providerRoster !== undefined || projectsStatus === 'loading') return
+    if (catalogAvailability !== 'ready') return
+    const firstRun = projectsStatus === 'ready' && projects.length === 0 && !onboardingDismissed
+    const roster = firstRun ? [] : seedProviderRoster({ providers: providerStatuses, projects })
+    providerRosterRef.current = roster
+    writeProviderRoster(roster)
+    setProviderRoster(roster)
+    // Until now every installed direct provider was listed and no ACP agent.
+    if (roster.some((key) => rosterAgent(key) !== undefined)) refreshCatalog()
+  }, [
+    providerRoster,
+    projectsStatus,
+    projects,
+    catalogAvailability,
+    onboardingDismissed,
+    providerStatuses,
+    refreshCatalog,
+  ])
+
   const handleAccountChange = useCallback(
     (changedProvider: ProviderId, changedAccount: Account) => {
-      if (changedProvider === providerRef.current) {
+      if (changedProvider !== 'acp') rememberSignIn(changedProvider, changedAccount.signedIn)
+      // This is the default account's sign-in; a composer on a further
+      // account keeps that account's own check.
+      if (changedProvider === providerRef.current && checkedAccountRef.current === undefined) {
         accountRequestRevision.current += 1
         setAccount(changedAccount)
         setAccountCheck({ provider: changedProvider, state: 'ready', account: changedAccount })
@@ -3716,6 +5115,27 @@ export function App() {
     },
     [],
   )
+
+  // The picker leaves out providers known to be signed out. One signed in from
+  // its own terminal since comes back once the picker opens and its account is
+  // read again; each is read at most once per recheck interval.
+  const signedOutProviders = useRef(unavailableProviders.signedOut)
+  signedOutProviders.current = unavailableProviders.signedOut
+  const signInRechecks = useRef(new Map<ProviderId, number>())
+  const openModelSelector = useCallback(() => {
+    discoverEveryModelSource()
+    const now = Date.now()
+    for (const id of signedOutProviders.current) {
+      if (!rosterAllows(providerRosterRef.current, id)) continue
+      const last = signInRechecks.current.get(id)
+      if (last !== undefined && now - last < PROVIDER_RECHECK_INTERVAL_MS) continue
+      signInRechecks.current.set(id, now)
+      void transport.request('auth.status', { provider: id }).then(
+        (account) => handleAccountChange(id, account),
+        () => undefined,
+      )
+    }
+  }, [discoverEveryModelSource, handleAccountChange, transport])
 
   useEffect(() => {
     if (!providerLoginTerminal || !providerLoginState) return
@@ -3731,6 +5151,7 @@ export function App() {
     setWorkspacePanelExpanded(completed.restorePanelExpanded)
     if (completed.restoreSettings) {
       setSettingsSection(requestSettingsSection('providers'))
+      setSettingsReturning(true)
       setSettingsOpen(true)
     }
     if (completed.source === 'pull-requests') {
@@ -3744,6 +5165,15 @@ export function App() {
     }
     const completedProvider = completed.provider
     if (!completedProvider) return
+    if (completed.accountId !== undefined && completed.accountId !== DEFAULT_ACCOUNT_ID) {
+      // A further account: its own check is what the server keeps as who signed
+      // in, and accounts.changed tells every accounts view. The default
+      // account's state is untouched.
+      void transport
+        .request('auth.status', { provider: completedProvider, accountId: completed.accountId })
+        .catch(() => undefined)
+      return
+    }
     setProviderAuthRefreshRevision((revision) => revision + 1)
     void transport
       .request('auth.status', { provider: completedProvider })
@@ -3802,7 +5232,10 @@ export function App() {
               branch,
             })
         projectBranches.current.set(activePath, branch)
+        if (info) recordCheckout(activePath, info)
         writeSetting(`harness.branch:${activePath}`, branch)
+        const known = branchLists.current.get(activePath)
+        if (known) known.branches = [branch, ...known.branches.filter((item) => item !== branch)]
         if (activePathRef.current !== activePath || activeIdRef.current) return
         setWorkspace((current) => info ?? (current ? { ...current, branch } : current))
         setBranches((current) => [branch, ...current.filter((item) => item !== branch)])
@@ -3810,7 +5243,7 @@ export function App() {
         reportError(error instanceof Error ? error.message : String(error))
       }
     },
-    [transport, activePath, activeId, isolateSession],
+    [transport, activePath, activeId, isolateSession, recordCheckout],
   )
 
   // Stable identities, so the memo around Composer is not defeated by a fresh
@@ -3824,8 +5257,18 @@ export function App() {
     [send],
   )
 
+  /** Set below; selecting the chat shown beside only moves focus to its pane. */
+  const focusPaneRef = useRef<(slot: PaneSlot) => void>(() => {})
   const selectSession = useCallback(
-    async (id: string) => {
+    /** keepView: a split pane taking focus. Its transcript stays as it is: no
+     * fresh view, no jump to the end, no composer focus. */
+    async (id: string, options?: { keepView?: boolean }) => {
+      const keepView = options?.keepView === true
+      if (!keepView && splitBesideId(splitRef.current) === id) {
+        setSurface('chat')
+        focusPaneRef.current(otherSlot(focusedSlotRef.current))
+        return
+      }
       setSurface('chat')
       pendingDeletionChecks.current.delete(id)
       if (!cancelArchive(id)) {
@@ -3838,11 +5281,13 @@ export function App() {
       if (found?.session.provider) {
         const source = sourceKey({
           provider: found.session.provider,
+          connectionId: found.session.connectionId,
           agentId: found.session.agent,
         })
         const matchesSource = (choice: ModelChoice) =>
           sourceKey({
             provider: choice.provider,
+            connectionId: choice.connectionId,
             agentId: choice.agent?.id,
           }) === source
         const rememberedModelKey = readSourceSelections()[source]?.modelKey
@@ -3856,6 +5301,7 @@ export function App() {
           visibleModels.find(
             (choice) => choice.key === rememberedModelKey && matchesSource(choice),
           ) ??
+          visibleModels.find((choice) => matchesSource(choice) && choice.model.isDefault) ??
           visibleModels.find(matchesSource)
         if (matchingChoice) {
           commitModelChoice(
@@ -3882,11 +5328,14 @@ export function App() {
       setRollbackOpen(false)
       activeIdRef.current = id
       setActiveThreadApproval(threadApprovals.current.get(id))
+      if (!id.startsWith('pending:')) readSharedSettings(id, threadSelection)
       setHistoryFailure(undefined)
       setActiveId(id)
-      setComposerFocusRequest((request) => request + 1)
-      setThreadRevealRequest((request) => request + 1)
-      setThreadEntryKey((key) => key + 1)
+      if (!keepView) {
+        setComposerFocusRequest((request) => request + 1)
+        setThreadRevealRequest((request) => request + 1)
+        setThreadEntryKey(++threadEntryKeys.current)
+      }
       setActivePath(found?.project.path)
       threadController.resetBackground(id)
       threadController.flush(id)
@@ -3922,6 +5371,84 @@ export function App() {
     if (id && !id.startsWith('pending:')) void readOpenedHistory(id, undefined)
   }, [readOpenedHistory])
 
+  /** Where a continuation's earlier uncommitted changes went, by new chat, as its start said. */
+  const [earlierChanges, setEarlierChanges] = useState<Record<string, EarlierChanges>>({})
+
+  /**
+   * "Continue on another account": a new chat pinned to that account carries
+   * the open chat on. The server gives its first prompt this chat's
+   * conversation; the composer starts with the request that failed, so
+   * nothing is sent until the user sends it.
+   */
+  const continueOnAccount = useCallback(
+    async (accountId: AccountId) => {
+      const earlierId = activeIdRef.current
+      const found = findSession(projectsRef.current, earlierId)
+      if (!earlierId || !found) return
+      const { project, session: earlier } = found
+      const choice =
+        selectedModelChoice?.provider === earlier.provider &&
+        !selectedModelChoice.agent &&
+        !selectedModelChoice.connectionId
+          ? selectedModelChoice
+          : undefined
+      setActionError(undefined)
+      try {
+        const { threadId, earlierChanges: changes } = await transport.request('thread.start', {
+          provider: earlier.provider,
+          workspacePath: project.path,
+          accountId,
+          continueFrom: earlierId,
+          approval: approval === 'auto-review' && !autoReviewSupported ? 'full' : approval,
+          ...(choice?.model.id ? { model: choice.model.id } : {}),
+          ...(choice && selectedServiceTier ? { serviceTier: selectedServiceTier } : {}),
+          ...(choice && selectedEffort ? { effort: selectedEffort } : {}),
+          // An isolated chat's work is on its branch; the new checkout starts there.
+          ...(earlier.worktreeBranch ? { isolate: true, baseRef: earlier.worktreeBranch } : {}),
+        })
+        if (changes) setEarlierChanges((current) => ({ ...current, [threadId]: changes }))
+        const request = lastRequest(threadController.snapshot(earlierId)?.items ?? [])
+        if (request) threadController.editDraft(threadId, { text: request })
+        const now = Date.now()
+        const row: Session = {
+          id: threadId,
+          title: 'New session',
+          provider: earlier.provider,
+          ...(accountId === DEFAULT_ACCOUNT_ID ? {} : { accountId }),
+          continuedFrom: earlierId,
+          createdAt: now,
+          statusSince: now,
+          status: 'idle',
+          lifecycle: { state: 'active', keepActive: false },
+          unread: false,
+        }
+        // Listed at once, so opening it finds its project; the next list reconciles.
+        const next = projectsRef.current.map((entry) =>
+          entry.path !== project.path || entry.sessions.some((each) => each.id === threadId)
+            ? entry
+            : { ...entry, sessions: [row, ...entry.sessions] },
+        )
+        projectsRef.current = next
+        setProjects(next)
+        await selectSession(threadId)
+        void refreshProjects().catch(() => undefined)
+      } catch (error) {
+        reportError(error instanceof Error ? error.message : String(error))
+      }
+    },
+    [
+      transport,
+      selectedModelChoice,
+      selectedServiceTier,
+      selectedEffort,
+      approval,
+      autoReviewSupported,
+      selectSession,
+      refreshProjects,
+      reportError,
+    ],
+  )
+
   const inspectCheckpoint = useCallback(
     async (checkpoint: Checkpoint) => {
       if (!activeId) return
@@ -3947,9 +5474,8 @@ export function App() {
     [transport, activeId],
   )
 
-  const decideApproval = useCallback(
-    (approvalId: string, decision: ApprovalDecision) => {
-      const threadId = activeIdRef.current
+  const respondToApproval = useCallback(
+    (threadId: string | undefined, approvalId: string, decision: ApprovalDecision) => {
       if (!threadId) return
       void transport
         .request('thread.respondToApproval', { threadId, approvalId, decision })
@@ -3961,15 +5487,25 @@ export function App() {
     },
     [transport],
   )
+  const decideApproval = useCallback(
+    (approvalId: string, decision: ApprovalDecision) =>
+      respondToApproval(activeIdRef.current, approvalId, decision),
+    [respondToApproval],
+  )
   /**
    * The permission chip is the one control for the access level, so it has to
    * do both jobs at once: it is this provider's default for every new session,
    * and picking a different mode inside a live chat changes that chat now.
    */
+  // A chat's access is its own account's default; a new chat's, its starting account's.
+  const approvalScope = defaultsScope(
+    provider,
+    activeId ? (activeSession?.accountId as AccountId | undefined) : newChatAccount,
+  )
   const changeApproval = useCallback(
     (mode: ApprovalMode) => {
       setApprovalByProvider((current) =>
-        current[provider] === mode ? current : { ...current, [provider]: mode },
+        current[approvalScope] === mode ? current : { ...current, [approvalScope]: mode },
       )
       const threadId = activeIdRef.current
       if (!threadId) return
@@ -3991,11 +5527,10 @@ export function App() {
         })
       approvalChanges.current.set(threadId, change)
     },
-    [provider, transport],
+    [approvalScope, transport],
   )
-  const answerUserInput = useCallback(
-    (requestId: string, answers: Record<string, string[]>) => {
-      const threadId = activeIdRef.current
+  const respondToUserInput = useCallback(
+    (threadId: string | undefined, requestId: string, answers: Record<string, string[]>) => {
       if (!threadId) return Promise.reject(new Error('No active session'))
       return transport
         .request('thread.respondToUserInput', { threadId, requestId, answers })
@@ -4010,14 +5545,21 @@ export function App() {
     },
     [transport, threadController, loadHistory],
   )
+  const answerUserInput = useCallback(
+    (requestId: string, answers: Record<string, string[]>) =>
+      respondToUserInput(activeIdRef.current, requestId, answers),
+    [respondToUserInput],
+  )
   const editMessage = useCallback((text: string) => {
     const owner = threadController.draftOwner
     const draft = threadController.draft(owner).text
     threadController.editDraft(owner, { text })
-    setComposerDraft((current) => ({ text, undoable: true, request: (current?.request ?? 0) + 1 }))
+    setComposerDraft({ text, undoable: true, request: ++composerDraftRequests.current })
     setComposerFocusRequest((request) => request + 1)
-    // An unsent draft must not vanish without a way back.
-    if (draft.trim() && draft !== text) {
+    // An unsent draft must not vanish without a way back. The saved draft
+    // holds chips where the sent prompt has their tokens, so the two are
+    // compared as the provider receives them.
+    if (draft.trim() && composerWireText(draft) !== composerWireText(text)) {
       setReplacedDraft({ owner, text: draft })
       setNotice(DRAFT_REPLACED_NOTICE)
     }
@@ -4035,11 +5577,11 @@ export function App() {
     setReplacedDraft(undefined)
     if (!replaced || replaced.owner !== threadController.draftOwner) return
     threadController.editDraft(replaced.owner, { text: replaced.text })
-    setComposerDraft((current) => ({
+    setComposerDraft({
       text: replaced.text,
       undoable: true,
-      request: (current?.request ?? 0) + 1,
-    }))
+      request: ++composerDraftRequests.current,
+    })
     setComposerFocusRequest((request) => request + 1)
   }, [replacedDraft])
   const revertCheckpoint = useCallback(
@@ -4151,7 +5693,7 @@ export function App() {
       // Thread ids are never reused, so a saved setup outlives its chat forever.
       removeSetting(`${MODEL_BY_THREAD_PREFIX}${id}`)
       setProjects((current) => removeSession(current, id))
-      if (activeIdRef.current === id) {
+      if (!splitRemovals.current.chats([id]) && activeIdRef.current === id) {
         activeIdRef.current = undefined
         setActiveId(undefined)
         setThread(emptyThread)
@@ -4188,7 +5730,7 @@ export function App() {
       setArchiveToastDismissed(false)
       savePendingChatDelete(pending)
       enqueueArchive(id, () => commitChatDelete(pending))
-      if (activeIdRef.current === id) {
+      if (!splitRemovals.current.chats([id]) && activeIdRef.current === id) {
         activeIdRef.current = undefined
         setActiveId(undefined)
         setThread(emptyThread)
@@ -4330,6 +5872,7 @@ export function App() {
             lifecycle,
           })),
         )
+        if (splitRemovals.current.chats(targets)) return
         const activeId = activeIdRef.current
         if (!activeId || !targets.includes(activeId)) return
         const current = findSession(projectsRef.current, activeId)
@@ -4421,6 +5964,16 @@ export function App() {
     }),
     [hideSession, hideSessions, restoreSession, restoreSessions, keepSessionActive],
   )
+  // Archive is the inbox's settle: the chat leaves its project for the
+  // Archived section and comes back when the user sends to it.
+  const archiveSidebarChat = useCallback(
+    (id: string) => void hideSession(id, 'settle'),
+    [hideSession],
+  )
+  const restoreSidebarChat = useCallback(
+    (id: string) => void restoreSession(id, 'unsettle'),
+    [restoreSession],
+  )
   const closeSidebar = useCallback(() => setCollapsed(true), [])
   const resizeSidebar = useCallback((width: number) => {
     setRailWidth(width)
@@ -4456,11 +6009,234 @@ export function App() {
     [beginSession],
   )
   const selectSidebarSession = useCallback((id: string) => void selectSession(id), [selectSession])
+
+  /** The focused pane as it is now, to show unchanged while the other pane has focus. */
+  const freezeFocusedPane = useCallback((): SplitView['frozen'] => {
+    const owner = threadController.draftOwner
+    return {
+      composer: {
+        ...liveComposerProps.current!,
+        // It is inert, but a paste that finishes saving later still belongs to its chat.
+        onDraftChange: (text) => void threadController.editDraft(owner, { text }),
+        onAttachmentsChange: (attachments) =>
+          void threadController.editDraft(owner, { attachments }),
+        onResourcesChange: (resources) => void threadController.editDraft(owner, { resources }),
+      },
+      entryKey: threadEntryKeyRef.current,
+      revealRequest: threadRevealRequestRef.current,
+    }
+  }, [threadController])
+  const focusedPaneContent = useCallback(
+    (): BesidePane =>
+      activeIdRef.current
+        ? { kind: 'chat', id: activeIdRef.current }
+        : { kind: 'new', projectPath: activePathRef.current },
+    [],
+  )
+  /**
+   * Move focus to the other split pane. Its chat becomes the active one; the
+   * pane that had focus keeps showing what it showed. The bookkeeping is
+   * synchronous, so the press that moved focus already acts on its own chat.
+   */
+  const focusPane = useCallback(
+    (slot: PaneSlot) => {
+      const current = splitRef.current
+      if (!current || slot === focusedSlotRef.current) return
+      const { beside: target, frozen } = current
+      const leaving = focusedPaneContent()
+      setSplit({ ...current, beside: leaving, frozen: freezeFocusedPane() })
+      setBesideQueue(leaving.kind === 'chat' ? threadController.queue(leaving.id) : undefined)
+      setFocusedSlot(slot)
+      // The pane comes back exactly as it was left: same view, draft and focus.
+      setThreadEntryKey(frozen.entryKey)
+      setThreadRevealRequest(frozen.revealRequest)
+      setComposerDraft(frozen.composer.draftRequest)
+      setComposerFocusRequest(frozen.composer.focusRequest)
+      const key = composerDraftKey(target.kind === 'chat' ? target.id : undefined)
+      threadController.draftOwner = key
+      composerDraftKeyRef.current = key
+      if (target.kind === 'chat') {
+        activeIdRef.current = target.id
+        void selectSession(target.id, { keepView: true })
+      } else {
+        activeIdRef.current = undefined
+        if (target.projectPath) beginSession(target.projectPath)
+        else setActiveId(undefined)
+      }
+    },
+    [
+      threadController,
+      freezeFocusedPane,
+      focusedPaneContent,
+      setSplit,
+      setFocusedSlot,
+      selectSession,
+      beginSession,
+      setActiveId,
+    ],
+  )
+  focusPaneRef.current = focusPane
+  /** Open a chat in split view beside the focused one. The opened pane takes focus. */
+  const openSessionBeside = useCallback(
+    (id: string) => {
+      void loadSplitViewStyles().then(
+        () => {
+          if (id === activeIdRef.current) return
+          const current = splitRef.current
+          const focused = focusedSlotRef.current
+          if (splitBesideId(current) === id) {
+            focusPane(otherSlot(focused))
+            return
+          }
+          const leaving = focusedPaneContent()
+          setSplit({
+            beside: leaving,
+            start: current?.start ?? focused,
+            frozen: freezeFocusedPane(),
+          })
+          setBesideQueue(leaving.kind === 'chat' ? threadController.queue(leaving.id) : undefined)
+          setFocusedSlot(otherSlot(focused))
+          // A new pane's composer also restores this when it is ready.
+          restoreComposerDraft(composerDraftKey(id))
+          void selectSession(id)
+        },
+        (error: unknown) => reportError(error instanceof Error ? error.message : String(error)),
+      )
+    },
+    [
+      threadController,
+      focusPane,
+      focusedPaneContent,
+      freezeFocusedPane,
+      setSplit,
+      setFocusedSlot,
+      restoreComposerDraft,
+      selectSession,
+      reportError,
+    ],
+  )
+  const closeBesidePane = useCallback(() => {
+    if (!splitRef.current) return
+    threadController.show(otherSlot(focusedSlotRef.current), undefined)
+    setSplit(undefined)
+    setBesideQueue(undefined)
+  }, [threadController, setSplit])
+  const closeFocusedPane = useCallback(() => {
+    if (!splitRef.current) return
+    focusPane(otherSlot(focusedSlotRef.current))
+    closeBesidePane()
+  }, [focusPane, closeBesidePane])
+  /** The stage body: a chat dragged from the sidebar is dropped on the panes in it. */
+  const stageBody = useRef<HTMLDivElement>(null)
+  const chatDrop = useChatDrop({
+    host: () => stageBody.current,
+    state: () => ({
+      split: splitRef.current !== undefined,
+      focusedSlot: focusedSlotRef.current,
+      activeId: activeIdRef.current,
+      besideId: splitBesideId(splitRef.current),
+    }),
+    // Each drop takes a path a click, "Open beside" or a pane press already
+    // takes, so drafts and running turns are handled exactly as there. A swap
+    // only trades the panes' sides; nothing inside either pane remounts.
+    apply: (id, action) => {
+      if (action.kind === 'open') return void selectSession(id)
+      if (action.kind === 'beside') return openSessionBeside(id)
+      const current = splitRef.current
+      if (!current) return
+      setSplit({ ...current, start: otherSlot(current.start) })
+      if (action.focusOther) focusPane(otherSlot(focusedSlotRef.current))
+    },
+  })
+  splitRemovals.current = {
+    chats: (ids) => {
+      const current = splitRef.current
+      if (!current) return false
+      const beside = splitBesideId(current)
+      if (beside !== undefined && ids.includes(beside)) {
+        closeBesidePane()
+        return false
+      }
+      const active = activeIdRef.current
+      if (active === undefined || !ids.includes(active)) return false
+      closeFocusedPane()
+      return true
+    },
+    project: (path) => {
+      const current = splitRef.current
+      if (!current) return false
+      const besidePath =
+        current.beside.kind === 'chat'
+          ? findSession(projectsRef.current, current.beside.id)?.project.path
+          : current.beside.projectPath
+      if (besidePath === path) {
+        closeBesidePane()
+        return false
+      }
+      if (activePathRef.current !== path) return false
+      closeFocusedPane()
+      return true
+    },
+  }
+  /** The chat shown beside the focused one acts on its own id, whatever has focus. */
+  const decideBesideApproval = useCallback(
+    (approvalId: string, decision: ApprovalDecision) =>
+      respondToApproval(besideId, approvalId, decision),
+    [besideId, respondToApproval],
+  )
+  const answerBesideUserInput = useCallback(
+    (requestId: string, answers: Record<string, string[]>) =>
+      respondToUserInput(besideId, requestId, answers),
+    [besideId, respondToUserInput],
+  )
+  const editBesideMessage = useCallback(
+    (text: string) => {
+      focusPane(otherSlot(focusedSlotRef.current))
+      editMessage(text)
+    },
+    [focusPane, editMessage],
+  )
+  const focusPaneFromEvent = useCallback(
+    (slot: PaneSlot, toComposer: boolean) => {
+      focusPane(slot)
+      // A press on the composer means the user wants to type there.
+      if (toComposer) setComposerFocusRequest((request) => request + 1)
+    },
+    [focusPane],
+  )
+  // A chat notification was clicked and the shell brought the window up.
+  const openNotifiedChat = useCallback(
+    (id: string) => {
+      if (!findSession(projectsRef.current, id)) return
+      setSettingsOpen(false)
+      void selectSession(id)
+    },
+    [selectSession],
+  )
+  useChatNotifications(projects, projectsStatus === 'ready', openNotifiedChat)
+  // An app update waits for running chats instead of cutting them off.
+  useAppUpdateInstallGate(transport, projects, projectsStatus === 'ready')
+  // The pull request the header chip asked the surface to open with.
+  const [pullRequestFocus, setPullRequestFocus] = useState<PullRequestTarget>()
   const openPullRequests = useCallback(() => {
+    setPullRequestFocus(undefined)
     setSettingsOpen(false)
     setPaletteScope(null)
     setSurface('pull-requests')
   }, [])
+  const openCheckoutPullRequest = useCallback((target: PullRequestTarget) => {
+    setPullRequestFocus(target)
+    setSettingsOpen(false)
+    setPaletteScope(null)
+    setSurface('pull-requests')
+  }, [])
+  const checkoutPullRequest = useCheckoutPullRequest(
+    transport,
+    activePath,
+    activeId,
+    thread.running,
+    surface === 'chat',
+  )
   const openPullRequestChat = useCallback(
     (pullRequest: PullRequestListItem) => {
       if (!pullRequest.localProjectPath) return
@@ -4529,7 +6305,7 @@ export function App() {
       removedProjectPaths.current.add(path)
       projectStartRevisions.current.set(path, (projectStartRevisions.current.get(path) ?? 0) + 1)
       setProjects((current) => current.filter((project) => project.path !== path))
-      if (previousActivePath === path) {
+      if (!splitRemovals.current.project(path) && previousActivePath === path) {
         activePathRef.current = undefined
         setActivePath(undefined)
         activeIdRef.current = undefined
@@ -4612,6 +6388,18 @@ export function App() {
     (id: string) => void archiveSession(id),
     [archiveSession],
   )
+  // The server marks a chat read when its history is fetched, as it does for
+  // the open chat after a turn. Asking for nothing past the end keeps that
+  // fetch empty.
+  const markSidebarSessionRead = useCallback(
+    (id: string) => {
+      setProjects((current) => updateSession(current, id, markSessionRead))
+      void transport
+        .request('thread.history', { threadId: id, afterSeq: Number.MAX_SAFE_INTEGER })
+        .catch(() => undefined)
+    },
+    [transport],
+  )
   const archiveSidebarProject = useCallback(
     (sessionIds: string[]) => {
       void (async () => {
@@ -4691,10 +6479,26 @@ export function App() {
   useEffect(() => {
     setSearchJump((current) => (current && current.threadId !== activeId ? undefined : current))
   }, [activeId])
-  const openSettings = useCallback((section: SettingsSection = 'workflows') => {
-    setSettingsSection(requestSettingsSection(section))
-    setSettingsOpen(true)
-  }, [])
+  const openSettings = useCallback(
+    (section: SettingsSection = 'workflows', view?: SettingsSectionRequest['view']) => {
+      setSettingsSection(requestSettingsSection(section, view))
+      setSettingsReturning(false)
+      setSettingsOpen(true)
+    },
+    [],
+  )
+  // A CLI's /resume, /config, /mcp, ... screen, as TasteCode's own.
+  const openAppScreen = useCallback(
+    (screen: AppScreen) => {
+      if (screen === 'resume') {
+        setSettingsOpen(false)
+        setPaletteScope('all')
+        return
+      }
+      openSettings(screen === 'settings' ? undefined : screen === 'login' ? 'providers' : screen)
+    },
+    [openSettings],
+  )
   const changeKeybinding = useCallback((action: KeybindingId, shortcut: Shortcut | null) => {
     setKeybindings((current) => {
       const next = { ...current, [action]: shortcut }
@@ -4711,34 +6515,75 @@ export function App() {
     refreshCatalog()
     openSettings('providers')
   }, [refreshCatalog, openSettings])
+  const openProviderPicker = useCallback(() => {
+    openSettings('providers', 'add-providers')
+  }, [openSettings])
+  // Settings would run the same read that just failed; asking again is the fix.
+  const retryAccountCheck = useCallback(() => setAuthStatusRequest((current) => current + 1), [])
+  // A CLI installed or signed in outside the app shows up when the window gets
+  // focus back. A scan that finds nothing new leaves the model catalog alone.
+  const accountUnconfirmed = accountCheck.provider === provider && accountCheck.state === 'failed'
+  const providerMissing = providerStatuses.some((status) => !status.installed)
+  useRecheckOnFocus(
+    catalogAvailability === 'failed' || providerMissing || accountUnconfirmed,
+    () => {
+      if (accountUnconfirmed) retryAccountCheck()
+      if (catalogAvailability === 'failed') refreshCatalog()
+      if (catalogAvailability !== 'ready' || !providerMissing) return
+      const known = providerStatuses
+      void transport.request('providers.list', {}).then(
+        ({ providers }) => {
+          if (providerScanChanged(known, providers)) refreshCatalog()
+        },
+        () => undefined,
+      )
+    },
+  )
   const closeSettings = useCallback(() => setSettingsOpen(false), [])
+  // Settings covers the window with an opaque page. Once its fade-in has
+  // finished, the app behind it cannot be seen, so the app's endless loops (a
+  // working chat's spinner, the live activity row) pause until it closes
+  // instead of drawing a frame every refresh.
+  const shellBody = useRef<HTMLDivElement>(null)
+  // The chat column follows the rail and the side panel instead of jumping to
+  // its new centre when either changes the pane's width.
+  const stage = useRef<HTMLElement>(null)
+  useStageGlide(
+    stage,
+    `${collapsed ? 'rail-folded' : 'rail-open'} ${workspacePanelOpen ? 'panel-open' : 'panel-hidden'} ${workspacePanelExpanded ? 'panel-expanded' : ''}`,
+  )
+  const coverShell = useCallback((event: ReactAnimationEvent<HTMLDivElement>) => {
+    if (event.target === event.currentTarget) shellBody.current?.setAttribute('data-covered', '')
+  }, [])
+  useLayoutEffect(() => {
+    if (!settingsOpen) shellBody.current?.removeAttribute('data-covered')
+    // Settings back in place of a login terminal has no fade: it covers the
+    // app from its first frame.
+    else if (settingsReturning) shellBody.current?.setAttribute('data-covered', '')
+  }, [settingsOpen, settingsReturning])
+  const forceOnboarding = useCallback(() => {
+    setSettingsOpen(false)
+    setOnboardingPreview(true)
+  }, [])
   const resetSettings = useCallback(() => {
     cancelWorkspacePanelWidthPersistence()
     localStorage.clear()
     location.reload()
   }, [cancelWorkspacePanelWidthPersistence])
-  const changeModelVisibility = useCallback((key: string, visible: boolean) => {
-    // On a profile without saved visibility this click creates the saved list.
-    // A failing source can keep discovery from ever saving the curated
-    // defaults, so the click saves them for every row the picker knows, and
-    // those rows are recorded as current: the next launch must not run a
-    // pending migration over this choice. Rows that appear later still get
-    // their defaults when they are first listed.
-    const created = modelVisibilityInitialized.current
-      ? undefined
-      : catalogModelsRef.current.filter((choice) => !choice.agent && !isCustomModelChoice(choice))
-    if (created) pendingVisibilityRows.current = created.map((choice) => choice.key)
-    // A click is an explicit preference even if live discovery is still
-    // replacing a cached catalog. Never let late first-run defaults erase it.
-    modelVisibilityInitialized.current = true
-    setHiddenModels((current) => {
-      const next = new Set(current)
-      for (const hiddenKey of defaultHiddenModelKeys(created ?? [])) next.add(hiddenKey)
-      if (visible) next.delete(key)
-      else next.add(key)
-      return next
-    })
-  }, [])
+  // One update for any number of rows: Settings' All and None on a large
+  // source must not copy the record once per row.
+  const changeModelsVisibility = useCallback(
+    (keys: readonly string[], visible: boolean) => {
+      updateModelVisibility((record) =>
+        chooseModelsVisibility(record, keys, visible, modelDefaultsRef.current, Date.now()),
+      )
+    },
+    [updateModelVisibility],
+  )
+  const changeModelVisibility = useCallback(
+    (key: string, visible: boolean) => changeModelsVisibility([key], visible),
+    [changeModelsVisibility],
+  )
   const closePalette = useCallback(() => {
     setPaletteScope(null)
     setPreferredNewThreadProject(undefined)
@@ -4799,14 +6644,22 @@ export function App() {
   const openProviderLoginTerminal = useCallback(
     (target: ProviderLoginTerminalTarget) => {
       setWorkspacePanelHasMounted(true)
-      setProviderLoginTerminal({
-        ...target,
-        id: nextProviderLoginTerminalId.current++,
-        visible: true,
-        restorePanelOpen: workspacePanelOpen,
-        restorePanelExpanded: workspacePanelExpanded,
-        restoreSettings: settingsOpen,
-      })
+      const id = nextProviderLoginTerminalId.current++
+      // Asking again for the terminal that is already open (Show terminal from
+      // Settings opened on top of it) keeps its one tab and where closing it
+      // returns to, instead of attaching a second tab to the same terminal.
+      setProviderLoginTerminal((current) =>
+        current?.visible && current.installKey === target.installKey
+          ? current
+          : {
+              ...target,
+              id,
+              visible: true,
+              restorePanelOpen: workspacePanelOpen,
+              restorePanelExpanded: workspacePanelExpanded,
+              restoreSettings: settingsOpen,
+            },
+      )
       setSettingsOpen(false)
       setWorkspacePanelOpen(true)
       setWorkspacePanelExpanded(true)
@@ -4825,6 +6678,7 @@ export function App() {
       setWorkspacePanelExpanded(providerLoginTerminal.restorePanelExpanded)
       if (providerLoginTerminal.restoreSettings) {
         setSettingsSection(requestSettingsSection('providers'))
+        setSettingsReturning(true)
         setSettingsOpen(true)
       }
     },
@@ -5148,6 +7002,18 @@ export function App() {
         shortcut: keybind('keybindings'),
         run: () => openSettings('keybinds'),
       },
+      ...(feedback.status.enabled
+        ? [
+            {
+              id: 'send-feedback',
+              title: 'Send feedback…',
+              detail: 'Report a bug or share an idea with the TasteCode team',
+              group: 'Actions' as const,
+              keywords: 'bug report problem error issue idea feedback',
+              run: () => openFeedback('command_palette'),
+            },
+          ]
+        : []),
       {
         id: 'open-pull-requests',
         title: 'Pull requests',
@@ -5247,6 +7113,8 @@ export function App() {
     addProject,
     openSettings,
     openPullRequests,
+    feedback.status.enabled,
+    openFeedback,
     active?.session.pinned,
     activeId,
     collapsed,
@@ -5278,6 +7146,80 @@ export function App() {
   }
   const RightWorkspacePanel = rightPanelType.current ?? WorkspacePanel
   const BottomWorkspacePanel = bottomPanelType.current ?? WorkspacePanel
+  // The same for Settings, per opening: once its chunk is loaded it renders
+  // without a Suspense pass, and a load that lands while it is open does not
+  // swap the type under it.
+  const settingsType = useRef<SettingsComponent | typeof LazySettings>(undefined)
+  if (!settingsOpen) settingsType.current = undefined
+  const SettingsView = settingsOpen
+    ? (settingsType.current ??= resolvedSettings ?? LazySettings)
+    : undefined
+
+  // "Continue on another account" is offered on a failed turn while the chat's
+  // own account is at a plan limit and its provider has another signed-in
+  // account. It never starts on its own.
+  const continuedChat = useMemo(
+    () => (activeId ? continuedIn(projects, activeId) : undefined),
+    [activeId, projects],
+  )
+  const continueOptions = useMemo(() => {
+    if (
+      !activeSession ||
+      continuedChat ||
+      activeSession.id.startsWith('pending:') ||
+      activeSession.agent ||
+      activeSession.connectionId ||
+      !accountAtLimit(usageState, activeSession.provider, activeSession.accountId, Date.now())
+    )
+      return []
+    const defaultSignedIn =
+      providerStatuses.find((status) => status.id === activeSession.provider)?.auth ===
+      'authenticated'
+    return continueAccounts(
+      providerAccounts,
+      activeSession.provider,
+      activeSession.accountId,
+      defaultSignedIn,
+    )
+  }, [activeSession, continuedChat, usageState, providerStatuses, providerAccounts])
+
+  // At the same plan limit, every other signed-in provider is offered as well,
+  // with the model the chat would use there. Choosing one only sets it up:
+  // the chat switches with the next message, which the user sends.
+  const switchOptions = useMemo(() => {
+    if (
+      !movableChat ||
+      !activeSession ||
+      continuedChat ||
+      !accountAtLimit(usageState, activeSession.provider, activeSession.accountId, Date.now())
+    )
+      return []
+    const sources = new Map<string, ModelChoice>()
+    for (const choice of visibleModels) {
+      const source = modelSource(choice)
+      if (source === activeModelSource || sources.has(source) || choice.provider === 'api') continue
+      if (
+        providerStatuses.find((status) => status.id === choice.provider)?.auth !== 'authenticated'
+      )
+        continue
+      const remembered = readSourceSelections()[source]?.modelKey
+      sources.set(
+        source,
+        visibleModels.find((each) => each.key === remembered && modelSource(each) === source) ??
+          visibleModels.find((each) => modelSource(each) === source && each.model.isDefault) ??
+          choice,
+      )
+    }
+    return [...sources.values()]
+  }, [
+    movableChat,
+    activeSession,
+    continuedChat,
+    usageState,
+    visibleModels,
+    activeModelSource,
+    providerStatuses,
+  ])
 
   const offlineError = useMemo<ComposerError | undefined>(
     () =>
@@ -5293,7 +7235,7 @@ export function App() {
   const composerProviderError = catalogError
     ? { ...catalogError, action: { label: 'Retry', run: refreshCatalog } }
     : accountCheck.provider === provider && accountCheck.error
-      ? { ...accountCheck.error, action: { label: 'Check setup', run: openProviderSetup } }
+      ? { ...accountCheck.error, action: { label: 'Retry', run: retryAccountCheck } }
       : providerSignInState?.phase === 'failed'
         ? {
             id: `sign-in:${providerSignInState.terminalId}`,
@@ -5315,16 +7257,256 @@ export function App() {
               },
             }
           : undefined
+  feedbackContext.current = {
+    ...(activeId ? { threadId: activeId } : {}),
+    provider,
+    ...(sourceAgent ? { custom: true } : {}),
+    ...(selectedModelChoice?.model.id ? { model: selectedModelChoice.model.id } : {}),
+    surface: settingsOpen
+      ? 'settings'
+      : surface === 'pull-requests'
+        ? 'pull_requests'
+        : designMode
+          ? 'design'
+          : 'chat',
+  }
+  /** Lets the person send an error they saw to the team. Opening the dialog sends nothing. */
+  const reportable = <T extends ComposerError>(
+    error: T,
+    kind: NonNullable<FeedbackRequest['context']['error']>['kind'],
+  ): T =>
+    feedback.status.enabled
+      ? {
+          ...error,
+          report: () =>
+            openFeedback('error_report', {
+              error: { kind, message: error.message.slice(0, 4000) },
+            }),
+        }
+      : error
+  // Once continued, the failed turn's row leads to the chat that carries it on.
+  /** Sets the chat up to switch, with the request that failed back in the composer. */
+  const switchAtLimit = (choice: ModelChoice) => {
+    commitModelChoice(choice)
+    const request = lastRequest(thread.items)
+    if (request) editMessage(request)
+  }
+  const continueOffer: Pick<ComposerError, 'action' | 'choices'> = continuedChat
+    ? {
+        action: {
+          label: `Continued on ${accountLabelOf(providerAccounts, continuedChat.provider, continuedChat.accountId)}`,
+          run: () => void selectSession(continuedChat.id),
+        },
+      }
+    : thread.running || continueOptions.length + switchOptions.length === 0
+      ? {}
+      : continueOptions.length + switchOptions.length === 1
+        ? {
+            action: continueOptions[0]
+              ? {
+                  label: `Continue on ${continueOptions[0].label}`,
+                  run: () => void continueOnAccount(continueOptions[0]!.id),
+                }
+              : {
+                  label: `Switch to ${switchOptions[0]!.sourceName}`,
+                  run: () => switchAtLimit(switchOptions[0]!),
+                },
+          }
+        : {
+            choices: {
+              label:
+                switchOptions.length === 0
+                  ? 'Continue on another account'
+                  : continueOptions.length === 0
+                    ? 'Switch to another provider'
+                    : 'Continue elsewhere',
+              options: [
+                ...continueOptions.map((account) => ({
+                  id: account.id,
+                  label: account.label,
+                  detail: account.email ?? account.plan,
+                  run: () => void continueOnAccount(account.id),
+                })),
+                ...switchOptions.map((choice) => ({
+                  id: `provider:${modelSource(choice)}`,
+                  label: choice.sourceName,
+                  detail: formatModelName(choice.model.displayName),
+                  run: () => switchAtLimit(choice),
+                })),
+              ],
+            },
+          }
+  const earlierChat =
+    // Shown until its first message; not while an opened chat's history is still loading.
+    activeSession?.continuedFrom &&
+    thread.items.length === 0 &&
+    !thread.running &&
+    loadingThreadId !== activeSession.id
+      ? findSession(projects, activeSession.continuedFrom)?.session
+      : undefined
   const composerErrors: ComposerError[] = [
-    ...(actionError ? [{ ...actionError, dismiss: () => setActionError(undefined) }] : []),
+    ...(actionError
+      ? [reportable({ ...actionError, dismiss: () => setActionError(undefined) }, 'action')]
+      : []),
     ...(thread.error && activeId
-      ? [{ ...thread.error, id: `chat:${activeId}:${thread.error.id}` }]
+      ? [
+          reportable(
+            { ...thread.error, id: `chat:${activeId}:${thread.error.id}`, ...continueOffer },
+            'turn',
+          ),
+        ]
+      : []),
+    ...(earlierChat && activeSession
+      ? [
+          {
+            id: `continues:${activeSession.id}`,
+            role: 'status' as const,
+            tone: 'info' as const,
+            message: continuationNote(
+              earlierChat.title,
+              accountLabelOf(providerAccounts, activeSession.provider, activeSession.accountId),
+              earlierChanges[activeSession.id],
+            ),
+            action: { label: 'Open', run: () => void selectSession(earlierChat.id) },
+          },
+        ]
+      : []),
+    ...(moveChoice && activeSession
+      ? [
+          {
+            id: `moves:${activeSession.id}:${moveChoice.key}`,
+            role: 'status' as const,
+            tone: 'info' as const,
+            message: `Your next message switches this chat to ${moveChoice.sourceName}. The conversation so far goes with it.`,
+            ...(chatOwnChoice
+              ? {
+                  action: {
+                    label: `Stay on ${chatOwnChoice.sourceName}`,
+                    run: () => commitModelChoice(chatOwnChoice),
+                  },
+                }
+              : {}),
+          },
+        ]
       : []),
     ...(currentModelError
-      ? [{ ...currentModelError, action: { label: 'Retry models', run: refreshCatalog } }]
+      ? [
+          reportable(
+            { ...currentModelError, action: { label: 'Retry models', run: refreshCatalog } },
+            'models',
+          ),
+        ]
       : []),
     ...(offlineError ? [offlineError] : []),
   ]
+
+  const composerProps: ComposerProps = {
+    transport: transport,
+    provider: provider,
+    projects: projectChoices,
+    projectPath: activePath,
+    projectName: activeProject ? displayName(activeProject) : undefined,
+    threadId: activeId && !activeId.startsWith('pending:') ? activeId : undefined,
+    projectsLoading: projectsStatus === 'loading',
+    branch:
+      (!activeId && activePath ? newChatBranch(activePath, isolateSession) : undefined) ??
+      active?.session.worktreeBranch ??
+      workspace?.branch ??
+      pathBranches[0],
+    branches: pathBranches,
+    onBranchMenuOpen: openBranchMenu,
+    branchesLoading: Boolean(activePath) && branchesPath !== activePath,
+    models: pickerModels,
+    modelsLoaded: modelsLoaded,
+    modelId: selectedModelChoice?.key,
+    modelChoice: selectedModelChoice,
+    modelPending: modelChoicePending,
+    effort: selectedEffort,
+    serviceTier: selectedServiceTier,
+    usage: thread.usage,
+    approval: displayedApproval,
+    approvalLoading: approvalLoading,
+    autoReviewSupported: autoReviewSupported,
+    attachmentsSupported: attachmentsSupported,
+    attachmentsLoading: catalogAvailability === 'loading',
+    voiceAvailable: isDesktop && provider === 'codex' && voiceAvailable,
+    voiceLoading: isDesktop && provider === 'codex' && voiceStatusLoading,
+    disabled: stopping,
+    placeholder: stopping ? 'Stopping…' : undefined,
+    sendAvailability: sendAvailability,
+    errors: composerErrors,
+    errorsVisible: !settingsOpen && surface === 'chat',
+    providerError: composerProviderError
+      ? reportable(composerProviderError, 'provider')
+      : undefined,
+    providerSignInRequired: providerStatuses.some(
+      (status) => status.id === provider && status.installed,
+    ),
+    running: visibleRunning,
+    newSession: !activeId,
+    isolate: active?.session.worktreeBranch ? true : isolateSession,
+    designMode: designMode,
+    keybindings: keybindings,
+    focusRequest: composerFocusRequest,
+    draftRequest: composerDraft,
+    onDraftChange: updateComposerDraftText,
+    onAttachmentsChange: updateComposerDraftAttachments,
+    onPendingAttachment: keepPendingAttachment,
+    onPendingQueuedEdit: keepQueuedEdit,
+    onResourcesChange: updateComposerDraftResources,
+    onRecallLastPrompt: recallLastPrompt,
+    onReady: handleComposerReady,
+    queuedTurns: queuedTurns,
+    canSteerQueue: canSteerQueue,
+    onModelSelectorOpen: openModelSelector,
+    onModelChange: selectModel,
+    onEffortChange: changeEffort,
+    onServiceTierChange: changeServiceTier,
+    onApprovalChange: changeApproval,
+    onIsolateChange: setIsolateSession,
+    onDesignModeChange: changeDesignMode,
+    onTranscribeVoice: transcribeVoice,
+    onCancelVoice: cancelVoice,
+    onProjectChange: selectProject,
+    onBranchChange: changeBranch,
+    onProjectRequired: requireProject,
+    onSetupProvider: sendAvailability === 'no-provider' ? openProviderPicker : openProviderSetup,
+    onSend: sendTurn,
+    onSteer: steerTurn,
+    onFeedbackCommand: feedback.status.enabled ? openCommandFeedback : undefined,
+    onNewChatCommand: startNewChat,
+    onAppScreenCommand: openAppScreen,
+    onInterrupt: interrupt,
+    stopping: stopping,
+    onDeleteQueuedTurn: deleteQueuedTurn,
+    onMoveQueuedTurn: moveQueuedTurn,
+    onSteerQueuedTurn: steerQueuedTurn,
+  }
+  liveComposerProps.current = composerProps
+  const besideSession = useMemo(
+    () => (besideId ? findSession(projects, besideId) : undefined),
+    [projects, besideId],
+  )
+  const besideNewPath = split?.beside.kind === 'new' ? split.beside.projectPath : undefined
+  const renderStageHeader = (onClosePane: (() => void) | undefined) => (
+    <StageHeader
+      sessionId={active?.session.id}
+      title={active?.session.title}
+      pinned={active?.session.pinned ?? false}
+      projectPath={activePath}
+      checkpointCount={thread.running ? 0 : checkpoints.length}
+      worktreeBranch={active?.session.worktreeBranch}
+      pullRequest={checkoutPullRequest}
+      onOpenPullRequest={openCheckoutPullRequest}
+      keybindings={keybindings}
+      menuActions={keybindingActions}
+      onOpenRollback={openRollback}
+      onRenameSession={renameSidebarSession}
+      onToggleSessionPin={toggleSidebarSessionPin}
+      onArchiveSession={deleteSidebarSession}
+      onClosePane={onClosePane}
+    />
+  )
 
   return (
     <div
@@ -5347,7 +7529,9 @@ export function App() {
       ) : null}
       {isDesktop ? <ZoomHud /> : null}
 
-      <div className="shell__body">
+      <div className="shell__body" ref={shellBody}>
+        {/* Inside the body, so its aurora pauses with the shell behind Settings. */}
+        <AppBackground />
         <Sidebar
           projects={archiveProjects}
           projectsLoading={projectsStatus === 'loading'}
@@ -5357,7 +7541,12 @@ export function App() {
           providerName={providerName(provider, sourceAgentName)}
           keybindings={keybindings}
           usageStates={usageState}
-          onRetryUsage={refreshUsage}
+          usageCardStates={cardUsageState}
+          accountLabel={accountLabel}
+          activeAccount={activeAccount}
+          onShowUsage={showUsage}
+          onRetryUsage={retryUsage}
+          onRefreshUsage={refreshAllUsage}
           onConsumeReset={consumeReset}
           mode={sidebarSettings.mode}
           inbox={sidebarInbox}
@@ -5371,177 +7560,209 @@ export function App() {
           onAddDroppedProjects={addDroppedSidebarProjects}
           onNewSession={startSidebarSession}
           onSelectSession={selectSidebarSession}
+          besideSessionId={surface === 'chat' ? besideId : undefined}
+          onOpenSessionBeside={openSessionBeside}
+          sessionDropTarget={chatDrop.target}
           onRenameProject={renameSidebarProject}
           onRemoveProject={removeSidebarProject}
           onTogglePin={toggleSidebarProjectPin}
           onRenameSession={renameSidebarSession}
           onToggleSessionPin={toggleSidebarSessionPin}
           onDeleteSession={deleteSidebarSession}
+          onMarkSessionRead={markSidebarSessionRead}
+          onArchiveSession={archiveSidebarChat}
+          onRestoreSession={restoreSidebarChat}
           onArchiveProject={archiveSidebarProject}
           onReorderProject={reorderSidebarProject}
           onReorderSession={reorderSidebarSession}
           onOpenSearch={openSidebarSearch}
           onOpenPullRequests={openPullRequests}
           onOpenSettings={openSettings}
+          onSendFeedback={feedback.status.enabled ? openAccountFeedback : undefined}
         />
 
         <div
           className={`workspace-layout${workspacePanelOpen ? ' is-panel-open' : ''}${workspacePanelExpanded ? ' is-panel-expanded' : ''}`}
           style={workspaceLayoutStyle(workspacePanelWidth)}
         >
-          <main className="stage">
+          <main className="stage" ref={stage}>
             {surface === 'pull-requests' ? (
               <Suspense fallback={<PullRequestsSkeleton />}>
                 <PullRequestsView
                   transport={transport}
+                  initialSelection={pullRequestFocus}
                   onOpenChat={openPullRequestChat}
                   onSetupTerminalOpen={openProviderLoginTerminal}
                   setupRefreshRevision={pullRequestSetupRefreshRevision}
                 />
               </Suspense>
-            ) : (
-              <StageHeader
-                sessionId={active?.session.id}
-                title={active?.session.title}
-                pinned={active?.session.pinned ?? false}
-                projectPath={activePath}
-                checkpointCount={thread.running ? 0 : checkpoints.length}
-                worktreeBranch={active?.session.worktreeBranch}
-                keybindings={keybindings}
-                menuActions={keybindingActions}
-                onOpenRollback={openRollback}
-                onRenameSession={renameSidebarSession}
-                onToggleSessionPin={toggleSidebarSessionPin}
-                onArchiveSession={deleteSidebarSession}
-              />
+            ) : split ? null : (
+              renderStageHeader(undefined)
             )}
 
             {/* The pull requests view covers the stage, but the bottom panel stays
                 mounted behind it so its tabs and running shells survive the visit. */}
             <div
-              className={`stage__body${activeId ? '' : ' is-new-session'}${activePath && terminalOpen ? ' has-terminal' : ''}`}
+              ref={stageBody}
+              className={`stage__body${activeId || split ? '' : ' is-new-session'}${split ? ' is-split' : ''}${activePath && terminalOpen ? ' has-terminal' : ''}`}
               hidden={surface === 'pull-requests'}
             >
               {surface === 'chat' ? (
-                <div className={`stage__conversation${activeId ? '' : ' is-new-session'}`}>
-                  {activeId ? (
-                    <Suspense fallback={<ThreadSkeleton />}>
-                      <LazyThread
-                        key={threadEntryKey}
-                        frameStore={threadFrameStore}
-                        errorsInComposer
-                        stopping={stopping}
-                        loading={loadingThreadId === activeId}
-                        loadFailure={
-                          historyFailure?.threadId === activeId ? historyFailure.message : undefined
+                // Without a split both wrappers take no box, so the single chat's
+                // layout is unchanged, and opening a split keeps it mounted.
+                <div className="split" style={split ? undefined : SPLIT_CONTENTS}>
+                  {PANE_SLOTS.map((slot) => {
+                    const focused = slot === focusedSlot
+                    if (!focused && !split) return null
+                    return (
+                      <SplitPane
+                        key={slot}
+                        slot={slot}
+                        split={split !== undefined}
+                        focused={focused}
+                        start={split?.start === slot}
+                        label={
+                          (focused ? active?.session.title : besideSession?.session.title) ??
+                          'New chat'
                         }
-                        onRetryLoad={retryOpenedHistory}
-                        projectPath={activePath}
-                        threadId={activeId}
-                        transport={transport}
-                        searchJump={searchJump?.threadId === activeId ? searchJump : undefined}
-                        onSearchJumpDone={finishSearchJump}
-                        revealRequest={threadRevealRequest}
-                        checkpoints={checkpoints}
-                        onDecide={decideApproval}
-                        onAnswerUserInput={answerUserInput}
-                        onEditMessage={editMessage}
-                        onRevertCheckpoint={revertCheckpoint}
-                        onUndoChanges={undoTurnChanges}
-                        onLoadOlderHistory={loadOlderHistory}
-                        onLoadCompleteHistory={loadCompleteHistory}
-                      />
-                    </Suspense>
-                  ) : (
-                    <Empty
-                      projects={projects}
-                      activePath={activePath}
-                      status={projectsStatus}
-                      startupProjectName={startupProjectName}
-                      onAddProject={addSidebarProject}
-                      onRetry={retryProjects}
-                    />
-                  )}
+                        onFocusPane={focusPaneFromEvent}
+                      >
+                        {focused ? (
+                          <>
+                            {split ? renderStageHeader(closeFocusedPane) : null}
+                            <div
+                              className={`stage__conversation${activeId ? '' : ' is-new-session'}`}
+                            >
+                              {activeId ? (
+                                <AccountLabelContext.Provider value={accountLabel}>
+                                  <Suspense fallback={<ThreadSkeleton />}>
+                                    <LazyThread
+                                      key={threadEntryKey}
+                                      frameStore={threadFrameStore}
+                                      errorsInComposer
+                                      stopping={stopping}
+                                      loading={loadingThreadId === activeId}
+                                      loadFailure={
+                                        historyFailure?.threadId === activeId
+                                          ? historyFailure.message
+                                          : undefined
+                                      }
+                                      onRetryLoad={retryOpenedHistory}
+                                      projectPath={activePath}
+                                      threadId={activeId}
+                                      transport={transport}
+                                      searchJump={
+                                        searchJump?.threadId === activeId ? searchJump : undefined
+                                      }
+                                      onSearchJumpDone={finishSearchJump}
+                                      revealRequest={threadRevealRequest}
+                                      checkpoints={checkpoints}
+                                      onDecide={decideApproval}
+                                      onAnswerUserInput={answerUserInput}
+                                      onEditMessage={editMessage}
+                                      onRevertCheckpoint={revertCheckpoint}
+                                      onUndoChanges={undoTurnChanges}
+                                      onLoadOlderHistory={loadOlderHistory}
+                                      onLoadCompleteHistory={loadCompleteHistory}
+                                      turnRail
+                                    />
+                                  </Suspense>
+                                </AccountLabelContext.Provider>
+                              ) : (
+                                <Empty
+                                  projects={projects}
+                                  activePath={activePath}
+                                  status={projectsStatus}
+                                  startupProjectName={startupProjectName}
+                                  onAddProject={addSidebarProject}
+                                  onRetry={retryProjects}
+                                />
+                              )}
 
-                  <Composer
-                    transport={transport}
-                    provider={provider}
-                    projects={projectChoices}
-                    projectPath={activePath}
-                    projectName={activeProject ? displayName(activeProject) : undefined}
-                    projectsLoading={projectsStatus === 'loading'}
-                    branch={
-                      (!activeId && activePath
-                        ? projectBranches.current.get(activePath)
-                        : undefined) ??
-                      active?.session.worktreeBranch ??
-                      workspace?.branch ??
-                      branches[0]
-                    }
-                    branches={branches}
-                    branchesLoading={Boolean(activePath) && branchesPath !== activePath}
-                    models={selectableModels}
-                    modelsLoaded={modelsLoaded}
-                    modelId={selectedModelChoice?.key}
-                    modelChoice={selectedModelChoice}
-                    modelPending={modelChoicePending}
-                    effort={selectedEffort}
-                    serviceTier={selectedServiceTier}
-                    usage={thread.usage}
-                    approval={displayedApproval}
-                    approvalLoading={approvalLoading}
-                    autoReviewSupported={autoReviewSupported}
-                    attachmentsSupported={attachmentsSupported}
-                    attachmentsLoading={catalogAvailability === 'loading'}
-                    voiceAvailable={isDesktop && provider === 'codex' && voiceAvailable}
-                    voiceLoading={isDesktop && provider === 'codex' && voiceStatusLoading}
-                    disabled={stopping}
-                    placeholder={stopping ? 'Stopping…' : undefined}
-                    sendAvailability={sendAvailability}
-                    errors={composerErrors}
-                    errorsVisible={!settingsOpen && surface === 'chat'}
-                    providerError={composerProviderError}
-                    providerSignInRequired={providerStatuses.some(
-                      (status) => status.id === provider && status.installed,
-                    )}
-                    running={visibleRunning}
-                    newSession={!activeId}
-                    isolate={active?.session.worktreeBranch ? true : isolateSession}
-                    designMode={designMode}
-                    keybindings={keybindings}
-                    focusRequest={composerFocusRequest}
-                    draftRequest={composerDraft}
-                    onDraftChange={updateComposerDraftText}
-                    onAttachmentsChange={updateComposerDraftAttachments}
-                    onPendingAttachment={keepPendingAttachment}
-                    onPendingQueuedEdit={keepQueuedEdit}
-                    onResourcesChange={updateComposerDraftResources}
-                    onRecallLastPrompt={recallLastPrompt}
-                    onReady={handleComposerReady}
-                    queuedTurns={queuedTurns}
-                    canSteerQueue={canSteerQueue}
-                    onModelChange={selectModel}
-                    onEffortChange={changeEffort}
-                    onServiceTierChange={changeServiceTier}
-                    onApprovalChange={changeApproval}
-                    onIsolateChange={setIsolateSession}
-                    onDesignModeChange={changeDesignMode}
-                    onTranscribeVoice={transcribeVoice}
-                    onCancelVoice={cancelVoice}
-                    onProjectChange={selectProject}
-                    onBranchChange={changeBranch}
-                    onProjectRequired={requireProject}
-                    onSetupProvider={openProviderSetup}
-                    onSend={sendTurn}
-                    onSteer={steerTurn}
-                    onInterrupt={interrupt}
-                    stopping={stopping}
-                    onDeleteQueuedTurn={deleteQueuedTurn}
-                    onMoveQueuedTurn={moveQueuedTurn}
-                    onSteerQueuedTurn={steerQueuedTurn}
-                  />
+                              <PaneComposer
+                                store={threadController.columns[slot]}
+                                composer={composerProps}
+                              />
+                            </div>
+                          </>
+                        ) : split ? (
+                          <>
+                            <StageHeader
+                              sessionId={besideSession?.session.id}
+                              title={besideSession?.session.title}
+                              pinned={besideSession?.session.pinned ?? false}
+                              projectPath={besideSession?.project.path ?? besideNewPath}
+                              checkpointCount={0}
+                              worktreeBranch={besideSession?.session.worktreeBranch}
+                              keybindings={keybindings}
+                              menuActions={keybindingActions}
+                              onOpenRollback={openRollback}
+                              onRenameSession={renameSidebarSession}
+                              onToggleSessionPin={toggleSidebarSessionPin}
+                              onArchiveSession={deleteSidebarSession}
+                              onClosePane={closeBesidePane}
+                            />
+                            <div
+                              className={`stage__conversation${besideId ? '' : ' is-new-session'}`}
+                            >
+                              {besideId ? (
+                                <AccountLabelContext.Provider value={accountLabel}>
+                                  <Suspense fallback={<ThreadSkeleton />}>
+                                    <LazyThread
+                                      key={split.frozen.entryKey}
+                                      frameStore={threadController.columns[slot]}
+                                      errorsInComposer
+                                      keyboardActive={false}
+                                      loading={loadingThreadId === besideId}
+                                      loadFailure={
+                                        historyFailure?.threadId === besideId
+                                          ? historyFailure.message
+                                          : undefined
+                                      }
+                                      onRetryLoad={retryOpenedHistory}
+                                      projectPath={besideSession?.project.path}
+                                      threadId={besideId}
+                                      transport={transport}
+                                      onSearchJumpDone={finishSearchJump}
+                                      revealRequest={split.frozen.revealRequest}
+                                      checkpoints={NO_CHECKPOINTS}
+                                      onDecide={decideBesideApproval}
+                                      onAnswerUserInput={answerBesideUserInput}
+                                      onEditMessage={editBesideMessage}
+                                      onRevertCheckpoint={revertCheckpoint}
+                                      onUndoChanges={undoTurnChanges}
+                                      onLoadOlderHistory={loadOlderHistory}
+                                      onLoadCompleteHistory={loadCompleteHistory}
+                                      turnRail
+                                    />
+                                  </Suspense>
+                                </AccountLabelContext.Provider>
+                              ) : (
+                                <Empty
+                                  projects={projects}
+                                  activePath={besideNewPath}
+                                  status={projectsStatus}
+                                  startupProjectName={startupProjectName}
+                                  onAddProject={addSidebarProject}
+                                  onRetry={retryProjects}
+                                />
+                              )}
+
+                              <PaneComposer
+                                store={threadController.columns[slot]}
+                                composer={split.frozen.composer}
+                                dormant
+                                queue={besideQueue}
+                              />
+                            </div>
+                          </>
+                        ) : null}
+                      </SplitPane>
+                    )
+                  })}
                 </div>
               ) : null}
+              {surface === 'chat' ? <ChatDropOverlay store={chatDrop.store} /> : null}
 
               {activePath && bottomTerminalMounted ? (
                 <div
@@ -5568,7 +7789,9 @@ export function App() {
                       threadId={activeId}
                       projectPath={activePath}
                       projectName={activeProject ? displayName(activeProject) : undefined}
-                      branch={active?.session.worktreeBranch ?? workspace?.branch ?? branches[0]}
+                      branch={
+                        active?.session.worktreeBranch ?? workspace?.branch ?? pathBranches[0]
+                      }
                       theme={themeColorScheme}
                       sideChatParentStatus={sideChatParentStatus}
                       sideChatStartOptions={sideChatStartOptions}
@@ -5577,12 +7800,14 @@ export function App() {
                         !settingsOpen &&
                         paletteScope === null &&
                         !rollbackOpen &&
-                        !checkoutDelete
+                        !checkoutDelete &&
+                        !feedbackRequest
                       }
                       onOpen={openBottomPanel}
                       onClose={closeTerminal}
                       onWidthChange={setTerminalHeight}
                       terminalToggleRequest={bottomTerminalToggleRequest}
+                      onOpenPullRequest={openCheckoutPullRequest}
                     />
                   </Suspense>
                 </div>
@@ -5602,13 +7827,17 @@ export function App() {
                 threadId={activeId}
                 projectPath={activePath}
                 projectName={activeProject ? displayName(activeProject) : undefined}
-                branch={active?.session.worktreeBranch ?? workspace?.branch ?? branches[0]}
+                branch={active?.session.worktreeBranch ?? workspace?.branch ?? pathBranches[0]}
                 theme={themeColorScheme}
                 sideChatParentStatus={sideChatParentStatus}
                 sideChatStartOptions={sideChatStartOptions}
                 sideChatPromptRequest={sideChatPromptRequest}
                 nativeSurfacesVisible={
-                  !settingsOpen && paletteScope === null && !rollbackOpen && !checkoutDelete
+                  !settingsOpen &&
+                  paletteScope === null &&
+                  !rollbackOpen &&
+                  !checkoutDelete &&
+                  !feedbackRequest
                 }
                 onOpen={openWorkspacePanel}
                 onClose={closeWorkspacePanel}
@@ -5616,6 +7845,7 @@ export function App() {
                 terminalToggleRequest={workspaceTerminalToggleRequest}
                 externalToolRequest={workspaceToolRequest}
                 designPreviewRequest={workspaceDesignPreviewRequest}
+                onOpenPullRequest={openCheckoutPullRequest}
                 providerLogin={
                   providerLoginTerminal?.visible
                     ? {
@@ -5633,14 +7863,17 @@ export function App() {
         </div>
       </div>
 
-      {settingsOpen ? (
-        <div className="surface-enter">
+      {SettingsView ? (
+        <div
+          className={`surface-enter${settingsReturning ? ' is-returning' : ''}`}
+          onAnimationEnd={coverShell}
+        >
           <SurfaceErrorBoundary
             name="Settings"
             onClose={closeSettings}
             fallback={<SettingsSkeleton section={settingsSection.section} />}
           >
-            <Settings
+            <SettingsView
               initialSection={settingsSection.section}
               sectionRequest={settingsSection.request}
               showDebug={debugSettingsVisible}
@@ -5649,18 +7882,29 @@ export function App() {
               transport={transport}
               projectPath={activePath}
               projectName={activeProject ? displayName(activeProject) : undefined}
-              account={account}
+              // Right after the composer moves to another provider, `account` is
+              // still the last one's until the new read starts; Settings must
+              // not show it as the new provider's.
+              account={accountCheck.provider === provider ? account : undefined}
               accountLoading={
                 accountCheck.provider !== provider || accountCheck.state === 'loading'
               }
+              usageLimits={usageController}
               profileIdentity={profileIdentity}
               onProfileIdentityChange={updateProfileIdentity}
               providerStatuses={providerStatuses}
+              acpAgents={acpAgents}
+              providerRoster={providerRoster}
+              onProviderRosterChange={changeProviderRoster}
+              providersView={settingsSection.view}
               providersLoading={catalogAvailability === 'loading'}
               models={models}
               modelsLoading={catalogAvailability === 'loading'}
+              modelErrors={modelErrors}
+              pendingModelSources={pendingModelSources}
               hiddenModels={hiddenModels}
               onModelVisibilityChange={changeModelVisibility}
+              onModelsVisibilityChange={changeModelsVisibility}
               providerDefaults={providerDefaultsControls}
               onConnectionsChanged={refreshCatalog}
               projectCount={projects.length}
@@ -5684,10 +7928,7 @@ export function App() {
               authRefreshRevision={providerAuthRefreshRevision}
               onProviderLoginTerminalOpen={openProviderLoginTerminal}
               onReset={resetSettings}
-              onForceOnboarding={() => {
-                setSettingsOpen(false)
-                setOnboardingPreview(true)
-              }}
+              onForceOnboarding={forceOnboarding}
               onClose={closeSettings}
             />
           </SurfaceErrorBoundary>
@@ -5704,11 +7945,15 @@ export function App() {
             themePreference={themePreference}
             onThemePreferenceChange={setThemePreference}
             providerStatuses={providerStatuses}
+            providersLoading={catalogAvailability === 'loading'}
+            providersError={catalogAvailability === 'failed' ? catalogError?.message : undefined}
+            acpAgents={acpAgents}
+            providerRoster={providerRoster ?? EMPTY_PROVIDER_ROSTER}
+            onProviderRosterChange={changeProviderRoster}
             onAddProject={() => {
               setOnboardingPreview(false)
               void addProject()
             }}
-            onOpenProviders={() => openSettings('providers')}
             onDismiss={() => {
               setOnboardingMounted(false)
               if (onboardingPreview) {
@@ -5765,6 +8010,20 @@ export function App() {
         </Suspense>
       ) : null}
 
+      {feedbackRequest ? (
+        <Suspense fallback={null}>
+          <FeedbackDialog
+            key={feedbackRequest.id}
+            transport={transport}
+            request={feedbackRequest}
+            status={feedback.status}
+            onSent={finishFeedback}
+            onStatusChange={feedback.refresh}
+            onClose={closeFeedback}
+          />
+        </Suspense>
+      ) : null}
+
       {checkoutDelete ? (
         <Suspense fallback={null}>
           <CheckoutDiscardDialog
@@ -5785,6 +8044,12 @@ export function App() {
         onUpdated={refreshCatalog}
         suppressed={offline || Boolean(notice) || Boolean(actionError)}
       />
+      {isDesktop ? (
+        <AppUpdateToast
+          hidden={settingsOpen}
+          quiet={pendingArchives.length > 0 && !archiveToastDismissed}
+        />
+      ) : null}
       {pendingArchives.length > 0 ? (
         <Suspense fallback={null}>
           <ArchiveToast
@@ -5818,7 +8083,7 @@ export function App() {
       </NoticePresence>
 
       <NoticePresence
-        className={`notice${undoRestore || notice === 'Restore undone.' ? ' notice--success' : ''}`}
+        className={`notice${undoRestore || notice === 'Restore undone.' || notice === FEEDBACK_SENT_NOTICE ? ' notice--success' : ''}`}
         role="alert"
         visible={Boolean(notice)}
         dismissKey={notice}
@@ -5920,8 +8185,28 @@ function Empty(props: {
   )
 }
 
+/** One provider account, as a key; the default account however it is named. */
+function chatAccountKey(provider: ProviderId, accountId: AccountId | undefined): string {
+  return `${provider}\u0000${accountId ?? DEFAULT_ACCOUNT_ID}`
+}
+
+/**
+ * The account a provider's own model list is read as: the one new chats start
+ * on, whose plan may offer other models. Undefined for the default account.
+ */
+function modelListAccount(
+  accounts: ProviderAccountsSnapshot,
+  provider: ProviderId,
+): AccountId | undefined {
+  const active = activeAccountOf(accounts, provider)
+  return active === DEFAULT_ACCOUNT_ID ? undefined : active
+}
+
 function providerName(id: ProviderId, sourceName?: string): string {
   if (sourceName) return sourceName
+  // ACP is how we talk to the agent, not who the agent is. Showing "ACP" would
+  // name our plumbing instead of the thing the user chose.
+  if (id === 'acp') return 'ACP agent'
   return providerDisplayName(id)
 }
 
@@ -5938,6 +8223,7 @@ function endsDesignBriefing(event: DomainEvent): boolean {
     text.trim() ===
       'Design mode was turned off because this request is not a website design task.' ||
     text.startsWith('Website built.') ||
+    text.startsWith('Dashboard built.') ||
     text.includes('DEBUG FINISHED · NO WEBSITE BUILT')
   )
 }
@@ -6122,17 +8408,15 @@ function writeThreadModelSelection(threadId: string, selection: ThreadSelection)
   writeSetting(`${MODEL_BY_THREAD_PREFIX}${threadId}`, JSON.stringify(selection))
 }
 
-type ApprovalPreferences = Partial<Record<ProviderId, ApprovalMode>>
+type ApprovalPreferences = Partial<Record<DefaultsScope, ApprovalMode>>
 
 function readApprovalPreferences(activeProvider: ProviderId) {
   const preferences: ApprovalPreferences = {}
   try {
     const stored: unknown = JSON.parse(readSetting(APPROVAL_BY_PROVIDER_KEY) ?? '{}')
     if (isRecord(stored)) {
-      for (const [storedProvider, mode] of Object.entries(stored)) {
-        if (isProviderId(storedProvider) && isApprovalMode(mode)) {
-          preferences[storedProvider] = mode
-        }
+      for (const [scope, mode] of Object.entries(stored)) {
+        if (isDefaultsScope(scope) && isApprovalMode(mode)) preferences[scope] = mode
       }
     }
   } catch {
@@ -6181,6 +8465,20 @@ function readSourceSelections(): Record<string, SourceSelection> {
   }
 }
 
+function readModelEfforts(): Record<string, string> {
+  try {
+    const stored: unknown = JSON.parse(readSetting(EFFORT_BY_MODEL_KEY) ?? '{}')
+    if (!isRecord(stored)) return {}
+    return Object.fromEntries(
+      Object.entries(stored).filter(
+        (entry): entry is [string, string] => typeof entry[1] === 'string',
+      ),
+    )
+  } catch {
+    return {}
+  }
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
@@ -6189,48 +8487,44 @@ function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((entry) => typeof entry === 'string')
 }
 
-function readModelVisibilityProgress(): ModelVisibilityProgress {
-  const rows = new Map<string, string>()
+/**
+ * The saved visibility record. A profile an older build saved as one hidden
+ * list is imported once: what the user hid stays hidden, and everything else
+ * returns to the current defaults, so an older generation the list still
+ * showed gives way to its successor.
+ */
+function readModelVisibility(): ModelVisibilityRecord {
+  const saved = parseModelVisibility(readSetting(MODEL_VISIBILITY_KEY))
+  if (saved) return saved
+  let legacyHidden: string[] = []
   try {
-    const stored: unknown = JSON.parse(readSetting(MODEL_VISIBILITY_ROWS_KEY) ?? 'null')
+    const stored: unknown = JSON.parse(readSetting(LEGACY_HIDDEN_MODELS_KEY) ?? '[]')
+    if (isStringArray(stored)) legacyHidden = stored
+  } catch {
+    // An unreadable list leaves every model on its default.
+  }
+  if (legacyHidden.length === 0) return EMPTY_MODEL_VISIBILITY
+  const rows: Record<string, string> = {}
+  try {
+    const stored: unknown = JSON.parse(readSetting(LEGACY_MODEL_VISIBILITY_ROWS_KEY) ?? 'null')
     if (isRecord(stored)) {
       for (const [key, version] of Object.entries(stored)) {
-        if (typeof version === 'string') rows.set(key, version)
+        if (typeof version === 'string') rows[key] = version
       }
     }
   } catch {
-    // An unreadable record only means those rows are migrated once more.
+    // Without the row record every row is where the list's version says.
   }
-  return { version: readSetting(MODEL_VISIBILITY_VERSION_KEY), rows }
-}
-
-/**
- * Record the `migrated` rows as moved onto the current visibility defaults.
- * Once every source has been listed, the whole profile is current and the
- * per-row record is no longer needed.
- */
-function recordModelVisibilityProgress(migrated: readonly string[], complete: boolean): void {
-  if (complete) {
-    if (readSetting(MODEL_VISIBILITY_VERSION_KEY) !== MODEL_VISIBILITY_VERSION) {
-      writeSetting(MODEL_VISIBILITY_VERSION_KEY, MODEL_VISIBILITY_VERSION)
-    }
-    removeSetting(MODEL_VISIBILITY_ROWS_KEY)
-    return
-  }
-  if (migrated.length === 0) return
-  const rows = new Map(readModelVisibilityProgress().rows)
-  for (const key of migrated) rows.set(key, MODEL_VISIBILITY_VERSION)
-  writeSetting(MODEL_VISIBILITY_ROWS_KEY, JSON.stringify(Object.fromEntries(rows)))
-}
-
-/** `null` until a full catalog has been recorded; an unreadable record is rebuilt then. */
-function readListedModels(): Set<string> | null {
-  try {
-    const stored: unknown = JSON.parse(readSetting(LISTED_MODELS_KEY) ?? 'null')
-    return isStringArray(stored) ? new Set(stored) : null
-  } catch {
-    return null
-  }
+  legacyHidden = legacyHiddenChoices(
+    legacyHidden,
+    readSetting(LEGACY_MODEL_VISIBILITY_VERSION_KEY),
+    rows,
+  )
+  if (legacyHidden.length === 0) return EMPTY_MODEL_VISIBILITY
+  // Only on the first launch after the upgrade: the sources the cached
+  // catalog lists are imported now, the others once they are listed.
+  const launchCatalog = parseModelCatalogCache(readSetting(MODEL_CATALOG_KEY))?.models ?? []
+  return importLegacyModelVisibility(legacyHidden, launchCatalog, Date.now())
 }
 
 function isProviderId(value: unknown): value is ProviderId {
@@ -6254,16 +8548,31 @@ function readStoredModelChoice(customModels: CustomModel[] = []): ModelChoice | 
   if (storedKey.startsWith('custom:')) {
     const custom = customModels.find((entry) => customModelKey(entry) === storedKey)
     if (!custom) return undefined
-    return customModelChoice(custom)
+    return customModelChoice(
+      custom,
+      providerDisplayName(custom.provider),
+      providerMark(custom.provider),
+    )
   }
-  const storedAgentId = readSetting(AGENT_KEY) ?? undefined
+  const storedAgentId = provider !== 'api' ? (readSetting(AGENT_KEY) ?? undefined) : undefined
   const agentId =
-    storedAgentId && storedKey.startsWith(`${provider}:${storedAgentId}:`)
+    provider === 'acp' || provider === 'pi'
       ? storedAgentId
-      : undefined
+      : storedAgentId && storedKey.startsWith(`${provider}:${storedAgentId}:`)
+        ? storedAgentId
+        : undefined
+  if ((provider === 'acp' || provider === 'pi') && !agentId) return undefined
   const agentName = agentId ? (readSetting(AGENT_NAME_KEY) ?? agentId) : undefined
-  const expectedSource = sourceKey({ provider, agentId })
+  const separator = storedKey.lastIndexOf(':')
+  const storedSource = separator > 0 ? storedKey.slice(0, separator) : undefined
+  const connectionId =
+    provider === 'api' && storedSource?.startsWith('api:')
+      ? storedSource.slice('api:'.length)
+      : undefined
+  if (provider === 'api' && !connectionId) return undefined
+  const expectedSource = sourceKey({ provider, connectionId, agentId })
   const canonical = storedKey.startsWith(`${expectedSource}:`)
+  if (provider === 'api' && !canonical) return undefined
 
   let modelId: string
   if (canonical) {
@@ -6286,8 +8595,9 @@ function readStoredModelChoice(customModels: CustomModel[] = []): ModelChoice | 
   return {
     key,
     provider,
-    sourceName: providerName(provider, agentName),
-    mark: providerMark(provider),
+    sourceName: provider === 'api' ? 'API connection' : providerName(provider, agentName),
+    mark: provider === 'acp' && agentId ? agentMark(agentId) : providerMark(provider),
+    ...(connectionId ? { connectionId } : {}),
     ...(agent ? { agent } : {}),
     model: {
       id: modelId,
@@ -6388,6 +8698,14 @@ function writeSetting(key: string, value: string): void {
   }
 }
 
+/** What each provider's last voice.status said, so the composer can show it before the next read answers. */
+const VOICE_AVAILABLE_KEY = 'harness.voiceAvailable'
+
+function rememberedVoice(provider: ProviderId): boolean | undefined {
+  const value = readSetting(`${VOICE_AVAILABLE_KEY}:${provider}`)
+  return value === 'true' ? true : value === 'false' ? false : undefined
+}
+
 /** With site data blocked, merely touching localStorage throws SecurityError —
  *  and most reads run inside useState initializers on first render. */
 function readSetting(key: string): string | null {
@@ -6404,4 +8722,23 @@ function removeSetting(key: string): void {
   } catch {
     // Nothing to lose.
   }
+}
+
+/**
+ * Save the catalog snapshot with each validated source's age. A catalog the
+ * reader would reject drops the key instead: an outgrown snapshot is never
+ * read again, and keeping the last one that fit would paint models a source
+ * no longer lists.
+ */
+function writeModelCatalogCache(
+  models: ModelChoice[],
+  validatedSources: ReadonlyMap<string, number>,
+): void {
+  const raw = serializeModelCatalogCache(models, {
+    validatedSources: validatedSources.keys(),
+    // A later completion must not refresh an earlier source's age.
+    validatedAt: Math.min(...validatedSources.values()),
+  })
+  if (raw === undefined) removeSetting(MODEL_CATALOG_KEY)
+  else writeSetting(MODEL_CATALOG_KEY, raw)
 }

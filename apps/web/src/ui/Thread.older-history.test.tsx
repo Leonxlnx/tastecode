@@ -6,6 +6,7 @@ import type { Item } from '@harness/contracts'
 import { ThreadFrameStore } from '../thread-frame-store.js'
 import { emptyThread, type ThreadState } from '../thread-store.js'
 import { mockKeyboardModifierState } from '../test-keyboard.js'
+import { TURN_TOP_GAP } from './scroll-mode.js'
 import { Thread } from './Thread.js'
 
 const ROW = 100
@@ -135,11 +136,23 @@ describe('Thread older history', () => {
   })
 
   it('keeps a streaming turn anchored and a pending jump on its row as older rows arrive', () => {
-    // The runway leaves a viewport below the last row, so a short turn can
-    // sit at the top of the view.
-    vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockImplementation(
-      () => layout.count * ROW + VIEWPORT,
-    )
+    // The browser's heights: the column holds the rows, and the scroll also
+    // reaches through the room left below a pinned turn.
+    const room = (element: Element) =>
+      Number.parseFloat(
+        element.querySelector<HTMLElement>('.thread__turn-room')?.style.height ?? '',
+      ) || 0
+    vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      return layout.count * ROW + room(this)
+    })
+    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: Element,
+    ) {
+      const height = this.classList.contains('thread__col') ? layout.count * ROW : 0
+      return { top: 0, height, bottom: height, left: 0, right: 0, width: 0, x: 0, y: 0 } as DOMRect
+    })
     const prompt: Item = {
       id: 'prompt-15',
       turnId: 'turn-15',
@@ -167,16 +180,16 @@ describe('Thread older history', () => {
     )
     const scroller = view.container.querySelector('.thread')!
 
-    // Starting a turn at the bottom pins its prompt (row 10) to the top.
+    // Starting a turn at the bottom pins its prompt (row 10) near the top.
     act(() => store.publish(streaming(turns(5, 15), 'cursor')))
-    expect(scroller.scrollTop).toBe(10 * ROW)
+    expect(scroller.scrollTop).toBe(10 * ROW - TURN_TOP_GAP)
 
     layout.scrollState = { index: 12 }
     act(() => store.publish(streaming(turns(0, 15))))
 
-    // The prompt is row 15 now. Following the old index would measure the
-    // turn from row 10, find it taller than the viewport and let go of it.
-    expect(scroller.scrollTop).toBe(15 * ROW)
+    // The prompt is row 15 now. Following the old index would pin row 10,
+    // which the content already passed, and let go of the turn.
+    expect(scroller.scrollTop).toBe(15 * ROW - TURN_TOP_GAP)
     expect(layout.scrollState.index).toBe(17)
   })
 

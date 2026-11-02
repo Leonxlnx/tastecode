@@ -12,6 +12,10 @@
       "types": "./dist/desktop-path.d.ts",
       "default": "./dist/desktop-path.js"
     },
+    "./account-home": {
+      "types": "./dist/account-home.d.ts",
+      "default": "./dist/account-home.js"
+    },
     "./cli": {
       "types": "./dist/cli.d.ts",
       "default": "./dist/cli.js"
@@ -23,6 +27,14 @@
     "./updates": {
       "types": "./dist/updates.d.ts",
       "default": "./dist/updates.js"
+    },
+    "./usage-archive": {
+      "types": "./dist/usage-archive.d.ts",
+      "default": "./dist/usage-archive.js"
+    },
+    "./usage-log": {
+      "types": "./dist/usage-log.d.ts",
+      "default": "./dist/usage-log.js"
     },
     "./symlink.test-support": {
       "types": "./dist/symlink.test-support.d.ts",

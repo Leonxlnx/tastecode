@@ -258,8 +258,8 @@ describe('workspace panel layout', () => {
       expect(rule(selector)).toContain('flex: none')
       expect(rule(selector)).toContain('white-space: nowrap')
     }
-    expect(narrow).toMatch(/\.workspace-review__generate-label \{[^}]*display: none;/)
-    expect(css).not.toMatch(/@media \(max-width: \d+px\) \{\s*\.workspace-review__generate-label/)
+    expect(narrow).toMatch(/\.workspace-review__action-label \{[^}]*display: none;/)
+    expect(css).not.toMatch(/@media \(max-width: \d+px\) \{\s*\.workspace-review__action-label/)
   })
 
   it('wraps the browser address onto its own row instead of cutting off the preview sizes', () => {
@@ -275,21 +275,21 @@ describe('workspace panel layout', () => {
     expect(css).not.toMatch(/\.workspace-browser__viewports \{[^}]*display: none;/)
   })
 
-  it('gives Temporary chat the main chat narrow gutters in a narrow panel', () => {
+  it('sizes Temporary chat as its own chat pane, with a narrower gutter in a narrow panel', () => {
     const narrow = containerBlocks(css, 'workspace-panel (max-width: 480px)')
 
-    expect(appCss).toMatch(
-      /@container chat-stage \(max-width: 480px\) \{[\s\S]*?\.thread__col \{[^}]*padding-inline: 14px;/,
+    // The shared column formula reads 100cqi; the side chat is that container,
+    // so its column lines up with its own prompt text, not the panel's.
+    expect(ruleBody('.workspace-side-chat')).toContain('container: side-chat / inline-size;')
+    expect(css).not.toMatch(/\.thread__col|\.thread-skeleton__col/)
+    expect(narrow).toMatch(/\.workspace-side-chat \{[^}]*--chat-gutter: 14px;/)
+    expect(narrow).not.toMatch(/padding-inline|calc\(100% - \d+px\)/)
+    expect(ruleBody('.workspace-side-chat__composer')).toContain(
+      'width: calc(100% - 2 * var(--chat-gutter));',
     )
-    expect(narrow).toMatch(
-      /\.workspace-side-chat__conversation \.thread__col,\s*\.workspace-side-chat__skeleton \.thread-skeleton__col \{[^}]*padding-inline: 14px;/,
+    expect(ruleBody('.workspace-side-chat__composer textarea')).toContain(
+      'padding: 16px 48px 12px calc(var(--chat-text-inset) - 1px);',
     )
-    expect(narrow).toMatch(/\.workspace-side-chat__composer \{[^}]*width: calc\(100% - 28px\);/)
-    // Wider, the gutter matches the composer's inset by panel width alone, not by window width.
-    expect(css).toMatch(
-      /\n\.workspace-side-chat__conversation \.thread__col,\s*\.workspace-side-chat__skeleton \.thread-skeleton__col \{[^}]*padding-inline: 24px;/,
-    )
-    expect(css).toMatch(/\n\.workspace-side-chat__composer \{[^}]*width: calc\(100% - 48px\);/)
     expect(css).not.toMatch(/\d+vw/)
   })
 

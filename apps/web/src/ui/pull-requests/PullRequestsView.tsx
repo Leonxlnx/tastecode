@@ -3,6 +3,7 @@ import type {
   PullRequestDetail,
   PullRequestListItem,
   PullRequestListResult,
+  PullRequestTarget,
 } from '@harness/contracts'
 import {
   IconChevronLeft as ChevronLeft,
@@ -77,6 +78,8 @@ const LIST_REVALIDATE_AFTER_MS = 30_000
 
 export function PullRequestsView(props: {
   transport: Transport
+  /** Open with this pull request selected, read on its own when the list lacks it. */
+  initialSelection?: PullRequestTarget | undefined
   onOpenChat: (pullRequest: PullRequestListItem) => void
   onSetupTerminalOpen: (target: ProviderLoginTerminalTarget) => void
   setupRefreshRevision?: number | undefined
@@ -88,13 +91,19 @@ export function PullRequestsView(props: {
   const [filter, setFilter] = useState<PullRequestFilter>('all')
   const [filters, setFilters] = useState<PullRequestFilters>(DEFAULT_PULL_REQUEST_FILTERS)
   const [query, setQuery] = useState('')
-  const [selectedKey, setSelectedKey] = useState<string>()
+  const [selectedKey, setSelectedKey] = useState(() =>
+    props.initialSelection ? pullRequestKey(props.initialSelection) : undefined,
+  )
   // An action can move the open pull request out of the view (merging it under
   // Open). It stays listed and open, with its result, until the view changes.
-  const [pinnedKey, setPinnedKey] = useState<string>()
+  const [pinnedKey, setPinnedKey] = useState(() =>
+    props.initialSelection ? pullRequestKey(props.initialSelection) : undefined,
+  )
   const [setupStarting, setSetupStarting] = useState(false)
   const [setupError, setSetupError] = useState<string>()
   const request = useRef(0)
+  // The requested pull request when the viewer's own lists do not include it.
+  const focusItem = useRef<PullRequestListItem>(undefined)
 
   const load = useCallback(
     async (refresh = false): Promise<PullRequestListResult | undefined> => {
@@ -103,8 +112,9 @@ export function PullRequestsView(props: {
       else setLoading(true)
       setError(undefined)
       try {
-        const next = await props.transport.request('pullRequests.list', { refresh })
+        const listed = await props.transport.request('pullRequests.list', { refresh })
         if (id !== request.current) return
+        const next = { ...listed, items: withItem(listed.items, focusItem.current) }
         setResult(next)
         setSelectedKey((current) =>
           current && next.items.some((item) => pullRequestKey(item) === current)
@@ -144,6 +154,50 @@ export function PullRequestsView(props: {
     setupRevision.current = revision
     void load(true)
   }, [load, props.setupRefreshRevision])
+
+  // Select the requested pull request once the list is in. Pinning keeps it in
+  // view under any filter until the person changes the view themselves.
+  const focusedKey = useRef<string>(undefined)
+  const listFailed = !result && !loading && error !== undefined
+  useEffect(() => {
+    const target = props.initialSelection
+    if (!target || !(result?.account.authenticated || listFailed)) return
+    const key = pullRequestKey(target)
+    if (focusedKey.current === key) return
+    focusedKey.current = key
+    const show = () => {
+      setPinnedKey(key)
+      setSelectedKey(key)
+    }
+    if (result?.items.some((item) => pullRequestKey(item) === key)) {
+      show()
+      return
+    }
+    // Not one the viewer authored or reviews, or the list itself failed: read
+    // it on its own and list it. A failed list then shows as a note above it.
+    void props.transport
+      .request('pullRequests.detail', { repository: target.repository, number: target.number })
+      .then(
+        (detail) => {
+          if (focusedKey.current !== key) return
+          const item = listItemFromDetail(detail, detail.relationship)
+          focusItem.current = item
+          setResult((current) =>
+            current
+              ? { ...current, items: withItem(current.items, item) }
+              : {
+                  // gh just answered for this pull request, so it is signed in.
+                  account: { available: true, authenticated: true },
+                  items: [item],
+                  fetchedAt: Date.now(),
+                  truncated: false,
+                },
+          )
+          show()
+        },
+        () => {},
+      )
+  }, [listFailed, props.initialSelection, props.transport, result])
 
   const normalizedQuery = query.trim().toLowerCase()
   const relationshipItems = useMemo(
@@ -678,8 +732,19 @@ function listItemFromDetail(
   }
 }
 
-function pullRequestKey(item: PullRequestListItem): string {
+function pullRequestKey(item: PullRequestTarget): string {
   return `${item.repository.toLowerCase()}#${item.number}`
+}
+
+/** Adds one pull request to a list that lacks it, newest first like the list. */
+function withItem(
+  items: PullRequestListItem[],
+  item: PullRequestListItem | undefined,
+): PullRequestListItem[] {
+  if (!item || items.some((entry) => pullRequestKey(entry) === pullRequestKey(item))) return items
+  return [...items, item].sort(
+    (left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt),
+  )
 }
 
 function listStatus(item: PullRequestListItem): string {

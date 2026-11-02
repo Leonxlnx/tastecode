@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import type {
@@ -11,9 +11,10 @@ import type {
   SDKMessage,
   SDKPartialAssistantMessage,
   SDKUserMessage,
+  SlashCommand,
 } from '@anthropic-ai/claude-agent-sdk'
 import type { DomainEvent, Item } from '@harness/contracts'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   ClaudeCodeAdapter,
   CLAUDE_CAPABILITIES,
@@ -22,6 +23,7 @@ import {
 } from './adapter.js'
 import type { ClaudeQueryFactory, ClaudeQueryRuntime } from './sdk-runtime.js'
 import { createClaudeMcpBootstrap } from './mcp-bootstrap.js'
+import { claudeProjectFolder } from './session-copy.js'
 import { Store } from '../../../apps/server/src/store.js'
 import { reduce, emptyThread } from '../../../apps/web/src/thread-store.js'
 import { projectThreadItems } from '../../../apps/web/src/ui/turns.js'
@@ -84,13 +86,24 @@ class FakeQuery implements ClaudeQueryRuntime {
     return this.models
   }
 
+  /** Replaces the status list derived from `mcpServers`, as Claude reports inherited servers. */
+  mcpStatus: McpServerStatus[] | undefined
+  mcpStatusCalls = 0
+  commands: SlashCommand[] = []
+
   async mcpServerStatus(): Promise<McpServerStatus[]> {
+    this.mcpStatusCalls += 1
+    if (this.mcpStatus) return this.mcpStatus
     return Object.entries(this.mcpServers).map(([name, config]) => ({
       name,
       status: 'connected',
       config,
       tools: [],
     }))
+  }
+
+  async supportedCommands(): Promise<SlashCommand[]> {
+    return this.commands
   }
 
   async setMcpServers(servers: Record<string, McpServerConfig>) {
@@ -329,9 +342,65 @@ describe('Claude Agent SDK session', () => {
         return query
       },
     })
-    await expect(adapter.startThread('/repo')).rejects.toThrow('startup timed out')
+    await expect(adapter.startThread('/repo')).rejects.toThrow(
+      'Claude Code did not start within 1 second. It may be updating, or the computer is busy.',
+    )
     expect(fake.queries[0]!.closed).toBe(true)
     await adapter.dispose()
+  })
+
+  it('does not blame project MCP servers when Claude Code itself has not answered', async () => {
+    const fake = harness()
+    const adapter = new ClaudeCodeAdapter({
+      startupTimeoutMs: 20,
+      createQuery: (input) => {
+        const query = fake.createQuery(input) as FakeQuery
+        vi.spyOn(query, 'initializationResult').mockImplementation(() => new Promise(() => {}))
+        return query
+      },
+    })
+    try {
+      await expect(
+        adapter.startThread('/repo', {
+          mcpServers: [
+            {
+              id: 'remote',
+              enabled: true,
+              transport: { type: 'http', url: 'https://example.test/mcp' },
+            },
+          ],
+        }),
+      ).rejects.toThrow('Claude Code did not start within 1 second.')
+    } finally {
+      await adapter.dispose()
+    }
+  })
+
+  it('gives a slow Claude Code a minute to start', async () => {
+    vi.useFakeTimers()
+    const fake = harness()
+    const adapter = new ClaudeCodeAdapter({
+      createQuery: (input) => {
+        const query = fake.createQuery(input) as FakeQuery
+        vi.spyOn(query, 'initializationResult').mockImplementation(() => new Promise(() => {}))
+        return query
+      },
+    })
+    try {
+      let settled = false
+      const starting = adapter.startThread('/repo').finally(() => {
+        settled = true
+      })
+      const failed = expect(starting).rejects.toThrow('Claude Code did not start within a minute.')
+      // Measured starts took up to 44 s on a busy machine; 15 s failed them.
+      await vi.advanceTimersByTimeAsync(59_999)
+      expect(settled).toBe(false)
+      await vi.advanceTimersByTimeAsync(1)
+      await failed
+    } finally {
+      vi.useRealTimers()
+      await adapter.dispose()
+    }
   })
 
   it('cancels a pending open immediately when disposed', async () => {
@@ -376,7 +445,9 @@ describe('Claude Agent SDK session', () => {
               },
             ],
           }),
-        ).rejects.toThrow('startup timed out')
+        ).rejects.toThrow(
+          'Claude Code started, but the project MCP servers did not connect within 1 second.',
+        )
         expect(fake.queries[0]!.closed).toBe(true)
         expect(
           (await vi.mocked(createClaudeMcpBootstrap).mock.results.at(-1)!.value).close,
@@ -731,6 +802,87 @@ describe('Claude Agent SDK session', () => {
     } finally {
       await adapter.dispose()
     }
+  })
+
+  describe('a session carried on from a saved one', () => {
+    const SAVED = '44444444-4444-4444-8444-444444444444'
+    const savedIn = () => {
+      const folder = mkdtempSync(path.join(tmpdir(), 'harness-claude-saved-'))
+      mkdirSync(path.join(folder, 'projects', '-elsewhere'), { recursive: true })
+      writeFileSync(
+        path.join(folder, 'projects', '-elsewhere', `${SAVED}.jsonl`),
+        `${JSON.stringify({ type: 'user', uuid: 'u1', sessionId: SAVED, message: { role: 'user', content: 'PLUM-42' } })}\n`,
+      )
+      return folder
+    }
+
+    it("resumes a copy of another account's session in its own folder", async () => {
+      const from = savedIn()
+      const accountHome = mkdtempSync(path.join(tmpdir(), 'harness-claude-account-'))
+      const fake = harness()
+      const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery, accountHome })
+      try {
+        const thread = await adapter.forkThread(
+          '/repo',
+          { threadId: `claude-${SAVED}`, accountHome: from },
+          { model: 'opus' },
+        )
+
+        const sessionId = thread.id.slice('claude-'.length)
+        expect(sessionId).not.toBe(SAVED)
+        expect(fake.inputs.map(({ options }) => [options.resume, options.sessionId])).toEqual([
+          [sessionId, undefined],
+        ])
+        expect(fake.inputs[0]!.options.model).toBe('opus')
+        const copy = path.join(
+          accountHome,
+          'projects',
+          claudeProjectFolder('/repo')!,
+          `${sessionId}.jsonl`,
+        )
+        expect(JSON.parse(readFileSync(copy, 'utf8'))).toMatchObject({ uuid: 'u1', sessionId })
+      } finally {
+        await adapter.dispose()
+      }
+    })
+
+    it('fails, rather than start empty, when the copy cannot be resumed, and removes it', async () => {
+      const from = savedIn()
+      const accountHome = mkdtempSync(path.join(tmpdir(), 'harness-claude-account-'))
+      const fake = harness()
+      const adapter = new ClaudeCodeAdapter({
+        accountHome,
+        createQuery: (input) => {
+          const query = fake.createQuery(input) as FakeQuery
+          vi.spyOn(query, 'initializationResult').mockRejectedValue(
+            new Error(
+              `Claude Code returned an error result: No conversation found with session ID: ${input.options.resume}`,
+            ),
+          )
+          return query
+        },
+      })
+
+      await expect(
+        adapter.forkThread('/repo', { threadId: `claude-${SAVED}`, accountHome: from }),
+      ).rejects.toThrow('No conversation found')
+      expect(fake.inputs).toHaveLength(1)
+      expect(
+        readdirSync(path.join(accountHome, 'projects', claudeProjectFolder('/repo')!)),
+      ).toEqual([])
+    })
+
+    it('starts nothing when the other folder holds no transcript of the session', async () => {
+      const fake = harness()
+      const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
+      await expect(
+        adapter.forkThread('/repo', {
+          threadId: `claude-${SAVED}`,
+          accountHome: mkdtempSync(path.join(tmpdir(), 'harness-claude-empty-')),
+        }),
+      ).rejects.toThrow('Claude Code has no saved conversation to carry on.')
+      expect(fake.inputs).toEqual([])
+    })
   })
 
   it('does not reuse a turn identity when a new instance resumes the session', async () => {
@@ -1428,6 +1580,117 @@ describe('Claude Agent SDK session', () => {
     adapter.dispose()
   })
 
+  it.each(['answers the Stop', 'never answers the Stop'] as const)(
+    'ends a stopped turn whose run never reports, process and all, when Claude %s',
+    async (variant) => {
+      const fake = harness()
+      const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery, stopTimeoutMs: 20 })
+      const events: DomainEvent[] = []
+      const logs: string[] = []
+      adapter.on('event', (event) => events.push(event))
+      adapter.on('log', (line) => logs.push(line))
+      const disconnected = vi.fn(() => events.slice())
+      adapter.onDisconnected(disconnected)
+      try {
+        const thread = await adapter.startThread('/repo')
+        const query = fake.queries[0]!
+        const turnId = await adapter.sendTurn(thread.id, 'Load the skills')
+        query.emitMessage(bashCalls('message-bash', ['ls', 'cat SKILL.md', 'git status']))
+        await tick()
+        if (variant === 'never answers the Stop') {
+          vi.spyOn(query, 'interrupt').mockReturnValueOnce(new Promise(() => {}))
+        }
+
+        // Stop settles even when the control request is never answered.
+        await adapter.interrupt()
+        await vi.waitFor(() =>
+          expect(events.filter((event) => event.type === 'turn.completed')).toEqual([
+            { type: 'turn.completed', turnId, status: 'interrupted' },
+          ]),
+        )
+
+        // No command is left running: each ends with the turn.
+        const latest = new Map<string, Item>()
+        for (const event of events) {
+          if (event.type === 'item.completed') latest.set(event.item.id, event.item)
+        }
+        const commands = [...latest.values()].filter((item) => item.type === 'command')
+        expect(commands.map((item) => item.status)).toEqual(['failed', 'failed', 'failed'])
+        expect(events.filter((event) => event.type === 'thread.error')).toEqual([])
+        // The process is ended, and the owner hears of it only after the turn has ended.
+        expect(query.closed).toBe(true)
+        expect(disconnected).toHaveBeenCalledOnce()
+        expect(disconnected.mock.results[0]!.value).toEqual(events)
+        expect(logs).toContainEqual(expect.stringContaining('did not end the stopped turn'))
+
+        // A late result from the closed process reports nothing.
+        query.emitMessage({ ...(resultMessage(true) as object), errors: ['aborted'] } as SDKMessage)
+        await tick()
+        expect(events.filter((event) => event.type === 'turn.completed')).toHaveLength(1)
+      } finally {
+        await adapter.dispose()
+      }
+    },
+  )
+
+  it('lets a stopped run end on its own within the stop deadline', async () => {
+    const fake = harness()
+    const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery, stopTimeoutMs: 30 })
+    const events: DomainEvent[] = []
+    adapter.on('event', (event) => events.push(event))
+    const disconnected = vi.fn()
+    adapter.onDisconnected(disconnected)
+    try {
+      const thread = await adapter.startThread('/repo')
+      const query = fake.queries[0]!
+      await adapter.sendTurn(thread.id, 'Run tests')
+      await adapter.interrupt()
+      query.emitMessage({ ...(resultMessage(true) as object), errors: ['aborted'] } as SDKMessage)
+      await new Promise((resolve) => setTimeout(resolve, 60))
+
+      expect(events.filter((event) => event.type === 'turn.completed')).toMatchObject([
+        { status: 'interrupted' },
+      ])
+      expect(query.closed).toBe(false)
+      expect(disconnected).not.toHaveBeenCalled()
+      await expect(adapter.sendTurn(thread.id, 'Next')).resolves.toBeTypeOf('string')
+    } finally {
+      await adapter.dispose()
+    }
+  })
+
+  it('keeps the turn of a steer that outlives a Stop past the stop deadline', async () => {
+    const fake = harness()
+    const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery, stopTimeoutMs: 30 })
+    const events: DomainEvent[] = []
+    adapter.on('event', (event) => events.push(event))
+    try {
+      const thread = await adapter.startThread('/repo')
+      const query = fake.queries[0]!
+      const prompts = fake.inputs[0]!.prompt[Symbol.asyncIterator]()
+      const first = await adapter.sendTurn(thread.id, 'A')
+      await prompts.next()
+      await adapter.steer(thread.id, 'B')
+      const steer = (await prompts.next()).value!
+      query.stillQueued = [steer.uuid!]
+      await adapter.interrupt()
+      query.emitMessage({ ...(resultMessage(true) as object), errors: ['aborted'] } as SDKMessage)
+      // The steer still runs in the turn after the stopped run reported.
+      await new Promise((resolve) => setTimeout(resolve, 60))
+      expect(query.closed).toBe(false)
+      expect(events.filter((event) => event.type === 'turn.completed')).toEqual([])
+
+      query.emitMessage(assistantMessage('message-b', 'Answer to B'))
+      query.emitMessage(resultMessage(false))
+      await tick()
+      expect(events.filter((event) => event.type === 'turn.completed')).toEqual([
+        { type: 'turn.completed', turnId: first, status: 'completed' },
+      ])
+    } finally {
+      await adapter.dispose()
+    }
+  })
+
   it('keeps subagent messages out of the main transcript, plan and model label', async () => {
     const fake = harness()
     const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
@@ -1841,6 +2104,132 @@ describe('Claude Agent SDK session', () => {
     expect(models.some((model) => model.id === 'opus[1m]')).toBe(false)
     adapter.dispose()
   })
+
+  describe('when discovery does not answer', () => {
+    const aliases: ModelInfo[] = [
+      {
+        value: 'default',
+        resolvedModel: 'claude-opus-5-5',
+        displayName: 'Default (recommended)',
+        description: 'Opus 5.5',
+        supportsEffort: true,
+      },
+      {
+        value: 'claude-fable-5-1[1m]',
+        resolvedModel: 'claude-fable-5-1',
+        displayName: 'Fable',
+        description: 'Fable 5.1',
+        supportsEffort: true,
+      },
+      {
+        value: 'opus',
+        resolvedModel: 'claude-opus-5-5',
+        displayName: 'Opus',
+        description: 'Opus 5.5',
+        supportsEffort: true,
+      },
+    ]
+    let configDirs = 0
+    /** A config directory no other test has listed, so the process-wide memory starts empty. */
+    const freshEnvironment = () => ({ CLAUDE_CONFIG_DIR: `claude-config-${(configDirs += 1)}` })
+
+    function adapterFor(
+      environment: NodeJS.ProcessEnv,
+      answer: (query: FakeQuery) => Promise<ModelInfo[]>,
+    ) {
+      const logs: string[] = []
+      const createQuery: ClaudeQueryFactory = (input) => {
+        const query = new FakeQuery([], input.options.mcpServers)
+        query.supportedModels = () => answer(query)
+        return query
+      }
+      const adapter = new ClaudeCodeAdapter({ createQuery, environment })
+      adapter.on('log', (line) => logs.push(line))
+      return { adapter, logs }
+    }
+
+    it('keeps the last live ids instead of swapping in the catalog ids', async () => {
+      const environment = freshEnvironment()
+      const live = adapterFor(environment, async () => aliases)
+      const listed = (await live.adapter.listModels()).map((model) => model.id)
+      expect(listed.slice(0, 2)).toEqual(['claude-fable-5-1[1m]', 'opus'])
+      live.adapter.dispose()
+
+      const failing = adapterFor(environment, async () => {
+        throw new Error('Claude model discovery timed out')
+      })
+      expect((await failing.adapter.listModels()).map((model) => model.id)).toEqual(listed)
+      expect(failing.logs).toEqual([
+        'Claude model discovery kept the last live list: Error: Claude model discovery timed out',
+      ])
+      failing.adapter.dispose()
+
+      const empty = adapterFor(environment, async () => [])
+      expect((await empty.adapter.listModels()).map((model) => model.id)).toEqual(listed)
+      expect(empty.logs).toEqual([
+        'Claude model discovery kept the last live list: the runtime listed no models',
+      ])
+      empty.adapter.dispose()
+    })
+
+    it('keeps the last live ids through the 30 s discovery timeout', async () => {
+      const environment = freshEnvironment()
+      const live = adapterFor(environment, async () => aliases)
+      const listed = (await live.adapter.listModels()).map((model) => model.id)
+      live.adapter.dispose()
+
+      vi.useFakeTimers()
+      try {
+        const stalled = adapterFor(environment, () => new Promise<ModelInfo[]>(() => {}))
+        const pending = stalled.adapter.listModels()
+        await vi.advanceTimersByTimeAsync(30_000)
+        expect((await pending).map((model) => model.id)).toEqual(listed)
+        stalled.adapter.dispose()
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('falls back to the catalog only before any live answer for that config directory', async () => {
+      const listedElsewhere = adapterFor(freshEnvironment(), async () => aliases)
+      await listedElsewhere.adapter.listModels()
+      listedElsewhere.adapter.dispose()
+
+      const cold = adapterFor(freshEnvironment(), async () => {
+        throw new Error('Claude model discovery timed out')
+      })
+      expect(await cold.adapter.listModels()).toEqual(CLAUDE_MODELS)
+      expect(cold.logs).toEqual([
+        'Claude model discovery fell back to known values: Error: Claude model discovery timed out',
+      ])
+      cold.adapter.dispose()
+    })
+
+    it('rejects a refresh before any live answer instead of answering with the catalog', async () => {
+      const environment = freshEnvironment()
+      const cold = adapterFor(environment, async () => {
+        throw new Error('Claude model discovery timed out')
+      })
+      // The caller's list may hold this account's alias ids from an earlier launch.
+      await expect(cold.adapter.listModels({ refresh: true })).rejects.toThrow(
+        'Claude model discovery did not answer: Error: Claude model discovery timed out',
+      )
+      cold.adapter.dispose()
+      const empty = adapterFor(environment, async () => [])
+      await expect(empty.adapter.listModels({ refresh: true })).rejects.toThrow(
+        /^Claude model discovery did not answer: the runtime listed no models$/,
+      )
+      empty.adapter.dispose()
+
+      const live = adapterFor(environment, async () => aliases)
+      const listed = await live.adapter.listModels({ refresh: true })
+      live.adapter.dispose()
+      const stalled = adapterFor(environment, async () => [])
+      // Once this process has a live answer, a refresh keeps it.
+      await expect(stalled.adapter.listModels({ refresh: true })).resolves.toEqual(listed)
+      stalled.adapter.dispose()
+    })
+  })
 })
 
 describe('Claude static model catalog', () => {
@@ -2141,6 +2530,46 @@ describe('Claude task plan', () => {
     })
   })
 
+  it("reads a resumed session's tasks from the folder of the account it runs as", async () => {
+    const sessionId = '33333333-3333-4333-8333-333333333333'
+    await withClaudeConfig(async () => {
+      const accountHome = mkdtempSync(path.join(tmpdir(), 'harness-claude-account-'))
+      const project = path.join(accountHome, 'projects', '-repo')
+      mkdirSync(project, { recursive: true })
+      writeFileSync(
+        path.join(project, `${sessionId}.jsonl`),
+        sessionFileTaskCreate('toolu_a', '1', 'Write the note').join('\n') + '\n',
+      )
+      const fake = harness()
+      const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery, accountHome })
+      const events: DomainEvent[] = []
+      adapter.on('event', (event) => events.push(event))
+      try {
+        const thread = await adapter.resumeThread(`claude-${sessionId}`, '/repo')
+        const turnId = await adapter.sendTurn(thread.id, 'Finish the task')
+        const query = fake.queries.at(-1)!
+        query.emitMessage(
+          taskToolUse('toolu_done', 'TaskUpdate', { taskId: '1', status: 'completed' }),
+        )
+        query.emitMessage(
+          taskToolResult('toolu_done', 'Updated task #1 status', {
+            success: true,
+            taskId: '1',
+            updatedFields: ['status'],
+            statusChange: { from: 'pending', to: 'completed' },
+          }),
+        )
+        await tick()
+        expect(events.filter((event) => event.type === 'plan.updated')).toEqual([
+          { type: 'plan.updated', turnId, steps: [{ text: 'Write the note', status: 'done' }] },
+        ])
+      } finally {
+        await adapter.dispose()
+        rmSync(accountHome, { recursive: true, force: true })
+      }
+    })
+  })
+
   it('keeps an empty plan when a resumed session has no transcript', async () => {
     const sessionId = '22222222-2222-4222-8222-222222222222'
     await withClaudeConfig(async () => {
@@ -2245,6 +2674,169 @@ describe('Claude SDK user messages', () => {
   })
 })
 
+/** Sanitized from a no-prompt capture of claude 2.1.296; see the fixture's note. */
+const inventory = JSON.parse(
+  readFileSync(new URL('./fixtures/inventory-claude-2.1.296.json', import.meta.url), 'utf8'),
+) as {
+  initializationResult: { commands: SlashCommand[] }
+  systemInit: { skills: string[]; terminal_slash_commands: string[] }
+  mcpServerStatus: { atInit: McpServerStatus[]; settled: McpServerStatus[] }
+}
+
+describe('live Claude inventory', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  async function liveSession() {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+    const fake = harness()
+    const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
+    const mcpChanged = vi.fn()
+    const commandsChanged = vi.fn()
+    adapter.on('mcpChanged', mcpChanged)
+    adapter.on('commandsChanged', commandsChanged)
+    const thread = await adapter.startThread('/repo')
+    const query = fake.queries[0]!
+    query.mcpStatus = inventory.mcpServerStatus.atInit
+    query.commands = inventory.initializationResult.commands
+    return { adapter, thread, query, mcpChanged, commandsChanged }
+  }
+
+  it('lists the MCP servers and announces once when they finish starting', async () => {
+    const { adapter, thread, query, mcpChanged } = await liveSession()
+    const servers = await adapter.listMcpServers(thread.id)
+    expect(servers.map((server) => [server.id, server.startup?.state])).toEqual([
+      ['plugin:acme-docs:acme-docs', 'starting'],
+      ['issue-tracker', 'stopped'],
+      ['project-notes', 'ready'],
+      ['claude.ai Claude Docs', 'starting'],
+      ['claude.ai Gmail', 'stopped'],
+    ])
+    expect(adapter.isMcpLoading()).toBe(true)
+
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(mcpChanged).not.toHaveBeenCalled()
+    query.mcpStatus = inventory.mcpServerStatus.settled
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(mcpChanged).toHaveBeenCalledOnce()
+    expect(adapter.isMcpLoading()).toBe(false)
+    const calls = query.mcpStatusCalls
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(query.mcpStatusCalls).toBe(calls)
+    expect((await adapter.listMcpServers(thread.id))[0]).toMatchObject({
+      displayName: 'acme-docs',
+      startup: { state: 'ready' },
+      tools: [{ name: 'search_docs' }, { name: 'write_page' }, { name: 'fetch_asset' }],
+    })
+    expect(adapter.isMcpLoading()).toBe(false)
+    await adapter.dispose()
+  })
+
+  it('stops waiting for a server that never starts after 30 seconds', async () => {
+    const { adapter, query, mcpChanged } = await liveSession()
+    await vi.advanceTimersByTimeAsync(29_000)
+    expect(mcpChanged).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(2_000)
+    expect(mcpChanged).toHaveBeenCalledOnce()
+    const calls = query.mcpStatusCalls
+    expect(calls).toBeLessThanOrEqual(31)
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(query.mcpStatusCalls).toBe(calls)
+    await adapter.dispose()
+  })
+
+  it('stops polling when the session closes', async () => {
+    const { adapter, query, mcpChanged } = await liveSession()
+    await adapter.dispose()
+    await vi.advanceTimersByTimeAsync(5_000)
+    expect(query.mcpStatusCalls).toBe(0)
+    expect(mcpChanged).not.toHaveBeenCalled()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('lists commands, learns skills from system/init and follows command changes', async () => {
+    const { adapter, thread, query, commandsChanged } = await liveSession()
+    const before = await adapter.listCommands(thread.id)
+    expect(before.map((command) => command.name)).toContain('code-review')
+    expect(before.map((command) => command.name)).not.toContain('model')
+    expect(before.map((command) => command.name)).not.toContain('doctor')
+    expect(before.some((command) => command.kind)).toBe(false)
+
+    await adapter.sendTurn(thread.id, '/context')
+    const init = { ...initMessage([]), ...inventory.systemInit } as SDKMessage
+    query.emitMessage(init)
+    await tick()
+    expect(commandsChanged).toHaveBeenCalledOnce()
+    const after = new Map(
+      (await adapter.listCommands(thread.id)).map((command) => [command.name, command]),
+    )
+    expect(after.get('code-review')?.kind).toBe('skill')
+    expect(after.get('pdf')?.kind).toBe('skill')
+    expect(after.get('context')?.kind).toBeUndefined()
+
+    // Every run repeats system/init; an unchanged one is not news.
+    query.emitMessage({ ...init, uuid: crypto.randomUUID() } as SDKMessage)
+    for (let index = 0; index < 20; index += 1)
+      query.emitMessage(
+        streamEvent(`delta-${index}`, {
+          type: 'content_block_delta',
+          index: 0,
+          delta: { type: 'text_delta', text: 'x' },
+        }),
+      )
+    await tick()
+    expect(commandsChanged).toHaveBeenCalledOnce()
+
+    query.commands = [
+      ...inventory.initializationResult.commands,
+      { name: 'ship-it', description: 'Release the current branch', argumentHint: '' },
+    ]
+    query.emitMessage({
+      type: 'system',
+      subtype: 'commands_changed',
+      commands: query.commands,
+      uuid: crypto.randomUUID(),
+      session_id: 'session-1',
+    } as SDKMessage)
+    await tick()
+    expect(commandsChanged).toHaveBeenCalledTimes(2)
+    expect((await adapter.listCommands(thread.id)).map((command) => command.name)).toContain(
+      'ship-it',
+    )
+    await adapter.dispose()
+  })
+
+  it('reads nothing per streamed delta', async () => {
+    const { adapter, thread, query, mcpChanged } = await liveSession()
+    query.mcpStatus = inventory.mcpServerStatus.settled
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(mcpChanged).toHaveBeenCalledOnce()
+    const calls = query.mcpStatusCalls
+    await adapter.sendTurn(thread.id, 'Work')
+    for (let index = 0; index < 50; index += 1)
+      query.emitMessage(
+        streamEvent(`delta-${index}`, {
+          type: 'content_block_delta',
+          index: 0,
+          delta: { type: 'text_delta', text: 'x' },
+        }),
+      )
+    await tick()
+    expect(query.mcpStatusCalls).toBe(calls)
+    await adapter.dispose()
+  })
+
+  it('refuses another thread and reports a closed session', async () => {
+    const { adapter, thread } = await liveSession()
+    await expect(adapter.listMcpServers('claude-other')).rejects.toThrow('unknown Claude thread')
+    await expect(adapter.listCommands('claude-other')).rejects.toThrow('unknown Claude thread')
+    await adapter.dispose()
+    await expect(adapter.listMcpServers(thread.id)).rejects.toThrow()
+    await expect(adapter.listCommands()).rejects.toThrow('not running')
+  })
+})
+
 function streamEvent(
   uuid: string,
   event: SDKPartialAssistantMessage['event'],
@@ -2271,6 +2863,29 @@ function assistantMessage(id: string, text: string): SDKMessage {
       model: 'claude-opus-5',
       type: 'message',
       content: [{ type: 'text', text }],
+    },
+  } as unknown as SDKMessage
+}
+
+/** One assistant message that starts parallel Bash calls, as Claude sends them. */
+function bashCalls(id: string, commands: string[]): SDKMessage {
+  // SAFETY: The adapter reads only the envelope, message id, model and content of this fixture.
+  return {
+    type: 'assistant',
+    parent_tool_use_id: null,
+    uuid: crypto.randomUUID(),
+    session_id: 'session-1',
+    message: {
+      id,
+      role: 'assistant',
+      model: 'claude-opus-5',
+      type: 'message',
+      content: commands.map((command, index) => ({
+        type: 'tool_use',
+        id: `${id}-bash-${index}`,
+        name: 'Bash',
+        input: { command },
+      })),
     },
   } as unknown as SDKMessage
 }
@@ -2332,3 +2947,52 @@ function messageTexts(events: DomainEvent[]) {
       : [],
   )
 }
+
+describe('Claude plan-limit events', () => {
+  // Captured from claude 2.1.296 during a turn on 2026-10-16 (ids replaced).
+  const rateLimitEvent = (rateLimitInfo: Record<string, unknown>) =>
+    ({
+      type: 'rate_limit_event',
+      rate_limit_info: rateLimitInfo,
+      uuid: crypto.randomUUID(),
+      session_id: 'session-1',
+    }) as unknown as SDKMessage
+
+  it('reports the windows of a rate_limit_event and asks for no new read', async () => {
+    const fake = harness()
+    const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
+    const updated = vi.fn()
+    const logs: string[] = []
+    adapter.on('limitsUpdated', updated)
+    adapter.on('log', (line) => logs.push(line))
+    const thread = await adapter.startThread('/repo')
+    await adapter.sendTurn(thread.id, 'Work')
+
+    fake.queries[0]!.emitMessage(
+      rateLimitEvent({
+        status: 'allowed',
+        resetsAt: 1_792_119_600,
+        rateLimitType: 'five_hour',
+        overageStatus: 'rejected',
+        overageDisabledReason: 'org_level_disabled',
+        isUsingOverage: false,
+        unifiedWindows: { five_hour: { utilization: 0.76, resetsAt: 1_792_119_600 } },
+      }),
+    )
+    // An event without a window this mapping knows changes nothing.
+    fake.queries[0]!.emitMessage(rateLimitEvent({ status: 'allowed', rateLimitType: 'overage' }))
+    await tick()
+
+    expect(updated).toHaveBeenCalledExactlyOnceWith([
+      {
+        id: 'five_hour',
+        label: 'Session',
+        usedPercent: 76,
+        resetsAt: 1_792_119_600_000,
+        windowMinutes: 300,
+      },
+    ])
+    expect(logs.filter((line) => line.startsWith('rate limit'))).toEqual([])
+    await adapter.dispose()
+  })
+})

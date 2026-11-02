@@ -16,15 +16,62 @@ describe('code block controls layout', () => {
       /<CodeBlockHeader[^>]*\/>[\s\S]*?<div>\s*<div data-streamdown="code-block-actions">/,
     )
     expect(markdownCss).toMatch(
-      /\.md \[data-streamdown='code-block'\] > div:has\(> \[data-streamdown='code-block-actions'\]\) \{[^}]*position: absolute;[^}]*top: 3px;[^}]*right: 0;/s,
+      /\.md \[data-streamdown='code-block'\] > div:has\(> \[data-streamdown='code-block-actions'\]\) \{[^}]*position: absolute;[^}]*top: 2px;[^}]*right: -6\.5px;/s,
     )
   })
 
   it('centres the controls on the label row and ends them on the block edge', () => {
     // A 26px row put the 24px buttons 1px above the block's border, so they
-    // read as tabs on the block while the label floated beside them.
+    // read as tabs on the block while the label floated beside them. 28px
+    // buttons sit 2px into a 32px row.
     expect(markdownCss).toMatch(
-      /\.md \[data-streamdown='code-block-header'\] \{[^}]*height: 30px;[^}]*padding: 0;/s,
+      /\.md \[data-streamdown='code-block-header'\] \{[^}]*height: 32px;[^}]*padding: 0 96px 0 0;[^}]*line-height: 32px;[^}]*text-overflow: ellipsis;[^}]*white-space: nowrap;/s,
+    )
+  })
+
+  it('draws the controls as ghost icon buttons like the reply actions', () => {
+    const button = /\.md \[data-streamdown='code-block'\] button \{([^}]*)\}/.exec(markdownCss)?.[1]
+    expect(button).toMatch(/width: 28px;[^}]*height: 28px;/s)
+    expect(button).toContain('background: transparent;')
+    expect(button).toContain('border: 0;')
+    // Opacity and transition on a button lose to the button-feedback layer.
+    expect(button).not.toContain('opacity')
+    expect(button).not.toContain('transition')
+    expect(markdownCss).not.toContain("[data-streamdown='code-block'] button::before")
+    expect(markdownCss).toMatch(
+      /\.md \[data-streamdown='code-block'\] button:hover,\s*\.md \[data-streamdown='code-block'\] button:focus-visible \{[^}]*background: var\(--surface\);[^}]*color: var\(--text-2\);/s,
+    )
+    expect(markdownCss).toMatch(
+      /\.md \[data-streamdown='code-block'\] button svg \{[^}]*width: 15px;[^}]*height: 15px;[^}]*stroke-width: 1\.7;/s,
+    )
+    expect(largeCodeBlockSource).toContain('<TextWrap size={15} aria-hidden />')
+  })
+
+  it('fades the whole action row in on block hover or focus', () => {
+    expect(markdownCss).toMatch(
+      /\.md \[data-streamdown='code-block'\] > div:has\(> \[data-streamdown='code-block-actions'\]\) \{[^}]*opacity: 0;[^}]*transition: opacity var\(--dur-hover\) var\(--ease-out\);/s,
+    )
+    // Keyboard focus on any one button reveals all of them.
+    expect(markdownCss).toMatch(
+      /\[data-streamdown='code-block'\]:is\(:hover, :focus-within\)\s*> div:has\(> \[data-streamdown='code-block-actions'\]\) \{\s*opacity: 1;/s,
+    )
+    expect(markdownCss).toMatch(
+      /@media \(hover: none\) \{\s*\.md \[data-streamdown='code-block'\] > div:has\(> \[data-streamdown='code-block-actions'\]\) \{\s*opacity: 1;/s,
+    )
+  })
+
+  it('drops Download before the row can run into the label', () => {
+    expect(markdownCss).toMatch(
+      /\.md \[data-streamdown='code-block'\] \{\s*container: code-block \/ inline-size;\s*\}/,
+    )
+    expect(markdownCss).toMatch(
+      /@container code-block \(max-width: 360px\) \{\s*\.md \[data-streamdown='code-block'\] button\[data-streamdown='code-block-download-button'\] \{\s*display: none;/s,
+    )
+  })
+
+  it('labels a fence without a language as text, completed or live', () => {
+    expect(markdownCss).toMatch(
+      /\.md \[data-streamdown='code-block-header'\] > span:empty::before,\s*\.md \[data-streamdown='code-block-header'\]:empty::before \{\s*content: 'text';\s*\}/,
     )
   })
 

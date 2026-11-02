@@ -49,6 +49,9 @@ export function createGrokHistorySource(options: GrokHistoryOptions = {}): Provi
                 if (summary) summaries.set(directory, cached)
               }
               const summary = cached.summary
+              // Nobody wrote in it: a session opened only to read the project's
+              // commands and MCP servers is no chat to list.
+              if (summary.num_messages === 0) return undefined
               const info = record(summary.info)
               let decoded = ''
               try {
@@ -64,14 +67,16 @@ export function createGrokHistorySource(options: GrokHistoryOptions = {}): Provi
                 date(summary.updated_at, 0),
                 date(summary.last_active_at, 0),
               )
+              // Grok writes the summary as the same name it generates; neither is the prompt.
+              const name =
+                text(summary.generated_title) ??
+                text(summary.title) ??
+                text(summary.session_summary)
               return {
                 id: text(info.id) ?? id,
                 workspacePath,
-                title:
-                  text(summary.generated_title) ??
-                  text(summary.title) ??
-                  text(summary.session_summary) ??
-                  'Grok chat',
+                title: name ?? 'Grok chat',
+                ...(name ? { named: true } : {}),
                 createdAt: date(
                   summary.created_at,
                   chatStat?.birthtimeMs ?? updatesStat?.birthtimeMs ?? updatedAt,

@@ -57,6 +57,25 @@ export const CodexRateLimitResponseSchema = z.object({
 export type CodexRateLimitSnapshot = z.infer<typeof CodexRateLimitSnapshotSchema>
 export type CodexRateLimitResponse = z.infer<typeof CodexRateLimitResponseSchema>
 
+/**
+ * A rolling `account/rateLimits/updated` snapshot. Codex 0.163 documents it as
+ * sparse: a null or missing value is unknown in this update and keeps the
+ * value of the newest read.
+ */
+export const CodexRateLimitUpdateSchema = z.object({
+  rateLimits: z.object({
+    limitId: nullableString.optional(),
+    limitName: nullableString.optional(),
+    primary: RateLimitWindowSchema.nullish(),
+    secondary: RateLimitWindowSchema.nullish(),
+    credits: CreditsSnapshotSchema.nullish(),
+  }),
+})
+export type CodexRateLimitUpdate = z.infer<typeof CodexRateLimitUpdateSchema>['rateLimits']
+
+/** The `initialize` answer names the home the app-server runs in (0.163: `codexHome`). */
+export const CodexInitializeHomeSchema = z.object({ codexHome: z.string().min(1) })
+
 export const CodexResetCreditSchema = z.object({
   id: z.string().min(1).optional(),
   status: z.literal('available'),
@@ -154,6 +173,19 @@ export const ListMcpServerStatusResponseSchema = z.object({
   nextCursor: nullableString,
 })
 
+/**
+ * `config/read` from Codex 0.163: `config.mcp_servers` maps each configured
+ * server name to its TOML entry. Only `enabled` is read; commands, URLs,
+ * environments and header variables never leave this parser.
+ */
+export const ConfiguredMcpServersSchema = z.object({
+  config: z.object({
+    mcp_servers: z
+      .record(z.string(), z.object({ enabled: z.boolean().nullish() }).catch({}))
+      .nullish(),
+  }),
+})
+
 const SkillToolDependencySchema = z.object({
   type: z.string(),
   value: z.string(),
@@ -188,6 +220,10 @@ const ThreadIdentitySchema = z.object({
   id: z.string(),
   createdAt: z.number().optional(),
   cwd: z.string().nullish(),
+  /** Set only on a thread a subagent runs in (generated/v2/Thread.ts). */
+  parentThreadId: z.string().nullish(),
+  agentNickname: z.string().nullish(),
+  agentRole: z.string().nullish(),
 })
 
 export const ThreadStartResponseSchema = z.object({

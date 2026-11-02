@@ -51,7 +51,9 @@
         }
       ],
       "defaultServiceTier": null,
-      "availableAccessPrograms": null,
+      "availableAccessPrograms": {
+        "cyber": ["standard"]
+      },
       "isDefault": true
     },
     {
@@ -90,7 +92,7 @@
           "description": "Maximum reasoning with automatic task delegation"
         }
       ],
-      "defaultReasoningEffort": "low",
+      "defaultReasoningEffort": "medium",
       "inputModalities": ["text", "image"],
       "supportsPersonality": false,
       "multiAgentVersion": "v2",
@@ -103,7 +105,9 @@
         }
       ],
       "defaultServiceTier": null,
-      "availableAccessPrograms": null,
+      "availableAccessPrograms": {
+        "cyber": ["standard"]
+      },
       "isDefault": false
     },
     {
@@ -154,8 +158,10 @@
           "description": "1.5x speed"
         }
       ],
-      "defaultServiceTier": "priority",
-      "availableAccessPrograms": null,
+      "defaultServiceTier": null,
+      "availableAccessPrograms": {
+        "cyber": ["standard"]
+      },
       "isDefault": false
     },
     {
@@ -202,21 +208,67 @@
           "description": "1.5x speed"
         }
       ],
-      "defaultServiceTier": "priority",
-      "availableAccessPrograms": null,
+      "defaultServiceTier": null,
+      "availableAccessPrograms": {
+        "cyber": ["standard"]
+      },
+      "isDefault": false
+    },
+    {
+      "id": "gpt-reserve",
+      "model": "gpt-reserve",
+      "upgrade": null,
+      "upgradeInfo": null,
+      "availabilityNux": null,
+      "displayName": "GPT-Reserve",
+      "description": "Fast and affordable agentic coding model.",
+      "modelSpecialty": null,
+      "hidden": true,
+      "supportedReasoningEfforts": [
+        {
+          "reasoningEffort": "low",
+          "description": "Fast responses with lighter reasoning"
+        },
+        {
+          "reasoningEffort": "medium",
+          "description": "Balances speed and reasoning depth for everyday tasks"
+        },
+        {
+          "reasoningEffort": "high",
+          "description": "Greater reasoning depth for complex problems"
+        },
+        {
+          "reasoningEffort": "xhigh",
+          "description": "Extra high reasoning depth for complex problems"
+        },
+        {
+          "reasoningEffort": "max",
+          "description": "Maximum reasoning depth for the hardest problems"
+        }
+      ],
+      "defaultReasoningEffort": "medium",
+      "inputModalities": ["text", "image"],
+      "supportsPersonality": false,
+      "multiAgentVersion": "v1",
+      "additionalSpeedTiers": ["fast"],
+      "serviceTiers": [
+        {
+          "id": "priority",
+          "name": "Fast",
+          "description": "1.5x speed, increased usage"
+        }
+      ],
+      "defaultServiceTier": null,
+      "availableAccessPrograms": {
+        "cyber": ["standard"]
+      },
       "isDefault": false
     },
     {
       "id": "gpt-5.6-sol",
       "model": "gpt-5.6-sol",
-      "upgrade": "gpt-6-sol",
-      "upgradeInfo": {
-        "model": "gpt-6-sol",
-        "upgradeCopy": null,
-        "modelLink": null,
-        "migrationMarkdown": "Meet GPT-6 Sol\n\nOur latest Sol is more intelligent and more efficient so your usage limits go further. This model is a great daily driver for complex tasks, especially coding.\n",
-        "retirementAt": null
-      },
+      "upgrade": null,
+      "upgradeInfo": null,
       "availabilityNux": null,
       "displayName": "GPT-5.6-Sol",
       "description": "Older generation workhorse model.",
@@ -261,20 +313,16 @@
         }
       ],
       "defaultServiceTier": null,
-      "availableAccessPrograms": null,
+      "availableAccessPrograms": {
+        "cyber": ["standard"]
+      },
       "isDefault": false
     },
     {
       "id": "gpt-5.6-terra",
       "model": "gpt-5.6-terra",
-      "upgrade": "gpt-6-sol",
-      "upgradeInfo": {
-        "model": "gpt-6-sol",
-        "upgradeCopy": null,
-        "modelLink": null,
-        "migrationMarkdown": "Meet GPT-6 Sol\n\nOur latest Sol is more intelligent and more efficient so your usage limits go further. This model is a great daily driver for complex tasks, especially coding.\n",
-        "retirementAt": null
-      },
+      "upgrade": null,
+      "upgradeInfo": null,
       "availabilityNux": null,
       "displayName": "GPT-5.6-Terra",
       "description": "Older balanced model for straightforward work.",
@@ -319,20 +367,16 @@
         }
       ],
       "defaultServiceTier": null,
-      "availableAccessPrograms": null,
+      "availableAccessPrograms": {
+        "cyber": ["standard"]
+      },
       "isDefault": false
     },
     {
       "id": "gpt-5.6-luna",
       "model": "gpt-5.6-luna",
-      "upgrade": "gpt-6-luna",
-      "upgradeInfo": {
-        "model": "gpt-6-luna",
-        "upgradeCopy": null,
-        "modelLink": null,
-        "migrationMarkdown": "Meet GPT-6 Luna\n\nOur latest Luna is significantly more efficient, so your usage limits go even further. Reach for it for any job that doesn't require frontier intelligence.\n",
-        "retirementAt": null
-      },
+      "upgrade": null,
+      "upgradeInfo": null,
       "availabilityNux": null,
       "displayName": "GPT-5.6-Luna",
       "description": "Older fast and efficient model.",
@@ -373,25 +417,21 @@
         }
       ],
       "defaultServiceTier": null,
-      "availableAccessPrograms": null,
+      "availableAccessPrograms": {
+        "cyber": ["standard"]
+      },
       "isDefault": false
     },
     {
-      "id": "gpt-5.5",
-      "model": "gpt-5.5",
-      "upgrade": "gpt-6-sol",
-      "upgradeInfo": {
-        "model": "gpt-6-sol",
-        "upgradeCopy": null,
-        "modelLink": null,
-        "migrationMarkdown": "Meet GPT-6 Sol\n\nOur latest Sol is more intelligent and more efficient so your usage limits go further. This model is a great daily driver for complex tasks, especially coding.\n",
-        "retirementAt": null
-      },
+      "id": "codex-auto-review",
+      "model": "codex-auto-review",
+      "upgrade": null,
+      "upgradeInfo": null,
       "availabilityNux": null,
-      "displayName": "GPT-5.5",
-      "description": "Legacy coding model.",
+      "displayName": "Codex Auto Review",
+      "description": "Automatic approval review model for Codex.",
       "modelSpecialty": null,
-      "hidden": false,
+      "hidden": true,
       "supportedReasoningEfforts": [
         {
           "reasoningEffort": "low",
@@ -408,12 +448,16 @@
         {
           "reasoningEffort": "xhigh",
           "description": "Extra high reasoning depth for complex problems"
+        },
+        {
+          "reasoningEffort": "max",
+          "description": "Maximum reasoning depth for the hardest problems"
         }
       ],
       "defaultReasoningEffort": "medium",
       "inputModalities": ["text", "image"],
       "supportsPersonality": false,
-      "multiAgentVersion": null,
+      "multiAgentVersion": "v1",
       "additionalSpeedTiers": ["fast"],
       "serviceTiers": [
         {
@@ -423,7 +467,9 @@
         }
       ],
       "defaultServiceTier": null,
-      "availableAccessPrograms": null,
+      "availableAccessPrograms": {
+        "cyber": ["standard"]
+      },
       "isDefault": false
     }
   ],

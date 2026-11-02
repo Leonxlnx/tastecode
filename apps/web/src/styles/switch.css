@@ -1,0 +1,49 @@
+/* The on/off switch. Only Settings and the feedback dialog draw one, and both
+   load on demand, so it stays out of the startup stylesheet. Settings sizes
+   it down in settings-system.css. */
+
+.switch {
+  position: relative;
+  width: 36px;
+  height: 22px;
+  flex: none;
+  padding: 0;
+  background: var(--surface-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-pill);
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
+}
+
+.switch.is-on {
+  background: var(--light);
+  border-color: var(--light);
+  color: var(--on-light);
+}
+
+:root[data-theme='light'] .switch:not(.is-on) {
+  background: var(--chrome-recessed);
+  border-color: var(--chrome-border);
+  box-shadow: var(--chrome-inset-shadow);
+}
+
+.switch__thumb {
+  position: absolute;
+  top: 50%;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  translate: 0 -50%;
+  background: var(--text-2);
+  border-radius: var(--r-circle);
+  transition:
+    transform var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
+}
+
+.switch.is-on .switch__thumb {
+  background: var(--on-light);
+  transform: translateX(14px);
+}

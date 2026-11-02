@@ -44,6 +44,8 @@ export class Streamer {
    * actually run.
    */
   #tools = new Map<string, ToolState>()
+  /** Tool calls reported as started and not yet finished, as last emitted. */
+  #running = new Map<string, Item>()
   /** How often each tool call id has been reused after its call finished. */
   #reuses = new Map<string, number>()
   /**
@@ -96,16 +98,25 @@ export class Streamer {
   reset(): void {
     this.#open.clear()
     this.#tools.clear()
+    this.#running.clear()
     this.#proposed.clear()
     this.#files.clear()
   }
 
-  /** Finish streamed items before the turn closes so history has immutable text. */
-  finish(): DomainEvent[] {
+  /**
+   * Finish streamed items before the turn closes so history has immutable text.
+   * A tool call the agent never reported finishing would otherwise stay
+   * `started` in the log forever; it takes the status of the turn that ended.
+   */
+  finish(toolStatus: 'completed' | 'failed' = 'completed'): DomainEvent[] {
     const events = [this.#complete('message'), this.#complete('reasoning')].filter(
       (event): event is DomainEvent => event !== undefined,
     )
+    for (const item of this.#running.values()) {
+      events.push({ type: 'item.completed', item: { ...item, status: toolStatus } })
+    }
     this.#tools.clear()
+    this.#running.clear()
     return events
   }
 
@@ -230,6 +241,8 @@ export class Streamer {
 
     if (output) item.text = item.text ? `${item.text}\n${output}` : output
 
+    if (finished) this.#running.delete(id)
+    else this.#running.set(id, item)
     if (finished && !update.toolCallId) {
       this.#tools.delete(id)
       this.#anonymousSeq++

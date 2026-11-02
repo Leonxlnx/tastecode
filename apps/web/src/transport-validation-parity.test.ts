@@ -14,6 +14,8 @@ const project = {
       title: 'Task',
       provider: 'codex',
       agent: 'agent',
+      accountId: 'work',
+      continuedFrom: 'earlier-thread',
       createdAt: 2,
       running: false,
       pinned: true,
@@ -47,6 +49,8 @@ const provider = {
       compactionOff: true,
       defaultCompactAt: 90,
     },
+    subagents: 'progress',
+    multipleAccounts: true,
   },
   setup: {
     installUrl: 'https://example.com',
@@ -54,6 +58,7 @@ const provider = {
     login: 'app',
     loginOpensBrowser: true,
   },
+  source: { agent: 'optional', connection: false, direct: true },
 }
 
 /** Change each supplied field independently, including every nested schema field. */

@@ -1,5 +1,6 @@
 import { IconGitBranch as GitBranch, IconX as X } from '@tabler/icons-react'
 import { useDialogFocus } from './dialog-focus.js'
+import '../styles/sheet.css'
 import '../styles/checkout-discard.css'
 
 export function CheckoutDiscardDialog(props: {

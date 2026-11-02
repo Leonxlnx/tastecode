@@ -127,8 +127,6 @@
   /* One raised surface for the rail: the account card and the active chat. */
   --rail-raised: color-mix(in srgb, var(--surface-2) 75%, var(--bg-rail-tint));
   --rail-raised-ring: color-mix(in srgb, var(--text) 6%, transparent);
-  /* The hairline that hangs a project's chats off its folder mark. */
-  --rail-guide: color-mix(in srgb, var(--text) 12%, transparent);
 
   position: absolute;
   inset: 0 auto 0 0;
@@ -471,35 +469,41 @@
   cursor: grab;
 }
 
-.sessrow.is-dragging {
-  opacity: 0.45;
-}
-
-.sessrow.is-dragging .sess {
+/* Live reorder: the held row rides with the pointer, the others slide aside
+   to open its slot; the order changes on release. */
+.is-row-reordering {
+  user-select: none;
   cursor: grabbing;
 }
 
-/* ::after: the active row's accent tick is a later ::before and would hide
-   the drop line on the row you are already in. */
-.sessrow[data-drop-position]::after {
-  content: '';
-  position: absolute;
-  z-index: 2;
-  /* Starts where the title does. */
-  left: calc(var(--sess-indent) + 19px);
-  right: 6px;
-  height: 2px;
-  border-radius: var(--r-pill);
-  background: var(--light);
-  pointer-events: none;
+.is-row-reordering .sess,
+.is-row-reordering .proj__head {
+  cursor: grabbing;
 }
 
-.sessrow[data-drop-position='before']::after {
-  top: -1px;
+/* Own layers for the duration: moves composite instead of repainting the rail. */
+.is-row-reordering > .sessrow,
+.is-row-reordering > .proj {
+  will-change: translate;
 }
 
-.sessrow[data-drop-position='after']::after {
-  bottom: -1px;
+.sessrow.is-row-dragging {
+  --sess-bg: var(--surface);
+  z-index: 3;
+  transition: none;
+}
+
+/* Rows making way use the rail's settle curve: quick to leave, long soft tail. */
+.sessrow.is-row-shifting,
+.proj.is-row-shifting {
+  transition: translate var(--dur-slow) var(--ease-rail);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sessrow.is-row-shifting,
+  .proj.is-row-shifting {
+    transition: none;
+  }
 }
 
 .sessrow:focus-within .sess__actions {
@@ -507,7 +511,8 @@
   pointer-events: auto;
 }
 
-.sessrow:focus-within .sess__meta {
+/* The time gives way to the row's one action; a live state never does. */
+.sessrow.has-action:focus-within .sess__meta {
   opacity: 0;
 }
 
@@ -518,7 +523,7 @@
     pointer-events: auto;
   }
 
-  .sessrow:hover .sess__meta {
+  .sessrow.has-action:hover .sess__meta {
     opacity: 0;
   }
 
@@ -576,106 +581,10 @@
   border: 0;
 }
 
-/* ---------- settings sheet ---------- */
-
-.sheet {
-  position: fixed;
-  inset: 0;
-  z-index: 60;
-  display: grid;
-  place-items: center;
-  padding: 32px;
-}
-
-.sheet__scrim {
-  position: absolute;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.55);
-  border: 0;
-  cursor: default;
-}
-
 @keyframes fade-in {
   from {
     opacity: 0;
   }
-}
-
-.sheet__panel {
-  position: relative;
-  width: 100%;
-  max-width: 460px;
-  max-height: 100%;
-  overflow-y: auto;
-  background: var(--bg-rail);
-  border: 1px solid var(--line-strong);
-  border-radius: var(--r-dialog);
-  box-shadow: var(--shadow-modal);
-}
-
-.sheet__head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 14px 16px 10px;
-}
-
-.sheet__title {
-  font-size: var(--t-lg);
-  font-weight: 560;
-  letter-spacing: -0.014em;
-  margin: 0;
-}
-
-.sheet__section {
-  padding: 12px 16px 16px;
-  border-top: 1px solid var(--line);
-}
-
-.switch {
-  position: relative;
-  width: 36px;
-  height: 22px;
-  flex: none;
-  padding: 0;
-  background: var(--surface-3);
-  border: 1px solid var(--line-strong);
-  border-radius: var(--r-pill);
-  cursor: pointer;
-  transition:
-    background var(--dur-fast) var(--ease-out),
-    border-color var(--dur-fast) var(--ease-out);
-}
-
-.switch.is-on {
-  background: var(--light);
-  border-color: var(--light);
-  color: var(--on-light);
-}
-
-:root[data-theme='light'] .switch:not(.is-on) {
-  background: var(--chrome-recessed);
-  border-color: var(--chrome-border);
-  box-shadow: var(--chrome-inset-shadow);
-}
-
-.switch__thumb {
-  position: absolute;
-  top: 50%;
-  left: 2px;
-  width: 16px;
-  height: 16px;
-  translate: 0 -50%;
-  background: var(--text-2);
-  border-radius: var(--r-circle);
-  transition:
-    transform var(--dur-fast) var(--ease-out),
-    background var(--dur-fast) var(--ease-out);
-}
-
-.switch.is-on .switch__thumb {
-  background: var(--on-light);
-  transform: translateX(14px);
 }
 
 .section {
@@ -728,32 +637,14 @@
   margin-bottom: 4px;
 }
 
-.proj[draggable='true'] > .proj__head {
+.proj.is-reorderable > .proj__head {
   cursor: grab;
 }
 
-.proj.is-dragging {
-  opacity: 0.42;
-}
-
-.proj[data-drop-position]::before {
-  content: '';
-  position: absolute;
-  z-index: 2;
-  right: 6px;
-  left: 26px;
-  height: 2px;
-  border-radius: var(--r-pill);
-  background: var(--light);
-  pointer-events: none;
-}
-
-.proj[data-drop-position='before']::before {
-  top: -1px;
-}
-
-.proj[data-drop-position='after']::before {
-  bottom: -1px;
+/* Opaque, so a project block riding over its neighbours covers them. */
+.proj.is-row-dragging {
+  z-index: 3;
+  background: var(--bg-rail);
 }
 
 .proj__head {
@@ -810,7 +701,7 @@
 }
 
 .proj__name {
-  flex: 1;
+  flex: 0 1 auto;
   /* Parents carry the weight; their chats read lighter beneath them. */
   font-weight: 500;
   overflow: hidden;
@@ -826,7 +717,7 @@
   overflow: hidden;
   transition:
     grid-template-rows var(--dur-slow) var(--ease-out),
-    opacity var(--dur-fast) var(--ease-out);
+    opacity var(--dur-slow) var(--ease-out);
 }
 
 .proj__drawer[data-open='true'] {
@@ -842,25 +733,11 @@
 }
 
 .proj__drawer > .proj__sessions {
-  /* A project's chats indent past the guide under its folder mark. */
+  /* A project's chats indent under its folder mark, with no rule beside them:
+     the indent alone says which project they belong to. */
   --sess-indent: 22px;
   --sess-indicator-x: 12px;
   min-height: 0;
-}
-
-/* The guide runs from under the folder mark (centre 13.5px) to the middle of
-   the last row. It hangs on the project so the drawer's clip cannot cut it,
-   and paints nothing once the drawer is shorter than the offsets. */
-.proj::after {
-  content: '';
-  position: absolute;
-  top: 24px;
-  bottom: 22px;
-  left: 13px;
-  width: 1px;
-  border-radius: var(--r-pill);
-  background: var(--rail-guide);
-  pointer-events: none;
 }
 
 .proj__sessions {
@@ -871,7 +748,8 @@
   grid-template-columns: minmax(0, 1fr);
   row-gap: 2px;
   list-style: none;
-  margin: 2px 0 8px;
+  /* The first chat follows its project's row directly. */
+  margin: 0 0 8px;
   padding: 0;
   /* Let the grid item shrink so long titles reach their ellipsis boundary. */
   min-width: 0;
@@ -981,8 +859,11 @@
   margin: 0 0 10px;
 }
 
+/* An empty project's one line starts under its name (folder mark 7px + 13px +
+   8px gap). At the chat-title indent it floated right of everything above it,
+   with no mark in front to explain the gap. */
 .proj__sessions > .rail__hint {
-  padding-left: calc(var(--sess-indent) + 21px);
+  padding-left: 28px;
 }
 
 .sess__title {
@@ -1036,14 +917,6 @@
   letter-spacing: 0;
 }
 
-.sess__unread-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: var(--r-circle);
-  background: var(--light);
-  flex: none;
-}
-
 .sess__actions {
   position: absolute;
   right: 0;
@@ -1083,13 +956,19 @@
   color: var(--text);
 }
 
+/* The box turns, not its <svg>, which Chromium repaints every frame. */
 .sess__spinner {
   position: relative;
+  display: block;
   width: 14px;
   height: 14px;
   flex: none;
   color: var(--running);
   animation: spin 800ms linear infinite;
+}
+
+.sess__spinner > svg {
+  display: block;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1118,12 +997,136 @@
   background: var(--error);
 }
 
+/* ---------- needs you ---------- */
+
+/* Chats waiting for the user, above Pinned. Only rendered when one is. */
+.needs-band__list {
+  margin: 0 0 10px;
+}
+
+/* The band's state mark sits in the provider mark's column, so every title in
+   the rail starts on one line. */
+.sess__mark {
+  display: grid;
+  place-items: center;
+  width: 13px;
+  height: 13px;
+  flex: none;
+}
+
+.sess__mark > .sess__status-dot {
+  margin: 0;
+}
+
+/* The title is what the row is about: the project name only gets the room
+   the title leaves, so it truncates first, and it hides rather than show a
+   letter or two. */
+:is(.needs-band__row, .archived__row) .sess__title {
+  flex: 0 1 auto;
+}
+
+.sess__project {
+  flex: 1 1 0;
+  min-width: 0;
+  container-type: inline-size;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  letter-spacing: 0;
+  text-align: right;
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+
+.sess__project > span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@container (max-width: 31px) {
+  .sess__project > span {
+    visibility: hidden;
+  }
+}
+
+.rail__body[data-narrow] .sess__project {
+  display: none;
+}
+
+/* The row's one action takes the project name's place; the state mark on the
+   left never hides. */
+.sessrow.has-action:focus-within .sess__project {
+  opacity: 0;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .sessrow.has-action:hover .sess__project {
+    opacity: 0;
+  }
+}
+
+/* ---------- archived ---------- */
+
+.archived__toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 24px;
+  background: none;
+  border: 0;
+  border-radius: var(--r-md);
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+  transition: color var(--dur-fast) var(--ease-out);
+}
+
+.archived__toggle:is(:hover, :focus-visible) {
+  color: var(--text-2);
+}
+
+.archived__count {
+  font-variant-numeric: tabular-nums;
+  font-weight: 400;
+}
+
+.archived__chevron {
+  flex: none;
+  margin-left: auto;
+  margin-right: 3px;
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+
+.archived__toggle[aria-expanded='true'] .archived__chevron {
+  transform: rotate(90deg);
+}
+
+.archived__list {
+  margin: 0 0 8px;
+}
+
+/* A folded project's count of chats that need the user, right after its name. */
+.proj__attention {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+  color: var(--text-2);
+  font-size: var(--t-xs);
+  font-variant-numeric: tabular-nums;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+
+.proj__attention > .sess__status-dot {
+  margin: 0;
+}
+
 /* ---------- stage ---------- */
 
-/* The right panel width is written inline on .workspace-layout on every frame
-   of a resize drag, and only that grid reads it. Left inheritable, each write
-   restyled the whole chat and Browser subtree under it (about 9 ms a frame next
-   to a long chat); not inherited, it restyles one element. */
+/* Set inline on .workspace-layout on every frame of a resize drag and read
+   only there. Not inherited, so a write restyles one element, not the chat. */
 @property --workspace-panel-w {
   syntax: '*';
   inherits: false;
@@ -1400,6 +1403,82 @@
   color: var(--text);
 }
 
+/* The chat checkout's pull request. Quiet like the header's other controls;
+   only the state glyph and the checks glyph carry colour. */
+.stagehead__pr {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  flex: none;
+  height: 24px;
+  align-items: center;
+  gap: 5px;
+  padding: 0 9px 0 7px;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--t-xs);
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease;
+}
+
+.stagehead__pr:is(:hover, :focus-visible) {
+  background: var(--surface-2);
+  border-color: var(--line-strong);
+  color: var(--text);
+}
+
+.stagehead__pr-state {
+  flex: none;
+  color: var(--text-2);
+}
+
+.stagehead__pr.is-open .stagehead__pr-state {
+  color: var(--success);
+}
+
+.stagehead__pr.is-draft .stagehead__pr-state {
+  color: var(--text-3);
+}
+
+.stagehead__pr.is-closed .stagehead__pr-state {
+  color: var(--error);
+}
+
+.stagehead__pr-number {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  font-weight: 520;
+}
+
+.stagehead__pr-label {
+  color: var(--text-3);
+}
+
+.stagehead__pr-checks {
+  flex: none;
+  margin-left: 1px;
+}
+
+.stagehead__pr-checks.is-passing {
+  color: var(--success);
+}
+
+.stagehead__pr-checks.is-failing {
+  color: var(--error);
+}
+
+.stagehead__pr-checks.is-pending {
+  color: var(--attention);
+}
+
 .menu.stagehead__options-menu {
   min-width: 0;
   width: min(216px, calc(100vw - 16px));
@@ -1583,7 +1662,7 @@
 
 .composer {
   min-width: 0;
-  padding: 4px 24px 8px;
+  padding: 4px var(--chat-gutter) 8px;
 }
 
 .composer:not(.is-new-session) {
@@ -1598,9 +1677,7 @@
   max-width: var(--chat-w);
   margin: 0 auto;
   border-radius: var(--r-composer);
-  /* Archiving replaces the thread in the same commit as this FLIP. Keep the
-     bounded visual box promoted so that work cannot delay layer creation. */
-  will-change: transform;
+  /* Not promoted at rest: text in a promoted layer loses subpixel AA. */
 }
 
 .composer__prompt {
@@ -1704,14 +1781,13 @@
   padding: 0 5px;
   opacity: 1;
   color: var(--queue-text);
-  will-change: transform, opacity;
   transition:
     opacity var(--dur-fast) var(--ease-out),
     transform var(--dur-press) var(--ease-out);
 }
 
 .queue-row[data-queue-phase='entering'] {
-  animation: composer-queue-item-in var(--dur-slow) var(--ease-in-out) both;
+  animation: composer-queue-item-in var(--dur-slow) var(--ease-rail) both;
 }
 
 .queue-row[data-queue-phase='exiting'] {
@@ -1760,7 +1836,7 @@
   left: 5px;
   height: 2px;
   border-radius: var(--r-pill);
-  background: var(--accent);
+  background: var(--light);
   pointer-events: none;
 }
 
@@ -2030,7 +2106,9 @@
   font-size: var(--t-lg);
   line-height: 1.45;
   min-height: 48px;
-  padding: 12px 16px 6px;
+  /* The 1px is .composer__prompt's border; the transcript column reads the
+     same inset, so its text starts where the prompt text starts. */
+  padding: 12px calc(var(--chat-text-inset) - 1px) 6px;
   resize: none;
   outline: none;
   max-height: 242px;
@@ -2097,19 +2175,6 @@
 .chip--file {
   max-width: 220px;
   padding-right: 3px;
-}
-
-.chip--resource {
-  max-width: 260px;
-  padding: 5px 4px 5px 7px;
-  background: color-mix(in srgb, var(--attention) 10%, var(--surface-2));
-  border: 1px solid color-mix(in srgb, var(--attention) 35%, var(--line-strong));
-  color: color-mix(in srgb, var(--attention) 62%, var(--text));
-  font-size: var(--t-md);
-}
-
-.chip--resource > svg {
-  color: var(--attention);
 }
 
 .attachment-preview {
@@ -2532,7 +2597,7 @@
      covers the first frame, and min-width: 0 beats the base .menu minimum. */
   min-width: 0;
   width: min(var(--menu-trigger-w, 224px), calc(100vw - 16px));
-  max-height: min(500px, calc(100vh - 24px));
+  max-height: calc(100vh - 24px);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -3250,13 +3315,11 @@
   }
 }
 
+/* Narrow panes only tighten the gutter; the composer and the transcript
+   column both read it, so they stay aligned. */
 @container chat-stage (max-width: 480px) {
-  .thread__col {
-    padding-inline: 14px;
-  }
-
-  .composer {
-    padding-inline: 10px;
+  .stage__body {
+    --chat-gutter: 10px;
   }
 }
 
@@ -3452,12 +3515,12 @@
     padding-inline: 12px 8px;
   }
 
-  .thread__col {
-    padding: 0 14px;
+  .stage__body {
+    --chat-gutter: 10px;
   }
 
   .composer {
-    padding: 4px 10px max(8px, env(safe-area-inset-bottom));
+    padding-bottom: max(8px, env(safe-area-inset-bottom));
   }
 
   .composer:not(.is-new-session) {
@@ -3526,10 +3589,6 @@
     opacity: 1;
     pointer-events: auto;
   }
-
-  .sheet {
-    padding: 12px;
-  }
 }
 
 @media (max-width: 520px) {
@@ -3578,6 +3637,16 @@
     var(--bg-rail-tint) calc(100% - var(--rail-glass, 0) * var(--rail-glass-fade, 20%)),
     transparent
   );
+}
+
+/* Below 700px the open rail is a drawer over the chat, which showed through
+   the glass: solid like the flyout. It ties the light rule, so it follows it. */
+@media (max-width: 700px) {
+  :root[data-glass='on'] .rail-slot .rail {
+    background: var(--bg-rail);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
 }
 
 /* The stage's rounded top-left corner exposes its parent. Paint that backing

@@ -3,8 +3,8 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { DesignBrief } from './brief.js'
-import { PAGE_LAYOUT_FAMILIES } from './page.js'
+import { isDashboardBrief, type DesignBrief } from './brief.js'
+import { WEBSITE_LAYOUT_FAMILIES } from './page.js'
 import {
   loadReviewedReferences,
   parseReferenceDeck,
@@ -12,6 +12,14 @@ import {
   referenceCandidatesForFamily,
   selectReviewedReferences,
 } from './reference-library.js'
+import {
+  MIN_SIMILAR_STYLE_SCORE,
+  type ReferenceStyleProfile,
+  type ReferenceStyleProfiles,
+} from './reference-style-profiles.js'
+
+// Dashboards are parked behind DASHBOARD_REFERENCES_ENABLED; these tests keep that path working.
+vi.mock('./dashboard-references.js', () => ({ DASHBOARD_REFERENCES_ENABLED: true }))
 
 const roots: string[] = []
 afterEach(() => {
@@ -48,6 +56,14 @@ const brief = {
 function save(root: string, references: unknown[]) {
   writeFileSync(path.join(root, 'catalog.json'), JSON.stringify({ version: 1, references }))
 }
+function profiles(sites: Record<string, Partial<ReferenceStyleProfile>>): ReferenceStyleProfiles {
+  return new Map(
+    Object.entries(sites).map(([site, profile]) => [
+      site,
+      { mood: [], outliers: new Set<string>(), ...profile },
+    ]),
+  )
+}
 describe('reviewed reference library', () => {
   it('selects the bundled library on a fresh install without machine-specific configuration', () => {
     vi.stubEnv('TASTECODE_REFERENCE_LIBRARY', undefined)
@@ -56,11 +72,24 @@ describe('reviewed reference library', () => {
     expect(referenceLibraryRoot()).toBe(
       fileURLToPath(new URL('../references/library/', import.meta.url)),
     )
+    // The parked dashboard set no longer ships; the bundle holds website sections only.
     expect(references).toHaveLength(172)
+    expect(references.some(({ family }) => family === 'dashboard')).toBe(false)
     expect(references.filter(({ family }) => family === 'hero')).toHaveLength(24)
     expect(references.filter(({ mobileImagePath }) => mobileImagePath)).toHaveLength(144)
-    expect(selectReviewedReferences(brief, references)).toHaveLength(14)
-    for (const family of PAGE_LAYOUT_FAMILIES) {
+    const websiteDeck = selectReviewedReferences(brief, references)
+    expect(websiteDeck).toHaveLength(14)
+    expect(websiteDeck.some(({ family }) => family === 'dashboard')).toBe(false)
+    expect(websiteDeck.map(({ role }) => role === 'anchor')).toEqual([
+      true,
+      ...Array(13).fill(false),
+    ])
+    expect(websiteDeck.every(({ site, role }) => site && role)).toBe(true)
+    expect(Boolean(websiteDeck[0]!.style)).toBe(
+      websiteDeck[0]!.site !== 'maestroclass.framer.website',
+    )
+    expect(parseReferenceDeck(websiteDeck)).toEqual(websiteDeck)
+    for (const family of WEBSITE_LAYOUT_FAMILIES) {
       const pool = referenceCandidatesForFamily(family, references)
       expect(
         new Set(pool.map((entry) => entry.group ?? entry.id)).size,
@@ -83,7 +112,73 @@ describe('reviewed reference library', () => {
     expect(loadReviewedReferences().map(({ id }) => id)).toEqual(['studio-hero'])
   })
 
-  it('makes every hero group eligible despite different source sites, styles and revision counts', () => {
+  it('prefers dashboards named for the requested domain and stays uniform without a match', () => {
+    const root = library()
+    save(root, [entry])
+    const dashboard = (
+      id: string,
+      domain: string,
+      sourceName: string,
+      cue: string,
+      motifs?: string[],
+    ) => ({
+      ...entry,
+      id,
+      group: id,
+      family: 'dashboard',
+      tags: ['dashboard', 'full-screen', 'generated', domain],
+      domain,
+      sourceName,
+      ...(motifs ? { motifs } : {}),
+      cue,
+      assetType: 'generated-reference',
+      mobileImagePath: 'hero.webp',
+      pairEvidence: 'Both views preserve the same toolbar and data regions.',
+    })
+    writeFileSync(
+      path.join(root, 'dashboard-catalog.json'),
+      JSON.stringify({
+        version: 1,
+        references: [
+          dashboard('dash-ledger', 'finance', 'Ledgerly', 'Dense ledger table with balances.'),
+          dashboard('dash-budget', 'business-finance', 'Budgeteer', 'Budget envelopes.'),
+          dashboard('dash-notes', 'notes', 'Notely', 'Notes editor with a small finance widget.'),
+          dashboard('dash-gym', 'fitness', 'Gymbook', 'Workout calendar.', ['heart-rate rings']),
+        ],
+      }),
+    )
+    const references = loadReviewedReferences(root)
+    const reachable = (originalRequest: string, extra: Partial<DesignBrief> = {}) => {
+      const seen = new Set<string>()
+      for (let index = 0; index < 4; index++) {
+        const deck = selectReviewedReferences(
+          { ...brief, pageType: 'dashboard', originalRequest, ...extra },
+          references,
+          (length) => index % length,
+        )
+        expect(deck).toHaveLength(1)
+        expect(deck[0]).not.toHaveProperty('relevance')
+        expect(parseReferenceDeck(deck)).toEqual(deck)
+        seen.add(deck[0]!.id)
+      }
+      return [...seen].sort()
+    }
+    // Domain and product names outweigh a passing mention in another screen's cue.
+    expect(reachable('Build a finance dashboard')).toEqual(['dash-budget', 'dash-ledger'])
+    expect(reachable('Build an app like Gymbook')).toEqual(['dash-gym'])
+    expect(reachable('An app with heart-rate rings')).toEqual(['dash-gym'])
+    expect(reachable('Build an app', { subject: 'Ledgerly clone' })).toEqual(['dash-ledger'])
+    expect(reachable('Build an app', { requiredContent: ['Workout log'] })).toEqual(['dash-gym'])
+    expect(reachable('Build an internal admin dashboard')).toEqual([
+      'dash-budget',
+      'dash-gym',
+      'dash-ledger',
+      'dash-notes',
+    ])
+    expect(reachable('Use dash-notes for our finance dashboard')).toEqual(['dash-notes'])
+  })
+
+  it('makes every hero group an equally eligible anchor despite source sites, profiles and revision counts', () => {
     const root = library()
     save(
       root,
@@ -91,19 +186,506 @@ describe('reviewed reference library', () => {
         ...entry,
         id: `hero-${index}`,
         group: `hero-${index}`,
-        source: `https://example.com/${index}`,
+        source: `https://site-${index}.example/`,
         tags: index === 0 ? ['studio', 'photographic'] : ['unrelated'],
       })),
     )
     const references = loadReviewedReferences(root)
     references.push({ ...references[0]!, id: 'hero-0-revision' })
-    const seen = Array.from(
-      { length: 10 },
-      (_, index) =>
-        selectReviewedReferences(brief, references, (length) => (length === 10 ? index : 0))[0]!
-          .group,
-    )
+    const styles = profiles({
+      'site-0.example': { headingType: 'serif', summary: 'Serif studio.' },
+      'site-1.example': { headingType: 'mono' },
+    })
+    const seen = Array.from({ length: 10 }, (_, index) => {
+      const [anchor] = selectReviewedReferences(
+        brief,
+        references,
+        (length) => (length === 10 ? index : 0),
+        styles,
+      )
+      expect(anchor).toMatchObject({ role: 'anchor', site: `site-${index}.example` })
+      expect(anchor?.style).toBe(index === 0 ? 'Serif studio.' : undefined)
+      return anchor!.group
+    })
     expect(new Set(seen).size).toBe(10)
+  })
+
+  it('fills later sections from the anchor site before any other source', () => {
+    const root = library()
+    const site = (name: string, id: string, family: string) => ({
+      ...entry,
+      id,
+      group: id,
+      family,
+      source: `https://${name}.example/${id}`,
+    })
+    save(root, [
+      site('b', 'b-hero', 'hero'),
+      site('a', 'a-hero', 'hero'),
+      site('a', 'a-about', 'about'),
+      site('b', 'b-about-1', 'about'),
+      site('b', 'b-about-2', 'about'),
+      ...['a-feature-1', 'a-feature-2', 'a-feature-3', 'a-feature-4'].map((id) =>
+        site('a', id, 'feature'),
+      ),
+      site('b', 'b-pricing', 'pricing'),
+    ])
+    const references = loadReviewedReferences(root)
+    const last = (length: number) => length - 1
+    const deck = selectReviewedReferences(brief, references, last, profiles({}))
+    expect(deck.map(({ id, role }) => `${id}:${role}`)).toEqual([
+      'a-hero:anchor',
+      'a-about:same-site',
+      'b-about-2:fallback',
+      'a-feature-4:same-site',
+      'a-feature-3:same-site',
+      'a-feature-2:same-site',
+      // The anchor site's compatible feature beats another site's native pricing.
+      'a-feature-1:same-site',
+    ])
+    expect(deck.map(({ site }) => site)).toEqual([
+      ...Array(2).fill('a.example'),
+      'b.example',
+      ...Array(4).fill('a.example'),
+    ])
+    expect(deck.at(-1)?.cue).toContain('Sampled for pricing content')
+    expect(deck.at(-1)?.family).toBe('feature')
+    expect(parseReferenceDeck(deck)).toEqual(deck)
+
+    const explicit = selectReviewedReferences(
+      { ...brief, originalRequest: 'Use b-about-1 for the about section' },
+      references,
+      last,
+      profiles({}),
+    )
+    expect(explicit.filter(({ family }) => family === 'about')).toMatchObject([
+      { id: 'b-about-1', role: 'fallback' },
+    ])
+  })
+
+  it('fills a slot with its own family before borrowing compatible geometry', () => {
+    const root = library()
+    const site = (id: string, family: string, name: string) => ({
+      ...entry,
+      id,
+      group: id,
+      family,
+      source: `https://${name}.example/`,
+    })
+    const style = {
+      theme: 'light',
+      headingType: 'serif',
+      bodyType: 'serif',
+      radius: 'small',
+      density: 'airy',
+    }
+    const styles = profiles({
+      'a.example': style,
+      's.example': style,
+      'far.example': { theme: 'dark', headingType: 'mono', bodyType: 'mono' },
+    })
+    save(root, [
+      site('a-hero', 'hero', 'a'),
+      site('a-proof-1', 'social_proof', 'a'),
+      site('a-proof-2', 'social_proof', 'a'),
+      site('a-cta-1', 'cta', 'a'),
+      site('a-cta-2', 'cta', 'a'),
+      site('far-stats', 'stats', 'far'),
+      // Eleven contact groups: contact is not sparse, so it never borrows CTA geometry.
+      ...Array.from({ length: 10 }, (_, index) =>
+        site(`c${index}-contact`, 'contact', `c${index}`),
+      ),
+      site('s-contact', 'contact', 's'),
+      site('s-stats', 'stats', 's'),
+    ])
+    const references = loadReviewedReferences(root)
+    const deck = (without: string[]) =>
+      selectReviewedReferences(
+        brief,
+        references.filter(({ id }) => !without.includes(id)),
+        () => 0,
+        styles,
+      ).map(({ id, family, role, cue }) =>
+        [id, family, role, /Sampled for (\w+) content/u.exec(cue)?.[1]].filter(Boolean).join(':'),
+      )
+    // The similar site's contact beats the anchor site's unused CTA.
+    expect(deck(['s-stats'])).toEqual([
+      'a-hero:hero:anchor',
+      'a-proof-1:social_proof:same-site',
+      // Stats is sparse and no close site has one, so the anchor site's proof is borrowed.
+      'a-proof-2:social_proof:same-site:stats',
+      'a-cta-1:cta:same-site',
+      's-contact:contact:similar-site',
+    ])
+    // Without a close contact, the uniform contact pool still beats the anchor site's CTA.
+    expect(deck(['s-stats', 's-contact']).slice(3)).toEqual([
+      'a-cta-1:cta:same-site',
+      'c0-contact:contact:fallback',
+    ])
+    // A close site's real stats section beats borrowed geometry from the anchor site.
+    expect(deck([])[2]).toBe('s-stats:stats:similar-site')
+  })
+
+  it('falls back to the closest profiled sites, ties included, but never to loosely related ones', () => {
+    const root = library()
+    const anchorStyle = {
+      theme: 'light',
+      headingType: 'serif',
+      bodyType: 'grotesk-sans',
+      radius: 'small',
+      density: 'airy',
+      imagery: 'photographic',
+      mood: ['calm', 'editorial', 'warm'],
+    }
+    const sharedType = { theme: 'light', headingType: 'serif', bodyType: 'grotesk-sans' }
+    const styles = profiles({
+      'anchor.example': { ...anchorStyle, summary: 'Calm serif editorial.' },
+      // Scores against the anchor: 14, 12, 11, 11, 10 and 9; the minimum is 10.
+      's1.example': anchorStyle,
+      's2.example': { ...anchorStyle, mood: ['calm'] },
+      's3.example': { ...sharedType, radius: 'small', density: 'airy', imagery: 'photographic' },
+      's4.example': {
+        ...anchorStyle,
+        headingType: 'high-contrast-serif',
+        bodyType: 'geometric-sans',
+        mood: ['calm', 'editorial'],
+      },
+      's5.example': { ...sharedType, radius: 'small', density: 'airy' },
+      'near.example': { ...sharedType, radius: 'medium', density: 'airy' },
+      'dissimilar.example': { theme: 'dark', headingType: 'mono', bodyType: 'mono' },
+    })
+    expect(MIN_SIMILAR_STYLE_SCORE).toBe(10)
+    const sites = ['s1', 's2', 's3', 's4', 's5', 'near', 'dissimilar', 'unprofiled']
+    save(root, [
+      { ...entry, id: 'anchor-hero', group: 'anchor-hero', source: 'https://anchor.example/' },
+      ...sites.map((name) => ({
+        ...entry,
+        id: `${name}-footer`,
+        group: `${name}-footer`,
+        family: 'footer',
+        source: `https://${name}.example/`,
+      })),
+    ])
+    const references = loadReviewedReferences(root)
+    const pick = (chooseIndex: (length: number) => number, without: string[] = []) =>
+      selectReviewedReferences(
+        brief,
+        references.filter(({ id }) => !without.includes(id)),
+        chooseIndex,
+        styles,
+      )
+    const lastDeck = pick((length) => length - 1)
+    expect(lastDeck[0]).toMatchObject({ id: 'anchor-hero', role: 'anchor' })
+    expect(lastDeck[0]?.style).toBe('Calm serif editorial.')
+    // s3 and s4 tie for third place, so both stay eligible; s5 ranks below the cut.
+    expect(lastDeck[1]).toMatchObject({ id: 's4-footer', role: 'similar-site', site: 's4.example' })
+    const reachable = new Set(
+      [0, 1, 2, 3].map((index) => pick((length) => (length === 4 ? index : 0))[1]?.id),
+    )
+    expect(reachable).toEqual(new Set(['s1-footer', 's2-footer', 's3-footer', 's4-footer']))
+    // Once the closer sites are gone, s5 still qualifies, but a site below the minimum never does.
+    const closer = ['s1-footer', 's2-footer', 's3-footer', 's4-footer']
+    expect(pick(() => 0, closer)[1]).toMatchObject({ id: 's5-footer', role: 'similar-site' })
+    expect(pick(() => 0, [...closer, 's5-footer'])[1]).toMatchObject({
+      id: 'near-footer',
+      role: 'fallback',
+    })
+    // Similar sites never take a slot from the anchor site itself.
+    const withAnchorFooter = [
+      ...references,
+      {
+        ...references[1]!,
+        id: 'anchor-footer',
+        group: 'anchor-footer',
+        source: 'https://anchor.example/',
+      },
+    ]
+    expect(selectReviewedReferences(brief, withAnchorFooter, () => 0, styles)[1]).toMatchObject({
+      id: 'anchor-footer',
+      role: 'same-site',
+    })
+  })
+
+  it('never anchors on or extends the anchor site with its listed outliers', () => {
+    const root = library()
+    const site = (id: string, family: string, name = 'a') => ({
+      ...entry,
+      id,
+      group: id,
+      family,
+      source: `https://${name}.example/`,
+    })
+    save(root, [
+      site('a-hero', 'hero'),
+      site('a-hero-odd', 'hero'),
+      site('a-footer-odd', 'footer'),
+      site('b-footer', 'footer', 'b'),
+    ])
+    const references = loadReviewedReferences(root)
+    const styles = profiles({ 'a.example': { outliers: new Set(['a-hero-odd', 'a-footer-odd']) } })
+    expect(
+      selectReviewedReferences(brief, references, (length) => length - 1, styles).map(
+        ({ id, role }) => `${id}:${role}`,
+      ),
+    ).toEqual(['a-hero:anchor', 'b-footer:fallback'])
+    // The uniform fallback may still use an outlier; it just never counts as the same language.
+    expect(
+      selectReviewedReferences(brief, references, () => 0, styles).map(
+        ({ id, role }) => `${id}:${role}`,
+      ),
+    ).toEqual(['a-hero:anchor', 'a-footer-odd:fallback'])
+    // A library whose only heroes are outliers still gets a hero anchor.
+    expect(
+      selectReviewedReferences(
+        brief,
+        references.filter(({ id }) => id !== 'a-hero'),
+        () => 0,
+        styles,
+      )[0],
+    ).toMatchObject({ id: 'a-hero-odd', role: 'anchor' })
+  })
+
+  it('skips the similar-site tier when the anchor site has no profile', () => {
+    const root = library()
+    const site = (id: string, family: string, name: string) => ({
+      ...entry,
+      id,
+      group: id,
+      family,
+      source: `https://${name}.example/`,
+    })
+    save(root, [
+      site('u-hero', 'hero', 'u'),
+      site('u-about', 'about', 'u'),
+      site('p-about', 'about', 'p'),
+      site('q-about', 'about', 'q'),
+    ])
+    const same = { theme: 'light', headingType: 'serif', mood: ['calm'] }
+    const deck = selectReviewedReferences(
+      brief,
+      loadReviewedReferences(root),
+      () => 0,
+      profiles({ 'p.example': same, 'q.example': same }),
+    )
+    expect(deck.map(({ id, role }) => `${id}:${role}`)).toEqual([
+      'u-hero:anchor',
+      'u-about:same-site',
+      'p-about:fallback',
+    ])
+    expect(deck[0]).not.toHaveProperty('style')
+  })
+
+  it('reads style profiles beside the configured catalog and degrades when they are missing or malformed', () => {
+    const root = library()
+    const site = (id: string, family: string, name: string) => ({
+      ...entry,
+      id,
+      group: id,
+      family,
+      source: `https://www.${name}.example/`,
+    })
+    save(root, [
+      site('a-hero', 'hero', 'a'),
+      site('a-hero-odd', 'hero', 'a'),
+      site('b-about', 'about', 'b'),
+      site('c-about', 'about', 'c'),
+    ])
+    vi.stubEnv('TASTECODE_REFERENCE_LIBRARY', root)
+    const profileFile = path.join(root, 'style-profiles.json')
+    const shared = {
+      theme: 'dark',
+      headingType: 'serif',
+      bodyType: 'serif',
+      radius: 'small',
+      density: 'airy',
+    }
+    writeFileSync(
+      profileFile,
+      JSON.stringify({
+        version: 1,
+        sites: {
+          'www.a.example': { ...shared, outliers: ['a-hero-odd'], summary: 'Dark serif.' },
+          'c.example': shared,
+        },
+      }),
+    )
+    const last = (length: number) => length - 1
+    expect(selectReviewedReferences(brief, undefined, last)).toMatchObject([
+      { id: 'a-hero', role: 'anchor', site: 'a.example', style: 'Dark serif.' },
+      { id: 'c-about', role: 'similar-site', site: 'c.example' },
+      { id: 'b-about', role: 'fallback', site: 'b.example' },
+    ])
+    for (const contents of ['{', '{"version":2,"sites":{}}', '[]']) {
+      writeFileSync(profileFile, contents)
+      const deck = selectReviewedReferences(brief, undefined, last)
+      expect(deck[0]).toMatchObject({ id: 'a-hero-odd', role: 'anchor', site: 'a.example' })
+      expect(deck[0]).not.toHaveProperty('style')
+      expect(deck.slice(1).map(({ role }) => role)).toEqual(['fallback', 'fallback'])
+    }
+    rmSync(profileFile)
+    expect(selectReviewedReferences(brief, undefined, last)[0]?.id).toBe('a-hero-odd')
+  })
+
+  it('loads paired generated dashboards separately and keeps random group votes and explicit choices', () => {
+    const root = library()
+    save(root, [entry, { ...entry, id: 'tiny-heading', tags: ['native-component'] }])
+    const dashboardEntries = Array.from({ length: 3 }, (_, index) => ({
+      ...entry,
+      id: `dashboard-${index}`,
+      family: 'dashboard',
+      group: `dashboard-${index}`,
+      assetType: 'generated-reference',
+      mobileImagePath: 'hero.webp',
+      pairEvidence: 'Both views preserve the same toolbar and data regions.',
+    }))
+    writeFileSync(
+      path.join(root, 'dashboard-catalog.json'),
+      JSON.stringify({
+        version: 1,
+        references: [
+          ...dashboardEntries,
+          { ...dashboardEntries[0], id: 'dashboard-revision' },
+          { ...dashboardEntries[0], id: 'unreviewed-app', reviewStatus: 'candidate' },
+          { ...dashboardEntries[0], id: 'screenshot-app', assetType: 'screenshot' },
+          { ...dashboardEntries[0], id: 'unpaired-app', mobileImagePath: undefined },
+        ],
+      }),
+    )
+    const references = loadReviewedReferences(root)
+    expect(references).toHaveLength(6)
+    const appBrief = {
+      ...brief,
+      pageType: 'fitness app',
+      originalRequest: 'Build a mobile fitness app',
+    }
+    const groups = Array.from({ length: 3 }, (_, index) => {
+      const deck = selectReviewedReferences(appBrief, references, (length) =>
+        length === 3 ? index : 0,
+      )
+      expect(deck).toHaveLength(1)
+      expect(parseReferenceDeck(deck)).toEqual(deck)
+      expect(deck[0]?.family).toBe('dashboard')
+      return deck[0]?.group
+    })
+    expect(new Set(groups).size).toBe(3)
+    expect(selectReviewedReferences(brief, references, () => 0).map(({ id }) => id)).toEqual([
+      'studio-hero',
+    ])
+    expect(
+      selectReviewedReferences(
+        { ...appBrief, originalRequest: 'Use dashboard-2' },
+        references,
+        () => 0,
+      )[0]?.id,
+    ).toBe('dashboard-2')
+    expect(() =>
+      selectReviewedReferences(
+        appBrief,
+        references.filter(({ family }) => family !== 'dashboard'),
+      ),
+    ).toThrow('No reviewed dashboard references')
+  })
+
+  it('classifies the requested surface rather than dashboard products advertised on websites', () => {
+    expect(isDashboardBrief({ ...brief, pageType: 'Dashboard' })).toBe(true)
+    expect(isDashboardBrief({ ...brief, pageType: 'product_interface' })).toBe(true)
+    expect(
+      isDashboardBrief({
+        ...brief,
+        pageType: '',
+        originalRequest: 'Create an analytics dashboard',
+      }),
+    ).toBe(true)
+    expect(
+      isDashboardBrief({
+        ...brief,
+        pageType: 'Landing page',
+        originalRequest: 'Promote our analytics dashboard',
+      }),
+    ).toBe(false)
+    expect(
+      isDashboardBrief({
+        ...brief,
+        pageType: '',
+        originalRequest: 'Build a landing page for a dashboard product',
+      }),
+    ).toBe(false)
+  })
+
+  it.each([
+    ['mobile fitness app', 'Build a mobile fitness app'],
+    ['web analytics app', 'Build a web analytics app'],
+    ['desktop music app', 'Build a desktop music app'],
+    ['Fitness-App', 'Erstelle eine Fitness-App'],
+    ['webapp', 'Build a finance webapp'],
+  ])(
+    'selects dashboard references for a %s, including an unclassified prompt',
+    (pageType, originalRequest) => {
+      expect(isDashboardBrief({ pageType, originalRequest })).toBe(true)
+      expect(isDashboardBrief({ pageType: '', originalRequest })).toBe(true)
+    },
+  )
+
+  it.each([
+    'Build a landing page for a mobile fitness app',
+    'Build a landingpage for a web analytics app',
+    'Build a website for a desktop music app',
+    'Erstelle eine Landingpage für eine Fitness-App',
+    'Build an apparel catalog',
+  ])('keeps website references for %s', (originalRequest) => {
+    expect(isDashboardBrief({ pageType: '', originalRequest })).toBe(false)
+  })
+
+  it.each(['Landingpage', 'App landing page', 'Website for a fitness app'])(
+    'prioritizes the explicit marketing page type %s over app language',
+    (pageType) => {
+      expect(isDashboardBrief({ pageType, originalRequest: 'Build a mobile fitness app' })).toBe(
+        false,
+      )
+    },
+  )
+
+  it.each([
+    ['one-pager', 'Build a one-pager site for my analytics app'],
+    ['', 'Build a one-pager site for my analytics app'],
+    ['', 'Erstelle eine Webseite für meine Fitness-App'],
+    ['website', 'Erstelle eine Webseite für meine Fitness-App'],
+    ['single page site', 'Make a site for our analytics startup'],
+    ['', 'Make a site for our admin tool'],
+    ['one_pager', 'One-pager for a bakery with App Store and Google Play buttons'],
+    ['', 'One-pager for a bakery with App Store and Google Play buttons'],
+    ['', 'Build a web site for our mobile app'],
+    ['product site', 'Site for our analytics app'],
+    ['', 'Site for our analytics app'],
+    ['microsite', 'Microsite launching our new app'],
+    ['', 'Microsite launching our new app'],
+    ['', 'Seite für unsere Analytics-Plattform'],
+    ['', 'Build a fitness app website'],
+    ['', 'Portfolio site for an iOS app developer'],
+    ['', 'Build a landing page for a dashboard product'],
+    ['', 'Create a launch page for our admin app'],
+    ['', 'Design a homepage for our analytics app'],
+    ['', 'Build a webpage about our fitness app'],
+    ['', 'Build a page for our analytics app'],
+    ['pricing_page', 'Design a pricing page for our SaaS app'],
+    ['', 'Design a pricing page for our SaaS app'],
+    ['Waitlist page', 'Create a waitlist page for my AI app'],
+    ['', 'Create a waitlist page for my AI app'],
+    ['About page', 'Make an about page for our analytics app'],
+    ['', 'Make an about page for our analytics app'],
+  ])('classifies %j "%s" as a website', (pageType, originalRequest) => {
+    expect(isDashboardBrief({ pageType, originalRequest })).toBe(false)
+  })
+
+  it.each([
+    'Create an analytics dashboard',
+    'Admin panel for orders',
+    'Build an internal analytics tool',
+    'Build a settings page for the admin app',
+    'Build an analytics app about page views',
+    'Build an analytics app tracking our pricing page conversions',
+  ])('classifies "%s" as a dashboard', (originalRequest) => {
+    expect(isDashboardBrief({ pageType: '', originalRequest })).toBe(true)
   })
 
   it('indexes complete generated candidates without claiming visual approval or resurrecting rejected entries', () => {
@@ -318,7 +900,7 @@ describe('reviewed reference library', () => {
         id: 'editorial-about',
         group: 'editorial-about',
         family: 'about',
-        source: 'https://example.com/editorial',
+        source: 'https://editorial.example/about',
         tags: ['serif'],
       },
     ])
@@ -327,8 +909,8 @@ describe('reviewed reference library', () => {
         { ...brief, requiredContent: ['Hero', 'About introduction'] },
         loadReviewedReferences(root),
         () => 0,
-      ).map(({ family }) => family),
-    ).toEqual(['hero', 'about'])
+      ).map(({ family, role }) => `${family}:${role}`),
+    ).toEqual(['hero:anchor', 'about:fallback'])
   })
   it('allows content topics without a dedicated catalog family', () => {
     const root = library()
@@ -343,6 +925,31 @@ describe('reviewed reference library', () => {
     expect(
       selectReviewedReferences({ ...brief, requiredContent: ['Hero', 'Pricing'] }, references),
     ).toHaveLength(1)
+  })
+  it('round-trips deck sites, roles and the anchor style while old decks still parse', () => {
+    const saved = {
+      id: 'studio-hero',
+      family: 'hero',
+      cue: 'Centered portrait collage.',
+      imagePath: '/library/hero.webp',
+    }
+    expect(parseReferenceDeck([saved])).toEqual([saved])
+    const deck = [
+      { ...saved, site: 'example.com', role: 'anchor', style: 'Quiet serif studio.' },
+      { ...saved, id: 'studio-about', family: 'about', site: 'example.com', role: 'same-site' },
+      { ...saved, id: 'other-faq', family: 'faq', site: 'other.example', role: 'similar-site' },
+      { ...saved, id: 'any-footer', family: 'footer', role: 'fallback' },
+    ]
+    expect(parseReferenceDeck(JSON.parse(JSON.stringify(deck)))).toEqual(deck)
+    expect(() => parseReferenceDeck([{ ...saved, role: 'primary' }])).toThrow('studio-hero.role')
+    expect(() => parseReferenceDeck([{ ...saved, site: 7 }])).toThrow('studio-hero.site')
+
+    const root = library()
+    save(root, [{ ...entry, site: 'claimed.example', role: 'anchor', style: 'Claimed.' }])
+    const [loaded] = loadReviewedReferences(root)
+    expect(loaded).not.toHaveProperty('site')
+    expect(loaded).not.toHaveProperty('role')
+    expect(loaded).not.toHaveProperty('style')
   })
   it('rejects duplicate identifiers and corrupt selected images with actionable errors', () => {
     const root = library()

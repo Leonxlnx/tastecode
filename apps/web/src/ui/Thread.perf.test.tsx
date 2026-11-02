@@ -70,9 +70,9 @@ describe('thread at scale', () => {
       />
     )
     const rendered = render(view([completedPhase]))
-    expect(
-      document.querySelector('.activity__working-orb canvas')?.getAttribute('aria-label'),
-    ).toBe('Working…')
+    const pulse = document.querySelector('.activity--working .activity__pulse')
+    expect(pulse).toBeTruthy()
+    expect(document.querySelector('.activity__working-label')?.textContent).not.toBe('Searching')
 
     rendered.rerender(
       view([
@@ -87,9 +87,9 @@ describe('thread at scale', () => {
         },
       ]),
     )
-    expect(
-      document.querySelector('.activity__working-orb canvas')?.getAttribute('aria-label'),
-    ).toBe('Searching…')
+    expect(document.querySelector('.activity__working-label')?.textContent).toBe('Searching')
+    // The label says what changed; the same dot keeps breathing.
+    expect(document.querySelector('.activity--working .activity__pulse')).toBe(pulse)
   })
 
   it('keeps one timer above the first visible response', () => {
@@ -133,7 +133,7 @@ describe('thread at scale', () => {
     rendered.rerender(view([asked, reply]))
     expect(rendered.container.querySelectorAll('.activity--working')).toHaveLength(1)
     expect(rendered.container.querySelector('.activity--working')).toBe(rail)
-    expect(rendered.container.querySelector('.activity__working-orb canvas')).toBeNull()
+    expect(rendered.container.querySelectorAll('.activity__pulse')).toHaveLength(1)
     cleanup()
   })
 

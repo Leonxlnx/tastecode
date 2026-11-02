@@ -1,4 +1,4 @@
-import type { ResultOf } from '@harness/contracts'
+import type { ProviderId, ResultOf } from '@harness/contracts'
 import { applyProjectOrder, applySessionOrder, type SessionOrder } from './sidebar-order.js'
 import type { Project } from './ui/Sidebar.js'
 
@@ -218,6 +218,27 @@ export function updateSession(
   return next
 }
 
+/** A chat's sidebar row once the chat moved to another provider, agent or account. */
+export function sessionOnProvider(
+  session: Session,
+  place: { provider: ProviderId; agent?: string | undefined; accountId?: string | undefined },
+): Session {
+  if (
+    session.provider === place.provider &&
+    session.agent === place.agent &&
+    session.accountId === place.accountId &&
+    session.connectionId === undefined
+  )
+    return session
+  const { agent: _agent, accountId: _accountId, connectionId: _connectionId, ...rest } = session
+  return {
+    ...rest,
+    provider: place.provider,
+    ...(place.agent ? { agent: place.agent } : {}),
+    ...(place.accountId ? { accountId: place.accountId } : {}),
+  }
+}
+
 /** Update a known set of chats without scanning every sidebar row. */
 export function updateSessions<Value>(
   projects: Project[],
@@ -412,6 +433,9 @@ function reconcileServerSession(
   const lifecycle = snapshot.lifecycle ?? DEFAULT_ACTIVE_LIFECYCLE
   const sameLifecycle = current ? lifecycleEqual(current.lifecycle, lifecycle) : false
   const agent = snapshot.agent || undefined
+  const connectionId = snapshot.connectionId || undefined
+  const accountId = snapshot.accountId || undefined
+  const continuedFrom = snapshot.continuedFrom || undefined
   const pinned = snapshot.pinned ?? false
   const unread = snapshot.unread ?? false
   const worktreeBranch = snapshot.worktreeBranch || undefined
@@ -419,6 +443,9 @@ function reconcileServerSession(
     current?.title === snapshot.title &&
     current.provider === snapshot.provider &&
     current.agent === agent &&
+    current.connectionId === connectionId &&
+    current.accountId === accountId &&
+    current.continuedFrom === continuedFrom &&
     current.createdAt === snapshot.createdAt &&
     current.status === status &&
     current.statusSince === statusSince &&
@@ -434,6 +461,9 @@ function reconcileServerSession(
     title: snapshot.title,
     provider: snapshot.provider,
     ...(agent ? { agent } : {}),
+    ...(connectionId ? { connectionId } : {}),
+    ...(accountId ? { accountId } : {}),
+    ...(continuedFrom ? { continuedFrom } : {}),
     createdAt: snapshot.createdAt,
     statusSince,
     status,

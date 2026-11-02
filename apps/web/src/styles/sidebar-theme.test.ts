@@ -75,6 +75,18 @@ describe('sidebar theme CSS', () => {
     )
   })
 
+  it('keeps the narrow-window drawer opaque over the chat', () => {
+    // Below 700px the open rail covers the transcript, so glass would show the
+    // chat through the sidebar items instead of the OS material.
+    const drawer = appCss.search(
+      /@media \(max-width: 700px\) \{\s*:root\[data-glass='on'\] \.rail-slot \.rail \{[^}]*background: var\(--bg-rail\);[^}]*backdrop-filter: none;[^}]*-webkit-backdrop-filter: none;/,
+    )
+    const lightGlass = appCss.indexOf(":root[data-theme='light'][data-glass='on'] .rail {")
+    expect(lightGlass).toBeGreaterThan(-1)
+    // It ties the light glass rule on specificity, so it must come after it.
+    expect(drawer).toBeGreaterThan(lightGlass)
+  })
+
   it('paints behind the rounded stage corner in light mode', () => {
     expect(appCss).toMatch(
       /:root\[data-theme='light'\]\[data-glass='on'\]\[data-shell='desktop'\] \.shell__body \{\s*background: var\(--bg-rail-tint\);\s*\}/s,
@@ -88,28 +100,32 @@ describe('sidebar theme CSS', () => {
     expect(appCss).not.toContain('.sess__source')
   })
 
-  it('hides the time and status when chat row actions are visible', () => {
+  it('hides the time when the row action shows, never a live state', () => {
+    // Only a row with an action (Archive, Restore, Mark as read) gives way; a
+    // spinner or a waiting dot stays visible on hover and focus.
     expect(appCss).toMatch(
-      /@media \(hover: hover\) and \(pointer: fine\) \{[\s\S]*?\.sessrow:hover \.sess__meta \{[^}]*opacity: 0;/s,
+      /@media \(hover: hover\) and \(pointer: fine\) \{[\s\S]*?\.sessrow\.has-action:hover \.sess__meta \{[^}]*opacity: 0;/s,
     )
-    expect(appCss).toMatch(/\.sessrow:focus-within \.sess__meta \{[^}]*opacity: 0;/s)
+    expect(appCss).toMatch(/\.sessrow\.has-action:focus-within \.sess__meta \{[^}]*opacity: 0;/s)
+    expect(appCss).not.toMatch(/\.sessrow:(hover|focus-within) \.sess__meta/)
     expect(appCss).toMatch(
       /\.sess__time \{[^}]*font-size: var\(--t-xs\);[^}]*font-variant-numeric: tabular-nums;/s,
     )
   })
 
-  it('hangs project chats off a soft guide under the folder mark', () => {
+  it('indents project chats under the folder mark, with no guide beside them', () => {
     expect(appCss).not.toContain('.proj__chevron')
     expect(appCss).toMatch(/\.proj__toggle \{[^}]*gap: 8px;[^}]*padding: 2px 7px;/s)
+    // The first chat follows its project's row directly.
     expect(appCss).toMatch(
-      /\.proj__sessions \{[^}]*--sess-indent: 7px;[^}]*display: grid;[^}]*grid-template-columns: minmax\(0, 1fr\);[^}]*row-gap: 2px;[^}]*margin: 2px 0 8px;[^}]*padding: 0;/s,
+      /\.proj__sessions \{[^}]*--sess-indent: 7px;[^}]*display: grid;[^}]*grid-template-columns: minmax\(0, 1fr\);[^}]*row-gap: 2px;[^}]*margin: 0 0 8px;[^}]*padding: 0;/s,
     )
-    // Pinned chats keep the outer gutter (7px); a project's chats indent past
-    // the guide, which sits on the folder mark's centre (7px + 13px / 2).
+    // Pinned chats keep the outer gutter (7px); a project's chats indent under
+    // its folder mark.
     expect(appCss).toMatch(/\.proj__drawer > \.proj__sessions \{[^}]*--sess-indent: 22px;/s)
-    expect(appCss).toMatch(
-      /\.proj::after \{[^}]*position: absolute;[^}]*left: 13px;[^}]*width: 1px;[^}]*background: var\(--rail-guide\);[^}]*pointer-events: none;/s,
-    )
+    // The hairline down the left of an open project is gone, and its token with it.
+    expect(appCss).not.toContain('.proj::after')
+    expect(appCss).not.toContain('--rail-guide')
     // Pinned chats share the project-chat indent; no override may pull them left.
     expect(appCss).not.toMatch(/\.sessrow\.is-pinned[^{]*\{[^}]*padding-left/s)
     expect(appCss).not.toMatch(/\.proj__sessions \{[^}]*border-left/s)
@@ -120,9 +136,9 @@ describe('sidebar theme CSS', () => {
     expect(appCss).toMatch(
       /\.proj__sessions-toggle \{[^}]*padding: 0 8px 0 calc\(var\(--sess-indent\) \+ 21px\);/s,
     )
-    expect(appCss).toMatch(
-      /\.proj__sessions > \.rail__hint \{[^}]*padding-left: calc\(var\(--sess-indent\) \+ 21px\);/s,
-    )
+    // An empty project's "No chats" starts under the project name, not at the
+    // chat-title indent, where it floated right with no mark in front of it.
+    expect(appCss).toMatch(/\.proj__sessions > \.rail__hint \{[^}]*padding-left: 28px;/s)
     expect(appCss).not.toMatch(/\.sessrow\.is-pinned \.sess \{/s)
   })
 
@@ -150,10 +166,11 @@ describe('sidebar theme CSS', () => {
     )
   })
 
-  it('keeps the account popup compact and pins its actions below scrolling limits', () => {
+  it('lets the account popup grow to the window and pins its actions below scrolling limits', () => {
     expect(appCss).toMatch(
-      /\.menu--settings \{[^}]*max-height: min\(500px, calc\(100vh - 24px\)\);[^}]*display: flex;[^}]*flex-direction: column;[^}]*overflow: hidden;/s,
+      /\.menu--settings \{[^}]*max-height: calc\(100vh - 24px\);[^}]*display: flex;[^}]*flex-direction: column;[^}]*overflow: hidden;/s,
     )
+    expect(appCss).not.toMatch(/\.menu--settings \{[^}]*max-height: min\(/s)
     expect(appCss).toMatch(/\.menu--compact \{[^}]*gap: 0;[^}]*padding: 3px;/s)
     expect(accountLimitsCss).toMatch(
       /\.account-menu__usage \{[^}]*flex: 0 1 auto;[^}]*min-height: 0;[^}]*overflow-y: auto;[^}]*overscroll-behavior: contain;/s,
@@ -192,10 +209,35 @@ describe('sidebar theme CSS', () => {
     expect(sidebarSource).not.toContain('IconChevronUp')
   })
 
-  it('uses the light foreground color for unread chat dots', () => {
-    expect(appCss).toMatch(
-      /\.sess__unread-dot \{[^}]*width: 6px;[^}]*height: 6px;[^}]*background: var\(--light\);/s,
+  it('keeps the open account card and its popup dark in the dark theme', () => {
+    // The shared pressed grey lit the whole card while its popup was open.
+    expect(accountCardCss).toMatch(
+      /:root:not\(\[data-theme='light'\]\) \.account-card \{\s*--control-pressed: color-mix\(in srgb, var\(--text\) 3%, var\(--rail-raised\)\);/,
     )
+    expect(accountCardCss).toMatch(
+      /:root:not\(\[data-theme='light'\]\) \.menu\.menu--account \{\s*--menu-bg: color-mix\(in srgb, var\(--surface\) 35%, var\(--bg-rail\)\);/,
+    )
+  })
+
+  it('marks an unread chat by a heavier title, not a second dot', () => {
+    // A failed or waiting chat already shows a dot in the row's one slot; an
+    // unread dot beside it made two.
+    expect(appCss).toMatch(/\.sessrow\.is-unread \.sess__title \{[^}]*font-weight: 560;/s)
+    expect(appCss).not.toContain('.sess__unread-dot')
+    // Needs you lists only blocked and failed chats, so it has no dot of its own.
+    expect(appCss).not.toContain('.sess__status-dot.is-done')
+  })
+
+  it("lets a band or Archived row's project name give way before its title", () => {
+    expect(appCss).toMatch(
+      /:is\(\.needs-band__row, \.archived__row\) \.sess__title \{[^}]*flex: 0 1 auto;/s,
+    )
+    // Only the room the title leaves; cut to a letter or two, it hides.
+    expect(appCss).toMatch(/\.sess__project \{[^}]*flex: 1 1 0;[^}]*container-type: inline-size;/s)
+    expect(appCss).toMatch(
+      /@container \(max-width: 31px\) \{\s*\.sess__project > span \{\s*visibility: hidden;/s,
+    )
+    expect(appCss).toMatch(/\.rail__body\[data-narrow\] \.sess__project \{\s*display: none;/s)
   })
 
   it('uses semantic colors for finished, failed, and waiting threads in both sidebars', () => {
@@ -224,11 +266,7 @@ describe('sidebar theme CSS', () => {
   })
 
   it('keeps unread chat titles on the shared text line', () => {
-    // An inline dot before the title pushed unread titles right of every
-    // other chat title. The dot trails the title inside the row's meta group.
     expect(appCss).toMatch(/\.sess__meta \{[^}]*display: flex;[^}]*flex: none;/s)
-    expect(appCss).toMatch(/\.sess__unread-dot \{[^}]*width: 6px;[^}]*flex: none;/s)
-    expect(appCss).not.toMatch(/\.sess__unread-dot \{[^}]*position: absolute/s)
   })
 
   it('gives project rows a consistent readable rhythm', () => {
@@ -251,11 +289,14 @@ describe('sidebar theme CSS', () => {
     expect(sessRule).toContain('font-weight: var(--rail-font-weight);')
     expect(sessRule).toContain('border-radius: var(--r-md);')
     expect(sidebarSource).toContain('const VIRTUAL_SESSION_ROW_HEIGHT = 30')
+    // A dragged project rides over its neighbours, so it needs the rail's
+    // opaque background; the rows making way slide with the shared curve.
     expect(appCss).toMatch(
-      /\.proj\[data-drop-position\]::before \{[^}]*right: 6px;[^}]*left: 26px;[^}]*height: 2px;[^}]*background: var\(--light\);/s,
+      /\.proj\.is-row-dragging \{[^}]*z-index: 3;[^}]*background: var\(--bg-rail\);/s,
     )
-    expect(appCss).toMatch(/\.proj\[data-drop-position='before'\]::before \{[^}]*top: -1px;/s)
-    expect(appCss).toMatch(/\.proj\[data-drop-position='after'\]::before \{[^}]*bottom: -1px;/s)
+    expect(appCss).toMatch(
+      /\.sessrow\.is-row-shifting,\s*\.proj\.is-row-shifting \{[^}]*transition: translate var\(--dur-slow\) var\(--ease-rail\);/s,
+    )
   })
 
   it('uses the reference pill shape without changing the virtual row geometry', () => {

@@ -11,15 +11,19 @@ import {
 } from 'node:fs'
 import path from 'node:path'
 import {
+  AccountContextSettingsSchema,
   ApprovalModeSchema,
   BackgroundModelPreferenceSchema,
+  DEFAULT_ACCOUNT_ID,
   DiffDecisionSchema,
   DomainEventSchema,
   ProviderContextSettingsMapSchema,
   ProviderIdSchema,
+  ProviderRuntimeSettingsSchema,
   SidebarSettingsSchema,
 } from '@harness/contracts'
 import type {
+  AccountContextSettings,
   ApprovalMode,
   BackgroundModelPreference,
   DiffDecision,
@@ -28,9 +32,11 @@ import type {
   ProviderContextSettingsMap,
   ProviderId,
   ProviderHistorySession,
+  ProviderRuntimeSettings,
   SidebarSettings,
   SessionSearchResult,
   ThreadLifecycle,
+  ThreadSettings,
   Usage,
 } from '@harness/contracts'
 import { z } from 'zod'
@@ -53,6 +59,17 @@ import {
 
 const BACKGROUND_MODEL_SETTING = 'background-model'
 const PROVIDER_CONTEXT_SETTING = 'provider-context'
+/** Further accounts' own context settings; the rest follow their provider's. */
+const ACCOUNT_CONTEXT_SETTING = 'provider-account-context'
+/** The runtime each provider launches through; a provider without one uses its default. */
+const PROVIDER_RUNTIME_SETTING = 'provider-runtime'
+const FEEDBACK_LEDGER_SETTING = 'feedback-ledger'
+const MODEL_LISTS_SETTING = 'model-lists'
+const PHONE_ACCESS_SETTING = 'phone-access'
+/** The model picker's hidden choice keys, as the desktop resolves them. */
+const HIDDEN_MODELS_SETTING = 'hidden-models'
+const PROVIDER_ROSTER_SETTING = 'provider-roster'
+const LIMIT_SNAPSHOT_SETTING = 'limit-snapshot'
 const AUTOMATIC_BACKGROUND_MODEL_PREFERENCE: BackgroundModelPreference = Object.freeze({
   mode: 'automatic',
 })
@@ -84,6 +101,12 @@ function freezeBackgroundModelPreference(
  * — and everything goes through this file, so replacing it is one file's work.
  */
 
+/** One transcript's listing as its history source reported it; `null` lists no session. */
+export type ProviderHistoryListing = {
+  revision: string
+  session: ProviderHistorySession | null
+}
+
 export type StoredProject = {
   path: string
   name: string
@@ -96,8 +119,12 @@ export type StoredThread = {
   id: string
   projectPath: string
   provider: ProviderId
-  /** Custom harness id, when the thread runs one instead of the provider CLI. */
+  /** ACP agent or custom harness id, when one owns the session. */
   agent?: string | undefined
+  /** Non-secret connection identity for direct API sessions. */
+  connectionId?: string | undefined
+  /** The provider account this chat is pinned to. Absent means the default account. */
+  accountId?: string | undefined
   /** Opaque provider-owned resume identity. Never used as the TasteCode id. */
   providerSessionId?: string | undefined
   title: string
@@ -118,6 +145,14 @@ export type StoredThread = {
   ephemeral: boolean
   /** Main conversation captured when an ephemeral Side chat was created. */
   parentThreadId?: string | undefined
+  /** The earlier chat this one carries on, such as on another account after a usage limit. */
+  continuedFrom?: string | undefined
+  /**
+   * Where the uncommitted changes of the earlier chat's own checkout went when
+   * this chat started: carried into this chat's checkout, or kept where they
+   * were because they could not be. Absent when there were none to carry.
+   */
+  continuedChanges?: 'carried' | 'kept' | undefined
 }
 
 /** Only the fields sent by `projects.list`; recovery-only metadata stays in SQLite. */
@@ -126,6 +161,10 @@ export type StoredSidebarThread = {
   projectPath: string
   provider: ProviderId
   agent?: string | undefined
+  /** Non-secret connection identity for direct API sessions. */
+  connectionId?: string | undefined
+  /** The provider account this chat is pinned to. Absent means the default account. */
+  accountId?: string | undefined
   title: string
   pinned: boolean
   createdAt: number
@@ -133,6 +172,10 @@ export type StoredSidebarThread = {
   worktreeBranch?: string | undefined
   lifecycle: ThreadLifecycle
   unread: boolean
+  continuedFrom?: string | undefined
+  /** The model of the chat's shared setup, from `thread_settings`. */
+  model?: string | undefined
+  lastActiveAt: number
 }
 
 type SidebarThreadUpdate = (thread: StoredSidebarThread) => StoredSidebarThread
@@ -146,6 +189,15 @@ export type StoredCheckpoint = {
   commit: string
   label: string
   createdAt: number
+}
+
+export type StoredUsageEvent = {
+  threadId: string
+  provider: ProviderId
+  /** The account the chat is pinned to; absent for the default account. */
+  accountId?: string | undefined
+  at: number
+  usage: Usage
 }
 
 export type StoredQueuedTurn = {
@@ -198,6 +250,26 @@ type SearchSnapshot = {
 }
 
 export type UsageSummary = { session: UsageTotal; today: UsageTotal }
+
+/**
+ * One provider account as stored. `label` is absent only on a default
+ * account's row that was never renamed; `home` is set only for a folder the
+ * user brought.
+ */
+export type StoredProviderAccount = {
+  provider: ProviderId
+  id: string
+  label?: string
+  home?: string
+  managed: boolean
+  email?: string
+  plan?: string
+  createdAt: number
+  /** New chats with this provider start on it. No active row means the default account. */
+  active: boolean
+}
+
+export type ProviderAccountSnapshotKind = 'limits' | 'models'
 
 type UsageSample = { total: UsageTotal; cumulative: boolean }
 
@@ -301,8 +373,11 @@ CREATE TABLE IF NOT EXISTS threads (
   project_path TEXT NOT NULL,
   provider     TEXT NOT NULL,
   agent        TEXT,
+  connection_id TEXT,
+  account_id   TEXT,
   provider_session_id TEXT,
   title        TEXT NOT NULL,
+  provisional_title TEXT,
   pinned       INTEGER NOT NULL DEFAULT 0,
   created_at   INTEGER NOT NULL,
   closed_at    INTEGER,
@@ -319,6 +394,10 @@ CREATE TABLE IF NOT EXISTS threads (
   last_active_at   INTEGER NOT NULL,
   ephemeral        INTEGER NOT NULL DEFAULT 0,
   parent_thread_id TEXT,
+  continued_from   TEXT,
+  continue_context_pending INTEGER NOT NULL DEFAULT 0,
+  continued_changes       TEXT,
+  handover_pending        INTEGER NOT NULL DEFAULT 0,
   restore_context_pending INTEGER NOT NULL DEFAULT 0,
   restored_at             INTEGER,
   history_rewrite_after   INTEGER,
@@ -348,6 +427,17 @@ CREATE TABLE IF NOT EXISTS provider_history_events (
   PRIMARY KEY (thread_id, event_seq)
 );
 CREATE INDEX IF NOT EXISTS provider_history_event_seq ON provider_history_events (event_seq);
+
+-- What a history source last listed for one saved transcript, so a restart does
+-- not read every transcript again. Locator and revision are opaque source keys;
+-- a NULL session means the transcript lists no session.
+CREATE TABLE IF NOT EXISTS provider_history_metadata (
+  provider TEXT NOT NULL,
+  locator  TEXT NOT NULL,
+  revision TEXT NOT NULL,
+  session  TEXT,
+  PRIMARY KEY (provider, locator)
+) WITHOUT ROWID;
 
 INSERT OR IGNORE INTO sidebar_settings (id, mode, auto_settle_days) VALUES (1, 'classic', 3);
 
@@ -460,6 +550,23 @@ CREATE TABLE IF NOT EXISTS thread_replay_snapshots (
   payload   TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS thread_runtime_state (
+  thread_id TEXT PRIMARY KEY REFERENCES threads(id) ON DELETE CASCADE,
+  payload   TEXT NOT NULL
+);
+
+-- Provider sessions a chat ran on before it moved to another provider. They
+-- stay the chat's own: provider history neither imports them as chats of
+-- their own nor reads them into the chat again. Kept after the chat is
+-- deleted, like any deleted chat's saved session.
+CREATE TABLE IF NOT EXISTS left_provider_sessions (
+  provider   TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  thread_id  TEXT NOT NULL,
+  left_at    INTEGER NOT NULL,
+  PRIMARY KEY (provider, session_id)
+) WITHOUT ROWID;
+
 CREATE TABLE IF NOT EXISTS history_keys (
   thread_id TEXT NOT NULL,
   key       TEXT NOT NULL,
@@ -497,10 +604,45 @@ CREATE TABLE IF NOT EXISTS thread_approvals (
   mode TEXT NOT NULL
 );
 
+-- What a chat's next turn runs with, shared by every client. NULL is the source's default.
+CREATE TABLE IF NOT EXISTS thread_settings (
+  thread_id    TEXT PRIMARY KEY REFERENCES threads(id) ON DELETE CASCADE,
+  model        TEXT,
+  effort       TEXT,
+  service_tier TEXT
+);
+
 CREATE TABLE IF NOT EXISTS app_settings (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+
+-- Provider accounts beyond the CLI's own. The default account gets a row only
+-- for a label or identity of its own. A managed account's folder is derived
+-- from the data folder, so only a folder the user brought is stored in home.
+-- No credential ever lands here; the vendor CLI keeps those in its folder.
+CREATE TABLE IF NOT EXISTS provider_accounts (
+  provider   TEXT NOT NULL,
+  id         TEXT NOT NULL,
+  label      TEXT,
+  home       TEXT,
+  managed    INTEGER NOT NULL DEFAULT 0,
+  email      TEXT,
+  plan       TEXT,
+  created_at INTEGER NOT NULL,
+  active     INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (provider, id)
+) WITHOUT ROWID;
+
+-- What an account's own controls keep across restarts, as they serialized it:
+-- its last plan limits and model lists. Removed with the account.
+CREATE TABLE IF NOT EXISTS provider_account_snapshots (
+  provider TEXT NOT NULL,
+  id       TEXT NOT NULL,
+  kind     TEXT NOT NULL CHECK (kind IN ('limits', 'models')),
+  value    TEXT NOT NULL,
+  PRIMARY KEY (provider, id, kind)
+) WITHOUT ROWID;
 
 CREATE INDEX IF NOT EXISTS checkpoints_by_thread ON checkpoints (thread_id, seq);
 CREATE INDEX IF NOT EXISTS events_by_thread ON events (thread_id, seq);
@@ -547,9 +689,20 @@ const ADDED_COLUMNS: Array<{ table: string; column: string; definition: string }
   { table: 'threads', column: 'parent_thread_id', definition: 'TEXT' },
   { table: 'threads', column: 'restore_context_pending', definition: 'INTEGER NOT NULL DEFAULT 0' },
   { table: 'threads', column: 'provider_session_id', definition: 'TEXT' },
+  { table: 'threads', column: 'connection_id', definition: 'TEXT' },
+  { table: 'threads', column: 'account_id', definition: 'TEXT' },
   { table: 'threads', column: 'history_rewrite_after', definition: 'INTEGER' },
   { table: 'threads', column: 'history_rewrite_through', definition: 'INTEGER' },
   { table: 'threads', column: 'restored_at', definition: 'INTEGER' },
+  { table: 'threads', column: 'continued_from', definition: 'TEXT' },
+  {
+    table: 'threads',
+    column: 'continue_context_pending',
+    definition: 'INTEGER NOT NULL DEFAULT 0',
+  },
+  { table: 'threads', column: 'continued_changes', definition: 'TEXT' },
+  { table: 'threads', column: 'handover_pending', definition: 'INTEGER NOT NULL DEFAULT 0' },
+  { table: 'threads', column: 'provisional_title', definition: 'TEXT' },
 ]
 
 type SqliteInteger = number | bigint
@@ -557,6 +710,17 @@ type ColumnRow = { name: string }
 type StringValueRow = { value: string }
 type MigrationRow = { name: string }
 type ProjectRow = { path: string; name: string; pinned: SqliteInteger; created_at: SqliteInteger }
+type ProviderAccountRow = {
+  provider: ProviderId
+  id: string
+  label: string | null
+  home: string | null
+  managed: SqliteInteger
+  email: string | null
+  plan: string | null
+  created_at: SqliteInteger
+  active: SqliteInteger
+}
 type WorktreeRow = {
   id: string
   project_path: string
@@ -568,6 +732,8 @@ type ThreadRow = {
   project_path: string
   provider: string
   agent: string | null
+  connection_id: string | null
+  account_id: string | null
   provider_session_id: string | null
   title: string
   pinned: SqliteInteger
@@ -585,6 +751,8 @@ type ThreadRow = {
   last_active_at: SqliteInteger
   ephemeral: SqliteInteger
   parent_thread_id: string | null
+  continued_from: string | null
+  continued_changes: string | null
 }
 type SidebarThreadRow = Pick<
   ThreadRow,
@@ -592,6 +760,8 @@ type SidebarThreadRow = Pick<
   | 'project_path'
   | 'provider'
   | 'agent'
+  | 'connection_id'
+  | 'account_id'
   | 'title'
   | 'pinned'
   | 'created_at'
@@ -604,7 +774,9 @@ type SidebarThreadRow = Pick<
   | 'keep_active'
   | 'woke_at'
   | 'unread'
->
+  | 'continued_from'
+  | 'last_active_at'
+> & { settings_model: string | null }
 type InactiveThreadCandidateRow = Pick<ThreadRow, 'id' | 'unread'>
 type ThreadIdRow = Pick<ThreadRow, 'id'>
 type ThreadLifecycleRow = Pick<
@@ -835,6 +1007,8 @@ export class Store {
   #sidebarSettingsCache: SidebarSettings | undefined
   #backgroundModelPreferenceCache: BackgroundModelPreference | undefined
   #providerContextSettingsCache: ProviderContextSettingsMap | undefined
+  #accountContextSettingsCache: readonly AccountContextSettings[] | undefined
+  #providerRuntimeSettingsCache: ProviderRuntimeSettings | undefined
   /**
    * Compact replays by thread. `tail` is false once an event lands after the
    * snapshot: the entry still serves as a base and for older history pages.
@@ -1114,10 +1288,11 @@ export class Store {
     this.#findProject = this.#db.prepare(`SELECT * FROM projects WHERE path = ?`)
     this.#insertThread = this.#db.prepare(
       `INSERT INTO threads
-        (id, project_path, provider, agent, provider_session_id, title, created_at,
-          worktree_path, worktree_branch,
-          lifecycle_state, keep_active, unread, last_active_at, ephemeral, parent_thread_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 0, 0, ?, ?, ?)`,
+        (id, project_path, provider, agent, connection_id, account_id, provider_session_id, title,
+          created_at, worktree_path, worktree_branch,
+          lifecycle_state, keep_active, unread, last_active_at, ephemeral, parent_thread_id,
+          continued_from, continue_context_pending, continued_changes)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 0, 0, ?, ?, ?, ?, ?, ?)`,
     )
     this.#listProjects = this.#db.prepare(`SELECT * FROM projects ORDER BY created_at`)
     this.#listProjectThreads = this.#db.prepare(
@@ -1127,10 +1302,13 @@ export class Store {
       `SELECT * FROM threads WHERE ephemeral = 0 ORDER BY created_at DESC`,
     )
     this.#listSidebarThreads = this.#db.prepare(
-      `SELECT id, project_path, provider, agent, title, pinned, created_at, closed_at,
-              worktree_branch, lifecycle_state, lifecycle_at, lifecycle_reason, wake_at,
-              keep_active, woke_at, unread
-       FROM threads WHERE ephemeral = 0 ORDER BY created_at DESC`,
+      `SELECT t.id, t.project_path, t.provider, t.agent, t.connection_id, t.account_id, t.title,
+              t.pinned, t.created_at, t.closed_at,
+              t.worktree_branch, t.lifecycle_state, t.lifecycle_at, t.lifecycle_reason, t.wake_at,
+              t.keep_active, t.woke_at, t.unread, t.continued_from, t.last_active_at,
+              s.model AS settings_model
+       FROM threads t LEFT JOIN thread_settings s ON s.thread_id = t.id
+       WHERE t.ephemeral = 0 ORDER BY t.created_at DESC`,
     )
     for (let mask = 0; mask < 4; mask += 1) {
       const clauses = ['session_search MATCH ?']
@@ -1487,6 +1665,8 @@ export class Store {
       stored.projectPath,
       stored.provider,
       stored.agent ?? null,
+      stored.connectionId ?? null,
+      stored.accountId ?? null,
       stored.providerSessionId ?? null,
       stored.title,
       stored.createdAt,
@@ -1495,6 +1675,10 @@ export class Store {
       stored.createdAt,
       ephemeral ? 1 : 0,
       stored.parentThreadId ?? null,
+      stored.continuedFrom ?? null,
+      // The earlier conversation goes with the first prompt; see threadNeedsContinueContext.
+      stored.continuedFrom === undefined ? 0 : 1,
+      stored.continuedChanges ?? null,
     )
     // A new thread's index covers every row it will ever have.
     if (!this.#threadHasEvents.get(stored.id)) {
@@ -1634,14 +1818,35 @@ export class Store {
     })
   }
 
+  /** Any rename, the user's own included, settles the title; see `setProvisionalTitle`. */
   renameThread(id: string, title: string): void {
-    this.#db.prepare(`UPDATE threads SET title = ? WHERE id = ?`).run(title, id)
+    this.#db
+      .prepare(`UPDATE threads SET title = ?, provisional_title = NULL WHERE id = ?`)
+      .run(title, id)
     this.#updateCachedThread(id, (thread) =>
       thread.title === title ? thread : { ...thread, title },
     )
     this.#updateSidebarThread(id, (thread) =>
       thread.title === title ? thread : { ...thread, title },
     )
+  }
+
+  /**
+   * Mark `title`, taken from the chat's first prompt, as standing in until the
+   * provider names the chat. Recovery metadata: kept out of the cached thread.
+   */
+  setProvisionalTitle(id: string, title: string): void {
+    this.#db.prepare(`UPDATE threads SET provisional_title = ? WHERE id = ?`).run(title, id)
+  }
+
+  /** The stand-in title, while the chat still has it. */
+  provisionalTitle(id: string): string | undefined {
+    return sqliteRow<StringValueRow>(
+      this.#db.prepare(
+        `SELECT provisional_title AS value FROM threads WHERE id = ? AND provisional_title = title`,
+      ),
+      id,
+    )?.value
   }
 
   setThreadPinned(id: string, pinned: boolean): void {
@@ -1691,10 +1896,17 @@ export class Store {
     })
   }
 
-  /** Include temporary tasks so provider discovery cannot publish their internal prompts. */
+  /**
+   * Include temporary tasks so provider discovery cannot publish their internal prompts.
+   * An imported chat that moved to another provider runs a session of its own
+   * since, so it counts as native too.
+   */
   nativeProviderThreads(provider: ProviderId): StoredThread[] {
     return sqliteRows<ThreadRow>(
-      this.#db.prepare("SELECT * FROM threads WHERE provider = ? AND id NOT LIKE 'external:%'"),
+      this.#db.prepare(
+        `SELECT * FROM threads WHERE provider = ? AND (id NOT LIKE 'external:%'
+           OR id IN (SELECT thread_id FROM left_provider_sessions))`,
+      ),
       provider,
     ).flatMap((row) => {
       const thread = toThread(row)
@@ -1773,6 +1985,47 @@ export class Store {
         )
         .run(threadId, provider, session.id)
       this.saveProviderHistory(provider, threadId, session)
+    })
+  }
+
+  /** What `provider`'s history source last listed per transcript; see ProviderHistoryListOptions. */
+  providerHistoryMetadata(provider: ProviderId): Map<string, ProviderHistoryListing> {
+    const listings = new Map<string, ProviderHistoryListing>()
+    for (const row of sqliteRows<{ locator: string; revision: string; session: string | null }>(
+      this.#db.prepare(
+        'SELECT locator, revision, session FROM provider_history_metadata WHERE provider = ?',
+      ),
+      provider,
+    )) {
+      try {
+        const session =
+          row.session === null ? null : (JSON.parse(row.session) as ProviderHistorySession)
+        listings.set(row.locator, { revision: row.revision, session })
+      } catch {
+        // A damaged row only costs one read of its transcript.
+      }
+    }
+    return listings
+  }
+
+  /** Records new listings and drops those of transcripts a full listing no longer named. */
+  saveProviderHistoryMetadata(
+    provider: ProviderId,
+    remembered: ReadonlyMap<string, ProviderHistoryListing>,
+    forgotten: Iterable<string>,
+  ): void {
+    this.#transaction(() => {
+      const save = this.#db.prepare(
+        `INSERT INTO provider_history_metadata (provider, locator, revision, session)
+         VALUES (?, ?, ?, ?) ON CONFLICT (provider, locator) DO UPDATE SET
+           revision = excluded.revision, session = excluded.session`,
+      )
+      for (const [locator, { revision, session }] of remembered)
+        save.run(provider, locator, revision, session === null ? null : JSON.stringify(session))
+      const forget = this.#db.prepare(
+        'DELETE FROM provider_history_metadata WHERE provider = ? AND locator = ?',
+      )
+      for (const locator of forgotten) forget.run(provider, locator)
     })
   }
 
@@ -1976,9 +2229,11 @@ export class Store {
     }))
     this.#updateSidebarThread(id, (thread) => {
       const nextUnread = thread.unread || unread
-      return thread.lifecycle === lifecycle && thread.unread === nextUnread
+      return thread.lifecycle === lifecycle &&
+        thread.unread === nextUnread &&
+        thread.lastActiveAt === at
         ? thread
-        : { ...thread, lifecycle, unread: nextUnread }
+        : { ...thread, lifecycle, unread: nextUnread, lastActiveAt: at }
     })
     return lifecycle
   }
@@ -2061,6 +2316,20 @@ export class Store {
     return this.#sidebarSettingsCache
   }
 
+  threadRuntimeState(threadId: string): unknown {
+    const row = sqliteRow<{ payload: string }>(
+      this.#db.prepare('SELECT payload FROM thread_runtime_state WHERE thread_id = ?'),
+      threadId,
+    )
+    return row ? JSON.parse(row.payload) : undefined
+  }
+
+  saveThreadRuntimeState(threadId: string, state: unknown): void {
+    this.#db
+      .prepare('INSERT OR REPLACE INTO thread_runtime_state (thread_id, payload) VALUES (?, ?)')
+      .run(threadId, serializeJson(state))
+  }
+
   threadApproval(threadId: string): ApprovalMode | undefined {
     const row = this.#db
       .prepare('SELECT mode FROM thread_approvals WHERE thread_id = ?')
@@ -2075,6 +2344,40 @@ export class Store {
       ON CONFLICT(thread_id) DO UPDATE SET mode = excluded.mode`,
       )
       .run(threadId, mode)
+  }
+
+  /** The chat's setup with its access level; empty when no client has chosen one. */
+  threadSettings(threadId: string): ThreadSettings {
+    const row = this.#db
+      .prepare('SELECT model, effort, service_tier FROM thread_settings WHERE thread_id = ?')
+      .get(threadId)
+    const approval = this.threadApproval(threadId)
+    const text = (value: unknown) => (typeof value === 'string' ? value : undefined)
+    const model = text(row?.['model'])
+    const effort = text(row?.['effort'])
+    const serviceTier = text(row?.['service_tier'])
+    return {
+      ...(model !== undefined ? { model } : {}),
+      ...(effort ? { effort } : {}),
+      ...(serviceTier ? { serviceTier } : {}),
+      ...(approval ? { approval } : {}),
+    }
+  }
+
+  /** Replaces the model, effort and tier together; the access level is kept apart. */
+  setThreadSettings(
+    threadId: string,
+    settings: Pick<ThreadSettings, 'model' | 'effort' | 'serviceTier'>,
+  ): void {
+    this.#db
+      .prepare(
+        `INSERT INTO thread_settings (thread_id, model, effort, service_tier) VALUES (?, ?, ?, ?)
+      ON CONFLICT(thread_id) DO UPDATE SET
+        model = excluded.model, effort = excluded.effort, service_tier = excluded.service_tier`,
+      )
+      .run(threadId, settings.model ?? null, settings.effort ?? null, settings.serviceTier ?? null)
+    // The project list names each chat's model.
+    this.#invalidateSidebarThreads()
   }
 
   backgroundModelPreference(): BackgroundModelPreference {
@@ -2131,6 +2434,277 @@ export class Store {
     this.#writeAppSetting.run(PROVIDER_CONTEXT_SETTING, JSON.stringify(next))
     this.#providerContextSettingsCache = Object.freeze(next)
     return this.#providerContextSettingsCache
+  }
+
+  providerRuntimeSettings(): ProviderRuntimeSettings {
+    if (this.#providerRuntimeSettingsCache) return this.#providerRuntimeSettingsCache
+    const row = sqliteRow<StringValueRow>(this.#readAppSetting, PROVIDER_RUNTIME_SETTING)
+    let settings: ProviderRuntimeSettings = {}
+    if (row) {
+      try {
+        settings = ProviderRuntimeSettingsSchema.parse(JSON.parse(row.value))
+      } catch {
+        // A shape a newer build wrote leaves every engine on its default runtime.
+        console.warn('[store] unreadable provider runtime settings, using engine defaults')
+      }
+    }
+    this.#providerRuntimeSettingsCache = Object.freeze(settings)
+    return this.#providerRuntimeSettingsCache
+  }
+
+  /** `null` returns the provider to its default runtime. */
+  updateProviderRuntimeSettings(
+    provider: ProviderId,
+    runtime: string | null,
+  ): ProviderRuntimeSettings {
+    const next: ProviderRuntimeSettings = { ...this.providerRuntimeSettings() }
+    if (runtime === null) delete next[provider]
+    else next[provider] = runtime
+    this.#writeAppSetting.run(PROVIDER_RUNTIME_SETTING, JSON.stringify(next))
+    this.#providerRuntimeSettingsCache = Object.freeze(next)
+    return this.#providerRuntimeSettingsCache
+  }
+
+  accountContextSettings(): readonly AccountContextSettings[] {
+    if (this.#accountContextSettingsCache) return this.#accountContextSettingsCache
+    const row = sqliteRow<StringValueRow>(this.#readAppSetting, ACCOUNT_CONTEXT_SETTING)
+    let settings: AccountContextSettings[] = []
+    if (row) {
+      try {
+        settings = z.array(AccountContextSettingsSchema).parse(JSON.parse(row.value))
+      } catch {
+        // A shape a newer build wrote leaves every account on its provider's settings.
+        console.warn('[store] unreadable account context settings, using provider settings')
+      }
+    }
+    this.#accountContextSettingsCache = Object.freeze(settings)
+    return this.#accountContextSettingsCache
+  }
+
+  /** Empty settings drop the account's own, so it follows its provider's again. */
+  updateAccountContextSettings(entry: AccountContextSettings): readonly AccountContextSettings[] {
+    const others = this.accountContextSettings().filter(
+      (each) => each.provider !== entry.provider || each.accountId !== entry.accountId,
+    )
+    const empty = entry.settings.window === undefined && entry.settings.compactAt === undefined
+    const next = Object.freeze(empty ? others : [...others, Object.freeze({ ...entry })])
+    this.#writeAppSetting.run(ACCOUNT_CONTEXT_SETTING, JSON.stringify(next))
+    this.#accountContextSettingsCache = next
+    return next
+  }
+
+  /** Send timestamps and short hashes only; feedback text is never stored. */
+  feedbackLedger(): string | undefined {
+    return sqliteRow<StringValueRow>(this.#readAppSetting, FEEDBACK_LEDGER_SETTING)?.value
+  }
+
+  setFeedbackLedger(value: string): void {
+    this.#writeAppSetting.run(FEEDBACK_LEDGER_SETTING, value)
+  }
+
+  /** Whether phones may connect, and the paired phones' public keys, as `PhoneAccess` serialized them. */
+  phoneAccessState(): string | undefined {
+    return sqliteRow<StringValueRow>(this.#readAppSetting, PHONE_ACCESS_SETTING)?.value
+  }
+
+  setPhoneAccessState(value: string): void {
+    this.#writeAppSetting.run(PHONE_ACCESS_SETTING, value)
+  }
+
+  hiddenModels(): string[] {
+    const value = sqliteRow<StringValueRow>(this.#readAppSetting, HIDDEN_MODELS_SETTING)?.value
+    if (value === undefined) return []
+    try {
+      return z.array(z.string()).catch([]).parse(JSON.parse(value))
+    } catch {
+      return []
+    }
+  }
+
+  setHiddenModels(keys: readonly string[]): void {
+    this.#writeAppSetting.run(HIDDEN_MODELS_SETTING, JSON.stringify(keys))
+  }
+
+  /** The desktop's provider roster; null until a desktop saved one. */
+  providerRoster(): string[] | null {
+    const value = sqliteRow<StringValueRow>(this.#readAppSetting, PROVIDER_ROSTER_SETTING)?.value
+    if (value === undefined) return null
+    try {
+      return z.array(z.string()).nullable().catch(null).parse(JSON.parse(value))
+    } catch {
+      return null
+    }
+  }
+
+  setProviderRoster(keys: readonly string[]): void {
+    this.#writeAppSetting.run(PROVIDER_ROSTER_SETTING, JSON.stringify(keys))
+  }
+
+  /** The last good model list per source, as `ModelListCache` serialized it. */
+  modelListSnapshot(): string | undefined {
+    return sqliteRow<StringValueRow>(this.#readAppSetting, MODEL_LISTS_SETTING)?.value
+  }
+
+  setModelListSnapshot(value: string): void {
+    this.#writeAppSetting.run(MODEL_LISTS_SETTING, value)
+  }
+
+  /** Each provider's last full plan-limit read, as `ProviderControls` serialized it. */
+  limitSnapshot(): string | undefined {
+    return sqliteRow<StringValueRow>(this.#readAppSetting, LIMIT_SNAPSHOT_SETTING)?.value
+  }
+
+  setLimitSnapshot(value: string): void {
+    this.#writeAppSetting.run(LIMIT_SNAPSHOT_SETTING, value)
+  }
+
+  // ---- provider accounts --------------------------------------------------
+
+  /** Oldest first. Rows of providers this build does not know stay in the table untouched. */
+  providerAccounts(provider: ProviderId): StoredProviderAccount[] {
+    return sqliteRows<ProviderAccountRow>(
+      this.#db.prepare(
+        `SELECT * FROM provider_accounts WHERE provider = ? ORDER BY created_at, id`,
+      ),
+      provider,
+    ).map((row) => ({
+      provider: row.provider,
+      id: row.id,
+      ...(row.label === null ? {} : { label: row.label }),
+      ...(row.home === null ? {} : { home: row.home }),
+      managed: Number(row.managed) === 1,
+      ...(row.email === null ? {} : { email: row.email }),
+      ...(row.plan === null ? {} : { plan: row.plan }),
+      createdAt: Number(row.created_at),
+      active: Number(row.active) === 1,
+    }))
+  }
+
+  /** Fails when the provider already has an account with this id. */
+  addProviderAccount(
+    account: Pick<StoredProviderAccount, 'provider' | 'id' | 'label' | 'home' | 'managed'> & {
+      createdAt: number
+    },
+  ): void {
+    this.#db
+      .prepare(
+        `INSERT INTO provider_accounts (provider, id, label, home, managed, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        account.provider,
+        account.id,
+        account.label ?? null,
+        account.home ?? null,
+        account.managed ? 1 : 0,
+        account.createdAt,
+      )
+  }
+
+  renameProviderAccount(provider: ProviderId, id: string, label: string): void {
+    this.#updateProviderAccount(
+      provider,
+      id,
+      `UPDATE provider_accounts SET label = ? WHERE provider = ? AND id = ?`,
+      label,
+    )
+  }
+
+  /** The last identity this account's own sign-in check named; absent fields are cleared. */
+  recordProviderAccountIdentity(
+    provider: ProviderId,
+    id: string,
+    identity: { email?: string; plan?: string },
+  ): void {
+    this.#updateProviderAccount(
+      provider,
+      id,
+      `UPDATE provider_accounts SET email = ?, plan = ? WHERE provider = ? AND id = ?`,
+      identity.email ?? null,
+      identity.plan ?? null,
+    )
+  }
+
+  /** False when there was no such account. Its snapshots go with it. */
+  removeProviderAccount(provider: ProviderId, id: string): boolean {
+    return this.#transaction(() => {
+      this.#db
+        .prepare(`DELETE FROM provider_account_snapshots WHERE provider = ? AND id = ?`)
+        .run(provider, id)
+      const result = this.#db
+        .prepare(`DELETE FROM provider_accounts WHERE provider = ? AND id = ?`)
+        .run(provider, id)
+      return Number(result.changes) > 0
+    })
+  }
+
+  /** An account's own last plan limits or model lists, as its controls serialized them. */
+  providerAccountSnapshot(
+    provider: ProviderId,
+    id: string,
+    kind: ProviderAccountSnapshotKind,
+  ): string | undefined {
+    return sqliteRow<StringValueRow>(
+      this.#db.prepare(
+        `SELECT value FROM provider_account_snapshots WHERE provider = ? AND id = ? AND kind = ?`,
+      ),
+      provider,
+      id,
+      kind,
+    )?.value
+  }
+
+  /** Kept only while the account exists, so a late write cannot outlive its removal. */
+  setProviderAccountSnapshot(
+    provider: ProviderId,
+    id: string,
+    kind: ProviderAccountSnapshotKind,
+    value: string,
+  ): void {
+    this.#db
+      .prepare(
+        `INSERT INTO provider_account_snapshots (provider, id, kind, value)
+         SELECT ?, ?, ?, ? WHERE EXISTS (
+           SELECT 1 FROM provider_accounts WHERE provider = ? AND id = ?
+         )
+         ON CONFLICT (provider, id, kind) DO UPDATE SET value = excluded.value`,
+      )
+      .run(provider, id, kind, value, provider, id)
+  }
+
+  /** The default account is active when no row is. */
+  setActiveProviderAccount(provider: ProviderId, id: string): void {
+    this.#transaction(() => {
+      this.#db
+        .prepare(`UPDATE provider_accounts SET active = 0 WHERE provider = ? AND active = 1`)
+        .run(provider)
+      if (id === DEFAULT_ACCOUNT_ID) return
+      const result = this.#db
+        .prepare(`UPDATE provider_accounts SET active = 1 WHERE provider = ? AND id = ?`)
+        .run(provider, id)
+      if (Number(result.changes) === 0) throw new Error('account not found')
+    })
+  }
+
+  /** The default account always exists, so its row is added on its first change. */
+  #updateProviderAccount(
+    provider: ProviderId,
+    id: string,
+    sql: string,
+    ...values: SQLInputValue[]
+  ): void {
+    this.#transaction(() => {
+      if (id === DEFAULT_ACCOUNT_ID) {
+        this.#db
+          .prepare(
+            `INSERT OR IGNORE INTO provider_accounts (provider, id, managed, created_at)
+             VALUES (?, ?, 0, ?)`,
+          )
+          .run(provider, id, Date.now())
+      }
+      const result = this.#db.prepare(sql).run(...values, provider, id)
+      if (Number(result.changes) === 0) throw new Error('account not found')
+    })
   }
 
   #updateThread(
@@ -2401,6 +2975,7 @@ export class Store {
         'events',
         'provider_history',
         'provider_history_events',
+        'thread_runtime_state',
         'checkpoints',
         'restore_undos',
         'diff_decisions',
@@ -3651,7 +4226,47 @@ export class Store {
     }
   }
 
-  usageSummary(threadId: string, since: number): UsageSummary {
+  /** Read indexed usage rows rather than scanning every streamed event. */
+  usageEvents(): StoredUsageEvent[] {
+    const rows = sqliteRows<{
+      thread_id: string
+      at: SqliteInteger
+      payload: string
+      provider: string
+      account_id: string | null
+    }>(
+      this.#db.prepare(
+        `SELECT u.thread_id, u.at, u.payload, t.provider, t.account_id
+         FROM usage_events u JOIN threads t ON t.id = u.thread_id
+         ORDER BY u.thread_id, u.event_seq`,
+      ),
+    )
+    const events: StoredUsageEvent[] = []
+    for (const row of rows) {
+      const provider = toProviderId(row.provider)
+      if (!provider) continue
+      const event = parseDomainEvent(row.payload, `usage history for thread ${row.thread_id}`)
+      if (event?.type !== 'usage.updated') continue
+      events.push({
+        threadId: row.thread_id,
+        provider,
+        ...(row.account_id === null ? {} : { accountId: row.account_id }),
+        at: Number(row.at),
+        usage: event.usage,
+      })
+    }
+    return events
+  }
+
+  /**
+   * The thread's own total, and the day's total across the providers `counted`
+   * accepts: every one unless the build leaves some out.
+   */
+  usageSummary(
+    threadId: string,
+    since: number,
+    counted: (provider: ProviderId) => boolean = () => true,
+  ): UsageSummary {
     const thread = this.thread(threadId)
     if (!thread) return { session: emptyUsage(), today: emptyUsage() }
 
@@ -3713,7 +4328,7 @@ export class Store {
         if (usage?.cumulative) previous.set(seed.thread_id, usage.total)
       }
 
-      const rows = sqliteRows<ThreadPayloadRow>(
+      const rows = sqliteRows<ThreadPayloadRow & { provider: string }>(
         this.#db.prepare(
           `SELECT u.thread_id, u.payload, t.provider
            FROM usage_events u JOIN threads t ON t.id = u.thread_id
@@ -3723,6 +4338,8 @@ export class Store {
         since,
       )
       for (const row of rows) {
+        const provider = toProviderId(row.provider)
+        if (provider !== undefined && !counted(provider)) continue
         const sample = parseUsage(row.payload, row.thread_id)
         if (!sample) continue
         const current = sample.total
@@ -3893,6 +4510,121 @@ export class Store {
 
   clearThreadRestoreContext(threadId: string): void {
     this.#db.prepare('UPDATE threads SET restore_context_pending = 0 WHERE id = ?').run(threadId)
+  }
+
+  /**
+   * A chat that continues an earlier one has not yet sent that conversation to
+   * its agent. It goes with the first prompt the agent accepts, so it is part of
+   * the provider's own session and survives a resume.
+   */
+  threadNeedsContinueContext(threadId: string): boolean {
+    return (
+      this.#db
+        .prepare('SELECT 1 FROM threads WHERE id = ? AND continue_context_pending = 1')
+        .get(threadId) !== undefined
+    )
+  }
+
+  clearThreadContinueContext(threadId: string): void {
+    this.#db.prepare('UPDATE threads SET continue_context_pending = 0 WHERE id = ?').run(threadId)
+  }
+
+  /**
+   * Moves a chat to another provider's session. Everything that belongs to
+   * the session it leaves goes: its resume identity and state, and its link to
+   * the provider's saved copy, which stays the chat's own as a left session.
+   * The conversation so far has not reached the new session yet; it goes with
+   * the first prompt that session accepts (`threadNeedsHandover`), which also
+   * covers an earlier chat this one continues and makes a restore notice moot.
+   * A `carried` session started as a copy of the one the chat leaves and
+   * already holds all of that.
+   */
+  moveThreadToProvider(
+    threadId: string,
+    next: {
+      provider: ProviderId
+      agent?: string | undefined
+      accountId?: string | undefined
+      providerSessionId: string
+      carried?: boolean | undefined
+    },
+  ): void {
+    const current = this.thread(threadId)
+    if (!current) throw new Error('thread not found')
+    this.#transaction(() => {
+      const left = current.providerSessionId ?? current.id
+      if (left !== next.providerSessionId || current.provider !== next.provider) {
+        this.#db
+          .prepare(
+            `INSERT INTO left_provider_sessions (provider, session_id, thread_id, left_at)
+             VALUES (?, ?, ?, ?) ON CONFLICT(provider, session_id) DO NOTHING`,
+          )
+          .run(current.provider, left, threadId, Date.now())
+      }
+      this.#db
+        .prepare(
+          `UPDATE threads SET provider = ?, agent = ?, connection_id = NULL, account_id = ?,
+             provider_session_id = ?, handover_pending = ?, continue_context_pending = 0,
+             restore_context_pending = 0
+           WHERE id = ?`,
+        )
+        .run(
+          next.provider,
+          next.agent ?? null,
+          next.accountId ?? null,
+          next.providerSessionId,
+          next.carried ? 0 : 1,
+          threadId,
+        )
+      this.#db.prepare('DELETE FROM thread_runtime_state WHERE thread_id = ?').run(threadId)
+      this.#db.prepare('DELETE FROM provider_history WHERE thread_id = ?').run(threadId)
+    })
+    const moved = (thread: StoredThread): StoredThread => {
+      const { agent: _agent, connectionId: _connectionId, accountId: _accountId, ...rest } = thread
+      return {
+        ...rest,
+        provider: next.provider,
+        ...(next.agent === undefined ? {} : { agent: next.agent }),
+        ...(next.accountId === undefined ? {} : { accountId: next.accountId }),
+        providerSessionId: next.providerSessionId,
+      }
+    }
+    this.#updateCachedThread(threadId, moved)
+    this.#updateSidebarThread(threadId, (thread) => {
+      const { agent: _agent, connectionId: _connectionId, accountId: _accountId, ...rest } = thread
+      return {
+        ...rest,
+        provider: next.provider,
+        ...(next.agent === undefined ? {} : { agent: next.agent }),
+        ...(next.accountId === undefined ? {} : { accountId: next.accountId }),
+      }
+    })
+  }
+
+  /** The chat moved to another provider and its conversation has not gone there yet. */
+  threadNeedsHandover(threadId: string): boolean {
+    return (
+      this.#db
+        .prepare('SELECT 1 FROM threads WHERE id = ? AND handover_pending = 1')
+        .get(threadId) !== undefined
+    )
+  }
+
+  clearThreadHandover(threadId: string): void {
+    this.#db.prepare('UPDATE threads SET handover_pending = 0 WHERE id = ?').run(threadId)
+  }
+
+  /** The handover did not reach the new session after all; the next prompt carries it again. */
+  rearmThreadHandover(threadId: string): void {
+    this.#db.prepare('UPDATE threads SET handover_pending = 1 WHERE id = ?').run(threadId)
+  }
+
+  /** Sessions of this provider that chats ran on before they moved elsewhere. */
+  leftProviderSessions(provider: ProviderId): string[] {
+    return sqliteRows<{ session_id: string }>(
+      this.#db.prepare('SELECT session_id FROM left_provider_sessions WHERE provider = ?'),
+      provider,
+    ).map((row) => row.session_id)
   }
 
   /** Save and remove the conversation tail so a restore remains reversible. */
@@ -4605,6 +5337,13 @@ function parseDomainEvent(serialized: string, context: string): DomainEvent | un
   return undefined
 }
 
+/**
+ * Unknown providers already reported. Readers such as the usage history call
+ * toProviderId once per row, so one such thread would otherwise log the same
+ * line for each of its events.
+ */
+const warnedUnknownProviders = new Set<string>()
+
 function toProviderId(provider: string): ProviderId | undefined {
   switch (provider) {
     case 'codex':
@@ -4617,7 +5356,10 @@ function toProviderId(provider: string): ProviderId | undefined {
       // A provider this build does not ship: a newer build, or one that lives
       // only on the nightly branch. The row stays stored; readers skip it
       // rather than die on it.
-      console.warn(`[store] skipped a thread row with unknown provider '${provider}'`)
+      if (!warnedUnknownProviders.has(provider)) {
+        warnedUnknownProviders.add(provider)
+        console.warn(`[store] skipped a thread row with unknown provider '${provider}'`)
+      }
       return undefined
     }
   }
@@ -4691,6 +5433,8 @@ function toSidebarThread(row: SidebarThreadRow): StoredSidebarThread | undefined
     projectPath: row.project_path,
     provider,
     ...(row.agent === null ? {} : { agent: row.agent }),
+    ...(row.connection_id === null ? {} : { connectionId: row.connection_id }),
+    ...(row.account_id === null ? {} : { accountId: row.account_id }),
     title: row.title,
     pinned: row.pinned === 1,
     createdAt: Number(row.created_at),
@@ -4698,6 +5442,9 @@ function toSidebarThread(row: SidebarThreadRow): StoredSidebarThread | undefined
     ...(row.worktree_branch === null ? {} : { worktreeBranch: row.worktree_branch }),
     lifecycle: toThreadLifecycle(row),
     unread: row.unread === 1,
+    ...(row.continued_from === null ? {} : { continuedFrom: row.continued_from }),
+    ...(row.settings_model ? { model: row.settings_model } : {}),
+    lastActiveAt: Number(row.last_active_at),
   }
 }
 
@@ -4712,6 +5459,8 @@ function toThread(row: ThreadRow): StoredThread | undefined {
     projectPath: row.project_path,
     provider,
     ...(row.agent === null ? {} : { agent: row.agent }),
+    ...(row.connection_id === null ? {} : { connectionId: row.connection_id }),
+    ...(row.account_id === null ? {} : { accountId: row.account_id }),
     ...(row.provider_session_id === null ? {} : { providerSessionId: row.provider_session_id }),
     title: row.title,
     pinned: row.pinned === 1,
@@ -4724,6 +5473,10 @@ function toThread(row: ThreadRow): StoredThread | undefined {
     lastActiveAt: Number(row.last_active_at),
     ephemeral: row.ephemeral === 1,
     ...(row.parent_thread_id === null ? {} : { parentThreadId: row.parent_thread_id }),
+    ...(row.continued_from === null ? {} : { continuedFrom: row.continued_from }),
+    ...(row.continued_changes === 'carried' || row.continued_changes === 'kept'
+      ? { continuedChanges: row.continued_changes }
+      : {}),
   }
 }
 

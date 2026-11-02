@@ -233,12 +233,20 @@ export class TerminalManager {
    * so a second request for the same key reattaches to the run in progress
    * instead of starting the command twice. A real pty rather than a plain
    * child process, so an installer that asks a question can be handed to the
-   * user instead of hanging invisibly.
+   * user instead of hanging invisibly. `env` is laid over the terminal's own
+   * environment, such as the variable that runs a CLI as another account.
    */
-  run(key: string, command: string, cwd: string, columns: number, rows: number): string {
+  run(
+    key: string,
+    command: string,
+    cwd: string,
+    columns: number,
+    rows: number,
+    env: NodeJS.ProcessEnv = {},
+  ): string {
     const args =
       globalThis.process.platform === 'win32' ? ['/d', '/s', '/c', command] : ['-c', command]
-    return this.#spawn(key, args, cwd, columns, rows)
+    return this.#spawn(key, args, cwd, columns, rows, key, env)
   }
 
   #spawn(
@@ -248,6 +256,7 @@ export class TerminalManager {
     columns: number,
     rows: number,
     threadId = key,
+    env: NodeJS.ProcessEnv = {},
   ): string {
     if (this.#closingAll) throw new Error('terminal manager is closing')
     if (this.#closingThreads.has(threadId)) throw new Error(`terminal is closing: ${key}`)
@@ -268,7 +277,7 @@ export class TerminalManager {
       cols: columns,
       rows,
       cwd,
-      env: terminalEnvironment(),
+      env: { ...terminalEnvironment(), ...env },
     })
     const status: TerminalStatus = {
       status: 'running',

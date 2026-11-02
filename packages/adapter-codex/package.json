@@ -12,6 +12,10 @@
       "types": "./dist/capabilities.d.ts",
       "default": "./dist/capabilities.js"
     },
+    "./account-home": {
+      "types": "./dist/account-home.d.ts",
+      "default": "./dist/account-home.js"
+    },
     "./auth": {
       "types": "./dist/auth.d.ts",
       "default": "./dist/auth.js"

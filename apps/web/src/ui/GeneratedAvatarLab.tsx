@@ -73,6 +73,7 @@ export function GeneratedAvatarLab(props: { initialName?: string | undefined }) 
         <label className="avatar-lab__field" htmlFor={inputId}>
           <span>Name</span>
           <input
+            className="set-input"
             id={inputId}
             type="text"
             maxLength={64}
@@ -80,7 +81,7 @@ export function GeneratedAvatarLab(props: { initialName?: string | undefined }) 
             onChange={(event) => setName(event.target.value)}
           />
         </label>
-        <button className="settings__action" type="button" onClick={() => setName(randomName())}>
+        <button className="set-button" type="button" onClick={() => setName(randomName())}>
           <Shuffle size={14} aria-hidden />
           <span>Random name</span>
         </button>

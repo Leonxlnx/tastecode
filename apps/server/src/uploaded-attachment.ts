@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { writeFile } from 'node:fs/promises'
+import { readFile, stat, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { ensurePrivateDirectory } from './safe-command-environment.js'
@@ -41,6 +41,37 @@ export async function materializeAttachment(
   const target = path.join(directory, `${randomUUID()}-${safeFileName(input.name)}`)
   await writeFile(target, bytes, { flag: 'wx', mode: 0o600 })
   return target
+}
+
+const IMAGE_TYPES = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.heic': 'image/heic',
+} as const satisfies Record<string, string>
+
+function imageType(file: string): string | undefined {
+  const extension = path.extname(file).toLowerCase()
+  return Object.hasOwn(IMAGE_TYPES, extension)
+    ? IMAGE_TYPES[extension as keyof typeof IMAGE_TYPES]
+    : undefined
+}
+
+/**
+ * An attached image's bytes, for a client that cannot read this computer's
+ * files. Anything that is not an image file of attachment size is refused.
+ */
+export async function readAttachmentImage(
+  file: string,
+): Promise<{ mimeType: string; data: string }> {
+  const mimeType = imageType(file)
+  if (!mimeType) throw new Error('only images can be read')
+  const info = await stat(file)
+  if (!info.isFile()) throw new Error('the attachment is not a file')
+  if (info.size > MAX_ATTACHMENT_BYTES) throw new Error('attachment exceeds the 25 MB limit')
+  return { mimeType, data: (await readFile(file)).toString('base64') }
 }
 
 function isValidBase64(value: string): boolean {

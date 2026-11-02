@@ -23,6 +23,70 @@
   -webkit-app-region: drag;
 }
 
+/* A page opened from inside a tab (Add providers) keeps its way back in the
+   content's top-left corner, where a chat's title sits in its header: the
+   arrow starts 15px in, as that title does after the stage's 1px frame and the
+   header's 14px padding (6px here, the button's 7px, the arrow's own 2px).
+   The strip itself stays a drag region; only the button is not. */
+.settings__back-slot {
+  position: absolute;
+  z-index: 4;
+  top: 0;
+  left: var(--rail-w);
+  display: flex;
+  align-items: center;
+  height: var(--titlebar-h);
+  padding-left: 6px;
+  pointer-events: none;
+}
+
+/* A Mac draws no strip here, so the button sits on the chat header's line, the
+   one the sidebar toggle and panel controls share: under the stage's 1px
+   frame, centred on the header's 41px above its rule. */
+.shell.is-macos .settings__back-slot {
+  top: 1px;
+  height: 41px;
+}
+
+.settings__back-slot > * {
+  pointer-events: auto;
+  -webkit-app-region: no-drag;
+}
+
+/* The same quiet arrow and words as Back to app at the top of the rail. */
+.set-page__back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 26px;
+  padding: 3px 8px 3px 7px;
+  background: none;
+  border: 0;
+  border-radius: var(--r-md);
+  color: var(--text-2);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--t-sm);
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+.set-page__back:is(:hover, :focus-visible) {
+  background: var(--control-hover);
+  color: var(--text);
+}
+
+.set-page__back:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-inset);
+}
+
+/* Without the shell's strip, as in a page shown on its own, it sits above the title. */
+.set-page__back-row {
+  margin: 0 0 12px -8px;
+}
+
 .settings__sidebar {
   position: relative;
   z-index: 2;
@@ -133,13 +197,278 @@
   padding: calc(var(--titlebar-h) + 48px) 48px 64px;
 }
 
+/* Nightly local activity: retain the history views alongside the local profile editor. */
+
+.profile-page__actions,
+.profile-page__notice,
+.profile-page__warnings p,
+.profile-activity > header,
+.profile-models li,
+.profile-models__name,
+.profile-insights dl > div {
+  display: flex;
+  align-items: center;
+}
+
+.profile-activity {
+  --profile-activity-gap: clamp(1px, 0.34cqi, 4px);
+
+  container-type: inline-size;
+  min-width: 0;
+  padding: 0;
+}
+
+.profile-activity__heatmap > span {
+  background: color-mix(in srgb, var(--surface-2) 72%, transparent);
+  border-radius: clamp(1.5px, 0.3cqi, 4px);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--line) 62%, transparent);
+  transition: box-shadow var(--dur-fast) var(--ease-out);
+}
+
+.profile-activity__heatmap > span:hover {
+  z-index: 1;
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--text-2) 46%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--text-3) 24%, transparent);
+}
+
+.profile-activity [data-level='1'] {
+  background: color-mix(in srgb, var(--file-reference) 25%, var(--surface-2));
+}
+
+.profile-activity [data-level='2'] {
+  background: color-mix(in srgb, var(--file-reference) 46%, var(--surface-2));
+}
+
+.profile-activity [data-level='3'] {
+  background: color-mix(in srgb, var(--file-reference) 68%, var(--surface-2));
+}
+
+.profile-activity [data-level='4'] {
+  background: color-mix(in srgb, var(--file-reference) 88%, var(--text-2));
+}
+
+.profile-activity__plot {
+  width: 100%;
+  min-width: 0;
+}
+
+.profile-activity__canvas {
+  width: 100%;
+  min-width: 0;
+}
+
+.profile-activity__months {
+  display: grid;
+  gap: var(--profile-activity-gap);
+  height: 18px;
+  margin-top: 7px;
+  color: var(--text-3);
+  font-size: clamp(8px, 1.35cqi, var(--t-xs));
+}
+
+.profile-activity__months span {
+  overflow: visible;
+  white-space: nowrap;
+}
+
+.profile-activity__heatmap {
+  display: grid;
+  width: 100%;
+  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-flow: column;
+  grid-template-rows: repeat(7, auto);
+  gap: var(--profile-activity-gap);
+}
+
+.profile-activity__heatmap > span,
+.profile-activity__heatmap > i {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  aspect-ratio: 1;
+}
+
+.profile-activity__tooltip {
+  position: fixed;
+  z-index: 100;
+  width: 264px;
+  max-width: calc(100vw - 32px);
+  padding: 9px 11px;
+  color: var(--text);
+  background: var(--menu-bg);
+  border: 1px solid var(--menu-line);
+  border-radius: var(--r-card);
+  box-shadow: var(--shadow-flyout);
+  font-size: var(--t-xs);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.3;
+  pointer-events: none;
+  transform: translate(-50%, calc(-100% - 8px));
+}
+
+.profile-activity__tooltip-title {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--t-sm);
+  font-weight: 520;
+}
+
+.profile-activity__tooltip-heading,
+.profile-activity__tooltip li,
+.profile-activity__tooltip-provider-name,
+.profile-activity__tooltip-provider-value {
+  display: flex;
+  align-items: center;
+}
+
+.profile-activity__tooltip-heading {
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--line);
+  color: var(--text-3);
+}
+
+.profile-activity__tooltip-heading strong {
+  color: var(--text);
+  font-size: var(--t-sm);
+  font-weight: 520;
+}
+
+.profile-activity__tooltip-heading span {
+  flex: none;
+  color: var(--text-3);
+}
+
+.profile-activity__tooltip ul {
+  display: grid;
+  gap: 2px;
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.profile-activity__tooltip li {
+  justify-content: space-between;
+  gap: 14px;
+  min-height: 26px;
+}
+
+.profile-activity__tooltip-provider-name {
+  min-width: 0;
+  gap: 7px;
+  color: var(--text-2);
+}
+
+.profile-activity__tooltip-provider-name svg {
+  flex: none;
+  color: var(--usage-provider-color);
+}
+
+.profile-activity__tooltip-provider-value {
+  flex: none;
+  justify-content: flex-end;
+  gap: 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+.profile-activity__tooltip-provider-value b {
+  color: var(--text);
+  font-size: var(--t-sm);
+  font-weight: 500;
+}
+
+.profile-activity__tooltip-provider-value small {
+  width: 42px;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  text-align: right;
+}
+
+.profile-activity__tooltip-empty {
+  margin: 8px 0 1px;
+  color: var(--text-3);
+}
+
+@media (max-width: 660px) {
+  .profile-activity > header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .profile-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    overflow: visible;
+    margin-bottom: 36px;
+  }
+  .profile-stats > div + div {
+    border-left: 0;
+  }
+  .profile-stats > div:nth-child(2n) {
+    border-left: 1px solid var(--line);
+  }
+  .profile-stats > div:nth-child(n + 3) {
+    border-top: 1px solid var(--line);
+  }
+}
+
+/* ---------- usage colors ----------
+   One color per provider for usage charts, here because Profile shares it
+   with the Usage page (styles/usage-page.css). */
+
+[data-provider='codex'] {
+  --usage-provider-color: var(--text-2);
+}
+
+[data-provider='claude-code'] {
+  --usage-provider-color: var(--effort);
+}
+
+[data-provider='grok'] {
+  --usage-provider-color: var(--attention);
+}
+
+[data-provider='cursor'] {
+  --usage-provider-color: var(--file-reference);
+}
+
+[data-provider='opencode'] {
+  --usage-provider-color: var(--text);
+}
+
+[data-provider='antigravity'] {
+  --usage-provider-color: color-mix(in oklab, var(--attention) 54%, var(--effort));
+}
+
+[data-provider='acp'] {
+  --usage-provider-color: color-mix(in oklab, var(--success) 52%, var(--attention));
+}
+
+[data-provider='api'] {
+  --usage-provider-color: color-mix(in oklab, var(--text-2) 62%, var(--file-reference));
+}
+
+@keyframes usage-refresh-spin {
+  to {
+    rotate: 360deg;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .profile-history.is-refreshing .profile-page__refresh svg,
+  .profile-page__notice--scan svg {
+    animation: none !important;
+  }
+}
+
 /* Debug › Avatar generator: one input, the picture at every shipped size,
    then fixed samples so shape and color variety can be judged side by side. */
 .avatar-lab {
   display: grid;
   gap: 16px;
-  padding: 4px 14px 16px;
-  border-top: 1px solid var(--line);
+  padding-top: 8px;
 }
 
 .avatar-lab__controls {
@@ -155,24 +484,6 @@
   gap: 6px;
   color: var(--text-3);
   font-size: var(--t-xs);
-}
-
-.avatar-lab__field input {
-  width: 100%;
-  min-height: 28px;
-  padding: 4px 8px;
-  background: var(--bg);
-  border: 1px solid var(--chrome-border);
-  border-radius: var(--r-md);
-  color: var(--text);
-  font: inherit;
-  font-size: var(--t-sm);
-  outline: none;
-}
-
-.avatar-lab__field input:focus-visible {
-  outline: var(--focus-ring);
-  outline-offset: var(--focus-ring-offset);
 }
 
 .avatar-lab__previews {
@@ -286,9 +597,11 @@
   outline-offset: var(--focus-ring-offset);
 }
 
+/* On the overlay's own clock: opening Settings fades the surface and settles
+   the first page together instead of finishing 40ms apart. */
 .settings__panel {
   width: 100%;
-  animation: settings-panel-in 220ms var(--ease-out);
+  animation: settings-panel-in var(--dur-fast) var(--ease-out);
 }
 
 @keyframes settings-panel-in {
@@ -313,35 +626,15 @@
   line-height: 1.2;
 }
 
-.settings__group-title {
-  margin: 0 0 12px;
-  color: var(--text-2);
-  font-size: var(--t-md);
-  font-weight: 520;
-}
-
-.settings__group {
-  overflow: hidden;
-  background: var(--bg-rail);
-  border: 1px solid var(--chrome-border);
-  border-radius: var(--r-lg);
-}
-
-.settings__group--plain {
-  overflow: visible;
-  background: none;
-  border: 0;
-  border-radius: 0;
-  box-shadow: none;
-}
-
+/* The previews keep their four-up size and start at the column edge, like
+   every row under them. The gap under the section heading leaves room for the
+   chosen preview's ring. */
 .theme-picker {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, calc((100% - 48px) / 4)));
-  justify-content: center;
   gap: 16px;
   min-width: 0;
-  margin: 0;
+  margin: 12px 0 0;
   padding: 0;
   border: 0;
 }
@@ -497,229 +790,26 @@
   translate: 0 -50%;
 }
 
+/* The picture choice label, as in General. */
 .theme-option__label {
   display: block;
   margin-top: 10px;
   overflow: hidden;
   font-size: var(--t-sm);
+  font-weight: 500;
+  line-height: 1.4;
   text-align: center;
   text-overflow: ellipsis;
   white-space: nowrap;
+  transition: color var(--dur-fast) var(--ease-out);
+}
+
+.theme-option:not(.is-selected):hover .theme-option__label {
+  color: var(--text-2);
 }
 
 .theme-option.is-selected .theme-option__label {
   color: var(--text);
-}
-
-/* Appearance reads like the provider roster: open rows with a dotted leader
-   from each name to its value, which lights while the row is hovered, and no
-   card or fill behind anything. Name and value share one size and baseline;
-   only ink tells them apart. */
-.appearance-section + .appearance-section {
-  margin-top: 40px;
-}
-
-.appearance-section__head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 16px;
-}
-
-.appearance-section__heading {
-  margin: 0 0 6px;
-  color: var(--text-3);
-  font-size: var(--t-sm);
-  font-weight: 500;
-  letter-spacing: -0.003em;
-}
-
-.appearance-section > .appearance-section__heading {
-  margin-bottom: 18px;
-}
-
-.appearance-section__reset {
-  padding: 0;
-  background: none;
-  border: 0;
-  color: var(--text-3);
-  cursor: pointer;
-  font: inherit;
-  font-size: var(--t-sm);
-}
-
-.appearance-section__reset:hover {
-  color: var(--text-2);
-}
-
-.appearance-section__reset:focus-visible {
-  border-radius: var(--r-xs);
-  outline: var(--focus-ring);
-  outline-offset: var(--focus-ring-offset);
-}
-
-.appearance-row {
-  --appearance-leader: color-mix(in srgb, var(--text-3) 46%, transparent);
-
-  display: grid;
-  grid-template-columns: minmax(0, max-content) minmax(32px, 1fr) max-content;
-  align-items: baseline;
-  padding-block: 11px;
-  font-size: var(--t-sm);
-  letter-spacing: -0.003em;
-  line-height: 1.35;
-  transition: --appearance-leader var(--dur-fast) var(--ease-out);
-}
-
-.appearance-row:is(:hover, :focus-within) {
-  --appearance-leader: color-mix(in srgb, var(--text-3) 85%, transparent);
-}
-
-@property --appearance-leader {
-  syntax: '<color>';
-  inherits: true;
-  initial-value: transparent;
-}
-
-.appearance-row__name {
-  min-width: 0;
-  margin: 0;
-  color: var(--text-2);
-  font-weight: 400;
-  transition: color var(--dur-fast) var(--ease-out);
-}
-
-.appearance-row:is(:hover, :focus-within) .appearance-row__name {
-  color: var(--text);
-}
-
-.appearance-row__note {
-  grid-column: 1 / -1;
-  max-width: 52ch;
-  margin: 3px 0 0;
-  color: var(--text-3);
-  font-size: var(--t-xs);
-  letter-spacing: -0.003em;
-  line-height: 1.4;
-}
-
-/* The provider defaults' leader, dot for dot: small and close-set on the
-   baseline, so it reads as a line rather than a row of beads. */
-.appearance-row__leader {
-  height: 5px;
-  margin-inline: 14px;
-  background: radial-gradient(circle, var(--appearance-leader) 0.75px, transparent 1.15px) left
-    center / 5px 100% repeat-x;
-}
-
-.appearance-row__value {
-  display: flex;
-  justify-content: flex-end;
-  min-width: 0;
-  color: var(--text);
-}
-
-.appearance-row__value:has(> .switch) {
-  align-self: center;
-}
-
-/* A smaller switch than the app default: here it is one value among many. */
-.appearance-row .switch {
-  width: 30px;
-  height: 18px;
-}
-
-.appearance-row .switch__thumb {
-  width: 12px;
-  height: 12px;
-}
-
-.appearance-row .switch.is-on .switch__thumb {
-  transform: translateX(12px);
-}
-
-/* A select here is its value and a chevron: no box, no fill, open or not. */
-.settings .appearance-select {
-  max-width: 240px;
-}
-
-.settings .appearance-select .app-select__trigger {
-  --control-pressed: transparent;
-
-  gap: 6px;
-  width: auto;
-  height: auto;
-  min-height: 0;
-  padding: 0;
-  background: none;
-  border: 0;
-  border-radius: var(--r-xs);
-  box-shadow: none;
-  color: var(--text);
-  font-size: inherit;
-  letter-spacing: inherit;
-  line-height: inherit;
-}
-
-.settings .appearance-select .app-select__trigger:focus-visible {
-  outline: var(--focus-ring);
-  outline-offset: var(--focus-ring-offset);
-}
-
-.settings .appearance-select .app-select__chevron {
-  color: var(--text-3);
-  transition: rotate var(--dur-slow) var(--ease-out);
-}
-
-.settings .appearance-select.is-open .app-select__chevron {
-  rotate: 180deg;
-}
-
-/* Typing into the font picker happens on the row itself: the field sits where
-   the value stood, flush right, and the leader runs up to whatever is typed. */
-.settings .appearance-select .app-select__query {
-  width: calc(100% - 20px);
-  padding: 0;
-  caret-color: var(--text);
-  text-align: right;
-}
-
-.settings .appearance-select.is-searching .app-select__value {
-  min-width: 24px;
-  padding-right: 2px;
-}
-
-.settings__row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  min-height: 48px;
-  padding: 10px 14px;
-  transition: background var(--dur-fast) var(--ease-out);
-}
-
-.settings__row:hover {
-  background: var(--surface);
-}
-
-.settings__row + .settings__row {
-  border-top: 1px solid var(--line);
-}
-
-.settings__row--roomy {
-  min-height: 64px;
-  gap: 16px;
-  padding-block: 10px;
-}
-
-.settings__row--roomy .settings__row-copy {
-  flex: 1;
-}
-
-.settings__row--roomy .settings__row-control {
-  flex-wrap: wrap;
-  justify-content: flex-end;
 }
 
 /* The sign-in flow as a card: code chip, browser hint, one live line. The
@@ -771,82 +861,48 @@
   white-space: nowrap;
 }
 
+/* An embedded provider terminal (an install or sign-in log) wears the
+   workspace terminal's look: its background, font and palette, here inside a
+   hairline frame with the workspace tab's 12px inset (its 13px rows sit flush
+   at line height 1, so a smaller top inset crowds the first line). The
+   workspace pane and the update notice drop the frame. */
 .install-terminal {
   box-sizing: border-box;
   height: 240px;
   overflow: hidden;
-  padding: 8px 12px;
-  background: var(--bg);
-  border-top: 1px solid var(--line);
+  padding: 12px;
+  background: var(--terminal-workspace-bg);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
 }
 
-/* Keep the row divider that the adjacent-sibling rule above would lose. */
-.install-terminal + .settings__row {
-  border-top: 1px solid var(--line);
+/* xterm fits its rows to the frame's whole height and subtracts only its own
+   padding, so an inset on the frame overflowed it by a row and focusing the
+   terminal scrolled the first line under the top edge. Once the terminal is
+   open, the inset is the terminal's own. */
+.install-terminal:has(> .xterm) {
+  padding: 0;
 }
 
-.provider-terminal + .settings__row {
-  border-top: 1px solid var(--line);
+.install-terminal > .xterm {
+  padding: 12px;
 }
 
-.settings__row-copy {
-  min-width: 0;
+/* xterm paints its viewport layer black under that padding; the frame's
+   background shows through instead. */
+.install-terminal > .xterm > .xterm-viewport {
+  background-color: transparent;
 }
 
-.settings__row-title {
-  /* Keep paragraph margins from expanding compact rows. */
-  margin: 0;
-  color: var(--text);
-  font-size: var(--t-sm);
-  font-weight: 500;
-  line-height: 1.35;
-}
+/* The provider roster is open type, not a card. Each provider is an entity
+   row wired to its account, and the wire is the status: the shared settings
+   leader while the provider waits for an account, a solid line between two
+   terminals once one is attached (the one mark only providers draw), nothing
+   when the provider is not on this machine. */
 
-.settings__row-note {
-  color: var(--text-2);
-  font-size: var(--t-xs);
-  line-height: 1.5;
-}
+.settings .provider-row {
+  --set-leader: color-mix(in srgb, var(--text-3) 46%, transparent);
 
-.settings__row-note {
-  margin: 4px 0 0;
-  max-width: 52ch;
-  overflow-wrap: anywhere;
-}
-
-.settings__group-title--inside {
-  margin: 12px 14px 4px;
-}
-
-.provider-settings__actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  color: var(--text-3);
-  font-size: var(--t-sm);
-}
-
-/* The provider roster is open type, not a card. Each provider is one line
-   wired to its account, and the wire is the status: solid between two
-   terminals once an account is attached, a dotted leader while the provider
-   waits for one, nothing when the provider is not on this machine. */
-@property --provider-wire {
-  syntax: '<color>';
-  inherits: true;
-  initial-value: transparent;
-}
-
-.settings__group--providers {
-  container-type: inline-size;
-}
-
-.provider-settings__entry .settings__row {
-  border-top: 0;
-}
-
-/* Doubled class: the viewport rules for generic rows further down must not
-   re-align or re-gap this grid. */
-.settings__row.provider-row {
   display: grid;
   grid-template-columns:
     max-content minmax(0, max-content) minmax(44px, 1fr) minmax(0, max-content)
@@ -857,48 +913,50 @@
   gap: 0;
   min-height: 54px;
   padding: 8px 0;
-  --provider-wire: color-mix(in srgb, var(--text-3) 72%, transparent);
-  transition: --provider-wire var(--dur-fast) var(--ease-out);
+  transition: --set-leader var(--dur-fast) var(--ease-out);
 }
 
-/* Nothing in the row is a target, so hovering lights its wire instead of
-   painting a surface behind it. */
-.provider-row:hover {
-  background: none;
-  --provider-wire: var(--text-2);
+/* Nothing in the row is a target, so pointing at it lights its wire. */
+.settings .provider-row:is(:hover, :focus-within) {
+  --set-leader: color-mix(in srgb, var(--text-3) 85%, transparent);
 }
 
-.provider-row[data-fault] {
-  --provider-wire: var(--error);
+.settings .provider-row[data-link='connected'] {
+  --set-leader: color-mix(in srgb, var(--text-3) 72%, transparent);
 }
 
-.provider-row::after {
+.settings .provider-row[data-link='connected']:is(:hover, :focus-within) {
+  --set-leader: var(--text-2);
+}
+
+/* A failure keeps its colour under the pointer too. */
+.settings .provider-row[data-link][data-fault] {
+  --set-leader: var(--error);
+}
+
+/* The wire runs through the middle of the row, level with the mark. */
+.settings .provider-row > .set-leader {
   grid-column: 3;
   grid-row: 1;
-  height: 5px;
-  margin-inline: 14px;
-  background: radial-gradient(circle, var(--provider-wire) 0.9px, transparent 1.35px) left center /
-    8px 100% repeat-x;
-  content: '';
+  translate: none;
 }
 
-.provider-row[data-link='connected']::after {
+.settings .provider-row[data-link='connected'] > .set-leader {
   background:
-    radial-gradient(circle at 2.5px 50%, var(--provider-wire) 2px, transparent 2.5px),
-    radial-gradient(circle at calc(100% - 2.5px) 50%, var(--provider-wire) 2px, transparent 2.5px),
-    linear-gradient(var(--provider-wire), var(--provider-wire)) center / calc(100% - 5px) 1px
-      no-repeat;
+    radial-gradient(circle at 2.5px 50%, var(--set-leader) 2px, transparent 2.5px),
+    radial-gradient(circle at calc(100% - 2.5px) 50%, var(--set-leader) 2px, transparent 2.5px),
+    linear-gradient(var(--set-leader), var(--set-leader)) center / calc(100% - 5px) 1px no-repeat;
   animation: provider-wire-draw 560ms var(--ease-out) both;
 }
 
-.provider-row[data-link='none']::after {
+.settings .provider-row[data-link='none'] > .set-leader {
   background: none;
 }
 
 /* Work in flight runs along the wire towards the account. */
-.provider-row[data-live]::after {
-  background: linear-gradient(90deg, var(--provider-wire) 50%, transparent 50%) left center / 8px
-    1px repeat-x;
+.settings .provider-row[data-live] > .set-leader {
+  background: linear-gradient(90deg, var(--set-leader) 50%, transparent 50%) left center / 8px 1px
+    repeat-x;
   animation: provider-wire-flow 520ms linear infinite;
 }
 
@@ -915,7 +973,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .provider-row::after {
+  .settings .provider-row > .set-leader {
     animation: none !important;
   }
 }
@@ -935,22 +993,15 @@
   min-width: 0;
 }
 
-.provider-row .settings__row-title {
-  overflow: hidden;
-  color: var(--text-2);
-  font-size: var(--t-lg);
-  font-weight: 550;
-  letter-spacing: -0.012em;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.settings .provider-row .set-entity__name {
   transition: color var(--dur-slow) var(--ease-out);
 }
 
-.provider-row[data-link='connected'] :is(.provider-row__mark, .settings__row-title) {
+.settings .provider-row[data-link='connected'] :is(.provider-row__mark, .set-entity__name) {
   color: var(--text);
 }
 
-.provider-row[data-link='none'] .settings__row-title {
+.settings .provider-row[data-link='none'] .set-entity__name {
   color: var(--text-3);
 }
 
@@ -961,11 +1012,9 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  color: var(--text-3);
-  font-size: var(--t-sm);
 }
 
-.provider-row[data-link='connected'] .provider-row__status {
+.settings .provider-row[data-link='connected'] .provider-row__status {
   color: var(--text-2);
 }
 
@@ -1025,8 +1074,8 @@
   margin-left: 6px;
 }
 
-/* A lone text action sits optically flush with the roster's right edge. */
-.provider-row__secondary:has(+ .provider-row__primary:empty) {
+/* A lone quiet action sits optically flush with the roster's right edge. */
+.provider-row__secondary:has(> .set-button--quiet):has(+ .provider-row__primary:empty) {
   margin-right: -10px;
 }
 
@@ -1035,66 +1084,208 @@
   display: none;
 }
 
-.provider-row .settings__action {
-  justify-content: center;
+/* Every row's actions share one width, so Sign in, Install and Sign out line
+   up down the roster. */
+.provider-row .set-button {
   min-width: 70px;
-  min-height: 28px;
-  padding: 4px 10px;
-  text-decoration: none;
-  font-size: var(--t-sm);
 }
 
-.provider-row .settings__action.is-primary {
-  background: transparent;
-  border-color: var(--line-strong);
-  color: var(--text);
-  font-weight: 500;
+/* A signed-in agent whose CLI keeps its own sign-out holds the action's
+   place, so its status stays in the column with the others. */
+.settings .provider-row[data-link='connected'] .provider-row__primary:empty {
+  display: block;
+  width: 70px;
 }
 
-.provider-row .settings__action.is-primary:hover:not(:disabled) {
-  background: var(--control-hover);
+/* The added providers. Each takes its minus in the margin left of its mark,
+   level with the row, so the roster's columns stay where they were; the
+   list ends on a plus in the same margin, its words where a name would be. */
+.provider-roster {
+  display: grid;
 }
 
-.provider-row .settings__action.is-secondary {
-  background: transparent;
-  border-color: transparent;
-  box-shadow: none;
+.provider-settings__entry {
+  position: relative;
+}
+
+.provider-roster__remove {
+  position: absolute;
+  top: 16px;
+  left: -35px;
+  display: grid;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  place-items: center;
+  background: none;
+  border: 0;
+  border-radius: var(--r-circle);
   color: var(--text-3);
+  cursor: pointer;
+  transition: color var(--dur-fast) var(--ease-out);
 }
 
-.provider-row .settings__action.is-secondary:hover:not(:disabled) {
-  background: var(--control-hover);
-  color: var(--text);
-}
-
-/* Signing out is housekeeping, not what the row asks for: a quiet tinted
-   slab that stays a button, and only shows its consequence on hover. */
-.provider-row .settings__action.is-primary.is-danger {
-  min-width: 0;
-  padding: 4px 12px;
-  background: color-mix(in srgb, var(--text) 5%, transparent);
-  border-color: color-mix(in srgb, var(--text) 7%, transparent);
-  color: var(--text-2);
-  transition:
-    background var(--dur-fast) var(--ease-out),
-    border-color var(--dur-fast) var(--ease-out),
-    color var(--dur-fast) var(--ease-out),
-    transform var(--dur-press) var(--ease-out);
-}
-
-.provider-row .settings__action.is-primary.is-danger:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--error) 10%, transparent);
-  border-color: color-mix(in srgb, var(--error) 14%, transparent);
+.provider-roster__remove:hover {
   color: var(--error);
 }
 
-.provider-row .settings__action.is-primary.is-danger:active:not(:disabled) {
-  transform: scale(0.97);
+.provider-roster__remove:focus-visible,
+.provider-roster__add:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
 }
 
-.provider-row .settings__action.is-primary.is-danger:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--error) 55%, transparent);
+.provider-roster__add {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  justify-self: start;
+  min-height: 54px;
+  margin-left: -32.5px;
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: var(--r-md);
+  color: var(--text-2);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--t-sm);
+  font-weight: 500;
+  transition: color var(--dur-fast) var(--ease-out);
+}
+
+.provider-roster__add > svg {
+  flex: none;
+  color: var(--text-3);
+  transition: color var(--dur-fast) var(--ease-out);
+}
+
+.provider-roster__add:hover,
+.provider-roster__add:hover > svg {
+  color: var(--text);
+}
+
+/* Sign-ins found on the computer are offered beside the plus that adds them. */
+.provider-roster__found {
+  margin-left: 6px;
+  color: var(--text-3);
+  font-weight: 400;
+}
+
+.provider-roster__found::before {
+  content: '· ';
+}
+
+/* The picker offers the same Add on every row, so at rest it is ink alone
+   and the row being pointed at draws its outline. */
+.settings .provider-picker .provider-row__primary > .set-button:not(:disabled) {
+  border-color: transparent;
+  color: var(--text-2);
+}
+
+.settings
+  .provider-picker
+  .provider-row:is(:hover, :focus-within)
+  .provider-row__primary
+  > .set-button:not(:disabled) {
+  border-color: var(--line-strong);
+  color: var(--text);
+}
+
+/* Ignored sign-ins wait folded at the foot of the picker: the section's
+   heading is the disclosure, with the chevron turning as it opens. */
+.provider-ignored__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: -2px;
+  padding: 2px 0;
+  background: none;
+  border: 0;
+  border-radius: var(--r-sm);
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  transition: color var(--dur-fast) var(--ease-out);
+}
+
+.provider-ignored__toggle:hover {
+  color: var(--text-2);
+}
+
+.provider-ignored__toggle:focus-visible {
+  outline: var(--focus-ring);
   outline-offset: 2px;
+}
+
+.provider-ignored__toggle > svg {
+  transition: rotate var(--dur-fast) var(--ease-out);
+}
+
+.provider-ignored__toggle > svg.is-open {
+  rotate: 90deg;
+}
+
+.provider-ignored__count {
+  font-variant-numeric: tabular-nums;
+}
+
+.provider-ignored__count::before {
+  content: '· ';
+}
+
+/* In the picker, an added provider holds the action's place with a settled
+   label the width of the buttons around it. Pointed at or focused, the label
+   offers to take the provider off again, in the colour of removing. */
+.provider-row__done {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 70px;
+  height: 28px;
+  color: var(--text-2);
+  font-size: var(--t-sm);
+  font-weight: 500;
+}
+
+.provider-row__done-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.provider-row__done--undo {
+  padding: 0 10px;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  cursor: pointer;
+  font-family: inherit;
+  transition:
+    color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
+}
+
+.provider-row__undo-label {
+  display: none;
+}
+
+.provider-row__done--undo:not([data-fresh]):is(:hover, :focus-visible) {
+  border-color: color-mix(in srgb, var(--error) 40%, transparent);
+  color: var(--error);
+}
+
+.provider-row__done--undo:not([data-fresh]):is(:hover, :focus-visible) > .provider-row__done-label {
+  display: none;
+}
+
+.provider-row__done--undo:not([data-fresh]):is(:hover, :focus-visible) > .provider-row__undo-label {
+  display: inline;
+}
+
+.provider-row__done--undo:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
 }
 
 /* Sign-in and install details hang under the provider's name. */
@@ -1102,61 +1293,49 @@
   margin: 0 0 12px 32px;
 }
 
-.provider-settings__entry .provider-terminal {
-  overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: var(--r-lg);
-}
-
-.provider-settings__entry .install-terminal {
-  border-top: 0;
-}
-
-.provider-updates-check {
+/* Provider updates: one quiet line under the roster, at the note size. Both
+   ends are quiet settings buttons whose labels sit on the column edges. */
+.settings .provider-updates-check {
   display: flex;
   align-items: center;
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 4px 12px;
-  min-height: 36px;
-  /* The ghost controls keep their hover padding; pull it back to the edge. */
-  margin: 14px -4px 0;
+  margin: 24px 0 0;
   color: var(--text-3);
-  font-size: var(--t-xs);
+  font-size: var(--t-sm);
 }
 
-.provider-updates-check > span,
-.provider-updates-check > button {
+.settings .provider-updates-check > span {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   min-height: 28px;
-  padding: 4px;
-  color: var(--text-3);
-  font-size: var(--t-xs);
 }
 
-.provider-updates-check .provider-updates-check__review {
+.settings .provider-updates-check > .set-button--quiet:first-child {
+  margin-left: -10px;
+}
+
+.settings .provider-updates-check > .set-button--quiet:last-child {
+  margin-right: -10px;
+}
+
+/* Something to look at reads a step brighter than the routine check (the
+   doubled class outranks the quiet look's ink). */
+.settings .provider-updates-check > .set-button.provider-updates-check__review {
   color: var(--text-2);
 }
 
-.provider-updates-check > button:hover:not(:disabled) {
-  color: var(--text);
-}
-
-/* Too narrow for a wire: the account drops under the name and hairlines
-   take over the rhythm. */
-@container (max-width: 520px) {
-  .settings__row.provider-row {
+/* Too narrow for a wire (the shared leader steps aside at the same width):
+   the account drops under the name and hairlines take over the rhythm. */
+@container settings-content (max-width: 560px) {
+  .settings .provider-row {
     grid-template-columns: max-content minmax(0, 1fr) max-content max-content;
     grid-template-rows: auto auto;
     row-gap: 2px;
     min-height: 62px;
     padding: 11px 0;
-  }
-
-  .provider-row::after {
-    display: none;
   }
 
   .provider-row__mark,
@@ -1190,82 +1369,25 @@
   .provider-settings__entry :is(.signin-card, .provider-terminal) {
     margin-left: 0;
   }
+
+  /* The row takes two lines here; the minus stays level with its mark. */
+  .provider-roster__remove {
+    top: 20px;
+  }
 }
 
-.provider-form {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
-  padding: 16px;
-  border-top: 1px solid var(--line);
+/* The accounts form: its add button and provider select. */
+.settings .provider-connections__add {
+  margin-top: 8px;
 }
 
-.provider-form label,
-.provider-form__field {
-  display: grid;
-  gap: 6px;
-  color: var(--text-3);
-  font-size: var(--t-sm);
-}
-
-.provider-form__wide,
-.provider-form__actions,
-.provider-form__error {
-  grid-column: 1 / -1;
-}
-
-.provider-form input,
-.provider-form select,
-.provider-form textarea {
-  min-width: 0;
-  background: var(--bg);
-  border: 1px solid var(--chrome-border);
-  border-radius: var(--r-md);
-  color: var(--text);
-  font: inherit;
-  outline: none;
-}
-
-.provider-form input,
-.provider-form select {
-  height: 28px;
-  padding: 0 8px;
-}
-
-.provider-form textarea {
-  min-height: 72px;
-  padding: 8px 10px;
-  line-height: 1.4;
-  resize: vertical;
-}
-
-.provider-form input:focus,
-.provider-form select:focus,
-.provider-form textarea:focus {
-  border-color: var(--text-3);
-  box-shadow: 0 0 0 2px color-mix(in oklab, var(--text) 8%, transparent);
-}
-
-.provider-form__field .menuwrap {
+.set-form__field .menuwrap {
   min-width: 0;
 }
 
 .provider-form__select {
   justify-content: space-between;
   width: 100%;
-  height: 28px;
-  padding: 0 8px;
-  background: var(--bg);
-  border: 1px solid var(--chrome-border);
-  border-radius: var(--r-md);
-  box-shadow: none;
-  color: var(--text);
-}
-
-.provider-form__select:hover:not(:disabled),
-.provider-form__select[aria-expanded='true'] {
-  background: var(--control-hover);
-  border-color: var(--text-3);
 }
 
 .provider-form__select-value {
@@ -1288,169 +1410,37 @@
   width: min(280px, calc(100vw - 16px));
 }
 
-.provider-form__actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
+/* Models: Background work, then one section per source on the shared rows,
+   at the section gap. */
+.settings .model-settings__sources {
+  margin-top: 36px;
 }
 
-.provider-form__error {
-  margin: 0;
-  color: var(--error);
-  font-size: var(--t-sm);
+/* The empty line's own padding makes up the rest of the gap. */
+.settings .model-settings > .set-empty {
+  margin-top: 24px;
 }
 
-.model-settings {
-  display: grid;
-  gap: 14px;
-}
-
-.background-model-settings {
-  overflow: hidden;
-  background: var(--bg-rail);
-  border: 1px solid var(--chrome-border);
-  border-radius: var(--r-lg);
-}
-
-.background-model-settings > header {
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--line);
-}
-
-.background-model-settings > header h2,
-.background-model-settings > header p,
-.background-model-settings__error {
-  margin: 0;
-}
-
-.background-model-settings > header h2 {
-  font-size: var(--t-sm);
-  font-weight: 500;
-}
-
-.background-model-settings > header p {
-  max-width: 66ch;
-  margin-top: 4px;
-  color: var(--text-3);
-  font-size: var(--t-sm);
-  line-height: 1.45;
-}
-
-.background-model-settings .settings__group {
-  border: 0;
-  border-radius: 0;
-  box-shadow: none;
-}
-
-.background-model-settings__error {
-  padding: 10px 14px;
-  border-top: 1px solid var(--line);
-  color: var(--error);
-  font-size: var(--t-sm);
-}
-
-.model-settings__empty p,
-.model-visibility__source h3 {
-  margin: 0;
-}
-
-.model-settings__sources {
-  display: grid;
-  gap: 12px;
-}
-
-.model-settings__empty {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-height: 60px;
-  padding: 12px 14px;
-  background: var(--bg-rail);
-  border: 1px solid var(--chrome-border);
-  border-radius: var(--r-lg);
-  color: var(--text-3);
-  font-size: var(--t-sm);
-}
-
-.model-visibility {
-  overflow: hidden;
-  background: var(--bg-rail);
-  border: 1px solid var(--chrome-border);
-  border-radius: var(--r-lg);
-}
-
-.model-visibility__source {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 12px;
-  min-height: 40px;
-  padding: 6px 14px;
-  color: var(--text);
-}
-
-.model-visibility__bulk-actions {
-  display: inline-flex;
-  justify-self: end;
-  padding: 2px;
-  background: var(--bg);
-  border: 1px solid var(--chrome-border);
-  border-radius: var(--r-md);
-}
-
+/* All and None keep one width, so the pair holds still as either dims. */
 .model-visibility__bulk-actions button {
   min-width: 42px;
-  min-height: 28px;
-  padding: 4px 10px;
-  background: transparent;
-  border: 0;
-  border-radius: var(--r-sm);
-  color: var(--text-2);
-  cursor: pointer;
-  font: inherit;
-  font-size: var(--t-sm);
-  transition:
-    background var(--dur-fast) var(--ease-out),
-    color var(--dur-fast) var(--ease-out),
-    opacity var(--dur-fast) var(--ease-out);
 }
 
-.model-visibility__bulk-actions button:hover:not(:disabled),
-.model-visibility__bulk-actions button:focus-visible {
-  background: var(--control-hover);
-  color: var(--text);
+/* A source's identity takes the heading's own line height: at its usual
+   line-height of 1 the clipped label cut off descenders ("Antigravity"). */
+.settings .set-section__title .source-identity {
+  line-height: inherit;
 }
 
-.model-visibility__bulk-actions button:focus-visible {
-  outline: var(--focus-ring);
-  outline-offset: var(--focus-ring-inset);
+/* The identity's baseline is its mark's bottom edge, which would drop the
+   All/None labels below the name; centring sets both on one line. */
+.settings .model-settings .set-section__head {
+  align-items: center;
 }
 
-.model-visibility__bulk-actions button:disabled {
-  cursor: default;
-  opacity: 0.42;
-}
-
-.model-visibility__source h3 {
-  overflow: hidden;
-  font-size: var(--t-sm);
-  font-weight: 500;
-  line-height: 1.3;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.model-visibility__models {
-  border-top: 1px solid var(--line);
-}
-
-.model-visibility__model {
-  min-height: 40px;
-  padding-block: 6px;
-}
-
-.model-visibility__model.is-hidden .settings__row-title {
-  color: var(--text-2);
+/* A model left out of the picker reads a step quieter than one in it. */
+.settings .model-visibility__model[data-tone='muted']:not(:hover, :focus-within) .set-row__name {
+  color: var(--text-3);
 }
 
 /* Errors never grow a second line: a red dot next to the row's control
@@ -1674,99 +1664,6 @@
   }
 }
 
-.settings__row-control {
-  display: flex;
-  flex: none;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
-.settings__row-control:has(> .state-label) {
-  max-width: 100%;
-}
-
-.settings__select {
-  max-width: min(310px, 42vw);
-}
-
-.settings__select--model {
-  min-width: min(210px, 42vw);
-}
-
-.settings__select--effort {
-  min-width: 112px;
-}
-
-.settings .app-select__trigger {
-  min-height: 28px;
-  height: auto;
-  padding: 3px 7px;
-  background: var(--bg);
-  border-radius: var(--r-md);
-  box-shadow: none;
-  color: var(--text);
-  font-size: var(--t-sm);
-  line-height: 1.25;
-}
-
-.settings__select .app-select__trigger:disabled {
-  color: var(--text-3);
-  opacity: 0.65;
-}
-
-.settings__action {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 28px;
-  padding: 4px 8px;
-  background: var(--control-hover);
-  border: 1px solid var(--chrome-border);
-  border-radius: var(--r-md);
-  color: var(--text-2);
-  cursor: pointer;
-  font: inherit;
-  font-size: var(--t-sm);
-  line-height: 1.25;
-  white-space: nowrap;
-  transition:
-    background var(--dur-fast) var(--ease-out),
-    color var(--dur-fast) var(--ease-out);
-}
-
-.settings__action:hover {
-  background: var(--surface-3);
-  color: var(--text);
-}
-
-.settings .settings__row:has(> .settings__row-control > :is(.switch, .settings__switch-skeleton)) {
-  min-height: 52px;
-  align-items: center;
-  flex-direction: row;
-  gap: 20px;
-  /* Same inset as every other row in a card, so titles line up down the card. */
-  padding: 12px 14px;
-}
-
-.settings .settings__row-control:has(> :is(.switch, .settings__switch-skeleton)) {
-  width: auto;
-  align-self: center;
-}
-
-.settings
-  .settings__row:has(> .settings__row-control > :is(.switch, .settings__switch-skeleton))
-  .settings__row-copy {
-  flex: 1;
-}
-
-.settings
-  .settings__row:has(> .settings__row-control > :is(.switch, .settings__switch-skeleton))
-  .settings__row-note {
-  margin-top: 4px;
-  line-height: 1.5;
-}
-
 :root[data-theme='light'] .settings {
   --control-hover: var(--surface-2);
 }
@@ -1780,364 +1677,68 @@
   box-shadow: none;
 }
 
-/* ---------- Agent Skills settings ---------- */
-
-.skills-settings__header,
-.skill-row__heading,
-.skill-row__dependency {
-  display: flex;
-}
-
-.skills-settings__header {
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 24px;
-  margin-bottom: 24px;
-}
-
-.skills-settings__header .settings__title {
-  margin-bottom: 5px;
-}
-
-.skills-settings__header p,
-.skills-settings__empty,
-.skills-settings__error,
-.skill-row p,
-.skill-row h2 {
-  margin: 0;
-}
-
-.skills-settings__header p,
-.skills-settings__empty {
-  color: var(--text-3);
-  font-size: var(--t-sm);
-}
-
-.skills-settings__empty,
-.skills-settings__error {
-  border: 1px solid var(--line-strong);
-  border-radius: var(--r-lg);
-}
-
-.skills-settings__empty {
-  padding: 20px;
-  background: var(--bg-rail);
-  text-align: center;
-}
-
-.skills-settings__error {
-  margin: 0 0 14px;
-  padding: 10px 12px;
-  border-color: color-mix(in srgb, var(--error) 42%, var(--line));
-  color: var(--error);
-  font-size: var(--t-sm);
-}
-
-.skills-settings__error p {
-  margin: 3px 0 0;
-}
-
-.skill-row {
-  align-items: flex-start;
-}
-
-.skill-row.is-disabled {
-  opacity: 0.58;
-}
-
-.skill-row__heading {
-  align-items: center;
-  min-width: 0;
-  gap: 8px;
-}
-
-.skill-row__heading h2 {
-  overflow: hidden;
-  color: var(--text);
-  font-size: var(--t-md);
-  font-weight: 550;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.skill-row__heading span {
-  flex: none;
-  padding: 1px 6px;
-  background: var(--surface-2);
-  border-radius: var(--r-pill);
-  color: var(--text-3);
-  font-size: var(--t-xs);
-}
-
-.skill-row__description {
-  margin-top: 7px;
-  color: var(--text-2);
-  font-size: var(--t-sm);
-  line-height: 1.5;
-}
-
-.skill-row__source {
-  margin-top: 8px;
-  overflow: hidden;
-  color: var(--text-3);
-  font-family: var(--font-mono);
-  font-size: var(--t-xs);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.skill-row__dependency {
-  align-items: center;
-  gap: 6px;
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px solid var(--line);
-  color: var(--error);
-  font-size: var(--t-xs);
-}
-
-.settings__action:disabled,
 .settings .switch:disabled {
   cursor: default;
   opacity: 0.5;
 }
 
-/* ---------- MCP settings ---------- */
+/* ---------- MCP servers ---------- */
 
-.mcp-settings__header,
-.mcp-row__heading,
-.mcp-row__failure {
+.settings .mcp-settings__provider {
   display: flex;
   align-items: center;
-}
-
-.mcp-settings__header {
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 24px;
-  margin-bottom: 24px;
-}
-
-.mcp-settings__actions,
-.mcp-settings__provider {
-  display: flex;
-  align-items: center;
-}
-
-.mcp-settings__actions {
-  flex: 0 1 auto;
-  flex-wrap: wrap;
-  gap: 10px;
-}
-
-.mcp-settings__provider {
-  gap: 7px;
+  gap: 8px;
   color: var(--text-3);
-  font-size: var(--t-xs);
+  font-size: var(--t-sm);
 }
 
-.mcp-settings__provider-select .app-select__trigger {
+.settings .mcp-settings__provider-select .app-select__trigger {
   min-width: 108px;
 }
 
-.mcp-settings__header .settings__title {
-  margin-bottom: 5px;
-}
-
-.mcp-settings__header p,
-.mcp-settings__empty,
-.mcp-settings__message,
-.mcp-row p,
-.mcp-row h2 {
-  margin: 0;
-}
-
-.mcp-settings__header p,
-.mcp-settings__empty,
-.mcp-row__transport,
-.mcp-row__details {
+/* The tool list is one more detail under the server, opened on request. */
+.settings .mcp-row__details {
+  margin-top: 2px;
   color: var(--text-3);
   font-size: var(--t-sm);
+  line-height: 1.45;
 }
 
-.mcp-settings__empty,
-.mcp-settings__message {
-  margin-bottom: 14px;
-  padding: 10px 12px;
-  border: 1px solid var(--line-strong);
-  border-radius: var(--r-lg);
-  color: var(--text-2);
-  font-size: var(--t-sm);
-}
-
-.mcp-settings__empty {
-  padding: 20px;
-  background: var(--bg-rail);
-  text-align: center;
-}
-
-.mcp-settings__message.is-error,
-.mcp-row__failure {
-  color: var(--error);
-}
-
-.mcp-row {
-  align-items: flex-start;
-}
-
-.mcp-row.is-disabled {
-  opacity: 0.58;
-}
-
-.mcp-row__heading {
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.mcp-row__heading h2 {
-  color: var(--text);
-  font-size: var(--t-md);
-  font-weight: 550;
-}
-
-.mcp-row__heading span {
-  padding: 1px 6px;
-  background: var(--surface-2);
-  border-radius: var(--r-pill);
-  color: var(--text-3);
-  font-size: var(--t-xs);
-  text-transform: capitalize;
-}
-
-.mcp-row__transport {
-  overflow: hidden;
-  margin-top: 7px !important;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.mcp-row__failure {
-  gap: 6px;
-  margin-top: 10px !important;
-  font-size: var(--t-xs);
-}
-
-.mcp-row__details {
-  margin-top: 10px;
-}
-
-.mcp-row__details summary {
+.settings .mcp-row__details summary {
+  width: fit-content;
+  border-radius: var(--r-xs);
   cursor: pointer;
+  transition: color var(--dur-fast) var(--ease-out);
 }
 
-.mcp-row__details ul {
-  margin: 8px 0 0;
+.settings .mcp-row__details summary:hover {
+  color: var(--text-2);
+}
+
+.settings .mcp-row__details summary:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.settings .mcp-row__details ul {
+  display: grid;
+  gap: 4px;
+  margin: 6px 0 2px;
   padding-left: 18px;
 }
 
-.mcp-row__details li + li {
-  margin-top: 5px;
+.settings .mcp-row__details p {
+  margin: 6px 0 2px;
 }
 
-.mcp-row__actions {
-  display: flex;
-  flex: none;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 7px;
-  max-width: 230px;
-}
-
-.settings__action.is-danger {
-  color: var(--error);
-}
-
-.mcp-inherited {
-  margin-top: 28px;
-}
-
-.mcp-inherited__header {
-  margin-bottom: 12px;
-}
-
-.mcp-inherited__header h2 {
-  margin: 0 0 4px;
+.settings .mcp-row__details strong {
   color: var(--text-2);
-  font-size: var(--t-md);
-  font-weight: 520;
+  font-weight: 500;
 }
 
-.mcp-inherited__header p {
-  margin: 0;
-  color: var(--text-3);
-  font-size: var(--t-sm);
-}
-
-.mcp-editor {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-  margin-bottom: 20px;
-  padding: 12px;
-  border: 1px solid var(--line-strong);
-  border-radius: var(--r-lg);
-  background: var(--bg-rail);
-}
-
-.mcp-editor label {
-  display: grid;
-  gap: 6px;
-  color: var(--text-2);
-  font-size: var(--t-sm);
-}
-
-.mcp-editor small {
-  color: var(--text-3);
-  font-size: var(--t-xs);
-}
-
-.mcp-settings__scope-note {
-  margin: 0 0 14px;
-  color: var(--text-3);
-  font-size: var(--t-sm);
-  line-height: 1.5;
-}
-
-.mcp-editor .mcp-settings__scope-note {
-  margin: 0;
-}
-
-.mcp-editor input,
-.mcp-editor textarea {
-  min-width: 0;
-  padding: 6px 8px;
-  border: 1px solid var(--line-strong);
-  border-radius: var(--r-md);
-  outline: none;
-  background: var(--surface-2);
-  color: var(--text);
-  font: inherit;
-}
-
-.mcp-editor input:focus,
-.mcp-editor textarea:focus {
-  border-color: var(--text-3);
-}
-
-.mcp-editor textarea {
+/* Room for a transport object without scrolling (outranks the shared 72px). */
+.settings textarea.set-input.mcp-editor__transport {
   min-height: 130px;
-  resize: vertical;
-}
-
-.mcp-editor__wide,
-.mcp-editor footer {
-  grid-column: 1 / -1;
-}
-
-.mcp-editor footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
 }
 
 .shell.is-macos .settings__titlebar {
@@ -2154,18 +1755,11 @@
 
 /* The settings rail can leave a narrow content pane while the window is still
    wider than the viewport breakpoints below. Compact appearance from its actual
-   usable width: two theme previews to a row, and rows drop their leaders. */
+   usable width: two theme previews to a row. Its rows drop their leaders with
+   every other v1 row (settings-system.css). */
 @container settings-content (max-width: 560px) {
   .theme-picker {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .appearance-row {
-    grid-template-columns: minmax(0, 1fr) max-content;
-  }
-
-  .appearance-row__leader {
-    display: none;
   }
 }
 
@@ -2223,21 +1817,32 @@
     padding: 28px 18px 48px;
   }
 
+  /* One column: the strip runs the full width, so the way back starts at the
+     window's edge, after the traffic lights on a Mac. */
+  .settings__back-slot {
+    left: 0;
+  }
+
+  .shell.is-macos .settings__back-slot {
+    left: 70px;
+  }
+
+  /* No margin to borrow at this width: the minus and plus move inside. */
+  .provider-settings__entry:has(> .provider-roster__remove) {
+    padding-left: 32px;
+  }
+
+  .provider-roster__remove {
+    left: 0;
+  }
+
+  .provider-roster__add {
+    margin-left: 2.5px;
+    gap: 14.5px;
+  }
+
   .settings__title {
     margin-bottom: 32px;
-  }
-
-  .model-visibility__source {
-    grid-template-columns: minmax(0, 1fr) auto;
-    row-gap: 8px;
-  }
-
-  .settings__row {
-    align-items: flex-start;
-  }
-
-  .model-visibility__model {
-    align-items: center;
   }
 }
 
@@ -2258,33 +1863,4 @@
   .theme-picker {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
-
-  .settings__row {
-    flex-direction: column;
-    gap: 10px;
-  }
-
-  .settings__row-control {
-    align-self: flex-end;
-  }
-
-  .model-visibility__source,
-  .model-visibility__model {
-    padding-inline: 14px;
-  }
-
-  .model-visibility__model {
-    flex-direction: row;
-    gap: 12px;
-  }
-
-  .model-visibility__model .settings__row-control {
-    align-self: auto;
-  }
-}
-
-.install-terminal {
-  margin: 0 12px 10px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-lg);
 }

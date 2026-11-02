@@ -11,7 +11,7 @@ import { killTree, spawnCli } from '@harness/proc'
 
 /**
  * The SDK declares the `get_settings` control request and its runtime answers it
- * through `getSettings()`, but 0.3.232's `Query` type does not declare the method.
+ * through `getSettings()`, but the `Query` type (through 0.3.296) does not declare the method.
  * It stays optional so a runtime without it degrades instead of throwing.
  */
 export type ClaudeSettingsReader = { getSettings?: () => Promise<unknown> }
@@ -26,6 +26,7 @@ export type ClaudeQueryRuntime = Pick<
   | 'supportedModels'
   | 'mcpServerStatus'
   | 'setMcpServers'
+  | 'supportedCommands'
 > &
   ClaudeSettingsReader &
   AsyncIterable<SDKMessage>

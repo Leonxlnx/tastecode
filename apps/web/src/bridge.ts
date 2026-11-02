@@ -1,4 +1,5 @@
 import type { PreviewCaptureRequest, PreviewCaptureResult } from '@harness/contracts'
+import type { ChatAttentionReport } from './chat-notifications.js'
 import type { KeybindingId, Keybindings, Shortcut } from './shortcuts.js'
 import {
   checkSimulatedAppUpdate,
@@ -40,6 +41,8 @@ type Bridge = {
   setZoom: (action: ZoomAction) => Promise<void>
   setTheme: (preference: AppThemePreference) => Promise<void>
   setWindowChrome?: (chrome: WindowChrome) => Promise<void>
+  getWindowMaterialSupport?: () => Promise<WindowMaterialSupport>
+  setWindowMaterial?: (material: WindowMaterial) => Promise<void>
   prepareHaptics?: () => void
   performHaptic?: (pattern: NativeHapticPattern) => void
   capturePreview: (request: PreviewCaptureRequest) => Promise<PreviewCaptureResult>
@@ -54,6 +57,7 @@ type Bridge = {
   getUpdateState?: () => Promise<AppUpdateState>
   checkForUpdates?: () => Promise<AppUpdateState>
   installUpdate?: () => Promise<boolean>
+  reportRunningAgents?: (count: number) => void
   setMenuShortcuts?: (shortcuts: NativeMenuShortcuts) => void
   onMenuAction?: (
     listener: (action: NativeMenuAction, source: NativeMenuActionSource) => void,
@@ -64,7 +68,10 @@ type Bridge = {
     listener: (guestId: number, action: BrowserShortcutAction) => void,
   ) => () => void
   onZoomChange: (listener: (factor: number) => void) => () => void
+  reportChatAttention?: (report: ChatAttentionReport) => void
+  onOpenChat?: (listener: (chatId: string) => void) => () => void
   reportStartupMilestone?: (name: RendererStartupMilestone) => void
+  edition?: unknown
   isDesktop: true
 }
 
@@ -161,6 +168,13 @@ export const canCapturePreview = bridge?.capturePreview !== undefined
 export const canRevealProjectFile = bridge?.revealProjectFile !== undefined
 export const canDropProjectFolders = bridge?.droppedFolderPaths !== undefined
 export const canPreviewViewedImages = bridge?.previewViewedImage !== undefined
+/**
+ * Which providers a packaged build's server offers: `release` the public set,
+ * `dev` every one. Undefined in a browser or an unpackaged run, whose server
+ * offers every provider unless a developer set otherwise.
+ */
+const edition = bridge?.edition
+export const buildEdition = edition === 'release' || edition === 'dev' ? edition : undefined
 
 export function reportStartupMilestone(name: RendererStartupMilestone): void {
   bridge?.reportStartupMilestone?.(name)
@@ -319,12 +333,47 @@ export function setDesktopWindowChrome(chrome: WindowChrome): Promise<void> {
   return bridge?.setWindowChrome?.(chrome) ?? Promise.resolve()
 }
 
+/**
+ * What the OS can draw behind the desktop window: a Windows 11 backdrop
+ * material, macOS vibrancy, or nothing (Windows 10, Linux, a browser).
+ * Mirrors apps/desktop/src/window-material.ts.
+ */
+export type WindowMaterialSupport = 'material' | 'vibrancy' | 'none'
+/** The Windows 11 backdrop: Acrylic blurs what is behind, Mica tints the wallpaper. */
+export type WindowMaterial = 'acrylic' | 'mica'
+
+export async function desktopWindowMaterialSupport(): Promise<WindowMaterialSupport> {
+  try {
+    const support = await bridge?.getWindowMaterialSupport?.()
+    return support === 'material' || support === 'vibrancy' ? support : 'none'
+  } catch {
+    return 'none'
+  }
+}
+
+export function setDesktopWindowMaterial(material: WindowMaterial): Promise<void> {
+  return bridge?.setWindowMaterial?.(material) ?? Promise.resolve()
+}
+
 export function prepareNativeHaptics(): void {
   bridge?.prepareHaptics?.()
 }
 
 export function performNativeHaptic(pattern: NativeHapticPattern): void {
   bridge?.performHaptic?.(pattern)
+}
+
+/** Whether the shell can notify about chats while the window is away. */
+export const canNotifyChats = bridge?.reportChatAttention !== undefined
+
+/** The chats that are not at rest; the desktop shell decides what to notify. */
+export function reportChatAttention(report: ChatAttentionReport): void {
+  bridge?.reportChatAttention?.(report)
+}
+
+/** A chat notification was clicked. */
+export function onOpenChatRequest(listener: (chatId: string) => void): () => void {
+  return bridge?.onOpenChat?.(listener) ?? (() => undefined)
 }
 
 export function onAppZoomChange(listener: (factor: number) => void): () => void {
@@ -481,6 +530,18 @@ export function installAppUpdate(): Promise<boolean> {
     return Promise.resolve(simulated.status === 'ready')
   }
   return bridge?.installUpdate?.() ?? Promise.resolve(false)
+}
+
+let reportedRunningAgents: number | undefined
+
+/**
+ * Chats with a running turn, for the desktop shell: a quit that begins while
+ * any runs leaves a ready update for later. Sent only when the count changes.
+ */
+export function reportRunningAgents(count: number): void {
+  if (count === reportedRunningAgents) return
+  reportedRunningAgents = count
+  bridge?.reportRunningAgents?.(count)
 }
 
 export function onAppUpdateState(listener: (state: AppUpdateState) => void): () => void {

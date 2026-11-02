@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { captureCli, quoteCmdArgument, spawnCli } from './cli.js'
+import { argumentPromptLimit, captureCli, quoteCmdArgument, spawnCli } from './cli.js'
 
 const argumentsToPreserve = [
   '',
@@ -136,4 +136,14 @@ describe('cmd argument quoting', () => {
       }
     },
   )
+})
+
+describe('argument prompt limit', () => {
+  it('leaves room under each system command-line limit', () => {
+    // Quoting can double a prompt full of quotes under Windows' 32,767.
+    expect(argumentPromptLimit('win32') * 2).toBeLessThan(32_767)
+    // Three UTF-8 bytes per code unit must stay under Linux's 128 KiB per argument.
+    expect(argumentPromptLimit('linux') * 3).toBeLessThan(128 * 1024)
+    expect(argumentPromptLimit('darwin')).toBeGreaterThan(argumentPromptLimit('linux'))
+  })
 })

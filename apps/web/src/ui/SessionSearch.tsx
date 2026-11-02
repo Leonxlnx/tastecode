@@ -4,8 +4,9 @@ import { IconLoader2 as LoaderCircle, IconSearch as Search, IconX as X } from '@
 import '../styles/command-palette.css'
 import '../styles/session-search.css'
 import {
+  agentPresentation,
   providerDisplayName,
-  providerPresentation,
+  sourcePresentation,
   type ProviderPresentation,
 } from '../provider-presentation.js'
 import type { Transport } from '../transport.js'
@@ -25,7 +26,17 @@ const SEARCH_TOKEN = /[\p{L}\p{N}][\p{L}\p{N}\p{M}_]*/gu
 const FOCUSABLE_SELECTOR =
   'a[href], button:not([disabled]):not([tabindex="-1"]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
 
-const PROVIDERS: ProviderId[] = ['claude-code', 'codex', 'grok']
+const PROVIDERS: ProviderId[] = [
+  'claude-code',
+  'codex',
+  'grok',
+  'cursor',
+  'opencode',
+  'antigravity',
+  'pi',
+  'acp',
+  'api',
+]
 
 type DisplaySearchResult = {
   key: string
@@ -34,6 +45,7 @@ type DisplaySearchResult = {
   threadId: string
   threadTitle: string
   provider: ProviderId
+  source?: ProviderPresentation | undefined
   createdAt: number
   turnId: string | undefined
   titleParts: SearchSnippetPart[]
@@ -99,6 +111,16 @@ function SessionSearchComponent(props: {
     }))
   }, [titleIndex])
 
+  const sources = useMemo(() => {
+    const presentations = new Map<string, ProviderPresentation>()
+    for (const entry of titleIndex) {
+      if (entry.provider === 'acp' && entry.agent) {
+        presentations.set(`${entry.projectPath}\0${entry.threadId}`, agentPresentation(entry.agent))
+      }
+    }
+    return presentations
+  }, [titleIndex])
+
   const titleResults = useMemo<DisplaySearchResult[]>(() => {
     if (!searchable) return []
     return searchSessionTitles(titleIndex, terms, {
@@ -112,12 +134,13 @@ function SessionSearchComponent(props: {
       threadId: entry.threadId,
       threadTitle: entry.threadTitle,
       provider: entry.provider,
+      source: sources.get(`${entry.projectPath}\0${entry.threadId}`),
       createdAt: entry.createdAt,
       turnId: undefined,
       titleParts: highlightText(entry.threadTitle, terms),
       snippet: undefined,
     }))
-  }, [projectPath, provider, searchable, terms, titleIndex])
+  }, [projectPath, provider, searchable, sources, terms, titleIndex])
 
   const { hiddenThreadIds } = props
   const displayResults = useMemo<DisplaySearchResult[]>(() => {
@@ -136,13 +159,14 @@ function SessionSearchComponent(props: {
         threadId: result.threadId,
         threadTitle: result.threadTitle,
         provider: result.provider,
+        source: sources.get(`${result.projectPath}\0${result.threadId}`),
         createdAt: result.createdAt,
         turnId: result.turnId,
         titleParts: [{ text: result.threadTitle, highlighted: false }],
         snippet: result.snippet,
       })),
     ]
-  }, [hiddenThreadIds, results, titleResults])
+  }, [hiddenThreadIds, results, sources, titleResults])
   const selected = useMemo(() => {
     if (displayResults.length === 0) return -1
     const index = displayResults.findIndex((result) => result.key === selectedKey)
@@ -486,7 +510,10 @@ function contentResultKey(
 }
 
 function resultSourcePresentation(result: DisplaySearchResult): ProviderPresentation {
-  return providerPresentation(result.provider)
+  if (result.source) return result.source
+  return sourcePresentation({
+    provider: result.provider,
+  })
 }
 
 function resultProviderLabel(result: DisplaySearchResult): string {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { activeTurnAnchor, isAtBottom, modeForNewTurn, shouldReleaseAnchor } from './scroll-mode.js'
+import { activeTurnAnchor, isAtBottom, modeForNewTurn, turnRoom } from './scroll-mode.js'
 
 describe('scroll mode', () => {
   it('treats a small gap from the bottom as being at the bottom', () => {
@@ -9,8 +9,8 @@ describe('scroll mode', () => {
     expect(isAtBottom({ scrollTop: 500, scrollHeight: 1000, clientHeight: 40 })).toBe(false)
   })
 
-  it('anchors a new turn only when the user was already at the bottom', () => {
-    expect(modeForNewTurn(true)).toBe('anchor-turn')
+  it('follows a new turn only when the user was already following', () => {
+    expect(modeForNewTurn(true)).toBe('follow-end')
     // Someone reading older output must not be yanked to a new turn.
     expect(modeForNewTurn(false)).toBe('free')
   })
@@ -72,8 +72,19 @@ describe('scroll mode', () => {
     expect(reads).toBeLessThanOrEqual(3)
   })
 
-  it('releases the anchor once the turn is taller than the viewport', () => {
-    expect(shouldReleaseAnchor(1200, 800)).toBe(true)
-    expect(shouldReleaseAnchor(400, 800)).toBe(false)
+  it('holds the end at a pinned prompt until the answer fills the screen', () => {
+    // A 500px chat in an 800px viewport, the new prompt 392px down.
+    expect(turnRoom(-300, 392)).toEqual({ end: 392, room: 692 })
+    // The answer grew by 200px: the room gives way, the end stays.
+    expect(turnRoom(-100, 392)).toEqual({ end: 392, room: 492 })
+    // Past the pin the content's own end leads and no room is left.
+    expect(turnRoom(420, 392)).toEqual({ end: 420, room: 0 })
+  })
+
+  it('adds no room without a pin, or for a pin the content already reaches', () => {
+    expect(turnRoom(-300, undefined)).toEqual({ end: 0, room: 0 })
+    expect(turnRoom(1_000, undefined)).toEqual({ end: 1_000, room: 0 })
+    // A first turn's prompt sits at the top already.
+    expect(turnRoom(-300, 0)).toEqual({ end: 0, room: 0 })
   })
 })

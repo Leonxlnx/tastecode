@@ -1,0 +1,10 @@
+T  Credentials [90m~\.local\share\opencode\auth.json
+|
+—  0 credentials
+
+T  Environment
+|
+•  Anthropic [90mANTHROPIC_API_KEY
+|
+—  1 environment variable
+
