@@ -75,6 +75,18 @@ describe('sidebar theme CSS', () => {
     )
   })
 
+  it('keeps the narrow-window drawer opaque over the chat', () => {
+    // Below 700px the open rail covers the transcript, so glass would show the
+    // chat through the sidebar items instead of the OS material.
+    const drawer = appCss.search(
+      /@media \(max-width: 700px\) \{\s*:root\[data-glass='on'\] \.rail-slot \.rail \{[^}]*background: var\(--bg-rail\);[^}]*backdrop-filter: none;[^}]*-webkit-backdrop-filter: none;/,
+    )
+    const lightGlass = appCss.indexOf(":root[data-theme='light'][data-glass='on'] .rail {")
+    expect(lightGlass).toBeGreaterThan(-1)
+    // It ties the light glass rule on specificity, so it must come after it.
+    expect(drawer).toBeGreaterThan(lightGlass)
+  })
+
   it('paints behind the rounded stage corner in light mode', () => {
     expect(appCss).toMatch(
       /:root\[data-theme='light'\]\[data-glass='on'\]\[data-shell='desktop'\] \.shell__body \{\s*background: var\(--bg-rail-tint\);\s*\}/s,

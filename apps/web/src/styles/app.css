@@ -3652,6 +3652,16 @@
   );
 }
 
+/* Below 700px the open rail is a drawer over the chat, which showed through
+   the glass: solid like the flyout. It ties the light rule, so it follows it. */
+@media (max-width: 700px) {
+  :root[data-glass='on'] .rail-slot .rail {
+    background: var(--bg-rail);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+}
+
 /* The stage's rounded top-left corner exposes its parent. Paint that backing
    layer too, otherwise the transparent desktop window leaves a dark wedge. */
 :root[data-theme='light'][data-glass='on'][data-shell='desktop'] .shell__body {
