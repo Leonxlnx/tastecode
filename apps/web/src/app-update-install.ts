@@ -5,8 +5,8 @@ import type { Project, Session } from './ui/Sidebar.js'
 
 /**
  * Installing an app update quits TasteCode, and quitting cuts off every chat
- * that is still working. So the install waits: when chats are running it
- * starts by itself once the last one ends, and Install now stops them first.
+ * that is still working. So Update asks first while chats run: stop them and
+ * install now, or wait and install by itself once the last one ends.
  *
  * Which chats run is the server's state. The sidebar status it pushes is the
  * live count (it changes on status changes, never per streamed delta), and
@@ -24,6 +24,8 @@ export type AppUpdateInstallState =
   | { phase: 'idle'; failed?: boolean }
   /** Asking the server whether chats are running before a click installs. */
   | { phase: 'checking' }
+  /** Update was clicked while chats run: stop them now, or wait for them? */
+  | { phase: 'confirming'; running: number }
   /** Installs by itself once `running` reaches zero. */
   | { phase: 'waiting'; running: number }
   /** Install now: stopping the running chats, then installing. */
@@ -80,6 +82,11 @@ export function subscribeAppUpdateInstall(listener: () => void): () => void {
 
 export function chatCount(running: number): string {
   return `${running} ${running === 1 ? 'chat' : 'chats'}`
+}
+
+/** The chats a restart would stop, while Update asks about them. */
+export function runningLabel(running: number): string {
+  return `${chatCount(running)} still running`
 }
 
 export function waitingLabel(running: number): string {
@@ -177,7 +184,16 @@ async function settle(): Promise<void> {
 
 /** The sidebar's running count, after every status change. */
 export function reportRunningChats(count: number): void {
+  const before = live
   live = count
+  if (state.phase === 'confirming') {
+    // Once the last chat it asked about ends there is nothing left to stop;
+    // Update installs at once again. Nothing installs without a click.
+    if (count === 0) {
+      if (before > 0) publish({ phase: 'idle' })
+    } else if (state.running !== count) publish({ phase: 'confirming', running: count })
+    return
+  }
   if (state.phase !== 'waiting') return
   if (count > 0) {
     clearTimer()
@@ -188,11 +204,11 @@ export function reportRunningChats(count: number): void {
   scheduleSettle()
 }
 
-/** Restart to update: installs now when no chat runs, otherwise waits for them. */
+/** Update: installs now when no chat runs, otherwise asks what to do with them. */
 export async function requestAppUpdateInstall(): Promise<void> {
   if (state.phase !== 'idle') return
   if (live > 0) {
-    publish({ phase: 'waiting', running: live })
+    publish({ phase: 'confirming', running: live })
     return
   }
   if (!gate) {
@@ -209,13 +225,24 @@ export async function requestAppUpdateInstall(): Promise<void> {
     await install()
     return
   }
-  publish({ phase: 'waiting', running })
+  publish({ phase: 'confirming', running })
+}
+
+/** The answer to Update: wait, and install by itself once the running chats end. */
+export function installWhenChatsFinish(): void {
+  if (state.phase !== 'confirming') return
+  publish({ phase: 'waiting', running: state.running })
+  // Only the server knows of a chat that is still starting; look again until
+  // its status arrives.
   if (live === 0) scheduleSettle()
 }
 
-/** Install now, confirmed: stops the running chats, then installs. */
+/**
+ * The answer to Update, or Install now while waiting: stops the running chats,
+ * then installs at once.
+ */
 export async function stopChatsAndInstall(): Promise<void> {
-  if (state.phase !== 'waiting') return
+  if (state.phase !== 'confirming' && state.phase !== 'waiting') return
   clearTimer()
   publish({ phase: 'stopping', running: state.running })
   try {

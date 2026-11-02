@@ -17,6 +17,7 @@ vi.mock('./bridge.js', () => ({
 const {
   appUpdateInstallState,
   INSTALL_SETTLE_MS,
+  installWhenChatsFinish,
   requestAppUpdateInstall,
   resetAppUpdateInstallForTests,
   stopChatsAndInstall,
@@ -188,8 +189,8 @@ describe('Install now', () => {
     )
 
     await requestAppUpdateInstall()
-    // c runs nothing, so only a and b hold the update.
-    expect(appUpdateInstallState()).toEqual({ phase: 'waiting', running: 2 })
+    // c runs nothing, so only a and b are asked about.
+    expect(appUpdateInstallState()).toEqual({ phase: 'confirming', running: 2 })
     await stopChatsAndInstall()
 
     expect(chats.a.queue).toEqual(['Follow-up 1', 'Follow-up 2'])
@@ -254,6 +255,7 @@ describe('Waiting for chats', () => {
     )
 
     await requestAppUpdateInstall()
+    installWhenChatsFinish()
     await vi.advanceTimersByTimeAsync(60 * 60 * 1000)
 
     expect(appUpdateInstallState()).toEqual({ phase: 'waiting', running: 3 })
@@ -270,6 +272,7 @@ describe('Waiting for chats', () => {
       { initialProps: { projects: sidebar({ a: 'working', b: 'approval' }) } },
     )
     await requestAppUpdateInstall()
+    installWhenChatsFinish()
     expect(appUpdateInstallState()).toEqual({ phase: 'waiting', running: 2 })
 
     // The approval is answered and b's turn ends.
