@@ -69,8 +69,11 @@ import { configurePreviewNavigation } from './preview-navigation.js'
 import { savePastedFile } from './pasted-file.js'
 import {
   ownedServerEnvironment,
+  packagedEdition,
   withDefaultSkills,
+  withEdition,
   withFeedbackDetails,
+  type BuildEdition,
 } from './owned-server-env.js'
 import { revealablePath } from './reveal-path.js'
 import { projectFilePath } from './project-file-path.js'
@@ -434,26 +437,40 @@ if (!ownsSingleInstance) {
  * isolated without paying for a second full app executable launch. The legacy
  * Node-mode child remains available as a field fallback.
  */
+/** The packaged package.json inside app.asar; unreadable means a release build. */
+function readPackagedEdition(): BuildEdition {
+  try {
+    return packagedEdition(
+      JSON.parse(readFileSync(path.join(app.getAppPath(), 'package.json'), 'utf8')),
+    )
+  } catch {
+    return 'release'
+  }
+}
+
 function startOwnedServer(): boolean {
   if (devServer || serverSupervisor) return true
   let serverEnv: NodeJS.ProcessEnv
   try {
-    serverEnv = withFeedbackDetails(
-      withDefaultSkills(
-        ownedServerEnvironment(
-          process.env,
-          app.isPackaged ? readFileSync(rendererIndexPath(), 'utf8') : undefined,
+    serverEnv = withEdition(
+      withFeedbackDetails(
+        withDefaultSkills(
+          ownedServerEnvironment(
+            process.env,
+            app.isPackaged ? readFileSync(rendererIndexPath(), 'utf8') : undefined,
+          ),
+          app.isPackaged ? path.join(process.resourcesPath, 'default-skills') : undefined,
         ),
-        app.isPackaged ? path.join(process.resourcesPath, 'default-skills') : undefined,
+        {
+          appVersion: app.getVersion(),
+          // Written at build time by scripts/build-main.js; an unpackaged run reads
+          // the maintainer's ~/.tastecode file on the server side instead.
+          feedbackConfig: app.isPackaged
+            ? path.join(process.resourcesPath, 'feedback', 'feedback.env')
+            : undefined,
+        },
       ),
-      {
-        appVersion: app.getVersion(),
-        // Written at build time by scripts/build-main.js; an unpackaged run reads
-        // the maintainer's ~/.tastecode file on the server side instead.
-        feedbackConfig: app.isPackaged
-          ? path.join(process.resourcesPath, 'feedback', 'feedback.env')
-          : undefined,
-      },
+      app.isPackaged ? readPackagedEdition() : undefined,
     )
   } catch (error) {
     dialog.showErrorBox(nativeAppName, error instanceof Error ? error.message : String(error))
