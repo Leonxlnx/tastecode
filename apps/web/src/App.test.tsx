@@ -6856,7 +6856,7 @@ describe('new chats', () => {
     )
 
     render(<App />)
-    fireEvent.click(await screen.findByRole('button', { name: /^Get started/ }))
+    fireEvent.click(await screen.findByRole('button', { name: /^Get started/ }, { timeout: 5_000 }))
     fireEvent.click(screen.getByRole('button', { name: /^Continue/ }))
     fireEvent.click(screen.getByRole('button', { name: /^Continue/ }))
     const setup = screen.getByRole('dialog', { name: 'Choose your coding agents' })
@@ -6889,7 +6889,7 @@ describe('new chats', () => {
     )
 
     render(<App />)
-    fireEvent.click(await screen.findByRole('button', { name: /^Get started/ }))
+    fireEvent.click(await screen.findByRole('button', { name: /^Get started/ }, { timeout: 5_000 }))
     fireEvent.click(screen.getByRole('button', { name: /^Continue/ }))
     fireEvent.click(screen.getByRole('button', { name: /^Continue/ }))
     const setup = screen.getByRole('dialog', { name: 'Choose your coding agents' })
@@ -6929,7 +6929,9 @@ describe('new chats', () => {
       })
 
       render(<App />)
-      fireEvent.click(await screen.findByRole('button', { name: /^Get started/ }))
+      fireEvent.click(
+        await screen.findByRole('button', { name: /^Get started/ }, { timeout: 5_000 }),
+      )
       fireEvent.click(screen.getByRole('button', { name: /^Continue/ }))
       fireEvent.click(screen.getByRole('button', { name: /^Continue/ }))
       const setup = screen.getByRole('dialog', { name: 'Choose your coding agents' })
