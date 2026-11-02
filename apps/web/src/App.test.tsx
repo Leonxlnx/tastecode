@@ -6842,6 +6842,67 @@ describe('new chats', () => {
     expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(true)
   })
 
+  it("holds setup's agent list until the server says which providers it offers", async () => {
+    desktopShell.enabled = true
+    serverProjects = []
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    const waiting: Array<() => void> = []
+    let answered = false
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method !== 'providers.list' || answered
+        ? request(method, params)
+        : new Promise((resolve) => waiting.push(() => resolve(request(method, params)))),
+    )
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^Get started/ }))
+    fireEvent.click(screen.getByRole('button', { name: /^Continue/ }))
+    fireEvent.click(screen.getByRole('button', { name: /^Continue/ }))
+    const setup = screen.getByRole('dialog', { name: 'Choose your coding agents' })
+    const list = () => setup.querySelector('.onboarding__pick')
+
+    expect(list()?.querySelector('[aria-busy="true"]')).toBeTruthy()
+    expect(list()?.textContent).not.toMatch(/\b(Claude Code|Codex|Grok|Cursor|OpenCode|Pi)\b/)
+
+    await act(async () => {
+      answered = true
+      for (const answer of waiting) answer()
+    })
+    await waitFor(() =>
+      expect(within(setup).getByRole('region', { name: 'Providers' }).textContent).toBe(
+        'ProvidersCodexSigned in',
+      ),
+    )
+    expect(list()?.querySelector('[aria-busy="true"]')).toBeNull()
+  })
+
+  it("ends setup's agent list in the provider error when the list fails", async () => {
+    desktopShell.enabled = true
+    serverProjects = []
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'providers.list'
+        ? Promise.reject(new Error('server offline'))
+        : request(method, params),
+    )
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^Get started/ }))
+    fireEvent.click(screen.getByRole('button', { name: /^Continue/ }))
+    fireEvent.click(screen.getByRole('button', { name: /^Continue/ }))
+    const setup = screen.getByRole('dialog', { name: 'Choose your coding agents' })
+
+    await waitFor(() =>
+      expect(setup.querySelector('.onboarding__lead')?.textContent).toBe(
+        'Could not load providers. server offline',
+      ),
+    )
+    expect(setup.querySelector('[aria-busy="true"]')).toBeNull()
+    expect(setup.querySelector('.onboarding__pick')?.textContent).toBe('')
+  })
+
   it.each(['success', 'failure', 'cancel'] as const)(
     'restores Settings after Claude sign-in ends with %s',
     async (outcome) => {

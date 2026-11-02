@@ -49,6 +49,7 @@ function onboardingProps(overrides: Partial<Props> = {}): Props {
     onThemePreferenceChange: vi.fn(),
     onDisplayNameChange: vi.fn(),
     providerStatuses: [codexReady, grokMissing],
+    providersLoading: false,
     acpAgents: [devin],
     providerRoster: [],
     onProviderRosterChange: vi.fn(),
@@ -65,6 +66,40 @@ function renderOnboarding(overrides: Partial<Props> = {}) {
 }
 
 const next = () => fireEvent.click(screen.getByRole('button', { name: /^Continue/ }))
+
+const toAgentsPage = () => {
+  fireEvent.click(screen.getByRole('button', { name: /^Get started/ }))
+  next()
+  next()
+  expect(screen.getByRole('heading', { name: 'Choose your coding agents' })).toBeTruthy()
+}
+
+// Every name the agents page could ever list, the ones a build leaves out included.
+const PROVIDER_NAMES = /\b(Claude Code|Codex|Grok|Cursor|OpenCode|Antigravity|Pi|Devin)\b/
+const LOADING_LINE = 'Looking for the coding agents installed on this machine…'
+const PENDING: Partial<Props> = {
+  providerStatuses: [],
+  providersLoading: true,
+  acpAgents: undefined,
+}
+// What a release build answers: five providers and no ACP entry.
+const RELEASE_STATUSES: ProviderStatus[] = [
+  { id: 'claude-code', displayName: 'Claude Code', installed: true, auth: 'unknown' },
+  codexReady,
+  grokMissing,
+  { id: 'cursor', displayName: 'Cursor', installed: false, auth: 'unauthenticated' },
+  { id: 'antigravity', displayName: 'Antigravity', installed: false, auth: 'unauthenticated' },
+]
+const RELEASE_ANSWER: Partial<Props> = {
+  providerStatuses: RELEASE_STATUSES,
+  providersLoading: false,
+  acpAgents: [],
+}
+
+const dialogText = () => screen.getByRole('dialog').textContent ?? ''
+const pickRows = () => document.querySelectorAll('.onboarding__pick .onboarding__pick-row')
+const busy = () => document.querySelector('.onboarding__pick [aria-busy="true"]')
+const lead = () => document.querySelector('.onboarding__lead')?.textContent
 
 describe('first-run onboarding', () => {
   it('walks welcome → name → appearance → agents → project and keeps progress honest', () => {
@@ -302,6 +337,101 @@ describe('first-run onboarding', () => {
       delete document.documentElement.dataset.theme
       Reflect.deleteProperty(document, 'startViewTransition')
     }
+  })
+})
+
+describe('agents page before the provider list answers', () => {
+  function renderPending(overrides: Partial<Props> = {}) {
+    const props = onboardingProps({ ...PENDING, ...overrides })
+    const view = render(<Onboarding {...props} />)
+    return {
+      answer: (answer: Partial<Props>) => view.rerender(<Onboarding {...props} {...answer} />),
+    }
+  }
+
+  it('holds placeholders in the final layout and names no provider', () => {
+    renderPending()
+    toAgentsPage()
+
+    expect(dialogText()).not.toMatch(PROVIDER_NAMES)
+    expect(screen.queryAllByRole('checkbox')).toHaveLength(0)
+    // The status line already reads as it will once the list is in.
+    expect(lead()).toBe('Pick the ones you use. Nothing is added until you do.')
+    expect(busy()?.textContent).toBe(LOADING_LINE)
+    // As many lines as a release build lists, under the heading the list keeps.
+    expect(screen.getByRole('region', { name: 'Providers' })).toBeTruthy()
+    expect(pickRows()).toHaveLength(5)
+  })
+
+  it('fills the same lines with exactly what a release build offers', () => {
+    const page = renderPending()
+    toAgentsPage()
+    page.answer(RELEASE_ANSWER)
+
+    expect(busy()).toBeNull()
+    expect(screen.getByRole('region', { name: 'Providers' }).textContent).toBe(
+      'Providers' +
+        'Claude CodeInstalled' +
+        'CodexSigned in' +
+        'GrokNot installed' +
+        'CursorNot installed' +
+        'AntigravityNot installed',
+    )
+    expect(screen.queryByRole('region', { name: 'ACP agents' })).toBeNull()
+    expect(dialogText()).not.toMatch(/\b(OpenCode|Pi)\b/)
+    expect(pickRows()).toHaveLength(5)
+    expect(lead()).toBe('Pick the ones you use. Nothing is added until you do.')
+  })
+
+  it('waits for the ACP library too, so no group arrives after the list', () => {
+    const page = renderPending()
+    toAgentsPage()
+    page.answer({ providerStatuses: [codexReady], providersLoading: false })
+    expect(dialogText()).not.toMatch(PROVIDER_NAMES)
+    expect(busy()).toBeTruthy()
+
+    page.answer({ providerStatuses: [codexReady], providersLoading: false, acpAgents: [devin] })
+    expect(busy()).toBeNull()
+    expect(screen.getByRole('region', { name: 'Providers' }).textContent).toBe(
+      'ProvidersCodexSigned in',
+    )
+    expect(screen.getByRole('region', { name: 'ACP agents' }).textContent).toBe(
+      'ACP agentsDevinInstalled',
+    )
+  })
+
+  it('draws agents added earlier in the preview from the first frame and keeps them', () => {
+    const page = renderPending({ providerRoster: ['codex', 'acp:devin'] })
+    const picker = () => document.querySelector('.onboarding__preview [data-land="model"]')
+    const drawn = () =>
+      [...(picker()?.querySelectorAll('.preview__mark') ?? [])].map((mark) =>
+        mark.getAttribute('data-land'),
+      )
+    expect(drawn()).toEqual(['agent-codex', 'agent-acp:devin'])
+    expect(picker()?.textContent).toBe('Codex')
+
+    // A release build offers no ACP agents; what was drawn still stays.
+    page.answer(RELEASE_ANSWER)
+    expect(drawn()).toEqual(['agent-codex', 'agent-acp:devin'])
+    expect(picker()?.textContent).toBe('Codex')
+  })
+
+  it('ends in the server error when the list never comes', () => {
+    const page = renderPending()
+    toAgentsPage()
+    page.answer({
+      providersLoading: false,
+      providersError: 'Could not load providers. Server offline',
+      acpAgents: [],
+    })
+
+    expect(lead()).toBe('Could not load providers. Server offline')
+    expect(busy()).toBeNull()
+    expect(pickRows()).toHaveLength(0)
+    expect(dialogText()).not.toMatch(PROVIDER_NAMES)
+    // Setup goes on without it.
+    next()
+    expect(screen.getByRole('heading', { name: 'Open your first project' })).toBeTruthy()
   })
 })
 

@@ -942,7 +942,9 @@ export function App() {
   /** For the model catalog's runs, which outlive a render. */
   const providerAccountsRef = useRef(providerAccounts)
   providerAccountsRef.current = providerAccounts
-  const [acpAgents, setAcpAgents] = useState<ResultOf<'acp.agents'>['agents']>([])
+  // Undefined until the first catalog run has listed them, so setup can tell
+  // an empty library from one that has not answered yet.
+  const [acpAgents, setAcpAgents] = useState<ResultOf<'acp.agents'>['agents'] | undefined>()
   const [providerRoster, setProviderRoster] = useState(readProviderRoster)
   // Read by the catalog run, which must not restart when a provider is added.
   const providerRosterRef = useRef(providerRoster)
@@ -2508,6 +2510,8 @@ export function App() {
     setCatalogError(undefined)
     const discoveryErrors: Record<string, ComposerError> = {}
     setCatalogAvailability((current) => (current === 'ready' ? current : 'loading'))
+    // Once this run asks for the ACP agents, that request settles them.
+    let listingAgents = false
     void (async () => {
       const agentsCatalog = transport.request('acp.agents', {}).catch(() => ({ agents: [] }))
       const harnessesCatalog = transport
@@ -2812,6 +2816,7 @@ export function App() {
           return preserveCatalog()
         }
       }
+      listingAgents = true
       const acpPromise = agentsCatalog.then(async (result) => {
         if (cancelled) return []
         // ACP agents belong to the ACP entry; a build without it lists none.
@@ -3041,6 +3046,10 @@ export function App() {
         )
         setModelCatalog((current) => ({ ...current, loaded: true }))
         setCatalogAvailability((current) => (current === 'ready' ? current : 'failed'))
+        // A run cut short before it asked for the agents must not leave setup
+        // waiting for them. One that already asked lets that answer set them,
+        // so setup never shows the list without them and then again with.
+        if (!listingAgents) setAcpAgents((current) => current ?? [])
       }
     })
     return () => {
@@ -7927,6 +7936,8 @@ export function App() {
             themePreference={themePreference}
             onThemePreferenceChange={setThemePreference}
             providerStatuses={providerStatuses}
+            providersLoading={catalogAvailability === 'loading'}
+            providersError={catalogAvailability === 'failed' ? catalogError?.message : undefined}
             acpAgents={acpAgents}
             providerRoster={providerRoster ?? EMPTY_PROVIDER_ROSTER}
             onProviderRosterChange={changeProviderRoster}
