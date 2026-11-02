@@ -2,7 +2,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import type { ResultOf } from '@harness/contracts'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { AccountLimits, type AccountLimitsState } from './AccountLimits.js'
+import { AccountLimits, type AccountLimitsState, summaryLimit } from './AccountLimits.js'
 import { dateTimeText } from './usage/usage-format.js'
 
 afterEach(() => {
@@ -43,6 +43,13 @@ function limits(
 
 function statusOf(region: HTMLElement): HTMLElement | null {
   return region.querySelector<HTMLElement>('.account-menu__source-status')
+}
+
+/** Opens a closed source by its heading, so every row it reports is on screen. */
+function open(name: string) {
+  const toggle = within(screen.getByRole('region', { name })).getByRole('button', { name })
+  expect(toggle.getAttribute('aria-expanded')).toBe('false')
+  fireEvent.click(toggle)
 }
 
 const resetLimit = {
@@ -174,8 +181,134 @@ describe('account limits', () => {
         onRetry={onRetry}
       />,
     )
-    expect(screen.getByRole('region', { name: 'Codex · Work' })).toBeTruthy()
+    const alone = screen.getByRole('region', { name: 'Codex · Work' })
     expect(screen.queryByText(/work-1a2b3c/)).toBeNull()
+    // Its account heading opens and closes its rows like a provider's.
+    expect(within(alone).getByRole('button', { name: 'Work' }).getAttribute('aria-expanded')).toBe(
+      'false',
+    )
+  })
+
+  it('closes each source to its heading and the window with the least left, and opens it to every row', async () => {
+    const now = Date.UTC(2026, 10, 2, 0, 30)
+    vi.spyOn(Date, 'now').mockReturnValue(now)
+    const onConsumeReset = vi.fn(async () => ({ outcome: 'reset' as const }))
+    render(
+      <AccountLimits
+        states={[
+          {
+            status: 'ready',
+            provider: 'codex',
+            summary: summary([
+              {
+                label: 'Weekly',
+                usedPercent: 5,
+                windowMinutes: 10_080,
+                resetsAt: now + 3 * 3_600_000,
+              },
+              { label: 'Credits', usedPercent: 0, valueLabel: '$1,724.24 · 43,106 credits' },
+              {
+                ...resetLimit,
+                valueLabel: '2 available',
+                resetCredits: [
+                  { id: 'later', expiresAt: now + 3 * 86_400_000 },
+                  { id: 'soon', expiresAt: now + 2 * 86_400_000 },
+                ],
+              },
+            ]),
+          },
+          {
+            status: 'ready',
+            provider: 'cursor',
+            summary: summary([
+              { label: 'Included', usedPercent: 24 },
+              { label: 'Auto', usedPercent: 90 },
+              { label: 'API', usedPercent: 0 },
+            ]),
+          },
+        ]}
+        onRetry={() => {}}
+        onConsumeReset={onConsumeReset}
+      />,
+    )
+
+    // Closed: the heading and one line, its bar between label and value, nothing to spend.
+    const codex = screen.getByRole('region', { name: 'Codex' })
+    const toggle = within(codex).getByRole('button', { name: 'Codex' })
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    expect(toggle.hasAttribute('aria-controls')).toBe(false)
+    expect(toggle.closest('h3')).not.toBeNull()
+    const rows = codex.querySelectorAll<HTMLElement>('.account-menu__limit')
+    expect(rows).toHaveLength(1)
+    const line = rows[0]!
+    expect(line.classList.contains('is-inline')).toBe(true)
+    expect(line.textContent).toBe('Weekly95% left')
+    const bar = within(line).getByRole('progressbar', { name: 'Codex Weekly left' })
+    expect(bar.parentElement?.classList.contains('account-menu__limit-row')).toBe(true)
+    // The reset time moves to hover instead of a line of its own.
+    expect(line.title).toMatch(/^Resets in 3h · /)
+    expect(line.querySelector('.account-menu__limit-reset')).toBeNull()
+    expect(within(codex).queryByText(/Credits|credits/)).toBeNull()
+    expect(within(codex).queryByRole('button', { name: 'Use rate limit reset' })).toBeNull()
+
+    // The share with the least left stands for its source, not the first one.
+    const cursor = screen.getByRole('region', { name: 'Cursor' })
+    const cursorLine = cursor.querySelector<HTMLElement>('.account-menu__limit')!
+    expect(cursorLine.textContent).toBe('Auto10% left')
+    expect(cursorLine.hasAttribute('data-low')).toBe(true)
+
+    // Open: every row as before, with the resets to spend; focus stays on the heading.
+    toggle.focus()
+    fireEvent.click(toggle)
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    const body = document.getElementById(toggle.getAttribute('aria-controls')!)!
+    expect(codex.contains(body)).toBe(true)
+    expect(document.activeElement).toBe(toggle)
+    expect(body.querySelector('.account-menu__limit.is-inline')).toBeNull()
+    expect(within(body).getByText('Resets in 3h')).toBeTruthy()
+    expect(within(body).getByText('$1,724.24 · 43,106 credits')).toBeTruthy()
+    const uses = within(body).getAllByRole('button', { name: 'Use rate limit reset' })
+    expect(uses).toHaveLength(2)
+    fireEvent.click(uses[0]!)
+    fireEvent.click(within(body).getByRole('button', { name: 'Confirm use rate limit reset' }))
+    await waitFor(() =>
+      expect(onConsumeReset).toHaveBeenCalledWith('codex', expect.any(String), 'soon'),
+    )
+
+    // Closing returns to the one line; the other source never moved.
+    fireEvent.click(toggle)
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    expect(codex.querySelectorAll('.account-menu__limit')).toHaveLength(1)
+    expect(
+      within(cursor).getByRole('button', { name: 'Cursor' }).getAttribute('aria-expanded'),
+    ).toBe('false')
+  })
+
+  it('stands a source for its share with the least left, and keeps a heading without values plain', () => {
+    expect(summaryLimit([])).toBeUndefined()
+    const credits = { label: 'Credits', usedPercent: 0, valueLabel: '$8.24' }
+    expect(summaryLimit([credits])).toBe(credits)
+    const session = { label: 'Session', usedPercent: 40 }
+    const weekly = { label: 'Weekly', usedPercent: 60 }
+    // Rounds to the same 40% left: the first of equals stays.
+    const other = { label: 'Other weekly', usedPercent: 60.2 }
+    expect(summaryLimit([credits, session, weekly, other])).toBe(weekly)
+
+    render(
+      <AccountLimits
+        states={[
+          { status: 'error', provider: 'claude-code', message: 'Offline' },
+          { status: 'loading', provider: 'grok' },
+        ]}
+        onRetry={() => {}}
+      />,
+    )
+    for (const name of ['Claude Code', 'Grok']) {
+      const region = screen.getByRole('region', { name })
+      expect(within(region).queryByRole('button', { name })).toBeNull()
+      expect(region.querySelector('[aria-expanded]')).toBeNull()
+      expect(region.classList.contains('is-closed')).toBe(false)
+    }
   })
 
   it('opens the account new chats start on, and shows what the others have left at a glance', () => {
@@ -730,6 +863,7 @@ describe('account limits', () => {
       },
     }
     const view = render(limits(state))
+    open('Codex')
 
     const codex = screen.getByRole('region', { name: 'Codex' })
     expect(within(codex).getByText('15% left')).toBeTruthy()
@@ -786,6 +920,7 @@ describe('account limits', () => {
         },
       }),
     )
+    open('Codex')
 
     const epoch = screen.getByText('Epoch').closest('.account-menu__limit')
     const farFuture = screen.getByText('Far future').closest('.account-menu__limit')
@@ -813,6 +948,7 @@ describe('account limits', () => {
         summary: summary([{ ...resetLimit, valueLabel: '5 available', resetCredits: credits }]),
       }),
     )
+    open('Codex')
 
     expect(
       within(screen.getByRole('region', { name: 'Codex' })).getByText('5 available'),
@@ -855,6 +991,7 @@ describe('account limits', () => {
       ]),
     })
     const view = render(limits(state(1)))
+    open('Codex')
     const time = () => screen.getByRole('list').querySelector('time')!
     expect(time().hasAttribute('data-expiring-soon')).toBe(false)
     expect(vi.getTimerCount()).toBe(0)
@@ -889,6 +1026,7 @@ describe('account limits', () => {
         ]),
       }),
     )
+    open('Claude Code')
 
     const pace = (label: string) => {
       const bar = screen.getByRole('progressbar', { name: `Claude Code ${label} left` })
@@ -929,6 +1067,7 @@ describe('account limits', () => {
         ]),
       }),
     )
+    open('Antigravity')
 
     const row = (label: string) => screen.getByText(label).closest('.account-menu__limit')!
     for (const label of ['Gemini 5 hours', 'Gemini weekly']) {
@@ -956,6 +1095,7 @@ describe('account limits', () => {
         ]),
       }),
     )
+    open('Codex')
 
     const reset = (label: string) =>
       screen
@@ -982,6 +1122,7 @@ describe('account limits', () => {
         ]),
       }),
     )
+    open('Codex')
     expect(screen.getByText(/^Expired /).hasAttribute('data-expiring-soon')).toBe(false)
     expect(screen.getByText('Expiry date unavailable')).toBeTruthy()
   })
@@ -1049,6 +1190,7 @@ describe('account limits', () => {
         onConsumeReset,
       ),
     )
+    open('Codex')
 
     const weekly = screen.getByText('Weekly').closest('.account-menu__limit') as HTMLElement
     expect(within(weekly).queryByRole('button', { name: 'Use rate limit reset' })).toBeNull()
@@ -1089,6 +1231,7 @@ describe('account limits', () => {
         onConsumeReset,
       ),
     )
+    open('Codex')
 
     const heading = screen.getByText('Rate limit resets').parentElement!
     expect(within(heading).queryByRole('button')).toBeNull()
@@ -1134,6 +1277,7 @@ describe('account limits', () => {
         vi.fn(),
       ),
     )
+    open('Codex')
     const rows = within(screen.getByRole('list')).getAllByRole('listitem')
     expect(within(rows[0]!).queryByRole('button')).toBeNull()
     expect(within(rows[1]!).queryByRole('button')).toBeNull()
@@ -1151,6 +1295,7 @@ describe('account limits', () => {
     )
     onConsumeReset.mockRejectedValueOnce(new Error('Still failing'))
     render(limits(resetState, () => {}, onConsumeReset))
+    open('Codex')
 
     fireEvent.click(screen.getByRole('button', { name: 'Use rate limit reset' }))
     const confirm = screen.getByRole('button', { name: 'Confirm use rate limit reset' })
@@ -1179,6 +1324,7 @@ describe('account limits', () => {
   ] as const)('explains a %s consume outcome', async (outcome, message) => {
     const onConsumeReset = vi.fn(async () => ({ outcome }))
     render(limits(resetState, () => {}, onConsumeReset))
+    open('Codex')
 
     fireEvent.click(screen.getByRole('button', { name: 'Use rate limit reset' }))
     fireEvent.click(screen.getByRole('button', { name: 'Confirm use rate limit reset' }))
