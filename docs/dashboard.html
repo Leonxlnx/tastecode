@@ -287,16 +287,43 @@
         <nav>
           <a href="#scope">Scope</a>
           <a href="#ready">Checklist</a>
-          <a href="#parked">Nightly only</a>
+          <a href="#parked">Dev builds only</a>
           <a href="./feature-inventory.html">Inventory</a>
           <a href="./CLAUDE-HANDOFF.md">Claude handoff</a>
         </nav>
-        <span class="meta">2026-11-01 dev 903bd694 · nightly 2347d870 · main 936c6d76</span>
+        <span class="meta">2026-11-02 dev 90183641 · nightly 2347d870 · main 936c6d76</span>
       </div>
     </div>
 
     <div class="wrap">
       <section id="scope">
+        <p>
+          November 2 on dev (90183641): the provider list per build and four app changes for v0.5.0
+          merged. Since October 25 the branches run dev → nightly → main: PRs target dev, and
+          nightly and main receive only promotions. main is still the public beta v0.1.1 with Codex,
+          Claude Code and Grok. v0.5.0 is being prepared for release on the evening of November 2
+          from a promotion; the version bump to 0.5.0 (#2016) and the promotion are still open. With
+          PRs #2006 to #2009, a release build offers exactly Claude Code, Codex, Grok, Cursor and
+          Antigravity, and a dev build (pnpm dev and other unpackaged runs, or a local package from
+          pnpm run dist or dist:dir) offers every provider, OpenCode, Pi and the ACP agents
+          included. The package records its edition at packaging time (#2006), the server offers and
+          starts only that edition's providers (#2007), the release asset check refuses a
+          dev-edition package (#2008), and the renderer offers only what providers.list returns
+          (#2009). Also merged: the sidebar drawer of a narrow window stays solid over the chat
+          (#2010), the plan-limits popup opens each provider closed to one line (#2011), a chat
+          dragged from the sidebar opens in split view (#2012), and Stop always settles the turn
+          (#2013). Each set of four passed lint, typecheck, build and the root tests on a combined
+          merge on Windows; the remaining Vitest failures there were timeouts under load, two
+          split-view tests that also fail on dev, a locale-dependent Codex test and tests that read
+          the machine's real Cursor install. A live server with HARNESS_EDITION=release listed only
+          the five release providers. Not verified yet: a real dist:release or dist package reading
+          its edition from app.asar, macOS, and the promotion. Still open on dev: usage history
+          without hidden providers (#2018), inline skill and command chips (#2014), an update notice
+          that waits for running agents (#2015), onboarding without flashes (#2017), the window
+          background setting (#1954) and design-agent dashboards from tasteskill app screens
+          (#1941). Sub-agents (#1956, #1957, #1959, #1968, #1969, #1972, #1973) come after v0.5, as
+          Leon decided.
+        </p>
         <p>
           November 1, evening, on dev (903bd694): slash commands for the five providers planned for
           v0.5 and a calmer limits view merged, PRs #1995 to #2004. Commands carry their source
@@ -1207,15 +1234,20 @@
           <a href="./verification/pr-quality-2026-09-09.md">scope, evidence, and release limits</a>.
         </p>
         <p class="sub">
-          The first release ships three subscription plans and nothing else: Codex, Claude Code, and
-          Grok. Everything below either exists and is checked, is being worked on, or must happen
-          before the beta goes out. Every other provider lives only on the nightly branch.
+          The public beta on main (v0.1.1) ships three subscription plans and nothing else: Codex,
+          Claude Code, and Grok. v0.5.0 is next: its release builds offer exactly Claude Code,
+          Codex, Grok, Cursor and Antigravity, while OpenCode, Pi and the ACP agents stay in the
+          code and appear only in dev builds. Everything below either exists and is checked, is
+          being worked on, or must happen before the beta goes out.
         </p>
         <div class="hero">
           <div class="kpi">
-            <b>3</b>
-            <span>providers in the beta</span>
-            <small>Claude Code, Codex, Grok. Every visible model answered on 2026-10-12</small>
+            <b>5</b>
+            <span>providers in v0.5 release builds</span>
+            <small
+              >Claude Code, Codex, Grok, Cursor, Antigravity; the v0.1.1 beta has the first
+              three</small
+            >
           </div>
           <div class="kpi">
             <b>Ready</b>
@@ -1225,7 +1257,7 @@
           <div class="kpi">
             <b>2</b>
             <span>workstreams running</span>
-            <small>design, v0.1.3 from nightly</small>
+            <small>design, v0.5.0 from dev</small>
           </div>
           <div class="kpi">
             <b>6</b>
@@ -1732,20 +1764,36 @@
           </div>
 
           <div class="lane l-active">
-            <header>In progress <span class="count">3</span></header>
+            <header>In progress <span class="count">4</span></header>
             <ul>
               <li>
                 <i class="tick">●</i>
                 <span
-                  >v0.1.3 from nightly
+                  >v0.5.0 from dev
                   <span class="d"
-                    >the October 16 improvement round is on nightly through PR #1841 (172 lane PRs
-                    in ten lanes, merge 54ee3536) and passed the local gates and the Electron shell
-                    checks on a copy of real data; next are Leon's own test, an installer from the
-                    newest nightly, the remaining nightly refactors so shared code never branches on
-                    provider names, version 0.1.3 and its release notes, then the promotion PR that
-                    brings every provider to main; multiple accounts per provider are on nightly for
-                    Codex and Claude Code (contracts PR #1675, the rest PR #1913)</span
+                    >the next public release after 0.1.1, in place of the planned 0.1.3; being
+                    prepared for release on the evening of 2026-11-02 from a promotion dev → nightly
+                    → main, which has not happened yet; the version bump (#2016) is open; release
+                    builds offer Claude Code, Codex, Grok, Cursor and Antigravity; merged on dev for
+                    it on November 2: the provider list per build (#2006 to #2009), the solid
+                    narrow-window sidebar drawer (#2010), the compact plan-limits popup (#2011),
+                    dragging a chat into split view (#2012) and a Stop that always settles (#2013);
+                    open: #2014, #2015, #2017, #2018, #1954 and #1941; sub-agents (#1956, #1957,
+                    #1959, #1968, #1969, #1972, #1973) come after v0.5</span
+                  >
+                </span>
+              </li>
+              <li>
+                <i class="tick">●</i>
+                <span
+                  >Provider list per build
+                  <span class="d"
+                    >merged on dev: the package records its edition (#2006), the server offers and
+                    starts only that edition's providers (#2007), the release asset check refuses a
+                    dev-edition package (#2008), and the renderer follows providers.list (#2009); a
+                    live server with HARNESS_EDITION=release listed only the five release providers;
+                    usage history without hidden providers is open (#2018); not verified yet: a real
+                    dist:release or dist package reading its edition from app.asar, and macOS</span
                   >
                 </span>
               </li>
@@ -1781,7 +1829,8 @@
                     runs; ordinary follow-ups retained both API identities, models and tool context
                     across an owned restart, with no browser exceptions or queued work left. Live
                     image-capable dashboard generation, packaged Electron, macOS and real-keyring
-                    acceptance remain unverified</span
+                    acceptance remain unverified; building dashboards from tasteskill v2.1 app
+                    screens is open on dev in #1941</span
                   >
                 </span>
               </li>
@@ -1903,20 +1952,19 @@
       </section>
 
       <section id="parked">
-        <h2>Nightly only</h2>
+        <h2>Dev builds only</h2>
         <p class="sub">
-          Built and tested, and absent from main's code since 2026-10-03. All of it runs on the
-          nightly branch; bringing one back to main is a port from nightly, not a roster switch. On
-          2026-10-16 Leon decided that all of it returns to main with v0.1.3, promoted from nightly
-          after testing.
+          In the code on dev but not on main, and left out of release builds. A dev build (pnpm dev
+          and other unpackaged runs, or a local package from pnpm run dist or dist:dir) offers the
+          providers below; a release build offers only Claude Code, Codex, Grok, Cursor and
+          Antigravity. Cursor and Antigravity left this list with v0.5 (#2007). Phone access is
+          separate: it needs HARNESS_PHONE_ACCESS=1, which pnpm dev sets.
         </p>
         <div class="parked">
-          <span>Cursor adapter</span>
-          <span>OpenCode adapter</span>
-          <span>Antigravity adapter</span>
+          <span>OpenCode adapter, also for a user's own API key</span>
           <span>Pi over RPC</span>
           <span>ACP agent library, 12 agents</span>
-          <span>GLM and Z.ai coding plans</span>
+          <span>GLM and Z.ai coding plans through OpenCode</span>
           <span>Phone access and the iPhone app</span>
         </div>
       </section>
