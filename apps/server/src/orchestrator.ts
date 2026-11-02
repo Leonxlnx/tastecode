@@ -686,6 +686,8 @@ export class Orchestrator {
   #serverOwnedUserTurns = new Set<string>()
   #suppressedUserItems = new Map<string, Set<string>>()
   #inFlightSubmissionIds = new Map<string, Set<string>>()
+  /** Prompts on their way to each thread that have not started or queued yet. */
+  #incomingSubmissions = new Map<string, Set<Promise<unknown>>>()
   #startingTurns = new Set<string>()
   #turnStartBarriers = new Map<string, TurnStartBarrier>()
   #pendingTurnStarts = new Map<string, PendingTurnStart>()
@@ -2778,12 +2780,48 @@ export class Orchestrator {
   }
 
   /** Send now when idle, otherwise put the prompt behind the active turn. */
-  async submitTurn(
+  submitTurn(
     threadId: string,
     text: string,
     attachments: string[] = [],
     options: TurnOptions = {},
     clientSubmissionId?: string,
+  ): Promise<{ queued: false; turnId: string } | { queued: true; queuedTurn: QueuedTurn }> {
+    return this.trackSubmission(threadId, () =>
+      this.#submitTurn(threadId, text, attachments, options, clientSubmissionId),
+    )
+  }
+
+  /**
+   * Runs `submit`, which hands a prompt to `threadId`, as a prompt on its way: a Stop sent
+   * meanwhile reaches the agent once the prompt has started or queued. The server also runs
+   * the work it does before `submitTurn` under this, so a Stop cannot overtake that either.
+   */
+  trackSubmission<T>(threadId: string, submit: () => Promise<T>): Promise<T> {
+    let submission: Promise<T>
+    try {
+      submission = submit()
+    } catch (error) {
+      return Promise.reject(error instanceof Error ? error : new Error(String(error)))
+    }
+    const incoming = this.#incomingSubmissions.get(threadId) ?? new Set<Promise<unknown>>()
+    incoming.add(submission)
+    this.#incomingSubmissions.set(threadId, incoming)
+    const arrived = () => {
+      incoming.delete(submission)
+      if (incoming.size === 0 && this.#incomingSubmissions.get(threadId) === incoming)
+        this.#incomingSubmissions.delete(threadId)
+    }
+    void submission.then(arrived, arrived)
+    return submission
+  }
+
+  async #submitTurn(
+    threadId: string,
+    text: string,
+    attachments: string[],
+    options: TurnOptions,
+    clientSubmissionId: string | undefined,
   ): Promise<{ queued: false; turnId: string } | { queued: true; queuedTurn: QueuedTurn }> {
     const panicGeneration = this.#panicGeneration
     const disposeGeneration = this.#disposeGeneration
@@ -4204,6 +4242,8 @@ export class Orchestrator {
   }
 
   async interrupt(threadId: string): Promise<void> {
+    // Only prompts already on their way when Stop came can start the turn it stops.
+    const incoming = [...(this.#incomingSubmissions.get(threadId) ?? [])]
     // "Stop" on a thread that is not live must be a no-op, not an error the
     // user cannot act on.
     if (!this.#threads.has(threadId)) {
@@ -4211,9 +4251,16 @@ export class Orchestrator {
       // that resume so its pending submission cannot run after the user stops it.
       if (this.#resumingThreads.has(threadId)) {
         this.#runtimeGenerations.set(threadId, (this.#runtimeGenerations.get(threadId) ?? 0) + 1)
+        return
       }
-      return
+      if (incoming.length === 0) return
     }
+    // An agent asked to stop before its turn exists has nothing to stop and
+    // drops the request; the turn then ran to its end behind "Stopping…". A new
+    // chat stopped while it starts sends its prompt and the Stop back to back,
+    // and the Stop overtook the prompt on its way in. Wait for those prompts to
+    // start or queue first.
+    await Promise.allSettled(incoming)
     // The checkpoint runs before the provider starts. An interrupt sent in
     // that window used to hit an idle adapter and disappear, after which the
     // turn started anyway. Wait until the adapter has accepted or rejected

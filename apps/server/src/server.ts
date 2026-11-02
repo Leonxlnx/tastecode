@@ -1614,18 +1614,21 @@ export function startServer(
 
       case 'thread.sendTurn': {
         const p = parseParams(method, params)
-        await loadProviderHistory(p.threadId)
-        const result = await orchestrator.submitTurn(
-          p.threadId,
-          p.text,
-          p.attachments,
-          {
-            model: p.model,
-            effort: p.effort,
-            serviceTier: p.serviceTier,
-          },
-          p.clientSubmissionId,
-        )
+        // A Stop sent right behind the prompt waits for it, history read included.
+        const result = await orchestrator.trackSubmission(p.threadId, async () => {
+          await loadProviderHistory(p.threadId)
+          return orchestrator.submitTurn(
+            p.threadId,
+            p.text,
+            p.attachments,
+            {
+              model: p.model,
+              effort: p.effort,
+              serviceTier: p.serviceTier,
+            },
+            p.clientSubmissionId,
+          )
+        })
         // A client that names its model sent with that setup; the others follow it.
         if (p.model !== undefined) adoptTurnSettings(p.threadId, p)
         return result

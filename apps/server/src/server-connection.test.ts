@@ -53,6 +53,8 @@ const state = vi.hoisted(() => ({
   hiddenModels: [] as string[],
   providerRoster: null as string[] | null,
   phoneAccessState: undefined as string | undefined,
+  /** Threads with a prompt on its way, as the orchestrator was told. */
+  submitting: [] as string[],
 }))
 const temporary: string[] = []
 
@@ -190,6 +192,10 @@ vi.mock('./orchestrator.js', () => ({
     }
     async submitTurn() {
       return { queued: false, turnId: 'turn' }
+    }
+    trackSubmission<T>(threadId: string, submit: () => Promise<T>) {
+      state.submitting.push(threadId)
+      return submit()
     }
     async setThreadApproval(threadId: string, approval: string) {
       state.approvals.set(threadId, approval)
@@ -430,6 +436,7 @@ afterEach(async () => {
   state.hiddenModels = []
   state.providerRoster = null
   state.phoneAccessState = undefined
+  state.submitting.length = 0
   vi.unstubAllEnvs()
   await Promise.all(
     temporary.splice(0).map((directory) => rm(directory, { recursive: true, maxRetries: 5 })),
@@ -1524,6 +1531,36 @@ describe('chat history during the first provider scan', () => {
 
       finishClaude()
       await vi.waitFor(() => expect(replied('earlier')).toBe(true))
+      expect(state.historyLoads).toEqual(['claude-earlier'])
+    } finally {
+      viewer.client.terminate()
+    }
+  })
+
+  it('tells the orchestrator a prompt is on its way before reading its history', async () => {
+    // A Stop sent behind the prompt waits for prompts on their way, not for this read.
+    let finishClaude!: () => void
+    state.historyScans.set('claude-code', new Promise<void>((resolve) => (finishClaude = resolve)))
+    state.historyRefresh = new Promise<void>(() => undefined)
+    state.threads.set('claude-earlier', { projectPath: '/work', provider: 'claude-code' })
+    const { port } = await listen()
+    const viewer = await connect(port)
+    try {
+      viewer.client.send(
+        JSON.stringify({
+          id: 'turn',
+          method: 'thread.sendTurn',
+          params: { threadId: 'claude-earlier', text: 'hi' },
+        }),
+      )
+      await vi.waitFor(() => expect(state.submitting).toEqual(['claude-earlier']))
+      expect(state.historyLoads).toEqual([])
+      expect(viewer.messages.some((message) => message.id === 'turn')).toBe(false)
+
+      finishClaude()
+      await vi.waitFor(() =>
+        expect(viewer.messages).toContainEqual(expect.objectContaining({ id: 'turn' })),
+      )
       expect(state.historyLoads).toEqual(['claude-earlier'])
     } finally {
       viewer.client.terminate()
