@@ -31,6 +31,24 @@ describe('window background stylesheet', () => {
     expect(sheet).not.toMatch(/(^|[^-])filter:\s*blur/m)
   })
 
+  it('keeps the narrow-window drawer as solid as it is without a background', () => {
+    // app.css makes the open rail solid below 700px, where it is a drawer
+    // over the chat. The pane rule here outranks that one, so the drawer
+    // needs its own override: the same selector, inside the same query, later.
+    const pane =
+      ':root[data-app-bg][data-theme][data-shell][data-glass] .rail-slot:not(.is-collapsed) .rail {'
+    expect(read('./app.css')).toMatch(
+      /@media \(max-width: 700px\) \{\s*:root\[data-glass='on'\] \.rail-slot \.rail \{[^}]*background: var\(--bg-rail\);/,
+    )
+    const translucent = sheet.indexOf(`${pane}\n  background: var(--app-bg-rail-pane);`)
+    const drawerRule = `@media (max-width: 700px) {\n  ${pane}\n    background: var(--bg-rail);\n  }\n}`
+    const drawer = sheet.indexOf(drawerRule)
+    expect(translucent).toBeGreaterThan(-1)
+    expect(drawer).toBeGreaterThan(translucent)
+    // Nothing after it paints the rail again.
+    expect(sheet.slice(drawer + drawerRule.length)).not.toMatch(/\.rail\b/)
+  })
+
   it('fades the transcript under the composer without covering the scrollbar', () => {
     const dock = read('./app.css').match(
       /\.stage__conversation:not\(\.is-new-session\) > \.composer::before \{[^}]*inset: 0 (\d+)px 0 0;/,

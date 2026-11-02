@@ -201,6 +201,15 @@
   );
 }
 
+/* Below 700px the open sidebar is a drawer over the chat, which stays solid
+   whatever the glass (app.css). The pane above would let the chat through;
+   same selector and later, so this wins only inside the query. */
+@media (max-width: 700px) {
+  :root[data-app-bg][data-theme][data-shell][data-glass] .rail-slot:not(.is-collapsed) .rail {
+    background: var(--bg-rail);
+  }
+}
+
 /* The stage's rounded top-left corner leaves a notch where the shell body
    used to show the sidebar colour; fill just that notch with the sidebar's
    pane so the raw background does not show as a wedge. */
