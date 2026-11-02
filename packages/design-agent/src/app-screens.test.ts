@@ -132,6 +132,7 @@ describe('app-screen deal', () => {
 
     const leave = selectAppDirection(
       brief('Leave planner for the team: who is on holiday, plus settings', {
+        subject: 'Leave planner for a clinic team',
         requiredContent: ['Team calendar', 'Billing settings'],
       }),
       first,
@@ -141,13 +142,36 @@ describe('app-screen deal', () => {
   })
 
   it('reads a signature cue as a whole word or its plural, not as the start of another word', () => {
-    const signatures = (request: string) => selectAppDirection(brief(request), first).signatures
+    const signatures = (subject: string) =>
+      selectAppDirection(brief('Build the dashboard', { subject }), first).signatures
     // "deli" starts "delivery" and "bake" starts "baked"; neither names a bakery.
     expect(signatures('Revenue for our shop with delivery times by region')).toEqual([])
     expect(signatures('Orders baked into one weekly view')).toEqual([])
     expect(signatures('Sales across our three bakeries')).toEqual(['sell-out-strip'])
     expect(signatures('Staff holidays this summer')).toEqual(['leave-timeline'])
     expect(signatures('Who is on-call this week')).toEqual(['cover-matrix'])
+  })
+
+  it('names signature elements from the product line, not from the screens around it', () => {
+    // Each of these words is a cue, but here it names interface furniture or a verb.
+    const support = selectAppDirection(
+      brief('Support inbox where agents can leave internal notes, with an account menu', {
+        subject: 'Support inbox for a software company',
+        primaryGoal: 'Agents can leave internal notes on a ticket',
+        audience: 'Support agents and developers on call',
+        requiredContent: ['Account menu with sign out', 'Test coverage per repository'],
+        explicitAnswers: [{ question: 'Anything else?', answer: 'Show who is on holiday' }],
+      }),
+      first,
+    )
+    expect(support.signatures).toEqual([])
+    expect(appSheetGuidance(support)).not.toContain('Signature elements')
+    const bakery = selectAppDirection(
+      brief('Dashboard for our two shops', { subject: 'Neighbourhood bakery with two shops' }),
+      first,
+    )
+    expect(bakery.signatures).toEqual(['sell-out-strip'])
+    expect(appSheetGuidance(bakery)).toContain('- Sell-out time strip (sell-out-strip).')
   })
 
   it('draws uniformly at random by default and always parses', () => {

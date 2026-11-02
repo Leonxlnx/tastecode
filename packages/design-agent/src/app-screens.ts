@@ -91,7 +91,7 @@ export interface AppDirection {
   style: string
   shell: string
   screens: Array<{ name: string; pattern?: string }>
-  /** Signature elements whose words the request uses (a power flow for an energy home). */
+  /** Signature elements whose words the brief's subject uses (a power flow for an energy home). */
   signatures: string[]
 }
 
@@ -640,8 +640,14 @@ export function selectAppDirection(
     )
     return pool.length ? { name, pattern: pick(pool, chooseIndex).id } : { name }
   })
+  // tasteskill names signature elements from its one-line `--brief "<the product>"`; the brief's
+  // subject is that line. Screens, goal and audience name interface furniture ("account menu",
+  // "agents can leave notes", "developers on call") that would deal another product's element.
+  const product = brief.subject ?? ''
   const signatures = library.patterns
-    .filter((pattern) => pattern.signature && pattern.cues.some((cue) => signatureCue(text, cue)))
+    .filter(
+      (pattern) => pattern.signature && pattern.cues.some((cue) => signatureCue(product, cue)),
+    )
     .map(({ id }) => id)
   return {
     version: 1,
