@@ -5,8 +5,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { TestTransport } from './test-transport.js'
 import type { Project, Session } from './ui/Sidebar.js'
 
-const bridge = vi.hoisted(() => ({ install: vi.fn<() => Promise<boolean>>() }))
-vi.mock('./bridge.js', () => ({ installAppUpdate: bridge.install }))
+const bridge = vi.hoisted(() => ({
+  install: vi.fn<() => Promise<boolean>>(),
+  reportRunning: vi.fn<(count: number) => void>(),
+}))
+vi.mock('./bridge.js', () => ({
+  installAppUpdate: bridge.install,
+  reportRunningAgents: bridge.reportRunning,
+}))
 
 const {
   appUpdateInstallState,
@@ -129,6 +135,33 @@ afterEach(() => {
   resetAppUpdateInstallForTests()
   vi.useRealTimers()
   vi.clearAllMocks()
+})
+
+describe('Running agents for the desktop shell', () => {
+  it('reports every running turn, approval and question, but not a queue, once loaded', () => {
+    const fake = server({})
+    const view = renderHook(
+      ({ projects, loaded }) => useAppUpdateInstallGate(fake.transport, projects, loaded),
+      {
+        initialProps: {
+          projects: sidebar({ a: 'working', b: 'approval', c: 'input', d: 'queued' }),
+          loaded: false,
+        },
+      },
+    )
+    // An empty list before loading would read as every agent stopping.
+    expect(bridge.reportRunning).not.toHaveBeenCalled()
+    view.rerender({
+      projects: sidebar({ a: 'working', b: 'approval', c: 'input', d: 'queued' }),
+      loaded: true,
+    })
+    expect(bridge.reportRunning).toHaveBeenLastCalledWith(3)
+    view.rerender({
+      projects: sidebar({ a: 'ready', b: 'idle', c: 'ready', d: 'queued' }),
+      loaded: true,
+    })
+    expect(bridge.reportRunning).toHaveBeenLastCalledWith(0)
+  })
 })
 
 describe('Install now', () => {

@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { installAppUpdate } from './bridge.js'
+import { installAppUpdate, reportRunningAgents } from './bridge.js'
 import type { Transport } from './transport.js'
 import type { Project, Session } from './ui/Sidebar.js'
 
@@ -284,7 +284,11 @@ export function useAppUpdateInstallGate(
     return () => setAppUpdateInstallGate(undefined)
   }, [transport])
   useEffect(() => {
-    if (loaded) reportRunningChats(runningChatCount(projects))
+    if (!loaded) return
+    const running = runningChatCount(projects)
+    reportRunningChats(running)
+    // The desktop shell installs nothing on a quit that begins while one runs.
+    reportRunningAgents(running)
   }, [projects, loaded])
 }
 
