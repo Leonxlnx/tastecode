@@ -145,7 +145,12 @@ export function AppUpdateToast(props: {
 
   const running = 'running' in install ? install.running : 0
   return (
-    <NoticePresence className="notice notice--app-update" role="status" visible={styled && wanted}>
+    <NoticePresence
+      className="notice notice--app-update"
+      role="status"
+      visible={styled && wanted}
+      followComposer={false}
+    >
       {asking ? (
         <>
           <IconHourglass size={16} stroke={1.7} aria-hidden />

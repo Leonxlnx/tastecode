@@ -9,6 +9,11 @@ type NoticePresenceProps = {
   onDismiss?: () => void
   autoDismissPaused?: boolean
   dismissKey?: unknown
+  /**
+   * False for a notice whose own CSS pins it away from the window corner: it
+   * never meets a composer, so nothing is measured or watched while it is up.
+   */
+  followComposer?: boolean
 }
 
 type NoticePhase = 'open' | 'closing'
@@ -87,11 +92,12 @@ export function NoticePresence(props: NoticePresenceProps) {
     reportStartupMilestone('notice-open')
     return () => reportStartupMilestone('notice-closed')
   }, [mounted])
+  const followComposer = props.followComposer ?? true
   useLayoutEffect(() => {
     const element = root.current
-    if (!mounted || !element) return
+    if (!mounted || !element || !followComposer) return
     return keepNoticeAboveComposer(element)
-  }, [mounted])
+  }, [mounted, followComposer])
   const canDismiss = Boolean(props.onDismiss)
   useEffect(() => {
     if (!props.visible || !canDismiss || props.autoDismissPaused || hovered) return

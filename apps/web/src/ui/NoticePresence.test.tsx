@@ -366,6 +366,20 @@ describe('NoticePresence', () => {
       expect(notice.style.getPropertyValue('--notice-right')).toBe('12px')
     })
 
+    it('measures nothing for a notice pinned away from the corner', () => {
+      setWindow(1280, 860)
+      dockComposer()
+      render(
+        <NoticePresence className="notice" role="status" visible followComposer={false}>
+          TasteCode 0.5.0 is ready
+        </NoticePresence>,
+      )
+
+      const notice = screen.getByRole('status')
+      expect(notice.style.getPropertyValue('--notice-bottom')).toBe('')
+      expect(notice.style.getPropertyValue('--notice-right')).toBe('')
+    })
+
     it('keeps the window corner when no composer is docked', () => {
       setWindow(1280, 860)
       dockComposer({ newSession: true })

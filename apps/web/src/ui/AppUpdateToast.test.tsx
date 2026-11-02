@@ -71,6 +71,28 @@ it('says nothing until an update is ready, then offers Update', async () => {
   expect(screen.getByRole('button', { name: 'Update' })).toBeTruthy()
 })
 
+it('stays under the header instead of measuring a docked composer', async () => {
+  const conversation = document.createElement('div')
+  conversation.className = 'stage__conversation'
+  const composer = document.createElement('div')
+  composer.className = 'composer'
+  const measure = vi.fn(
+    () => ({ top: 700, left: 300, right: 1100, bottom: 860, width: 800, height: 160 }) as DOMRect,
+  )
+  composer.getBoundingClientRect = measure
+  conversation.append(composer)
+  document.body.append(conversation)
+  try {
+    bridge.read.mockResolvedValue(ready)
+    render(<AppUpdateToast />)
+    await screen.findByText('TasteCode 0.5.0 is ready')
+    expect(openNotice()?.getAttribute('style') ?? '').not.toContain('--notice-bottom')
+    expect(measure).not.toHaveBeenCalled()
+  } finally {
+    conversation.remove()
+  }
+})
+
 it('restarts into the update at once when no agent is running', async () => {
   const gate = serverGate(0)
   bridge.read.mockResolvedValue(ready)
