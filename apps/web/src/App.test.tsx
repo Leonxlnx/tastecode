@@ -25,6 +25,7 @@ import { PROVIDER_RECHECK_INTERVAL_MS } from './provider-recheck.js'
 import { providerUpdatesStore } from './provider-updates.js'
 import { mockKeyboardModifierState } from './test-keyboard.js'
 import { NEWEST_HISTORY_TURNS } from './thread-controller.js'
+import { composerWireText } from './ui/composer-chips.js'
 
 const NEWEST_PAGE = { turnLimit: NEWEST_HISTORY_TURNS }
 const PENDING_CHAT_DELETES_KEY = 'harness.pendingChatDeletes.v1'
@@ -1522,7 +1523,8 @@ describe('web client', () => {
     await screen.findByRole('button', { name: /^New session,/ })
     expect(composer().value).toBe('New chat idea')
     fireEvent.click(screen.getByRole('button', { name: /^New session,/ }))
-    expect(composer().value).toBe('Half-typed reply')
+    // A skill saved apart from the text comes back as a chip inside it.
+    expect(composerWireText(composer().value)).toBe('$docs Half-typed reply')
     expect(screen.getByRole('button', { name: 'Remove later.png' })).toBeTruthy()
     expect(composerProps().draftRequest?.resources).toEqual([docs])
   })

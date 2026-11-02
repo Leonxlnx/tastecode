@@ -7,13 +7,14 @@ import {
   useMemo,
   useRef,
   useState,
+  type ClipboardEvent,
   type DragEvent,
+  type KeyboardEvent,
 } from 'react'
 import type { ApprovalMode, ProviderId, QueuedTurn, Usage } from '@harness/contracts'
 import type { ModelChoice } from '../model-catalog.js'
 import {
   IconArrowUp as ArrowUp,
-  IconBox as Box,
   IconCornerDownRight as CornerDownRight,
   IconFile as FileIcon,
   IconFolder as Folder,
@@ -25,7 +26,6 @@ import {
   IconPencil as Pencil,
   IconPlayerPlay as Play,
   IconPlus as Plus,
-  IconServer as Server,
   IconSquare as Square,
   IconTrash as Trash2,
   IconVideo as Video,
@@ -33,6 +33,7 @@ import {
 } from '@tabler/icons-react'
 import { APPROVAL_MODES } from './approval-modes.js'
 import {
+  isMacOS,
   pickFiles,
   previewViewedImage,
   revealPath,
@@ -40,6 +41,7 @@ import {
   type PickedAttachment,
 } from '../bridge.js'
 import { appCommands, parseAppActionCommand, type AppScreen } from '../app-commands.js'
+import { rememberChipTokens, rememberedChipTokens } from '../composer-chip-memory.js'
 import { parseFeedbackCommand } from '../feedback-command.js'
 import { DEFAULT_KEYBINDINGS, shortcutAria, type Keybindings } from '../shortcuts.js'
 import type { Transport } from '../transport.js'
@@ -55,6 +57,24 @@ import {
   type ComposerResourcePickerHandle,
   type ComposerResourceTrigger,
 } from './composer-resource.js'
+import {
+  composerChipAround,
+  composerChipFragments,
+  composerChipPastSpaces,
+  composerChipText,
+  composerChipTokens,
+  composerChips,
+  composerChipTouching,
+  composerSelectionOverChips,
+  composerSlashCanLead,
+  composerTextWithoutPicks,
+  composerWireText,
+  createComposerChipTextStore,
+  hasComposerChips,
+  repairComposerChips,
+  type ComposerChipKind,
+} from './composer-chips.js'
+import { composerTextWithChips } from './message-chips.js'
 import { Menu, MenuItem } from './Menu.js'
 import { IconMorph } from './IconMorph.js'
 import { LazyMediaViewer as MediaViewer, preloadMediaViewer } from './LazyMediaViewer.js'
@@ -68,6 +88,13 @@ const ComposerResourcePicker = lazy(() =>
   import('./ComposerResourcePicker.js').then((module) => ({
     default: module.ComposerResourcePicker,
   })),
+)
+// Loaded as soon as a menu opens or a draft brings chips, so the first chip
+// rarely waits for it; until then the draft shows as plain text.
+let chipOverlayModule: Promise<typeof import('./ComposerChipOverlay.js')> | undefined
+const loadComposerChipOverlay = () => (chipOverlayModule ??= import('./ComposerChipOverlay.js'))
+const ComposerChipOverlay = lazy(() =>
+  loadComposerChipOverlay().then((module) => ({ default: module.ComposerChipOverlay })),
 )
 const ModelSelector = lazy(() =>
   import('./ModelSelector.js').then((module) => ({ default: module.ModelSelector })),
@@ -83,6 +110,15 @@ const ContextUsage = lazy(() =>
 )
 const DRAFT_HAS_CONTENT = /\S/u
 const RESOURCE_SKELETON_WIDTHS = [108, 76, 132, 92]
+const NO_CHIP_TOKENS: ReadonlySet<string> = new Set()
+/** Undo and redo put back a state the editor held; a chip repair must not redo itself on them. */
+const HISTORY_INPUT_TYPES: ReadonlySet<string> = new Set(['historyUndo', 'historyRedo'])
+
+/** Ctrl+Backspace and Ctrl+Delete delete a word, or Option with them on macOS. */
+function deletesWord(event: KeyboardEvent<HTMLTextAreaElement>): boolean {
+  if (event.metaKey || event.shiftKey) return false
+  return isMacOS() ? event.altKey && !event.ctrlKey : event.ctrlKey && !event.altKey
+}
 
 function ModelTriggerSkeleton() {
   return (
@@ -127,13 +163,6 @@ function ResourcePickerSkeleton(props: { marker: ComposerResourceMarker }) {
 
 function sameDraftPaths(left: string[], right: string[]): boolean {
   return left.length === right.length && left.every((path, index) => path === right[index])
-}
-
-function sameDraftResources(left: ComposerResource[], right: ComposerResource[]): boolean {
-  return (
-    left.length === right.length &&
-    left.every((resource, index) => resource.key === right[index]?.key)
-  )
 }
 
 /**
@@ -417,7 +446,7 @@ export function composerResourceTriggerAt(
 
   const marker = text[markerIndex]
   if (marker !== '/' && marker !== '$' && marker !== '@') return undefined
-  if (marker === '/' && !onlySpaceBefore(text, markerIndex)) return undefined
+  if (marker === '/' && !composerSlashCanLead(text, markerIndex)) return undefined
   const query = text.slice(queryStart, position)
   let end = position
   while (end < text.length && isResourceQueryCharacter(text.charCodeAt(end))) end += 1
@@ -435,22 +464,10 @@ function composerResourceTriggerAtLongToken(
   if (marker !== '/' && marker !== '$' && marker !== '@') return undefined
   const query = match[3] ?? ''
   const start = cursor - query.length - 1
-  if (marker === '/' && !onlySpaceBefore(text, start)) return undefined
+  if (marker === '/' && !composerSlashCanLead(text, start)) return undefined
   let end = cursor
   while (end < text.length && isResourceQueryCharacter(text.charCodeAt(end))) end += 1
   return { marker, query, start, end }
-}
-
-/**
- * A slash names a command only at the start of the message, as providers read
- * it. The walk stops at the first other character, so a long draft costs one
- * step.
- */
-function onlySpaceBefore(text: string, index: number): boolean {
-  for (let position = index - 1; position >= 0; position -= 1) {
-    if (!/\s/.test(text[position]!)) return false
-  }
-  return true
 }
 
 function isResourceQueryCharacter(code: number): boolean {
@@ -465,11 +482,18 @@ function isResourceQueryCharacter(code: number): boolean {
   )
 }
 
-export function composerPromptWithResources(text: string, resources: ComposerResource[]): string {
-  const references = resources.map((resource) => resource.token).join(' ')
-  const body = text.trim()
-  if (references && body) return `${references}\n\n${body}`
-  return references || body
+/** Drafts saved before chips sat inline kept picked skills and servers apart from the text. */
+function draftTextWithResources(text: string, resources: readonly ComposerResource[]): string {
+  if (resources.length === 0) return text
+  const chips = resources
+    .map((resource) => composerChipText(resource.token, chipKind(resource)))
+    .join(' ')
+  return text ? `${chips} ${text}` : `${chips} `
+}
+
+function chipKind(resource: ComposerResource): ComposerChipKind {
+  if (resource.kind === 'command') return resource.commandKind === 'skill' ? 'skill' : 'command'
+  return resource.kind
 }
 
 function ComposerComponent(props: {
@@ -612,9 +636,14 @@ function ComposerComponent(props: {
     revision: 0,
     items: props.queuedTurns.map((turn) => ({ turn, phase: 'present' })),
   }))
-  const [selectedResources, setSelectedResources] = useState<ComposerResource[]>([])
   const [resourceTrigger, setResourceTrigger] = useState<ComposerResourceTrigger>()
   const [resourcePickerMounted, setResourcePickerMounted] = useState(false)
+  const [chipStore] = useState(createComposerChipTextStore)
+  // The overlay mounts once a menu opened or a chip arrived, and stays.
+  const [chipsSeen, setChipsSeen] = useState(false)
+  const chipsSeenRef = useRef(false)
+  // Set while a chip repair edits through the editor, whose own input events must not repair again.
+  const repairingChips = useRef(false)
   const area = useRef<HTMLTextAreaElement>(null)
   const resourcePicker = useRef<ComposerResourcePickerHandle>(null)
   const sendAvailabilityRef = useRef(props.sendAvailability)
@@ -650,8 +679,6 @@ function ComposerComponent(props: {
   const previousNewSession = useRef(props.newSession)
   const attachmentsChangeReady = useRef(false)
   const attachmentsEdited = useRef(false)
-  const resourcesChangeReady = useRef(false)
-  const resourcesEdited = useRef(false)
   const pendingAttachments = useRef(new Set<string>())
   const onReady = useRef(props.onReady)
   onReady.current = props.onReady
@@ -660,9 +687,10 @@ function ComposerComponent(props: {
   const previousComposerRect = useRef<DOMRect | null>(null)
   const dockAnimation = useRef<Animation | null>(null)
   const mounted = useRef(true)
-  const selectedResourceKeys = useMemo(
-    () => new Set(selectedResources.map((resource) => resource.key)),
-    [selectedResources],
+  // Read once per menu update, never per keystroke while the menu is closed.
+  const chipTokensInDraft = useMemo(
+    () => (resourceTrigger ? composerChipTokens(textRef.current) : NO_CHIP_TOKENS),
+    [resourceTrigger],
   )
   // A side chat branches off a started chat; feedback needs this build's service.
   const sideChatAvailable = props.threadId !== undefined
@@ -695,7 +723,10 @@ function ComposerComponent(props: {
 
   const updateResourceTrigger = (trigger: ComposerResourceTrigger | undefined) => {
     setResourceTrigger(trigger)
-    if (trigger) setResourcePickerMounted(true)
+    if (!trigger) return
+    setResourcePickerMounted(true)
+    // A pick is a key away; have the chip drawing ready for it.
+    void loadComposerChipOverlay()
   }
 
   const getQueueRowRef = (queueRowId: string) => {
@@ -1044,10 +1075,39 @@ function ComposerComponent(props: {
     if (props.focusRequest > 0) area.current?.focus()
   }, [props.focusRequest, props.disabled])
 
+  // The new-chat composer keeps its draft when its provider or project
+  // changes, but skills and MCP servers belong to the place they were picked
+  // for and may not exist in the new one, so their chips go. Command chips
+  // stay, as typed commands always did. A switch that comes with another
+  // draft (another chat, a draft handed to a new chat) leaves the text to it.
+  const pickPlace = useRef({
+    provider: props.provider,
+    projectPath: props.projectPath,
+    threadId: props.threadId,
+    draftRequest: props.draftRequest?.request,
+  })
   useEffect(() => {
-    setSelectedResources([])
+    const previous = pickPlace.current
+    pickPlace.current = {
+      provider: props.provider,
+      projectPath: props.projectPath,
+      threadId: props.threadId,
+      draftRequest: props.draftRequest?.request,
+    }
+    if (previous.provider === props.provider && previous.projectPath === props.projectPath) return
     setResourceTrigger(undefined)
-  }, [props.provider, props.projectPath])
+    if (
+      previous.threadId !== props.threadId ||
+      previous.draftRequest !== props.draftRequest?.request
+    )
+      return
+    // A first project only adds to what the picks could come from.
+    if (previous.provider === props.provider && previous.projectPath === undefined) return
+    const kept = composerTextWithoutPicks(textRef.current)
+    if (kept === textRef.current) return
+    updateText(kept)
+    grow()
+  }, [props.provider, props.projectPath, props.threadId, props.draftRequest?.request])
 
   // A provider that cannot enumerate models shows nothing once discovery finishes.
   const showModelPlaceholder = props.models.length === 0 && !props.modelsLoaded
@@ -1080,6 +1140,12 @@ function ComposerComponent(props: {
       hasDraftTextRef.current = nextHasDraftText
       setHasDraftText(nextHasDraftText)
     }
+    // Notifies the overlay only while chips are in the draft or just left it.
+    chipStore.set(value)
+    if (!chipsSeenRef.current && chipStore.get() !== '') {
+      chipsSeenRef.current = true
+      setChipsSeen(true)
+    }
     if (notify) props.onDraftChange?.(value)
   }
 
@@ -1105,13 +1171,9 @@ function ComposerComponent(props: {
     return inserted && el.value === value
   }
 
-  /** Arrow Up may only replace nothing: no text, files or skills, and the caret at the start. */
+  /** Arrow Up may only replace nothing: no text, chips or files, and the caret at the start. */
   const composerEmptyAtStart = (el: HTMLTextAreaElement) =>
-    el.value === '' &&
-    el.selectionStart === 0 &&
-    el.selectionEnd === 0 &&
-    attachments.length === 0 &&
-    selectedResources.length === 0
+    el.value === '' && el.selectionStart === 0 && el.selectionEnd === 0 && attachments.length === 0
 
   /** Escape after Arrow Up: back to the empty composer, which Ctrl+Z can undo. */
   const cancelRecalledPrompt = () => {
@@ -1119,8 +1181,8 @@ function ComposerComponent(props: {
     if (!insertUndoably('')) setValue('')
   }
 
-  const replaceDraft = (value: string) => {
-    updateText(value, true, false)
+  const replaceDraft = (value: string, notify = false) => {
+    updateText(value, true, notify)
     setResourceTrigger(undefined)
     requestAnimationFrame(() => {
       area.current?.focus()
@@ -1136,10 +1198,21 @@ function ComposerComponent(props: {
     if (!props.draftRequest) return
     // Only the request Arrow Up made keeps Escape's way back to an empty box.
     if (props.draftRequest.text !== recalledPrompt.current) recalledPrompt.current = undefined
+    // A sent prompt coming back (Edit, Arrow Up) gets its chips back, and a
+    // draft saved before chips sat inline brings its skills into the text.
+    const legacyResources = props.draftRequest.resources ?? []
+    const text = draftTextWithResources(
+      props.draftRequest.undoable
+        ? composerTextWithChips(props.draftRequest.text, rememberedChipTokens())
+        : props.draftRequest.text,
+      legacyResources,
+    )
     // Parent already holds this snapshot. Writing it back would let a stale
-    // empty request wipe a draft that was typed after the last publish.
-    if (!props.draftRequest.undoable || !insertUndoably(props.draftRequest.text))
-      replaceDraft(props.draftRequest.text)
+    // empty request wipe a draft that was typed after the last publish; only
+    // a draft this composer just rewrote is saved again.
+    if (!props.draftRequest.undoable || !insertUndoably(text))
+      replaceDraft(text, text !== props.draftRequest.text)
+    if (legacyResources.length > 0) props.onResourcesChange?.([])
     if (props.draftRequest.attachments !== undefined) {
       for (const attachment of attachments) releasePreview(attachment.previewUrl)
       setViewingMedia(undefined)
@@ -1160,10 +1233,6 @@ function ComposerComponent(props: {
       for (const path of paths) {
         if (previewMediaType('', path)) hydrateAttachmentPreview(path)
       }
-    }
-    if (props.draftRequest.resources !== undefined) {
-      resourcesEdited.current = false
-      setSelectedResources(props.draftRequest.resources)
     }
   }, [props.draftRequest?.request])
 
@@ -1369,30 +1438,17 @@ function ComposerComponent(props: {
     props.onAttachmentsChange?.(paths)
   }, [attachments, props.onAttachmentsChange])
 
-  useEffect(() => {
-    if (!resourcesChangeReady.current) {
-      resourcesChangeReady.current = true
-      return
-    }
-    const hydrated = draftRequestRef.current?.resources
-    if (
-      !resourcesEdited.current &&
-      hydrated !== undefined &&
-      sameDraftResources(selectedResources, hydrated)
-    )
-      return
-    resourcesEdited.current = true
-    props.onResourcesChange?.(selectedResources)
-  }, [selectedResources, props.onResourcesChange])
-
   const sendContent = (content: string, submission: RunningSubmission = 'queue') => {
-    const feedback = selectedResources.length === 0 ? parseFeedbackCommand(content) : undefined
+    // Chips are only how the draft looks: the provider and TasteCode's own
+    // commands read the tokens they stand for.
+    const prompt = composerWireText(content)
+    const feedback = parseFeedbackCommand(prompt)
     if (feedback && props.onFeedbackCommand) {
       updateText('')
       props.onFeedbackCommand(feedback.text)
       return true
     }
-    const action = selectedResources.length === 0 ? parseAppActionCommand(content) : undefined
+    const action = parseAppActionCommand(prompt)
     if (action === 'new-chat' && props.onNewChatCommand) {
       updateText('')
       props.onNewChatCommand()
@@ -1417,7 +1473,7 @@ function ComposerComponent(props: {
       pickerTrigger.click()
       return true
     }
-    const trimmed = composerPromptWithResources(content, selectedResources)
+    const trimmed = prompt.trim()
     const paths = attachments.flatMap((attachment) => attachment.path ?? [])
     if (
       (trimmed === '' && paths.length === 0) ||
@@ -1438,10 +1494,11 @@ function ComposerComponent(props: {
     // puts the words back into this chat's draft, and a later clear would
     // erase them from the saved draft while the box still showed them.
     updateText('')
+    // The transcript draws these tokens as chips wherever they sit in the prompt.
+    rememberChipTokens(composerChips(content))
     if (submission === 'steer') props.onSteer(trimmed, paths)
     else props.onSend(trimmed, paths)
     composerAtMaximumHeight.current = false
-    setSelectedResources([])
     setResourceTrigger(undefined)
     clearAttachments()
     if (el) {
@@ -1551,11 +1608,10 @@ function ComposerComponent(props: {
     setVoiceError(undefined)
   }, [props.voiceAvailable])
 
-  const showStop =
-    props.running && !hasDraftText && attachments.length === 0 && selectedResources.length === 0
+  const showStop = props.running && !hasDraftText && attachments.length === 0
   const submitLabel = props.running ? 'Queue' : 'Send'
   const sendDisabled =
-    (!hasDraftText && selectedResources.length === 0 && attachments.length === 0) ||
+    (!hasDraftText && attachments.length === 0) ||
     attachments.some((attachment) => !attachment.path) ||
     props.disabled ||
     props.sendAvailability !== 'ready' ||
@@ -1606,36 +1662,176 @@ function ComposerComponent(props: {
     queueError,
   ].filter((error): error is ComposerError => error !== undefined)
 
+  /** Removes a range through the editor, so Ctrl+Z brings it back. */
+  const deleteRange = (from: number, to: number) => {
+    const el = area.current
+    if (!el) return
+    const text = el.value
+    const next = text.slice(0, from) + text.slice(to)
+    el.setSelectionRange(from, to)
+    // The input event this fires runs onChange, which records the new text.
+    if (!el.disabled && typeof document.execCommand === 'function') {
+      if (document.execCommand('delete') && el.value === next) return
+    }
+    updateText(next)
+    setResourceTrigger(undefined)
+    el.setSelectionRange(from, from)
+    grow()
+  }
+
+  /**
+   * Removes what an edit left of a cut chip through the editor, last range
+   * first, so the repair sits on the undo stack after the edit that caused it
+   * and Ctrl+Z can step back to the whole chip. False when the editor is not
+   * there or refused, as it does for an edit the composer itself made through
+   * it; the caller then writes the text.
+   */
+  const removeChipFragments = (el: HTMLTextAreaElement, text: string): boolean => {
+    if (el.disabled || typeof document.execCommand !== 'function') return false
+    const fragments = composerChipFragments(text)
+    repairingChips.current = true
+    try {
+      for (let index = fragments.length - 1; index >= 0; index -= 1) {
+        const [from, to] = fragments[index]!
+        el.setSelectionRange(from, to)
+        if (!document.execCommand('delete')) return false
+      }
+      return true
+    } finally {
+      repairingChips.current = false
+    }
+  }
+
+  /**
+   * A chip moves and deletes as one character: Backspace after it or Delete
+   * before it removes all of it, the arrows step over it, and typing over a
+   * selection that cuts through it replaces the whole chip.
+   */
+  const handleChipKey = (event: KeyboardEvent<HTMLTextAreaElement>): boolean => {
+    const el = event.currentTarget
+    const text = el.value
+    const start = el.selectionStart
+    const end = el.selectionEnd
+    if (event.key === 'Backspace' || event.key === 'Delete') {
+      const backward = event.key === 'Backspace'
+      if (start !== end) {
+        const [from, to] = composerSelectionOverChips(text, start, end)
+        if (from !== start || to !== end) el.setSelectionRange(from, to)
+        return false
+      }
+      const chip =
+        composerChipTouching(text, start, backward ? 'before' : 'after') ??
+        composerChipAround(text, start)
+      if (chip) {
+        event.preventDefault()
+        deleteRange(chip.start, chip.end)
+        return true
+      }
+      // A word deletion across the space after a pick takes the chip with the
+      // space, as it takes a word with the space after it.
+      const spaced =
+        (event.ctrlKey || event.altKey) && deletesWord(event)
+          ? composerChipPastSpaces(text, start, backward ? 'before' : 'after')
+          : undefined
+      if (!spaced) return false
+      event.preventDefault()
+      if (backward) deleteRange(spaced.start, start)
+      else deleteRange(start, spaced.end)
+      return true
+    }
+    if (
+      (event.key === 'ArrowLeft' || event.key === 'ArrowRight') &&
+      !event.altKey &&
+      !event.ctrlKey &&
+      !event.metaKey
+    ) {
+      // A plain arrow on a selection collapses it, as it always does.
+      if (start !== end && !event.shiftKey) return false
+      const backward = el.selectionDirection === 'backward'
+      const focus = backward ? start : end
+      const anchor = backward ? end : start
+      const chip = composerChipTouching(text, focus, event.key === 'ArrowLeft' ? 'before' : 'after')
+      if (!chip) return false
+      event.preventDefault()
+      const next = event.key === 'ArrowLeft' ? chip.start : chip.end
+      if (event.shiftKey) {
+        el.setSelectionRange(
+          Math.min(anchor, next),
+          Math.max(anchor, next),
+          next < anchor ? 'backward' : 'forward',
+        )
+      } else el.setSelectionRange(next, next)
+      return true
+    }
+    if (
+      start !== end &&
+      !event.ctrlKey &&
+      !event.metaKey &&
+      (event.key.length === 1 || event.key === 'Process')
+    ) {
+      const [from, to] = composerSelectionOverChips(text, start, end)
+      if (from !== start || to !== end) el.setSelectionRange(from, to)
+    }
+    return false
+  }
+
+  /** Copy and cut hand out the tokens a selection's chips stand for. */
+  const copyChips = (event: ClipboardEvent<HTMLTextAreaElement>, cut: boolean) => {
+    if (chipStore.get() === '') return
+    const el = event.currentTarget
+    const [from, to] = composerSelectionOverChips(el.value, el.selectionStart, el.selectionEnd)
+    const selected = el.value.slice(from, to)
+    if (!hasComposerChips(selected)) return
+    event.preventDefault()
+    event.clipboardData.setData('text/plain', composerWireText(selected))
+    if (cut) deleteRange(from, to)
+  }
+
+  /** Text pasted over a selection that cuts into a chip replaces the whole chip. */
+  const pasteOverChips = (event: ClipboardEvent<HTMLTextAreaElement>) => {
+    if (chipStore.get() === '') return
+    const el = event.currentTarget
+    const [from, to] = composerSelectionOverChips(el.value, el.selectionStart, el.selectionEnd)
+    if (from === el.selectionStart && to === el.selectionEnd) return
+    el.setSelectionRange(from, to)
+    // Inserted through the editor, so Ctrl+Z takes it out as it would a paste.
+    // Without it, the browser's own paste lands on the widened selection.
+    if (typeof document.execCommand !== 'function') return
+    if (document.execCommand('insertText', false, event.clipboardData.getData('text/plain')))
+      event.preventDefault()
+  }
+
   const selectResource = (resource: ComposerResource) => {
     const trigger = resourceTrigger
     if (!trigger) return
-    if (resource.kind === 'command') {
-      // The provider expands `/name` itself, so the draft keeps it as text and
-      // the caret waits after it for any arguments.
-      const before = `${textRef.current.slice(0, trigger.start)}${resource.token} `
-      const after = textRef.current.slice(trigger.end).replace(/^ /, '')
-      updateText(before + after)
-      setResourceTrigger(undefined)
-      requestAnimationFrame(() => {
-        area.current?.focus()
-        area.current?.setSelectionRange(before.length, before.length)
-        grow()
-      })
-      return
-    }
-    setSelectedResources((current) =>
-      current.some((entry) => entry.key === resource.key) ? current : [...current, resource],
-    )
-
-    const before = textRef.current.slice(0, trigger.start)
-    let after = textRef.current.slice(trigger.end)
-    if ((before === '' || before.endsWith(' ')) && after.startsWith(' ')) after = after.slice(1)
-    const next = before + after
-    updateText(next)
+    // Every pick becomes a chip where its marker was typed, with the caret
+    // after it, ready for the next word or a command's arguments.
+    const text = textRef.current
+    const before = text.slice(0, trigger.start)
+    const replaceEnd = text.startsWith(' ', trigger.end) ? trigger.end + 1 : trigger.end
+    const chip = composerChipText(resource.token, chipKind(resource))
+    // Providers read a slash command only at the start of the prompt, so one
+    // picked after skill or server chips goes in front of them. The chips are
+    // written again after it in the same edit, so one Ctrl+Z undoes the pick.
+    const firstChip = resource.token.startsWith('/') ? composerChips(before)[0] : undefined
+    const from = firstChip ? 0 : trigger.start
+    // Only whitespace comes before the first chip; the chip's own icon room stays.
+    const inserted = firstChip ? `${chip} ${before.slice(firstChip.start)}` : `${chip} `
+    const next = text.slice(0, from) + inserted + text.slice(replaceEnd)
+    const caret = from + inserted.length
     setResourceTrigger(undefined)
+    const el = area.current
+    if (el && !el.disabled && typeof document.execCommand === 'function') {
+      el.focus()
+      el.setSelectionRange(from, replaceEnd)
+      // Inserted through the editor so Ctrl+Z takes the chip back out; the
+      // input event runs onChange, which records the new text.
+      if (document.execCommand('insertText', false, inserted) && el.value === next) return
+    }
+    updateText(next)
     requestAnimationFrame(() => {
       area.current?.focus()
-      area.current?.setSelectionRange(trigger.start, trigger.start)
+      area.current?.setSelectionRange(caret, caret)
       grow()
     })
   }
@@ -1911,7 +2107,7 @@ function ComposerComponent(props: {
                 threadId={props.threadId}
                 appCommands={ownCommands}
                 trigger={resourceTrigger}
-                selectedKeys={selectedResourceKeys}
+                selectedTokens={chipTokensInDraft}
                 onSelect={selectResource}
               />
             </Suspense>
@@ -2012,36 +2208,14 @@ function ComposerComponent(props: {
                     </span>
                   ),
                 )}
-                {selectedResources.map((resource) => {
-                  const ResourceIcon = resource.kind === 'skill' ? Box : Server
-                  return (
-                    <span
-                      className="chip chip--resource"
-                      key={resource.key}
-                      title={`${resource.kind === 'skill' ? 'Skill' : 'MCP server'} · ${resource.description}`}
-                    >
-                      <ResourceIcon size={14} strokeWidth={1.7} aria-hidden />
-                      <span className="chip__label">{resource.name}</span>
-                      <button
-                        type="button"
-                        className="chip__x"
-                        onClick={() => {
-                          setSelectedResources((current) =>
-                            current.filter((entry) => entry.key !== resource.key),
-                          )
-                          area.current?.focus()
-                        }}
-                        title="Remove"
-                        aria-label={`Remove ${resource.name}`}
-                      >
-                        <X size={10} aria-hidden />
-                      </button>
-                    </span>
-                  )
-                })}
               </div>
 
               <div className="composer__field">
+                {chipsSeen || resourcePickerMounted ? (
+                  <Suspense fallback={null}>
+                    <ComposerChipOverlay store={chipStore} area={area} />
+                  </Suspense>
+                ) : null}
                 <textarea
                   ref={area}
                   defaultValue=""
@@ -2057,7 +2231,24 @@ function ComposerComponent(props: {
                   onFocus={preloadThread}
                   onPointerEnter={preloadThread}
                   onChange={(e) => {
-                    const value = e.target.value
+                    const input = e.nativeEvent as InputEvent
+                    let value = e.target.value
+                    // An edit that cut through a chip leaves no invisible mark
+                    // behind. Undo and redo only put back what the editor held,
+                    // so Ctrl+Z can step back past the repair to the whole chip.
+                    const repaired =
+                      chipStore.get() !== '' &&
+                      !input.isComposing &&
+                      !repairingChips.current &&
+                      !HISTORY_INPUT_TYPES.has(input.inputType)
+                        ? repairComposerChips(value, e.target.selectionStart ?? value.length)
+                        : undefined
+                    if (repaired) {
+                      removeChipFragments(e.target, value)
+                      if (e.target.value !== repaired.text) e.target.value = repaired.text
+                      e.target.setSelectionRange(repaired.caret, repaired.caret)
+                      value = repaired.text
+                    }
                     const onlyInserts =
                       composerAtMaximumHeight.current &&
                       composerInputOnlyInserts(textRef.current, value, e.nativeEvent as InputEvent)
@@ -2071,6 +2262,7 @@ function ComposerComponent(props: {
                     // IME users press Escape to dismiss the candidate window;
                     // that must never reach the shortcuts below (interrupt!).
                     if (e.nativeEvent.isComposing) return
+                    if (chipStore.get() !== '' && handleChipKey(e)) return
                     if (resourceTrigger) {
                       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
                         e.preventDefault()
@@ -2082,7 +2274,13 @@ function ComposerComponent(props: {
                         return
                       }
                       if (e.key === 'Enter') {
-                        if (resourcePicker.current?.selectActive('Enter') === 'selected') {
+                        // Behind chips a command cannot run as typed: Enter
+                        // picks it, which puts it in front, as Tab does.
+                        const behindChips =
+                          resourceTrigger.marker === '/' &&
+                          hasComposerChips(textRef.current.slice(0, resourceTrigger.start))
+                        const key = behindChips ? 'Tab' : 'Enter'
+                        if (resourcePicker.current?.selectActive(key) === 'selected') {
                           e.preventDefault()
                           return
                         }
@@ -2137,10 +2335,21 @@ function ComposerComponent(props: {
                   }}
                   onSelect={(e) => {
                     const target = e.currentTarget
+                    // A click or a vertical move that lands inside a chip goes to its nearer edge.
+                    if (chipStore.get() !== '' && target.selectionStart === target.selectionEnd) {
+                      const caret = target.selectionStart
+                      const chip = composerChipAround(target.value, caret)
+                      if (chip) {
+                        const edge = caret - chip.start < chip.end - caret ? chip.start : chip.end
+                        target.setSelectionRange(edge, edge)
+                      }
+                    }
                     updateResourceTrigger(
                       composerResourceTriggerAt(textRef.current, target.selectionStart ?? 0),
                     )
                   }}
+                  onCopy={(e) => copyChips(e, false)}
+                  onCut={(e) => copyChips(e, true)}
                   onBlur={() => setResourceTrigger(undefined)}
                   onPaste={(e) => {
                     const files = Array.from(e.clipboardData.files)
@@ -2162,7 +2371,9 @@ function ComposerComponent(props: {
                       }
                       attachFiles(paths)
                       addPastedFiles(materialized, 'paste')
+                      return
                     }
+                    pasteOverChips(e)
                   }}
                   placeholder={props.placeholder ?? 'Do anything'}
                 />

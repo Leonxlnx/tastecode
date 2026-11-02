@@ -113,8 +113,23 @@ const SCREEN_COMMANDS = [
 
 export type AppAction = 'new-chat' | 'model' | 'permissions' | { screen: AppScreen }
 
+const ALL_APP_COMMANDS: readonly AppCommand[] = [
+  NEW_CHAT_COMMAND,
+  MODEL_COMMAND,
+  PERMISSIONS_COMMAND,
+  ...SCREEN_COMMANDS,
+  SIDE_CHAT_COMMAND,
+  FEEDBACK_COMMAND,
+]
+
 function named(command: AppCommand, name: string): boolean {
   return command.name === name || (command.aliases?.includes(name) ?? false)
+}
+
+/** The icon of TasteCode's own command by any of its names, so its chip matches its menu row. */
+export function appCommandIcon(name: string): TablerIcon | undefined {
+  const lowered = name.toLowerCase()
+  return ALL_APP_COMMANDS.find((command) => named(command, lowered))?.icon
 }
 
 /**
