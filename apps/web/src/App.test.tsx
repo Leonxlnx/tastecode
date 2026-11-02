@@ -15133,6 +15133,146 @@ describe('split view', () => {
     expect(within(transcriptIn('Left chat')).getByText('x'.repeat(200))).toBeTruthy()
     expect(appRenders).not.toHaveBeenCalled()
   })
+
+  describe('dropping a chat dragged from the sidebar', () => {
+    /** happy-dom has no layout: a 1000 by 800 chat area, split down the middle. */
+    function layOutStage() {
+      const rect = (left: number, right: number, bottom = 800) =>
+        ({
+          left,
+          right,
+          top: 0,
+          bottom,
+          x: left,
+          y: 0,
+          width: right - left,
+          height: bottom,
+          toJSON: () => ({}),
+        }) as DOMRect
+      vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+        this: HTMLElement,
+      ) {
+        if (this.classList.contains('stage__body')) return rect(0, 1000)
+        if (this.matches('.split__pane[data-split-slot]')) {
+          return this.classList.contains('is-start') ? rect(0, 500) : rect(500, 1000)
+        }
+        return rect(0, 0, 0)
+      })
+      return sidebarProps().sessionDropTarget!
+    }
+    const dropZone = () => document.querySelector<HTMLElement>('.chat-drop')
+    const composerIn = (title: string) =>
+      within(pane(title)).getByPlaceholderText('Do anything') as HTMLTextAreaElement
+
+    it('opens a chat dropped on the right half beside the current one', async () => {
+      useTwoChats()
+      render(<App />)
+      fireEvent.click(await waitFor(() => treeChatRow('Left chat')))
+      const first = await screen.findByTestId('thread')
+      fireEvent.change(screen.getByPlaceholderText('Do anything'), {
+        target: { value: 'left draft' },
+      })
+      const target = layOutStage()
+
+      // The left half would replace the open chat; the right half opens beside it.
+      act(() => target.move('right-thread', 200, 400))
+      expect(dropZone()?.dataset.zone).toBe('pane')
+      expect(dropZone()?.style.width).toBe('1000px')
+      act(() => target.move('right-thread', 800, 400))
+      expect(dropZone()?.dataset.zone).toBe('beside')
+      expect([dropZone()?.style.left, dropZone()?.style.width]).toEqual(['500px', '500px'])
+      // The open chat has nowhere to go.
+      act(() => target.move('left-thread', 800, 400))
+      expect(dropZone()).toBeNull()
+
+      act(() => target.drop('right-thread', 800, 400))
+      expect(dropZone()).toBeNull()
+      await waitFor(() => expect(screen.getAllByTestId('thread')).toHaveLength(2))
+      expect(isFocused('Right chat')).toBe(true)
+      expect(pane('Left chat').classList.contains('is-start')).toBe(true)
+      expect(transcriptIn('Left chat')).toBe(first)
+      expect(composerIn('Left chat').value).toBe('left draft')
+    })
+
+    it('replaces the chat of the pane it is dropped on, keeping every draft', async () => {
+      await openSplit([
+        { id: 'third-thread', title: 'Third chat', provider: 'codex', createdAt: 1 },
+      ])
+      fireEvent.change(composerIn('Right chat'), { target: { value: 'right draft' } })
+      fireEvent.pointerDown(transcriptIn('Left chat'), { button: 0 })
+      await waitFor(() => expect(isFocused('Left chat')).toBe(true))
+      fireEvent.change(composerIn('Left chat'), { target: { value: 'left draft' } })
+      const left = transcriptIn('Left chat')
+      startTurn('right-thread', 'turn-1')
+      const target = layOutStage()
+
+      // The pointer moving over the panes redraws only the highlight.
+      appRenders.mockClear()
+      shellRenders.threadFrame.mockClear()
+      act(() => {
+        target.move('third-thread', 700, 300)
+        target.move('third-thread', 720, 320)
+        target.move('third-thread', 200, 300)
+        target.move('third-thread', 800, 300)
+      })
+      expect(appRenders).not.toHaveBeenCalled()
+      expect(shellRenders.threadFrame).not.toHaveBeenCalled()
+      expect([dropZone()?.style.left, dropZone()?.style.width]).toEqual(['500px', '500px'])
+
+      act(() => target.drop('third-thread', 800, 300))
+      await waitFor(() => expect(transcriptIn('Third chat').dataset.threadId).toBe('third-thread'))
+      expect(screen.queryByRole('region', { name: 'Right chat' })).toBeNull()
+      expect(isFocused('Third chat')).toBe(true)
+      expect(pane('Third chat').classList.contains('is-end')).toBe(true)
+      expect(transcriptIn('Left chat')).toBe(left)
+      expect(composerIn('Left chat').value).toBe('left draft')
+      // The replaced chat keeps running and keeps its draft for later.
+      expect(transport.request).not.toHaveBeenCalledWith('thread.interrupt', expect.anything())
+      fireEvent.click(treeChatRow('Right chat'))
+      await waitFor(() => expect(composerIn('Right chat').value).toBe('right draft'))
+    })
+
+    it('swaps the panes when a chat on screen is dropped on the other one', async () => {
+      await openSplit()
+      fireEvent.change(composerIn('Right chat'), { target: { value: 'right draft' } })
+      const left = transcriptIn('Left chat')
+      const right = transcriptIn('Right chat')
+      streamText('right-thread', 'from the right')
+      await waitFor(() => expect(within(right).getByText('from the right')).toBeTruthy())
+      const target = layOutStage()
+
+      // The focused chat, onto the other pane: the two trade sides and it keeps focus.
+      act(() => target.move('right-thread', 200, 400))
+      expect(dropZone()?.dataset.zone).toBe('pane')
+      act(() => target.drop('right-thread', 200, 400))
+      await waitFor(() => expect(pane('Right chat').classList.contains('is-start')).toBe(true))
+      expect(pane('Left chat').classList.contains('is-end')).toBe(true)
+      expect(isFocused('Right chat')).toBe(true)
+      expect(transcriptIn('Left chat')).toBe(left)
+      expect(transcriptIn('Right chat')).toBe(right)
+      expect(composerIn('Right chat').value).toBe('right draft')
+      // Its answer keeps streaming into the same transcript.
+      emitThreadEvent('right-thread', {
+        type: 'item.delta',
+        turnId: 'turn-1',
+        itemId: 'right-thread-item',
+        textDelta: ' and on',
+      })
+      await waitFor(() => expect(within(right).getByText('from the right and on')).toBeTruthy())
+
+      // The chat beside, onto the focused pane: they trade back and it takes focus.
+      act(() => target.drop('left-thread', 200, 400))
+      await waitFor(() => expect(isFocused('Left chat')).toBe(true))
+      expect(pane('Left chat').classList.contains('is-start')).toBe(true)
+      expect(transcriptIn('Left chat')).toBe(left)
+      expect(transcriptIn('Right chat')).toBe(right)
+      expect(composerIn('Right chat').value).toBe('right draft')
+      expect(transport.request).not.toHaveBeenCalledWith('thread.interrupt', expect.anything())
+      // Dropped where it already is: nothing lights up and nothing changes.
+      act(() => target.move('left-thread', 200, 400))
+      expect(dropZone()).toBeNull()
+    })
+  })
 })
 
 // Last in this file: it resets the module registry so App starts with the

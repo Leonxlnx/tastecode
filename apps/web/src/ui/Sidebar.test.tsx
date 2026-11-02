@@ -2005,6 +2005,167 @@ describe('Sidebar chat actions', () => {
     expect(target.style.translate).toBe('')
   })
 
+  it('carries a chat out of the rail to the drop target without reordering or opening it', () => {
+    const onReorderSession = vi.fn()
+    const onSelectSession = vi.fn()
+    const target = { move: vi.fn(), drop: vi.fn(), leave: vi.fn() }
+    render(
+      <Sidebar
+        projects={[
+          {
+            path: '/work/harness',
+            name: 'TasteCode',
+            sessions: [session('thread-1', 'First chat'), session('thread-2', 'Second chat')],
+          },
+        ]}
+        activeProjectPath="/work/harness"
+        activeSessionId="thread-2"
+        account={undefined}
+        providerName="Codex"
+        collapsed={false}
+        width={248}
+        onWidthChange={vi.fn()}
+        onClose={vi.fn()}
+        onAddProject={vi.fn()}
+        onNewSession={vi.fn()}
+        onSelectSession={onSelectSession}
+        sessionDropTarget={target}
+        onRenameProject={vi.fn()}
+        onRemoveProject={vi.fn()}
+        onTogglePin={vi.fn()}
+        onRenameSession={vi.fn()}
+        onDeleteSession={vi.fn()}
+        onArchiveProject={vi.fn()}
+        onReorderSession={onReorderSession}
+        onOpenSearch={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />,
+    )
+
+    const button = screen.getByRole('button', { name: 'First chat, Codex' })
+    const source = button.closest('li')!
+    const other = screen.getByRole('button', { name: 'Second chat, Codex' }).closest('li')!
+    mockRowRect(source, 30, 30)
+    mockRowRect(other, 60, 30)
+    // The rail spans x 0 to 200.
+    mockRowRect(document.querySelector('.rail')!, 0, 800)
+
+    // Sideways inside the rail starts nothing: a click with a slip is still a click.
+    fireEvent.pointerDown(source, { button: 0, pointerId: 1, clientX: 100, clientY: 45 })
+    fireEvent.pointerMove(source, { pointerId: 1, clientX: 190, clientY: 46 })
+    expect(source.classList.contains('is-row-dragging')).toBe(false)
+    fireEvent.pointerUp(source, { pointerId: 1 })
+    fireEvent.click(button)
+    expect(onSelectSession).toHaveBeenCalledExactlyOnceWith('thread-1')
+    expect(target.move).not.toHaveBeenCalled()
+    onSelectSession.mockClear()
+
+    // Reordering, then past the rail's edge: the row is carried out and the
+    // reorder preview steps back.
+    fireEvent.pointerDown(source, { button: 0, pointerId: 2, clientX: 100, clientY: 45 })
+    fireEvent.pointerMove(source, { pointerId: 2, clientX: 100, clientY: 52 })
+    fireEvent.pointerMove(source, { pointerId: 2, clientX: 100, clientY: 92 })
+    expect(other.style.translate).toBe('0 -30px')
+    fireEvent.pointerMove(source, { pointerId: 2, clientX: 400, clientY: 300 })
+    expect(target.move).toHaveBeenLastCalledWith('thread-1', 400, 300)
+    expect(source.style.translate).toBe('')
+    expect(other.style.translate).toBe('')
+    expect(source.classList.contains('is-row-dragging')).toBe(true)
+    // Back over the rail it reorders again.
+    fireEvent.pointerMove(source, { pointerId: 2, clientX: 100, clientY: 92 })
+    expect(target.leave).toHaveBeenCalledOnce()
+    expect(other.style.translate).toBe('0 -30px')
+    fireEvent.pointerMove(source, { pointerId: 2, clientX: 640, clientY: 320 })
+    fireEvent.pointerUp(source, { pointerId: 2 })
+    expect(target.drop).toHaveBeenCalledExactlyOnceWith('thread-1', 640, 320)
+    expect(onReorderSession).not.toHaveBeenCalled()
+    expect(source.classList.contains('is-row-dragging')).toBe(false)
+    expect(other.classList.contains('is-row-shifting')).toBe(false)
+    // The release that ended the drag does not open the chat; the next click does.
+    fireEvent.click(button)
+    expect(onSelectSession).not.toHaveBeenCalled()
+    fireEvent.click(button)
+    expect(onSelectSession).toHaveBeenCalledExactlyOnceWith('thread-1')
+
+    // Escape while outside cancels: no drop.
+    target.leave.mockClear()
+    target.drop.mockClear()
+    fireEvent.pointerDown(source, { button: 0, pointerId: 3, clientX: 100, clientY: 45 })
+    fireEvent.pointerMove(source, { pointerId: 3, clientX: 400, clientY: 45 })
+    fireEvent.keyDown(window, { key: 'Escape' })
+    fireEvent.pointerUp(source, { pointerId: 3 })
+    expect(target.leave).toHaveBeenCalledOnce()
+    expect(target.drop).not.toHaveBeenCalled()
+  })
+
+  it('carries a pinned chat out of the rail, while a click on it still opens it', () => {
+    const onSelectSession = vi.fn()
+    const target = { move: vi.fn(), drop: vi.fn(), leave: vi.fn() }
+    const content = (dropTarget: typeof target | undefined) => (
+      <Sidebar
+        projects={[
+          {
+            path: '/work/harness',
+            name: 'TasteCode',
+            sessions: [
+              { ...session('pinned-1', 'Pinned chat'), pinned: true },
+              session('thread-2', 'Other chat'),
+            ],
+          },
+        ]}
+        activeProjectPath="/work/harness"
+        activeSessionId="thread-2"
+        account={undefined}
+        providerName="Codex"
+        collapsed={false}
+        width={248}
+        onWidthChange={vi.fn()}
+        onClose={vi.fn()}
+        onAddProject={vi.fn()}
+        onNewSession={vi.fn()}
+        onSelectSession={onSelectSession}
+        sessionDropTarget={dropTarget}
+        onRenameProject={vi.fn()}
+        onRemoveProject={vi.fn()}
+        onTogglePin={vi.fn()}
+        onRenameSession={vi.fn()}
+        onDeleteSession={vi.fn()}
+        onArchiveProject={vi.fn()}
+        onReorderSession={vi.fn()}
+        onOpenSearch={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />
+    )
+    const view = render(content(target))
+    const row = document.querySelector<HTMLElement>(
+      '.pinned-sessions [data-archive-session-id="pinned-1"]',
+    )!
+    const button = within(row).getByRole('button', { name: 'Pinned chat, Codex' })
+    mockRowRect(row, 30, 30)
+    mockRowRect(document.querySelector('.rail')!, 0, 800)
+    expect(row.classList.contains('is-reorderable')).toBe(true)
+
+    fireEvent.click(button)
+    expect(onSelectSession).toHaveBeenCalledExactlyOnceWith('pinned-1')
+    onSelectSession.mockClear()
+
+    // Pinned chats keep their order: up and down over the rail does nothing.
+    fireEvent.pointerDown(row, { button: 0, pointerId: 1, clientX: 100, clientY: 45 })
+    fireEvent.pointerMove(row, { pointerId: 1, clientX: 100, clientY: 90 })
+    expect(row.style.translate).toBeFalsy()
+    expect(row.classList.contains('is-row-dragging')).toBe(false)
+    fireEvent.pointerMove(row, { pointerId: 1, clientX: 420, clientY: 90 })
+    expect(target.move).toHaveBeenLastCalledWith('pinned-1', 420, 90)
+    fireEvent.pointerUp(row, { pointerId: 1 })
+    expect(target.drop).toHaveBeenCalledExactlyOnceWith('pinned-1', 420, 90)
+    fireEvent.click(button)
+    expect(onSelectSession).not.toHaveBeenCalled()
+
+    // Without a drop target a pinned row is not draggable at all.
+    view.rerender(content(undefined))
+    expect(row.classList.contains('is-reorderable')).toBe(false)
+  })
+
   it('reorders projects when one is dragged between sidebar rows', () => {
     const onReorderProject = vi.fn()
     render(
