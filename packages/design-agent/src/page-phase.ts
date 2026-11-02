@@ -1,5 +1,6 @@
 import { appScreenRules, appSheetGuidance, type AppDirection } from './app-screens.js'
-import { dashboardModeEnabled, isDashboardBrief, type DesignBrief } from './brief.js'
+import { isDashboardBrief, type DesignBrief } from './brief.js'
+import { DASHBOARD_REFERENCES_ENABLED } from './dashboard-references.js'
 import type { BrandSystem } from './brand.js'
 import path from 'node:path'
 import { assertPageCopy } from './copywriting.js'
@@ -18,8 +19,10 @@ const FULL_PAGE_PROTOCOL = `Return the final page blueprint as JSON only, withou
 
 {"version":1,"page":{"title":"...","route":"/","description":"..."},"architecture":{"contract":"This page helps ...","mode":"scan_compare|read_understand|persuade_convert|explore_experience|operate_monitor","novelty":"low|medium|high","grid":"...","signatureRule":"...","rhythm":"..."},"navigation":[{"label":"...","target":"..."}],"navigationDesign":{"layoutCase":"navigation-1","layout":"...","behavior":[],"transformation":{"compact":"...","medium":"...","expanded":"..."}},"sections":[{"id":"...","layoutFamily":"hero|about|feature|how_it_works|social_proof|stats|faq|cta|pricing|contact|footer|dashboard","layoutCases":["hero-text-1","hero-visual-1"],"referenceDirectionId":"direction-001","purpose":"...","userQuestion":"...","stage":"orient|qualify|evaluate|prove|explain|de_risk|act|continue","dependencies":[],"evidence":[],"copy":{"heading":"...","body":[],"callsToAction":[{"label":"...","target":"..."}]},"layout":"...","motion":{"purpose":"none|feedback|state_change|spatial_continuity|explanation|status","trigger":"none|load|scroll_enter|scroll_progress|hover|press|drag|state_change","behavior":"...","durationMs":220,"easing":"cubic-bezier(0.23, 1, 0.32, 1)","reducedMotion":"..."},"componentNeeds":[],"assetNeeds":[],"transformation":{"compact":"...","medium":"...","expanded":"..."}}],"responsive":[],"interactions":[],"acceptanceCriteria":[]}`
 
-// With both dashboard paths off, a plan cannot choose the dashboard mode or family.
-const PAGE_PROTOCOL = dashboardModeEnabled()
+// The website prompts plan a dashboard only from the parked image catalog; an app screen has its
+// own protocol below. While the catalog is off, a website plan cannot choose the dashboard mode
+// or family: no website deck holds a dashboard reference to back them.
+const PAGE_PROTOCOL = DASHBOARD_REFERENCES_ENABLED
   ? FULL_PAGE_PROTOCOL
   : FULL_PAGE_PROTOCOL.replace('|operate_monitor', '').replace('|dashboard', '')
 

@@ -76,18 +76,49 @@ describe('dashboards as tasteskill app screens, dashboard images parked', () => 
     expect(APP_SCREENS_ENABLED).toBe(true)
   })
 
-  it('routes app-screen briefs and saved operate_monitor plans into dashboard mode', () => {
+  it('routes app-screen briefs into dashboard mode', () => {
     expect(isDashboardBrief(dashboardBrief)).toBe(true)
     expect(isDashboardBrief({ pageType: '', originalRequest: 'Admin panel for orders' })).toBe(true)
     expect(
       isDashboardBrief({ pageType: 'landing_page', originalRequest: 'A site for our admin app' }),
     ).toBe(false)
-    expect(isDashboardPageMode('operate_monitor')).toBe(true)
     const guidance = designMotionGuidance(dashboardBrief, {
       architecture: { mode: 'operate_monitor' },
     } as PageBlueprint)
     expect(guidance).toContain('DASHBOARD INTERACTION')
     expect(guidance).toContain('Nothing on the screen performs an entrance.')
+  })
+
+  it('keeps a website run a website, even when its plan says operate_monitor', () => {
+    // Only the parked image catalog plans dashboards through the website prompts.
+    expect(isDashboardPageMode('operate_monitor')).toBe(false)
+    const status = {
+      ...dashboardBrief,
+      originalRequest: 'A public status page for our hosting',
+      pageType: 'status page',
+    }
+    expect(isDashboardBrief(status)).toBe(false)
+    const brand = {
+      version: 1 as const,
+      creativeDirection: { summary: 'Calm.', keywords: [], avoid: [] },
+      colorPalette: [{ name: 'Ink', value: '#171512', usage: 'Text' }],
+      typefaces: [{ family: 'Geist', source: 'Project', roles: ['UI'], weights: [500] }],
+      interfaceDirection: 'Precise.',
+      imageDirection: { summary: 'Product.', subjects: [], treatment: 'Clean.', avoid: [] },
+      motionDirection: { summary: 'Quiet.', principles: [], avoid: [] },
+      voice: { summary: 'Direct.', avoid: [] },
+    }
+    const deck = [
+      { id: 'studio-hero', family: 'hero' as const, imagePath: '/h.webp', cue: 'Hero.' },
+    ]
+    const page = designPagePrompt(status, brand, [], deck)
+    expect(page).not.toContain('operate_monitor')
+    expect(page).not.toContain('|dashboard"')
+    const guidance = designMotionGuidance(status, {
+      architecture: { mode: 'operate_monitor' },
+    } as PageBlueprint)
+    expect(guidance).not.toContain('DASHBOARD INTERACTION')
+    expect(guidance).toContain('VISIBLE MOTION')
   })
 
   it('ignores dashboard catalogs and entries and draws no images for a dashboard', () => {

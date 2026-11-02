@@ -65,9 +65,13 @@ export function isDashboardBrief(
   return !isMarketingSurface(request) && APPLICATION_SURFACE.test(request)
 }
 
-/** A page plan in the dashboard mode; a saved one routes nothing while both paths are off. */
+/**
+ * A website-prompt plan in the dashboard mode. Only the parked image catalog plans dashboards
+ * through the website prompts; an app screen is routed by its dealt sheet and its dashboard brief,
+ * so while the catalog is off an operate_monitor plan on a website run stays a website.
+ */
 export function isDashboardPageMode(mode: string | undefined): boolean {
-  return dashboardModeEnabled() && mode === 'operate_monitor'
+  return DASHBOARD_REFERENCES_ENABLED && mode === 'operate_monitor'
 }
 
 function isMarketingSurface(text: string): boolean {
