@@ -1312,10 +1312,15 @@ export function App() {
    *  reads this merged list; the cache only ever stores the server catalog. */
   const models = useMemo(
     () =>
-      mergeCustomModels(catalogModels, customModels).filter((choice) =>
-        rosterAllows(providerRoster, modelSource(choice)),
+      mergeCustomModels(catalogModels, customModels).filter(
+        (choice) =>
+          rosterAllows(providerRoster, modelSource(choice)) &&
+          // Once the server has answered, a cached or custom row for a provider
+          // this build does not offer is left out.
+          (providerStatuses.length === 0 ||
+            providerStatuses.some((status) => status.id === choice.provider)),
       ),
-    [catalogModels, customModels, providerRoster],
+    [catalogModels, customModels, providerRoster, providerStatuses],
   )
   const catalogModelsRef = useRef(catalogModels)
   catalogModelsRef.current = catalogModels
@@ -2808,7 +2813,8 @@ export function App() {
       }
       const acpPromise = agentsCatalog.then(async (result) => {
         if (cancelled) return []
-        const agents = result?.agents ?? []
+        // ACP agents belong to the ACP entry; a build without it lists none.
+        const agents = providers.some((status) => status.id === 'acp') ? (result?.agents ?? []) : []
         setAcpAgents(agents)
         // Only agents added under Settings › Providers start for their models.
         const listed = agents.filter(
@@ -2832,7 +2838,10 @@ export function App() {
       })
       const harnessesResult = await harnessesCatalog
       if (cancelled) return
-      const harnesses = harnessesResult?.harnesses ?? []
+      // A harness runs through its provider, so it is offered only with it.
+      const harnesses = (harnessesResult?.harnesses ?? []).filter((harness) =>
+        providers.some((status) => status.id === harness.provider),
+      )
       setPendingModelSources(
         (current) =>
           new Set([

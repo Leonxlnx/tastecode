@@ -3214,6 +3214,7 @@ describe('web client', () => {
     })
 
     it('lists an agent that registers after the picker opened', async () => {
+      serverProviders = [...serverProviders, { ...serverProviders[0]!, id: 'acp' }]
       const kimi = { id: 'kimi', name: 'Kimi CLI' }
       localStorage.setItem('harness.providerRoster.v1', JSON.stringify(['codex', 'acp:kimi']))
       localStorage.setItem(
@@ -3841,6 +3842,7 @@ describe('web client', () => {
   })
 
   it('discovers a custom Pi source and binds new sessions to its harness id', async () => {
+    serverProviders = [...serverProviders, { ...serverProviders[0]!, id: 'pi', displayName: 'Pi' }]
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
     transport.request.mockImplementation((method: string, params: unknown) => {
@@ -4432,6 +4434,7 @@ describe('web client', () => {
   })
 
   it('fetches models only for the ACP agents added to Providers', async () => {
+    serverProviders = [...serverProviders, { ...serverProviders[0]!, id: 'acp' }]
     localStorage.setItem('harness.providerRoster.v1', JSON.stringify(['codex', 'acp:kimi']))
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
@@ -4552,6 +4555,11 @@ describe('web client', () => {
           },
         ],
       },
+    ]
+    // The server lists ACP agents under its ACP entry.
+    serverProviders = [
+      ...serverProviders,
+      { ...serverProviders[0]!, id: 'acp', displayName: 'ACP agents', version: 'Kimi CLI, Devin' },
     ]
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
