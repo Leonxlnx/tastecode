@@ -111,10 +111,13 @@ const preloadComposerChipOverlay = () => {
  * The chip overlay, drawn as soon as its module is there. Under Suspense the
  * first mount would commit the empty fallback and React holds the reveal back
  * for up to 300 ms after it, however early the module arrived, leaving a
- * restored or recalled draft's raw chip characters on screen that long.
+ * restored or recalled draft's raw chip characters on screen that long. The
+ * module-level copy also covers a load that a later preload finished after
+ * this one failed.
  */
 function ChipOverlay(props: ComponentProps<ChipOverlayComponent>) {
-  const [Overlay, setOverlay] = useState(() => loadedChipOverlay)
+  const [ownOverlay, setOverlay] = useState(() => loadedChipOverlay)
+  const Overlay = ownOverlay ?? loadedChipOverlay
   useEffect(() => {
     if (Overlay) return
     let cancelled = false
@@ -1242,7 +1245,9 @@ function ComposerComponent(props: {
       legacyResources,
     )
     // A draft that brings chips (restored, edited, recalled) starts loading
-    // their drawing before the textarea shows it: one includes, not a parse.
+    // their drawing at once: one includes, not a parse. The textarea shows the
+    // text in this same pass, so when nothing loaded the drawing earlier (a
+    // draft restored at startup) the raw chip text shows until it arrives.
     if (hasComposerChips(text)) preloadComposerChipOverlay()
     // Parent already holds this snapshot. Writing it back would let a stale
     // empty request wipe a draft that was typed after the last publish; only
