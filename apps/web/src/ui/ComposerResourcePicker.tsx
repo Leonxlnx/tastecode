@@ -8,11 +8,11 @@ import {
   useState,
 } from 'react'
 import type { McpServer, ProviderCommand, ProviderId, ResultOf, Skill } from '@harness/contracts'
-import { IconBox as Box, IconServer as Server, IconSlash as Slash } from '@tabler/icons-react'
 import type { AppCommand } from '../app-commands.js'
 import { providerDisplayName } from '../provider-presentation.js'
 import type { Transport } from '../transport.js'
 import '../styles/composer-resource-picker.css'
+import { commandIcon, MCP_ICON, SKILL_ICON } from './chip-icons.js'
 import { SkeletonRows, SkeletonStatus } from './Skeleton.js'
 import {
   COMPOSER_RESOURCE_LIST_ID,
@@ -293,10 +293,10 @@ export const ComposerResourcePicker = forwardRef<
           const Icon =
             resource.icon ??
             (resource.kind === 'mcp'
-              ? Server
+              ? MCP_ICON
               : resource.kind === 'command' && resource.commandKind !== 'skill'
-                ? Slash
-                : Box)
+                ? commandIcon(resource.id)
+                : SKILL_ICON)
           const selected = index === resolvedActiveIndex
           return (
             <button

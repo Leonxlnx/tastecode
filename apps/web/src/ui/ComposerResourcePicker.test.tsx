@@ -112,6 +112,33 @@ function optionNames(): string[] {
 }
 
 describe('ComposerResourcePicker', () => {
+  it('gives each row an icon of what it is', async () => {
+    renderPicker(
+      createResourceTransport(() => ({
+        commands: [
+          { name: 'goal', description: 'Set the goal' },
+          { name: 'init', description: 'Create AGENTS.md' },
+          { name: 'review', description: 'Review changes' },
+          { name: 'my-script', description: 'A custom command', source: 'custom' },
+          { name: 'design', description: 'A bundled skill', kind: 'skill' },
+        ],
+        loading: false,
+      })),
+      slash(''),
+      { provider: 'codex' },
+    )
+
+    await screen.findByRole('option', { name: /\/goal/ })
+    const icon = (name: RegExp) =>
+      screen.getByRole('option', { name }).querySelector('svg')?.getAttribute('class')
+    expect(icon(/\/goal/)).toContain('tabler-icon-target')
+    expect(icon(/\/init/)).toContain('tabler-icon-file-plus')
+    expect(icon(/\/review/)).toContain('tabler-icon-zoom-code')
+    expect(icon(/\/my-script/)).toContain('tabler-icon-slash')
+    expect(icon(/\/design/)).toContain('tabler-icon-blocks')
+    expect(icon(/Animate/)).toContain('tabler-icon-blocks')
+  })
+
   it('keeps hover highlight and selectActive in sync', async () => {
     const { onSelect, pickerRef } = renderPicker(
       createResourceTransport(),
