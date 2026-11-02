@@ -8,6 +8,9 @@
   right: auto;
   left: 50%;
   translate: -50% 0;
+  /* The question with both choices is wider than the 420px a notice may take,
+     which cut "2 chats still running" short. */
+  max-width: calc(100vw - 36px);
   gap: 8px;
   padding: 5px 7px 5px 12px;
   background: var(--menu-bg);

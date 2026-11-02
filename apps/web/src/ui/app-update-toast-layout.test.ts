@@ -22,6 +22,12 @@ describe('the app update notice', () => {
     expect(notice).toContain('translate: -50% 0')
   })
 
+  it('takes the width its question needs instead of a notice’s 420px', () => {
+    // "2 chats still running", Stop and update, When they finish and close
+    // come to about 470px; at 420px the label was cut to "2 chats still run".
+    expect(rule('.notice.notice--app-update')).toContain('max-width: calc(100vw - 36px)')
+  })
+
   it('waits below an open deleted-chat toast instead of under it', () => {
     const stacked = rule(".notice.notice--app-update:has(~ .notice--archive[data-state='open'])")
     expect(stacked).toContain('top: 100px')
