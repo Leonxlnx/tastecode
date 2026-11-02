@@ -471,7 +471,9 @@
                   starts once instead of twice; a chat whose first prompt never reached the CLI is
                   created under the same session id instead of failing every later send; a session
                   start allows 60 s, and its timeout says whether Claude Code itself or the
-                  project's MCP servers stalled</span
+                  project's MCP servers stalled; a Stop whose run reports no result within 15 s,
+                  answered or not, ends the turn as stopped together with the CLI process, and the
+                  next send resumes the session in a new one</span
                 ></span
               ></label
             >
