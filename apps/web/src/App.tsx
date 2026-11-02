@@ -2525,9 +2525,11 @@ export function App() {
       // here, before anything below can cut the run short. A run that fails
       // before this point leaves them as they were for the next run to settle:
       // an empty stand-in would let a retry show the list without them first.
+      // A run replaced before they answer still settles them while no other
+      // run has, so a replacement that fails does not leave setup waiting.
       const offeredAgents = agentsCatalog.then((result) => {
         const agents = providers.some((status) => status.id === 'acp') ? (result?.agents ?? []) : []
-        if (!cancelled) setAcpAgents(agents)
+        setAcpAgents((current) => (cancelled && current !== undefined ? current : agents))
         return agents
       })
       // Only the first answer may move an unchosen launch; later refreshes
