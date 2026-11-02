@@ -81,8 +81,9 @@ The dashboard image catalog stays parked (owner decision, 2026-10-16): the first
 reference set did not meet the design bar, so `DASHBOARD_REFERENCES_ENABLED` in
 `packages/design-agent/src/dashboard-references.ts` is `false` and the 200 dashboard pairs no
 longer ship in the bundled library. While it is off, no library's `dashboard-catalog.json` or
-`dashboard` family entry is loaded, including a configured local library that still has one. With
-both switches off, `isDashboardBrief` routes nothing into dashboard mode and a dashboard request
+`dashboard` family entry is loaded, including a configured local library that still has one, and
+the website Page prompt offers neither the `operate_monitor` mode nor the `dashboard` family, so a
+website run stays a website. With both switches off, `isDashboardBrief` routes nothing into dashboard mode and a dashboard request
 completes as a website that presents the product. The rules below describe the parked image path;
 they return only when its switch is turned back on together with a new reviewed asset set in
 `dashboard-catalog.json`.

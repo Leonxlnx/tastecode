@@ -777,9 +777,11 @@ Chrome and shell access in every provider, and the deal would not survive a resu
 **The dashboard image catalog has been parked since 2026-10-16 (owner decision).** The dashboard
 asset set is not good enough to ship. Its switch, `DASHBOARD_REFERENCES_ENABLED` in
 `packages/design-agent/src/dashboard-references.ts`, keeps every dashboard catalog unloaded and
-no dashboard image deck is sampled. With both switches off, `isDashboardBrief` and a saved
-`operate_monitor` page route nothing into dashboard prompts, the Page protocol stops offering that
-mode and family, and a dashboard request becomes a normal website run. The 400 dashboard WebPs,
+no dashboard image deck is sampled. While it is off, the website Page protocol does not offer the
+`operate_monitor` mode or the `dashboard` family, and an `operate_monitor` plan on a website run
+routes nothing into dashboard prompts; app screens reach theirs through the dealt sheet and the
+dashboard brief. With both switches off, `isDashboardBrief` routes nothing either, and a dashboard
+request becomes a normal website run. The 400 dashboard WebPs,
 their catalog and provenance left the packaged library (about 42 MB) and stay in git history. The
 history below describes the parked image path.
 
