@@ -19,6 +19,10 @@ const DOCKED_COMPOSER = '.stage__conversation:not(.is-new-session) > .composer:n
 export const NOTICE_COMPOSER_CLEARANCE = 56
 const NOTICE_EDGE = 12
 
+function dockedComposer(): HTMLElement | null {
+  return document.querySelector<HTMLElement>(DOCKED_COMPOSER)
+}
+
 /**
  * Toasts are fixed to the window corner, which is where the docked composer
  * keeps Send. While a toast is open it sits above that composer instead,
@@ -26,7 +30,10 @@ const NOTICE_EDGE = 12
  * so measuring never restyles the rest of the document.
  */
 export function placeNoticeAboveComposer(notice: HTMLElement): void {
-  const composer = document.querySelector<HTMLElement>(DOCKED_COMPOSER)
+  placeNoticeAbove(notice, dockedComposer())
+}
+
+function placeNoticeAbove(notice: HTMLElement, composer: HTMLElement | null): void {
   const rect = composer?.getBoundingClientRect()
   if (!composer || !rect || rect.height <= 0) {
     notice.style.removeProperty('--notice-bottom')
@@ -47,7 +54,7 @@ export function placeNoticeAboveComposer(notice: HTMLElement): void {
 function keepNoticeAboveComposer(notice: HTMLElement): () => void {
   const place = () => placeNoticeAboveComposer(notice)
   place()
-  const composer = document.querySelector<HTMLElement>(DOCKED_COMPOSER)
+  const composer = dockedComposer()
   const ResizeObserverConstructor = globalThis.ResizeObserver
   const observer =
     composer && ResizeObserverConstructor ? new ResizeObserverConstructor(place) : undefined
