@@ -3187,7 +3187,7 @@ describe('Composer chip drawing for a draft that brings chips', () => {
 
     // Outside act, as in the app: Suspense would commit its empty fallback
     // first and React would then hold the reveal back for about 300 ms.
-    const actEnvironment = globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
+    const actEnvironment = globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean | undefined }
     const previous = actEnvironment.IS_REACT_ACT_ENVIRONMENT
     actEnvironment.IS_REACT_ACT_ENVIRONMENT = false
     try {
