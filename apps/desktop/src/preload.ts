@@ -6,6 +6,7 @@ import { clipboardText } from './clipboard-text.js'
 import { isNativeMenuActionMessage, type NativeMenuActionSource } from './menu-contract.js'
 import { droppedFilePath, isAppUpdateState, isFiniteNumber } from './preload-validation.js'
 import type { WindowChrome } from './window-theme.js'
+import type { WindowMaterial, WindowMaterialSupport } from './window-material.js'
 
 type PickedAttachment = {
   path: string
@@ -64,6 +65,10 @@ const api = {
     ipcRenderer.invoke('harness:setTheme', preference),
   setWindowChrome: (chrome: WindowChrome): Promise<void> =>
     ipcRenderer.invoke('harness:setWindowChrome', chrome),
+  getWindowMaterialSupport: (): Promise<WindowMaterialSupport> =>
+    ipcRenderer.invoke('harness:getWindowMaterialSupport'),
+  setWindowMaterial: (material: WindowMaterial): Promise<void> =>
+    ipcRenderer.invoke('harness:setWindowMaterial', material),
   prepareHaptics: (): void => ipcRenderer.send('harness:hapticsPrepare'),
   performHaptic: (pattern: NativeHapticPattern): void =>
     ipcRenderer.send('harness:hapticFeedback', pattern),
