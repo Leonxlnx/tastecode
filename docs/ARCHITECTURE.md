@@ -413,6 +413,24 @@ Every other adapter in this document, the ACP agent roster and the direct API ru
 only on `nightly`; on `main`, `packages/adapter-acp` remains solely as the protocol client
 behind project-enabled Grok MCP sessions. The decisions below still bind both branches.
 
+**Each build offers the providers of its edition (2026-11-01).** Promotions `dev` → `nightly`
+→ `main` merge whole branches, so the provider code on `dev` reaches `main` with a promotion;
+the build, not the branch, decides what a user is offered. A release build offers exactly Claude Code, Codex,
+Grok, Cursor and Antigravity; a dev build offers every provider. The edition is decided at
+package time through electron-builder `extraMetadata`: `dist` and `dist:dir` write
+`tastecodeEdition=dev` into the packaged `package.json`, and `dist:release` writes nothing.
+Desktop main reads that field; a missing, unknown or unreadable value means release, so a
+package built any other way fails closed. It passes the edition to the server as
+`HARNESS_EDITION`, applied after the inherited environment so a variable set on the machine
+cannot widen a release build; unpackaged runs (`pnpm dev`) pass nothing and offer everything.
+The server reads `HARNESS_EDITION` once at startup, deletes it from `process.env` so agent CLIs
+and terminals do not inherit it, and refuses to start on any value other than `release` or
+`dev`. It enforces the edition at `providers.list` (and `acp.agents`), at provider install and
+launch, in the runtime loader every session passes through, in `startThread` before the
+base-branch switch, and in the custom-harness listing. The renderer only follows
+`providers.list`; shared code never checks a provider by name. The release asset check refuses
+a package whose `tastecodeEdition` is anything other than `release`.
+
 **The product must work with only a direct API provider configured.** TasteCode owns the
 shared session model, persistence, orchestration, queueing, review, worktrees, terminal and
 UI. Provider integrations supply inference and declare optional capabilities; they do not
@@ -954,3 +972,4 @@ registry entry, which is deliberately a good first outside contribution.
 | 2026-10-25 | Claude Code can also run through `claude -p` (stream-json, same protocol); engines declare `capabilities.runtimes`, the server keeps the choice.                               |
 | 2026-10-25 | Phone app screens moved from SwiftUI to UIKit view controllers under one native view; Expo UI is no longer a dependency.                                                       |
 | 2026-10-31 | Phone access became dev-only: offered only with `HARNESS_PHONE_ACCESS=1` (set by `pnpm dev`); other builds never open the phone port.                                          |
+| 2026-11-01 | Each build offers its edition's providers: release offers Claude Code, Codex, Grok, Cursor and Antigravity, dev every provider; missing means release.                         |
