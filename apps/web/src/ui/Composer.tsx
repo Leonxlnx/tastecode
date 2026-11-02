@@ -8,6 +8,7 @@ import {
   useRef,
   useState,
   type ClipboardEvent,
+  type ComponentProps,
   type DragEvent,
   type KeyboardEvent,
 } from 'react'
@@ -91,11 +92,44 @@ const ComposerResourcePicker = lazy(() =>
 )
 // Loaded as soon as a menu opens or a draft brings chips, so the first chip
 // rarely waits for it; until then the draft shows as plain text.
-let chipOverlayModule: Promise<typeof import('./ComposerChipOverlay.js')> | undefined
-const loadComposerChipOverlay = () => (chipOverlayModule ??= import('./ComposerChipOverlay.js'))
-const ComposerChipOverlay = lazy(() =>
-  loadComposerChipOverlay().then((module) => ({ default: module.ComposerChipOverlay })),
-)
+type ChipOverlayComponent = typeof import('./ComposerChipOverlay.js').ComposerChipOverlay
+let chipOverlayModule: Promise<ChipOverlayComponent> | undefined
+let loadedChipOverlay: ChipOverlayComponent | undefined
+const loadComposerChipOverlay = () =>
+  (chipOverlayModule ??= import('./ComposerChipOverlay.js').then(
+    (module) => (loadedChipOverlay = module.ComposerChipOverlay),
+    (error: unknown) => {
+      chipOverlayModule = undefined
+      throw error
+    },
+  ))
+const preloadComposerChipOverlay = () => {
+  void loadComposerChipOverlay().catch(() => undefined)
+}
+
+/**
+ * The chip overlay, drawn as soon as its module is there. Under Suspense the
+ * first mount would commit the empty fallback and React holds the reveal back
+ * for up to 300 ms after it, however early the module arrived, leaving a
+ * restored or recalled draft's raw chip characters on screen that long.
+ */
+function ChipOverlay(props: ComponentProps<ChipOverlayComponent>) {
+  const [Overlay, setOverlay] = useState(() => loadedChipOverlay)
+  useEffect(() => {
+    if (Overlay) return
+    let cancelled = false
+    loadComposerChipOverlay().then(
+      (component) => {
+        if (!cancelled) setOverlay(() => component)
+      },
+      () => undefined,
+    )
+    return () => {
+      cancelled = true
+    }
+  }, [Overlay])
+  return Overlay ? <Overlay {...props} /> : null
+}
 const ModelSelector = lazy(() =>
   import('./ModelSelector.js').then((module) => ({ default: module.ModelSelector })),
 )
@@ -726,7 +760,7 @@ function ComposerComponent(props: {
     if (!trigger) return
     setResourcePickerMounted(true)
     // A pick is a key away; have the chip drawing ready for it.
-    void loadComposerChipOverlay()
+    preloadComposerChipOverlay()
   }
 
   const getQueueRowRef = (queueRowId: string) => {
@@ -1207,6 +1241,9 @@ function ComposerComponent(props: {
         : props.draftRequest.text,
       legacyResources,
     )
+    // A draft that brings chips (restored, edited, recalled) starts loading
+    // their drawing before the textarea shows it: one includes, not a parse.
+    if (hasComposerChips(text)) preloadComposerChipOverlay()
     // Parent already holds this snapshot. Writing it back would let a stale
     // empty request wipe a draft that was typed after the last publish; only
     // a draft this composer just rewrote is saved again.
@@ -2212,9 +2249,7 @@ function ComposerComponent(props: {
 
               <div className="composer__field">
                 {chipsSeen || resourcePickerMounted ? (
-                  <Suspense fallback={null}>
-                    <ComposerChipOverlay store={chipStore} area={area} />
-                  </Suspense>
+                  <ChipOverlay store={chipStore} area={area} />
                 ) : null}
                 <textarea
                   ref={area}
