@@ -7702,6 +7702,70 @@ describe('several sessions at once', () => {
     await vi.waitFor(() => expect(sessions[0]!.interrupted).toBe(true))
   })
 
+  it('delivers a Stop sent right behind its prompt after the turn started', async () => {
+    // A new chat stopped while it starts sends the prompt and the Stop back to back. An agent
+    // asked to stop before its turn exists has nothing to stop, and drops the request.
+    const { sessions, orchestrator } = harness()
+    const thread = await orchestrator.startThread('codex', '/repo')
+    const session = sessions[0]!
+    const promptsWhenStopped: number[] = []
+    vi.spyOn(session, 'interrupt').mockImplementation(async () => {
+      promptsWhenStopped.push(session.sent.length)
+    })
+
+    const sending = orchestrator.submitTurn(thread.id, 'stop me')
+    const stopping = orchestrator.interrupt(thread.id)
+
+    await expect(sending).resolves.toMatchObject({ queued: false })
+    await expect(stopping).resolves.toBeUndefined()
+    expect(promptsWhenStopped).toEqual([1])
+  })
+
+  it('holds a Stop for a prompt that is still being prepared', async () => {
+    const { sessions, orchestrator } = harness()
+    const thread = await orchestrator.startThread('codex', '/repo')
+    const session = sessions[0]!
+    const promptsWhenStopped: number[] = []
+    vi.spyOn(session, 'interrupt').mockImplementation(async () => {
+      promptsWhenStopped.push(session.sent.length)
+    })
+    let prepared!: () => void
+    const preparing = new Promise<void>((resolve) => (prepared = resolve))
+
+    // The server reads outside history before it hands the prompt over.
+    const sending = orchestrator.trackSubmission(thread.id, async () => {
+      await preparing
+      return orchestrator.submitTurn(thread.id, 'stop me')
+    })
+    const stopping = orchestrator.interrupt(thread.id)
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(promptsWhenStopped).toEqual([])
+
+    prepared()
+    await expect(sending).resolves.toMatchObject({ queued: false })
+    await expect(stopping).resolves.toBeUndefined()
+    expect(promptsWhenStopped).toEqual([1])
+  })
+
+  it('does not hold a Stop for a prompt sent after it', async () => {
+    const { sessions, orchestrator } = harness()
+    const thread = await orchestrator.startThread('codex', '/repo')
+    await orchestrator.submitTurn(thread.id, 'running')
+    let prepared!: () => void
+    const preparing = new Promise<void>((resolve) => (prepared = resolve))
+
+    const stopping = orchestrator.interrupt(thread.id)
+    const later = orchestrator.trackSubmission(thread.id, async () => {
+      await preparing
+      return orchestrator.submitTurn(thread.id, 'later')
+    })
+    await expect(stopping).resolves.toBeUndefined()
+    expect(sessions[0]!.interrupted).toBe(true)
+
+    prepared()
+    await expect(later).resolves.toMatchObject({ queued: true })
+  })
+
   it('cancels a cold resume on Stop and allows a later submission', async () => {
     const { sessions, orchestrator, store } = harness()
     store.addProject('/repo')
