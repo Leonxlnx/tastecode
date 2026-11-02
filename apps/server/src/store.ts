@@ -5337,6 +5337,13 @@ function parseDomainEvent(serialized: string, context: string): DomainEvent | un
   return undefined
 }
 
+/**
+ * Unknown providers already reported. Readers such as the usage history call
+ * toProviderId once per row, so one such thread would otherwise log the same
+ * line for each of its events.
+ */
+const warnedUnknownProviders = new Set<string>()
+
 function toProviderId(provider: string): ProviderId | undefined {
   switch (provider) {
     case 'codex':
@@ -5349,7 +5356,10 @@ function toProviderId(provider: string): ProviderId | undefined {
       // A provider this build does not ship: a newer build, or one that lives
       // only on the nightly branch. The row stays stored; readers skip it
       // rather than die on it.
-      console.warn(`[store] skipped a thread row with unknown provider '${provider}'`)
+      if (!warnedUnknownProviders.has(provider)) {
+        warnedUnknownProviders.add(provider)
+        console.warn(`[store] skipped a thread row with unknown provider '${provider}'`)
+      }
       return undefined
     }
   }
