@@ -71,6 +71,7 @@ type Bridge = {
   reportChatAttention?: (report: ChatAttentionReport) => void
   onOpenChat?: (listener: (chatId: string) => void) => () => void
   reportStartupMilestone?: (name: RendererStartupMilestone) => void
+  edition?: unknown
   isDesktop: true
 }
 
@@ -167,6 +168,13 @@ export const canCapturePreview = bridge?.capturePreview !== undefined
 export const canRevealProjectFile = bridge?.revealProjectFile !== undefined
 export const canDropProjectFolders = bridge?.droppedFolderPaths !== undefined
 export const canPreviewViewedImages = bridge?.previewViewedImage !== undefined
+/**
+ * Which providers a packaged build's server offers: `release` the public set,
+ * `dev` every one. Undefined in a browser or an unpackaged run, whose server
+ * offers every provider unless a developer set otherwise.
+ */
+const edition = bridge?.edition
+export const buildEdition = edition === 'release' || edition === 'dev' ? edition : undefined
 
 export function reportStartupMilestone(name: RendererStartupMilestone): void {
   bridge?.reportStartupMilestone?.(name)

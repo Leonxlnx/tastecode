@@ -944,7 +944,9 @@ export function App() {
   /** For the model catalog's runs, which outlive a render. */
   const providerAccountsRef = useRef(providerAccounts)
   providerAccountsRef.current = providerAccounts
-  const [acpAgents, setAcpAgents] = useState<ResultOf<'acp.agents'>['agents']>([])
+  // Undefined until the first catalog run has listed them, so setup can tell
+  // an empty library from one that has not answered yet.
+  const [acpAgents, setAcpAgents] = useState<ResultOf<'acp.agents'>['agents'] | undefined>()
   const [providerRoster, setProviderRoster] = useState(readProviderRoster)
   // Read by the catalog run, which must not restart when a provider is added.
   const providerRosterRef = useRef(providerRoster)
@@ -2520,6 +2522,18 @@ export function App() {
       if (cancelled) return
       setProviderStatuses(providers)
       setCatalogAvailability('ready')
+      // ACP agents belong to the ACP entry; a build without it lists none.
+      // Setup shows its list once these are in as well, so they are settled
+      // here, before anything below can cut the run short. A run that fails
+      // before this point leaves them as they were for the next run to settle:
+      // an empty stand-in would let a retry show the list without them first.
+      // A run replaced before they answer still settles them while no other
+      // run has, so a replacement that fails does not leave setup waiting.
+      const offeredAgents = agentsCatalog.then((result) => {
+        const agents = providers.some((status) => status.id === 'acp') ? (result?.agents ?? []) : []
+        setAcpAgents((current) => (cancelled && current !== undefined ? current : agents))
+        return agents
+      })
       // Only the first answer may move an unchosen launch; later refreshes
       // must not override what the user picked since.
       const unchosen = providerUnchosenAtLaunch.current
@@ -2814,11 +2828,8 @@ export function App() {
           return preserveCatalog()
         }
       }
-      const acpPromise = agentsCatalog.then(async (result) => {
+      const acpPromise = offeredAgents.then(async (agents) => {
         if (cancelled) return []
-        // ACP agents belong to the ACP entry; a build without it lists none.
-        const agents = providers.some((status) => status.id === 'acp') ? (result?.agents ?? []) : []
-        setAcpAgents(agents)
         // Only agents added under Settings › Providers start for their models.
         const listed = agents.filter(
           (agent) =>
@@ -7931,6 +7942,8 @@ export function App() {
             themePreference={themePreference}
             onThemePreferenceChange={setThemePreference}
             providerStatuses={providerStatuses}
+            providersLoading={catalogAvailability === 'loading'}
+            providersError={catalogAvailability === 'failed' ? catalogError?.message : undefined}
             acpAgents={acpAgents}
             providerRoster={providerRoster ?? EMPTY_PROVIDER_ROSTER}
             onProviderRosterChange={changeProviderRoster}
