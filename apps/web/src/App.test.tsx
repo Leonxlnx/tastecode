@@ -1626,6 +1626,19 @@ describe('web client', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Restore' }))
     await waitFor(() => expect(composer.value).toBe('my unsent draft'))
   })
+  it('offers nothing back when Edit brings the same prompt with chips again', async () => {
+    await openNewSession()
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+
+    act(() => threadCallbacks.editMessage?.('/goal ship the fix'))
+    // The command came back as a chip; the draft now holds the chip form.
+    expect(composer.value).not.toBe('/goal ship the fix')
+    expect(composerWireText(composer.value)).toBe('/goal ship the fix')
+
+    act(() => threadCallbacks.editMessage?.('/goal ship the fix'))
+    expect(composerWireText(composer.value)).toBe('/goal ship the fix')
+    expect(screen.queryByText('Your draft was replaced.')).toBeNull()
+  })
   it('puts the last sent prompt back on Arrow Up in an empty composer', async () => {
     const fallback = transport.request.getMockImplementation()!
     const prompt = (id: string, text: string, createdAt: number) => ({

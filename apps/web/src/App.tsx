@@ -110,6 +110,7 @@ import { createSessionOrderSerializer } from './session-order-serializer.js'
 import type { CommandScope, PaletteCommand } from './ui/CommandPalette.js'
 import type { AppScreen } from './app-commands.js'
 import { Composer, type SendAvailability, type WorkspaceInfo } from './ui/Composer.js'
+import { composerWireText } from './ui/composer-chips.js'
 import {
   formatModelName,
   getFastModeOffValue,
@@ -5555,8 +5556,10 @@ export function App() {
     threadController.editDraft(owner, { text })
     setComposerDraft({ text, undoable: true, request: ++composerDraftRequests.current })
     setComposerFocusRequest((request) => request + 1)
-    // An unsent draft must not vanish without a way back.
-    if (draft.trim() && draft !== text) {
+    // An unsent draft must not vanish without a way back. The saved draft
+    // holds chips where the sent prompt has their tokens, so the two are
+    // compared as the provider receives them.
+    if (draft.trim() && composerWireText(draft) !== composerWireText(text)) {
       setReplacedDraft({ owner, text: draft })
       setNotice(DRAFT_REPLACED_NOTICE)
     }
