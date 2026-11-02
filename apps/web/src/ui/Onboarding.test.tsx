@@ -7,12 +7,16 @@ import { Onboarding, providerReadiness } from './Onboarding.js'
 
 const desktop = vi.hoisted(() => ({
   enabled: false,
+  edition: undefined as 'release' | 'dev' | undefined,
   setTheme: vi.fn((_preference: string) => Promise.resolve()),
 }))
 vi.mock('../bridge.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../bridge.js')>()),
   get isDesktop() {
     return desktop.enabled
+  },
+  get buildEdition() {
+    return desktop.edition
   },
   setDesktopTheme: desktop.setTheme,
 }))
@@ -341,6 +345,10 @@ describe('first-run onboarding', () => {
 })
 
 describe('agents page before the provider list answers', () => {
+  afterEach(() => {
+    desktop.edition = undefined
+  })
+
   function renderPending(overrides: Partial<Props> = {}) {
     const props = onboardingProps({ ...PENDING, ...overrides })
     const view = render(<Onboarding {...props} />)
@@ -350,6 +358,7 @@ describe('agents page before the provider list answers', () => {
   }
 
   it('holds placeholders in the final layout and names no provider', () => {
+    desktop.edition = 'release'
     renderPending()
     toAgentsPage()
 
@@ -360,10 +369,56 @@ describe('agents page before the provider list answers', () => {
     expect(busy()?.textContent).toBe(LOADING_LINE)
     // As many lines as a release build lists, under the heading the list keeps.
     expect(screen.getByRole('region', { name: 'Providers' })).toBeTruthy()
+    expect(screen.queryByRole('region', { name: 'ACP agents' })).toBeNull()
     expect(pickRows()).toHaveLength(5)
   })
 
+  it.each([
+    ['a dev build', 'dev'],
+    ['an unpackaged run', undefined],
+  ] as const)("holds the whole list's shape in %s, ACP group included", (_name, edition) => {
+    desktop.edition = edition
+    const page = renderPending()
+    toAgentsPage()
+    const lines = (group: string) =>
+      screen.getByRole('region', { name: group }).querySelectorAll('.onboarding__pick-row')
+
+    expect(dialogText()).not.toMatch(PROVIDER_NAMES)
+    expect(lines('Providers')).toHaveLength(7)
+    expect(lines('ACP agents').length).toBeGreaterThan(0)
+    // One loading line for the whole list, not one per group.
+    expect(document.querySelectorAll('.onboarding__pick [role="status"]')).toHaveLength(1)
+    expect(busy()?.textContent).toBe(LOADING_LINE)
+
+    // Every provider and the ACP library, as a dev build's server lists them.
+    const statuses = [
+      'claude-code',
+      'codex',
+      'grok',
+      'cursor',
+      'opencode',
+      'antigravity',
+      'pi',
+      'acp',
+    ].map((id): ProviderStatus => ({
+      id: id as ProviderStatus['id'],
+      displayName: id,
+      installed: false,
+      auth: 'unauthenticated',
+    }))
+    page.answer({ providerStatuses: statuses, providersLoading: false, acpAgents: [devin] })
+    expect(busy()).toBeNull()
+    expect(
+      [...document.querySelectorAll('.onboarding__pick .onboarding__pick-title')].map(
+        (title) => title.textContent,
+      ),
+    ).toEqual(['Providers', 'ACP agents'])
+    expect(lines('Providers')).toHaveLength(7)
+    expect(lines('ACP agents')).toHaveLength(1)
+  })
+
   it('fills the same lines with exactly what a release build offers', () => {
+    desktop.edition = 'release'
     const page = renderPending()
     toAgentsPage()
     page.answer(RELEASE_ANSWER)

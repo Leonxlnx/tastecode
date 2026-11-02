@@ -19,7 +19,7 @@ import {
 } from 'react'
 import { flushSync } from 'react-dom'
 import '../styles/onboarding.css'
-import { isDesktop, setDesktopTheme } from '../bridge.js'
+import { buildEdition, isDesktop, setDesktopTheme } from '../bridge.js'
 import { providerDisplayName, providerMark, type ProviderMark } from '../model-catalog.js'
 import { agentMark, agentPresentation } from '../provider-presentation.js'
 import {
@@ -32,7 +32,7 @@ import { DARK_THEME_QUERY, type ThemePreference } from '../theme.js'
 import { GeneratedAvatar } from './GeneratedAvatar.js'
 import { OnboardingPreview, type PreviewAgent, type PreviewHint } from './OnboardingPreview.js'
 import { ProviderIcon } from './ProviderIcon.js'
-import { Skeleton, SkeletonStatus } from './Skeleton.js'
+import { Skeleton, SkeletonGroup, SkeletonStatus } from './Skeleton.js'
 import { useDialogFocus } from './dialog-focus.js'
 import { catchIn, fly, flyText, morphInto, prefersReducedMotion } from './onboarding-motion.js'
 
@@ -652,7 +652,18 @@ export function Onboarding(props: {
                       : `${addedCount} added. Change this any time in Settings › Providers.`}
                 </p>
                 <div className="onboarding__pick">
-                  {listState === 'loading' ? <PickGroupSkeleton title="Providers" /> : null}
+                  {listState === 'loading'
+                    ? (buildEdition === 'release' ? RELEASE_PICK_SKELETON : FULL_PICK_SKELETON).map(
+                        (group, index) => (
+                          <PickGroupSkeleton
+                            key={group.title}
+                            title={group.title}
+                            rows={group.rows}
+                            announce={index === 0}
+                          />
+                        ),
+                      )
+                    : null}
                   {listState === 'ready' ? (
                     <>
                       <PickGroup
@@ -807,47 +818,60 @@ function PickGroup(props: {
   )
 }
 
-// Five lines: what a release build lists, so its answer fills them in
-// without moving the page. A build that offers more grows into the list.
-const PICK_SKELETON_ROWS = 5
+type PickSkeletonGroup = { title: string; rows: number }
+// A release build lists five providers and no ACP library, so its answer
+// fills these lines in without moving the page.
+const RELEASE_PICK_SKELETON: readonly PickSkeletonGroup[] = [{ title: 'Providers', rows: 5 }]
+// Every other build lists every provider and then the ACP library, which
+// runs past the list's tallest max height. Eight agent lines do as well, so
+// the list area already has the height the answer keeps.
+const FULL_PICK_SKELETON: readonly PickSkeletonGroup[] = [
+  { title: 'Providers', rows: DIRECT_PROVIDERS.length },
+  { title: 'ACP agents', rows: 8 },
+]
 // Fixed widths: a placeholder that reshuffles between renders jitters.
 const PICK_SKELETON_NAME_WIDTHS = [52, 88, 40] as const
 const PICK_SKELETON_STATE_WIDTHS = [48, 60, 40] as const
 
 /**
- * The providers group before the server has said which providers it offers:
- * the same lines, with bars where each mark, name and state will be, and the
- * loading line announced in place of the list.
+ * A group of the agents list before the server has said what it offers: the
+ * same lines, with bars where each mark, name and state will be. The first
+ * group announces the loading line in place of the list.
  */
-function PickGroupSkeleton(props: { title: string }) {
+function PickGroupSkeleton(props: { title: string; rows: number; announce: boolean }) {
   const titleId = useId()
+  const lines = Array.from({ length: props.rows }, (_, index) => (
+    <div className="onboarding__pick-row" key={index} aria-hidden>
+      <span className="onboarding__pick-line">
+        <Skeleton className="skeleton--block" width={16} height={16} />
+        <Skeleton
+          className="onboarding__pick-name-bar"
+          width={PICK_SKELETON_NAME_WIDTHS[index % PICK_SKELETON_NAME_WIDTHS.length]}
+        />
+        <span className="onboarding__pick-wire" />
+        <Skeleton
+          className="onboarding__pick-state-bar"
+          width={PICK_SKELETON_STATE_WIDTHS[index % PICK_SKELETON_STATE_WIDTHS.length]}
+        />
+        <span className="onboarding__pick-socket" />
+      </span>
+    </div>
+  ))
   return (
     <section className="onboarding__pick-group" aria-labelledby={titleId}>
       <h2 className="onboarding__pick-title" id={titleId}>
         {props.title}
       </h2>
-      <SkeletonStatus
-        label="Looking for the coding agents installed on this machine…"
-        className="onboarding__picks"
-      >
-        {Array.from({ length: PICK_SKELETON_ROWS }, (_, index) => (
-          <div className="onboarding__pick-row" key={index} aria-hidden>
-            <span className="onboarding__pick-line">
-              <Skeleton className="skeleton--block" width={16} height={16} />
-              <Skeleton
-                className="onboarding__pick-name-bar"
-                width={PICK_SKELETON_NAME_WIDTHS[index % PICK_SKELETON_NAME_WIDTHS.length]}
-              />
-              <span className="onboarding__pick-wire" />
-              <Skeleton
-                className="onboarding__pick-state-bar"
-                width={PICK_SKELETON_STATE_WIDTHS[index % PICK_SKELETON_STATE_WIDTHS.length]}
-              />
-              <span className="onboarding__pick-socket" />
-            </span>
-          </div>
-        ))}
-      </SkeletonStatus>
+      {props.announce ? (
+        <SkeletonStatus
+          label="Looking for the coding agents installed on this machine…"
+          className="onboarding__picks"
+        >
+          {lines}
+        </SkeletonStatus>
+      ) : (
+        <SkeletonGroup className="onboarding__picks">{lines}</SkeletonGroup>
+      )}
     </section>
   )
 }
