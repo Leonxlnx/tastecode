@@ -2,11 +2,11 @@
   "version": 1,
   "source": {
     "name": "tasteskill",
-    "version": "2.1.5",
+    "version": "2.5",
     "repository": "https://github.com/Leonxlnx/taste-skill",
-    "tag": "v2.1.5",
-    "commit": "12af471f627f866411b4bd785b19646d3672784c",
-    "release": "https://github.com/Leonxlnx/taste-skill/releases/tag/v2.1.5",
+    "ref": "v2.5",
+    "commit": "939b5640b56614f0e4cd1189311d106c451497e6",
+    "release": "https://github.com/Leonxlnx/taste-skill/tree/939b5640b56614f0e4cd1189311d106c451497e6",
     "license": "MIT"
   },
   "files": [
@@ -18,7 +18,7 @@
     {
       "path": "app-screens.md",
       "upstream": "skills/taste-skill/references/app-screens.md",
-      "sha256": "55e937ec30de605b53a11310b446f328a3ce7403de24fff008920a00be1a5ed4"
+      "sha256": "e278f892dfb5c6e05c6300c210df24e64ad9528c3c3efd127c1db3d6a926e8a4"
     },
     {
       "path": "app.css",

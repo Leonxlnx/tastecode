@@ -1,5 +1,5 @@
 /**
- * The switch for dashboards and app screens built from the tasteskill v2.1 app library (owner
+ * The switch for dashboards and app screens built from the tasteskill v2.5 app library (owner
  * request, 2026-10-25).
  *
  * While this is true, a dashboard or app-screen brief routes into dashboard mode again: Briefing

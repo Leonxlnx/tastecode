@@ -156,7 +156,7 @@ describe('dashboards as tasteskill app screens, dashboard images parked', () => 
       [],
       selectAppDirection(dashboardBrief, () => 0),
     )
-    expect(page).toContain('APP SHEET: dealt by TasteCode from tasteskill v2.1.5')
+    expect(page).toContain('APP SHEET: dealt by TasteCode from tasteskill v2.5')
     expect(page).toContain('"mode":"operate_monitor"')
     expect(page).not.toContain('DASHBOARD PLAN')
     expect(page).not.toContain('REFERENCE LOCK')

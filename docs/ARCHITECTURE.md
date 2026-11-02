@@ -761,7 +761,7 @@ manual.
 ## Dashboard design references (nightly)
 
 **Dashboards run as tasteskill app screens since 2026-10-25 (owner request).** A dashboard brief
-is dealt an app sheet from the tasteskill v2.1.5 app library bundled in
+is dealt an app sheet from the tasteskill v2.5 app library bundled in
 `packages/design-agent/references/app-screens/` (styles, shells and screen patterns as data, no
 images) and every phase works from that sheet and quoted sections of tasteskill's app-screen
 chapter; see [DESIGN-REFERENCES.md](./DESIGN-REFERENCES.md). `APP_SCREENS_ENABLED` in

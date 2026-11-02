@@ -51,8 +51,8 @@ describe('bundled tasteskill app library', () => {
       files: Array<{ path: string; sha256: string }>
     }
     expect(provenance.source).toMatchObject({
-      version: '2.1.5',
-      commit: '12af471f627f866411b4bd785b19646d3672784c',
+      version: '2.5',
+      commit: '939b5640b56614f0e4cd1189311d106c451497e6',
     })
     for (const file of provenance.files) {
       const digest = createHash('sha256')
@@ -60,7 +60,7 @@ describe('bundled tasteskill app library', () => {
         .digest('hex')
       expect(digest, file.path).toBe(file.sha256)
     }
-    expect(appScreenSource()).toBe('tasteskill v2.1.5')
+    expect(appScreenSource()).toBe('tasteskill v2.5')
   })
 })
 
@@ -107,7 +107,7 @@ describe('app-screen deal', () => {
     const direction = selectAppDirection(brief('Budget dashboard for our household'), first)
     expect(direction).toEqual({
       version: 1,
-      source: 'tasteskill v2.1.5',
+      source: 'tasteskill v2.5',
       kind: 'finance',
       style: 'achromatic-ledger',
       shell: 'open-plane',
@@ -206,7 +206,7 @@ describe('app sheet and rules', () => {
   it('renders the dealt sheet with tokens, type and shell, without tasteskill commands', () => {
     const direction = selectAppDirection(brief('Budget dashboard for our household'), first)
     const sheet = appSheetGuidance(direction)
-    expect(sheet).toContain('APP SHEET: dealt by TasteCode from tasteskill v2.1.5')
+    expect(sheet).toContain('APP SHEET: dealt by TasteCode from tasteskill v2.5')
     expect(sheet).toContain('1. The style: Achromatic ledger (achromatic-ledger, light)')
     expect(sheet).toContain('The move: No brand colour anywhere in the chrome')
     expect(sheet).toContain('  --ground: #f8f8f8;')
@@ -249,7 +249,7 @@ describe('app sheet and rules', () => {
     for (const file of ['app.css', 'charts.js']) {
       const [header, ...rest] = readFileSync(path.join(kit, file), 'utf8').split('\n')
       expect(header).toBe(
-        `/* tasteskill v2.1.5 ${file} (MIT License, Copyright (c) 2026 Leonxlnx): https://github.com/Leonxlnx/taste-skill. Keep this line in every copy. */`,
+        `/* tasteskill v2.5 ${file} (MIT License, Copyright (c) 2026 Leonxlnx): https://github.com/Leonxlnx/taste-skill. Keep this line in every copy. */`,
       )
       expect(rest.join('\n')).toBe(readFileSync(new URL(file, library), 'utf8'))
     }

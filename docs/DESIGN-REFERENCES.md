@@ -59,8 +59,8 @@ likely typefaces. Decks saved before this change, without these fields, still pa
 
 **Dashboards run as tasteskill app screens (owner request, 2026-10-25).** A dashboard or other
 app screen (admin, analytics, settings, inbox, wallet, builder) is built from the app-screen part
-of tasteskill v2.1, bundled unmodified from
-[Leonxlnx/taste-skill](https://github.com/Leonxlnx/taste-skill) tag `v2.1.5` in
+of tasteskill v2.5, bundled unmodified from
+[Leonxlnx/taste-skill](https://github.com/Leonxlnx/taste-skill) branch `v2.5` in
 `packages/design-agent/references/app-screens/` (MIT; `provenance.json` pins each file's
 SHA-256). `APP_SCREENS_ENABLED` in `packages/design-agent/src/app-screen-mode.ts` turns it on.
 After Briefing records a dashboard, the server deals one app sheet, a port of tasteskill's

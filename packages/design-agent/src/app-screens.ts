@@ -6,7 +6,7 @@ import { array, list, optionalRecord, record, string, strings } from './parse.js
 import type { ReferenceDirection } from './reference-directions.js'
 
 /**
- * Dashboards and app screens from the tasteskill v2.1 app library (app-screen-mode.ts).
+ * Dashboards and app screens from the tasteskill v2.5 app library (app-screen-mode.ts).
  *
  * `references/app-screens/` holds unmodified copies of tasteskill's app library, its app-screen
  * chapter, `app.css`, `charts.js` and its license. This module ports the deal of tasteskill's
@@ -83,7 +83,7 @@ interface AppLibrarySource {
 /** A dealt sheet, persisted with the run as library IDs so a resumed run renders the same sheet. */
 export interface AppDirection {
   version: 1
-  /** The library the IDs come from, such as "tasteskill v2.1.5". */
+  /** The library the IDs come from, such as "tasteskill v2.5". */
   source: string
   kind: string
   /** Only when the request names a light or dark interface. */
@@ -136,7 +136,7 @@ function librarySource(): AppLibrarySource {
   }
 }
 
-/** "tasteskill v2.1.5": the library a sheet was dealt from. */
+/** "tasteskill v2.5": the library a sheet was dealt from. */
 export function appScreenSource(): string {
   return `tasteskill v${bundle().source.version}`
 }

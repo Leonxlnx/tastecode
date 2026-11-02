@@ -1,10 +1,10 @@
 # tasteskill app-screen library
 
 Design mode builds dashboards and other app screens (admin, analytics, settings, inboxes,
-wallets, builders) from the app-screen part of tasteskill v2.1, the anti-slop frontend skill.
+wallets, builders) from the app-screen part of tasteskill v2.5, the anti-slop frontend skill.
 The files here are unmodified copies from
-[Leonxlnx/taste-skill](https://github.com/Leonxlnx/taste-skill) at tag `v2.1.5`
-(commit `12af471f627f866411b4bd785b19646d3672784c`). `provenance.json` records each file's
+[Leonxlnx/taste-skill](https://github.com/Leonxlnx/taste-skill) on branch `v2.5`
+(commit `939b5640b56614f0e4cd1189311d106c451497e6`). `provenance.json` records each file's
 upstream path and SHA-256; a test fails when a file no longer matches it.
 
 | File             | Upstream path                                  | Used for                                                                                   |
