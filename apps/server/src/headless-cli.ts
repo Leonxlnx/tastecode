@@ -21,6 +21,8 @@ export async function runHeadlessCli(
     return
   }
 
+  const { takeEdition } = await import('./provider-edition.js')
+  takeEdition(process.env)
   const { startServer } = await import('./server.js')
   const server = startServer({
     port: options.port,

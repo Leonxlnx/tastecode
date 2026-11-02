@@ -6,6 +6,10 @@ import type {
   ServerRequestHandler,
 } from '@harness/proc'
 import { spawnCli } from '@harness/proc'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { describe, expect, it, vi } from 'vitest'
 import { AcpAdapter, type AcpRpc } from './adapter.js'
 import type { ToolKind } from './protocol.js'
@@ -35,6 +39,8 @@ class FakeAcpRpc implements AcpRpc {
   #rejectPrompt: ((error: Error) => void) | undefined
   failTransport: ((error: Error) => void) | undefined
   loadSession = false
+  promptImages = true
+  prompts: unknown[] = []
   methods: string[] = []
   configOptions: unknown[] = []
   /** Client-to-agent notifications and permission answers, in wire order. */
@@ -78,13 +84,14 @@ class FakeAcpRpc implements AcpRpc {
           protocolVersion: 1,
           agentCapabilities: {
             loadSession: this.loadSession,
-            promptCapabilities: { image: true },
+            promptCapabilities: { image: this.promptImages },
           },
         }),
       )
     }
     if (method === 'session/new') return Promise.resolve(parse({ sessionId: 'sess-1' }))
     if (method === 'session/prompt') {
+      this.prompts.push(params)
       return new Promise<JsonRpcValue>((resolve, reject) => {
         this.#resolvePrompt = resolve
         this.#rejectPrompt = reject
@@ -241,6 +248,29 @@ describe('ACP approval lifecycle', () => {
       current.sendTurn('acp-grok-sess-1', 'review', ['preview.png']),
     ).rejects.toMatchObject({ code: 'ENOENT' })
     expect(events).toEqual([])
+  })
+
+  it('sends an image as a file link to an agent without image prompts', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'harness-acp-turn-'))
+    const image = join(directory, 'shot.png')
+    writeFileSync(image, Buffer.from([1, 2]))
+    try {
+      const current = adapter()
+      activeRpc().promptImages = false
+      await current.startThread('C:\repo')
+      expect(current.capabilities).toMatchObject({ images: false, imageFiles: true })
+      await current.sendTurn('acp-grok-sess-1', 'what is this?', [image])
+      expect(activeRpc().prompts.at(-1)).toMatchObject({
+        prompt: [
+          { type: 'text', text: 'what is this?' },
+          { type: 'resource_link', name: 'shot.png', uri: pathToFileURL(image).href },
+        ],
+      })
+      activeRpc().resolvePrompt({ stopReason: 'end_turn' })
+      await current.dispose()
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
   })
 
   it('answers an abandoned approval with cancelled when the turn ends', async () => {

@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
+import path from 'node:path'
 import type { ApprovalMode, Capabilities, DomainEvent, Model, Thread } from '@harness/contracts'
 import {
   argumentPromptLimit,
@@ -34,7 +35,34 @@ export const CURSOR_CAPABILITIES: Capabilities = {
   interrupt: true,
   reasoningItems: false,
   approvals: false,
-  images: false,
+  images: true,
+}
+
+const IMAGE_EXTENSIONS = new Set(['.gif', '.jpeg', '.jpg', '.png', '.webp'])
+
+/** What a turn's attachments add to cursor-agent's argv and prompt. */
+export type CursorAttachments = { args: string[]; files: string[] }
+
+/**
+ * Images go through cursor-agent's `--image <path>` ("Attach image(s) to a
+ * headless prompt", hidden from 2026.07 help): the CLI reads each file,
+ * scales it to 2048 px and sends it as JPEG pixels. Other files are named in
+ * the prompt, and their folders become extra workspace roots (`--add-dir`)
+ * so the agent may read them.
+ */
+export function cursorAttachments(attachments: readonly string[]): CursorAttachments {
+  const images = attachments.filter((file) =>
+    IMAGE_EXTENSIONS.has(path.extname(file).toLowerCase()),
+  )
+  const files = attachments.filter((file) => !images.includes(file))
+  const folders = [...new Set(files.map((file) => path.dirname(file)))]
+  return {
+    args: [
+      ...images.flatMap((file) => ['--image', file]),
+      ...folders.flatMap((folder) => ['--add-dir', folder]),
+    ],
+    files,
+  }
 }
 
 type Events = { event: [DomainEvent]; log: [string]; providerSessionId: [string] }
@@ -181,7 +209,6 @@ export class CursorAdapter extends EventEmitter<Events> {
       throw new Error('Cursor session has not started')
     }
     if (this.#turnId || this.#startingTurn) throw new Error('a turn is already running')
-    if (attachments.length) throw new Error('Cursor CLI attachments are not supported')
     this.#startingTurn = true
     this.#options = applyCursorTurnOptions(this.#options, options)
     const effectiveOptions = await this.#withConcreteModel(this.#options).finally(() => {
@@ -191,10 +218,14 @@ export class CursorAdapter extends EventEmitter<Events> {
     // a lingering child must not block or clobber the new turn.
     if (this.#child) await killTree(this.#child)
     const turnId = `${threadId}-turn-${crypto.randomUUID()}`
+    const attached = cursorAttachments(attachments)
+    const request = attached.files.length
+      ? `${text}\n\nAttached files:\n${attached.files.map((file) => `- ${file}`).join('\n')}`
+      : text
     const prompt =
       this.#instructionsPending && this.#options.instructions
-        ? `<system-instructions>\n${this.#options.instructions}\n</system-instructions>\n\n${text}`
-        : text
+        ? `<system-instructions>\n${this.#options.instructions}\n</system-instructions>\n\n${request}`
+        : request
     const args = [
       '--print',
       '--output-format',
@@ -204,6 +235,7 @@ export class CursorAdapter extends EventEmitter<Events> {
         : []),
       ...(effectiveOptions.model ? ['--model', effectiveOptions.model] : []),
       ...(this.#sessionId ? ['--resume', this.#sessionId] : []),
+      ...attached.args,
       prompt,
     ]
     const child = this.#spawn('cursor-agent', args, { cwd: this.#workspacePath })

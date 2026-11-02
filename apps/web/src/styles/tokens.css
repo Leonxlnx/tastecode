@@ -133,11 +133,6 @@
   --warning: #f2c94c;
   --error: #e5687a;
   --success: #6fbf8e;
-  /* Plan-limit gauge: how much is left, read as temperature from an empty
-     red through amber to a full green. Only the limits popup uses it. */
-  --gauge-empty: #f2677c;
-  --gauge-half: #f2b544;
-  --gauge-full: #4fd08d;
 
   /* Effort slider: a recessed pill, a mid-grey fill through the chosen level
      and a thumb in the text colour on it, so the level reads at a glance.
@@ -426,10 +421,6 @@
   --warning: #946800;
   --error: #be123c;
   --success: #16803c;
-  /* As bright on paper as on dark; darker stops turn olive in the middle. */
-  --gauge-empty: #ec4566;
-  --gauge-half: #f5a524;
-  --gauge-full: #1fb46c;
 
   /* Light: the same active language as a switch. The empty part is a
      groove, the chosen range is ink, and the thumb is paper. A mid-grey

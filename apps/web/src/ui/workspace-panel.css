@@ -31,7 +31,10 @@
   visibility: visible;
   opacity: 1;
   pointer-events: auto;
-  transform: translate3d(0, 0, 0);
+  /* None, not translate3d(0, 0, 0): a resting 3D transform kept the open
+     panel on its own layer, where Chromium drops subpixel antialiasing from
+     all of its text. The slide still runs on the compositor. */
+  transform: none;
   transition-delay: 0s;
 }
 
@@ -41,6 +44,26 @@
 
 .workspace-panel.is-expanded {
   border-left: 0;
+}
+
+/* Hiding takes the panel's grid column away at once. For the length of its
+   fade the panel leaves over the chat at its last open width instead of
+   vanishing with the column; WorkspacePanel sets the width and clears both. */
+.workspace-panel[data-leaving] {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: var(--workspace-panel-leave-w);
+}
+
+/* The panel mounts already open the first time it is shown; without a
+   starting style that first open skipped its entrance and appeared at once. */
+@starting-style {
+  .workspace-panel.is-open:not(.workspace-panel--bottom) {
+    opacity: 0;
+    transform: translate3d(24px, 0, 0);
+  }
 }
 
 .workspace-panel__resize {

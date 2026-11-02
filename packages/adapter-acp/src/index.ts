@@ -4,6 +4,7 @@ export {
   probeAgentSession,
   type AcpSessionProbe,
   type AcpLaunchOptions,
+  type AcpManagedMcp,
   type AcpStartOptions,
   type AcpTurnSettings,
 } from './adapter.js'

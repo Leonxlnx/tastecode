@@ -103,6 +103,21 @@ function released(
 }
 
 describe('openCodeModels', () => {
+  it('carries image input only where OpenCode says', () => {
+    const models = byId(
+      openCodeModels([
+        entry('anthropic', 'Anthropic', 'claude-sonnet-4-5', 'Claude Sonnet 4.5', {
+          imageInput: true,
+        }),
+        entry('deepseek', 'DeepSeek', 'deepseek-chat', 'DeepSeek Chat', { imageInput: false }),
+        entry('openai', 'OpenAI', 'gpt-5', 'GPT-5'),
+      ]),
+    )
+    expect(models.get('anthropic/claude-sonnet-4-5')?.images).toBe(true)
+    expect(models.get('deepseek/deepseek-chat')?.images).toBe(false)
+    expect(models.get('openai/gpt-5')).not.toHaveProperty('images')
+  })
+
   it('names each captured model as its provider does and places it with its lab', () => {
     const models = openCodeModels(capturedEntries())
     for (const model of models) expect(ModelSchema.parse(model)).toEqual(model)

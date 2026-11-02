@@ -56,6 +56,7 @@ import {
 } from './provider-controls.js'
 import { ModelListCache } from './model-list-cache.js'
 import { PROVIDER_CAPABILITIES } from './provider-capabilities.js'
+import { assertProviderOffered } from './provider-edition.js'
 import {
   contextForLaunch,
   providerContextControl,
@@ -75,6 +76,7 @@ import {
 import { handoverBudget, handoverPrompt } from './handover.js'
 import { REPLY_STYLE_INSTRUCTIONS } from './reply-style.js'
 import { LOCAL_SKILL_CAPABILITIES, listLocalSkills, mergeSkills } from './skill-inventory.js'
+import { isDefaultSkillId, loadDefaultSkills, type DefaultSkills } from './default-skills.js'
 import type { ProviderAccountSnapshotKind, Store, StoredCheckpoint } from './store.js'
 import {
   carryUncommittedChanges,
@@ -685,6 +687,8 @@ export class Orchestrator {
   #serverOwnedUserTurns = new Set<string>()
   #suppressedUserItems = new Map<string, Set<string>>()
   #inFlightSubmissionIds = new Map<string, Set<string>>()
+  /** Prompts on their way to each thread that have not started or queued yet. */
+  #incomingSubmissions = new Map<string, Set<Promise<unknown>>>()
   #startingTurns = new Set<string>()
   #turnStartBarriers = new Map<string, TurnStartBarrier>()
   #pendingTurnStarts = new Map<string, PendingTurnStart>()
@@ -742,6 +746,8 @@ export class Orchestrator {
   /** The latest patch recorded for each running turn. */
   #recordedTurnDiffs = new Map<string, { turnId: string; diff: string }>()
   #worktreeRoot: string
+  readonly #defaultSkillsRoot: string | undefined
+  #defaultSkills: DefaultSkills | undefined
   #onEvent: RecordedEventHandler
   #onSideEvent: RecordedEventHandler
   #onQueue: (threadId: string, state: QueueState) => void
@@ -889,6 +895,8 @@ export class Orchestrator {
 
       /** Where isolated checkouts live. Outside any repository, on purpose. */
       worktreeRoot?: string
+      /** The folder of the skills that ship with TasteCode; absent, sessions get none. */
+      defaultSkillsRoot?: string
     },
   ) {
     this.#store = store
@@ -899,6 +907,7 @@ export class Orchestrator {
     this.#worktreeRoot =
       handlers.worktreeRoot ??
       (process.env['HARNESS_WORKTREE_DIR'] || path.join(path.dirname(storeLocation()), 'trees'))
+    this.#defaultSkillsRoot = handlers.defaultSkillsRoot
     this.#onEvent = handlers.onEvent
     this.#onSideEvent = handlers.onSideEvent ?? handlers.onEvent
     this.#onQueue = handlers.onQueue ?? (() => {})
@@ -1531,18 +1540,50 @@ export class Orchestrator {
     const local = control.capabilities.agentsSkillsDir
       ? await listLocalSkills(projectPath)
       : undefined
+    // Every provider's chats can use the skills that ship with TasteCode, so
+    // they are listed even where the provider has no inventory of its own.
+    const bundled = this.#bundledSkills().skills
     if (!control.listSkills) {
-      return local
+      const own = local
         ? { capabilities: LOCAL_SKILL_CAPABILITIES, ...local }
         : { capabilities: NO_SKILL_CAPABILITIES, skills: [], errors: [] }
+      return { ...own, skills: mergeSkills(own.skills, bundled) }
     }
     this.watchProvider(provider, projectPath, ['skills'])
     const vendor = await control.listSkills(projectPath)
-    if (!local) return vendor
     return {
       capabilities: vendor.capabilities,
-      skills: mergeSkills(vendor.skills, local.skills),
-      errors: [...vendor.errors, ...local.errors],
+      skills: mergeSkills(mergeSkills(vendor.skills, local?.skills ?? []), bundled),
+      errors: [...vendor.errors, ...(local?.errors ?? [])],
+    }
+  }
+
+  /** Read once per server: the bundled files do not change while it runs. */
+  #bundledSkills(): DefaultSkills {
+    const root = this.#defaultSkillsRoot
+    this.#defaultSkills ??= root ? loadDefaultSkills(root) : { root: '', skills: [], catalog: '' }
+    return this.#defaultSkills
+  }
+
+  /**
+   * The instructions a session starts with: reply style, then the default
+   * skills (as a plugin where the provider loads them itself, as a short
+   * catalog everywhere else), then any instructions of the caller. Side work
+   * that is not a chat of its own leaves the skills out.
+   */
+  #sessionStart(
+    provider: ProviderId,
+    instructions?: string,
+    { skills = true }: { skills?: boolean } = {},
+  ): Pick<StartOptions, 'instructions' | 'skillPlugin'> {
+    const bundled = skills ? this.#bundledSkills() : undefined
+    const native = this.#controls.forProvider(provider).capabilities.defaultSkillsPlugin
+    const catalog = bundled && !native ? bundled.catalog : ''
+    return {
+      instructions: composeInstructions(
+        [catalog, instructions?.trim()].filter(Boolean).join('\n\n'),
+      ),
+      ...(bundled?.skills.length && native ? { skillPlugin: bundled.root } : {}),
     }
   }
 
@@ -1552,6 +1593,8 @@ export class Orchestrator {
     skillId: string,
     enabled: boolean,
   ): Promise<boolean> {
+    if (isDefaultSkillId(skillId))
+      throw new Error('Skills included with TasteCode cannot be turned off yet.')
     const control = this.#controls.forProvider(provider)
     if (!control.setSkillEnabled)
       throw new Error(`provider "${provider}" cannot configure skills yet`)
@@ -1737,6 +1780,7 @@ export class Orchestrator {
   }
 
   #requireMcpManagement(provider: ProviderId): void {
+    assertProviderOffered(provider)
     if (!PROVIDER_CAPABILITIES[provider].managedMcp)
       throw new Error(`provider "${provider}" cannot manage MCP servers yet`)
   }
@@ -1871,6 +1915,9 @@ export class Orchestrator {
   ): Promise<Thread> {
     const resolved = resolveWorkspacePath(workspacePath)
     if (this.#panicStopping) throw new Error('task start cancelled by panic stop')
+    // Before the base-branch switch below, which would move the user's checkout
+    // for a chat that can never start.
+    assertProviderOffered(provider)
     const generation = {
       dispose: this.#disposeGeneration,
       panic: this.#panicGeneration,
@@ -2079,7 +2126,7 @@ export class Orchestrator {
         ...(target.effort ? { effort: target.effort } : {}),
         ...(target.serviceTier ? { serviceTier: target.serviceTier } : {}),
         ...(approval ? { approval } : {}),
-        instructions: composeInstructions(),
+        ...this.#sessionStart(target.provider),
         ...this.#mcpRuntimeOptions(target.provider, stored.projectPath),
         ...this.#contextRuntimeOptions(target.provider, target.agent, accountId),
       }
@@ -2273,7 +2320,9 @@ export class Orchestrator {
     const runtime = this.#runtimeFor(provider, this.#onLog, accountHome)
     const runtimeOptions = {
       ...options,
-      instructions: composeInstructions(options.instructions),
+      ...this.#sessionStart(provider, options.instructions, {
+        skills: !options.ephemeral,
+      }),
       ...this.#mcpRuntimeOptions(provider, workspacePath),
       ...this.#contextRuntimeOptions(provider, options.agent, accountId),
     }
@@ -2736,12 +2785,48 @@ export class Orchestrator {
   }
 
   /** Send now when idle, otherwise put the prompt behind the active turn. */
-  async submitTurn(
+  submitTurn(
     threadId: string,
     text: string,
     attachments: string[] = [],
     options: TurnOptions = {},
     clientSubmissionId?: string,
+  ): Promise<{ queued: false; turnId: string } | { queued: true; queuedTurn: QueuedTurn }> {
+    return this.trackSubmission(threadId, () =>
+      this.#submitTurn(threadId, text, attachments, options, clientSubmissionId),
+    )
+  }
+
+  /**
+   * Runs `submit`, which hands a prompt to `threadId`, as a prompt on its way: a Stop sent
+   * meanwhile reaches the agent once the prompt has started or queued. The server also runs
+   * the work it does before `submitTurn` under this, so a Stop cannot overtake that either.
+   */
+  trackSubmission<T>(threadId: string, submit: () => Promise<T>): Promise<T> {
+    let submission: Promise<T>
+    try {
+      submission = submit()
+    } catch (error) {
+      return Promise.reject(error instanceof Error ? error : new Error(String(error)))
+    }
+    const incoming = this.#incomingSubmissions.get(threadId) ?? new Set<Promise<unknown>>()
+    incoming.add(submission)
+    this.#incomingSubmissions.set(threadId, incoming)
+    const arrived = () => {
+      incoming.delete(submission)
+      if (incoming.size === 0 && this.#incomingSubmissions.get(threadId) === incoming)
+        this.#incomingSubmissions.delete(threadId)
+    }
+    void submission.then(arrived, arrived)
+    return submission
+  }
+
+  async #submitTurn(
+    threadId: string,
+    text: string,
+    attachments: string[],
+    options: TurnOptions,
+    clientSubmissionId: string | undefined,
   ): Promise<{ queued: false; turnId: string } | { queued: true; queuedTurn: QueuedTurn }> {
     const panicGeneration = this.#panicGeneration
     const disposeGeneration = this.#disposeGeneration
@@ -4162,6 +4247,8 @@ export class Orchestrator {
   }
 
   async interrupt(threadId: string): Promise<void> {
+    // Only prompts already on their way when Stop came can start the turn it stops.
+    const incoming = [...(this.#incomingSubmissions.get(threadId) ?? [])]
     // "Stop" on a thread that is not live must be a no-op, not an error the
     // user cannot act on.
     if (!this.#threads.has(threadId)) {
@@ -4169,9 +4256,16 @@ export class Orchestrator {
       // that resume so its pending submission cannot run after the user stops it.
       if (this.#resumingThreads.has(threadId)) {
         this.#runtimeGenerations.set(threadId, (this.#runtimeGenerations.get(threadId) ?? 0) + 1)
+        return
       }
-      return
+      if (incoming.length === 0) return
     }
+    // An agent asked to stop before its turn exists has nothing to stop and
+    // drops the request; the turn then ran to its end behind "Stopping…". A new
+    // chat stopped while it starts sends its prompt and the Stop back to back,
+    // and the Stop overtook the prompt on its way in. Wait for those prompts to
+    // start or queue first.
+    await Promise.allSettled(incoming)
     // The checkpoint runs before the provider starts. An interrupt sent in
     // that window used to hit an idle adapter and disappear, after which the
     // turn started anyway. Wait until the adapter has accepted or rejected
@@ -4720,20 +4814,21 @@ export class Orchestrator {
       ...this.#mcpRuntimeOptions(stored.provider, stored.projectPath),
       ...this.#contextRuntimeOptions(stored.provider, stored.agent, stored.accountId),
     }
+    const sessionStart = this.#sessionStart(stored.provider, undefined, {
+      skills: !stored.ephemeral,
+    })
     let freshSessionId: string | undefined
     const result = await (
       fresh || !resume
-        ? runtime
-            .start(workspacePath, { ...options, instructions: composeInstructions() })
-            .then((started) => {
-              freshSessionId = started.thread.id
-              return mapProviderSession(threadId, started)
-            })
+        ? runtime.start(workspacePath, { ...options, ...sessionStart }).then((started) => {
+            freshSessionId = started.thread.id
+            return mapProviderSession(threadId, started)
+          })
         : resume(threadId, workspacePath, {
             ...options,
             ...(stored.providerSessionId ? { providerSessionId: stored.providerSessionId } : {}),
             ...(resumeState === undefined ? {} : { resumeState }),
-            instructions: REPLY_STYLE_INSTRUCTIONS,
+            ...sessionStart,
           })
     ).catch((error: unknown) => {
       if (!(error instanceof StartupCleanupError)) throw error

@@ -13,7 +13,7 @@ import {
 } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import { CLAUDE_MCP_CAPABILITIES } from '@harness/adapter-claude-code/capabilities'
 import { GROK_MCP_CAPABILITIES } from '@harness/adapter-grok/mcp'
 import { OPENCODE_MCP_CAPABILITIES } from '@harness/adapter-opencode/inventory'
@@ -55,8 +55,10 @@ import {
 } from '@harness/design-agent'
 import { encodeHistoryCursor, readHistoryPage } from './history-page.js'
 import { compactHistoryReplay } from './history-replay.js'
+import { writeDefaultSkillsFixture } from './default-skills.test-support.js'
 import { McpConfigStore } from './mcp-config.js'
 import { Orchestrator } from './orchestrator.js'
+import { PROVIDER_CAPABILITIES } from './provider-capabilities.js'
 import type { ProviderControlsOptions } from './provider-controls.js'
 import { StartupCleanupError } from './provider-session.js'
 import { DatabaseSync } from './sqlite.js'
@@ -336,6 +338,7 @@ function harness(
   maxIdleThreadRuntimes?: number,
   idleThreadRuntimeMs?: number,
   providerServices?: ProviderControlsOptions['services'],
+  defaultSkillsRoot?: string,
 ) {
   const sessions: FakeSession[] = []
   const received: Array<{
@@ -466,6 +469,7 @@ function harness(
       opencode: { ...quietOpenCodeInventory, ...providerServices?.opencode },
     },
     ...(worktreeRoot ? { worktreeRoot } : {}),
+    ...(defaultSkillsRoot ? { defaultSkillsRoot } : {}),
   })
 
   return {
@@ -1492,6 +1496,71 @@ describe('reply style', () => {
       expect(startedOptions[0]?.instructions).toContain('Do not use em dashes')
     },
   )
+})
+
+describe('default skills', () => {
+  const skillsHarness = async () => {
+    const parent = mkdtempSync(path.join(os.tmpdir(), 'tc-orchestrator-skills-'))
+    onTestFinished(() => rmSync(parent, { recursive: true, force: true }))
+    const root = await writeDefaultSkillsFixture(parent)
+    return { root, ...harness(undefined, undefined, undefined, undefined, undefined, root) }
+  }
+
+  it.each(ProviderIdSchema.options)('lists the bundled skills for %s', async (provider) => {
+    const { orchestrator } = await skillsHarness()
+    const inventory = await orchestrator.listSkills(provider, process.cwd())
+
+    expect(
+      inventory.skills
+        .filter((skill) => skill.id.startsWith('tastecode:'))
+        .map((skill) => [skill.name, skill.scope]),
+    ).toEqual([
+      ['cinetic', 'system'],
+      ['design-taste-frontend', 'system'],
+      ['cook', 'system'],
+    ])
+    await orchestrator.disposeAll()
+  })
+
+  it.each(ProviderIdSchema.options)(
+    'gives %s chats the default skills, but not a Side chat',
+    async (provider) => {
+      const { orchestrator, startedOptions, store, root } = await skillsHarness()
+      const parent = await orchestrator.startThread(provider, process.cwd())
+      store.append(parent.id, userMessage(`user-${provider}`, 'Question', 'parent-turn'))
+      await orchestrator.startSideThread(parent.id)
+
+      expect(startedOptions[0]?.instructions).toContain('Do not use em dashes')
+      if (PROVIDER_CAPABILITIES[provider].defaultSkillsPlugin) {
+        // Loaded natively as a plugin, so the catalog would only repeat it.
+        expect(startedOptions[0]?.skillPlugin).toBe(root)
+        expect(startedOptions[0]?.instructions).not.toContain('Skills included with TasteCode')
+      } else {
+        expect(startedOptions[0]?.instructions).toContain('Skills included with TasteCode')
+        expect(startedOptions[0]?.instructions).toContain(path.join(root, 'skills'))
+        expect(startedOptions[0]?.instructions).toContain('- cook: long reference-matching loops')
+        expect(startedOptions[0]?.skillPlugin).toBeUndefined()
+      }
+      expect(startedOptions[1]?.instructions).not.toContain('Skills included with TasteCode')
+      expect(startedOptions[1]?.skillPlugin).toBeUndefined()
+      await orchestrator.disposeAll()
+    },
+  )
+
+  it('starts without a catalog when no bundle was given', async () => {
+    const { orchestrator, startedOptions } = harness()
+    await orchestrator.startThread('cursor', process.cwd())
+    expect(startedOptions[0]?.instructions).not.toContain('Skills included with TasteCode')
+    await orchestrator.disposeAll()
+  })
+
+  it('refuses to switch off a bundled skill through a provider', async () => {
+    const { orchestrator } = await skillsHarness()
+    await expect(
+      orchestrator.setSkillEnabled('codex', process.cwd(), 'tastecode:cook', false),
+    ).rejects.toThrow(/included with TasteCode/)
+    await orchestrator.disposeAll()
+  })
 })
 
 describe('provider-neutral Side chat', () => {
@@ -7631,6 +7700,70 @@ describe('several sessions at once', () => {
     await expect(sending).resolves.toMatchObject({ queued: false })
     await expect(stopping).resolves.toBeUndefined()
     await vi.waitFor(() => expect(sessions[0]!.interrupted).toBe(true))
+  })
+
+  it('delivers a Stop sent right behind its prompt after the turn started', async () => {
+    // A new chat stopped while it starts sends the prompt and the Stop back to back. An agent
+    // asked to stop before its turn exists has nothing to stop, and drops the request.
+    const { sessions, orchestrator } = harness()
+    const thread = await orchestrator.startThread('codex', '/repo')
+    const session = sessions[0]!
+    const promptsWhenStopped: number[] = []
+    vi.spyOn(session, 'interrupt').mockImplementation(async () => {
+      promptsWhenStopped.push(session.sent.length)
+    })
+
+    const sending = orchestrator.submitTurn(thread.id, 'stop me')
+    const stopping = orchestrator.interrupt(thread.id)
+
+    await expect(sending).resolves.toMatchObject({ queued: false })
+    await expect(stopping).resolves.toBeUndefined()
+    expect(promptsWhenStopped).toEqual([1])
+  })
+
+  it('holds a Stop for a prompt that is still being prepared', async () => {
+    const { sessions, orchestrator } = harness()
+    const thread = await orchestrator.startThread('codex', '/repo')
+    const session = sessions[0]!
+    const promptsWhenStopped: number[] = []
+    vi.spyOn(session, 'interrupt').mockImplementation(async () => {
+      promptsWhenStopped.push(session.sent.length)
+    })
+    let prepared!: () => void
+    const preparing = new Promise<void>((resolve) => (prepared = resolve))
+
+    // The server reads outside history before it hands the prompt over.
+    const sending = orchestrator.trackSubmission(thread.id, async () => {
+      await preparing
+      return orchestrator.submitTurn(thread.id, 'stop me')
+    })
+    const stopping = orchestrator.interrupt(thread.id)
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(promptsWhenStopped).toEqual([])
+
+    prepared()
+    await expect(sending).resolves.toMatchObject({ queued: false })
+    await expect(stopping).resolves.toBeUndefined()
+    expect(promptsWhenStopped).toEqual([1])
+  })
+
+  it('does not hold a Stop for a prompt sent after it', async () => {
+    const { sessions, orchestrator } = harness()
+    const thread = await orchestrator.startThread('codex', '/repo')
+    await orchestrator.submitTurn(thread.id, 'running')
+    let prepared!: () => void
+    const preparing = new Promise<void>((resolve) => (prepared = resolve))
+
+    const stopping = orchestrator.interrupt(thread.id)
+    const later = orchestrator.trackSubmission(thread.id, async () => {
+      await preparing
+      return orchestrator.submitTurn(thread.id, 'later')
+    })
+    await expect(stopping).resolves.toBeUndefined()
+    expect(sessions[0]!.interrupted).toBe(true)
+
+    prepared()
+    await expect(later).resolves.toMatchObject({ queued: true })
   })
 
   it('cancels a cold resume on Stop and allows a later submission', async () => {

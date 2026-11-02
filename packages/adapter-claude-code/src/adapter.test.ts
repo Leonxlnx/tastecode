@@ -1580,6 +1580,117 @@ describe('Claude Agent SDK session', () => {
     adapter.dispose()
   })
 
+  it.each(['answers the Stop', 'never answers the Stop'] as const)(
+    'ends a stopped turn whose run never reports, process and all, when Claude %s',
+    async (variant) => {
+      const fake = harness()
+      const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery, stopTimeoutMs: 20 })
+      const events: DomainEvent[] = []
+      const logs: string[] = []
+      adapter.on('event', (event) => events.push(event))
+      adapter.on('log', (line) => logs.push(line))
+      const disconnected = vi.fn(() => events.slice())
+      adapter.onDisconnected(disconnected)
+      try {
+        const thread = await adapter.startThread('/repo')
+        const query = fake.queries[0]!
+        const turnId = await adapter.sendTurn(thread.id, 'Load the skills')
+        query.emitMessage(bashCalls('message-bash', ['ls', 'cat SKILL.md', 'git status']))
+        await tick()
+        if (variant === 'never answers the Stop') {
+          vi.spyOn(query, 'interrupt').mockReturnValueOnce(new Promise(() => {}))
+        }
+
+        // Stop settles even when the control request is never answered.
+        await adapter.interrupt()
+        await vi.waitFor(() =>
+          expect(events.filter((event) => event.type === 'turn.completed')).toEqual([
+            { type: 'turn.completed', turnId, status: 'interrupted' },
+          ]),
+        )
+
+        // No command is left running: each ends with the turn.
+        const latest = new Map<string, Item>()
+        for (const event of events) {
+          if (event.type === 'item.completed') latest.set(event.item.id, event.item)
+        }
+        const commands = [...latest.values()].filter((item) => item.type === 'command')
+        expect(commands.map((item) => item.status)).toEqual(['failed', 'failed', 'failed'])
+        expect(events.filter((event) => event.type === 'thread.error')).toEqual([])
+        // The process is ended, and the owner hears of it only after the turn has ended.
+        expect(query.closed).toBe(true)
+        expect(disconnected).toHaveBeenCalledOnce()
+        expect(disconnected.mock.results[0]!.value).toEqual(events)
+        expect(logs).toContainEqual(expect.stringContaining('did not end the stopped turn'))
+
+        // A late result from the closed process reports nothing.
+        query.emitMessage({ ...(resultMessage(true) as object), errors: ['aborted'] } as SDKMessage)
+        await tick()
+        expect(events.filter((event) => event.type === 'turn.completed')).toHaveLength(1)
+      } finally {
+        await adapter.dispose()
+      }
+    },
+  )
+
+  it('lets a stopped run end on its own within the stop deadline', async () => {
+    const fake = harness()
+    const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery, stopTimeoutMs: 30 })
+    const events: DomainEvent[] = []
+    adapter.on('event', (event) => events.push(event))
+    const disconnected = vi.fn()
+    adapter.onDisconnected(disconnected)
+    try {
+      const thread = await adapter.startThread('/repo')
+      const query = fake.queries[0]!
+      await adapter.sendTurn(thread.id, 'Run tests')
+      await adapter.interrupt()
+      query.emitMessage({ ...(resultMessage(true) as object), errors: ['aborted'] } as SDKMessage)
+      await new Promise((resolve) => setTimeout(resolve, 60))
+
+      expect(events.filter((event) => event.type === 'turn.completed')).toMatchObject([
+        { status: 'interrupted' },
+      ])
+      expect(query.closed).toBe(false)
+      expect(disconnected).not.toHaveBeenCalled()
+      await expect(adapter.sendTurn(thread.id, 'Next')).resolves.toBeTypeOf('string')
+    } finally {
+      await adapter.dispose()
+    }
+  })
+
+  it('keeps the turn of a steer that outlives a Stop past the stop deadline', async () => {
+    const fake = harness()
+    const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery, stopTimeoutMs: 30 })
+    const events: DomainEvent[] = []
+    adapter.on('event', (event) => events.push(event))
+    try {
+      const thread = await adapter.startThread('/repo')
+      const query = fake.queries[0]!
+      const prompts = fake.inputs[0]!.prompt[Symbol.asyncIterator]()
+      const first = await adapter.sendTurn(thread.id, 'A')
+      await prompts.next()
+      await adapter.steer(thread.id, 'B')
+      const steer = (await prompts.next()).value!
+      query.stillQueued = [steer.uuid!]
+      await adapter.interrupt()
+      query.emitMessage({ ...(resultMessage(true) as object), errors: ['aborted'] } as SDKMessage)
+      // The steer still runs in the turn after the stopped run reported.
+      await new Promise((resolve) => setTimeout(resolve, 60))
+      expect(query.closed).toBe(false)
+      expect(events.filter((event) => event.type === 'turn.completed')).toEqual([])
+
+      query.emitMessage(assistantMessage('message-b', 'Answer to B'))
+      query.emitMessage(resultMessage(false))
+      await tick()
+      expect(events.filter((event) => event.type === 'turn.completed')).toEqual([
+        { type: 'turn.completed', turnId: first, status: 'completed' },
+      ])
+    } finally {
+      await adapter.dispose()
+    }
+  })
+
   it('keeps subagent messages out of the main transcript, plan and model label', async () => {
     const fake = harness()
     const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
@@ -2752,6 +2863,29 @@ function assistantMessage(id: string, text: string): SDKMessage {
       model: 'claude-opus-5',
       type: 'message',
       content: [{ type: 'text', text }],
+    },
+  } as unknown as SDKMessage
+}
+
+/** One assistant message that starts parallel Bash calls, as Claude sends them. */
+function bashCalls(id: string, commands: string[]): SDKMessage {
+  // SAFETY: The adapter reads only the envelope, message id, model and content of this fixture.
+  return {
+    type: 'assistant',
+    parent_tool_use_id: null,
+    uuid: crypto.randomUUID(),
+    session_id: 'session-1',
+    message: {
+      id,
+      role: 'assistant',
+      model: 'claude-opus-5',
+      type: 'message',
+      content: commands.map((command, index) => ({
+        type: 'tool_use',
+        id: `${id}-bash-${index}`,
+        name: 'Bash',
+        input: { command },
+      })),
     },
   } as unknown as SDKMessage
 }

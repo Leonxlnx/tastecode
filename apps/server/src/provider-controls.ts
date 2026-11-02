@@ -37,6 +37,7 @@ import {
 import type { ModelListRead } from './model-list-cache.js'
 import { ProjectInventoryCache, type ProjectInventoryService } from './project-inventory-cache.js'
 import { PROVIDER_CAPABILITIES, type ProviderControlCapabilities } from './provider-capabilities.js'
+import { providerOffered } from './provider-edition.js'
 import { retryableLazy } from './retryable-lazy.js'
 import { WatchLeases } from './watch-leases.js'
 
@@ -57,8 +58,8 @@ type LoginResponse = { loginId: string; authUrl?: string }
 type LoginHandle = LoginResponse & { cancel: () => Promise<void> }
 type LimitSource = { status: 'ready'; limits: ProviderLimit[] } | { status: 'unavailable' }
 /**
- * The Codex control process serves no commands, so a `commands` watch holds no
- * process lease. It does watch a project inventory's configuration folders,
+ * The Codex control process serves no commands (its list is static), so a
+ * `commands` watch holds no process lease. It does watch a project inventory's configuration folders,
  * and services report command changes through `InventoryRead.changed`.
  */
 type WatchTarget = ParamsOf<'providers.watch'>['targets'][number]
@@ -412,7 +413,14 @@ function claudeLaunch(runtime: string | undefined) {
 
 const defaultServices = {
   antigravity: {
+    // agy answers its read-only commands itself and expands skills from
+    // folders, so the list needs no process.
+    listCommands: async (projectPath) => ({
+      commands: await (await loadAntigravity()).listAntigravityCommands(projectPath),
+      loading: false,
+    }),
     account: async () => (await loadAntigravity()).antigravityAccount(),
+    usageLimitSource: async () => (await loadAntigravity()).antigravityLimitSource(),
     // agy keeps its Google sign-in in the OS keyring and drops it only from
     // its own TUI; doing nothing here would show a sign-out that never happened.
     signOut: async () => {
@@ -420,7 +428,14 @@ const defaultServices = {
     },
   },
   api: {},
-  codex: {},
+  codex: {
+    // Codex's slash commands are app-server actions its chats route typed
+    // commands to, so the list needs no process.
+    listCommands: async () => ({
+      commands: (await loadCodex()).CODEX_COMMANDS.map((command) => ({ ...command })),
+      loading: false,
+    }),
+  },
   opencode: {
     // OpenCode reports these from a running server. A project without a chat
     // starts one without a session (4-12 s), cached.
@@ -461,7 +476,15 @@ const defaultServices = {
     signOut: async () => (await loadClaude()).signOutClaude(),
   },
   cursor: {
+    // A print-mode turn expands the custom commands and skills it finds on
+    // disk, so the list is read from the same folders without a process.
+    listCommands: async (projectPath) => ({
+      commands: await (await loadCursor()).listCursorCommands(projectPath),
+      loading: false,
+    }),
     account: async () => (await loadCursor()).cursorAccount(),
+    // One HTTPS request with cursor-agent's stored sign-in; see the adapter.
+    usageLimitSource: async () => (await loadCursor()).cursorLimitSource(),
     startLogin: async (complete) => (await loadCursor()).startCursorLogin(complete),
     signOut: async () => (await loadCursor()).signOutCursor(),
   },
@@ -483,6 +506,8 @@ const defaultServices = {
     signOut: async () => (await loadGrok()).signOutGrok(),
   },
   acp: {
+    // ACP sessions can only add servers.
+    validateMcpServer: validateAcpMcpServer,
     account: async (agent) => (agent ? (await loadAcp()).acpAccount(agent) : { signedIn: false }),
     signOut: async (agent) => {
       if (agent) await (await loadAcp()).acpSignOut(agent)
@@ -760,10 +785,17 @@ export class ProviderControls {
   }
 
   #makeControl(provider: ProviderId): ProviderControl {
-    const capabilities = PROVIDER_CAPABILITIES[provider]
+    // A provider this build does not offer answers like a removed API
+    // connection: signed out, no limits, models or inventories, and it never
+    // starts its CLI. Old chats on it still get a usage summary.
+    const offered = providerOffered(provider)
+    const capabilities = PROVIDER_CAPABILITIES[offered ? provider : 'api']
     const home = this.#options.accountHome
-    const ownServices =
-      home === undefined ? defaultServices[provider] : accountServices.get(provider)?.(home)
+    const ownServices = !offered
+      ? {}
+      : home === undefined
+        ? defaultServices[provider]
+        : accountServices.get(provider)?.(home)
     // The default account's calls would act on the user's own sign-in instead.
     if (!ownServices) throw new Error(`${provider} cannot run as another account`)
     const services: ProviderServices = { ...ownServices, ...this.#options.services?.[provider] }

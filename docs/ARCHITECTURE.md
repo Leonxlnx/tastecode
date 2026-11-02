@@ -109,8 +109,15 @@ the key into desktop main (main never needs it).
 ### Phones connect over an end-to-end encrypted link
 
 **A paired phone is one more client of the same protocol, reached directly over the local
-network or a tailnet, with every frame encrypted end to end.** Phone access is off until the
-user turns it on in Settings › Phone. Then a second listener (`HARNESS_PHONE_PORT`, default 4317) accepts WebSockets on `/link` from private, link-local, loopback and tailnet
+network or a tailnet, with every frame encrypted end to end.** For now phone access is a dev
+feature: a build offers it only when the server runs with `HARNESS_PHONE_ACCESS=1`, which
+`pnpm dev` sets. Without it nothing can open the phone listener (resuming a state an earlier dev
+build stored as on, turning access on and pairing all refuse with "Phone access is not part of
+this build."), `phone.status` answers `available: false`, and the desktop hides Settings › Phone.
+The packaged desktop passes its own environment to the server it starts, so a tester of a dev
+installer turns it on with a user environment variable (on Windows `setx HARNESS_PHONE_ACCESS 1`
+or System Properties › Environment Variables) and then quits and restarts TasteCode. Where it is
+offered, phone access is off until the user turns it on in Settings › Phone. Then a second listener (`HARNESS_PHONE_PORT`, default 4317) accepts WebSockets on `/link` from private, link-local, loopback and tailnet
 (100.64.0.0/10) addresses only, refuses any request carrying an `Origin` header (no page can
 reach it), and speaks nothing but a **Noise IK** handshake (`Noise_IK_25519_ChaChaPoly_SHA256`,
 prologue `tastecode-link/1`) until the phone has proved its key. The pairing code is a
@@ -946,3 +953,4 @@ registry entry, which is deliberately a good first outside contribution.
 | 2026-10-23 | Each chat's setup moved from every client's own storage to the server (`thread.settings`); the desktop shares its hidden models.                                               |
 | 2026-10-25 | Claude Code can also run through `claude -p` (stream-json, same protocol); engines declare `capabilities.runtimes`, the server keeps the choice.                               |
 | 2026-10-25 | Phone app screens moved from SwiftUI to UIKit view controllers under one native view; Expo UI is no longer a dependency.                                                       |
+| 2026-10-31 | Phone access became dev-only: offered only with `HARNESS_PHONE_ACCESS=1` (set by `pnpm dev`); other builds never open the phone port.                                          |

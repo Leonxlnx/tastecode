@@ -12,6 +12,7 @@ import {
   SettingsEntitySkeleton,
   SettingsNotice,
   SettingsPage,
+  SettingsSection,
 } from './settings/SettingsLayout.js'
 import '../styles/switch.css'
 
@@ -185,6 +186,7 @@ export function SkillsSettings(props: {
   const currentInventory = contextMatches(inventoryContext.current) ? inventory : undefined
   const currentError = currentInventory || contextMatches(errorContext.current) ? error : undefined
   const projectSkills = currentInventory?.skills.filter((skill) => skill.scope === 'project') ?? []
+  const includedSkills = currentInventory?.skills.filter(isIncludedSkill) ?? []
   // A background refresh keeps the current list on screen; blanking it
   // to a loading note on every skills.changed push read as flicker.
   const discovering = Boolean(props.projectPath) && loading && !inventory
@@ -252,8 +254,29 @@ export function SkillsSettings(props: {
       ) : (
         <SettingsEmpty title="No Agent Skills have been imported into this project." />
       )}
+      {props.projectPath && includedSkills.length ? (
+        <SettingsSection
+          title="Included with TasteCode"
+          note="Every chat can use these. An agent opens one only when the task calls for it."
+        >
+          {includedSkills.map((skill) => (
+            <SkillRow
+              key={skill.id}
+              skill={skill}
+              configurable={false}
+              busy={false}
+              onToggle={() => undefined}
+            />
+          ))}
+        </SettingsSection>
+      ) : null}
     </SettingsPage>
   )
+}
+
+/** Skills that ship with TasteCode itself; the server gives them `tastecode:` ids. */
+function isIncludedSkill(skill: Skill): boolean {
+  return skill.scope === 'system' && skill.id.startsWith('tastecode:')
 }
 
 /** The provider and, once a project is open, the project the list belongs to. */
