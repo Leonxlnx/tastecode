@@ -137,6 +137,8 @@ import {
 import { PanelToggles, StageHeader } from './ui/StageHeader.js'
 import { PaneComposer, SplitPane } from './ui/SplitPane.js'
 import { loadSplitViewStyles } from './ui/split-view-context.js'
+import { useChatDrop } from './ui/chat-drop.js'
+import { ChatDropOverlay } from './ui/ChatDropOverlay.js'
 import { SurfaceErrorBoundary } from './ui/SurfaceErrorBoundary.js'
 import { surfaceLoadFailed } from './surface-load-error.js'
 import { preloadWhenIdle } from './idle-preload.js'
@@ -6099,6 +6101,28 @@ export function App() {
     focusPane(otherSlot(focusedSlotRef.current))
     closeBesidePane()
   }, [focusPane, closeBesidePane])
+  /** The stage body: a chat dragged from the sidebar is dropped on the panes in it. */
+  const stageBody = useRef<HTMLDivElement>(null)
+  const chatDrop = useChatDrop({
+    host: () => stageBody.current,
+    state: () => ({
+      split: splitRef.current !== undefined,
+      focusedSlot: focusedSlotRef.current,
+      activeId: activeIdRef.current,
+      besideId: splitBesideId(splitRef.current),
+    }),
+    // Each drop takes a path a click, "Open beside" or a pane press already
+    // takes, so drafts and running turns are handled exactly as there. A swap
+    // only trades the panes' sides; nothing inside either pane remounts.
+    apply: (id, action) => {
+      if (action.kind === 'open') return void selectSession(id)
+      if (action.kind === 'beside') return openSessionBeside(id)
+      const current = splitRef.current
+      if (!current) return
+      setSplit({ ...current, start: otherSlot(current.start) })
+      if (action.focusOther) focusPane(otherSlot(focusedSlotRef.current))
+    },
+  })
   splitRemovals.current = {
     chats: (ids) => {
       const current = splitRef.current
@@ -7511,6 +7535,7 @@ export function App() {
           onSelectSession={selectSidebarSession}
           besideSessionId={surface === 'chat' ? besideId : undefined}
           onOpenSessionBeside={openSessionBeside}
+          sessionDropTarget={chatDrop.target}
           onRenameProject={renameSidebarProject}
           onRemoveProject={removeSidebarProject}
           onTogglePin={toggleSidebarProjectPin}
@@ -7551,6 +7576,7 @@ export function App() {
             {/* The pull requests view covers the stage, but the bottom panel stays
                 mounted behind it so its tabs and running shells survive the visit. */}
             <div
+              ref={stageBody}
               className={`stage__body${activeId || split ? '' : ' is-new-session'}${split ? ' is-split' : ''}${activePath && terminalOpen ? ' has-terminal' : ''}`}
               hidden={surface === 'pull-requests'}
             >
@@ -7709,6 +7735,7 @@ export function App() {
                   })}
                 </div>
               ) : null}
+              {surface === 'chat' ? <ChatDropOverlay store={chatDrop.store} /> : null}
 
               {activePath && bottomTerminalMounted ? (
                 <div

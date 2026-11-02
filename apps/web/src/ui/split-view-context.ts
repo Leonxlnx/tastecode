@@ -1,18 +1,22 @@
 import { createContext } from 'react'
+import type { RowDragOptions } from './useRowDrag.js'
 
 /**
  * What a sidebar chat row needs from split view: which chat is open beside the
- * active one, and how to open another there. Rows read it from context so the
- * rail's many row components do not each thread two more props through.
+ * active one, how to open another there, and where a row dragged out of the
+ * rail can be dropped. Rows read it from context so the rail's many row
+ * components do not each thread more props through.
  */
 export type SplitSidebar = {
   besideSessionId: string | undefined
   openBeside: ((id: string) => void) | undefined
+  dragOut: RowDragOptions['away']
 }
 
 export const SplitSidebarContext = createContext<SplitSidebar>({
   besideSessionId: undefined,
   openBeside: undefined,
+  dragOut: undefined,
 })
 
 let splitViewStyles: Promise<unknown> | undefined
