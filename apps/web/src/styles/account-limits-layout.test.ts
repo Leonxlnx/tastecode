@@ -36,6 +36,8 @@ describe('account limits layout', () => {
     const status = rule('.account-menu__source-status')
     expect(status).toContain('color: var(--text-3)')
     expect(status).toContain('text-overflow: ellipsis')
+    // It takes the room the name leaves, so it shortens before the name does.
+    expect(status).toContain('flex: 1 1 0')
     const retry = rule('.account-menu__retry')
     expect(retry).toContain('background: none')
     expect(retry).toContain('border: 0')
