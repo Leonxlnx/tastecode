@@ -91,6 +91,18 @@ describe('app-screen deal', () => {
     expect(appScreenKinds(brief('Stock market watchlist'))).toEqual(['markets'])
   })
 
+  it('lets a phrase of one kind own the words inside it', () => {
+    // "personal finance" is tasteskill's wallet kind, not also finance and a personal workspace.
+    expect(appScreenKinds(brief('Personal finance dashboard'))).toEqual(['wallet'])
+    expect(appScreenKinds(brief('An app to send money to friends'))).toEqual(['wallet'])
+    // The words still count where they stand on their own.
+    expect(appScreenKinds(brief('Personal finance dashboard with our finance team'))).toEqual([
+      'finance',
+      'wallet',
+    ])
+    expect(appScreenKinds(brief('Household money overview'))).toEqual(['finance'])
+  })
+
   it('deals a style, shell and one pattern per screen that suit the kind', () => {
     const direction = selectAppDirection(brief('Budget dashboard for our household'), first)
     expect(direction).toEqual({

@@ -493,9 +493,20 @@ const SCREEN_WORDS = {
   detail: ['detail page', 'detail view'],
 } as const satisfies Record<string, readonly string[]>
 
-function containsWord(text: string, word: string): boolean {
+function wordPattern(word: string, flags: string): RegExp {
   const escaped = word.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&').replace(/ /gu, '[\\s_-]+')
-  return new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, 'iu').test(text)
+  return new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, flags)
+}
+
+function containsWord(text: string, word: string): boolean {
+  return wordPattern(word, 'iu').test(text)
+}
+
+/** Where a word occurs in the text, as [start, end) offsets. */
+function wordSpans(text: string, word: string): Array<readonly [number, number]> {
+  return [...text.matchAll(wordPattern(word, 'giu'))].map(
+    (match) => [match.index, match.index + match[0].length] as const,
+  )
 }
 
 function briefText(brief: AppBrief): string {
@@ -513,11 +524,30 @@ function briefText(brief: AppBrief): string {
     .join('\n')
 }
 
-/** The kinds whose words the request uses most, ties included; general kinds when none match. */
+/**
+ * The kinds whose words the request uses most, ties included; general kinds when none match.
+ * A phrase of one kind owns the words inside it: "personal finance" counts for wallet only, not
+ * also for finance ("finance") and workspace ("personal").
+ */
 export function appScreenKinds(brief: AppBrief): string[] {
   const text = briefText(brief)
-  const scores = Object.entries(KIND_WORDS).map(
-    ([kind, words]) => [kind, words.filter((word) => containsWord(text, word)).length] as const,
+  const matches = Object.entries(KIND_WORDS).flatMap(([kind, words]) =>
+    words.flatMap((word) => {
+      const spans = wordSpans(text, word)
+      return spans.length ? [{ kind, spans }] : []
+    }),
+  )
+  const insideOtherPhrase = (kind: string, [start, end]: readonly [number, number]) =>
+    matches.some(
+      (other) =>
+        other.kind !== kind &&
+        other.spans.some(([from, to]) => from <= start && end <= to && to - from > end - start),
+    )
+  const counted = matches.filter(
+    ({ kind, spans }) => !spans.every((span) => insideOtherPhrase(kind, span)),
+  )
+  const scores = Object.keys(KIND_WORDS).map(
+    (kind) => [kind, counted.filter((match) => match.kind === kind).length] as const,
   )
   const top = Math.max(...scores.map(([, score]) => score))
   return top > 0
