@@ -113,6 +113,21 @@ export async function verifyBundledDesignReferences(
   return expected.length
 }
 
+/**
+ * A public release offers only the release providers. The desktop dev scripts
+ * write `tastecodeEdition: "dev"` into the packaged package.json, which makes
+ * the app offer every provider; such a package must never be published.
+ */
+export function verifyReleaseEdition(archive) {
+  const asar = packagingAsar()
+  asar.uncache(archive)
+  const manifest = JSON.parse(asar.extractFile(archive, 'package.json').toString('utf8'))
+  if (manifest.tastecodeEdition !== undefined && manifest.tastecodeEdition !== 'release')
+    throw new Error(
+      `Packaged app is a ${String(manifest.tastecodeEdition)} build; package releases with dist:release`,
+    )
+}
+
 export async function verifyPackagedResources(
   resources,
   config = releaseConfig,
@@ -144,6 +159,7 @@ export async function verifyPackagedResources(
     if (!entry.isFile() || entry.isSymbolicLink() || entry.size === 0)
       throw new Error(`Missing packaged runtime file: ${relative}`)
   }
+  verifyReleaseEdition(path.join(resources, 'app.asar'))
   await verifyBundledDesignReferences(
     path.join(resources, 'app.asar'),
     path.join(sourceRoot, 'packages', 'design-agent', 'references'),
