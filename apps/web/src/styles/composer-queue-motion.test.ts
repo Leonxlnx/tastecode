@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 const appCss = readFileSync(new URL('./app.css', import.meta.url), 'utf8')
+const tokensCss = readFileSync(new URL('./tokens.css', import.meta.url), 'utf8')
 const composerSource = readFileSync(new URL('../ui/Composer.tsx', import.meta.url), 'utf8')
 
 function rule(selector: string): string {
@@ -85,6 +86,15 @@ describe('composer queue motion', () => {
     expect(composerSource).toContain('<Trash2 size={12} aria-hidden />')
     expect(composerSource).toContain('<Video size={12} /> : <ImageIcon size={12} />')
     expect(composerSource).toContain('<Play size={7} fill="currentColor" />')
+  })
+
+  it('draws the reorder drop line in a defined token', () => {
+    // --accent is defined nowhere, so the line it painted was invisible. The
+    // sidebar's project drop line had the same bug and was fixed with --light.
+    const dropLine = rule('.queue-row[data-drop-position]::before')
+
+    expect(dropLine).toContain('background: var(--light);')
+    expect(tokensCss).toMatch(/^\s*--light: /m)
   })
 
   it('keeps only finite opacity feedback when reduced motion is requested', () => {
