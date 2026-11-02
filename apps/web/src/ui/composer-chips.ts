@@ -94,14 +94,46 @@ export function composerChipSegments(text: string): ComposerChipSegment[] {
   return segments
 }
 
-/** The prompt as the provider receives it: every chip back to its token. */
+/**
+ * The prompt as the provider receives it: every chip back to its token. A chip
+ * drawn right against a word or another chip is still its own token, so a
+ * space keeps the two apart where they would otherwise run together
+ * (`$cookx`, `use$cook`, `$cook$docs` name no skill).
+ */
 export function composerWireText(text: string): string {
   if (!hasComposerChips(text)) return text
-  return composerChipSegments(text)
-    .map((segment) =>
-      segment.type === 'chip' ? segment.token : segment.text.replace(FRAGMENT, ''),
-    )
-    .join('')
+  let wire = ''
+  let afterToken = false
+  for (const segment of composerChipSegments(text)) {
+    if (segment.type === 'chip') {
+      if (wire !== '' && !opensToken(wire.at(-1)!)) wire += ' '
+      wire += segment.token
+      afterToken = true
+      continue
+    }
+    const plain = segment.text.replace(FRAGMENT, '')
+    if (plain === '') continue
+    if (afterToken && !closesToken(plain)) wire += ' '
+    wire += plain
+    afterToken = false
+  }
+  return wire
+}
+
+/** Whitespace, or an opening bracket or quote, may sit right before a token. */
+function opensToken(character: string): boolean {
+  return /[\s([{"']/.test(character)
+}
+
+/**
+ * Whitespace or closing punctuation may follow a token directly. A full stop
+ * or colon only when a space or the end follows it: `$cook.` ends a sentence,
+ * while `$cook.md` would read as a longer name.
+ */
+function closesToken(text: string): boolean {
+  const first = text[0]!
+  if (/[\s,;!?)\]}"']/.test(first)) return true
+  return (first === '.' || first === ':') && (text.length === 1 || /\s/.test(text[1]!))
 }
 
 /** The chip the position falls strictly inside, where no caret belongs. */

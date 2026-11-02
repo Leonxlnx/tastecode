@@ -2470,6 +2470,16 @@ describe('Composer inline chips', () => {
     expect(chips[0]!.querySelector('svg')).toBeTruthy()
   })
 
+  it('sends a chip that touches a word as its own token', () => {
+    const onSend = vi.fn()
+    renderComposer(onSend)
+    // The space after the pick was deleted and typing went on.
+    const composer = draftWith(`use${cook}x`)
+
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    expect(onSend).toHaveBeenCalledWith('use $cook x', [])
+  })
+
   it('deletes a whole chip with Backspace after it and Delete before it', () => {
     renderComposer(vi.fn())
     const composer = draftWith(`${goal} fix ${cook}`)

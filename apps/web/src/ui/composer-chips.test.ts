@@ -30,6 +30,24 @@ describe('composer chips', () => {
     )
   })
 
+  it('keeps a token apart from a word or a chip drawn right against it', () => {
+    // The space after a pick deleted and typing went on, or text typed before a chip.
+    expect(composerWireText(`${cook}x`)).toBe('$cook x')
+    expect(composerWireText(`use${cook}`)).toBe('use $cook')
+    expect(composerWireText(`${goal}${cook}${docs}`)).toBe('/goal $cook @officialDocs')
+    expect(composerWireText(`${cook}.md`)).toBe('$cook .md')
+    expect(composerWireText(`${cook}-based`)).toBe('$cook -based')
+  })
+
+  it('lets brackets, quotes and closing punctuation touch a token', () => {
+    expect(composerWireText(`(${cook}), "${docs}"`)).toBe('($cook), "@officialDocs"')
+    expect(composerWireText(`try ${cook}. Then ${docs}: done`)).toBe(
+      'try $cook. Then @officialDocs: done',
+    )
+    expect(composerWireText(`end ${cook}.`)).toBe('end $cook.')
+    expect(composerWireText(`${cook}!`)).toBe('$cook!')
+  })
+
   it('keeps chip names to one token and leaves a name it cannot hold as plain text', () => {
     expect(hasComposerChips(cook)).toBe(true)
     expect(composerChipText('$two words', 'skill')).toBe('$two words')
