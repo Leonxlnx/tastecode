@@ -140,6 +140,16 @@ describe('app-screen deal', () => {
     expect(leave.screens.map(({ name }) => name)).toContain('settings')
   })
 
+  it('reads a signature cue as a whole word or its plural, not as the start of another word', () => {
+    const signatures = (request: string) => selectAppDirection(brief(request), first).signatures
+    // "deli" starts "delivery" and "bake" starts "baked"; neither names a bakery.
+    expect(signatures('Revenue for our shop with delivery times by region')).toEqual([])
+    expect(signatures('Orders baked into one weekly view')).toEqual([])
+    expect(signatures('Sales across our three bakeries')).toEqual(['sell-out-strip'])
+    expect(signatures('Staff holidays this summer')).toEqual(['leave-timeline'])
+    expect(signatures('Who is on-call this week')).toEqual(['cover-matrix'])
+  })
+
   it('draws uniformly at random by default and always parses', () => {
     for (let index = 0; index < 40; index++) {
       const direction = selectAppDirection(brief('Support inbox for our helpdesk'))

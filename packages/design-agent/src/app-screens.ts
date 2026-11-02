@@ -605,10 +605,17 @@ function screenNames(library: AppLibrary, kind: string, text: string): string[] 
   return [...new Set([...(library.kinds.get(kind)?.screens ?? ['overview']), ...named])]
 }
 
-/** tasteskill matches a signature cue at a word start, so "holiday" also finds "holidays". */
+/**
+ * A signature cue as a whole word or its plural: "holiday" finds "holidays" and "bakery"
+ * "bakeries". tasteskill matches a cue at any word start, which also reads "deli" in "Delivery"
+ * and "bake" in "baked".
+ */
 function signatureCue(text: string, cue: string): boolean {
-  const escaped = cue.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')
-  return new RegExp(`(?:^|[^a-z])${escaped}`, 'iu').test(text)
+  const escape = (value: string) =>
+    value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&').replace(/ /gu, '[\\s_-]+')
+  const plural = cue.endsWith('y') ? `|${escape(cue.slice(0, -1))}ies` : ''
+  const word = `(?:${escape(cue)}(?:s|es)?${plural})`
+  return new RegExp(`(?<![\\p{L}\\p{N}])${word}(?![\\p{L}\\p{N}])`, 'iu').test(text)
 }
 
 /**
