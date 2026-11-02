@@ -2865,11 +2865,12 @@ function deferred() {
 function renderComposer(
   onSend: (text: string, attachments: string[]) => void,
   overrides: Partial<Parameters<typeof Composer>[0]> = {},
+  Component: typeof Composer = Composer,
 ) {
   let currentOverrides = overrides
   const transport = overrides.transport ?? createResourceTransport()
   const composer = () => (
-    <Composer
+    <Component
       transport={transport}
       provider="codex"
       projects={[{ path: '/work/harness', name: 'TasteCode' }]}
@@ -3171,5 +3172,29 @@ describe('Composer Enter while Send is loading', () => {
     view.rerenderComposer({ threadId: 'thread-b' })
     view.rerenderComposer({ sendAvailability: 'ready' })
     expect(onSend).not.toHaveBeenCalled()
+  })
+})
+
+// Last in the file: it swaps in a fresh module registry, so later imports would see it too.
+describe('Composer chip drawing for a draft that brings chips', () => {
+  it('draws the chips once their module is there, without a Suspense hold', async () => {
+    vi.resetModules()
+    // Evaluated up front, so the wait below measures the composer, not the transform.
+    await import('./ComposerChipOverlay.js')
+    const { Composer: FreshComposer } = await import('./Composer.js')
+    const cook = composerChipText('$cook', 'skill')
+    renderComposer(vi.fn(), { draftRequest: { text: `${cook} go`, request: 1 } }, FreshComposer)
+
+    // Outside act, as in the app: Suspense would commit its empty fallback
+    // first and React would then hold the reveal back for about 300 ms.
+    const actEnvironment = globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean | undefined }
+    const previous = actEnvironment.IS_REACT_ACT_ENVIRONMENT
+    actEnvironment.IS_REACT_ACT_ENVIRONMENT = false
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 60))
+    } finally {
+      actEnvironment.IS_REACT_ACT_ENVIRONMENT = previous
+    }
+    expect(document.querySelector('.composer__chips')).not.toBeNull()
   })
 })
