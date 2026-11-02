@@ -2328,7 +2328,9 @@
                   the last two days; usage.history reuses computed figures while the index, Harness
                   events, sources and day are unchanged, only changed archive files cross the worker
                   boundary, unchanged scans skip the cache write, and a saved index above 4 MB is
-                  read in the usage worker</span
+                  read in the usage worker. A release build never scans the archive of a provider it
+                  does not offer and leaves that provider out of usage.history and today's total,
+                  while its indexed files stay in the shared index for a dev build</span
                 ></span
               ></label
             >

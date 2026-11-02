@@ -4258,7 +4258,15 @@ export class Store {
     return events
   }
 
-  usageSummary(threadId: string, since: number): UsageSummary {
+  /**
+   * The thread's own total, and the day's total across the providers `counted`
+   * accepts: every one unless the build leaves some out.
+   */
+  usageSummary(
+    threadId: string,
+    since: number,
+    counted: (provider: ProviderId) => boolean = () => true,
+  ): UsageSummary {
     const thread = this.thread(threadId)
     if (!thread) return { session: emptyUsage(), today: emptyUsage() }
 
@@ -4320,7 +4328,7 @@ export class Store {
         if (usage?.cumulative) previous.set(seed.thread_id, usage.total)
       }
 
-      const rows = sqliteRows<ThreadPayloadRow>(
+      const rows = sqliteRows<ThreadPayloadRow & { provider: string }>(
         this.#db.prepare(
           `SELECT u.thread_id, u.payload, t.provider
            FROM usage_events u JOIN threads t ON t.id = u.thread_id
@@ -4330,6 +4338,8 @@ export class Store {
         since,
       )
       for (const row of rows) {
+        const provider = toProviderId(row.provider)
+        if (provider !== undefined && !counted(provider)) continue
         const sample = parseUsage(row.payload, row.thread_id)
         if (!sample) continue
         const current = sample.total

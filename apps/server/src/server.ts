@@ -1472,9 +1472,10 @@ export function startServer(
           reasoningTokens: 0,
           totalTokens: 0,
         }
+        // A provider this build does not offer counts toward no day's total.
         const totals =
           'threadId' in p
-            ? store.usageSummary(p.threadId, startOfToday.getTime())
+            ? store.usageSummary(p.threadId, startOfToday.getTime(), providerOffered)
             : { session: empty, today: empty }
         return usageSummaryWithLimits(
           totals,
