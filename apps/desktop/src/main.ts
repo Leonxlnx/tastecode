@@ -39,6 +39,7 @@ import {
 import { shouldHideWindowOnClose } from './background-lifecycle.js'
 import {
   createAppUpdateController,
+  parseRunningAgents,
   type AppUpdateController,
   type AppUpdateState,
 } from './app-updater.js'
@@ -286,6 +287,8 @@ function showServerFailureNotice(): void {
 }
 let diagnostics: LocalDiagnostics | undefined
 let appUpdater: AppUpdateController | undefined
+/** Chats with a running turn, as the main window's page last reported them. */
+let runningAgents = 0
 let waitingForUpdateCleanup = false
 let waitingForServerShutdown = false
 let mainWindowStatePersistence: MainWindowStatePersistence | undefined
@@ -941,6 +944,14 @@ ipcMain.handle('harness:installUpdate', (event) => {
   return appUpdater?.install() ?? false
 })
 
+// Sent after every sidebar status change. Only the main window's page reports;
+// a page that goes away leaves its last count, which errs towards not installing.
+ipcMain.on('harness:runningAgents', (event, value: unknown) => {
+  if (!isOwnRenderer(event.sender) || event.sender !== mainWindow?.webContents) return
+  const count = parseRunningAgents(value)
+  if (count !== undefined) runningAgents = count
+})
+
 ipcMain.handle('harness:setTheme', (event, preference: unknown) => {
   requireOwnRenderer(event.sender)
   nativeTheme.themeSource = windowThemeSource(preference)
@@ -1182,6 +1193,8 @@ if (ownsSingleInstance) {
       event.preventDefault()
       return
     }
+    // Decided on the first request, before the server stops the agents it ends.
+    if (!appIsQuitting) appUpdater?.prepareForQuit(runningAgents > 0)
     const updater = appUpdater
     const updateStatus = updater?.state().status
     if (
@@ -1255,6 +1268,9 @@ if (ownsSingleInstance) {
         }),
       currentVersion: app.getVersion(),
       enabled: app.isPackaged && !devServer && ['darwin', 'win32'].includes(process.platform),
+      // Updates come from the public release, which offers fewer providers than
+      // a dev build. A dev build offers them, but installs one only on Update.
+      installOnQuit: !app.isPackaged || readPackagedEdition() !== 'dev',
       onError: (cause) => void diagnostics?.record('updater', cause),
     })
     appUpdater.subscribe((state) => {

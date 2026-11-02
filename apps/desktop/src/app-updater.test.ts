@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createAppUpdateController } from './app-updater.js'
+import { createAppUpdateController, parseRunningAgents } from './app-updater.js'
 
 function fakeUpdater() {
   const emitter = new EventEmitter()
@@ -467,6 +467,79 @@ describe('app update controller', () => {
     expect(updater.checkForUpdates).toHaveBeenCalledOnce()
     updater.emit('update-downloaded', { version: '0.1.3' })
     expect(states).toEqual(['downloading', 'downloading 41', 'preparing', 'ready'])
+  })
+
+  describe('installing by itself on quit', () => {
+    const ready = (options: { installOnQuit?: boolean } = {}) => {
+      const updater = fakeUpdater()
+      const controller = createAppUpdateController({
+        updater,
+        currentVersion: '0.1.2',
+        enabled: true,
+        ...options,
+      })
+      updater.emit('update-downloaded', { version: '0.5.0' })
+      return { updater, controller }
+    }
+
+    it('installs a ready update on quit in a release build when no agent runs', () => {
+      const { updater, controller } = ready()
+      expect(updater.autoInstallOnAppQuit).toBe(true)
+      controller.prepareForQuit(false)
+      expect(updater.autoInstallOnAppQuit).toBe(true)
+      expect(updater.quitAndInstall).not.toHaveBeenCalled()
+    })
+
+    it('installs nothing on a quit that began while agents ran', () => {
+      const { updater, controller } = ready()
+      controller.prepareForQuit(true)
+      expect(updater.autoInstallOnAppQuit).toBe(false)
+      expect(updater.quitAndInstall).not.toHaveBeenCalled()
+    })
+
+    it('keeps the answer from the start of the quit while the agents shut down', () => {
+      const { updater, controller } = ready()
+      controller.prepareForQuit(true)
+      // The server stops, the agents end, and the next report says none run.
+      controller.prepareForQuit(false)
+      expect(updater.autoInstallOnAppQuit).toBe(false)
+
+      const idle = ready()
+      idle.controller.prepareForQuit(false)
+      // Only the first call of a quit counts, in either direction.
+      idle.controller.prepareForQuit(true)
+      expect(idle.updater.autoInstallOnAppQuit).toBe(true)
+    })
+
+    it('applies a quit that began with agents to an updater loaded later', async () => {
+      const updater = fakeUpdater()
+      const controller = createAppUpdateController({
+        loadUpdater: vi.fn().mockResolvedValue(updater),
+        currentVersion: '0.1.2',
+        enabled: true,
+      })
+      controller.prepareForQuit(true)
+      await controller.check()
+      expect(updater.autoInstallOnAppQuit).toBe(false)
+    })
+
+    it('never installs by itself in a dev build, but installs on Update', () => {
+      const { updater, controller } = ready({ installOnQuit: false })
+      expect(updater.autoInstallOnAppQuit).toBe(false)
+      expect(controller.state()).toMatchObject({ status: 'ready', version: '0.5.0' })
+      controller.prepareForQuit(false)
+      expect(updater.autoInstallOnAppQuit).toBe(false)
+      expect(updater.quitAndInstall).not.toHaveBeenCalled()
+      expect(controller.install()).toBe(true)
+      expect(updater.quitAndInstall).toHaveBeenCalledWith(false, true)
+    })
+
+    it('accepts only a whole, non-negative running agent count', () => {
+      expect(parseRunningAgents(0)).toBe(0)
+      expect(parseRunningAgents(3)).toBe(3)
+      for (const value of [-1, 1.5, Number.NaN, Infinity, '2', true, null, undefined, {}])
+        expect(parseRunningAgents(value)).toBeUndefined()
+    })
   })
 
   it('keeps a background preparation failure out of view', async () => {
