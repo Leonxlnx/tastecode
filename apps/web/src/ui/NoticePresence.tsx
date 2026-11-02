@@ -56,19 +56,64 @@ function placeNoticeAbove(notice: HTMLElement, composer: HTMLElement | null): vo
   )
 }
 
+// Which composer is docked changes only with a class on one of these, or with
+// one of them coming or going.
+const DOCK_PARTS = '.stage__body, .split, .split__pane, .stage__conversation, .composer'
+
+function isDockPart(node: Node): boolean {
+  return node.nodeType === Node.ELEMENT_NODE && (node as Element).matches(DOCK_PARTS)
+}
+
+/**
+ * Streamed text rewrites the transcript many times a second while a notice
+ * can be open, so a mutation costs one `matches` per changed node, and only a
+ * change to the dock itself measures anything.
+ */
+function movesDock(record: MutationRecord): boolean {
+  if (record.type === 'attributes') return isDockPart(record.target)
+  for (const node of record.addedNodes) if (isDockPart(node)) return true
+  for (const node of record.removedNodes) if (isDockPart(node)) return true
+  return false
+}
+
+/**
+ * The dock can change under an open notice: a notice that opened over a new
+ * chat stays up while a chat opens, a split opens beside it, focus moves to
+ * the other pane, or the stage comes back from another view. The notice
+ * follows whichever composer is docked now.
+ */
 function keepNoticeAboveComposer(notice: HTMLElement): () => void {
-  const place = () => placeNoticeAboveComposer(notice)
-  place()
-  const composer = dockedComposer()
+  let composer: HTMLElement | null = null
   const ResizeObserverConstructor = globalThis.ResizeObserver
-  const observer =
-    composer && ResizeObserverConstructor ? new ResizeObserverConstructor(place) : undefined
-  if (composer) observer?.observe(composer)
-  if (composer?.parentElement) observer?.observe(composer.parentElement)
-  window.addEventListener('resize', place)
+  const MutationObserverConstructor = globalThis.MutationObserver
+  const follow = () => {
+    const next = dockedComposer()
+    if (next !== composer) {
+      composer = next
+      resize?.disconnect()
+      if (composer) resize?.observe(composer)
+      if (composer?.parentElement) resize?.observe(composer.parentElement)
+    }
+    placeNoticeAbove(notice, composer)
+  }
+  const resize = ResizeObserverConstructor ? new ResizeObserverConstructor(follow) : undefined
+  const dock = MutationObserverConstructor
+    ? new MutationObserverConstructor((records) => {
+        if (records.some(movesDock)) follow()
+      })
+    : undefined
+  follow()
+  dock?.observe(document.body, {
+    subtree: true,
+    childList: true,
+    attributes: true,
+    attributeFilter: ['class'],
+  })
+  window.addEventListener('resize', follow)
   return () => {
-    observer?.disconnect()
-    window.removeEventListener('resize', place)
+    dock?.disconnect()
+    resize?.disconnect()
+    window.removeEventListener('resize', follow)
   }
 }
 
