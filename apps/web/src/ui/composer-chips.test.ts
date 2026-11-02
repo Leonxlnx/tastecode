@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   composerChipAround,
+  composerChipFragments,
   composerChips,
   composerChipSegments,
   composerChipText,
@@ -113,6 +114,14 @@ describe('composer chips', () => {
     expect(repairComposerChips('plain', 2)).toBeUndefined()
     // A chip whose name was deleted: its marks go, the caret stays before "b".
     expect(repairComposerChips('a  ⁠⁡⁠ b', 7)).toEqual({ text: 'a  b', caret: 3 })
+  })
+
+  it('finds what an edit left of a cut chip, with touching leftovers as one range', () => {
+    expect(composerChipFragments(`xZ${cook.slice(3)} y`)).toEqual([[6, 7]])
+    // An opener and its mark touch; the whole chip after them is no leftover.
+    expect(composerChipFragments(`${cook.slice(0, 3)}x ${cook}`)).toEqual([[0, 3]])
+    expect(composerChipFragments(`a ${cook} b`)).toEqual([])
+    expect(composerChipFragments('plain')).toEqual([])
   })
 
   it('drops skill and server chips with the space after them and keeps commands', () => {

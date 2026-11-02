@@ -210,26 +210,42 @@ export function repairComposerChips(
   text: string,
   caret: number,
 ): { text: string; caret: number } | undefined {
-  if (!/[⁠-⁤]/.test(text)) return undefined
+  const fragments = composerChipFragments(text)
+  if (fragments.length === 0) return undefined
   let repaired = ''
   let nextCaret = caret
-  let changed = false
   let position = 0
-  for (const segment of composerChipSegments(text)) {
-    const start = position
-    position += segment.type === 'chip' ? segment.end - segment.start : segment.text.length
-    if (segment.type === 'chip') {
-      repaired += text.slice(segment.start, segment.end)
-      continue
-    }
-    const kept = segment.text.replace(FRAGMENT, (fragment, offset: number) => {
-      changed = true
-      if (start + offset < caret) nextCaret -= Math.min(fragment.length, caret - start - offset)
-      return ''
-    })
-    repaired += kept
+  for (const [start, end] of fragments) {
+    repaired += text.slice(position, start)
+    if (start < caret) nextCaret -= Math.min(end, caret) - start
+    position = end
   }
-  return changed ? { text: repaired, caret: nextCaret } : undefined
+  return { text: repaired + text.slice(position), caret: nextCaret }
+}
+
+/**
+ * Where an edit that cut through a chip left its opener or a lone mark, in
+ * order. Leftovers that touch are one range, so they go in one edit.
+ */
+export function composerChipFragments(text: string): Array<[start: number, end: number]> {
+  if (!/[⁠-⁤]/.test(text)) return []
+  const fragments: Array<[number, number]> = []
+  let position = 0
+  const collect = (until: number) => {
+    for (const match of text.slice(position, until).matchAll(FRAGMENT)) {
+      const start = position + match.index
+      const end = start + match[0].length
+      const last = fragments.at(-1)
+      if (last && last[1] === start) last[1] = end
+      else fragments.push([start, end])
+    }
+  }
+  for (const chip of composerChips(text)) {
+    collect(chip.start)
+    position = chip.end
+  }
+  collect(text.length)
+  return fragments
 }
 
 /** The tokens of the chips in a draft, so the menu can leave them out. */
