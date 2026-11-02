@@ -2,9 +2,10 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { DatabaseSync } from './sqlite.js'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import { ItemTypeSchema, type DomainEvent, type ItemType } from '@harness/contracts'
+import { providerOffered, takeEdition } from './provider-edition.js'
 import { Store } from './store.js'
 
 let store: Store
@@ -2889,5 +2890,26 @@ describe('usage totals across providers', () => {
     const summary = store.usageSummary('one', 0)
     expect(summary.session).toEqual(expect.objectContaining({ totalTokens: 100 }))
     expect(summary.today).toEqual(expect.objectContaining({ totalTokens: 140 }))
+  })
+})
+
+describe('usage totals in a release build', () => {
+  afterEach(() => takeEdition({}))
+
+  it("leaves a provider the build does not offer out of today's total", () => {
+    takeEdition({ HARNESS_EDITION: 'release' })
+    store.addProject('/repo')
+    store.addThread({ id: 'one', projectPath: '/repo', provider: 'codex', title: 'One' })
+    store.addThread({ id: 'two', projectPath: '/repo', provider: 'opencode', title: 'Two' })
+    store.append('one', usage(100))
+    store.append('two', usage(40))
+
+    expect(store.usageSummary('one', 0, providerOffered).today).toEqual(
+      expect.objectContaining({ totalTokens: 100 }),
+    )
+    // An old chat on that provider stays readable with its own total.
+    const hidden = store.usageSummary('two', 0, providerOffered)
+    expect(hidden.session).toEqual(expect.objectContaining({ totalTokens: 40 }))
+    expect(hidden.today).toEqual(expect.objectContaining({ totalTokens: 100 }))
   })
 })
