@@ -205,7 +205,10 @@ type PreviewStyle = CSSProperties & {
  * dim over it. Both follow the sliders on every step; the CSS blur here
  * covers a thumbnail, never the window.
  */
-function BackgroundImagePreview(props: { background: AppBackground; images: BackgroundImageStore }) {
+function BackgroundImagePreview(props: {
+  background: AppBackground
+  images: BackgroundImageStore
+}) {
   const { image, dim, blur } = props.background
   const url = useOriginalImageUrl(image, props.images)
   const style: PreviewStyle = {

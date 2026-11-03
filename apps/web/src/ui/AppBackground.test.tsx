@@ -150,7 +150,14 @@ describe('AppBackgroundLayer', () => {
 
     const { container, unmount } = render(
       <AppBackgroundLayer
-        background={{ mode: 'image', effect: 'glow', material: 'acrylic', image: 'rev-1', dim: 50, blur: 14 }}
+        background={{
+          mode: 'image',
+          effect: 'glow',
+          material: 'acrylic',
+          image: 'rev-1',
+          dim: 50,
+          blur: 14,
+        }}
         images={images}
       />,
     )
@@ -227,7 +234,14 @@ describe('AppBackgroundLayer', () => {
     const { AppBackgroundLayer } = await import('./AppBackgroundLayer.js')
     const { container } = render(
       <AppBackgroundLayer
-        background={{ mode: 'image', effect: 'glow', material: 'acrylic', image: undefined, dim: 50, blur: 14 }}
+        background={{
+          mode: 'image',
+          effect: 'glow',
+          material: 'acrylic',
+          image: undefined,
+          dim: 50,
+          blur: 14,
+        }}
         images={images}
       />,
     )
