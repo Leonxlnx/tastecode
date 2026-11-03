@@ -13993,6 +13993,185 @@ describe('live sessions', () => {
   })
 })
 
+describe('the sidebar circle on Stop', () => {
+  beforeEach(() => {
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'project',
+        pinned: false,
+        createdAt: 0,
+        sessions: [
+          { id: 'thread-1', title: 'Existing work', running: false },
+          { id: 'thread-2', title: 'Other work', running: false },
+        ],
+      },
+    ]
+  })
+
+  /** Stops the server has not answered yet, in the order they were sent. */
+  function holdStops() {
+    const request = transport.request.getMockImplementation()!
+    const stops: Array<{ answer: () => void; fail: (error: Error) => void }> = []
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'thread.interrupt'
+        ? new Promise((resolve, reject) => stops.push({ answer: () => resolve({}), fail: reject }))
+        : request(method, params),
+    )
+    return stops
+  }
+
+  function spinning(title: string): boolean {
+    return treeChatRow(title).querySelector('.sess__spinner') !== null
+  }
+
+  async function openRunningChat() {
+    render(<App />)
+    fireEvent.click(await waitFor(() => treeChatRow('Existing work')))
+    startTurn('thread-1', 'turn-1')
+    expect(spinning('Existing work')).toBe(true)
+  }
+
+  it('stops at the click, before the server has ended the turn', async () => {
+    const stops = holdStops()
+    await openRunningChat()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Stop' }))
+
+    expect(stops).toHaveLength(1)
+    expect(spinning('Existing work')).toBe(false)
+    expect(treeChatRow('Existing work').getAttribute('aria-label')).toBe('Existing work, Codex')
+    expect(screen.queryByText('Working')).toBeNull()
+
+    // The server ends the turn at once and answers once the agent took the Stop.
+    emitThreadEvent('thread-1', { type: 'turn.completed', turnId: 'turn-1', status: 'interrupted' })
+    expect(spinning('Existing work')).toBe(false)
+    await act(async () => stops[0]!.answer())
+    expect(spinning('Existing work')).toBe(false)
+    expect(treeChatRow('Existing work').getAttribute('aria-label')).toBe('Existing work, Codex')
+  })
+
+  it('stays stopped while a turn that was still starting comes up and is ended', async () => {
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'thread.sendTurn' ? new Promise(() => {}) : request(method, params),
+    )
+    const stops = holdStops()
+    render(<App />)
+    fireEvent.click(await waitFor(() => treeChatRow('Existing work')))
+    const composer = screen.getByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: 'A turn that starts slowly' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    fireEvent.click(await screen.findByRole('button', { name: 'Stop' }))
+    expect(stops).toHaveLength(1)
+
+    // The server delivers the Stop once the agent has taken the prompt: the turn starts,
+    // then ends as stopped.
+    startTurn('thread-1', 'turn-1')
+    expect(spinning('Existing work')).toBe(false)
+    emitThreadEvent('thread-1', { type: 'turn.completed', turnId: 'turn-1', status: 'interrupted' })
+    expect(spinning('Existing work')).toBe(false)
+  })
+
+  it('stays stopped when a chat list read before the Stop arrives after it', async () => {
+    const stops = holdStops()
+    await openRunningChat()
+    fireEvent.click(screen.getByRole('button', { name: 'Stop' }))
+    const lists = rpcCount('projects.list')
+
+    serverProjects[0]!.sessions[0] = {
+      ...serverProjects[0]!.sessions[0]!,
+      running: true,
+      status: 'working',
+    }
+    act(() => transport.listeners.get('projects.changed')?.({}))
+    await waitFor(() => expect(rpcCount('projects.list')).toBe(lists + 1))
+    await act(async () => Promise.resolve())
+
+    expect(spinning('Existing work')).toBe(false)
+    expect(stops).toHaveLength(1)
+  })
+
+  it.each([
+    ['the Stop fails', 'fail'],
+    ['the server answers and the turn still runs', 'answer'],
+  ] as const)('spins again when %s', async (_case, outcome) => {
+    const stops = holdStops()
+    await openRunningChat()
+    fireEvent.click(screen.getByRole('button', { name: 'Stop' }))
+    expect(spinning('Existing work')).toBe(false)
+
+    await act(async () =>
+      outcome === 'fail' ? stops[0]!.fail(new Error('Stop failed')) : stops[0]!.answer(),
+    )
+
+    expect(spinning('Existing work')).toBe(true)
+  })
+
+  it('stops for a chat the user left before the server ended its turn', async () => {
+    const stops = holdStops()
+    await openRunningChat()
+    fireEvent.click(screen.getByRole('button', { name: 'Stop' }))
+
+    fireEvent.click(treeChatRow('Other work'))
+    await waitFor(() =>
+      expect(screen.getByTestId('thread').getAttribute('data-thread-id')).toBe('thread-2'),
+    )
+    expect(spinning('Existing work')).toBe(false)
+
+    emitThreadEvent('thread-1', { type: 'turn.completed', turnId: 'turn-1', status: 'interrupted' })
+    expect(spinning('Existing work')).toBe(false)
+    expect(treeChatRow('Existing work').getAttribute('aria-label')).toBe(
+      'Existing work, Codex, ready, unread',
+    )
+    await act(async () => stops[0]!.answer())
+    expect(spinning('Existing work')).toBe(false)
+  })
+
+  it('stops for a chat another window stopped', async () => {
+    render(<App />)
+    await waitFor(() => treeChatRow('Other work'))
+    startTurn('thread-2', 'turn-2')
+    expect(spinning('Other work')).toBe(true)
+
+    emitThreadEvent('thread-2', { type: 'turn.completed', turnId: 'turn-2', status: 'interrupted' })
+
+    expect(spinning('Other work')).toBe(false)
+  })
+
+  it('stops for a new chat stopped while it starts, through to the stopped turn', async () => {
+    serverProjects = [
+      { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },
+    ]
+    const request = transport.request.getMockImplementation()!
+    let releaseStart!: () => void
+    const startGate = new Promise<void>((resolve) => (releaseStart = resolve))
+    transport.request.mockImplementation(async (method: string, params: unknown) => {
+      if (method === 'thread.start') await startGate
+      return request(method, params)
+    })
+    const stops = holdStops()
+    render(<App />)
+    const composer = await screen.findByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: 'Stop this new chat' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    await waitFor(() => expect(spinning('Stop this new chat')).toBe(true))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Stop' }))
+    expect(spinning('Stop this new chat')).toBe(false)
+
+    await act(async () => releaseStart())
+    await waitFor(() => expect(stops).toHaveLength(1))
+    expect(transport.request).toHaveBeenCalledWith('thread.interrupt', { threadId: 'thread-1' })
+    expect(spinning('Stop this new chat')).toBe(false)
+    startTurn('thread-1', 'turn-1')
+    expect(spinning('Stop this new chat')).toBe(false)
+    emitThreadEvent('thread-1', { type: 'turn.completed', turnId: 'turn-1', status: 'interrupted' })
+    await act(async () => stops[0]!.answer())
+    expect(spinning('Stop this new chat')).toBe(false)
+  })
+})
+
 function dropFile(composer: HTMLElement, path: string) {
   const file = new File(['test'], path.split('/').at(-1) ?? 'attachment')
   const descriptor = Object.getOwnPropertyDescriptor(window, 'harness')
