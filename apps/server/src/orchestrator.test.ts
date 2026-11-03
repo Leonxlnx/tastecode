@@ -1683,7 +1683,7 @@ describe('reply style', () => {
 })
 
 describe('default skills', () => {
-  const skillsHarness = async () => {
+  const skillsHarness = async (services?: ProviderControlsOptions['services']) => {
     const parent = mkdtempSync(path.join(os.tmpdir(), 'tc-orchestrator-skills-'))
     onTestFinished(() => rmSync(parent, { recursive: true, force: true }))
     const root = await writeDefaultSkillsFixture(parent)
@@ -1697,7 +1697,7 @@ describe('default skills', () => {
     return {
       root,
       project,
-      ...harness(undefined, undefined, undefined, undefined, undefined, root),
+      ...harness(undefined, undefined, undefined, undefined, services, root),
     }
   }
 
@@ -1747,6 +1747,122 @@ describe('default skills', () => {
     await orchestrator.startThread('cursor', process.cwd())
     expect(startedOptions[0]?.instructions).not.toContain('Skills included with TasteCode')
     await orchestrator.disposeAll()
+  })
+
+  it('lists the bundled skills as commands where the provider loads them as a plugin', async () => {
+    // Claude Code runs `/cook` as the plugin's `tastecode:cook`, but its probe
+    // starts without the plugin. Without these rows the slash menu offered
+    // `$cook` while the list loaded and after, which Claude does not expand.
+    let finish: (() => void) | undefined
+    const discover = vi.fn(
+      () =>
+        new Promise<{ commands: ProviderCommand[]; servers: McpServer[] }>((resolve) => {
+          finish = () =>
+            resolve({ commands: [{ name: 'context', description: 'Show context' }], servers: [] })
+        }),
+    )
+    const { orchestrator, sessions, commandChanges } = await skillsHarness({
+      'claude-code': { projectInventory: { mcpCapabilities: CLAUDE_MCP_CAPABILITIES, discover } },
+    })
+    const bundled: ProviderCommand[] = ['cinetic', 'design-taste-frontend', 'cook'].map((name) => ({
+      name,
+      description: `The long ${name} description.`,
+      aliases: [`tastecode:${name}`],
+      kind: 'skill',
+      source: 'plugin',
+    }))
+    try {
+      await expect(orchestrator.listCommands('claude-code', '/repo')).resolves.toEqual({
+        commands: bundled,
+        loading: true,
+      })
+      await vi.waitFor(() => expect(finish).toBeDefined())
+      finish!()
+      await vi.waitFor(() =>
+        expect(commandChanges).toEqual([{ provider: 'claude-code', projectPath: '/repo' }]),
+      )
+      await expect(orchestrator.listCommands('claude-code', '/repo')).resolves.toEqual({
+        commands: [{ name: 'context', description: 'Show context' }, ...bundled],
+        loading: false,
+      })
+
+      // A chat that loaded the plugin reports its qualified name; keep one bare row.
+      const chat = await orchestrator.startThread('claude-code', '/repo')
+      const live: ProviderCommand = {
+        name: 'tastecode:cook',
+        aliases: ['cook'],
+        description: '(tastecode) Cook.',
+        kind: 'skill',
+        source: 'plugin',
+      }
+      sessions[0]!.commands = [live]
+      const inventory = await orchestrator.listCommands('claude-code', '/repo', chat.id)
+      expect(inventory).toEqual({
+        commands: bundled,
+        loading: false,
+      })
+      expect(sessions[0]!.commands).toEqual([live])
+      const selected = inventory.commands.find((command) => command.name === 'cook')!
+      await orchestrator.submitTurn(chat.id, `/${selected.name} Build a site`)
+      expect(sessions[0]!.sent).toEqual(['/cook Build a site'])
+
+      // A provider that reads them from the catalog has no such commands.
+      for (const provider of ProviderIdSchema.options) {
+        if (PROVIDER_CAPABILITIES[provider].defaultSkillsPlugin) continue
+        const { commands } = await orchestrator.listCommands(provider, '/repo')
+        expect(
+          commands.filter((command) =>
+            command.aliases?.some((alias) => alias.startsWith('tastecode:')),
+          ),
+        ).toEqual([])
+      }
+    } finally {
+      await orchestrator.disposeAll()
+    }
+  })
+
+  it('collapses manifest-derived aliases while preserving other plugins and user commands', async () => {
+    const { orchestrator, sessions, root, project } = await skillsHarness()
+    writeFileSync(
+      path.join(root, 'skills.json'),
+      JSON.stringify({ plugin: { name: 'acme' }, skills: [{ folder: 'cook' }] }),
+    )
+    writeFileSync(
+      path.join(root, 'skills', 'cook', 'SKILL.md'),
+      '---\nname: cook-loop\ndescription: Loops.\n---\n',
+    )
+    const bundled: ProviderCommand = {
+      name: 'cook-loop',
+      aliases: ['acme:cook'],
+      description: 'Loops.',
+      kind: 'skill',
+      source: 'plugin',
+    }
+    const probed: ProviderCommand = { name: 'acme:cook', description: 'Probed.' }
+    const other: ProviderCommand = { name: 'other:cook', description: 'Another plugin.' }
+    const custom: ProviderCommand = { name: 'cook-loop', description: 'My own command.' }
+    try {
+      const chat = await orchestrator.startThread('claude-code', project)
+      sessions[0]!.commands = [probed, other]
+      await expect(orchestrator.listCommands('claude-code', project, chat.id)).resolves.toEqual({
+        commands: [other, bundled],
+        loading: false,
+      })
+
+      for (const commands of [
+        [probed, custom, other],
+        [custom, probed, other],
+      ]) {
+        sessions[0]!.commands = commands
+        await expect(orchestrator.listCommands('claude-code', project, chat.id)).resolves.toEqual({
+          commands: [custom, other],
+          loading: false,
+        })
+        expect(sessions[0]!.commands).toEqual(commands)
+      }
+    } finally {
+      await orchestrator.disposeAll()
+    }
   })
 
   it('refuses to switch off a bundled skill through a provider', async () => {

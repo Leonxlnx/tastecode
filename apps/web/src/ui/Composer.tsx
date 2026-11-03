@@ -1880,11 +1880,10 @@ function ComposerComponent(props: {
       if (document.execCommand('insertText', false, inserted) && el.value === next) return
     }
     updateText(next)
-    requestAnimationFrame(() => {
-      area.current?.focus()
-      area.current?.setSelectionRange(caret, caret)
-      grow()
-    })
+    // The textarea value is already written; a later caret reset can overtake typing.
+    el?.focus()
+    el?.setSelectionRange(caret, caret)
+    grow()
   }
 
   return (

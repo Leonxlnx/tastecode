@@ -96,6 +96,17 @@ export const SubagentSchema = z.object({
 export type Subagent = z.infer<typeof SubagentSchema>
 
 /**
+ * Whether a chat's agent may start sub-agents on providers other than the
+ * chat's own. `otherProviders` is absent until the user answers, and absent
+ * counts as not allowed: then only a sub-agent on another provider that the
+ * user's own prompt asks for may start.
+ */
+export const SubagentSettingsSchema = z.object({
+  otherProviders: z.boolean().optional(),
+})
+export type SubagentSettings = z.infer<typeof SubagentSettingsSchema>
+
+/**
  * The chat moved to another provider, agent or account; the turns after it run
  * there. The conversation before it went along as context.
  */

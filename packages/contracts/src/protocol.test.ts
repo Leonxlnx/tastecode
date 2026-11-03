@@ -2490,3 +2490,16 @@ describe('attachments.read', () => {
     })
   })
 })
+
+describe('subagents.settings', () => {
+  it('leaves other providers unanswered until the user chooses', () => {
+    expect(methods['subagents.settings'].result.parse({})).toEqual({})
+    expect(methods['subagents.settings'].result.parse({ otherProviders: true })).toEqual({
+      otherProviders: true,
+    })
+    const update = methods['subagents.updateSettings']
+    expect(update.params.parse({ otherProviders: false })).toEqual({ otherProviders: false })
+    expect(update.params.safeParse({}).success).toBe(false)
+    expect(update.params.safeParse({ otherProviders: 'yes' }).success).toBe(false)
+  })
+})

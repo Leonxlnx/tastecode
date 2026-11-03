@@ -3045,12 +3045,15 @@
                   >pinned to exact upstream commits in packages/default-skills/skills.json, fetched
                   and hash-checked by its sync script (the files are not in git) and packaged as
                   real files in resources/default-skills; the Skills page lists them read-only under
-                  Included with TasteCode, and $ offers them in the composer; chats get a short
-                  catalog (names, one line, folder) in their instructions and read SKILL.md only
-                  when needed, Side chats and background sessions do not; Claude Code loads the
-                  folder natively as the plugin tastecode (skills show as tastecode:&lt;name&gt;,
-                  Agent SDK plugins option and claude -p --plugin-dir) and gets no catalog; a
-                  missing bundle lists nothing and adds no catalog</span
+                  Included with TasteCode, and $ offers them in the composer (where the provider
+                  loads them as a plugin, every command list carries the bare SKILL.md name with
+                  tastecode:&lt;folder&gt; as an alias, so / shows and inserts /&lt;name&gt; even
+                  before a chat runs; a live probe's qualified row collapses into that same row);
+                  chats get a short catalog (names, one line, folder) in their instructions and read
+                  SKILL.md only when needed, Side chats and background sessions do not; Claude Code
+                  loads the folder natively as the plugin tastecode (Agent SDK plugins option and
+                  claude -p --plugin-dir) and gets no catalog; a missing bundle lists nothing and
+                  adds no catalog</span
                 ></span
               ></label
             >
