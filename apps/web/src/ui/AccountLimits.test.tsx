@@ -442,9 +442,8 @@ describe('account limits', () => {
     })
     expect(session.getAttribute('aria-valuenow')).toBe('85')
     expect(session.getAttribute('aria-valuetext')).toBe('85% left, 5.1 of 6× Pro left')
-    expect(
-      within(pool).getByText(/^5\.1 of 6× Pro left · 2 of 3 accounts · Personal resets in/),
-    ).toBeTruthy()
+    expect(within(pool).getByText('5.1× Pro left · 2 of 3 accounts')).toBeTruthy()
+    expect(within(pool).getByText(/^Personal resets in 2h/)).toBeTruthy()
     // Weekly: 11.2 of 16 left, a segment per account, the soonest reset first.
     const weekly = within(pool).getByRole('progressbar', {
       name: 'Claude Code Weekly left, all accounts',
@@ -457,7 +456,8 @@ describe('account limits', () => {
       'Studio',
     ])
     expect(segments.map((segment) => segment.style.flexGrow)).toEqual(['5', '1', '10'])
-    expect(within(pool).getByText(/^11\.2 of 16× Pro left · Work resets/)).toBeTruthy()
+    expect(within(pool).getByText('11.2× Pro left')).toBeTruthy()
+    expect(within(pool).getByText(/^Work resets /)).toBeTruthy()
 
     // Work resets its week soonest with room left: it is the one to use next.
     const work = screen.getByRole('button', { name: /^Work, recommended, / })

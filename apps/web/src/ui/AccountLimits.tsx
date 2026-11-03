@@ -293,18 +293,17 @@ function PoolWindowRow(props: {
     total.capacity > 0
       ? Math.min(100, Math.max(0, Math.round((total.remaining / total.capacity) * 100)))
       : 0
-  const size = `${multipleText(total.capacity)}×${pool.unit ? ` ${pool.unit}` : ''}`
-  const amount = `${multipleText(total.remaining, 1)} of ${size} left`
+  const unit = pool.unit ? ` ${pool.unit}` : ''
+  const size = `${multipleText(total.capacity)}×${unit}`
+  const amount = `${multipleText(total.remaining, 1)}×${unit} left`
   const segments = poolSegments(pool, total.kind, props.now)
   const next = segments.find((segment) => segment.resetsAt === total.nextResetAt)
   const reset = next?.resetsAt === undefined ? undefined : resetText(next.resetsAt, props.now)
+  // Accounts without a plan size, or without this window, are not in the sum.
   const counted =
     total.accounts < pool.accounts.length
       ? `${total.accounts} of ${pool.accounts.length} accounts`
       : undefined
-  const detail = [amount, counted, next && reset ? `${next.label} ${reset.label}` : undefined]
-    .filter(Boolean)
-    .join(' · ')
   return (
     <div className="account-menu__limit account-menu__pool-window">
       <div className="account-menu__limit-row">
@@ -321,7 +320,7 @@ function PoolWindowRow(props: {
         aria-valuenow={left}
         aria-valuemin={0}
         aria-valuemax={100}
-        aria-valuetext={`${left}% left, ${amount}`}
+        aria-valuetext={`${left}% left, ${multipleText(total.remaining, 1)} of ${size} left`}
       >
         {segments.map((segment) => {
           const segmentLeft = Math.round(segment.left * 100)
@@ -342,8 +341,9 @@ function PoolWindowRow(props: {
           )
         })}
       </div>
-      <span className="account-menu__limit-reset" title={reset?.title}>
-        {detail}
+      <span className="account-menu__pool-detail">
+        <span>{[amount, counted].filter(Boolean).join(' · ')}</span>
+        {next && reset ? <span title={reset.title}>{`${next.label} ${reset.label}`}</span> : null}
       </span>
     </div>
   )
