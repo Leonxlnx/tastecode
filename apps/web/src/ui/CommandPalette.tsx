@@ -219,7 +219,9 @@ function CommandPaletteComponent(props: {
                     id={`command-${command.id}`}
                     className={`command-palette__item ${index === selected ? 'is-selected' : ''}`}
                     onClick={() => choose(command)}
-                    onMouseEnter={() => setSelectedId(command.id)}
+                    // Move, not enter: arrow keys scroll rows under a resting pointer, and
+                    // mouseenter would pull the selection away from the keyboard's choice.
+                    onMouseMove={() => setSelectedId(command.id)}
                     role="option"
                     tabIndex={-1}
                     aria-selected={index === selected}

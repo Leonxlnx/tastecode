@@ -412,6 +412,8 @@ export type ClaudeAdapterEvents = {
   mcpChanged: []
   /** The session reported a new command list or what its skills are. */
   commandsChanged: []
+  /** Whether work the session started still runs in the background changed. */
+  backgroundWorkChanged: []
 }
 
 /** Claude starts MCP servers in the background; this long is a server still worth waiting for. */
@@ -665,6 +667,8 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
   /** The latest status list still had a server starting. */
   #mcpPending = false
   readonly #subagents = new ClaudeSubagents((event) => this.emit('event', event))
+  /** The process still runs background work that reports by starting a turn of its own. */
+  #backgroundWork = false
   #tasks: ClaudeTask[] = []
   readonly #pendingTaskTools = new Map<string, PendingTaskTool>()
 
@@ -949,6 +953,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
       this.#log(`Could not close Claude: ${error instanceof Error ? error.message : String(error)}`)
     }
     this.#subagents.endSession()
+    this.#setBackgroundWork(false)
     this.#settlePending('Claude turn was stopped.')
     this.emit('disconnected')
   }
@@ -1128,6 +1133,21 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     return this.#mcpPending && this.#mcpSettling !== undefined
   }
 
+  /**
+   * Work a turn started in the background (a shell command, an agent, a monitor) still runs
+   * in this process. Claude starts a turn of its own when it ends, so ending the process
+   * now would lose both; `backgroundWorkChanged` follows each change.
+   */
+  hasBackgroundWork(): boolean {
+    return this.#backgroundWork
+  }
+
+  #setBackgroundWork(running: boolean): void {
+    if (this.#backgroundWork === running) return
+    this.#backgroundWork = running
+    this.emit('backgroundWorkChanged')
+  }
+
   /** Commands and skills this session runs when a message starts with `/name`. */
   async listCommands(threadId?: string): Promise<ProviderCommand[]> {
     const { query, redactor } = await this.#liveQuery(threadId)
@@ -1182,6 +1202,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     this.#query = undefined
     this.#completeStreamingItems('failed', 'interrupted')
     this.#subagents.endSession()
+    this.#setBackgroundWork(false)
     this.#activeTurnId = undefined
     this.#clearStreamingState()
     this.#options = {}
@@ -1439,6 +1460,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     this.#clearStreamingState()
     // Background agents run inside the closed process.
     this.#subagents.endSession()
+    this.#setBackgroundWork(false)
     try {
       // An unused session has no transcript yet, so it must keep --session-id.
       await this.#startQuery(this.#resumeOnRestart ? this.#sessionId : undefined, options)
@@ -1482,6 +1504,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
         this.#promptQueue?.close()
         this.#promptQueue = undefined
         this.#subagents.endSession()
+        this.#setBackgroundWork(false)
         this.#settlePending('Claude session disconnected.')
         if (!this.#disposed) this.emit('disconnected')
       }
@@ -1645,6 +1668,17 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     }
 
     if (message.type === 'system' && this.#subagents.onTaskMessage(message)) return
+
+    if (message.type === 'system' && message.subtype === 'background_tasks_changed') {
+      // Every live background task after a start, end or kill, with replace semantics, and
+      // nothing when a process starts (SDKBackgroundTasksChangedMessage, sent by claude
+      // 2.1.296). When one ends, the CLI reports it in a turn of its own, prompted by a
+      // <task-notification>. Ambient tasks are housekeeping and never activity.
+      this.#setBackgroundWork(
+        Array.isArray(message.tasks) && message.tasks.some((task) => task.ambient !== true),
+      )
+      return
+    }
 
     if (message.type === 'system' && message.subtype === 'init') {
       this.#reportedModel = message.model

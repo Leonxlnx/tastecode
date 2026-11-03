@@ -185,6 +185,8 @@ class FakeSession implements AgentSession {
   commands: ProviderCommand[] = []
   commandReads: Array<string | undefined> = []
   emitCommandsChanged: () => void = () => {}
+  backgroundWork = false
+  emitBackgroundWorkChanged: () => void = () => {}
   emitDisconnected: () => void = () => {}
   emitProviderSessionId: (providerSessionId: string) => void = () => {}
   afterEventBarrier: Promise<void> | undefined
@@ -281,6 +283,20 @@ class FakeSession implements AgentSession {
 
   onCommandsChanged(listener: () => void): void {
     this.emitCommandsChanged = listener
+  }
+
+  hasBackgroundWork(): boolean {
+    return this.backgroundWork
+  }
+
+  onBackgroundWorkChanged(listener: () => void): void {
+    this.emitBackgroundWorkChanged = listener
+  }
+
+  /** Work a turn started keeps running in the background, or stops. */
+  runInBackground(running: boolean): void {
+    this.backgroundWork = running
+    this.emitBackgroundWorkChanged()
   }
 
   onDisconnected(listener: () => void): () => void {
@@ -1037,6 +1053,83 @@ describe('idle thread runtime retention', () => {
       await orchestrator.disposeAll()
       vi.useRealTimers()
     }
+  })
+
+  it('keeps an idle runtime alive while its agent runs background work that will report', async () => {
+    vi.useFakeTimers()
+    const { orchestrator, sessions, received } = harness(undefined, new Store(':memory:'), 8, 1_000)
+    try {
+      const thread = await orchestrator.startThread('codex', process.cwd())
+      const session = sessions[0]!
+      // The turn starts a long check in the background and ends, waiting for it.
+      session.emit(turnStarted(thread.id, 'waits'))
+      session.runInBackground(true)
+      session.emit({ type: 'turn.completed', turnId: 'waits', status: 'completed' })
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(session.disposed).toBe(false)
+
+      // The check ends and the agent reports it in a turn nobody sent.
+      session.runInBackground(false)
+      session.emit(turnStarted(thread.id, 'reports'))
+      session.emit(message('The check passed.', 'reports'))
+      session.emit({ type: 'turn.completed', turnId: 'reports', status: 'completed' })
+      expect(
+        received.flatMap(({ event }) => (event.type === 'turn.started' ? [event.turn.id] : [])),
+      ).toEqual(['waits', 'reports'])
+      expect(orchestrator.isTurnRunning(thread.id)).toBe(false)
+      await vi.advanceTimersByTimeAsync(999)
+      expect(session.disposed).toBe(false)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(session.disposed).toBe(true)
+    } finally {
+      await orchestrator.disposeAll()
+      vi.useRealTimers()
+    }
+  })
+
+  it('starts the idle window when background work ends without a turn', async () => {
+    vi.useFakeTimers()
+    const { orchestrator, sessions } = harness(undefined, new Store(':memory:'), 8, 1_000)
+    try {
+      const thread = await orchestrator.startThread('codex', process.cwd())
+      const session = sessions[0]!
+      session.emit(turnStarted(thread.id, 'waits'))
+      session.runInBackground(true)
+      session.emit({ type: 'turn.completed', turnId: 'waits', status: 'completed' })
+      await vi.advanceTimersByTimeAsync(5_000)
+      session.runInBackground(false)
+      await vi.advanceTimersByTimeAsync(999)
+      expect(session.disposed).toBe(false)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(session.disposed).toBe(true)
+    } finally {
+      await orchestrator.disposeAll()
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps a runtime with background work out of the warm-runtime limit', async () => {
+    const { orchestrator, sessions } = harness(undefined, new Store(':memory:'), 1)
+    const threads = await Promise.all(
+      Array.from({ length: 3 }, () => orchestrator.startThread('codex', process.cwd())),
+    )
+    sessions[0]!.emit(turnStarted(threads[0]!.id, 'waits'))
+    sessions[0]!.runInBackground(true)
+    for (let index = 0; index < threads.length; index += 1) {
+      sessions[index]!.emit({
+        type: 'turn.completed',
+        turnId: index === 0 ? 'waits' : `turn-${index}`,
+        status: 'completed',
+      })
+    }
+    // The newest idle runtime stays warm; the one still working is never counted.
+    expect(sessions.map((session) => session.disposed)).toEqual([false, true, false])
+
+    sessions[0]!.runInBackground(false)
+    await vi.waitFor(() =>
+      expect(sessions.map((session) => session.disposed)).toEqual([false, true, true]),
+    )
+    await orchestrator.disposeAll()
   })
 
   it('releases an expired runtime when its last queued prompt is removed', async () => {

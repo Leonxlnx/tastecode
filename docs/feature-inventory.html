@@ -530,6 +530,20 @@
               ></label
             >
           </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Background work carries a chat on by itself
+                <span class="d"
+                  >while a shell command, agent, monitor or workflow a turn started in the
+                  background still runs (Claude Code's live task list, housekeeping tasks left out),
+                  the idle release and the warm-runtime limit leave its process alone; when the work
+                  ends, the turn Claude starts to report it shows once, without a prompt, and Stop
+                  ends it like any other turn; the idle window starts again when the work ends</span
+                ></span
+              ></label
+            >
+          </li>
         </ul>
 
         <h3>Cursor (cursor-agent stream-json)</h3>
@@ -739,7 +753,11 @@
                 >Conversation resume, interrupt, permission mapping
                 <span class="d"
                   >unreadable frames and throwing listeners are logged without ending the turn;
-                  Windows detection also finds agy in %LOCALAPPDATA%\agy\bin</span
+                  Windows detection also finds agy in %LOCALAPPDATA%\agy\bin; a result that is not
+                  SUCCESS waits for agy's exit code, because agy 1.4.7 reports ERROR for the
+                  conversation's latest error step even when it lies in an earlier turn: exit 0
+                  completes the turn with agy's error text in the log only, any other exit (or no
+                  exit within 10 s) still shows Antigravity finished with status ERROR</span
                 ></span
               ></label
             >
@@ -1430,7 +1448,9 @@
                   >Enter queues while an agent runs; Ctrl/Command+Enter and the visible Steer
                   control redirect the current turn; every queued row can also steer immediately,
                   except while a Design run owns the chat: then queued prompts offer no Steer and
-                  wait until the run finishes</span
+                  wait until the run finishes; a prompt steered in after the turn's first response
+                  carries the transcript's spinner under it until the agent adds its next row, the
+                  turn ends, fails or is stopped</span
                 ></span
               ></label
             >
@@ -1828,7 +1848,8 @@
                 >Safe project-file actions in completed replies
                 <span class="d"
                   >Desktop reveals validated files inside the selected project; outside-project and
-                  network paths show blocked reasons, and browser stays non-interactive</span
+                  network paths stay grey with their blocked reason in the hover tooltip and for
+                  screen readers, not repeated inline, and browser stays non-interactive</span
                 ></span
               ></label
             >
@@ -1924,7 +1945,9 @@
                 <span class="d"
                   >each completed model reply folds thoughts, work notes, and tool activity into one
                   closed disclosure while the final answer stays visible; the summary can be opened
-                  and closed again; repeated settled reasoning-only histories with no answer do the
+                  and closed again; a command the agent leaves running when its turn ends, such as a
+                  server Codex started, folds with the turn and takes its real result when its
+                  process exits; repeated settled reasoning-only histories with no answer do the
                   same; everything between two work notes, thoughts included, folds into one batch
                   with a counted summary such as Ran 3 commands, read 2 files and edited 1 file, a
                   hammer for mixed work, with failures marked on the batch; open, it lists one line
@@ -1989,13 +2012,15 @@
                   chat again while it is still starting shows it without asking the server for its
                   history, so no internal error appears; a Stop pressed while the chat starts, or
                   right behind any prompt, waits for that prompt's turn to start and then stops it
-                  instead of reaching an agent with no turn and being dropped; in every chat the
-                  server ends a stopped turn at once (Stopped by you, the sidebar row stops
-                  spinning) without waiting for the agent to confirm, records none of that turn's
-                  late output, holds a prompt sent meanwhile in the queue until the agent has ended
-                  the turn, stops new work the agent starts in it after accepting the Stop, and ends
-                  the agent process when it refuses the Stop or has not ended the turn within 30 s
-                  (the next send resumes the session)</span
+                  instead of reaching an agent with no turn and being dropped; the chat's sidebar
+                  row stops spinning at the click, as the chat does, also while its turn is still
+                  starting or after the user opened another chat, and spins again only if the Stop
+                  fails or the turn runs on; in every chat the server ends a stopped turn at once
+                  (Stopped by you, the sidebar row stops spinning) without waiting for the agent to
+                  confirm, records none of that turn's late output, holds a prompt sent meanwhile in
+                  the queue until the agent has ended the turn, stops new work the agent starts in
+                  it after accepting the Stop, and ends the agent process when it refuses the Stop
+                  or has not ended the turn within 30 s (the next send resumes the session)</span
                 ></span
               ></label
             >
@@ -2597,13 +2622,14 @@
                 <span class="d"
                   >sidebar delete actions show a top toast with a white Undo button. The toast
                   closes after 5 seconds, pausing on hover or focus within the 10-second undo
-                  window, and fade and slide visible rows before removal. Deletion is permanent once
-                  the window ends; selecting or sending in a pending chat cancels it. A delete still
-                  in its window when the app quits normally finishes on the next start, and the chat
-                  is not shown again. A delete whose request failed is tried once more on the next
-                  start. A crash or hard kill within about 5 seconds of the click can still lose the
-                  delete. Shift-click range selection covers only visible rows. Reduced motion skips
-                  these effects</span
+                  window, and fade and slide visible rows before removal. Deleting a running chat
+                  stops its turn at once, not when the window ends, and Undo brings it back stopped.
+                  Deletion is permanent once the window ends; selecting or sending in a pending chat
+                  cancels it. A delete still in its window when the app quits normally finishes on
+                  the next start, and the chat is not shown again. A delete whose request failed is
+                  tried once more on the next start. A crash or hard kill within about 5 seconds of
+                  the click can still lose the delete. Shift-click range selection covers only
+                  visible rows. Reduced motion skips these effects</span
                 ></span
               ></label
             >
