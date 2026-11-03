@@ -188,3 +188,57 @@ describe('a subagent opened from the Agents tab', () => {
     expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull()
   })
 })
+
+describe('prompting a subagent from its detail', () => {
+  const open = (send: () => unknown) => {
+    const frameStore = new ThreadFrameStore({ ...emptyThread, items: [reviewer, explorer] })
+    const transport = new TestTransport((method) => {
+      if (method === 'thread.sendTurn') return send()
+      if (method === 'thread.subagents') return { subagents: [] }
+      if (method === 'thread.history') return { events: [], running: false, approval: 'ask' }
+      return {}
+    })
+    render(
+      <WorkspaceAgents active transport={transport} threadId="parent" frameStore={frameStore} />,
+    )
+    return transport
+  }
+
+  it('sends a follow-up to a TasteCode child and clears the draft', async () => {
+    const transport = open(() => ({ queued: false, turnId: 'child-turn-2' }))
+    fireEvent.click(await screen.findByRole('button', { name: /Reviewer/ }))
+    const box = await screen.findByRole('textbox', { name: 'Message subagent' })
+    fireEvent.change(box, { target: { value: '  Also check src/b.ts.  ' } })
+    fireEvent.keyDown(box, { key: 'Enter' })
+    await waitFor(() =>
+      expect(transport.requests).toContainEqual({
+        method: 'thread.sendTurn',
+        params: {
+          threadId: 'child-1',
+          text: 'Also check src/b.ts.',
+          clientSubmissionId: expect.stringMatching(/^agent-detail-/),
+        },
+      }),
+    )
+    expect((box as HTMLTextAreaElement).value).toBe('')
+  })
+
+  it('keeps the draft and says why when the prompt cannot be sent', async () => {
+    open(() => {
+      throw new Error('The chat is closed.')
+    })
+    fireEvent.click(await screen.findByRole('button', { name: /Reviewer/ }))
+    const box = await screen.findByRole('textbox', { name: 'Message subagent' })
+    fireEvent.change(box, { target: { value: 'Try again' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    expect((await screen.findByRole('alert')).textContent).toBe('The chat is closed.')
+    expect((box as HTMLTextAreaElement).value).toBe('Try again')
+  })
+
+  it('offers no composer for an engine’s own subagent', async () => {
+    open(() => ({ queued: false, turnId: 't' }))
+    fireEvent.click(await screen.findByRole('button', { name: /Explore/ }))
+    await screen.findByText('The refresh lives in auth/session.ts.')
+    expect(screen.queryByRole('textbox', { name: 'Message subagent' })).toBeNull()
+  })
+})
