@@ -5767,13 +5767,26 @@ export function App() {
       setArchiveToastDismissed(false)
       savePendingChatDelete(pending)
       enqueueArchive(id, () => commitChatDelete(pending))
+      // A deleted chat stops now, not when the Undo window closes: until then its agent
+      // would go on working in the folder for a chat the user has thrown away. Undo brings
+      // the chat back stopped. Should this Stop fail, the delete still ends the agent.
+      if (
+        threadController.snapshot(id)?.running ||
+        runsTurn(findSession(projectsRef.current, id)?.session.status)
+      ) {
+        setStoppingRows((rows) => withStoppingRow(rows, id, Date.now()))
+        void transport
+          .request('thread.interrupt', { threadId: id })
+          .catch(() => undefined)
+          .finally(() => setStoppingRows((rows) => withoutStoppingRow(rows, id)))
+      }
       if (!splitRemovals.current.chats([id]) && activeIdRef.current === id) {
         activeIdRef.current = undefined
         setActiveId(undefined)
         setThread(emptyThread)
       }
     },
-    [enqueueArchive, commitChatDelete],
+    [enqueueArchive, commitChatDelete, threadController, transport],
   )
 
   const undoArchive = useCallback(() => {
@@ -8289,6 +8302,13 @@ function statusFor(
   if (state.approvals.length > 0) return 'approval'
   if (state.userInputs.length > 0) return 'input'
   return state.running ? 'working' : 'idle'
+}
+
+/** The chat runs a turn, starts one, or its turn waits on the user. */
+function runsTurn(status: Project['sessions'][number]['status'] | undefined): boolean {
+  return (
+    status === 'starting' || status === 'working' || status === 'approval' || status === 'input'
+  )
 }
 
 function withStoppingRow(
