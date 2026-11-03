@@ -2,11 +2,12 @@
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { Item } from '@harness/contracts'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { ThreadFrameStore } from '../thread-frame-store.js'
 import { emptyThread, reduce, type ThreadState } from '../thread-store.js'
+import { Markdown } from './Markdown.js'
 import { Thread } from './Thread.js'
 
 vi.mock('@tanstack/react-virtual', () => ({
@@ -28,7 +29,18 @@ stylesheet.textContent = readFileSync(
   join(dirname(fileURLToPath(import.meta.url)), '../styles/markdown.css'),
   'utf8',
 )
-beforeAll(() => document.head.append(stylesheet))
+beforeAll(async () => {
+  document.head.append(stylesheet)
+  // A rich reply first shows the streaming renderer and swaps in the finished one
+  // once its chunk has loaded. Waiting for that import inside one test's 1 s
+  // `waitFor` failed on loaded CI runners; load it once here, as a running app has.
+  render(<Markdown text="Load `the` renderer" streaming />)
+  await act(async () => {
+    await import('./CompletedMarkdown.js')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  })
+  cleanup()
+})
 afterAll(() => stylesheet.remove())
 afterEach(cleanup)
 
