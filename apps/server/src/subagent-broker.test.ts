@@ -20,6 +20,8 @@ type FixtureState = {
   outcome: SubagentOutcome
   createError?: Error
   otherProviders: boolean
+  /** Holds createChild until it resolves, like a chat that takes a while to start. */
+  createGate?: Promise<void>
 }
 
 function fixture() {
@@ -28,6 +30,7 @@ function fixture() {
   const created: SubagentChildSpec[] = []
   const sent: Array<{ threadId: string; task: string }> = []
   const stopped: string[] = []
+  const released: string[] = []
   const interrupted: string[] = []
   const state: FixtureState = {
     parent: {
@@ -57,14 +60,19 @@ function fixture() {
     otherProvidersAllowed: () => state.otherProviders,
     createChild: async (spec) => {
       created.push(spec)
+      const id = `child-${created.length}`
+      await state.createGate
       if (state.createError) throw state.createError
-      return `child-${created.length}`
+      return id
     },
     sendToChild: async (threadId, task) => {
       sent.push({ threadId, task })
     },
     stopChild: async (threadId) => {
       stopped.push(threadId)
+    },
+    releaseChild: async (threadId) => {
+      released.push(threadId)
     },
     outcome: () => state.outcome,
     recordOnParent: (parentThreadId, event) => recorded.push({ parentThreadId, event }),
@@ -88,6 +96,7 @@ function fixture() {
     created,
     sent,
     stopped,
+    released,
     interrupted,
     state,
     rows,
@@ -350,6 +359,22 @@ describe('SubagentBroker', () => {
       new AbortController().signal,
     )) as { agents: Array<Record<string, unknown>> }
     expect(report.agents[0]).toMatchObject({ status: 'failed', error: 'Codex is not signed in.' })
+  })
+
+  it('ends the agent of a child stopped while its chat was starting', async () => {
+    const f = fixture()
+    let open = () => {}
+    f.state.createGate = new Promise<void>((resolve) => (open = resolve))
+    await start(f.broker)
+    await f.broker.stop(caller, { agent_id: 'a1' })
+    expect(f.released).toEqual([])
+
+    open()
+    await settle()
+    // The chat exists but gets no task, and its process does not idle on.
+    expect(f.sent).toEqual([])
+    expect(f.released).toEqual(['child-1'])
+    expect(f.lastRow().subagent.state).toBe('interrupted')
   })
 
   it('ends a wait on timeout or when the caller hangs up', async () => {

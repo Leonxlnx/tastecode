@@ -1030,6 +1030,8 @@ export class Orchestrator {
         )
       },
       stopChild: (threadId) => this.interrupt(threadId),
+      // Closing a sub-agent's chat ends its runtime and keeps its transcript.
+      releaseChild: (threadId) => this.close(threadId),
       outcome: (threadId, turnId) => this.#subagentOutcome(threadId, turnId),
       recordOnParent: (parentThreadId, event) => {
         if (this.#store.thread(parentThreadId)) this.#record(parentThreadId, event)
