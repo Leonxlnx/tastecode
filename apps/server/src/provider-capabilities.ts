@@ -12,6 +12,13 @@ export type ProviderControlCapabilities = Readonly<{
   inheritedMcp: boolean
   /** The provider can list the MCP servers its own settings load (server-internal). */
   mcpInventory: boolean
+  /**
+   * A chat on this provider gets TasteCode's agent tools, served as the MCP
+   * server `tastecode`, and can start sub-agents on other providers
+   * (server-internal). It needs a managed MCP path that one more server does
+   * not change; Grok switches to its ACP mode for any server, so it has none.
+   */
+  agentTools: boolean
   /** The provider lists the skills it loads itself (server-internal). */
   nativeSkills: boolean
   /**
@@ -19,6 +26,14 @@ export type ProviderControlCapabilities = Readonly<{
    * and the home folder. Only a capture of the CLI reading them turns this on.
    */
   agentsSkillsDir: boolean
+  /**
+   * The provider loads the skills that ship with TasteCode itself, from the
+   * plugin folder passed as `StartOptions.skillPlugin`, so its sessions skip
+   * the skill catalog in the shared instructions (server-internal). Only a
+   * runtime with a native plugin loader turns this on (Claude Code's
+   * `--plugin-dir`, which shows the skills as `tastecode:<name>`).
+   */
+  defaultSkillsPlugin: boolean
   nativeModels: boolean
   /**
    * The provider names the chats it runs for TasteCode, and its history source
@@ -56,8 +71,10 @@ const unsupported: ProviderControlCapabilities = {
   managedMcp: false,
   inheritedMcp: false,
   mcpInventory: false,
+  agentTools: false,
   nativeSkills: false,
   agentsSkillsDir: false,
+  defaultSkillsPlugin: false,
   nativeModels: false,
   nativeTitles: false,
   notifications: false,
@@ -79,7 +96,15 @@ const unsupported: ProviderControlCapabilities = {
 const PROCESS_LIMIT_READ_INTERVAL_MS = 5 * 60_000
 
 export const PROVIDER_CAPABILITIES = {
-  acp: { ...unsupported, resume: true, nativeModels: true, account: true, signOut: true },
+  acp: {
+    ...unsupported,
+    resume: true,
+    // TasteCode's project servers go to session/new, filtered by the agent's transports.
+    managedMcp: true,
+    nativeModels: true,
+    account: true,
+    signOut: true,
+  },
   antigravity: {
     ...unsupported,
     nativeModels: true,
@@ -97,6 +122,8 @@ export const PROVIDER_CAPABILITIES = {
     forkSession: true,
     managedMcp: true,
     mcpInventory: true,
+    agentTools: true,
+    defaultSkillsPlugin: true,
     nativeModels: true,
     // The CLI saves an `ai-title` row once a prompt says enough to name.
     nativeTitles: true,
@@ -118,8 +145,11 @@ export const PROVIDER_CAPABILITIES = {
     managedMcp: true,
     inheritedMcp: true,
     mcpInventory: true,
+    agentTools: true,
     nativeSkills: true,
     agentsSkillsDir: true,
+    // skills/extraRoots/set exists, but nothing shows it stays out of ~/.codex.
+    defaultSkillsPlugin: false,
     nativeModels: true,
     // Codex's own apps name their threads; the app server leaves TasteCode's unnamed.
     nativeTitles: false,
@@ -140,6 +170,10 @@ export const PROVIDER_CAPABILITIES = {
     account: true,
     login: true,
     signOut: true,
+    usageLimits: true,
+    // A read is one HTTPS request, no process; Cursor's figures change with
+    // each turn but nothing reports them live, so they are this old at most.
+    limitReadIntervalMs: PROCESS_LIMIT_READ_INTERVAL_MS,
   },
   grok: {
     ...unsupported,
@@ -160,6 +194,7 @@ export const PROVIDER_CAPABILITIES = {
     resume: true,
     managedMcp: true,
     mcpInventory: true,
+    agentTools: true,
     nativeSkills: true,
     nativeModels: true,
     account: true,

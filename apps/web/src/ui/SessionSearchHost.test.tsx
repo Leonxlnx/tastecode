@@ -131,6 +131,35 @@ describe('SessionSearchHost focus restoration', () => {
     expect(document.activeElement).toBe(screen.getByPlaceholderText('Do anything'))
   })
 
+  it("falls back to the focused split pane's composer, not the dormant one", async () => {
+    const search = createRef<SessionSearchHandle>()
+    render(
+      <>
+        <div inert data-testid="dormant">
+          <textarea placeholder="Do anything" />
+        </div>
+        <div data-testid="focused">
+          <textarea placeholder="Do anything" />
+        </div>
+        <SessionSearchHost
+          ref={search}
+          transport={transport}
+          projects={PROJECTS}
+          onSelect={() => undefined}
+        />
+      </>,
+    )
+    act(() => search.current?.open())
+    const input = await screen.findByRole('combobox', { name: 'Search every chat' })
+
+    fireEvent.keyDown(input, { key: 'Escape' })
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(document.activeElement?.closest('[data-testid]')?.getAttribute('data-testid')).toBe(
+      'focused',
+    )
+  })
+
   it('falls back when the invoking control unmounts after selection', async () => {
     function TasteCode() {
       const search = useRef<SessionSearchHandle>(null)

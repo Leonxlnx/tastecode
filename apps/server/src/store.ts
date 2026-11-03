@@ -52,6 +52,7 @@ import {
   type HistoryTailRows,
 } from './history-tail.js'
 import { DatabaseSync, type SQLInputValue, type StatementSync } from './sqlite.js'
+import { SubagentRunTable, subagentRunItem } from './subagent-runs.js'
 import {
   affectsInboxProjection,
   applyInboxProjectionEvent,
@@ -149,6 +150,12 @@ export type StoredThread = {
   ephemeral: boolean
   /** Main conversation captured when an ephemeral Side chat was created. */
   parentThreadId?: string | undefined
+  /**
+   * The chat that started this one as its sub-agent. Such a chat is stored as
+   * `ephemeral`, so every chat list, lifecycle, inbox and search leaves it
+   * out, but unlike a Side chat it survives a restart and goes with its owner.
+   */
+  ownerThreadId?: string | undefined
   /** The earlier chat this one carries on, such as on another account after a usage limit. */
   continuedFrom?: string | undefined
   /**
@@ -354,6 +361,13 @@ CREATE INDEX IF NOT EXISTS threads_inactive
   WHERE closed_at IS NULL AND lifecycle_state = 'active' AND ephemeral = 0 AND keep_active = 0;
 `
 
+/** Runs after the column migration, which an older database needs first. */
+const OWNED_THREAD_INDEX = `
+CREATE INDEX IF NOT EXISTS threads_by_owner
+  ON threads (owner_thread_id)
+  WHERE owner_thread_id IS NOT NULL;
+`
+
 const SESSION_SEARCH_TABLE = `
 CREATE VIRTUAL TABLE IF NOT EXISTS session_search USING fts5 (
   thread_id UNINDEXED,
@@ -398,6 +412,7 @@ CREATE TABLE IF NOT EXISTS threads (
   last_active_at   INTEGER NOT NULL,
   ephemeral        INTEGER NOT NULL DEFAULT 0,
   parent_thread_id TEXT,
+  owner_thread_id  TEXT,
   continued_from   TEXT,
   continue_context_pending INTEGER NOT NULL DEFAULT 0,
   continued_changes       TEXT,
@@ -691,6 +706,7 @@ const ADDED_COLUMNS: Array<{ table: string; column: string; definition: string }
   { table: 'threads', column: 'last_active_at', definition: 'INTEGER NOT NULL DEFAULT 0' },
   { table: 'threads', column: 'ephemeral', definition: 'INTEGER NOT NULL DEFAULT 0' },
   { table: 'threads', column: 'parent_thread_id', definition: 'TEXT' },
+  { table: 'threads', column: 'owner_thread_id', definition: 'TEXT' },
   { table: 'threads', column: 'restore_context_pending', definition: 'INTEGER NOT NULL DEFAULT 0' },
   { table: 'threads', column: 'provider_session_id', definition: 'TEXT' },
   { table: 'threads', column: 'connection_id', definition: 'TEXT' },
@@ -755,6 +771,7 @@ type ThreadRow = {
   last_active_at: SqliteInteger
   ephemeral: SqliteInteger
   parent_thread_id: string | null
+  owner_thread_id: string | null
   continued_from: string | null
   continued_changes: string | null
 }
@@ -1026,6 +1043,8 @@ export class Store {
   #searchRevision = 0
   /** Keeps the streamed-event path from querying SQLite just to skip search indexing. */
   #ephemeralThreads = new Set<string>()
+  /** Sub-agent runs: what each chat started, and where its result stands. */
+  readonly subagents: SubagentRunTable
   /**
    * The item and turn of each thread's last indexed delta. A run of deltas
    * names the same keys, so the history index is written once per run.
@@ -1286,6 +1305,8 @@ export class Store {
     )
     this.#migrate()
     this.#db.exec(LIFECYCLE_INDEXES)
+    this.#db.exec(OWNED_THREAD_INDEX)
+    this.subagents = new SubagentRunTable(this.#db)
     this.#insertProject = this.#db.prepare(
       `INSERT INTO projects (path, name, pinned, created_at) VALUES (?, ?, 0, ?)
        ON CONFLICT (path) DO NOTHING`,
@@ -1296,8 +1317,8 @@ export class Store {
         (id, project_path, provider, agent, connection_id, account_id, provider_session_id, title,
           created_at, worktree_path, worktree_branch,
           lifecycle_state, keep_active, unread, last_active_at, ephemeral, parent_thread_id,
-          continued_from, continue_context_pending, continued_changes)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 0, 0, ?, ?, ?, ?, ?, ?)`,
+          owner_thread_id, continued_from, continue_context_pending, continued_changes)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 0, 0, ?, ?, ?, ?, ?, ?, ?)`,
     )
     this.#listProjects = this.#db.prepare(`SELECT * FROM projects ORDER BY created_at`)
     this.#listProjectThreads = this.#db.prepare(
@@ -1451,6 +1472,11 @@ export class Store {
     )
     this.#lastSequence = this.#db.prepare(`SELECT MAX(seq) AS seq FROM events WHERE thread_id = ?`)
     this.#purgeEphemeralThreads()
+    // What is still ephemeral now belongs to a sub-agent, and stays out of search.
+    for (const { id } of sqliteRows<{ id: string }>(
+      this.#db.prepare(`SELECT id FROM threads WHERE ephemeral = 1`),
+    ))
+      this.#ephemeralThreads.add(id)
     this.#recoverQueuedTurnClaims()
     const completedMigrations = new Set(
       sqliteRows<MigrationRow>(this.#db.prepare(`SELECT name FROM schema_migrations`)).map(
@@ -1542,29 +1568,34 @@ export class Store {
     this.#db.exec(`UPDATE threads SET last_active_at = created_at WHERE last_active_at = 0`)
   }
 
-  /** Side chats intentionally do not survive an app restart or a crashed renderer. */
+  /**
+   * Side chats intentionally do not survive an app restart or a crashed
+   * renderer. Sub-agent chats do: their owner's transcript points at them.
+   */
   #purgeEphemeralThreads(): void {
-    const exists = this.#db.prepare(`SELECT 1 FROM threads WHERE ephemeral = 1 LIMIT 1`).get()
+    const exists = this.#db
+      .prepare(`SELECT 1 FROM threads WHERE ephemeral = 1 AND owner_thread_id IS NULL LIMIT 1`)
+      .get()
     if (!exists) return
     this.#transaction(() => {
       this.#db.exec(`
         DELETE FROM session_search
-        WHERE thread_id IN (SELECT id FROM threads WHERE ephemeral = 1);
+        WHERE thread_id IN (SELECT id FROM threads WHERE ephemeral = 1 AND owner_thread_id IS NULL);
         DELETE FROM events
-        WHERE thread_id IN (SELECT id FROM threads WHERE ephemeral = 1);
+        WHERE thread_id IN (SELECT id FROM threads WHERE ephemeral = 1 AND owner_thread_id IS NULL);
         DELETE FROM checkpoints
-        WHERE thread_id IN (SELECT id FROM threads WHERE ephemeral = 1);
+        WHERE thread_id IN (SELECT id FROM threads WHERE ephemeral = 1 AND owner_thread_id IS NULL);
         DELETE FROM restore_undos
-        WHERE thread_id IN (SELECT id FROM threads WHERE ephemeral = 1);
+        WHERE thread_id IN (SELECT id FROM threads WHERE ephemeral = 1 AND owner_thread_id IS NULL);
         DELETE FROM diff_decisions
-        WHERE thread_id IN (SELECT id FROM threads WHERE ephemeral = 1);
+        WHERE thread_id IN (SELECT id FROM threads WHERE ephemeral = 1 AND owner_thread_id IS NULL);
         DELETE FROM design_runs
-        WHERE thread_id IN (SELECT id FROM threads WHERE ephemeral = 1);
+        WHERE thread_id IN (SELECT id FROM threads WHERE ephemeral = 1 AND owner_thread_id IS NULL);
         DELETE FROM history_keys
-        WHERE thread_id IN (SELECT id FROM threads WHERE ephemeral = 1);
+        WHERE thread_id IN (SELECT id FROM threads WHERE ephemeral = 1 AND owner_thread_id IS NULL);
         DELETE FROM history_state_events
-        WHERE thread_id IN (SELECT id FROM threads WHERE ephemeral = 1);
-        DELETE FROM threads WHERE ephemeral = 1;
+        WHERE thread_id IN (SELECT id FROM threads WHERE ephemeral = 1 AND owner_thread_id IS NULL);
+        DELETE FROM threads WHERE ephemeral = 1 AND owner_thread_id IS NULL;
       `)
     })
   }
@@ -1680,6 +1711,7 @@ export class Store {
       stored.createdAt,
       ephemeral ? 1 : 0,
       stored.parentThreadId ?? null,
+      stored.ownerThreadId ?? null,
       stored.continuedFrom ?? null,
       // The earlier conversation goes with the first prompt; see threadNeedsContinueContext.
       stored.continuedFrom === undefined ? 0 : 1,
@@ -2804,6 +2836,14 @@ export class Store {
     this.#pendingSidebarThreads = updated
   }
 
+  /** The sub-agent chats a chat started, oldest first. */
+  ownedThreadIds(ownerThreadId: string): string[] {
+    return sqliteRows<{ id: string }>(
+      this.#db.prepare(`SELECT id FROM threads WHERE owner_thread_id = ? ORDER BY created_at`),
+      ownerThreadId,
+    ).map((row) => row.id)
+  }
+
   /**
    * Marks a session finished without discarding it. Closing a session ends the
    * process; it does not mean the user wanted the transcript gone.
@@ -2827,29 +2867,55 @@ export class Store {
     this.#updateSidebarThread(id, ({ closedAt: _closedAt, ...thread }) => thread)
   }
 
-  deleteThread(id: string): void {
-    if (this.thread(id)?.worktreePath) {
+  /**
+   * `keepSessionOut`: the user deleted the chat. Its provider session stays on
+   * disk, so it is kept as a session the chat left: provider history must never
+   * import it as a chat again, also when no scan had linked the chat to it yet.
+   */
+  deleteThread(id: string, options: { keepSessionOut?: boolean } = {}): void {
+    const thread = this.thread(id)
+    if (thread?.worktreePath) {
       throw new Error('discard the isolated session checkout before deleting it')
     }
+    // A chat's sub-agents go with it.
+    const ids = [id, ...this.ownedThreadIds(id)]
     // One transaction: a failure partway must not leave orphaned rows with
     // no owner and no path to ever clean them up.
     this.#db.exec('BEGIN IMMEDIATE')
     try {
-      this.#db.prepare(`DELETE FROM session_search WHERE thread_id = ?`).run(id)
-      this.#db.prepare(`DELETE FROM events WHERE thread_id = ?`).run(id)
-      this.#db.prepare(`DELETE FROM checkpoints WHERE thread_id = ?`).run(id)
-      this.#db.prepare(`DELETE FROM restore_undos WHERE thread_id = ?`).run(id)
-      this.#db.prepare(`DELETE FROM diff_decisions WHERE thread_id = ?`).run(id)
-      this.#db.prepare(`DELETE FROM design_runs WHERE thread_id = ?`).run(id)
-      this.#db.prepare(`DELETE FROM history_keys WHERE thread_id = ?`).run(id)
-      this.#db.prepare(`DELETE FROM history_state_events WHERE thread_id = ?`).run(id)
-      this.#db.prepare(`DELETE FROM threads WHERE id = ?`).run(id)
+      if (options.keepSessionOut && thread && !thread.ephemeral) {
+        const session = thread.providerSessionId ?? thread.id
+        // Another chat on the same session still owns it, and still reads it.
+        this.#db
+          .prepare(
+            `INSERT INTO left_provider_sessions (provider, session_id, thread_id, left_at)
+             SELECT ?, ?, ?, ? WHERE NOT EXISTS (
+               SELECT 1 FROM threads
+               WHERE provider = ? AND id <> ? AND COALESCE(provider_session_id, id) = ?)
+             ON CONFLICT(provider, session_id) DO NOTHING`,
+          )
+          .run(thread.provider, session, id, Date.now(), thread.provider, id, session)
+      }
+      for (const threadId of ids) {
+        this.#db.prepare(`DELETE FROM session_search WHERE thread_id = ?`).run(threadId)
+        this.#db.prepare(`DELETE FROM events WHERE thread_id = ?`).run(threadId)
+        this.#db.prepare(`DELETE FROM checkpoints WHERE thread_id = ?`).run(threadId)
+        this.#db.prepare(`DELETE FROM restore_undos WHERE thread_id = ?`).run(threadId)
+        this.#db.prepare(`DELETE FROM diff_decisions WHERE thread_id = ?`).run(threadId)
+        this.#db.prepare(`DELETE FROM design_runs WHERE thread_id = ?`).run(threadId)
+        this.#db.prepare(`DELETE FROM history_keys WHERE thread_id = ?`).run(threadId)
+        this.#db.prepare(`DELETE FROM history_state_events WHERE thread_id = ?`).run(threadId)
+        this.subagents.deleteFor(threadId)
+        this.#db.prepare(`DELETE FROM threads WHERE id = ?`).run(threadId)
+      }
       this.#db.exec('COMMIT')
-      this.#historyDeltaRuns.delete(id)
       this.#searchRevision += 1
-      this.#ephemeralThreads.delete(id)
-      this.#deleteCachedReplaySnapshot(id)
-      this.#cacheThread(id, undefined)
+      for (const threadId of ids) {
+        this.#historyDeltaRuns.delete(threadId)
+        this.#ephemeralThreads.delete(threadId)
+        this.#deleteCachedReplaySnapshot(threadId)
+        this.#cacheThread(threadId, undefined)
+      }
       this.#invalidateSidebarThreads()
     } catch (error) {
       this.#db.exec('ROLLBACK')
@@ -2908,6 +2974,7 @@ export class Store {
         ]) {
           this.#db.prepare(`DELETE FROM ${table} WHERE thread_id = ?`).run(id)
         }
+        this.subagents.deleteFor(id)
         this.#db.prepare('DELETE FROM threads WHERE id = ?').run(id)
       }
     })
@@ -3366,6 +3433,14 @@ export class Store {
         }
         this.touchThread(threadId, true, at)
         recovered.push(threadId)
+      }
+      // Sub-agents died with that process too; their parents' rows say so.
+      for (const run of this.subagents.interruptUnfinished(at)) {
+        this.#appendEvent(
+          run.parentThreadId,
+          { type: 'item.completed', item: subagentRunItem(run) },
+          at,
+        )
       }
       this.#db.exec('COMMIT')
       return recovered
@@ -4003,6 +4078,7 @@ export class Store {
   }
 
   #indexEvent(seq: number, threadId: string, at: number, event: DomainEvent): void {
+    if (this.#ephemeralThreads.has(threadId)) return
     const entry = searchableEntry(event)
     if (!entry) return
     this.#indexSearchEntry(seq, threadId, at, entry)
@@ -4296,7 +4372,15 @@ export class Store {
     return events
   }
 
-  usageSummary(threadId: string, since: number): UsageSummary {
+  /**
+   * The thread's own total, and the day's total across the providers `counted`
+   * accepts: every one unless the build leaves some out.
+   */
+  usageSummary(
+    threadId: string,
+    since: number,
+    counted: (provider: ProviderId) => boolean = () => true,
+  ): UsageSummary {
     const thread = this.thread(threadId)
     if (!thread) return { session: emptyUsage(), today: emptyUsage() }
 
@@ -4358,7 +4442,7 @@ export class Store {
         if (usage?.cumulative) previous.set(seed.thread_id, usage.total)
       }
 
-      const rows = sqliteRows<ThreadPayloadRow>(
+      const rows = sqliteRows<ThreadPayloadRow & { provider: string }>(
         this.#db.prepare(
           `SELECT u.thread_id, u.payload, t.provider
            FROM usage_events u JOIN threads t ON t.id = u.thread_id
@@ -4368,6 +4452,8 @@ export class Store {
         since,
       )
       for (const row of rows) {
+        const provider = toProviderId(row.provider)
+        if (provider !== undefined && !counted(provider)) continue
         const sample = parseUsage(row.payload, row.thread_id)
         if (!sample) continue
         const current = sample.total
@@ -5365,6 +5451,13 @@ function parseDomainEvent(serialized: string, context: string): DomainEvent | un
   return undefined
 }
 
+/**
+ * Unknown providers already reported. Readers such as the usage history call
+ * toProviderId once per row, so one such thread would otherwise log the same
+ * line for each of its events.
+ */
+const warnedUnknownProviders = new Set<string>()
+
 function toProviderId(provider: string): ProviderId | undefined {
   switch (provider) {
     case 'codex':
@@ -5377,7 +5470,10 @@ function toProviderId(provider: string): ProviderId | undefined {
       // A provider this build does not ship: a newer build, or one that lives
       // only on the nightly branch. The row stays stored; readers skip it
       // rather than die on it.
-      console.warn(`[store] skipped a thread row with unknown provider '${provider}'`)
+      if (!warnedUnknownProviders.has(provider)) {
+        warnedUnknownProviders.add(provider)
+        console.warn(`[store] skipped a thread row with unknown provider '${provider}'`)
+      }
       return undefined
     }
   }
@@ -5491,6 +5587,7 @@ function toThread(row: ThreadRow): StoredThread | undefined {
     lastActiveAt: Number(row.last_active_at),
     ephemeral: row.ephemeral === 1,
     ...(row.parent_thread_id === null ? {} : { parentThreadId: row.parent_thread_id }),
+    ...(row.owner_thread_id === null ? {} : { ownerThreadId: row.owner_thread_id }),
     ...(row.continued_from === null ? {} : { continuedFrom: row.continued_from }),
     ...(row.continued_changes === 'carried' || row.continued_changes === 'kept'
       ? { continuedChanges: row.continued_changes }

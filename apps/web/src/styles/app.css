@@ -1833,7 +1833,7 @@
   left: 5px;
   height: 2px;
   border-radius: var(--r-pill);
-  background: var(--accent);
+  background: var(--light);
   pointer-events: none;
 }
 
@@ -2174,19 +2174,6 @@
   padding-right: 3px;
 }
 
-.chip--resource {
-  max-width: 260px;
-  padding: 5px 4px 5px 7px;
-  background: color-mix(in srgb, var(--attention) 10%, var(--surface-2));
-  border: 1px solid color-mix(in srgb, var(--attention) 35%, var(--line-strong));
-  color: color-mix(in srgb, var(--attention) 62%, var(--text));
-  font-size: var(--t-md);
-}
-
-.chip--resource > svg {
-  color: var(--attention);
-}
-
 .attachment-preview {
   position: relative;
   display: block;
@@ -2341,12 +2328,6 @@
 .tools > .composer__dictation-options:not([data-hidden]),
 .model-selector__trigger-model > svg {
   flex-shrink: 0;
-}
-
-@container chat-stage (max-width: 420px) {
-  .model-selector__trigger-level + .model-selector__trigger-effort {
-    display: none;
-  }
 }
 
 .tool span {
@@ -3647,6 +3628,16 @@
     var(--bg-rail-tint) calc(100% - var(--rail-glass, 0) * var(--rail-glass-fade, 20%)),
     transparent
   );
+}
+
+/* Below 700px the open rail is a drawer over the chat, which showed through
+   the glass: solid like the flyout. It ties the light rule, so it follows it. */
+@media (max-width: 700px) {
+  :root[data-glass='on'] .rail-slot .rail {
+    background: var(--bg-rail);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
 }
 
 /* The stage's rounded top-left corner exposes its parent. Paint that backing

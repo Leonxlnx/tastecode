@@ -18,6 +18,7 @@ import { cliProbe, invalidateCliProbes } from './cli-probe.js'
 import { stopModelListings } from './runtime-loader.js'
 import { readWorkspaceDiff, StaleDiffSnapshotError } from './diff-review.js'
 import { Orchestrator, resolveWorkspacePath, type LifecycleScheduleHint } from './orchestrator.js'
+import { defaultSkillsRoot } from './default-skills.js'
 import { checkForUpdates } from './update-check.js'
 import type { FeedbackConfig } from './feedback-config.js'
 import { FeedbackService, providerVersionLabel } from './feedback.js'
@@ -29,6 +30,7 @@ import type { CheckoutPullRequests } from './checkout-pull-request.js'
 import type { PullRequestService } from './pull-requests.js'
 import { sourceAccount } from './account-directory.js'
 import { ProviderAccounts } from './provider-accounts.js'
+import { providerOffered } from './provider-edition.js'
 import { DEFAULT_PORT } from './server-config.js'
 import { Store } from './store.js'
 import { createProjectListProjector, type ProjectListState } from './project-list.js'
@@ -280,6 +282,15 @@ export function startServer(
         push.broadcastRecordedEvent('sideChat.event', threadId, serializedEvent, seq)
       }
     },
+    onSubagentEvent: (threadId, parentThreadId, event, seq, serializedEvent) => {
+      if (event.type === 'item.delta') streamQuiet.noteDelta()
+      if (serializedEvent === undefined) {
+        push.broadcast('subagent.event', { threadId, parentThreadId, event, seq })
+      } else {
+        push.broadcastRecordedSubagentEvent(threadId, parentThreadId, serializedEvent, seq)
+      }
+    },
+    agentTools: true,
     onQueue: (threadId, state) => push.broadcast('thread.queue', { threadId, ...state }),
     onLog: (line) => console.log(`[agent] ${line}`),
     onLogin: (provider, result, accountId) => {
@@ -304,6 +315,7 @@ export function startServer(
       push.broadcast('usage.changed', accountId ? { provider, accountId } : { provider }),
     onLimitsChanged: (source) => push.broadcast('usage.limits', { source }),
     providerBinary: async (provider) => (await providerService).providerBinary(provider),
+    defaultSkillsRoot: defaultSkillsRoot(),
     onModelsChanged: (provider, agent, accountId) =>
       push.broadcast('models.changed', {
         provider,
@@ -1204,6 +1216,7 @@ export function startServer(
       }
 
       case 'acp.agents': {
+        if (!providerOffered('acp')) return { agents: [] }
         const { acpCanSignOut, detectAgents } = await import('@harness/adapter-acp/agents')
         const agents = await detectAgents()
         return {
@@ -1403,8 +1416,10 @@ export function startServer(
         if (store.thread(p.threadId)?.worktreePath) {
           throw new Error('discard the isolated session checkout before deleting it')
         }
+        // Closing ends a running turn, so nothing the provider still writes can
+        // land in the chat; its saved session is kept out of history imports.
         await orchestrator.close(p.threadId)
-        store.deleteThread(p.threadId)
+        store.deleteThread(p.threadId, { keepSessionOut: true })
         orchestrator.forgetDeletedThread(p.threadId)
         lifecycleScheduler.changed()
         return {}
@@ -1453,6 +1468,11 @@ export function startServer(
         return orchestrator.diff(p.threadId)
       }
 
+      case 'thread.subagents': {
+        const p = parseParams(method, params)
+        return { subagents: orchestrator.subagents(p.threadId) }
+      }
+
       case 'thread.undoTurnChanges': {
         const p = parseParams(method, params)
         await orchestrator.undoTurnChanges(p.threadId, p.turnId, p.expectedDiff)
@@ -1491,9 +1511,10 @@ export function startServer(
           reasoningTokens: 0,
           totalTokens: 0,
         }
+        // A provider this build does not offer counts toward no day's total.
         const totals =
           'threadId' in p
-            ? store.usageSummary(p.threadId, startOfToday.getTime())
+            ? store.usageSummary(p.threadId, startOfToday.getTime(), providerOffered)
             : { session: empty, today: empty }
         return usageSummaryWithLimits(
           totals,
@@ -1635,18 +1656,21 @@ export function startServer(
 
       case 'thread.sendTurn': {
         const p = parseParams(method, params)
-        await loadProviderHistory(p.threadId)
-        const result = await orchestrator.submitTurn(
-          p.threadId,
-          p.text,
-          p.attachments,
-          {
-            model: p.model,
-            effort: p.effort,
-            serviceTier: p.serviceTier,
-          },
-          p.clientSubmissionId,
-        )
+        // A Stop sent right behind the prompt waits for it, history read included.
+        const result = await orchestrator.trackSubmission(p.threadId, async () => {
+          await loadProviderHistory(p.threadId)
+          return orchestrator.submitTurn(
+            p.threadId,
+            p.text,
+            p.attachments,
+            {
+              model: p.model,
+              effort: p.effort,
+              serviceTier: p.serviceTier,
+            },
+            p.clientSubmissionId,
+          )
+        })
         // A client that names its model sent with that setup; the others follow it.
         if (p.model !== undefined) adoptTurnSettings(p.threadId, p)
         return result

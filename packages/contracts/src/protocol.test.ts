@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { CapabilitiesSchema, DomainEventSchema, ItemSchema } from './domain.js'
+import { CapabilitiesSchema, DomainEventSchema, ItemSchema, ModelSchema } from './domain.js'
 import {
   channels,
   DiffFileSchema,
@@ -1801,8 +1801,10 @@ describe('provider command contracts', () => {
           argumentHint: '<page>',
           aliases: ['taste'],
           kind: 'skill',
+          source: 'plugin',
         },
-        { name: 'review', description: '', kind: 'command' },
+        { name: 'review', description: '', kind: 'command', source: 'builtin' },
+        { name: 'mcp__docs__search', description: '', source: 'mcp' },
       ],
       loading: false,
     }
@@ -1821,6 +1823,7 @@ describe('provider command contracts', () => {
     { name: 'context', aliases: ['/ctx'] },
     { name: 'context', argumentHint: '' },
     { name: 'context', kind: 'prompt' },
+    { name: 'context', source: 'user' },
   ])('rejects malformed commands: %j', (command) => {
     expect(
       list.result.safeParse({ commands: [{ description: '', ...command }], loading: false })
@@ -2053,6 +2056,71 @@ describe('subagent contracts', () => {
     expect(ItemSchema.safeParse({ ...call, subagent: { ...subagent, ...change } }).success).toBe(
       false,
     )
+  })
+
+  it('carries where a TasteCode sub-agent runs, and still reads snapshots without it', () => {
+    const crossProvider = {
+      ...subagent,
+      threadId: 'codex-child-1',
+      provider: 'codex',
+      model: 'gpt-5.5',
+      attention: 'approval',
+    }
+    expect(ItemSchema.parse({ ...call, subagent: crossProvider }).subagent).toEqual(crossProvider)
+    expect(ItemSchema.parse({ ...call, subagent }).subagent).toEqual(subagent)
+    for (const attention of ['approval', 'input'])
+      expect(
+        ItemSchema.parse({ ...call, subagent: { ...subagent, attention } }).subagent?.attention,
+      ).toBe(attention)
+  })
+
+  it.each([
+    ['empty thread id', { threadId: '' }],
+    ['unknown provider', { provider: 'gemini-web' }],
+    ['empty model', { model: '' }],
+    ['empty agent', { agent: '' }],
+    ['unknown attention', { attention: 'review' }],
+  ])('rejects a TasteCode sub-agent with %s', (_name, change) => {
+    expect(ItemSchema.safeParse({ ...call, subagent: { ...subagent, ...change } }).success).toBe(
+      false,
+    )
+  })
+
+  it('lists a chat’s TasteCode sub-agents with the row that shows each', () => {
+    expect(methods['thread.subagents'].params.parse({ threadId: 'th1' })).toEqual({
+      threadId: 'th1',
+    })
+    expect(methods['thread.subagents'].params.safeParse({ threadId: '' }).success).toBe(false)
+    const listed = {
+      subagents: [
+        {
+          itemId: 'subagent-codex-child-1',
+          createdAt: 10,
+          subagent: { id: 'a1', state: 'running', threadId: 'codex-child-1', provider: 'codex' },
+        },
+      ],
+    }
+    expect(methods['thread.subagents'].result.parse(listed)).toEqual(listed)
+    expect(methods['thread.subagents'].result.parse({ subagents: [] })).toEqual({ subagents: [] })
+    expect(
+      methods['thread.subagents'].result.safeParse({
+        subagents: [{ itemId: '', createdAt: 1, subagent: { id: 'a1', state: 'running' } }],
+      }).success,
+    ).toBe(false)
+  })
+
+  it('routes a sub-agent’s own events on their own channel', () => {
+    const data = {
+      threadId: 'codex-child-1',
+      parentThreadId: 'claude-code-parent',
+      seq: 4,
+      event: { type: 'item.delta', turnId: 't1', itemId: 'm1', textDelta: 'hi' },
+    }
+    expect(channels['subagent.event'].parse(data)).toEqual(data)
+    const { seq: _seq, ...withoutSeq } = data
+    expect(channels['subagent.event'].parse(withoutSeq)).toEqual(withoutSeq)
+    const { parentThreadId: _parent, ...withoutParent } = data
+    expect(channels['subagent.event'].safeParse(withoutParent).success).toBe(false)
   })
 
   it('declares how an engine reports subagents, absent for plain tool calls', () => {
@@ -2422,6 +2490,26 @@ describe('provider account contracts', () => {
     expect(CapabilitiesSchema.safeParse({ ...capabilities, multipleAccounts: 'yes' }).success).toBe(
       false,
     )
+  })
+
+  it('keeps image files apart from pixels and lets a model narrow images', () => {
+    const capabilities = {
+      steer: false,
+      fork: false,
+      interrupt: true,
+      reasoningItems: false,
+      approvals: false,
+      images: false,
+    }
+    expect(CapabilitiesSchema.parse(capabilities).imageFiles).toBeUndefined()
+    expect(CapabilitiesSchema.parse({ ...capabilities, imageFiles: true })).toMatchObject({
+      images: false,
+      imageFiles: true,
+    })
+    expect(CapabilitiesSchema.safeParse({ ...capabilities, imageFiles: 'yes' }).success).toBe(false)
+    const model = { id: 'm', displayName: 'M', isDefault: true, reasoningEfforts: [] }
+    expect(ModelSchema.parse(model).images).toBeUndefined()
+    expect(ModelSchema.parse({ ...model, images: false }).images).toBe(false)
   })
 })
 

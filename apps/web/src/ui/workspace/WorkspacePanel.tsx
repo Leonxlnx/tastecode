@@ -18,6 +18,7 @@ import {
   IconFolderOpen as FolderOpen,
   IconWorld as Globe2,
   IconMessageCirclePlus as MessageCirclePlus,
+  IconSubtask as Subtask,
   IconTerminal2 as SquareTerminal,
   IconX as X,
   IconPlus as Plus,
@@ -26,6 +27,7 @@ import {
 import type { PullRequestTarget } from '@harness/contracts'
 import { performAppHaptic, prepareAppHaptics } from '../../haptics.js'
 import { cancelInstall, installState, subscribeInstalls } from '../../provider-install.js'
+import type { ThreadFrameStore } from '../../thread-frame-store.js'
 import type { Transport } from '../../transport.js'
 import { beginPanelResize, settlePanelSize } from '../panel-resize.js'
 import type {
@@ -67,6 +69,9 @@ const WorkspaceFiles = lazy(() =>
 const WorkspaceSideChat = lazy(() =>
   import('./WorkspaceSideChat.js').then((module) => ({ default: module.WorkspaceSideChat })),
 )
+const WorkspaceAgents = lazy(() =>
+  import('./WorkspaceAgents.js').then((module) => ({ default: module.WorkspaceAgents })),
+)
 
 export type WorkspaceProviderLoginRequest = {
   id: number
@@ -75,7 +80,7 @@ export type WorkspaceProviderLoginRequest = {
   canCancelSignIn?: boolean
 }
 
-export type WorkspaceTool = 'review' | 'terminal' | 'browser' | 'files' | 'side-chat'
+export type WorkspaceTool = 'review' | 'terminal' | 'browser' | 'files' | 'side-chat' | 'agents'
 
 type WorkspaceTab =
   | {
@@ -123,6 +128,11 @@ const TOOLS: Array<{
     title: 'Temporary chat',
     Icon: MessageCirclePlus,
   },
+  {
+    kind: 'agents',
+    title: 'Agents',
+    Icon: Subtask,
+  },
 ]
 
 const MIN_CHAT_WIDTH = 360
@@ -134,6 +144,8 @@ function WorkspacePanelComponent(props: {
   expanded: boolean
   width: number
   transport: Transport
+  /** The open chat's transcript, which the Agents tab lists sub-agents from. */
+  frameStore?: ThreadFrameStore | undefined
   threadId?: string | undefined
   projectPath?: string | undefined
   projectName?: string | undefined
@@ -606,6 +618,7 @@ function WorkspacePanelComponent(props: {
                   tab={tab}
                   active={props.open && props.nativeSurfacesVisible && tab.id === tool?.id}
                   transport={props.transport}
+                  frameStore={props.frameStore}
                   threadId={props.threadId}
                   projectPath={props.projectPath}
                   projectName={props.projectName}
@@ -655,6 +668,7 @@ function WorkspaceToolSurface(props: {
   tab: WorkspaceTab
   active: boolean
   transport: Transport
+  frameStore?: ThreadFrameStore | undefined
   threadId?: string | undefined
   projectPath?: string | undefined
   projectName?: string | undefined
@@ -729,6 +743,16 @@ function WorkspaceToolSurface(props: {
         projectPath={props.projectPath}
         projectName={props.projectName}
         threadId={props.threadId}
+      />
+    )
+  }
+  if (props.tab.kind === 'agents') {
+    return (
+      <WorkspaceAgents
+        active={props.active}
+        transport={props.transport}
+        threadId={props.threadId}
+        frameStore={props.frameStore}
       />
     )
   }

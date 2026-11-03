@@ -314,6 +314,44 @@ export function removeSession(projects: Project[], threadId: string): Project[] 
   return next
 }
 
+/**
+ * A server list without the chats this window deleted. A list the server read
+ * before a delete can arrive after it, and must not bring the chat back. Thread
+ * ids are never reused, so a deleted id stays deleted. Returns the same list
+ * when it holds none of them.
+ */
+export function withoutDeletedSessions(
+  snapshot: ServerProject[],
+  deleted: ReadonlySet<string>,
+): ServerProject[] {
+  if (deleted.size === 0) return snapshot
+  let changed = false
+  const projects = snapshot.map((project) => {
+    if (!project.sessions.some((session) => deleted.has(session.id))) return project
+    changed = true
+    return { ...project, sessions: project.sessions.filter((session) => !deleted.has(session.id)) }
+  })
+  return changed ? projects : snapshot
+}
+
+/**
+ * The sidebar while Stops are on their way: a chat the user stopped, mapped to when, shows
+ * as idle since then instead of running. The chat itself stops showing work at the click,
+ * and its row follows at once rather than when the server has ended the turn. Returns the
+ * same list when none of those chats still shows as running.
+ */
+export function withStoppingSessions(
+  projects: Project[],
+  stopping: ReadonlyMap<string, number>,
+): Project[] {
+  if (stopping.size === 0) return projects
+  return updateSessions(projects, stopping, (session, stoppedAt) =>
+    session.status === 'starting' || session.status === 'working'
+      ? { ...session, status: 'idle', statusSince: stoppedAt }
+      : session,
+  )
+}
+
 /** Convert, order, and reconcile the server snapshot in one pass without a temporary UI tree. */
 export function reconcileProjectList(
   current: Project[],

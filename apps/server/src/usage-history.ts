@@ -22,6 +22,7 @@ import {
   type UsageHistoryTotals,
 } from '@harness/contracts'
 import { modelRate, priceEntry, type ModelRate } from './model-prices.js'
+import { providerOffered } from './provider-edition.js'
 import type { StoredUsageEvent } from './store.js'
 
 const CACHE_VERSION = 8
@@ -46,7 +47,14 @@ const PARSE_CONCURRENCY = 8
 const CHECKPOINT_RETENTION_MS = 2 * 24 * 60 * 60 * 1000
 const AUTO_REFRESH_INTERVAL_MS = 60_000
 const HARNESS_USAGE_CACHE_MS = 5_000
-/** Local provider archives in scan order. Each adapter owns its CLI home and file layout. */
+/**
+ * Local provider archives in scan order. Each adapter owns its CLI home and file layout.
+ *
+ * This list stays the same in every edition: it also decides which files a
+ * saved index may hold, and a release build that dropped a provider from it
+ * would discard the whole index a dev build saved. A release build leaves a
+ * provider it does not offer out of each scan and each answer instead.
+ */
 const LOCAL_USAGE_SOURCES: readonly UsageHistorySource<ProviderId, LocalUsageRecord>[] = [
   CLAUDE_USAGE_HISTORY,
   CODEX_USAGE_HISTORY,
@@ -384,6 +392,7 @@ export class UsageHistoryService {
           : {}),
       })),
     }
+    const unscanned = unscannedProviders()
     const abort = new AbortController()
     this.#scanAbort = abort
     this.#refreshing = Promise.resolve()
@@ -397,7 +406,7 @@ export class UsageHistoryService {
         ),
       )
       .then((result) => {
-        if (!abort.signal.aborted) return this.#applyScan(base, result, generatedAt)
+        if (!abort.signal.aborted) return this.#applyScan(base, result, generatedAt, unscanned)
       })
       .catch((error: unknown) => {
         if (this.#disposed) return
@@ -413,7 +422,10 @@ export class UsageHistoryService {
       })
   }
 
-  /** Each provider's own archive, then every other account's archive inside its folder. */
+  /**
+   * Each provider's own archive, then every other account's archive inside its
+   * folder. A provider this build does not offer is never read.
+   */
   #roots(): UsageSourceRoot[] {
     let homes: readonly UsageAccountHome[]
     try {
@@ -427,16 +439,21 @@ export class UsageHistoryService {
       if (!source || accountId === DEFAULT_ACCOUNT_ID) return []
       return [{ provider, accountId, root: source.root(home) }]
     })
-    return [...this.#sourceRoots, ...accountRoots]
+    return [...this.#sourceRoots, ...accountRoots].filter((root) => providerOffered(root.provider))
   }
 
   /**
    * Folds a scan into the index. A scan that finds nothing new keeps the same
    * index object, so computed figures stay valid, and does not rewrite the file.
    */
-  async #applyScan(base: UsageCache, result: UsageScanResult, generatedAt: number): Promise<void> {
+  async #applyScan(
+    base: UsageCache,
+    result: UsageScanResult,
+    generatedAt: number,
+    unscanned: ReadonlySet<ProviderId>,
+  ): Promise<void> {
     if (this.#cache !== base) return
-    const cache = mergeScan(base, result, generatedAt)
+    const cache = mergeScan(base, result, generatedAt, unscanned)
     if (cache !== base) {
       this.#cache = cache
       this.#sources = cache.sources
@@ -514,15 +531,18 @@ export class UsageHistoryService {
 
   /**
    * A provider's usage on accounts beyond its default one is split into a row
-   * per account; with `account`, only that account's usage counts.
+   * per account; with `account`, only that account's usage counts. A provider
+   * this build does not offer counts nowhere: its indexed files, TasteCode's
+   * own events for it and its source are all left out.
    */
   #figures(
     range: UsageHistoryRange,
     endDate: string,
-    harness: readonly StoredUsageEvent[],
+    allHarness: readonly StoredUsageEvent[],
     account: UsageHistoryAccount | undefined,
   ): UsageHistoryFigures {
-    const files = this.#cache?.files ?? []
+    const files = (this.#cache?.files ?? []).filter((file) => providerOffered(file.provider))
+    const harness = allHarness.filter((event) => providerOffered(event.provider))
     // By provider, so no key string is built for each of thousands of files.
     const richAccounts = new Map<ProviderId, Set<AccountId>>()
     for (const file of files) {
@@ -707,10 +727,11 @@ export class UsageHistoryService {
       }
     })
 
-    const sourceStates =
-      wanted === undefined
-        ? this.#sources
-        : this.#sources.filter((source) => accountKey(source.provider, source.accountId) === wanted)
+    const sourceStates = this.#sources.filter(
+      (source) =>
+        providerOffered(source.provider) &&
+        (wanted === undefined || accountKey(source.provider, source.accountId) === wanted),
+    )
     const sourceProviders = new Set<ProviderId>([
       ...sourceStates.map((source) => source.provider),
       ...providerSessions.keys(),
@@ -830,8 +851,17 @@ async function parseUsageFile(
 /**
  * Builds the next index from a scan, in discovery order. Returns `base` itself
  * when the scan changed no file, source or warning.
+ *
+ * The `unscanned` providers, which this build does not offer, keep their
+ * indexed files and source states as they are, after the scanned ones, so a
+ * build that offers them again reads on from the same index.
  */
-function mergeScan(base: UsageCache, result: UsageScanResult, generatedAt: number): UsageCache {
+function mergeScan(
+  base: UsageCache,
+  result: UsageScanResult,
+  generatedAt: number,
+  unscanned: ReadonlySet<ProviderId>,
+): UsageCache {
   const indexed = new Map(base.files.map((file) => [file.path, file]))
   const parsed = new Map(result.files.map((file) => [file.path, file]))
   const files: CachedUsageFile[] = []
@@ -842,19 +872,36 @@ function mergeScan(base: UsageCache, result: UsageScanResult, generatedAt: numbe
       : indexed.get(filePath)
     if (file) files.push(file)
   }
+  let sources = result.sources
+  if (unscanned.size > 0) {
+    for (const file of base.files) if (unscanned.has(file.provider)) files.push(file)
+    sources = mergeSources([
+      ...result.sources.filter((source) => !unscanned.has(source.provider)),
+      ...base.sources.filter((source) => unscanned.has(source.provider)),
+    ])
+  }
   const unchanged =
     files.length === base.files.length &&
     files.every((file, index) => file === base.files[index]) &&
-    JSON.stringify(result.sources) === JSON.stringify(base.sources) &&
+    JSON.stringify(sources) === JSON.stringify(base.sources) &&
     JSON.stringify(result.warnings) === JSON.stringify(base.warnings)
   if (unchanged) return base
   return {
     version: CACHE_VERSION,
     generatedAt,
     files,
-    sources: result.sources,
+    sources,
     warnings: result.warnings,
   }
+}
+
+/** The providers with a local archive that this build does not offer, and so never scans. */
+function unscannedProviders(): ReadonlySet<ProviderId> {
+  return new Set(
+    LOCAL_USAGE_SOURCES.map((source) => source.provider).filter(
+      (provider) => !providerOffered(provider),
+    ),
+  )
 }
 
 /**

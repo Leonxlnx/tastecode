@@ -73,6 +73,7 @@ import { CopyButton } from './CopyButton.js'
 import { LazyMediaViewer as MediaViewer, preloadMediaViewer } from './LazyMediaViewer.js'
 import { Markdown } from './Markdown.js'
 import { Plan } from './Plan.js'
+import { PromptText } from './PromptText.js'
 import { ThreadSkeleton } from './Skeleton.js'
 import {
   REVEAL_CLOSE_MS,
@@ -99,6 +100,7 @@ import {
   isBlankReasoning,
   isStackedActivity,
   neighbourTurn,
+  pendingSteerIndex,
   type TurnActivityGroup,
   type TurnPresentation,
 } from './turns.js'
@@ -496,6 +498,11 @@ export const Thread = memo(function Thread(props: ThreadProps) {
   // A working turn's last line keeps clear of the prompt bar. A finished turn
   // ends on its answer's taller actions row, so the end never moves up.
   const runwayEnd = railReserve + (showWorkingRail ? WORKING_TAIL_PX : 0)
+  // A prompt steered in after the first response sits below the rail, often
+  // far below it. Until the agent answers, the prompt carries a spinner of
+  // its own. Running already excludes a stop the user asked for.
+  const steerPendingIndex =
+    railIndex === undefined ? undefined : pendingSteerIndex(thread.items, railIndex)
 
   /**
    * The virtual list moves the scroll itself: when a row above the viewport
@@ -1423,6 +1430,7 @@ export const Thread = memo(function Thread(props: ThreadProps) {
                     entering={enteringItemIds.has(item.id)}
                     settlingTurnId={settledTurnId}
                     showWorkingRail={showWorkingRail}
+                    steerPending={row.index === steerPendingIndex}
                     projectPath={props.projectPath}
                     onEditMessage={props.onEditMessage}
                     checkpointIndex={checkpointIndex}
@@ -1951,6 +1959,7 @@ const ThreadFrameRow = memo(function ThreadFrameRow({
   entering,
   settlingTurnId,
   showWorkingRail,
+  steerPending,
   projectPath,
   onEditMessage,
   checkpointIndex,
@@ -1969,6 +1978,8 @@ const ThreadFrameRow = memo(function ThreadFrameRow({
   entering: boolean
   settlingTurnId: string | undefined
   showWorkingRail: boolean
+  /** A steered prompt the running turn has not answered yet. */
+  steerPending: boolean
   projectPath: string | undefined
   onEditMessage: ((text: string) => void) | undefined
   checkpointIndex: CheckpointIndex<Checkpoint>
@@ -2072,6 +2083,7 @@ const ThreadFrameRow = memo(function ThreadFrameRow({
         stoppedByUser={stoppedAnswer}
       />
       {stoppedByUser && !stoppedAnswer ? <TurnStopped /> : null}
+      {steerPending ? <SteerPending /> : null}
     </div>
   )
 })
@@ -2089,6 +2101,21 @@ function nextItemWithARow(
     item = threadItemAt(items, liveItems, index)
   }
   return item
+}
+
+/**
+ * The transcript's spinner under a steered prompt until the agent answers it.
+ * The rotation sits on an HTML box, which the compositor turns on its own, so
+ * a reply streaming above it never waits on it (as .sess__spinner does).
+ */
+function SteerPending() {
+  return (
+    <span className="steer-pending" aria-hidden>
+      <span className="spinner">
+        <LoaderCircle />
+      </span>
+    </span>
+  )
 }
 
 /** Roughly one paragraph, for rows whose height depends on their text. */
@@ -2331,7 +2358,11 @@ const Row = memo(function Row({
             ))}
           </div>
         ) : null}
-        {item.text ? <p className="said__text">{item.text}</p> : null}
+        {item.text ? (
+          <p className="said__text">
+            <PromptText text={item.text} />
+          </p>
+        ) : null}
         {item.text ? (
           <div className="response-actions said__actions" aria-label="Prompt actions">
             <CopyButton text={item.text} label="Copy prompt" />

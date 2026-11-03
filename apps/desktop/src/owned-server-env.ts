@@ -48,3 +48,62 @@ export function withFeedbackDetails(
       : {}),
   }
 }
+
+/**
+ * Where the server finds the Agent Skills that ship with the app. A packaged
+ * build keeps them as real files in its resources folder so agent processes
+ * can read them; an unpackaged run leaves the server to find the workspace copy.
+ */
+export function withDefaultSkills(
+  env: NodeJS.ProcessEnv,
+  directory: string | undefined,
+): NodeJS.ProcessEnv {
+  return directory ? { ...env, HARNESS_DEFAULT_SKILLS_DIR: directory } : env
+}
+
+export type BuildEdition = 'release' | 'dev'
+
+/**
+ * Which providers a packaged build offers, from the `tastecodeEdition` field
+ * electron-builder writes into the packaged package.json. Only the dev scripts
+ * set it, so a package built any other way, or with a value we do not know,
+ * is a release build.
+ */
+export function packagedEdition(packageJson: { tastecodeEdition?: unknown }): BuildEdition {
+  return packageJson.tastecodeEdition === 'dev' ? 'dev' : 'release'
+}
+
+/**
+ * Hands the build's edition to the server. Applied after the inherited
+ * environment, unlike the feedback endpoint, so a variable set on the machine
+ * cannot widen a release build. An unpackaged run passes nothing and keeps
+ * whatever the developer set.
+ */
+export function withEdition(
+  env: NodeJS.ProcessEnv,
+  edition: BuildEdition | undefined,
+): NodeJS.ProcessEnv {
+  return edition ? { ...env, HARNESS_EDITION: edition } : env
+}
+
+const EDITION_SWITCH = '--tastecode-edition='
+
+/**
+ * The renderer argument that carries a packaged build's edition to the
+ * preload, so setup can draw the provider list's shape before the server has
+ * listed it.
+ */
+export function editionArgument(edition: BuildEdition): string {
+  return EDITION_SWITCH + edition
+}
+
+/**
+ * The edition the main process passed, or undefined when it passed none (an
+ * unpackaged run, whose server offers every provider unless a developer set
+ * HARNESS_EDITION). Anything else is ignored rather than trusted.
+ */
+export function editionFromArguments(argv: readonly string[]): BuildEdition | undefined {
+  const value = argv.find((argument) => argument.startsWith(EDITION_SWITCH))
+  const edition = value?.slice(EDITION_SWITCH.length)
+  return edition === 'release' || edition === 'dev' ? edition : undefined
+}

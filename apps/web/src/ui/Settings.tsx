@@ -18,6 +18,7 @@ import { createPortal } from 'react-dom'
 import { RowIssue } from './RowIssue.js'
 import { surfaceLoadFailed } from '../surface-load-error.js'
 import { AppearanceColorPicker } from './AppearanceColorPicker.js'
+import { AppBackgroundSettings } from './AppBackgroundSettings.js'
 import {
   accentColor,
   backdropColor,
@@ -128,7 +129,9 @@ import {
   appUpdateInstallState,
   cancelAppUpdateInstall,
   chatCount,
+  installWhenChatsFinish,
   requestAppUpdateInstall,
+  runningLabel,
   stopChatsAndInstall,
   subscribeAppUpdateInstall,
   waitingLabel,
@@ -2192,6 +2195,7 @@ function AppearanceSettings(props: {
           onChange={(updates) => props.onAppearancePreferenceChange(mode, updates)}
         />
       ))}
+      <AppBackgroundSettings />
       {props.showMacOSHaptics || props.showMacOSFontSmoothing ? (
         <SettingsSection label="Shared appearance controls">
           {props.showMacOSHaptics ? <SidebarHapticsSetting /> : null}
@@ -2737,6 +2741,8 @@ function AboutSettings(props: { transport: Transport }) {
   const nativePreparing = nativeUpdate?.status === 'preparing'
   const nativeReady = nativeUpdate?.status === 'ready'
   const waiting = nativeReady && install.phase === 'waiting'
+  // Restart to update was clicked while chats run: stop them, or wait?
+  const asking = nativeReady && install.phase === 'confirming'
   const stopping = nativeReady && install.phase === 'stopping'
   const restarting = nativeReady && (install.phase === 'checking' || install.phase === 'installing')
   const confirming = waiting && confirmStop
@@ -2781,9 +2787,11 @@ function AboutSettings(props: { transport: Transport }) {
                 detail:
                   install.phase === 'waiting'
                     ? waitingLabel(install.running)
-                    : install.phase === 'stopping'
-                      ? `Stopping ${chatCount(install.running)}`
-                      : `${nativeUpdate.version ?? 'Update'} ready`,
+                    : install.phase === 'confirming'
+                      ? runningLabel(install.running)
+                      : install.phase === 'stopping'
+                        ? `Stopping ${chatCount(install.running)}`
+                        : `${nativeUpdate.version ?? 'Update'} ready`,
               }
             : undefined
 
@@ -2824,7 +2832,32 @@ function AboutSettings(props: { transport: Transport }) {
         {!checking && !nativeChecking && !nativeStatus && updateStatus ? (
           <StateLabel {...updateStatus} live />
         ) : null}
-        {confirming ? (
+        {asking ? (
+          <>
+            <button
+              className="set-button set-button--quiet"
+              type="button"
+              onClick={stepHere(cancelAppUpdateInstall)}
+            >
+              Not now
+            </button>
+            <button
+              ref={stepAction}
+              className="set-button set-button--quiet"
+              type="button"
+              onClick={stepHere(installWhenChatsFinish)}
+            >
+              When they finish
+            </button>
+            <button
+              className="set-button set-button--danger"
+              type="button"
+              onClick={stepHere(() => void stopChatsAndInstall())}
+            >
+              {`Stop ${chatCount(install.running)} and update`}
+            </button>
+          </>
+        ) : confirming ? (
           <>
             <button
               ref={stepAction}

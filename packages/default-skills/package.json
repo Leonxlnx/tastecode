@@ -1,0 +1,15 @@
+{
+  "name": "@harness/default-skills",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./skills.json": "./skills.json",
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "sync": "node scripts/sync.js",
+    "verify": "node scripts/sync.js --verify",
+    "test": "node --test scripts/sync.test.js"
+  }
+}

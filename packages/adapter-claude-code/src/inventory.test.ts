@@ -30,6 +30,7 @@ describe('Claude Code commands', () => {
       'code-review',
       'simplify',
       'loop',
+      'advisor',
       'compact',
       'context',
       'init',
@@ -61,6 +62,7 @@ describe('Claude Code commands', () => {
         '[low|medium|high|xhigh|max] [--fix] [--comment] [<pr#>|<branch>|<path>] [--max-findings <n>|all]',
       aliases: ['review'],
       kind: 'skill',
+      source: 'builtin',
     })
     // An empty hint is left out, and the plugin skill keeps its short alias.
     expect(commands.get('acme-docs:acme-docs')).toEqual({
@@ -68,6 +70,7 @@ describe('Claude Code commands', () => {
       description: '(acme-docs) Write documentation in the Acme house style',
       aliases: ['acme-docs'],
       kind: 'skill',
+      source: 'plugin',
     })
     // system/init lists this skill under its alias.
     expect(commands.get('pdf')?.kind).toBe('skill')
@@ -75,8 +78,13 @@ describe('Claude Code commands', () => {
       name: 'usage',
       description: "Show session cost, plan usage, and what's contributing to your limits",
       aliases: ['cost', 'stats'],
+      source: 'builtin',
     })
     expect(commands.get('standup')?.kind).toBeUndefined()
+    expect(commands.get('standup')?.source).toBe('custom')
+    // A claude.ai skill listed by its short name is still a plugin's.
+    expect(commands.get('pdf')?.source).toBe('plugin')
+    expect(commands.get('anthropic-skills:deep-research')?.source).toBe('plugin')
   })
 
   it('uses the captured terminal list until system/init reports one', () => {
@@ -92,6 +100,22 @@ describe('Claude Code commands', () => {
     }).map((command) => command.name)
     expect(reported).toContain('doctor')
     expect(reported).not.toContain('loop')
+  })
+
+  it("hides only Claude's own rows, and a custom row its built-in shadows", () => {
+    const commands = mapClaudeCommands([
+      { name: 'autocompact', description: 'Built-in', argumentHint: '', builtin: true },
+      { name: 'autocompact', description: 'Mine', argumentHint: '' },
+      { name: 'compact', description: 'Mine first', argumentHint: '' },
+      { name: 'compact', description: 'Built-in', argumentHint: '', builtin: true },
+      { name: 'login', description: 'Mine, no built-in of that name', argumentHint: '' },
+      { name: 'mcp__docs__search', description: 'Search the docs', argumentHint: '<query>' },
+    ])
+    expect(commands.map((command) => [command.name, command.description, command.source])).toEqual([
+      ['compact', 'Built-in', 'builtin'],
+      ['login', 'Mine, no built-in of that name', 'custom'],
+      ['mcp__docs__search', 'Search the docs', 'mcp'],
+    ])
   })
 
   it('drops names the contract cannot carry and repeated entries', () => {

@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import type { DomainEvent, ProviderHistorySession, ProviderHistorySource } from '@harness/contracts'
+import { createClaudeHistorySource } from '@harness/adapter-claude-code'
 import { ProviderHistory } from './provider-history.js'
 import { Store } from './store.js'
 import { compactHistoryReplay } from './history-replay.js'
@@ -145,6 +146,66 @@ describe('provider history integration', () => {
     expect(history.hasCopy('native')).toBe(true)
     // A chat whose session the provider has not saved yet has nothing to merge.
     expect(history.hasCopy('fresh')).toBe(false)
+  })
+
+  it('never brings back a deleted chat whose saved session no scan had linked yet', async () => {
+    // A new chat is deleted before any scan saw its session: its transcript stays on disk.
+    store.addThread({ id: 'native', projectPath: process.cwd(), provider: 'codex', title: 'Local' })
+    store.deleteThread('native', { keepSessionOut: true })
+    const sessions = [metadata('native')]
+    const { history } = setup(sessions)
+    await history.refresh()
+    // The stopped turn writes to the transcript after the delete.
+    sessions[0] = { ...metadata('native'), revision: '2', updatedAt: 3000 }
+    await history.refresh()
+    expect(store.threads()).toEqual([])
+  })
+
+  it('never brings back a deleted chat that a scan linked, or its imported copy', async () => {
+    store.addThread({ id: 'native', projectPath: process.cwd(), provider: 'codex', title: 'Local' })
+    const sessions = [metadata('native'), metadata('outside')]
+    const { history } = setup(sessions)
+    await history.refresh()
+    expect(store.threads().map(({ id }) => id)).toEqual(['native', 'external:codex:outside'])
+    store.deleteThread('native', { keepSessionOut: true })
+    store.deleteThread('external:codex:outside', { keepSessionOut: true })
+    sessions.splice(
+      0,
+      2,
+      { ...metadata('native'), revision: '2' },
+      {
+        ...metadata('outside'),
+        revision: '2',
+      },
+    )
+    await history.refresh()
+    expect(store.threads()).toEqual([])
+    // A fresh server reads its tombstones from the store.
+    const restarted = setup(sessions)
+    await restarted.history.refresh()
+    expect(store.threads()).toEqual([])
+  })
+
+  it('keeps importing a session that another chat still runs on', async () => {
+    store.addThread({
+      id: 'first',
+      projectPath: process.cwd(),
+      provider: 'codex',
+      providerSessionId: 'shared',
+      title: 'First',
+    })
+    store.addThread({
+      id: 'second',
+      projectPath: process.cwd(),
+      provider: 'codex',
+      providerSessionId: 'shared',
+      title: 'Second',
+    })
+    store.deleteThread('first', { keepSessionOut: true })
+    expect(store.leftProviderSessions('codex')).toEqual([])
+    const { history } = setup([metadata('shared')])
+    await history.refresh()
+    expect(history.hasCopy('second')).toBe(true)
   })
 
   it('keeps what a source listed across restarts and forgets transcripts it no longer names', async () => {
@@ -1776,6 +1837,131 @@ describe('provider history after a restore', () => {
       }
     } finally {
       rmSync(directory, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('a Claude chat that carried on by itself', () => {
+  it('shows a slash-command prompt and the turns Claude started after a background task once', async () => {
+    const session = '33333333-3333-4333-8333-333333333333'
+    const threadId = `claude-${session}`
+    const at = Date.parse('2026-11-03T02:30:00.000Z')
+    const minutes = (count: number) => at + count * 60_000
+    const prompt = '/taste-pro a website make something creative, you can cook'
+    const waiting = "I'm waiting on the consistency checker. I'll pick up as soon as it reports."
+    const later = "The second checker run is still going. I'll read its results when it finishes."
+    const configDir = mkdtempSync(path.join(tmpdir(), 'claude-continued-'))
+    try {
+      const project = path.join(configDir, 'projects', '-fixture')
+      mkdirSync(project, { recursive: true })
+      const row = (
+        uuid: string,
+        type: 'user' | 'assistant',
+        content: unknown,
+        time: number,
+        extra: Record<string, unknown> = {},
+      ) => ({
+        type,
+        uuid,
+        parentUuid: null,
+        sessionId: session,
+        cwd: process.cwd(),
+        timestamp: new Date(time).toISOString(),
+        message:
+          type === 'assistant'
+            ? { id: `msg-${uuid}`, role: type, content, stop_reason: 'end_turn' }
+            : { role: type, content },
+        ...extra,
+      })
+      // What claude 2.1.296 saves: the skill call as command tags (#2042), the skill text
+      // as a meta row, and the <task-notification> prompt that woke it as an sdk row.
+      const rows = [
+        row(
+          'prompt',
+          'user',
+          '<command-message>taste-pro</command-message>\n<command-name>/taste-pro</command-name>\n<command-args>a website make something creative, you can cook</command-args>',
+          at,
+          { promptId: 'p1', entrypoint: 'sdk-ts' },
+        ),
+        row('skill', 'user', [{ type: 'text', text: 'Base directory for this skill: …' }], at, {
+          parentUuid: 'prompt',
+          isMeta: true,
+        }),
+        row('waiting', 'assistant', [{ type: 'text', text: waiting }], minutes(61), {
+          parentUuid: 'skill',
+        }),
+        row(
+          'woken',
+          'user',
+          '<task-notification>\n<task-id>b1</task-id>\n<status>completed</status>\n</task-notification>',
+          minutes(63),
+          { parentUuid: 'waiting', origin: { kind: 'task-notification' }, promptSource: 'sdk' },
+        ),
+        row('later', 'assistant', [{ type: 'text', text: later }], minutes(76), {
+          parentUuid: 'woken',
+        }),
+      ]
+      writeFileSync(
+        path.join(project, `${session}.jsonl`),
+        rows.map((value) => JSON.stringify(value)).join('\n') + '\n',
+      )
+
+      // The chat saw the prompt's turn, then the turn Claude started on its own.
+      store.addThread({
+        id: threadId,
+        projectPath: process.cwd(),
+        provider: 'claude-code',
+        title: 'Site',
+      })
+      const item = (
+        id: string,
+        turnId: string,
+        role: 'user' | 'assistant',
+        text: string,
+        time: number,
+      ) =>
+        ({
+          type: 'item.completed',
+          item: { id, turnId, type: 'message', role, status: 'completed', text, createdAt: time },
+        }) satisfies DomainEvent
+      for (const event of [
+        { type: 'turn.started', turn: { id: 'asked', threadId, status: 'running', createdAt: at } },
+        item('asked-prompt', 'asked', 'user', prompt, at),
+        item('asked-answer', 'asked', 'assistant', waiting, minutes(61)),
+        { type: 'turn.completed', turnId: 'asked', status: 'completed', completedAt: minutes(61) },
+        {
+          type: 'turn.started',
+          turn: { id: 'woken', threadId, status: 'running', createdAt: minutes(63) },
+        },
+        item('woken-answer', 'woken', 'assistant', later, minutes(76)),
+        { type: 'turn.completed', turnId: 'woken', status: 'completed', completedAt: minutes(76) },
+      ] satisfies DomainEvent[])
+        store.append(threadId, event)
+
+      const history = new ProviderHistory(
+        store,
+        [{ provider: 'claude-code', history: createClaudeHistorySource({ configDir }) }],
+        { isBusy: () => false, changed: vi.fn(), log: vi.fn() },
+      )
+      histories.push(history)
+      await history.refresh()
+      await history.load(threadId)
+
+      expect(messages(threadId).map(({ role, text }) => ({ role, text }))).toEqual([
+        { role: 'user', text: prompt },
+        { role: 'assistant', text: waiting },
+        { role: 'assistant', text: later },
+      ])
+      expect(JSON.stringify(compactHistoryReplay(store.history(threadId)))).not.toContain(
+        '<command-',
+      )
+      expect(
+        compactHistoryReplay(store.history(threadId)).filter(
+          ({ event }) => event.type === 'turn.started',
+        ),
+      ).toHaveLength(2)
+    } finally {
+      rmSync(configDir, { recursive: true, force: true })
     }
   })
 })

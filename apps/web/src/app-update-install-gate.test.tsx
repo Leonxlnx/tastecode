@@ -5,12 +5,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { TestTransport } from './test-transport.js'
 import type { Project, Session } from './ui/Sidebar.js'
 
-const bridge = vi.hoisted(() => ({ install: vi.fn<() => Promise<boolean>>() }))
-vi.mock('./bridge.js', () => ({ installAppUpdate: bridge.install }))
+const bridge = vi.hoisted(() => ({
+  install: vi.fn<() => Promise<boolean>>(),
+  reportRunning: vi.fn<(count: number) => void>(),
+}))
+vi.mock('./bridge.js', () => ({
+  installAppUpdate: bridge.install,
+  reportRunningAgents: bridge.reportRunning,
+}))
 
 const {
   appUpdateInstallState,
   INSTALL_SETTLE_MS,
+  installWhenChatsFinish,
   requestAppUpdateInstall,
   resetAppUpdateInstallForTests,
   stopChatsAndInstall,
@@ -131,6 +138,33 @@ afterEach(() => {
   vi.clearAllMocks()
 })
 
+describe('Running agents for the desktop shell', () => {
+  it('reports every running turn, approval and question, but not a queue, once loaded', () => {
+    const fake = server({})
+    const view = renderHook(
+      ({ projects, loaded }) => useAppUpdateInstallGate(fake.transport, projects, loaded),
+      {
+        initialProps: {
+          projects: sidebar({ a: 'working', b: 'approval', c: 'input', d: 'queued' }),
+          loaded: false,
+        },
+      },
+    )
+    // An empty list before loading would read as every agent stopping.
+    expect(bridge.reportRunning).not.toHaveBeenCalled()
+    view.rerender({
+      projects: sidebar({ a: 'working', b: 'approval', c: 'input', d: 'queued' }),
+      loaded: true,
+    })
+    expect(bridge.reportRunning).toHaveBeenLastCalledWith(3)
+    view.rerender({
+      projects: sidebar({ a: 'ready', b: 'idle', c: 'ready', d: 'queued' }),
+      loaded: true,
+    })
+    expect(bridge.reportRunning).toHaveBeenLastCalledWith(0)
+  })
+})
+
 describe('Install now', () => {
   it('keeps every queued prompt and stops the turns it can stop without sending one', async () => {
     const chats = {
@@ -155,8 +189,8 @@ describe('Install now', () => {
     )
 
     await requestAppUpdateInstall()
-    // c runs nothing, so only a and b hold the update.
-    expect(appUpdateInstallState()).toEqual({ phase: 'waiting', running: 2 })
+    // c runs nothing, so only a and b are asked about.
+    expect(appUpdateInstallState()).toEqual({ phase: 'confirming', running: 2 })
     await stopChatsAndInstall()
 
     expect(chats.a.queue).toEqual(['Follow-up 1', 'Follow-up 2'])
@@ -221,6 +255,7 @@ describe('Waiting for chats', () => {
     )
 
     await requestAppUpdateInstall()
+    installWhenChatsFinish()
     await vi.advanceTimersByTimeAsync(60 * 60 * 1000)
 
     expect(appUpdateInstallState()).toEqual({ phase: 'waiting', running: 3 })
@@ -237,6 +272,7 @@ describe('Waiting for chats', () => {
       { initialProps: { projects: sidebar({ a: 'working', b: 'approval' }) } },
     )
     await requestAppUpdateInstall()
+    installWhenChatsFinish()
     expect(appUpdateInstallState()).toEqual({ phase: 'waiting', running: 2 })
 
     // The approval is answered and b's turn ends.

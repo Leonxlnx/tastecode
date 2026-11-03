@@ -25,6 +25,7 @@ import { PROVIDER_RECHECK_INTERVAL_MS } from './provider-recheck.js'
 import { providerUpdatesStore } from './provider-updates.js'
 import { mockKeyboardModifierState } from './test-keyboard.js'
 import { NEWEST_HISTORY_TURNS } from './thread-controller.js'
+import { composerWireText } from './ui/composer-chips.js'
 
 const NEWEST_PAGE = { turnLimit: NEWEST_HISTORY_TURNS }
 const PENDING_CHAT_DELETES_KEY = 'harness.pendingChatDeletes.v1'
@@ -112,6 +113,8 @@ const threadCallbacks = vi.hoisted<ThreadCallbacks>(() => ({
   searchJump: undefined,
   searchJumpDone: undefined,
 }))
+/** The last props each chat's transcript rendered with, for split view's two transcripts. */
+const threadPropsById = vi.hoisted(() => new Map<string, ThreadProps>())
 const pickFolder = vi.hoisted(() => vi.fn<() => Promise<string | undefined>>())
 const droppedProjectFolderPaths = vi.hoisted(() =>
   vi.fn<(files: ArrayLike<File>) => Promise<string[]>>(),
@@ -187,8 +190,10 @@ vi.mock('./ui/Thread.js', async () => {
       return (
         <div
           data-testid="thread"
+          data-thread-id={props.threadId}
           data-started-at={frame.activeTurn?.startedAt}
           ref={() => {
+            if (props.threadId) threadPropsById.set(props.threadId, props)
             threadCallbacks.decideApproval = props.onDecide
             threadCallbacks.answerUserInput = props.onAnswerUserInput
             threadCallbacks.undoChanges = props.onUndoChanges
@@ -418,6 +423,7 @@ beforeEach(() => {
   threadCallbacks.threadId = undefined
   threadCallbacks.searchJump = undefined
   threadCallbacks.searchJumpDone = undefined
+  threadPropsById.clear()
   window.location.hash = ''
   document.documentElement.removeAttribute('data-theme')
   document.documentElement.classList.remove('dark')
@@ -1517,7 +1523,8 @@ describe('web client', () => {
     await screen.findByRole('button', { name: /^New session,/ })
     expect(composer().value).toBe('New chat idea')
     fireEvent.click(screen.getByRole('button', { name: /^New session,/ }))
-    expect(composer().value).toBe('Half-typed reply')
+    // A skill saved apart from the text comes back as a chip inside it.
+    expect(composerWireText(composer().value)).toBe('$docs Half-typed reply')
     expect(screen.getByRole('button', { name: 'Remove later.png' })).toBeTruthy()
     expect(composerProps().draftRequest?.resources).toEqual([docs])
   })
@@ -1618,6 +1625,19 @@ describe('web client', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Restore' }))
     await waitFor(() => expect(composer.value).toBe('my unsent draft'))
+  })
+  it('offers nothing back when Edit brings the same prompt with chips again', async () => {
+    await openNewSession()
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+
+    act(() => threadCallbacks.editMessage?.('/goal ship the fix'))
+    // The command came back as a chip; the draft now holds the chip form.
+    expect(composer.value).not.toBe('/goal ship the fix')
+    expect(composerWireText(composer.value)).toBe('/goal ship the fix')
+
+    act(() => threadCallbacks.editMessage?.('/goal ship the fix'))
+    expect(composerWireText(composer.value)).toBe('/goal ship the fix')
+    expect(screen.queryByText('Your draft was replaced.')).toBeNull()
   })
   it('puts the last sent prompt back on Arrow Up in an empty composer', async () => {
     const fallback = transport.request.getMockImplementation()!
@@ -2197,6 +2217,110 @@ describe('web client', () => {
     await act(async () => window.dispatchEvent(new Event('pagehide')))
     expect(rpcCount('thread.delete')).toBe(0)
     expect(screen.queryByText('Chat deleted')).toBeNull()
+  })
+
+  describe('deleting a running chat', () => {
+    const listed = (id: string) =>
+      sidebarProps().projects.some((project) => project.sessions.some((entry) => entry.id === id))
+
+    it.each([
+      ['works', 'doomed-thread'],
+      ['waits on an approval', 'doomed-thread'],
+      ['is the open one', 'untouched-thread'],
+    ] as const)(
+      'stops it at once when it %s, not when the Undo window closes',
+      async (state, id) => {
+        serverProjects[0]!.sessions.push({
+          id: 'doomed-thread',
+          title: 'Doomed chat',
+          createdAt: 5,
+        })
+        await openNewSession()
+        startTurn(id, 'turn-1')
+        if (state === 'waits on an approval')
+          emitThreadEvent(id, {
+            type: 'approval.requested',
+            request: { id: 'approval-1', kind: 'command', command: 'pnpm test', createdAt: 1 },
+          })
+
+        act(() => sidebarProps().onDeleteSession(id))
+        await screen.findByText('Chat deleted')
+
+        expect(transport.request).toHaveBeenCalledWith('thread.interrupt', { threadId: id })
+        expect(rpcCount('thread.delete')).toBe(0)
+        expect(listed(id)).toBe(false)
+        await act(async () => window.dispatchEvent(new Event('pagehide')))
+        await waitFor(() =>
+          expect(transport.request).toHaveBeenCalledWith('thread.delete', { threadId: id }),
+        )
+        const calls = transport.request.mock.calls.map(([method]) => method)
+        expect(calls.indexOf('thread.interrupt')).toBeLessThan(calls.indexOf('thread.delete'))
+      },
+    )
+
+    it('sends no Stop for a chat that is not running', async () => {
+      serverProjects[0]!.sessions.push({ id: 'doomed-thread', title: 'Doomed chat', createdAt: 5 })
+      await openNewSession()
+      act(() => sidebarProps().onDeleteSession('doomed-thread'))
+      await screen.findByText('Chat deleted')
+      await act(async () => window.dispatchEvent(new Event('pagehide')))
+      await waitFor(() => expect(rpcCount('thread.delete')).toBe(1))
+      expect(rpcCount('thread.interrupt')).toBe(0)
+    })
+
+    it('brings the chat back stopped on Undo, even before the server has ended its turn', async () => {
+      serverProjects[0]!.sessions.push({ id: 'doomed-thread', title: 'Doomed chat', createdAt: 5 })
+      const request = transport.request.getMockImplementation()!
+      transport.request.mockImplementation((method: string, params: unknown) =>
+        method === 'thread.interrupt' ? new Promise(() => {}) : request(method, params),
+      )
+      await openNewSession()
+      startTurn('doomed-thread', 'turn-1')
+      act(() => sidebarProps().onDeleteSession('doomed-thread'))
+      await screen.findByText('Chat deleted')
+
+      fireEvent.click(screen.getByRole('button', { name: 'Undo' }))
+
+      await waitFor(() => expect(listed('doomed-thread')).toBe(true))
+      expect(treeChatRow('Doomed chat').querySelector('.sess__spinner')).toBeNull()
+      emitThreadEvent('doomed-thread', {
+        type: 'turn.completed',
+        turnId: 'turn-1',
+        status: 'interrupted',
+      })
+      expect(treeChatRow('Doomed chat').querySelector('.sess__spinner')).toBeNull()
+      await act(async () => window.dispatchEvent(new Event('pagehide')))
+      expect(rpcCount('thread.delete')).toBe(0)
+    })
+
+    it('keeps the chat out of the sidebar when its stopped run reports late', async () => {
+      serverProjects[0]!.sessions.push({ id: 'doomed-thread', title: 'Doomed chat', createdAt: 5 })
+      await openNewSession()
+      startTurn('doomed-thread', 'turn-1')
+      act(() => sidebarProps().onDeleteSession('doomed-thread'))
+      await screen.findByText('Chat deleted')
+      await act(async () => window.dispatchEvent(new Event('pagehide')))
+      await waitFor(() => expect(rpcCount('thread.delete')).toBe(1))
+      await waitFor(() => expect(listed('doomed-thread')).toBe(false))
+
+      startTurn('doomed-thread', 'turn-2')
+      emitThreadEvent('doomed-thread', {
+        type: 'item.started',
+        item: {
+          id: 'late',
+          turnId: 'turn-2',
+          type: 'message',
+          role: 'assistant',
+          status: 'started',
+          text: 'late answer',
+          createdAt: 2,
+        },
+      })
+
+      expect(listed('doomed-thread')).toBe(false)
+      expect(screen.queryByRole('button', { name: chatRowName('Doomed chat') })).toBeNull()
+      expect(document.querySelector('.sess__spinner')).toBeNull()
+    })
   })
 
   it('keeps populated histories and drafts even when titled New session', async () => {
@@ -3209,6 +3333,7 @@ describe('web client', () => {
     })
 
     it('lists an agent that registers after the picker opened', async () => {
+      serverProviders = [...serverProviders, { ...serverProviders[0]!, id: 'acp' }]
       const kimi = { id: 'kimi', name: 'Kimi CLI' }
       localStorage.setItem('harness.providerRoster.v1', JSON.stringify(['codex', 'acp:kimi']))
       localStorage.setItem(
@@ -3836,6 +3961,7 @@ describe('web client', () => {
   })
 
   it('discovers a custom Pi source and binds new sessions to its harness id', async () => {
+    serverProviders = [...serverProviders, { ...serverProviders[0]!, id: 'pi', displayName: 'Pi' }]
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
     transport.request.mockImplementation((method: string, params: unknown) => {
@@ -4427,6 +4553,7 @@ describe('web client', () => {
   })
 
   it('fetches models only for the ACP agents added to Providers', async () => {
+    serverProviders = [...serverProviders, { ...serverProviders[0]!, id: 'acp' }]
     localStorage.setItem('harness.providerRoster.v1', JSON.stringify(['codex', 'acp:kimi']))
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
@@ -4547,6 +4674,11 @@ describe('web client', () => {
           },
         ],
       },
+    ]
+    // The server lists ACP agents under its ACP entry.
+    serverProviders = [
+      ...serverProviders,
+      { ...serverProviders[0]!, id: 'acp', displayName: 'ACP agents', version: 'Kimi CLI, Devin' },
     ]
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
@@ -6862,6 +6994,196 @@ describe('new chats', () => {
     expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(true)
   })
 
+  it("holds setup's agent list until the server says which providers it offers", async () => {
+    desktopShell.enabled = true
+    serverProjects = []
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    const waiting: Array<() => void> = []
+    let answered = false
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method !== 'providers.list' || answered
+        ? request(method, params)
+        : new Promise((resolve) => waiting.push(() => resolve(request(method, params)))),
+    )
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^Get started/ }, { timeout: 5_000 }))
+    fireEvent.click(screen.getByRole('button', { name: /^Continue/ }))
+    fireEvent.click(screen.getByRole('button', { name: /^Continue/ }))
+    const setup = screen.getByRole('dialog', { name: 'Choose your coding agents' })
+    const list = () => setup.querySelector('.onboarding__pick')
+
+    expect(list()?.querySelector('[aria-busy="true"]')).toBeTruthy()
+    expect(list()?.textContent).not.toMatch(/\b(Claude Code|Codex|Grok|Cursor|OpenCode|Pi)\b/)
+
+    await act(async () => {
+      answered = true
+      for (const answer of waiting) answer()
+    })
+    await waitFor(() =>
+      expect(within(setup).getByRole('region', { name: 'Providers' }).textContent).toBe(
+        'ProvidersCodexSigned in',
+      ),
+    )
+    expect(list()?.querySelector('[aria-busy="true"]')).toBeNull()
+  })
+
+  it("ends setup's agent list in the provider error when the list fails", async () => {
+    desktopShell.enabled = true
+    serverProjects = []
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'providers.list'
+        ? Promise.reject(new Error('server offline'))
+        : request(method, params),
+    )
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^Get started/ }, { timeout: 5_000 }))
+    fireEvent.click(screen.getByRole('button', { name: /^Continue/ }))
+    fireEvent.click(screen.getByRole('button', { name: /^Continue/ }))
+    const setup = screen.getByRole('dialog', { name: 'Choose your coding agents' })
+
+    await waitFor(() =>
+      expect(setup.querySelector('.onboarding__lead')?.textContent).toBe(
+        'Could not load providers. server offline',
+      ),
+    )
+    expect(setup.querySelector('[aria-busy="true"]')).toBeNull()
+    expect(setup.querySelector('.onboarding__pick')?.textContent).toBe('')
+  })
+
+  it("shows setup's ACP group with the list when a retry follows a failed list", async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      desktopShell.enabled = true
+      serverProjects = []
+      serverProviders = [...serverProviders, { ...serverProviders[0]!, id: 'acp' }]
+      const request = transport.request.getMockImplementation()
+      if (!request) throw new Error('missing request mock')
+      let retrying = false
+      let releaseAgents: (() => void) | undefined
+      transport.request.mockImplementation((method: string, params: unknown) => {
+        if (method === 'providers.list' && !retrying) {
+          return Promise.reject(new Error('server offline'))
+        }
+        if (method === 'acp.agents' && retrying) {
+          return new Promise((resolve) => {
+            releaseAgents = () =>
+              resolve({
+                agents: [{ id: 'kimi', name: 'Kimi CLI', installed: true, verified: true }],
+              })
+          })
+        }
+        return request(method, params)
+      })
+
+      render(<App />)
+      fireEvent.click(
+        await screen.findByRole('button', { name: /^Get started/ }, { timeout: 5_000 }),
+      )
+      fireEvent.click(screen.getByRole('button', { name: /^Continue/ }))
+      fireEvent.click(screen.getByRole('button', { name: /^Continue/ }))
+      const setup = screen.getByRole('dialog', { name: 'Choose your coding agents' })
+      const list = () => setup.querySelector('.onboarding__pick')
+      await waitFor(() =>
+        expect(setup.querySelector('.onboarding__lead')?.textContent).toBe(
+          'Could not load providers. server offline',
+        ),
+      )
+
+      // Focus retries the failed list; this time the providers answer first.
+      retrying = true
+      vi.setSystemTime(Date.now() + 31_000)
+      act(() => window.dispatchEvent(new Event('focus')))
+      await waitFor(() =>
+        expect(
+          transport.request.mock.calls.filter(([method]) => method === 'providers.list'),
+        ).toHaveLength(2),
+      )
+      await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0)))
+      expect(list()?.querySelector('[aria-busy="true"]')).toBeTruthy()
+      expect(list()?.textContent).not.toMatch(/\bCodex\b/)
+
+      await act(async () => releaseAgents?.())
+      await waitFor(() =>
+        expect(within(setup).getByRole('region', { name: 'ACP agents' }).textContent).toMatch(
+          /Kimi CLI/,
+        ),
+      )
+      expect(within(setup).getByRole('region', { name: 'Providers' }).textContent).toBe(
+        'ProvidersCodexSigned in',
+      )
+      expect(list()?.querySelector('[aria-busy="true"]')).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it("settles setup's ACP group from a replaced run when its replacement fails", async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      desktopShell.enabled = true
+      serverProjects = []
+      serverProviders = [...serverProviders, { ...serverProviders[0]!, id: 'acp' }]
+      const request = transport.request.getMockImplementation()
+      if (!request) throw new Error('missing request mock')
+      let providerLists = 0
+      let releaseAgents: (() => void) | undefined
+      transport.request.mockImplementation((method: string, params: unknown) => {
+        // Only the first run's providers answer.
+        if (method === 'providers.list' && ++providerLists > 1) {
+          return Promise.reject(new Error('server offline'))
+        }
+        // The first run's agents are held; later runs never hear back.
+        if (method === 'acp.agents') {
+          return new Promise((resolve) => {
+            releaseAgents ??= () =>
+              resolve({
+                agents: [{ id: 'kimi', name: 'Kimi CLI', installed: true, verified: true }],
+              })
+          })
+        }
+        return request(method, params)
+      })
+
+      render(<App />)
+      fireEvent.click(
+        await screen.findByRole('button', { name: /^Get started/ }, { timeout: 5_000 }),
+      )
+      fireEvent.click(screen.getByRole('button', { name: /^Continue/ }))
+      fireEvent.click(screen.getByRole('button', { name: /^Continue/ }))
+      const setup = screen.getByRole('dialog', { name: 'Choose your coding agents' })
+      const list = () => setup.querySelector('.onboarding__pick')
+      await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0)))
+      expect(providerLists).toBe(1)
+      expect(list()?.querySelector('[aria-busy="true"]')).toBeTruthy()
+
+      // A later focus replaces the first run before its agents answer, and
+      // the replacement's provider list fails.
+      vi.setSystemTime(Date.now() + 6 * 60 * 60_000 + 1_000)
+      act(() => window.dispatchEvent(new Event('focus')))
+      await waitFor(() => expect(providerLists).toBeGreaterThan(1))
+      await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0)))
+      expect(list()?.querySelector('[aria-busy="true"]')).toBeTruthy()
+
+      await act(async () => releaseAgents?.())
+      await waitFor(() =>
+        expect(within(setup).getByRole('region', { name: 'ACP agents' }).textContent).toMatch(
+          /Kimi CLI/,
+        ),
+      )
+      expect(within(setup).getByRole('region', { name: 'Providers' }).textContent).toBe(
+        'ProvidersCodexSigned in',
+      )
+      expect(list()?.querySelector('[aria-busy="true"]')).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it.each(['success', 'failure', 'cancel'] as const)(
     'restores Settings after Claude sign-in ends with %s',
     async (outcome) => {
@@ -8230,6 +8552,68 @@ describe('new chats', () => {
     expect(await screen.findByRole('button', { name: chatRowName('New session') })).toBeTruthy()
     expect(rpcCount('thread.delete')).toBe(1)
     expect(localStorage.getItem(PENDING_CHAT_DELETES_KEY)).toBeNull()
+  })
+
+  describe('a chat list that lands while a delete is on its way', () => {
+    /** Deletes "New session" and lands a list that still has it before the delete replies. */
+    async function deleteWithListInFlight() {
+      const nativeTimeout = globalThis.setTimeout
+      vi.spyOn(globalThis, 'setTimeout').mockImplementation(
+        (...args: Parameters<typeof setTimeout>) => {
+          if (args[1] === 10_000) args[1] = 50
+          return nativeTimeout(...args)
+        },
+      )
+      await openNewSession()
+      const request = transport.request.getMockImplementation()!
+      let reply: { resolve: () => void; reject: (error: Error) => void } | undefined
+      transport.request.mockImplementation((method, params) =>
+        method === 'thread.delete'
+          ? new Promise((resolve, reject) => {
+              reply = {
+                resolve: () => resolve(request(method, params)),
+                reject,
+              }
+            })
+          : request(method, params),
+      )
+      await chooseChatMenuItem('New session', 'Delete chat')
+      await waitFor(() => expect(reply).toBeDefined())
+      const lists = rpcCount('projects.list')
+      // The server has not deleted the chat yet, so this list still has it.
+      act(() => transport.listeners.get('providerHistory.changed')?.({ threadIds: [] }))
+      await waitFor(() => expect(rpcCount('projects.list')).toBe(lists + 1))
+      await act(async () => new Promise((resolve) => nativeTimeout(resolve, 0)))
+      shellRenders.sidebar.mockClear()
+      return reply!
+    }
+
+    function shownChatIds() {
+      return shellRenders.sidebar.mock.calls.flatMap(([props]) =>
+        (props as ComponentProps<typeof import('./ui/Sidebar.js').Sidebar>).projects.flatMap(
+          (project) => project.sessions.map((session) => session.id),
+        ),
+      )
+    }
+
+    it('keeps the chat out once the delete commits', async () => {
+      const reply = await deleteWithListInFlight()
+      await act(async () => reply.resolve())
+      await waitFor(() => expect(localStorage.getItem(PENDING_CHAT_DELETES_KEY)).toBeNull())
+      const lists = rpcCount('projects.list')
+      act(() => transport.listeners.get('providerHistory.changed')?.({ threadIds: [] }))
+      await waitFor(() => expect(rpcCount('projects.list')).toBeGreaterThan(lists))
+      await act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
+      expect(screen.queryByRole('button', { name: chatRowName('New session') })).toBeNull()
+      expect(shownChatIds()).not.toContain('untouched-thread')
+    })
+
+    it('shows the chat again when the delete fails', async () => {
+      const reply = await deleteWithListInFlight()
+      await act(async () => reply.reject(new Error('The chat is still starting.')))
+      expect((await screen.findByRole('alert')).textContent).toBe('The chat is still starting.')
+      expect(await screen.findByRole('button', { name: chatRowName('New session') })).toBeTruthy()
+    })
   })
 
   it('reconciles workspace ownership when a running session is archived', async () => {
@@ -11638,7 +12022,7 @@ describe('inbox lifecycle', () => {
     await screen.findByRole('button', { name: 'Settle Newest chat' })
 
     vi.spyOn(window, 'requestAnimationFrame').mockImplementation(() => 1)
-    vi.useFakeTimers()
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     try {
       act(() => {
         transport.listeners.get('thread.lifecycle')?.({
@@ -13517,6 +13901,11 @@ describe('live sessions', () => {
     serverSidebarSettings.mode = 'inbox'
     render(<App />)
     const inboxSearch = await screen.findByRole('textbox', { name: 'Search threads' })
+    // The composer takes focus on the frame after it restores its draft. Open
+    // the palette after that frame, as a person would; a frame landing while
+    // the palette is open would make the composer the search's opener.
+    const composer = screen.getByRole('textbox', { name: 'Message' })
+    await waitFor(() => expect(document.activeElement).toBe(composer))
     fireEvent.keyDown(window, { key: 'k', metaKey: true })
     const commandSearch = await screen.findByRole('textbox', { name: 'Search commands' })
     fireEvent.change(commandSearch, { target: { value: 'search all chats' } })
@@ -13793,6 +14182,185 @@ describe('live sessions', () => {
         .getByRole('button', { name: 'Background chat, Codex, ready, unread' })
         .querySelector('.sess__status-dot.is-success'),
     ).not.toBeNull()
+  })
+})
+
+describe('the sidebar circle on Stop', () => {
+  beforeEach(() => {
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'project',
+        pinned: false,
+        createdAt: 0,
+        sessions: [
+          { id: 'thread-1', title: 'Existing work', running: false },
+          { id: 'thread-2', title: 'Other work', running: false },
+        ],
+      },
+    ]
+  })
+
+  /** Stops the server has not answered yet, in the order they were sent. */
+  function holdStops() {
+    const request = transport.request.getMockImplementation()!
+    const stops: Array<{ answer: () => void; fail: (error: Error) => void }> = []
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'thread.interrupt'
+        ? new Promise((resolve, reject) => stops.push({ answer: () => resolve({}), fail: reject }))
+        : request(method, params),
+    )
+    return stops
+  }
+
+  function spinning(title: string): boolean {
+    return treeChatRow(title).querySelector('.sess__spinner') !== null
+  }
+
+  async function openRunningChat() {
+    render(<App />)
+    fireEvent.click(await waitFor(() => treeChatRow('Existing work')))
+    startTurn('thread-1', 'turn-1')
+    expect(spinning('Existing work')).toBe(true)
+  }
+
+  it('stops at the click, before the server has ended the turn', async () => {
+    const stops = holdStops()
+    await openRunningChat()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Stop' }))
+
+    expect(stops).toHaveLength(1)
+    expect(spinning('Existing work')).toBe(false)
+    expect(treeChatRow('Existing work').getAttribute('aria-label')).toBe('Existing work, Codex')
+    expect(screen.queryByText('Working')).toBeNull()
+
+    // The server ends the turn at once and answers once the agent took the Stop.
+    emitThreadEvent('thread-1', { type: 'turn.completed', turnId: 'turn-1', status: 'interrupted' })
+    expect(spinning('Existing work')).toBe(false)
+    await act(async () => stops[0]!.answer())
+    expect(spinning('Existing work')).toBe(false)
+    expect(treeChatRow('Existing work').getAttribute('aria-label')).toBe('Existing work, Codex')
+  })
+
+  it('stays stopped while a turn that was still starting comes up and is ended', async () => {
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'thread.sendTurn' ? new Promise(() => {}) : request(method, params),
+    )
+    const stops = holdStops()
+    render(<App />)
+    fireEvent.click(await waitFor(() => treeChatRow('Existing work')))
+    const composer = screen.getByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: 'A turn that starts slowly' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    fireEvent.click(await screen.findByRole('button', { name: 'Stop' }))
+    expect(stops).toHaveLength(1)
+
+    // The server delivers the Stop once the agent has taken the prompt: the turn starts,
+    // then ends as stopped.
+    startTurn('thread-1', 'turn-1')
+    expect(spinning('Existing work')).toBe(false)
+    emitThreadEvent('thread-1', { type: 'turn.completed', turnId: 'turn-1', status: 'interrupted' })
+    expect(spinning('Existing work')).toBe(false)
+  })
+
+  it('stays stopped when a chat list read before the Stop arrives after it', async () => {
+    const stops = holdStops()
+    await openRunningChat()
+    fireEvent.click(screen.getByRole('button', { name: 'Stop' }))
+    const lists = rpcCount('projects.list')
+
+    serverProjects[0]!.sessions[0] = {
+      ...serverProjects[0]!.sessions[0]!,
+      running: true,
+      status: 'working',
+    }
+    act(() => transport.listeners.get('projects.changed')?.({}))
+    await waitFor(() => expect(rpcCount('projects.list')).toBe(lists + 1))
+    await act(async () => Promise.resolve())
+
+    expect(spinning('Existing work')).toBe(false)
+    expect(stops).toHaveLength(1)
+  })
+
+  it.each([
+    ['the Stop fails', 'fail'],
+    ['the server answers and the turn still runs', 'answer'],
+  ] as const)('spins again when %s', async (_case, outcome) => {
+    const stops = holdStops()
+    await openRunningChat()
+    fireEvent.click(screen.getByRole('button', { name: 'Stop' }))
+    expect(spinning('Existing work')).toBe(false)
+
+    await act(async () =>
+      outcome === 'fail' ? stops[0]!.fail(new Error('Stop failed')) : stops[0]!.answer(),
+    )
+
+    expect(spinning('Existing work')).toBe(true)
+  })
+
+  it('stops for a chat the user left before the server ended its turn', async () => {
+    const stops = holdStops()
+    await openRunningChat()
+    fireEvent.click(screen.getByRole('button', { name: 'Stop' }))
+
+    fireEvent.click(treeChatRow('Other work'))
+    await waitFor(() =>
+      expect(screen.getByTestId('thread').getAttribute('data-thread-id')).toBe('thread-2'),
+    )
+    expect(spinning('Existing work')).toBe(false)
+
+    emitThreadEvent('thread-1', { type: 'turn.completed', turnId: 'turn-1', status: 'interrupted' })
+    expect(spinning('Existing work')).toBe(false)
+    expect(treeChatRow('Existing work').getAttribute('aria-label')).toBe(
+      'Existing work, Codex, ready, unread',
+    )
+    await act(async () => stops[0]!.answer())
+    expect(spinning('Existing work')).toBe(false)
+  })
+
+  it('stops for a chat another window stopped', async () => {
+    render(<App />)
+    await waitFor(() => treeChatRow('Other work'))
+    startTurn('thread-2', 'turn-2')
+    expect(spinning('Other work')).toBe(true)
+
+    emitThreadEvent('thread-2', { type: 'turn.completed', turnId: 'turn-2', status: 'interrupted' })
+
+    expect(spinning('Other work')).toBe(false)
+  })
+
+  it('stops for a new chat stopped while it starts, through to the stopped turn', async () => {
+    serverProjects = [
+      { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },
+    ]
+    const request = transport.request.getMockImplementation()!
+    let releaseStart!: () => void
+    const startGate = new Promise<void>((resolve) => (releaseStart = resolve))
+    transport.request.mockImplementation(async (method: string, params: unknown) => {
+      if (method === 'thread.start') await startGate
+      return request(method, params)
+    })
+    const stops = holdStops()
+    render(<App />)
+    const composer = await screen.findByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: 'Stop this new chat' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    await waitFor(() => expect(spinning('Stop this new chat')).toBe(true))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Stop' }))
+    expect(spinning('Stop this new chat')).toBe(false)
+
+    await act(async () => releaseStart())
+    await waitFor(() => expect(stops).toHaveLength(1))
+    expect(transport.request).toHaveBeenCalledWith('thread.interrupt', { threadId: 'thread-1' })
+    expect(spinning('Stop this new chat')).toBe(false)
+    startTurn('thread-1', 'turn-1')
+    expect(spinning('Stop this new chat')).toBe(false)
+    emitThreadEvent('thread-1', { type: 'turn.completed', turnId: 'turn-1', status: 'interrupted' })
+    await act(async () => stops[0]!.answer())
+    expect(spinning('Stop this new chat')).toBe(false)
   })
 })
 
@@ -14991,6 +15559,367 @@ describe('connection recovery regressions', () => {
       threadId: 'untouched-thread',
       approvalId: 'approval-1',
       decision: 'approve',
+    })
+  })
+})
+
+describe('split view', () => {
+  function useTwoChats(extra: TestServerSession[] = []) {
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'project',
+        pinned: false,
+        createdAt: 0,
+        sessions: [
+          { id: 'left-thread', title: 'Left chat', provider: 'codex', createdAt: 3 },
+          { id: 'right-thread', title: 'Right chat', provider: 'codex', createdAt: 2 },
+          ...extra,
+        ],
+      },
+    ]
+  }
+  const pane = (title: string) => screen.getByRole('region', { name: title })
+  const transcriptIn = (title: string) => within(pane(title)).getByTestId('thread')
+  const isFocused = (title: string) => pane(title).classList.contains('is-focused')
+
+  async function openSplit(extra?: TestServerSession[]) {
+    useTwoChats(extra)
+    render(<App />)
+    fireEvent.click(await waitFor(() => treeChatRow('Left chat')))
+    await screen.findByTestId('thread')
+    fireEvent.contextMenu(treeChatRow('Right chat'))
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Open beside' }))
+    await waitFor(() => expect(screen.getAllByTestId('thread')).toHaveLength(2))
+  }
+
+  function streamText(threadId: string, text: string) {
+    emitThreadEvent(threadId, {
+      type: 'item.started',
+      item: {
+        id: `${threadId}-item`,
+        turnId: 'turn-1',
+        type: 'message',
+        role: 'assistant',
+        status: 'started',
+        text: '',
+        createdAt: 1,
+      },
+    })
+    emitThreadEvent(threadId, {
+      type: 'item.delta',
+      turnId: 'turn-1',
+      itemId: `${threadId}-item`,
+      textDelta: text,
+    })
+  }
+
+  it('opens a chat beside the active one from the chat menu, and the opened pane has focus', async () => {
+    await openSplit()
+    expect(transcriptIn('Left chat').dataset.threadId).toBe('left-thread')
+    expect(transcriptIn('Right chat').dataset.threadId).toBe('right-thread')
+    expect(isFocused('Right chat')).toBe(true)
+    expect(isFocused('Left chat')).toBe(false)
+    expect(sidebarProps().activeSessionId).toBe('right-thread')
+    expect(sidebarProps().besideSessionId).toBe('left-thread')
+    // Each pane has its own header; the stage-wide one is not shown.
+    expect(within(pane('Left chat')).getByRole('button', { name: 'Close Left chat pane' }))
+    expect(within(pane('Right chat')).getByRole('button', { name: 'Close Right chat pane' }))
+    expect(document.querySelector('.stage__body')!.classList.contains('is-split')).toBe(true)
+  })
+
+  it('opens a chat beside with Alt+click and keeps the open chat mounted', async () => {
+    useTwoChats()
+    render(<App />)
+    fireEvent.click(await waitFor(() => treeChatRow('Left chat')))
+    const first = await screen.findByTestId('thread')
+    fireEvent.click(treeChatRow('Right chat'), { altKey: true })
+    await waitFor(() => expect(screen.getAllByTestId('thread')).toHaveLength(2))
+    expect(isFocused('Right chat')).toBe(true)
+    // Opening the split keeps the chat that was open mounted.
+    expect(transcriptIn('Left chat')).toBe(first)
+  })
+
+  it('streams both chats into their own panes', async () => {
+    await openSplit()
+    streamText('left-thread', 'from the left')
+    streamText('right-thread', 'from the right')
+    await waitFor(() => {
+      expect(within(transcriptIn('Left chat')).getByText('from the left')).toBeTruthy()
+      expect(within(transcriptIn('Right chat')).getByText('from the right')).toBeTruthy()
+    })
+    expect(within(transcriptIn('Left chat')).queryByText('from the right')).toBeNull()
+  })
+
+  it('moves focus on a press in the other pane without remounting either transcript', async () => {
+    await openSplit()
+    const left = transcriptIn('Left chat')
+    const right = transcriptIn('Right chat')
+    const leftComposer = pane('Left chat').querySelector('.composer')!
+    expect(leftComposer.classList.contains('is-dormant')).toBe(true)
+    expect(leftComposer.hasAttribute('inert')).toBe(true)
+
+    fireEvent.pointerDown(left, { button: 0 })
+
+    await waitFor(() => expect(isFocused('Left chat')).toBe(true))
+    expect(sidebarProps().activeSessionId).toBe('left-thread')
+    expect(sidebarProps().besideSessionId).toBe('right-thread')
+    expect(transcriptIn('Left chat')).toBe(left)
+    expect(transcriptIn('Right chat')).toBe(right)
+    expect(pane('Left chat').querySelector('.composer')).toBe(leftComposer)
+    expect(leftComposer.classList.contains('is-dormant')).toBe(false)
+    expect(pane('Right chat').querySelector('.composer')!.classList.contains('is-dormant')).toBe(
+      true,
+    )
+  })
+
+  it('gives the focused pane the live composer and keeps the other one as it was', async () => {
+    await openSplit()
+    type ComposerCall = ComponentProps<typeof import('./ui/Composer.js').Composer>
+    const lastComposer = (dormant: boolean) =>
+      shellRenders.composer.mock.calls
+        .map(([props]) => props as ComposerCall)
+        .findLast((props) => (props.dormant === true) === dormant)!
+    expect(lastComposer(false).threadId).toBe('right-thread')
+    expect(lastComposer(true).threadId).toBe('left-thread')
+    expect(lastComposer(true).errorsVisible).toBe(false)
+
+    fireEvent.pointerDown(transcriptIn('Left chat'), { button: 0 })
+
+    await waitFor(() => expect(lastComposer(false).threadId).toBe('left-thread'))
+    expect(lastComposer(true).threadId).toBe('right-thread')
+  })
+  it('answers an approval in the unfocused pane on that pane’s chat', async () => {
+    await openSplit()
+    act(() => threadPropsById.get('left-thread')!.onDecide('approval-1', 'approve'))
+    expect(transport.request).toHaveBeenCalledWith('thread.respondToApproval', {
+      threadId: 'left-thread',
+      approvalId: 'approval-1',
+      decision: 'approve',
+    })
+  })
+
+  it('replaces the focused pane’s chat from the sidebar, and a chat shown beside only takes focus', async () => {
+    await openSplit([{ id: 'third-thread', title: 'Third chat', provider: 'codex', createdAt: 1 }])
+    fireEvent.click(treeChatRow('Third chat'))
+    await waitFor(() => expect(transcriptIn('Third chat').dataset.threadId).toBe('third-thread'))
+    expect(screen.queryByRole('region', { name: 'Right chat' })).toBeNull()
+    expect(isFocused('Third chat')).toBe(true)
+    const left = transcriptIn('Left chat')
+
+    fireEvent.click(treeChatRow('Left chat'))
+
+    await waitFor(() => expect(isFocused('Left chat')).toBe(true))
+    expect(screen.getAllByTestId('thread')).toHaveLength(2)
+    expect(transcriptIn('Left chat')).toBe(left)
+    expect(sidebarProps().besideSessionId).toBe('third-thread')
+  })
+
+  it('keeps the chat beside read when its turn completes', async () => {
+    await openSplit()
+    startTurn('left-thread', 'turn-1')
+    completeTurn('left-thread', 'turn-1')
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('thread.history', {
+        threadId: 'left-thread',
+        afterSeq: Number.MAX_SAFE_INTEGER,
+      }),
+    )
+    const left = sidebarProps()
+      .projects.flatMap((project) => project.sessions)
+      .find((session) => session.id === 'left-thread')
+    expect(left?.unread).toBe(false)
+  })
+
+  it('closes a pane and returns to the single chat layout with the other chat still mounted', async () => {
+    await openSplit()
+    const left = transcriptIn('Left chat')
+    fireEvent.click(
+      within(pane('Right chat')).getByRole('button', { name: 'Close Right chat pane' }),
+    )
+    await waitFor(() => expect(screen.getAllByTestId('thread')).toHaveLength(1))
+    expect(screen.getByTestId('thread')).toBe(left)
+    expect(sidebarProps().activeSessionId).toBe('left-thread')
+    expect(sidebarProps().besideSessionId).toBeUndefined()
+    expect(document.querySelector('.stage__body')!.classList.contains('is-split')).toBe(false)
+    expect(screen.queryByRole('region', { name: 'Left chat' })).toBeNull()
+    expect(screen.queryByRole('button', { name: /^Close .* pane$/ })).toBeNull()
+  })
+
+  it('closes the pane of a chat that is deleted', async () => {
+    await openSplit()
+    await chooseChatMenuItem('Left chat', 'Delete chat')
+    await waitFor(() => expect(screen.getAllByTestId('thread')).toHaveLength(1))
+    expect(screen.getByTestId('thread').dataset.threadId).toBe('right-thread')
+    expect(sidebarProps().besideSessionId).toBeUndefined()
+  })
+
+  it('draws the chat beside without rendering the app for its streamed text', async () => {
+    await openSplit()
+    // Every frame runs only when the test runs it. A real frame still pending
+    // from the empty delta would draw the text below on its own schedule.
+    const frames: FrameRequestCallback[] = []
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      frames.push(callback)
+      return frames.length
+    })
+    streamText('left-thread', '')
+    act(() => {
+      for (const frame of frames.splice(0)) frame(0)
+    })
+    await waitFor(() => expect(within(transcriptIn('Left chat')).queryByText('x')).toBeNull())
+    frames.length = 0
+    appRenders.mockClear()
+    for (let index = 0; index < 200; index += 1) {
+      emitThreadEvent('left-thread', {
+        type: 'item.delta',
+        turnId: 'turn-1',
+        itemId: 'left-thread-item',
+        textDelta: 'x',
+      })
+    }
+    act(() => frames[0]?.(16))
+    expect(within(transcriptIn('Left chat')).getByText('x'.repeat(200))).toBeTruthy()
+    expect(appRenders).not.toHaveBeenCalled()
+  })
+
+  describe('dropping a chat dragged from the sidebar', () => {
+    /** happy-dom has no layout: a 1000 by 800 chat area, split down the middle. */
+    function layOutStage() {
+      const rect = (left: number, right: number, bottom = 800) =>
+        ({
+          left,
+          right,
+          top: 0,
+          bottom,
+          x: left,
+          y: 0,
+          width: right - left,
+          height: bottom,
+          toJSON: () => ({}),
+        }) as DOMRect
+      vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+        this: HTMLElement,
+      ) {
+        if (this.classList.contains('stage__body')) return rect(0, 1000)
+        if (this.matches('.split__pane[data-split-slot]')) {
+          return this.classList.contains('is-start') ? rect(0, 500) : rect(500, 1000)
+        }
+        return rect(0, 0, 0)
+      })
+      return sidebarProps().sessionDropTarget!
+    }
+    const dropZone = () => document.querySelector<HTMLElement>('.chat-drop')
+    const composerIn = (title: string) =>
+      within(pane(title)).getByPlaceholderText('Do anything') as HTMLTextAreaElement
+
+    it('opens a chat dropped on the right half beside the current one', async () => {
+      useTwoChats()
+      render(<App />)
+      fireEvent.click(await waitFor(() => treeChatRow('Left chat')))
+      const first = await screen.findByTestId('thread')
+      fireEvent.change(screen.getByPlaceholderText('Do anything'), {
+        target: { value: 'left draft' },
+      })
+      const target = layOutStage()
+
+      // The left half would replace the open chat; the right half opens beside it.
+      act(() => target.move('right-thread', 200, 400))
+      expect(dropZone()?.dataset.zone).toBe('pane')
+      expect(dropZone()?.style.width).toBe('1000px')
+      act(() => target.move('right-thread', 800, 400))
+      expect(dropZone()?.dataset.zone).toBe('beside')
+      expect([dropZone()?.style.left, dropZone()?.style.width]).toEqual(['500px', '500px'])
+      // The open chat has nowhere to go.
+      act(() => target.move('left-thread', 800, 400))
+      expect(dropZone()).toBeNull()
+
+      act(() => target.drop('right-thread', 800, 400))
+      expect(dropZone()).toBeNull()
+      await waitFor(() => expect(screen.getAllByTestId('thread')).toHaveLength(2))
+      expect(isFocused('Right chat')).toBe(true)
+      expect(pane('Left chat').classList.contains('is-start')).toBe(true)
+      expect(transcriptIn('Left chat')).toBe(first)
+      expect(composerIn('Left chat').value).toBe('left draft')
+    })
+
+    it('replaces the chat of the pane it is dropped on, keeping every draft', async () => {
+      await openSplit([
+        { id: 'third-thread', title: 'Third chat', provider: 'codex', createdAt: 1 },
+      ])
+      fireEvent.change(composerIn('Right chat'), { target: { value: 'right draft' } })
+      fireEvent.pointerDown(transcriptIn('Left chat'), { button: 0 })
+      await waitFor(() => expect(isFocused('Left chat')).toBe(true))
+      fireEvent.change(composerIn('Left chat'), { target: { value: 'left draft' } })
+      const left = transcriptIn('Left chat')
+      startTurn('right-thread', 'turn-1')
+      const target = layOutStage()
+
+      // The pointer moving over the panes redraws only the highlight.
+      appRenders.mockClear()
+      shellRenders.threadFrame.mockClear()
+      act(() => {
+        target.move('third-thread', 700, 300)
+        target.move('third-thread', 720, 320)
+        target.move('third-thread', 200, 300)
+        target.move('third-thread', 800, 300)
+      })
+      expect(appRenders).not.toHaveBeenCalled()
+      expect(shellRenders.threadFrame).not.toHaveBeenCalled()
+      expect([dropZone()?.style.left, dropZone()?.style.width]).toEqual(['500px', '500px'])
+
+      act(() => target.drop('third-thread', 800, 300))
+      await waitFor(() => expect(transcriptIn('Third chat').dataset.threadId).toBe('third-thread'))
+      expect(screen.queryByRole('region', { name: 'Right chat' })).toBeNull()
+      expect(isFocused('Third chat')).toBe(true)
+      expect(pane('Third chat').classList.contains('is-end')).toBe(true)
+      expect(transcriptIn('Left chat')).toBe(left)
+      expect(composerIn('Left chat').value).toBe('left draft')
+      // The replaced chat keeps running and keeps its draft for later.
+      expect(transport.request).not.toHaveBeenCalledWith('thread.interrupt', expect.anything())
+      fireEvent.click(treeChatRow('Right chat'))
+      await waitFor(() => expect(composerIn('Right chat').value).toBe('right draft'))
+    })
+
+    it('swaps the panes when a chat on screen is dropped on the other one', async () => {
+      await openSplit()
+      fireEvent.change(composerIn('Right chat'), { target: { value: 'right draft' } })
+      const left = transcriptIn('Left chat')
+      const right = transcriptIn('Right chat')
+      streamText('right-thread', 'from the right')
+      await waitFor(() => expect(within(right).getByText('from the right')).toBeTruthy())
+      const target = layOutStage()
+
+      // The focused chat, onto the other pane: the two trade sides and it keeps focus.
+      act(() => target.move('right-thread', 200, 400))
+      expect(dropZone()?.dataset.zone).toBe('pane')
+      act(() => target.drop('right-thread', 200, 400))
+      await waitFor(() => expect(pane('Right chat').classList.contains('is-start')).toBe(true))
+      expect(pane('Left chat').classList.contains('is-end')).toBe(true)
+      expect(isFocused('Right chat')).toBe(true)
+      expect(transcriptIn('Left chat')).toBe(left)
+      expect(transcriptIn('Right chat')).toBe(right)
+      expect(composerIn('Right chat').value).toBe('right draft')
+      // Its answer keeps streaming into the same transcript.
+      emitThreadEvent('right-thread', {
+        type: 'item.delta',
+        turnId: 'turn-1',
+        itemId: 'right-thread-item',
+        textDelta: ' and on',
+      })
+      await waitFor(() => expect(within(right).getByText('from the right and on')).toBeTruthy())
+
+      // The chat beside, onto the focused pane: they trade back and it takes focus.
+      act(() => target.drop('left-thread', 200, 400))
+      await waitFor(() => expect(isFocused('Left chat')).toBe(true))
+      expect(pane('Left chat').classList.contains('is-start')).toBe(true)
+      expect(transcriptIn('Left chat')).toBe(left)
+      expect(transcriptIn('Right chat')).toBe(right)
+      expect(composerIn('Right chat').value).toBe('right draft')
+      expect(transport.request).not.toHaveBeenCalledWith('thread.interrupt', expect.anything())
+      // Dropped where it already is: nothing lights up and nothing changes.
+      act(() => target.move('left-thread', 200, 400))
+      expect(dropZone()).toBeNull()
     })
   })
 })

@@ -11,6 +11,7 @@ import {
 } from 'react'
 import type {
   AnimationEvent as ReactAnimationEvent,
+  ComponentProps,
   CSSProperties,
   TransitionEvent as ReactTransitionEvent,
 } from 'react'
@@ -59,6 +60,7 @@ import { readTerminalPlacement, subscribeTerminalPlacement } from './terminal-pl
 import { useChatNotifications } from './use-chat-notifications.js'
 import { useAppUpdateInstallGate } from './app-update-install.js'
 import { ProviderUpdateNotice } from './ui/ProviderUpdates.js'
+import { AppUpdateToast } from './ui/AppUpdateToast.js'
 import { IndeterminateRequestError, Transport } from './transport.js'
 import { OptimisticMutations } from './optimistic-mutations.js'
 import {
@@ -73,6 +75,7 @@ import {
 import {
   ThreadController,
   removePendingSubmission,
+  type PaneSlot,
   type PendingSubmission,
   type RecoverableDraft,
 } from './thread-controller.js'
@@ -95,6 +98,8 @@ import {
   sessionOnProvider,
   updateSession,
   updateSessions,
+  withoutDeletedSessions,
+  withStoppingSessions,
 } from './project-store.js'
 import {
   applyProjectOrder,
@@ -108,7 +113,9 @@ import {
 } from './sidebar-order.js'
 import { createSessionOrderSerializer } from './session-order-serializer.js'
 import type { CommandScope, PaletteCommand } from './ui/CommandPalette.js'
+import type { AppScreen } from './app-commands.js'
 import { Composer, type SendAvailability, type WorkspaceInfo } from './ui/Composer.js'
+import { composerWireText } from './ui/composer-chips.js'
 import {
   formatModelName,
   getFastModeOffValue,
@@ -146,6 +153,10 @@ import {
   WorkspacePanelSkeleton,
 } from './ui/SurfaceSkeletons.js'
 import { PanelToggles, StageHeader } from './ui/StageHeader.js'
+import { PaneComposer, SplitPane } from './ui/SplitPane.js'
+import { loadSplitViewStyles } from './ui/split-view-context.js'
+import { useChatDrop } from './ui/chat-drop.js'
+import { ChatDropOverlay } from './ui/ChatDropOverlay.js'
 import { SurfaceErrorBoundary } from './ui/SurfaceErrorBoundary.js'
 import { surfaceLoadFailed } from './surface-load-error.js'
 import { preloadWhenIdle } from './idle-preload.js'
@@ -258,6 +269,7 @@ import {
   restoreWorkspacePanelWidth,
 } from './ui/workspace/workspace-panel-width.js'
 import { useWindowChrome } from './window-chrome.js'
+import { AppBackground } from './ui/AppBackground.js'
 import { backdropColorScheme } from './theme-colors.js'
 import { adoptedSelection, shareSavedSetups, sharedSetup } from './thread-settings.js'
 import {
@@ -343,6 +355,7 @@ const MODEL_BY_THREAD_PREFIX = 'harness.modelByThread:'
 const COMPOSER_DRAFTS_KEY = 'harness.composerDrafts.v1'
 const EMPTY_PALETTE_COMMANDS: PaletteCommand[] = []
 const EMPTY_PROVIDER_ROSTER: ProviderRoster = []
+const NO_STOPPING_ROWS: ReadonlyMap<string, number> = new Map()
 /** Only the user's own visibility choices; the defaults follow the catalog. */
 const MODEL_VISIBILITY_KEY = 'harness.modelVisibility.v2'
 /** One complete hidden list, which mixed the defaults of the build that saved it with choices. */
@@ -375,6 +388,27 @@ const DEFAULT_RAIL_WIDTH = 256
 const WORKSPACE_PANEL_WIDTH_KEY = 'harness.workspacePanel.width'
 const DEFAULT_SIDEBAR_SETTINGS: SidebarSettings = { mode: 'classic', autoSettleDays: 3 }
 type BottomTerminalPhase = 'closed' | 'opening' | 'open' | 'closing'
+type ComposerProps = ComponentProps<typeof Composer>
+/** What the pane beside the focused one shows: a chat, or a new chat not yet started. */
+type BesidePane = { kind: 'chat'; id: string } | { kind: 'new'; projectPath: string | undefined }
+/**
+ * Split view: a second chat beside the focused one. The focused pane is App's
+ * active chat; the other pane keeps what it showed when it lost focus, so a
+ * focus swap moves nothing on screen.
+ */
+type SplitView = {
+  beside: BesidePane
+  /** The pane shown on the left; the one opened later sits to its right. */
+  start: PaneSlot
+  /** The unfocused pane's view, put back when it takes focus again. */
+  frozen: { composer: ComposerProps; entryKey: number; revealRequest: number }
+}
+const otherSlot = (slot: PaneSlot): PaneSlot => (slot === 0 ? 1 : 0)
+const splitBesideId = (split: SplitView | undefined): string | undefined =>
+  split?.beside.kind === 'chat' ? split.beside.id : undefined
+const PANE_SLOTS: readonly PaneSlot[] = [0, 1]
+const SPLIT_CONTENTS: CSSProperties = { display: 'contents' }
+const NO_CHECKPOINTS: Checkpoint[] = []
 const PullRequestsView = lazy(() =>
   import('./ui/pull-requests/PullRequestsView.js').then((module) => ({
     default: module.PullRequestsView,
@@ -793,6 +827,12 @@ export function App() {
   const [onboardingPreview, setOnboardingPreview] = useState(false)
   /** The thread whose interrupt has been sent but not yet acknowledged. */
   const [stoppingThreadId, setStoppingThreadId] = useState<string | undefined>()
+  /**
+   * Every chat whose Stop is on its way, with when it was clicked. Its sidebar row stops
+   * spinning at the click, as the chat does, not when the server has ended the turn: that
+   * waits for a turn still starting, which can take seconds.
+   */
+  const [stoppingRows, setStoppingRows] = useState<ReadonlyMap<string, number>>(NO_STOPPING_ROWS)
 
   useEffect(() => {
     if (projectsStatus !== 'ready' || projects.length === 0 || onboardingDismissed) return
@@ -834,14 +874,47 @@ export function App() {
   const [chatWithoutProject, setChatWithoutProject] = useState(false)
   const chatWithoutProjectRef = useRef(chatWithoutProject)
   chatWithoutProjectRef.current = chatWithoutProject
-  const threadFrameStore = threadController.frames
+  const [split, setSplitState] = useState<SplitView>()
+  const splitRef = useRef(split)
+  const setSplit = useCallback((next: SplitView | undefined) => {
+    splitRef.current = next
+    setSplitState(next)
+  }, [])
+  /** The column with focus. Without a split it is the only one shown. */
+  const [focusedSlot, setFocusedSlotState] = useState<PaneSlot>(0)
+  const focusedSlotRef = useRef<PaneSlot>(0)
+  const setFocusedSlot = useCallback(
+    (slot: PaneSlot) => {
+      focusedSlotRef.current = slot
+      threadController.focus(slot)
+      setFocusedSlotState(slot)
+    },
+    [threadController],
+  )
+  const besideId = split?.beside.kind === 'chat' ? split.beside.id : undefined
+  const [besideQueue, setBesideQueue] = useState<{ items: QueuedTurn[]; canSteer: boolean }>()
+  /** The composer props the focused pane rendered last, frozen when it loses focus. */
+  const liveComposerProps = useRef<ComposerProps | undefined>(undefined)
+  /** Set further down, where the split's actions are defined: a chat or project
+   * going away closes the pane that shows it. True when that was the focused pane. */
+  const splitRemovals = useRef({
+    chats: (_ids: readonly string[]): boolean => false,
+    project: (_path: string): boolean => false,
+  })
+  const threadFrameStore = threadController.columns[focusedSlot]
   const thread = useSyncExternalStore(
     threadFrameStore.subscribeStructure,
     threadFrameStore.getStructureSnapshot,
   )
+  /** Draw into the focused column, whatever it shows. */
   const setThread = useCallback(
-    (next: ThreadState) => threadFrameStore.publish(next),
-    [threadFrameStore],
+    (next: ThreadState) => threadController.frames.publish(next),
+    [threadController],
+  )
+  /** Draw a chat's state if a column shows it; a hidden chat is only cached. */
+  const publishThread = useCallback(
+    (threadId: string, next: ThreadState) => threadController.publish(threadId, next),
+    [threadController],
   )
   const [loadingThreadId, setLoadingThreadId] = useState<string | undefined>()
   const [historyFailure, setHistoryFailure] = useState<
@@ -905,7 +978,9 @@ export function App() {
   /** For the model catalog's runs, which outlive a render. */
   const providerAccountsRef = useRef(providerAccounts)
   providerAccountsRef.current = providerAccounts
-  const [acpAgents, setAcpAgents] = useState<ResultOf<'acp.agents'>['agents']>([])
+  // Undefined until the first catalog run has listed them, so setup can tell
+  // an empty library from one that has not answered yet.
+  const [acpAgents, setAcpAgents] = useState<ResultOf<'acp.agents'>['agents'] | undefined>()
   const [providerRoster, setProviderRoster] = useState(readProviderRoster)
   // Read by the catalog run, which must not restart when a provider is added.
   const providerRosterRef = useRef(providerRoster)
@@ -1077,19 +1152,19 @@ export function App() {
   }>()
   const searchJumpRequests = useRef(0)
   const [composerFocusRequest, setComposerFocusRequest] = useState(0)
-  const [composerDraft, setComposerDraft] = useState<
-    | {
-        text: string
-        attachments?: string[] | undefined
-        resources?: ComposerResource[] | undefined
-        request: number
-      }
-    | undefined
-  >()
+  const [composerDraft, setComposerDraft] = useState<ComposerProps['draftRequest']>()
   const [threadRevealRequest, setThreadRevealRequest] = useState(0)
   // Session entry gets a fresh virtualizer at the latest message. A pending
   // session becoming durable keeps this key and preserves its live view.
   const [threadEntryKey, setThreadEntryKey] = useState(0)
+  // Keys and requests only ever grow: a split pane put back into focus brings
+  // its own older values back, and a new one must differ from both panes'.
+  const threadEntryKeys = useRef(0)
+  const composerDraftRequests = useRef(0)
+  const threadEntryKeyRef = useRef(threadEntryKey)
+  threadEntryKeyRef.current = threadEntryKey
+  const threadRevealRequestRef = useRef(threadRevealRequest)
+  threadRevealRequestRef.current = threadRevealRequest
   const [notice, setNotice] = useState<string | undefined>()
   /** The unsent draft an "Edit as new prompt" replaced, offered back in the notice. */
   const [replacedDraft, setReplacedDraft] = useState<{ owner: string; text: string } | undefined>()
@@ -1162,6 +1237,10 @@ export function App() {
       sessions: project.sessions.filter((session) => !hidden.has(session.id)),
     }))
   }, [projects, archivingIds])
+  const sidebarProjects = useMemo(
+    () => withStoppingSessions(archiveProjects, stoppingRows),
+    [archiveProjects, stoppingRows],
+  )
 
   const [checkpoints, setCheckpoints] = useState<Checkpoint[]>([])
   const [rollbackOpen, setRollbackOpen] = useState(false)
@@ -1276,10 +1355,15 @@ export function App() {
    *  reads this merged list; the cache only ever stores the server catalog. */
   const models = useMemo(
     () =>
-      mergeCustomModels(catalogModels, customModels).filter((choice) =>
-        rosterAllows(providerRoster, modelSource(choice)),
+      mergeCustomModels(catalogModels, customModels).filter(
+        (choice) =>
+          rosterAllows(providerRoster, modelSource(choice)) &&
+          // Once the server has answered, a cached or custom row for a provider
+          // this build does not offer is left out.
+          (providerStatuses.length === 0 ||
+            providerStatuses.some((status) => status.id === choice.provider)),
       ),
-    [catalogModels, customModels, providerRoster],
+    [catalogModels, customModels, providerRoster, providerStatuses],
   )
   const catalogModelsRef = useRef(catalogModels)
   catalogModelsRef.current = catalogModels
@@ -1777,6 +1861,7 @@ export function App() {
               provider: selectedModelChoice.provider,
               connectionId: selectedModelChoice.connectionId,
               agentId: selectedModelChoice.agent?.id,
+              modelImages: selectedModelChoice.model.images,
             }
           : { provider, agentId: sourceAgent },
         providerStatuses,
@@ -1958,12 +2043,12 @@ export function App() {
     }
   }, [threadController])
   const publishComposerDraft = useCallback((draft: ComposerDraft) => {
-    setComposerDraft((current) => ({
+    setComposerDraft({
       text: draft.text,
       attachments: draft.attachments,
       resources: draft.resources,
-      request: (current?.request ?? 0) + 1,
-    }))
+      request: ++composerDraftRequests.current,
+    })
   }, [])
   const restoreRejectedDraft = useCallback(
     (threadId: string, rejected: RecoverableDraft) => {
@@ -2192,7 +2277,7 @@ export function App() {
   // prettier-ignore
   const releaseDirectStart = useCallback((threadId: string) => { const probe = workspaceIdleProbe.current, queued = new Set([...probe.queuedStarts.entriesForThread(threadId)].map(([, owner]) => owner.token)), token = probe.pendingStarts.get(threadId)?.tokens.find((candidate) => !queued.has(candidate)); if (token === undefined) return; for (const [id, start] of probe.submissionStarts.entriesForThread(threadId)) if (start.token === token) probe.submissionStarts.delete(id); releaseWorkspaceStart(threadId, token) }, [releaseWorkspaceStart])
   // prettier-ignore
-  const clearWorkspaceThread = useCallback((threadId: string) => { pendingProviderHistoryIds.current.delete(threadId); providerHistoryReads.current.delete(threadId); const probe = workspaceIdleProbe.current, path = probe.pendingStarts.get(threadId)?.path ?? findSession(projectsRef.current, threadId)?.project.path; probe.pendingStarts.delete(threadId); probe.unknownQueues.delete(threadId); threadController.forget(threadId); for (const [id] of probe.submissionStarts.entriesForThread(threadId)) probe.submissionStarts.delete(id); for (const [id] of probe.queuedStarts.entriesForThread(threadId)) { probe.queuedStarts.delete(id); probe.claimedStarts.delete(id) }; for (const [id] of probe.queueActions.entriesForThread(threadId)) probe.queueActions.delete(id); if (activeIdRef.current === threadId) { activeIdRef.current = undefined; setActiveId(undefined); setThread(emptyThread) }; return path }, [])
+  const clearWorkspaceThread = useCallback((threadId: string) => { pendingProviderHistoryIds.current.delete(threadId); providerHistoryReads.current.delete(threadId); const probe = workspaceIdleProbe.current, path = probe.pendingStarts.get(threadId)?.path ?? findSession(projectsRef.current, threadId)?.project.path; probe.pendingStarts.delete(threadId); probe.unknownQueues.delete(threadId); threadController.forget(threadId); for (const [id] of probe.submissionStarts.entriesForThread(threadId)) probe.submissionStarts.delete(id); for (const [id] of probe.queuedStarts.entriesForThread(threadId)) { probe.queuedStarts.delete(id); probe.claimedStarts.delete(id) }; for (const [id] of probe.queueActions.entriesForThread(threadId)) probe.queueActions.delete(id); if (!splitRemovals.current.chats([threadId]) && activeIdRef.current === threadId) { activeIdRef.current = undefined; setActiveId(undefined); setThread(emptyThread) }; return path }, [])
   /** Refetch after an outage. Held in a ref because the transport effect is
    *  set up before the fetchers it needs are declared. */
   const resync = useRef<(retry?: boolean) => void>(() => {})
@@ -2207,7 +2292,7 @@ export function App() {
       }
       pendingProviderHistoryIds.current.delete(threadId)
       threadController.invalidateHistory(threadId)
-      if (threadId !== activeIdRef.current) {
+      if (!threadController.isVisible(threadId)) {
         threadController.discardSnapshot(threadId)
         return
       }
@@ -2254,11 +2339,10 @@ export function App() {
   const settleQueuedSubmissions = useCallback(
     (threadId: string, items: QueuedTurn[], snapshot?: ThreadState) => {
       const rejected = threadController.settleSubmissions(threadId, items, snapshot)
-      if (threadId === activeIdRef.current)
-        setThread(threadController.snapshot(threadId) ?? emptyThread)
+      publishThread(threadId, threadController.snapshot(threadId) ?? emptyThread)
       for (const submission of rejected) restoreRejectedDraft(threadId, submission)
     },
-    [restoreRejectedDraft],
+    [restoreRejectedDraft, publishThread],
   )
   const acceptSidebarSettings = useCallback(
     (settings: SidebarSettings) => {
@@ -2346,21 +2430,23 @@ export function App() {
         if (finished && threadId === activeIdRef.current) setHeldSessionId(threadId)
         setProjects((current) => {
           const updated = updateSession(current, threadId, (session) => {
-            const status = statusFor(next, event, threadId !== activeIdRef.current)
+            // A chat in either split pane is in view, so it never turns unread.
+            const shown = threadController.isVisible(threadId)
+            const status = statusFor(next, event, !shown)
             return {
               ...session,
               status,
               statusSince: status === session.status ? session.statusSince : Date.now(),
               ...(event.type === 'turn.completed'
                 ? {
-                    unread: threadId !== activeIdRef.current,
+                    unread: !shown,
                   }
                 : {}),
             }
           })
           return finished ? liftSession(updated, threadId) : updated
         })
-        if (event.type === 'turn.completed' && threadId === activeIdRef.current) {
+        if (event.type === 'turn.completed' && threadController.isVisible(threadId)) {
           // Only here for the server's mark-as-read side effect — the live event
           // stream already delivered the turn. afterSeq skips serializing,
           // shipping, and parsing the full log just to throw it away.
@@ -2374,6 +2460,8 @@ export function App() {
       }
       if (event.type === 'turn.completed' || event.type === 'thread.error') {
         threadController.resetBackground(threadId)
+        // The turn has ended, so the row shows the server's status again.
+        setStoppingRows((rows) => withoutStoppingRow(rows, threadId))
         if (pendingProviderHistoryIds.current.has(threadId)) {
           refreshProviderThreadHistory(threadId)
         }
@@ -2400,7 +2488,8 @@ export function App() {
       if (items.length === 0 && probe.blockedPath === projectPath)
         refreshWorkspaceAfterCompletion(projectPath)
       if (threadId !== activeIdRef.current) {
-        if (items.length === 0) pruneQueueMetadata()
+        if (threadId === splitBesideId(splitRef.current)) setBesideQueue({ items, canSteer })
+        else if (items.length === 0) pruneQueueMetadata()
         return
       }
       setQueuedTurns(items)
@@ -2514,13 +2603,15 @@ export function App() {
     refreshWorkspaceAfterCompletion,
     refreshUsage,
     usageController,
-    threadFrameStore,
     pruneThreadStateCache,
     pruneQueueMetadata,
     isThreadCacheProtected,
     refreshProviderThreadHistory,
     setThreadDesignMode,
     draggedSessionOrder,
+    // The controller, not a column's frame store: a store that changed identity
+    // here would close the transport in this effect's cleanup.
+    threadController,
   ])
 
   useEffect(() => {
@@ -2573,6 +2664,18 @@ export function App() {
       if (cancelled) return
       setProviderStatuses(providers)
       setCatalogAvailability('ready')
+      // ACP agents belong to the ACP entry; a build without it lists none.
+      // Setup shows its list once these are in as well, so they are settled
+      // here, before anything below can cut the run short. A run that fails
+      // before this point leaves them as they were for the next run to settle:
+      // an empty stand-in would let a retry show the list without them first.
+      // A run replaced before they answer still settles them while no other
+      // run has, so a replacement that fails does not leave setup waiting.
+      const offeredAgents = agentsCatalog.then((result) => {
+        const agents = providers.some((status) => status.id === 'acp') ? (result?.agents ?? []) : []
+        setAcpAgents((current) => (cancelled && current !== undefined ? current : agents))
+        return agents
+      })
       // Only the first answer may move an unchosen launch; later refreshes
       // must not override what the user picked since.
       const unchosen = providerUnchosenAtLaunch.current
@@ -2870,10 +2973,8 @@ export function App() {
           return preserveCatalog()
         }
       }
-      const acpPromise = agentsCatalog.then(async (result) => {
+      const acpPromise = offeredAgents.then(async (agents) => {
         if (cancelled) return []
-        const agents = result?.agents ?? []
-        setAcpAgents(agents)
         // Only agents added under Settings › Providers start for their models.
         const listed = agents.filter(
           (agent) =>
@@ -2896,7 +2997,10 @@ export function App() {
       })
       const harnessesResult = await harnessesCatalog
       if (cancelled) return
-      const harnesses = harnessesResult?.harnesses ?? []
+      // A harness runs through its provider, so it is offered only with it.
+      const harnesses = (harnessesResult?.harnesses ?? []).filter((harness) =>
+        providers.some((status) => status.id === harness.provider),
+      )
       setPendingModelSources(
         (current) =>
           new Set([
@@ -3391,13 +3495,17 @@ export function App() {
 
   // Once per window: chats set up before the server kept setups share theirs.
   const savedSetupsShared = useRef(false)
+  // Chats this window deleted; a list read before the delete must not bring one back.
+  const deletedThreadIds = useRef(new Set<string>())
   const refreshProjects = useCallback(async () => {
     if (!startupMilestones.current.projectsRequested) {
       startupMilestones.current.projectsRequested = true
       reportStartupMilestone('projects-requested')
     }
     const result = await transport.request('projects.list', {})
-    const list = result.projects.filter((project) => !removedProjectPaths.current.has(project.path))
+    const list = withoutDeletedSessions(result.projects, deletedThreadIds.current).filter(
+      (project) => !removedProjectPaths.current.has(project.path),
+    )
     if (!savedSetupsShared.current) {
       savedSetupsShared.current = true
       void shareSavedSetups(
@@ -3469,6 +3577,8 @@ export function App() {
     async (threadId: string, afterSeq?: number) => {
       try {
         const loaded = await threadController.loadHistory(threadId, afterSeq)
+        if (loaded && activeIdRef.current !== threadId && threadController.isVisible(threadId))
+          setProjects((current) => updateSession(current, threadId, markSessionRead))
         if (loaded && activeIdRef.current === threadId) {
           setActiveThreadApproval(loaded.approval ?? 'ask')
           setHistoryFailure((current) => (current?.threadId === threadId ? undefined : current))
@@ -3524,6 +3634,8 @@ export function App() {
       )
         threadIds.add(session.id)
     if (activeId && !activeId.startsWith('pending:')) threadIds.add(activeId)
+    const besideId = splitBesideId(splitRef.current)
+    if (besideId && !besideId.startsWith('pending:')) threadIds.add(besideId)
     const resyncThread = async (
       id: string,
     ): Promise<{ id: string; thread: ThreadState; queue: QueuedTurn[] } | undefined> => {
@@ -3553,6 +3665,7 @@ export function App() {
         const start = probe.submissionStarts.get(item.id)
         if (start?.threadId === id) probe.queuedStarts.set(item.id, start)
       }
+      if (id === splitBesideId(splitRef.current)) setBesideQueue(state)
       if (activeIdRef.current === id) {
         setQueuedTurns(state.items)
         setCanSteerQueue(state.canSteer)
@@ -4475,6 +4588,10 @@ export function App() {
           setActiveId(threadId)
           setActiveThreadApproval(sessionApproval)
           setThread(provisional)
+        } else if (splitBesideId(splitRef.current) === provisionalId) {
+          // The chat lost focus to the other split pane before its id arrived.
+          threadController.show(otherSlot(focusedSlotRef.current), threadId)
+          setSplit({ ...splitRef.current!, beside: { kind: 'chat', id: threadId } })
         }
         // A pin made while the chat was starting has only been shown locally.
         // Send it ahead of the rename so the refresh below already includes it.
@@ -4588,6 +4705,7 @@ export function App() {
       const next = { ...current, items: update(current.items) }
       threadController.setQueue(threadId, next, 'local')
       if (activeIdRef.current === threadId) setQueuedTurns(next.items)
+      else if (threadId === splitBesideId(splitRef.current)) setBesideQueue(next)
     },
     [],
   )
@@ -4595,10 +4713,16 @@ export function App() {
   const requestInterrupt = useCallback(
     (threadId: string) => {
       setStoppingThreadId(threadId)
-      void transport.request('thread.interrupt', { threadId }).catch((error) => {
-        setStoppingThreadId((current) => (current === threadId ? undefined : current))
-        reportError(error instanceof Error ? error.message : String(error))
-      })
+      setStoppingRows((rows) => withStoppingRow(rows, threadId, Date.now()))
+      void transport
+        .request('thread.interrupt', { threadId })
+        .catch((error) => {
+          setStoppingThreadId((current) => (current === threadId ? undefined : current))
+          reportError(error instanceof Error ? error.message : String(error))
+        })
+        // A Stop that reached a running turn has ended it by the time the server answers.
+        // A turn that still runs after the answer, as when the Stop failed, spins again.
+        .finally(() => setStoppingRows((rows) => withoutStoppingRow(rows, threadId)))
     },
     [transport],
   )
@@ -4788,6 +4912,8 @@ export function App() {
         pendingSession.current = { id: provisionalId, promise, title: titleFrom(titlePrompt) }
         threadId = await promise
         interruptRequested = pendingInterruptThreadIds.current.delete(provisionalId)
+        // The row has its real id now, or is gone. A Stop goes on below under that id.
+        setStoppingRows((rows) => withoutStoppingRow(rows, provisionalId))
         if (pendingSession.current?.id === provisionalId) pendingSession.current = undefined
         if (!threadId) {
           setStoppingThreadId((current) => (current === provisionalId ? undefined : current))
@@ -4795,7 +4921,7 @@ export function App() {
           if (current !== undefined && current.activeTurn?.id === optimisticTurnId) {
             const next: ThreadState = { ...current, running: false, activeTurn: undefined }
             threadController.update(provisionalId, next)
-            if (activeIdRef.current === provisionalId) setThread(next)
+            publishThread(provisionalId, next)
           }
           releasePendingStart()
           restoreDraftAfterFailedStart()
@@ -4816,7 +4942,7 @@ export function App() {
           attachments,
         )
         threadController.update(targetId, provisional)
-        if (activeIdRef.current === targetId) setThread(provisional)
+        publishThread(targetId, provisional)
         setThreadRevealRequest((request) => request + 1)
         threadId = await pending.promise
         if (!threadId) {
@@ -4846,10 +4972,8 @@ export function App() {
         )
         optimisticTurnId = next.activeTurn?.id
         threadController.update(threadId, next)
-        if (threadId === activeIdRef.current) {
-          setThread(next)
-          setThreadRevealRequest((request) => request + 1)
-        }
+        publishThread(threadId, next)
+        if (threadId === activeIdRef.current) setThreadRevealRequest((request) => request + 1)
       } else if (wasRunning && steering) {
         const next = appendUserMessage(
           before,
@@ -4859,7 +4983,7 @@ export function App() {
           attachments,
         )
         threadController.update(threadId, next)
-        if (threadId === activeIdRef.current) setThread(next)
+        publishThread(threadId, next)
       }
       if (optimisticQueueId) {
         updateQueue(threadId, (items) => [
@@ -5034,7 +5158,7 @@ export function App() {
             if (!wasRunning) {
               const reconciled = pending ? removePendingSubmission(current, pending) : current
               threadController.update(threadId, reconciled)
-              if (threadId === activeIdRef.current) setThread(reconciled)
+              publishThread(threadId, reconciled)
             }
             threadController.forgetSubmission(threadId, optimisticItemId)
           }
@@ -5066,7 +5190,7 @@ export function App() {
               next = { ...next, running: false, activeTurn: undefined }
             }
             threadController.update(threadId, next)
-            if (threadId === activeIdRef.current) setThread(next)
+            publishThread(threadId, next)
           }
           restoreRejectedDraft(threadId, { text, attachments })
         } else if (steering) {
@@ -5074,7 +5198,7 @@ export function App() {
           if (current) {
             const next = removeOptimisticMessage(current, optimisticItemId)
             threadController.update(threadId, next)
-            if (threadId === activeIdRef.current) setThread(next)
+            publishThread(threadId, next)
           }
         }
         reportError(error instanceof Error ? error.message : String(error))
@@ -5113,6 +5237,7 @@ export function App() {
     if (activeId.startsWith('pending:')) {
       pendingInterruptThreadIds.current.add(activeId)
       setStoppingThreadId(activeId)
+      setStoppingRows((rows) => withStoppingRow(rows, activeId, Date.now()))
       return
     }
     requestInterrupt(activeId)
@@ -5356,8 +5481,18 @@ export function App() {
     [send],
   )
 
+  /** Set below; selecting the chat shown beside only moves focus to its pane. */
+  const focusPaneRef = useRef<(slot: PaneSlot) => void>(() => {})
   const selectSession = useCallback(
-    async (id: string) => {
+    /** keepView: a split pane taking focus. Its transcript stays as it is: no
+     * fresh view, no jump to the end, no composer focus. */
+    async (id: string, options?: { keepView?: boolean }) => {
+      const keepView = options?.keepView === true
+      if (!keepView && splitBesideId(splitRef.current) === id) {
+        setSurface('chat')
+        focusPaneRef.current(otherSlot(focusedSlotRef.current))
+        return
+      }
       setSurface('chat')
       pendingDeletionChecks.current.delete(id)
       if (!cancelArchive(id)) {
@@ -5423,9 +5558,11 @@ export function App() {
         held === id || (found && sessionGroup(found.session) === 'done') ? id : undefined,
       )
       setActiveId(id)
-      setComposerFocusRequest((request) => request + 1)
-      setThreadRevealRequest((request) => request + 1)
-      setThreadEntryKey((key) => key + 1)
+      if (!keepView) {
+        setComposerFocusRequest((request) => request + 1)
+        setThreadRevealRequest((request) => request + 1)
+        setThreadEntryKey(++threadEntryKeys.current)
+      }
       setChatWithoutProject(false)
       setActivePath(found?.project.path)
       threadController.resetBackground(id)
@@ -5565,9 +5702,8 @@ export function App() {
     [transport, activeId],
   )
 
-  const decideApproval = useCallback(
-    (approvalId: string, decision: ApprovalDecision) => {
-      const threadId = activeIdRef.current
+  const respondToApproval = useCallback(
+    (threadId: string | undefined, approvalId: string, decision: ApprovalDecision) => {
       if (!threadId) return
       void transport
         .request('thread.respondToApproval', { threadId, approvalId, decision })
@@ -5578,6 +5714,11 @@ export function App() {
         })
     },
     [transport],
+  )
+  const decideApproval = useCallback(
+    (approvalId: string, decision: ApprovalDecision) =>
+      respondToApproval(activeIdRef.current, approvalId, decision),
+    [respondToApproval],
   )
   /**
    * The permission chip is the one control for the access level, so it has to
@@ -5616,9 +5757,8 @@ export function App() {
     },
     [approvalScope, transport],
   )
-  const answerUserInput = useCallback(
-    (requestId: string, answers: Record<string, string[]>) => {
-      const threadId = activeIdRef.current
+  const respondToUserInput = useCallback(
+    (threadId: string | undefined, requestId: string, answers: Record<string, string[]>) => {
       if (!threadId) return Promise.reject(new Error('No active session'))
       return transport
         .request('thread.respondToUserInput', { threadId, requestId, answers })
@@ -5633,14 +5773,21 @@ export function App() {
     },
     [transport, threadController, loadHistory],
   )
+  const answerUserInput = useCallback(
+    (requestId: string, answers: Record<string, string[]>) =>
+      respondToUserInput(activeIdRef.current, requestId, answers),
+    [respondToUserInput],
+  )
   const editMessage = useCallback((text: string) => {
     const owner = threadController.draftOwner
     const draft = threadController.draft(owner).text
     threadController.editDraft(owner, { text })
-    setComposerDraft((current) => ({ text, undoable: true, request: (current?.request ?? 0) + 1 }))
+    setComposerDraft({ text, undoable: true, request: ++composerDraftRequests.current })
     setComposerFocusRequest((request) => request + 1)
-    // An unsent draft must not vanish without a way back.
-    if (draft.trim() && draft !== text) {
+    // An unsent draft must not vanish without a way back. The saved draft
+    // holds chips where the sent prompt has their tokens, so the two are
+    // compared as the provider receives them.
+    if (draft.trim() && composerWireText(draft) !== composerWireText(text)) {
       setReplacedDraft({ owner, text: draft })
       setNotice(DRAFT_REPLACED_NOTICE)
     }
@@ -5658,11 +5805,11 @@ export function App() {
     setReplacedDraft(undefined)
     if (!replaced || replaced.owner !== threadController.draftOwner) return
     threadController.editDraft(replaced.owner, { text: replaced.text })
-    setComposerDraft((current) => ({
+    setComposerDraft({
       text: replaced.text,
       undoable: true,
-      request: (current?.request ?? 0) + 1,
-    }))
+      request: ++composerDraftRequests.current,
+    })
     setComposerFocusRequest((request) => request + 1)
   }, [replacedDraft])
   const revertCheckpoint = useCallback(
@@ -5767,14 +5914,23 @@ export function App() {
 
   const deleteSession = useCallback(
     async (id: string) => {
-      await transport.request('thread.delete', { threadId: id })
+      // Recorded before the reply: a list read before the delete can land
+      // while the request is on its way, and must not bring the chat back.
+      deletedThreadIds.current.add(id)
+      try {
+        await transport.request('thread.delete', { threadId: id })
+      } catch (error) {
+        // The chat was not deleted, so the next list shows it again.
+        deletedThreadIds.current.delete(id)
+        throw error
+      }
       const projectPath = clearWorkspaceThread(id)
       threadController.discardSnapshot(id)
       threadController.invalidateHistory(id)
       // Thread ids are never reused, so a saved setup outlives its chat forever.
       removeSetting(`${MODEL_BY_THREAD_PREFIX}${id}`)
       setProjects((current) => removeSession(current, id))
-      if (activeIdRef.current === id) {
+      if (!splitRemovals.current.chats([id]) && activeIdRef.current === id) {
         activeIdRef.current = undefined
         setActiveId(undefined)
         setThread(emptyThread)
@@ -5811,13 +5967,26 @@ export function App() {
       setArchiveToastDismissed(false)
       savePendingChatDelete(pending)
       enqueueArchive(id, () => commitChatDelete(pending))
-      if (activeIdRef.current === id) {
+      // A deleted chat stops now, not when the Undo window closes: until then its agent
+      // would go on working in the folder for a chat the user has thrown away. Undo brings
+      // the chat back stopped. Should this Stop fail, the delete still ends the agent.
+      if (
+        threadController.snapshot(id)?.running ||
+        runsTurn(findSession(projectsRef.current, id)?.session.status)
+      ) {
+        setStoppingRows((rows) => withStoppingRow(rows, id, Date.now()))
+        void transport
+          .request('thread.interrupt', { threadId: id })
+          .catch(() => undefined)
+          .finally(() => setStoppingRows((rows) => withoutStoppingRow(rows, id)))
+      }
+      if (!splitRemovals.current.chats([id]) && activeIdRef.current === id) {
         activeIdRef.current = undefined
         setActiveId(undefined)
         setThread(emptyThread)
       }
     },
-    [enqueueArchive, commitChatDelete],
+    [enqueueArchive, commitChatDelete, threadController, transport],
   )
 
   const undoArchive = useCallback(() => {
@@ -5955,6 +6124,7 @@ export function App() {
             lifecycle,
           })),
         )
+        if (splitRemovals.current.chats(targets)) return
         const activeId = activeIdRef.current
         if (!activeId || !targets.includes(activeId)) return
         const current = findSession(projectsRef.current, activeId)
@@ -6094,6 +6264,201 @@ export function App() {
   )
   const startChatWithoutProject = useCallback(() => beginSession(undefined), [beginSession])
   const selectSidebarSession = useCallback((id: string) => void selectSession(id), [selectSession])
+
+  /** The focused pane as it is now, to show unchanged while the other pane has focus. */
+  const freezeFocusedPane = useCallback((): SplitView['frozen'] => {
+    const owner = threadController.draftOwner
+    return {
+      composer: {
+        ...liveComposerProps.current!,
+        // It is inert, but a paste that finishes saving later still belongs to its chat.
+        onDraftChange: (text) => void threadController.editDraft(owner, { text }),
+        onAttachmentsChange: (attachments) =>
+          void threadController.editDraft(owner, { attachments }),
+        onResourcesChange: (resources) => void threadController.editDraft(owner, { resources }),
+      },
+      entryKey: threadEntryKeyRef.current,
+      revealRequest: threadRevealRequestRef.current,
+    }
+  }, [threadController])
+  const focusedPaneContent = useCallback(
+    (): BesidePane =>
+      activeIdRef.current
+        ? { kind: 'chat', id: activeIdRef.current }
+        : { kind: 'new', projectPath: activePathRef.current },
+    [],
+  )
+  /**
+   * Move focus to the other split pane. Its chat becomes the active one; the
+   * pane that had focus keeps showing what it showed. The bookkeeping is
+   * synchronous, so the press that moved focus already acts on its own chat.
+   */
+  const focusPane = useCallback(
+    (slot: PaneSlot) => {
+      const current = splitRef.current
+      if (!current || slot === focusedSlotRef.current) return
+      const { beside: target, frozen } = current
+      const leaving = focusedPaneContent()
+      setSplit({ ...current, beside: leaving, frozen: freezeFocusedPane() })
+      setBesideQueue(leaving.kind === 'chat' ? threadController.queue(leaving.id) : undefined)
+      setFocusedSlot(slot)
+      // The pane comes back exactly as it was left: same view, draft and focus.
+      setThreadEntryKey(frozen.entryKey)
+      setThreadRevealRequest(frozen.revealRequest)
+      setComposerDraft(frozen.composer.draftRequest)
+      setComposerFocusRequest(frozen.composer.focusRequest)
+      const key = composerDraftKey(target.kind === 'chat' ? target.id : undefined)
+      threadController.draftOwner = key
+      composerDraftKeyRef.current = key
+      if (target.kind === 'chat') {
+        activeIdRef.current = target.id
+        void selectSession(target.id, { keepView: true })
+      } else {
+        activeIdRef.current = undefined
+        if (target.projectPath) beginSession(target.projectPath)
+        else setActiveId(undefined)
+      }
+    },
+    [
+      threadController,
+      freezeFocusedPane,
+      focusedPaneContent,
+      setSplit,
+      setFocusedSlot,
+      selectSession,
+      beginSession,
+      setActiveId,
+    ],
+  )
+  focusPaneRef.current = focusPane
+  /** Open a chat in split view beside the focused one. The opened pane takes focus. */
+  const openSessionBeside = useCallback(
+    (id: string) => {
+      void loadSplitViewStyles().then(
+        () => {
+          if (id === activeIdRef.current) return
+          const current = splitRef.current
+          const focused = focusedSlotRef.current
+          if (splitBesideId(current) === id) {
+            focusPane(otherSlot(focused))
+            return
+          }
+          const leaving = focusedPaneContent()
+          setSplit({
+            beside: leaving,
+            start: current?.start ?? focused,
+            frozen: freezeFocusedPane(),
+          })
+          setBesideQueue(leaving.kind === 'chat' ? threadController.queue(leaving.id) : undefined)
+          setFocusedSlot(otherSlot(focused))
+          // A new pane's composer also restores this when it is ready.
+          restoreComposerDraft(composerDraftKey(id))
+          void selectSession(id)
+        },
+        (error: unknown) => reportError(error instanceof Error ? error.message : String(error)),
+      )
+    },
+    [
+      threadController,
+      focusPane,
+      focusedPaneContent,
+      freezeFocusedPane,
+      setSplit,
+      setFocusedSlot,
+      restoreComposerDraft,
+      selectSession,
+      reportError,
+    ],
+  )
+  const closeBesidePane = useCallback(() => {
+    if (!splitRef.current) return
+    threadController.show(otherSlot(focusedSlotRef.current), undefined)
+    setSplit(undefined)
+    setBesideQueue(undefined)
+  }, [threadController, setSplit])
+  const closeFocusedPane = useCallback(() => {
+    if (!splitRef.current) return
+    focusPane(otherSlot(focusedSlotRef.current))
+    closeBesidePane()
+  }, [focusPane, closeBesidePane])
+  /** The stage body: a chat dragged from the sidebar is dropped on the panes in it. */
+  const stageBody = useRef<HTMLDivElement>(null)
+  const chatDrop = useChatDrop({
+    host: () => stageBody.current,
+    state: () => ({
+      split: splitRef.current !== undefined,
+      focusedSlot: focusedSlotRef.current,
+      activeId: activeIdRef.current,
+      besideId: splitBesideId(splitRef.current),
+    }),
+    // Each drop takes a path a click, "Open beside" or a pane press already
+    // takes, so drafts and running turns are handled exactly as there. A swap
+    // only trades the panes' sides; nothing inside either pane remounts.
+    apply: (id, action) => {
+      if (action.kind === 'open') return void selectSession(id)
+      if (action.kind === 'beside') return openSessionBeside(id)
+      const current = splitRef.current
+      if (!current) return
+      setSplit({ ...current, start: otherSlot(current.start) })
+      if (action.focusOther) focusPane(otherSlot(focusedSlotRef.current))
+    },
+  })
+  splitRemovals.current = {
+    chats: (ids) => {
+      const current = splitRef.current
+      if (!current) return false
+      const beside = splitBesideId(current)
+      if (beside !== undefined && ids.includes(beside)) {
+        closeBesidePane()
+        return false
+      }
+      const active = activeIdRef.current
+      if (active === undefined || !ids.includes(active)) return false
+      closeFocusedPane()
+      return true
+    },
+    project: (path) => {
+      const current = splitRef.current
+      if (!current) return false
+      const besidePath =
+        current.beside.kind === 'chat'
+          ? findSession(projectsRef.current, current.beside.id)?.project.path
+          : current.beside.projectPath
+      if (besidePath === path) {
+        closeBesidePane()
+        return false
+      }
+      if (activePathRef.current !== path) return false
+      closeFocusedPane()
+      return true
+    },
+  }
+  /** The chat shown beside the focused one acts on its own id, whatever has focus. */
+  const decideBesideApproval = useCallback(
+    (approvalId: string, decision: ApprovalDecision) =>
+      respondToApproval(besideId, approvalId, decision),
+    [besideId, respondToApproval],
+  )
+  const answerBesideUserInput = useCallback(
+    (requestId: string, answers: Record<string, string[]>) =>
+      respondToUserInput(besideId, requestId, answers),
+    [besideId, respondToUserInput],
+  )
+  const editBesideMessage = useCallback(
+    (text: string) => {
+      focusPane(otherSlot(focusedSlotRef.current))
+      editMessage(text)
+    },
+    [focusPane, editMessage],
+  )
+  const focusPaneFromEvent = useCallback(
+    (slot: PaneSlot, toComposer: boolean) => {
+      focusPane(slot)
+      // A press on the composer means the user wants to type there.
+      if (toComposer) setComposerFocusRequest((request) => request + 1)
+    },
+    [focusPane],
+  )
   // A chat notification was clicked and the shell brought the window up.
   const openNotifiedChat = useCallback(
     (id: string) => {
@@ -6195,7 +6560,7 @@ export function App() {
       removedProjectPaths.current.add(path)
       projectStartRevisions.current.set(path, (projectStartRevisions.current.get(path) ?? 0) + 1)
       setProjects((current) => current.filter((project) => project.path !== path))
-      if (previousActivePath === path) {
+      if (!splitRemovals.current.project(path) && previousActivePath === path) {
         activePathRef.current = undefined
         setActivePath(undefined)
         activeIdRef.current = undefined
@@ -6385,6 +6750,18 @@ export function App() {
       setSettingsOpen(true)
     },
     [],
+  )
+  // A CLI's /resume, /config, /mcp, ... screen, as TasteCode's own.
+  const openAppScreen = useCallback(
+    (screen: AppScreen) => {
+      if (screen === 'resume') {
+        setSettingsOpen(false)
+        setPaletteScope('all')
+        return
+      }
+      openSettings(screen === 'settings' ? undefined : screen === 'login' ? 'providers' : screen)
+    },
+    [openSettings],
   )
   const changeKeybinding = useCallback((action: KeybindingId, shortcut: Shortcut | null) => {
     setKeybindings((current) => {
@@ -7296,6 +7673,116 @@ export function App() {
     ...(offlineError ? [offlineError] : []),
   ]
 
+  const composerProps: ComposerProps = {
+    transport: transport,
+    provider: provider,
+    projects: projectChoices,
+    projectPath: activePath,
+    projectName: activeProject ? displayName(activeProject) : undefined,
+    withoutProject: chatWithoutProject && !activePath,
+    threadId: activeId && !activeId.startsWith('pending:') ? activeId : undefined,
+    projectsLoading: projectsStatus === 'loading',
+    branch:
+      (!activeId && activePath ? newChatBranch(activePath, isolateSession) : undefined) ??
+      active?.session.worktreeBranch ??
+      workspace?.branch ??
+      pathBranches[0],
+    branches: pathBranches,
+    onBranchMenuOpen: openBranchMenu,
+    branchesLoading: Boolean(activePath) && branchesPath !== activePath,
+    models: pickerModels,
+    modelsLoaded: modelsLoaded,
+    modelId: selectedModelChoice?.key,
+    modelChoice: selectedModelChoice,
+    modelPending: modelChoicePending,
+    effort: selectedEffort,
+    serviceTier: selectedServiceTier,
+    usage: thread.usage,
+    approval: displayedApproval,
+    approvalLoading: approvalLoading,
+    autoReviewSupported: autoReviewSupported,
+    attachmentsSupported: attachmentsSupported,
+    attachmentsLoading: catalogAvailability === 'loading',
+    voiceAvailable: isDesktop && provider === 'codex' && voiceAvailable,
+    voiceLoading: isDesktop && provider === 'codex' && voiceStatusLoading,
+    disabled: stopping,
+    placeholder: stopping ? 'Stopping…' : undefined,
+    sendAvailability: sendAvailability,
+    errors: composerErrors,
+    errorsVisible: !settingsOpen && surface === 'chat',
+    providerError: composerProviderError
+      ? reportable(composerProviderError, 'provider')
+      : undefined,
+    providerSignInRequired: providerStatuses.some(
+      (status) => status.id === provider && status.installed,
+    ),
+    running: visibleRunning,
+    newSession: !activeId,
+    isolate: active?.session.worktreeBranch ? true : isolateSession,
+    designMode: designMode,
+    keybindings: keybindings,
+    focusRequest: composerFocusRequest,
+    draftRequest: composerDraft,
+    onDraftChange: updateComposerDraftText,
+    onAttachmentsChange: updateComposerDraftAttachments,
+    onPendingAttachment: keepPendingAttachment,
+    onPendingQueuedEdit: keepQueuedEdit,
+    onResourcesChange: updateComposerDraftResources,
+    onRecallLastPrompt: recallLastPrompt,
+    onReady: handleComposerReady,
+    queuedTurns: queuedTurns,
+    canSteerQueue: canSteerQueue,
+    onModelSelectorOpen: openModelSelector,
+    onModelChange: selectModel,
+    onEffortChange: changeEffort,
+    onServiceTierChange: changeServiceTier,
+    onApprovalChange: changeApproval,
+    onIsolateChange: setIsolateSession,
+    onDesignModeChange: changeDesignMode,
+    onTranscribeVoice: transcribeVoice,
+    onCancelVoice: cancelVoice,
+    onProjectChange: selectProject,
+    onChooseWithoutProject: selectWithoutProject,
+    onBranchChange: changeBranch,
+    onProjectRequired: requireProject,
+    onSetupProvider: sendAvailability === 'no-provider' ? openProviderPicker : openProviderSetup,
+    onSend: sendTurn,
+    onSteer: steerTurn,
+    onFeedbackCommand: feedback.status.enabled ? openCommandFeedback : undefined,
+    onNewChatCommand: startNewChat,
+    onAppScreenCommand: openAppScreen,
+    onInterrupt: interrupt,
+    stopping: stopping,
+    onDeleteQueuedTurn: deleteQueuedTurn,
+    onMoveQueuedTurn: moveQueuedTurn,
+    onSteerQueuedTurn: steerQueuedTurn,
+  }
+  liveComposerProps.current = composerProps
+  const besideSession = useMemo(
+    () => (besideId ? findSession(projects, besideId) : undefined),
+    [projects, besideId],
+  )
+  const besideNewPath = split?.beside.kind === 'new' ? split.beside.projectPath : undefined
+  const renderStageHeader = (onClosePane: (() => void) | undefined) => (
+    <StageHeader
+      sessionId={active?.session.id}
+      title={active?.session.title}
+      pinned={active?.session.pinned ?? false}
+      projectPath={activePath}
+      checkpointCount={thread.running ? 0 : checkpoints.length}
+      worktreeBranch={active?.session.worktreeBranch}
+      pullRequest={checkoutPullRequest}
+      onOpenPullRequest={openCheckoutPullRequest}
+      keybindings={keybindings}
+      menuActions={keybindingActions}
+      onOpenRollback={openRollback}
+      onRenameSession={renameSidebarSession}
+      onToggleSessionPin={toggleSidebarSessionPin}
+      onArchiveSession={deleteSidebarSession}
+      onClosePane={onClosePane}
+    />
+  )
+
   return (
     <div
       className={`shell ${collapsed ? 'is-narrow' : ''}${isDesktop && macOS ? ' is-macos' : ''}`}
@@ -7318,8 +7805,9 @@ export function App() {
       {isDesktop ? <ZoomHud /> : null}
 
       <div className="shell__body" ref={shellBody}>
+        <AppBackground />
         <Sidebar
-          projects={archiveProjects}
+          projects={sidebarProjects}
           projectsLoading={projectsStatus === 'loading'}
           activeProjectPath={activePath}
           activeSessionId={surface === 'chat' ? activeId : undefined}
@@ -7348,6 +7836,9 @@ export function App() {
           onNewSession={startSidebarSession}
           onNewChatWithoutProject={startChatWithoutProject}
           onSelectSession={selectSidebarSession}
+          besideSessionId={surface === 'chat' ? besideId : undefined}
+          onOpenSessionBeside={openSessionBeside}
+          sessionDropTarget={chatDrop.target}
           onRenameProject={renameSidebarProject}
           onRemoveProject={removeSidebarProject}
           onTogglePin={toggleSidebarProjectPin}
@@ -7381,171 +7872,179 @@ export function App() {
                   setupRefreshRevision={pullRequestSetupRefreshRevision}
                 />
               </Suspense>
-            ) : (
-              <StageHeader
-                sessionId={active?.session.id}
-                title={active?.session.title}
-                pinned={active?.session.pinned ?? false}
-                projectPath={activePath}
-                checkpointCount={thread.running ? 0 : checkpoints.length}
-                worktreeBranch={active?.session.worktreeBranch}
-                pullRequest={checkoutPullRequest}
-                onOpenPullRequest={openCheckoutPullRequest}
-                keybindings={keybindings}
-                menuActions={keybindingActions}
-                onOpenRollback={openRollback}
-                onRenameSession={renameSidebarSession}
-                onToggleSessionPin={toggleSidebarSessionPin}
-                onArchiveSession={deleteSidebarSession}
-              />
+            ) : split ? null : (
+              renderStageHeader(undefined)
             )}
 
             {/* The pull requests view covers the stage, but the bottom panel stays
                 mounted behind it so its tabs and running shells survive the visit. */}
             <div
-              className={`stage__body${activeId ? '' : ' is-new-session'}${activePath && terminalOpen ? ' has-terminal' : ''}`}
+              ref={stageBody}
+              className={`stage__body${activeId || split ? '' : ' is-new-session'}${split ? ' is-split' : ''}${activePath && terminalOpen ? ' has-terminal' : ''}`}
               hidden={surface === 'pull-requests'}
             >
               {surface === 'chat' ? (
-                <div className={`stage__conversation${activeId ? '' : ' is-new-session'}`}>
-                  {activeId ? (
-                    <AccountLabelContext.Provider value={accountLabel}>
-                      <ModelLabelContext.Provider value={modelLabel}>
-                        <Suspense fallback={<ThreadSkeleton />}>
-                          <LazyThread
-                            key={threadEntryKey}
-                            frameStore={threadFrameStore}
-                            errorsInComposer
-                            stopping={stopping}
-                            loading={loadingThreadId === activeId}
-                            loadFailure={
-                              historyFailure?.threadId === activeId
-                                ? historyFailure.message
-                                : undefined
-                            }
-                            onRetryLoad={retryOpenedHistory}
-                            projectPath={activePath}
-                            threadId={activeId}
-                            transport={transport}
-                            searchJump={searchJump?.threadId === activeId ? searchJump : undefined}
-                            onSearchJumpDone={finishSearchJump}
-                            revealRequest={threadRevealRequest}
-                            checkpoints={checkpoints}
-                            onDecide={decideApproval}
-                            onAnswerUserInput={answerUserInput}
-                            onEditMessage={editMessage}
-                            onRevertCheckpoint={revertCheckpoint}
-                            onUndoChanges={undoTurnChanges}
-                            onLoadOlderHistory={loadOlderHistory}
-                            onLoadCompleteHistory={loadCompleteHistory}
-                            turnRail
-                          />
-                        </Suspense>
-                      </ModelLabelContext.Provider>
-                    </AccountLabelContext.Provider>
-                  ) : (
-                    <Empty
-                      projects={projects}
-                      activePath={activePath}
-                      withoutProject={chatWithoutProject}
-                      status={projectsStatus}
-                      startupProjectName={startupProjectName}
-                      onAddProject={addSidebarProject}
-                      onRetry={retryProjects}
-                    />
-                  )}
+                // Without a split both wrappers take no box, so the single chat's
+                // layout is unchanged, and opening a split keeps it mounted.
+                <div className="split" style={split ? undefined : SPLIT_CONTENTS}>
+                  {PANE_SLOTS.map((slot) => {
+                    const focused = slot === focusedSlot
+                    if (!focused && !split) return null
+                    return (
+                      <SplitPane
+                        key={slot}
+                        slot={slot}
+                        split={split !== undefined}
+                        focused={focused}
+                        start={split?.start === slot}
+                        label={
+                          (focused ? active?.session.title : besideSession?.session.title) ??
+                          'New chat'
+                        }
+                        onFocusPane={focusPaneFromEvent}
+                      >
+                        {focused ? (
+                          <>
+                            {split ? renderStageHeader(closeFocusedPane) : null}
+                            <div
+                              className={`stage__conversation${activeId ? '' : ' is-new-session'}`}
+                            >
+                              {activeId ? (
+                                <AccountLabelContext.Provider value={accountLabel}>
+                                  <ModelLabelContext.Provider value={modelLabel}>
+                                    <Suspense fallback={<ThreadSkeleton />}>
+                                      <LazyThread
+                                        key={threadEntryKey}
+                                        frameStore={threadFrameStore}
+                                        errorsInComposer
+                                        stopping={stopping}
+                                        loading={loadingThreadId === activeId}
+                                        loadFailure={
+                                          historyFailure?.threadId === activeId
+                                            ? historyFailure.message
+                                            : undefined
+                                        }
+                                        onRetryLoad={retryOpenedHistory}
+                                        projectPath={activePath}
+                                        threadId={activeId}
+                                        transport={transport}
+                                        searchJump={
+                                          searchJump?.threadId === activeId ? searchJump : undefined
+                                        }
+                                        onSearchJumpDone={finishSearchJump}
+                                        revealRequest={threadRevealRequest}
+                                        checkpoints={checkpoints}
+                                        onDecide={decideApproval}
+                                        onAnswerUserInput={answerUserInput}
+                                        onEditMessage={editMessage}
+                                        onRevertCheckpoint={revertCheckpoint}
+                                        onUndoChanges={undoTurnChanges}
+                                        onLoadOlderHistory={loadOlderHistory}
+                                        onLoadCompleteHistory={loadCompleteHistory}
+                                        turnRail
+                                      />
+                                    </Suspense>
+                                  </ModelLabelContext.Provider>
+                                </AccountLabelContext.Provider>
+                              ) : (
+                                <Empty
+                                  projects={projects}
+                                  activePath={activePath}
+                                  withoutProject={chatWithoutProject}
+                                  status={projectsStatus}
+                                  startupProjectName={startupProjectName}
+                                  onAddProject={addSidebarProject}
+                                  onRetry={retryProjects}
+                                />
+                              )}
 
-                  <Composer
-                    transport={transport}
-                    provider={provider}
-                    projects={projectChoices}
-                    projectPath={activePath}
-                    projectName={activeProject ? displayName(activeProject) : undefined}
-                    withoutProject={chatWithoutProject && !activePath}
-                    threadId={activeId && !activeId.startsWith('pending:') ? activeId : undefined}
-                    projectsLoading={projectsStatus === 'loading'}
-                    branch={
-                      (!activeId && activePath
-                        ? newChatBranch(activePath, isolateSession)
-                        : undefined) ??
-                      active?.session.worktreeBranch ??
-                      workspace?.branch ??
-                      pathBranches[0]
-                    }
-                    branches={pathBranches}
-                    onBranchMenuOpen={openBranchMenu}
-                    branchesLoading={Boolean(activePath) && branchesPath !== activePath}
-                    models={pickerModels}
-                    modelsLoaded={modelsLoaded}
-                    modelId={selectedModelChoice?.key}
-                    modelChoice={selectedModelChoice}
-                    modelPending={modelChoicePending}
-                    effort={selectedEffort}
-                    serviceTier={selectedServiceTier}
-                    usage={thread.usage}
-                    approval={displayedApproval}
-                    approvalLoading={approvalLoading}
-                    autoReviewSupported={autoReviewSupported}
-                    attachmentsSupported={attachmentsSupported}
-                    attachmentsLoading={catalogAvailability === 'loading'}
-                    voiceAvailable={isDesktop && provider === 'codex' && voiceAvailable}
-                    voiceLoading={isDesktop && provider === 'codex' && voiceStatusLoading}
-                    disabled={stopping}
-                    placeholder={stopping ? 'Stopping…' : undefined}
-                    sendAvailability={sendAvailability}
-                    errors={composerErrors}
-                    errorsVisible={!settingsOpen && surface === 'chat'}
-                    providerError={
-                      composerProviderError
-                        ? reportable(composerProviderError, 'provider')
-                        : undefined
-                    }
-                    providerSignInRequired={providerStatuses.some(
-                      (status) => status.id === provider && status.installed,
-                    )}
-                    running={visibleRunning}
-                    newSession={!activeId}
-                    isolate={active?.session.worktreeBranch ? true : isolateSession}
-                    designMode={designMode}
-                    keybindings={keybindings}
-                    focusRequest={composerFocusRequest}
-                    draftRequest={composerDraft}
-                    onDraftChange={updateComposerDraftText}
-                    onAttachmentsChange={updateComposerDraftAttachments}
-                    onPendingAttachment={keepPendingAttachment}
-                    onPendingQueuedEdit={keepQueuedEdit}
-                    onResourcesChange={updateComposerDraftResources}
-                    onRecallLastPrompt={recallLastPrompt}
-                    onReady={handleComposerReady}
-                    queuedTurns={queuedTurns}
-                    canSteerQueue={canSteerQueue}
-                    onModelSelectorOpen={openModelSelector}
-                    onModelChange={selectModel}
-                    onEffortChange={changeEffort}
-                    onServiceTierChange={changeServiceTier}
-                    onApprovalChange={changeApproval}
-                    onIsolateChange={setIsolateSession}
-                    onDesignModeChange={changeDesignMode}
-                    onTranscribeVoice={transcribeVoice}
-                    onCancelVoice={cancelVoice}
-                    onProjectChange={selectProject}
-                    onChooseWithoutProject={selectWithoutProject}
-                    onBranchChange={changeBranch}
-                    onProjectRequired={requireProject}
-                    onSetupProvider={
-                      sendAvailability === 'no-provider' ? openProviderPicker : openProviderSetup
-                    }
-                    onSend={sendTurn}
-                    onSteer={steerTurn}
-                    onFeedbackCommand={feedback.status.enabled ? openCommandFeedback : undefined}
-                    onInterrupt={interrupt}
-                    stopping={stopping}
-                    onDeleteQueuedTurn={deleteQueuedTurn}
-                    onMoveQueuedTurn={moveQueuedTurn}
-                    onSteerQueuedTurn={steerQueuedTurn}
-                  />
+                              <PaneComposer
+                                store={threadController.columns[slot]}
+                                composer={composerProps}
+                              />
+                            </div>
+                          </>
+                        ) : split ? (
+                          <>
+                            <StageHeader
+                              sessionId={besideSession?.session.id}
+                              title={besideSession?.session.title}
+                              pinned={besideSession?.session.pinned ?? false}
+                              projectPath={besideSession?.project.path ?? besideNewPath}
+                              checkpointCount={0}
+                              worktreeBranch={besideSession?.session.worktreeBranch}
+                              keybindings={keybindings}
+                              menuActions={keybindingActions}
+                              onOpenRollback={openRollback}
+                              onRenameSession={renameSidebarSession}
+                              onToggleSessionPin={toggleSidebarSessionPin}
+                              onArchiveSession={deleteSidebarSession}
+                              onClosePane={closeBesidePane}
+                            />
+                            <div
+                              className={`stage__conversation${besideId ? '' : ' is-new-session'}`}
+                            >
+                              {besideId ? (
+                                <AccountLabelContext.Provider value={accountLabel}>
+                                  <ModelLabelContext.Provider value={modelLabel}>
+                                    <Suspense fallback={<ThreadSkeleton />}>
+                                      <LazyThread
+                                        key={split.frozen.entryKey}
+                                        frameStore={threadController.columns[slot]}
+                                        errorsInComposer
+                                        keyboardActive={false}
+                                        loading={loadingThreadId === besideId}
+                                        loadFailure={
+                                          historyFailure?.threadId === besideId
+                                            ? historyFailure.message
+                                            : undefined
+                                        }
+                                        onRetryLoad={retryOpenedHistory}
+                                        projectPath={besideSession?.project.path}
+                                        threadId={besideId}
+                                        transport={transport}
+                                        onSearchJumpDone={finishSearchJump}
+                                        revealRequest={split.frozen.revealRequest}
+                                        checkpoints={NO_CHECKPOINTS}
+                                        onDecide={decideBesideApproval}
+                                        onAnswerUserInput={answerBesideUserInput}
+                                        onEditMessage={editBesideMessage}
+                                        onRevertCheckpoint={revertCheckpoint}
+                                        onUndoChanges={undoTurnChanges}
+                                        onLoadOlderHistory={loadOlderHistory}
+                                        onLoadCompleteHistory={loadCompleteHistory}
+                                        turnRail
+                                      />
+                                    </Suspense>
+                                  </ModelLabelContext.Provider>
+                                </AccountLabelContext.Provider>
+                              ) : (
+                                <Empty
+                                  projects={projects}
+                                  activePath={besideNewPath}
+                                  withoutProject={false}
+                                  status={projectsStatus}
+                                  startupProjectName={startupProjectName}
+                                  onAddProject={addSidebarProject}
+                                  onRetry={retryProjects}
+                                />
+                              )}
+
+                              <PaneComposer
+                                store={threadController.columns[slot]}
+                                composer={split.frozen.composer}
+                                dormant
+                                queue={besideQueue}
+                              />
+                            </div>
+                          </>
+                        ) : null}
+                      </SplitPane>
+                    )
+                  })}
                 </div>
               ) : null}
+              {surface === 'chat' ? <ChatDropOverlay store={chatDrop.store} /> : null}
 
               {activePath && bottomTerminalMounted ? (
                 <div
@@ -7627,6 +8126,7 @@ export function App() {
                 onWidthChange={setWorkspacePanelWidth}
                 terminalToggleRequest={workspaceTerminalToggleRequest}
                 externalToolRequest={workspaceToolRequest}
+                frameStore={threadFrameStore}
                 designPreviewRequest={workspaceDesignPreviewRequest}
                 onOpenPullRequest={openCheckoutPullRequest}
                 providerLogin={
@@ -7728,6 +8228,8 @@ export function App() {
             themePreference={themePreference}
             onThemePreferenceChange={setThemePreference}
             providerStatuses={providerStatuses}
+            providersLoading={catalogAvailability === 'loading'}
+            providersError={catalogAvailability === 'failed' ? catalogError?.message : undefined}
             acpAgents={acpAgents}
             providerRoster={providerRoster ?? EMPTY_PROVIDER_ROSTER}
             onProviderRosterChange={changeProviderRoster}
@@ -7829,6 +8331,12 @@ export function App() {
         onUpdated={refreshCatalog}
         suppressed={offline || Boolean(notice) || Boolean(actionError)}
       />
+      {isDesktop ? (
+        <AppUpdateToast
+          hidden={settingsOpen}
+          quiet={pendingArchives.length > 0 && !archiveToastDismissed}
+        />
+      ) : null}
       {pendingArchives.length > 0 ? (
         <Suspense fallback={null}>
           <ArchiveToast
@@ -8044,6 +8552,31 @@ function statusFor(
   if (state.approvals.length > 0) return 'approval'
   if (state.userInputs.length > 0) return 'input'
   return state.running ? 'working' : 'idle'
+}
+
+/** The chat runs a turn, starts one, or its turn waits on the user. */
+function runsTurn(status: Project['sessions'][number]['status'] | undefined): boolean {
+  return (
+    status === 'starting' || status === 'working' || status === 'approval' || status === 'input'
+  )
+}
+
+function withStoppingRow(
+  rows: ReadonlyMap<string, number>,
+  threadId: string,
+  stoppedAt: number,
+): ReadonlyMap<string, number> {
+  return rows.has(threadId) ? rows : new Map(rows).set(threadId, stoppedAt)
+}
+
+function withoutStoppingRow(
+  rows: ReadonlyMap<string, number>,
+  threadId: string,
+): ReadonlyMap<string, number> {
+  if (!rows.has(threadId)) return rows
+  const next = new Map(rows)
+  next.delete(threadId)
+  return next.size === 0 ? NO_STOPPING_ROWS : next
 }
 
 function basename(path: string): string {

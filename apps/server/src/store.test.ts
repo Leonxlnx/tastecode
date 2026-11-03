@@ -2,9 +2,10 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { DatabaseSync } from './sqlite.js'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import { ItemTypeSchema, type DomainEvent, type ItemType } from '@harness/contracts'
+import { providerOffered, takeEdition } from './provider-edition.js'
 import { Store } from './store.js'
 
 let store: Store
@@ -909,6 +910,36 @@ describe('a database written by a newer build', () => {
       expect(reopened.recoverInterruptedThreads()).toEqual([])
     } finally {
       reopened.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('warns once about an unknown provider, however many of its rows are read', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-unknown-provider-warning-'))
+    const file = path.join(dir, 'harness.db')
+    const seeded = new Store(file)
+    seeded.addProject('/repo')
+    seeded.addThread({ id: 'alien', projectPath: '/repo', provider: 'codex', title: 'Alien' })
+    for (let index = 1; index <= 5; index += 1) seeded.append('alien', usage(index * 10))
+    seeded.close()
+
+    const raw = new DatabaseSync(file)
+    raw.prepare(`UPDATE threads SET provider = ? WHERE id = ?`).run('provider-warned-once', 'alien')
+    raw.close()
+
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const reopened = new Store(file)
+    try {
+      expect(reopened.usageEvents()).toEqual([])
+      expect(reopened.usageEvents()).toEqual([])
+      expect(reopened.threads()).toEqual([])
+      const warnings = warn.mock.calls.filter(([line]) =>
+        String(line).includes("unknown provider 'provider-warned-once'"),
+      )
+      expect(warnings).toHaveLength(1)
+    } finally {
+      reopened.close()
+      warn.mockRestore()
       rmSync(dir, { recursive: true, force: true })
     }
   })
@@ -2917,5 +2948,26 @@ describe('usage totals across providers', () => {
     const summary = store.usageSummary('one', 0)
     expect(summary.session).toEqual(expect.objectContaining({ totalTokens: 100 }))
     expect(summary.today).toEqual(expect.objectContaining({ totalTokens: 140 }))
+  })
+})
+
+describe('usage totals in a release build', () => {
+  afterEach(() => takeEdition({}))
+
+  it("leaves a provider the build does not offer out of today's total", () => {
+    takeEdition({ HARNESS_EDITION: 'release' })
+    store.addProject('/repo')
+    store.addThread({ id: 'one', projectPath: '/repo', provider: 'codex', title: 'One' })
+    store.addThread({ id: 'two', projectPath: '/repo', provider: 'opencode', title: 'Two' })
+    store.append('one', usage(100))
+    store.append('two', usage(40))
+
+    expect(store.usageSummary('one', 0, providerOffered).today).toEqual(
+      expect.objectContaining({ totalTokens: 100 }),
+    )
+    // An old chat on that provider stays readable with its own total.
+    const hidden = store.usageSummary('two', 0, providerOffered)
+    expect(hidden.session).toEqual(expect.objectContaining({ totalTokens: 40 }))
+    expect(hidden.today).toEqual(expect.objectContaining({ totalTokens: 100 }))
   })
 })

@@ -14,6 +14,7 @@ import type { CliUpdateSource } from '@harness/proc/updates'
 import type { ProviderSetup, ProviderSourceShape, ProviderStatus } from '@harness/contracts'
 import { refreshWindowsPath } from '@harness/proc/desktop-path'
 import { cliProbe } from './cli-probe.js'
+import { assertProviderOffered, providerOffered } from './provider-edition.js'
 
 /**
  * What this machine can actually run.
@@ -26,7 +27,8 @@ import { cliProbe } from './cli-probe.js'
  *
  * A provider we have not built stays in the list with a `problem` explaining
  * why. Silently omitting it would leave the user unable to tell "not supported"
- * from "not installed".
+ * from "not installed". A provider this build does not offer (provider-edition)
+ * is left out entirely: for that build it does not exist.
  */
 
 type Probe = {
@@ -290,6 +292,7 @@ export async function installCommandFor(
   provider: ProviderStatus['id'],
   agent?: string,
 ): Promise<string> {
+  assertProviderOffered(provider)
   const target =
     provider === 'acp'
       ? await (async () => {
@@ -320,6 +323,7 @@ export async function launchCommandFor(
   provider: ProviderStatus['id'],
   agent?: string,
 ): Promise<string> {
+  assertProviderOffered(provider)
   if (provider === 'acp') {
     const { findAgentSpec } = await import('@harness/adapter-acp/agents')
     const spec = agent ? findAgentSpec(agent) : undefined
@@ -370,12 +374,16 @@ function scanProviders(system: SystemProbe, refreshPath: boolean): Promise<Provi
   if (current) return current
 
   const scan = () =>
-    Promise.all([Promise.all(PROBES.map((entry) => probe(entry, system))), acpStatus(system)])
+    Promise.all([
+      Promise.all(
+        PROBES.filter((entry) => providerOffered(entry.id)).map((entry) => probe(entry, system)),
+      ),
+      providerOffered('acp') ? acpStatus(system) : undefined,
+    ])
   const pathRefresh = refreshPath ? system.refreshPath?.() : undefined
-  const detection = (pathRefresh ? pathRefresh.then(scan) : scan()).then(([direct, acp]) => [
-    ...direct,
-    acp,
-  ])
+  const detection = (pathRefresh ? pathRefresh.then(scan) : scan()).then(([direct, acp]) =>
+    acp ? [...direct, acp] : direct,
+  )
   providerDetections.set(system, detection)
   const clear = () => {
     if (providerDetections.get(system) === detection) providerDetections.delete(system)

@@ -115,6 +115,7 @@ const isCapabilities = objectValidator<Capabilities>({
   userInput: optional(isBoolean),
   autoReview: optional(isBoolean),
   images: isBoolean,
+  imageFiles: optional(isBoolean),
   context: optional(isContextControl),
   subagents: optional(
     enumValidator<NonNullable<Capabilities['subagents']>>({ summary: true, progress: true }),

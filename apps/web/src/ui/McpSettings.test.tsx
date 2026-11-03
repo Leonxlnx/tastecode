@@ -188,6 +188,45 @@ describe('MCP settings', () => {
     fireEvent.keyDown(screen.getByLabelText('Server ID'), { key: 'Escape' })
     expect(document.activeElement).toBe(add)
   })
+  it('says where to sign in when the provider cannot start MCP sign-in', async () => {
+    const transport = client(async (method) => {
+      if (method !== 'mcp.list') throw new Error(`unexpected ${method}`)
+      return {
+        capabilities: {
+          inventory: true,
+          add: true,
+          update: true,
+          remove: true,
+          reload: false,
+          startOAuth: false,
+          cancelOAuth: false,
+        },
+        servers: [
+          {
+            id: 'docs',
+            scope: 'project',
+            enabled: true,
+            auth: { status: 'sign_in_required', method: 'oauth' },
+            startup: { state: 'ready' },
+            tools: [],
+            resources: [],
+            resourceTemplates: [],
+          },
+        ],
+      }
+    })
+    render(
+      <McpSettings
+        transport={transport}
+        provider="grok"
+        providerName="Grok"
+        projectPath="/work/project"
+        projectName="Project"
+      />,
+    )
+    expect(await screen.findByText(/Sign in through Grok itself/)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Sign in' })).toBeNull()
+  })
   it('shows live inventory, failures, tools, and starts OAuth', async () => {
     const transport = client(async (method) => {
       if (method === 'mcp.list') {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { dateFromKey, formatMoney, formatTokens, resetText } from './usage-format.js'
+import { dateFromKey, dateTimeText, formatMoney, formatTokens, resetText } from './usage-format.js'
 
 const NOW = Date.UTC(2026, 9, 18, 10)
 
@@ -31,5 +31,15 @@ describe('usage formats', () => {
     expect(resetText(NOW + 2 * 86_400_000, NOW)?.label).toMatch(/^resets [A-Z][a-z]{2} \d/)
     expect(resetText(NOW + 30 * 86_400_000, NOW)?.label).toBe('resets Nov 17')
     expect(resetText(Number.NaN, NOW)).toBeUndefined()
+  })
+})
+
+describe('dateTimeText', () => {
+  it('names the month, day and time, and the year only when it is not this one', () => {
+    const local = (year: number) => new Date(year, 10, 30, 21, 24).getTime()
+    expect(dateTimeText(local(2026), NOW)).toMatch(/^Nov 30, \S/)
+    expect(dateTimeText(local(2026), NOW)).not.toContain('2026')
+    expect(dateTimeText(local(2027), NOW)).toMatch(/^Nov 30, 2027, \S/)
+    expect(dateTimeText(Number.NaN, NOW)).toBeUndefined()
   })
 })

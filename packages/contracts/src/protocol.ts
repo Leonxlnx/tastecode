@@ -23,6 +23,7 @@ import {
   ProviderSetupSchema,
   ProviderStatusSchema,
   ProviderUpdateSchema,
+  SubagentSchema,
   UsageSchema,
 } from './domain.js'
 import { PhoneAccessStatusSchema, PhonePairingSchema, ProjectBrowseResultSchema } from './phone.js'
@@ -362,6 +363,11 @@ export const ProviderCommandSchema = z.object({
   aliases: z.array(ProviderCommandNameSchema).max(20).optional(),
   /** Absent means a plain command. */
   kind: z.enum(['command', 'skill']).optional(),
+  /**
+   * Who defined it, so a menu can group it: the provider itself, the user or
+   * project, a plugin, or an MCP server's prompt. Absent means unknown.
+   */
+  source: z.enum(['builtin', 'custom', 'plugin', 'mcp']).optional(),
 })
 export type ProviderCommand = z.infer<typeof ProviderCommandSchema>
 
@@ -902,6 +908,15 @@ export type FeedbackSubmitResult = z.infer<typeof FeedbackSubmitResultSchema>
  * Method table. Adding a method means adding it here first — this object is the
  * single source of truth that the server routes against and the client calls.
  */
+/** A sub-agent TasteCode started, and the parent's transcript row that shows it. */
+export const ThreadSubagentSchema = z.object({
+  /** The parent's `tool_call` item carrying the snapshot. */
+  itemId: z.string().min(1),
+  createdAt: z.number().int().nonnegative(),
+  subagent: SubagentSchema,
+})
+export type ThreadSubagent = z.infer<typeof ThreadSubagentSchema>
+
 export const methods = {
   'client.capabilities': {
     params: z.object({ previewCapture: z.boolean() }),
@@ -1935,6 +1950,16 @@ export const methods = {
         .optional(),
     }),
   },
+  /**
+   * The sub-agents TasteCode started for a chat, newest first, including those
+   * whose rows sit on transcript pages the client has not loaded. Sub-agents
+   * an engine runs itself are not listed; their rows in the transcript are
+   * all there is of them.
+   */
+  'thread.subagents': {
+    params: z.object({ threadId: z.string().min(1) }),
+    result: z.object({ subagents: z.array(ThreadSubagentSchema) }),
+  },
   'thread.diff': {
     params: z.object({ threadId: z.string() }),
     result: SessionDiffSchema,
@@ -2404,6 +2429,18 @@ export const channels = {
   /** Events from an ephemeral Side chat stay out of the main conversation stream. */
   'sideChat.event': z.object({
     threadId: z.string(),
+    event: DomainEventSchema,
+    seq: z.number().optional(),
+  }),
+  /**
+   * Events of a sub-agent's hidden chat. They stay off `thread.event`, so the
+   * parent's stream, unread marks and sidebar never see them; a client that
+   * shows the sub-agent's work reconciles them by `seq` against
+   * `thread.history`, as it does for a Side chat.
+   */
+  'subagent.event': z.object({
+    threadId: z.string(),
+    parentThreadId: z.string(),
     event: DomainEventSchema,
     seq: z.number().optional(),
   }),

@@ -36,6 +36,8 @@ describe('account limits layout', () => {
     const status = rule('.account-menu__source-status')
     expect(status).toContain('color: var(--text-3)')
     expect(status).toContain('text-overflow: ellipsis')
+    // It takes the room the name leaves, so it shortens before the name does.
+    expect(status).toContain('flex: 1 1 0')
     const retry = rule('.account-menu__retry')
     expect(retry).toContain('background: none')
     expect(retry).toContain('border: 0')
@@ -71,6 +73,32 @@ describe('account limits layout', () => {
     expect(css).toMatch(/@property --limit-fill \{[^}]*syntax: '<number>';/s)
     // Neither the colour nor the fill motion is a hard-coded value.
     expect(css).not.toMatch(/#[0-9a-f]{3,8}\b/i)
+  })
+
+  it('closes a source to its heading and one line, the bar between label and value', () => {
+    // Closer than an open source's rows, so the closed popup stays short.
+    expect(rule('.account-menu__source.is-closed')).toContain('gap: 4px')
+    expect(rule('.account-menu__source-body')).toContain('gap: 8px')
+    const toggle = rule('.account-menu__source-toggle')
+    expect(toggle).toContain('background: none')
+    expect(toggle).toContain('cursor: pointer')
+    expect(rule('.account-menu__source-toggle:hover')).toContain('background: var(--menu-hover)')
+    expect(rule('.account-menu__source-toggle:focus-visible')).toContain(
+      'outline: var(--focus-ring)',
+    )
+    expect(
+      rule(".account-menu__source-toggle[aria-expanded='true'] > .account-menu__source-chevron"),
+    ).toContain('rotate: 90deg')
+    // The inline bar is the same 4px bar, short, and gives way before the label.
+    const bar = rule('.account-menu__limit.is-inline .account-menu__limit-bar')
+    expect(bar).toContain('flex: 0 100 48px')
+    expect(bar).toContain('min-width: 24px')
+    expect(rule('.account-menu__limit.is-inline .account-menu__limit-label')).toContain(
+      'text-overflow: ellipsis',
+    )
+    expect(css).toMatch(
+      /\.account-menu__account-line > svg,\s*\.account-menu__source \.account-menu__source-chevron \{\s*transition: none;/,
+    )
   })
 
   it('fills every gauge at once when the popup opens, and not at all with reduced motion', () => {
