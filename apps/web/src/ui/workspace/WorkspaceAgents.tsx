@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import type { ThreadSubagent } from '@harness/contracts'
 import { providerDisplayName } from '../../provider-presentation.js'
 import { ThreadFrameStore } from '../../thread-frame-store.js'
 import { emptyThread } from '../../thread-state.js'
 import type { Transport } from '../../transport.js'
 import { SubagentGlyph, SubagentStatus } from '../SubagentRow.js'
+import { AgentDetail } from './AgentDetail.js'
 import { groupAgentEntries, subagentEntries, type AgentEntry } from './agents-list.js'
 import { WorkspaceEmptyState } from './WorkspaceEmptyState.js'
 import './workspace-agents.css'
@@ -35,6 +36,9 @@ export function WorkspaceAgents(props: {
     threadId: string
     subagents: readonly ThreadSubagent[]
   }>()
+  /** The row opened to its detail, for the chat it belongs to. */
+  const [opened, setOpened] = useState<{ threadId: string; itemId: string }>()
+  const closeDetail = useCallback(() => setOpened(undefined), [])
 
   useEffect(() => {
     if (!active || !threadId) return
@@ -69,6 +73,16 @@ export function WorkspaceAgents(props: {
       />
     )
   }
+  const openEntry =
+    opened && opened.threadId === threadId
+      ? (groups.running.find((entry) => entry.itemId === opened.itemId) ??
+        groups.finished.find((entry) => entry.itemId === opened.itemId))
+      : undefined
+  if (openEntry) {
+    return (
+      <AgentDetail entry={openEntry} active={active} transport={transport} onBack={closeDetail} />
+    )
+  }
   if (groups.running.length === 0 && groups.finished.length === 0) {
     return (
       <WorkspaceEmptyState
@@ -78,15 +92,24 @@ export function WorkspaceAgents(props: {
       />
     )
   }
+  const open = (itemId: string) => setOpened({ threadId, itemId })
   return (
     <div className="workspace-agents">
-      <AgentGroup label="Running" entries={groups.running} />
-      <AgentGroup label="Finished" entries={groups.finished} />
+      <AgentGroup label="Running" entries={groups.running} onOpen={open} />
+      <AgentGroup label="Finished" entries={groups.finished} onOpen={open} />
     </div>
   )
 }
 
-function AgentGroup({ label, entries }: { label: string; entries: readonly AgentEntry[] }) {
+function AgentGroup({
+  label,
+  entries,
+  onOpen,
+}: {
+  label: string
+  entries: readonly AgentEntry[]
+  onOpen: (itemId: string) => void
+}) {
   if (entries.length === 0) return null
   return (
     <section className="agents-group" aria-label={label}>
@@ -96,14 +119,16 @@ function AgentGroup({ label, entries }: { label: string; entries: readonly Agent
       </h3>
       <ul className="agents-group__list">
         {entries.map((entry) => (
-          <AgentRow key={entry.itemId} entry={entry} />
+          <li key={entry.itemId}>
+            <AgentRow entry={entry} onOpen={onOpen} />
+          </li>
         ))}
       </ul>
     </section>
   )
 }
 
-function AgentRow({ entry }: { entry: AgentEntry }) {
+function AgentRow({ entry, onOpen }: { entry: AgentEntry; onOpen: (itemId: string) => void }) {
   const { subagent } = entry
   const running = subagent.state === 'running'
   const engine = subagent.provider
@@ -119,7 +144,12 @@ function AgentRow({ entry }: { entry: AgentEntry }) {
         ? 'Needs input'
         : undefined
   return (
-    <li className="agents-row" data-state={subagent.state}>
+    <button
+      type="button"
+      className="agents-row"
+      data-state={subagent.state}
+      onClick={() => onOpen(entry.itemId)}
+    >
       <span className="agents-row__lead" aria-hidden>
         {running ? <span className="subagent__pulse" /> : <SubagentGlyph />}
       </span>
@@ -131,7 +161,7 @@ function AgentRow({ entry }: { entry: AgentEntry }) {
         {attention ? <span className="agents-row__attention">{attention}</span> : null}
         <SubagentStatus subagent={subagent} startedAt={entry.createdAt} quietRunning />
       </span>
-    </li>
+    </button>
   )
 }
 
