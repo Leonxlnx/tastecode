@@ -1210,7 +1210,8 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
         this.emit('log', error.message)
         const starting = this.#startingMcpServers()
         // A process that already holds a chat keeps running for that chat.
-        if (this.#ownThreads.size > 0) throw new Error(codexThreadStartStalledMessage(false, starting))
+        if (this.#ownThreads.size > 0)
+          throw new Error(codexThreadStartStalledMessage(false, starting))
         await this.#stopStalledProcess(rpc)
         if (attempt > 0) throw new Error(codexThreadStartStalledMessage(true, starting))
         // A stuck process cannot be asked again; a second stall on a fresh
