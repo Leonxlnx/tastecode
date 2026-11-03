@@ -1199,21 +1199,28 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
 
   async startThread(workspacePath: string, options: StartOptions = {}): Promise<Thread> {
     const params = this.#newThreadParams(workspacePath, options)
-    const rpc = await this.#readyRpc()
-    let response: z.infer<typeof ThreadStartResponseSchema>
-    try {
-      response = await this.#requestThreadStart(rpc, params)
-    } catch (error) {
-      if (!(error instanceof CodexThreadStartStall)) throw error
+    for (let attempt = 0; ; attempt += 1) {
+      const rpc = await this.#readyRpc()
+      let response: z.infer<typeof ThreadStartResponseSchema>
+      try {
+        response = await this.#requestThreadStart(rpc, params)
+      } catch (error) {
+        if (!(error instanceof CodexThreadStartStall)) throw error
+        if (this.#rpc !== rpc) throw new Error('Codex disconnected during the request')
+        this.emit('log', error.message)
+        const starting = this.#startingMcpServers()
+        // A process that already holds a chat keeps running for that chat.
+        if (this.#ownThreads.size > 0) throw new Error(codexThreadStartStalledMessage(false, starting))
+        await this.#stopStalledProcess(rpc)
+        if (attempt > 0) throw new Error(codexThreadStartStalledMessage(true, starting))
+        // A stuck process cannot be asked again; a second stall on a fresh
+        // one means the cause lies elsewhere, so that one is reported.
+        this.emit('log', 'Codex did not start the thread; restarting the local process once.')
+        continue
+      }
       if (this.#rpc !== rpc) throw new Error('Codex disconnected during the request')
-      this.emit('log', error.message)
-      const starting = this.#startingMcpServers()
-      // A process that already holds a chat keeps running for that chat.
-      if (this.#ownThreads.size === 0) await this.#stopStalledProcess(rpc)
-      throw new Error(codexThreadStartStalledMessage(false, starting))
+      return this.#adoptNewThread(response, workspacePath, options)
     }
-    if (this.#rpc !== rpc) throw new Error('Codex disconnected during the request')
-    return this.#adoptNewThread(response, workspacePath, options)
   }
 
   /**

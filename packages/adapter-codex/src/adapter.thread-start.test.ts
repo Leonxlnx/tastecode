@@ -69,21 +69,46 @@ describe('Codex thread start', () => {
     }
   })
 
-  it('stops a silent process and says so plainly', async () => {
+  it('restarts a silent process once and starts the thread on the fresh one', async () => {
     vi.useFakeTimers()
-    const rpc = peer()
-    peers.queued.push(rpc)
+    const stuck = peer()
+    const fresh = peer(() => Promise.resolve(started('thread-2')))
+    peers.queued.push(stuck, fresh)
     const { adapter, logs } = adapterWithLog()
     try {
       await adapter.start()
-      const thread = adapter.startThread('C:\\test7')
-      const failed = expect(thread).rejects.toThrow(codexThreadStartStalledMessage(false, []))
+      const thread = adapter.startThread('C:\\test7', { model: 'gpt-6-astra', effort: 'high' })
       await vi.advanceTimersByTimeAsync(44_999)
-      expect(rpc.disposals).toBe(0)
+      expect(stuck.disposals).toBe(0)
       await vi.advanceTimersByTimeAsync(1)
+      await expect(thread).resolves.toMatchObject({ id: 'thread-2' })
+      expect(stuck.disposals).toBe(1)
+      expect(peers.spawned).toBe(2)
+      expect(fresh.calls.map(({ method }) => method)).toEqual(['initialize', 'thread/start'])
+      expect(fresh.calls[1]?.params).toEqual(stuck.calls[1]?.params)
+      expect(logs).toEqual([
+        'Codex thread/start had no answer and no output for 45s.',
+        'Codex did not start the thread; restarting the local process once.',
+      ])
+    } finally {
+      await adapter.dispose()
+    }
+  })
+
+  it('stops both processes after a second stall and says so plainly', async () => {
+    vi.useFakeTimers()
+    const first = peer()
+    const second = peer()
+    peers.queued.push(first, second)
+    const { adapter } = adapterWithLog()
+    try {
+      await adapter.start()
+      const thread = adapter.startThread('C:\\test7')
+      const failed = expect(thread).rejects.toThrow(codexThreadStartStalledMessage(true, []))
+      await vi.advanceTimersByTimeAsync(90_000)
       await failed
-      expect(rpc.disposals).toBe(1)
-      expect(logs).toContain('Codex thread/start had no answer and no output for 45s.')
+      expect([first.disposals, second.disposals]).toEqual([1, 1])
+      expect(peers.spawned).toBe(2)
     } finally {
       await adapter.dispose()
     }
@@ -91,15 +116,11 @@ describe('Codex thread start', () => {
 
   it('gives up at the overall limit and names the MCP servers still starting', async () => {
     vi.useFakeTimers()
-    const rpc = peer()
-    peers.queued.push(rpc)
+    const first = peer()
+    const second = peer()
+    peers.queued.push(first, second)
     const { adapter } = adapterWithLog()
-    try {
-      await adapter.start()
-      const thread = adapter.startThread('C:\\test7')
-      const failed = expect(thread).rejects.toThrow(
-        'Codex did not finish starting this chat. MCP servers still starting: browser, docs. Try sending again.',
-      )
+    const busy = async (rpc: FakeCodexRpc) => {
       mcpStarting(rpc, 'docs')
       mcpStarting(rpc, 'browser')
       rpc.emitNotification('mcpServer/startupStatus/updated', {
@@ -113,11 +134,36 @@ describe('Codex thread start', () => {
         await vi.advanceTimersByTimeAsync(20_000)
         rpc.emitStderr('still starting MCP servers\n')
       }
+    }
+    try {
+      await adapter.start()
+      const thread = adapter.startThread('C:\\test7')
+      const failed = expect(thread).rejects.toThrow(
+        'Codex did not finish starting this chat, even after one restart. MCP servers still starting: browser, docs. Try sending again.',
+      )
+      await busy(first)
+      expect(first.disposals).toBe(1)
+      await busy(second)
       await failed
-      expect(rpc.disposals).toBe(1)
+      expect(second.disposals).toBe(1)
     } finally {
       await adapter.dispose()
     }
+  })
+
+  it('does not restart a process after disposal cancels the start', async () => {
+    vi.useFakeTimers()
+    const rpc = peer()
+    peers.queued.push(rpc)
+    const { adapter } = adapterWithLog()
+    await adapter.start()
+    const thread = adapter.startThread('C:\\test7')
+    const failed = expect(thread).rejects.toThrow()
+    await vi.advanceTimersByTimeAsync(10_000)
+    await adapter.dispose()
+    await vi.advanceTimersByTimeAsync(60_000)
+    await failed
+    expect(peers.spawned).toBe(1)
   })
 
   it('leaves a process that already holds a chat running', async () => {
