@@ -43,13 +43,14 @@ describe('build edition', () => {
   it('lists only the release providers in a release build', async () => {
     takeEdition({ HARNESS_EDITION: 'release' })
     const listed = await detectProviders(everything())
-    expect(listed.map((status) => status.id)).toEqual([
-      'claude-code',
-      'codex',
-      'grok',
-      'cursor',
-      'antigravity',
-    ])
+    expect(listed.map((status) => status.id)).toEqual(['claude-code', 'codex', 'grok', 'cursor'])
+  })
+
+  it('leaves Antigravity out of a release build', async () => {
+    takeEdition({ HARNESS_EDITION: 'release' })
+    await expect(installCommandFor('antigravity')).rejects.toThrow(
+      'not part of this TasteCode build',
+    )
   })
 
   it('lists every provider and the ACP entry in a dev build', async () => {
