@@ -8004,6 +8004,7 @@ export function App() {
             acpAgents={acpAgents}
             providerRoster={providerRoster ?? EMPTY_PROVIDER_ROSTER}
             onProviderRosterChange={changeProviderRoster}
+            transport={transport}
             onAddProject={() => {
               setOnboardingPreview(false)
               void addProject()

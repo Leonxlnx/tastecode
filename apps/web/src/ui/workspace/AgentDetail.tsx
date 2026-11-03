@@ -8,6 +8,7 @@ import { Thread } from '../Thread.js'
 import type { AgentEntry } from './agents-list.js'
 import { useChildTranscript } from './child-transcript.js'
 import { NativeSubagentTranscript } from './NativeSubagentTranscript.js'
+import { SubagentAvatar } from './SubagentAvatar.js'
 
 /**
  * One sub-agent, opened from the Agents tab. A sub-agent TasteCode started
@@ -58,6 +59,7 @@ export function AgentDetail(props: {
         >
           <ChevronLeft size={14} aria-hidden />
         </button>
+        <SubagentAvatar seed={entry.itemId} running={running} size={20} />
         <span className="agent-detail__title">
           <span className="agent-detail__name">{subagent.name ?? 'Subagent'}</span>
           {engine ? <span className="agent-detail__engine">{engine}</span> : null}

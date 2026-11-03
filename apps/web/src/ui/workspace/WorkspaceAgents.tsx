@@ -4,9 +4,10 @@ import { providerDisplayName } from '../../provider-presentation.js'
 import { ThreadFrameStore } from '../../thread-frame-store.js'
 import { emptyThread } from '../../thread-state.js'
 import type { Transport } from '../../transport.js'
-import { SubagentGlyph, SubagentStatus } from '../SubagentRow.js'
+import { SubagentStatus } from '../SubagentRow.js'
 import { AgentDetail } from './AgentDetail.js'
 import { groupAgentEntries, subagentEntries, type AgentEntry } from './agents-list.js'
+import { SubagentAvatar } from './SubagentAvatar.js'
 import { WorkspaceEmptyState } from './WorkspaceEmptyState.js'
 import './workspace-agents.css'
 
@@ -103,8 +104,13 @@ export function WorkspaceAgents(props: {
   const open = (itemId: string) => setOpened({ threadId, itemId })
   return (
     <div className="workspace-agents">
-      <AgentGroup label="Running" entries={groups.running} onOpen={open} />
-      <AgentGroup label="Finished" entries={groups.finished} onOpen={open} />
+      <AgentGroup
+        label="Active"
+        entries={groups.running}
+        empty="No active subagents"
+        onOpen={open}
+      />
+      <AgentGroup label="Done" entries={groups.finished} onOpen={open} />
     </div>
   )
 }
@@ -112,26 +118,33 @@ export function WorkspaceAgents(props: {
 function AgentGroup({
   label,
   entries,
+  empty,
   onOpen,
 }: {
   label: string
   entries: readonly AgentEntry[]
+  /** Shown instead of the rows; a group without it is left out when empty. */
+  empty?: string
   onOpen: (itemId: string) => void
 }) {
-  if (entries.length === 0) return null
+  if (entries.length === 0 && !empty) return null
   return (
     <section className="agents-group" aria-label={label}>
       <h3 className="agents-group__label">
         {label}
         <span className="agents-group__count">{entries.length}</span>
       </h3>
-      <ul className="agents-group__list">
-        {entries.map((entry) => (
-          <li key={entry.itemId}>
-            <AgentRow entry={entry} onOpen={onOpen} />
-          </li>
-        ))}
-      </ul>
+      {entries.length === 0 ? (
+        <p className="agents-group__empty">{empty}</p>
+      ) : (
+        <ul className="agents-group__list">
+          {entries.map((entry) => (
+            <li key={entry.itemId}>
+              <AgentRow entry={entry} onOpen={onOpen} />
+            </li>
+          ))}
+        </ul>
+      )}
     </section>
   )
 }
@@ -159,7 +172,7 @@ function AgentRow({ entry, onOpen }: { entry: AgentEntry; onOpen: (itemId: strin
       onClick={() => onOpen(entry.itemId)}
     >
       <span className="agents-row__lead" aria-hidden>
-        {running ? <span className="subagent__pulse" /> : <SubagentGlyph />}
+        <SubagentAvatar seed={entry.itemId} running={running} />
       </span>
       <span className="agents-row__text">
         <span className="agents-row__name">{subagent.name ?? 'Subagent'}</span>
@@ -167,10 +180,34 @@ function AgentRow({ entry, onOpen }: { entry: AgentEntry; onOpen: (itemId: strin
       </span>
       <span className="agents-row__meta">
         {attention ? <span className="agents-row__attention">{attention}</span> : null}
-        <SubagentStatus subagent={subagent} startedAt={entry.createdAt} quietRunning />
+        {running ? (
+          <SubagentStatus subagent={subagent} startedAt={entry.createdAt} quietRunning />
+        ) : (
+          <span className="agents-row__when">{finishedLabel(entry, Date.now())}</span>
+        )}
       </span>
     </button>
   )
+}
+
+/** "Stopped · 1h ago": a finished row says how it ended only when that was not a plain finish. */
+export function finishedLabel(entry: AgentEntry, now: number): string {
+  const { subagent } = entry
+  const endedAt = entry.createdAt + (subagent.durationMs ?? 0)
+  const ago = relativeTime(endedAt, now)
+  const ending =
+    subagent.state === 'failed' ? 'Failed' : subagent.state === 'interrupted' ? 'Stopped' : ''
+  return ending ? `${ending} · ${ago}` : ago
+}
+
+function relativeTime(at: number, now: number): string {
+  const seconds = Math.max(0, Math.round((now - at) / 1_000))
+  if (seconds < 60) return 'just now'
+  const minutes = Math.round(seconds / 60)
+  if (minutes < 60) return `${minutes}m ago`
+  const hours = Math.round(minutes / 60)
+  if (hours < 24) return `${hours}h ago`
+  return `${Math.round(hours / 24)}d ago`
 }
 
 function oneLine(text: string): string {

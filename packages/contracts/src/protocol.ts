@@ -1916,10 +1916,16 @@ export const methods = {
     params: z.object({ threadId: z.string().min(1) }),
     result: z.object({ subagents: z.array(ThreadSubagentSchema) }),
   },
-  /** A native sub-agent's read-only saved conversation; empty when unavailable. */
+  /**
+   * A native sub-agent's read-only saved conversation; empty when unavailable. A long
+   * one is cut to its newest items, and `omitted` counts the older ones left out.
+   */
   'thread.subagentTranscript': {
     params: z.object({ threadId: z.string().min(1), itemId: z.string().min(1) }),
-    result: z.object({ items: z.array(ItemSchema) }),
+    result: z.object({
+      items: z.array(ItemSchema),
+      omitted: z.number().int().positive().optional(),
+    }),
   },
   'thread.diff': {
     params: z.object({ threadId: z.string() }),

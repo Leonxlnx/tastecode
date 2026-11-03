@@ -2018,6 +2018,12 @@ describe('subagent contracts', () => {
     expect(method.result.parse({ items: [] })).toEqual({ items: [] })
     expect(method.result.parse({ items: [call] })).toEqual({ items: [call] })
     expect(method.result.safeParse({ items: [{ ...call, type: 'made-up' }] }).success).toBe(false)
+    expect(method.result.parse({ items: [call], omitted: 120 })).toEqual({
+      items: [call],
+      omitted: 120,
+    })
+    for (const omitted of [0, -1, 1.5, '3'])
+      expect(method.result.safeParse({ items: [call], omitted }).success).toBe(false)
     expect(ItemSchema.parse({ ...call, subagent }).subagent).not.toHaveProperty('transcriptId')
     const native = { ...subagent, transcriptId: 'provider-owned-reference' }
     expect(ItemSchema.parse({ ...call, subagent: native }).subagent).toEqual(native)
