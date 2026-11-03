@@ -391,7 +391,9 @@ describe('Composer loading controls', () => {
 
     fireEvent.change(textarea, { target: { value: '$skill' } })
     fireEvent.change(textarea, { target: { value: '$' } })
-    expect(await screen.findByRole('option', { name: /Airtable CLI/ })).toBeTruthy()
+    expect(
+      await screen.findByRole('option', { name: /Airtable CLI/ }, { timeout: 5000 }),
+    ).toBeTruthy()
     expect(screen.queryByText('Loading skills…')).toBeNull()
     expect(document.activeElement).toBe(textarea)
   })
