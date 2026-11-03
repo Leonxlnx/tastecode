@@ -24,6 +24,7 @@ import {
   ProviderStatusSchema,
   ProviderUpdateSchema,
   SubagentSchema,
+  SubagentSettingsSchema,
   UsageSchema,
 } from './domain.js'
 import { PhoneAccessStatusSchema, PhonePairingSchema, ProjectBrowseResultSchema } from './phone.js'
@@ -2278,6 +2279,15 @@ export const methods = {
   'sidebar.updateSettings': {
     params: SidebarSettingsSchema.partial(),
     result: SidebarSettingsSchema,
+  },
+  /** Where an agent may start sub-agents; the server enforces it on every start. */
+  'subagents.settings': {
+    params: z.object({}),
+    result: SubagentSettingsSchema,
+  },
+  'subagents.updateSettings': {
+    params: z.object({ otherProviders: z.boolean() }),
+    result: SubagentSettingsSchema,
   },
 } as const
 
