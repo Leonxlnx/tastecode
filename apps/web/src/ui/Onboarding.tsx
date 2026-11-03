@@ -35,12 +35,14 @@ import { ProviderIcon } from './ProviderIcon.js'
 import { Skeleton, SkeletonGroup, SkeletonStatus } from './Skeleton.js'
 import { useDialogFocus } from './dialog-focus.js'
 import { catchIn, fly, flyText, morphInto, prefersReducedMotion } from './onboarding-motion.js'
+import type { Transport } from '../transport.js'
 
 const STEPS = [
   { id: 'welcome', label: 'Welcome', hint: undefined },
   { id: 'name', label: 'Your name', hint: 'profile' },
   { id: 'appearance', label: 'Appearance', hint: undefined },
   { id: 'providers', label: 'Coding agents', hint: 'model' },
+  { id: 'subagents', label: 'Sub-agents', hint: undefined },
   { id: 'project', label: 'First project', hint: undefined },
 ] as const satisfies ReadonlyArray<{ id: string; label: string; hint: PreviewHint | undefined }>
 type StepId = (typeof STEPS)[number]['id']
@@ -62,6 +64,15 @@ const THEME_CHOICES = [
 ] as const satisfies ReadonlyArray<{ value: ThemePreference; label: string; note: string }>
 
 const PREVIEW = '.onboarding__preview'
+
+const SUBAGENT_CHOICES = [
+  { allowed: true, label: 'Allow', note: 'Agents pick the best provider for each sub-agent.' },
+  {
+    allowed: false,
+    label: 'Only when I ask',
+    note: "Sub-agents use the chat's provider unless you name another one.",
+  },
+] as const
 
 type Readiness = { label: string; tone: 'ready' | 'pending' | 'checking' }
 
@@ -130,6 +141,8 @@ export function Onboarding(props: {
   onProviderRosterChange: (roster: ProviderRoster) => void
   onAddProject: () => void
   onDismiss: () => void
+  /** Reads and stores the sub-agent provider answer; without it the page only moves on. */
+  transport?: Transport | undefined
   /** Kept mounted but hidden while Settings sits on top, so the page survives the round trip. */
   hidden?: boolean | undefined
   /** Setup is no longer needed — a project arrived — so the page plays its way out. */
@@ -161,6 +174,9 @@ export function Onboarding(props: {
   // The pointer or focus is on Choose a folder: the preview's waiting project
   // row reacts before anything is chosen.
   const [pointingFolder, setPointingFolder] = useState(false)
+  // Undefined until the user answers here or answered before; nothing is preselected.
+  const [otherProviders, setOtherProviders] = useState<boolean>()
+  const [subagentError, setSubagentError] = useState<string>()
   const step: StepId = STEPS[index]?.id ?? 'welcome'
   const leaving = pending !== undefined
   const titleId = useId()
@@ -223,6 +239,34 @@ export function Onboarding(props: {
   useEffect(() => {
     if (props.finished) setClosing(true)
   }, [props.finished])
+
+  const transport = props.transport
+  useEffect(() => {
+    if (!transport) return
+    let cancelled = false
+    void Promise.resolve(transport.request('subagents.settings', {}))
+      .then((settings) => {
+        if (!cancelled) setOtherProviders(settings?.otherProviders)
+      })
+      .catch(() => undefined)
+    return () => {
+      cancelled = true
+    }
+  }, [transport])
+
+  const chooseSubagents = async (allowed: boolean) => {
+    setOtherProviders(allowed)
+    setSubagentError(undefined)
+    if (!transport) return
+    try {
+      const settings = await transport.request('subagents.updateSettings', {
+        otherProviders: allowed,
+      })
+      setOtherProviders(settings.otherProviders)
+    } catch (cause) {
+      setSubagentError(cause instanceof Error ? cause.message : String(cause))
+    }
+  }
 
   const settle = (next: number) => {
     setIndex(next)
@@ -680,6 +724,57 @@ export function Onboarding(props: {
                       />
                     </>
                   ) : null}
+                </div>
+                <StepActions onBack={() => go(index - 1)} onNext={advance} pressed={enterHeld} />
+              </>
+            ) : null}
+
+            {step === 'subagents' ? (
+              <>
+                <h1 className="onboarding__title" id={titleId} ref={setFocusTarget} tabIndex={-1}>
+                  Sub-agents on other providers
+                </h1>
+                <p className="onboarding__lead">
+                  TasteCode may use your other subscriptions for sub-agents when another model fits
+                  a task better. Change this any time in Settings › Models.
+                </p>
+                {subagentError ? (
+                  <p className="onboarding__lead" role="alert">
+                    {subagentError}
+                  </p>
+                ) : null}
+                <div className="onboarding__pick">
+                  <ul
+                    className="onboarding__picks"
+                    role="radiogroup"
+                    aria-label="Sub-agents on other providers"
+                  >
+                    {SUBAGENT_CHOICES.map((choice) => {
+                      const selected = otherProviders === choice.allowed
+                      return (
+                        <li
+                          className="onboarding__pick-row"
+                          data-added={selected || undefined}
+                          key={choice.label}
+                        >
+                          <label>
+                            <input
+                              className="visually-hidden"
+                              type="radio"
+                              name="onboarding-subagents"
+                              checked={selected}
+                              onChange={() => void chooseSubagents(choice.allowed)}
+                            />
+                            <span className="onboarding__pick-mark" aria-hidden />
+                            <span className="onboarding__pick-name">{choice.label}</span>
+                            <span className="onboarding__pick-wire" aria-hidden />
+                            <span className="onboarding__pick-state">{choice.note}</span>
+                            <span className="onboarding__pick-socket" aria-hidden />
+                          </label>
+                        </li>
+                      )
+                    })}
+                  </ul>
                 </div>
                 <StepActions onBack={() => go(index - 1)} onNext={advance} pressed={enterHeld} />
               </>
