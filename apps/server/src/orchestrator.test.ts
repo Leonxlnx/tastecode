@@ -3,6 +3,7 @@ import { EventEmitter } from 'node:events'
 import {
   appendFileSync,
   copyFileSync,
+  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -14,7 +15,17 @@ import {
 } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { afterAll, afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  onTestFinished,
+  vi,
+} from 'vitest'
 import { CLAUDE_MCP_CAPABILITIES } from '@harness/adapter-claude-code/capabilities'
 import { GROK_MCP_CAPABILITIES } from '@harness/adapter-grok/mcp'
 import { OPENCODE_MCP_CAPABILITIES } from '@harness/adapter-opencode/inventory'
@@ -71,8 +82,11 @@ import type {
   ProviderServices,
 } from './provider-controls.js'
 import { StartupCleanupError } from './provider-session.js'
+import { REPLY_STYLE_INSTRUCTIONS } from './reply-style.js'
 import { DatabaseSync } from './sqlite.js'
 import { Store } from './store.js'
+import { subagentRunItem } from './subagent-runs.js'
+import type { StoredSubagentRun } from './subagent-runs.js'
 import * as checkpoint from './checkpoint.js'
 import { beginOptimisticTurn, emptyThread, reduceEventLog } from '../../web/src/thread-store.js'
 import { projectThreadItems } from '../../web/src/ui/turns.js'
@@ -185,6 +199,8 @@ class FakeSession implements AgentSession {
   commands: ProviderCommand[] = []
   commandReads: Array<string | undefined> = []
   emitCommandsChanged: () => void = () => {}
+  backgroundWork = false
+  emitBackgroundWorkChanged: () => void = () => {}
   emitDisconnected: () => void = () => {}
   emitProviderSessionId: (providerSessionId: string) => void = () => {}
   afterEventBarrier: Promise<void> | undefined
@@ -281,6 +297,20 @@ class FakeSession implements AgentSession {
 
   onCommandsChanged(listener: () => void): void {
     this.emitCommandsChanged = listener
+  }
+
+  hasBackgroundWork(): boolean {
+    return this.backgroundWork
+  }
+
+  onBackgroundWorkChanged(listener: () => void): void {
+    this.emitBackgroundWorkChanged = listener
+  }
+
+  /** Work a turn started keeps running in the background, or stops. */
+  runInBackground(running: boolean): void {
+    this.backgroundWork = running
+    this.emitBackgroundWorkChanged()
   }
 
   onDisconnected(listener: () => void): () => void {
@@ -1039,6 +1069,83 @@ describe('idle thread runtime retention', () => {
     }
   })
 
+  it('keeps an idle runtime alive while its agent runs background work that will report', async () => {
+    vi.useFakeTimers()
+    const { orchestrator, sessions, received } = harness(undefined, new Store(':memory:'), 8, 1_000)
+    try {
+      const thread = await orchestrator.startThread('codex', process.cwd())
+      const session = sessions[0]!
+      // The turn starts a long check in the background and ends, waiting for it.
+      session.emit(turnStarted(thread.id, 'waits'))
+      session.runInBackground(true)
+      session.emit({ type: 'turn.completed', turnId: 'waits', status: 'completed' })
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(session.disposed).toBe(false)
+
+      // The check ends and the agent reports it in a turn nobody sent.
+      session.runInBackground(false)
+      session.emit(turnStarted(thread.id, 'reports'))
+      session.emit(message('The check passed.', 'reports'))
+      session.emit({ type: 'turn.completed', turnId: 'reports', status: 'completed' })
+      expect(
+        received.flatMap(({ event }) => (event.type === 'turn.started' ? [event.turn.id] : [])),
+      ).toEqual(['waits', 'reports'])
+      expect(orchestrator.isTurnRunning(thread.id)).toBe(false)
+      await vi.advanceTimersByTimeAsync(999)
+      expect(session.disposed).toBe(false)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(session.disposed).toBe(true)
+    } finally {
+      await orchestrator.disposeAll()
+      vi.useRealTimers()
+    }
+  })
+
+  it('starts the idle window when background work ends without a turn', async () => {
+    vi.useFakeTimers()
+    const { orchestrator, sessions } = harness(undefined, new Store(':memory:'), 8, 1_000)
+    try {
+      const thread = await orchestrator.startThread('codex', process.cwd())
+      const session = sessions[0]!
+      session.emit(turnStarted(thread.id, 'waits'))
+      session.runInBackground(true)
+      session.emit({ type: 'turn.completed', turnId: 'waits', status: 'completed' })
+      await vi.advanceTimersByTimeAsync(5_000)
+      session.runInBackground(false)
+      await vi.advanceTimersByTimeAsync(999)
+      expect(session.disposed).toBe(false)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(session.disposed).toBe(true)
+    } finally {
+      await orchestrator.disposeAll()
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps a runtime with background work out of the warm-runtime limit', async () => {
+    const { orchestrator, sessions } = harness(undefined, new Store(':memory:'), 1)
+    const threads = await Promise.all(
+      Array.from({ length: 3 }, () => orchestrator.startThread('codex', process.cwd())),
+    )
+    sessions[0]!.emit(turnStarted(threads[0]!.id, 'waits'))
+    sessions[0]!.runInBackground(true)
+    for (let index = 0; index < threads.length; index += 1) {
+      sessions[index]!.emit({
+        type: 'turn.completed',
+        turnId: index === 0 ? 'waits' : `turn-${index}`,
+        status: 'completed',
+      })
+    }
+    // The newest idle runtime stays warm; the one still working is never counted.
+    expect(sessions.map((session) => session.disposed)).toEqual([false, true, false])
+
+    sessions[0]!.runInBackground(false)
+    await vi.waitFor(() =>
+      expect(sessions.map((session) => session.disposed)).toEqual([false, true, true]),
+    )
+    await orchestrator.disposeAll()
+  })
+
   it('releases an expired runtime when its last queued prompt is removed', async () => {
     vi.useFakeTimers()
     const store = new Store(':memory:')
@@ -1576,12 +1683,20 @@ describe('reply style', () => {
 
       expect(startedOptions[0]?.instructions).toContain('clear, capable teammate')
       expect(startedOptions[0]?.instructions).toContain('Do not use em dashes')
+      expect(startedOptions[0]?.instructions).toContain(
+        'When a task is done, end the turn with a short wrap-up',
+      )
+      expect(startedOptions[0]?.instructions).toContain('Skip file-by-file inventories')
     },
   )
+
+  it('keeps the shared reply instructions free of the em dashes they forbid', () => {
+    expect(REPLY_STYLE_INSTRUCTIONS).not.toContain('—')
+  })
 })
 
 describe('default skills', () => {
-  const skillsHarness = async () => {
+  const skillsHarness = async (services?: ProviderControlsOptions['services']) => {
     const parent = mkdtempSync(path.join(os.tmpdir(), 'tc-orchestrator-skills-'))
     onTestFinished(() => rmSync(parent, { recursive: true, force: true }))
     const root = await writeDefaultSkillsFixture(parent)
@@ -1595,7 +1710,7 @@ describe('default skills', () => {
     return {
       root,
       project,
-      ...harness(undefined, undefined, undefined, undefined, undefined, root),
+      ...harness(undefined, undefined, undefined, undefined, services, root),
     }
   }
 
@@ -1645,6 +1760,122 @@ describe('default skills', () => {
     await orchestrator.startThread('cursor', process.cwd())
     expect(startedOptions[0]?.instructions).not.toContain('Skills included with TasteCode')
     await orchestrator.disposeAll()
+  })
+
+  it('lists the bundled skills as commands where the provider loads them as a plugin', async () => {
+    // Claude Code runs `/cook` as the plugin's `tastecode:cook`, but its probe
+    // starts without the plugin. Without these rows the slash menu offered
+    // `$cook` while the list loaded and after, which Claude does not expand.
+    let finish: (() => void) | undefined
+    const discover = vi.fn(
+      () =>
+        new Promise<{ commands: ProviderCommand[]; servers: McpServer[] }>((resolve) => {
+          finish = () =>
+            resolve({ commands: [{ name: 'context', description: 'Show context' }], servers: [] })
+        }),
+    )
+    const { orchestrator, sessions, commandChanges } = await skillsHarness({
+      'claude-code': { projectInventory: { mcpCapabilities: CLAUDE_MCP_CAPABILITIES, discover } },
+    })
+    const bundled: ProviderCommand[] = ['cinetic', 'design-taste-frontend', 'cook'].map((name) => ({
+      name,
+      description: `The long ${name} description.`,
+      aliases: [`tastecode:${name}`],
+      kind: 'skill',
+      source: 'plugin',
+    }))
+    try {
+      await expect(orchestrator.listCommands('claude-code', '/repo')).resolves.toEqual({
+        commands: bundled,
+        loading: true,
+      })
+      await vi.waitFor(() => expect(finish).toBeDefined())
+      finish!()
+      await vi.waitFor(() =>
+        expect(commandChanges).toEqual([{ provider: 'claude-code', projectPath: '/repo' }]),
+      )
+      await expect(orchestrator.listCommands('claude-code', '/repo')).resolves.toEqual({
+        commands: [{ name: 'context', description: 'Show context' }, ...bundled],
+        loading: false,
+      })
+
+      // A chat that loaded the plugin reports its qualified name; keep one bare row.
+      const chat = await orchestrator.startThread('claude-code', '/repo')
+      const live: ProviderCommand = {
+        name: 'tastecode:cook',
+        aliases: ['cook'],
+        description: '(tastecode) Cook.',
+        kind: 'skill',
+        source: 'plugin',
+      }
+      sessions[0]!.commands = [live]
+      const inventory = await orchestrator.listCommands('claude-code', '/repo', chat.id)
+      expect(inventory).toEqual({
+        commands: bundled,
+        loading: false,
+      })
+      expect(sessions[0]!.commands).toEqual([live])
+      const selected = inventory.commands.find((command) => command.name === 'cook')!
+      await orchestrator.submitTurn(chat.id, `/${selected.name} Build a site`)
+      expect(sessions[0]!.sent).toEqual(['/cook Build a site'])
+
+      // A provider that reads them from the catalog has no such commands.
+      for (const provider of ProviderIdSchema.options) {
+        if (PROVIDER_CAPABILITIES[provider].defaultSkillsPlugin) continue
+        const { commands } = await orchestrator.listCommands(provider, '/repo')
+        expect(
+          commands.filter((command) =>
+            command.aliases?.some((alias) => alias.startsWith('tastecode:')),
+          ),
+        ).toEqual([])
+      }
+    } finally {
+      await orchestrator.disposeAll()
+    }
+  })
+
+  it('collapses manifest-derived aliases while preserving other plugins and user commands', async () => {
+    const { orchestrator, sessions, root, project } = await skillsHarness()
+    writeFileSync(
+      path.join(root, 'skills.json'),
+      JSON.stringify({ plugin: { name: 'acme' }, skills: [{ folder: 'cook' }] }),
+    )
+    writeFileSync(
+      path.join(root, 'skills', 'cook', 'SKILL.md'),
+      '---\nname: cook-loop\ndescription: Loops.\n---\n',
+    )
+    const bundled: ProviderCommand = {
+      name: 'cook-loop',
+      aliases: ['acme:cook'],
+      description: 'Loops.',
+      kind: 'skill',
+      source: 'plugin',
+    }
+    const probed: ProviderCommand = { name: 'acme:cook', description: 'Probed.' }
+    const other: ProviderCommand = { name: 'other:cook', description: 'Another plugin.' }
+    const custom: ProviderCommand = { name: 'cook-loop', description: 'My own command.' }
+    try {
+      const chat = await orchestrator.startThread('claude-code', project)
+      sessions[0]!.commands = [probed, other]
+      await expect(orchestrator.listCommands('claude-code', project, chat.id)).resolves.toEqual({
+        commands: [other, bundled],
+        loading: false,
+      })
+
+      for (const commands of [
+        [probed, custom, other],
+        [custom, probed, other],
+      ]) {
+        sessions[0]!.commands = commands
+        await expect(orchestrator.listCommands('claude-code', project, chat.id)).resolves.toEqual({
+          commands: [custom, other],
+          loading: false,
+        })
+        expect(sessions[0]!.commands).toEqual(commands)
+      }
+    } finally {
+      await orchestrator.disposeAll()
+    }
   })
 
   it('refuses to switch off a bundled skill through a provider', async () => {
@@ -6937,6 +7168,9 @@ describe('persisted threads', () => {
 
     expect(resumedOptions[0]?.instructions).toContain('clear, capable teammate')
     expect(resumedOptions[0]?.instructions).toContain('Do not use em dashes')
+    expect(resumedOptions[0]?.instructions).toContain(
+      'When a task is done, end the turn with a short wrap-up',
+    )
   })
 
   it('resumes a persisted thread with the model options of the turn that wakes it', async () => {
@@ -8900,6 +9134,170 @@ describe('sidebar inbox lifecycle', () => {
   })
 })
 
+describe('session-owned subagent snapshots', () => {
+  it.each(['disconnect', 'close', 'shutdown', 'idle release'] as const)(
+    'settles a running subagent on %s and preserves its parent turn outcome',
+    async (end) => {
+      if (end === 'idle release') vi.useFakeTimers()
+      const { orchestrator, sessions, store } = harness(undefined, new Store(':memory:'), 8, 1_000)
+      try {
+        const thread = await orchestrator.startThread('codex', '/repo')
+        const session = sessions[0]!
+        await orchestrator.sendTurn(thread.id, 'Review the design')
+        const item = {
+          id: 'reviewer',
+          turnId: 's1-turn',
+          type: 'tool_call' as const,
+          status: 'completed' as const,
+          text: 'Reviewer launched',
+          createdAt: 1,
+          subagent: { id: 'reviewer', state: 'running' as const, background: true, toolUses: 3 },
+        }
+        session.emit({ type: 'item.completed', item })
+        session.emit({ type: 'turn.completed', turnId: item.turnId, status: 'completed' })
+        const latest = () => reduceEventLog(emptyThread, store.history(thread.id))
+        expect(latest().items.find(({ id }) => id === item.id)?.subagent?.state).toBe('running')
+
+        if (end === 'disconnect') session.emitDisconnected()
+        else if (end === 'close') await orchestrator.close(thread.id)
+        else if (end === 'shutdown') await orchestrator.disposeAll()
+        else await vi.advanceTimersByTimeAsync(1_000)
+
+        expect(latest().items.find(({ id }) => id === item.id)).toMatchObject({
+          status: 'completed',
+          text: 'Reviewer launched',
+          subagent: { state: 'interrupted', background: true, toolUses: 3 },
+        })
+        expect(
+          store
+            .history(thread.id)
+            .filter(({ event }) => event.type === 'turn.completed')
+            .at(-1)?.event,
+        ).toMatchObject({ turnId: item.turnId, status: 'completed' })
+      } finally {
+        await orchestrator.disposeAll()
+        vi.useRealTimers()
+      }
+    },
+  )
+
+  it('leaves a background subagent running on Stop and settles a launch still open', async () => {
+    const { orchestrator, sessions, store } = harness(undefined, new Store(':memory:'))
+    try {
+      const thread = await orchestrator.startThread('codex', '/repo')
+      const session = sessions[0]!
+      session.turnIds = ['launch-turn', 'stopped-turn']
+      await orchestrator.sendTurn(thread.id, 'Review the design in the background')
+      // Launched by an earlier turn: its launching call completed and it runs on.
+      session.emit({
+        type: 'item.completed',
+        item: {
+          id: 'reviewer',
+          turnId: 'launch-turn',
+          type: 'tool_call',
+          status: 'completed',
+          text: 'Reviewer launched',
+          createdAt: 1,
+          subagent: { id: 'reviewer', state: 'running', background: true, toolUses: 3 },
+        },
+      })
+      session.emit({ type: 'turn.completed', turnId: 'launch-turn', status: 'completed' })
+      await orchestrator.sendTurn(thread.id, 'Explore the repo')
+      // The stopped turn's own launching call has not completed yet.
+      session.emit({
+        type: 'item.started',
+        item: {
+          id: 'explorer',
+          turnId: 'stopped-turn',
+          type: 'tool_call',
+          status: 'started',
+          text: 'Explorer launched',
+          createdAt: 2,
+          subagent: { id: 'explorer', state: 'running' },
+        },
+      })
+
+      await orchestrator.interrupt(thread.id)
+
+      // Stop ends the running turn only; background work keeps running (#2058).
+      const items = reduceEventLog(emptyThread, store.history(thread.id)).items
+      expect(items.find(({ id }) => id === 'reviewer')).toMatchObject({
+        status: 'completed',
+        subagent: { state: 'running', background: true, toolUses: 3 },
+      })
+      expect(items.find(({ id }) => id === 'explorer')).toMatchObject({
+        status: 'failed',
+        subagent: { state: 'interrupted' },
+      })
+      expect(
+        store
+          .history(thread.id)
+          .filter(({ event }) => event.type === 'turn.completed')
+          .at(-1)?.event,
+      ).toMatchObject({ turnId: 'stopped-turn', status: 'interrupted' })
+    } finally {
+      await orchestrator.disposeAll()
+    }
+  })
+
+  it.each(['disconnect', 'idle release', 'shutdown'] as const)(
+    "leaves TasteCode's own subagents to the broker on %s",
+    async (end) => {
+      if (end === 'idle release') vi.useFakeTimers()
+      const { orchestrator, sessions, store } = harness(undefined, new Store(':memory:'), 8, 1_000)
+      try {
+        const thread = await orchestrator.startThread('codex', '/repo')
+        const session = sessions[0]!
+        await orchestrator.sendTurn(thread.id, 'Delegate the review')
+        const run = (
+          itemId: string,
+          shortId: string,
+          state: 'running' | 'waiting_for_approval',
+          threadId?: string,
+        ): StoredSubagentRun => ({
+          itemId,
+          parentThreadId: thread.id,
+          shortId,
+          turnId: 's1-turn',
+          ...(threadId ? { threadId } : {}),
+          provider: 'claude-code',
+          task: 'Review src/a.ts',
+          state,
+          snapshot: {
+            id: shortId,
+            state: 'running',
+            ...(threadId ? { threadId } : {}),
+            provider: 'claude-code',
+          },
+          createdAt: 1,
+        })
+        // As the broker records them: one runs in a chat of its own, the other waits for
+        // the user's approval before it has one.
+        for (const entry of [
+          run('broker-running', 'a1', 'running', 'child-thread'),
+          run('broker-waiting', 'a2', 'waiting_for_approval'),
+        ]) {
+          store.subagents.add(entry)
+          store.append(thread.id, { type: 'item.completed', item: subagentRunItem(entry) })
+        }
+        session.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+
+        if (end === 'disconnect') session.emitDisconnected()
+        else if (end === 'idle release') await vi.advanceTimersByTimeAsync(1_000)
+        else await orchestrator.disposeAll()
+
+        expect(orchestrator.isRunning(thread.id)).toBe(false)
+        const items = reduceEventLog(emptyThread, store.history(thread.id)).items
+        for (const id of ['broker-running', 'broker-waiting'])
+          expect(items.find((item) => item.id === id)?.subagent?.state).toBe('running')
+      } finally {
+        await orchestrator.disposeAll()
+        vi.useRealTimers()
+      }
+    },
+  )
+})
+
 describe('queued turns', () => {
   it('bounds empty queue reads while retaining the hottest entries', async () => {
     const store = new Store(':memory:')
@@ -9489,21 +9887,34 @@ describe('queued turns', () => {
   })
 })
 
-describe('isolated sessions', () => {
+// Real Git worktrees, checkpoints and restores can exceed 20 s on loaded Windows runners.
+describe('isolated sessions', { timeout: 60_000 }, () => {
+  let fixtureRepo: string
   let repo: string
   let trees: string
+
+  // Copy a pristine repository per test instead of repeating five Git setup commands.
+  beforeAll(() => {
+    fixtureRepo = mkdtempSync(path.join(os.tmpdir(), 'harness-orch-fixture-'))
+    execFileSync('git', ['init', '-b', 'main', fixtureRepo], { windowsHide: true })
+    const git = (...args: string[]) =>
+      execFileSync('git', args, { cwd: fixtureRepo, windowsHide: true })
+    git('config', 'user.email', 'test@example.com')
+    git('config', 'user.name', 'Test')
+    writeFileSync(path.join(fixtureRepo, 'file.txt'), 'original\n')
+    git('add', '.')
+    git('commit', '-m', 'first')
+  }, 60_000)
+
+  afterAll(() => {
+    rmSync(fixtureRepo, { recursive: true, force: true })
+  })
 
   beforeEach(() => {
     const base = mkdtempSync(path.join(os.tmpdir(), 'harness-orch-'))
     repo = path.join(base, 'repo')
     trees = path.join(base, 'trees')
-    execFileSync('git', ['init', '-b', 'main', repo], { windowsHide: true })
-    const git = (...args: string[]) => execFileSync('git', args, { cwd: repo, windowsHide: true })
-    git('config', 'user.email', 'test@example.com')
-    git('config', 'user.name', 'Test')
-    writeFileSync(path.join(repo, 'file.txt'), 'original\n')
-    git('add', '.')
-    git('commit', '-m', 'first')
+    cpSync(fixtureRepo, repo, { recursive: true })
   })
 
   afterEach(() => {
@@ -9877,7 +10288,7 @@ describe('isolated sessions', () => {
     await orchestrator.discardWorktree(thread.id)
 
     expect(existsSync(worktreePath)).toBe(false)
-  }, 20_000)
+  })
 
   it('closing a session leaves its checkout alone', async () => {
     const { store, orchestrator } = harness(trees)

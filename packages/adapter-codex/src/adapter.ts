@@ -8,6 +8,7 @@ import type {
   ApprovalReview,
   Capabilities,
   DomainEvent,
+  Item,
   McpServer,
   McpServerConfig,
   McpStartupStatus,
@@ -673,6 +674,13 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
   readonly #ownThreads = new Set<string>()
   readonly #subagents = new CodexSubagents((event) => this.emit('event', event))
   #activeTurns = new Map<string, string>()
+  /**
+   * Items a turn started and Codex has not completed, by turn id. Codex 0.163 keeps a
+   * command in progress for as long as its process runs, so a server the agent starts
+   * (`npm run start`) stays in progress after the turn ends and completes minutes later,
+   * when the process exits.
+   */
+  readonly #openItems = new Map<string, Map<string, Item>>()
   #pendingTurnCompletions = new Set<Set<string>>()
   /** A command waiting to learn the id of the turn its request started. */
   #turnStartWaiters = new Map<string, (turnId: string | undefined) => void>()
@@ -867,8 +875,10 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     }
     for (const [threadId, turnId] of turns) {
       this.emit('event', { type: 'thread.error', threadId, message: error.message })
+      this.#settleOpenItems(turnId, 'failed')
       this.emit('event', { type: 'turn.completed', turnId, status: 'failed' })
     }
+    this.#openItems.clear()
     this.emit('disconnected')
   }
 
@@ -1681,6 +1691,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     this.#ownThreads.clear()
     this.#threadApprovals.clear()
     this.#activeTurns.clear()
+    this.#openItems.clear()
     this.#sessionThread = undefined
     // Held responders close over the dead transport; answering one after
     // disposal would write into nothing. Drop them with the process.
@@ -1914,12 +1925,10 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
         for (const completed of this.#pendingTurnCompletions) completed.add(p.turn.id)
         if (this.#activeTurns.get(p.threadId) === p.turn.id) this.#activeTurns.delete(p.threadId)
         this.#declineOpenRequests(p.threadId, p.turn.id, activeTurn)
-        emit({
-          type: 'turn.completed',
-          turnId: p.turn.id,
-          // `inProgress` should not reach us here, but map it rather than crash.
-          status: p.turn.status === 'inProgress' ? 'completed' : p.turn.status,
-        })
+        // `inProgress` should not reach us here, but map it rather than crash.
+        const status = p.turn.status === 'inProgress' ? 'completed' : p.turn.status
+        this.#settleOpenItems(p.turn.id, status)
+        emit({ type: 'turn.completed', turnId: p.turn.id, status })
         return
       }
 
@@ -1933,12 +1942,21 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
             createdAt: p.startedAtMs,
           }),
         )
-        if (item) emit({ type: 'item.started', item })
+        if (!item) return
+        // A subagent's item keeps the state its tracker sends; an item without an id
+        // cannot be matched to its completion.
+        if (item.status === 'started' && !item.subagent && p.item.id !== undefined) {
+          const open = this.#openItems.get(p.turnId) ?? new Map<string, Item>()
+          open.set(item.id, item)
+          this.#openItems.set(p.turnId, open)
+        }
+        emit({ type: 'item.started', item })
         return
       }
 
       case 'item/completed': {
         const p = ItemCompletedNotificationSchema.parse(params)
+        if (p.item.id !== undefined) this.#openItems.get(p.turnId)?.delete(p.item.id)
         const item = this.#subagents.onItem(
           p.item,
           mapThreadItem(p.item, {
@@ -2129,6 +2147,24 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
       this.#declineOpenRequests(p.threadId, p.turn.id, undefined)
     }
     this.#subagents.onThreadNotification(threadId, method, params)
+  }
+
+  /**
+   * A finished turn leaves none of its work running: the transcript folds a turn's work
+   * only once nothing in it is still started. What Codex still reports in progress, such
+   * as a server the agent started, did its part of the turn; Codex completes it when its
+   * process exits, and that report replaces this one. A stopped turn keeps its unfinished
+   * work as it is, which reads as interrupted.
+   */
+  #settleOpenItems(turnId: string, status: 'completed' | 'failed' | 'interrupted'): void {
+    const open = this.#openItems.get(turnId)
+    this.#openItems.delete(turnId)
+    if (!open || status === 'interrupted') return
+    for (const item of open.values()) {
+      // Without text, so the output and answer that streamed in stay as they arrived.
+      const { text: _streamed, ...started } = item
+      this.emit('event', { type: 'item.completed', item: { ...started, status } })
+    }
   }
 
   /**

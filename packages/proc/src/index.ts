@@ -4,7 +4,7 @@ export { LineBuffer, MAX_PROTOCOL_FRAME_BYTES, ProtocolFrameError, readSseData }
 
 export { applyDesktopPath, desktopPath } from './desktop-path.js'
 export type { DesktopPathOptions } from './desktop-path.js'
-export { killTree, spawnOwned } from './kill.js'
+export { holdsProcessGroup, killTree, spawnOwned } from './kill.js'
 export {
   argumentPromptLimit,
   commandVersion,

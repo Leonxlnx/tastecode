@@ -15,6 +15,7 @@ import {
   CustomHarnessVerificationSchema,
   DetectedAccountHomeSchema,
   DomainEventSchema,
+  ItemSchema,
   ModelSchema,
   ProviderAccountHomeSchema,
   ProviderAccountSchema,
@@ -23,6 +24,8 @@ import {
   ProviderSetupSchema,
   ProviderStatusSchema,
   ProviderUpdateSchema,
+  SubagentSchema,
+  SubagentSettingsSchema,
   UsageSchema,
 } from './domain.js'
 import { PhoneAccessStatusSchema, PhonePairingSchema, ProjectBrowseResultSchema } from './phone.js'
@@ -682,6 +685,61 @@ export type ProviderLimit = z.infer<typeof ProviderLimitSchema>
 const LimitRefreshErrorSchema = z.string().min(1).max(300)
 const UnixMsSchema = z.number().int().nonnegative()
 
+/**
+ * One plan-limit window of an account in its provider's pool. `kind` comes from
+ * the window's length, never its position: `session` is 5 hours, `weekly` 7 days.
+ */
+export const PoolWindowSchema = z.object({
+  /** The limit row's id, such as "five_hour" or "codex:primary". */
+  id: z.string().min(1).max(80),
+  label: z.string().min(1).max(120),
+  kind: z.enum(['session', 'weekly']),
+  usedPercent: z.number().min(0).max(100),
+  resetsAt: UnixMsSchema.optional(),
+})
+export type PoolWindow = z.infer<typeof PoolWindowSchema>
+
+/** One account of a provider, as the pool sees it from the limits already held for it. */
+export const PoolAccountSchema = z.object({
+  accountId: AccountIdSchema,
+  label: z.string().min(1).max(80),
+  plan: z.string().min(1).max(80).optional(),
+  /**
+   * The plan's size against the provider's cheapest paid plan, per window kind, from
+   * published plan limits. A kind is absent when its size is not known.
+   */
+  weights: z
+    .object({ session: z.number().positive().optional(), weekly: z.number().positive().optional() })
+    .optional(),
+  /**
+   * `ready`: limits were read. `unknown`: none read yet, or the read failed or found
+   * no plan. `unavailable`: the account cannot run, such as a missing folder.
+   */
+  status: z.enum(['ready', 'unknown', 'unavailable']),
+  /** The newest read failed, so these are the last known values. */
+  stale: z.literal(true).optional(),
+  windows: z.array(PoolWindowSchema),
+  /** One of its windows is used up and has not reset yet. */
+  atLimit: z.boolean(),
+})
+export type PoolAccount = z.infer<typeof PoolAccountSchema>
+
+/** A window id summed over the pool's accounts that report it and have a known weight for its kind. */
+export const PoolWindowTotalSchema = z.object({
+  id: z.string().min(1).max(80),
+  label: z.string().min(1).max(120),
+  kind: z.enum(['session', 'weekly']),
+  /** How many accounts the totals count. */
+  accounts: z.number().int().nonnegative(),
+  /** The sum of their weights. */
+  capacity: z.number().nonnegative(),
+  /** What of that capacity is still free: each weight times its unused share. */
+  remaining: z.number().nonnegative(),
+  /** The soonest reset among them. */
+  nextResetAt: UnixMsSchema.optional(),
+})
+export type PoolWindowTotal = z.infer<typeof PoolWindowTotalSchema>
+
 export const ProviderLimitSourceSchema = z.discriminatedUnion('status', [
   z
     .object({
@@ -895,6 +953,15 @@ export type FeedbackSubmitResult = z.infer<typeof FeedbackSubmitResultSchema>
  * Method table. Adding a method means adding it here first — this object is the
  * single source of truth that the server routes against and the client calls.
  */
+/** A sub-agent TasteCode started, and the parent's transcript row that shows it. */
+export const ThreadSubagentSchema = z.object({
+  /** The parent's `tool_call` item carrying the snapshot. */
+  itemId: z.string().min(1),
+  createdAt: z.number().int().nonnegative(),
+  subagent: SubagentSchema,
+})
+export type ThreadSubagent = z.infer<typeof ThreadSubagentSchema>
+
 export const methods = {
   'client.capabilities': {
     params: z.object({ previewCapture: z.boolean() }),
@@ -1406,6 +1473,22 @@ export const methods = {
     params: z.object({ provider: ProviderIdSchema, accountId: AccountIdSchema }),
     result: z.object({}),
   },
+  /**
+   * A provider's accounts as one pool: each account's plan, session and weekly
+   * windows and resets, and the pool's combined capacity per window id. Built from
+   * the limits the server already holds; it never asks a vendor. `recommended` is
+   * the account a new chat would best start on (not at a limit, the soonest weekly
+   * reset), for a client to preselect; nothing switches to it on its own.
+   */
+  'accounts.pool': {
+    params: z.object({ provider: ProviderIdSchema }),
+    result: z.object({
+      provider: ProviderIdSchema,
+      accounts: z.array(PoolAccountSchema),
+      windows: z.array(PoolWindowTotalSchema),
+      recommended: AccountIdSchema.optional(),
+    }),
+  },
   'workspace.info': {
     params: z.object({ path: z.string() }),
     result: z.object({
@@ -1894,6 +1977,27 @@ export const methods = {
         .optional(),
     }),
   },
+  /**
+   * The sub-agents TasteCode started for a chat, newest first, including those
+   * whose rows sit on transcript pages the client has not loaded. Sub-agents
+   * an engine runs itself are not listed; their rows in the transcript are
+   * all there is of them.
+   */
+  'thread.subagents': {
+    params: z.object({ threadId: z.string().min(1) }),
+    result: z.object({ subagents: z.array(ThreadSubagentSchema) }),
+  },
+  /**
+   * A native sub-agent's read-only saved conversation; empty when unavailable. A long
+   * one is cut to its newest items, and `omitted` counts the older ones left out.
+   */
+  'thread.subagentTranscript': {
+    params: z.object({ threadId: z.string().min(1), itemId: z.string().min(1) }),
+    result: z.object({
+      items: z.array(ItemSchema),
+      omitted: z.number().int().positive().optional(),
+    }),
+  },
   'thread.diff': {
     params: z.object({ threadId: z.string() }),
     result: SessionDiffSchema,
@@ -2259,6 +2363,15 @@ export const methods = {
     params: SidebarSettingsSchema.partial(),
     result: SidebarSettingsSchema,
   },
+  /** Where an agent may start sub-agents; the server enforces it on every start. */
+  'subagents.settings': {
+    params: z.object({}),
+    result: SubagentSettingsSchema,
+  },
+  'subagents.updateSettings': {
+    params: z.object({ otherProviders: z.boolean() }),
+    result: SubagentSettingsSchema,
+  },
 } as const
 
 export type MethodName = keyof typeof methods
@@ -2363,6 +2476,18 @@ export const channels = {
   /** Events from an ephemeral Side chat stay out of the main conversation stream. */
   'sideChat.event': z.object({
     threadId: z.string(),
+    event: DomainEventSchema,
+    seq: z.number().optional(),
+  }),
+  /**
+   * Events of a sub-agent's hidden chat. They stay off `thread.event`, so the
+   * parent's stream, unread marks and sidebar never see them; a client that
+   * shows the sub-agent's work reconciles them by `seq` against
+   * `thread.history`, as it does for a Side chat.
+   */
+  'subagent.event': z.object({
+    threadId: z.string(),
+    parentThreadId: z.string(),
     event: DomainEventSchema,
     seq: z.number().optional(),
   }),

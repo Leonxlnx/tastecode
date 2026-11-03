@@ -637,6 +637,7 @@
 .shell__body[data-covered] .activity__pulse,
 .shell__body[data-covered] .activity--live .activity__label,
 .shell__body[data-covered] .subagent__pulse,
+.shell__body[data-covered] .subagent-avatar[data-running]::after,
 .shell__body[data-covered] .attachment-preview__loading,
 .shell__body[data-covered] .orb--stop.is-stopping .orb__stop-glyph,
 .shell__body[data-covered] .composer__design:focus-visible > span,

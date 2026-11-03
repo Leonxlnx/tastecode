@@ -123,9 +123,9 @@ function plainTurn(index: number, extra: DomainEvent[] = []): DomainEvent[] {
  * A long, untidy session: prompts recorded before their turn starts,
  * overlapping turns, delta-first items, items completed turns later, repeated
  * usage, diff and plan reports, approvals and questions left open or asked
- * again, reviews and thread errors. Rows go through both write paths.
+ * again, reviews and thread errors. By default, rows go through both write paths.
  */
-function writeSession(store: Store, seed: number): void {
+function writeSession(store: Store, seed: number, batchOnly = false): void {
   const next = mulberry32(seed)
   const chance = (probability: number) => next() < probability
   const count = (max: number) => Math.floor(next() * (max + 1))
@@ -135,7 +135,8 @@ function writeSession(store: Store, seed: number): void {
     batch = []
   }
   const write = (event: DomainEvent) => {
-    if (chance(0.5)) {
+    // Consume the same random value so batching keeps the generated events identical.
+    if (chance(0.5) || batchOnly) {
       batch.push({ threadId: THREAD, event })
       if (batch.length >= 16) flush()
     } else {
@@ -403,11 +404,12 @@ describe('the indexed newest history page', () => {
   it('stays exact across unreadable rows, restores and retired provider rows', () => {
     const location = fileLocation()
     const store = newStore(location)
-    writeSession(store, 7)
+    // Batch the file-backed fixture to avoid hundreds of individual SQLite commits.
+    writeSession(store, 7, true)
     const raw = new DatabaseSync(location)
     const insert = raw.prepare(`INSERT INTO events (thread_id, at, payload) VALUES (?, 0, ?)`)
     insert.run(THREAD, '{"type":')
-    writeSession(store, 8)
+    writeSession(store, 8, true)
     insert.run(THREAD, '{"type":"item.completed"}')
     raw.close()
     const check = () => {
@@ -424,7 +426,7 @@ describe('the indexed newest history page', () => {
     store.applyRestoreUndo(THREAD, token)
     check()
     store.saveRestoreUndo(THREAD, middle, 'checkpoint')
-    writeSession(store, 9)
+    writeSession(store, 9, true)
     check()
 
     const provider = (key: string, event: DomainEvent) => ({ key, event })

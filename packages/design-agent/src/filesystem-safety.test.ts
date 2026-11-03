@@ -135,4 +135,30 @@ describe('Design filesystem boundaries', () => {
     mkdirSync(path.join(root, ...Array.from({ length: 42 }, () => 'a')), { recursive: true })
     expect(() => workspaceEntries(root)).toThrow('exceeds 40 directory levels')
   })
+
+  it('lists linked worktrees without entering them, but scans submodules', () => {
+    const root = workspace()
+    const checkout = (relative: string, gitdir: string) => {
+      const directory = path.join(root, ...relative.split('/'))
+      mkdirSync(directory, { recursive: true })
+      writeFileSync(path.join(directory, '.git'), `gitdir: ${gitdir}\n`)
+      writeFileSync(path.join(directory, 'page.tsx'), 'export {}')
+    }
+    checkout('.worktrees/feature', path.join(root, '.git', 'worktrees', 'feature'))
+    checkout('.claude/worktrees/agent', `${root.replaceAll('\\', '/')}/.git/worktrees/agent/`)
+    checkout('libs/ui', '../../.git/modules/libs/ui')
+    expect(workspaceEntries(root).map(({ relative }) => relative)).toEqual([
+      '.claude/',
+      '.claude/worktrees/',
+      '.claude/worktrees/agent/',
+      '.claude/worktrees/agent/.git',
+      '.worktrees/',
+      '.worktrees/feature/',
+      '.worktrees/feature/.git',
+      'libs/',
+      'libs/ui/',
+      'libs/ui/.git',
+      'libs/ui/page.tsx',
+    ])
+  })
 })

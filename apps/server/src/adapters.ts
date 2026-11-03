@@ -143,6 +143,14 @@ export interface AgentSession {
    * idle runtime would lose it. Absent means the runtime's `resume` decides.
    */
   readonly resumable?: boolean
+  /**
+   * Work a turn started still runs in the background of the agent's process, and the
+   * agent starts a turn of its own when it ends. Releasing the idle runtime would end
+   * both. Absent: the agent runs nothing between turns.
+   */
+  hasBackgroundWork?(): boolean
+  /** The answer of `hasBackgroundWork` may have changed. */
+  onBackgroundWorkChanged?(listener: () => void): (() => void) | void
   /** The session cannot accept more work; its terminal events have already been emitted. */
   onDisconnected?(listener: () => void): () => void
   /** Provider reported or rotated the opaque identity needed after a restart. */
@@ -1018,6 +1026,11 @@ function claudeRuntime(
     onCommandsChanged: (listener) => {
       adapter.on('commandsChanged', listener)
       return () => adapter.off('commandsChanged', listener)
+    },
+    hasBackgroundWork: () => adapter.hasBackgroundWork(),
+    onBackgroundWorkChanged: (listener) => {
+      adapter.on('backgroundWorkChanged', listener)
+      return () => adapter.off('backgroundWorkChanged', listener)
     },
     onDisconnected: (listener) => adapter.onDisconnected(listener),
     dispose: () => adapter.dispose(),

@@ -445,16 +445,42 @@ function retainedTailStart(
   if (next.length === previous.length + 1) {
     if (previous.length > 0 && previous.at(-1) !== next[previous.length - 1]) return undefined
     const appendedIndex = previous.length
-    const appendedTurn = normalizedTurnId(next[appendedIndex]!, appendedIndex)
+    const appended = next[appendedIndex]!
+    const appendedTurn = normalizedTurnId(appended, appendedIndex)
     const previousTurn = projection.turns.at(-1)
-    return previousTurn?.turnId === appendedTurn ? previousTurn.index : appendedIndex
+    const start = previousTurn?.turnId === appendedTurn ? previousTurn.index : appendedIndex
+    return turnStartAcrossEchoes(previous, projection.turns, appended.turnId, start)
   }
 
   if (next.length !== previous.length || next.length === 0) return undefined
   const lastIndex = next.length - 1
   if (previous[lastIndex] === next[lastIndex]) return undefined
   if (lastIndex > 0 && previous[lastIndex - 1] !== next[lastIndex - 1]) return undefined
-  return projection.turns.at(-1)?.index ?? 0
+  const start = projection.turns.at(-1)?.index ?? 0
+  return turnStartAcrossEchoes(previous, projection.turns, next[lastIndex]!.turnId, start)
+}
+
+/**
+ * A prompt steered into a running turn shows as a local echo, without a turn
+ * id, until the server confirms it, so it can split that turn's rows into two
+ * boundaries. The changed tail is then projected from the turn's first row: a
+ * presentation built only from the rows after the echo would lose the turn's
+ * first response and its earlier work. Walks back over a mark or two.
+ */
+function turnStartAcrossEchoes(
+  previous: readonly Item[],
+  turns: readonly TurnMark[],
+  turnId: string,
+  start: number,
+): number {
+  if (turnId === '') return start
+  for (let index = turns.length - 1; index >= 0; index -= 1) {
+    const turn = turns[index]!
+    if (turn.index >= start) continue
+    if (turn.turnId === turnId) start = turn.index
+    else if (previous[turn.index]?.turnId !== '') break
+  }
+  return start
 }
 
 function normalizedTurnId(item: Item, index: number): string {
@@ -513,6 +539,29 @@ export function isStackedActivity(item: Item): boolean {
 
 export function isBlankReasoning(item: Item): boolean {
   return item.type === 'reasoning' && !item.text?.trim()
+}
+
+/**
+ * The index of a prompt the user steered into the running turn that the agent
+ * has not answered yet: the transcript ends on that prompt, after the turn's
+ * first response. Empty reasoning does not count as an answer because it shows
+ * nothing. Before the first response the working rail already sits under the
+ * last prompt, so there is nothing to mark.
+ *
+ * Walks back from the end only past empty reasoning rows, so it costs a step
+ * or two per structural update and nothing per streamed delta.
+ */
+export function pendingSteerIndex(
+  items: readonly Item[],
+  firstResponseIndex: number,
+): number | undefined {
+  for (let index = items.length - 1; index > firstResponseIndex; index -= 1) {
+    const item = items[index]
+    if (!item) return undefined
+    if (isBlankReasoning(item)) continue
+    return item.type === 'message' && item.role === 'user' ? index : undefined
+  }
+  return undefined
 }
 
 /**

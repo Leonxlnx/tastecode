@@ -19,7 +19,10 @@ export async function writeDefaultSkillsFixture(
   await mkdir(path.join(root, 'skills'), { recursive: true })
   await writeFile(
     path.join(root, 'skills.json'),
-    JSON.stringify({ skills: BUNDLED.map(([folder, summary]) => ({ folder, summary })) }),
+    JSON.stringify({
+      plugin: { name: 'tastecode' },
+      skills: BUNDLED.map(([folder, summary]) => ({ folder, summary })),
+    }),
   )
   for (const folder of present) {
     await mkdir(path.join(root, 'skills', folder), { recursive: true })

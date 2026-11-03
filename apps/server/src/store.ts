@@ -28,6 +28,7 @@ import type {
   BackgroundModelPreference,
   DiffDecision,
   DomainEvent,
+  Item,
   JsonValue,
   ProviderContextSettingsMap,
   ProviderId,
@@ -35,6 +36,7 @@ import type {
   ProviderRuntimeSettings,
   SidebarSettings,
   SessionSearchResult,
+  SubagentSettings,
   ThreadLifecycle,
   ThreadSettings,
   Usage,
@@ -49,6 +51,7 @@ import {
   type HistoryTailRows,
 } from './history-tail.js'
 import { DatabaseSync, type SQLInputValue, type StatementSync } from './sqlite.js'
+import { SubagentRunTable, subagentRunItem } from './subagent-runs.js'
 import {
   affectsInboxProjection,
   applyInboxProjectionEvent,
@@ -69,6 +72,7 @@ const PHONE_ACCESS_SETTING = 'phone-access'
 /** The model picker's hidden choice keys, as the desktop resolves them. */
 const HIDDEN_MODELS_SETTING = 'hidden-models'
 const PROVIDER_ROSTER_SETTING = 'provider-roster'
+const SUBAGENT_OTHER_PROVIDERS_SETTING = 'subagent-other-providers'
 const LIMIT_SNAPSHOT_SETTING = 'limit-snapshot'
 const AUTOMATIC_BACKGROUND_MODEL_PREFERENCE: BackgroundModelPreference = Object.freeze({
   mode: 'automatic',
@@ -145,6 +149,12 @@ export type StoredThread = {
   ephemeral: boolean
   /** Main conversation captured when an ephemeral Side chat was created. */
   parentThreadId?: string | undefined
+  /**
+   * The chat that started this one as its sub-agent. Such a chat is stored as
+   * `ephemeral`, so every chat list, lifecycle, inbox and search leaves it
+   * out, but unlike a Side chat it survives a restart and goes with its owner.
+   */
+  ownerThreadId?: string | undefined
   /** The earlier chat this one carries on, such as on another account after a usage limit. */
   continuedFrom?: string | undefined
   /**
@@ -295,8 +305,8 @@ const USAGE_INDEX_VERSION = 'usage_events_v1'
 const INBOX_INDEX_VERSION = 'inbox_events_v2'
 const USER_SUBMISSION_INDEX_VERSION = 'user_submission_items_v1'
 const TURN_DIFF_INDEX_VERSION = 'turn_diff_events_v1'
-// v2 reopens requests asked again after their answer; the rebuild settles them.
-const RECOVERY_STATE_VERSION = 'recovery_lifecycles_v2'
+// v3 retains running sub-agents after their launcher completed, including old logs.
+const RECOVERY_STATE_VERSION = 'recovery_lifecycles_v3'
 const BOUNDED_REPLAY_SNAPSHOTS_VERSION = 'bounded_replay_snapshots_v1'
 const CHRONOLOGICAL_REPLAY_SNAPSHOTS_VERSION = 'chronological_replay_snapshots_v1'
 // Every row this build writes lands in the history index in the same step. A
@@ -350,6 +360,13 @@ CREATE INDEX IF NOT EXISTS threads_inactive
   WHERE closed_at IS NULL AND lifecycle_state = 'active' AND ephemeral = 0 AND keep_active = 0;
 `
 
+/** Runs after the column migration, which an older database needs first. */
+const OWNED_THREAD_INDEX = `
+CREATE INDEX IF NOT EXISTS threads_by_owner
+  ON threads (owner_thread_id)
+  WHERE owner_thread_id IS NOT NULL;
+`
+
 const SESSION_SEARCH_TABLE = `
 CREATE VIRTUAL TABLE IF NOT EXISTS session_search USING fts5 (
   thread_id UNINDEXED,
@@ -394,6 +411,7 @@ CREATE TABLE IF NOT EXISTS threads (
   last_active_at   INTEGER NOT NULL,
   ephemeral        INTEGER NOT NULL DEFAULT 0,
   parent_thread_id TEXT,
+  owner_thread_id  TEXT,
   continued_from   TEXT,
   continue_context_pending INTEGER NOT NULL DEFAULT 0,
   continued_changes       TEXT,
@@ -687,6 +705,7 @@ const ADDED_COLUMNS: Array<{ table: string; column: string; definition: string }
   { table: 'threads', column: 'last_active_at', definition: 'INTEGER NOT NULL DEFAULT 0' },
   { table: 'threads', column: 'ephemeral', definition: 'INTEGER NOT NULL DEFAULT 0' },
   { table: 'threads', column: 'parent_thread_id', definition: 'TEXT' },
+  { table: 'threads', column: 'owner_thread_id', definition: 'TEXT' },
   { table: 'threads', column: 'restore_context_pending', definition: 'INTEGER NOT NULL DEFAULT 0' },
   { table: 'threads', column: 'provider_session_id', definition: 'TEXT' },
   { table: 'threads', column: 'connection_id', definition: 'TEXT' },
@@ -751,6 +770,7 @@ type ThreadRow = {
   last_active_at: SqliteInteger
   ephemeral: SqliteInteger
   parent_thread_id: string | null
+  owner_thread_id: string | null
   continued_from: string | null
   continued_changes: string | null
 }
@@ -925,6 +945,7 @@ export class Store {
   #deleteThreadInboxEvents: StatementSync
   #insertUserSubmission: StatementSync
   #hasUserSubmission: StatementSync
+  #itemSnapshot: StatementSync
   #insertTurnDiffEvent: StatementSync
   #readTurnDiff: StatementSync
   #upsertRecoveryStart: StatementSync
@@ -1021,6 +1042,8 @@ export class Store {
   #searchRevision = 0
   /** Keeps the streamed-event path from querying SQLite just to skip search indexing. */
   #ephemeralThreads = new Set<string>()
+  /** Sub-agent runs: what each chat started, and where its result stands. */
+  readonly subagents: SubagentRunTable
   /**
    * The item and turn of each thread's last indexed delta. A run of deltas
    * names the same keys, so the history index is written once per run.
@@ -1097,6 +1120,16 @@ export class Store {
     )
     this.#hasUserSubmission = this.#db.prepare(
       `SELECT 1 FROM user_submission_items WHERE thread_id = ? AND item_id = ?`,
+    )
+    // Rows from the item's first one on (`seq >= ?`), and only those whose text holds its
+    // JSON-quoted id (`instr`), are parsed as JSON at all.
+    this.#itemSnapshot = this.#db.prepare(
+      `SELECT e.payload FROM events e
+       LEFT JOIN provider_history_events p ON p.event_seq = e.seq
+       WHERE e.thread_id = ? AND e.seq >= ? AND COALESCE(p.active, 1) = 1
+         AND instr(e.payload, ?) > 0
+         AND json_extract(CASE WHEN json_valid(e.payload) THEN e.payload END, '$.item.id') = ?
+       ORDER BY e.seq DESC LIMIT 1`,
     )
     this.#insertTurnDiffEvent = this.#db.prepare(
       `INSERT OR REPLACE INTO turn_diff_events (event_seq, thread_id, turn_id)
@@ -1194,7 +1227,13 @@ export class Store {
        FROM recovery_lifecycles AS recovery
        INNER JOIN threads ON threads.id = recovery.thread_id
        LEFT JOIN recovery_errors AS errors ON errors.thread_id = recovery.thread_id
-       WHERE threads.closed_at IS NULL
+       WHERE (threads.closed_at IS NULL OR (
+         recovery.event_type IN ('item.started', 'item.completed')
+         AND json_extract(
+           CASE WHEN json_valid(recovery.payload) THEN recovery.payload END,
+           '$.item.subagent.state'
+         ) = 'running'
+       ))
          AND recovery.started_seq IS NOT NULL
          AND recovery.terminal_seq IS NULL
          AND recovery.payload IS NOT NULL
@@ -1281,6 +1320,8 @@ export class Store {
     )
     this.#migrate()
     this.#db.exec(LIFECYCLE_INDEXES)
+    this.#db.exec(OWNED_THREAD_INDEX)
+    this.subagents = new SubagentRunTable(this.#db)
     this.#insertProject = this.#db.prepare(
       `INSERT INTO projects (path, name, pinned, created_at) VALUES (?, ?, 0, ?)
        ON CONFLICT (path) DO NOTHING`,
@@ -1291,8 +1332,8 @@ export class Store {
         (id, project_path, provider, agent, connection_id, account_id, provider_session_id, title,
           created_at, worktree_path, worktree_branch,
           lifecycle_state, keep_active, unread, last_active_at, ephemeral, parent_thread_id,
-          continued_from, continue_context_pending, continued_changes)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 0, 0, ?, ?, ?, ?, ?, ?)`,
+          owner_thread_id, continued_from, continue_context_pending, continued_changes)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 0, 0, ?, ?, ?, ?, ?, ?, ?)`,
     )
     this.#listProjects = this.#db.prepare(`SELECT * FROM projects ORDER BY created_at`)
     this.#listProjectThreads = this.#db.prepare(
@@ -1446,6 +1487,11 @@ export class Store {
     )
     this.#lastSequence = this.#db.prepare(`SELECT MAX(seq) AS seq FROM events WHERE thread_id = ?`)
     this.#purgeEphemeralThreads()
+    // What is still ephemeral now belongs to a sub-agent, and stays out of search.
+    for (const { id } of sqliteRows<{ id: string }>(
+      this.#db.prepare(`SELECT id FROM threads WHERE ephemeral = 1`),
+    ))
+      this.#ephemeralThreads.add(id)
     this.#recoverQueuedTurnClaims()
     const completedMigrations = new Set(
       sqliteRows<MigrationRow>(this.#db.prepare(`SELECT name FROM schema_migrations`)).map(
@@ -1537,29 +1583,34 @@ export class Store {
     this.#db.exec(`UPDATE threads SET last_active_at = created_at WHERE last_active_at = 0`)
   }
 
-  /** Side chats intentionally do not survive an app restart or a crashed renderer. */
+  /**
+   * Side chats intentionally do not survive an app restart or a crashed
+   * renderer. Sub-agent chats do: their owner's transcript points at them.
+   */
   #purgeEphemeralThreads(): void {
-    const exists = this.#db.prepare(`SELECT 1 FROM threads WHERE ephemeral = 1 LIMIT 1`).get()
+    const exists = this.#db
+      .prepare(`SELECT 1 FROM threads WHERE ephemeral = 1 AND owner_thread_id IS NULL LIMIT 1`)
+      .get()
     if (!exists) return
     this.#transaction(() => {
       this.#db.exec(`
         DELETE FROM session_search
-        WHERE thread_id IN (SELECT id FROM threads WHERE ephemeral = 1);
+        WHERE thread_id IN (SELECT id FROM threads WHERE ephemeral = 1 AND owner_thread_id IS NULL);
         DELETE FROM events
-        WHERE thread_id IN (SELECT id FROM threads WHERE ephemeral = 1);
+        WHERE thread_id IN (SELECT id FROM threads WHERE ephemeral = 1 AND owner_thread_id IS NULL);
         DELETE FROM checkpoints
-        WHERE thread_id IN (SELECT id FROM threads WHERE ephemeral = 1);
+        WHERE thread_id IN (SELECT id FROM threads WHERE ephemeral = 1 AND owner_thread_id IS NULL);
         DELETE FROM restore_undos
-        WHERE thread_id IN (SELECT id FROM threads WHERE ephemeral = 1);
+        WHERE thread_id IN (SELECT id FROM threads WHERE ephemeral = 1 AND owner_thread_id IS NULL);
         DELETE FROM diff_decisions
-        WHERE thread_id IN (SELECT id FROM threads WHERE ephemeral = 1);
+        WHERE thread_id IN (SELECT id FROM threads WHERE ephemeral = 1 AND owner_thread_id IS NULL);
         DELETE FROM design_runs
-        WHERE thread_id IN (SELECT id FROM threads WHERE ephemeral = 1);
+        WHERE thread_id IN (SELECT id FROM threads WHERE ephemeral = 1 AND owner_thread_id IS NULL);
         DELETE FROM history_keys
-        WHERE thread_id IN (SELECT id FROM threads WHERE ephemeral = 1);
+        WHERE thread_id IN (SELECT id FROM threads WHERE ephemeral = 1 AND owner_thread_id IS NULL);
         DELETE FROM history_state_events
-        WHERE thread_id IN (SELECT id FROM threads WHERE ephemeral = 1);
-        DELETE FROM threads WHERE ephemeral = 1;
+        WHERE thread_id IN (SELECT id FROM threads WHERE ephemeral = 1 AND owner_thread_id IS NULL);
+        DELETE FROM threads WHERE ephemeral = 1 AND owner_thread_id IS NULL;
       `)
     })
   }
@@ -1675,6 +1726,7 @@ export class Store {
       stored.createdAt,
       ephemeral ? 1 : 0,
       stored.parentThreadId ?? null,
+      stored.ownerThreadId ?? null,
       stored.continuedFrom ?? null,
       // The earlier conversation goes with the first prompt; see threadNeedsContinueContext.
       stored.continuedFrom === undefined ? 0 : 1,
@@ -2525,6 +2577,20 @@ export class Store {
     this.#writeAppSetting.run(HIDDEN_MODELS_SETTING, JSON.stringify(keys))
   }
 
+  /** Whether sub-agents may use other providers; absent until the user answered. */
+  subagentSettings(): SubagentSettings {
+    const value = sqliteRow<StringValueRow>(
+      this.#readAppSetting,
+      SUBAGENT_OTHER_PROVIDERS_SETTING,
+    )?.value
+    return value === 'true' || value === 'false' ? { otherProviders: value === 'true' } : {}
+  }
+
+  setSubagentOtherProviders(allowed: boolean): SubagentSettings {
+    this.#writeAppSetting.run(SUBAGENT_OTHER_PROVIDERS_SETTING, String(allowed))
+    return { otherProviders: allowed }
+  }
+
   /** The desktop's provider roster; null until a desktop saved one. */
   providerRoster(): string[] | null {
     const value = sqliteRow<StringValueRow>(this.#readAppSetting, PROVIDER_ROSTER_SETTING)?.value
@@ -2766,6 +2832,14 @@ export class Store {
     this.#pendingSidebarThreads = updated
   }
 
+  /** The sub-agent chats a chat started, oldest first. */
+  ownedThreadIds(ownerThreadId: string): string[] {
+    return sqliteRows<{ id: string }>(
+      this.#db.prepare(`SELECT id FROM threads WHERE owner_thread_id = ? ORDER BY created_at`),
+      ownerThreadId,
+    ).map((row) => row.id)
+  }
+
   /**
    * Marks a session finished without discarding it. Closing a session ends the
    * process; it does not mean the user wanted the transcript gone.
@@ -2799,6 +2873,8 @@ export class Store {
     if (thread?.worktreePath) {
       throw new Error('discard the isolated session checkout before deleting it')
     }
+    // A chat's sub-agents go with it.
+    const ids = [id, ...this.ownedThreadIds(id)]
     // One transaction: a failure partway must not leave orphaned rows with
     // no owner and no path to ever clean them up.
     this.#db.exec('BEGIN IMMEDIATE')
@@ -2816,21 +2892,26 @@ export class Store {
           )
           .run(thread.provider, session, id, Date.now(), thread.provider, id, session)
       }
-      this.#db.prepare(`DELETE FROM session_search WHERE thread_id = ?`).run(id)
-      this.#db.prepare(`DELETE FROM events WHERE thread_id = ?`).run(id)
-      this.#db.prepare(`DELETE FROM checkpoints WHERE thread_id = ?`).run(id)
-      this.#db.prepare(`DELETE FROM restore_undos WHERE thread_id = ?`).run(id)
-      this.#db.prepare(`DELETE FROM diff_decisions WHERE thread_id = ?`).run(id)
-      this.#db.prepare(`DELETE FROM design_runs WHERE thread_id = ?`).run(id)
-      this.#db.prepare(`DELETE FROM history_keys WHERE thread_id = ?`).run(id)
-      this.#db.prepare(`DELETE FROM history_state_events WHERE thread_id = ?`).run(id)
-      this.#db.prepare(`DELETE FROM threads WHERE id = ?`).run(id)
+      for (const threadId of ids) {
+        this.#db.prepare(`DELETE FROM session_search WHERE thread_id = ?`).run(threadId)
+        this.#db.prepare(`DELETE FROM events WHERE thread_id = ?`).run(threadId)
+        this.#db.prepare(`DELETE FROM checkpoints WHERE thread_id = ?`).run(threadId)
+        this.#db.prepare(`DELETE FROM restore_undos WHERE thread_id = ?`).run(threadId)
+        this.#db.prepare(`DELETE FROM diff_decisions WHERE thread_id = ?`).run(threadId)
+        this.#db.prepare(`DELETE FROM design_runs WHERE thread_id = ?`).run(threadId)
+        this.#db.prepare(`DELETE FROM history_keys WHERE thread_id = ?`).run(threadId)
+        this.#db.prepare(`DELETE FROM history_state_events WHERE thread_id = ?`).run(threadId)
+        this.subagents.deleteFor(threadId)
+        this.#db.prepare(`DELETE FROM threads WHERE id = ?`).run(threadId)
+      }
       this.#db.exec('COMMIT')
-      this.#historyDeltaRuns.delete(id)
       this.#searchRevision += 1
-      this.#ephemeralThreads.delete(id)
-      this.#deleteCachedReplaySnapshot(id)
-      this.#cacheThread(id, undefined)
+      for (const threadId of ids) {
+        this.#historyDeltaRuns.delete(threadId)
+        this.#ephemeralThreads.delete(threadId)
+        this.#deleteCachedReplaySnapshot(threadId)
+        this.#cacheThread(threadId, undefined)
+      }
       this.#invalidateSidebarThreads()
     } catch (error) {
       this.#db.exec('ROLLBACK')
@@ -2889,6 +2970,7 @@ export class Store {
         ]) {
           this.#db.prepare(`DELETE FROM ${table} WHERE thread_id = ?`).run(id)
         }
+        this.subagents.deleteFor(id)
         this.#db.prepare('DELETE FROM threads WHERE id = ?').run(id)
       }
     })
@@ -3302,7 +3384,8 @@ export class Store {
       states.set(row.thread_id, state)
 
       if (event.type === 'turn.started') state.openTurns.add(event.turn.id)
-      if (event.type === 'item.started') state.activeItems.set(event.item.id, event.item)
+      if (event.type === 'item.started' || event.type === 'item.completed')
+        state.activeItems.set(event.item.id, event.item)
       if (event.type === 'approval.requested') state.approvals.add(event.request.id)
       if (event.type === 'user_input.requested') {
         if (row.resumable) state.hasResumableInput = true
@@ -3348,6 +3431,14 @@ export class Store {
         this.touchThread(threadId, true, at)
         recovered.push(threadId)
       }
+      // Sub-agents died with that process too; their parents' rows say so.
+      for (const run of this.subagents.interruptUnfinished(at)) {
+        this.#appendEvent(
+          run.parentThreadId,
+          { type: 'item.completed', item: subagentRunItem(run) },
+          at,
+        )
+      }
       this.#db.exec('COMMIT')
       return recovered
     } catch (error) {
@@ -3368,11 +3459,18 @@ export class Store {
    * Restart recovery settles these for a dead process; a runtime force-stopped
    * while the server keeps running needs the same, or its turn and requests
    * stay open in the log until the next restart. The caller records them.
+   *
+   * `launchedSubagents: false` leaves out sub-agents whose launching call
+   * already completed: they run in the background, past the turn that started
+   * them, while their runtime lives.
    */
-  interruptedLifecycleEvents(threadId: string): DomainEvent[] {
+  interruptedLifecycleEvents(
+    threadId: string,
+    { launchedSubagents = true }: { launchedSubagents?: boolean } = {},
+  ): DomainEvent[] {
     const rows = sqliteRows<InterruptedThreadRow>(this.#readInterruptedThread, threadId)
     const state = this.#interruptedThreadStates(rows).get(threadId)
-    return state ? interruptedLifecycleEvents(state, Date.now()) : []
+    return state ? interruptedLifecycleEvents(state, Date.now(), launchedSubagents) : []
   }
 
   /** Returns the sequence number, which is what a client resumes from. */
@@ -3473,6 +3571,31 @@ export class Store {
 
   hasUserSubmission(threadId: string, itemId: string): boolean {
     return this.#hasUserSubmission.get(threadId, itemId) !== undefined
+  }
+
+  /**
+   * Latest retained item boundary, scoped to its owning thread. A sub-agent's detail asks
+   * for it every few seconds, so the history index bounds the rows read: none when it
+   * covers the thread and never saw the item, else those from the item's first row on.
+   */
+  itemSnapshot(threadId: string, itemId: string): Item | undefined {
+    const key = `i:${itemId}`
+    const firstSeq = this.historyIndexed(threadId)
+      ? this.historyKeyFirstSeqs(threadId, [key]).get(key)
+      : 0
+    if (firstSeq === undefined) return undefined
+    const row = sqliteRow<{ payload: string }>(
+      this.#itemSnapshot,
+      threadId,
+      firstSeq,
+      JSON.stringify(itemId),
+      itemId,
+    )
+    if (!row) return undefined
+    const event = parseDomainEvent(row.payload, `item snapshot for thread ${threadId}`)
+    return event?.type === 'item.started' || event?.type === 'item.completed'
+      ? event.item
+      : undefined
   }
 
   #insertEventRow(threadId: string, at: number, payload: string): number {
@@ -3984,6 +4107,7 @@ export class Store {
   }
 
   #indexEvent(seq: number, threadId: string, at: number, event: DomainEvent): void {
+    if (this.#ephemeralThreads.has(threadId)) return
     const entry = searchableEntry(event)
     if (!entry) return
     this.#indexSearchEntry(seq, threadId, at, entry)
@@ -4846,6 +4970,14 @@ function recoveryMutation(event: DomainEvent): RecoveryMutation | undefined {
         lifecycleKey: `item:${event.item.id}`,
       }
     case 'item.completed':
+      // A background agent can outlive both its launcher and its parent turn.
+      if (event.item.subagent?.state === 'running')
+        return {
+          kind: 'start',
+          eventType: event.type,
+          lifecycleKey: `item:${event.item.id}`,
+          reopens: true,
+        }
       return { kind: 'terminal', lifecycleKey: `item:${event.item.id}` }
     // A request id asked again after its answer is a new question (a retried
     // command reuses its id), not a late echo like an item started after it
@@ -4884,13 +5016,27 @@ function recoveryMutation(event: DomainEvent): RecoveryMutation | undefined {
 }
 
 /** The terminal events that settle every lifecycle a dead runtime left open. */
-function interruptedLifecycleEvents(state: InterruptedThreadState, at: number): DomainEvent[] {
+function interruptedLifecycleEvents(
+  state: InterruptedThreadState,
+  at: number,
+  launchedSubagents = true,
+): DomainEvent[] {
   const events: DomainEvent[] = []
   for (const item of state.activeItems.values()) {
+    // Only a sub-agent's row stays open after its launching call completed.
+    if (!launchedSubagents && item.subagent && item.status !== 'started') continue
     // Omitting text preserves every persisted delta when the renderer
     // folds this terminal item over the streamed version.
     const { text: _streamedText, ...started } = item
-    events.push({ type: 'item.completed', item: { ...started, status: 'failed' } })
+    events.push({
+      type: 'item.completed',
+      item: {
+        ...(item.status === 'started' ? { ...started, status: 'failed' as const } : item),
+        ...(item.subagent?.state === 'running'
+          ? { subagent: { ...item.subagent, state: 'interrupted' as const } }
+          : {}),
+      },
+    })
   }
   for (const id of state.approvals) events.push({ type: 'approval.resolved', id })
   for (const id of state.userInputs) events.push({ type: 'user_input.resolved', id })
@@ -5492,6 +5638,7 @@ function toThread(row: ThreadRow): StoredThread | undefined {
     lastActiveAt: Number(row.last_active_at),
     ephemeral: row.ephemeral === 1,
     ...(row.parent_thread_id === null ? {} : { parentThreadId: row.parent_thread_id }),
+    ...(row.owner_thread_id === null ? {} : { ownerThreadId: row.owner_thread_id }),
     ...(row.continued_from === null ? {} : { continuedFrom: row.continued_from }),
     ...(row.continued_changes === 'carried' || row.continued_changes === 'kept'
       ? { continuedChanges: row.continued_changes }

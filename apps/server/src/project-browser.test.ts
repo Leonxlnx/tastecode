@@ -55,7 +55,12 @@ describe('project folder browser', () => {
     const root = home()
     const outside = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), 'browse-outside-')))
     made.push(outside)
-    symlinkSync(outside, path.join(root, 'escape'), 'dir')
+    // A directory symlink needs Developer Mode on Windows; a junction does not.
+    symlinkSync(
+      outside,
+      path.join(root, 'escape'),
+      process.platform === 'win32' ? 'junction' : 'dir',
+    )
     const result = await browseFolders(undefined, { home: root, platform: 'linux' })
     expect(result.folders.map((folder) => folder.name)).not.toContain('escape')
     await expect(

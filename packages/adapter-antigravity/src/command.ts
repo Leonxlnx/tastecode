@@ -35,6 +35,11 @@ export type AgySpawnOptions = {
   env: NodeJS.ProcessEnv
   stdio: ['pipe', 'pipe', 'pipe']
   windowsHide: boolean
+  /**
+   * POSIX: a turn's agy exits with its answer, so its process group stays
+   * until the adapter is disposed and a server the turn started keeps running.
+   */
+  keepGroupAfterExit?: boolean
 }
 
 export type AgySpawn = (

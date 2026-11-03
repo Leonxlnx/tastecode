@@ -77,8 +77,36 @@ export const SubagentSchema = z.object({
   lastTool: z.string().min(1).optional(),
   /** The provider's short account of progress or of the result. */
   summary: z.string().optional(),
+  /** Provider-owned reference for reading a native sub-agent's saved conversation. */
+  transcriptId: z.string().min(1).optional(),
+  /**
+   * The hidden TasteCode chat this sub-agent runs in, when TasteCode started it
+   * on a provider of its own choosing. Its transcript is read with
+   * `thread.history` and followed on `subagent.event`. Absent for a sub-agent
+   * the engine runs itself; an optional transcriptId names its provider-owned history.
+   */
+  threadId: z.string().min(1).optional(),
+  /** Where a TasteCode sub-agent runs, when that differs from its parent. */
+  provider: ProviderIdSchema.optional(),
+  /** The ACP agent or custom harness, when the provider runs several. */
+  agent: z.string().min(1).optional(),
+  /** The model it runs on, as the provider names it. */
+  model: z.string().min(1).optional(),
+  /** It waits for the user: an approval, or an answer to a question. */
+  attention: z.enum(['approval', 'input']).optional(),
 })
 export type Subagent = z.infer<typeof SubagentSchema>
+
+/**
+ * Whether a chat's agent may start sub-agents on providers other than the
+ * chat's own. `otherProviders` is absent until the user answers, and absent
+ * counts as not allowed: then only a sub-agent on another provider that the
+ * user's own prompt asks for may start.
+ */
+export const SubagentSettingsSchema = z.object({
+  otherProviders: z.boolean().optional(),
+})
+export type SubagentSettings = z.infer<typeof SubagentSettingsSchema>
 
 /**
  * The chat moved to another provider, agent or account; the turns after it run
@@ -384,6 +412,8 @@ export const CapabilitiesSchema = z.object({
    * one runs. Absent: subagents appear only as plain tool calls.
    */
   subagents: z.enum(['summary', 'progress']).optional(),
+  /** Can read a native sub-agent's saved conversation without starting a session. */
+  subagentTranscript: z.boolean().optional(),
   /**
    * The engine runs signed in as any of several accounts, each with its own
    * config folder, so a user can add accounts beyond the default one.

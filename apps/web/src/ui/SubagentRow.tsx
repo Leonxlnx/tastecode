@@ -204,15 +204,26 @@ export function SubagentGroup({ items }: { items: Item[] }) {
 
 /**
  * "Running · 3 tools · 5.2k tokens · 41s", "Failed · 2 tools". CSS draws the dots between
- * parts, so a narrow chat can drop the token count without leaving one behind.
+ * parts, so a narrow chat can drop the token count without leaving one behind. A list that
+ * already groups the running ones passes quietRunning to leave the word out.
  */
-function SubagentStatus({ subagent, startedAt }: { subagent: Subagent; startedAt: number }) {
+export function SubagentStatus({
+  subagent,
+  startedAt,
+  quietRunning = false,
+}: {
+  subagent: Subagent
+  startedAt: number
+  quietRunning?: boolean
+}) {
   const state =
     subagent.state === 'running' ? (
-      <span className="subagent__part subagent__state">
-        <span className="subagent__pulse" aria-hidden />
-        Running
-      </span>
+      quietRunning ? null : (
+        <span className="subagent__part subagent__state">
+          <span className="subagent__pulse" aria-hidden />
+          Running
+        </span>
+      )
     ) : subagent.state === 'failed' ? (
       <span className="subagent__part subagent__state is-failed">Failed</span>
     ) : subagent.state === 'interrupted' ? (

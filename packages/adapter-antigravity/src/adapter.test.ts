@@ -2,10 +2,12 @@ import path from 'node:path'
 import { ChildProcess } from 'node:child_process'
 import { PassThrough } from 'node:stream'
 import type { DomainEvent } from '@harness/contracts'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   AntigravityAdapter,
   ANTIGRAVITY_CAPABILITIES,
+  ANTIGRAVITY_RESULT_EXIT_GRACE_MS,
+  antigravityBackgroundNote,
   antigravityImagePrompt,
   antigravityTurnArgs,
   parseAntigravityModels,
@@ -21,6 +23,33 @@ const CAPTURED_FRAMES = [
   '{"event":"step_update","step_update":{"conversation_id":"9f1827a7-3506-4a85-add9-63182b9917a4","step_index":3,"state":"DONE","step_type":"checkpoint"}}',
   '{"event":"result","result":{"conversation_id":"9f1827a7-3506-4a85-add9-63182b9917a4","status":"SUCCESS","response":"MONDLICHT\\n","num_turns":1,"usage":{"input_tokens":26368,"output_tokens":6,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":26374}}}',
 ]
+
+/**
+ * The result agy 1.4.7 prints when the conversation holds an error step, as
+ * one that failed in an earlier turn does: CAPTURED_FRAMES' result with the
+ * fields steps.JSONOutput fills in then (json tags read from the agy.exe
+ * binary): status ERROR and that step's message in `error`. The status is
+ * the same whether this turn finished (exit 0) or failed (exit 3).
+ */
+const ERROR_RESULT_FRAME = JSON.stringify({
+  event: 'result',
+  result: {
+    conversation_id: '9f1827a7-3506-4a85-add9-63182b9917a4',
+    status: 'ERROR',
+    response: 'MONDLICHT\n',
+    error: 'UNAUTHENTICATED (code 401): Request had invalid authentication credentials.',
+    duration_seconds: 4.2,
+    num_turns: 1,
+    usage: {
+      input_tokens: 26368,
+      output_tokens: 6,
+      thinking_tokens: 0,
+      cache_read_tokens: 0,
+      total_tokens: 26374,
+    },
+  },
+})
+const ERROR_RESULT_TURN = [...CAPTURED_FRAMES.slice(0, -1), ERROR_RESULT_FRAME]
 
 class FakeChild extends ChildProcess {
   override stdout = new PassThrough()
@@ -105,6 +134,107 @@ describe('Antigravity turn invocation', () => {
       '--conversation',
       '9f1827a7-3506-4a85-add9-63182b9917a4',
     ])
+  })
+
+  it('completes a turn agy finished although its result says ERROR', async () => {
+    const child = new FakeChild()
+    const adapter = new AntigravityAdapter({ spawn: fakeSpawn({}, child) })
+    const events: DomainEvent[] = []
+    const logs: string[] = []
+    adapter.on('event', (event) => events.push(event))
+    adapter.on('log', (line) => logs.push(line))
+    const thread = await adapter.startThread('C:\\repo')
+    const turnId = await adapter.sendTurn(thread.id, 'Say only the word MONDLICHT.')
+    for (const frame of ERROR_RESULT_TURN) child.stdout.write(`${frame}\n`)
+    child.stdout.end()
+    await new Promise((resolve) => setImmediate(resolve))
+
+    // The answer is in, but the verdict is agy's exit code.
+    expect(events.find((event) => event.type === 'item.completed')).toMatchObject({
+      item: { id: `${turnId}-message`, status: 'completed', text: 'MONDLICHT' },
+    })
+    expect(events.some((event) => event.type === 'turn.completed')).toBe(false)
+
+    child.emit('exit', 0, null)
+    child.emit('close', 0, null)
+    await new Promise((resolve) => setImmediate(resolve))
+
+    expect(events.filter((event) => event.type === 'turn.completed')).toEqual([
+      { type: 'turn.completed', turnId, status: 'completed' },
+    ])
+    expect(events.some((event) => event.type === 'thread.error')).toBe(false)
+    expect(logs.some((line) => line.includes('UNAUTHENTICATED (code 401)'))).toBe(true)
+  })
+
+  it('still fails a turn that agy exits non-zero after an ERROR result', async () => {
+    const child = new FakeChild()
+    const adapter = new AntigravityAdapter({ spawn: fakeSpawn({}, child) })
+    const events: DomainEvent[] = []
+    adapter.on('event', (event) => events.push(event))
+    const thread = await adapter.startThread('C:\\repo')
+    const turnId = await adapter.sendTurn(thread.id, 'Hello')
+    for (const frame of ERROR_RESULT_TURN) child.stdout.write(`${frame}\n`)
+    child.stdout.end()
+    await new Promise((resolve) => setImmediate(resolve))
+    child.emit('exit', 3, null)
+    child.emit('close', 3, null)
+    await new Promise((resolve) => setImmediate(resolve))
+
+    expect(events.filter((event) => event.type === 'thread.error')).toEqual([
+      {
+        type: 'thread.error',
+        threadId: thread.id,
+        message: 'Antigravity finished with status ERROR',
+      },
+    ])
+    expect(events.filter((event) => event.type === 'turn.completed')).toEqual([
+      { type: 'turn.completed', turnId, status: 'failed' },
+    ])
+  })
+
+  it('judges an ERROR result on the frame alone when agy does not exit', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      const child = new FakeChild()
+      const adapter = new AntigravityAdapter({ spawn: fakeSpawn({}, child) })
+      const events: DomainEvent[] = []
+      adapter.on('event', (event) => events.push(event))
+      const thread = await adapter.startThread('C:\\repo')
+      const turnId = await adapter.sendTurn(thread.id, 'Hello')
+      for (const frame of ERROR_RESULT_TURN) child.stdout.write(`${frame}\n`)
+      await new Promise((resolve) => setImmediate(resolve))
+      expect(events.some((event) => event.type === 'turn.completed')).toBe(false)
+
+      vi.advanceTimersByTime(ANTIGRAVITY_RESULT_EXIT_GRACE_MS)
+      child.emit('exit', 0, null)
+      child.emit('close', 0, null)
+
+      expect(events.filter((event) => event.type === 'thread.error')).toHaveLength(1)
+      expect(events.filter((event) => event.type === 'turn.completed')).toEqual([
+        { type: 'turn.completed', turnId, status: 'failed' },
+      ])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('completes a turn stopped while agy exits after an ERROR result as interrupted', async () => {
+    const child = new FakeChild()
+    const adapter = new AntigravityAdapter({ spawn: fakeSpawn({}, child) })
+    const events: DomainEvent[] = []
+    adapter.on('event', (event) => events.push(event))
+    const thread = await adapter.startThread('C:\\repo')
+    const turnId = await adapter.sendTurn(thread.id, 'Hello')
+    for (const frame of ERROR_RESULT_TURN) child.stdout.write(`${frame}\n`)
+    await new Promise((resolve) => setImmediate(resolve))
+
+    await adapter.interrupt()
+    await new Promise((resolve) => setImmediate(resolve))
+
+    expect(events.filter((event) => event.type === 'turn.completed')).toEqual([
+      { type: 'turn.completed', turnId, status: 'interrupted' },
+    ])
+    expect(events.some((event) => event.type === 'thread.error')).toBe(false)
   })
 
   it('reports a dead CLI instead of hanging silently', async () => {
@@ -255,7 +385,9 @@ describe('Antigravity turn invocation', () => {
     const image = 'C:\\Temp\\TasteCode\\attachments\\shot.png'
     await adapter.sendTurn(thread.id, 'What is wrong here?', [image])
     const prompt = record.args?.[record.args.indexOf('-p') + 1]
-    expect(prompt?.startsWith('What is wrong here?\n\n<attached-images>')).toBe(true)
+    // The first prompt also carries the session note in front of the request.
+    expect(prompt?.endsWith(antigravityImagePrompt('What is wrong here?', [image]))).toBe(true)
+    expect(prompt).toContain('What is wrong here?\n\n<attached-images>')
     expect(prompt).toContain(`- ${image}`)
     expect(record.args?.slice(record.args.indexOf('--add-dir'))).toEqual([
       '--add-dir',
@@ -279,6 +411,55 @@ describe('Antigravity turn invocation', () => {
     expect(prompt).toContain('<system-instructions>')
     expect(prompt).toContain('No filler.')
     expect(prompt).toContain('Hello there')
+  })
+
+  it('tells agy how to leave a server running, even without session instructions', async () => {
+    const record: SpawnRecord = {}
+    const adapter = new AntigravityAdapter({ spawn: fakeSpawn(record, new FakeChild()) })
+    const thread = await adapter.startThread('C:\\repo')
+    await adapter.sendTurn(thread.id, 'Start the site')
+    const prompt = record.args?.[record.args.indexOf('-p') + 1]
+    expect(prompt).toContain('<system-instructions>')
+    expect(prompt).toContain(antigravityBackgroundNote('C:\\repo'))
+    expect(prompt).toContain('Start the site')
+  })
+
+  it('starts a lasting server outside agy on each platform', () => {
+    // agy's Windows job object ends what agy started; WMI creates outside it,
+    // hidden and in the chat's folder.
+    const windows = antigravityBackgroundNote("C:\\Leon's work", 'win32')
+    expect(windows).toContain('Invoke-CimMethod -ClassName Win32_Process')
+    expect(windows).toContain("CurrentDirectory = 'C:\\Leon''s work'")
+    expect(windows).toContain('ShowWindow = [uint16]0')
+    expect(windows).toContain('%TEMP%\\dev-server.log')
+    expect(antigravityBackgroundNote('/work', 'darwin')).toContain('nohup ')
+    expect(antigravityBackgroundNote('/work', 'darwin')).toContain('< /dev/null &')
+    expect(antigravityBackgroundNote('/work', 'linux')).not.toContain('Invoke-CimMethod')
+  })
+
+  it('lets a queued turn start without stopping what the answered turn left running', async () => {
+    const first = new FakeChild()
+    const second = new FakeChild()
+    let killed = false
+    first.kill = () => {
+      killed = true
+      return true
+    }
+    const children = [first, second]
+    const adapter = new AntigravityAdapter({ spawn: () => children.shift()! })
+    const thread = await adapter.startThread('C:\\repo')
+    await adapter.sendTurn(thread.id, 'Start the site')
+    for (const frame of CAPTURED_FRAMES) first.stdout.write(`${frame}\n`)
+    await new Promise((resolve) => setImmediate(resolve))
+
+    // The SUCCESS result is in and agy is closing when the queued prompt starts.
+    const next = adapter.sendTurn(thread.id, 'Now add a footer')
+    await new Promise((resolve) => setImmediate(resolve))
+    first.emit('exit', 0, null)
+    await next
+
+    expect(killed).toBe(false)
+    expect(children).toEqual([])
   })
 
   it('resolves a changed effort on the next invocation', async () => {

@@ -4,6 +4,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { rememberedChipTokens, resetRememberedChipTokens } from '../composer-chip-memory.js'
 import { emptyThread, reduce } from '../thread-store.js'
 import type { Transport } from '../transport.js'
+import { TestTransport } from '../test-transport.js'
 import { Composer, composerResourceTriggerAt } from './Composer.js'
 import { composerChipText, composerWireText, hasComposerChips } from './composer-chips.js'
 
@@ -290,7 +291,10 @@ describe('Composer loading controls', () => {
 
     view.rerenderComposer({ voiceLoading: false, voiceAvailable: true })
     expectSkeleton('Loading voice', 'composer-skeleton-voice')
-    expect(await screen.findByRole('button', { name: 'Record voice note' })).toBeTruthy()
+    // The voice button is a lazy chunk; a slow Windows runner needed over 1 s for it.
+    expect(
+      await screen.findByRole('button', { name: 'Record voice note' }, { timeout: 5000 }),
+    ).toBeTruthy()
     expect(screen.queryByText('Loading voice')).toBeNull()
   })
 
@@ -391,7 +395,9 @@ describe('Composer loading controls', () => {
 
     fireEvent.change(textarea, { target: { value: '$skill' } })
     fireEvent.change(textarea, { target: { value: '$' } })
-    expect(await screen.findByRole('option', { name: /Airtable CLI/ })).toBeTruthy()
+    expect(
+      await screen.findByRole('option', { name: /Airtable CLI/ }, { timeout: 5000 }),
+    ).toBeTruthy()
     expect(screen.queryByText('Loading skills…')).toBeNull()
     expect(document.activeElement).toBe(textarea)
   })
@@ -1513,6 +1519,24 @@ describe('Composer queue', () => {
     expect(onDeleteQueuedTurn).toHaveBeenCalledWith('Polish the queue')
   })
 
+  it('puts the queue before a note shelf, in paint and focus order as on screen', () => {
+    renderComposer(vi.fn(), {
+      running: true,
+      newSession: false,
+      canSteerQueue: true,
+      errors: [{ id: 'note', tone: 'info', message: 'Codex is reconnecting.' }],
+      queuedTurns: [{ id: 'queued-1', text: 'Polish the queue', attachments: [], createdAt: 1 }],
+    })
+
+    const queue = screen.getByLabelText('Queued prompts')
+    const shelf = screen.getByLabelText('Errors')
+    // The panel tucks its lower band under whatever sits on top of the box.
+    // Coming first, it is painted below the shelf instead of over its text,
+    // and Tab reaches the queue (drawn above the shelf) before the shelf.
+    expect(queue.compareDocumentPosition(shelf) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(queue.parentElement).toBe(shelf.parentElement)
+  })
+
   it('keeps a queued-prompt reorder out of the file drop target', () => {
     renderComposer(vi.fn(), {
       running: true,
@@ -1945,6 +1969,97 @@ describe('Composer provider commands', () => {
 })
 
 describe('Composer arguments typed before the command list arrives', () => {
+  const prompt = '/taste-pro a website'
+  const inventory = {
+    commands: [{ name: 'taste-pro', description: 'Builds sites', kind: 'skill' }],
+    loading: false,
+  }
+
+  function typeCharacters(composer: HTMLTextAreaElement, text: string) {
+    for (const character of text) {
+      expect(fireEvent.keyDown(composer, { key: character })).toBe(true)
+      act(() => {
+        const start = composer.selectionStart
+        const end = composer.selectionEnd
+        setNativeValue.call(
+          composer,
+          composer.value.slice(0, start) + character + composer.value.slice(end),
+        )
+        composer.setSelectionRange(start + 1, start + 1)
+        composer.dispatchEvent(
+          new InputEvent('input', { bubbles: true, inputType: 'insertText', data: character }),
+        )
+      })
+      fireEvent.keyUp(composer, { key: character })
+      fireEvent.select(composer)
+    }
+  }
+
+  describe.each(['pending', 'empty', 'loading'] as const)('with a %s list', (initial) => {
+    it.each(Array.from({ length: prompt.length }, (_, index) => index + 1))(
+      'preserves every character when commands arrive after character %i',
+      async (arrivalOffset) => {
+        const onSend = vi.fn()
+        const commands = deferred()
+        let commandRequests = 0
+        const transport = new TestTransport(async (method) => {
+          if (method === 'skills.list')
+            return {
+              capabilities: { inventory: false, configure: false, install: false },
+              skills: [],
+              errors: [],
+            }
+          if (method === 'commands.list') {
+            commandRequests += 1
+            return initial === 'pending' || commandRequests > 1
+              ? commands.promise
+              : { commands: [], loading: initial === 'loading' }
+          }
+          throw new Error(`Unexpected request: ${method}`)
+        })
+        renderComposer(onSend, {
+          transport,
+          provider: 'claude-code',
+          projectPath: '/work/project',
+          newSession: true,
+        })
+        const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+        composer.focus()
+        typeCharacters(composer, '/')
+        await waitFor(
+          () =>
+            expect(transport.requests.some(({ method }) => method === 'commands.list')).toBe(true),
+          { timeout: 5_000 },
+        )
+        if (initial !== 'pending') {
+          act(() => {
+            transport.emit('commands.changed', {
+              provider: 'claude-code',
+              projectPath: '/work/project',
+            })
+          })
+          await waitFor(() => expect(commandRequests).toBe(2))
+        }
+        typeCharacters(composer, prompt.slice(1, arrivalOffset))
+
+        await act(async () => {
+          commands.resolve(inventory)
+          await commands.promise
+        })
+
+        if (arrivalOffset <= '/taste-pro'.length)
+          expect(screen.getByRole('option', { name: /taste-pro/ })).toBeTruthy()
+        expect(composer.value).toBe(prompt.slice(0, arrivalOffset))
+        expect(composer.selectionStart).toBe(arrivalOffset)
+        expect(composer.selectionEnd).toBe(arrivalOffset)
+        typeCharacters(composer, prompt.slice(arrivalOffset))
+        expect(composer.value).toBe(prompt)
+        fireEvent.keyDown(composer, { key: 'Enter' })
+        expect(onSend).toHaveBeenCalledWith(prompt, [])
+      },
+    )
+  })
+
   /** Claude-shaped: the list answers only once the provider has started. */
   function lateCommands() {
     const commands = deferred()
@@ -1969,6 +2084,35 @@ describe('Composer arguments typed before the command list arrives', () => {
     return { transport, arrive }
   }
 
+  it.each(['Enter', 'Tab', 'click'] as const)(
+    'keeps arguments typed at the caret after a late command is picked with %s',
+    async (pick) => {
+      const onSend = vi.fn()
+      const { transport, arrive } = lateCommands()
+      renderComposer(onSend, { transport, provider: 'claude-code', newSession: true })
+      const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+      fakeEditor(composer)
+      composer.focus()
+      typeCharacters(composer, '/taste')
+      await waitFor(
+        () => expect(transport.request).toHaveBeenCalledWith('commands.list', expect.anything()),
+        { timeout: 5_000 },
+      )
+      await arrive()
+      typeCharacters(composer, '-pro')
+      const option = screen.getByRole('option', { name: /taste-pro/ })
+      if (pick === 'click') fireEvent.click(option)
+      else fireEvent.keyDown(composer, { key: pick })
+
+      expect(composer.value).toBe(`${composerChipText('/taste-pro', 'skill')} `)
+      expect(composer.selectionStart).toBe(composer.value.length)
+      typeCharacters(composer, 'a website')
+      expect(composer.value).toBe(`${composerChipText('/taste-pro', 'skill')} a website`)
+      fireEvent.keyDown(composer, { key: 'Enter' })
+      expect(onSend).toHaveBeenCalledWith(prompt, [])
+    },
+  )
+
   it('sends the command and its arguments exactly as typed', async () => {
     const onSend = vi.fn()
     const { transport, arrive } = lateCommands()
@@ -1976,13 +2120,51 @@ describe('Composer arguments typed before the command list arrives', () => {
     const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
     fakeEditor(composer)
 
-    fireEvent.change(composer, { target: { value: '/taste-pro', selectionStart: 10 } })
-    fireEvent.change(composer, { target: { value: '/taste-pro a website', selectionStart: 20 } })
+    composer.focus()
+    typeCharacters(composer, prompt)
     await arrive()
     fireEvent.keyDown(composer, { key: 'Enter' })
 
     expect(onSend).toHaveBeenCalledWith('/taste-pro a website', [])
   })
+
+  it.each(['unavailable', 'declined'] as const)(
+    'preserves fast typing across the next frame when native insertion is %s',
+    async (nativeInsertion) => {
+      const onSend = vi.fn()
+      const { transport, arrive } = lateCommands()
+      renderComposer(onSend, { transport, provider: 'claude-code', newSession: true })
+      const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+      composer.focus()
+      typeCharacters(composer, '/taste-pro')
+      await waitFor(
+        () => expect(transport.request).toHaveBeenCalledWith('commands.list', expect.anything()),
+        { timeout: 5_000 },
+      )
+      await arrive()
+      await screen.findByRole('option', { name: /taste-pro/ })
+      const frames: FrameRequestCallback[] = []
+      vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) =>
+        frames.push(callback),
+      )
+      Object.defineProperty(document, 'execCommand', {
+        configurable: true,
+        value: nativeInsertion === 'declined' ? vi.fn(() => false) : undefined,
+      })
+      try {
+        fireEvent.keyDown(composer, { key: 'Tab' })
+        expect(composer.value).toBe(`${composerChipText('/taste-pro', 'skill')} `)
+        expect(composer.selectionStart).toBe(composer.value.length)
+        typeCharacters(composer, 'a')
+        act(() => frames.splice(0).forEach((callback) => callback(0)))
+        typeCharacters(composer, ' website')
+        fireEvent.keyDown(composer, { key: 'Enter' })
+        expect(onSend).toHaveBeenCalledWith(prompt, [])
+      } finally {
+        Reflect.deleteProperty(document, 'execCommand')
+      }
+    },
+  )
 
   it('keeps the space before the arguments when the command is picked after they were typed', async () => {
     const onSend = vi.fn()
@@ -1991,8 +2173,8 @@ describe('Composer arguments typed before the command list arrives', () => {
     const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
     fakeEditor(composer)
 
-    fireEvent.change(composer, { target: { value: '/taste-pro', selectionStart: 10 } })
-    fireEvent.change(composer, { target: { value: '/taste-pro a website', selectionStart: 20 } })
+    composer.focus()
+    typeCharacters(composer, prompt)
     await arrive()
     // Back to the end of the command, where the menu opens again with the list.
     composer.setSelectionRange(10, 10)

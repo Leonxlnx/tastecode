@@ -1880,11 +1880,10 @@ function ComposerComponent(props: {
       if (document.execCommand('insertText', false, inserted) && el.value === next) return
     }
     updateText(next)
-    requestAnimationFrame(() => {
-      area.current?.focus()
-      area.current?.setSelectionRange(caret, caret)
-      grow()
-    })
+    // The textarea value is already written; a later caret reset can overtake typing.
+    el?.focus()
+    el?.setSelectionRange(caret, caret)
+    grow()
   }
 
   return (
@@ -1908,6 +1907,121 @@ function ComposerComponent(props: {
             if (hasDroppedFiles(e)) addDroppedFiles(Array.from(e.dataTransfer.files))
           }}
         >
+          {/* First child: the panel tucks its lower band behind the top of the box,
+              so the shelves below have to paint over that band, not under it. */}
+          {renderedQueue.items.length > 0 ? (
+            <div
+              ref={queuePanel}
+              className="composer__queue"
+              aria-label="Queued prompts"
+              aria-hidden={props.queuedTurns.length === 0 ? true : undefined}
+              inert={props.queuedTurns.length === 0 ? true : undefined}
+            >
+              {renderedQueue.items.map(({ turn: queuedTurn, phase, exitBox }, index) => (
+                <div
+                  className={`queue-row${phase !== 'exiting' && draggedQueueId === queuedTurn.id ? ' is-dragging' : ''}`}
+                  data-drop-position={
+                    phase !== 'exiting' && queueDropTarget?.id === queuedTurn.id
+                      ? queueDropTarget.position
+                      : undefined
+                  }
+                  data-queue-id={queuedTurn.id}
+                  data-queue-phase={phase}
+                  data-queue-positioned={exitBox ? true : undefined}
+                  style={
+                    exitBox
+                      ? {
+                          top: exitBox.top,
+                          left: exitBox.left,
+                          width: exitBox.width,
+                          height: exitBox.height,
+                        }
+                      : undefined
+                  }
+                  aria-hidden={phase === 'exiting' ? true : undefined}
+                  inert={phase === 'exiting' ? true : undefined}
+                  key={queuedTurn.id}
+                  ref={getQueueRowRef(queuedTurn.id)}
+                  draggable={phase !== 'exiting'}
+                  onDragStart={(event) => {
+                    event.dataTransfer.effectAllowed = 'move'
+                    event.dataTransfer.setData('text/plain', queuedTurn.id)
+                    setDraggedQueueId(queuedTurn.id)
+                  }}
+                  onDragOver={(event) => {
+                    if (!draggedQueueId || draggedQueueId === queuedTurn.id) return
+                    event.preventDefault()
+                    event.dataTransfer.dropEffect = 'move'
+                    const bounds = event.currentTarget.getBoundingClientRect()
+                    setQueueDropTarget({
+                      id: queuedTurn.id,
+                      position: event.clientY < bounds.top + bounds.height / 2 ? 'before' : 'after',
+                    })
+                  }}
+                  onDrop={(event) => dropQueuedTurn(event, queuedTurn.id)}
+                  onDragEnd={endQueueDrag}
+                  onAnimationEnd={(event) => {
+                    if (event.target === event.currentTarget && phase !== 'present') {
+                      finishQueueItemMotion(queuedTurn.id, phase)
+                    }
+                  }}
+                >
+                  <button
+                    type="button"
+                    className="queue-row__handle"
+                    title="Drag to reorder"
+                    aria-label={`Drag ${queuedTurn.text} to reorder`}
+                    onKeyDown={(event) => {
+                      if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
+                      event.preventDefault()
+                      const direction = event.key === 'ArrowUp' ? 'up' : 'down'
+                      if (
+                        (direction === 'up' && index > 0) ||
+                        (direction === 'down' && index < props.queuedTurns.length - 1)
+                      )
+                        void props.onMoveQueuedTurn(queuedTurn.id, direction)
+                    }}
+                  >
+                    <GripVertical size={14} aria-hidden />
+                  </button>
+                  <QueuedMediaPreview attachments={queuedTurn.attachments} />
+                  <span className="queue-row__text" title={queuedTurn.text}>
+                    {queuedTurn.text}
+                  </span>
+                  {props.canSteerQueue ? (
+                    <button
+                      type="button"
+                      className="queue-row__steer"
+                      onClick={() => props.onSteerQueuedTurn(queuedTurn.id)}
+                      title="Steer the running agent with this prompt"
+                    >
+                      <CornerDownRight size={13} aria-hidden />
+                      <span>Steer</span>
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    className="queue-row__action"
+                    onClick={() => void editQueuedTurn(queuedTurn)}
+                    title="Edit prompt"
+                    aria-label={`Edit ${queuedTurn.text}`}
+                  >
+                    <Pencil size={14} aria-hidden />
+                  </button>
+                  <button
+                    type="button"
+                    className="queue-row__action"
+                    onClick={() => void removeQueuedTurn(queuedTurn.id)}
+                    title="Remove from queue"
+                    aria-label={`Remove ${queuedTurn.text} from queue`}
+                  >
+                    <Trash2 size={14} aria-hidden />
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : null}
+
           <ComposerErrors
             errors={composerErrors}
             visible={props.errorsVisible ?? true}
@@ -2028,119 +2142,6 @@ function ComposerComponent(props: {
                   </span>
                 </SkeletonStatus>
               ) : null}
-            </div>
-          ) : null}
-
-          {renderedQueue.items.length > 0 ? (
-            <div
-              ref={queuePanel}
-              className="composer__queue"
-              aria-label="Queued prompts"
-              aria-hidden={props.queuedTurns.length === 0 ? true : undefined}
-              inert={props.queuedTurns.length === 0 ? true : undefined}
-            >
-              {renderedQueue.items.map(({ turn: queuedTurn, phase, exitBox }, index) => (
-                <div
-                  className={`queue-row${phase !== 'exiting' && draggedQueueId === queuedTurn.id ? ' is-dragging' : ''}`}
-                  data-drop-position={
-                    phase !== 'exiting' && queueDropTarget?.id === queuedTurn.id
-                      ? queueDropTarget.position
-                      : undefined
-                  }
-                  data-queue-id={queuedTurn.id}
-                  data-queue-phase={phase}
-                  data-queue-positioned={exitBox ? true : undefined}
-                  style={
-                    exitBox
-                      ? {
-                          top: exitBox.top,
-                          left: exitBox.left,
-                          width: exitBox.width,
-                          height: exitBox.height,
-                        }
-                      : undefined
-                  }
-                  aria-hidden={phase === 'exiting' ? true : undefined}
-                  inert={phase === 'exiting' ? true : undefined}
-                  key={queuedTurn.id}
-                  ref={getQueueRowRef(queuedTurn.id)}
-                  draggable={phase !== 'exiting'}
-                  onDragStart={(event) => {
-                    event.dataTransfer.effectAllowed = 'move'
-                    event.dataTransfer.setData('text/plain', queuedTurn.id)
-                    setDraggedQueueId(queuedTurn.id)
-                  }}
-                  onDragOver={(event) => {
-                    if (!draggedQueueId || draggedQueueId === queuedTurn.id) return
-                    event.preventDefault()
-                    event.dataTransfer.dropEffect = 'move'
-                    const bounds = event.currentTarget.getBoundingClientRect()
-                    setQueueDropTarget({
-                      id: queuedTurn.id,
-                      position: event.clientY < bounds.top + bounds.height / 2 ? 'before' : 'after',
-                    })
-                  }}
-                  onDrop={(event) => dropQueuedTurn(event, queuedTurn.id)}
-                  onDragEnd={endQueueDrag}
-                  onAnimationEnd={(event) => {
-                    if (event.target === event.currentTarget && phase !== 'present') {
-                      finishQueueItemMotion(queuedTurn.id, phase)
-                    }
-                  }}
-                >
-                  <button
-                    type="button"
-                    className="queue-row__handle"
-                    title="Drag to reorder"
-                    aria-label={`Drag ${queuedTurn.text} to reorder`}
-                    onKeyDown={(event) => {
-                      if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
-                      event.preventDefault()
-                      const direction = event.key === 'ArrowUp' ? 'up' : 'down'
-                      if (
-                        (direction === 'up' && index > 0) ||
-                        (direction === 'down' && index < props.queuedTurns.length - 1)
-                      )
-                        void props.onMoveQueuedTurn(queuedTurn.id, direction)
-                    }}
-                  >
-                    <GripVertical size={12} aria-hidden />
-                  </button>
-                  <QueuedMediaPreview attachments={queuedTurn.attachments} />
-                  <span className="queue-row__text" title={queuedTurn.text}>
-                    {queuedTurn.text}
-                  </span>
-                  {props.canSteerQueue ? (
-                    <button
-                      type="button"
-                      className="queue-row__steer"
-                      onClick={() => props.onSteerQueuedTurn(queuedTurn.id)}
-                      title="Steer the running agent with this prompt"
-                    >
-                      <CornerDownRight size={12} aria-hidden />
-                      <span>Steer</span>
-                    </button>
-                  ) : null}
-                  <button
-                    type="button"
-                    className="queue-row__action"
-                    onClick={() => void editQueuedTurn(queuedTurn)}
-                    title="Edit prompt"
-                    aria-label={`Edit ${queuedTurn.text}`}
-                  >
-                    <Pencil size={12} aria-hidden />
-                  </button>
-                  <button
-                    type="button"
-                    className="queue-row__action"
-                    onClick={() => void removeQueuedTurn(queuedTurn.id)}
-                    title="Remove from queue"
-                    aria-label={`Remove ${queuedTurn.text} from queue`}
-                  >
-                    <Trash2 size={12} aria-hidden />
-                  </button>
-                </div>
-              ))}
             </div>
           ) : null}
 

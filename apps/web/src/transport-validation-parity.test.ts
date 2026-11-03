@@ -50,6 +50,7 @@ const provider = {
       defaultCompactAt: 90,
     },
     subagents: 'progress',
+    subagentTranscript: true,
     multipleAccounts: true,
   },
   setup: {
@@ -122,7 +123,7 @@ describe('fast validation canonical parity', () => {
       )
   })
 
-  it.each(['thread.event', 'sideChat.event', 'terminal.output'] as const)(
+  it.each(['thread.event', 'sideChat.event', 'subagent.event', 'terminal.output'] as const)(
     'matches canonical parsing for %s',
     (channel) => {
       const fixture =
@@ -130,6 +131,7 @@ describe('fast validation canonical parity', () => {
           ? { terminalId: 'terminal', data: 'text', outputOffset: 7 }
           : {
               threadId: 'thread',
+              ...(channel === 'subagent.event' ? { parentThreadId: 'parent' } : {}),
               seq: 9,
               event: { type: 'item.delta', turnId: 'turn', itemId: 'item', textDelta: 'text' },
             }
@@ -150,6 +152,9 @@ describe('fast validation canonical parity', () => {
     )
     expect(Object.keys(FAST_CHANNEL_FIELDS.sideChat).sort()).toEqual(
       Object.keys(channels['sideChat.event'].shape).sort(),
+    )
+    expect(Object.keys(FAST_CHANNEL_FIELDS.subagent).sort()).toEqual(
+      Object.keys(channels['subagent.event'].shape).sort(),
     )
     const delta = DomainEventSchema.options.find(
       (schema) => schema.shape.type.value === 'item.delta',

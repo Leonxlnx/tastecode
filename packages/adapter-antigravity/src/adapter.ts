@@ -2,7 +2,13 @@ import { EventEmitter } from 'node:events'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import path from 'node:path'
 import type { ApprovalMode, Capabilities, DomainEvent, Model, Thread } from '@harness/contracts'
-import { argumentPromptLimit, killTree, ProtocolFrameError, readNdjson } from '@harness/proc'
+import {
+  argumentPromptLimit,
+  holdsProcessGroup,
+  killTree,
+  ProtocolFrameError,
+  readNdjson,
+} from '@harness/proc'
 import { z } from 'zod'
 import { ANTIGRAVITY_ENVIRONMENT, antigravityCommand, spawnAgy, type AgySpawn } from './command.js'
 import { agyCommandName, isAgyAnsweredCommand } from './commands.js'
@@ -159,10 +165,19 @@ const AgyFrameSchema = z.object({
       conversation_id: z.string().optional(),
       status: z.string().optional(),
       response: z.string().optional(),
+      // agy 1.4.7 steps.JSONOutput: `Error string json:"error,omitempty"`.
+      error: z.string().optional(),
       usage: AgyUsageSchema.optional(),
     })
     .optional(),
 })
+
+/**
+ * How long a turn whose result frame did not say SUCCESS waits for agy to
+ * exit. agy closes its store and exits within a second of the result; one
+ * that is still running after this is judged on the frame alone.
+ */
+export const ANTIGRAVITY_RESULT_EXIT_GRACE_MS = 10_000
 
 /** The fields of agy's `--output-format json` object an answered command needs. */
 const AgyAnswerSchema = z.object({
@@ -187,6 +202,13 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
   /** agy's own conversation id, so follow-up turns resume rather than restart. */
   #conversationId: string | undefined
   #child: ChildProcessWithoutNullStreams | undefined
+  /**
+   * Turns whose agy exited cleanly and whose POSIX process group still has
+   * members, such as a server the turn started. Dispose stops them.
+   */
+  #finishedTurns = new Set<ChildProcessWithoutNullStreams>()
+  /** Turns whose agy reported a successful result and is only closing. */
+  #answered = new WeakSet<ChildProcessWithoutNullStreams>()
   /** Why we killed a child: only an explicit Stop completes the turn. */
   #killReasons = new WeakMap<ChildProcessWithoutNullStreams, 'interrupt' | 'silent'>()
   #turnCounter = 0
@@ -215,7 +237,8 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
     this.#workspacePath = workspacePath
     this.#options = options
     this.#conversationId = undefined
-    this.#instructionsPending = Boolean(options.instructions)
+    // The background-process note goes out even without session instructions.
+    this.#instructionsPending = true
     return {
       id: `antigravity-${crypto.randomUUID()}`,
       provider: 'antigravity',
@@ -248,11 +271,15 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
     const request = antigravityImagePrompt(text, attachments)
     // agy expands a slash command or skill only at the start of the prompt, so
     // a command goes alone and the instructions wait for the next prompt.
-    const carriesInstructions = Boolean(
-      this.#instructionsPending && this.#options.instructions && !agyCommandName(text),
-    )
+    const carriesInstructions = this.#instructionsPending && !agyCommandName(text)
+    const instructions = [
+      this.#options.instructions,
+      antigravityBackgroundNote(this.#workspacePath),
+    ]
+      .filter(Boolean)
+      .join('\n\n')
     const prompt = carriesInstructions
-      ? `<system-instructions>\n${this.#options.instructions}\n</system-instructions>\n\n${request}`
+      ? `<system-instructions>\n${instructions}\n</system-instructions>\n\n${request}`
       : request
     if (carriesInstructions) this.#instructionsPending = false
     const args = antigravityTurnArgs(prompt, this.#options, this.#conversationId, [
@@ -261,14 +288,27 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
 
     // A turn already in flight would be orphaned by the reassignment below —
     // its exit handler must also not clobber the new child's reference.
-    if (this.#child) await this.#stop(this.#child)
+    if (this.#child) await this.#retire(this.#child)
     const child = this.#spawn(antigravityCommand(), args, {
       cwd: this.#workspacePath,
       env: ANTIGRAVITY_ENVIRONMENT,
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
+      keepGroupAfterExit: true,
     })
     this.#child = child
+    child.once('exit', (code) => {
+      // Only a turn agy finished keeps what it started; a failed or stopped
+      // one takes its leftovers with it, as before.
+      if (code !== 0) {
+        void killTree(child).catch(() => undefined)
+        return
+      }
+      for (const old of this.#finishedTurns) {
+        if (!holdsProcessGroup(old)) this.#finishedTurns.delete(old)
+      }
+      if (holdsProcessGroup(child)) this.#finishedTurns.add(child)
+    })
 
     this.emit('event', {
       type: 'turn.started',
@@ -279,6 +319,8 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
     let messageStarted = false
     let messageText = ''
     const messageId = `${turnId}-message`
+    /** A result frame that did not say SUCCESS, waiting for agy's exit code. */
+    let reported: { status: string; error?: string; timer: NodeJS.Timeout } | undefined
 
     readNdjson(
       child.stdout,
@@ -348,14 +390,28 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
             })
           }
           if (frame.result.status === 'SUCCESS') {
+            this.#answered.add(child)
             this.emit('event', { type: 'turn.completed', turnId, status: 'completed' })
-          } else {
-            this.emit('event', {
-              type: 'thread.error',
-              threadId,
-              message: `Antigravity finished with status ${frame.result.status ?? 'unknown'}`,
-            })
-            this.emit('event', { type: 'turn.completed', turnId, status: 'failed' })
+            return
+          }
+          // The status covers the whole conversation, not this turn. agy
+          // 1.4.7's steps.BuildJSONOutput sets ERROR, and the step's message
+          // in `error`, whenever the conversation's latest error step (an
+          // error message, or a failed step that is not a tool call) exists,
+          // even in an earlier turn; the SUCCESS a finished turn asks for is
+          // dropped once `error` is set. agy judges the turn itself only from
+          // this turn's steps, and that verdict is the exit code
+          // (printmode.ExitCode: 0 when the turn finished, 3 for an agent or
+          // model failure, 1 otherwise). So the turn waits for it.
+          const timer = setTimeout(
+            () => settleReported(undefined),
+            ANTIGRAVITY_RESULT_EXIT_GRACE_MS,
+          )
+          timer.unref()
+          reported = {
+            status: frame.result.status ?? 'unknown',
+            ...(frame.result.error ? { error: frame.result.error } : {}),
+            timer,
           }
         }
       },
@@ -377,10 +433,45 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
     child.stderr.setEncoding('utf8')
     child.stderr.on('data', (chunk: string) => this.emit('log', chunk.trimEnd()))
 
+    // Settles a turn whose result frame did not say SUCCESS. `code` is agy's
+    // exit code, or undefined when the process failed or outlived the grace.
+    const settleReported = (code: number | null | undefined) => {
+      const result = reported
+      if (!result) return
+      reported = undefined
+      clearTimeout(result.timer)
+      const killReason = this.#killReasons.get(child)
+      if (killReason === 'silent') return
+      if (killReason === 'interrupt') {
+        this.emit('event', { type: 'turn.completed', turnId, status: 'interrupted' })
+        return
+      }
+      if (code === 0) {
+        // A finished turn: the answer is delivered and the error belongs to
+        // an earlier step, so it stays out of the chat and goes to the log.
+        this.emit(
+          'log',
+          `Antigravity finished the turn; its result said ${result.status}${result.error ? `: ${result.error}` : ''}`,
+        )
+        this.emit('event', { type: 'turn.completed', turnId, status: 'completed' })
+        return
+      }
+      this.emit('event', {
+        type: 'thread.error',
+        threadId,
+        message: `Antigravity finished with status ${result.status}`,
+      })
+      this.emit('event', { type: 'turn.completed', turnId, status: 'failed' })
+    }
+
     // A spawn failure reports 'error' and then 'close', and a stream failure
     // kills the child, so every exit path funnels through one terminal guard.
-    const finishProcess = (errorMessage: string) => {
+    const finishProcess = (errorMessage: string, code?: number | null) => {
       if (this.#child === child) this.#child = undefined
+      if (reported) {
+        settleReported(code)
+        return
+      }
       if (terminal) return
       terminal = true
       const killReason = this.#killReasons.get(child)
@@ -412,8 +503,11 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
 
     // An exit without a result frame would otherwise look like a hang.
     child.on('close', (code) =>
-      finishProcess(`agy exited with code ${code ?? 'unknown'} before reporting a result`),
+      finishProcess(`agy exited with code ${code ?? 'unknown'} before reporting a result`, code),
     )
+    // 'close' also waits for every holder of agy's pipes; the exit code a
+    // reported result waits for is known at 'exit'.
+    child.on('exit', (code) => settleReported(code))
 
     // A spawn failure emits 'error' on the child; without a listener that
     // throws out of the event loop and takes the whole server down.
@@ -431,7 +525,7 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
    * leaves no conversation, so the chat's next prompt resumes as before.
    */
   async #answerCommand(threadId: string, turnId: string, text: string): Promise<string> {
-    if (this.#child) await this.#stop(this.#child)
+    if (this.#child) await this.#retire(this.#child)
     const child = this.#spawn(
       antigravityCommand(),
       ['-p', text.trim(), '--output-format', 'json'],
@@ -526,10 +620,25 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
   }
 
   dispose(): Promise<void> {
+    // Servers earlier turns left running end with the chat's runtime.
+    const finished = [...this.#finishedTurns].map((child) => killTree(child).catch(() => undefined))
+    this.#finishedTurns.clear()
     const stopped = this.#child ? this.#stop(this.#child) : this.#processStop
     this.#child = undefined
     this.#processStop = stopped
-    return stopped
+    return Promise.all([stopped, ...finished]).then(() => undefined)
+  }
+
+  /**
+   * Makes way for a new turn. An agy that already answered is only closing:
+   * it gets a moment to exit, and then only agy itself is stopped, so its
+   * process group, with a server the turn started, stays.
+   */
+  async #retire(child: ChildProcessWithoutNullStreams): Promise<void> {
+    if (!this.#answered.has(child)) return this.#stop(child)
+    if (await exitsWithin(child, ANSWERED_EXIT_WAIT_MS)) return
+    this.#killReasons.set(child, 'silent')
+    child.kill()
   }
 
   #stop(
@@ -541,6 +650,54 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
     this.#processStop = killTree(child)
     return this.#processStop
   }
+}
+
+/**
+ * How long a new turn waits for the previous agy, which has answered and is
+ * only closing, to exit by itself. Stopping its tree instead would end a
+ * server that turn started; a queued prompt starts a turn at once.
+ */
+const ANSWERED_EXIT_WAIT_MS = 5_000
+
+function exitsWithin(child: ChildProcessWithoutNullStreams, ms: number): Promise<boolean> {
+  if (child.exitCode != null || child.signalCode != null) return Promise.resolve(true)
+  return new Promise((resolve) => {
+    const done = () => {
+      clearTimeout(timer)
+      resolve(true)
+    }
+    const timer = setTimeout(() => {
+      child.off('exit', done)
+      resolve(false)
+    }, ms)
+    timer.unref()
+    child.once('exit', done)
+  })
+}
+
+/**
+ * agy runs the commands of a turn in a Windows job object (agy.exe imports
+ * CreateJobObject and AssignProcessToJobObject), and its process ends with the
+ * turn, so a dev server it started stopped as soon as the answer was in. A
+ * process created through WMI is not in that job; it also outlives TasteCode,
+ * like a server the user starts in a terminal. On POSIX the turn's process
+ * group is kept after agy exits (keepGroupAfterExit), and a `nohup … &`
+ * command outlives agy's own shell. Logs go to the temp folder, not the project.
+ */
+export function antigravityBackgroundNote(
+  workspacePath: string,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  const folder = workspacePath.replaceAll("'", "''")
+  const start =
+    platform === 'win32'
+      ? `powershell -NoProfile -Command "Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = 'cmd /c npm run dev > %TEMP%\\dev-server.log 2>&1'; CurrentDirectory = '${folder}'; ProcessStartupInformation = (New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{ ShowWindow = [uint16]0 }) }"`
+      : 'nohup npm run dev > "${TMPDIR:-/tmp}/dev-server.log" 2>&1 < /dev/null &'
+  return [
+    'Every process you start ends when your answer ends. To leave a dev server or another long-running process running for the user after you answer, start it detached and write its output to a log file, for example:',
+    start,
+    'Then check that it responds before you tell the user its address.',
+  ].join('\n')
 }
 
 export function parseAntigravityModels(output: string): Model[] {
