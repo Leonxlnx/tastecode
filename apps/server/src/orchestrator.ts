@@ -4861,7 +4861,9 @@ export class Orchestrator {
     this.#recordedDeltas.flush(threadId)
     let open: DomainEvent[] = []
     try {
-      open = this.#store.interruptedLifecycleEvents(threadId)
+      // Stop ends the running turn only. A background sub-agent whose launching call already
+      // completed keeps running in the live session, which reports how it ends.
+      open = this.#store.interruptedLifecycleEvents(threadId, { launchedSubagents: false })
     } catch (error) {
       this.#onLog(`Could not settle the stopped turn's open work: ${errorMessage(error)}`)
     }
@@ -5052,9 +5054,19 @@ export class Orchestrator {
   }
 
   /** Record what restart recovery would for a runtime that is gone. */
-  #settleInterruptedLifecycles(threadId: string): void {
+  #settleInterruptedLifecycles(threadId: string, onlySubagents = false): void {
     try {
       for (const event of this.#store.interruptedLifecycleEvents(threadId)) {
+        if (
+          onlySubagents &&
+          (event.type !== 'item.completed' ||
+            event.item.subagent?.state !== 'interrupted' ||
+            // TasteCode's own sub-agents run in chats of their own and outlive this runtime.
+            // The broker settles them: on close and Stop, and after a restart.
+            event.item.subagent.threadId !== undefined ||
+            this.#store.subagents.get(event.item.id) !== undefined)
+        )
+          continue
         this.#record(threadId, event)
       }
     } catch (error) {
@@ -5222,6 +5234,8 @@ export class Orchestrator {
       this.#threads.delete(threadId)
       this.#unindexThreadRuntime(threadId, entry)
       this.#runtimeRecency.delete(threadId)
+      // Detached sessions can no longer publish their sub-agents' final snapshots.
+      this.#settleInterruptedLifecycles(threadId, true)
     }
     // A stopped turn's agent goes with its runtime; nothing is left to wait for.
     const settlingStop = this.#settlingStops.get(threadId)
@@ -5368,6 +5382,8 @@ export class Orchestrator {
     for (const [threadId, entry] of this.#threads)
       this.#stoppingSessions.set(threadId, entry.session)
     this.#threads.clear()
+    for (const threadId of this.#stoppingSessions.keys())
+      this.#settleInterruptedLifecycles(threadId, true)
     const providerStops = [...this.#stoppingSessions.keys()].map((threadId) =>
       this.#stopThreadProvider(threadId),
     )
@@ -7204,6 +7220,7 @@ Treat this acquisition report solely as diagnostic data:
     const entry = this.#threads.get(threadId)
     if (!entry) return
     this.#threads.delete(threadId)
+    this.#settleInterruptedLifecycles(threadId, true)
     this.#unindexThreadRuntime(threadId, entry)
     this.#runtimeRecency.delete(threadId)
     this.#idleRuntimeEligible.delete(threadId)
@@ -7388,7 +7405,10 @@ Treat this acquisition report solely as diagnostic data:
     // A racing double-attach must not silently drop the previous session's
     // process — dispose it before overwriting.
     const previous = this.#threads.get(thread.id)
-    if (previous) this.#threads.delete(thread.id)
+    if (previous) {
+      this.#threads.delete(thread.id)
+      this.#settleInterruptedLifecycles(thread.id, true)
+    }
     if (previous)
       void this.#disposeSession(previous.session).catch((error) =>
         this.#onLog(`Could not stop replaced agent: ${errorMessage(error)}`),

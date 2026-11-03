@@ -28,6 +28,7 @@ import type {
   BackgroundModelPreference,
   DiffDecision,
   DomainEvent,
+  Item,
   JsonValue,
   ProviderContextSettingsMap,
   ProviderId,
@@ -304,8 +305,8 @@ const USAGE_INDEX_VERSION = 'usage_events_v1'
 const INBOX_INDEX_VERSION = 'inbox_events_v2'
 const USER_SUBMISSION_INDEX_VERSION = 'user_submission_items_v1'
 const TURN_DIFF_INDEX_VERSION = 'turn_diff_events_v1'
-// v2 reopens requests asked again after their answer; the rebuild settles them.
-const RECOVERY_STATE_VERSION = 'recovery_lifecycles_v2'
+// v3 retains running sub-agents after their launcher completed, including old logs.
+const RECOVERY_STATE_VERSION = 'recovery_lifecycles_v3'
 const BOUNDED_REPLAY_SNAPSHOTS_VERSION = 'bounded_replay_snapshots_v1'
 const CHRONOLOGICAL_REPLAY_SNAPSHOTS_VERSION = 'chronological_replay_snapshots_v1'
 // Every row this build writes lands in the history index in the same step. A
@@ -944,6 +945,7 @@ export class Store {
   #deleteThreadInboxEvents: StatementSync
   #insertUserSubmission: StatementSync
   #hasUserSubmission: StatementSync
+  #itemSnapshot: StatementSync
   #insertTurnDiffEvent: StatementSync
   #readTurnDiff: StatementSync
   #upsertRecoveryStart: StatementSync
@@ -1119,6 +1121,16 @@ export class Store {
     this.#hasUserSubmission = this.#db.prepare(
       `SELECT 1 FROM user_submission_items WHERE thread_id = ? AND item_id = ?`,
     )
+    // Rows from the item's first one on (`seq >= ?`), and only those whose text holds its
+    // JSON-quoted id (`instr`), are parsed as JSON at all.
+    this.#itemSnapshot = this.#db.prepare(
+      `SELECT e.payload FROM events e
+       LEFT JOIN provider_history_events p ON p.event_seq = e.seq
+       WHERE e.thread_id = ? AND e.seq >= ? AND COALESCE(p.active, 1) = 1
+         AND instr(e.payload, ?) > 0
+         AND json_extract(CASE WHEN json_valid(e.payload) THEN e.payload END, '$.item.id') = ?
+       ORDER BY e.seq DESC LIMIT 1`,
+    )
     this.#insertTurnDiffEvent = this.#db.prepare(
       `INSERT OR REPLACE INTO turn_diff_events (event_seq, thread_id, turn_id)
        VALUES (?, ?, ?)`,
@@ -1215,7 +1227,13 @@ export class Store {
        FROM recovery_lifecycles AS recovery
        INNER JOIN threads ON threads.id = recovery.thread_id
        LEFT JOIN recovery_errors AS errors ON errors.thread_id = recovery.thread_id
-       WHERE threads.closed_at IS NULL
+       WHERE (threads.closed_at IS NULL OR (
+         recovery.event_type IN ('item.started', 'item.completed')
+         AND json_extract(
+           CASE WHEN json_valid(recovery.payload) THEN recovery.payload END,
+           '$.item.subagent.state'
+         ) = 'running'
+       ))
          AND recovery.started_seq IS NOT NULL
          AND recovery.terminal_seq IS NULL
          AND recovery.payload IS NOT NULL
@@ -3366,7 +3384,8 @@ export class Store {
       states.set(row.thread_id, state)
 
       if (event.type === 'turn.started') state.openTurns.add(event.turn.id)
-      if (event.type === 'item.started') state.activeItems.set(event.item.id, event.item)
+      if (event.type === 'item.started' || event.type === 'item.completed')
+        state.activeItems.set(event.item.id, event.item)
       if (event.type === 'approval.requested') state.approvals.add(event.request.id)
       if (event.type === 'user_input.requested') {
         if (row.resumable) state.hasResumableInput = true
@@ -3440,11 +3459,18 @@ export class Store {
    * Restart recovery settles these for a dead process; a runtime force-stopped
    * while the server keeps running needs the same, or its turn and requests
    * stay open in the log until the next restart. The caller records them.
+   *
+   * `launchedSubagents: false` leaves out sub-agents whose launching call
+   * already completed: they run in the background, past the turn that started
+   * them, while their runtime lives.
    */
-  interruptedLifecycleEvents(threadId: string): DomainEvent[] {
+  interruptedLifecycleEvents(
+    threadId: string,
+    { launchedSubagents = true }: { launchedSubagents?: boolean } = {},
+  ): DomainEvent[] {
     const rows = sqliteRows<InterruptedThreadRow>(this.#readInterruptedThread, threadId)
     const state = this.#interruptedThreadStates(rows).get(threadId)
-    return state ? interruptedLifecycleEvents(state, Date.now()) : []
+    return state ? interruptedLifecycleEvents(state, Date.now(), launchedSubagents) : []
   }
 
   /** Returns the sequence number, which is what a client resumes from. */
@@ -3545,6 +3571,31 @@ export class Store {
 
   hasUserSubmission(threadId: string, itemId: string): boolean {
     return this.#hasUserSubmission.get(threadId, itemId) !== undefined
+  }
+
+  /**
+   * Latest retained item boundary, scoped to its owning thread. A sub-agent's detail asks
+   * for it every few seconds, so the history index bounds the rows read: none when it
+   * covers the thread and never saw the item, else those from the item's first row on.
+   */
+  itemSnapshot(threadId: string, itemId: string): Item | undefined {
+    const key = `i:${itemId}`
+    const firstSeq = this.historyIndexed(threadId)
+      ? this.historyKeyFirstSeqs(threadId, [key]).get(key)
+      : 0
+    if (firstSeq === undefined) return undefined
+    const row = sqliteRow<{ payload: string }>(
+      this.#itemSnapshot,
+      threadId,
+      firstSeq,
+      JSON.stringify(itemId),
+      itemId,
+    )
+    if (!row) return undefined
+    const event = parseDomainEvent(row.payload, `item snapshot for thread ${threadId}`)
+    return event?.type === 'item.started' || event?.type === 'item.completed'
+      ? event.item
+      : undefined
   }
 
   #insertEventRow(threadId: string, at: number, payload: string): number {
@@ -4919,6 +4970,14 @@ function recoveryMutation(event: DomainEvent): RecoveryMutation | undefined {
         lifecycleKey: `item:${event.item.id}`,
       }
     case 'item.completed':
+      // A background agent can outlive both its launcher and its parent turn.
+      if (event.item.subagent?.state === 'running')
+        return {
+          kind: 'start',
+          eventType: event.type,
+          lifecycleKey: `item:${event.item.id}`,
+          reopens: true,
+        }
       return { kind: 'terminal', lifecycleKey: `item:${event.item.id}` }
     // A request id asked again after its answer is a new question (a retried
     // command reuses its id), not a late echo like an item started after it
@@ -4957,13 +5016,27 @@ function recoveryMutation(event: DomainEvent): RecoveryMutation | undefined {
 }
 
 /** The terminal events that settle every lifecycle a dead runtime left open. */
-function interruptedLifecycleEvents(state: InterruptedThreadState, at: number): DomainEvent[] {
+function interruptedLifecycleEvents(
+  state: InterruptedThreadState,
+  at: number,
+  launchedSubagents = true,
+): DomainEvent[] {
   const events: DomainEvent[] = []
   for (const item of state.activeItems.values()) {
+    // Only a sub-agent's row stays open after its launching call completed.
+    if (!launchedSubagents && item.subagent && item.status !== 'started') continue
     // Omitting text preserves every persisted delta when the renderer
     // folds this terminal item over the streamed version.
     const { text: _streamedText, ...started } = item
-    events.push({ type: 'item.completed', item: { ...started, status: 'failed' } })
+    events.push({
+      type: 'item.completed',
+      item: {
+        ...(item.status === 'started' ? { ...started, status: 'failed' as const } : item),
+        ...(item.subagent?.state === 'running'
+          ? { subagent: { ...item.subagent, state: 'interrupted' as const } }
+          : {}),
+      },
+    })
   }
   for (const id of state.approvals) events.push({ type: 'approval.resolved', id })
   for (const id of state.userInputs) events.push({ type: 'user_input.resolved', id })
