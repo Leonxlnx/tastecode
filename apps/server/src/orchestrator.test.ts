@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process'
+import { EventEmitter } from 'node:events'
 import {
   appendFileSync,
   copyFileSync,
@@ -19,11 +20,13 @@ import { GROK_MCP_CAPABILITIES } from '@harness/adapter-grok/mcp'
 import { OPENCODE_MCP_CAPABILITIES } from '@harness/adapter-opencode/inventory'
 import { ProviderIdSchema } from '@harness/contracts'
 import type {
+  Account,
   ApprovalMode,
   Capabilities,
   DomainEvent,
   McpServer,
   McpServerConfig,
+  Model,
   ProviderCommand,
   ProviderId,
   ThreadLifecycle,
@@ -62,7 +65,11 @@ import { writeDefaultSkillsFixture } from './default-skills.test-support.js'
 import { McpConfigStore } from './mcp-config.js'
 import { Orchestrator } from './orchestrator.js'
 import { PROVIDER_CAPABILITIES } from './provider-capabilities.js'
-import type { ProviderControlsOptions } from './provider-controls.js'
+import type {
+  CodexControlAdapter,
+  ProviderControlsOptions,
+  ProviderServices,
+} from './provider-controls.js'
 import { StartupCleanupError } from './provider-session.js'
 import { DatabaseSync } from './sqlite.js'
 import { Store } from './store.js'
@@ -308,27 +315,94 @@ class FakeSession implements AgentSession {
   }
 }
 
-/** Claude's project probe would start the real CLI; without a chat it finds nothing here. */
-const quietClaudeInventory: NonNullable<ProviderControlsOptions['services']>['claude-code'] = {
-  projectInventory: {
-    mcpCapabilities: CLAUDE_MCP_CAPABILITIES,
-    discover: async () => ({ commands: [], servers: [] }),
-  },
+/** A test that needs a provider to sign in or change its settings passes its own service. */
+function unavailableInTests(what: string) {
+  return async (): Promise<never> => {
+    throw new Error(`${what} is not available in orchestrator tests.`)
+  }
 }
-/** The same for Grok's and OpenCode's probes. */
-const quietGrokInventory: NonNullable<ProviderControlsOptions['services']>['grok'] = {
-  projectInventory: {
-    mcpCapabilities: GROK_MCP_CAPABILITIES,
-    skillCapabilities: { inventory: true, configure: false, install: false },
-    discover: async () => ({ commands: [], servers: [], skills: [] }),
+const signedOut = async (): Promise<Account> => ({ signedIn: false })
+const noLimits = async () => ({ status: 'unavailable' as const })
+const noCommands = async () => ({ commands: [], loading: false })
+
+/**
+ * Each provider service that would start an installed CLI or read its sign-in or
+ * folders answers with nothing here, so no test depends on the providers installed
+ * on the machine that runs it. Services that read nothing (Codex's static commands,
+ * MCP validation, the sign-out notices) stay. A test's own services win.
+ */
+const quietServices = {
+  antigravity: { listCommands: noCommands, account: signedOut, usageLimitSource: noLimits },
+  api: {},
+  // Everything else Codex answers comes from its control process: see QuietCodexControl.
+  codex: {},
+  opencode: {
+    projectInventory: {
+      mcpCapabilities: OPENCODE_MCP_CAPABILITIES,
+      skillCapabilities: { inventory: true, configure: false, install: false },
+      discover: async () => ({ commands: [], servers: [], skills: [] }),
+    },
+    account: signedOut,
   },
-}
-const quietOpenCodeInventory: NonNullable<ProviderControlsOptions['services']>['opencode'] = {
-  projectInventory: {
-    mcpCapabilities: OPENCODE_MCP_CAPABILITIES,
-    skillCapabilities: { inventory: true, configure: false, install: false },
-    discover: async () => ({ commands: [], servers: [], skills: [] }),
+  pi: {},
+  'claude-code': {
+    projectInventory: {
+      mcpCapabilities: CLAUDE_MCP_CAPABILITIES,
+      discover: async () => ({ commands: [], servers: [] }),
+    },
+    account: signedOut,
+    usageLimitSource: noLimits,
+    startLogin: unavailableInTests('Claude Code sign-in'),
+    signOut: unavailableInTests('Claude Code sign-out'),
   },
+  cursor: {
+    listCommands: noCommands,
+    account: signedOut,
+    usageLimitSource: noLimits,
+    startLogin: unavailableInTests('Cursor sign-in'),
+    signOut: unavailableInTests('Cursor sign-out'),
+  },
+  grok: {
+    projectInventory: {
+      mcpCapabilities: GROK_MCP_CAPABILITIES,
+      skillCapabilities: { inventory: true, configure: false, install: false },
+      discover: async () => ({ commands: [], servers: [], skills: [] }),
+    },
+    account: signedOut,
+    usageLimitSource: noLimits,
+    signOut: unavailableInTests('Grok sign-out'),
+  },
+  acp: { account: signedOut, signOut: unavailableInTests('ACP sign-out') },
+} satisfies Record<ProviderId, ProviderServices>
+
+/** Codex's control process would start the installed CLI; this one has nothing to report. */
+class QuietCodexControl extends EventEmitter implements CodexControlAdapter {
+  async start(): Promise<void> {}
+  async dispose(): Promise<void> {}
+  onUsageChanged(): void {}
+  account = signedOut
+  async listModels(): Promise<Model[]> {
+    return []
+  }
+  async listMcpServers(): Promise<McpServer[]> {
+    return []
+  }
+  isMcpLoading(): boolean {
+    return false
+  }
+  async whenMcpServersListed(): Promise<boolean> {
+    return true
+  }
+  async listSkills() {
+    return { skills: [], errors: [] }
+  }
+  rateLimitSource = noLimits
+  setSkillEnabled = unavailableInTests('Codex skill settings')
+  consumeRateLimitReset = unavailableInTests('Codex limit resets')
+  startLogin = unavailableInTests('Codex sign-in')
+  cancelLogin = unavailableInTests('Codex sign-in')
+  useApiKey = unavailableInTests('Codex sign-in')
+  signOut = unavailableInTests('Codex sign-out')
 }
 
 // Every orchestrator under test gets its own MCP config folder. Remove them when the file is done:
@@ -483,12 +557,15 @@ function harness(
     ...(maxIdleThreadRuntimes === undefined ? {} : { maxIdleThreadRuntimes }),
     ...(idleThreadRuntimeMs === undefined ? {} : { idleThreadRuntimeMs }),
     ...(stopSettleMs === undefined ? {} : { stopSettleMs }),
-    providerServices: {
-      ...providerServices,
-      'claude-code': { ...quietClaudeInventory, ...providerServices?.['claude-code'] },
-      grok: { ...quietGrokInventory, ...providerServices?.grok },
-      opencode: { ...quietOpenCodeInventory, ...providerServices?.opencode },
-    },
+    providerServices: Object.fromEntries(
+      ProviderIdSchema.options.map((provider) => {
+        // tsc skips the server's tests, so a provider added without an entry is caught here.
+        const quiet = Object.hasOwn(quietServices, provider) ? quietServices[provider] : undefined
+        if (!quiet) throw new Error(`The test harness has no quiet services for ${provider}.`)
+        return [provider, { ...quiet, ...providerServices?.[provider] }]
+      }),
+    ),
+    createCodex: () => new QuietCodexControl(),
     ...(worktreeRoot ? { worktreeRoot } : {}),
     ...(defaultSkillsRoot ? { defaultSkillsRoot } : {}),
   })
@@ -1601,12 +1678,23 @@ describe('default skills', () => {
     const parent = mkdtempSync(path.join(os.tmpdir(), 'tc-orchestrator-skills-'))
     onTestFinished(() => rmSync(parent, { recursive: true, force: true }))
     const root = await writeDefaultSkillsFixture(parent)
-    return { root, ...harness(undefined, undefined, undefined, undefined, undefined, root) }
+    // A provider that loads `.agents/skills` lists the user's and the project's; keep both empty.
+    const project = path.join(parent, 'project')
+    const home = path.join(parent, 'home')
+    mkdirSync(project)
+    mkdirSync(home)
+    const homedir = vi.spyOn(os, 'homedir').mockReturnValue(home)
+    onTestFinished(() => homedir.mockRestore())
+    return {
+      root,
+      project,
+      ...harness(undefined, undefined, undefined, undefined, undefined, root),
+    }
   }
 
   it.each(ProviderIdSchema.options)('lists the bundled skills for %s', async (provider) => {
-    const { orchestrator } = await skillsHarness()
-    const inventory = await orchestrator.listSkills(provider, process.cwd())
+    const { orchestrator, project } = await skillsHarness()
+    const inventory = await orchestrator.listSkills(provider, project)
 
     expect(
       inventory.skills
@@ -7654,15 +7742,16 @@ describe('provider commands', () => {
         loading: true,
       })
 
-      // Without a service only a running chat can answer.
-      await expect(orchestrator.listCommands('cursor', '/repo')).resolves.toEqual({
+      // Without a service only a running chat can answer. ACP agents have none:
+      // they report their commands only from a session.
+      await expect(orchestrator.listCommands('acp', '/repo')).resolves.toEqual({
         commands: [],
         loading: false,
       })
-      await orchestrator.startThread('cursor', '/repo')
-      sessions[3]!.commands = [command('cursor')]
-      await expect(orchestrator.listCommands('cursor', '/repo')).resolves.toEqual({
-        commands: [command('cursor')],
+      await orchestrator.startThread('acp', '/repo')
+      sessions[3]!.commands = [command('acp')]
+      await expect(orchestrator.listCommands('acp', '/repo')).resolves.toEqual({
+        commands: [command('acp')],
         loading: false,
       })
     } finally {

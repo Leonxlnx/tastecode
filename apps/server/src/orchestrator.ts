@@ -861,7 +861,7 @@ export class Orchestrator {
   /** What every account's controls share with the default account's. */
   #scopeOptions: Pick<
     ProviderControlsOptions,
-    'controlIdleMs' | 'beforeLimitRead' | 'services' | 'chosenRuntime'
+    'controlIdleMs' | 'beforeLimitRead' | 'services' | 'createCodex' | 'chosenRuntime'
   >
   /** Install, update and sign-in terminals, by terminal id, and the source they change. */
   #providerTerminals = new Map<
@@ -935,6 +935,8 @@ export class Orchestrator {
       beforeLimitRead?: () => Promise<void>
       /** Test override for the provider services behind settings and inventories. */
       providerServices?: ProviderControlsOptions['services']
+      /** Test override for the Codex control process behind its settings and inventories. */
+      createCodex?: ProviderControlsOptions['createCodex']
       /** Names the binary a provider's own model lists come from (path and version). */
       providerBinary?: (provider: ProviderId) => Promise<string | undefined>
 
@@ -1001,6 +1003,7 @@ export class Orchestrator {
       ...(handlers.controlIdleMs !== undefined ? { controlIdleMs: handlers.controlIdleMs } : {}),
       ...(handlers.beforeLimitRead ? { beforeLimitRead: handlers.beforeLimitRead } : {}),
       ...(handlers.providerServices ? { services: handlers.providerServices } : {}),
+      ...(handlers.createCodex ? { createCodex: handlers.createCodex } : {}),
     }
     this.#controls = new ProviderControls({
       listModels: (provider, agent, read) =>
