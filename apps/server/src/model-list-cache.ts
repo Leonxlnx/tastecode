@@ -172,6 +172,19 @@ export class ModelListCache {
   }
 
   /**
+   * The list this launch already holds, without asking the provider. Undefined
+   * when none was read yet; a caller that must not start a vendor process,
+   * such as an agent listing models for a sub-agent, takes that as "unknown".
+   */
+  peek(provider: ProviderId, agent?: string): readonly Model[] | undefined {
+    this.#restore()
+    const entry = this.#entries.get(entryKey(provider, agent))
+    // A restored list waits for its binary check before it answers.
+    if (!entry || entry.value === undefined || entry.needsBinary) return undefined
+    return entry.value
+  }
+
+  /**
    * The provider's lists may be out of date, for example after a sign-in or an
    * update. They still answer, but the next request refreshes them. Without an
    * agent this covers every source of the provider.
