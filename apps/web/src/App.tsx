@@ -158,6 +158,7 @@ import { sourceSupportsAttachments } from './attachment-capability.js'
 import { canCaptureVoice, type VoiceRecording } from './voice-capability.js'
 import { pollUsageLimits, UsageLimitsController, type LimitTarget } from './usage-limits-state.js'
 import { sameAccount } from './usage-summary-state.js'
+import { poolsOf } from './account-pool.js'
 import {
   AccountLabelContext,
   accountLabelOf,
@@ -954,6 +955,13 @@ export function App() {
   /** For the model catalog's runs, which outlive a render. */
   const providerAccountsRef = useRef(providerAccounts)
   providerAccountsRef.current = providerAccounts
+  // A provider's accounts as one pool, worked out again only when the limits
+  // or the accounts change, never per streamed delta. The server's
+  // `accounts.pool` can replace this later.
+  const accountPools = useMemo(
+    () => poolsOf(usageState, providerAccounts.accounts, Date.now()),
+    [usageState, providerAccounts.accounts],
+  )
   // Undefined until the first catalog run has listed them, so setup can tell
   // an empty library from one that has not answered yet.
   const [acpAgents, setAcpAgents] = useState<ResultOf<'acp.agents'>['agents'] | undefined>()
@@ -7593,6 +7601,7 @@ export function App() {
           usageCardStates={cardUsageState}
           accountLabel={accountLabel}
           activeAccount={activeAccount}
+          accountPools={accountPools}
           onShowUsage={showUsage}
           onRetryUsage={retryUsage}
           onRefreshUsage={refreshAllUsage}

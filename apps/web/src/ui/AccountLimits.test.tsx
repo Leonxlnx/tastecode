@@ -1,7 +1,8 @@
 // @vitest-environment happy-dom
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import type { ResultOf } from '@harness/contracts'
+import type { ProviderAccount, ResultOf } from '@harness/contracts'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { poolsOf } from '../account-pool.js'
 import { AccountLimits, type AccountLimitsState, summaryLimit } from './AccountLimits.js'
 import { dateTimeText } from './usage/usage-format.js'
 
@@ -362,6 +363,142 @@ describe('account limits', () => {
     expect(
       screen.getByRole('button', { name: 'Personal, Session 0% left, Weekly 2% left' }),
     ).toBeTruthy()
+  })
+
+  it('sums a provider’s accounts into one pool above them and marks the one to use next', () => {
+    const now = Date.now()
+    const hour = 3_600_000
+    const day = 24 * hour
+    const window = (label: string, usedPercent: number, minutes: number, resetsAt: number) => ({
+      label,
+      usedPercent,
+      windowMinutes: minutes,
+      resetsAt,
+    })
+    const states: AccountLimitsState[] = [
+      {
+        status: 'ready',
+        provider: 'claude-code',
+        summary: summary([
+          window('Session', 40, 300, now + 2 * hour),
+          window('Weekly', 30, 10_080, now + 3 * day),
+        ]),
+      },
+      {
+        status: 'ready',
+        provider: 'claude-code',
+        accountId: 'max-1a2b3c',
+        summary: summary([
+          window('Session', 10, 300, now + 4 * hour),
+          window('Weekly', 50, 10_080, now + day),
+        ]),
+      },
+      {
+        status: 'ready',
+        provider: 'claude-code',
+        accountId: 'ultra-1a2b3c',
+        summary: summary([window('Weekly', 20, 10_080, now + 5 * day)]),
+      },
+    ]
+    const accounts: ProviderAccount[] = [
+      { id: 'default', provider: 'claude-code', label: 'Personal', managed: false, plan: 'Pro' },
+      {
+        id: 'max-1a2b3c',
+        provider: 'claude-code',
+        label: 'Work',
+        home: 'C:\\accounts\\max',
+        managed: true,
+        plan: 'Max x5',
+      },
+      {
+        id: 'ultra-1a2b3c',
+        provider: 'claude-code',
+        label: 'Studio',
+        home: 'C:\\accounts\\ultra',
+        managed: true,
+        plan: 'Max x20',
+      },
+    ]
+    const names = new Map(accounts.map((account) => [account.id, account.label]))
+    render(
+      <AccountLimits
+        states={states}
+        accountLabel={(_provider, accountId) => names.get(accountId ?? 'default') ?? 'Account'}
+        activeAccount={() => 'default'}
+        pools={poolsOf(states, accounts, now)}
+        onRetry={() => {}}
+      />,
+    )
+
+    const pool = screen.getByRole('region', { name: 'Claude Code · All accounts' })
+    const group = screen.getByRole('group', { name: 'Claude Code' })
+    // The pool comes before every account line.
+    expect(group.querySelector('.account-menu__pool, .account-menu__account')).toBe(pool)
+    expect(within(pool).getByText('3 accounts')).toBeTruthy()
+
+    // Session: Pro and Max (Ultra has no 5-hour window), 5.1 of 6 left.
+    const session = within(pool).getByRole('progressbar', {
+      name: 'Claude Code Session left, all accounts',
+    })
+    expect(session.getAttribute('aria-valuenow')).toBe('85')
+    expect(session.getAttribute('aria-valuetext')).toBe('85% left, 5.1 of 6× Pro left')
+    expect(
+      within(pool).getByText(/^5\.1 of 6× Pro left · 2 of 3 accounts · Personal resets in/),
+    ).toBeTruthy()
+    // Weekly: 11.2 of 16 left, a segment per account, the soonest reset first.
+    const weekly = within(pool).getByRole('progressbar', {
+      name: 'Claude Code Weekly left, all accounts',
+    })
+    expect(weekly.getAttribute('aria-valuenow')).toBe('70')
+    const segments = [...weekly.querySelectorAll<HTMLElement>('.account-menu__pool-segment')]
+    expect(segments.map((segment) => segment.title.split(':')[0])).toEqual([
+      'Work',
+      'Personal',
+      'Studio',
+    ])
+    expect(segments.map((segment) => segment.style.flexGrow)).toEqual(['5', '1', '10'])
+    expect(within(pool).getByText(/^11\.2 of 16× Pro left · Work resets/)).toBeTruthy()
+
+    // Work resets its week soonest with room left: it is the one to use next.
+    const work = screen.getByRole('button', { name: /^Work, recommended, / })
+    expect(within(work).getByText('Recommended')).toBeTruthy()
+    expect(screen.getAllByText('Recommended')).toHaveLength(1)
+  })
+
+  it('shows no pool without plan sizes, and none for a single account', () => {
+    const states: AccountLimitsState[] = [
+      {
+        status: 'ready',
+        provider: 'codex',
+        summary: summary([{ label: 'Weekly', usedPercent: 10, windowMinutes: 10_080 }]),
+      },
+      {
+        status: 'ready',
+        provider: 'codex',
+        accountId: 'work-1a2b3c',
+        summary: summary([{ label: 'Weekly', usedPercent: 10, windowMinutes: 10_080 }]),
+      },
+    ]
+    const view = render(
+      <AccountLimits states={states} pools={poolsOf(states, [], Date.now())} onRetry={() => {}} />,
+    )
+    expect(screen.queryByRole('region', { name: /All accounts/ })).toBeNull()
+    view.unmount()
+
+    const single = [states[0]!]
+    render(
+      <AccountLimits
+        states={single}
+        pools={poolsOf(
+          single,
+          [{ id: 'default', provider: 'codex', label: 'Default', managed: false, plan: 'Plus' }],
+          Date.now(),
+        )}
+        onRetry={() => {}}
+      />,
+    )
+    expect(screen.queryByRole('region', { name: /All accounts/ })).toBeNull()
+    expect(screen.queryByText('Recommended')).toBeNull()
   })
 
   it('says once that the limits are on screen and releases that when it closes', () => {

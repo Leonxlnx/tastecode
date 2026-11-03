@@ -15,6 +15,12 @@ import {
   type ResultOf,
 } from '@harness/contracts'
 import { IconChevronRight as ChevronRight, IconRefresh as RefreshCw } from '@tabler/icons-react'
+import {
+  multipleText,
+  poolSegments,
+  type PoolWindowTotal,
+  type ProviderPool,
+} from '../account-pool.js'
 import type { AccountLabel } from '../provider-accounts-state.js'
 import { providerDisplayName, providerMark } from '../provider-presentation.js'
 import { limitKey, USAGE_LOW_PERCENT } from '../usage-limits-state.js'
@@ -51,6 +57,8 @@ export function AccountLimits(props: {
   accountLabel?: AccountLabel | undefined
   /** The account a new chat with the provider starts on; open first where a provider has several. */
   activeAccount?: ((provider: ProviderId) => AccountId) | undefined
+  /** Each provider's accounts as one pool (account-pool.ts), summed above its accounts. */
+  pools?: readonly ProviderPool[] | undefined
   /** Called once while the limits are on screen; returns the release for when they leave. */
   onShow?: (() => () => void) | undefined
   onRetry: (provider: ProviderId, accountId?: AccountId) => void
@@ -143,6 +151,7 @@ export function AccountLimits(props: {
             states={group.states}
             label={label}
             active={props.activeAccount?.(group.provider)}
+            pool={props.pools?.find((pool) => pool.provider === group.provider)}
             action={action}
             now={now}
             onRetry={(state) => retry(state.provider, state.accountId)}
@@ -190,22 +199,27 @@ function RefreshLimits(props: { busy: boolean; onRefresh: () => void }) {
 }
 
 /**
- * A provider with several accounts: its name once, then a line per account that
- * opens to that account's full limits. A closed line shows how much is left of
- * each window, Session and Weekly under its name, so the account with room
- * shows at a glance. The account new chats start on is open to begin with.
+ * A provider with several accounts: its name once, the accounts summed into
+ * one pool, then a line per account that opens to that account's full
+ * limits. A closed line shows how much is left of each window, Session and
+ * Weekly under its name, so the account with room shows at a glance. The
+ * account new chats start on is open to begin with, and the one the pool
+ * recommends for the next chat is marked.
  */
 function ProviderAccountLimits(props: {
   provider: ProviderId
   states: AccountLimitsState[]
   label: (state: AccountLimitsState) => string
   active?: AccountId | undefined
+  pool?: ProviderPool | undefined
   action?: ReactNode
   now: number
   onRetry: (state: AccountLimitsState) => void
   onConsumeReset?: ConsumeReset | undefined
 }) {
   const name = providerDisplayName(props.provider)
+  const pool = props.pool
+  const recommended = pool?.recommended
   const [open, setOpen] = useState<ReadonlySet<AccountId>>(() => {
     const active = props.active ?? DEFAULT_ACCOUNT_ID
     const first = accountOf(props.states[0]!)
@@ -220,12 +234,16 @@ function ProviderAccountLimits(props: {
   return (
     <div className="account-menu__provider" role="group" aria-label={name}>
       <ProviderHeading provider={props.provider} action={props.action} />
+      {pool && pool.windows.length > 0 ? (
+        <AccountPool pool={pool} provider={name} now={props.now} />
+      ) : null}
       {props.states.map((state) => (
         <AccountLine
           key={limitKey(state.provider, state.accountId)}
           state={state}
           provider={name}
           account={props.label(state)}
+          recommended={recommended !== undefined && accountOf(state) === recommended}
           open={open.has(accountOf(state))}
           now={props.now}
           onToggle={() => toggle(accountOf(state))}
@@ -237,11 +255,107 @@ function ProviderAccountLimits(props: {
   )
 }
 
+/**
+ * The provider's accounts summed into one pool, above the accounts: per
+ * window, how much of the pool is left, its size in the cheapest plan's
+ * units, and a bar with a segment per account, sized by its plan, the one
+ * that resets soonest first. Accounts whose plan size is unknown stay out of
+ * the sum; the line under the bar says how many are counted.
+ */
+function AccountPool(props: { pool: ProviderPool; provider: string; now: number }) {
+  return (
+    <section className="account-menu__pool" aria-label={`${props.provider} · All accounts`}>
+      <div className="account-menu__pool-head">
+        <span className="account-menu__pool-name">All accounts</span>
+        <span className="account-menu__pool-count">{props.pool.accounts.length} accounts</span>
+      </div>
+      {props.pool.windows.map((total) => (
+        <PoolWindowRow
+          key={total.id}
+          pool={props.pool}
+          total={total}
+          provider={props.provider}
+          now={props.now}
+        />
+      ))}
+    </section>
+  )
+}
+
+function PoolWindowRow(props: {
+  pool: ProviderPool
+  total: PoolWindowTotal
+  provider: string
+  now: number
+}) {
+  const { pool, total } = props
+  const left =
+    total.capacity > 0
+      ? Math.min(100, Math.max(0, Math.round((total.remaining / total.capacity) * 100)))
+      : 0
+  const size = `${multipleText(total.capacity)}×${pool.unit ? ` ${pool.unit}` : ''}`
+  const amount = `${multipleText(total.remaining, 1)} of ${size} left`
+  const segments = poolSegments(pool, total.kind, props.now)
+  const next = segments.find((segment) => segment.resetsAt === total.nextResetAt)
+  const reset = next?.resetsAt === undefined ? undefined : resetText(next.resetsAt, props.now)
+  const counted =
+    total.accounts < pool.accounts.length
+      ? `${total.accounts} of ${pool.accounts.length} accounts`
+      : undefined
+  const detail = [amount, counted, next && reset ? `${next.label} ${reset.label}` : undefined]
+    .filter(Boolean)
+    .join(' · ')
+  return (
+    <div className="account-menu__limit account-menu__pool-window">
+      <div className="account-menu__limit-row">
+        <span className="account-menu__limit-label">
+          {total.label}
+          <span className="account-menu__pool-size"> · {size}</span>
+        </span>
+        <span className="account-menu__limit-value">{left}% left</span>
+      </div>
+      <div
+        className="account-menu__pool-bar"
+        role="progressbar"
+        aria-label={`${props.provider} ${total.label} left, all accounts`}
+        aria-valuenow={left}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuetext={`${left}% left, ${amount}`}
+      >
+        {segments.map((segment) => {
+          const segmentLeft = Math.round(segment.left * 100)
+          const segmentReset =
+            segment.resetsAt === undefined ? undefined : resetText(segment.resetsAt, props.now)
+          return (
+            <span
+              key={segment.accountId}
+              className="account-menu__pool-segment"
+              data-low={segmentLeft <= USAGE_LOW_PERCENT ? '' : undefined}
+              style={{ flexGrow: segment.weight, '--left': segment.left } as CSSProperties}
+              title={[`${segment.label}: ${segmentLeft}% left`, segmentReset?.label]
+                .filter(Boolean)
+                .join(', ')}
+            >
+              <span />
+            </span>
+          )
+        })}
+      </div>
+      <span className="account-menu__limit-reset" title={reset?.title}>
+        {detail}
+      </span>
+    </div>
+  )
+}
+
 /** One account under its provider: a line that opens to its limits. */
 function AccountLine(props: {
   state: AccountLimitsState
   provider: string
   account: string
+  /** The account the pool recommends for the next chat. */
+  recommended?: boolean | undefined
   open: boolean
   now: number
   onToggle: () => void
@@ -255,6 +369,11 @@ function AccountLine(props: {
   const glance = glanced
     .map((limit) => `${limit.label} ${limit.valueLabel ?? `${remaining(limit)}% left`}`)
     .join(', ')
+  const badge = props.recommended ? (
+    <span className="account-menu__account-badge" title="Resets soonest and has room left">
+      Recommended
+    </span>
+  ) : null
   const retry = retryable ? (
     <button
       className="account-menu__retry"
@@ -271,6 +390,7 @@ function AccountLine(props: {
       <div className="account-menu__account-head">
         <span className="account-menu__account-line" title={status?.detail}>
           <span className="account-menu__account-name">{props.account}</span>
+          {badge}
           <span className="account-menu__account-status">{status?.label}</span>
         </span>
         {retry}
@@ -285,12 +405,19 @@ function AccountLine(props: {
           type="button"
           aria-expanded={props.open}
           aria-controls={props.open ? bodyId : undefined}
-          aria-label={props.open ? props.account : `${props.account}, ${glance}`}
+          aria-label={[
+            props.account,
+            props.recommended ? 'recommended' : '',
+            props.open ? '' : glance,
+          ]
+            .filter(Boolean)
+            .join(', ')}
           title={props.open ? status?.detail : glance}
           onClick={props.onToggle}
         >
           <ChevronRight size={12} aria-hidden />
           <span className="account-menu__account-name">{props.account}</span>
+          {badge}
           {props.open ? (
             status ? (
               <span className="account-menu__account-status">{status.label}</span>
