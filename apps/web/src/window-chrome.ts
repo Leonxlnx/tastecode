@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef } from 'react'
+import { readAppBackground } from './app-background.js'
 import { isDesktop, setDesktopWindowChrome, type WindowChrome } from './bridge.js'
 
 type Theme = WindowChrome['theme']
@@ -86,7 +87,8 @@ export function backgroundAt(x: number, y: number): string | undefined {
 
 /**
  * What native chrome must match right now: the background under the caption
- * buttons (top right), the title-bar symbol colour and the page background.
+ * buttons (top right), the title-bar symbol colour and the page background,
+ * and whether the page shows what is behind the window.
  */
 export function readWindowChrome(theme: Theme): WindowChrome {
   const probe = document.createElement('div')
@@ -103,15 +105,29 @@ export function readWindowChrome(theme: Theme): WindowChrome {
   const fallback = FALLBACK[theme]
   // With a window background (app-background.css) nothing under the buttons
   // is opaque unless something covers the title bar, as Settings does.
-  const seeThrough = document.documentElement.hasAttribute('data-app-bg')
-  return {
+  const appBackground = document.documentElement.dataset['appBg']
+  const chrome: WindowChrome = {
     theme,
     background: background ?? fallback.background,
     caption:
       backgroundAt(window.innerWidth - 2, 2) ??
-      (seeThrough ? SEE_THROUGH_CAPTION : (rail ?? fallback.caption)),
+      (appBackground !== undefined ? SEE_THROUGH_CAPTION : (rail ?? fallback.caption)),
     symbol: symbol ?? fallback.symbol,
   }
+  // Only Transparent leaves the page itself see-through; a picture or an
+  // effect paints its own opaque layer, so the window behind it stays solid.
+  // Read from the choice rather than data-app-bg, which arrives with a lazy
+  // chunk: at startup the first report would otherwise turn a window that
+  // opened clear solid for a moment. The shell clears it only where the OS
+  // draws a material, and the page stays opaque until the layer applies.
+  //
+  // The translucent sidebar (data-glass) also needs it: in the dark theme the
+  // page leaves body and .shell__body clear behind the sidebar (app.css), but
+  // an opaque window colour under them covered the material, so the sidebar
+  // only ever showed its own tint. The light theme keeps its chrome opaque.
+  const glass = document.documentElement.dataset['glass'] === 'on' && theme === 'dark'
+  if (glass || readAppBackground().mode === 'transparent') chrome.seeThrough = true
+  return chrome
 }
 
 /**
@@ -150,7 +166,8 @@ export function useWindowChrome(theme: Theme, surface: string): void {
     })
     observer.observe(document.documentElement, {
       attributes: true,
-      attributeFilter: ['data-app-bg'],
+      // The sidebar glass turning on or off changes whether the window is see-through.
+      attributeFilter: ['data-app-bg', 'data-glass'],
     })
     return () => {
       observer.disconnect()
