@@ -224,7 +224,7 @@ describe('the overall pool', () => {
     expect(pool.accounts[1]!.windows.map(({ id }) => id)).toEqual(['codex:primary'])
   })
 
-  it('keeps Claude's model-scoped weekly limits out of the pool', () => {
+  it("keeps Claude's model-scoped weekly limits out of the pool", () => {
     const claude = (id: string, plan: string, opus: number): PoolMember => ({
       account: { ...account(id, plan), provider: 'claude-code' },
       weights: claudePlanWeights(plan),
@@ -260,7 +260,13 @@ describe('the overall pool', () => {
   it('takes the more used window when an account reports two of one kind', () => {
     const pool = accountPool(
       'codex',
-      [member('default', 'Plus', ready([weekly(20, NOW + HOUR), weekly(70, NOW + 2 * HOUR, 'other')]))],
+      [
+        member(
+          'default',
+          'Plus',
+          ready([weekly(20, NOW + HOUR), weekly(70, NOW + 2 * HOUR, 'other')]),
+        ),
+      ],
       NOW,
     )
     expect(pool.accounts[0]!.windows).toEqual([
@@ -270,18 +276,15 @@ describe('the overall pool', () => {
 })
 
 describe('overall limits', () => {
-  it('names each adapter's overall windows', () => {
+  it("names each adapter's overall windows", () => {
     expect(['five_hour', 'seven_day', 'seven_day_opus'].map(claudeOverallLimit)).toEqual([
       true,
       true,
       false,
     ])
-    expect(['codex:primary', 'codex:secondary', 'spark:primary', 'credits'].map(codexOverallLimit)).toEqual([
-      true,
-      true,
-      false,
-      false,
-    ])
+    expect(
+      ['codex:primary', 'codex:secondary', 'spark:primary', 'credits'].map(codexOverallLimit),
+    ).toEqual([true, true, false, false])
   })
 })
 

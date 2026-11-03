@@ -137,10 +137,10 @@ function poolTotals(accounts: readonly PoolAccount[]): PoolWindowTotal[] {
   return [...totals.values()]
     .sort((a, b) => KIND_ORDER[a.kind] - KIND_ORDER[b.kind])
     .map((total) => ({
-    ...total,
-    capacity: round(total.capacity),
-    remaining: round(total.remaining),
-  }))
+      ...total,
+      capacity: round(total.capacity),
+      remaining: round(total.remaining),
+    }))
 }
 
 /**
