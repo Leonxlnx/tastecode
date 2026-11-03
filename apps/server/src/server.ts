@@ -279,6 +279,15 @@ export function startServer(
         push.broadcastRecordedEvent('sideChat.event', threadId, serializedEvent, seq)
       }
     },
+    onSubagentEvent: (threadId, parentThreadId, event, seq, serializedEvent) => {
+      if (event.type === 'item.delta') streamQuiet.noteDelta()
+      if (serializedEvent === undefined) {
+        push.broadcast('subagent.event', { threadId, parentThreadId, event, seq })
+      } else {
+        push.broadcastRecordedSubagentEvent(threadId, parentThreadId, serializedEvent, seq)
+      }
+    },
+    agentTools: true,
     onQueue: (threadId, state) => push.broadcast('thread.queue', { threadId, ...state }),
     onLog: (line) => console.log(`[agent] ${line}`),
     onLogin: (provider, result, accountId) => {
@@ -1384,8 +1393,10 @@ export function startServer(
         if (store.thread(p.threadId)?.worktreePath) {
           throw new Error('discard the isolated session checkout before deleting it')
         }
+        // Closing ends a running turn, so nothing the provider still writes can
+        // land in the chat; its saved session is kept out of history imports.
         await orchestrator.close(p.threadId)
-        store.deleteThread(p.threadId)
+        store.deleteThread(p.threadId, { keepSessionOut: true })
         orchestrator.forgetDeletedThread(p.threadId)
         lifecycleScheduler.changed()
         return {}
@@ -1432,6 +1443,11 @@ export function startServer(
       case 'thread.diff': {
         const p = parseParams(method, params)
         return orchestrator.diff(p.threadId)
+      }
+
+      case 'thread.subagents': {
+        const p = parseParams(method, params)
+        return { subagents: orchestrator.subagents(p.threadId) }
       }
 
       case 'thread.undoTurnChanges': {

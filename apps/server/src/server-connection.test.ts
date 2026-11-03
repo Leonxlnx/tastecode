@@ -145,6 +145,9 @@ vi.mock('./store.js', () => ({
     renameThread(threadId: string) {
       state.renamed.push(threadId)
     }
+    deleteThread(threadId: string, options?: { keepSessionOut?: boolean }) {
+      state.handled.push(`store.deleteThread(${threadId}, ${JSON.stringify(options)})`)
+    }
     close() {}
   },
 }))
@@ -181,6 +184,12 @@ vi.mock('./orchestrator.js', () => ({
       return operation()
     }
     async undoRestore() {}
+    async close(threadId: string) {
+      state.handled.push(`orchestrator.close(${threadId})`)
+    }
+    forgetDeletedThread(threadId: string) {
+      state.handled.push(`orchestrator.forgetDeletedThread(${threadId})`)
+    }
     isTurnRunning() {
       return true
     }
@@ -1762,6 +1771,37 @@ describe('checkpoint restores across clients', () => {
     } finally {
       reader.client.terminate()
     }
+  })
+})
+
+describe('chat deletes', () => {
+  async function request(port: number, method: string, params: unknown) {
+    const client = new WebSocket(`ws://127.0.0.1:${port}`)
+    try {
+      await once(client, 'message')
+      const reply = once(client, 'message')
+      client.send(JSON.stringify({ id: 'delete', method, params }))
+      const [message] = await reply
+      return JSON.parse(String(message)) as unknown
+    } finally {
+      client.terminate()
+    }
+  }
+
+  it('stops a chat, then deletes it with its provider session kept out of history imports', async () => {
+    // A plain deleteThread leaves the saved session importable, and the next
+    // history scan brings the deleted chat back as a new one.
+    state.threads.set('t', { projectPath: '/project', provider: 'claude-code' })
+    const { port } = await listen()
+    expect(await request(port, 'thread.delete', { threadId: 't' })).toEqual({
+      id: 'delete',
+      result: {},
+    })
+    expect(state.handled.filter((entry) => /^(orchestrator|store)\./.test(entry))).toEqual([
+      'orchestrator.close(t)',
+      'store.deleteThread(t, {"keepSessionOut":true})',
+      'orchestrator.forgetDeletedThread(t)',
+    ])
   })
 })
 

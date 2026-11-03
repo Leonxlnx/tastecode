@@ -24,6 +24,11 @@ export function parseChannelData<C extends ChannelName>(channel: C, value: unkno
     const delta = parseThreadDeltaData(value)
     if (delta) return delta as DataOf<C>
   }
+  if (channel === 'subagent.event') {
+    // A sub-agent streams as hard as a chat, to every client, whether or not it is open.
+    const delta = parseSubagentDeltaData(value)
+    if (delta) return delta as DataOf<C>
+  }
   if (channel === 'terminal.output') {
     const output = parseTerminalOutputData(value)
     if (output) return output as DataOf<C>
@@ -66,6 +71,10 @@ export const FAST_CHANNEL_FIELDS = {
     keyof DataOf<'sideChat.event'>,
     true
   >,
+  subagent: { threadId: true, parentThreadId: true, seq: true, event: true } satisfies Record<
+    keyof DataOf<'subagent.event'>,
+    true
+  >,
   delta: { type: true, turnId: true, itemId: true, textDelta: true } satisfies Record<
     keyof Extract<DomainEvent, { type: 'item.delta' }>,
     true
@@ -106,6 +115,14 @@ function parseThreadDeltaData(value: unknown): DataOf<'thread.event'> | undefine
   return sequence === undefined
     ? { threadId: data['threadId'], event: parsedEvent }
     : { threadId: data['threadId'], event: parsedEvent, seq: sequence }
+}
+
+function parseSubagentDeltaData(value: unknown): DataOf<'subagent.event'> | undefined {
+  const delta = parseThreadDeltaData(value)
+  if (!delta) return undefined
+  const parentThreadId = (value as Record<string, unknown>)['parentThreadId']
+  if (typeof parentThreadId !== 'string' || parentThreadId.length === 0) return undefined
+  return { ...delta, parentThreadId }
 }
 
 export function parseMethodResult<M extends MethodName>(method: M, value: unknown): ResultOf<M> {

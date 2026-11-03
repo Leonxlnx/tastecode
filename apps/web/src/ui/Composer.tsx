@@ -85,11 +85,20 @@ import { ComposerErrors, useComposerError, type ComposerError } from './Composer
 import { Skeleton, SkeletonRows, SkeletonStatus } from './Skeleton.js'
 import { droppedFilePath } from './composer-dropped-file.js'
 
+const loadResourcePicker = () => import('./ComposerResourcePicker.js')
 const ComposerResourcePicker = lazy(() =>
-  import('./ComposerResourcePicker.js').then((module) => ({
+  loadResourcePicker().then((module) => ({
     default: module.ComposerResourcePicker,
   })),
 )
+// Fetched when the box is about to be typed in, so a first `/` does not wait for it.
+const preloadResourcePicker = () => {
+  void loadResourcePicker().catch(() => undefined)
+}
+const warmUpComposer = () => {
+  preloadThread()
+  preloadResourcePicker()
+}
 // Loaded as soon as a menu opens or a draft brings chips, so the first chip
 // rarely waits for it; until then the draft shows as plain text.
 type ChipOverlayComponent = typeof import('./ComposerChipOverlay.js').ComposerChipOverlay
@@ -2268,8 +2277,8 @@ function ComposerComponent(props: {
                   aria-expanded={resourceTrigger !== undefined}
                   aria-haspopup="listbox"
                   aria-autocomplete="list"
-                  onFocus={preloadThread}
-                  onPointerEnter={preloadThread}
+                  onFocus={warmUpComposer}
+                  onPointerEnter={warmUpComposer}
                   onChange={(e) => {
                     const input = e.nativeEvent as InputEvent
                     let value = e.target.value

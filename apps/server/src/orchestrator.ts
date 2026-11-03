@@ -13,7 +13,12 @@ import type {
   VisualReview,
 } from '@harness/design-agent'
 import { isDesignBriefAttachment } from '@harness/design-agent/attachment'
-import { DEFAULT_ACCOUNT_ID, JsonValueSchema, PreviewDomAuditSchema } from '@harness/contracts'
+import {
+  DEFAULT_ACCOUNT_ID,
+  JsonValueSchema,
+  PreviewDomAuditSchema,
+  ProviderIdSchema,
+} from '@harness/contracts'
 import { z } from 'zod'
 import {
   providerRuntime,
@@ -120,6 +125,7 @@ import type {
   Thread,
   ThreadInboxStatus,
   ThreadLifecycle,
+  ThreadSubagent,
   UsageReadIntent,
 } from '@harness/contracts'
 import {
@@ -139,8 +145,23 @@ import { assertPublicWorkspaceFile, existingWorkspacePath } from './api-workspac
 import {
   continuationPromptFromReplay,
   type EarlierChanges,
+  projectHistoryItems,
   sideChatInstructionsFromReplay,
 } from './side-chat.js'
+import {
+  AGENT_TOOLS_SERVER_ID,
+  AgentToolError,
+  AgentToolsEndpoint,
+  type AgentToolsGrant,
+} from './agent-tools-mcp.js'
+import {
+  SUBAGENT_INSTRUCTIONS,
+  SubagentBroker,
+  type AgentModelChoice,
+  type SubagentChildSpec,
+  type SubagentOutcome,
+  type SubagentParent,
+} from './subagent-broker.js'
 import { IDLE_THREAD_RUNTIME_MS, idleThreadRuntimeLimit } from './runtime-retention.js'
 import {
   cleanGeneratedCommitMessage,
@@ -175,6 +196,18 @@ type RecordedEventHandler = (
   seq: number,
   serializedEvent?: string,
 ) => void
+
+/** A sub-agent chat's event, with the chat that started it. */
+type SubagentEventHandler = (
+  threadId: string,
+  parentThreadId: string,
+  event: DomainEvent,
+  seq: number,
+  serializedEvent?: string,
+) => void
+
+/** The header value's credential reference in the reserved `tastecode` server. */
+const AGENT_TOOLS_CREDENTIAL = 'tastecode-agent-tools'
 
 type HistoryEntry = { seq: number; event: DomainEvent }
 type HistoryRead = { events: HistoryEntry[]; serializedEvents?: string | undefined }
@@ -229,6 +262,18 @@ type QueueState = { items: QueuedTurn[]; canSteer: boolean }
 type PendingTurnStart = { acceptedAt: number; submission?: UserSubmission }
 type QueueDrain = { queueId: string; completedTurnId?: string }
 type TurnStartBarrier = { done: Promise<void>; release: () => void; turnCompleted?: boolean }
+/** A turn Stop already ended for the user, while its agent has not reported its end yet. */
+type SettlingStop = {
+  turnId: string
+  entry: AttachedThreadRuntime
+  timer: ReturnType<typeof setTimeout>
+  /** The agent accepted the Stop request. */
+  confirmed?: boolean
+  /** The agent started new work after that, and was asked to stop once more. */
+  stoppedAgain?: boolean
+  /** A held prompt the user sent meanwhile; it goes first once the agent has ended the turn. */
+  sendFirst?: string
+}
 type BackgroundSourceEntry = {
   reading: Promise<AvailableBackgroundModelSource | undefined>
   /** Infinite while the read is in flight. */
@@ -523,6 +568,13 @@ function onAccount(thread: Thread, accountId: string | undefined): Thread {
     : { ...thread, accountId }
 }
 
+/** A user's MCP server may not take the id TasteCode's agent tools use. */
+function assertUserMcpServerId(id: string): void {
+  if (id === AGENT_TOOLS_SERVER_ID) {
+    throw new Error(`"${AGENT_TOOLS_SERVER_ID}" is reserved for TasteCode's own agent tools.`)
+  }
+}
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
@@ -610,6 +662,12 @@ function designRecoveryState(history: Array<{ event: DomainEvent }>): DesignReco
   return { unresolved, openTurnId }
 }
 const PANIC_STOP_TIMEOUT_MS = 5_000
+/**
+ * How long a stopped turn's agent may take to report the turn's end before its process
+ * is ended. Longer than an adapter's own stop deadline (Claude's is 15 s), which then
+ * decides first.
+ */
+const STOP_SETTLE_TIMEOUT_MS = 30_000
 const IDLE_RUNTIME_PRUNE_RETRY_MS = 30_000
 const DESIGN_START_TIMEOUT_MS = 30_000
 const DESIGN_REPAIR_LIMIT = 2
@@ -670,6 +728,11 @@ export class Orchestrator {
   #idleRuntimeEligible = new Set<string>()
   /** Runtimes that started before their project's MCP servers changed, released once idle. */
   #mcpStaleRuntimes = new Map<string, AgentSession>()
+  /**
+   * Runtimes whose agent still runs work a turn started in the background and starts a
+   * turn of its own when it ends. Releasing one would end that work and lose the turn.
+   */
+  #backgroundWorkThreads = new Set<string>()
   #runtimeOperationCounts = new Map<string, number>()
   /**
    * MCP sign-ins that keep a runtime alive, per thread. `early` holds results
@@ -690,6 +753,14 @@ export class Orchestrator {
   #sideParents = new Map<string, string>()
   #startingSideThreads = new Map<string, Promise<Thread>>()
   #discardedSideThreads = new Set<string>()
+  /** Sub-agent chats this process runs, and the chat that started each. */
+  #subagentParents = new Map<string, string>()
+  #onSubagentEvent: SubagentEventHandler
+  #subagents: SubagentBroker
+  /** TasteCode's agent tools; absent when this orchestrator serves none. */
+  #agentTools: AgentToolsEndpoint | undefined
+  /** Each parent chat's token for the agent tools, kept while it exists. */
+  #agentToolGrants = new Map<string, AgentToolsGrant>()
   #activeTurns = new Set<string>()
   #activeTurnIds = new Map<string, string>()
   #serverOwnedUserTurns = new Set<string>()
@@ -701,11 +772,23 @@ export class Orchestrator {
   #turnStartBarriers = new Map<string, TurnStartBarrier>()
   #pendingTurnStarts = new Map<string, PendingTurnStart>()
   #acceptedTurnStarts = new Map<string, Map<string, PendingTurnStart>>()
+  /**
+   * Turns a Stop ended for the user before their agent confirmed it. The agent is still
+   * busy with them: prompts sent meanwhile wait in the queue, and the turn's late events
+   * are not recorded.
+   */
+  #settlingStops = new Map<string, SettlingStop>()
+  readonly #stopSettleMs: number
   #restoringThreads = new Map<string, Promise<void>>()
   #reviewingDiffs = new Set<string>()
   #queuedTurns = new Map<string, QueuedTurnEntry[]>()
   #emptyQueuedTurns = new Set<string>()
   #drainingQueues = new Map<string, QueueDrain>()
+  /**
+   * Chats whose queued prompts a Stop holds: they wait for the user instead of going out when
+   * the stopped turn ends. The user's next prompt, or sending a held one, lets them go.
+   */
+  #heldQueues = new Set<string>()
   #designFlows = new Map<string, DesignFlow>()
   #designTurns = new Map<string, string>()
   #designStartingThreads = new Set<string>()
@@ -826,7 +909,7 @@ export class Orchestrator {
   /** What every account's controls share with the default account's. */
   #scopeOptions: Pick<
     ProviderControlsOptions,
-    'controlIdleMs' | 'beforeLimitRead' | 'services' | 'chosenRuntime'
+    'controlIdleMs' | 'beforeLimitRead' | 'services' | 'createCodex' | 'chosenRuntime'
   >
   /** Install, update and sign-in terminals, by terminal id, and the source they change. */
   #providerTerminals = new Map<
@@ -839,6 +922,10 @@ export class Orchestrator {
     handlers: {
       onEvent: RecordedEventHandler
       onSideEvent?: RecordedEventHandler
+      /** Events of sub-agent chats, which stay off the chat stream. */
+      onSubagentEvent?: SubagentEventHandler
+      /** Serve TasteCode's agent tools to chats on providers that take them. */
+      agentTools?: boolean
       onQueue?: (threadId: string, state: QueueState) => void
       onLog: (line: string) => void
       /** `accountId` is absent for the default account. */
@@ -894,10 +981,14 @@ export class Orchestrator {
       idleThreadRuntimeMs?: number
       /** Test override for releasing one-shot Codex control processes. */
       controlIdleMs?: number
+      /** Test override for how long a stopped turn's agent may take to report its end. */
+      stopSettleMs?: number
       /** Waited on before an uncached limit read; the server holds it while a turn streams. */
       beforeLimitRead?: () => Promise<void>
       /** Test override for the provider services behind settings and inventories. */
       providerServices?: ProviderControlsOptions['services']
+      /** Test override for the Codex control process behind its settings and inventories. */
+      createCodex?: ProviderControlsOptions['createCodex']
       /** Names the binary a provider's own model lists come from (path and version). */
       providerBinary?: (provider: ProviderId) => Promise<string | undefined>
 
@@ -918,6 +1009,31 @@ export class Orchestrator {
     this.#defaultSkillsRoot = handlers.defaultSkillsRoot
     this.#onEvent = handlers.onEvent
     this.#onSideEvent = handlers.onSideEvent ?? handlers.onEvent
+    this.#onSubagentEvent = handlers.onSubagentEvent ?? (() => {})
+    this.#subagents = new SubagentBroker(store.subagents, {
+      parent: (threadId) => this.#subagentParent(threadId),
+      choices: () => this.#agentModelChoices(),
+      createChild: (spec) => this.#startSubagentThread(spec),
+      sendToChild: async (threadId, task, options) => {
+        await this.submitTurn(
+          threadId,
+          task,
+          [],
+          {
+            ...(options.model ? { model: options.model } : {}),
+            ...(options.effort ? { effort: options.effort } : {}),
+          },
+          `subagent-task-${crypto.randomUUID()}`,
+        )
+      },
+      stopChild: (threadId) => this.interrupt(threadId),
+      outcome: (threadId, turnId) => this.#subagentOutcome(threadId, turnId),
+      recordOnParent: (parentThreadId, event) => {
+        if (this.#store.thread(parentThreadId)) this.#record(parentThreadId, event)
+      },
+      interruptParent: (parentThreadId) => this.interrupt(parentThreadId),
+    })
+    this.#agentTools = handlers.agentTools ? new AgentToolsEndpoint(this.#subagents) : undefined
     this.#onQueue = handlers.onQueue ?? (() => {})
     this.#onLog = handlers.onLog
     this.#onLogin = handlers.onLogin
@@ -958,11 +1074,13 @@ export class Orchestrator {
       0,
       Math.floor(handlers.idleThreadRuntimeMs ?? IDLE_THREAD_RUNTIME_MS),
     )
+    this.#stopSettleMs = Math.max(1, handlers.stopSettleMs ?? STOP_SETTLE_TIMEOUT_MS)
     this.#scopeOptions = {
       chosenRuntime: (provider) => this.#chosenRuntime(provider),
       ...(handlers.controlIdleMs !== undefined ? { controlIdleMs: handlers.controlIdleMs } : {}),
       ...(handlers.beforeLimitRead ? { beforeLimitRead: handlers.beforeLimitRead } : {}),
       ...(handlers.providerServices ? { services: handlers.providerServices } : {}),
+      ...(handlers.createCodex ? { createCodex: handlers.createCodex } : {}),
     }
     this.#controls = new ProviderControls({
       listModels: (provider, agent, read) =>
@@ -1462,7 +1580,8 @@ export class Orchestrator {
             : undefined,
         )
       : { capabilities: PROJECT_MCP_MANAGEMENT_CAPABILITIES, servers: [] }
-    const inherited = inventory.servers
+    // TasteCode's own agent tools are not one of the user's servers.
+    const inherited = inventory.servers.filter((server) => server.id !== AGENT_TOOLS_SERVER_ID)
     const servers = new Map(inherited.map((server) => [server.id, server]))
     for (const config of this.#mcpConfig.list(provider, projectPath)) {
       const current = servers.get(config.id)
@@ -1660,6 +1779,7 @@ export class Orchestrator {
 
   addMcpServer(provider: ProviderId, projectPath: string, server: McpServerConfig): void {
     this.#requireMcpManagement(provider)
+    assertUserMcpServerId(server.id)
     this.#controls.forProvider(provider).validateMcpServer?.(server)
     this.#mcpConfig.add(provider, projectPath, server)
     this.#controls.projectMcpConfigChanged(provider, projectPath)
@@ -1667,6 +1787,7 @@ export class Orchestrator {
 
   updateMcpServer(provider: ProviderId, projectPath: string, server: McpServerConfig): void {
     this.#requireMcpManagement(provider)
+    assertUserMcpServerId(server.id)
     this.#controls.forProvider(provider).validateMcpServer?.(server)
     this.#mcpConfig.update(provider, projectPath, server)
     this.#controls.projectMcpConfigChanged(provider, projectPath)
@@ -1694,11 +1815,15 @@ export class Orchestrator {
     const results = await Promise.allSettled(
       [...active].map(async ([threadId, entry]) => {
         if (entry.session.reloadMcpServers) {
+          // A chat with agent tools keeps them through a reload.
+          const own = this.#agentToolGrants.has(threadId)
+            ? (await this.#agentToolsOptions(provider, threadId, options)).options
+            : options
           return this.#withThreadRuntimeOperation(threadId, () =>
             entry.session.reloadMcpServers!(
               entry.thread.id,
-              options.mcpServers ?? [],
-              options.mcpCredentials ?? {},
+              own.mcpServers ?? [],
+              own.mcpCredentials ?? {},
             ),
           )
         }
@@ -1828,6 +1953,62 @@ export class Orchestrator {
       }
     }
     return { mcpServers, mcpCredentials }
+  }
+
+  /** Whether a chat on `provider` gets the agent tools. Synchronous, so other starts keep their timing. */
+  #offersAgentTools(provider: ProviderId): boolean {
+    return this.#agentTools !== undefined && PROVIDER_CAPABILITIES[provider].agentTools
+  }
+
+  /**
+   * Adds TasteCode's agent tools as the reserved `tastecode` server for a chat
+   * whose provider takes them. Its token names the chat once `threadId` is
+   * known; a new chat's caller binds it after the chat exists.
+   */
+  async #agentToolsOptions(
+    provider: ProviderId,
+    threadId: string | undefined,
+    mcp: StartOptions,
+  ): Promise<{ options: StartOptions; grant?: AgentToolsGrant }> {
+    const endpoint = this.#agentTools
+    if (!endpoint || !PROVIDER_CAPABILITIES[provider].agentTools) return { options: mcp }
+    let url: string
+    try {
+      url = await endpoint.url()
+    } catch (error) {
+      this.#onLog(`[agent-tools] not offered: ${errorMessage(error)}`)
+      return { options: mcp }
+    }
+    const grant = (threadId && this.#agentToolGrants.get(threadId)) || endpoint.grant()
+    if (threadId) {
+      grant.bind(threadId)
+      this.#agentToolGrants.set(threadId, grant)
+    }
+    const server: McpServerConfig = {
+      id: AGENT_TOOLS_SERVER_ID,
+      enabled: true,
+      displayName: 'TasteCode agents',
+      transport: {
+        type: 'http',
+        url,
+        headers: { Authorization: { source: 'credential', credentialRef: AGENT_TOOLS_CREDENTIAL } },
+      },
+    }
+    return {
+      options: {
+        mcpServers: [
+          ...(mcp.mcpServers ?? []).filter((entry) => entry.id !== AGENT_TOOLS_SERVER_ID),
+          server,
+        ],
+        mcpCredentials: { ...mcp.mcpCredentials, [AGENT_TOOLS_CREDENTIAL]: grant.authorization },
+      },
+      grant,
+    }
+  }
+
+  #revokeAgentTools(threadId: string): void {
+    this.#agentToolGrants.get(threadId)?.revoke()
+    this.#agentToolGrants.delete(threadId)
   }
 
   async account(provider: ProviderId, agent?: string, accountId?: AccountId): Promise<Account> {
@@ -2153,7 +2334,15 @@ export class Orchestrator {
         ...(target.serviceTier ? { serviceTier: target.serviceTier } : {}),
         ...(approval ? { approval } : {}),
         ...this.#sessionStart(target.provider),
-        ...this.#mcpRuntimeOptions(target.provider, stored.projectPath),
+        ...(this.#offersAgentTools(target.provider)
+          ? (
+              await this.#agentToolsOptions(
+                target.provider,
+                threadId,
+                this.#mcpRuntimeOptions(target.provider, stored.projectPath),
+              )
+            ).options
+          : this.#mcpRuntimeOptions(target.provider, stored.projectPath)),
         ...this.#contextRuntimeOptions(target.provider, target.agent, accountId),
       }
       // Another account of the same provider can take the session itself.
@@ -2323,12 +2512,46 @@ export class Orchestrator {
   async #startThread(
     provider: ProviderId,
     workspacePath: string,
+    options: StartOptions & {
+      accountId?: AccountId | undefined
+      continueFrom?: string | undefined
+    },
+    generation: { dispose: number; panic: number; project: number },
+  ): Promise<Thread> {
+    const mcp = this.#mcpRuntimeOptions(provider, workspacePath)
+    // Awaited only when offered, so other starts keep their timing.
+    const agentTools = this.#offersAgentTools(provider)
+      ? await this.#agentToolsOptions(provider, undefined, mcp)
+      : { options: mcp, grant: undefined }
+    try {
+      const thread = await this.#launchThread(
+        provider,
+        workspacePath,
+        options,
+        generation,
+        agentTools.options,
+      )
+      if (agentTools.grant) {
+        agentTools.grant.bind(thread.id)
+        this.#agentToolGrants.set(thread.id, agentTools.grant)
+      }
+      return thread
+    } catch (error) {
+      agentTools.grant?.revoke()
+      throw error
+    }
+  }
+
+  async #launchThread(
+    provider: ProviderId,
+    workspacePath: string,
     {
       accountId: requestedAccount,
       continueFrom,
       ...options
     }: StartOptions & { accountId?: AccountId | undefined; continueFrom?: string | undefined },
     generation: { dispose: number; panic: number; project: number },
+    mcpOptions: StartOptions,
   ): Promise<Thread> {
     const cancelled = () =>
       generation.dispose !== this.#disposeGeneration ||
@@ -2349,7 +2572,7 @@ export class Orchestrator {
       ...this.#sessionStart(provider, options.instructions, {
         skills: !options.ephemeral,
       }),
-      ...this.#mcpRuntimeOptions(provider, workspacePath),
+      ...mcpOptions,
       ...this.#contextRuntimeOptions(provider, options.agent, accountId),
     }
     const worktree = options.isolate
@@ -2583,6 +2806,168 @@ export class Orchestrator {
     }
   }
 
+  /** The sub-agents TasteCode started for a chat, newest first. */
+  subagents(threadId: string): ThreadSubagent[] {
+    return this.#subagents.list(threadId)
+  }
+
+  /** The calling chat as a parent that may start sub-agents now. */
+  #subagentParent(threadId: string): SubagentParent {
+    const stored = this.#store.thread(threadId)
+    if (!stored || stored.closedAt !== undefined) throw new AgentToolError('This chat is closed.')
+    if (stored.ephemeral) throw new AgentToolError('A sub-agent cannot start sub-agents.')
+    if (this.#designOwnsThread(threadId)) {
+      throw new AgentToolError('Sub-agents are not available during a Design run.')
+    }
+    const turnId = this.#activeTurnIds.get(threadId)
+    if (turnId === undefined) throw new AgentToolError('Sub-agents start from a running turn.')
+    return {
+      provider: stored.provider,
+      turnId,
+      approval:
+        this.#threadApprovals.get(threadId) ?? this.#store.threadApproval(threadId) ?? 'ask',
+    }
+  }
+
+  /**
+   * Providers in the roster with a model list this launch already read, minus
+   * hidden models. Listing never starts a vendor process: a provider the app
+   * has not listed is left out rather than probed from inside a turn.
+   */
+  #agentModelChoices(): AgentModelChoice[] {
+    const roster = this.#store.providerRoster()
+    const hidden = new Set(this.#store.hiddenModels())
+    const choices: AgentModelChoice[] = []
+    for (const provider of ProviderIdSchema.options) {
+      if (roster !== null && !roster.includes(provider)) continue
+      const listed = this.#defaultScope.modelLists.peek(provider)
+      if (!listed) continue
+      const models = listed.filter((model) => !hidden.has(`${provider}:${model.id}`))
+      if (models.length === 0) continue
+      choices.push({
+        provider,
+        models: models.map((model) => ({
+          id: model.id,
+          name: model.displayName,
+          ...(model.isDefault ? { default: true as const } : {}),
+          ...(model.reasoningEfforts.length > 0 ? { efforts: model.reasoningEfforts } : {}),
+        })),
+      })
+    }
+    return choices
+  }
+
+  /**
+   * Starts a sub-agent's hidden chat in its parent's checkout, at the parent's
+   * access level and on the provider's account for new chats. Modelled on
+   * Side chat; the chat gets the project's MCP servers but never the agent
+   * tools, so sub-agents stay one level deep.
+   */
+  async #startSubagentThread(spec: SubagentChildSpec): Promise<string> {
+    const panicGeneration = this.#panicGeneration
+    const disposeGeneration = this.#disposeGeneration
+    const assertCurrent = () => {
+      if (
+        panicGeneration !== this.#panicGeneration ||
+        disposeGeneration !== this.#disposeGeneration
+      )
+        throw new Error('The sub-agent start was cancelled by Stop all or shutdown.')
+    }
+    const storedParent = this.#store.thread(spec.parentThreadId)
+    if (!storedParent || storedParent.closedAt !== undefined) {
+      throw new Error('The chat that started this sub-agent closed.')
+    }
+    const workspacePath =
+      storedParent.worktreePath ?? resolveWorkspacePath(storedParent.projectPath)
+    // Never a higher access level than the chat that starts it.
+    const approval =
+      this.#threadApprovals.get(spec.parentThreadId) ??
+      this.#store.threadApproval(spec.parentThreadId) ??
+      'ask'
+    const accountId = accountForNewThread(this.#accounts, spec.provider, undefined, undefined)
+    const accountHome = existingAccountHome(this.#accounts, spec.provider, accountId)
+    const runtime = this.#runtimeFor(spec.provider, this.#onLog, accountHome)
+    const runtimeOptions: StartOptions = {
+      approval,
+      ...(spec.model ? { model: spec.model } : {}),
+      ...(spec.effort ? { effort: spec.effort } : {}),
+      instructions: composeInstructions(SUBAGENT_INSTRUCTIONS),
+      ...this.#mcpRuntimeOptions(spec.provider, storedParent.projectPath),
+      ...this.#contextRuntimeOptions(spec.provider, undefined, accountId),
+    }
+    let started: Awaited<ReturnType<ProviderRuntime['start']>> | undefined
+    try {
+      assertCurrent()
+      started = await runtime.start(workspacePath, runtimeOptions)
+      const thread = onAccount(started.thread, accountId)
+      this.#saveSubagentHistoryRecord(thread)
+      assertCurrent()
+      const parent = this.#store.thread(spec.parentThreadId)
+      if (!parent || parent.closedAt !== undefined) {
+        throw new Error('The chat that started this sub-agent closed.')
+      }
+      this.#store.addThread({
+        id: thread.id,
+        projectPath: storedParent.projectPath,
+        provider: spec.provider,
+        ...(thread.accountId ? { accountId: thread.accountId } : {}),
+        title: spec.name ?? 'Sub-agent',
+        createdAt: thread.createdAt,
+        ephemeral: true,
+        ownerThreadId: spec.parentThreadId,
+        ...(storedParent.worktreePath ? { worktreePath: storedParent.worktreePath } : {}),
+      })
+      this.#subagentParents.set(thread.id, spec.parentThreadId)
+      this.#attachThread(
+        thread,
+        started.session,
+        storedParent.projectPath,
+        runtime.resume !== undefined,
+      )
+      this.#threadApprovals.set(thread.id, approval)
+      this.#store.setThreadApproval(thread.id, approval)
+      return thread.id
+    } catch (error) {
+      if (error instanceof StartupCleanupError) {
+        void this.#stopFailedStartup(
+          `subagent-start-${crypto.randomUUID()}`,
+          workspacePath,
+          error,
+        ).catch((stopError: unknown) =>
+          this.#onLog(`[startup] agent still not stopped: ${errorMessage(stopError)}`),
+        )
+        throw error.startError
+      }
+      await started?.session.dispose()
+      const childId = started?.thread.id
+      if (childId) {
+        this.#subagentParents.delete(childId)
+        if (this.#store.thread(childId)) {
+          this.#store.forgetWorktree(childId)
+          this.#store.deleteThread(childId)
+          this.forgetDeletedThread(childId)
+        }
+      }
+      throw error
+    }
+  }
+
+  /** What a sub-agent's turn left, read once when it ends, never per delta. */
+  #subagentOutcome(threadId: string, turnId: string): SubagentOutcome {
+    const items = projectHistoryItems(this.#store.history(threadId)).filter(
+      (item) => item.turnId === turnId,
+    )
+    const answer = items.findLast(
+      (item) => item.type === 'message' && item.role === 'assistant' && item.text?.trim(),
+    )?.text
+    const changedPaths = [
+      ...new Set(
+        items.flatMap((item) => (item.type === 'file_change' && item.path ? [item.path] : [])),
+      ),
+    ]
+    return { answer, changedPaths }
+  }
+
   async sendTurn(
     threadId: string,
     text: string,
@@ -2617,9 +3002,14 @@ export class Orchestrator {
       !handover &&
       this.#store.thread(threadId)?.continuedFrom !== undefined &&
       this.#store.threadNeedsContinueContext(threadId)
+    // Sub-agent results its agent has not read go in front of the prompt.
+    const unreadSubagents = this.#subagents.unreadResults(threadId)
     // The prompt carries more than the user's words; the transcript keeps the words.
     if (
-      (handover || continuation || this.#store.threadNeedsRestoreContext(threadId)) &&
+      (handover ||
+        continuation ||
+        unreadSubagents ||
+        this.#store.threadNeedsRestoreContext(threadId)) &&
       !submission
     ) {
       submission = { id: crypto.randomUUID(), text, attachments, createdAt: Date.now() }
@@ -2627,7 +3017,8 @@ export class Orchestrator {
     // The conversation the handover carries ends before this prompt is recorded.
     const handoverThrough = handover ? this.#store.lastSeq(threadId) : 0
     this.#touchThreadRuntime(threadId)
-    if (!this.#sideParents.has(threadId)) this.#wakeForActivity(threadId)
+    if (!this.#sideParents.has(threadId) && !this.#subagentParents.has(threadId))
+      this.#wakeForActivity(threadId)
     const panicGeneration = this.#panicGeneration
     const pendingStart = this.#beginTurnStart(threadId, submission)
     this.#addSidebarStatus(this.#startingTurns, threadId)
@@ -2747,9 +3138,10 @@ export class Orchestrator {
         }
         return turnId
       }
-      const prompt = existsSync(path.join(this.#repoPath(threadId), '.taste', 'brief.json'))
+      const ownPrompt = existsSync(path.join(this.#repoPath(threadId), '.taste', 'brief.json'))
         ? `This is an ordinary user turn, not an active TasteCode Design phase. Earlier phase-only JSON protocols no longer apply. Follow the current request normally and explain your work in normal prose, unless the user explicitly requests structured data. If asked to launch a preview, perform the launch on an available local port and report its URL instead of returning a preview-plan JSON object.\n\nUser request:\n${text}`
         : text
+      const prompt = unreadSubagents ? `${unreadSubagents.text}${ownPrompt}` : ownPrompt
       const turnId = await entry.session.sendTurn(
         threadId,
         handover
@@ -2780,6 +3172,7 @@ export class Orchestrator {
       this.#acceptTurnStart(threadId, turnId, pendingStart)
       this.#store.clearThreadRestoreContext(threadId)
       if (continuation) this.#store.clearThreadContinueContext(threadId)
+      if (unreadSubagents) this.#subagents.markRead(unreadSubagents.itemIds)
       if (handover) {
         this.#store.clearThreadHandover(threadId)
         this.#handoverTurns.set(threadId, { turnId, answered: false })
@@ -2857,6 +3250,8 @@ export class Orchestrator {
     const panicGeneration = this.#panicGeneration
     const disposeGeneration = this.#disposeGeneration
     if (this.#panicStopping) throw new Error('turn cancelled by panic stop')
+    // The user is writing again after a Stop: what they queued before it may go, in order.
+    this.#heldQueues.delete(threadId)
     if (this.#changingProvider.has(threadId)) {
       throw new Error('This chat is moving to another provider. Send again once it has moved.')
     }
@@ -2880,6 +3275,8 @@ export class Orchestrator {
       this.#startingTurns.has(threadId) ||
       this.#drainingQueues.has(threadId) ||
       this.#designFlows.has(threadId) ||
+      // The agent is still ending a turn the user stopped and cannot take a prompt yet.
+      this.#settlingStops.has(threadId) ||
       queue.length > 0
     ) {
       const queuedTurn: QueuedTurnEntry = {
@@ -2955,6 +3352,16 @@ export class Orchestrator {
   }
 
   async steerQueuedTurn(threadId: string, queuedTurnId: string): Promise<void> {
+    // A Stop held the queue; the prompt the user picks goes now, as a turn of its own. The
+    // Stop may have ended an agent that would not stop, so its chat resumes first.
+    if (
+      this.#heldQueues.has(threadId) &&
+      !this.#activeTurns.has(threadId) &&
+      !this.isTurnRunning(threadId)
+    ) {
+      await this.#ensureThread(threadId)
+      return this.#sendHeldQueuedTurn(threadId, queuedTurnId)
+    }
     const session = this.#get(threadId).session
     if (!this.#activeTurns.has(threadId)) throw new Error('there is no running turn to steer')
     if (this.#designOwnsThread(threadId)) {
@@ -3064,6 +3471,14 @@ export class Orchestrator {
     const { seq, serializedEvent } = this.#store.appendWithSerializedEvent(threadId, event)
     if (this.#sideParents.has(threadId)) {
       this.#onSideEvent(threadId, event, seq, serializedEvent)
+    } else if (this.#subagentParents.size > 0 && this.#subagentParents.has(threadId)) {
+      this.#onSubagentEvent(
+        threadId,
+        this.#subagentParents.get(threadId)!,
+        event,
+        seq,
+        serializedEvent,
+      )
     } else {
       this.#onEvent(threadId, event, seq, serializedEvent)
     }
@@ -3087,6 +3502,14 @@ export class Orchestrator {
       const { seq, serializedEvent } = persisted[index]!
       if (this.#sideParents.has(threadId)) {
         this.#onSideEvent(threadId, event, seq, serializedEvent)
+      } else if (this.#subagentParents.size > 0 && this.#subagentParents.has(threadId)) {
+        this.#onSubagentEvent(
+          threadId,
+          this.#subagentParents.get(threadId)!,
+          event,
+          seq,
+          serializedEvent,
+        )
       } else {
         this.#onEvent(threadId, event, seq, serializedEvent)
       }
@@ -3161,19 +3584,33 @@ export class Orchestrator {
     }
     if (affectsInbox) this.#recordSidebarStatusChange(threadId)
     const sideChat = this.#sideParents.has(threadId)
+    const subagentParent = this.#subagentParents.get(threadId)
     if (
       !sideChat &&
+      subagentParent === undefined &&
       (event.type === 'turn.started' ||
         event.type === 'approval.requested' ||
         event.type === 'user_input.requested')
     ) {
       this.#wakeForActivity(threadId)
     }
-    if (!sideChat && (event.type === 'turn.completed' || event.type === 'thread.error')) {
+    if (
+      !sideChat &&
+      subagentParent === undefined &&
+      (event.type === 'turn.completed' || event.type === 'thread.error')
+    ) {
       this.#wakeForActivity(threadId, true)
     }
     if (sideChat) this.#onSideEvent(threadId, event, seq, serializedEvent)
-    else this.#onEvent(threadId, event, seq, serializedEvent)
+    else if (subagentParent !== undefined) {
+      this.#onSubagentEvent(threadId, subagentParent, event, seq, serializedEvent)
+      this.#subagents.childEvent(threadId, event)
+    } else {
+      this.#onEvent(threadId, event, seq, serializedEvent)
+      // What its turn started carries on in the background.
+      if (event.type === 'turn.completed' || event.type === 'thread.error')
+        this.#subagents.parentTurnEnded(threadId)
+    }
     if (
       event.type === 'turn.started' &&
       matchedStart?.submission &&
@@ -3480,8 +3917,15 @@ export class Orchestrator {
   }
 
   forgetDeletedThread(threadId: string): void {
+    this.#revokeAgentTools(threadId)
+    this.#subagents.forget(threadId)
+    // The store deleted a chat's sub-agent chats with it.
+    for (const [childId, parentId] of this.#subagentParents) {
+      if (parentId === threadId || childId === threadId) this.#subagentParents.delete(childId)
+    }
     this.#inboxProjections.delete(threadId)
     this.#staleInboxProjectionThreads.delete(threadId)
+    this.#heldQueues.delete(threadId)
   }
 
   #addSidebarStatus(set: Set<string>, threadId: string): void {
@@ -3782,13 +4226,32 @@ export class Orchestrator {
   }
 
   /** Detached callers never await this, so a storage failure is logged rather than thrown. */
-  #drainQueue(threadId: string): Promise<void> {
-    return this.#drainQueueOnce(threadId).catch((error: unknown) => {
+  #drainQueue(threadId: string, queuedTurnId?: string): Promise<void> {
+    return this.#drainQueueOnce(threadId, queuedTurnId).catch((error: unknown) => {
       this.#onLog(`could not start the next queued turn; it remains queued: ${errorMessage(error)}`)
     })
   }
 
-  async #drainQueueOnce(threadId: string): Promise<void> {
+  /** The user sends one prompt a Stop held, ahead of the others; the rest follow it in order. */
+  async #sendHeldQueuedTurn(threadId: string, queuedTurnId: string): Promise<void> {
+    if (!this.#queueEntries(threadId).some((item) => item.id === queuedTurnId))
+      throw new Error('queued prompt not found')
+    if (this.#drainingQueues.has(threadId)) throw new Error('a queued prompt is already being sent')
+    this.#heldQueues.delete(threadId)
+    // The agent is still ending the stopped turn: the picked prompt goes first once it has.
+    const settling = this.#settlingStops.get(threadId)
+    if (settling) {
+      settling.sendFirst = queuedTurnId
+      return
+    }
+    await this.#drainQueueOnce(threadId, queuedTurnId)
+  }
+
+  /**
+   * Sends the queue's first prompt, or `queuedTurnId` when the user picked one; the first
+   * when the picked one has left the queue meanwhile.
+   */
+  async #drainQueueOnce(threadId: string, queuedTurnId?: string): Promise<void> {
     const entry = this.#threads.get(threadId)
     if (
       !entry ||
@@ -3797,6 +4260,10 @@ export class Orchestrator {
       this.#panicStopping ||
       this.#drainingQueues.has(threadId) ||
       this.isTurnRunning(threadId) ||
+      // A Stop holds what was queued before it until the user sends again.
+      this.#heldQueues.has(threadId) ||
+      // The agent is still ending a stopped turn; the queue drains once it has.
+      this.#settlingStops.has(threadId) ||
       // Design owns the thread between phases too (preview and capture run
       // with no provider turn); it drains when the run finishes or fails.
       this.#designFlows.has(threadId)
@@ -3804,7 +4271,11 @@ export class Orchestrator {
       return
     }
     const queue = this.#queueEntries(threadId)
-    const next = queue[0]
+    const index = Math.max(
+      0,
+      queuedTurnId === undefined ? 0 : queue.findIndex((item) => item.id === queuedTurnId),
+    )
+    const next = queue[index]
     if (!next) {
       this.#pruneIdleThreadRuntimes()
       return
@@ -3812,7 +4283,7 @@ export class Orchestrator {
 
     const claimed = this.#store.claimQueuedTurn(threadId, next.id, 'normal')
     if (!claimed) return
-    queue.shift()
+    queue.splice(index, 1)
     this.#retainQueueEntries(threadId, queue)
 
     const draining: QueueDrain = { queueId: next.id }
@@ -4213,6 +4684,8 @@ export class Orchestrator {
   }
 
   respondToApproval(threadId: string, approvalId: string, decision: ApprovalDecision): void {
+    // TasteCode asked this one itself, about starting a sub-agent.
+    if (this.#subagents.answer(threadId, approvalId, decision)) return
     this.#get(threadId).session.respondToApproval(approvalId, decision)
   }
 
@@ -4273,35 +4746,185 @@ export class Orchestrator {
   }
 
   async interrupt(threadId: string): Promise<void> {
-    // Only prompts already on their way when Stop came can start the turn it stops.
-    const incoming = [...(this.#incomingSubmissions.get(threadId) ?? [])]
-    // "Stop" on a thread that is not live must be a no-op, not an error the
-    // user cannot act on.
-    if (!this.#threads.has(threadId)) {
-      // A persisted thread is not attached until resume resolves. Invalidate
-      // that resume so its pending submission cannot run after the user stops it.
-      if (this.#resumingThreads.has(threadId)) {
-        this.#runtimeGenerations.set(threadId, (this.#runtimeGenerations.get(threadId) ?? 0) + 1)
-        return
+    // A chat's sub-agents stop with it, a background one included. A chat
+    // without any keeps the exact timing it had.
+    const children = this.#subagents.stopFor(threadId)
+    try {
+      // Only prompts already on their way when Stop came can start the turn it stops.
+      const incoming = [...(this.#incomingSubmissions.get(threadId) ?? [])]
+      // "Stop" on a thread that is not live must be a no-op, not an error the
+      // user cannot act on.
+      if (!this.#threads.has(threadId)) {
+        // A persisted thread is not attached until resume resolves. Invalidate
+        // that resume so its pending submission cannot run after the user stops it.
+        if (this.#resumingThreads.has(threadId)) {
+          this.#runtimeGenerations.set(threadId, (this.#runtimeGenerations.get(threadId) ?? 0) + 1)
+          return
+        }
+        if (incoming.length === 0) return
       }
-      if (incoming.length === 0) return
+      // An agent asked to stop before its turn exists has nothing to stop and
+      // drops the request; the turn then ran to its end behind "Stopping…". A new
+      // chat stopped while it starts sends its prompt and the Stop back to back,
+      // and the Stop overtook the prompt on its way in. Wait for those prompts to
+      // start or queue first.
+      await Promise.allSettled(incoming)
+      // Nothing goes out on its own after a Stop: what waits in the queue now
+      // waits for the user, not for the stopped turn to end.
+      if (this.#hasQueuedTurns(threadId)) this.#heldQueues.add(threadId)
+      // The checkpoint runs before the provider starts. An interrupt sent in
+      // that window used to hit an idle adapter and disappear, after which the
+      // turn started anyway. Wait until the adapter has accepted or rejected
+      // the start, then deliver the interrupt against its real active turn.
+      // A Design phase hand-off starts its turn without that barrier.
+      const barrier = this.#turnStartBarriers.get(threadId)?.done
+      await barrier
+      await this.#designProviderStarts.get(threadId)?.catch(() => undefined)
+      const entry = this.#threads.get(threadId)
+      if (!entry) return
+      // The chat shows the turn stopped now. An agent can take seconds to confirm a Stop,
+      // or never do so, and the chat must not keep running behind "Stopping…" meanwhile.
+      const stop = this.#settleStoppedTurn(threadId, entry)
+      try {
+        await entry.session.interrupt(threadId)
+        if (stop) stop.confirmed = true
+      } catch (error) {
+        if (!stop) throw error
+        // The turn has ended meanwhile, by the agent or with its process.
+        if (this.#settlingStops.get(threadId) !== stop) return
+        if (!entry.resumable) {
+          // The agent runs on and nothing can end it without losing the chat; say so.
+          this.#finishSettlingStop(threadId, stop)
+          throw error
+        }
+        // The chat already shows the turn as stopped, so end the agent that refused to stop.
+        // The next prompt resumes the session in a new process.
+        await this.#endUnconfirmedStop(
+          threadId,
+          stop,
+          `The agent refused Stop (${errorMessage(error)})`,
+        )
+      }
+    } finally {
+      if (children) await children
     }
-    // An agent asked to stop before its turn exists has nothing to stop and
-    // drops the request; the turn then ran to its end behind "Stopping…". A new
-    // chat stopped while it starts sends its prompt and the Stop back to back,
-    // and the Stop overtook the prompt on its way in. Wait for those prompts to
-    // start or queue first.
-    await Promise.allSettled(incoming)
-    // The checkpoint runs before the provider starts. An interrupt sent in
-    // that window used to hit an idle adapter and disappear, after which the
-    // turn started anyway. Wait until the adapter has accepted or rejected
-    // the start, then deliver the interrupt against its real active turn.
-    // A Design phase hand-off starts its turn without that barrier.
-    const barrier = this.#turnStartBarriers.get(threadId)?.done
-    await barrier
-    await this.#designProviderStarts.get(threadId)?.catch(() => undefined)
-    const entry = this.#threads.get(threadId)
-    if (entry) await entry.session.interrupt(threadId)
+  }
+
+  /**
+   * Ends a stopped turn for the user: its open items, requests and the turn itself settle
+   * as interrupted, the way a restart settles them. The agent is still asked to stop and
+   * stays busy until it reports the end, or until the settle deadline ends its process.
+   */
+  #settleStoppedTurn(threadId: string, entry: AttachedThreadRuntime): SettlingStop | undefined {
+    const turnId = this.#activeTurnIds.get(threadId)
+    if (!turnId || this.#settlingStops.has(threadId)) return undefined
+    const stop: SettlingStop = {
+      turnId,
+      entry,
+      timer: setTimeout(
+        () =>
+          void this.#endUnconfirmedStop(
+            threadId,
+            stop,
+            `The agent did not end the stopped turn within ${Math.ceil(this.#stopSettleMs / 1000)} s`,
+          ),
+        this.#stopSettleMs,
+      ),
+    }
+    stop.timer.unref?.()
+    this.#settlingStops.set(threadId, stop)
+    this.#recordedDeltas.flush(threadId)
+    let open: DomainEvent[] = []
+    try {
+      open = this.#store.interruptedLifecycleEvents(threadId)
+    } catch (error) {
+      this.#onLog(`Could not settle the stopped turn's open work: ${errorMessage(error)}`)
+    }
+    for (const event of open) if (event.type !== 'turn.completed') this.#record(threadId, event)
+    // Through the session path, so a Design run or a handover sees its turn end.
+    this.#handleSessionEvent(threadId, { type: 'turn.completed', turnId, status: 'interrupted' })
+    return stop
+  }
+
+  /**
+   * While a stopped turn settles, its agent's events belong to the turn the user already saw
+   * end. Returns whether the event is consumed here instead of recorded.
+   */
+  #settlingStopEvent(threadId: string, event: DomainEvent): boolean {
+    const stop = this.#settlingStops.get(threadId)
+    if (!stop) return false
+    switch (event.type) {
+      case 'turn.completed':
+        if (event.turnId === stop.turnId) this.#finishSettlingStop(threadId, stop)
+        return true
+      case 'thread.error':
+        // Once the agent accepted the Stop, its errors belong to the run it is ending, or to
+        // work nobody asked for: an agent may report a stopped run as failed, for instance
+        // after a repeat Stop it turned down. The user already saw the turn end as stopped,
+        // so a banner now would be spurious. Before that, an error is still news.
+        if (!stop.confirmed) return false
+        this.#onLog(`The agent reported an error while ending a stopped turn: ${event.message}`)
+        return true
+      // Spend still counts, and a resolution only closes a request.
+      case 'usage.updated':
+      case 'approval.resolved':
+      case 'user_input.resolved':
+        return false
+      default:
+        // Every prompt waits while a Stop settles, so any turn the agent runs now is the
+        // stopped one, or work of its own that nobody asked for.
+        if (event.type === 'item.started' && stop.confirmed && !stop.stoppedAgain) {
+          // New work after the agent accepted the Stop, such as a steer Claude keeps
+          // queued through it, would run unseen. Stop that too.
+          stop.stoppedAgain = true
+          this.#onLog('The agent started new work in a stopped turn; stopping it again')
+          void stop.entry.session
+            .interrupt(threadId)
+            .catch((error: unknown) =>
+              this.#onLog(`Could not stop the agent's new work: ${errorMessage(error)}`),
+            )
+        }
+        return true
+    }
+  }
+
+  #finishSettlingStop(threadId: string, stop: SettlingStop): void {
+    if (this.#settlingStops.get(threadId) !== stop) return
+    clearTimeout(stop.timer)
+    this.#settlingStops.delete(threadId)
+    this.#releaseCheckoutIfIdle(threadId)
+    // Prompts sent after the Stop waited for the agent to finish it. Prompts queued before
+    // it stay held until the user sends again.
+    if (
+      this.#threads.get(threadId) === stop.entry &&
+      this.#hasQueuedTurns(threadId) &&
+      !this.#heldQueues.has(threadId)
+    ) {
+      void this.#drainQueue(threadId, stop.sendFirst)
+    } else {
+      this.#pruneIdleThreadRuntimes()
+    }
+  }
+
+  /**
+   * The agent did not end a stopped turn in time, or refused the Stop: end its process, as
+   * a disconnect would. A resumable chat continues in a new one with its next prompt.
+   */
+  #endUnconfirmedStop(threadId: string, stop: SettlingStop, why: string): Promise<void> {
+    if (this.#settlingStops.get(threadId) !== stop) return Promise.resolve()
+    if (this.#threads.get(threadId) !== stop.entry || !stop.entry.resumable) {
+      if (this.#threads.get(threadId) === stop.entry)
+        this.#onLog(`${why}; it keeps its process because the chat could not resume without it`)
+      this.#finishSettlingStop(threadId, stop)
+      return Promise.resolve()
+    }
+    this.#onLog(`${why}; ending its process`)
+    if (this.#designFlows.has(threadId)) this.#suspendDesignFlow(threadId)
+    const stopped = this.#disposeThreadRuntime(threadId, 'disconnect')
+    void this.#resumeQueuedAfterDisconnect(threadId, stopped, stop.sendFirst)
+    return stopped.catch((error: unknown) =>
+      this.#onLog(`Could not end the stopped agent: ${errorMessage(error)}`),
+    )
   }
 
   /** Overlapping callers share one stop, so none can lift the guard while another still runs. */
@@ -4323,6 +4946,8 @@ export class Orchestrator {
     )
     this.#panicStopping = true
     this.#panicGeneration += 1
+    // Every sub-agent ends as stopped; the busy chats below include theirs.
+    this.#subagents.release()
     try {
       for (const threadId of this.#designFlows.keys()) {
         for (const [turnId, owner] of this.#designTurns) {
@@ -4413,6 +5038,11 @@ export class Orchestrator {
   }
 
   async close(threadId: string): Promise<void> {
+    // A sub-agent's chat goes with the chat that started it; closing stops it.
+    if (this.#store.thread(threadId)?.ownerThreadId !== undefined) {
+      await this.#disposeThreadRuntime(threadId)
+      return
+    }
     if (this.#store.thread(threadId)?.ephemeral) {
       await this.closeSideThread(threadId)
       return
@@ -4434,11 +5064,21 @@ export class Orchestrator {
     // Recorded before waiting for the Side chat to stop, so a replacement Side
     // chat that starts meanwhile sees the closed parent and refuses to attach.
     this.#store.closeThread(threadId)
+    this.#revokeAgentTools(threadId)
     this.#onLifecycleScheduleChanged()
     await Promise.all([
       sideThreadId ? this.closeSideThread(sideThreadId) : undefined,
       runtimeDisposed,
+      ...this.#endSubagents(threadId),
     ])
+  }
+
+  /** A chat's sub-agents end with its process; their chats stay readable. */
+  #endSubagents(threadId: string): Array<Promise<void>> {
+    this.#subagents.release(threadId)
+    return this.#store
+      .ownedThreadIds(threadId)
+      .map((childId) => this.#disposeThreadRuntime(childId))
   }
 
   /**
@@ -4447,6 +5087,10 @@ export class Orchestrator {
    * back, and its chats must still accept messages then.
    */
   async stopThread(threadId: string): Promise<void> {
+    if (this.#store.thread(threadId)?.ownerThreadId !== undefined) {
+      await this.#disposeThreadRuntime(threadId, 'close', true)
+      return
+    }
     if (this.#store.thread(threadId)?.ephemeral) {
       await this.closeSideThread(threadId)
       return
@@ -4465,6 +5109,7 @@ export class Orchestrator {
     await Promise.all([
       sideThreadId ? this.closeSideThread(sideThreadId) : undefined,
       runtimeDisposed,
+      ...this.#endSubagents(threadId),
     ])
   }
 
@@ -4515,7 +5160,22 @@ export class Orchestrator {
    */
   #isSideThread(threadId: string): boolean {
     if (this.#sideParents.has(threadId)) return true
-    return this.#store.thread(threadId)?.ephemeral === true
+    const stored = this.#store.thread(threadId)
+    // A sub-agent's chat is stored ephemeral too, but has an owner.
+    return stored?.ephemeral === true && stored.ownerThreadId === undefined
+  }
+
+  /** Keeps provider history import from listing a sub-agent's session as a chat of its own. */
+  #saveSubagentHistoryRecord(thread: Thread, providerSessionId = thread.id): void {
+    this.#store.replaceProviderHistory(thread.provider, thread.id, {
+      id: providerSessionId,
+      workspacePath: thread.workspacePath,
+      title: 'Sub-agent',
+      createdAt: thread.createdAt,
+      updatedAt: thread.createdAt,
+      revision: 'subagent',
+      internal: true,
+    })
   }
 
   #disposeThreadRuntime(
@@ -4538,6 +5198,10 @@ export class Orchestrator {
       this.#unindexThreadRuntime(threadId, entry)
       this.#runtimeRecency.delete(threadId)
     }
+    // A stopped turn's agent goes with its runtime; nothing is left to wait for.
+    const settlingStop = this.#settlingStops.get(threadId)
+    if (settlingStop) clearTimeout(settlingStop.timer)
+    this.#settlingStops.delete(threadId)
     const providerStopped = this.#stopThreadProvider(threadId, entry?.session)
     // A session gone before its handover turn ended may never have read it.
     const handover = this.#handoverTurns.get(threadId)
@@ -4548,6 +5212,7 @@ export class Orchestrator {
     this.#failedCarries.delete(threadId)
     this.#idleRuntimeEligible.delete(threadId)
     this.#mcpStaleRuntimes.delete(threadId)
+    this.#backgroundWorkThreads.delete(threadId)
     this.#runtimeOperationCounts.delete(threadId)
     this.#mcpOAuthThreads.delete(threadId)
     this.#threadApprovals.delete(threadId)
@@ -4655,6 +5320,9 @@ export class Orchestrator {
 
   async disposeAll(): Promise<void> {
     this.#disposeGeneration += 1
+    this.#subagents.dispose()
+    const agentToolsClosed = this.#agentTools?.close()
+    this.#agentToolGrants.clear()
     for (const controller of this.#designPreviewAborts.values()) controller.abort()
     this.#designPreviewAborts.clear()
     const accountScopes = [...this.#accountScopes.values()]
@@ -4678,7 +5346,12 @@ export class Orchestrator {
     const providerStops = [...this.#stoppingSessions.keys()].map((threadId) =>
       this.#stopThreadProvider(threadId),
     )
-    const stopped = Promise.allSettled([terminalsClosed, controlStopped, ...providerStops])
+    const stopped = Promise.allSettled([
+      terminalsClosed,
+      controlStopped,
+      agentToolsClosed,
+      ...providerStops,
+    ])
     this.#recordedDeltas.flushAll()
     this.#threads.clear()
     this.#runtimeThreadIdsByProject.clear()
@@ -4686,10 +5359,12 @@ export class Orchestrator {
     this.#clearIdleRuntimeTimer()
     this.#idleRuntimeEligible.clear()
     this.#mcpStaleRuntimes.clear()
+    this.#backgroundWorkThreads.clear()
     this.#runtimeOperationCounts.clear()
     this.#mcpOAuthThreads.clear()
     this.#sideThreads.clear()
     this.#sideParents.clear()
+    this.#subagentParents.clear()
     this.#startingSideThreads.clear()
     this.#discardedSideThreads.clear()
     this.#activeTurns.clear()
@@ -4702,10 +5377,13 @@ export class Orchestrator {
     this.#turnStartBarriers.clear()
     this.#pendingTurnStarts.clear()
     this.#acceptedTurnStarts.clear()
+    for (const stop of this.#settlingStops.values()) clearTimeout(stop.timer)
+    this.#settlingStops.clear()
     this.#reviewingDiffs.clear()
     this.#queuedTurns.clear()
     this.#emptyQueuedTurns.clear()
     this.#drainingQueues.clear()
+    this.#heldQueues.clear()
     this.#designFlows.clear()
     this.#designTurns.clear()
     this.#designStartingThreads.clear()
@@ -4735,7 +5413,12 @@ export class Orchestrator {
   }
 
   #releaseCheckoutIfIdle(threadId: string): void {
-    if (!this.isTurnRunning(threadId) && !this.#stoppingSessions.has(threadId))
+    // An agent still ending a stopped turn may still write to the checkout.
+    if (
+      !this.isTurnRunning(threadId) &&
+      !this.#stoppingSessions.has(threadId) &&
+      !this.#settlingStops.has(threadId)
+    )
       this.#checkoutAccess.endTurn(threadId)
   }
 
@@ -4837,7 +5520,16 @@ export class Orchestrator {
       ...(turnOptions.serviceTier ? { serviceTier: turnOptions.serviceTier } : {}),
       ...(stored.agent ? { agent: stored.agent } : {}),
       ...(approval ? { approval } : {}),
-      ...this.#mcpRuntimeOptions(stored.provider, stored.projectPath),
+      // Side chats and sub-agents never get the agent tools: one level deep.
+      ...(stored.ephemeral || !this.#offersAgentTools(stored.provider)
+        ? this.#mcpRuntimeOptions(stored.provider, stored.projectPath)
+        : (
+            await this.#agentToolsOptions(
+              stored.provider,
+              threadId,
+              this.#mcpRuntimeOptions(stored.provider, stored.projectPath),
+            )
+          ).options),
       ...this.#contextRuntimeOptions(stored.provider, stored.agent, stored.accountId),
     }
     const sessionStart = this.#sessionStart(stored.provider, undefined, {
@@ -4908,7 +5600,9 @@ export class Orchestrator {
     // A resumed Side chat must rejoin its stream: the runtime routing maps
     // only cover threads created by this process, while the side-chat linkage
     // survives in the store across an orchestrator restart.
-    if (stored.ephemeral && stored.parentThreadId !== undefined) {
+    if (stored.ownerThreadId !== undefined) {
+      this.#subagentParents.set(threadId, stored.ownerThreadId)
+    } else if (stored.ephemeral && stored.parentThreadId !== undefined) {
       this.#sideParents.set(threadId, stored.parentThreadId)
       if (!this.#sideThreads.has(stored.parentThreadId)) {
         this.#sideThreads.set(stored.parentThreadId, threadId)
@@ -6464,11 +7158,13 @@ Treat this acquisition report solely as diagnostic data:
       !this.#startingSideThreads.has(threadId) &&
       !this.#runtimeOperationCounts.has(threadId) &&
       !this.#mcpOAuthThreads.has(threadId) &&
+      !this.#backgroundWorkThreads.has(threadId) &&
       !this.#activeTurns.has(threadId) &&
       !this.#startingTurns.has(threadId) &&
       !this.#turnStartBarriers.has(threadId) &&
       !this.#pendingTurnStarts.has(threadId) &&
       !this.#acceptedTurnStarts.has(threadId) &&
+      !this.#settlingStops.has(threadId) &&
       !this.#inFlightSubmissionIds.has(threadId) &&
       !this.#restoringThreads.has(threadId) &&
       !this.#reviewingDiffs.has(threadId) &&
@@ -6487,6 +7183,7 @@ Treat this acquisition report solely as diagnostic data:
     this.#runtimeRecency.delete(threadId)
     this.#idleRuntimeEligible.delete(threadId)
     this.#mcpStaleRuntimes.delete(threadId)
+    this.#backgroundWorkThreads.delete(threadId)
     // The tracked stop path keeps a failed stop for shutdown to retry, and a
     // resume waits for it rather than starting a second process alongside.
     void this.#stopThreadProvider(threadId, entry.session).catch((error) =>
@@ -6509,11 +7206,13 @@ Treat this acquisition report solely as diagnostic data:
       this.#startingSideThreads.size > 0 ||
       this.#runtimeOperationCounts.size > 0 ||
       this.#mcpOAuthThreads.size > 0 ||
+      this.#backgroundWorkThreads.size > 0 ||
       this.#activeTurns.size > 0 ||
       this.#startingTurns.size > 0 ||
       this.#turnStartBarriers.size > 0 ||
       this.#pendingTurnStarts.size > 0 ||
       this.#acceptedTurnStarts.size > 0 ||
+      this.#settlingStops.size > 0 ||
       this.#inFlightSubmissionIds.size > 0 ||
       this.#restoringThreads.size > 0 ||
       this.#reviewingDiffs.size > 0 ||
@@ -6712,6 +7411,19 @@ Treat this acquisition report solely as diagnostic data:
         this.#onCommandsChanged(thread.provider, projectPath)
       }
     })
+    // A replaced session's background work ended with its process.
+    this.#backgroundWorkThreads.delete(thread.id)
+    session.onBackgroundWorkChanged?.(() => {
+      if (this.#threads.get(thread.id)?.session !== session) return
+      if (session.hasBackgroundWork?.() === true) {
+        this.#backgroundWorkThreads.add(thread.id)
+        return
+      }
+      if (!this.#backgroundWorkThreads.delete(thread.id)) return
+      // The idle window starts when the work ends, not when the turn that started it did.
+      this.#touchThreadRuntime(thread.id)
+      this.#scheduleIdleRuntimePrune()
+    })
     session.onDisconnected?.(() => {
       if (this.#threads.get(thread.id)?.session !== session || !this.#store.thread(thread.id)) {
         return
@@ -6732,6 +7444,8 @@ Treat this acquisition report solely as diagnostic data:
       if (this.#threads.get(thread.id)?.session === session) {
         this.#store.setProviderSessionId(thread.id, providerSessionId)
         if (this.#isSideThread(thread.id)) this.#saveSideHistoryTombstone(thread, providerSessionId)
+        else if (this.#subagentParents.has(thread.id))
+          this.#saveSubagentHistoryRecord(thread, providerSessionId)
       }
     })
     session.on('event', (event) => {
@@ -6739,6 +7453,7 @@ Treat this acquisition report solely as diagnostic data:
         if (event.type === 'turn.completed' && session.snapshot) {
           this.#store.saveThreadRuntimeState(thread.id, session.snapshot())
         }
+        if (this.#settlingStopEvent(thread.id, event)) return
         this.#handleSessionEvent(thread.id, event)
       }
     })
@@ -6746,7 +7461,12 @@ Treat this acquisition report solely as diagnostic data:
     this.#pruneIdleThreadRuntimes()
   }
 
-  async #resumeQueuedAfterDisconnect(threadId: string, stopped: Promise<void>): Promise<void> {
+  async #resumeQueuedAfterDisconnect(
+    threadId: string,
+    stopped: Promise<void>,
+    /** A held prompt the user picked to go first. */
+    sendFirst?: string,
+  ): Promise<void> {
     const panic = this.#panicGeneration
     const dispose = this.#disposeGeneration
     try {
@@ -6756,13 +7476,15 @@ Treat this acquisition report solely as diagnostic data:
         dispose !== this.#disposeGeneration ||
         this.#panicStopping ||
         !this.#hasQueuedTurns(threadId) ||
+        // A Stop held them, so they wait for the user; no process is started for them.
+        this.#heldQueues.has(threadId) ||
         !this.#store.thread(threadId) ||
         this.#store.thread(threadId)?.closedAt !== undefined
       )
         return
       await this.#ensureThread(threadId)
       if (panic === this.#panicGeneration && dispose === this.#disposeGeneration)
-        await this.#drainQueue(threadId)
+        await this.#drainQueue(threadId, sendFirst)
     } catch (error) {
       if (panic !== this.#panicGeneration || dispose !== this.#disposeGeneration) return
       this.#onLog(`Could not resume queued prompts: ${errorMessage(error)}`)

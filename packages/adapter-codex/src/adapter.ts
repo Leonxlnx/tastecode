@@ -8,6 +8,7 @@ import type {
   ApprovalReview,
   Capabilities,
   DomainEvent,
+  Item,
   McpServer,
   McpServerConfig,
   McpStartupStatus,
@@ -134,6 +135,15 @@ const INVALID_PARAMS = -32602
 const CONTROL_READ_TIMEOUT_MS = 10_000
 const INITIALIZE_TIMEOUT_MS = 30_000
 const THREAD_START_TIMEOUT_MS = 30_000
+/**
+ * How long a new thread may wait without a single frame from Codex.
+ * thread/start answers only after Codex set the session up, which includes
+ * starting the chat's MCP servers; those report progress while they start, and
+ * any frame resets this window. Silence this long means the process is stuck.
+ */
+const THREAD_START_IDLE_MS = 45_000
+/** A thread start that keeps reporting progress still gives up here. */
+const THREAD_START_LIMIT_MS = 180_000
 /** How long a command whose request answers with nothing waits for its turn to start. */
 const COMMAND_TURN_START_TIMEOUT_MS = 15_000
 /** The id of the next turn a thread starts; undefined when none started in time. */
@@ -176,6 +186,25 @@ const CONNECTION_NOTIFICATIONS = new Set([
   'mcpServer/startupStatus/updated',
   'mcpServer/oauthLogin/completed',
 ])
+
+/** thread/start got no answer in time; the message says how long and why, for the log. */
+class CodexThreadStartStall extends Error {}
+
+/** What the user reads when a new chat could not open; never the raw method name. */
+export function codexThreadStartStalledMessage(
+  restarted: boolean,
+  startingMcpServers: readonly string[],
+): string {
+  return [
+    restarted
+      ? 'Codex did not finish starting this chat, even after one restart.'
+      : 'Codex did not finish starting this chat.',
+    ...(startingMcpServers.length
+      ? [`MCP servers still starting: ${startingMcpServers.join(', ')}.`]
+      : []),
+    'Try sending again.',
+  ].join(' ')
+}
 
 /** The thread a notification reports on; one property read, since deltas pass here too. */
 function notificationThreadId(params: JsonRpcValue | undefined): string | undefined {
@@ -627,6 +656,9 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
   #restartNeeded = false
   #starting: Promise<void> | undefined
   #startupGeneration = 0
+  /** Thread starts waiting on Codex; while any is, frames from the process count as progress. */
+  #threadStartWaits = 0
+  #lastFrameAt = 0
   #mcpStartup = new Map<string, McpStartupStatus>()
   #mcpInventory = new Map<string, McpServer[]>()
   /** Resolves true once the status list landed, false when it failed or was replaced. */
@@ -642,6 +674,13 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
   readonly #ownThreads = new Set<string>()
   readonly #subagents = new CodexSubagents((event) => this.emit('event', event))
   #activeTurns = new Map<string, string>()
+  /**
+   * Items a turn started and Codex has not completed, by turn id. Codex 0.163 keeps a
+   * command in progress for as long as its process runs, so a server the agent starts
+   * (`npm run start`) stays in progress after the turn ends and completes minutes later,
+   * when the process exits.
+   */
+  readonly #openItems = new Map<string, Map<string, Item>>()
   #pendingTurnCompletions = new Set<Set<string>>()
   /** A command waiting to learn the id of the turn its request started. */
   #turnStartWaiters = new Map<string, (turnId: string | undefined) => void>()
@@ -752,13 +791,21 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     this.#rpc = rpc
     this.#lastRpc = rpc
 
-    rpc.onStderr((text) => this.emit('log', text.trimEnd()))
+    rpc.onStderr((text) => {
+      if (this.#threadStartWaits > 0 && this.#rpc === rpc) this.#lastFrameAt = Date.now()
+      this.emit('log', text.trimEnd())
+    })
     rpc.onNotification((method, params) => {
-      if (this.#rpc === rpc) this.#onNotification(method, params)
+      if (this.#rpc !== rpc) return
+      // One comparison per frame while no thread is starting; deltas pass here.
+      if (this.#threadStartWaits > 0) this.#lastFrameAt = Date.now()
+      this.#onNotification(method, params)
     })
 
     rpc.onServerRequest((method, params, respond, rpcId) => {
-      if (this.#rpc === rpc) this.#onServerRequest(method, params, respond, rpcId)
+      if (this.#rpc !== rpc) return
+      if (this.#threadStartWaits > 0) this.#lastFrameAt = Date.now()
+      this.#onServerRequest(method, params, respond, rpcId)
     })
 
     let initialized: JsonRpcValue | undefined
@@ -828,8 +875,10 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     }
     for (const [threadId, turnId] of turns) {
       this.emit('event', { type: 'thread.error', threadId, message: error.message })
+      this.#settleOpenItems(turnId, 'failed')
       this.emit('event', { type: 'turn.completed', turnId, status: 'failed' })
     }
+    this.#openItems.clear()
     this.emit('disconnected')
   }
 
@@ -1159,13 +1208,102 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
   }
 
   async startThread(workspacePath: string, options: StartOptions = {}): Promise<Thread> {
-    const response = await this.#callParsed(
-      'thread/start',
-      this.#newThreadParams(workspacePath, options),
-      ThreadStartResponseSchema,
-      THREAD_START_TIMEOUT_MS,
-    )
-    return this.#adoptNewThread(response, workspacePath, options)
+    const params = this.#newThreadParams(workspacePath, options)
+    for (let attempt = 0; ; attempt += 1) {
+      const rpc = await this.#readyRpc()
+      let response: z.infer<typeof ThreadStartResponseSchema>
+      try {
+        response = await this.#requestThreadStart(rpc, params)
+      } catch (error) {
+        if (!(error instanceof CodexThreadStartStall)) throw error
+        if (this.#rpc !== rpc) throw new Error('Codex disconnected during the request')
+        this.emit('log', error.message)
+        const starting = this.#startingMcpServers()
+        // A process that already holds a chat keeps running for that chat.
+        if (this.#ownThreads.size > 0)
+          throw new Error(codexThreadStartStalledMessage(false, starting))
+        await this.#stopStalledProcess(rpc)
+        if (attempt > 0) throw new Error(codexThreadStartStalledMessage(true, starting))
+        // A stuck process cannot be asked again; a second stall on a fresh
+        // one means the cause lies elsewhere, so that one is reported.
+        this.emit('log', 'Codex did not start the thread; restarting the local process once.')
+        continue
+      }
+      if (this.#rpc !== rpc) throw new Error('Codex disconnected during the request')
+      return this.#adoptNewThread(response, workspacePath, options)
+    }
+  }
+
+  /**
+   * thread/start, given as long as Codex keeps reporting progress. It rejects
+   * with a stall once the process went silent for the idle window, or reached
+   * the overall limit while still busy.
+   */
+  async #requestThreadStart(
+    rpc: CodexRpc,
+    params: object,
+  ): Promise<z.infer<typeof ThreadStartResponseSchema>> {
+    const startedAt = Date.now()
+    this.#threadStartWaits += 1
+    this.#lastFrameAt = startedAt
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const request = rpc.request('thread/start', params, { result: ThreadStartResponseSchema })
+    const stalled = new Promise<never>((_resolve, reject) => {
+      const check = () => {
+        const now = Date.now()
+        const idleEnds = this.#lastFrameAt + THREAD_START_IDLE_MS
+        const limitEnds = startedAt + THREAD_START_LIMIT_MS
+        if (now < idleEnds && now < limitEnds) {
+          timer = setTimeout(check, Math.min(idleEnds, limitEnds) - now)
+          return
+        }
+        const seconds = Math.round((now - startedAt) / 1000)
+        reject(
+          new CodexThreadStartStall(
+            now >= limitEnds
+              ? `Codex thread/start had no answer after ${seconds}s of startup progress.`
+              : `Codex thread/start had no answer and no output for ${seconds}s.`,
+          ),
+        )
+      }
+      timer = setTimeout(check, THREAD_START_IDLE_MS)
+    })
+    // Whichever side loses the race settles later, or never; neither is an error then.
+    request.catch(() => undefined)
+    stalled.catch(() => undefined)
+    try {
+      return await Promise.race([request, stalled])
+    } finally {
+      clearTimeout(timer)
+      this.#threadStartWaits -= 1
+    }
+  }
+
+  /** MCP servers Codex reported as starting and never as ready, failed or stopped. */
+  #startingMcpServers(): string[] {
+    const names = new Set<string>()
+    for (const [key, status] of this.#mcpStartup) {
+      if (status.state === 'starting') names.add(key.slice(key.indexOf('\0') + 1))
+    }
+    return [...names].sort()
+  }
+
+  /**
+   * Stops a process that stalled before it held a chat, so the next request
+   * starts a fresh one instead of queueing behind the stuck one.
+   */
+  async #stopStalledProcess(rpc: CodexRpc): Promise<void> {
+    if (this.#rpc !== rpc) return
+    this.#rpc = undefined
+    this.#started = false
+    this.#restartNeeded = true
+    this.#mcpStartup.clear()
+    this.#mcpInventory.clear()
+    this.#mcpInventoryLoads.clear()
+    this.#mcpConfigured.clear()
+    this.#mcpLogins.clear()
+    this.#processStop = Promise.resolve(rpc.dispose())
+    await this.#settleProcessStop()
   }
 
   /**
@@ -1553,6 +1691,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     this.#ownThreads.clear()
     this.#threadApprovals.clear()
     this.#activeTurns.clear()
+    this.#openItems.clear()
     this.#sessionThread = undefined
     // Held responders close over the dead transport; answering one after
     // disposal would write into nothing. Drop them with the process.
@@ -1786,12 +1925,10 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
         for (const completed of this.#pendingTurnCompletions) completed.add(p.turn.id)
         if (this.#activeTurns.get(p.threadId) === p.turn.id) this.#activeTurns.delete(p.threadId)
         this.#declineOpenRequests(p.threadId, p.turn.id, activeTurn)
-        emit({
-          type: 'turn.completed',
-          turnId: p.turn.id,
-          // `inProgress` should not reach us here, but map it rather than crash.
-          status: p.turn.status === 'inProgress' ? 'completed' : p.turn.status,
-        })
+        // `inProgress` should not reach us here, but map it rather than crash.
+        const status = p.turn.status === 'inProgress' ? 'completed' : p.turn.status
+        this.#settleOpenItems(p.turn.id, status)
+        emit({ type: 'turn.completed', turnId: p.turn.id, status })
         return
       }
 
@@ -1805,12 +1942,21 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
             createdAt: p.startedAtMs,
           }),
         )
-        if (item) emit({ type: 'item.started', item })
+        if (!item) return
+        // A subagent's item keeps the state its tracker sends; an item without an id
+        // cannot be matched to its completion.
+        if (item.status === 'started' && !item.subagent && p.item.id !== undefined) {
+          const open = this.#openItems.get(p.turnId) ?? new Map<string, Item>()
+          open.set(item.id, item)
+          this.#openItems.set(p.turnId, open)
+        }
+        emit({ type: 'item.started', item })
         return
       }
 
       case 'item/completed': {
         const p = ItemCompletedNotificationSchema.parse(params)
+        if (p.item.id !== undefined) this.#openItems.get(p.turnId)?.delete(p.item.id)
         const item = this.#subagents.onItem(
           p.item,
           mapThreadItem(p.item, {
@@ -2001,6 +2147,24 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
       this.#declineOpenRequests(p.threadId, p.turn.id, undefined)
     }
     this.#subagents.onThreadNotification(threadId, method, params)
+  }
+
+  /**
+   * A finished turn leaves none of its work running: the transcript folds a turn's work
+   * only once nothing in it is still started. What Codex still reports in progress, such
+   * as a server the agent started, did its part of the turn; Codex completes it when its
+   * process exits, and that report replaces this one. A stopped turn keeps its unfinished
+   * work as it is, which reads as interrupted.
+   */
+  #settleOpenItems(turnId: string, status: 'completed' | 'failed' | 'interrupted'): void {
+    const open = this.#openItems.get(turnId)
+    this.#openItems.delete(turnId)
+    if (!open || status === 'interrupted') return
+    for (const item of open.values()) {
+      // Without text, so the output and answer that streamed in stay as they arrived.
+      const { text: _streamed, ...started } = item
+      this.emit('event', { type: 'item.completed', item: { ...started, status } })
+    }
   }
 
   /**

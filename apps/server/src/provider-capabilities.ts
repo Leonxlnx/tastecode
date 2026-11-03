@@ -12,6 +12,13 @@ export type ProviderControlCapabilities = Readonly<{
   inheritedMcp: boolean
   /** The provider can list the MCP servers its own settings load (server-internal). */
   mcpInventory: boolean
+  /**
+   * A chat on this provider gets TasteCode's agent tools, served as the MCP
+   * server `tastecode`, and can start sub-agents on other providers
+   * (server-internal). It needs a managed MCP path that one more server does
+   * not change; Grok switches to its ACP mode for any server, so it has none.
+   */
+  agentTools: boolean
   /** The provider lists the skills it loads itself (server-internal). */
   nativeSkills: boolean
   /**
@@ -64,6 +71,7 @@ const unsupported: ProviderControlCapabilities = {
   managedMcp: false,
   inheritedMcp: false,
   mcpInventory: false,
+  agentTools: false,
   nativeSkills: false,
   agentsSkillsDir: false,
   defaultSkillsPlugin: false,
@@ -114,6 +122,7 @@ export const PROVIDER_CAPABILITIES = {
     forkSession: true,
     managedMcp: true,
     mcpInventory: true,
+    agentTools: true,
     defaultSkillsPlugin: true,
     nativeModels: true,
     // The CLI saves an `ai-title` row once a prompt says enough to name.
@@ -136,6 +145,7 @@ export const PROVIDER_CAPABILITIES = {
     managedMcp: true,
     inheritedMcp: true,
     mcpInventory: true,
+    agentTools: true,
     nativeSkills: true,
     agentsSkillsDir: true,
     // skills/extraRoots/set exists, but nothing shows it stays out of ~/.codex.
@@ -184,6 +194,7 @@ export const PROVIDER_CAPABILITIES = {
     resume: true,
     managedMcp: true,
     mcpInventory: true,
+    agentTools: true,
     nativeSkills: true,
     nativeModels: true,
     account: true,

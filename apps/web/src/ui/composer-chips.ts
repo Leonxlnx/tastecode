@@ -126,14 +126,15 @@ function opensToken(character: string): boolean {
 }
 
 /**
- * Whitespace or closing punctuation may follow a token directly. A full stop
- * or colon only when a space or the end follows it: `$cook.` ends a sentence,
- * while `$cook.md` would read as a longer name.
+ * Whitespace or closing punctuation may follow a token directly, as long as
+ * no name character comes after the dots, colons and dashes it starts with:
+ * `$cook.`, `$cook...` and `$cook.)` end at the name, while `$cook.md` would
+ * read as a longer name. This is where a sent prompt's token ends when it is
+ * read back (message-chips.ts), so a prompt put back into the composer goes
+ * out again exactly as it was sent.
  */
 function closesToken(text: string): boolean {
-  const first = text[0]!
-  if (/[\s,;!?)\]}"']/.test(first)) return true
-  return (first === '.' || first === ':') && (text.length === 1 || /\s/.test(text[1]!))
+  return /^[\s.,;:!?)\]}"']/.test(text) && !/^[\w.:-]*\w/.test(text)
 }
 
 /** The chip the position falls strictly inside, where no caret belongs. */
