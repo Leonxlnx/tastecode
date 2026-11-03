@@ -7894,6 +7894,10 @@ export function App() {
                 terminalToggleRequest={workspaceTerminalToggleRequest}
                 externalToolRequest={workspaceToolRequest}
                 frameStore={threadFrameStore}
+                subagentTranscript={
+                  providerStatuses.find((status) => status.id === activeSession?.provider)
+                    ?.capabilities?.subagentTranscript
+                }
                 designPreviewRequest={workspaceDesignPreviewRequest}
                 onOpenPullRequest={openCheckoutPullRequest}
                 providerLogin={

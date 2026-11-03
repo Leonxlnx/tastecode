@@ -28,6 +28,7 @@ import type {
   BackgroundModelPreference,
   DiffDecision,
   DomainEvent,
+  Item,
   JsonValue,
   ProviderContextSettingsMap,
   ProviderId,
@@ -944,6 +945,7 @@ export class Store {
   #deleteThreadInboxEvents: StatementSync
   #insertUserSubmission: StatementSync
   #hasUserSubmission: StatementSync
+  #itemSnapshot: StatementSync
   #insertTurnDiffEvent: StatementSync
   #readTurnDiff: StatementSync
   #upsertRecoveryStart: StatementSync
@@ -1118,6 +1120,16 @@ export class Store {
     )
     this.#hasUserSubmission = this.#db.prepare(
       `SELECT 1 FROM user_submission_items WHERE thread_id = ? AND item_id = ?`,
+    )
+    // Rows from the item's first one on (`seq >= ?`), and only those whose text holds its
+    // JSON-quoted id (`instr`), are parsed as JSON at all.
+    this.#itemSnapshot = this.#db.prepare(
+      `SELECT e.payload FROM events e
+       LEFT JOIN provider_history_events p ON p.event_seq = e.seq
+       WHERE e.thread_id = ? AND e.seq >= ? AND COALESCE(p.active, 1) = 1
+         AND instr(e.payload, ?) > 0
+         AND json_extract(CASE WHEN json_valid(e.payload) THEN e.payload END, '$.item.id') = ?
+       ORDER BY e.seq DESC LIMIT 1`,
     )
     this.#insertTurnDiffEvent = this.#db.prepare(
       `INSERT OR REPLACE INTO turn_diff_events (event_seq, thread_id, turn_id)
@@ -3545,6 +3557,31 @@ export class Store {
 
   hasUserSubmission(threadId: string, itemId: string): boolean {
     return this.#hasUserSubmission.get(threadId, itemId) !== undefined
+  }
+
+  /**
+   * Latest retained item boundary, scoped to its owning thread. A sub-agent's detail asks
+   * for it every few seconds, so the history index bounds the rows read: none when it
+   * covers the thread and never saw the item, else those from the item's first row on.
+   */
+  itemSnapshot(threadId: string, itemId: string): Item | undefined {
+    const key = `i:${itemId}`
+    const firstSeq = this.historyIndexed(threadId)
+      ? this.historyKeyFirstSeqs(threadId, [key]).get(key)
+      : 0
+    if (firstSeq === undefined) return undefined
+    const row = sqliteRow<{ payload: string }>(
+      this.#itemSnapshot,
+      threadId,
+      firstSeq,
+      JSON.stringify(itemId),
+      itemId,
+    )
+    if (!row) return undefined
+    const event = parseDomainEvent(row.payload, `item snapshot for thread ${threadId}`)
+    return event?.type === 'item.started' || event?.type === 'item.completed'
+      ? event.item
+      : undefined
   }
 
   #insertEventRow(threadId: string, at: number, payload: string): number {
