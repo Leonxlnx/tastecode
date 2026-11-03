@@ -105,4 +105,19 @@ describe('message chips', () => {
     expect(composerTextWithChips('nothing to draw', known)).toBe('nothing to draw')
     expect(composerTextWithChips(draft, known)).toBe(draft)
   })
+
+  it('sends a prompt put back with its chips exactly as it was sent', () => {
+    const known: KnownChipTokens = new Map([
+      ['$cook', 'skill'],
+      ['@officialDocs', 'mcp'],
+    ])
+    for (const sent of [
+      '/taste-pro a website make something creative',
+      '$cook... then more',
+      'ask @officialDocs: (with $cook.)',
+      '/goal: ship $cook.md',
+    ]) {
+      expect(composerWireText(composerTextWithChips(sent, known))).toBe(sent)
+    }
+  })
 })
