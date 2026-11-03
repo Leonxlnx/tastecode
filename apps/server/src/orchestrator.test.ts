@@ -3,6 +3,7 @@ import { EventEmitter } from 'node:events'
 import {
   appendFileSync,
   copyFileSync,
+  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -14,7 +15,17 @@ import {
 } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { afterAll, afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  onTestFinished,
+  vi,
+} from 'vitest'
 import { CLAUDE_MCP_CAPABILITIES } from '@harness/adapter-claude-code/capabilities'
 import { GROK_MCP_CAPABILITIES } from '@harness/adapter-grok/mcp'
 import { OPENCODE_MCP_CAPABILITIES } from '@harness/adapter-opencode/inventory'
@@ -9710,21 +9721,34 @@ describe('queued turns', () => {
   })
 })
 
-describe('isolated sessions', () => {
+// Real Git worktrees, checkpoints and restores can exceed 20 s on loaded Windows runners.
+describe('isolated sessions', { timeout: 60_000 }, () => {
+  let fixtureRepo: string
   let repo: string
   let trees: string
+
+  // Copy a pristine repository per test instead of repeating five Git setup commands.
+  beforeAll(() => {
+    fixtureRepo = mkdtempSync(path.join(os.tmpdir(), 'harness-orch-fixture-'))
+    execFileSync('git', ['init', '-b', 'main', fixtureRepo], { windowsHide: true })
+    const git = (...args: string[]) =>
+      execFileSync('git', args, { cwd: fixtureRepo, windowsHide: true })
+    git('config', 'user.email', 'test@example.com')
+    git('config', 'user.name', 'Test')
+    writeFileSync(path.join(fixtureRepo, 'file.txt'), 'original\n')
+    git('add', '.')
+    git('commit', '-m', 'first')
+  }, 60_000)
+
+  afterAll(() => {
+    rmSync(fixtureRepo, { recursive: true, force: true })
+  })
 
   beforeEach(() => {
     const base = mkdtempSync(path.join(os.tmpdir(), 'harness-orch-'))
     repo = path.join(base, 'repo')
     trees = path.join(base, 'trees')
-    execFileSync('git', ['init', '-b', 'main', repo], { windowsHide: true })
-    const git = (...args: string[]) => execFileSync('git', args, { cwd: repo, windowsHide: true })
-    git('config', 'user.email', 'test@example.com')
-    git('config', 'user.name', 'Test')
-    writeFileSync(path.join(repo, 'file.txt'), 'original\n')
-    git('add', '.')
-    git('commit', '-m', 'first')
+    cpSync(fixtureRepo, repo, { recursive: true })
   })
 
   afterEach(() => {
@@ -10098,7 +10122,7 @@ describe('isolated sessions', () => {
     await orchestrator.discardWorktree(thread.id)
 
     expect(existsSync(worktreePath)).toBe(false)
-  }, 20_000)
+  })
 
   it('closing a session leaves its checkout alone', async () => {
     const { store, orchestrator } = harness(trees)
