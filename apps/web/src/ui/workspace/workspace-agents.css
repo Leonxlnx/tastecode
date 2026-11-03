@@ -354,3 +354,9 @@ button.agents-row:focus-visible {
   color: var(--text-3);
   font-size: var(--t-xs);
 }
+
+/* Above a cut native transcript, on the snapshot text's left edge. */
+.agent-detail__omitted {
+  flex: none;
+  margin: 10px 16px 0 40px;
+}

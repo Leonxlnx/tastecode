@@ -291,12 +291,26 @@
           <a href="./feature-inventory.html">Inventory</a>
           <a href="./CLAUDE-HANDOFF.md">Claude handoff</a>
         </nav>
-        <span class="meta">2026-11-03 dev c3c76d3a · nightly f49f31aa · main 41c61109</span>
+        <span class="meta">2026-11-03 dev c2364371 · nightly f49f31aa · main 41c61109</span>
       </div>
     </div>
 
     <div class="wrap">
       <section id="scope">
+        <p>
+          November 3, evening: unfinished subagents settle as stopped when their owning session ends
+          or their history is recovered after a restart, while live background work can still
+          outlast its parent turn (<a href="https://github.com/Leonxlnx/tastecode/pull/2074"
+            >#2074</a
+          >). Native Claude Code subagent conversations open in Agents (<a
+            href="https://github.com/Leonxlnx/tastecode/pull/2079"
+            >#2079</a
+          >, contracts <a href="https://github.com/Leonxlnx/tastecode/pull/2081">#2081</a>, merged):
+          the saved prompt, tool calls and answer are read through an optional adapter capability;
+          while a helper runs, the detail asks every five seconds only while visible, the server
+          rereads only changed files, replaces screenshots with a placeholder and sends the newest
+          400 items. Hosted CI passed; no running-app or installer check was performed for these.
+        </p>
         <p>
           November 3, afternoon, on dev (c3c76d3a): a second fix round, the sub-agent series and
           shorter finished replies, all merged with hosted CI green on windows-latest and
