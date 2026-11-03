@@ -745,7 +745,7 @@ export function Onboarding(props: {
                 ) : null}
                 <div className="onboarding__pick">
                   <ul
-                    className="onboarding__picks"
+                    className="onboarding__picks onboarding__picks--notes"
                     role="radiogroup"
                     aria-label="Sub-agents on other providers"
                   >
