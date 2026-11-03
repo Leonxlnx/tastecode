@@ -1742,15 +1742,18 @@
   max-width: 220px;
 }
 
+/* Full width, tucked behind the top of the box by exactly its corner radius:
+   the panel's sides then run straight into the prompt's sides. The tucked band
+   is covered, so the bottom padding clears it before the last row. */
 .composer__queue {
   position: absolute;
-  right: 28px;
-  bottom: calc(100% - 9px);
-  left: 28px;
+  right: 0;
+  bottom: calc(100% - var(--r-composer));
+  left: 0;
   min-width: 0;
   max-height: min(40vh, 280px);
   margin: 0;
-  padding: 3px 7px 7px;
+  padding: 5px 8px calc(var(--r-composer) + 5px);
   overflow-y: auto;
   background: var(--bg-queue);
   border: 1px solid var(--queue-line);

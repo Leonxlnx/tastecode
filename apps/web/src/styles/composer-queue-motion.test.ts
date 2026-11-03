@@ -53,6 +53,19 @@ describe('composer queue motion', () => {
     expect(composerSource).toContain("{ transform: 'translate3d(0, 0, 0)' }")
   })
 
+  it('spans the whole composer and tucks only behind its rounded top', () => {
+    const panel = rule('.composer__queue')
+
+    expect(panel).toContain('right: 0;')
+    expect(panel).toContain('left: 0;')
+    // Tucking exactly the corner radius lets the panel's sides run straight
+    // into the prompt's sides; a shallower tuck leaves a notch at each corner.
+    expect(panel).toContain('bottom: calc(100% - var(--r-composer));')
+    // That band is covered, so the bottom padding has to clear it or the last
+    // row's lower edge disappears behind the prompt.
+    expect(panel).toMatch(/padding: \d+px \d+px calc\(var\(--r-composer\) \+ \d+px\);/)
+  })
+
   it('lets a queued row grow with its text instead of clipping it', () => {
     const row = rule('.queue-row')
     const text = rule('.queue-row__text')
