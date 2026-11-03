@@ -87,6 +87,50 @@ const messages = (id: string) =>
   )
 
 describe('provider history integration', () => {
+  it('settles unfinished subagents on history import and keeps their reported ends on reload', async () => {
+    const { history, source } = setup()
+    const events: DomainEvent[] = [
+      ...transcript(),
+      ...(['running', 'completed', 'failed', 'interrupted'] as const).map((state): DomainEvent => ({
+        type: 'item.completed',
+        item: {
+          id: state,
+          turnId: 'native-turn',
+          type: 'tool_call',
+          status: 'completed',
+          text: 'Review launched',
+          createdAt: 1001,
+          subagent: { id: state, name: 'Reviewer', state, background: true, toolUses: 3 },
+        },
+      })),
+    ]
+    vi.mocked(source.read).mockResolvedValue(events)
+    await history.refresh()
+    const id = 'external:codex:native'
+    await history.load(id)
+    const agents = () =>
+      compactHistoryReplay(store.history(id)).flatMap(({ event }) =>
+        event.type === 'item.completed' && event.item.subagent ? [event.item] : [],
+      )
+    expect(agents().map((item) => item.subagent?.state)).toEqual([
+      'interrupted',
+      'completed',
+      'failed',
+      'interrupted',
+    ])
+    expect(agents()[0]).toMatchObject({
+      status: 'completed',
+      text: 'Review launched',
+      subagent: { name: 'Reviewer', background: true, toolUses: 3 },
+    })
+    await history.close()
+    const reloaded = setup()
+    await reloaded.history.refresh()
+    expect(await reloaded.history.load(id)).toBe(false)
+    expect(agents()[0]?.subagent?.state).toBe('interrupted')
+    expect(events[5]).toMatchObject({ item: { subagent: { state: 'running' } } })
+  })
+
   it('reports whether a refresh changed any chat, so the server can poll less', async () => {
     const sessions = [metadata()]
     const { history, source } = setup(sessions)
