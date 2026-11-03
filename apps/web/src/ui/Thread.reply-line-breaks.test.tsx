@@ -34,13 +34,15 @@ beforeAll(async () => {
   // A rich reply first shows the streaming renderer and swaps in the finished one
   // once its chunk has loaded. Waiting for that import inside one test's 1 s
   // `waitFor` failed on loaded CI runners; load it once here, as a running app has.
+  // The first import transforms the whole renderer, which took over 10 s on a busy
+  // machine, so this hook gets the time and the tests wait for nothing.
   render(<Markdown text="Load `the` renderer" streaming />)
   await act(async () => {
     await import('./CompletedMarkdown.js')
     await new Promise((resolve) => setTimeout(resolve, 0))
   })
   cleanup()
-})
+}, 60_000)
 afterAll(() => stylesheet.remove())
 afterEach(cleanup)
 
