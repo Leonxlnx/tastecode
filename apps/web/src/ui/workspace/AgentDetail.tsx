@@ -7,17 +7,20 @@ import { SubagentStatus } from '../SubagentRow.js'
 import { Thread } from '../Thread.js'
 import type { AgentEntry } from './agents-list.js'
 import { useChildTranscript } from './child-transcript.js'
+import { NativeSubagentTranscript } from './NativeSubagentTranscript.js'
 
 /**
  * One sub-agent, opened from the Agents tab. A sub-agent TasteCode started
  * shows its own chat, read-only, where its approvals and questions can be
- * answered and its run stopped. One the engine runs itself shows its last
- * snapshot: the engine keeps no transcript TasteCode can read yet.
+ * answered and its run stopped. An engine's own sub-agent shows its saved
+ * transcript when available, otherwise its last snapshot.
  */
 export function AgentDetail(props: {
   entry: AgentEntry
   active: boolean
   transport: Transport
+  threadId?: string | undefined
+  subagentTranscript?: boolean | undefined
   onBack: () => void
 }) {
   const { entry, transport } = props
@@ -82,6 +85,18 @@ export function AgentDetail(props: {
       {childId ? (
         props.active ? (
           <ChildThread key={childId} threadId={childId} transport={transport} />
+        ) : null
+      ) : props.subagentTranscript && props.threadId && !subagent.provider ? (
+        props.active ? (
+          <NativeSubagentTranscript
+            key={`${props.threadId}:${entry.itemId}`}
+            threadId={props.threadId}
+            itemId={entry.itemId}
+            subagent={subagent}
+            transport={transport}
+          >
+            <SnapshotDetail subagent={subagent} />
+          </NativeSubagentTranscript>
         ) : null
       ) : (
         <SnapshotDetail subagent={subagent} />
