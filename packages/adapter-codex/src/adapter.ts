@@ -134,6 +134,15 @@ const INVALID_PARAMS = -32602
 const CONTROL_READ_TIMEOUT_MS = 10_000
 const INITIALIZE_TIMEOUT_MS = 30_000
 const THREAD_START_TIMEOUT_MS = 30_000
+/**
+ * How long a new thread may wait without a single frame from Codex.
+ * thread/start answers only after Codex set the session up, which includes
+ * starting the chat's MCP servers; those report progress while they start, and
+ * any frame resets this window. Silence this long means the process is stuck.
+ */
+const THREAD_START_IDLE_MS = 45_000
+/** A thread start that keeps reporting progress still gives up here. */
+const THREAD_START_LIMIT_MS = 180_000
 /** How long a command whose request answers with nothing waits for its turn to start. */
 const COMMAND_TURN_START_TIMEOUT_MS = 15_000
 /** The id of the next turn a thread starts; undefined when none started in time. */
@@ -176,6 +185,25 @@ const CONNECTION_NOTIFICATIONS = new Set([
   'mcpServer/startupStatus/updated',
   'mcpServer/oauthLogin/completed',
 ])
+
+/** thread/start got no answer in time; the message says how long and why, for the log. */
+class CodexThreadStartStall extends Error {}
+
+/** What the user reads when a new chat could not open; never the raw method name. */
+export function codexThreadStartStalledMessage(
+  restarted: boolean,
+  startingMcpServers: readonly string[],
+): string {
+  return [
+    restarted
+      ? 'Codex did not finish starting this chat, even after one restart.'
+      : 'Codex did not finish starting this chat.',
+    ...(startingMcpServers.length
+      ? [`MCP servers still starting: ${startingMcpServers.join(', ')}.`]
+      : []),
+    'Try sending again.',
+  ].join(' ')
+}
 
 /** The thread a notification reports on; one property read, since deltas pass here too. */
 function notificationThreadId(params: JsonRpcValue | undefined): string | undefined {
@@ -627,6 +655,9 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
   #restartNeeded = false
   #starting: Promise<void> | undefined
   #startupGeneration = 0
+  /** Thread starts waiting on Codex; while any is, frames from the process count as progress. */
+  #threadStartWaits = 0
+  #lastFrameAt = 0
   #mcpStartup = new Map<string, McpStartupStatus>()
   #mcpInventory = new Map<string, McpServer[]>()
   /** Resolves true once the status list landed, false when it failed or was replaced. */
@@ -752,13 +783,21 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     this.#rpc = rpc
     this.#lastRpc = rpc
 
-    rpc.onStderr((text) => this.emit('log', text.trimEnd()))
+    rpc.onStderr((text) => {
+      if (this.#threadStartWaits > 0 && this.#rpc === rpc) this.#lastFrameAt = Date.now()
+      this.emit('log', text.trimEnd())
+    })
     rpc.onNotification((method, params) => {
-      if (this.#rpc === rpc) this.#onNotification(method, params)
+      if (this.#rpc !== rpc) return
+      // One comparison per frame while no thread is starting; deltas pass here.
+      if (this.#threadStartWaits > 0) this.#lastFrameAt = Date.now()
+      this.#onNotification(method, params)
     })
 
     rpc.onServerRequest((method, params, respond, rpcId) => {
-      if (this.#rpc === rpc) this.#onServerRequest(method, params, respond, rpcId)
+      if (this.#rpc !== rpc) return
+      if (this.#threadStartWaits > 0) this.#lastFrameAt = Date.now()
+      this.#onServerRequest(method, params, respond, rpcId)
     })
 
     let initialized: JsonRpcValue | undefined
@@ -1159,13 +1198,94 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
   }
 
   async startThread(workspacePath: string, options: StartOptions = {}): Promise<Thread> {
-    const response = await this.#callParsed(
-      'thread/start',
-      this.#newThreadParams(workspacePath, options),
-      ThreadStartResponseSchema,
-      THREAD_START_TIMEOUT_MS,
-    )
+    const params = this.#newThreadParams(workspacePath, options)
+    const rpc = await this.#readyRpc()
+    let response: z.infer<typeof ThreadStartResponseSchema>
+    try {
+      response = await this.#requestThreadStart(rpc, params)
+    } catch (error) {
+      if (!(error instanceof CodexThreadStartStall)) throw error
+      if (this.#rpc !== rpc) throw new Error('Codex disconnected during the request')
+      this.emit('log', error.message)
+      const starting = this.#startingMcpServers()
+      // A process that already holds a chat keeps running for that chat.
+      if (this.#ownThreads.size === 0) await this.#stopStalledProcess(rpc)
+      throw new Error(codexThreadStartStalledMessage(false, starting))
+    }
+    if (this.#rpc !== rpc) throw new Error('Codex disconnected during the request')
     return this.#adoptNewThread(response, workspacePath, options)
+  }
+
+  /**
+   * thread/start, given as long as Codex keeps reporting progress. It rejects
+   * with a stall once the process went silent for the idle window, or reached
+   * the overall limit while still busy.
+   */
+  async #requestThreadStart(
+    rpc: CodexRpc,
+    params: object,
+  ): Promise<z.infer<typeof ThreadStartResponseSchema>> {
+    const startedAt = Date.now()
+    this.#threadStartWaits += 1
+    this.#lastFrameAt = startedAt
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const request = rpc.request('thread/start', params, { result: ThreadStartResponseSchema })
+    const stalled = new Promise<never>((_resolve, reject) => {
+      const check = () => {
+        const now = Date.now()
+        const idleEnds = this.#lastFrameAt + THREAD_START_IDLE_MS
+        const limitEnds = startedAt + THREAD_START_LIMIT_MS
+        if (now < idleEnds && now < limitEnds) {
+          timer = setTimeout(check, Math.min(idleEnds, limitEnds) - now)
+          return
+        }
+        const seconds = Math.round((now - startedAt) / 1000)
+        reject(
+          new CodexThreadStartStall(
+            now >= limitEnds
+              ? `Codex thread/start had no answer after ${seconds}s of startup progress.`
+              : `Codex thread/start had no answer and no output for ${seconds}s.`,
+          ),
+        )
+      }
+      timer = setTimeout(check, THREAD_START_IDLE_MS)
+    })
+    // Whichever side loses the race settles later, or never; neither is an error then.
+    request.catch(() => undefined)
+    stalled.catch(() => undefined)
+    try {
+      return await Promise.race([request, stalled])
+    } finally {
+      clearTimeout(timer)
+      this.#threadStartWaits -= 1
+    }
+  }
+
+  /** MCP servers Codex reported as starting and never as ready, failed or stopped. */
+  #startingMcpServers(): string[] {
+    const names = new Set<string>()
+    for (const [key, status] of this.#mcpStartup) {
+      if (status.state === 'starting') names.add(key.slice(key.indexOf('\0') + 1))
+    }
+    return [...names].sort()
+  }
+
+  /**
+   * Stops a process that stalled before it held a chat, so the next request
+   * starts a fresh one instead of queueing behind the stuck one.
+   */
+  async #stopStalledProcess(rpc: CodexRpc): Promise<void> {
+    if (this.#rpc !== rpc) return
+    this.#rpc = undefined
+    this.#started = false
+    this.#restartNeeded = true
+    this.#mcpStartup.clear()
+    this.#mcpInventory.clear()
+    this.#mcpInventoryLoads.clear()
+    this.#mcpConfigured.clear()
+    this.#mcpLogins.clear()
+    this.#processStop = Promise.resolve(rpc.dispose())
+    await this.#settleProcessStop()
   }
 
   /**
