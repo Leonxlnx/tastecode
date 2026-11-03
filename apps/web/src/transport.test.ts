@@ -226,11 +226,74 @@ describe('Transport', () => {
         data: JSON.stringify({ id, result: { events: [], running: false, ignored: data } }),
       })
     }
-    expect(transport.state).toBe('reconnecting')
+    // Only the reply over budget fails; the connection and the reply already
+    // admitted stay until the transport closes.
+    const [, rejected] = calls
+    expect(await rejected).toBeInstanceOf(IndeterminateRequestError)
+    expect(String(await rejected)).toContain('Too much server data')
+    expect(transport.state).toBe('open')
+    expect(FakeSocket.instances).toHaveLength(1)
     transport.close()
     for (const result of await Promise.all(calls)) {
       expect(result).toBeInstanceOf(IndeterminateRequestError)
     }
+  })
+
+  it('admits one reply larger than the whole budget when nothing else waits', async () => {
+    const transport = new Transport('ws://127.0.0.1:4311')
+    transport.connect()
+    const socket = FakeSocket.instances.at(-1)!
+    socket.open()
+    const call = transport.request('thread.history', { threadId: 'thread' })
+    const { id } = RequestFrameSchema.parse(JSON.parse(userFrames(socket)[0]!))
+    const text = 'x'.repeat(TRANSPORT_LIMITS.responseValidationBytes / 2 + 1)
+    socket.onmessage?.({
+      data: JSON.stringify({
+        id,
+        result: {
+          events: [
+            { seq: 1, event: { type: 'item.delta', turnId: 't', itemId: 'i', textDelta: text } },
+          ],
+          running: false,
+        },
+      }),
+    })
+    expect(transport.state).toBe('open')
+    const result = await call
+    expect(result.events).toHaveLength(1)
+    expect(FakeSocket.instances).toHaveLength(1)
+    transport.close()
+  })
+
+  it('keeps answering other requests when one reply is refused for size', async () => {
+    const transport = new Transport('ws://127.0.0.1:4311')
+    transport.connect()
+    const socket = FakeSocket.instances.at(-1)!
+    socket.open()
+    const held = transport.request('thread.history', { threadId: 'held' })
+    const large = transport
+      .request('thread.history', { threadId: 'large' })
+      .catch((error: unknown) => error)
+    const models = transport.request('models.list', { provider: 'claude-code' })
+    const [heldId, largeId, modelsId] = userFrames(socket).map(
+      (frame) => RequestFrameSchema.parse(JSON.parse(frame)).id,
+    )
+    const half = 'x'.repeat(TRANSPORT_LIMITS.responseValidationBytes / 4)
+    socket.onmessage?.({
+      data: JSON.stringify({ id: heldId, result: { events: [], running: false, ignored: half } }),
+    })
+    socket.onmessage?.({
+      data: JSON.stringify({ id: largeId, result: { events: [], running: false, ignored: half } }),
+    })
+    expect(await large).toBeInstanceOf(IndeterminateRequestError)
+    // A restart here used to fail every in-flight call with "Connection to
+    // the server was lost." and let recovery ask for the same reply again.
+    expect(transport.state).toBe('open')
+    expect(FakeSocket.instances).toHaveLength(1)
+    socket.onmessage?.({ data: JSON.stringify({ id: modelsId, result: { models: [] } }) })
+    await expect(held).resolves.toMatchObject({ events: [] })
+    await expect(models).resolves.toMatchObject({ models: [] })
+    transport.close()
   })
 
   it('rejects a schema-invalid reply with a protocol error and keeps serving', async () => {

@@ -546,14 +546,22 @@ class WebSocketTransport implements Transport {
         const text = message.error.message || 'The server reported an error.'
         call.reject(new Error(message.error.detail ? `${text} (${message.error.detail})` : text))
       } else {
+        // The budget bounds replies piling up behind the validator. One reply
+        // is always admitted: it is already in memory, and refusing it alone
+        // made a thread larger than the budget impossible to open (#1943).
+        // Over budget, only this call fails. Restarting the socket rejected
+        // every other request, and recovery asked for the same reply again,
+        // which reconnected without end (#2036).
         const bytes = raw.length * 2
-        if (this.#responseValidationBytes + bytes > TRANSPORT_LIMITS.responseValidationBytes) {
+        if (
+          this.#responseValidationBytes > 0 &&
+          this.#responseValidationBytes + bytes > TRANSPORT_LIMITS.responseValidationBytes
+        ) {
           call.reject(
             new IndeterminateRequestError(
               'Too much server data is waiting to be checked. Refresh before trying again.',
             ),
           )
-          this.#restartSocket()
           return
         }
         call.validationBytes = bytes

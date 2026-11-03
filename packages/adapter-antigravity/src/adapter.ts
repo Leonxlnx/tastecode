@@ -159,10 +159,19 @@ const AgyFrameSchema = z.object({
       conversation_id: z.string().optional(),
       status: z.string().optional(),
       response: z.string().optional(),
+      // agy 1.4.7 steps.JSONOutput: `Error string json:"error,omitempty"`.
+      error: z.string().optional(),
       usage: AgyUsageSchema.optional(),
     })
     .optional(),
 })
+
+/**
+ * How long a turn whose result frame did not say SUCCESS waits for agy to
+ * exit. agy closes its store and exits within a second of the result; one
+ * that is still running after this is judged on the frame alone.
+ */
+export const ANTIGRAVITY_RESULT_EXIT_GRACE_MS = 10_000
 
 /** The fields of agy's `--output-format json` object an answered command needs. */
 const AgyAnswerSchema = z.object({
@@ -279,6 +288,8 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
     let messageStarted = false
     let messageText = ''
     const messageId = `${turnId}-message`
+    /** A result frame that did not say SUCCESS, waiting for agy's exit code. */
+    let reported: { status: string; error?: string; timer: NodeJS.Timeout } | undefined
 
     readNdjson(
       child.stdout,
@@ -349,13 +360,26 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
           }
           if (frame.result.status === 'SUCCESS') {
             this.emit('event', { type: 'turn.completed', turnId, status: 'completed' })
-          } else {
-            this.emit('event', {
-              type: 'thread.error',
-              threadId,
-              message: `Antigravity finished with status ${frame.result.status ?? 'unknown'}`,
-            })
-            this.emit('event', { type: 'turn.completed', turnId, status: 'failed' })
+            return
+          }
+          // The status covers the whole conversation, not this turn. agy
+          // 1.4.7's steps.BuildJSONOutput sets ERROR, and the step's message
+          // in `error`, whenever the conversation's latest error step (an
+          // error message, or a failed step that is not a tool call) exists,
+          // even in an earlier turn; the SUCCESS a finished turn asks for is
+          // dropped once `error` is set. agy judges the turn itself only from
+          // this turn's steps, and that verdict is the exit code
+          // (printmode.ExitCode: 0 when the turn finished, 3 for an agent or
+          // model failure, 1 otherwise). So the turn waits for it.
+          const timer = setTimeout(
+            () => settleReported(undefined),
+            ANTIGRAVITY_RESULT_EXIT_GRACE_MS,
+          )
+          timer.unref()
+          reported = {
+            status: frame.result.status ?? 'unknown',
+            ...(frame.result.error ? { error: frame.result.error } : {}),
+            timer,
           }
         }
       },
@@ -377,10 +401,45 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
     child.stderr.setEncoding('utf8')
     child.stderr.on('data', (chunk: string) => this.emit('log', chunk.trimEnd()))
 
+    // Settles a turn whose result frame did not say SUCCESS. `code` is agy's
+    // exit code, or undefined when the process failed or outlived the grace.
+    const settleReported = (code: number | null | undefined) => {
+      const result = reported
+      if (!result) return
+      reported = undefined
+      clearTimeout(result.timer)
+      const killReason = this.#killReasons.get(child)
+      if (killReason === 'silent') return
+      if (killReason === 'interrupt') {
+        this.emit('event', { type: 'turn.completed', turnId, status: 'interrupted' })
+        return
+      }
+      if (code === 0) {
+        // A finished turn: the answer is delivered and the error belongs to
+        // an earlier step, so it stays out of the chat and goes to the log.
+        this.emit(
+          'log',
+          `Antigravity finished the turn; its result said ${result.status}${result.error ? `: ${result.error}` : ''}`,
+        )
+        this.emit('event', { type: 'turn.completed', turnId, status: 'completed' })
+        return
+      }
+      this.emit('event', {
+        type: 'thread.error',
+        threadId,
+        message: `Antigravity finished with status ${result.status}`,
+      })
+      this.emit('event', { type: 'turn.completed', turnId, status: 'failed' })
+    }
+
     // A spawn failure reports 'error' and then 'close', and a stream failure
     // kills the child, so every exit path funnels through one terminal guard.
-    const finishProcess = (errorMessage: string) => {
+    const finishProcess = (errorMessage: string, code?: number | null) => {
       if (this.#child === child) this.#child = undefined
+      if (reported) {
+        settleReported(code)
+        return
+      }
       if (terminal) return
       terminal = true
       const killReason = this.#killReasons.get(child)
@@ -412,8 +471,11 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
 
     // An exit without a result frame would otherwise look like a hang.
     child.on('close', (code) =>
-      finishProcess(`agy exited with code ${code ?? 'unknown'} before reporting a result`),
+      finishProcess(`agy exited with code ${code ?? 'unknown'} before reporting a result`, code),
     )
+    // 'close' also waits for every holder of agy's pipes; the exit code a
+    // reported result waits for is known at 'exit'.
+    child.on('exit', (code) => settleReported(code))
 
     // A spawn failure emits 'error' on the child; without a listener that
     // throws out of the event loop and takes the whole server down.
