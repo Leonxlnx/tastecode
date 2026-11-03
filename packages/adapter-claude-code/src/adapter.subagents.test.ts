@@ -361,3 +361,124 @@ describe('Claude subagents', () => {
     })
   })
 })
+
+describe('Claude background work', () => {
+  const firstResult = () => index((message) => message.type === 'result')
+  /** The run Claude starts by itself once the background agent has reported. */
+  const ownRun = () => captured.slice(firstResult() + 1)
+  /** The live task list as claude 2.1.296 sends it, here for a background shell. */
+  const backgroundTasks = (...tasks: Array<{ task_id: string; ambient?: boolean }>) =>
+    ({
+      type: 'system',
+      subtype: 'background_tasks_changed',
+      tasks: tasks.map((task) => ({
+        task_type: 'local_bash',
+        description: 'Consistency check',
+        ...task,
+      })),
+      uuid: crypto.randomUUID(),
+      session_id: 'session',
+    }) as SDKMessage
+  const startedTurns = (events: DomainEvent[]) =>
+    events.flatMap((event) => (event.type === 'turn.started' ? [event.turn.id] : []))
+  const items = (events: DomainEvent[]) =>
+    events.flatMap((event) =>
+      event.type === 'item.started' || event.type === 'item.completed' ? [event.item] : [],
+    )
+
+  it('follows the captured list of live background tasks', async () => {
+    const { adapter, replay } = await session()
+    const changes: boolean[] = []
+    adapter.on('backgroundWorkChanged', () => changes.push(adapter.hasBackgroundWork()))
+    const listed = index((message) => message.subtype === 'background_tasks_changed')
+    await replay(captured.slice(0, listed + 1))
+    expect(adapter.hasBackgroundWork()).toBe(true)
+    await replay(captured.slice(listed + 1))
+    expect(adapter.hasBackgroundWork()).toBe(false)
+    expect(changes).toEqual([true, false])
+  })
+
+  it('keeps work running past its turn and shows the run Claude starts when it ends', async () => {
+    const { adapter, events, turnId, replay } = await session()
+    // The turn starts a check in the background and ends, waiting for it.
+    await replay([backgroundTasks({ task_id: 'check' }), captured[firstResult()]!])
+    expect(events.filter((event) => event.type === 'turn.completed')).toEqual([
+      { type: 'turn.completed', turnId, status: 'completed' },
+    ])
+    expect(adapter.hasBackgroundWork()).toBe(true)
+
+    // The check ends; Claude reports it in a run nobody sent.
+    await replay([backgroundTasks(), ...ownRun()])
+    expect(adapter.hasBackgroundWork()).toBe(false)
+    const started = startedTurns(events)
+    expect(started).toEqual([turnId, expect.any(String)])
+    const own = started[1]!
+    expect(items(events).filter((item) => item.turnId === own)).toContainEqual(
+      expect.objectContaining({
+        type: 'message',
+        role: 'assistant',
+        status: 'completed',
+        text: expect.stringMatching(/^The background agent finished too\./),
+      }),
+    )
+    // The prompt that woke Claude is a <task-notification>, never the user speaking.
+    expect(items(events).filter((item) => item.role === 'user')).toEqual([])
+    expect(events.filter((event) => event.type === 'turn.completed')).toEqual([
+      { type: 'turn.completed', turnId, status: 'completed' },
+      { type: 'turn.completed', turnId: own, status: 'completed' },
+    ])
+  })
+
+  it('does not count housekeeping tasks as background work', async () => {
+    const { adapter, replay } = await session()
+    await replay([backgroundTasks({ task_id: 'watch', ambient: true })])
+    expect(adapter.hasBackgroundWork()).toBe(false)
+    await replay([backgroundTasks({ task_id: 'watch', ambient: true }, { task_id: 'check' })])
+    expect(adapter.hasBackgroundWork()).toBe(true)
+  })
+
+  it('ends background work with the process that ran it', async () => {
+    const { adapter, query, replay } = await session()
+    const changes: boolean[] = []
+    adapter.on('backgroundWorkChanged', () => changes.push(adapter.hasBackgroundWork()))
+    await replay([backgroundTasks({ task_id: 'check' })])
+    query().close()
+    await tick()
+    expect(adapter.hasBackgroundWork()).toBe(false)
+    expect(changes).toEqual([true, false])
+  })
+
+  it('stops a run Claude started by itself', async () => {
+    const { adapter, events, turnId, replay } = await session()
+    await replay([
+      backgroundTasks({ task_id: 'check' }),
+      captured[firstResult()]!,
+      backgroundTasks(),
+    ])
+    const run = ownRun()
+    await replay(
+      run.slice(
+        0,
+        run.findIndex((message) => message.type === 'assistant'),
+      ),
+    )
+    const own = startedTurns(events).find((id) => id !== turnId)
+    expect(own).toBeDefined()
+
+    await adapter.interrupt()
+    const result = run.find((message) => message.type === 'result')!
+    await replay([
+      {
+        ...result,
+        subtype: 'error_during_execution',
+        is_error: true,
+        errors: ['[ede_diagnostic] request aborted'],
+      } as SDKMessage,
+    ])
+    expect(events.filter((event) => event.type === 'turn.completed')).toEqual([
+      { type: 'turn.completed', turnId, status: 'completed' },
+      { type: 'turn.completed', turnId: own, status: 'interrupted' },
+    ])
+    expect(events.filter((event) => event.type === 'thread.error')).toEqual([])
+  })
+})
