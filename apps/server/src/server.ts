@@ -1101,6 +1101,9 @@ export function startServer(
         return {}
       }
 
+      case 'accounts.pool':
+        return orchestrator.accountPool(parseParams(method, params).provider)
+
       case 'accounts.setActive': {
         const p = parseParams(method, params)
         accounts.setActive(p.provider, p.accountId)
