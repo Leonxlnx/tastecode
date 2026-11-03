@@ -1527,11 +1527,27 @@ export class Orchestrator {
             active[1].session.listCommands!(active[1].thread.id),
           )
       : undefined
-    if (control.listCommands) {
-      this.watchProvider(provider, projectPath, ['commands'])
-      return control.listCommands(projectPath, readActive)
-    }
-    return { commands: readActive ? await readActive() : [], loading: false }
+    if (control.listCommands) this.watchProvider(provider, projectPath, ['commands'])
+    const inventory: CommandInventory = control.listCommands
+      ? await control.listCommands(projectPath, readActive)
+      : { commands: readActive ? await readActive() : [], loading: false }
+    return control.capabilities.defaultSkillsPlugin
+      ? this.#withBundledCommands(inventory)
+      : inventory
+  }
+
+  /**
+   * A provider that loads the bundled skills as a plugin runs them as that
+   * plugin's commands, but a list read before any of its chats loaded the
+   * plugin (a probe, a file read) leaves them out. The slash menu then offered
+   * them as `$name`, which such a provider does not expand.
+   */
+  #withBundledCommands(inventory: CommandInventory): CommandInventory {
+    const listed = new Set(inventory.commands.map((command) => command.name))
+    const missing = this.#bundledSkills().commands.filter((command) => !listed.has(command.name))
+    return missing.length
+      ? { ...inventory, commands: [...inventory.commands, ...missing] }
+      : inventory
   }
 
   async listSkills(
@@ -1569,7 +1585,9 @@ export class Orchestrator {
   /** Read once per server: the bundled files do not change while it runs. */
   #bundledSkills(): DefaultSkills {
     const root = this.#defaultSkillsRoot
-    this.#defaultSkills ??= root ? loadDefaultSkills(root) : { root: '', skills: [], catalog: '' }
+    this.#defaultSkills ??= root
+      ? loadDefaultSkills(root)
+      : { root: '', skills: [], commands: [], catalog: '' }
     return this.#defaultSkills
   }
 
