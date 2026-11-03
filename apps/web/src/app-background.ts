@@ -15,10 +15,15 @@ import {
  *   vibrancy). Where the OS cannot draw one the look stays unchanged.
  * - image: a local picture, resized, blurred and dimmed behind the panes;
  *   how much of each is set with Dim and Blur.
- * - effect: a CSS backdrop preset (glow, grain or aurora).
+ * - effect: a static pattern (ordered dither, halftone, dot grid or grain),
+ *   faded by Dim.
  */
 export type AppBackgroundMode = 'none' | 'transparent' | 'image' | 'effect'
-export type AppBackgroundEffect = 'glow' | 'grain' | 'aurora'
+export type AppBackgroundEffect = 'dither' | 'halftone' | 'dots' | 'grain'
+
+export const DEFAULT_APP_BACKGROUND_EFFECT: AppBackgroundEffect = 'dither'
+/** Effects that were removed; a stored one becomes the default effect. */
+const RETIRED_EFFECTS = new Set(['glow', 'aurora'])
 
 export type AppBackground = {
   mode: AppBackgroundMode
@@ -29,7 +34,8 @@ export type AppBackground = {
   image: string | undefined
   /**
    * How strongly the picture is dimmed, 0 to 100. The default, 50, is the
-   * dim the window always had; 0 takes it away and 100 doubles it.
+   * dim the window always had; 0 takes it away and 100 doubles it. An
+   * effect fades the same way: twice as strong at 0, gone at 100.
    */
   dim: number
   /** Blur of the picture, in pixels of its display copy (see app-background-image.ts). */
@@ -51,7 +57,7 @@ export const APP_BACKGROUND_BLUR_KEY = 'harness.appBackground.blur'
 const CHANGE_EVENT = 'harness:appBackground'
 
 const MODES = new Set<AppBackgroundMode>(['none', 'transparent', 'image', 'effect'])
-const EFFECTS = new Set<AppBackgroundEffect>(['glow', 'grain', 'aurora'])
+const EFFECTS = new Set<AppBackgroundEffect>(['dither', 'halftone', 'dots', 'grain'])
 const IMAGE_REVISION = /^[a-z0-9-]{1,64}$/i
 
 /** Kept in memory so a render never reads storage; refreshed by every write. */
@@ -110,7 +116,7 @@ export function parseAppBackground(values: {
     mode: MODES.has(values.mode as AppBackgroundMode) ? (values.mode as AppBackgroundMode) : 'none',
     effect: EFFECTS.has(values.effect as AppBackgroundEffect)
       ? (values.effect as AppBackgroundEffect)
-      : 'glow',
+      : DEFAULT_APP_BACKGROUND_EFFECT,
     material: values.material === 'mica' ? 'mica' : 'acrylic',
     image,
     dim: parseLevel(values.dim, MAX_APP_BACKGROUND_DIM, DEFAULT_APP_BACKGROUND_DIM),
@@ -119,7 +125,14 @@ export function parseAppBackground(values: {
 }
 
 export function readAppBackground(): AppBackground {
-  snapshot ??= parseAppBackground({
+  if (snapshot) return snapshot
+  const effect = readStored(APP_BACKGROUND_EFFECT_KEY)
+  // Glow and Aurora were replaced; whoever picked one gets the new default,
+  // stored so the old value is not read again.
+  if (effect !== null && RETIRED_EFFECTS.has(effect)) {
+    writeStored(APP_BACKGROUND_EFFECT_KEY, DEFAULT_APP_BACKGROUND_EFFECT)
+  }
+  snapshot = parseAppBackground({
     mode: readStored(APP_BACKGROUND_KEY),
     effect: readStored(APP_BACKGROUND_EFFECT_KEY),
     material: readStored(APP_BACKGROUND_MATERIAL_KEY),

@@ -41,9 +41,10 @@ const MODE_OPTIONS = [
 ] as const satisfies ReadonlyArray<{ value: AppBackgroundMode; label: string }>
 
 const EFFECT_OPTIONS = [
-  { value: 'glow', label: 'Glow' },
+  { value: 'dither', label: 'Dither' },
+  { value: 'halftone', label: 'Halftone' },
+  { value: 'dots', label: 'Dot grid' },
   { value: 'grain', label: 'Grain' },
-  { value: 'aurora', label: 'Aurora' },
 ] as const satisfies ReadonlyArray<{ value: AppBackgroundEffect; label: string }>
 
 const MATERIAL_OPTIONS = [

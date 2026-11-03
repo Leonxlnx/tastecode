@@ -35,21 +35,29 @@ describe('AppBackground in the browser shell', () => {
     const { writeAppBackground } = await import('../app-background.js')
     const { container } = render(<AppBackground />)
 
-    act(() => writeAppBackground({ mode: 'effect', effect: 'aurora' }))
+    act(() => writeAppBackground({ mode: 'effect', effect: 'halftone' }))
     const layer = await waitFor(() => {
       const element = container.querySelector<HTMLElement>('.app-bg')
       expect(element).not.toBeNull()
       return element!
     })
     expect(layer.dataset['mode']).toBe('effect')
-    expect(layer.dataset['effect']).toBe('aurora')
+    expect(layer.dataset['effect']).toBe('halftone')
     expect(layer.getAttribute('aria-hidden')).toBe('true')
     expect(root()['appBg']).toBe('effect')
-    expect(root()['appBgEffect']).toBe('aurora')
+    expect(root()['appBgEffect']).toBe('halftone')
+    // Its tile is handed to the stylesheet; Dim reaches it as a factor.
+    expect(layer.style.getPropertyValue('--app-bg-pattern')).toMatch(/^url\("data:image\/svg\+xml,/)
+    expect(layer.style.getPropertyValue('--app-bg-pattern-size')).toBe('16px 448px')
+    expect(layer.style.getPropertyValue('--app-bg-dim')).toBe('1')
+    act(() => writeAppBackground({ dim: 75 }))
+    expect(layer.style.getPropertyValue('--app-bg-dim')).toBe('1.5')
 
     act(() => writeAppBackground({ effect: 'grain' }))
     expect(layer.dataset['effect']).toBe('grain')
     expect(root()['appBgEffect']).toBe('grain')
+    // Grain is painted by the stylesheet alone.
+    expect(layer.style.getPropertyValue('--app-bg-pattern')).toBe('')
 
     act(() => writeAppBackground({ mode: 'none' }))
     expect(container.querySelector('.app-bg')).toBeNull()
@@ -150,7 +158,7 @@ describe('AppBackgroundLayer', () => {
 
     const { container, unmount } = render(
       <AppBackgroundLayer
-        background={{ mode: 'image', effect: 'glow', material: 'acrylic', image: 'rev-1', dim: 50, blur: 14 }}
+        background={{ mode: 'image', effect: 'dither', material: 'acrylic', image: 'rev-1', dim: 50, blur: 14 }}
         images={images}
       />,
     )
@@ -189,7 +197,7 @@ describe('AppBackgroundLayer', () => {
     const { AppBackgroundLayer } = await import('./AppBackgroundLayer.js')
     const background = {
       mode: 'image',
-      effect: 'glow',
+      effect: 'dither',
       material: 'acrylic',
       image: 'rev-1',
       dim: 50,
@@ -227,7 +235,7 @@ describe('AppBackgroundLayer', () => {
     const { AppBackgroundLayer } = await import('./AppBackgroundLayer.js')
     const { container } = render(
       <AppBackgroundLayer
-        background={{ mode: 'image', effect: 'glow', material: 'acrylic', image: undefined, dim: 50, blur: 14 }}
+        background={{ mode: 'image', effect: 'dither', material: 'acrylic', image: undefined, dim: 50, blur: 14 }}
         images={images}
       />,
     )

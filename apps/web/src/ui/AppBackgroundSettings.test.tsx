@@ -51,9 +51,10 @@ describe('Window background settings', () => {
     const presets = screen.getByRole('radiogroup', { name: 'Background effect' })
     expect(
       Array.from(presets.querySelectorAll('[role="radio"]')).map((option) => option.textContent),
-    ).toEqual(['Glow', 'Grain', 'Aurora'])
-    fireEvent.click(choice('Aurora'))
-    expect(readAppBackground().effect).toBe('aurora')
+    ).toEqual(['Dither', 'Halftone', 'Dot grid', 'Grain'])
+    expect(choice('Dither').getAttribute('aria-checked')).toBe('true')
+    fireEvent.click(choice('Dot grid'))
+    expect(readAppBackground().effect).toBe('dots')
   })
 
   it('says so when Transparent cannot be drawn here', async () => {

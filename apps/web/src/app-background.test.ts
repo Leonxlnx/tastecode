@@ -35,7 +35,7 @@ describe('window background preference', () => {
   it('defaults to None, so nothing changes until someone picks', () => {
     expect(readAppBackground()).toEqual({
       mode: 'none',
-      effect: 'glow',
+      effect: 'dither',
       material: 'acrylic',
       image: undefined,
       dim: 50,
@@ -51,7 +51,7 @@ describe('window background preference', () => {
   ])('turns garbage into the defaults %j', (values) => {
     expect(parseAppBackground(values)).toEqual({
       mode: 'none',
-      effect: 'glow',
+      effect: 'dither',
       material: 'acrylic',
       image: undefined,
       dim: 50,
@@ -61,19 +61,26 @@ describe('window background preference', () => {
 
   it('reads what was stored', () => {
     localStorage.setItem(APP_BACKGROUND_KEY, 'effect')
-    localStorage.setItem(APP_BACKGROUND_EFFECT_KEY, 'aurora')
+    localStorage.setItem(APP_BACKGROUND_EFFECT_KEY, 'halftone')
     localStorage.setItem(APP_BACKGROUND_MATERIAL_KEY, 'mica')
     localStorage.setItem(APP_BACKGROUND_IMAGE_KEY, 'lr2k1x-0a1b')
     localStorage.setItem(APP_BACKGROUND_DIM_KEY, '0')
     localStorage.setItem(APP_BACKGROUND_BLUR_KEY, '40')
     expect(readAppBackground()).toEqual({
       mode: 'effect',
-      effect: 'aurora',
+      effect: 'halftone',
       material: 'mica',
       image: 'lr2k1x-0a1b',
       dim: 0,
       blur: 40,
     })
+  })
+
+  it.each(['glow', 'aurora'])('moves a stored %s, which was removed, to Dither', (retired) => {
+    localStorage.setItem(APP_BACKGROUND_KEY, 'effect')
+    localStorage.setItem(APP_BACKGROUND_EFFECT_KEY, retired)
+    expect(readAppBackground()).toMatchObject({ mode: 'effect', effect: 'dither' })
+    expect(localStorage.getItem(APP_BACKGROUND_EFFECT_KEY)).toBe('dither')
   })
 
   it('keeps one snapshot until a write, then persists only what changed and notifies', () => {
