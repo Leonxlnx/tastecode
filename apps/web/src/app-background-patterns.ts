@@ -13,6 +13,9 @@ export type EffectPattern = {
   image: string
   /** Its CSS background/mask size: width and height in CSS pixels. */
   size: string
+  /** The same size as numbers, for a preview that draws the tile smaller. */
+  width: number
+  height: number
 }
 
 /** Columns of the dither tile: one turn of the 8×8 Bayer matrix. */
@@ -103,6 +106,8 @@ function ditherPattern(): EffectPattern {
     // Hard cell edges, so each cell reads as a pixel when scaled up.
     image: svgUrl(DITHER_COLUMNS, DITHER_ROWS, 'crispEdges', `<path d="${path}"/>`),
     size: `${width}px ${height}px`,
+    width,
+    height,
   }
 }
 
@@ -128,6 +133,8 @@ function halftonePattern(): EffectPattern {
   return {
     image: svgUrl(width, height, 'geometricPrecision', circles),
     size: `${width}px ${height}px`,
+    width,
+    height,
   }
 }
 
