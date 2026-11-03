@@ -85,6 +85,8 @@ import { StartupCleanupError } from './provider-session.js'
 import { REPLY_STYLE_INSTRUCTIONS } from './reply-style.js'
 import { DatabaseSync } from './sqlite.js'
 import { Store } from './store.js'
+import { subagentRunItem } from './subagent-runs.js'
+import type { StoredSubagentRun } from './subagent-runs.js'
 import * as checkpoint from './checkpoint.js'
 import { beginOptimisticTurn, emptyThread, reduceEventLog } from '../../web/src/thread-store.js'
 import { projectThreadItems } from '../../web/src/ui/turns.js'
@@ -9130,6 +9132,170 @@ describe('sidebar inbox lifecycle', () => {
     expect(store.thread(inactive.id)?.lifecycle).toMatchObject({ state: 'active' })
     expect(store.thread(archived.id)?.closedAt).toBeDefined()
   })
+})
+
+describe('session-owned subagent snapshots', () => {
+  it.each(['disconnect', 'close', 'shutdown', 'idle release'] as const)(
+    'settles a running subagent on %s and preserves its parent turn outcome',
+    async (end) => {
+      if (end === 'idle release') vi.useFakeTimers()
+      const { orchestrator, sessions, store } = harness(undefined, new Store(':memory:'), 8, 1_000)
+      try {
+        const thread = await orchestrator.startThread('codex', '/repo')
+        const session = sessions[0]!
+        await orchestrator.sendTurn(thread.id, 'Review the design')
+        const item = {
+          id: 'reviewer',
+          turnId: 's1-turn',
+          type: 'tool_call' as const,
+          status: 'completed' as const,
+          text: 'Reviewer launched',
+          createdAt: 1,
+          subagent: { id: 'reviewer', state: 'running' as const, background: true, toolUses: 3 },
+        }
+        session.emit({ type: 'item.completed', item })
+        session.emit({ type: 'turn.completed', turnId: item.turnId, status: 'completed' })
+        const latest = () => reduceEventLog(emptyThread, store.history(thread.id))
+        expect(latest().items.find(({ id }) => id === item.id)?.subagent?.state).toBe('running')
+
+        if (end === 'disconnect') session.emitDisconnected()
+        else if (end === 'close') await orchestrator.close(thread.id)
+        else if (end === 'shutdown') await orchestrator.disposeAll()
+        else await vi.advanceTimersByTimeAsync(1_000)
+
+        expect(latest().items.find(({ id }) => id === item.id)).toMatchObject({
+          status: 'completed',
+          text: 'Reviewer launched',
+          subagent: { state: 'interrupted', background: true, toolUses: 3 },
+        })
+        expect(
+          store
+            .history(thread.id)
+            .filter(({ event }) => event.type === 'turn.completed')
+            .at(-1)?.event,
+        ).toMatchObject({ turnId: item.turnId, status: 'completed' })
+      } finally {
+        await orchestrator.disposeAll()
+        vi.useRealTimers()
+      }
+    },
+  )
+
+  it('leaves a background subagent running on Stop and settles a launch still open', async () => {
+    const { orchestrator, sessions, store } = harness(undefined, new Store(':memory:'))
+    try {
+      const thread = await orchestrator.startThread('codex', '/repo')
+      const session = sessions[0]!
+      session.turnIds = ['launch-turn', 'stopped-turn']
+      await orchestrator.sendTurn(thread.id, 'Review the design in the background')
+      // Launched by an earlier turn: its launching call completed and it runs on.
+      session.emit({
+        type: 'item.completed',
+        item: {
+          id: 'reviewer',
+          turnId: 'launch-turn',
+          type: 'tool_call',
+          status: 'completed',
+          text: 'Reviewer launched',
+          createdAt: 1,
+          subagent: { id: 'reviewer', state: 'running', background: true, toolUses: 3 },
+        },
+      })
+      session.emit({ type: 'turn.completed', turnId: 'launch-turn', status: 'completed' })
+      await orchestrator.sendTurn(thread.id, 'Explore the repo')
+      // The stopped turn's own launching call has not completed yet.
+      session.emit({
+        type: 'item.started',
+        item: {
+          id: 'explorer',
+          turnId: 'stopped-turn',
+          type: 'tool_call',
+          status: 'started',
+          text: 'Explorer launched',
+          createdAt: 2,
+          subagent: { id: 'explorer', state: 'running' },
+        },
+      })
+
+      await orchestrator.interrupt(thread.id)
+
+      // Stop ends the running turn only; background work keeps running (#2058).
+      const items = reduceEventLog(emptyThread, store.history(thread.id)).items
+      expect(items.find(({ id }) => id === 'reviewer')).toMatchObject({
+        status: 'completed',
+        subagent: { state: 'running', background: true, toolUses: 3 },
+      })
+      expect(items.find(({ id }) => id === 'explorer')).toMatchObject({
+        status: 'failed',
+        subagent: { state: 'interrupted' },
+      })
+      expect(
+        store
+          .history(thread.id)
+          .filter(({ event }) => event.type === 'turn.completed')
+          .at(-1)?.event,
+      ).toMatchObject({ turnId: 'stopped-turn', status: 'interrupted' })
+    } finally {
+      await orchestrator.disposeAll()
+    }
+  })
+
+  it.each(['disconnect', 'idle release', 'shutdown'] as const)(
+    "leaves TasteCode's own subagents to the broker on %s",
+    async (end) => {
+      if (end === 'idle release') vi.useFakeTimers()
+      const { orchestrator, sessions, store } = harness(undefined, new Store(':memory:'), 8, 1_000)
+      try {
+        const thread = await orchestrator.startThread('codex', '/repo')
+        const session = sessions[0]!
+        await orchestrator.sendTurn(thread.id, 'Delegate the review')
+        const run = (
+          itemId: string,
+          shortId: string,
+          state: 'running' | 'waiting_for_approval',
+          threadId?: string,
+        ): StoredSubagentRun => ({
+          itemId,
+          parentThreadId: thread.id,
+          shortId,
+          turnId: 's1-turn',
+          ...(threadId ? { threadId } : {}),
+          provider: 'claude-code',
+          task: 'Review src/a.ts',
+          state,
+          snapshot: {
+            id: shortId,
+            state: 'running',
+            ...(threadId ? { threadId } : {}),
+            provider: 'claude-code',
+          },
+          createdAt: 1,
+        })
+        // As the broker records them: one runs in a chat of its own, the other waits for
+        // the user's approval before it has one.
+        for (const entry of [
+          run('broker-running', 'a1', 'running', 'child-thread'),
+          run('broker-waiting', 'a2', 'waiting_for_approval'),
+        ]) {
+          store.subagents.add(entry)
+          store.append(thread.id, { type: 'item.completed', item: subagentRunItem(entry) })
+        }
+        session.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+
+        if (end === 'disconnect') session.emitDisconnected()
+        else if (end === 'idle release') await vi.advanceTimersByTimeAsync(1_000)
+        else await orchestrator.disposeAll()
+
+        expect(orchestrator.isRunning(thread.id)).toBe(false)
+        const items = reduceEventLog(emptyThread, store.history(thread.id)).items
+        for (const id of ['broker-running', 'broker-waiting'])
+          expect(items.find((item) => item.id === id)?.subagent?.state).toBe('running')
+      } finally {
+        await orchestrator.disposeAll()
+        vi.useRealTimers()
+      }
+    },
+  )
 })
 
 describe('queued turns', () => {
