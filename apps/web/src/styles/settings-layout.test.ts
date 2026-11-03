@@ -164,6 +164,10 @@ describe('settings viewport CSS', () => {
     expect(settingsCss).toMatch(
       /\.settings \.model-settings \.set-section__head \{[^}]*align-items: center;/s,
     )
+    // Model rows run denser than the 40px rhythm: a long list of switches.
+    expect(settingsCss).toMatch(
+      /\.settings \.set-row\.model-visibility__model \{[^}]*min-height: 30px;[^}]*padding-block: 6px;/s,
+    )
     // A model left out of the picker is a muted row whose name steps down.
     expect(settingsCss).toMatch(
       /\.settings \.model-visibility__model\[data-tone='muted'\]:not\(:hover, :focus-within\) \.set-row__name \{[^}]*color: var\(--text-3\);/s,
