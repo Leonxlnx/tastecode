@@ -23,6 +23,7 @@ import {
   type SavedRecord,
 } from './history-items.js'
 import { toUsage } from './events.js'
+import { withoutInlineData } from './inline-data.js'
 import { approvalFor } from './permission-mode.js'
 
 export type ClaudeHistoryOptions = {
@@ -360,7 +361,10 @@ async function fingerprint(handle: FileHandle, start: number, end: number): Prom
 }
 
 /** Whether the bytes `progress` was read from are still in place, by their fingerprints. */
-async function unchanged(handle: FileHandle, progress: Progress): Promise<boolean> {
+async function unchanged(
+  handle: FileHandle,
+  progress: Pick<Progress, 'complete' | 'head' | 'seam'>,
+): Promise<boolean> {
   const { complete } = progress
   return (
     (await fingerprint(handle, 0, Math.min(HEAD_BYTES, complete))) === progress.head &&
@@ -669,6 +673,228 @@ function eventsFor(rows: SavedRecord[], session: ProviderHistorySession): Domain
   return events
 }
 
+/** A sidechain's last read. Claude only appends, so a longer file reads on from `complete`. */
+type SidechainRead = {
+  size: number
+  mtimeMs: number
+  /** Rows from the complete lines, as main-chain rows without inline file data. */
+  rows: SavedRecord[]
+  /** The offset after the last line feed read, and fingerprints as `Progress` keeps them. */
+  complete: number
+  head: string
+  seam: string
+  items: Item[]
+}
+
+/** What a source remembers between reads of its native sub-agents. */
+type SubagentCache = {
+  /** The last read of each sidechain file, by real path, least recently used first. */
+  files: Map<string, SidechainRead>
+  reading: Map<string, Promise<SidechainRead>>
+  /**
+   * Agent ids looked up for snapshots that lack one, by parent file and spawning call. A
+   * miss holds while the parent keeps its size and time, so polling does not rescan it.
+   */
+  agents: Map<string, { agentId: string | undefined; size: number; mtimeMs: number }>
+}
+
+// Rows without their screenshots stay small, but a session can start hundreds of agents.
+const SIDECHAIN_FILES = 8
+const SIDECHAIN_AGENT_IDS = 256
+const AGENT_ID = /^[a-zA-Z0-9_-]+$/
+const META_FILE = /^agent-([a-zA-Z0-9_-]+)\.meta\.json$/
+const AGENT_ID_KEY = Buffer.from('"agentId"', 'latin1')
+
+function remember<T>(map: Map<string, T>, key: string, value: T, limit: number): void {
+  map.delete(key)
+  map.set(key, value)
+  for (const oldest of map.keys()) {
+    if (map.size <= limit) break
+    map.delete(oldest)
+  }
+}
+
+/** One of an agent's rows as a main-chain row, without inline file data. */
+function sidechainRow(row: SavedRecord | undefined, agentId: string): SavedRecord | undefined {
+  if (!row || (row.agentId !== undefined && row.agentId !== agentId)) return undefined
+  const message = object(row.message)
+  const result = object(row.toolUseResult)
+  return {
+    ...row,
+    isSidechain: false,
+    // History items read only these; the rest repeats the content, screenshots included.
+    toolUseResult: Object.fromEntries(
+      ['exitCode', 'code', 'durationMs'].flatMap((key): Array<[string, unknown]> =>
+        typeof result[key] === 'number' ? [[key, result[key]]] : [],
+      ),
+    ),
+    ...(Array.isArray(message.content)
+      ? { message: { ...message, content: message.content.map(withoutInlineData) } }
+      : {}),
+  }
+}
+
+/**
+ * The agent a spawning call started, for a snapshot saved before it kept the id: from the
+ * sidechain metadata newer Claude Code versions write, else from the call's saved result.
+ */
+async function agentIdFor(
+  parent: string,
+  sessionId: string,
+  toolUseId: string,
+): Promise<string | undefined> {
+  const folder = path.join(path.dirname(parent), sessionId, 'subagents')
+  const metas = (await readdir(folder).catch(() => [] as string[])).filter((name) =>
+    META_FILE.test(name),
+  )
+  for (let index = 0; index < metas.length; index += STAT_BATCH) {
+    const found = await Promise.all(
+      metas.slice(index, index + STAT_BATCH).map(async (name) => {
+        try {
+          const meta = object(JSON.parse(await readFile(path.join(folder, name), 'utf8')))
+          return meta.toolUseId === toolUseId ? META_FILE.exec(name)?.[1] : undefined
+        } catch {
+          return undefined
+        }
+      }),
+    )
+    const agentId = found.find((id) => id !== undefined)
+    if (agentId) return agentId
+  }
+  // The parent can be hundreds of megabytes: read it a line at a time, parse only lines
+  // naming this call and an agent id, and stop at the first match.
+  const needle = Buffer.from(toolUseId, 'utf8')
+  const handle = await open(parent, 'r')
+  try {
+    for await (const line of linesForward(handle, 0, (await handle.stat()).size)) {
+      if (!line.bytes.includes(needle) || !line.bytes.includes(AGENT_ID_KEY)) continue
+      const row = parseLine(line.bytes)
+      const agentId = string(object(row?.toolUseResult).agentId)
+      if (
+        row &&
+        agentId &&
+        !row.isSidechain &&
+        contentBlocks(row).some(
+          (block) => block.type === 'tool_result' && block.tool_use_id === toolUseId,
+        )
+      )
+        return agentId
+    }
+  } finally {
+    await handle.close()
+  }
+  return undefined
+}
+
+async function cachedAgentId(
+  cache: SubagentCache,
+  parent: string,
+  sessionId: string,
+  toolUseId: string,
+): Promise<string | undefined> {
+  const key = `${parent}\0${toolUseId}`
+  const known = cache.agents.get(key)
+  if (known?.agentId) return known.agentId
+  const { size, mtimeMs } = await stat(parent)
+  if (known?.size === size && known.mtimeMs === mtimeMs) return undefined
+  const agentId = await agentIdFor(parent, sessionId, toolUseId)
+  remember(cache.agents, key, { agentId, size, mtimeMs }, SIDECHAIN_AGENT_IDS)
+  return agentId
+}
+
+/**
+ * A sidechain's items, read again only when the file changed and then only from where the
+ * last read stopped. A final line without its line feed may still be mid-write: it shows
+ * now and is read again next time.
+ */
+async function readSidechain(
+  file: string,
+  agentId: string,
+  session: ProviderHistorySession,
+  previous: SidechainRead | undefined,
+): Promise<SidechainRead> {
+  const handle = await open(file, 'r')
+  try {
+    const { size, mtimeMs } = await handle.stat()
+    if (previous?.size === size && previous.mtimeMs === mtimeMs) return previous
+    const resume =
+      previous && size >= previous.complete && (await unchanged(handle, previous))
+        ? previous
+        : undefined
+    const from = resume?.complete ?? 0
+    const complete = await completeEnd(handle, from, size)
+    const rows = resume ? [...resume.rows] : []
+    for await (const line of linesForward(handle, from, complete)) {
+      const row = sidechainRow(parseLine(line.bytes), agentId)
+      if (row) rows.push(row)
+    }
+    const partial =
+      complete < size
+        ? sidechainRow(parseLine(await readAt(handle, complete, size - complete)), agentId)
+        : undefined
+    const items = new Map<string, Item>()
+    const chain = await conversation(partial ? [...rows, partial] : rows, session)
+    for (const event of eventsFor(chain, session)) {
+      if (event.type === 'item.started' || event.type === 'item.completed')
+        items.set(event.item.id, event.item)
+    }
+    return {
+      size,
+      mtimeMs,
+      rows,
+      complete,
+      head: await fingerprint(handle, 0, Math.min(HEAD_BYTES, complete)),
+      seam: await fingerprint(handle, Math.max(0, complete - SEAM_BYTES), complete),
+      items: [...items.values()],
+    }
+  } finally {
+    await handle.close()
+  }
+}
+
+/** Native agents live beside the parent: <session>/subagents/agent-<agentId>.jsonl. */
+async function subagentTranscript(
+  session: ProviderHistorySession,
+  item: Item,
+  options: ClaudeHistoryOptions,
+  cache: SubagentCache,
+): Promise<Item[]> {
+  const subagent = item.subagent
+  if (!subagent) return []
+  const sessionId = session.id.startsWith('claude-') ? session.id.slice(7) : session.id
+  const parent = session.locator ?? (await findClaudeSessionFile(sessionId, options))
+  if (!parent) return []
+  try {
+    if (
+      path.basename(parent) !== `${sessionId}.jsonl` ||
+      !(await isClaudeSessionFile(claudeProjectsRoot(options), parent))
+    )
+      return []
+    const agentId =
+      subagent.transcriptId ?? (await cachedAgentId(cache, parent, sessionId, subagent.id))
+    if (!agentId || !AGENT_ID.test(agentId)) return []
+    const project = await realpath(path.dirname(parent))
+    const relative = path.join(sessionId, 'subagents', `agent-${agentId}.jsonl`)
+    const file = await realpath(path.join(project, relative))
+    // A saved reference must never turn into a path outside this session, including
+    // through a symlink or junction in the sidechain directory.
+    if (path.relative(project, file) !== relative) return []
+    let reading = cache.reading.get(file)
+    if (!reading) {
+      reading = readSidechain(file, agentId, session, cache.files.get(file)).finally(() =>
+        cache.reading.delete(file),
+      )
+      cache.reading.set(file, reading)
+    }
+    const read = await reading
+    remember(cache.files, file, read, SIDECHAIN_FILES)
+    return read.items
+  } catch {
+    // A new sidechain may not have been written yet, or may have been removed.
+    return []
+  }
+}
+
 export function createClaudeHistorySource(
   options: ClaudeHistoryOptions = {},
 ): ProviderHistorySource {
@@ -680,8 +906,11 @@ export function createClaudeHistorySource(
     { key: string; session: ProviderHistorySession | undefined; progress: Progress | undefined }
   >()
   const validLocator = (locator: string) => isClaudeSessionFile(projects, locator)
+  const subagents: SubagentCache = { files: new Map(), reading: new Map(), agents: new Map() }
   return {
     resolveSessionId: (threadId) => (threadId.startsWith('claude-') ? threadId.slice(7) : threadId),
+    readSubagentTranscript: (session, item) =>
+      subagentTranscript(session, item, options, subagents),
     async list(options) {
       const directories = await readdir(projects, { withFileTypes: true }).catch(() => [])
       const sessions = new Map<string, ProviderHistorySession>()
@@ -776,6 +1005,8 @@ export function createClaudeHistorySource(
     },
     dispose() {
       cache.clear()
+      subagents.files.clear()
+      subagents.agents.clear()
     },
   }
 }

@@ -1,5 +1,11 @@
 import { statSync } from 'node:fs'
-import { DEFAULT_ACCOUNT_ID, type AccountId, type ProviderId } from '@harness/contracts'
+import {
+  DEFAULT_ACCOUNT_ID,
+  type AccountId,
+  type PoolAccount,
+  type ProviderAccount,
+  type ProviderId,
+} from '@harness/contracts'
 
 const ACCOUNT_NOT_FOUND = 'That account does not exist any more.'
 
@@ -25,7 +31,14 @@ export type AccountDirectory = {
   home(provider: ProviderId, accountId: AccountId | undefined): string | undefined
   /** The account a new chat with this provider starts on. */
   active(provider: ProviderId): AccountId
+  /** The provider's accounts, default first; empty for a provider with one account only. */
+  accounts?(provider: ProviderId): readonly ProviderAccount[]
+  /** A plan's size against the provider's cheapest paid plan, per window kind, when known. */
+  planWeights?(provider: ProviderId, plan: string | undefined): PlanWeights | undefined
 }
+
+/** See `PoolAccount.weights`. */
+export type PlanWeights = NonNullable<PoolAccount['weights']>
 
 /** Every provider as its default account only, for a server without a registry. */
 export const DEFAULT_ACCOUNTS_ONLY: AccountDirectory = {

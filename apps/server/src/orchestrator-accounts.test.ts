@@ -11,6 +11,7 @@ import type {
   ProviderLimitSource,
 } from '@harness/contracts'
 import { afterAll, describe, expect, it, vi } from 'vitest'
+import { claudePlanWeights } from '@harness/adapter-claude-code/account-home'
 import { AccountNotFoundError, type AccountDirectory } from './account-directory.js'
 import type { AgentSession, ProviderRuntime } from './adapters.js'
 import { McpConfigStore } from './mcp-config.js'
@@ -25,6 +26,8 @@ type LoginResult = { loginId: string; success: boolean; error: string | null }
 const claude = vi.hoisted(() => ({
   calls: [] as string[][],
   complete: undefined as ((result: LoginResult) => void) | undefined,
+  /** Limits a test sets per account folder; the default ones otherwise. */
+  limits: undefined as ((accountHome: string | undefined) => unknown) | undefined,
 }))
 
 vi.mock('@harness/adapter-claude-code', async (importOriginal) => {
@@ -51,6 +54,7 @@ vi.mock('@harness/adapter-claude-code', async (importOriginal) => {
     },
     claudeLimitSource: async (options?: { accountHome?: string }) => {
       claude.calls.push(['limits', options?.accountHome ?? 'default'])
+      if (claude.limits) return claude.limits(options?.accountHome)
       const usedPercent = options?.accountHome ? 70 : 10
       return { status: 'ready', limits: [{ id: 'seven_day', label: 'Weekly', usedPercent }] }
     },
@@ -829,6 +833,84 @@ describe('removing an account', () => {
     )
     expect(unregister).not.toHaveBeenCalled()
     expect(sessions[0]?.disposed).toBe(false)
+    await orchestrator.disposeAll()
+  })
+})
+
+describe('the account pool', () => {
+  it('starts a chat the user did not pin on the account whose weekly allowance refills first', async () => {
+    const hour = 60 * 60 * 1000
+    claude.limits = (accountHome) => ({
+      status: 'ready',
+      limits: [
+        {
+          id: 'seven_day',
+          label: 'Weekly',
+          usedPercent: accountHome ? 40 : 60,
+          windowMinutes: 7 * 24 * 60,
+          resetsAt: Date.now() + (accountHome ? 1 : 5) * hour,
+        },
+      ],
+    })
+    const accounts: AccountDirectory = {
+      ...directory({ 'claude-code:work': claudeHome }),
+      accounts: (provider) =>
+        provider === 'claude-code'
+          ? [
+              { id: 'default', provider, label: 'Default', managed: false, plan: 'Pro' },
+              {
+                id: 'work',
+                provider,
+                label: 'Work',
+                managed: true,
+                home: claudeHome,
+                createdAt: 1,
+                plan: 'Max x5',
+              },
+            ]
+          : [],
+      planWeights: (_provider, plan) => claudePlanWeights(plan),
+    }
+    const { orchestrator, store } = setup(accounts)
+    try {
+      // Before any limits are held, the provider's active account decides.
+      const before = await orchestrator.startThread('claude-code', root)
+      expect(store.thread(before.id)?.accountId).toBeUndefined()
+
+      await orchestrator.usageLimitSource('claude-code', 'visible')
+      await orchestrator.usageLimitSource('claude-code', 'visible', 'work')
+      const reads = claude.calls.filter(([kind]) => kind === 'limits').length
+      expect(orchestrator.accountPool('claude-code')).toMatchObject({
+        recommended: 'work',
+        accounts: [
+          { accountId: 'default', plan: 'Pro', weights: { session: 1, weekly: 1 } },
+          { accountId: 'work', plan: 'Max x5', weights: { session: 5, weekly: 5 } },
+        ],
+        windows: [{ id: 'seven_day', kind: 'weekly', accounts: 2, capacity: 6, remaining: 3.4 }],
+      })
+      // The pool reads only what is held; it never asks the vendor.
+      expect(claude.calls.filter(([kind]) => kind === 'limits')).toHaveLength(reads)
+
+      const after = await orchestrator.startThread('claude-code', root)
+      expect(store.thread(after.id)?.accountId).toBe('work')
+      // An account the user picked wins.
+      const pinned = await orchestrator.startThread('claude-code', root, { accountId: 'default' })
+      expect(store.thread(pinned.id)?.accountId).toBeUndefined()
+    } finally {
+      claude.limits = undefined
+      await orchestrator.disposeAll()
+    }
+  })
+
+  it('shows a provider with one account as its default account', async () => {
+    const { orchestrator } = setup(directory({}))
+    expect(orchestrator.accountPool('grok')).toEqual({
+      provider: 'grok',
+      accounts: [
+        { accountId: 'default', label: 'Default', status: 'unknown', windows: [], atLimit: false },
+      ],
+      windows: [],
+    })
     await orchestrator.disposeAll()
   })
 })
