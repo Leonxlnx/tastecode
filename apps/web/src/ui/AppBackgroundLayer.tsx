@@ -27,6 +27,11 @@ export const BLUR_SETTLE_MS = 220
 export function AppBackgroundLayer(props: {
   background: AppBackground
   images?: BackgroundImageStore | undefined
+  /**
+   * Settings covers the whole window: an effect stops moving behind it and the still
+   * tile stays, so nothing draws 30 times a second where no one can see it.
+   */
+  covered?: boolean | undefined
 }) {
   const { mode, effect, image, dim, blur } = props.background
   const images = props.images ?? indexedDbBackgroundImages
@@ -64,7 +69,9 @@ export function AppBackgroundLayer(props: {
       style={style}
       aria-hidden
     >
-      {mode === 'effect' ? <AppBackgroundMotion effect={effect} onDrawing={setMoving} /> : null}
+      {mode === 'effect' && !props.covered ? (
+        <AppBackgroundMotion effect={effect} onDrawing={setMoving} />
+      ) : null}
     </div>
   )
 }

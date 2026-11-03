@@ -153,3 +153,18 @@ describe('the moving effect', () => {
     expect(gl?.['deleteProgram']).toHaveBeenCalledTimes(2)
   })
 })
+
+describe('the moving effect behind Settings', () => {
+  it('stops while Settings covers the window and moves again after it', () => {
+    const view = render(<AppBackgroundLayer background={effect} />)
+    expect(view.container.querySelector('canvas.app-bg__motion')).not.toBeNull()
+
+    view.rerender(<AppBackgroundLayer background={effect} covered />)
+    // The still tile shows; nothing draws behind an opaque Settings.
+    expect(view.container.querySelector('canvas.app-bg__motion')).toBeNull()
+    expect(view.container.querySelector('.app-bg')!.hasAttribute('data-motion')).toBe(false)
+
+    view.rerender(<AppBackgroundLayer background={effect} covered={false} />)
+    expect(view.container.querySelector('canvas.app-bg__motion')).not.toBeNull()
+  })
+})
