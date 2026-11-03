@@ -310,7 +310,12 @@ button.agents-row:focus-visible {
   display: flex;
   flex: 1;
   flex-direction: column;
+  min-width: 0;
   min-height: 0;
+  /* The chat column sizes from 100cqi, its chat pane. Without a container of its
+     own, the child's column measured a wider pane further out and ran past this
+     panel's right edge. The Side chat declares one the same way. */
+  container: agent-transcript / inline-size;
 }
 
 .agent-detail__snapshot {
