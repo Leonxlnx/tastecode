@@ -11,9 +11,9 @@ import {
 } from 'node:fs'
 import { rm } from 'node:fs/promises'
 import path from 'node:path'
-import { CLAUDE_ACCOUNT_HOME } from '@harness/adapter-claude-code/account-home'
+import { CLAUDE_ACCOUNT_HOME, claudePlanWeights } from '@harness/adapter-claude-code/account-home'
 import { CLAUDE_CAPABILITIES } from '@harness/adapter-claude-code/capabilities'
-import { CODEX_ACCOUNT_HOME } from '@harness/adapter-codex/account-home'
+import { CODEX_ACCOUNT_HOME, codexPlanWeights } from '@harness/adapter-codex/account-home'
 import { CODEX_CAPABILITIES } from '@harness/adapter-codex/capabilities'
 import {
   DEFAULT_ACCOUNT_ID,
@@ -32,6 +32,7 @@ import {
   AccountNotFoundError,
   existingAccountHome,
   type AccountDirectory,
+  type PlanWeights,
 } from './account-directory.js'
 import { accountRead } from './account-identity.js'
 import type { Store, StoredProviderAccount } from './store.js'
@@ -65,6 +66,17 @@ export const ACCOUNT_HOMES: AccountHomes = declared([
   ['claude-code', CLAUDE_CAPABILITIES, CLAUDE_ACCOUNT_HOME],
   ['codex', CODEX_CAPABILITIES, CODEX_ACCOUNT_HOME],
 ])
+
+/**
+ * How much each plan holds, per window kind, as each adapter publishes it from
+ * the vendor's plan limits; the account pool weighs its capacity by these.
+ */
+export const ACCOUNT_PLAN_WEIGHTS = {
+  'claude-code': claudePlanWeights,
+  codex: codexPlanWeights,
+} as const satisfies Partial<
+  Record<ProviderId, (plan: string | undefined) => PlanWeights | undefined>
+>
 
 /** What the default account is called until the user renames it. */
 const DEFAULT_LABEL = 'Default'
@@ -145,6 +157,19 @@ export class ProviderAccounts implements AccountDirectory {
       accounts.push(...listed)
     }
     return { accounts, active }
+  }
+
+  /** The provider's accounts, default first; empty for a provider with one account only. */
+  accounts(provider: ProviderId): ProviderAccount[] {
+    return this.list(provider).accounts
+  }
+
+  planWeights(provider: ProviderId, plan: string | undefined): PlanWeights | undefined {
+    const weigh: ((plan: string | undefined) => PlanWeights | undefined) | undefined =
+      Object.hasOwn(ACCOUNT_PLAN_WEIGHTS, provider)
+        ? ACCOUNT_PLAN_WEIGHTS[provider as keyof typeof ACCOUNT_PLAN_WEIGHTS]
+        : undefined
+    return weigh?.(plan)
   }
 
   /** The account a new chat with this provider starts on. */
