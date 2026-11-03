@@ -1232,16 +1232,29 @@
                   window, such as Session and Weekly, a row each on a short gauge under the account
                   name; a failed read says Unavailable with Retry on its line, one still loading
                   says Checking…), the card's figure is each provider's active account, and a Usage
-                  sheet sums its accounts and lists each one with its tokens and limits. Profile
-                  &gt; Accounts lists further accounts (Codex · Work, plan or Signed out, never an
-                  email). When a turn fails while the chat's account is at a plan limit (a window at
-                  100% that has not reset) and another account of the provider is signed in, the
-                  error offers Continue on Work (a menu, Continue on another account, when there are
-                  several); never automatic. It starts a new chat pinned to that account in the same
-                  project (an isolated chat's branch as base, in a checkout of its own that gets the
-                  earlier checkout's uncommitted changes copied in; when they cannot be copied, the
-                  first prompt and the new chat's note say which folder still holds them), with the
-                  failed request in its composer. Claude Code and Codex carry the earlier chat's own
+                  sheet sums its accounts and lists each one with its tokens and limits. Above a
+                  provider's account lines the popup sums them into one pool (All accounts, worked
+                  out in the client from the limits it holds until the server sends one): per
+                  window, Session and Weekly told apart by their length, the % left of the pool, its
+                  size in the provider's cheapest plan (Weekly · 16× Pro), how much of it is left,
+                  how many accounts it counts and which account resets next, over a bar with a
+                  segment per account, as long as its plan is big and the soonest reset first. Plan
+                  sizes: Claude Pro 1, Max 5, Ultra (Max x20) 10 a week and no session window, Team
+                  Standard 1.25 and Team Premium 6.25 per session; Codex Plus, Team and Business 1,
+                  Pro x5 5, Pro x20 20; an account on any other plan stays out of the sum. The
+                  account whose weekly window resets soonest and that is not at a limit is marked
+                  Recommended, and a new chat starts on it until the user picks an account for new
+                  chats (model picker or Set active, remembered per provider in this app; a further
+                  account the server keeps active counts as picked). Profile &gt; Accounts lists
+                  further accounts (Codex · Work, plan or Signed out, never an email). When a turn
+                  fails while the chat's account is at a plan limit (a window at 100% that has not
+                  reset) and another account of the provider is signed in, the error offers Continue
+                  on Work (a menu, Continue on another account, when there are several); never
+                  automatic. It starts a new chat pinned to that account in the same project (an
+                  isolated chat's branch as base, in a checkout of its own that gets the earlier
+                  checkout's uncommitted changes copied in; when they cannot be copied, the first
+                  prompt and the new chat's note say which folder still holds them), with the failed
+                  request in its composer. Claude Code and Codex carry the earlier chat's own
                   session on in the new account's folder (Claude Code a copy of its transcript under
                   a new id, Codex a fork of its rollout copied with the rollouts it was forked
                   from), so tool results and reasoning come along and the first prompt is just the
