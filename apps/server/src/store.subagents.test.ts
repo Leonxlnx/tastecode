@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { DomainEvent } from '@harness/contracts'
 import { DatabaseSync } from './sqlite.js'
 import { Store } from './store.js'
-import type { StoredSubagentRun } from './subagent-runs.js'
+import { RESTART_SUMMARY, type StoredSubagentRun } from './subagent-runs.js'
 
 const message = (text: string): DomainEvent => ({
   type: 'item.completed',
@@ -159,12 +159,34 @@ describe('sub-agent chats in the store', () => {
       }),
     )
     const settled = store.subagents.interruptUnfinished(99)
+    const summary = RESTART_SUMMARY
     expect(settled.map((entry) => [entry.shortId, entry.state, entry.snapshot])).toEqual([
-      ['a1', 'interrupted', { id: 'a1', state: 'interrupted', background: false }],
-      ['a2', 'interrupted', { id: 'a2', state: 'interrupted', background: false }],
+      ['a1', 'interrupted', { id: 'a1', state: 'interrupted', background: false, summary }],
+      ['a2', 'interrupted', { id: 'a2', state: 'interrupted', background: false, summary }],
     ])
     expect(store.subagents.get('subagent-3')?.state).toBe('completed')
     expect(store.subagents.interruptUnfinished(100)).toEqual([])
+    store.close()
+  })
+
+  it('shows unfinished runs as interrupted on their parent after a restart', () => {
+    const store = new Store(':memory:')
+    seed(store)
+    store.subagents.add(run({ snapshot: { id: 'a1', state: 'running', lastTool: 'Shell' } }))
+    store.recoverInterruptedThreads()
+    const rows = store
+      .history('main')
+      .flatMap(({ event }) => (event.type === 'item.completed' ? [event.item] : []))
+    expect(rows).toEqual([
+      expect.objectContaining({
+        id: 'subagent-1',
+        turnId: 't1',
+        type: 'tool_call',
+        subagent: { id: 'a1', state: 'interrupted', background: false, summary: RESTART_SUMMARY },
+      }),
+    ])
+    expect(store.subagents.get('subagent-1')).toMatchObject({ state: 'interrupted' })
+    expect(store.subagents.get('subagent-1')?.deliveredAt).toBeUndefined()
     store.close()
   })
 

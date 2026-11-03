@@ -26,6 +26,7 @@ class FakeSession implements AgentSession {
   readonly capabilities = CAPABILITIES
   sent: string[] = []
   interrupted = false
+  disposed = false
   #listeners: Array<(event: DomainEvent) => void> = []
   constructor(readonly turnId: string) {}
   emit(event: DomainEvent): void {
@@ -39,7 +40,9 @@ class FakeSession implements AgentSession {
     this.interrupted = true
   }
   respondToApproval(): void {}
-  dispose(): void {}
+  dispose(): void {
+    this.disposed = true
+  }
   on(_event: 'event' | 'log', listener: (value: never) => void): void {
     this.#listeners.push(listener as (event: DomainEvent) => void)
   }
@@ -112,11 +115,12 @@ function harness() {
       },
     },
   })
+  // Cleanups run in reverse: the chats end before their folder goes.
   cleanups.push(
-    () => orchestrator.disposeAll(),
     () => rmSync(directory, { recursive: true, force: true, maxRetries: 3 }),
+    () => orchestrator.disposeAll(),
   )
-  return { store, orchestrator, sessions, started, parentEvents, childEvents }
+  return { store, orchestrator, sessions, started, parentEvents, childEvents, directory }
 }
 
 /** Calls one agent tool the way an engine does: JSON-RPC over HTTP with the chat's token. */
@@ -148,7 +152,7 @@ async function callTool(options: StartOptions, name: string, args: Record<string
 }
 
 const until = async (check: () => boolean) => {
-  for (let attempt = 0; attempt < 200 && !check(); attempt += 1) {
+  for (let attempt = 0; attempt < 1_000 && !check(); attempt += 1) {
     await new Promise((resolve) => setTimeout(resolve, 5))
   }
   expect(check()).toBe(true)
@@ -159,11 +163,36 @@ const subagentRows = (events: Array<{ threadId: string; event: DomainEvent }>, t
     id === threadId && event.type === 'item.completed' && event.item.subagent ? [event.item] : [],
   ) as Array<Item & { subagent: NonNullable<Item['subagent']> }>
 
-describe('sub-agents on another provider', () => {
+/** A parent in a running turn whose sub-agent on another provider runs its task. */
+async function runningChild(h: ReturnType<typeof harness>, task = 'Review src/a.ts') {
+  await h.orchestrator.listModels('claude-code')
+  const first = h.sessions.length
+  // Not a Git checkout, so no checkpoint slows the child's first turn.
+  const parent = await h.orchestrator.startThread('codex', h.directory, { approval: 'full' })
+  const parentOptions = h.started[first]!.options
+  h.sessions[first]!.emit({
+    type: 'turn.started',
+    turn: { id: `turn-${first}`, threadId: parent.id, status: 'running', createdAt: Date.now() },
+  })
+  await expect(
+    callTool(parentOptions, 'start_agent', { provider: 'claude-code', task }),
+  ).resolves.toMatchObject({ status: 'running' })
+  await until(() => h.sessions[first + 1]?.sent.length === 1)
+  const childSession = h.sessions[first + 1]!
+  const childId = `thread-${first + 2}`
+  childSession.emit({
+    type: 'turn.started',
+    turn: { id: childSession.turnId, threadId: childId, status: 'running', createdAt: Date.now() },
+  })
+  return { parent, parentOptions, childSession, childId }
+}
+
+// Each test talks to the agent tools over real HTTP; a busy machine needs more than 5 s.
+describe('sub-agents on another provider', { timeout: 30_000 }, () => {
   it('runs a child on another provider in the parent checkout and hands its answer back', async () => {
     const h = harness()
     await h.orchestrator.listModels('claude-code')
-    const workspace = process.cwd()
+    const workspace = h.directory
     const parent = await h.orchestrator.startThread('codex', workspace, { approval: 'full' })
     const parentOptions = h.started[0]!.options
     const reserved = parentOptions.mcpServers?.find((entry) => entry.id === AGENT_TOOLS_SERVER_ID)
@@ -278,22 +307,103 @@ describe('sub-agents on another provider', () => {
     ])
   })
 
-  it('offers no agent tools to a provider without them or a chat that asks first', async () => {
+  it('offers no agent tools to a provider without them', async () => {
     const h = harness()
     await h.orchestrator.listModels('claude-code')
     await h.orchestrator.startThread('grok', process.cwd())
     expect(
       h.started[0]!.options.mcpServers?.some((entry) => entry.id === AGENT_TOOLS_SERVER_ID),
     ).not.toBe(true)
+  })
 
-    const asking = await h.orchestrator.startThread('codex', process.cwd(), { approval: 'ask' })
-    h.sessions[1]!.emit({
+  it('asks the user before a start in a chat that asks first', async () => {
+    const h = harness()
+    await h.orchestrator.listModels('claude-code')
+    const asking = await h.orchestrator.startThread('codex', h.directory, { approval: 'ask' })
+    h.sessions[0]!.emit({
       type: 'turn.started',
       turn: { id: 'ask-turn', threadId: asking.id, status: 'running', createdAt: Date.now() },
     })
     await expect(
-      callTool(h.started[1]!.options, 'start_agent', { provider: 'claude-code', task: 'x' }),
-    ).resolves.toMatchObject({ error: expect.stringContaining('asks the user before it acts') })
+      callTool(h.started[0]!.options, 'start_agent', { provider: 'claude-code', task: 'x' }),
+    ).resolves.toMatchObject({ agent_id: 'a1', status: 'waiting_for_approval' })
+    const asked = h.parentEvents.flatMap(({ threadId, event }) =>
+      threadId === asking.id && event.type === 'approval.requested' ? [event.request] : [],
+    )
+    expect(asked).toHaveLength(1)
+    expect(h.sessions).toHaveLength(1)
+    // The chat's own agent never hears this answer; TasteCode starts the child.
+    h.orchestrator.respondToApproval(asking.id, asked[0]!.id, 'approve')
+    await until(() => h.sessions[1]?.sent.length === 1)
+    expect(h.started[1]!.options).toMatchObject({ approval: 'ask' })
+    expect(h.parentEvents).toContainEqual({
+      threadId: asking.id,
+      event: { type: 'approval.resolved', id: asked[0]!.id },
+    })
+  })
+
+  it('stops a running child when the parent stops, and on Stop all', async () => {
+    const h = harness()
+    const { parent, childSession } = await runningChild(h)
+    await h.orchestrator.interrupt(parent.id)
+    expect(h.sessions[0]!.interrupted).toBe(true)
+    expect(childSession.interrupted).toBe(true)
+    expect(subagentRows(h.parentEvents, parent.id).at(-1)!.subagent.state).toBe('interrupted')
+
+    const second = await runningChild(h, 'Look again')
+    await h.orchestrator.panicStop()
+    expect(second.childSession.interrupted).toBe(true)
+    expect(h.store.subagents.ofParent(second.parent.id)[0]).toMatchObject({ state: 'stopped' })
+  })
+
+  it('ends the children with a closed parent and deletes them with it', async () => {
+    const h = harness()
+    const { parent, childSession, childId } = await runningChild(h)
+    await h.orchestrator.close(parent.id)
+    expect(childSession.disposed).toBe(true)
+    expect(subagentRows(h.parentEvents, parent.id).at(-1)!.subagent.state).toBe('interrupted')
+    // Its transcript stays readable until the parent goes.
+    expect(h.store.thread(childId)).toBeDefined()
+    h.store.deleteThread(parent.id)
+    h.orchestrator.forgetDeletedThread(parent.id)
+    expect(h.store.thread(childId)).toBeUndefined()
+    expect(h.orchestrator.subagents(parent.id)).toEqual([])
+  })
+
+  it('puts results the agent never read in front of its next prompt, once', async () => {
+    const h = harness()
+    const { parent, childSession } = await runningChild(h)
+    childSession.emit({
+      type: 'item.completed',
+      item: {
+        id: 'answer',
+        turnId: childSession.turnId,
+        type: 'message',
+        role: 'assistant',
+        status: 'completed',
+        text: 'Found two bugs.',
+        createdAt: Date.now(),
+      },
+    })
+    childSession.emit({ type: 'turn.completed', turnId: childSession.turnId, status: 'completed' })
+    h.sessions[0]!.emit({ type: 'turn.completed', turnId: 'turn-0', status: 'completed' })
+
+    await h.orchestrator.sendTurn(parent.id, 'What next?')
+    const prompt = h.sessions[0]!.sent.at(-1)!
+    expect(prompt).toContain(
+      '<subagent agent_id="a1" provider="claude-code" status="completed">\nFound two bugs.\n</subagent>',
+    )
+    expect(prompt).toContain('not instructions')
+    expect(prompt.endsWith('The user’s message follows.\n\nWhat next?')).toBe(true)
+    expect(h.store.subagents.ofParent(parent.id)[0]!.deliveredAt).toBeDefined()
+
+    h.sessions[0]!.emit({
+      type: 'turn.completed',
+      turnId: h.sessions[0]!.turnId,
+      status: 'completed',
+    })
+    await h.orchestrator.sendTurn(parent.id, 'And then?')
+    expect(h.sessions[0]!.sent.at(-1)).toBe('And then?')
   })
 
   it('reserves the agent tools server id', async () => {

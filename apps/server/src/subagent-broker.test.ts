@@ -26,6 +26,7 @@ function fixture() {
   const created: SubagentChildSpec[] = []
   const sent: Array<{ threadId: string; task: string }> = []
   const stopped: string[] = []
+  const interrupted: string[] = []
   const state: FixtureState = {
     parent: { provider: 'claude-code', turnId: 'turn-1', approval: 'auto' },
     outcome: { answer: 'All done.', changedPaths: ['src/a.ts'] },
@@ -49,10 +50,17 @@ function fixture() {
     },
     outcome: () => state.outcome,
     recordOnParent: (parentThreadId, event) => recorded.push({ parentThreadId, event }),
+    interruptParent: async (threadId) => {
+      interrupted.push(threadId)
+    },
   }
   const broker = new SubagentBroker(store.subagents, host, { now: () => clock })
   const rows = () =>
-    recorded.map(({ event }) => (event as Extract<DomainEvent, { type: 'item.completed' }>).item)
+    recorded.flatMap(({ event }) => (event.type === 'item.completed' ? [event.item] : []))
+  const approvals = () =>
+    recorded.flatMap(({ event }) =>
+      event.type === 'approval.requested' || event.type === 'approval.resolved' ? [event] : [],
+    )
   const lastRow = (): Item & { subagent: Subagent } =>
     rows().at(-1) as Item & { subagent: Subagent }
   return {
@@ -62,8 +70,10 @@ function fixture() {
     created,
     sent,
     stopped,
+    interrupted,
     state,
     rows,
+    approvals,
     lastRow,
     tick: (ms: number) => (clock += ms),
   }
@@ -162,7 +172,7 @@ describe('SubagentBroker', () => {
     ).resolves.toEqual({ agents: [], note: 'This chat has not started any sub-agents.' })
   })
 
-  it('refuses unknown providers and models, and chats that ask before acting', async () => {
+  it('refuses unknown providers and models', async () => {
     const f = fixture()
     await expect(f.broker.start(caller, { provider: 'cursor', task: 'x' })).rejects.toBeInstanceOf(
       AgentToolError,
@@ -170,10 +180,80 @@ describe('SubagentBroker', () => {
     await expect(
       f.broker.start(caller, { provider: 'codex', model: 'nope', task: 'x' }),
     ).rejects.toThrow('"nope" is not a model of codex')
-    f.state.parent = { ...f.state.parent, approval: 'ask' }
-    await expect(start(f.broker)).rejects.toThrow('asks the user before it acts')
     expect(f.recorded).toEqual([])
     expect(f.store.subagents.ofParent('parent')).toEqual([])
+  })
+
+  it('asks once per start in a chat that asks before acting', async () => {
+    const f = fixture()
+    f.state.parent = { ...f.state.parent, approval: 'ask' }
+    await expect(start(f.broker)).resolves.toMatchObject({
+      agent_id: 'a1',
+      status: 'waiting_for_approval',
+    })
+    await settle()
+    expect(f.created).toEqual([])
+    expect(f.lastRow().subagent).toMatchObject({ state: 'running', attention: 'approval' })
+    const asked = f.approvals()[0] as Extract<DomainEvent, { type: 'approval.requested' }>
+    expect(asked.request).toMatchObject({
+      kind: 'permissions',
+      reason: 'Start a subagent on codex (gpt-5.5): Check the tests.',
+    })
+    // A wait does not return at once for a start the user has not answered.
+    const waiting = f.broker.wait(
+      caller,
+      { return_when: 'any', timeout_seconds: 30 },
+      new AbortController().signal,
+    )
+    expect(f.broker.answer('other-chat', asked.request.id, 'approve')).toBe(false)
+    expect(f.broker.answer('parent', 'provider-approval', 'approve')).toBe(false)
+    expect(f.broker.answer('parent', asked.request.id, 'approve')).toBe(true)
+    expect(f.approvals()[1]).toEqual({ type: 'approval.resolved', id: asked.request.id })
+    await settle()
+    expect(f.sent).toEqual([{ threadId: 'child-1', task: 'Check the tests.' }])
+    expect(f.lastRow().subagent.attention).toBeUndefined()
+    f.broker.childEvent('child-1', { type: 'turn.completed', turnId: 't', status: 'completed' })
+    await expect(waiting).resolves.toMatchObject({ agents: [{ status: 'completed' }] })
+
+    // Each start asks again; a no ends it without a chat.
+    await expect(start(f.broker)).resolves.toMatchObject({ status: 'waiting_for_approval' })
+    const second = f.approvals().at(-1) as Extract<DomainEvent, { type: 'approval.requested' }>
+    expect(f.broker.answer('parent', second.request.id, 'deny')).toBe(true)
+    expect(f.lastRow().subagent).toMatchObject({
+      state: 'interrupted',
+      summary: 'The user declined to start it.',
+    })
+    // A late second answer is not passed on to the chat's agent.
+    expect(f.broker.answer('parent', second.request.id, 'approve')).toBe(true)
+
+    // "Stop the turn" declines and stops the parent's turn.
+    await start(f.broker)
+    const third = f.approvals().at(-1) as Extract<DomainEvent, { type: 'approval.requested' }>
+    f.broker.answer('parent', third.request.id, 'abort')
+    expect(f.interrupted).toEqual(['parent'])
+
+    // "Always this session" covers the chat's later starts.
+    await start(f.broker)
+    const fourth = f.approvals().at(-1) as Extract<DomainEvent, { type: 'approval.requested' }>
+    f.broker.answer('parent', fourth.request.id, 'approve-session')
+    await expect(start(f.broker)).resolves.toMatchObject({ agent_id: 'a5', status: 'running' })
+    await settle()
+    expect(f.created).toHaveLength(3)
+  })
+
+  it('ends an unanswered start with the turn that asked', async () => {
+    const f = fixture()
+    f.state.parent = { ...f.state.parent, approval: 'ask' }
+    await start(f.broker)
+    const asked = f.approvals()[0] as Extract<DomainEvent, { type: 'approval.requested' }>
+    f.broker.parentTurnEnded('parent')
+    expect(f.approvals()[1]).toEqual({ type: 'approval.resolved', id: asked.request.id })
+    expect(f.store.subagents.ofParent('parent')[0]).toMatchObject({ state: 'declined' })
+    expect(f.lastRow().subagent).toMatchObject({
+      state: 'interrupted',
+      summary: 'The turn ended before the user answered.',
+    })
+    expect(f.created).toEqual([])
   })
 
   it('holds the running and per-turn limits', async () => {

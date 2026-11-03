@@ -1,6 +1,11 @@
 import { ProviderIdSchema, SubagentSchema } from '@harness/contracts'
-import type { ProviderId, Subagent } from '@harness/contracts'
+import type { Item, ProviderId, Subagent } from '@harness/contracts'
 import type { DatabaseSync, StatementSync } from './sqlite.js'
+
+/** The task as the row's tool call shows it, sent with every update. */
+const ROW_TASK_CHARACTERS = 2_000
+/** Why a run that was unfinished when the app closed ended. */
+export const RESTART_SUMMARY = 'TasteCode closed while this subagent ran.'
 
 /**
  * Where one sub-agent run stands, as its parent agent sees it. A run waits for
@@ -213,8 +218,10 @@ export class SubagentRunTable {
         ...run.snapshot,
         state: 'interrupted',
         background: false,
+        summary: RESTART_SUMMARY,
       }
       delete snapshot.attention
+      delete snapshot.lastTool
       this.update(run.itemId, { state: 'interrupted', snapshot, finishedAt: at })
       settled.push({ ...run, state: 'interrupted', snapshot, finishedAt: at })
     }
@@ -227,6 +234,29 @@ export class SubagentRunTable {
       .prepare(`DELETE FROM subagent_runs WHERE parent_thread_id = ? OR thread_id = ?`)
       .run(threadId, threadId)
   }
+}
+
+/** The parent's `tool_call` item that shows a run, carrying its stored snapshot. */
+export function subagentRunItem(run: StoredSubagentRun): Item {
+  return {
+    id: run.itemId,
+    turnId: run.turnId,
+    type: 'tool_call',
+    // The call that started it is done; the sub-agent's own state is the snapshot's.
+    status: run.state === 'failed' ? 'failed' : 'completed',
+    text: `subagent\n${JSON.stringify({ prompt: shorten(run.task, ROW_TASK_CHARACTERS) })}`,
+    subagent: run.snapshot,
+    createdAt: run.createdAt,
+  }
+}
+
+/** Keeps the start and the end, where a report puts its summary and its conclusion. */
+export function shorten(text: string, limit: number): string {
+  if (text.length <= limit) return text
+  const marker = '\n\n[… shortened by TasteCode …]\n\n'
+  const keep = limit - marker.length
+  const head = Math.ceil(keep / 2)
+  return `${text.slice(0, head)}${marker}${text.slice(text.length - (keep - head))}`
 }
 
 function toRun(row: RunRow): StoredSubagentRun | undefined {

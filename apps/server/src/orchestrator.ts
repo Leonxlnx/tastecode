@@ -1031,6 +1031,7 @@ export class Orchestrator {
       recordOnParent: (parentThreadId, event) => {
         if (this.#store.thread(parentThreadId)) this.#record(parentThreadId, event)
       },
+      interruptParent: (parentThreadId) => this.interrupt(parentThreadId),
     })
     this.#agentTools = handlers.agentTools ? new AgentToolsEndpoint(this.#subagents) : undefined
     this.#onQueue = handlers.onQueue ?? (() => {})
@@ -2983,9 +2984,14 @@ export class Orchestrator {
       !handover &&
       this.#store.thread(threadId)?.continuedFrom !== undefined &&
       this.#store.threadNeedsContinueContext(threadId)
+    // Sub-agent results its agent has not read go in front of the prompt.
+    const unreadSubagents = this.#subagents.unreadResults(threadId)
     // The prompt carries more than the user's words; the transcript keeps the words.
     if (
-      (handover || continuation || this.#store.threadNeedsRestoreContext(threadId)) &&
+      (handover ||
+        continuation ||
+        unreadSubagents ||
+        this.#store.threadNeedsRestoreContext(threadId)) &&
       !submission
     ) {
       submission = { id: crypto.randomUUID(), text, attachments, createdAt: Date.now() }
@@ -3114,9 +3120,10 @@ export class Orchestrator {
         }
         return turnId
       }
-      const prompt = existsSync(path.join(this.#repoPath(threadId), '.taste', 'brief.json'))
+      const ownPrompt = existsSync(path.join(this.#repoPath(threadId), '.taste', 'brief.json'))
         ? `This is an ordinary user turn, not an active TasteCode Design phase. Earlier phase-only JSON protocols no longer apply. Follow the current request normally and explain your work in normal prose, unless the user explicitly requests structured data. If asked to launch a preview, perform the launch on an available local port and report its URL instead of returning a preview-plan JSON object.\n\nUser request:\n${text}`
         : text
+      const prompt = unreadSubagents ? `${unreadSubagents.text}${ownPrompt}` : ownPrompt
       const turnId = await entry.session.sendTurn(
         threadId,
         handover
@@ -3147,6 +3154,7 @@ export class Orchestrator {
       this.#acceptTurnStart(threadId, turnId, pendingStart)
       this.#store.clearThreadRestoreContext(threadId)
       if (continuation) this.#store.clearThreadContinueContext(threadId)
+      if (unreadSubagents) this.#subagents.markRead(unreadSubagents.itemIds)
       if (handover) {
         this.#store.clearThreadHandover(threadId)
         this.#handoverTurns.set(threadId, { turnId, answered: false })
@@ -3892,6 +3900,11 @@ export class Orchestrator {
 
   forgetDeletedThread(threadId: string): void {
     this.#revokeAgentTools(threadId)
+    this.#subagents.forget(threadId)
+    // The store deleted a chat's sub-agent chats with it.
+    for (const [childId, parentId] of this.#subagentParents) {
+      if (parentId === threadId || childId === threadId) this.#subagentParents.delete(childId)
+    }
     this.#inboxProjections.delete(threadId)
     this.#staleInboxProjectionThreads.delete(threadId)
     this.#heldQueues.delete(threadId)
@@ -4653,6 +4666,8 @@ export class Orchestrator {
   }
 
   respondToApproval(threadId: string, approvalId: string, decision: ApprovalDecision): void {
+    // TasteCode asked this one itself, about starting a sub-agent.
+    if (this.#subagents.answer(threadId, approvalId, decision)) return
     this.#get(threadId).session.respondToApproval(approvalId, decision)
   }
 
@@ -4713,60 +4728,67 @@ export class Orchestrator {
   }
 
   async interrupt(threadId: string): Promise<void> {
-    // Only prompts already on their way when Stop came can start the turn it stops.
-    const incoming = [...(this.#incomingSubmissions.get(threadId) ?? [])]
-    // "Stop" on a thread that is not live must be a no-op, not an error the
-    // user cannot act on.
-    if (!this.#threads.has(threadId)) {
-      // A persisted thread is not attached until resume resolves. Invalidate
-      // that resume so its pending submission cannot run after the user stops it.
-      if (this.#resumingThreads.has(threadId)) {
-        this.#runtimeGenerations.set(threadId, (this.#runtimeGenerations.get(threadId) ?? 0) + 1)
-        return
-      }
-      if (incoming.length === 0) return
-    }
-    // An agent asked to stop before its turn exists has nothing to stop and
-    // drops the request; the turn then ran to its end behind "Stopping…". A new
-    // chat stopped while it starts sends its prompt and the Stop back to back,
-    // and the Stop overtook the prompt on its way in. Wait for those prompts to
-    // start or queue first.
-    await Promise.allSettled(incoming)
-    // Nothing goes out on its own after a Stop: what waits in the queue now
-    // waits for the user, not for the stopped turn to end.
-    if (this.#hasQueuedTurns(threadId)) this.#heldQueues.add(threadId)
-    // The checkpoint runs before the provider starts. An interrupt sent in
-    // that window used to hit an idle adapter and disappear, after which the
-    // turn started anyway. Wait until the adapter has accepted or rejected
-    // the start, then deliver the interrupt against its real active turn.
-    // A Design phase hand-off starts its turn without that barrier.
-    const barrier = this.#turnStartBarriers.get(threadId)?.done
-    await barrier
-    await this.#designProviderStarts.get(threadId)?.catch(() => undefined)
-    const entry = this.#threads.get(threadId)
-    if (!entry) return
-    // The chat shows the turn stopped now. An agent can take seconds to confirm a Stop,
-    // or never do so, and the chat must not keep running behind "Stopping…" meanwhile.
-    const stop = this.#settleStoppedTurn(threadId, entry)
+    // A chat's sub-agents stop with it, a background one included. A chat
+    // without any keeps the exact timing it had.
+    const children = this.#subagents.stopFor(threadId)
     try {
-      await entry.session.interrupt(threadId)
-      if (stop) stop.confirmed = true
-    } catch (error) {
-      if (!stop) throw error
-      // The turn has ended meanwhile, by the agent or with its process.
-      if (this.#settlingStops.get(threadId) !== stop) return
-      if (!entry.resumable) {
-        // The agent runs on and nothing can end it without losing the chat; say so.
-        this.#finishSettlingStop(threadId, stop)
-        throw error
+      // Only prompts already on their way when Stop came can start the turn it stops.
+      const incoming = [...(this.#incomingSubmissions.get(threadId) ?? [])]
+      // "Stop" on a thread that is not live must be a no-op, not an error the
+      // user cannot act on.
+      if (!this.#threads.has(threadId)) {
+        // A persisted thread is not attached until resume resolves. Invalidate
+        // that resume so its pending submission cannot run after the user stops it.
+        if (this.#resumingThreads.has(threadId)) {
+          this.#runtimeGenerations.set(threadId, (this.#runtimeGenerations.get(threadId) ?? 0) + 1)
+          return
+        }
+        if (incoming.length === 0) return
       }
-      // The chat already shows the turn as stopped, so end the agent that refused to stop.
-      // The next prompt resumes the session in a new process.
-      await this.#endUnconfirmedStop(
-        threadId,
-        stop,
-        `The agent refused Stop (${errorMessage(error)})`,
-      )
+      // An agent asked to stop before its turn exists has nothing to stop and
+      // drops the request; the turn then ran to its end behind "Stopping…". A new
+      // chat stopped while it starts sends its prompt and the Stop back to back,
+      // and the Stop overtook the prompt on its way in. Wait for those prompts to
+      // start or queue first.
+      await Promise.allSettled(incoming)
+      // Nothing goes out on its own after a Stop: what waits in the queue now
+      // waits for the user, not for the stopped turn to end.
+      if (this.#hasQueuedTurns(threadId)) this.#heldQueues.add(threadId)
+      // The checkpoint runs before the provider starts. An interrupt sent in
+      // that window used to hit an idle adapter and disappear, after which the
+      // turn started anyway. Wait until the adapter has accepted or rejected
+      // the start, then deliver the interrupt against its real active turn.
+      // A Design phase hand-off starts its turn without that barrier.
+      const barrier = this.#turnStartBarriers.get(threadId)?.done
+      await barrier
+      await this.#designProviderStarts.get(threadId)?.catch(() => undefined)
+      const entry = this.#threads.get(threadId)
+      if (!entry) return
+      // The chat shows the turn stopped now. An agent can take seconds to confirm a Stop,
+      // or never do so, and the chat must not keep running behind "Stopping…" meanwhile.
+      const stop = this.#settleStoppedTurn(threadId, entry)
+      try {
+        await entry.session.interrupt(threadId)
+        if (stop) stop.confirmed = true
+      } catch (error) {
+        if (!stop) throw error
+        // The turn has ended meanwhile, by the agent or with its process.
+        if (this.#settlingStops.get(threadId) !== stop) return
+        if (!entry.resumable) {
+          // The agent runs on and nothing can end it without losing the chat; say so.
+          this.#finishSettlingStop(threadId, stop)
+          throw error
+        }
+        // The chat already shows the turn as stopped, so end the agent that refused to stop.
+        // The next prompt resumes the session in a new process.
+        await this.#endUnconfirmedStop(
+          threadId,
+          stop,
+          `The agent refused Stop (${errorMessage(error)})`,
+        )
+      }
+    } finally {
+      if (children) await children
     }
   }
 
@@ -4906,6 +4928,8 @@ export class Orchestrator {
     )
     this.#panicStopping = true
     this.#panicGeneration += 1
+    // Every sub-agent ends as stopped; the busy chats below include theirs.
+    this.#subagents.release()
     try {
       for (const threadId of this.#designFlows.keys()) {
         for (const [turnId, owner] of this.#designTurns) {
@@ -5027,7 +5051,16 @@ export class Orchestrator {
     await Promise.all([
       sideThreadId ? this.closeSideThread(sideThreadId) : undefined,
       runtimeDisposed,
+      ...this.#endSubagents(threadId),
     ])
+  }
+
+  /** A chat's sub-agents end with its process; their chats stay readable. */
+  #endSubagents(threadId: string): Array<Promise<void>> {
+    this.#subagents.release(threadId)
+    return this.#store
+      .ownedThreadIds(threadId)
+      .map((childId) => this.#disposeThreadRuntime(childId))
   }
 
   /**
@@ -5058,6 +5091,7 @@ export class Orchestrator {
     await Promise.all([
       sideThreadId ? this.closeSideThread(sideThreadId) : undefined,
       runtimeDisposed,
+      ...this.#endSubagents(threadId),
     ])
   }
 
