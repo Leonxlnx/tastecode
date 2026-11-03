@@ -18,6 +18,7 @@ import {
   isInterruptMarker,
   isPrompt,
   object,
+  slashCommandPrompt,
   string,
   type SavedRecord,
 } from './history-items.js'
@@ -537,9 +538,10 @@ function observe(digest: Digest, row: SavedRecord): void {
     if (digest.cwd === undefined && typeof row.cwd === 'string') digest.cwd = row.cwd
     if (digest.prompt === undefined && isPrompt(row))
       digest.prompt = titleText(
-        contentBlocks(row)
-          .map((block) => string(block.text) ?? '')
-          .join(' '),
+        slashCommandPrompt(row) ??
+          contentBlocks(row)
+            .map((block) => string(block.text) ?? '')
+            .join(' '),
       )
   }
   if (row.type === 'relocated') digest.relocatedCwd = row.relocatedCwd
