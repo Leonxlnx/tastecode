@@ -4386,9 +4386,16 @@ export class Orchestrator {
       case 'turn.completed':
         if (event.turnId === stop.turnId) this.#finishSettlingStop(threadId, stop)
         return true
-      // Spend still counts, an error is still news, and a resolution only closes a request.
-      case 'usage.updated':
       case 'thread.error':
+        // Once the agent accepted the Stop, its errors belong to the run it is ending, or to
+        // work nobody asked for: an agent may report a stopped run as failed, for instance
+        // after a repeat Stop it turned down. The user already saw the turn end as stopped,
+        // so a banner now would be spurious. Before that, an error is still news.
+        if (!stop.confirmed) return false
+        this.#onLog(`The agent reported an error while ending a stopped turn: ${event.message}`)
+        return true
+      // Spend still counts, and a resolution only closes a request.
+      case 'usage.updated':
       case 'approval.resolved':
       case 'user_input.resolved':
         return false

@@ -7928,6 +7928,52 @@ describe('several sessions at once', () => {
       await orchestrator.disposeAll()
     })
 
+    it('shows no error banner when the agent reports the stopped run as failed', async () => {
+      const { orchestrator, thread, session, received, logs, confirm, stopping } =
+        await stoppedWhileUnconfirmed()
+      confirm()
+      await stopping
+      // A late item of the stopped run looks like new work, and the repeat Stop is refused;
+      // an agent can then report the run it was already ending as an error.
+      session.interruptError = new Error('no run to stop')
+      session.emit({
+        type: 'item.started',
+        item: {
+          id: 'late-answer',
+          turnId: 's1-turn',
+          type: 'message',
+          role: 'assistant',
+          status: 'started',
+          createdAt: 2,
+        },
+      })
+      await vi.waitFor(() =>
+        expect(logs).toContainEqual(expect.stringMatching(/Could not stop.*no run to stop/)),
+      )
+      session.emit({ type: 'thread.error', threadId: thread.id, message: 'aborted by user' })
+      session.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'failed' })
+
+      expect(received.some(({ event }) => event.type === 'thread.error')).toBe(false)
+      expect(logs).toContainEqual(expect.stringMatching(/ending a stopped turn: aborted by user/))
+      expect(turnsCompleted(received)).toEqual([
+        expect.objectContaining({ turnId: 's1-turn', status: 'interrupted' }),
+      ])
+      await orchestrator.disposeAll()
+    })
+
+    it('still shows an error the agent reports before it accepted the Stop', async () => {
+      const { orchestrator, thread, session, received, confirm, stopping } =
+        await stoppedWhileUnconfirmed()
+      session.emit({ type: 'thread.error', threadId: thread.id, message: 'connection lost' })
+      confirm()
+      await stopping
+
+      expect(received.map(({ event }) => event)).toContainEqual(
+        expect.objectContaining({ type: 'thread.error', message: 'connection lost' }),
+      )
+      await orchestrator.disposeAll()
+    })
+
     it('holds a prompt sent meanwhile until the agent has ended the turn', async () => {
       const { orchestrator, thread, session, confirm, stopping } = await stoppedWhileUnconfirmed()
 
