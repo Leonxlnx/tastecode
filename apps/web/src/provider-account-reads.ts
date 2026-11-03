@@ -23,6 +23,10 @@ type Kept = { account: Account; ticket: number }
 const reads = new WeakMap<Transport, Map<string, Kept>>()
 let tickets = 0
 
+/** Reads on their way, which a later visit joins rather than start another CLI. */
+type Pending = { ticket: number; revision: number; answer: Promise<Account> }
+const pending = new WeakMap<Transport, Map<string, Pending>>()
+
 /** Taken when a read starts; pass it to `rememberAccountRead` with the answer. */
 export function accountReadTicket(): number {
   tickets += 1
@@ -49,4 +53,48 @@ export function rememberAccountRead(
   const kept = entries.get(key)
   if (kept && kept.ticket > ticket) return
   entries.set(key, { account, ticket })
+  // A read that started before this answer can only tell less; none may join it.
+  const running = pending.get(transport)
+  if ((running?.get(key)?.ticket ?? ticket) < ticket) running?.delete(key)
+}
+
+/**
+ * Reads an account, or joins the read of it already on its way. Every read
+ * starts the provider's CLI and outlives the page that started it, so
+ * reopening Settings › Providers while the last visit's reads still ran
+ * started a second CLI per provider. A read that must postdate something
+ * passes `fresh`, as after a sign-in on the page; one asked for under a newer
+ * `revision`, as after a sign-in in a terminal, does not join an older read.
+ * The answer is kept as `rememberAccountRead` keeps it, with the ticket the
+ * read took when it started, even when the page closed meanwhile.
+ */
+export function readAccount(
+  transport: Transport,
+  key: string,
+  read: () => Promise<Account>,
+  options: { fresh?: boolean; revision?: number } = {},
+): Promise<Account> {
+  const entries = pending.get(transport) ?? new Map<string, Pending>()
+  pending.set(transport, entries)
+  const revision = options.revision ?? 0
+  const running = entries.get(key)
+  if (running && !options.fresh && running.revision === revision) return running.answer
+  const ticket = accountReadTicket()
+  let started: Promise<Account>
+  try {
+    started = read()
+  } catch (cause) {
+    started = Promise.reject(cause instanceof Error ? cause : new Error(String(cause)))
+  }
+  const answer = started.then((account) => {
+    rememberAccountRead(transport, key, account, ticket)
+    return account
+  })
+  const entry: Pending = { ticket, revision, answer }
+  const settle = () => {
+    if (entries.get(key) === entry) entries.delete(key)
+  }
+  answer.then(settle, settle)
+  entries.set(key, entry)
+  return answer
 }

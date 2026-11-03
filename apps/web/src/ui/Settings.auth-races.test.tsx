@@ -195,6 +195,40 @@ describe('returning to the page', () => {
     expect(reads).toBe(2)
   })
 
+  it('joins a read a closed visit left running instead of starting another CLI', async () => {
+    const slow = deferred<Account>()
+    const later = deferred<Account>()
+    let reads = 0
+    const transport = new TestTransport((method) => {
+      if (method === 'providers.updates') return { updates: [] }
+      if (method === 'auth.status') return ++reads === 1 ? slow.promise : later.promise
+      throw new Error(`Unexpected ${method}`)
+    })
+    const props = {
+      provider: 'claude-code' as const,
+      account: undefined,
+      providerStatuses: statuses,
+      transport,
+      onConnectionsChanged,
+      onAccountChange: vi.fn(),
+    }
+    const first = render(<ProviderSettings {...props} />)
+    first.unmount()
+    // Reopened twice while the first visit's CLI is still answering.
+    render(<ProviderSettings {...props} />).unmount()
+    const third = render(<ProviderSettings {...props} />)
+    expect(reads).toBe(1)
+    await act(async () => slow.resolve({ signedIn: true }))
+    expect(screen.getByRole('button', { name: 'Sign out' })).toBeTruthy()
+    third.unmount()
+
+    // The next visit reads again; one after a sign-in in a terminal must not join that read.
+    render(<ProviderSettings {...props} />).unmount()
+    expect(reads).toBe(2)
+    render(<ProviderSettings {...props} authRefreshRevision={1} />)
+    expect(reads).toBe(3)
+  })
+
   it('does not reopen on a read that started before a sign-out on the page', async () => {
     const stale = deferred<Account>()
     let reads = 0

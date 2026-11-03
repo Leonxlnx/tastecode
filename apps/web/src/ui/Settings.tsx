@@ -157,7 +157,7 @@ import {
 } from '../provider-install.js'
 import type { Transport } from '../transport.js'
 import {
-  accountReadTicket,
+  readAccount,
   rememberAccountRead,
   rememberedAccountReads,
 } from '../provider-account-reads.js'
@@ -928,7 +928,6 @@ export function ProviderSettings(props: {
   const refreshAccount = useCallback(
     async (provider: ProviderId, forceLoading = false) => {
       const request = { id: ++sequence.current, transport: props.transport }
-      const ticket = accountReadTicket()
       statusRequests.current = { ...statusRequests.current, [provider]: request }
       setAuthStates((current) => {
         if (!forceLoading && current[provider]?.phase === 'ready') return current
@@ -940,9 +939,13 @@ export function ProviderSettings(props: {
         }
       })
       try {
-        const account = await props.transport.request('auth.status', { provider })
-        // Kept even when the page closed meanwhile: the next visit opens on it.
-        rememberAccountRead(request.transport, provider, account, ticket)
+        // Joins a read a closed visit left running; kept for the next visit either way.
+        const account = await readAccount(
+          request.transport,
+          provider,
+          () => request.transport.request('auth.status', { provider }),
+          { fresh: forceLoading, revision: props.authRefreshRevision ?? 0 },
+        )
         if (
           statusRequests.current[provider] !== request ||
           currentTransport.current !== request.transport
@@ -974,7 +977,7 @@ export function ProviderSettings(props: {
         })
       }
     },
-    [props.transport, props.onAccountChange],
+    [props.transport, props.onAccountChange, props.authRefreshRevision],
   )
 
   const authProviderIds = props.providerStatuses
@@ -1037,14 +1040,14 @@ export function ProviderSettings(props: {
   }, [props.transport])
 
   const refreshAgentAccount = useCallback(
-    async (agentId: string) => {
-      const ticket = accountReadTicket()
+    async (agentId: string, fresh = false) => {
       try {
-        const account = await props.transport.request('auth.status', {
-          provider: 'acp',
-          agent: agentId,
-        })
-        rememberAccountRead(props.transport, agentRosterKey(agentId), account, ticket)
+        const account = await readAccount(
+          props.transport,
+          agentRosterKey(agentId),
+          () => props.transport.request('auth.status', { provider: 'acp', agent: agentId }),
+          { fresh },
+        )
         setAgentAccounts((current) => ({ ...current, [agentId]: account }))
         setAgentAccountErrors((current) => ({ ...current, [agentId]: '' }))
       } catch (cause) {
@@ -1342,7 +1345,7 @@ export function ProviderSettings(props: {
           mark={mark}
           target={{ provider: 'acp', agent: agent.id }}
           transport={props.transport}
-          onSignedIn={() => void refreshAgentAccount(agent.id)}
+          onSignedIn={() => void refreshAgentAccount(agent.id, true)}
           onOpenExpandedTerminal={props.onProviderLoginTerminalOpen}
         />
       )
