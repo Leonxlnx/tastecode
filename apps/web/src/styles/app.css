@@ -1775,10 +1775,10 @@
   position: relative;
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
   min-width: 0;
-  min-height: 22px;
-  padding: 0 5px;
+  min-height: 30px;
+  padding: 2px 0;
   opacity: 1;
   color: var(--queue-text);
   transition:
@@ -1850,7 +1850,8 @@
 
 .queue-row__handle {
   display: grid;
-  width: 22px;
+  width: 20px;
+  height: 26px;
   flex: none;
   padding: 0;
   place-items: center;
@@ -1867,12 +1868,14 @@
   color: var(--text);
 }
 
+/* overflow: hidden (for the ellipsis) clips at the line box, so the line holds
+   the font's whole ascent and descent; Segoe UI's runs to about 1.33em. */
 .queue-row__text {
   min-width: 0;
   flex: 1;
   overflow: hidden;
-  font-size: var(--t-xs);
-  line-height: 1.1;
+  font-size: var(--t-md);
+  line-height: 1.5;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1881,8 +1884,8 @@
   position: relative;
   isolation: isolate;
   display: grid;
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
   flex: none;
   padding: 0;
   overflow: hidden;
@@ -1940,7 +1943,7 @@
   align-items: center;
   justify-content: center;
   flex: none;
-  height: 22px;
+  height: 26px;
   background: none;
   border: 0;
   border-radius: var(--r-md);
@@ -1951,13 +1954,13 @@
 
 .queue-row__steer {
   gap: 5px;
-  padding: 0 7px;
-  font-size: var(--t-xs);
-  line-height: 1.1;
+  padding: 0 8px;
+  font-size: var(--t-sm);
+  line-height: 1.5;
 }
 
 .queue-row__action {
-  width: 24px;
+  width: 26px;
   padding: 0;
 }
 
@@ -1972,8 +1975,8 @@
 }
 
 .queue-row > .menuwrap .queue-row__action {
-  width: 24px;
-  height: 22px;
+  width: 26px;
+  height: 26px;
   justify-content: center;
   padding: 0;
 }

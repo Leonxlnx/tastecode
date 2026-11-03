@@ -2103,7 +2103,7 @@ function ComposerComponent(props: {
                         void props.onMoveQueuedTurn(queuedTurn.id, direction)
                     }}
                   >
-                    <GripVertical size={12} aria-hidden />
+                    <GripVertical size={14} aria-hidden />
                   </button>
                   <QueuedMediaPreview attachments={queuedTurn.attachments} />
                   <span className="queue-row__text" title={queuedTurn.text}>
@@ -2116,7 +2116,7 @@ function ComposerComponent(props: {
                       onClick={() => props.onSteerQueuedTurn(queuedTurn.id)}
                       title="Steer the running agent with this prompt"
                     >
-                      <CornerDownRight size={12} aria-hidden />
+                      <CornerDownRight size={13} aria-hidden />
                       <span>Steer</span>
                     </button>
                   ) : null}
@@ -2127,7 +2127,7 @@ function ComposerComponent(props: {
                     title="Edit prompt"
                     aria-label={`Edit ${queuedTurn.text}`}
                   >
-                    <Pencil size={12} aria-hidden />
+                    <Pencil size={14} aria-hidden />
                   </button>
                   <button
                     type="button"
@@ -2136,7 +2136,7 @@ function ComposerComponent(props: {
                     title="Remove from queue"
                     aria-label={`Remove ${queuedTurn.text} from queue`}
                   >
-                    <Trash2 size={12} aria-hidden />
+                    <Trash2 size={14} aria-hidden />
                   </button>
                 </div>
               ))}
