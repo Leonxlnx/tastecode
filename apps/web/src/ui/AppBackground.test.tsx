@@ -1,7 +1,11 @@
 // @vitest-environment happy-dom
 import { act, cleanup, render, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { DISPLAY_IMAGE_VERSION, type BackgroundImageStore } from '../app-background-image.js'
+import {
+  DISPLAY_IMAGE_VERSION,
+  displayImageVersion,
+  type BackgroundImageStore,
+} from '../app-background-image.js'
 
 afterEach(async () => {
   cleanup()
@@ -31,21 +35,29 @@ describe('AppBackground in the browser shell', () => {
     const { writeAppBackground } = await import('../app-background.js')
     const { container } = render(<AppBackground />)
 
-    act(() => writeAppBackground({ mode: 'effect', effect: 'aurora' }))
+    act(() => writeAppBackground({ mode: 'effect', effect: 'halftone' }))
     const layer = await waitFor(() => {
       const element = container.querySelector<HTMLElement>('.app-bg')
       expect(element).not.toBeNull()
       return element!
     })
     expect(layer.dataset['mode']).toBe('effect')
-    expect(layer.dataset['effect']).toBe('aurora')
+    expect(layer.dataset['effect']).toBe('halftone')
     expect(layer.getAttribute('aria-hidden')).toBe('true')
     expect(root()['appBg']).toBe('effect')
-    expect(root()['appBgEffect']).toBe('aurora')
+    expect(root()['appBgEffect']).toBe('halftone')
+    // Its tile is handed to the stylesheet; Dim reaches it as a factor.
+    expect(layer.style.getPropertyValue('--app-bg-pattern')).toMatch(/^url\("data:image\/svg\+xml,/)
+    expect(layer.style.getPropertyValue('--app-bg-pattern-size')).toBe('16px 448px')
+    expect(layer.style.getPropertyValue('--app-bg-dim')).toBe('1')
+    act(() => writeAppBackground({ dim: 75 }))
+    expect(layer.style.getPropertyValue('--app-bg-dim')).toBe('1.5')
 
     act(() => writeAppBackground({ effect: 'grain' }))
     expect(layer.dataset['effect']).toBe('grain')
     expect(root()['appBgEffect']).toBe('grain')
+    // Grain is painted by the stylesheet alone.
+    expect(layer.style.getPropertyValue('--app-bg-pattern')).toBe('')
 
     act(() => writeAppBackground({ mode: 'none' }))
     expect(container.querySelector('.app-bg')).toBeNull()
@@ -137,6 +149,7 @@ describe('AppBackgroundLayer', () => {
         displayVersion: DISPLAY_IMAGE_VERSION,
       })),
       save: vi.fn(async () => undefined),
+      saveDisplay: vi.fn(async () => true),
       clear: vi.fn(async () => undefined),
     }
     const createObjectURL = vi.fn(() => 'blob:tastecode/one')
@@ -146,7 +159,14 @@ describe('AppBackgroundLayer', () => {
 
     const { container, unmount } = render(
       <AppBackgroundLayer
-        background={{ mode: 'image', effect: 'glow', material: 'acrylic', image: 'rev-1' }}
+        background={{
+          mode: 'image',
+          effect: 'dither',
+          material: 'acrylic',
+          image: 'rev-1',
+          dim: 50,
+          blur: 14,
+        }}
         images={images}
       />,
     )
@@ -165,16 +185,74 @@ describe('AppBackgroundLayer', () => {
     expect(root()['appBg']).toBeUndefined()
   })
 
+  it('dims the picture by the Dim level and swaps in a new blur without a gap', async () => {
+    const first = new Blob(['blur 14'], { type: 'image/webp' })
+    const second = new Blob(['blur 30'], { type: 'image/webp' })
+    const original = new Blob(['original'], { type: 'image/webp' })
+    const load = vi
+      .fn<BackgroundImageStore['load']>()
+      .mockResolvedValueOnce({ original, display: first, displayVersion: DISPLAY_IMAGE_VERSION })
+      .mockResolvedValue({ original, display: second, displayVersion: displayImageVersion(30) })
+    const images: BackgroundImageStore = {
+      load,
+      save: vi.fn(async () => undefined),
+      saveDisplay: vi.fn(async () => true),
+      clear: vi.fn(async () => undefined),
+    }
+    let made = 0
+    const createObjectURL = vi.fn(() => `blob:tastecode/${++made}`)
+    const revokeObjectURL = vi.fn()
+    vi.stubGlobal('URL', Object.assign(URL, { createObjectURL, revokeObjectURL }))
+    const { AppBackgroundLayer } = await import('./AppBackgroundLayer.js')
+    const background = {
+      mode: 'image',
+      effect: 'dither',
+      material: 'acrylic',
+      image: 'rev-1',
+      dim: 50,
+      blur: 14,
+    } as const
+
+    const view = render(<AppBackgroundLayer background={background} images={images} />)
+    const layer = view.container.querySelector<HTMLElement>('.app-bg')!
+    expect(layer.style.getPropertyValue('--app-bg-dim')).toBe('1')
+    await waitFor(() => expect(layer.dataset['ready']).toBe(''))
+
+    view.rerender(<AppBackgroundLayer background={{ ...background, dim: 20 }} images={images} />)
+    expect(layer.style.getPropertyValue('--app-bg-dim')).toBe('0.4')
+
+    // A drag across the slider rebuilds once, after it rests.
+    for (const blur of [18, 22, 26, 30]) {
+      view.rerender(<AppBackgroundLayer background={{ ...background, blur }} images={images} />)
+    }
+    expect(load).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(createObjectURL).toHaveBeenLastCalledWith(second))
+    expect(load).toHaveBeenCalledTimes(2)
+    // The old picture stayed up until the new one was ready, then was let go.
+    expect(layer.dataset['ready']).toBe('')
+    expect(layer.style.getPropertyValue('--app-bg-image')).toBe('url("blob:tastecode/2")')
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:tastecode/1')
+    expect(revokeObjectURL).not.toHaveBeenCalledWith('blob:tastecode/2')
+  })
+
   it('shows the plain background when no image is stored yet', async () => {
     const images: BackgroundImageStore = {
       load: vi.fn(async () => undefined),
       save: vi.fn(async () => undefined),
+      saveDisplay: vi.fn(async () => true),
       clear: vi.fn(async () => undefined),
     }
     const { AppBackgroundLayer } = await import('./AppBackgroundLayer.js')
     const { container } = render(
       <AppBackgroundLayer
-        background={{ mode: 'image', effect: 'glow', material: 'acrylic', image: undefined }}
+        background={{
+          mode: 'image',
+          effect: 'dither',
+          material: 'acrylic',
+          image: undefined,
+          dim: 50,
+          blur: 14,
+        }}
         images={images}
       />,
     )

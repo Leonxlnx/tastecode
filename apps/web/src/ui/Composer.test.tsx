@@ -1944,6 +1944,68 @@ describe('Composer provider commands', () => {
   })
 })
 
+describe('Composer arguments typed before the command list arrives', () => {
+  /** Claude-shaped: the list answers only once the provider has started. */
+  function lateCommands() {
+    const commands = deferred()
+    const transport = createResourceTransport(async (method) => {
+      if (method === 'skills.list')
+        return {
+          capabilities: { inventory: false, configure: false, install: false },
+          skills: [],
+          errors: [],
+        }
+      if (method === 'commands.list') return commands.promise
+      throw new Error(`Unexpected request: ${method}`)
+    })
+    const arrive = () =>
+      act(async () => {
+        commands.resolve({
+          commands: [{ name: 'taste-pro', description: 'Builds sites', kind: 'skill' }],
+          loading: false,
+        })
+        await commands.promise
+      })
+    return { transport, arrive }
+  }
+
+  it('sends the command and its arguments exactly as typed', async () => {
+    const onSend = vi.fn()
+    const { transport, arrive } = lateCommands()
+    renderComposer(onSend, { transport, provider: 'claude-code' })
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+    fakeEditor(composer)
+
+    fireEvent.change(composer, { target: { value: '/taste-pro', selectionStart: 10 } })
+    fireEvent.change(composer, { target: { value: '/taste-pro a website', selectionStart: 20 } })
+    await arrive()
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
+    expect(onSend).toHaveBeenCalledWith('/taste-pro a website', [])
+  })
+
+  it('keeps the space before the arguments when the command is picked after they were typed', async () => {
+    const onSend = vi.fn()
+    const { transport, arrive } = lateCommands()
+    renderComposer(onSend, { transport, provider: 'claude-code' })
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+    fakeEditor(composer)
+
+    fireEvent.change(composer, { target: { value: '/taste-pro', selectionStart: 10 } })
+    fireEvent.change(composer, { target: { value: '/taste-pro a website', selectionStart: 20 } })
+    await arrive()
+    // Back to the end of the command, where the menu opens again with the list.
+    composer.setSelectionRange(10, 10)
+    fireEvent.select(composer)
+    await screen.findByRole('option', { name: /taste-pro/ })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
+    expect(composer.value).toBe(`${composerChipText('/taste-pro', 'skill')} a website`)
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    expect(onSend).toHaveBeenCalledWith('/taste-pro a website', [])
+  })
+})
+
 describe('Composer permissions', () => {
   it('shows an icon for every mode and offers auto-review only when supported', () => {
     const unsupported = renderComposer(vi.fn())

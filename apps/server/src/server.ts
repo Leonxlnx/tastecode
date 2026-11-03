@@ -1384,8 +1384,10 @@ export function startServer(
         if (store.thread(p.threadId)?.worktreePath) {
           throw new Error('discard the isolated session checkout before deleting it')
         }
+        // Closing ends a running turn, so nothing the provider still writes can
+        // land in the chat; its saved session is kept out of history imports.
         await orchestrator.close(p.threadId)
-        store.deleteThread(p.threadId)
+        store.deleteThread(p.threadId, { keepSessionOut: true })
         orchestrator.forgetDeletedThread(p.threadId)
         lifecycleScheduler.changed()
         return {}

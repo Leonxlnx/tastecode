@@ -318,7 +318,8 @@ export function setDesktopTheme(preference: AppThemePreference): Promise<void> {
 }
 
 /**
- * The colours the page paints where native window chrome meets it, as #rrggbb.
+ * The colours the page paints where native window chrome meets it, as #rrggbb
+ * (the caption as #00000000 while a window background shows through it).
  * The desktop shell colours the caption buttons with them and opens the next
  * launch in them. Mirrors WindowChrome in apps/desktop/src/window-theme.ts.
  */
