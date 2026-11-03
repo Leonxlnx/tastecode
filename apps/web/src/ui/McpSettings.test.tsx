@@ -2,6 +2,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { Transport } from '../transport.js'
+import { cachedInventory, loadInventory } from './composer-inventory.js'
 import { McpSettings } from './McpSettings.js'
 
 afterEach(() => {
@@ -1274,5 +1275,117 @@ describe('MCP settings', () => {
         serverId: 'github',
       })
     })
+  })
+})
+
+describe('opening the page again', () => {
+  const docs = {
+    capabilities: {
+      inventory: true,
+      add: true,
+      update: true,
+      remove: true,
+      reload: false,
+      startOAuth: false,
+      cancelOAuth: false,
+    },
+    servers: [
+      {
+        id: 'docs',
+        scope: 'project' as const,
+        enabled: true,
+        transport: { type: 'http' as const, url: 'https://docs.example.test/mcp' },
+        auth: { status: 'not_required' as const },
+        startup: { state: 'ready' as const },
+        tools: [],
+        resources: [],
+        resourceTemplates: [],
+      },
+    ],
+  }
+  const page = (transport: Transport) => (
+    <McpSettings
+      transport={transport}
+      provider="codex"
+      providerName="Codex"
+      projectPath="/work/project"
+      projectName="Project"
+    />
+  )
+  /** Lists answer only when the test says so, as a provider still starting does. */
+  function slowClient() {
+    const answers: Array<(value: unknown) => void> = []
+    const listeners = new Map<string, (value: never) => void>()
+    const transport = {
+      state: 'open',
+      request: vi.fn(
+        (method: string) =>
+          new Promise((resolve) => {
+            if (method !== 'mcp.list') throw new Error(`unexpected ${method}`)
+            answers.push(resolve)
+          }),
+      ),
+      on: vi.fn((channel: string, listener: (value: never) => void) => {
+        listeners.set(channel, listener)
+        return () => listeners.delete(channel)
+      }),
+      onState: vi.fn(() => () => {}),
+    } as unknown as Transport
+    const lists = () => vi.mocked(transport.request).mock.calls.length
+    return { transport, answers, listeners, lists }
+  }
+
+  it('opens on the list it showed last time and asks again behind it', async () => {
+    const { transport, answers, lists } = slowClient()
+    const first = render(page(transport))
+    // Before any list arrives the page says it is loading; that is the first visit.
+    expect(screen.getByText('Loading MCP servers…')).toBeTruthy()
+    await waitFor(() => expect(lists()).toBe(1))
+    await act(async () => answers[0]?.(docs))
+    expect(screen.getByText('docs')).toBeTruthy()
+    first.unmount()
+
+    render(page(transport))
+    // The second visit shows the servers in its first render, with no answer yet.
+    expect(screen.getByText('docs')).toBeTruthy()
+    expect(screen.queryByText('Loading MCP servers…')).toBeNull()
+    await waitFor(() => expect(lists()).toBe(2))
+    await act(async () => answers[1]?.({ ...docs, servers: [] }))
+    expect(screen.queryByText('docs')).toBeNull()
+    expect(screen.getByText('No MCP servers have been added to this project.')).toBeTruthy()
+    expect(lists()).toBe(2)
+  })
+
+  it("opens on the list the composer's @ menu read, and joins a read on its way", async () => {
+    const { transport, answers, lists } = slowClient()
+    const place = { provider: 'codex' as const, projectPath: '/work/project' }
+    const composer = loadInventory(transport, 'mcp', place)
+    await waitFor(() => expect(lists()).toBe(1))
+    await act(async () => answers[0]?.(docs))
+    await composer
+    // The composer reads again; the page opening now shares that read.
+    void loadInventory(transport, 'mcp', place)
+
+    render(page(transport))
+    expect(screen.getByText('docs')).toBeTruthy()
+    await act(async () => undefined)
+    expect(lists()).toBe(2)
+  })
+
+  it('asks anew after a change instead of joining a read that started before it', async () => {
+    const { transport, answers, listeners, lists } = slowClient()
+    render(page(transport))
+    await waitFor(() => expect(lists()).toBe(1))
+    act(() =>
+      listeners.get('mcp.changed')?.({ provider: 'codex', projectPath: '/work/project' } as never),
+    )
+    await waitFor(() => expect(lists()).toBe(2))
+    // The read from before the change answers last and must not win.
+    await act(async () => answers[1]?.(docs))
+    await act(async () => answers[0]?.({ ...docs, servers: [] }))
+    expect(screen.getByText('docs')).toBeTruthy()
+    expect(
+      cachedInventory(transport, 'mcp', { provider: 'codex', projectPath: '/work/project' }),
+    ).toEqual(docs)
   })
 })
