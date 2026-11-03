@@ -706,6 +706,11 @@ export class Orchestrator {
   #queuedTurns = new Map<string, QueuedTurnEntry[]>()
   #emptyQueuedTurns = new Set<string>()
   #drainingQueues = new Map<string, QueueDrain>()
+  /**
+   * Chats whose queued prompts a Stop holds: they wait for the user instead of going out when
+   * the stopped turn ends. The user's next prompt, or sending a held one, lets them go.
+   */
+  #heldQueues = new Set<string>()
   #designFlows = new Map<string, DesignFlow>()
   #designTurns = new Map<string, string>()
   #designStartingThreads = new Set<string>()
@@ -2839,6 +2844,8 @@ export class Orchestrator {
     const panicGeneration = this.#panicGeneration
     const disposeGeneration = this.#disposeGeneration
     if (this.#panicStopping) throw new Error('turn cancelled by panic stop')
+    // The user is writing again after a Stop: what they queued before it may go, in order.
+    this.#heldQueues.delete(threadId)
     if (this.#changingProvider.has(threadId)) {
       throw new Error('This chat is moving to another provider. Send again once it has moved.')
     }
@@ -2938,7 +2945,13 @@ export class Orchestrator {
 
   async steerQueuedTurn(threadId: string, queuedTurnId: string): Promise<void> {
     const session = this.#get(threadId).session
-    if (!this.#activeTurns.has(threadId)) throw new Error('there is no running turn to steer')
+    if (!this.#activeTurns.has(threadId)) {
+      // A Stop held the queue; the prompt the user picks goes now, as a turn of its own.
+      if (this.#heldQueues.has(threadId) && !this.isTurnRunning(threadId)) {
+        return this.#sendHeldQueuedTurn(threadId, queuedTurnId)
+      }
+      throw new Error('there is no running turn to steer')
+    }
     if (this.#designOwnsThread(threadId)) {
       throw new Error('queued prompts wait until the Design run finishes')
     }
@@ -3464,6 +3477,7 @@ export class Orchestrator {
   forgetDeletedThread(threadId: string): void {
     this.#inboxProjections.delete(threadId)
     this.#staleInboxProjectionThreads.delete(threadId)
+    this.#heldQueues.delete(threadId)
   }
 
   #addSidebarStatus(set: Set<string>, threadId: string): void {
@@ -3770,7 +3784,17 @@ export class Orchestrator {
     })
   }
 
-  async #drainQueueOnce(threadId: string): Promise<void> {
+  /** The user sends one prompt a Stop held, ahead of the others; the rest follow it in order. */
+  async #sendHeldQueuedTurn(threadId: string, queuedTurnId: string): Promise<void> {
+    if (!this.#queueEntries(threadId).some((item) => item.id === queuedTurnId))
+      throw new Error('queued prompt not found')
+    if (this.#drainingQueues.has(threadId)) throw new Error('a queued prompt is already being sent')
+    this.#heldQueues.delete(threadId)
+    await this.#drainQueueOnce(threadId, queuedTurnId)
+  }
+
+  /** Sends the queue's first prompt, or `queuedTurnId` when the user picked one. */
+  async #drainQueueOnce(threadId: string, queuedTurnId?: string): Promise<void> {
     const entry = this.#threads.get(threadId)
     if (
       !entry ||
@@ -3779,6 +3803,8 @@ export class Orchestrator {
       this.#panicStopping ||
       this.#drainingQueues.has(threadId) ||
       this.isTurnRunning(threadId) ||
+      // A Stop holds what was queued before it until the user sends again.
+      this.#heldQueues.has(threadId) ||
       // Design owns the thread between phases too (preview and capture run
       // with no provider turn); it drains when the run finishes or fails.
       this.#designFlows.has(threadId)
@@ -3786,7 +3812,9 @@ export class Orchestrator {
       return
     }
     const queue = this.#queueEntries(threadId)
-    const next = queue[0]
+    const index =
+      queuedTurnId === undefined ? 0 : queue.findIndex((item) => item.id === queuedTurnId)
+    const next = queue[index]
     if (!next) {
       this.#pruneIdleThreadRuntimes()
       return
@@ -3794,7 +3822,7 @@ export class Orchestrator {
 
     const claimed = this.#store.claimQueuedTurn(threadId, next.id, 'normal')
     if (!claimed) return
-    queue.shift()
+    queue.splice(index, 1)
     this.#retainQueueEntries(threadId, queue)
 
     const draining: QueueDrain = { queueId: next.id }
@@ -4274,6 +4302,9 @@ export class Orchestrator {
     // and the Stop overtook the prompt on its way in. Wait for those prompts to
     // start or queue first.
     await Promise.allSettled(incoming)
+    // Nothing goes out on its own after a Stop: what waits in the queue now
+    // waits for the user, not for the stopped turn to end.
+    if (this.#hasQueuedTurns(threadId)) this.#heldQueues.add(threadId)
     // The checkpoint runs before the provider starts. An interrupt sent in
     // that window used to hit an idle adapter and disappear, after which the
     // turn started anyway. Wait until the adapter has accepted or rejected
@@ -4688,6 +4719,7 @@ export class Orchestrator {
     this.#queuedTurns.clear()
     this.#emptyQueuedTurns.clear()
     this.#drainingQueues.clear()
+    this.#heldQueues.clear()
     this.#designFlows.clear()
     this.#designTurns.clear()
     this.#designStartingThreads.clear()

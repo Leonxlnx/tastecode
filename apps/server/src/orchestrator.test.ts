@@ -7789,6 +7789,70 @@ describe('several sessions at once', () => {
     await expect(later).resolves.toMatchObject({ queued: true })
   })
 
+  describe('prompts queued before a Stop', () => {
+    async function stoppedWithQueue() {
+      const context = harness()
+      const { sessions, orchestrator } = context
+      const thread = await orchestrator.startThread('codex', '/repo')
+      const session = sessions[0]!
+      session.turnIds = ['t1', 't2', 't3']
+      await orchestrator.submitTurn(thread.id, 'running')
+      const queued = await orchestrator.submitTurn(thread.id, 'sent by accident')
+      if (!queued.queued) throw new Error('expected the prompt to queue')
+      await orchestrator.interrupt(thread.id)
+      session.emit({ type: 'turn.completed', turnId: 't1', status: 'interrupted' })
+      await new Promise((resolve) => setTimeout(resolve, 10))
+      return { ...context, thread, session, queuedId: queued.queuedTurn.id }
+    }
+
+    it('stay queued when the stopped turn ends', async () => {
+      const { orchestrator, thread, session } = await stoppedWithQueue()
+
+      expect(session.sent).toEqual(['running'])
+      expect(orchestrator.queue(thread.id).items.map((item) => item.text)).toEqual([
+        'sent by accident',
+      ])
+      expect(orchestrator.isTurnRunning(thread.id)).toBe(false)
+      await orchestrator.disposeAll()
+    })
+
+    it('go out in order once the user sends again', async () => {
+      const { orchestrator, thread, session } = await stoppedWithQueue()
+
+      await expect(orchestrator.submitTurn(thread.id, 'next')).resolves.toMatchObject({
+        queued: true,
+      })
+      await vi.waitFor(() => expect(session.sent).toEqual(['running', 'sent by accident']))
+      session.emit({ type: 'turn.completed', turnId: 't2', status: 'completed' })
+      await vi.waitFor(() => expect(session.sent).toEqual(['running', 'sent by accident', 'next']))
+      await orchestrator.disposeAll()
+    })
+
+    it('go out one at a time when the user sends a held one', async () => {
+      const { orchestrator, thread, session, queuedId } = await stoppedWithQueue()
+
+      await orchestrator.steerQueuedTurn(thread.id, queuedId)
+
+      expect(session.sent).toEqual(['running', 'sent by accident'])
+      expect(session.steered).toEqual([])
+      expect(orchestrator.queue(thread.id).items).toEqual([])
+      await orchestrator.disposeAll()
+    })
+
+    it('still go out after a turn the user did not stop', async () => {
+      const { sessions, orchestrator } = harness()
+      const thread = await orchestrator.startThread('codex', '/repo')
+      const session = sessions[0]!
+      session.turnIds = ['t1', 't2']
+      await orchestrator.submitTurn(thread.id, 'running')
+      await orchestrator.submitTurn(thread.id, 'queued')
+      session.emit({ type: 'turn.completed', turnId: 't1', status: 'completed' })
+
+      await vi.waitFor(() => expect(session.sent).toEqual(['running', 'queued']))
+      await orchestrator.disposeAll()
+    })
+  })
+
   it('cancels a cold resume on Stop and allows a later submission', async () => {
     const { sessions, orchestrator, store } = harness()
     store.addProject('/repo')
