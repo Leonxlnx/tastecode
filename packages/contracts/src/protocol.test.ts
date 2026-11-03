@@ -2004,6 +2004,42 @@ describe('subagent contracts', () => {
     expect(ItemSchema.parse(call).subagent).toBeUndefined()
   })
 
+  it('reads a native sub-agent transcript without changing existing snapshots', () => {
+    const method = methods['thread.subagentTranscript']
+    expect(method.params.parse({ threadId: 'parent', itemId: call.id })).toEqual({
+      threadId: 'parent',
+      itemId: call.id,
+    })
+    for (const params of [
+      { threadId: '', itemId: call.id },
+      { threadId: 'parent', itemId: '' },
+    ])
+      expect(method.params.safeParse(params).success).toBe(false)
+    expect(method.result.parse({ items: [] })).toEqual({ items: [] })
+    expect(method.result.parse({ items: [call] })).toEqual({ items: [call] })
+    expect(method.result.safeParse({ items: [{ ...call, type: 'made-up' }] }).success).toBe(false)
+    expect(method.result.parse({ items: [call], omitted: 120 })).toEqual({
+      items: [call],
+      omitted: 120,
+    })
+    for (const omitted of [0, -1, 1.5, '3'])
+      expect(method.result.safeParse({ items: [call], omitted }).success).toBe(false)
+    expect(ItemSchema.parse({ ...call, subagent }).subagent).not.toHaveProperty('transcriptId')
+    const native = { ...subagent, transcriptId: 'provider-owned-reference' }
+    expect(ItemSchema.parse({ ...call, subagent: native }).subagent).toEqual(native)
+    expect(
+      ItemSchema.safeParse({ ...call, subagent: { ...subagent, transcriptId: '' } }).success,
+    ).toBe(false)
+    expect(CapabilitiesSchema.parse(capabilities)).not.toHaveProperty('subagentTranscript')
+    for (const subagentTranscript of [true, false])
+      expect(
+        CapabilitiesSchema.parse({ ...capabilities, subagentTranscript }).subagentTranscript,
+      ).toBe(subagentTranscript)
+    expect(
+      CapabilitiesSchema.safeParse({ ...capabilities, subagentTranscript: 'yes' }).success,
+    ).toBe(false)
+  })
+
   it('round-trips a subagent snapshot on its spawning tool call', () => {
     const item = { ...call, subagent }
     expect(ItemSchema.parse(item)).toEqual(item)
