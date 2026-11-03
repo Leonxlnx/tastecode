@@ -1988,7 +1988,13 @@
                   chat again while it is still starting shows it without asking the server for its
                   history, so no internal error appears; a Stop pressed while the chat starts, or
                   right behind any prompt, waits for that prompt's turn to start and then stops it
-                  instead of reaching an agent with no turn and being dropped</span
+                  instead of reaching an agent with no turn and being dropped; in every chat the
+                  server ends a stopped turn at once (Stopped by you, the sidebar row stops
+                  spinning) without waiting for the agent to confirm, records none of that turn's
+                  late output, holds a prompt sent meanwhile in the queue until the agent has ended
+                  the turn, stops new work the agent starts in it after accepting the Stop, and ends
+                  the agent process when it refuses the Stop or has not ended the turn within 30 s
+                  (the next send resumes the session)</span
                 ></span
               ></label
             >
