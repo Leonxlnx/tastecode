@@ -53,8 +53,10 @@ afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup()
 })
 
-function harness() {
+/** `otherProviders`: the user allows sub-agents on other providers, as most of these tests need. */
+function harness({ otherProviders = true }: { otherProviders?: boolean } = {}) {
   const store = new Store(':memory:')
+  if (otherProviders) store.setSubagentOtherProviders(true)
   const directory = mkdtempSync(path.join(os.tmpdir(), 'harness-subagents-'))
   const sessions: FakeSession[] = []
   const started: Array<{ provider: ProviderId; workspacePath: string; options: StartOptions }> = []
@@ -415,5 +417,71 @@ describe('sub-agents on another provider', { timeout: 30_000 }, () => {
         transport: { type: 'http', url: 'http://127.0.0.1:1/' },
       }),
     ).toThrow('reserved')
+  })
+})
+
+describe('sub-agents on another provider without the setting', { timeout: 30_000 }, () => {
+  it("starts one only when the user's prompt asks for that provider", async () => {
+    const h = harness({ otherProviders: false })
+    expect(h.store.subagentSettings()).toEqual({})
+    await h.orchestrator.listModels('opencode')
+    const parent = await h.orchestrator.startThread('claude-code', h.directory, {
+      approval: 'full',
+    })
+    const parentOptions = h.started[0]!.options
+    const session = h.sessions[0]!
+    const runTurn = async (prompt: string) => {
+      await h.orchestrator.sendTurn(parent.id, prompt)
+      session.emit({
+        type: 'turn.started',
+        turn: { id: session.turnId, threadId: parent.id, status: 'running', createdAt: Date.now() },
+      })
+    }
+
+    await runTurn('Review src/a.ts and fix what fails.')
+    await expect(callTool(parentOptions, 'list_agent_models', {})).resolves.toMatchObject({
+      own_provider: 'claude-code',
+      other_providers: "only when the user's own message asks for that provider or model",
+    })
+    const refused = await callTool(parentOptions, 'start_agent', {
+      provider: 'opencode',
+      task: 'Review src/a.ts',
+    })
+    expect(refused.error).toContain('Sub-agents in this chat run on Claude Code.')
+    expect(h.started).toHaveLength(1)
+
+    session.emit({ type: 'turn.completed', turnId: session.turnId, status: 'completed' })
+    await runTurn('Let an OpenCode sub-agent do the review.')
+    await expect(
+      callTool(parentOptions, 'start_agent', { provider: 'opencode', task: 'Review src/a.ts' }),
+    ).resolves.toMatchObject({ status: 'running', provider: 'opencode' })
+    await until(() => h.sessions[1]?.sent.length === 1)
+    expect(h.started[1]!.provider).toBe('opencode')
+  })
+})
+
+describe('prompting a sub-agent from its own chat', { timeout: 30_000 }, () => {
+  it('sends the prompt to the child and runs its finished row again', async () => {
+    const h = harness()
+    const { parent, childSession, childId } = await runningChild(h)
+    const lastRow = () => subagentRows(h.parentEvents, parent.id).at(-1)?.subagent
+    childSession.emit({ type: 'turn.completed', turnId: childSession.turnId, status: 'completed' })
+    await until(() => lastRow()?.state === 'completed')
+
+    await h.orchestrator.submitTurn(childId, 'Also check src/b.ts.')
+    await until(() => childSession.sent.length === 2)
+    expect(childSession.sent[1]).toContain('Also check src/b.ts.')
+    childSession.emit({
+      type: 'turn.started',
+      turn: {
+        id: childSession.turnId,
+        threadId: childId,
+        status: 'running',
+        createdAt: Date.now(),
+      },
+    })
+    await until(() => lastRow()?.state === 'running')
+    childSession.emit({ type: 'turn.completed', turnId: childSession.turnId, status: 'completed' })
+    await until(() => lastRow()?.state === 'completed')
   })
 })

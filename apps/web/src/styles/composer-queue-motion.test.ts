@@ -53,37 +53,59 @@ describe('composer queue motion', () => {
     expect(composerSource).toContain("{ transform: 'translate3d(0, 0, 0)' }")
   })
 
-  it('keeps queued rows compact', () => {
+  it('spans the whole composer and tucks only behind its rounded top', () => {
     const panel = rule('.composer__queue')
+
+    expect(panel).toContain('right: 0;')
+    expect(panel).toContain('left: 0;')
+    // Tucking exactly the corner radius lets the panel's sides run straight
+    // into the prompt's sides; a shallower tuck leaves a notch at each corner.
+    expect(panel).toContain('bottom: calc(100% - var(--r-composer));')
+    // That band is covered, so the bottom padding has to clear it or the last
+    // row's lower edge disappears behind the prompt.
+    expect(panel).toMatch(/padding: \d+px \d+px calc\(var\(--r-composer\) \+ \d+px\);/)
+  })
+
+  it('lets a queued row grow with its text instead of clipping it', () => {
+    const row = rule('.queue-row')
+    const text = rule('.queue-row__text')
+    const steer = rule('.queue-row__steer')
+
+    expect(row).toMatch(/min-height: \d+px;/)
+    expect(row).not.toMatch(/(^|[\s;])height:/m)
+    expect(text).not.toMatch(/(^|[\s;])(max-)?height:/m)
+    // overflow: hidden (for the ellipsis) clips at the line box, so the line
+    // has to hold the font's whole ascent and descent: Segoe UI's runs to
+    // about 1.33em, which line-height 1.1 cut off at the top and bottom.
+    expect(text).toContain('overflow: hidden;')
+    expect(Number(/line-height: ([\d.]+);/.exec(text)?.[1])).toBeGreaterThanOrEqual(1.4)
+    expect(text).toContain('font-size: var(--t-md);')
+    expect(steer).toContain('font-size: var(--t-sm);')
+  })
+
+  it('keeps every queued row control on one height', () => {
     const row = rule('.queue-row')
     const media = rule('.queue-row__media')
     const handle = rule('.queue-row__handle')
-    const text = rule('.queue-row__text')
     const steer = rule('.queue-row__steer')
-    const action = rule('.queue-row__action')
 
-    expect(panel).toContain('padding: 3px 7px 7px;')
-    expect(row).toContain('gap: 7px;')
-    expect(row).toContain('min-height: 22px;')
-    expect(row).toContain('padding: 0 5px;')
-    expect(handle).toContain('width: 22px;')
-    expect(media).toContain('width: 22px;')
-    expect(media).toContain('height: 22px;')
-    expect(text).toContain('font-size: var(--t-xs);')
-    expect(text).toContain('line-height: 1.1;')
-    expect(steer).toContain('font-size: var(--t-xs);')
-    expect(steer).toContain('line-height: 1.1;')
+    expect(row).toContain('min-height: 30px;')
+    expect(row).toContain('padding: 2px 0;')
+    expect(handle).toContain('width: 20px;')
+    expect(handle).toContain('height: 26px;')
+    expect(media).toContain('width: 24px;')
+    expect(media).toContain('height: 24px;')
     expect(steer).toContain('gap: 5px;')
-    expect(steer).toContain('padding: 0 7px;')
-    expect(action).toContain('height: 22px;')
-    expect(appCss).toMatch(/\.queue-row__action \{[\s\S]*?width: 24px;[\s\S]*?padding: 0;/)
+    expect(steer).toContain('padding: 0 8px;')
+    expect(appCss).toMatch(/\.queue-row__steer,\n\.queue-row__action \{[^}]*?\n {2}height: 26px;/)
+    expect(appCss).toMatch(/\.queue-row__action \{[\s\S]*?width: 26px;[\s\S]*?padding: 0;/)
     expect(appCss).toMatch(
-      /\.queue-row > \.menuwrap \.queue-row__action \{[\s\S]*?width: 24px;[\s\S]*?height: 22px;/,
+      /\.queue-row > \.menuwrap \.queue-row__action \{[\s\S]*?width: 26px;[\s\S]*?height: 26px;/,
     )
-    expect(composerSource).toContain('<GripVertical size={12} aria-hidden />')
-    expect(composerSource).toContain('<CornerDownRight size={12} aria-hidden />')
-    expect(composerSource).toContain('<Pencil size={12} aria-hidden />')
-    expect(composerSource).toContain('<Trash2 size={12} aria-hidden />')
+    expect(composerSource).toContain('<GripVertical size={14} aria-hidden />')
+    expect(composerSource).toContain('<CornerDownRight size={13} aria-hidden />')
+    expect(composerSource).toContain('<Pencil size={14} aria-hidden />')
+    expect(composerSource).toContain('<Trash2 size={14} aria-hidden />')
     expect(composerSource).toContain('<Video size={12} /> : <ImageIcon size={12} />')
     expect(composerSource).toContain('<Play size={7} fill="currentColor" />')
   })
