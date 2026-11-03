@@ -1,17 +1,29 @@
-import { useEffect, useRef, useState, useSyncExternalStore, type ChangeEvent } from 'react'
 import {
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ChangeEvent,
+  type CSSProperties,
+} from 'react'
+import {
+  dimFactor,
+  MAX_APP_BACKGROUND_BLUR,
+  MAX_APP_BACKGROUND_DIM,
   nextImageRevision,
   readAppBackground,
   requestWindowMaterialSupport,
   subscribeAppBackground,
   windowMaterialSupport,
   writeAppBackground,
+  type AppBackground,
   type AppBackgroundEffect,
   type AppBackgroundMode,
 } from '../app-background.js'
 import {
   BACKGROUND_IMAGE_TYPES,
   BackgroundImageError,
+  DISPLAY_IMAGE_EDGE,
   indexedDbBackgroundImages,
   prepareBackgroundImage,
   type BackgroundImageStore,
@@ -19,6 +31,7 @@ import {
 import { isDesktop, type WindowMaterial } from '../bridge.js'
 import { SettingsRow, SettingsSection } from './settings/SettingsLayout.js'
 import { SettingsSegmented } from './settings/SettingsSegmented.js'
+import '../styles/app-background-settings.css'
 
 const MODE_OPTIONS = [
   { value: 'none', label: 'None' },
@@ -108,9 +121,32 @@ export function AppBackgroundSettings(props: {
       {background.mode === 'image' ? (
         <BackgroundImageRow
           hasImage={background.image !== undefined}
+          blur={background.blur}
           images={props.images ?? indexedDbBackgroundImages}
           prepare={props.prepare ?? prepareBackgroundImage}
         />
+      ) : null}
+      {background.mode === 'image' && background.image !== undefined ? (
+        <>
+          <SettingsRow name="Preview">
+            <BackgroundImagePreview
+              background={background}
+              images={props.images ?? indexedDbBackgroundImages}
+            />
+          </SettingsRow>
+          <LevelRow
+            name="Dim"
+            value={background.dim}
+            max={MAX_APP_BACKGROUND_DIM}
+            onChange={(dim) => writeAppBackground({ dim })}
+          />
+          <LevelRow
+            name="Blur"
+            value={background.blur}
+            max={MAX_APP_BACKGROUND_BLUR}
+            onChange={(blur) => writeAppBackground({ blur })}
+          />
+        </>
       ) : null}
       {background.mode === 'effect' ? (
         <SettingsRow name="Effect">
@@ -128,8 +164,102 @@ export function AppBackgroundSettings(props: {
   )
 }
 
+/**
+ * A slider that applies while it moves: every step is written at once, and
+ * the window background follows (a new blur once the drag pauses).
+ */
+function LevelRow(props: {
+  name: string
+  value: number
+  max: number
+  onChange: (value: number) => void
+}) {
+  return (
+    <SettingsRow name={props.name}>
+      <input
+        className="app-bg-settings__range"
+        type="range"
+        min={0}
+        max={props.max}
+        step={1}
+        value={props.value}
+        aria-label={props.name}
+        onChange={(event) => props.onChange(Number(event.currentTarget.value))}
+      />
+    </SettingsRow>
+  )
+}
+
+/** Width of the preview, in CSS pixels; the blur is scaled down to it. */
+const PREVIEW_WIDTH = 176
+
+type PreviewStyle = CSSProperties & {
+  '--app-bg-image'?: string
+  '--app-bg-dim'?: string
+  '--app-bg-preview-blur'?: string
+}
+
+/**
+ * The picture as the window will show it, drawn small from the stored
+ * original: the blur scaled from the display copy to this width and the same
+ * dim over it. Both follow the sliders on every step; the CSS blur here
+ * covers a thumbnail, never the window.
+ */
+function BackgroundImagePreview(props: {
+  background: AppBackground
+  images: BackgroundImageStore
+}) {
+  const { image, dim, blur } = props.background
+  const url = useOriginalImageUrl(image, props.images)
+  const style: PreviewStyle = {
+    '--app-bg-dim': dimFactor(dim),
+    '--app-bg-preview-blur': `${((blur * PREVIEW_WIDTH) / DISPLAY_IMAGE_EDGE).toFixed(2)}px`,
+  }
+  if (url) style['--app-bg-image'] = `url("${url}")`
+  return (
+    <div
+      className="app-bg app-bg--preview"
+      data-mode="image"
+      data-ready={url ? '' : undefined}
+      style={style}
+      role="img"
+      aria-label="Preview of the window background"
+    />
+  )
+}
+
+/** A blob: URL for the stored original, revoked when the image changes. */
+function useOriginalImageUrl(
+  revision: string | undefined,
+  images: BackgroundImageStore,
+): string | undefined {
+  const [url, setUrl] = useState<string | undefined>(undefined)
+  useEffect(() => {
+    if (!revision) return
+    let cancelled = false
+    let created: string | undefined
+    void images
+      .load()
+      .then((stored) => {
+        if (cancelled || !stored) return
+        created = URL.createObjectURL(stored.original)
+        setUrl(created)
+      })
+      .catch(() => {
+        // No preview; the window background reports its own failure the same way.
+      })
+    return () => {
+      cancelled = true
+      if (created) URL.revokeObjectURL(created)
+      setUrl(undefined)
+    }
+  }, [revision, images])
+  return url
+}
+
 function BackgroundImageRow(props: {
   hasImage: boolean
+  blur: number
   images: BackgroundImageStore
   prepare: typeof prepareBackgroundImage
 }) {
@@ -152,7 +282,7 @@ function BackgroundImageRow(props: {
     setBusy(true)
     setProblem(undefined)
     try {
-      await props.images.save(await props.prepare(file))
+      await props.images.save(await props.prepare(file, props.blur))
       writeAppBackground({ image: nextImageRevision() })
     } catch (error) {
       if (mounted.current) {

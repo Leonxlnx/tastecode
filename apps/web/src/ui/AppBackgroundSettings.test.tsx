@@ -25,6 +25,7 @@ function fakeImages(): BackgroundImageStore {
   return {
     load: vi.fn(async () => undefined),
     save: vi.fn(async () => undefined),
+    saveDisplay: vi.fn(async () => true),
     clear: vi.fn(async () => undefined),
   }
 }
@@ -84,7 +85,7 @@ describe('Window background settings', () => {
     fireEvent.change(input, { target: { files: [file] } })
 
     await waitFor(() => expect(readAppBackground().image).toBeDefined())
-    expect(prepare).toHaveBeenCalledWith(file)
+    expect(prepare).toHaveBeenCalledWith(file, 14)
     expect(images.save).toHaveBeenCalledWith(prepared)
     expect(screen.getByRole('button', { name: 'Change image…' })).toBeTruthy()
 
@@ -92,6 +93,44 @@ describe('Window background settings', () => {
     await waitFor(() => expect(readAppBackground().image).toBeUndefined())
     expect(images.clear).toHaveBeenCalledTimes(1)
     expect(screen.getByRole('button', { name: 'Choose image…' })).toBeTruthy()
+  })
+
+  it('sets Dim and Blur with sliders and previews them on every step', async () => {
+    const images = fakeImages()
+    vi.mocked(images.load).mockResolvedValue({
+      original: new Blob(['o'], { type: 'image/webp' }),
+      display: new Blob(['d'], { type: 'image/webp' }),
+      displayVersion: DISPLAY_IMAGE_VERSION,
+    })
+    const createObjectURL = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:preview')
+    const revokeObjectURL = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
+    act(() => writeAppBackground({ mode: 'image' }))
+    const view = render(<AppBackgroundSettings images={images} />)
+    // No picture yet: nothing to preview or tune.
+    expect(screen.queryByRole('slider', { name: 'Dim' })).toBeNull()
+    expect(screen.queryByRole('img', { name: /Preview/ })).toBeNull()
+
+    act(() => writeAppBackground({ image: 'rev-1' }))
+    const preview = screen.getByRole('img', { name: 'Preview of the window background' })
+    await waitFor(() =>
+      expect(preview.style.getPropertyValue('--app-bg-image')).toBe('url("blob:preview")'),
+    )
+    expect(createObjectURL).toHaveBeenCalledTimes(1)
+    expect(preview.style.getPropertyValue('--app-bg-dim')).toBe('1')
+    expect(preview.style.getPropertyValue('--app-bg-preview-blur')).toBe('1.54px')
+
+    const dim = screen.getByRole<HTMLInputElement>('slider', { name: 'Dim' })
+    const blur = screen.getByRole<HTMLInputElement>('slider', { name: 'Blur' })
+    expect([dim.value, dim.max, blur.value, blur.max]).toEqual(['50', '100', '14', '40'])
+    fireEvent.change(dim, { target: { value: '80' } })
+    expect(readAppBackground().dim).toBe(80)
+    expect(preview.style.getPropertyValue('--app-bg-dim')).toBe('1.6')
+    fireEvent.change(blur, { target: { value: '0' } })
+    expect(readAppBackground().blur).toBe(0)
+    expect(preview.style.getPropertyValue('--app-bg-preview-blur')).toBe('0.00px')
+
+    view.unmount()
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:preview')
   })
 
   it('explains an image it cannot use and keeps the old one', async () => {

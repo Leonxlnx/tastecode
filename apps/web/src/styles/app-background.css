@@ -24,8 +24,10 @@
   --app-bg-stage: 74%;
   /* How fast Sidebar translucency thins the sidebar (Medium is 0.35). */
   --app-bg-rail-fade: 100%;
-  /* The dim laid over a picture. */
-  --app-bg-scrim: rgb(0 0 0 / 40%);
+  /* The dim laid over a picture: its colour, and its strength at the default
+     Dim. The layer sets --app-bg-dim (0 to 2, 1 by default) from Settings. */
+  --app-bg-scrim: rgb(0 0 0);
+  --app-bg-scrim-strength: 0.4;
   /* Grain strength; effects carry a trace of it so their gradients do not band. */
   --app-bg-grain: 0.035;
   --app-bg-aurora-a: color-mix(in srgb, var(--attention) 22%, transparent);
@@ -49,7 +51,8 @@
 :root[data-theme='light'][data-app-bg] {
   --app-bg-stage: 80%;
   --app-bg-rail-fade: 60%;
-  --app-bg-scrim: rgb(255 255 255 / 45%);
+  --app-bg-scrim: rgb(255 255 255);
+  --app-bg-scrim-strength: 0.45;
   --app-bg-grain: 0.045;
   --app-bg-aurora-a: color-mix(in srgb, var(--attention) 16%, transparent);
   --app-bg-aurora-b: rgb(45 212 191 / 12%);
@@ -100,6 +103,7 @@
 
 .app-bg[data-mode='image']::after {
   background: var(--app-bg-scrim);
+  opacity: min(1, calc(var(--app-bg-scrim-strength) * var(--app-bg-dim, 1)));
 }
 
 /* Effects: gradients on ::before, grain on ::after. */
