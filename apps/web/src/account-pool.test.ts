@@ -104,7 +104,8 @@ describe('plan weights', () => {
     expect(planWeights('claude-code', 'Max x20')).toEqual({ weekly: 10 })
     expect(planWeights('claude-code', 'Max 20x')).toEqual({ weekly: 10 })
     expect(planWeights('claude-code', 'Ultra')).toEqual({ weekly: 10 })
-    // Team seats publish a session multiple only.
+    // Team seats publish a session multiple only; a plain Team seat is a Standard one.
+    expect(planWeights('claude-code', 'Team')).toEqual({ session: 1.25 })
     expect(planWeights('claude-code', 'Team Standard')).toEqual({ session: 1.25 })
     expect(planWeights('claude-code', 'Team Premium')).toEqual({ session: 6.25 })
   })
@@ -114,12 +115,13 @@ describe('plan weights', () => {
     expect(planWeights('codex', 'Plus')).toEqual({ session: 1, weekly: 1 })
     expect(planWeights('codex', 'Team')).toEqual({ session: 1, weekly: 1 })
     expect(planWeights('codex', 'Business')).toEqual({ session: 1, weekly: 1 })
-    expect(planWeights('codex', 'Pro x5')).toEqual({ session: 5, weekly: 5 })
-    expect(planWeights('codex', 'Pro x20')).toEqual({ session: 20, weekly: 20 })
+    // Pro has no 5-hour window.
+    expect(planWeights('codex', 'Pro x5')).toEqual({ weekly: 5 })
+    expect(planWeights('codex', 'Pro x20')).toEqual({ weekly: 20 })
   })
 
   it('leaves plans it cannot size unknown', () => {
-    for (const plan of ['Team', 'Free', 'Enterprise', 'Plus', 'Signed in']) {
+    for (const plan of ['Free', 'Enterprise', 'Plus', 'Signed in']) {
       expect(planWeights('claude-code', plan), plan).toBeUndefined()
     }
     for (const plan of ['Free', 'Go', 'Enterprise', 'Edu', 'Signed in', 'API key', 'Pro']) {
@@ -183,7 +185,7 @@ describe('account pool', () => {
   it('keeps an account without a known plan out of the totals, but in the pool', () => {
     const accounts = [
       account('claude-code', 'default', 'Personal', 'Pro'),
-      account('claude-code', 'team-1', 'Team seat', 'Team'),
+      account('claude-code', 'team-1', 'Company', 'Enterprise'),
       account('claude-code', 'new-1', 'New'),
     ]
     const states = [
@@ -219,7 +221,7 @@ describe('account pool', () => {
     expect(pool.recommended).toBe('default')
   })
 
-  it('reads accounts without values as unknown or unavailable, never as empty', () => {
+  it('reads accounts without usable values as unknown, never as empty', () => {
     const states: UsageSummaryState[] = [
       { status: 'loading', provider: 'codex' },
       {
@@ -286,15 +288,17 @@ describe('account pool', () => {
       ),
     ]
     const pool = poolOf('codex', states, accounts, NOW)
+    // As the contract has it: unavailable (cannot run) is the server's to say.
     expect(pool.accounts.map((each) => [each.accountId, each.status])).toEqual([
       ['default', 'unknown'],
-      ['failed-1', 'unavailable'],
+      ['failed-1', 'unknown'],
       ['retrying-1', 'unknown'],
-      ['gave-up-1', 'unavailable'],
-      ['api-1', 'unavailable'],
+      ['gave-up-1', 'unknown'],
+      ['api-1', 'unknown'],
       ['checking-1', 'unknown'],
-      ['credits-1', 'unavailable'],
+      ['credits-1', 'unknown'],
     ])
+    expect(pool.accounts.every((each) => each.windows.length === 0)).toBe(true)
     expect(pool.windows).toEqual([])
     expect(pool.recommended).toBeUndefined()
   })

@@ -1,10 +1,14 @@
 import {
   DEFAULT_ACCOUNT_ID,
   type AccountId,
+  type PoolAccount,
+  type PoolWindow,
+  type PoolWindowTotal,
   type ProviderAccount,
   type ProviderId,
   type ProviderLimit,
   type ProviderLimitSource,
+  type ResultOf,
 } from '@harness/contracts'
 import { accountAtLimit } from './continue-account.js'
 import type { UsageSummaryState } from './usage-summary-state.js'
@@ -14,13 +18,17 @@ import type { UsageSummaryState } from './usage-summary-state.js'
  * pool is in units of the provider's cheapest plan and how much of it is
  * left, and which account a new chat should start on.
  *
- * Everything here is computed in the client from the limits it already holds.
- * The names follow the server's planned `accounts.pool` answer, so `poolsOf`
- * can be replaced by that request once the server sends it.
+ * Computed in the client from the limits it already holds, in the shape of
+ * the server's `accounts.pool` answer, so `poolsOf` can be replaced by that
+ * request. It is kept here for now because the server sums each window id
+ * on its own (Claude's model weeklies become totals of their own, and a
+ * Codex Plus 5-hour and a Codex Pro weekly window share `codex:primary`),
+ * while this sums one Session and one Weekly window per account, told apart
+ * by length.
  */
 
 /** The 5-hour session window and the weekly window, told apart by their length. */
-export type PoolWindowKind = 'session' | 'weekly'
+export type PoolWindowKind = PoolWindow['kind']
 
 const WINDOW_MINUTES = { session: 300, weekly: 10_080 } as const satisfies Record<
   PoolWindowKind,
@@ -32,70 +40,24 @@ const WINDOW_LABELS = { session: 'Session', weekly: 'Weekly' } as const satisfie
 >
 const KINDS: readonly PoolWindowKind[] = ['session', 'weekly']
 
-/** One account's reading of one window. */
-export type PoolWindow = {
-  id: string
-  label: string
-  kind: PoolWindowKind
-  usedPercent: number
-  resetsAt?: number | undefined
-}
-
 /** A plan's size per window, in units of the provider's cheapest plan. Absent: not known. */
-export type PoolWeights = { session?: number | undefined; weekly?: number | undefined }
+export type PoolWeights = NonNullable<PoolAccount['weights']>
 
-export type PoolAccount = {
-  accountId: AccountId
-  label: string
-  plan?: string | undefined
-  weights?: PoolWeights | undefined
-  /** `ready`: its windows are known. `unknown`: not read yet. `unavailable`: no windows to read. */
-  status: 'ready' | 'unknown' | 'unavailable'
-  /** The newest refresh failed, so the windows are the last known values. */
-  stale?: true | undefined
-  windows: PoolWindow[]
-  /** A percent row is used up and has not reset yet (`accountAtLimit`). */
-  atLimit: boolean
-}
-
-/** One window summed over the accounts whose plan size for it is known. */
-export type PoolWindowTotal = {
-  id: string
-  label: string
-  kind: PoolWindowKind
-  /** Accounts counted: a known weight for this window and a reading of it. */
-  accounts: number
-  /** Sum of their weights. */
-  capacity: number
-  /** Sum of weight × unused share. */
-  remaining: number
-  /** The soonest reset still ahead among the counted accounts. */
-  nextResetAt?: number | undefined
-}
-
-export type ProviderPool = {
-  provider: ProviderId
+export type ProviderPool = ResultOf<'accounts.pool'> & {
   /** The cheapest plan the weights count in, such as "Pro"; absent when no plan is known. */
   unit?: string | undefined
-  accounts: PoolAccount[]
-  windows: PoolWindowTotal[]
-  /**
-   * Ready, not at a limit, and its weekly window resets soonest, so the
-   * allowance about to lapse is used first. Accounts without a weekly reset
-   * come last; equal ones keep their listed order.
-   */
-  recommended?: AccountId | undefined
 }
 
 type PlanTable = { unit: string; plans: ReadonlyMap<string, PoolWeights> }
 
 /**
- * Plan sizes as of 2026-11-03 (research-plan-limits.md). Keys are plan
- * labels as the adapters report them, normalized by `planKey`. A plan left
- * out, or a window it leaves out, is unknown and stays out of the totals:
- * Claude Team's weekly multiple and Free, Enterprise or Edu plans are not
- * published. Claude Ultra (formerly Max 20x) has no 5-hour window once
- * verified, so it has a weekly size only.
+ * Plan sizes as of 2026-11-03 (research-plan-limits.md), the same as the
+ * adapters' `claudePlanWeights` and `codexPlanWeights` on the server. Keys
+ * are plan labels as the adapters report them, normalized by `planKey`. A
+ * plan left out, or a window it leaves out, is unknown and stays out of the
+ * totals: Claude Team's weekly multiple and Free, Enterprise or Edu plans
+ * are not published. Claude Ultra (formerly Max 20x) and Codex Pro have no
+ * 5-hour window, so they have a weekly size only.
  */
 const PLAN_TABLES: ReadonlyMap<ProviderId, PlanTable> = new Map<ProviderId, PlanTable>([
   [
@@ -108,6 +70,7 @@ const PLAN_TABLES: ReadonlyMap<ProviderId, PlanTable> = new Map<ProviderId, Plan
         ['max x5', { session: 5, weekly: 5 }],
         ['max x20', { weekly: 10 }],
         ['ultra', { weekly: 10 }],
+        ['team', { session: 1.25 }],
         ['team standard', { session: 1.25 }],
         ['team premium', { session: 6.25 }],
       ]),
@@ -121,8 +84,8 @@ const PLAN_TABLES: ReadonlyMap<ProviderId, PlanTable> = new Map<ProviderId, Plan
         ['plus', { session: 1, weekly: 1 }],
         ['team', { session: 1, weekly: 1 }],
         ['business', { session: 1, weekly: 1 }],
-        ['pro x5', { session: 5, weekly: 5 }],
-        ['pro x20', { session: 20, weekly: 20 }],
+        ['pro x5', { weekly: 5 }],
+        ['pro x20', { weekly: 20 }],
       ]),
     },
   ],
@@ -188,20 +151,18 @@ export function poolWindows(limits: readonly ProviderLimit[]): PoolWindow[] {
   return windows
 }
 
+/**
+ * As the contract has it: `ready` once limits with a Session or Weekly
+ * window are held, `unknown` while none are, after a failed read or when
+ * the account has no plan limits. `unavailable` (the account cannot run,
+ * such as a missing folder) is only known to the server.
+ */
 function readingOf(state: UsageSummaryState): Pick<PoolAccount, 'status' | 'stale' | 'windows'> {
   const source = sourceOf(state)
-  if (!source) {
-    // A failed first read that still retries on its own is not settled yet.
-    const failed = state.status === 'error' && state.retry === undefined
-    return { status: failed ? 'unavailable' : 'unknown', windows: [] }
-  }
-  if (source.status === 'unavailable') {
-    return { status: state.status === 'loading' ? 'unknown' : 'unavailable', windows: [] }
-  }
-  const windows = poolWindows(source.limits)
-  if (windows.length === 0) return { status: 'unavailable', windows }
+  const windows = source?.status === 'ready' ? poolWindows(source.limits) : []
+  if (source?.status !== 'ready' || windows.length === 0) return { status: 'unknown', windows: [] }
   const stale = source.stale === true || state.status === 'error'
-  return { status: 'ready', ...(stale ? { stale: true } : {}), windows }
+  return { status: 'ready', ...(stale ? { stale: true as const } : {}), windows }
 }
 
 /** What is left of a window, 0 to 1. A window whose reset has passed is whole again. */

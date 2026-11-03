@@ -10,17 +10,13 @@ import {
 import {
   DEFAULT_ACCOUNT_ID,
   type AccountId,
+  type PoolWindowTotal,
   type ProviderId,
   type ProviderLimitSource,
   type ResultOf,
 } from '@harness/contracts'
 import { IconChevronRight as ChevronRight, IconRefresh as RefreshCw } from '@tabler/icons-react'
-import {
-  multipleText,
-  poolSegments,
-  type PoolWindowTotal,
-  type ProviderPool,
-} from '../account-pool.js'
+import { multipleText, poolSegments, type ProviderPool } from '../account-pool.js'
 import type { AccountLabel } from '../provider-accounts-state.js'
 import { providerDisplayName, providerMark } from '../provider-presentation.js'
 import { limitKey, USAGE_LOW_PERCENT } from '../usage-limits-state.js'
