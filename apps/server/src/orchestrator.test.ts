@@ -9122,7 +9122,7 @@ describe('sidebar inbox lifecycle', () => {
 })
 
 describe('session-owned subagent snapshots', () => {
-  it.each(['disconnect', 'close', 'shutdown', 'stop', 'idle release'] as const)(
+  it.each(['disconnect', 'close', 'shutdown', 'idle release'] as const)(
     'settles a running subagent on %s and preserves its parent turn outcome',
     async (end) => {
       if (end === 'idle release') vi.useFakeTimers()
@@ -9141,16 +9141,14 @@ describe('session-owned subagent snapshots', () => {
           subagent: { id: 'reviewer', state: 'running' as const, background: true, toolUses: 3 },
         }
         session.emit({ type: 'item.completed', item })
-        if (end !== 'stop')
-          session.emit({ type: 'turn.completed', turnId: item.turnId, status: 'completed' })
+        session.emit({ type: 'turn.completed', turnId: item.turnId, status: 'completed' })
         const latest = () => reduceEventLog(emptyThread, store.history(thread.id))
         expect(latest().items.find(({ id }) => id === item.id)?.subagent?.state).toBe('running')
 
         if (end === 'disconnect') session.emitDisconnected()
         else if (end === 'close') await orchestrator.close(thread.id)
         else if (end === 'shutdown') await orchestrator.disposeAll()
-        else if (end === 'idle release') await vi.advanceTimersByTimeAsync(1_000)
-        else await orchestrator.interrupt(thread.id)
+        else await vi.advanceTimersByTimeAsync(1_000)
 
         expect(latest().items.find(({ id }) => id === item.id)).toMatchObject({
           status: 'completed',
@@ -9162,16 +9160,72 @@ describe('session-owned subagent snapshots', () => {
             .history(thread.id)
             .filter(({ event }) => event.type === 'turn.completed')
             .at(-1)?.event,
-        ).toMatchObject({
-          turnId: item.turnId,
-          status: end === 'stop' ? 'interrupted' : 'completed',
-        })
+        ).toMatchObject({ turnId: item.turnId, status: 'completed' })
       } finally {
         await orchestrator.disposeAll()
         vi.useRealTimers()
       }
     },
   )
+
+  it('leaves a background subagent running on Stop and settles a launch still open', async () => {
+    const { orchestrator, sessions, store } = harness(undefined, new Store(':memory:'))
+    try {
+      const thread = await orchestrator.startThread('codex', '/repo')
+      const session = sessions[0]!
+      session.turnIds = ['launch-turn', 'stopped-turn']
+      await orchestrator.sendTurn(thread.id, 'Review the design in the background')
+      // Launched by an earlier turn: its launching call completed and it runs on.
+      session.emit({
+        type: 'item.completed',
+        item: {
+          id: 'reviewer',
+          turnId: 'launch-turn',
+          type: 'tool_call',
+          status: 'completed',
+          text: 'Reviewer launched',
+          createdAt: 1,
+          subagent: { id: 'reviewer', state: 'running', background: true, toolUses: 3 },
+        },
+      })
+      session.emit({ type: 'turn.completed', turnId: 'launch-turn', status: 'completed' })
+      await orchestrator.sendTurn(thread.id, 'Explore the repo')
+      // The stopped turn's own launching call has not completed yet.
+      session.emit({
+        type: 'item.started',
+        item: {
+          id: 'explorer',
+          turnId: 'stopped-turn',
+          type: 'tool_call',
+          status: 'started',
+          text: 'Explorer launched',
+          createdAt: 2,
+          subagent: { id: 'explorer', state: 'running' },
+        },
+      })
+
+      await orchestrator.interrupt(thread.id)
+
+      // Stop ends the running turn only; background work keeps running (#2058).
+      const items = reduceEventLog(emptyThread, store.history(thread.id)).items
+      expect(items.find(({ id }) => id === 'reviewer')).toMatchObject({
+        status: 'completed',
+        subagent: { state: 'running', background: true, toolUses: 3 },
+      })
+      expect(items.find(({ id }) => id === 'explorer')).toMatchObject({
+        status: 'failed',
+        subagent: { state: 'interrupted' },
+      })
+      expect(
+        store
+          .history(thread.id)
+          .filter(({ event }) => event.type === 'turn.completed')
+          .at(-1)?.event,
+      ).toMatchObject({ turnId: 'stopped-turn', status: 'interrupted' })
+    } finally {
+      await orchestrator.disposeAll()
+    }
+  })
 })
 
 describe('queued turns', () => {

@@ -3431,11 +3431,18 @@ export class Store {
    * Restart recovery settles these for a dead process; a runtime force-stopped
    * while the server keeps running needs the same, or its turn and requests
    * stay open in the log until the next restart. The caller records them.
+   *
+   * `launchedSubagents: false` leaves out sub-agents whose launching call
+   * already completed: they run in the background, past the turn that started
+   * them, while their runtime lives.
    */
-  interruptedLifecycleEvents(threadId: string): DomainEvent[] {
+  interruptedLifecycleEvents(
+    threadId: string,
+    { launchedSubagents = true }: { launchedSubagents?: boolean } = {},
+  ): DomainEvent[] {
     const rows = sqliteRows<InterruptedThreadRow>(this.#readInterruptedThread, threadId)
     const state = this.#interruptedThreadStates(rows).get(threadId)
-    return state ? interruptedLifecycleEvents(state, Date.now()) : []
+    return state ? interruptedLifecycleEvents(state, Date.now(), launchedSubagents) : []
   }
 
   /** Returns the sequence number, which is what a client resumes from. */
@@ -4956,9 +4963,15 @@ function recoveryMutation(event: DomainEvent): RecoveryMutation | undefined {
 }
 
 /** The terminal events that settle every lifecycle a dead runtime left open. */
-function interruptedLifecycleEvents(state: InterruptedThreadState, at: number): DomainEvent[] {
+function interruptedLifecycleEvents(
+  state: InterruptedThreadState,
+  at: number,
+  launchedSubagents = true,
+): DomainEvent[] {
   const events: DomainEvent[] = []
   for (const item of state.activeItems.values()) {
+    // Only a sub-agent's row stays open after its launching call completed.
+    if (!launchedSubagents && item.subagent && item.status !== 'started') continue
     // Omitting text preserves every persisted delta when the renderer
     // folds this terminal item over the streamed version.
     const { text: _streamedText, ...started } = item

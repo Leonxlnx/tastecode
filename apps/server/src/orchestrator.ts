@@ -4841,7 +4841,9 @@ export class Orchestrator {
     this.#recordedDeltas.flush(threadId)
     let open: DomainEvent[] = []
     try {
-      open = this.#store.interruptedLifecycleEvents(threadId)
+      // Stop ends the running turn only. A background sub-agent whose launching call already
+      // completed keeps running in the live session, which reports how it ends.
+      open = this.#store.interruptedLifecycleEvents(threadId, { launchedSubagents: false })
     } catch (error) {
       this.#onLog(`Could not settle the stopped turn's open work: ${errorMessage(error)}`)
     }
