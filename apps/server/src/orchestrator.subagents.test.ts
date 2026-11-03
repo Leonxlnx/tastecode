@@ -459,3 +459,24 @@ describe('sub-agents on another provider without the setting', { timeout: 30_000
     expect(h.started[1]!.provider).toBe('opencode')
   })
 })
+
+describe('prompting a sub-agent from its own chat', { timeout: 30_000 }, () => {
+  it('sends the prompt to the child and runs its finished row again', async () => {
+    const h = harness()
+    const { parent, childSession, childId } = await runningChild(h)
+    const lastRow = () => subagentRows(h.parentEvents, parent.id).at(-1)?.subagent
+    childSession.emit({ type: 'turn.completed', turnId: childSession.turnId, status: 'completed' })
+    await until(() => lastRow()?.state === 'completed')
+
+    await h.orchestrator.submitTurn(childId, 'Also check src/b.ts.')
+    await until(() => childSession.sent.length === 2)
+    expect(childSession.sent[1]).toContain('Also check src/b.ts.')
+    childSession.emit({
+      type: 'turn.started',
+      turn: { id: childSession.turnId, threadId: childId, status: 'running', createdAt: Date.now() },
+    })
+    await until(() => lastRow()?.state === 'running')
+    childSession.emit({ type: 'turn.completed', turnId: childSession.turnId, status: 'completed' })
+    await until(() => lastRow()?.state === 'completed')
+  })
+})
