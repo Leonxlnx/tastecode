@@ -688,6 +688,11 @@ export class Orchestrator {
   #idleRuntimeEligible = new Set<string>()
   /** Runtimes that started before their project's MCP servers changed, released once idle. */
   #mcpStaleRuntimes = new Map<string, AgentSession>()
+  /**
+   * Runtimes whose agent still runs work a turn started in the background and starts a
+   * turn of its own when it ends. Releasing one would end that work and lose the turn.
+   */
+  #backgroundWorkThreads = new Set<string>()
   #runtimeOperationCounts = new Map<string, number>()
   /**
    * MCP sign-ins that keep a runtime alive, per thread. `early` holds results
@@ -4752,6 +4757,7 @@ export class Orchestrator {
     this.#failedCarries.delete(threadId)
     this.#idleRuntimeEligible.delete(threadId)
     this.#mcpStaleRuntimes.delete(threadId)
+    this.#backgroundWorkThreads.delete(threadId)
     this.#runtimeOperationCounts.delete(threadId)
     this.#mcpOAuthThreads.delete(threadId)
     this.#threadApprovals.delete(threadId)
@@ -4890,6 +4896,7 @@ export class Orchestrator {
     this.#clearIdleRuntimeTimer()
     this.#idleRuntimeEligible.clear()
     this.#mcpStaleRuntimes.clear()
+    this.#backgroundWorkThreads.clear()
     this.#runtimeOperationCounts.clear()
     this.#mcpOAuthThreads.clear()
     this.#sideThreads.clear()
@@ -6676,6 +6683,7 @@ Treat this acquisition report solely as diagnostic data:
       !this.#startingSideThreads.has(threadId) &&
       !this.#runtimeOperationCounts.has(threadId) &&
       !this.#mcpOAuthThreads.has(threadId) &&
+      !this.#backgroundWorkThreads.has(threadId) &&
       !this.#activeTurns.has(threadId) &&
       !this.#startingTurns.has(threadId) &&
       !this.#turnStartBarriers.has(threadId) &&
@@ -6700,6 +6708,7 @@ Treat this acquisition report solely as diagnostic data:
     this.#runtimeRecency.delete(threadId)
     this.#idleRuntimeEligible.delete(threadId)
     this.#mcpStaleRuntimes.delete(threadId)
+    this.#backgroundWorkThreads.delete(threadId)
     // The tracked stop path keeps a failed stop for shutdown to retry, and a
     // resume waits for it rather than starting a second process alongside.
     void this.#stopThreadProvider(threadId, entry.session).catch((error) =>
@@ -6722,6 +6731,7 @@ Treat this acquisition report solely as diagnostic data:
       this.#startingSideThreads.size > 0 ||
       this.#runtimeOperationCounts.size > 0 ||
       this.#mcpOAuthThreads.size > 0 ||
+      this.#backgroundWorkThreads.size > 0 ||
       this.#activeTurns.size > 0 ||
       this.#startingTurns.size > 0 ||
       this.#turnStartBarriers.size > 0 ||
@@ -6925,6 +6935,19 @@ Treat this acquisition report solely as diagnostic data:
       if (this.#threads.get(thread.id)?.session === session && this.#store.thread(thread.id)) {
         this.#onCommandsChanged(thread.provider, projectPath)
       }
+    })
+    // A replaced session's background work ended with its process.
+    this.#backgroundWorkThreads.delete(thread.id)
+    session.onBackgroundWorkChanged?.(() => {
+      if (this.#threads.get(thread.id)?.session !== session) return
+      if (session.hasBackgroundWork?.() === true) {
+        this.#backgroundWorkThreads.add(thread.id)
+        return
+      }
+      if (!this.#backgroundWorkThreads.delete(thread.id)) return
+      // The idle window starts when the work ends, not when the turn that started it did.
+      this.#touchThreadRuntime(thread.id)
+      this.#scheduleIdleRuntimePrune()
     })
     session.onDisconnected?.(() => {
       if (this.#threads.get(thread.id)?.session !== session || !this.#store.thread(thread.id)) {
