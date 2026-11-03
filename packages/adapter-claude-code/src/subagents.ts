@@ -161,8 +161,9 @@ export class ClaudeSubagents {
       if (run.subagent.state === 'running') {
         this.#settle(run, 'interrupted')
         this.#flush(run)
-      } else {
-        this.#cancelTimer(run)
+      } else if (run.timer) {
+        // A terminal task update may still be waiting for the progress throttle.
+        this.#flush(run)
       }
     }
     this.#runs.clear()
