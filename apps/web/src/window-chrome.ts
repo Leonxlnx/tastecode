@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef } from 'react'
+import { useEffect, useLayoutEffect, useRef } from 'react'
 import { isDesktop, setDesktopWindowChrome, type WindowChrome } from './bridge.js'
 
 type Theme = WindowChrome['theme']
@@ -8,6 +8,13 @@ const FALLBACK = {
   light: { background: '#fdfdfd', caption: '#fcfcfc', symbol: '#27272a' },
   dark: { background: '#0f0f0f', caption: '#131313', symbol: '#f4f4f5' },
 } satisfies Record<Theme, Omit<WindowChrome, 'theme'>>
+
+/**
+ * The caption colour while a window background is on: fully transparent, so
+ * the native caption buttons show the page's see-through title bar (and the
+ * background behind it) instead of an opaque box.
+ */
+export const SEE_THROUGH_CAPTION = '#00000000'
 
 const RGB = /^rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)\s*(?:[,/]\s*([\d.]+%?)\s*)?\)$/i
 const SRGB =
@@ -94,10 +101,15 @@ export function readWindowChrome(theme: Theme): WindowChrome {
   const rail = opaqueHex(style.borderTopColor)
   probe.remove()
   const fallback = FALLBACK[theme]
+  // With a window background (app-background.css) nothing under the buttons
+  // is opaque unless something covers the title bar, as Settings does.
+  const seeThrough = document.documentElement.hasAttribute('data-app-bg')
   return {
     theme,
     background: background ?? fallback.background,
-    caption: backgroundAt(window.innerWidth - 2, 2) ?? rail ?? fallback.caption,
+    caption:
+      backgroundAt(window.innerWidth - 2, 2) ??
+      (seeThrough ? SEE_THROUGH_CAPTION : (rail ?? fallback.caption)),
     symbol: symbol ?? fallback.symbol,
   }
 }
@@ -113,20 +125,46 @@ export function readWindowChrome(theme: Theme): WindowChrome {
  * forced a style and layout pass there (about 30 ms when Settings opens) that
  * the frame then recalculated after the probe and the effects touched the
  * document again.
+ *
+ * A window background is applied by a lazily loaded layer, after the render
+ * that chose it, so its root attribute is watched as well.
  */
 export function useWindowChrome(theme: Theme, surface: string): void {
   const sent = useRef<string | undefined>(undefined)
+  const current = useRef<Theme>(theme)
   useLayoutEffect(() => {
+    current.current = theme
     if (!isDesktop) return
-    const frame = requestAnimationFrame(() => {
-      const chrome = readWindowChrome(theme)
-      const key = JSON.stringify(chrome)
-      if (key === sent.current) return
-      sent.current = key
-      void setDesktopWindowChrome(chrome).catch(() => {
-        if (sent.current === key) sent.current = undefined
-      })
-    })
+    const frame = requestAnimationFrame(() => reportWindowChrome(theme, sent))
     return () => cancelAnimationFrame(frame)
   }, [theme, surface])
+  useEffect(() => {
+    if (!isDesktop || typeof MutationObserver === 'undefined') return
+    let frame: number | undefined
+    const observer = new MutationObserver(() => {
+      if (frame !== undefined) cancelAnimationFrame(frame)
+      frame = requestAnimationFrame(() => {
+        frame = undefined
+        reportWindowChrome(current.current, sent)
+      })
+    })
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['data-app-bg'],
+    })
+    return () => {
+      observer.disconnect()
+      if (frame !== undefined) cancelAnimationFrame(frame)
+    }
+  }, [])
+}
+
+function reportWindowChrome(theme: Theme, sent: { current: string | undefined }): void {
+  const chrome = readWindowChrome(theme)
+  const key = JSON.stringify(chrome)
+  if (key === sent.current) return
+  sent.current = key
+  void setDesktopWindowChrome(chrome).catch(() => {
+    if (sent.current === key) sent.current = undefined
+  })
 }

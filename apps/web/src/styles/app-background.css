@@ -6,8 +6,9 @@
  * nothing for Transparent, where the OS backdrop shows instead. The sidebar
  * and the chat pane turn into tinted panes over it; the prompt bar, menus,
  * code and the workspace panel keep their own opaque surfaces. The title
- * bar stays opaque, as it does with sidebar glass: the native caption
- * buttons on Windows paint a solid colour beside it.
+ * bar turns into the sidebar's pane across the whole window width, and the
+ * native caption buttons on Windows go see-through over it
+ * (window-chrome.ts), so the strip reads as one piece with the sidebar.
  *
  * Everything here is static except the aurora, which moves in half-second
  * steps on the compositor (the window repaints twice a second, not sixty
@@ -199,6 +200,13 @@
     var(--bg-rail-tint) calc(100% - var(--rail-glass, 0) * var(--app-bg-rail-fade)),
     transparent
   );
+}
+
+/* The title bar above the sidebar and the chat shows the background through
+   the sidebar's pane. On a Mac the bar is a transparent strip inside the
+   sidebar, which already paints that pane. */
+:root[data-app-bg][data-theme][data-shell][data-glass] .shell:not(.is-macos) > .titlebar {
+  background: var(--app-bg-rail-pane);
 }
 
 /* Below 700px the open sidebar is a drawer over the chat, which stays solid
