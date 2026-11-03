@@ -36,7 +36,11 @@ export async function cursorAccount(run: typeof runCli = runCursorAgent): Promis
 
 async function readCursorPlan(run: typeof runCli): Promise<string | undefined> {
   try {
-    const about = await run('cursor-agent', ['about', '--format', 'json'], CURSOR_COMMAND_TIMEOUT_MS)
+    const about = await run(
+      'cursor-agent',
+      ['about', '--format', 'json'],
+      CURSOR_COMMAND_TIMEOUT_MS,
+    )
     return about.code === 0 ? cursorPlan(about.stdout) : undefined
   } catch {
     return undefined
