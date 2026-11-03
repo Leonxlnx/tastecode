@@ -9,13 +9,9 @@ import type { ProviderId } from '@harness/contracts'
  * start them, so promotion between branches never has to delete adapters.
  * Unset (pnpm dev, `pnpm harness`, tests) offers every provider.
  */
-const RELEASE_PROVIDERS: readonly ProviderId[] = [
-  'claude-code',
-  'codex',
-  'grok',
-  'cursor',
-  'antigravity',
-]
+// Antigravity is left out of public builds: Google's Antigravity FAQ says wrapping agy
+// inside third-party apps is not supported under consumer plans (Leon, 2026-11-03).
+const RELEASE_PROVIDERS: readonly ProviderId[] = ['claude-code', 'codex', 'grok', 'cursor']
 
 let offered: ReadonlySet<ProviderId> | undefined
 

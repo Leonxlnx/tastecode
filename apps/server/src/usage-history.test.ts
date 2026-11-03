@@ -1382,7 +1382,7 @@ describe('usage history in a release build', () => {
     'acp',
     'api',
   ]
-  const releaseProviders: ProviderId[] = ['claude-code', 'codex', 'grok', 'cursor', 'antigravity']
+  const releaseProviders: ProviderId[] = ['claude-code', 'codex', 'grok', 'cursor']
 
   /** The archives one scan was asked to read, as provider:account. */
   async function scannedArchives(): Promise<string[]> {
@@ -1469,7 +1469,7 @@ describe('usage history in a release build', () => {
     })
 
     const history = await settledHistory(service, '7d')
-    expect(history.sessionCount).toBe(5)
+    expect(history.sessionCount).toBe(releaseProviders.length)
     expect(new Set(history.providers.map((provider) => provider.provider))).toEqual(
       new Set(releaseProviders),
     )
@@ -1480,8 +1480,11 @@ describe('usage history in a release build', () => {
       new Set(history.daily.flatMap((day) => day.providers.map((entry) => entry.provider))),
     ).toEqual(new Set(releaseProviders))
     expect(history.sources.map((source) => source.provider)).toEqual(releaseProviders)
-    expect(history.totals).toMatchObject({ processedTokens: 650, providerReportedTokens: 650 })
-    expect(history.totals.estimatedCostUsd).toBeCloseTo(0.05, 8)
+    expect(history.totals).toMatchObject({
+      processedTokens: 130 * releaseProviders.length,
+      providerReportedTokens: 130 * releaseProviders.length,
+    })
+    expect(history.totals.estimatedCostUsd).toBeCloseTo(0.01 * releaseProviders.length, 8)
 
     for (const accountId of [DEFAULT_ACCOUNT_ID, 'work']) {
       const alone = await service.history('7d', false, { provider: 'opencode', accountId })
