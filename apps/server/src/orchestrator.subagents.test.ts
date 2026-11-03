@@ -473,7 +473,12 @@ describe('prompting a sub-agent from its own chat', { timeout: 30_000 }, () => {
     expect(childSession.sent[1]).toContain('Also check src/b.ts.')
     childSession.emit({
       type: 'turn.started',
-      turn: { id: childSession.turnId, threadId: childId, status: 'running', createdAt: Date.now() },
+      turn: {
+        id: childSession.turnId,
+        threadId: childId,
+        status: 'running',
+        createdAt: Date.now(),
+      },
     })
     await until(() => lastRow()?.state === 'running')
     childSession.emit({ type: 'turn.completed', turnId: childSession.turnId, status: 'completed' })
