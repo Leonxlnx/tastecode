@@ -71,6 +71,8 @@ export interface SubagentHost {
   ): Promise<void>
   /** Stops the child's running turn; its chat stays readable. */
   stopChild(threadId: string): Promise<void>
+  /** Ends the child's agent process; its chat stays readable. */
+  releaseChild(threadId: string): Promise<void>
   /** The child's answer and changed files once a turn ended, from its recorded transcript. */
   outcome(threadId: string, turnId: string): SubagentOutcome
   /** Records an event on the parent's transcript and sends it to clients. */
@@ -564,8 +566,12 @@ export class SubagentBroker implements AgentToolsBroker {
     }
     live.run.threadId = threadId
     this.#runs.update(live.run.itemId, { threadId })
-    // Stopped while its chat was starting: the chat stays, without a task.
-    if (live.stopRequested || FINISHED_SUBAGENT_STATES.has(live.run.state)) return
+    // Stopped while its chat was starting: the chat stays, without a task, and
+    // the agent process it just started ends instead of idling until the parent closes.
+    if (live.stopRequested || FINISHED_SUBAGENT_STATES.has(live.run.state)) {
+      await this.#host.releaseChild(threadId).catch(() => undefined)
+      return
+    }
     this.#byChild.set(threadId, live)
     this.#flush(live)
     try {
