@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { statSync } from 'node:fs'
 import path from 'node:path'
+import { DEFAULT_ACCOUNT_ID } from '@harness/contracts'
 import type {
   DomainEvent,
   Item,
@@ -13,7 +14,11 @@ import { Store, type ProviderHistoryListing } from './store.js'
 import { projectHistoryItems, withoutContinuationContext } from './side-chat.js'
 import { DESIGN_PHASE_NOTICE, RESTORE_CONTEXT_NOTICE } from './provider-session.js'
 
-type Source = { provider: ProviderId; history: ProviderHistorySource }
+type Source = {
+  provider: ProviderId
+  history: ProviderHistorySource
+  forAccount?(accountHome: string): Promise<ProviderHistorySource>
+}
 type Imported = {
   provider: ProviderId
   threadId: string
@@ -34,6 +39,7 @@ export class ProviderHistory {
   /** Each source's stored listings, read from the store at its first scan. */
   #listings = new Map<ProviderId, Map<string, ProviderHistoryListing>>()
   #closed = false
+  #accountSources = new Map<string, Promise<ProviderHistorySource>>()
 
   constructor(
     private store: Store,
@@ -43,6 +49,7 @@ export class ProviderHistory {
       canImport?(): boolean
       changed(threadIds: string[]): void
       log(message: string): void
+      accountHome?(threadId: string): string | undefined
     },
   ) {
     for (const entry of store.providerHistories()) this.#remember(entry)
@@ -68,6 +75,55 @@ export class ProviderHistory {
   hasCopy(threadId: string): boolean {
     const entry = this.#byThread.get(threadId)
     return entry !== undefined && !entry.session.internal
+  }
+
+  /** Native child history is read on demand; it never starts or resumes an engine. */
+  async readSubagentTranscript(threadId: string, itemId: string): Promise<Item[]> {
+    const thread = this.store.thread(threadId)
+    if (!thread) throw new Error('Thread not found')
+    const item = this.store.itemSnapshot(threadId, itemId)
+    if (!item?.subagent || item.type !== 'tool_call' || item.subagent.threadId) {
+      throw new Error('Native subagent not found in this thread')
+    }
+    const registered = this.sources.find(({ provider }) => provider === thread.provider)
+    if (this.#closed || !registered?.history.readSubagentTranscript) return []
+    const namedAccount = thread.accountId !== undefined && thread.accountId !== DEFAULT_ACCOUNT_ID
+    if (namedAccount && !this.hooks.accountHome) return []
+    const accountHome = this.hooks.accountHome?.(threadId)
+    if (namedAccount && accountHome === undefined) return []
+    let source = registered.history
+    if (accountHome !== undefined) {
+      if (!registered.forAccount) return []
+      const key = `${thread.provider}\0${accountHome}`
+      let pending = this.#accountSources.get(key)
+      if (!pending) {
+        pending = registered.forAccount(accountHome).catch((error: unknown) => {
+          this.#accountSources.delete(key)
+          throw error
+        })
+        this.#accountSources.set(key, pending)
+      }
+      source = await pending
+    }
+    if (this.#closed || !source.readSubagentTranscript) return []
+    const linked = this.#byThread.get(threadId)
+    const session =
+      accountHome === undefined && linked?.provider === thread.provider ? linked.session : undefined
+    const id = thread.providerSessionId ?? session?.id
+    if (!id) return []
+    return source.readSubagentTranscript(
+      session?.id === id
+        ? session
+        : {
+            id,
+            workspacePath: thread.worktreePath ?? thread.projectPath,
+            title: thread.title,
+            createdAt: thread.createdAt,
+            updatedAt: thread.lastActiveAt,
+            revision: '',
+          },
+      item,
+    )
   }
 
   /**
@@ -445,7 +501,14 @@ export class ProviderHistory {
     this.#closed = true
     for (const scan of this.#scanned.values()) scan.settle()
     await Promise.allSettled([this.#refreshing, ...this.#reading.values()])
-    await Promise.allSettled(this.sources.map(({ history }) => history.dispose?.()))
+    const accounts = await Promise.allSettled(this.#accountSources.values())
+    await Promise.allSettled([
+      ...this.sources.map(({ history }) => history.dispose?.()),
+      ...accounts.map((result) =>
+        result.status === 'fulfilled' ? result.value.dispose?.() : undefined,
+      ),
+    ])
+    this.#accountSources.clear()
   }
 }
 

@@ -16,6 +16,11 @@ const AgentInputSchema = z.object({
   run_in_background: z.boolean().optional(),
 })
 
+const ChildMessageSchema = z.object({
+  parent_tool_use_id: z.string(),
+  agent_id: z.string(),
+})
+
 const TaskUsageSchema = z.object({
   total_tokens: z.number().int().nonnegative(),
   tool_uses: z.number().int().nonnegative(),
@@ -145,6 +150,16 @@ export class ClaudeSubagents {
     return true
   }
 
+  /** Child snapshots also identify the saved sidechain when a launcher omits task_started. */
+  onChildMessage(message: unknown): void {
+    const parsed = ChildMessageSchema.safeParse(message)
+    if (!parsed.success) return
+    const run = this.#runs.get(parsed.data.parent_tool_use_id)
+    if (!run || run.subagent.transcriptId === parsed.data.agent_id) return
+    run.subagent = { ...run.subagent, transcriptId: parsed.data.agent_id }
+    this.#schedule(run)
+  }
+
   /** The turn ended: an agent it waited on cannot report any more. */
   endTurn(state: SubagentState): void {
     for (const [toolUseId, run] of this.#runs) {
@@ -178,6 +193,7 @@ export class ClaudeSubagents {
         this.#tasks.set(task.task_id, toolUseId)
         run.subagent = {
           ...run.subagent,
+          transcriptId: task.task_id,
           ...(!run.subagent.name && task.subagent_type ? { name: task.subagent_type } : {}),
           ...(task.is_backgrounded ? { background: true } : {}),
         }

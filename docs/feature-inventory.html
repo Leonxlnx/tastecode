@@ -225,7 +225,7 @@
       <div class="topbar-inner">
         <h1>Feature Inventory</h1>
         <span class="total" id="total">0 checked</span>
-        <span class="meta">2026-11-03 dev c3c76d3a · includes main 41c61109</span>
+        <span class="meta">2026-11-03 dev f84a6dfc · includes main 41c61109</span>
       </div>
     </div>
 
@@ -2595,9 +2595,15 @@
                 <span class="d"
                   >a row opens its detail in the tab: one TasteCode started shows its own chat
                   read-only and live, with its approvals and questions answerable and a Stop button;
-                  one the engine runs itself shows its task, current tool and report with
-                  "Transcript not available for this engine yet"; the back arrow returns to the
-                  list</span
+                  native Claude Code helpers show their saved delegated prompt, tools and full
+                  answer through an optional adapter capability (draft
+                  <a href="https://github.com/Leonxlnx/tastecode/pull/2079">#2079</a>, not merged).
+                  Only the open detail refreshes while running, every five seconds while the window
+                  is visible and once more when it finishes; screenshots show as "[Screenshot
+                  1280×800]" and a long one shows its newest 400 steps with "N earlier steps are not
+                  shown."; unsupported engines keep the task, current tool and report snapshot, and
+                  a finished Claude helper without a saved file adds "This subagent's conversation
+                  was not saved." The back arrow returns to the list</span
                 ></span
               ></label
             >
