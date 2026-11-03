@@ -106,7 +106,7 @@ const busy = () => document.querySelector('.onboarding__pick [aria-busy="true"]'
 const lead = () => document.querySelector('.onboarding__lead')?.textContent
 
 describe('first-run onboarding', () => {
-  it('walks welcome → name → appearance → agents → project and keeps progress honest', () => {
+  it('walks welcome → name → appearance → agents → sub-agents → project and keeps progress honest', () => {
     const props = renderOnboarding({ displayName: 'Blue Emi' })
     const progress = screen.getByRole('list', { name: 'Setup progress' })
     const current = () => progress.querySelector('[aria-current="step"]')?.textContent
@@ -135,9 +135,17 @@ describe('first-run onboarding', () => {
     expect(current()).toBe('Coding agents')
     next()
 
+    expect(screen.getByRole('heading', { name: 'Sub-agents on other providers' })).toBeTruthy()
+    expect(current()).toBe('Sub-agents')
+    // Nothing is preselected: moving on leaves the answer open, which counts as off.
+    expect(screen.getAllByRole('radio').some((radio) => (radio as HTMLInputElement).checked)).toBe(
+      false,
+    )
+    next()
+
     expect(screen.getByRole('heading', { name: 'Open your first project' })).toBeTruthy()
     expect(current()).toBe('First project')
-    expect(progress.querySelectorAll('.is-done')).toHaveLength(5)
+    expect(progress.querySelectorAll('.is-done')).toHaveLength(6)
     expect(screen.queryByRole('button', { name: 'Skip setup' })).toBeNull()
 
     fireEvent.click(screen.getByRole('button', { name: /^Choose a folder/ }))
@@ -286,6 +294,7 @@ describe('first-run onboarding', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /^Get started/ }))
     await act(async () => next())
+    next()
     next()
     next()
     expect(incoming()).toBe('open')
@@ -486,6 +495,7 @@ describe('agents page before the provider list answers', () => {
     expect(dialogText()).not.toMatch(PROVIDER_NAMES)
     // Setup goes on without it.
     next()
+    next()
     expect(screen.getByRole('heading', { name: 'Open your first project' })).toBeTruthy()
   })
 })
@@ -507,5 +517,41 @@ describe('providerReadiness', () => {
       tone: 'ready',
     })
     expect(providerReadiness(codexReady)).toEqual({ label: 'Signed in', tone: 'ready' })
+  })
+})
+
+describe('sub-agents page', () => {
+  const toSubagentsPage = () => {
+    toAgentsPage()
+    next()
+    expect(screen.getByRole('heading', { name: 'Sub-agents on other providers' })).toBeTruthy()
+  }
+
+  it('stores the answer the moment it is chosen', async () => {
+    const request = vi.fn(async (method: string, params: unknown) =>
+      method === 'subagents.updateSettings' ? params : {},
+    )
+    renderOnboarding({ transport: { request } as unknown as Props['transport'] })
+    toSubagentsPage()
+    await act(async () => {
+      fireEvent.click(screen.getByRole('radio', { name: /^Allow/ }))
+    })
+    expect(request).toHaveBeenCalledWith('subagents.updateSettings', { otherProviders: true })
+    expect((screen.getByRole('radio', { name: /^Allow/ }) as HTMLInputElement).checked).toBe(true)
+    await act(async () => {
+      fireEvent.click(screen.getByRole('radio', { name: /^Only when I ask/ }))
+    })
+    expect(request).toHaveBeenLastCalledWith('subagents.updateSettings', { otherProviders: false })
+  })
+
+  it('shows an earlier answer', async () => {
+    const request = vi.fn(async () => ({ otherProviders: false }))
+    await act(async () => {
+      renderOnboarding({ transport: { request } as unknown as Props['transport'] })
+    })
+    toSubagentsPage()
+    expect(
+      (screen.getByRole('radio', { name: /^Only when I ask/ }) as HTMLInputElement).checked,
+    ).toBe(true)
   })
 })

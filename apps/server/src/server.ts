@@ -1748,6 +1748,12 @@ export function startServer(
       case 'sidebar.settings':
         return store.sidebarSettings()
 
+      case 'subagents.settings':
+        return store.subagentSettings()
+
+      case 'subagents.updateSettings':
+        return store.setSubagentOtherProviders(parseParams(method, params).otherProviders)
+
       case 'phone.status':
         return phoneAccess.status()
 
