@@ -2,7 +2,13 @@ import { EventEmitter } from 'node:events'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import path from 'node:path'
 import type { ApprovalMode, Capabilities, DomainEvent, Model, Thread } from '@harness/contracts'
-import { argumentPromptLimit, killTree, ProtocolFrameError, readNdjson } from '@harness/proc'
+import {
+  argumentPromptLimit,
+  holdsProcessGroup,
+  killTree,
+  ProtocolFrameError,
+  readNdjson,
+} from '@harness/proc'
 import { z } from 'zod'
 import { ANTIGRAVITY_ENVIRONMENT, antigravityCommand, spawnAgy, type AgySpawn } from './command.js'
 import { agyCommandName, isAgyAnsweredCommand } from './commands.js'
@@ -197,11 +203,12 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
   #conversationId: string | undefined
   #child: ChildProcessWithoutNullStreams | undefined
   /**
-   * Turns whose agy has exited. On POSIX their process group stays, with any
-   * server the turn started, until dispose; the oldest are let go to the
-   * app-exit cleanup so a long chat does not hold every turn's process.
+   * Turns whose agy exited cleanly and whose POSIX process group still has
+   * members, such as a server the turn started. Dispose stops them.
    */
   #finishedTurns = new Set<ChildProcessWithoutNullStreams>()
+  /** Turns whose agy reported a successful result and is only closing. */
+  #answered = new WeakSet<ChildProcessWithoutNullStreams>()
   /** Why we killed a child: only an explicit Stop completes the turn. */
   #killReasons = new WeakMap<ChildProcessWithoutNullStreams, 'interrupt' | 'silent'>()
   #turnCounter = 0
@@ -265,7 +272,10 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
     // agy expands a slash command or skill only at the start of the prompt, so
     // a command goes alone and the instructions wait for the next prompt.
     const carriesInstructions = this.#instructionsPending && !agyCommandName(text)
-    const instructions = [this.#options.instructions, antigravityBackgroundNote()]
+    const instructions = [
+      this.#options.instructions,
+      antigravityBackgroundNote(this.#workspacePath),
+    ]
       .filter(Boolean)
       .join('\n\n')
     const prompt = carriesInstructions
@@ -278,7 +288,7 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
 
     // A turn already in flight would be orphaned by the reassignment below —
     // its exit handler must also not clobber the new child's reference.
-    if (this.#child) await this.#stop(this.#child)
+    if (this.#child) await this.#retire(this.#child)
     const child = this.#spawn(antigravityCommand(), args, {
       cwd: this.#workspacePath,
       env: ANTIGRAVITY_ENVIRONMENT,
@@ -287,12 +297,17 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
       keepGroupAfterExit: true,
     })
     this.#child = child
-    child.once('exit', () => {
-      this.#finishedTurns.add(child)
-      for (const old of this.#finishedTurns) {
-        if (this.#finishedTurns.size <= MAX_FINISHED_TURNS) break
-        this.#finishedTurns.delete(old)
+    child.once('exit', (code) => {
+      // Only a turn agy finished keeps what it started; a failed or stopped
+      // one takes its leftovers with it, as before.
+      if (code !== 0) {
+        void killTree(child).catch(() => undefined)
+        return
       }
+      for (const old of this.#finishedTurns) {
+        if (!holdsProcessGroup(old)) this.#finishedTurns.delete(old)
+      }
+      if (holdsProcessGroup(child)) this.#finishedTurns.add(child)
     })
 
     this.emit('event', {
@@ -375,6 +390,7 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
             })
           }
           if (frame.result.status === 'SUCCESS') {
+            this.#answered.add(child)
             this.emit('event', { type: 'turn.completed', turnId, status: 'completed' })
             return
           }
@@ -509,7 +525,7 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
    * leaves no conversation, so the chat's next prompt resumes as before.
    */
   async #answerCommand(threadId: string, turnId: string, text: string): Promise<string> {
-    if (this.#child) await this.#stop(this.#child)
+    if (this.#child) await this.#retire(this.#child)
     const child = this.#spawn(
       antigravityCommand(),
       ['-p', text.trim(), '--output-format', 'json'],
@@ -605,12 +621,24 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
 
   dispose(): Promise<void> {
     // Servers earlier turns left running end with the chat's runtime.
-    for (const finished of this.#finishedTurns) void killTree(finished).catch(() => undefined)
+    const finished = [...this.#finishedTurns].map((child) => killTree(child).catch(() => undefined))
     this.#finishedTurns.clear()
     const stopped = this.#child ? this.#stop(this.#child) : this.#processStop
     this.#child = undefined
     this.#processStop = stopped
-    return stopped
+    return Promise.all([stopped, ...finished]).then(() => undefined)
+  }
+
+  /**
+   * Makes way for a new turn. An agy that already answered is only closing:
+   * it gets a moment to exit, and then only agy itself is stopped, so its
+   * process group, with a server the turn started, stays.
+   */
+  async #retire(child: ChildProcessWithoutNullStreams): Promise<void> {
+    if (!this.#answered.has(child)) return this.#stop(child)
+    if (await exitsWithin(child, ANSWERED_EXIT_WAIT_MS)) return
+    this.#killReasons.set(child, 'silent')
+    child.kill()
   }
 
   #stop(
@@ -624,22 +652,47 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
   }
 }
 
-/** Finished turns whose process groups dispose still stops. */
-const MAX_FINISHED_TURNS = 20
+/**
+ * How long a new turn waits for the previous agy, which has answered and is
+ * only closing, to exit by itself. Stopping its tree instead would end a
+ * server that turn started; a queued prompt starts a turn at once.
+ */
+const ANSWERED_EXIT_WAIT_MS = 5_000
+
+function exitsWithin(child: ChildProcessWithoutNullStreams, ms: number): Promise<boolean> {
+  if (child.exitCode != null || child.signalCode != null) return Promise.resolve(true)
+  return new Promise((resolve) => {
+    const done = () => {
+      clearTimeout(timer)
+      resolve(true)
+    }
+    const timer = setTimeout(() => {
+      child.off('exit', done)
+      resolve(false)
+    }, ms)
+    timer.unref()
+    child.once('exit', done)
+  })
+}
 
 /**
  * agy runs the commands of a turn in a Windows job object (agy.exe imports
  * CreateJobObject and AssignProcessToJobObject), and its process ends with the
  * turn, so a dev server it started stopped as soon as the answer was in. A
- * process created through WMI is not in that job. On POSIX the turn's process
+ * process created through WMI is not in that job; it also outlives TasteCode,
+ * like a server the user starts in a terminal. On POSIX the turn's process
  * group is kept after agy exits (keepGroupAfterExit), and a `nohup … &`
- * command outlives agy's own shell.
+ * command outlives agy's own shell. Logs go to the temp folder, not the project.
  */
-export function antigravityBackgroundNote(platform: NodeJS.Platform = process.platform): string {
+export function antigravityBackgroundNote(
+  workspacePath: string,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  const folder = workspacePath.replaceAll("'", "''")
   const start =
     platform === 'win32'
-      ? `powershell -NoProfile -Command "Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = 'cmd /c npm run dev > dev-server.log 2>&1'; CurrentDirectory = '<project folder>' }"`
-      : 'nohup npm run dev > dev-server.log 2>&1 &'
+      ? `powershell -NoProfile -Command "Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = 'cmd /c npm run dev > %TEMP%\\dev-server.log 2>&1'; CurrentDirectory = '${folder}'; ProcessStartupInformation = (New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{ ShowWindow = [uint16]0 }) }"`
+      : 'nohup npm run dev > "${TMPDIR:-/tmp}/dev-server.log" 2>&1 < /dev/null &'
   return [
     'Every process you start ends when your answer ends. To leave a dev server or another long-running process running for the user after you answer, start it detached and write its output to a log file, for example:',
     start,

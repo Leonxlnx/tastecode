@@ -60,6 +60,11 @@ export function spawnOwned(
   return child
 }
 
+/** Whether child's POSIX process group is still owned: its members have not all ended. */
+export function holdsProcessGroup(child: KillableProcess): boolean {
+  return groups.has(child)
+}
+
 /** How often a group kept after its leader's exit is checked for members. */
 const KEPT_GROUP_POLL_MS = 2_000
 

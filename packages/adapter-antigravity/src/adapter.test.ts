@@ -420,17 +420,46 @@ describe('Antigravity turn invocation', () => {
     await adapter.sendTurn(thread.id, 'Start the site')
     const prompt = record.args?.[record.args.indexOf('-p') + 1]
     expect(prompt).toContain('<system-instructions>')
-    expect(prompt).toContain(antigravityBackgroundNote())
+    expect(prompt).toContain(antigravityBackgroundNote('C:\\repo'))
     expect(prompt).toContain('Start the site')
   })
 
   it('starts a lasting server outside agy on each platform', () => {
-    // agy's Windows job object ends what agy started; WMI creates outside it.
-    expect(antigravityBackgroundNote('win32')).toContain(
-      'Invoke-CimMethod -ClassName Win32_Process',
-    )
-    expect(antigravityBackgroundNote('darwin')).toContain('nohup ')
-    expect(antigravityBackgroundNote('linux')).not.toContain('Invoke-CimMethod')
+    // agy's Windows job object ends what agy started; WMI creates outside it,
+    // hidden and in the chat's folder.
+    const windows = antigravityBackgroundNote("C:\\Leon's work", 'win32')
+    expect(windows).toContain('Invoke-CimMethod -ClassName Win32_Process')
+    expect(windows).toContain("CurrentDirectory = 'C:\\Leon''s work'")
+    expect(windows).toContain('ShowWindow = [uint16]0')
+    expect(windows).toContain('%TEMP%\\dev-server.log')
+    expect(antigravityBackgroundNote('/work', 'darwin')).toContain('nohup ')
+    expect(antigravityBackgroundNote('/work', 'darwin')).toContain('< /dev/null &')
+    expect(antigravityBackgroundNote('/work', 'linux')).not.toContain('Invoke-CimMethod')
+  })
+
+  it('lets a queued turn start without stopping what the answered turn left running', async () => {
+    const first = new FakeChild()
+    const second = new FakeChild()
+    let killed = false
+    first.kill = () => {
+      killed = true
+      return true
+    }
+    const children = [first, second]
+    const adapter = new AntigravityAdapter({ spawn: () => children.shift()! })
+    const thread = await adapter.startThread('C:\\repo')
+    await adapter.sendTurn(thread.id, 'Start the site')
+    for (const frame of CAPTURED_FRAMES) first.stdout.write(`${frame}\n`)
+    await new Promise((resolve) => setImmediate(resolve))
+
+    // The SUCCESS result is in and agy is closing when the queued prompt starts.
+    const next = adapter.sendTurn(thread.id, 'Now add a footer')
+    await new Promise((resolve) => setImmediate(resolve))
+    first.emit('exit', 0, null)
+    await next
+
+    expect(killed).toBe(false)
+    expect(children).toEqual([])
   })
 
   it('resolves a changed effort on the next invocation', async () => {
