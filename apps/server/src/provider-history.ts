@@ -656,6 +656,10 @@ export function importedEvents(
           ...event.item,
           id: `import:${event.item.id}`,
           turnId: `import:${event.item.turnId}`,
+          // A saved snapshot has no live session to finish its background work.
+          ...(event.item.subagent?.state === 'running'
+            ? { subagent: { ...event.item.subagent, state: 'interrupted' } }
+            : {}),
         },
       }
     else if (event.type === 'item.delta')
