@@ -649,7 +649,7 @@ describe('recovering interrupted turns', () => {
 
     const raw = new DatabaseSync(file)
     raw.exec(`DELETE FROM recovery_lifecycles; DELETE FROM recovery_errors`)
-    raw.prepare(`DELETE FROM schema_migrations WHERE name = ?`).run('recovery_lifecycles_v2')
+    raw.prepare(`DELETE FROM schema_migrations WHERE name = ?`).run('recovery_lifecycles_v3')
     raw.close()
 
     const restarted = new Store(file)
@@ -660,6 +660,96 @@ describe('recovering interrupted turns', () => {
       rmSync(dir, { recursive: true, force: true })
     }
   })
+
+  it.each([
+    { status: 'started', closed: false },
+    { status: 'completed', closed: false },
+    { status: 'started', closed: true },
+    { status: 'completed', closed: true },
+  ] as const)(
+    'recovers a running sub-agent on a $status launcher after its parent turn ended (closed=$closed)',
+    ({ status, closed }) => {
+      const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-subagent-recovery-'))
+      const file = path.join(dir, 'harness.db')
+      const seeded = new Store(file)
+      seeded.addProject('/repo')
+      seedThread(seeded, 'thread-1')
+      const item = {
+        id: 'reviewer',
+        turnId: 'thread-1-turn',
+        type: 'tool_call' as const,
+        status,
+        text: 'Reviewer launched',
+        createdAt: 2,
+      }
+      seeded.append('thread-1', { type: 'item.started', item: { ...item, status: 'started' } })
+      if (status === 'completed') seeded.append('thread-1', { type: 'item.completed', item })
+      seeded.append('thread-1', {
+        type: status === 'started' ? 'item.started' : 'item.completed',
+        item: { ...item, subagent: { id: 'reviewer', state: 'running', toolUses: 1 } },
+      })
+      seeded.append('thread-1', {
+        type: status === 'started' ? 'item.started' : 'item.completed',
+        item: {
+          ...item,
+          subagent: { id: 'reviewer', state: 'running', background: true, toolUses: 4 },
+        },
+      })
+      for (const state of ['completed', 'failed', 'interrupted'] as const) {
+        seeded.append('thread-1', {
+          type: 'item.completed',
+          item: {
+            ...item,
+            id: state,
+            status: 'completed',
+            subagent: { id: state, state },
+          },
+        })
+      }
+      seeded.append('thread-1', {
+        type: 'turn.completed',
+        turnId: item.turnId,
+        status: 'completed',
+      })
+      if (closed) {
+        seeded.append('thread-1', lifecycleItem('ordinary', item.turnId, 'message'))
+        seeded.closeThread('thread-1')
+      }
+      const before = seeded.lastSeq('thread-1')
+      seeded.close()
+
+      // The previous index considered completed launchers terminal. Rebuild it
+      // from the log on upgrade, including the latest progress snapshot.
+      const raw = new DatabaseSync(file)
+      raw.exec('DELETE FROM recovery_lifecycles; DELETE FROM recovery_errors')
+      raw.prepare('DELETE FROM schema_migrations WHERE name = ?').run('recovery_lifecycles_v3')
+      raw
+        .prepare('INSERT OR IGNORE INTO schema_migrations (name) VALUES (?)')
+        .run('recovery_lifecycles_v2')
+      raw.close()
+
+      const restarted = new Store(file)
+      try {
+        expect(restarted.recoverInterruptedThreads()).toEqual([])
+        expect(restarted.history('thread-1', before).map(({ event }) => event)).toEqual([
+          {
+            type: 'item.completed',
+            item: {
+              ...item,
+              ...(status === 'started' ? { text: undefined, status: 'failed' } : {}),
+              subagent: { id: 'reviewer', state: 'interrupted', background: true, toolUses: 4 },
+            },
+          },
+        ])
+        const recoveredSeq = restarted.lastSeq('thread-1')
+        expect(restarted.recoverInterruptedThreads()).toEqual([])
+        expect(restarted.lastSeq('thread-1')).toBe(recoveredSeq)
+      } finally {
+        restarted.close()
+        rmSync(dir, { recursive: true, force: true })
+      }
+    },
+  )
 
   it('removes and restores active recovery state with a reversible transcript restore', () => {
     store.addProject('/repo')
