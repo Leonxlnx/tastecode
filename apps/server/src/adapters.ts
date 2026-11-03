@@ -76,6 +76,11 @@ export type StartOptions = {
   providerSessionId?: string | undefined
   /** Opaque local state, validated only by the adapter that owns it. */
   resumeState?: unknown
+  /**
+   * The folder of the skills that ship with TasteCode, laid out as a Claude
+   * Code plugin. Passed only to providers that declare `defaultSkillsPlugin`.
+   */
+  skillPlugin?: string | undefined
 }
 
 export type TurnOptions = Pick<StartOptions, 'model' | 'serviceTier' | 'effort'>
@@ -138,6 +143,14 @@ export interface AgentSession {
    * idle runtime would lose it. Absent means the runtime's `resume` decides.
    */
   readonly resumable?: boolean
+  /**
+   * Work a turn started still runs in the background of the agent's process, and the
+   * agent starts a turn of its own when it ends. Releasing the idle runtime would end
+   * both. Absent: the agent runs nothing between turns.
+   */
+  hasBackgroundWork?(): boolean
+  /** The answer of `hasBackgroundWork` may have changed. */
+  onBackgroundWorkChanged?(listener: () => void): (() => void) | void
   /** The session cannot accept more work; its terminal events have already been emitted. */
   onDisconnected?(listener: () => void): () => void
   /** Provider reported or rotated the opaque identity needed after a restart. */
@@ -901,7 +914,7 @@ function acpRuntime(
   const open = async (workspacePath: string, options: StartOptions, threadId?: string) => {
     if (!options.agent) throw new Error('no ACP agent chosen')
     const harness = harnessFor('acp', options.agent, resolveHarness)
-    const { AcpAdapter } = await loadAcpAdapter()
+    const { AcpAdapter, prepareAcpMcpServers } = await loadAcpAdapter()
     const adapter = new AcpAdapter(
       options.agent,
       harness
@@ -912,6 +925,9 @@ function acpRuntime(
             spawn: customHarnessSpawn(harness),
           }
         : undefined,
+      {
+        servers: prepareAcpMcpServers(options.mcpServers ?? [], options.mcpCredentials ?? {}),
+      },
     )
     adapter.on('log', onLog)
     return startedSession(adapter, async () => {
@@ -1011,6 +1027,11 @@ function claudeRuntime(
       adapter.on('commandsChanged', listener)
       return () => adapter.off('commandsChanged', listener)
     },
+    hasBackgroundWork: () => adapter.hasBackgroundWork(),
+    onBackgroundWorkChanged: (listener) => {
+      adapter.on('backgroundWorkChanged', listener)
+      return () => adapter.off('backgroundWorkChanged', listener)
+    },
     onDisconnected: (listener) => adapter.onDisconnected(listener),
     dispose: () => adapter.dispose(),
     on: (event: 'event' | 'log', listener: never) => adapter.on(event, listener),
@@ -1029,6 +1050,7 @@ function claudeRuntime(
           mcpServers: options.mcpServers,
           mcpCredentials: options.mcpCredentials,
           context: options.context,
+          plugins: options.skillPlugin ? [options.skillPlugin] : undefined,
         }),
       )
     },
@@ -1049,6 +1071,7 @@ function claudeRuntime(
             mcpServers: options.mcpServers,
             mcpCredentials: options.mcpCredentials,
             context: options.context,
+            plugins: options.skillPlugin ? [options.skillPlugin] : undefined,
           },
         ),
       )
@@ -1066,6 +1089,7 @@ function claudeRuntime(
             mcpServers: options.mcpServers,
             mcpCredentials: options.mcpCredentials,
             context: options.context,
+            plugins: options.skillPlugin ? [options.skillPlugin] : undefined,
           }),
         ),
       )

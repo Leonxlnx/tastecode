@@ -949,13 +949,27 @@
   list-style: none;
 }
 
-.onboarding__pick-row > label {
+.onboarding__pick-row > label,
+.onboarding__pick-line {
   display: grid;
   grid-template-columns: 16px max-content minmax(20px, 1fr) max-content 10px;
   align-items: center;
   column-gap: 10px;
   min-height: 34px;
+}
+
+.onboarding__pick-row > label {
   cursor: pointer;
+}
+
+/* Before the list arrives each line holds bars where its name and state will
+   be; the leader and socket are already in place. */
+.onboarding__pick-name-bar {
+  height: 12px;
+}
+
+.onboarding__pick-state-bar {
+  height: 9px;
 }
 
 .onboarding__pick-row > label:has(input:focus-visible) {

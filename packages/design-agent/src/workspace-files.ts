@@ -28,6 +28,18 @@ const OPAQUE_DIRECTORIES = new Set([
   '.turbo',
   '.cache',
   '.gradle',
+  // Package-manager caches a sandboxed agent may keep inside the workspace (#1553).
+  '.bun-cache',
+  '.npm',
+  '.npm-cache',
+  '.pnpm-cache',
+  '.yarn',
+  '.yarn-cache',
+  'bower_components',
+  'jspm_packages',
+  '.parcel-cache',
+  '.vite',
+  '.angular',
 ])
 
 export interface WorkspaceEntry {

@@ -222,11 +222,13 @@ describe('settings viewport layout', () => {
     renderSettings()
 
     expect(screen.getByRole('heading', { name: 'Theme', level: 2 })).toBeTruthy()
-    expect(screen.getAllByRole('radio').map((option) => option.getAttribute('value'))).toEqual([
-      'system',
-      'light',
-      'dark',
-    ])
+    expect(
+      within(screen.getByRole('group', { name: 'Theme' }))
+        .getAllByRole('radio')
+        .map((option) => option.getAttribute('value')),
+    ).toEqual(['system', 'light', 'dark'])
+    // One window background for both modes, after their rows.
+    expect(screen.getByRole('heading', { name: 'Window background', level: 2 })).toBeTruthy()
 
     expect(screen.getByRole('heading', { name: 'Light mode' })).toBeTruthy()
     expect(screen.getByRole('heading', { name: 'Dark mode' })).toBeTruthy()
@@ -306,6 +308,84 @@ describe('settings panel names', () => {
     expect(current.textContent).toBe(section === 'workflows' ? 'General' : title)
   })
 })
+describe('phone access in settings', () => {
+  const phoneStatus = {
+    enabled: false,
+    listening: false,
+    port: 4317,
+    serverName: 'Studio Mac',
+    addresses: [],
+    devices: [],
+  }
+
+  function phoneNav() {
+    const categories = screen.getByRole('navigation', { name: 'Settings categories' })
+    return within(categories).queryByRole('button', { name: 'Phone' })
+  }
+
+  it('shows Phone once the server says this build offers it, and hides it until then', async () => {
+    let answer: (status: typeof phoneStatus & { available?: boolean }) => void = () => {}
+    const transport = new TestTransport((method) => {
+      if (method !== 'phone.status') return new Promise(() => {})
+      return new Promise((resolve) => {
+        answer = resolve
+      })
+    })
+    renderSettings({ transport })
+
+    expect(transport.requests.map((request) => request.method)).toEqual(['phone.status'])
+    expect(phoneNav()).toBeNull()
+    await act(async () => answer({ ...phoneStatus, available: true }))
+
+    fireEvent.click(phoneNav()!)
+    expect(await screen.findByRole('heading', { level: 1, name: 'Phone' })).toBeTruthy()
+  })
+
+  it.each([
+    ['says it has no phone access', () => ({ ...phoneStatus, available: false })],
+    [
+      'cannot be asked',
+      () => {
+        throw new Error('offline')
+      },
+    ],
+  ])('leaves Phone out when the server %s', async (_case, status) => {
+    const transport = new TestTransport((method) =>
+      method === 'phone.status' ? status() : new Promise(() => {}),
+    )
+    renderSettings({ transport })
+
+    await waitFor(() =>
+      expect(transport.requests.map((request) => request.method)).toContain('phone.status'),
+    )
+    await act(async () => {})
+    expect(phoneNav()).toBeNull()
+  })
+
+  it('treats a server from before the flag as offering phone access', async () => {
+    const transport = new TestTransport((method) =>
+      method === 'phone.status' ? phoneStatus : new Promise(() => {}),
+    )
+    renderSettings({ transport })
+
+    await waitFor(() => expect(phoneNav()).toBeTruthy())
+  })
+
+  it('opens General instead when asked for Phone in a build without it', async () => {
+    const transport = new TestTransport((method) =>
+      method === 'phone.status' ? { ...phoneStatus, available: false } : new Promise(() => {}),
+    )
+    renderSettings({ initialSection: 'phone', transport })
+
+    expect(screen.getByRole('heading', { level: 1, name: 'General' })).toBeTruthy()
+    await act(async () => {})
+    expect(screen.getByRole('heading', { level: 1, name: 'General' })).toBeTruthy()
+    expect(screen.queryByRole('heading', { level: 1, name: 'Phone' })).toBeNull()
+    // Only the availability check: the Phone page never mounted to ask again.
+    expect(transport.requests.map((request) => request.method)).toEqual(['phone.status'])
+  })
+})
+
 describe('settings v1 pages', () => {
   it.each([
     ['data', ['Reset app preferences']],
@@ -427,6 +507,32 @@ describe('app update install', () => {
     return gate
   }
 
+  it('asks in About before stopping running chats, and restarts at once on Stop', async () => {
+    settingsLoading.desktop = true
+    vi.spyOn(bridge, 'appUpdateState').mockResolvedValue(ready)
+    const confirm = vi.fn(() => true)
+    vi.stubGlobal('confirm', confirm)
+    const calls: string[] = []
+    serverGate(calls)
+    reportRunningChats(2)
+    renderSettings({ initialSection: 'about' })
+    fireEvent.click(await screen.findByRole('button', { name: 'Restart to update' }))
+    expect(
+      await screen.findByRole('status', { name: 'Ready · 2 chats still running' }),
+    ).toBeTruthy()
+    // The safe choice takes the focus, so a stray Enter stops nothing.
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'When they finish' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Not now' }))
+    expect(screen.getByRole('status', { name: 'Ready · 1.0.1 ready' })).toBeTruthy()
+    expect(calls).toEqual([])
+
+    fireEvent.click(screen.getByRole('button', { name: 'Restart to update' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Stop 2 chats and update' }))
+    await waitFor(() => expect(calls).toEqual(['stop', 'install']))
+    expect(confirm).not.toHaveBeenCalled()
+    vi.unstubAllGlobals()
+  })
+
   it('waits in About while chats run and stops them after one confirmation', async () => {
     settingsLoading.desktop = true
     vi.spyOn(bridge, 'appUpdateState').mockResolvedValue(ready)
@@ -435,6 +541,7 @@ describe('app update install', () => {
     reportRunningChats(1)
     renderSettings({ initialSection: 'about' })
     fireEvent.click(await screen.findByRole('button', { name: 'Restart to update' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'When they finish' }))
     expect(
       await screen.findByRole('status', { name: 'Ready · Installs when 1 chat finishes' }),
     ).toBeTruthy()
@@ -461,6 +568,7 @@ describe('app update install', () => {
     reportRunningChats(2)
     renderSettings({ initialSection: 'about' })
     fireEvent.click(await screen.findByRole('button', { name: 'Restart to update' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'When they finish' }))
     expect(
       await screen.findByRole('status', { name: 'Ready · Installs when 2 chats finish' }),
     ).toBeTruthy()
@@ -468,6 +576,7 @@ describe('app update install', () => {
     expect(screen.getByRole('status', { name: 'Ready · 1.0.1 ready' })).toBeTruthy()
 
     fireEvent.click(screen.getByRole('button', { name: 'Restart to update' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'When they finish' }))
     vi.useFakeTimers()
     act(() => reportRunningChats(0))
     await act(async () => vi.advanceTimersByTimeAsync(INSTALL_SETTLE_MS))
@@ -513,9 +622,11 @@ describe('settings dialog keyboard behavior', () => {
     renderSettings()
     const dialog = screen.getByRole('dialog', { name: 'Settings' })
     const first = screen.getByRole('button', { name: 'Back to app' })
-    const last = within(screen.getByRole('region', { name: 'Dark mode' })).getByRole('combobox', {
-      name: 'Sidebar translucency',
-    })
+    // The chosen Window background is the page's last tab stop.
+    const last = within(screen.getByRole('radiogroup', { name: 'Window background' })).getByRole(
+      'radio',
+      { name: 'None' },
+    )
 
     last.focus()
     fireEvent.keyDown(last, { key: 'Tab' })

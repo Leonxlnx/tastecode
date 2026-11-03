@@ -1,7 +1,13 @@
 // @vitest-environment happy-dom
 import { cleanup, render } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { backgroundAt, opaqueHex, readWindowChrome, useWindowChrome } from './window-chrome.js'
+import {
+  backgroundAt,
+  opaqueHex,
+  readWindowChrome,
+  SEE_THROUGH_CAPTION,
+  useWindowChrome,
+} from './window-chrome.js'
 
 const bridge = vi.hoisted(() => ({ setChrome: vi.fn((_chrome: unknown) => Promise.resolve()) }))
 vi.mock('./bridge.js', () => ({
@@ -15,6 +21,7 @@ afterEach(() => {
   bridge.setChrome.mockClear()
   document.body.replaceChildren()
   document.documentElement.removeAttribute('style')
+  document.documentElement.removeAttribute('data-app-bg')
 })
 
 describe('opaqueHex', () => {
@@ -70,6 +77,28 @@ describe('readWindowChrome', () => {
   it('falls back to the theme colours when nothing opaque is under the buttons', () => {
     vi.spyOn(document, 'elementFromPoint').mockReturnValue(null)
     expect(readWindowChrome('dark').caption).toMatch(/^#[0-9a-f]{6}$/)
+  })
+
+  it('clears the caption buttons over the see-through title bar of a window background', () => {
+    document.documentElement.dataset['appBg'] = 'image'
+    const bar = document.createElement('header')
+    bar.style.backgroundColor = 'rgba(19, 19, 19, 0.6)'
+    document.body.append(bar)
+    vi.spyOn(document, 'elementFromPoint').mockReturnValue(bar)
+    const chrome = readWindowChrome('dark')
+    expect(chrome.caption).toBe(SEE_THROUGH_CAPTION)
+    // Only the caption: the symbols and the page background stay opaque colours.
+    expect(chrome.symbol).toMatch(/^#[0-9a-f]{6}$/)
+    expect(chrome.background).toMatch(/^#[0-9a-f]{6}$/)
+  })
+
+  it('keeps the caption opaque where something opaque covers the title bar', () => {
+    document.documentElement.dataset['appBg'] = 'effect'
+    const settingsBar = document.createElement('div')
+    settingsBar.style.backgroundColor = 'rgb(245, 245, 246)'
+    document.body.append(settingsBar)
+    vi.spyOn(document, 'elementFromPoint').mockReturnValue(settingsBar)
+    expect(readWindowChrome('light').caption).toBe('#f5f5f6')
   })
 })
 
@@ -130,6 +159,34 @@ describe('useWindowChrome', () => {
     frame.paint()
     expect(bridge.setChrome).toHaveBeenLastCalledWith(
       expect.objectContaining({ theme: 'dark', caption: '#131313' }),
+    )
+  })
+
+  it('reports again once the lazily applied window background reaches the page', async () => {
+    const frame = frames()
+    vi.spyOn(document, 'elementFromPoint').mockReturnValue(null)
+    render(<Shell theme="dark" surface="chat" frame={0} />)
+    frame.paint()
+    expect(bridge.setChrome).toHaveBeenCalledTimes(1)
+    expect(bridge.setChrome).not.toHaveBeenLastCalledWith(
+      expect.objectContaining({ caption: SEE_THROUGH_CAPTION }),
+    )
+
+    document.documentElement.dataset['appBg'] = 'image'
+    // MutationObserver callbacks run as a microtask.
+    await Promise.resolve()
+    frame.paint()
+    expect(bridge.setChrome).toHaveBeenCalledTimes(2)
+    expect(bridge.setChrome).toHaveBeenLastCalledWith(
+      expect.objectContaining({ theme: 'dark', caption: SEE_THROUGH_CAPTION }),
+    )
+
+    document.documentElement.removeAttribute('data-app-bg')
+    await Promise.resolve()
+    frame.paint()
+    expect(bridge.setChrome).toHaveBeenCalledTimes(3)
+    expect(bridge.setChrome).not.toHaveBeenLastCalledWith(
+      expect.objectContaining({ caption: SEE_THROUGH_CAPTION }),
     )
   })
 

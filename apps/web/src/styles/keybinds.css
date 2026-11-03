@@ -192,17 +192,14 @@
   }
 }
 
-/* A new shortcut drops into its place, modifiers first, then the key. */
+/* A new shortcut drops into its place as one piece, modifiers and key
+   together. */
 .keybind-shortcut[data-landed] > * {
-  animation: keybind-land 240ms var(--ease-out) both;
-}
-
-.keybind-shortcut[data-landed] > .keybind-shortcut__key {
-  animation-delay: 50ms;
+  animation: keybind-land var(--dur-slow) var(--ease-out) both;
 }
 
 .keybind-shortcut[data-landed]:not(:has(> *)) {
-  animation: keybind-land 240ms var(--ease-out) both;
+  animation: keybind-land var(--dur-slow) var(--ease-out) both;
 }
 
 @keyframes keybind-land {

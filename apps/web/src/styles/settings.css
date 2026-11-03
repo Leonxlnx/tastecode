@@ -597,9 +597,11 @@
   outline-offset: var(--focus-ring-offset);
 }
 
+/* On the overlay's own clock: opening Settings fades the surface and settles
+   the first page together instead of finishing 40ms apart. */
 .settings__panel {
   width: 100%;
-  animation: settings-panel-in 220ms var(--ease-out);
+  animation: settings-panel-in var(--dur-fast) var(--ease-out);
 }
 
 @keyframes settings-panel-in {

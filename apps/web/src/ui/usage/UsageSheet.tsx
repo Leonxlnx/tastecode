@@ -3,11 +3,10 @@ import type { AccountId, ProviderId, UsageHistoryModel } from '@harness/contract
 import { providerMark } from '../../provider-presentation.js'
 import { ProviderIcon } from '../ProviderIcon.js'
 import { UsageChart, type ChartAxis } from './UsageChart.js'
-import { formatInteger, formatTokens } from './usage-format.js'
+import { formatInteger, formatTokens, resetText } from './usage-format.js'
 import {
   formatValue,
   markInk,
-  resetText,
   type ProviderSheet,
   type SheetAccount,
   type SheetLimit,

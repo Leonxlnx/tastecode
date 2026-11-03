@@ -1,9 +1,12 @@
 import { EventEmitter } from 'node:events'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
+import path from 'node:path'
 import type { ApprovalMode, Capabilities, DomainEvent, Model, Thread } from '@harness/contracts'
 import { argumentPromptLimit, killTree, ProtocolFrameError, readNdjson } from '@harness/proc'
 import { z } from 'zod'
 import { ANTIGRAVITY_ENVIRONMENT, antigravityCommand, spawnAgy, type AgySpawn } from './command.js'
+import { agyCommandName, isAgyAnsweredCommand } from './commands.js'
+import { lastJsonObject } from './limits.js'
 import {
   ANTIGRAVITY_SIGN_IN_REQUIRED,
   antigravitySignIn,
@@ -50,6 +53,9 @@ export const ANTIGRAVITY_CAPABILITIES: Capabilities = {
   reasoningItems: false,
   approvals: false,
   images: false,
+  // agy's print mode takes text only, but its own file viewer opens images and
+  // shows them to the model, so an attached image goes in as a path to open.
+  imageFiles: true,
 }
 
 export type AntigravityStartOptions = {
@@ -77,6 +83,25 @@ function applyAntigravityTurnOptions(
 }
 
 /**
+ * Names attached images in the prompt so the agent opens them with its own
+ * file viewer. Print mode has no image input of its own: `--input-format
+ * stream-json` accepts a single content block type (agy 1.1.x strings:
+ * "stream input content block type %q is not supported (only %q)"), and the
+ * CLI's paste-an-image path exists only in its interactive prompt.
+ */
+export function antigravityImagePrompt(text: string, attachments: readonly string[]): string {
+  if (attachments.length === 0) return text
+  const subject = attachments.length === 1 ? 'this image' : 'these images'
+  const block = [
+    '<attached-images>',
+    `The user attached ${subject}. Open each file with your file viewer to see it before you answer.`,
+    ...attachments.map((file) => `- ${file}`),
+    '</attached-images>',
+  ].join('\n')
+  return text.trim() ? `${text}\n\n${block}` : block
+}
+
+/**
  * The per-turn argv. The prompt may be multi-line because the binary is
  * spawned directly (never through cmd.exe).
  */
@@ -84,6 +109,7 @@ export function antigravityTurnArgs(
   prompt: string,
   options: AntigravityStartOptions,
   conversationId: string | undefined,
+  readableDirectories: readonly string[] = [],
 ): string[] {
   // The picker holds a collapsed base id; the wire wants the concrete
   // per-effort slug from the listing.
@@ -101,6 +127,11 @@ export function antigravityTurnArgs(
     ...(options.approval === 'auto' ? ['--mode', 'accept-edits'] : []),
     ...(options.approval === 'full' ? ['--dangerously-skip-permissions'] : []),
     ...(conversationId ? ['--conversation', conversationId] : []),
+    // Attached images are saved outside the workspace, where agy's
+    // non-workspace file policy would stop its file viewer; --add-dir is its
+    // own switch for reading one more directory (agy 1.x usage string
+    // "--add-dir <path>").
+    ...readableDirectories.flatMap((directory) => ['--add-dir', directory]),
   ]
 }
 
@@ -128,10 +159,27 @@ const AgyFrameSchema = z.object({
       conversation_id: z.string().optional(),
       status: z.string().optional(),
       response: z.string().optional(),
+      // agy 1.4.7 steps.JSONOutput: `Error string json:"error,omitempty"`.
+      error: z.string().optional(),
       usage: AgyUsageSchema.optional(),
     })
     .optional(),
 })
+
+/**
+ * How long a turn whose result frame did not say SUCCESS waits for agy to
+ * exit. agy closes its store and exits within a second of the result; one
+ * that is still running after this is judged on the frame alone.
+ */
+export const ANTIGRAVITY_RESULT_EXIT_GRACE_MS = 10_000
+
+/** The fields of agy's `--output-format json` object an answered command needs. */
+const AgyAnswerSchema = z.object({
+  status: z.string().optional(),
+  response: z.string().optional(),
+})
+/** A command's answer is a few KB; /changelog is the longest. */
+const ANSWER_LIMIT_CHARS = 1024 * 1024
 
 export type AntigravityAdapterEvents = {
   event: [DomainEvent]
@@ -191,8 +239,10 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
     attachments: string[] = [],
     options: AntigravityTurnOptions = {},
   ): Promise<string> {
-    if (attachments.length) throw new Error('Antigravity attachments are not supported yet')
     this.#options = applyAntigravityTurnOptions(this.#options, options)
+    if (attachments.length === 0 && isAgyAnsweredCommand(text)) {
+      return this.#answerCommand(threadId, `${threadId}-turn-${++this.#turnCounter}`, text)
+    }
     // The picker normally warms this process-wide index. A server restart can
     // resume straight into a turn, though, and passing the collapsed anchor
     // id in that case silently loses a non-default effort selection.
@@ -204,12 +254,19 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
       }
     }
     const turnId = `${threadId}-turn-${++this.#turnCounter}`
-    const prompt =
-      this.#instructionsPending && this.#options.instructions
-        ? `<system-instructions>\n${this.#options.instructions}\n</system-instructions>\n\n${text}`
-        : text
-    this.#instructionsPending = false
-    const args = antigravityTurnArgs(prompt, this.#options, this.#conversationId)
+    const request = antigravityImagePrompt(text, attachments)
+    // agy expands a slash command or skill only at the start of the prompt, so
+    // a command goes alone and the instructions wait for the next prompt.
+    const carriesInstructions = Boolean(
+      this.#instructionsPending && this.#options.instructions && !agyCommandName(text),
+    )
+    const prompt = carriesInstructions
+      ? `<system-instructions>\n${this.#options.instructions}\n</system-instructions>\n\n${request}`
+      : request
+    if (carriesInstructions) this.#instructionsPending = false
+    const args = antigravityTurnArgs(prompt, this.#options, this.#conversationId, [
+      ...new Set(attachments.map((file) => path.dirname(file))),
+    ])
 
     // A turn already in flight would be orphaned by the reassignment below —
     // its exit handler must also not clobber the new child's reference.
@@ -231,6 +288,8 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
     let messageStarted = false
     let messageText = ''
     const messageId = `${turnId}-message`
+    /** A result frame that did not say SUCCESS, waiting for agy's exit code. */
+    let reported: { status: string; error?: string; timer: NodeJS.Timeout } | undefined
 
     readNdjson(
       child.stdout,
@@ -301,13 +360,26 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
           }
           if (frame.result.status === 'SUCCESS') {
             this.emit('event', { type: 'turn.completed', turnId, status: 'completed' })
-          } else {
-            this.emit('event', {
-              type: 'thread.error',
-              threadId,
-              message: `Antigravity finished with status ${frame.result.status ?? 'unknown'}`,
-            })
-            this.emit('event', { type: 'turn.completed', turnId, status: 'failed' })
+            return
+          }
+          // The status covers the whole conversation, not this turn. agy
+          // 1.4.7's steps.BuildJSONOutput sets ERROR, and the step's message
+          // in `error`, whenever the conversation's latest error step (an
+          // error message, or a failed step that is not a tool call) exists,
+          // even in an earlier turn; the SUCCESS a finished turn asks for is
+          // dropped once `error` is set. agy judges the turn itself only from
+          // this turn's steps, and that verdict is the exit code
+          // (printmode.ExitCode: 0 when the turn finished, 3 for an agent or
+          // model failure, 1 otherwise). So the turn waits for it.
+          const timer = setTimeout(
+            () => settleReported(undefined),
+            ANTIGRAVITY_RESULT_EXIT_GRACE_MS,
+          )
+          timer.unref()
+          reported = {
+            status: frame.result.status ?? 'unknown',
+            ...(frame.result.error ? { error: frame.result.error } : {}),
+            timer,
           }
         }
       },
@@ -329,10 +401,45 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
     child.stderr.setEncoding('utf8')
     child.stderr.on('data', (chunk: string) => this.emit('log', chunk.trimEnd()))
 
+    // Settles a turn whose result frame did not say SUCCESS. `code` is agy's
+    // exit code, or undefined when the process failed or outlived the grace.
+    const settleReported = (code: number | null | undefined) => {
+      const result = reported
+      if (!result) return
+      reported = undefined
+      clearTimeout(result.timer)
+      const killReason = this.#killReasons.get(child)
+      if (killReason === 'silent') return
+      if (killReason === 'interrupt') {
+        this.emit('event', { type: 'turn.completed', turnId, status: 'interrupted' })
+        return
+      }
+      if (code === 0) {
+        // A finished turn: the answer is delivered and the error belongs to
+        // an earlier step, so it stays out of the chat and goes to the log.
+        this.emit(
+          'log',
+          `Antigravity finished the turn; its result said ${result.status}${result.error ? `: ${result.error}` : ''}`,
+        )
+        this.emit('event', { type: 'turn.completed', turnId, status: 'completed' })
+        return
+      }
+      this.emit('event', {
+        type: 'thread.error',
+        threadId,
+        message: `Antigravity finished with status ${result.status}`,
+      })
+      this.emit('event', { type: 'turn.completed', turnId, status: 'failed' })
+    }
+
     // A spawn failure reports 'error' and then 'close', and a stream failure
     // kills the child, so every exit path funnels through one terminal guard.
-    const finishProcess = (errorMessage: string) => {
+    const finishProcess = (errorMessage: string, code?: number | null) => {
       if (this.#child === child) this.#child = undefined
+      if (reported) {
+        settleReported(code)
+        return
+      }
       if (terminal) return
       terminal = true
       const killReason = this.#killReasons.get(child)
@@ -364,13 +471,92 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
 
     // An exit without a result frame would otherwise look like a hang.
     child.on('close', (code) =>
-      finishProcess(`agy exited with code ${code ?? 'unknown'} before reporting a result`),
+      finishProcess(`agy exited with code ${code ?? 'unknown'} before reporting a result`, code),
     )
+    // 'close' also waits for every holder of agy's pipes; the exit code a
+    // reported result waits for is known at 'exit'.
+    child.on('exit', (code) => settleReported(code))
 
     // A spawn failure emits 'error' on the child; without a listener that
     // throws out of the event loop and takes the whole server down.
     child.on('error', (error) => finishProcess(String(error)))
 
+    child.stdin.end()
+    return turnId
+  }
+
+  /**
+   * One of the commands agy answers itself, run as limits.ts runs `/usage`:
+   * `--output-format json`, whose single object (fixtures/agy-usage-1.4.7.json)
+   * carries the answer in `response`, one tab-separated record per line. No
+   * model, mode or conversation switch: the answer starts no agent turn and
+   * leaves no conversation, so the chat's next prompt resumes as before.
+   */
+  async #answerCommand(threadId: string, turnId: string, text: string): Promise<string> {
+    if (this.#child) await this.#stop(this.#child)
+    const child = this.#spawn(
+      antigravityCommand(),
+      ['-p', text.trim(), '--output-format', 'json'],
+      {
+        cwd: this.#workspacePath,
+        env: ANTIGRAVITY_ENVIRONMENT,
+        stdio: ['pipe', 'pipe', 'pipe'],
+        windowsHide: true,
+      },
+    )
+    this.#child = child
+    this.emit('event', {
+      type: 'turn.started',
+      turn: { id: turnId, threadId, status: 'running', createdAt: Date.now() },
+    })
+    let stdout = ''
+    child.stdout.setEncoding('utf8')
+    child.stdout.on('data', (chunk: string) => {
+      if (stdout.length < ANSWER_LIMIT_CHARS) stdout += chunk
+    })
+    child.stderr.setEncoding('utf8')
+    child.stderr.on('data', (chunk: string) => this.emit('log', chunk.trimEnd()))
+    let finished = false
+    const finish = (error?: string) => {
+      if (finished) return
+      finished = true
+      if (this.#child === child) this.#child = undefined
+      const killReason = this.#killReasons.get(child)
+      if (killReason) {
+        if (killReason === 'interrupt') {
+          this.emit('event', { type: 'turn.completed', turnId, status: 'interrupted' })
+        }
+        return
+      }
+      const answer = AgyAnswerSchema.safeParse(lastJsonObject(stdout))
+      const response = answer.success ? answer.data.response?.trimEnd() : undefined
+      if (!error && answer.success && answer.data.status === 'SUCCESS' && response) {
+        this.emit('event', {
+          type: 'item.completed',
+          item: {
+            id: `${turnId}-message`,
+            turnId,
+            type: 'message',
+            role: 'assistant',
+            status: 'completed',
+            text: response,
+            createdAt: Date.now(),
+          },
+        })
+        this.emit('event', { type: 'turn.completed', turnId, status: 'completed' })
+        return
+      }
+      // agy's own error text can name the account, so only the command leaves.
+      this.emit('event', {
+        type: 'thread.error',
+        threadId,
+        message: error ?? `Antigravity did not answer ${text.trim().split(/\s/)[0]}.`,
+      })
+      this.emit('event', { type: 'turn.completed', turnId, status: 'failed' })
+    }
+    child.on('close', () => finish())
+    child.on('error', (error) => finish(String(error)))
+    // agy waits forever on a piped stdin that stays open.
     child.stdin.end()
     return turnId
   }

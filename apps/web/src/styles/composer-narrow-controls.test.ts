@@ -59,11 +59,9 @@ describe('composer controls in a narrow chat column', () => {
     expect(truncating).toContain('text-overflow: ellipsis;')
   })
 
-  it('lets the level dots carry the effort alone below 420px', () => {
-    const narrow =
-      appCss.match(/@container chat-stage \(max-width: 420px\) \{[\s\S]*?\n\}/)?.[0] ?? ''
-    expect(
-      rule(narrow, '.model-selector__trigger-level + .model-selector__trigger-effort'),
-    ).toContain('display: none;')
+  it('keeps the effort name, with no level dots, in a narrow column', () => {
+    expect(appCss).not.toContain('model-selector__trigger-level')
+    expect(triggerCss).not.toContain('model-selector__trigger-level')
+    expect(triggerCss).not.toContain('model-selector__trigger-dot')
   })
 })

@@ -16,6 +16,8 @@ export type OpenCodeCatalogEntry = {
   toolCall?: boolean | undefined
   /** Whether the model answers in text; an image or video model does not. */
   textOutput?: boolean | undefined
+  /** Whether the model takes image input; absent when OpenCode does not say. */
+  imageInput?: boolean | undefined
   isDefault: boolean
   reasoningEfforts: string[]
   defaultReasoningEffort?: string | undefined
@@ -327,6 +329,7 @@ export function openCodeModels(entries: readonly OpenCodeCatalogEntry[]): Model[
         ? { defaultReasoningEffort: entry.defaultReasoningEffort }
         : {}),
       serviceTiers: [],
+      ...(entry.imageInput !== undefined ? { images: entry.imageInput } : {}),
       ...(lab ? { lab } : {}),
       ...(lineage &&
       family &&

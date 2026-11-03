@@ -87,7 +87,9 @@ describe('Codex prompt transport', () => {
     const text = ` Grüße 🧪\n${'x'.repeat(40_000)}`
     await adapter.start()
     const thread = await adapter.startThread('C:\\repo')
-    expect(rpc.calls.find((call) => call.method === 'thread/start')?.timeoutMs).toBe(30_000)
+    // No flat request timeout: the adapter's progress-aware wait bounds the
+    // start instead (adapter.thread-start.test.ts).
+    expect(rpc.calls.find((call) => call.method === 'thread/start')?.timeoutMs).toBeUndefined()
 
     await adapter.sendTurn(thread.id, text)
 

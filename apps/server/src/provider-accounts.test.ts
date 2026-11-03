@@ -357,8 +357,10 @@ describe('finding further accounts on the machine', () => {
     const { folder, accounts } = machine()
     const personal = folder('.cli_personal', ['sessions/'])
     const laptop = folder('.cli-work-laptop', ['config.toml'])
+    const copywriting = folder('.cli-copywriting', ['config.toml'])
     const found = accounts.detect()
     expect(found.map(({ home, label }) => ({ home, label }))).toEqual([
+      { home: copywriting, label: 'Copywriting' },
       { home: laptop, label: 'Work laptop' },
       { home: personal, label: 'Personal' },
     ])
@@ -371,6 +373,8 @@ describe('finding further accounts on the machine', () => {
     folder('.cli.bak', ['config.toml'])
     folder('.cli-backup', ['config.toml'])
     folder('.cli_old2', ['config.toml'])
+    folder('.cli.backup-pre-move-20260813-020621', ['config.toml'])
+    folder('.cli-work-old', ['config.toml'])
     folder('.client', ['config.toml'])
     folder('.cli-', ['config.toml'])
     writeFileSync(path.join(home, '.cli.json'), '{}\n')
@@ -384,6 +388,32 @@ describe('finding further accounts on the machine', () => {
     accounts.create('codex', 'Personal', { kind: 'existing', path: work })
     expect(accounts.detect()).toEqual([
       expect.objectContaining({ home: other, label: '.cli_personal' }),
+    ])
+  })
+
+  it('also looks beside the built-in folder when a variable moved the default away', () => {
+    const { home, folder } = machine()
+    const moved = folder(path.join('drive', '.cli'), ['config.toml'])
+    const beside = folder(path.join('drive', '.cli-beside'), ['sessions/'])
+    const work = folder('.cli-work', ['config.toml'])
+    const store = new Store(':memory:')
+    cleanup.push(() => store.close())
+    const accounts = new ProviderAccounts(store, {
+      root: path.join(home, 'data', 'accounts'),
+      homes: {
+        codex: {
+          defaultHome: (environment = {}) =>
+            environment['FAKE_CLI_HOME'] ?? path.join(home, '.cli'),
+          environment: (at) => ({ FAKE_CLI_HOME: at }),
+          seedFiles: [],
+          markers: ['config.toml', 'sessions'],
+        },
+      },
+      environment: { FAKE_CLI_HOME: moved },
+    })
+    expect(accounts.detect().map(({ home: at, label }) => ({ home: at, label }))).toEqual([
+      { home: beside, label: 'Beside' },
+      { home: work, label: 'Work' },
     ])
   })
 

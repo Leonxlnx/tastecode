@@ -31,6 +31,8 @@ class FakeAcpRpc implements AcpRpc {
   #resolvePrompt: ((result: JsonRpcValue) => void) | undefined
   /** Notifications the agent sends before it answers session/new. */
   beforeSession: [string, JsonRpcValue][] = []
+  /** The prompt of each session/prompt, as sent. */
+  prompts: unknown[] = []
 
   onStderr(): void {}
   onNotification(handler: (method: string, params: JsonRpcValue | undefined) => void): void {
@@ -56,7 +58,7 @@ class FakeAcpRpc implements AcpRpc {
   ): Promise<Result>
   request<Result>(
     method: string,
-    _params: unknown = {},
+    params: unknown = {},
     options: JsonRpcRequestOptions | ParsedJsonRpcRequestOptions<Result> = {},
   ): Promise<JsonRpcValue | undefined | Result> {
     const parse = (value: JsonRpcValue) =>
@@ -67,6 +69,7 @@ class FakeAcpRpc implements AcpRpc {
       return Promise.resolve(parse({ sessionId: captured.sessionId! }))
     }
     if (method === 'session/prompt') {
+      this.prompts.push((params as { prompt?: unknown }).prompt)
       return new Promise<JsonRpcValue>((resolve) => {
         this.#resolvePrompt = resolve
       }).then(parse)
@@ -156,6 +159,26 @@ describe('ACP available commands', () => {
     ])
     expect(JSON.stringify(events[1])).toContain('hi')
     expect(events.at(-1)).toEqual({ type: 'turn.completed', turnId, status: 'completed' })
+    await adapter.dispose()
+  })
+
+  it('sends a slash command alone and keeps the instructions for the next prompt', async () => {
+    const { adapter, remote } = grokOverAcp()
+    await adapter.startThread('C:\\repo', { instructions: 'Answer plainly.' })
+    const threadId = `acp-grok-${String(captured.sessionId)}`
+    await adapter.sendTurn(threadId, '/goal Ship the release')
+    remote.resolvePrompt({ stopReason: 'end_turn' })
+    await new Promise((resolve) => setImmediate(resolve))
+    await adapter.sendTurn(threadId, 'Now explain it')
+    expect(remote.prompts).toEqual([
+      [{ type: 'text', text: '/goal Ship the release' }],
+      [
+        {
+          type: 'text',
+          text: '<system-instructions>\nAnswer plainly.\n</system-instructions>\n\nNow explain it',
+        },
+      ],
+    ])
     await adapter.dispose()
   })
 })
