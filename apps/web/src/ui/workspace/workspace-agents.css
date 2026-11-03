@@ -87,7 +87,7 @@
   border: 1.5px solid transparent;
   border-top-color: var(--sigil-a);
   border-right-color: var(--sigil-a);
-  border-radius: 50%;
+  border-radius: var(--r-circle);
   animation: subagent-sigil-turn 1.6s linear infinite;
   content: '';
 }
