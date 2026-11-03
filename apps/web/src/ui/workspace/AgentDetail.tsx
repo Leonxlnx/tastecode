@@ -1,6 +1,10 @@
 import { useCallback, useState } from 'react'
 import type { ApprovalDecision, Subagent } from '@harness/contracts'
-import { IconChevronLeft as ChevronLeft, IconSquare as Square } from '@tabler/icons-react'
+import {
+  IconArrowUp as ArrowUp,
+  IconChevronLeft as ChevronLeft,
+  IconSquare as Square,
+} from '@tabler/icons-react'
 import { providerDisplayName } from '../../provider-presentation.js'
 import type { Transport } from '../../transport.js'
 import { SubagentStatus } from '../SubagentRow.js'
@@ -109,20 +113,23 @@ function ChildThread({ threadId, transport }: { threadId: string; transport: Tra
     [threadId, transport],
   )
   return (
-    <div className="agent-detail__transcript">
-      <Thread
-        frameStore={transcript.frameStore}
-        threadId={threadId}
-        transport={transport}
-        keyboardActive={false}
-        loading={transcript.loading}
-        loadFailure={transcript.failure}
-        onRetryLoad={transcript.retry}
-        onDecide={decide}
-        onAnswerUserInput={answer}
-        inlineUserInput
-      />
-    </div>
+    <>
+      <div className="agent-detail__transcript">
+        <Thread
+          frameStore={transcript.frameStore}
+          threadId={threadId}
+          transport={transport}
+          keyboardActive={false}
+          loading={transcript.loading}
+          loadFailure={transcript.failure}
+          onRetryLoad={transcript.retry}
+          onDecide={decide}
+          onAnswerUserInput={answer}
+          inlineUserInput
+        />
+      </div>
+      <ChildComposer threadId={threadId} transport={transport} />
+    </>
   )
 }
 
@@ -157,5 +164,66 @@ function SnapshotDetail({ subagent }: { subagent: Subagent }) {
       ) : null}
       {note ? <p className="agent-detail__note">{note}</p> : null}
     </div>
+  )
+}
+
+/**
+ * A follow-up for a sub-agent TasteCode started, written like a Side chat
+ * message. While the sub-agent works the prompt waits behind its turn, as in any chat.
+ */
+function ChildComposer({ threadId, transport }: { threadId: string; transport: Transport }) {
+  const [draft, setDraft] = useState('')
+  const [sending, setSending] = useState(false)
+  const [error, setError] = useState<string>()
+
+  const send = () => {
+    const text = draft.trim()
+    if (!text || sending) return
+    setSending(true)
+    setError(undefined)
+    setDraft('')
+    transport
+      .request('thread.sendTurn', {
+        threadId,
+        text,
+        clientSubmissionId: `agent-detail-${crypto.randomUUID()}`,
+      })
+      .catch((reason: unknown) => {
+        setDraft((current) => current || text)
+        setError(reason instanceof Error ? reason.message : 'Could not send it.')
+      })
+      .finally(() => setSending(false))
+  }
+
+  return (
+    <>
+      {error ? (
+        <span className="agent-detail__error" role="alert">
+          {error}
+        </span>
+      ) : null}
+      <div className="workspace-side-chat__composer">
+        <textarea
+          rows={3}
+          value={draft}
+          aria-label="Message subagent"
+          placeholder="Ask for follow-up changes"
+          onChange={(event) => setDraft(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return
+            event.preventDefault()
+            send()
+          }}
+        />
+        <button
+          type="button"
+          aria-label="Send message"
+          disabled={!draft.trim() || sending}
+          onClick={send}
+        >
+          <ArrowUp size={15} aria-hidden />
+        </button>
+      </div>
+    </>
   )
 }
