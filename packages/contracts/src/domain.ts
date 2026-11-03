@@ -77,11 +77,13 @@ export const SubagentSchema = z.object({
   lastTool: z.string().min(1).optional(),
   /** The provider's short account of progress or of the result. */
   summary: z.string().optional(),
+  /** Provider-owned reference for reading a native sub-agent's saved conversation. */
+  transcriptId: z.string().min(1).optional(),
   /**
    * The hidden TasteCode chat this sub-agent runs in, when TasteCode started it
    * on a provider of its own choosing. Its transcript is read with
    * `thread.history` and followed on `subagent.event`. Absent for a sub-agent
-   * the engine runs itself, whose steps are not kept.
+   * the engine runs itself; an optional transcriptId names its provider-owned history.
    */
   threadId: z.string().min(1).optional(),
   /** Where a TasteCode sub-agent runs, when that differs from its parent. */
@@ -410,6 +412,8 @@ export const CapabilitiesSchema = z.object({
    * one runs. Absent: subagents appear only as plain tool calls.
    */
   subagents: z.enum(['summary', 'progress']).optional(),
+  /** Can read a native sub-agent's saved conversation without starting a session. */
+  subagentTranscript: z.boolean().optional(),
   /**
    * The engine runs signed in as any of several accounts, each with its own
    * config folder, so a user can add accounts beyond the default one.
