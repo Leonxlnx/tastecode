@@ -3,6 +3,7 @@ import { useCallback, useState } from 'react'
 import type { Account, ProviderId, ProviderStatus } from '@harness/contracts'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { SIGNED_IN_PROVIDERS_KEY, SIGNED_OUT_PROVIDERS_KEY } from '../remembered-sign-in.js'
 import { TestTransport } from '../test-transport.js'
 import { ProviderSettings } from './Settings.js'
 
@@ -164,6 +165,112 @@ describe('returning to the page', () => {
     expect(screen.getByRole('button', { name: 'Sign in' })).toBeTruthy()
     expect(reads).toBe(2)
   })
+
+  it('keeps an answer that arrives after the page closed', async () => {
+    const late = deferred<Account>()
+    const reread = deferred<Account>()
+    let reads = 0
+    const transport = new TestTransport((method) => {
+      if (method === 'providers.updates') return { updates: [] }
+      if (method === 'auth.status') return ++reads === 1 ? late.promise : reread.promise
+      throw new Error(`Unexpected ${method}`)
+    })
+    const props = {
+      provider: 'claude-code' as const,
+      account: undefined,
+      providerStatuses: statuses,
+      transport,
+      onConnectionsChanged,
+      onAccountChange: vi.fn(),
+    }
+    const first = render(<ProviderSettings {...props} />)
+    expect(screen.getByText('Checking account…')).toBeTruthy()
+    // Left before the CLI answered.
+    first.unmount()
+    await act(async () => late.resolve({ signedIn: true }))
+
+    render(<ProviderSettings {...props} />)
+    expect(screen.queryByText('Checking account…')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Sign out' })).toBeTruthy()
+    expect(reads).toBe(2)
+  })
+
+  it('does not reopen on a read that started before a sign-out on the page', async () => {
+    const stale = deferred<Account>()
+    let reads = 0
+    const transport = new TestTransport((method) => {
+      if (method === 'providers.updates') return { updates: [] }
+      if (method === 'auth.status') {
+        reads += 1
+        return reads === 1 ? account : reads === 2 ? stale.promise : new Promise(() => undefined)
+      }
+      if (method === 'auth.signOut') return {}
+      throw new Error(`Unexpected ${method}`)
+    })
+    const props = {
+      provider: 'claude-code' as const,
+      account: undefined,
+      providerStatuses: statuses,
+      transport,
+      onConnectionsChanged,
+      onAccountChange: vi.fn(),
+    }
+    const first = render(<ProviderSettings {...props} />)
+    await act(async () => undefined)
+    first.rerender(<ProviderSettings {...props} authRefreshRevision={1} />)
+    expect(reads).toBe(2)
+    fireEvent.click(screen.getByRole('button', { name: 'Sign out' }))
+    await act(async () => undefined)
+    expect(screen.getByRole('button', { name: 'Sign in' })).toBeTruthy()
+    first.unmount()
+    await act(async () => stale.resolve(account))
+
+    render(<ProviderSettings {...props} />)
+    expect(screen.getByRole('button', { name: 'Sign in' })).toBeTruthy()
+  })
+
+  it.each([
+    [true, 'Sign out'],
+    [false, 'Sign in'],
+  ])(
+    'opens a row first read this run on what an earlier run kept (signed in: %s)',
+    async (signedIn, action) => {
+      localStorage.setItem(
+        signedIn ? SIGNED_IN_PROVIDERS_KEY : SIGNED_OUT_PROVIDERS_KEY,
+        JSON.stringify(['codex']),
+      )
+      try {
+        const reread = deferred<Account>()
+        let reads = 0
+        const transport = new TestTransport((method) => {
+          if (method === 'providers.updates') return { updates: [] }
+          if (method === 'auth.status') {
+            reads += 1
+            return reread.promise
+          }
+          throw new Error(`Unexpected ${method}`)
+        })
+        render(
+          <ProviderSettings
+            provider="claude-code"
+            account={undefined}
+            providerStatuses={statuses}
+            transport={transport}
+            onConnectionsChanged={onConnectionsChanged}
+            onAccountChange={vi.fn()}
+          />,
+        )
+        expect(screen.queryByText('Checking account…')).toBeNull()
+        expect(screen.getByRole('button', { name: action })).toBeTruthy()
+        expect(reads).toBe(1)
+        await act(async () => reread.resolve({ signedIn: !signedIn }))
+        expect(screen.getByRole('button', { name: signedIn ? 'Sign in' : 'Sign out' })).toBeTruthy()
+      } finally {
+        localStorage.removeItem(SIGNED_IN_PROVIDERS_KEY)
+        localStorage.removeItem(SIGNED_OUT_PROVIDERS_KEY)
+      }
+    },
+  )
 })
 
 describe('background account re-checks', () => {

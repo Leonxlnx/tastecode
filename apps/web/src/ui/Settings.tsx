@@ -156,7 +156,12 @@ import {
   type ProviderLoginTerminalTarget,
 } from '../provider-install.js'
 import type { Transport } from '../transport.js'
-import { rememberAccountRead, rememberedAccountReads } from '../provider-account-reads.js'
+import {
+  accountReadTicket,
+  rememberAccountRead,
+  rememberedAccountReads,
+} from '../provider-account-reads.js'
+import { lastSignIn } from '../remembered-sign-in.js'
 import {
   fontFamilyFromPreference,
   fontFamilyStack,
@@ -848,6 +853,10 @@ export function ProviderSettings(props: {
   const [agentBusy, setAgentBusy] = useState<string>()
   const [authStates, setAuthStates] = useState<ProviderMap<AuthReadState>>(() => {
     const states: ProviderMap<AuthReadState> = {}
+    for (const status of props.providerStatuses) {
+      const kept = status.installed ? keptSignIn(status.id) : undefined
+      if (kept) states[status.id] = { phase: 'ready', account: kept }
+    }
     for (const [key, account] of rememberedAccountReads(props.transport)) {
       if (rosterAgent(key) === undefined) states[key as ProviderId] = { phase: 'ready', account }
     }
@@ -906,20 +915,26 @@ export function ProviderSettings(props: {
   const refreshAccount = useCallback(
     async (provider: ProviderId, forceLoading = false) => {
       const request = { id: ++sequence.current, transport: props.transport }
+      const ticket = accountReadTicket()
       statusRequests.current = { ...statusRequests.current, [provider]: request }
-      setAuthStates((current) =>
-        !forceLoading && current[provider]?.phase === 'ready'
-          ? current
-          : { ...current, [provider]: { phase: 'loading' } },
-      )
+      setAuthStates((current) => {
+        if (!forceLoading && current[provider]?.phase === 'ready') return current
+        // A row read for the first time this run opens on what the last read said.
+        const kept = !forceLoading && !current[provider] ? keptSignIn(provider) : undefined
+        return {
+          ...current,
+          [provider]: kept ? { phase: 'ready', account: kept } : { phase: 'loading' },
+        }
+      })
       try {
         const account = await props.transport.request('auth.status', { provider })
+        // Kept even when the page closed meanwhile: the next visit opens on it.
+        rememberAccountRead(request.transport, provider, account, ticket)
         if (
           statusRequests.current[provider] !== request ||
           currentTransport.current !== request.transport
         )
           return
-        rememberAccountRead(request.transport, provider, account)
         setAuthStates((current) => ({
           ...current,
           [provider]: { phase: 'ready', account },
@@ -1010,12 +1025,13 @@ export function ProviderSettings(props: {
 
   const refreshAgentAccount = useCallback(
     async (agentId: string) => {
+      const ticket = accountReadTicket()
       try {
         const account = await props.transport.request('auth.status', {
           provider: 'acp',
           agent: agentId,
         })
-        rememberAccountRead(props.transport, agentRosterKey(agentId), account)
+        rememberAccountRead(props.transport, agentRosterKey(agentId), account, ticket)
         setAgentAccounts((current) => ({ ...current, [agentId]: account }))
         setAgentAccountErrors((current) => ({ ...current, [agentId]: '' }))
       } catch (cause) {
@@ -3291,6 +3307,16 @@ function ProviderTerminal(props: { transport: Transport; installKey: string }) {
  */
 function providerEmailKey(provider: ProviderId): string {
   return `harness.providerEmail.${provider}`
+}
+
+/**
+ * Whether the last read of a provider's default account, in this run or an
+ * earlier one, said signed in (remembered-sign-in.ts). A row opens on it while
+ * its account is read again; the saved email names who, as after any read.
+ */
+function keptSignIn(provider: ProviderId): Account | undefined {
+  const signedIn = lastSignIn(provider)
+  return signedIn === undefined ? undefined : { signedIn }
 }
 
 function AccountIdentity(props: { provider: ProviderId; account: Account }) {

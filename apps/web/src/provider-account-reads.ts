@@ -10,19 +10,43 @@ import type { Transport } from './transport.js'
  * "Checking account…" for that long. It now opens on these answers and reads
  * again behind them.
  *
+ * A read that answers after the page closed is kept as well, so leaving the
+ * page early does not cost the next visit its rows. Each answer carries the
+ * ticket its read took when it started: an answer from a read that started
+ * before a newer one was kept, such as a sign-out finished on the page, does
+ * not replace it.
+ *
  * Kept in memory only, keyed by a provider id or an ACP agent's roster key.
  */
-const reads = new WeakMap<Transport, Map<string, Account>>()
+type Kept = { account: Account; ticket: number }
 
-export function rememberedAccountReads(transport: Transport): ReadonlyMap<string, Account> {
-  return reads.get(transport) ?? new Map()
+const reads = new WeakMap<Transport, Map<string, Kept>>()
+let tickets = 0
+
+/** Taken when a read starts; pass it to `rememberAccountRead` with the answer. */
+export function accountReadTicket(): number {
+  tickets += 1
+  return tickets
 }
 
-export function rememberAccountRead(transport: Transport, key: string, account: Account): void {
+export function rememberedAccountReads(transport: Transport): ReadonlyMap<string, Account> {
+  const entries = reads.get(transport)
+  return new Map([...(entries ?? [])].map(([key, kept]) => [key, kept.account]))
+}
+
+/** Without a ticket the answer is as new as can be, as a finished sign-out is. */
+export function rememberAccountRead(
+  transport: Transport,
+  key: string,
+  account: Account,
+  ticket = accountReadTicket(),
+): void {
   let entries = reads.get(transport)
   if (!entries) {
     entries = new Map()
     reads.set(transport, entries)
   }
-  entries.set(key, account)
+  const kept = entries.get(key)
+  if (kept && kept.ticket > ticket) return
+  entries.set(key, { account, ticket })
 }
