@@ -79,10 +79,10 @@ describe('WorkspaceAgents', () => {
     expect(await screen.findByText('No subagents in this chat yet')).toBeTruthy()
   })
 
-  it('lists running sub-agents above finished ones, newest first, with their engine', async () => {
+  it('lists active sub-agents above done ones, newest first, with their engine', async () => {
     const { frameStore, transport } = setup([native, nativeRunning], [listed])
     render(<WorkspaceAgents active transport={transport} threadId="t" frameStore={frameStore} />)
-    const running = await screen.findByRole('region', { name: 'Running' })
+    const running = await screen.findByRole('region', { name: 'Active' })
     await within(running).findByText('Reviewer')
     const names = within(running)
       .getAllByRole('listitem')
@@ -90,9 +90,14 @@ describe('WorkspaceAgents', () => {
     expect(names).toEqual(['Tester', 'Reviewer'])
     expect(within(running).getByText('Codex · gpt-5.5 · Review src/a.ts')).toBeTruthy()
     expect(within(running).getByText('Needs approval')).toBeTruthy()
-    const finished = screen.getByRole('region', { name: 'Finished' })
+    const finished = screen.getByRole('region', { name: 'Done' })
     expect(within(finished).getByText('Explore')).toBeTruthy()
-    expect(within(finished).getByText('4 tools')).toBeTruthy()
+    // A done row says when it ended, as Codex's panel does; the detail keeps the figures.
+    expect(finished.querySelector('.agents-row__when')?.textContent).toMatch(/ago$/)
+    // Every row carries its own sigil, the same one for the same sub-agent.
+    const sigils = [...document.querySelectorAll('.agents-row .subagent-avatar')]
+    expect(sigils).toHaveLength(3)
+    expect(sigils.filter((sigil) => sigil.hasAttribute('data-running'))).toHaveLength(2)
     expect(transport.requests).toEqual([{ method: 'thread.subagents', params: { threadId: 't' } }])
   })
 
@@ -104,9 +109,11 @@ describe('WorkspaceAgents', () => {
     })
     const { frameStore, transport } = setup([finishedCopy], [listed])
     render(<WorkspaceAgents active transport={transport} threadId="t" frameStore={frameStore} />)
-    const finished = await screen.findByRole('region', { name: 'Finished' })
+    const finished = await screen.findByRole('region', { name: 'Done' })
     expect(within(finished).getByText('Reviewer')).toBeTruthy()
-    expect(screen.queryByRole('region', { name: 'Running' })).toBeNull()
+    const active = screen.getByRole('region', { name: 'Active' })
+    expect(within(active).getByText('No active subagents')).toBeTruthy()
+    expect(within(active).queryAllByRole('listitem')).toEqual([])
   })
 
   it('neither asks nor follows the transcript while hidden', () => {
