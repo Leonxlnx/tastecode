@@ -10017,6 +10017,36 @@ describe('overnight race pins', () => {
     await orchestrator.disposeAll()
   })
 
+  it('stops a running turn when its chat is deleted, and its later output stays out', async () => {
+    const { orchestrator, sessions, store } = harness()
+    const thread = await orchestrator.startThread('claude-code', '/repo')
+    await orchestrator.submitTurn(thread.id, 'running')
+    expect(orchestrator.isTurnRunning(thread.id)).toBe(true)
+    const savedSession = store.thread(thread.id)!.providerSessionId ?? thread.id
+    // The order thread.delete runs in.
+    await orchestrator.close(thread.id)
+    store.deleteThread(thread.id, { keepSessionOut: true })
+    orchestrator.forgetDeletedThread(thread.id)
+    expect(sessions[0]!.disposed).toBe(true)
+    expect(orchestrator.isTurnRunning(thread.id)).toBe(false)
+    sessions[0]!.emit({
+      type: 'item.completed',
+      item: {
+        id: 'late',
+        turnId: 'late-turn',
+        type: 'message',
+        role: 'assistant',
+        status: 'completed',
+        text: 'late answer',
+        createdAt: Date.now(),
+      },
+    })
+    expect(store.thread(thread.id)).toBeUndefined()
+    expect(store.history(thread.id)).toEqual([])
+    expect(store.leftProviderSessions('claude-code')).toEqual([savedSession])
+    await orchestrator.disposeAll()
+  })
+
   it('waits for a pending provider start before panic reports success', async () => {
     const { orchestrator, sessions } = harness()
     const thread = await orchestrator.startThread('codex', '/repo')
