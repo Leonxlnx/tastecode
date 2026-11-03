@@ -1017,16 +1017,19 @@ export class Orchestrator {
       choices: () => this.#agentModelChoices(),
       otherProvidersAllowed: () => this.#store.subagentSettings().otherProviders === true,
       createChild: (spec) => this.#startSubagentThread(spec),
+      // The task goes past submitTurn: it is the broker's prompt, not the user's.
       sendToChild: async (threadId, task, options) => {
-        await this.submitTurn(
-          threadId,
-          task,
-          [],
-          {
-            ...(options.model ? { model: options.model } : {}),
-            ...(options.effort ? { effort: options.effort } : {}),
-          },
-          `subagent-task-${crypto.randomUUID()}`,
+        await this.trackSubmission(threadId, () =>
+          this.#submitTurn(
+            threadId,
+            task,
+            [],
+            {
+              ...(options.model ? { model: options.model } : {}),
+              ...(options.effort ? { effort: options.effort } : {}),
+            },
+            `subagent-task-${crypto.randomUUID()}`,
+          ),
         )
       },
       stopChild: (threadId) => this.interrupt(threadId),
@@ -3226,6 +3229,11 @@ export class Orchestrator {
     options: TurnOptions = {},
     clientSubmissionId?: string,
   ): Promise<{ queued: false; turnId: string } | { queued: true; queuedTurn: QueuedTurn }> {
+    // The user prompted a sub-agent's chat from the Agents tab: its run may reopen.
+    // Read from the store, since a released child is not attached until it resumes.
+    if (this.#store.thread(threadId)?.ownerThreadId !== undefined) {
+      this.#subagents.userPrompted(threadId)
+    }
     return this.trackSubmission(threadId, () =>
       this.#submitTurn(threadId, text, attachments, options, clientSubmissionId),
     )

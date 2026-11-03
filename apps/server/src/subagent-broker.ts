@@ -158,6 +158,8 @@ export class SubagentBroker implements AgentToolsBroker {
   /** Runs this process started and has not let go of, by parent item id. */
   #live = new Map<string, LiveRun>()
   #byChild = new Map<string, LiveRun>()
+  /** Sub-agent chats the user sent a prompt whose turn has not started yet. */
+  #prompted = new Set<string>()
   /** Waits to wake when one of a parent's runs changes state. */
   #waiters = new Map<string, Set<() => void>>()
   /** Starts waiting for the user's answer, by the approval id the parent shows. */
@@ -348,8 +350,20 @@ export class SubagentBroker implements AgentToolsBroker {
   }
 
   /** A child chat's event; the orchestrator passes no `item.delta`. */
+  /**
+   * The user sent a sub-agent's chat a prompt of their own, from the Agents tab. The
+   * turn it starts reopens the run if it has finished by then, so its row runs again
+   * and the parent hears the new result once. Only such a turn reopens a run: a turn
+   * that starts late after a Stop must not.
+   */
+  userPrompted(threadId: string): void {
+    if (!this.#disposed && this.#runs.forThread(threadId)) this.#prompted.add(threadId)
+  }
+
   childEvent(threadId: string, event: DomainEvent): void {
-    const live = this.#byChild.get(threadId)
+    const live =
+      this.#byChild.get(threadId) ??
+      (event.type === 'turn.started' ? this.#reopen(threadId) : undefined)
     if (!live || FINISHED_SUBAGENT_STATES.has(live.run.state)) return
     switch (event.type) {
       case 'item.started':
@@ -504,7 +518,10 @@ export class SubagentBroker implements AgentToolsBroker {
       if (live.run.parentThreadId !== parentThreadId) continue
       clearTimeout(live.timer)
       this.#live.delete(itemId)
-      if (live.run.threadId) this.#byChild.delete(live.run.threadId)
+      if (live.run.threadId) {
+        this.#byChild.delete(live.run.threadId)
+        this.#prompted.delete(live.run.threadId)
+      }
     }
     this.#allowed.delete(parentThreadId)
   }
@@ -567,6 +584,34 @@ export class SubagentBroker implements AgentToolsBroker {
         `One turn starts at most ${SUBAGENT_LIMITS.startedPerTurn} sub-agents. Finish with the ones you have.`,
       )
     }
+  }
+
+  #reopen(threadId: string): LiveRun | undefined {
+    if (this.#disposed || !this.#prompted.delete(threadId)) return undefined
+    const stored = this.#runs.forThread(threadId)
+    if (!stored) return undefined
+    let live = this.#live.get(stored.itemId)
+    if (!live) {
+      // A run from before a restart: its counts live only in its stored row.
+      live = this.#track(stored)
+      live.tools = stored.snapshot.toolUses ?? 0
+      live.tokens = stored.snapshot.tokens ?? 0
+    }
+    const { run } = live
+    if (!FINISHED_SUBAGENT_STATES.has(run.state)) return live
+    run.state = 'running'
+    delete run.finishedAt
+    delete run.deliveredAt
+    delete run.result
+    live.error = undefined
+    live.lastTool = undefined
+    live.stopRequested = false
+    // The parent did not start this turn; it carries on beside the parent's work.
+    live.background = true
+    this.#runs.reopen(run.itemId)
+    this.#byChild.set(threadId, live)
+    this.#flush(live)
+    return live
   }
 
   #track(run: StoredSubagentRun): LiveRun {

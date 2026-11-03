@@ -91,6 +91,7 @@ function fixture() {
     rows().at(-1) as Item & { subagent: Subagent }
   return {
     store,
+    host,
     broker,
     recorded,
     created,
@@ -493,5 +494,108 @@ describe('mentions', () => {
     expect(mentions('Run GPT-5x5 here', 'GPT-5.5')).toBe(false)
     expect(mentions('Run GPT-5.55 here', 'GPT-5.5')).toBe(false)
     expect(mentions('anything', '  ')).toBe(false)
+  })
+})
+
+describe('a sub-agent the user prompts from its own chat', () => {
+  const completeChild = (f: ReturnType<typeof fixture>, turnId = 'child-turn') =>
+    f.broker.childEvent('child-1', { type: 'turn.completed', turnId, status: 'completed' })
+  const startChildTurn = (f: ReturnType<typeof fixture>, id = 'child-turn-2') =>
+    f.broker.childEvent('child-1', {
+      type: 'turn.started',
+      turn: { id, threadId: 'child-1', status: 'running', createdAt: 0 },
+    })
+  const waitOnce = (f: ReturnType<typeof fixture>) =>
+    f.broker.wait(caller, { return_when: 'all', timeout_seconds: 1 }, new AbortController().signal)
+
+  it('runs again and reports its new result to the parent once', async () => {
+    const f = fixture()
+    await start(f.broker)
+    await settle()
+    completeChild(f)
+    await expect(waitOnce(f)).resolves.toMatchObject({
+      agents: [{ status: 'completed', result: 'All done.' }],
+    })
+
+    f.broker.userPrompted('child-1')
+    startChildTurn(f)
+    expect(f.lastRow().subagent).toMatchObject({ state: 'running', background: true })
+    expect(f.lastRow().subagent.summary).toBeUndefined()
+    expect(f.store.subagents.ofParent('parent')[0]).toMatchObject({ state: 'running' })
+    expect(f.store.subagents.ofParent('parent')[0]!.result).toBeUndefined()
+
+    f.state.outcome = { answer: 'Fixed the second test too.', changedPaths: ['src/b.ts'] }
+    completeChild(f, 'child-turn-2')
+    expect(f.lastRow().subagent).toMatchObject({
+      state: 'completed',
+      summary: 'Fixed the second test too.',
+    })
+    // The new result is news to the parent once, and only once.
+    await expect(waitOnce(f)).resolves.toMatchObject({
+      agents: [{ status: 'completed', result: 'Fixed the second test too.' }],
+    })
+    await expect(waitOnce(f)).resolves.toEqual({
+      agents: [],
+      note: 'This chat has not started any sub-agents.',
+    })
+    expect(f.broker.unreadResults('parent')).toBeUndefined()
+  })
+
+  it('does not reopen for a turn the user did not send, such as one that starts late after a Stop', async () => {
+    const f = fixture()
+    await start(f.broker)
+    await settle()
+    await f.broker.stop(caller, { agent_id: 'a1' })
+    expect(f.lastRow().subagent.state).toBe('interrupted')
+    startChildTurn(f)
+    expect(f.lastRow().subagent.state).toBe('interrupted')
+    expect(f.store.subagents.ofParent('parent')[0]).toMatchObject({ state: 'stopped' })
+  })
+
+  it('reopens a stopped run when the user prompts it', async () => {
+    const f = fixture()
+    await start(f.broker)
+    await settle()
+    await f.broker.stop(caller, { agent_id: 'a1' })
+    f.broker.userPrompted('child-1')
+    startChildTurn(f)
+    expect(f.lastRow().subagent.state).toBe('running')
+  })
+
+  it('reopens for a prompt that waited behind the turn still running', async () => {
+    const f = fixture()
+    await start(f.broker)
+    await settle()
+    // Sent while the task ran: it queues, and its turn starts after the task's ends.
+    f.broker.userPrompted('child-1')
+    completeChild(f)
+    expect(f.lastRow().subagent.state).toBe('completed')
+    startChildTurn(f)
+    expect(f.lastRow().subagent.state).toBe('running')
+  })
+
+  it('reopens a run from before a restart with its stored counts', async () => {
+    const f = fixture()
+    await start(f.broker)
+    await settle()
+    f.broker.childEvent('child-1', toolCompleted('c1'))
+    completeChild(f)
+    const restarted = new SubagentBroker(f.store.subagents, f.host, { now: () => 9_000 })
+    restarted.userPrompted('child-1')
+    restarted.childEvent('child-1', {
+      type: 'turn.started',
+      turn: { id: 'child-turn-2', threadId: 'child-1', status: 'running', createdAt: 0 },
+    })
+    expect(f.lastRow().subagent).toMatchObject({ state: 'running', toolUses: 1 })
+  })
+
+  it('ignores a prompt to a chat that is not a sub-agent', () => {
+    const f = fixture()
+    f.broker.userPrompted('some-chat')
+    f.broker.childEvent('some-chat', {
+      type: 'turn.started',
+      turn: { id: 't', threadId: 'some-chat', status: 'running', createdAt: 0 },
+    })
+    expect(f.recorded).toEqual([])
   })
 })
