@@ -413,6 +413,11 @@
   color: var(--text);
 }
 
+.settings .set-entity__more:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
 /* Centred where the first detail line's text would sit. */
 .settings .set-entity__skeleton-detail {
   max-width: 100%;

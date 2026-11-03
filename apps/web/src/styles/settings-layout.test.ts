@@ -381,6 +381,10 @@ describe('settings viewport CSS', () => {
     expect(systemCss).toMatch(
       /\.settings \.set-entity__detail--clamped \{[^}]*overflow: hidden;[^}]*-webkit-line-clamp: 2;/s,
     )
+    // Show more is reached from the keyboard and shows the system focus ring.
+    expect(systemCss).toMatch(
+      /\.settings \.set-entity__more:focus-visible \{\s*outline: var\(--focus-ring\);\s*outline-offset: var\(--focus-ring-offset\);/s,
+    )
     // The entity rows step aside from their leader where every row does.
     expect(systemCss).toMatch(
       /@container settings-content \(max-width: 560px\) \{[\s\S]*?\.settings \.set-entity__head \{[^}]*grid-template-columns: minmax\(0, max-content\) minmax\(0, 1fr\);/s,
