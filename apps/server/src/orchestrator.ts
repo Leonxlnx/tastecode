@@ -229,6 +229,16 @@ type QueueState = { items: QueuedTurn[]; canSteer: boolean }
 type PendingTurnStart = { acceptedAt: number; submission?: UserSubmission }
 type QueueDrain = { queueId: string; completedTurnId?: string }
 type TurnStartBarrier = { done: Promise<void>; release: () => void; turnCompleted?: boolean }
+/** A turn Stop already ended for the user, while its agent has not reported its end yet. */
+type SettlingStop = {
+  turnId: string
+  entry: AttachedThreadRuntime
+  timer: ReturnType<typeof setTimeout>
+  /** The agent accepted the Stop request. */
+  confirmed?: boolean
+  /** The agent started new work after that, and was asked to stop once more. */
+  stoppedAgain?: boolean
+}
 type BackgroundSourceEntry = {
   reading: Promise<AvailableBackgroundModelSource | undefined>
   /** Infinite while the read is in flight. */
@@ -610,6 +620,12 @@ function designRecoveryState(history: Array<{ event: DomainEvent }>): DesignReco
   return { unresolved, openTurnId }
 }
 const PANIC_STOP_TIMEOUT_MS = 5_000
+/**
+ * How long a stopped turn's agent may take to report the turn's end before its process
+ * is ended. Longer than an adapter's own stop deadline (Claude's is 15 s), which then
+ * decides first.
+ */
+const STOP_SETTLE_TIMEOUT_MS = 30_000
 const IDLE_RUNTIME_PRUNE_RETRY_MS = 30_000
 const DESIGN_START_TIMEOUT_MS = 30_000
 const DESIGN_REPAIR_LIMIT = 2
@@ -701,6 +717,13 @@ export class Orchestrator {
   #turnStartBarriers = new Map<string, TurnStartBarrier>()
   #pendingTurnStarts = new Map<string, PendingTurnStart>()
   #acceptedTurnStarts = new Map<string, Map<string, PendingTurnStart>>()
+  /**
+   * Turns a Stop ended for the user before their agent confirmed it. The agent is still
+   * busy with them: prompts sent meanwhile wait in the queue, and the turn's late events
+   * are not recorded.
+   */
+  #settlingStops = new Map<string, SettlingStop>()
+  readonly #stopSettleMs: number
   #restoringThreads = new Map<string, Promise<void>>()
   #reviewingDiffs = new Set<string>()
   #queuedTurns = new Map<string, QueuedTurnEntry[]>()
@@ -899,6 +922,8 @@ export class Orchestrator {
       idleThreadRuntimeMs?: number
       /** Test override for releasing one-shot Codex control processes. */
       controlIdleMs?: number
+      /** Test override for how long a stopped turn's agent may take to report its end. */
+      stopSettleMs?: number
       /** Waited on before an uncached limit read; the server holds it while a turn streams. */
       beforeLimitRead?: () => Promise<void>
       /** Test override for the provider services behind settings and inventories. */
@@ -963,6 +988,7 @@ export class Orchestrator {
       0,
       Math.floor(handlers.idleThreadRuntimeMs ?? IDLE_THREAD_RUNTIME_MS),
     )
+    this.#stopSettleMs = Math.max(1, handlers.stopSettleMs ?? STOP_SETTLE_TIMEOUT_MS)
     this.#scopeOptions = {
       chosenRuntime: (provider) => this.#chosenRuntime(provider),
       ...(handlers.controlIdleMs !== undefined ? { controlIdleMs: handlers.controlIdleMs } : {}),
@@ -2869,6 +2895,8 @@ export class Orchestrator {
       this.#startingTurns.has(threadId) ||
       this.#drainingQueues.has(threadId) ||
       this.#designFlows.has(threadId) ||
+      // The agent is still ending a turn the user stopped and cannot take a prompt yet.
+      this.#settlingStops.has(threadId) ||
       queue.length > 0
     ) {
       const queuedTurn: QueuedTurnEntry = {
@@ -3805,6 +3833,8 @@ export class Orchestrator {
       this.isTurnRunning(threadId) ||
       // A Stop holds what was queued before it until the user sends again.
       this.#heldQueues.has(threadId) ||
+      // The agent is still ending a stopped turn; the queue drains once it has.
+      this.#settlingStops.has(threadId) ||
       // Design owns the thread between phases too (preview and capture run
       // with no provider turn); it drains when the run finishes or fails.
       this.#designFlows.has(threadId)
@@ -4314,7 +4344,135 @@ export class Orchestrator {
     await barrier
     await this.#designProviderStarts.get(threadId)?.catch(() => undefined)
     const entry = this.#threads.get(threadId)
-    if (entry) await entry.session.interrupt(threadId)
+    if (!entry) return
+    // The chat shows the turn stopped now. An agent can take seconds to confirm a Stop,
+    // or never do so, and the chat must not keep running behind "Stopping…" meanwhile.
+    const stop = this.#settleStoppedTurn(threadId, entry)
+    try {
+      await entry.session.interrupt(threadId)
+      if (stop) stop.confirmed = true
+    } catch (error) {
+      if (!stop) throw error
+      // The turn has ended meanwhile, by the agent or with its process.
+      if (this.#settlingStops.get(threadId) !== stop) return
+      if (!entry.resumable) {
+        // The agent runs on and nothing can end it without losing the chat; say so.
+        this.#finishSettlingStop(threadId, stop)
+        throw error
+      }
+      // The chat already shows the turn as stopped, so end the agent that refused to stop.
+      // The next prompt resumes the session in a new process.
+      await this.#endUnconfirmedStop(
+        threadId,
+        stop,
+        `The agent refused Stop (${errorMessage(error)})`,
+      )
+    }
+  }
+
+  /**
+   * Ends a stopped turn for the user: its open items, requests and the turn itself settle
+   * as interrupted, the way a restart settles them. The agent is still asked to stop and
+   * stays busy until it reports the end, or until the settle deadline ends its process.
+   */
+  #settleStoppedTurn(threadId: string, entry: AttachedThreadRuntime): SettlingStop | undefined {
+    const turnId = this.#activeTurnIds.get(threadId)
+    if (!turnId || this.#settlingStops.has(threadId)) return undefined
+    const stop: SettlingStop = {
+      turnId,
+      entry,
+      timer: setTimeout(
+        () =>
+          void this.#endUnconfirmedStop(
+            threadId,
+            stop,
+            `The agent did not end the stopped turn within ${Math.ceil(this.#stopSettleMs / 1000)} s`,
+          ),
+        this.#stopSettleMs,
+      ),
+    }
+    stop.timer.unref?.()
+    this.#settlingStops.set(threadId, stop)
+    this.#recordedDeltas.flush(threadId)
+    let open: DomainEvent[] = []
+    try {
+      open = this.#store.interruptedLifecycleEvents(threadId)
+    } catch (error) {
+      this.#onLog(`Could not settle the stopped turn's open work: ${errorMessage(error)}`)
+    }
+    for (const event of open) if (event.type !== 'turn.completed') this.#record(threadId, event)
+    // Through the session path, so a Design run or a handover sees its turn end.
+    this.#handleSessionEvent(threadId, { type: 'turn.completed', turnId, status: 'interrupted' })
+    return stop
+  }
+
+  /**
+   * While a stopped turn settles, its agent's events belong to the turn the user already saw
+   * end. Returns whether the event is consumed here instead of recorded.
+   */
+  #settlingStopEvent(threadId: string, event: DomainEvent): boolean {
+    const stop = this.#settlingStops.get(threadId)
+    if (!stop) return false
+    switch (event.type) {
+      case 'turn.completed':
+        if (event.turnId === stop.turnId) this.#finishSettlingStop(threadId, stop)
+        return true
+      // Spend still counts, an error is still news, and a resolution only closes a request.
+      case 'usage.updated':
+      case 'thread.error':
+      case 'approval.resolved':
+      case 'user_input.resolved':
+        return false
+      default:
+        // Every prompt waits while a Stop settles, so any turn the agent runs now is the
+        // stopped one, or work of its own that nobody asked for.
+        if (event.type === 'item.started' && stop.confirmed && !stop.stoppedAgain) {
+          // New work after the agent accepted the Stop, such as a steer Claude keeps
+          // queued through it, would run unseen. Stop that too.
+          stop.stoppedAgain = true
+          this.#onLog('The agent started new work in a stopped turn; stopping it again')
+          void stop.entry.session
+            .interrupt(threadId)
+            .catch((error: unknown) =>
+              this.#onLog(`Could not stop the agent's new work: ${errorMessage(error)}`),
+            )
+        }
+        return true
+    }
+  }
+
+  #finishSettlingStop(threadId: string, stop: SettlingStop): void {
+    if (this.#settlingStops.get(threadId) !== stop) return
+    clearTimeout(stop.timer)
+    this.#settlingStops.delete(threadId)
+    this.#releaseCheckoutIfIdle(threadId)
+    // Prompts sent after the Stop waited for the agent to finish it.
+    if (this.#threads.get(threadId) === stop.entry && this.#hasQueuedTurns(threadId)) {
+      void this.#drainQueue(threadId)
+    } else {
+      this.#pruneIdleThreadRuntimes()
+    }
+  }
+
+  /**
+   * The agent did not end a stopped turn in time, or refused the Stop: end its process, as
+   * a disconnect would. A resumable chat continues in a new one with its next prompt.
+   */
+  #endUnconfirmedStop(threadId: string, stop: SettlingStop, why: string): Promise<void> {
+    if (this.#settlingStops.get(threadId) !== stop) return Promise.resolve()
+    if (this.#threads.get(threadId) !== stop.entry || !stop.entry.resumable) {
+      if (this.#threads.get(threadId) === stop.entry)
+        this.#onLog(`${why}; it keeps its process because the chat could not resume without it`)
+      this.#finishSettlingStop(threadId, stop)
+      return Promise.resolve()
+    }
+    this.#onLog(`${why}; ending its process`)
+    if (this.#designFlows.has(threadId)) this.#suspendDesignFlow(threadId)
+    const stopped = this.#disposeThreadRuntime(threadId, 'disconnect')
+    void this.#resumeQueuedAfterDisconnect(threadId, stopped)
+    return stopped.catch((error: unknown) =>
+      this.#onLog(`Could not end the stopped agent: ${errorMessage(error)}`),
+    )
   }
 
   /** Overlapping callers share one stop, so none can lift the guard while another still runs. */
@@ -4551,6 +4709,10 @@ export class Orchestrator {
       this.#unindexThreadRuntime(threadId, entry)
       this.#runtimeRecency.delete(threadId)
     }
+    // A stopped turn's agent goes with its runtime; nothing is left to wait for.
+    const settlingStop = this.#settlingStops.get(threadId)
+    if (settlingStop) clearTimeout(settlingStop.timer)
+    this.#settlingStops.delete(threadId)
     const providerStopped = this.#stopThreadProvider(threadId, entry?.session)
     // A session gone before its handover turn ended may never have read it.
     const handover = this.#handoverTurns.get(threadId)
@@ -4715,6 +4877,8 @@ export class Orchestrator {
     this.#turnStartBarriers.clear()
     this.#pendingTurnStarts.clear()
     this.#acceptedTurnStarts.clear()
+    for (const stop of this.#settlingStops.values()) clearTimeout(stop.timer)
+    this.#settlingStops.clear()
     this.#reviewingDiffs.clear()
     this.#queuedTurns.clear()
     this.#emptyQueuedTurns.clear()
@@ -4749,7 +4913,12 @@ export class Orchestrator {
   }
 
   #releaseCheckoutIfIdle(threadId: string): void {
-    if (!this.isTurnRunning(threadId) && !this.#stoppingSessions.has(threadId))
+    // An agent still ending a stopped turn may still write to the checkout.
+    if (
+      !this.isTurnRunning(threadId) &&
+      !this.#stoppingSessions.has(threadId) &&
+      !this.#settlingStops.has(threadId)
+    )
       this.#checkoutAccess.endTurn(threadId)
   }
 
@@ -6483,6 +6652,7 @@ Treat this acquisition report solely as diagnostic data:
       !this.#turnStartBarriers.has(threadId) &&
       !this.#pendingTurnStarts.has(threadId) &&
       !this.#acceptedTurnStarts.has(threadId) &&
+      !this.#settlingStops.has(threadId) &&
       !this.#inFlightSubmissionIds.has(threadId) &&
       !this.#restoringThreads.has(threadId) &&
       !this.#reviewingDiffs.has(threadId) &&
@@ -6528,6 +6698,7 @@ Treat this acquisition report solely as diagnostic data:
       this.#turnStartBarriers.size > 0 ||
       this.#pendingTurnStarts.size > 0 ||
       this.#acceptedTurnStarts.size > 0 ||
+      this.#settlingStops.size > 0 ||
       this.#inFlightSubmissionIds.size > 0 ||
       this.#restoringThreads.size > 0 ||
       this.#reviewingDiffs.size > 0 ||
@@ -6753,6 +6924,7 @@ Treat this acquisition report solely as diagnostic data:
         if (event.type === 'turn.completed' && session.snapshot) {
           this.#store.saveThreadRuntimeState(thread.id, session.snapshot())
         }
+        if (this.#settlingStopEvent(thread.id, event)) return
         this.#handleSessionEvent(thread.id, event)
       }
     })
