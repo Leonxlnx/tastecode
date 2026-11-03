@@ -310,6 +310,53 @@ describe('Claude subagents', () => {
     })
   })
 
+  it('interrupts an unreported background agent when its session ends after the turn', async () => {
+    const { events, replay, query, turnId } = await session()
+    const report = index(
+      (message) => message.subtype === 'task_updated' && message.task_id === 'ad5eb828797c51a09',
+    )
+    await replay([
+      ...captured.slice(0, report),
+      captured[index((message) => message.type === 'result')]!,
+    ])
+    expect(events).toContainEqual({ type: 'turn.completed', turnId, status: 'completed' })
+    expect(itemsFor(events, BACKGROUND).at(-1)).toMatchObject({
+      status: 'completed',
+      subagent: { state: 'running', background: true },
+    })
+
+    query().close()
+    await tick()
+
+    expect(itemsFor(events, BACKGROUND).at(-1)).toMatchObject({
+      status: 'completed',
+      subagent: { state: 'interrupted', background: true },
+    })
+    expect(events.filter((event) => event.type === 'turn.completed')).toHaveLength(1)
+  })
+
+  it('flushes a throttled terminal snapshot when the session ends before its report', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+    const { events, replay, query } = await session()
+    const report = index(
+      (message) => message.subtype === 'task_updated' && message.task_id === 'ad5eb828797c51a09',
+    )
+    await replay([
+      ...captured.slice(0, report),
+      captured[index((message) => message.type === 'result')]!,
+      captured[report]!,
+    ])
+    expect(itemsFor(events, BACKGROUND).at(-1)?.subagent?.state).toBe('running')
+
+    query().close()
+    await tick()
+
+    expect(itemsFor(events, BACKGROUND).at(-1)).toMatchObject({
+      status: 'completed',
+      subagent: { state: 'completed', background: true },
+    })
+  })
+
   it('sends progress at most once a second, then the latest numbers', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
     const { events, replay } = await session()
