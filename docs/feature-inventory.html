@@ -2012,13 +2012,15 @@
                   chat again while it is still starting shows it without asking the server for its
                   history, so no internal error appears; a Stop pressed while the chat starts, or
                   right behind any prompt, waits for that prompt's turn to start and then stops it
-                  instead of reaching an agent with no turn and being dropped; in every chat the
-                  server ends a stopped turn at once (Stopped by you, the sidebar row stops
-                  spinning) without waiting for the agent to confirm, records none of that turn's
-                  late output, holds a prompt sent meanwhile in the queue until the agent has ended
-                  the turn, stops new work the agent starts in it after accepting the Stop, and ends
-                  the agent process when it refuses the Stop or has not ended the turn within 30 s
-                  (the next send resumes the session)</span
+                  instead of reaching an agent with no turn and being dropped; the chat's sidebar
+                  row stops spinning at the click, as the chat does, also while its turn is still
+                  starting or after the user opened another chat, and spins again only if the Stop
+                  fails or the turn runs on; in every chat the server ends a stopped turn at once
+                  (Stopped by you, the sidebar row stops spinning) without waiting for the agent to
+                  confirm, records none of that turn's late output, holds a prompt sent meanwhile in
+                  the queue until the agent has ended the turn, stops new work the agent starts in
+                  it after accepting the Stop, and ends the agent process when it refuses the Stop
+                  or has not ended the turn within 30 s (the next send resumes the session)</span
                 ></span
               ></label
             >
@@ -2620,13 +2622,14 @@
                 <span class="d"
                   >sidebar delete actions show a top toast with a white Undo button. The toast
                   closes after 5 seconds, pausing on hover or focus within the 10-second undo
-                  window, and fade and slide visible rows before removal. Deletion is permanent once
-                  the window ends; selecting or sending in a pending chat cancels it. A delete still
-                  in its window when the app quits normally finishes on the next start, and the chat
-                  is not shown again. A delete whose request failed is tried once more on the next
-                  start. A crash or hard kill within about 5 seconds of the click can still lose the
-                  delete. Shift-click range selection covers only visible rows. Reduced motion skips
-                  these effects</span
+                  window, and fade and slide visible rows before removal. Deleting a running chat
+                  stops its turn at once, not when the window ends, and Undo brings it back stopped.
+                  Deletion is permanent once the window ends; selecting or sending in a pending chat
+                  cancels it. A delete still in its window when the app quits normally finishes on
+                  the next start, and the chat is not shown again. A delete whose request failed is
+                  tried once more on the next start. A crash or hard kill within about 5 seconds of
+                  the click can still lose the delete. Shift-click range selection covers only
+                  visible rows. Reduced motion skips these effects</span
                 ></span
               ></label
             >
