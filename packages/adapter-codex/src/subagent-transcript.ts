@@ -1,4 +1,4 @@
-import { readdir } from 'node:fs/promises'
+import { readdir, stat } from 'node:fs/promises'
 import path from 'node:path'
 import type { Item, ProviderHistorySession } from '@harness/contracts'
 import { parseCodexHistory } from './history-transcript.js'
@@ -23,6 +23,12 @@ const HEADER_RECORDS = 4
 /** Where recently read sub-agents' rollouts are, so re-reads while one runs skip the search. */
 const located = new Map<string, string>()
 const LOCATED_LIMIT = 64
+/**
+ * The detail asks again every few seconds while a sub-agent runs, so the items of an
+ * unchanged rollout are answered from memory.
+ */
+const parsed = new Map<string, { file: string; size: number; mtimeMs: number; items: Item[] }>()
+const PARSED_LIMIT = 8
 /** "Message Type: NEW_TASK\nTask name: …\nSender: /root\nPayload:\n<the message>" */
 const PAYLOAD_MARKER = 'Payload:\n'
 
@@ -38,6 +44,24 @@ export async function readCodexSubagentTranscript(home: string, threadId: string
   if (!THREAD_ID.test(threadId)) return []
   const file = await rolloutFile(home, threadId)
   if (!file) return []
+  let info
+  try {
+    info = await stat(file)
+  } catch {
+    return []
+  }
+  const key = `${home}\0${threadId}`
+  const known = parsed.get(key)
+  if (known?.file === file && known.size === info.size && known.mtimeMs === info.mtimeMs)
+    return [...known.items]
+  const items = (await readTranscript(file, threadId)).map(withoutInlineData)
+  parsed.delete(key)
+  if (parsed.size >= PARSED_LIMIT) parsed.delete(parsed.keys().next().value!)
+  parsed.set(key, { file, size: info.size, mtimeMs: info.mtimeMs, items })
+  return [...items]
+}
+
+async function readTranscript(file: string, threadId: string): Promise<Item[]> {
   const header = await readHeader(file, threadId)
   if (!header) return []
   const records = (await transcriptRecords(file)).flatMap(({ index, record }) => {
@@ -163,6 +187,25 @@ function ownRecord(record: JsonObject, agentPath: string | undefined): JsonObjec
       role: 'user',
       content: [{ type: 'input_text', text: task }],
     },
+  }
+}
+
+/**
+ * An item with inline file data replaced by a short note. A screenshot Codex looked at
+ * comes back as a data URL of several MB, and the detail asks again every few seconds.
+ */
+function withoutInlineData(item: Item): Item {
+  const inline = item.attachments?.filter((reference) => reference.startsWith('data:')) ?? []
+  if (!inline.length) return item
+  const { attachments, ...rest } = item
+  const kept = attachments!.filter((reference) => !reference.startsWith('data:'))
+  const notes = inline.map((reference) =>
+    reference.startsWith('data:image/') ? '[Screenshot]' : '[Attached file]',
+  )
+  return {
+    ...rest,
+    text: [item.text, ...notes].filter(Boolean).join('\n'),
+    ...(kept.length ? { attachments: kept } : {}),
   }
 }
 

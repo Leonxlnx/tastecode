@@ -259,6 +259,58 @@ describe('a Codex subagent’s own transcript', () => {
     ).toEqual([])
   })
 
+  it('answers an unchanged rollout from memory and re-reads it once it grows', async () => {
+    const records = rollout()
+    const { root, file } = await home(records)
+    const first = await transcript(root)
+    expect(await transcript(root)).toEqual(first)
+
+    const more = [
+      line(16, 'event_msg', { type: 'task_started', turn_id: 'child-turn-2' }),
+      line(17, 'response_item', {
+        type: 'agent_message',
+        id: 'amsg_more',
+        author: '/root',
+        recipient: '/root/read_first_line',
+        content: taskContent({ type: 'input_text', text: 'Now the second line.' }),
+      }),
+      line(18, 'event_msg', { type: 'task_complete', turn_id: 'child-turn-2' }),
+    ]
+    await writeFile(file, [...records, ...more].map((record) => JSON.stringify(record)).join('\n'))
+    const second = await transcript(root)
+    expect(second.slice(0, first.length)).toEqual(first)
+    expect(second.at(-1)).toMatchObject({ role: 'user', text: 'Now the second line.' })
+  })
+
+  it('replaces a screenshot’s inline data with a short note', async () => {
+    const image =
+      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg=='
+    const records = [
+      ...rollout(),
+      line(16, 'event_msg', { type: 'task_started', turn_id: 'child-turn-2' }),
+      line(17, 'response_item', {
+        type: 'message',
+        id: 'msg_shot',
+        role: 'user',
+        content: [
+          { type: 'input_text', text: 'The page now:' },
+          { type: 'input_image', image_url: image },
+          { type: 'input_image', image_url: 'C:\\project\\shot.png' },
+        ],
+        internal_chat_message_metadata_passthrough: provenance('user'),
+      }),
+      line(18, 'event_msg', { type: 'task_complete', turn_id: 'child-turn-2' }),
+    ]
+    const { root } = await home(records)
+    const items = await transcript(root)
+    const shot = items.find((item) => item.id === 'msg_shot')
+    expect(shot).toMatchObject({
+      text: 'The page now:\n[Screenshot]',
+      attachments: ['C:\\project\\shot.png'],
+    })
+    expect(JSON.stringify(items)).not.toContain('base64')
+  })
+
   it('reads by the provider reference when the row carries one', async () => {
     const { root } = await home(rollout())
     const other = '01a14938-0000-7000-8000-000000000000'
