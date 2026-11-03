@@ -5039,7 +5039,12 @@ export class Orchestrator {
       for (const event of this.#store.interruptedLifecycleEvents(threadId)) {
         if (
           onlySubagents &&
-          (event.type !== 'item.completed' || event.item.subagent?.state !== 'interrupted')
+          (event.type !== 'item.completed' ||
+            event.item.subagent?.state !== 'interrupted' ||
+            // TasteCode's own sub-agents run in chats of their own and outlive this runtime.
+            // The broker settles them: on close and Stop, and after a restart.
+            event.item.subagent.threadId !== undefined ||
+            this.#store.subagents.get(event.item.id) !== undefined)
         )
           continue
         this.#record(threadId, event)

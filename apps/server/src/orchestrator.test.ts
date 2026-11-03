@@ -74,6 +74,8 @@ import { StartupCleanupError } from './provider-session.js'
 import { REPLY_STYLE_INSTRUCTIONS } from './reply-style.js'
 import { DatabaseSync } from './sqlite.js'
 import { Store } from './store.js'
+import { subagentRunItem } from './subagent-runs.js'
+import type { StoredSubagentRun } from './subagent-runs.js'
 import * as checkpoint from './checkpoint.js'
 import { beginOptimisticTurn, emptyThread, reduceEventLog } from '../../web/src/thread-store.js'
 import { projectThreadItems } from '../../web/src/ui/turns.js'
@@ -9226,6 +9228,63 @@ describe('session-owned subagent snapshots', () => {
       await orchestrator.disposeAll()
     }
   })
+
+  it.each(['disconnect', 'idle release', 'shutdown'] as const)(
+    "leaves TasteCode's own subagents to the broker on %s",
+    async (end) => {
+      if (end === 'idle release') vi.useFakeTimers()
+      const { orchestrator, sessions, store } = harness(undefined, new Store(':memory:'), 8, 1_000)
+      try {
+        const thread = await orchestrator.startThread('codex', '/repo')
+        const session = sessions[0]!
+        await orchestrator.sendTurn(thread.id, 'Delegate the review')
+        const run = (
+          itemId: string,
+          shortId: string,
+          state: 'running' | 'waiting_for_approval',
+          threadId?: string,
+        ): StoredSubagentRun => ({
+          itemId,
+          parentThreadId: thread.id,
+          shortId,
+          turnId: 's1-turn',
+          ...(threadId ? { threadId } : {}),
+          provider: 'claude-code',
+          task: 'Review src/a.ts',
+          state,
+          snapshot: {
+            id: shortId,
+            state: 'running',
+            ...(threadId ? { threadId } : {}),
+            provider: 'claude-code',
+          },
+          createdAt: 1,
+        })
+        // As the broker records them: one runs in a chat of its own, the other waits for
+        // the user's approval before it has one.
+        for (const entry of [
+          run('broker-running', 'a1', 'running', 'child-thread'),
+          run('broker-waiting', 'a2', 'waiting_for_approval'),
+        ]) {
+          store.subagents.add(entry)
+          store.append(thread.id, { type: 'item.completed', item: subagentRunItem(entry) })
+        }
+        session.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+
+        if (end === 'disconnect') session.emitDisconnected()
+        else if (end === 'idle release') await vi.advanceTimersByTimeAsync(1_000)
+        else await orchestrator.disposeAll()
+
+        expect(orchestrator.isRunning(thread.id)).toBe(false)
+        const items = reduceEventLog(emptyThread, store.history(thread.id)).items
+        for (const id of ['broker-running', 'broker-waiting'])
+          expect(items.find((item) => item.id === id)?.subagent?.state).toBe('running')
+      } finally {
+        await orchestrator.disposeAll()
+        vi.useRealTimers()
+      }
+    },
+  )
 })
 
 describe('queued turns', () => {
