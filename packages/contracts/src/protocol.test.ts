@@ -2018,6 +2018,12 @@ describe('subagent contracts', () => {
     expect(method.result.parse({ items: [] })).toEqual({ items: [] })
     expect(method.result.parse({ items: [call] })).toEqual({ items: [call] })
     expect(method.result.safeParse({ items: [{ ...call, type: 'made-up' }] }).success).toBe(false)
+    expect(method.result.parse({ items: [call], omitted: 120 })).toEqual({
+      items: [call],
+      omitted: 120,
+    })
+    for (const omitted of [0, -1, 1.5, '3'])
+      expect(method.result.safeParse({ items: [call], omitted }).success).toBe(false)
     expect(ItemSchema.parse({ ...call, subagent }).subagent).not.toHaveProperty('transcriptId')
     const native = { ...subagent, transcriptId: 'provider-owned-reference' }
     expect(ItemSchema.parse({ ...call, subagent: native }).subagent).toEqual(native)
@@ -2531,5 +2537,79 @@ describe('subagents.settings', () => {
     expect(update.params.parse({ otherProviders: false })).toEqual({ otherProviders: false })
     expect(update.params.safeParse({}).success).toBe(false)
     expect(update.params.safeParse({ otherProviders: 'yes' }).success).toBe(false)
+  })
+})
+
+describe('accounts.pool', () => {
+  it('describes each account and the combined windows', () => {
+    const pool = {
+      provider: 'codex',
+      accounts: [
+        {
+          accountId: 'default',
+          label: 'Default',
+          plan: 'Plus',
+          weights: { session: 1, weekly: 1 },
+          status: 'ready',
+          windows: [
+            {
+              id: 'codex:secondary',
+              label: 'Weekly',
+              kind: 'weekly',
+              usedPercent: 40,
+              resetsAt: 1_800_000_000_000,
+            },
+          ],
+          atLimit: false,
+        },
+        { accountId: 'work-1a2b3c', label: 'Work', status: 'unknown', windows: [], atLimit: false },
+      ],
+      windows: [
+        {
+          id: 'codex:secondary',
+          label: 'Weekly',
+          kind: 'weekly',
+          accounts: 1,
+          capacity: 1,
+          remaining: 0.6,
+          nextResetAt: 1_800_000_000_000,
+        },
+      ],
+      recommended: 'default',
+    }
+    expect(methods['accounts.pool'].params.parse({ provider: 'codex' })).toEqual({
+      provider: 'codex',
+    })
+    expect(methods['accounts.pool'].result.parse(pool)).toEqual(pool)
+  })
+
+  it('refuses a window kind other than session or weekly, and a zero weight', () => {
+    const account = {
+      accountId: 'default',
+      label: 'Default',
+      status: 'ready',
+      windows: [],
+      atLimit: false,
+    }
+    const result = methods['accounts.pool'].result
+    expect(
+      result.safeParse({
+        provider: 'codex',
+        accounts: [
+          {
+            ...account,
+            windows: [{ id: 'm', label: 'Monthly', kind: 'monthly', usedPercent: 1 }],
+          },
+        ],
+        windows: [],
+      }).success,
+    ).toBe(false)
+    expect(
+      result.safeParse({
+        provider: 'codex',
+        accounts: [{ ...account, weights: { weekly: 0 } }],
+        windows: [],
+      }).success,
+    ).toBe(false)
   })
 })

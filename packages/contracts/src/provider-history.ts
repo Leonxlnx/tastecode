@@ -60,6 +60,8 @@ export type ProviderHistorySource = {
    * Read a native sub-agent's conversation without launching a provider. The server
    * supplies its stored parent item, never a client-provided path or transcript id.
    * Missing transcripts return an empty list; sources without this capability omit it.
+   * It is asked again every few seconds while the sub-agent runs, so a source answers an
+   * unchanged file from memory and replaces inline image data with a short placeholder.
    */
   readSubagentTranscript?(session: ProviderHistorySession, item: Item): Promise<Item[]>
   dispose?(): void | Promise<void>

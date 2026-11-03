@@ -1,23 +1,31 @@
 import { useCallback, useState } from 'react'
 import type { ApprovalDecision, Subagent } from '@harness/contracts'
-import { IconChevronLeft as ChevronLeft, IconSquare as Square } from '@tabler/icons-react'
+import {
+  IconArrowUp as ArrowUp,
+  IconChevronLeft as ChevronLeft,
+  IconSquare as Square,
+} from '@tabler/icons-react'
 import { providerDisplayName } from '../../provider-presentation.js'
 import type { Transport } from '../../transport.js'
 import { SubagentStatus } from '../SubagentRow.js'
 import { Thread } from '../Thread.js'
 import type { AgentEntry } from './agents-list.js'
 import { useChildTranscript } from './child-transcript.js'
+import { NativeSubagentTranscript } from './NativeSubagentTranscript.js'
+import { SubagentAvatar } from './SubagentAvatar.js'
 
 /**
  * One sub-agent, opened from the Agents tab. A sub-agent TasteCode started
  * shows its own chat, read-only, where its approvals and questions can be
- * answered and its run stopped. One the engine runs itself shows its last
- * snapshot: the engine keeps no transcript TasteCode can read yet.
+ * answered and its run stopped. An engine's own sub-agent shows its saved
+ * transcript when available, otherwise its last snapshot.
  */
 export function AgentDetail(props: {
   entry: AgentEntry
   active: boolean
   transport: Transport
+  threadId?: string | undefined
+  subagentTranscript?: boolean | undefined
   onBack: () => void
 }) {
   const { entry, transport } = props
@@ -55,6 +63,7 @@ export function AgentDetail(props: {
         >
           <ChevronLeft size={14} aria-hidden />
         </button>
+        <SubagentAvatar seed={entry.itemId} running={running} size={20} />
         <span className="agent-detail__title">
           <span className="agent-detail__name">{subagent.name ?? 'Subagent'}</span>
           {engine ? <span className="agent-detail__engine">{engine}</span> : null}
@@ -83,6 +92,18 @@ export function AgentDetail(props: {
         props.active ? (
           <ChildThread key={childId} threadId={childId} transport={transport} />
         ) : null
+      ) : props.subagentTranscript && props.threadId && !subagent.provider ? (
+        props.active ? (
+          <NativeSubagentTranscript
+            key={`${props.threadId}:${entry.itemId}`}
+            threadId={props.threadId}
+            itemId={entry.itemId}
+            subagent={subagent}
+            transport={transport}
+          >
+            <SnapshotDetail subagent={subagent} transcriptSupported />
+          </NativeSubagentTranscript>
+        ) : null
       ) : (
         <SnapshotDetail subagent={subagent} />
       )}
@@ -107,32 +128,47 @@ function ChildThread({ threadId, transport }: { threadId: string; transport: Tra
     [threadId, transport],
   )
   return (
-    <div className="agent-detail__transcript">
-      <Thread
-        frameStore={transcript.frameStore}
-        threadId={threadId}
-        transport={transport}
-        keyboardActive={false}
-        loading={transcript.loading}
-        loadFailure={transcript.failure}
-        onRetryLoad={transcript.retry}
-        onDecide={decide}
-        onAnswerUserInput={answer}
-        inlineUserInput
-      />
-    </div>
+    <>
+      <div className="agent-detail__transcript">
+        <Thread
+          frameStore={transcript.frameStore}
+          threadId={threadId}
+          transport={transport}
+          keyboardActive={false}
+          loading={transcript.loading}
+          loadFailure={transcript.failure}
+          onRetryLoad={transcript.retry}
+          onDecide={decide}
+          onAnswerUserInput={answer}
+          inlineUserInput
+        />
+      </div>
+      <ChildComposer threadId={threadId} transport={transport} />
+    </>
   )
 }
 
 /** What the parent's row knows; the whole story for a sub-agent without a chat of its own. */
-function SnapshotDetail({ subagent }: { subagent: Subagent }) {
+function SnapshotDetail({
+  subagent,
+  transcriptSupported,
+}: {
+  subagent: Subagent
+  /** The engine saves its sub-agents' conversations, but this one's was not found. */
+  transcriptSupported?: boolean
+}) {
   const running = subagent.state === 'running'
   // A TasteCode sub-agent gets its chat once it starts; one that never started has none.
+  // A running native one may not have written its file yet.
   const note = subagent.provider
     ? running
       ? 'Its transcript shows here once it starts.'
       : undefined
-    : 'Transcript not available for this engine yet'
+    : transcriptSupported
+      ? running
+        ? undefined
+        : "This subagent's conversation was not saved."
+      : 'Transcript not available for this engine yet'
   return (
     <div className="agent-detail__snapshot">
       {subagent.description ? (
@@ -155,5 +191,66 @@ function SnapshotDetail({ subagent }: { subagent: Subagent }) {
       ) : null}
       {note ? <p className="agent-detail__note">{note}</p> : null}
     </div>
+  )
+}
+
+/**
+ * A follow-up for a sub-agent TasteCode started, written like a Side chat
+ * message. While the sub-agent works the prompt waits behind its turn, as in any chat.
+ */
+function ChildComposer({ threadId, transport }: { threadId: string; transport: Transport }) {
+  const [draft, setDraft] = useState('')
+  const [sending, setSending] = useState(false)
+  const [error, setError] = useState<string>()
+
+  const send = () => {
+    const text = draft.trim()
+    if (!text || sending) return
+    setSending(true)
+    setError(undefined)
+    setDraft('')
+    transport
+      .request('thread.sendTurn', {
+        threadId,
+        text,
+        clientSubmissionId: `agent-detail-${crypto.randomUUID()}`,
+      })
+      .catch((reason: unknown) => {
+        setDraft((current) => current || text)
+        setError(reason instanceof Error ? reason.message : 'Could not send it.')
+      })
+      .finally(() => setSending(false))
+  }
+
+  return (
+    <>
+      {error ? (
+        <span className="agent-detail__error" role="alert">
+          {error}
+        </span>
+      ) : null}
+      <div className="workspace-side-chat__composer">
+        <textarea
+          rows={3}
+          value={draft}
+          aria-label="Message subagent"
+          placeholder="Ask for follow-up changes"
+          onChange={(event) => setDraft(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return
+            event.preventDefault()
+            send()
+          }}
+        />
+        <button
+          type="button"
+          aria-label="Send message"
+          disabled={!draft.trim() || sending}
+          onClick={send}
+        >
+          <ArrowUp size={15} aria-hidden />
+        </button>
+      </div>
+    </>
   )
 }
