@@ -51,6 +51,7 @@ import {
   threadAccountHome,
   type AccountDirectory,
 } from './account-directory.js'
+import { accountPool } from './account-pool.js'
 import { accountRead, type AccountIdentity } from './account-identity.js'
 import { checkpointLabel } from './slice-code-units.js'
 import { canonicalCheckoutRoot, CheckoutAccess } from './checkout-access.js'
@@ -114,9 +115,11 @@ import type {
   AccountContextSettings,
   ProviderContextSettings,
   ProviderContextSettingsMap,
+  ProviderAccount,
   ProviderId,
   ProviderLimitSource,
   ProviderRuntimeSettings,
+  ResultOf,
   QueuedTurn,
   SessionDiff,
   Skill,
@@ -2070,6 +2073,45 @@ export class Orchestrator {
     return held && withAccount(held, scope)
   }
 
+  /**
+   * The provider's accounts as one pool, from the limits already held for each; it
+   * never asks a vendor. An account whose folder is gone shows as unavailable.
+   */
+  accountPool(provider: ProviderId): ResultOf<'accounts.pool'> {
+    const listed = this.#accounts.accounts?.(provider) ?? []
+    const accounts: readonly ProviderAccount[] =
+      listed.length > 0
+        ? listed
+        : [{ id: DEFAULT_ACCOUNT_ID, provider, label: 'Default', managed: false }]
+    const members = accounts.map((account) => {
+      const weights = this.#accounts.planWeights?.(provider, account.plan)
+      try {
+        const source = this.heldLimitSource(provider, 'background', account.id)
+        return { account, weights, source }
+      } catch {
+        return { account, weights, source: undefined, unavailable: true }
+      }
+    })
+    return accountPool(provider, members, Date.now())
+  }
+
+  /**
+   * The account a new chat the user did not pin starts on when the provider has
+   * several: the pool's recommended one, so the allowance that refills first is used
+   * first. None without limit data, and none for a custom harness, which runs with
+   * its own sign-in; the provider's active account decides then.
+   */
+  #recommendedAccount(provider: ProviderId, agent: string | undefined): AccountId | undefined {
+    if (agent !== undefined || (this.#accounts.accounts?.(provider).length ?? 0) < 2)
+      return undefined
+    try {
+      return this.accountPool(provider).recommended
+    } catch (error) {
+      this.#onLog(`[accounts] no recommended ${provider} account: ${errorMessage(error)}`)
+      return undefined
+    }
+  }
+
   /** Signs in as the account, in its own folder; absent, the default account. */
   async startLogin(
     provider: ProviderId,
@@ -2572,7 +2614,12 @@ export class Orchestrator {
       generation.project !==
         (this.#projectGenerations.get(resolveWorkspacePath(workspacePath)) ?? 0)
     if (cancelled()) throw new Error('task start cancelled by shutdown or panic stop')
-    const accountId = accountForNewThread(this.#accounts, provider, options.agent, requestedAccount)
+    const accountId = accountForNewThread(
+      this.#accounts,
+      provider,
+      options.agent,
+      requestedAccount ?? this.#recommendedAccount(provider, options.agent),
+    )
     const accountHome = existingAccountHome(this.#accounts, provider, accountId)
     if (continueFrom !== undefined) this.#assertContinuable(continueFrom, provider)
     // The id has to exist before the worktree, and the worktree before the
