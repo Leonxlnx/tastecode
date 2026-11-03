@@ -13,6 +13,7 @@ function fixture(
   dispose: () => void | Promise<void>,
   status = 'preparing',
   serverSupervisor?: { stop: () => Promise<void> },
+  runningAgents = 0,
 ) {
   const events: Array<{ preventDefault: ReturnType<typeof vi.fn> }> = []
   const app = Object.assign(new EventEmitter(), {
@@ -24,7 +25,12 @@ function fixture(
   })
   const context = {
     app,
-    appUpdater: { state: () => ({ status }), dispose: vi.fn(dispose) },
+    appUpdater: {
+      state: () => ({ status }),
+      dispose: vi.fn(dispose),
+      prepareForQuit: vi.fn<(agentsRunning: boolean) => void>(),
+    },
+    runningAgents,
     waitingForUpdateCleanup: false,
     waitingForServerShutdown: false,
     serverSupervisor,
@@ -119,6 +125,27 @@ describe('quit during an app update', () => {
     expect(events[2]!.preventDefault).not.toHaveBeenCalled()
     expect(context.waitingForServerShutdown).toBe(false)
     expect(mainWindowStatePersistence.saveAndStop).toHaveBeenCalledOnce()
+  })
+
+  it('tells the updater whether agents ran before the server stops them', async () => {
+    const calls: string[] = []
+    const stop = vi.fn(async () => {
+      calls.push('server')
+    })
+    const { app, appUpdater, context } = fixture(() => {}, 'ready', { stop }, 2)
+    appUpdater.prepareForQuit.mockImplementation((running) => {
+      calls.push(`prepare ${running}`)
+    })
+    app.quit()
+    // The stopped agents report in while the server shuts down.
+    context.runningAgents = 0
+    await flush()
+    expect(calls).toEqual(['prepare true', 'server'])
+    expect(appUpdater.prepareForQuit.mock.calls[0]).toEqual([true])
+
+    const idle = fixture(() => {}, 'ready')
+    idle.app.quit()
+    expect(idle.appUpdater.prepareForQuit).toHaveBeenCalledWith(false)
   })
 
   it('detaches an update before waiting for server shutdown', async () => {

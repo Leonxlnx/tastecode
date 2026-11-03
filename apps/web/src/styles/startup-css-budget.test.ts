@@ -147,6 +147,25 @@ describe('startup CSS budget', () => {
     expect(limits).toContain("import '../styles/account-limits.css'")
   })
 
+  it('loads split view styles with the first split, not at startup', () => {
+    const context = readSource('../ui/split-view-context.ts')
+    const styles = readSource('../ui/split-view-styles.ts')
+
+    expect(context).toContain("import('./split-view-styles.js')")
+    expect(styles).toContain("import './split-view.css'")
+    for (const eager of [
+      '../main.tsx',
+      '../App.tsx',
+      '../ui/Sidebar.tsx',
+      '../ui/SplitPane.tsx',
+      '../ui/StageHeader.tsx',
+      '../ui/Composer.tsx',
+    ]) {
+      expect(readSource(eager)).not.toContain('split-view.css')
+      expect(readSource(eager)).not.toMatch(/from ['"]\.\/(ui\/)?split-view-styles\.js['"]/)
+    }
+  })
+
   it('keeps optional thread overlays behind their user actions', () => {
     const thread = readSource('../ui/Thread.tsx')
 

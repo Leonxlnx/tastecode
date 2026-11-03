@@ -38,6 +38,10 @@ export function windowThemeSource(preference: unknown): 'system' | 'light' | 'da
  * symbol colour. Theme, tinted backdrops and the open surface (the Settings
  * title bar is a shade off the rail) all change them, which a light/dark pair
  * of constants cannot follow.
+ *
+ * The caption may carry an alpha byte (#rrggbbaa): with a window background
+ * the page's title bar is see-through, and the buttons must not paint an
+ * opaque box over it.
  */
 export type WindowChrome = {
   theme: 'light' | 'dark'
@@ -47,6 +51,7 @@ export type WindowChrome = {
 }
 
 const HEX_COLOR = /^#[0-9a-f]{6}$/i
+const HEX_COLOR_WITH_ALPHA = /^#[0-9a-f]{6}(?:[0-9a-f]{2})?$/i
 
 /** Validates a renderer-supplied WindowChrome; throws on anything else. */
 export function parseWindowChrome(value: unknown): WindowChrome {
@@ -60,7 +65,9 @@ export function parseWindowChrome(value: unknown): WindowChrome {
     typeof background !== 'string' ||
     typeof caption !== 'string' ||
     typeof symbol !== 'string' ||
-    ![background, caption, symbol].every((color) => HEX_COLOR.test(color))
+    !HEX_COLOR.test(background) ||
+    !HEX_COLOR_WITH_ALPHA.test(caption) ||
+    !HEX_COLOR.test(symbol)
   ) {
     throw new Error('Invalid window chrome')
   }

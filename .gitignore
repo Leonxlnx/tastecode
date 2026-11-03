@@ -50,6 +50,10 @@ test-results/
 
 .osaku/
 
+# Default Agent Skills, fetched from their pinned commits by packages/default-skills/scripts/sync.js
+/packages/default-skills/bundle/
+/packages/default-skills/bundle.staging-*/
+
 # Local scratch — anything here is yours alone
 scratch/
 

@@ -21,9 +21,11 @@ import { KEYBINDING_DEFINITIONS, type Shortcut } from './shortcuts.js'
 import { TERMINAL_PLACEMENT_KEY } from './terminal-placement.js'
 import { IndeterminateRequestError, type ConnectionState, type Transport } from './transport.js'
 import { resetInstalls } from './provider-install.js'
+import { PROVIDER_RECHECK_INTERVAL_MS } from './provider-recheck.js'
 import { providerUpdatesStore } from './provider-updates.js'
 import { mockKeyboardModifierState } from './test-keyboard.js'
 import { NEWEST_HISTORY_TURNS } from './thread-controller.js'
+import { composerWireText } from './ui/composer-chips.js'
 
 const NEWEST_PAGE = { turnLimit: NEWEST_HISTORY_TURNS }
 const PENDING_CHAT_DELETES_KEY = 'harness.pendingChatDeletes.v1'
@@ -111,6 +113,8 @@ const threadCallbacks = vi.hoisted<ThreadCallbacks>(() => ({
   searchJump: undefined,
   searchJumpDone: undefined,
 }))
+/** The last props each chat's transcript rendered with, for split view's two transcripts. */
+const threadPropsById = vi.hoisted(() => new Map<string, ThreadProps>())
 const pickFolder = vi.hoisted(() => vi.fn<() => Promise<string | undefined>>())
 const droppedProjectFolderPaths = vi.hoisted(() =>
   vi.fn<(files: ArrayLike<File>) => Promise<string[]>>(),
@@ -186,8 +190,10 @@ vi.mock('./ui/Thread.js', async () => {
       return (
         <div
           data-testid="thread"
+          data-thread-id={props.threadId}
           data-started-at={frame.activeTurn?.startedAt}
           ref={() => {
+            if (props.threadId) threadPropsById.set(props.threadId, props)
             threadCallbacks.decideApproval = props.onDecide
             threadCallbacks.answerUserInput = props.onAnswerUserInput
             threadCallbacks.undoChanges = props.onUndoChanges
@@ -417,6 +423,7 @@ beforeEach(() => {
   threadCallbacks.threadId = undefined
   threadCallbacks.searchJump = undefined
   threadCallbacks.searchJumpDone = undefined
+  threadPropsById.clear()
   window.location.hash = ''
   document.documentElement.removeAttribute('data-theme')
   document.documentElement.classList.remove('dark')
@@ -1366,6 +1373,23 @@ describe('web client', () => {
         { provider: 'codex', state: 'loading', remembered: true },
       ),
     ).toBe('setup-required')
+    // The provider's status is its default account's; a further account's own
+    // check decides for that account, signed out or in.
+    const team = { provider: 'codex' as const, accountId: 'team-9z8y7x' }
+    expect(resolve({ auth: 'unauthenticated' }, { ...team, state: 'loading' })).toBe('loading')
+    expect(resolve({ auth: 'unauthenticated' }, { ...team, state: 'loading', slow: true })).toBe(
+      'ready',
+    )
+    expect(resolve({ auth: 'authenticated' }, { ...team, state: 'loading' })).toBe('loading')
+    expect(
+      resolve(
+        { auth: 'unauthenticated' },
+        { ...team, state: 'ready', account: { signedIn: true } },
+      ),
+    ).toBe('ready')
+    expect(
+      resolve({ auth: 'authenticated' }, { ...team, state: 'ready', account: { signedIn: false } }),
+    ).toBe('setup-required')
   })
 
   it('cuts a prompt title before an emoji split at 40 code units', () => {
@@ -1499,7 +1523,8 @@ describe('web client', () => {
     await screen.findByRole('button', { name: /^New session,/ })
     expect(composer().value).toBe('New chat idea')
     fireEvent.click(screen.getByRole('button', { name: /^New session,/ }))
-    expect(composer().value).toBe('Half-typed reply')
+    // A skill saved apart from the text comes back as a chip inside it.
+    expect(composerWireText(composer().value)).toBe('$docs Half-typed reply')
     expect(screen.getByRole('button', { name: 'Remove later.png' })).toBeTruthy()
     expect(composerProps().draftRequest?.resources).toEqual([docs])
   })
@@ -1600,6 +1625,19 @@ describe('web client', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Restore' }))
     await waitFor(() => expect(composer.value).toBe('my unsent draft'))
+  })
+  it('offers nothing back when Edit brings the same prompt with chips again', async () => {
+    await openNewSession()
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+
+    act(() => threadCallbacks.editMessage?.('/goal ship the fix'))
+    // The command came back as a chip; the draft now holds the chip form.
+    expect(composer.value).not.toBe('/goal ship the fix')
+    expect(composerWireText(composer.value)).toBe('/goal ship the fix')
+
+    act(() => threadCallbacks.editMessage?.('/goal ship the fix'))
+    expect(composerWireText(composer.value)).toBe('/goal ship the fix')
+    expect(screen.queryByText('Your draft was replaced.')).toBeNull()
   })
   it('puts the last sent prompt back on Arrow Up in an empty composer', async () => {
     const fallback = transport.request.getMockImplementation()!
@@ -2434,6 +2472,82 @@ describe('web client', () => {
     }
   })
 
+  it('leaves a provider known to be signed out out of the picker until a read says otherwise', async () => {
+    serverProviders = [
+      ...serverProviders,
+      { ...claudeCodeServerProvider(), auth: 'unknown' },
+      { ...grokServerProvider(), auth: 'unknown' },
+    ]
+    // Claude Code's last account read said signed out; Grok's was never read.
+    localStorage.setItem('harness.signedOutProviders', JSON.stringify(['claude-code']))
+    mockLiveDiscovery()
+    let claudeAccount = { signedIn: false }
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'auth.status' &&
+      methods['auth.status'].params.parse(params).provider === 'claude-code'
+        ? Promise.resolve(claudeAccount)
+        : request(method, params),
+    )
+    const claudeReads = () =>
+      transport.request.mock.calls.filter(
+        ([method, params]) =>
+          method === 'auth.status' &&
+          methods['auth.status'].params.parse(params).provider === 'claude-code',
+      ).length
+
+    render(<App />)
+
+    await waitFor(() => expect(offeredModelNames('grok')).toEqual(['Grok 4.7']))
+    await waitFor(() => expect(offeredModelNames('codex').length).toBeGreaterThan(0))
+    expect(offeredModelNames('claude-code')).toEqual([])
+
+    // Opening the picker asks again; still signed out, it stays away.
+    act(() => composerProps().onModelSelectorOpen?.())
+    await waitFor(() => expect(claudeReads()).toBe(1))
+    await act(async () => undefined)
+    expect(offeredModelNames('claude-code')).toEqual([])
+    // A second opening within the recheck interval does not start the CLI again.
+    act(() => composerProps().onModelSelectorOpen?.())
+    await act(async () => undefined)
+    expect(claudeReads()).toBe(1)
+
+    // Signed in from its own terminal since: back once a read says so.
+    claudeAccount = { signedIn: true }
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + PROVIDER_RECHECK_INTERVAL_MS + 1)
+    act(() => composerProps().onModelSelectorOpen?.())
+    await waitFor(() =>
+      expect(offeredModelNames('claude-code')).toEqual([
+        'Fable 5.1',
+        'Opus 5.5',
+        'Sonnet 5.5',
+        'Haiku 5.5',
+      ]),
+    )
+    expect(claudeReads()).toBe(2)
+  })
+
+  it('keeps the provider the composer is on in the picker while it is signed out', async () => {
+    serverProviders = [...serverProviders, { ...claudeCodeServerProvider(), auth: 'unknown' }]
+    localStorage.setItem('harness.provider', 'claude-code')
+    mockLiveDiscovery()
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'auth.status' &&
+      methods['auth.status'].params.parse(params).provider === 'claude-code'
+        ? Promise.resolve({ signedIn: false })
+        : request(method, params),
+    )
+
+    render(<App />)
+
+    await waitFor(() =>
+      expect(localStorage.getItem('harness.signedOutProviders')).toContain('claude-code'),
+    )
+    await waitFor(() => expect(offeredModelNames('claude-code').length).toBeGreaterThan(0))
+    expect(composerProps().provider).toBe('claude-code')
+  })
+
   it('returns an older build’s list to the current lineups from the cached catalog', async () => {
     serverProviders = [...serverProviders, claudeCodeServerProvider()]
     // Version 4 predates Claude Code's reset (7) and Codex's (8), so every
@@ -3115,6 +3229,7 @@ describe('web client', () => {
     })
 
     it('lists an agent that registers after the picker opened', async () => {
+      serverProviders = [...serverProviders, { ...serverProviders[0]!, id: 'acp' }]
       const kimi = { id: 'kimi', name: 'Kimi CLI' }
       localStorage.setItem('harness.providerRoster.v1', JSON.stringify(['codex', 'acp:kimi']))
       localStorage.setItem(
@@ -3742,6 +3857,7 @@ describe('web client', () => {
   })
 
   it('discovers a custom Pi source and binds new sessions to its harness id', async () => {
+    serverProviders = [...serverProviders, { ...serverProviders[0]!, id: 'pi', displayName: 'Pi' }]
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
     transport.request.mockImplementation((method: string, params: unknown) => {
@@ -4333,6 +4449,7 @@ describe('web client', () => {
   })
 
   it('fetches models only for the ACP agents added to Providers', async () => {
+    serverProviders = [...serverProviders, { ...serverProviders[0]!, id: 'acp' }]
     localStorage.setItem('harness.providerRoster.v1', JSON.stringify(['codex', 'acp:kimi']))
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
@@ -4374,6 +4491,70 @@ describe('web client', () => {
     expect(await screen.findByRole('heading', { name: 'Add providers' })).toBeTruthy()
   })
 
+  it("never shows the composer's last provider's sign-in as the next one's in Settings", async () => {
+    await import('./ui/Settings.js')
+    serverProjects = []
+    localStorage.setItem('harness.provider', 'claude-code')
+    localStorage.setItem('harness.providerRoster.v1', '[]')
+    serverProviders.unshift({
+      ...serverProviders[0]!,
+      id: 'claude-code',
+      displayName: 'Claude Code',
+      auth: 'unknown',
+    })
+    let answerCodex!: (account: { signedIn: boolean }) => void
+    const codexAccount = new Promise<{ signedIn: boolean }>((resolve) => {
+      answerCodex = resolve
+    })
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'auth.status') {
+        // Claude Code's CLI is signed out; Codex's read is still running.
+        return methods['auth.status'].params.parse(params).provider === 'codex'
+          ? codexAccount
+          : Promise.resolve({ signedIn: false })
+      }
+      if (method === 'models.list') {
+        return Promise.resolve({
+          models:
+            methods['models.list'].params.parse(params).provider === 'codex'
+              ? [cachedCodexChoice().model]
+              : [],
+        })
+      }
+      return request(method, params)
+    })
+    render(<App />)
+
+    expect(await screen.findByText('Add a provider to start chatting.')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Add provider' }))
+    expect(await screen.findByRole('heading', { name: 'Add providers' })).toBeTruthy()
+    const codexRow = () =>
+      screen.getByRole('button', { name: /^(Add|Remove) Codex$/ }).closest('.provider-row')!
+    expect(codexRow().textContent).toContain('Signed in')
+
+    // Adding Codex lists its models, and the composer moves to it.
+    fireEvent.click(screen.getByRole('button', { name: 'Add Codex' }))
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('models.list', { provider: 'codex' }),
+    )
+    // Settings' read of the row and the composer's own read of its new provider.
+    await waitFor(() =>
+      expect(
+        transport.request.mock.calls.filter(
+          ([method, params]) =>
+            method === 'auth.status' && (params as { provider?: string }).provider === 'codex',
+        ),
+      ).toHaveLength(2),
+    )
+    await act(async () => undefined)
+    expect(codexRow().textContent).not.toContain('Not signed in')
+
+    await act(async () => answerCodex({ signedIn: true }))
+    expect(codexRow().textContent).toContain('Signed in')
+    expect(codexRow().textContent).not.toContain('Not signed in')
+  })
+
   it('starts the roster from what was in use: installed providers and agents with chats', async () => {
     serverProjects = [
       {
@@ -4389,6 +4570,11 @@ describe('web client', () => {
           },
         ],
       },
+    ]
+    // The server lists ACP agents under its ACP entry.
+    serverProviders = [
+      ...serverProviders,
+      { ...serverProviders[0]!, id: 'acp', displayName: 'ACP agents', version: 'Kimi CLI, Devin' },
     ]
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
@@ -5661,6 +5847,66 @@ describe('new chats', () => {
     expect(note()).toBeUndefined()
   })
 
+  it("checks the sign-in of the chat's own account, not the default one", async () => {
+    const codex = serverProviders[0]!
+    // The default account is signed out; the chat runs on Team, which is not.
+    serverProviders = [
+      {
+        ...codex,
+        auth: 'unauthenticated',
+        capabilities: { ...codex.capabilities!, multipleAccounts: true },
+      },
+    ]
+    serverProjects[0]!.sessions = [
+      {
+        id: 'chat-1',
+        title: 'Webhook retries',
+        provider: 'codex',
+        accountId: 'team-9z8y7x',
+        createdAt: 1,
+      },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'accounts.list') {
+        return Promise.resolve({
+          accounts: [
+            { id: 'default', provider: 'codex', label: 'Personal', managed: false },
+            {
+              id: 'team-9z8y7x',
+              provider: 'codex',
+              label: 'Team',
+              home: 'C:\\TasteCode\\accounts\\codex\\team-9z8y7x',
+              managed: true,
+              email: 'team@example.test',
+            },
+          ],
+          active: {},
+        })
+      }
+      if (method === 'auth.status') {
+        const { accountId } = methods['auth.status'].params.parse(params)
+        return Promise.resolve(
+          accountId === 'team-9z8y7x'
+            ? { signedIn: true, email: 'team@example.test' }
+            : { signedIn: false },
+        )
+      }
+      return request(method, params)
+    })
+    render(<App />)
+
+    fireEvent.click(await waitFor(() => treeChatRow('Webhook retries')))
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('auth.status', {
+        provider: 'codex',
+        accountId: 'team-9z8y7x',
+      }),
+    )
+    await waitFor(() => expect(composerProps().sendAvailability).toBe('ready'))
+  })
+
   it('keeps the message and the chat where they were when a switch fails', async () => {
     serverProviders = [...serverProviders, claudeCodeServerProvider()]
     serverProjects[0]!.sessions = [
@@ -6609,6 +6855,196 @@ describe('new chats', () => {
         .some((status) => status.textContent?.includes('Sign in to use this provider.')),
     ).toBe(true)
     expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it("holds setup's agent list until the server says which providers it offers", async () => {
+    desktopShell.enabled = true
+    serverProjects = []
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    const waiting: Array<() => void> = []
+    let answered = false
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method !== 'providers.list' || answered
+        ? request(method, params)
+        : new Promise((resolve) => waiting.push(() => resolve(request(method, params)))),
+    )
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^Get started/ }, { timeout: 5_000 }))
+    fireEvent.click(screen.getByRole('button', { name: /^Continue/ }))
+    fireEvent.click(screen.getByRole('button', { name: /^Continue/ }))
+    const setup = screen.getByRole('dialog', { name: 'Choose your coding agents' })
+    const list = () => setup.querySelector('.onboarding__pick')
+
+    expect(list()?.querySelector('[aria-busy="true"]')).toBeTruthy()
+    expect(list()?.textContent).not.toMatch(/\b(Claude Code|Codex|Grok|Cursor|OpenCode|Pi)\b/)
+
+    await act(async () => {
+      answered = true
+      for (const answer of waiting) answer()
+    })
+    await waitFor(() =>
+      expect(within(setup).getByRole('region', { name: 'Providers' }).textContent).toBe(
+        'ProvidersCodexSigned in',
+      ),
+    )
+    expect(list()?.querySelector('[aria-busy="true"]')).toBeNull()
+  })
+
+  it("ends setup's agent list in the provider error when the list fails", async () => {
+    desktopShell.enabled = true
+    serverProjects = []
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'providers.list'
+        ? Promise.reject(new Error('server offline'))
+        : request(method, params),
+    )
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^Get started/ }, { timeout: 5_000 }))
+    fireEvent.click(screen.getByRole('button', { name: /^Continue/ }))
+    fireEvent.click(screen.getByRole('button', { name: /^Continue/ }))
+    const setup = screen.getByRole('dialog', { name: 'Choose your coding agents' })
+
+    await waitFor(() =>
+      expect(setup.querySelector('.onboarding__lead')?.textContent).toBe(
+        'Could not load providers. server offline',
+      ),
+    )
+    expect(setup.querySelector('[aria-busy="true"]')).toBeNull()
+    expect(setup.querySelector('.onboarding__pick')?.textContent).toBe('')
+  })
+
+  it("shows setup's ACP group with the list when a retry follows a failed list", async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      desktopShell.enabled = true
+      serverProjects = []
+      serverProviders = [...serverProviders, { ...serverProviders[0]!, id: 'acp' }]
+      const request = transport.request.getMockImplementation()
+      if (!request) throw new Error('missing request mock')
+      let retrying = false
+      let releaseAgents: (() => void) | undefined
+      transport.request.mockImplementation((method: string, params: unknown) => {
+        if (method === 'providers.list' && !retrying) {
+          return Promise.reject(new Error('server offline'))
+        }
+        if (method === 'acp.agents' && retrying) {
+          return new Promise((resolve) => {
+            releaseAgents = () =>
+              resolve({
+                agents: [{ id: 'kimi', name: 'Kimi CLI', installed: true, verified: true }],
+              })
+          })
+        }
+        return request(method, params)
+      })
+
+      render(<App />)
+      fireEvent.click(
+        await screen.findByRole('button', { name: /^Get started/ }, { timeout: 5_000 }),
+      )
+      fireEvent.click(screen.getByRole('button', { name: /^Continue/ }))
+      fireEvent.click(screen.getByRole('button', { name: /^Continue/ }))
+      const setup = screen.getByRole('dialog', { name: 'Choose your coding agents' })
+      const list = () => setup.querySelector('.onboarding__pick')
+      await waitFor(() =>
+        expect(setup.querySelector('.onboarding__lead')?.textContent).toBe(
+          'Could not load providers. server offline',
+        ),
+      )
+
+      // Focus retries the failed list; this time the providers answer first.
+      retrying = true
+      vi.setSystemTime(Date.now() + 31_000)
+      act(() => window.dispatchEvent(new Event('focus')))
+      await waitFor(() =>
+        expect(
+          transport.request.mock.calls.filter(([method]) => method === 'providers.list'),
+        ).toHaveLength(2),
+      )
+      await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0)))
+      expect(list()?.querySelector('[aria-busy="true"]')).toBeTruthy()
+      expect(list()?.textContent).not.toMatch(/\bCodex\b/)
+
+      await act(async () => releaseAgents?.())
+      await waitFor(() =>
+        expect(within(setup).getByRole('region', { name: 'ACP agents' }).textContent).toMatch(
+          /Kimi CLI/,
+        ),
+      )
+      expect(within(setup).getByRole('region', { name: 'Providers' }).textContent).toBe(
+        'ProvidersCodexSigned in',
+      )
+      expect(list()?.querySelector('[aria-busy="true"]')).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it("settles setup's ACP group from a replaced run when its replacement fails", async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      desktopShell.enabled = true
+      serverProjects = []
+      serverProviders = [...serverProviders, { ...serverProviders[0]!, id: 'acp' }]
+      const request = transport.request.getMockImplementation()
+      if (!request) throw new Error('missing request mock')
+      let providerLists = 0
+      let releaseAgents: (() => void) | undefined
+      transport.request.mockImplementation((method: string, params: unknown) => {
+        // Only the first run's providers answer.
+        if (method === 'providers.list' && ++providerLists > 1) {
+          return Promise.reject(new Error('server offline'))
+        }
+        // The first run's agents are held; later runs never hear back.
+        if (method === 'acp.agents') {
+          return new Promise((resolve) => {
+            releaseAgents ??= () =>
+              resolve({
+                agents: [{ id: 'kimi', name: 'Kimi CLI', installed: true, verified: true }],
+              })
+          })
+        }
+        return request(method, params)
+      })
+
+      render(<App />)
+      fireEvent.click(
+        await screen.findByRole('button', { name: /^Get started/ }, { timeout: 5_000 }),
+      )
+      fireEvent.click(screen.getByRole('button', { name: /^Continue/ }))
+      fireEvent.click(screen.getByRole('button', { name: /^Continue/ }))
+      const setup = screen.getByRole('dialog', { name: 'Choose your coding agents' })
+      const list = () => setup.querySelector('.onboarding__pick')
+      await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0)))
+      expect(providerLists).toBe(1)
+      expect(list()?.querySelector('[aria-busy="true"]')).toBeTruthy()
+
+      // A later focus replaces the first run before its agents answer, and
+      // the replacement's provider list fails.
+      vi.setSystemTime(Date.now() + 6 * 60 * 60_000 + 1_000)
+      act(() => window.dispatchEvent(new Event('focus')))
+      await waitFor(() => expect(providerLists).toBeGreaterThan(1))
+      await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0)))
+      expect(list()?.querySelector('[aria-busy="true"]')).toBeTruthy()
+
+      await act(async () => releaseAgents?.())
+      await waitFor(() =>
+        expect(within(setup).getByRole('region', { name: 'ACP agents' }).textContent).toMatch(
+          /Kimi CLI/,
+        ),
+      )
+      expect(within(setup).getByRole('region', { name: 'Providers' }).textContent).toBe(
+        'ProvidersCodexSigned in',
+      )
+      expect(list()?.querySelector('[aria-busy="true"]')).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it.each(['success', 'failure', 'cancel'] as const)(
@@ -7979,6 +8415,68 @@ describe('new chats', () => {
     expect(await screen.findByRole('button', { name: chatRowName('New session') })).toBeTruthy()
     expect(rpcCount('thread.delete')).toBe(1)
     expect(localStorage.getItem(PENDING_CHAT_DELETES_KEY)).toBeNull()
+  })
+
+  describe('a chat list that lands while a delete is on its way', () => {
+    /** Deletes "New session" and lands a list that still has it before the delete replies. */
+    async function deleteWithListInFlight() {
+      const nativeTimeout = globalThis.setTimeout
+      vi.spyOn(globalThis, 'setTimeout').mockImplementation(
+        (...args: Parameters<typeof setTimeout>) => {
+          if (args[1] === 10_000) args[1] = 50
+          return nativeTimeout(...args)
+        },
+      )
+      await openNewSession()
+      const request = transport.request.getMockImplementation()!
+      let reply: { resolve: () => void; reject: (error: Error) => void } | undefined
+      transport.request.mockImplementation((method, params) =>
+        method === 'thread.delete'
+          ? new Promise((resolve, reject) => {
+              reply = {
+                resolve: () => resolve(request(method, params)),
+                reject,
+              }
+            })
+          : request(method, params),
+      )
+      await chooseChatMenuItem('New session', 'Delete chat')
+      await waitFor(() => expect(reply).toBeDefined())
+      const lists = rpcCount('projects.list')
+      // The server has not deleted the chat yet, so this list still has it.
+      act(() => transport.listeners.get('providerHistory.changed')?.({ threadIds: [] }))
+      await waitFor(() => expect(rpcCount('projects.list')).toBe(lists + 1))
+      await act(async () => new Promise((resolve) => nativeTimeout(resolve, 0)))
+      shellRenders.sidebar.mockClear()
+      return reply!
+    }
+
+    function shownChatIds() {
+      return shellRenders.sidebar.mock.calls.flatMap(([props]) =>
+        (props as ComponentProps<typeof import('./ui/Sidebar.js').Sidebar>).projects.flatMap(
+          (project) => project.sessions.map((session) => session.id),
+        ),
+      )
+    }
+
+    it('keeps the chat out once the delete commits', async () => {
+      const reply = await deleteWithListInFlight()
+      await act(async () => reply.resolve())
+      await waitFor(() => expect(localStorage.getItem(PENDING_CHAT_DELETES_KEY)).toBeNull())
+      const lists = rpcCount('projects.list')
+      act(() => transport.listeners.get('providerHistory.changed')?.({ threadIds: [] }))
+      await waitFor(() => expect(rpcCount('projects.list')).toBeGreaterThan(lists))
+      await act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
+      expect(screen.queryByRole('button', { name: chatRowName('New session') })).toBeNull()
+      expect(shownChatIds()).not.toContain('untouched-thread')
+    })
+
+    it('shows the chat again when the delete fails', async () => {
+      const reply = await deleteWithListInFlight()
+      await act(async () => reply.reject(new Error('The chat is still starting.')))
+      expect((await screen.findByRole('alert')).textContent).toBe('The chat is still starting.')
+      expect(await screen.findByRole('button', { name: chatRowName('New session') })).toBeTruthy()
+    })
   })
 
   it('reconciles workspace ownership when a running session is archived', async () => {
@@ -11336,7 +11834,7 @@ describe('inbox lifecycle', () => {
     await screen.findByRole('button', { name: 'Settle Newest chat' })
 
     vi.spyOn(window, 'requestAnimationFrame').mockImplementation(() => 1)
-    vi.useFakeTimers()
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     try {
       act(() => {
         transport.listeners.get('thread.lifecycle')?.({
@@ -13211,6 +13709,11 @@ describe('live sessions', () => {
     serverSidebarSettings.mode = 'inbox'
     render(<App />)
     const inboxSearch = await screen.findByRole('textbox', { name: 'Search threads' })
+    // The composer takes focus on the frame after it restores its draft. Open
+    // the palette after that frame, as a person would; a frame landing while
+    // the palette is open would make the composer the search's opener.
+    const composer = screen.getByRole('textbox', { name: 'Message' })
+    await waitFor(() => expect(document.activeElement).toBe(composer))
     fireEvent.keyDown(window, { key: 'k', metaKey: true })
     const commandSearch = await screen.findByRole('textbox', { name: 'Search commands' })
     fireEvent.change(commandSearch, { target: { value: 'search all chats' } })
@@ -14685,6 +15188,367 @@ describe('connection recovery regressions', () => {
       threadId: 'untouched-thread',
       approvalId: 'approval-1',
       decision: 'approve',
+    })
+  })
+})
+
+describe('split view', () => {
+  function useTwoChats(extra: TestServerSession[] = []) {
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'project',
+        pinned: false,
+        createdAt: 0,
+        sessions: [
+          { id: 'left-thread', title: 'Left chat', provider: 'codex', createdAt: 3 },
+          { id: 'right-thread', title: 'Right chat', provider: 'codex', createdAt: 2 },
+          ...extra,
+        ],
+      },
+    ]
+  }
+  const pane = (title: string) => screen.getByRole('region', { name: title })
+  const transcriptIn = (title: string) => within(pane(title)).getByTestId('thread')
+  const isFocused = (title: string) => pane(title).classList.contains('is-focused')
+
+  async function openSplit(extra?: TestServerSession[]) {
+    useTwoChats(extra)
+    render(<App />)
+    fireEvent.click(await waitFor(() => treeChatRow('Left chat')))
+    await screen.findByTestId('thread')
+    fireEvent.contextMenu(treeChatRow('Right chat'))
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Open beside' }))
+    await waitFor(() => expect(screen.getAllByTestId('thread')).toHaveLength(2))
+  }
+
+  function streamText(threadId: string, text: string) {
+    emitThreadEvent(threadId, {
+      type: 'item.started',
+      item: {
+        id: `${threadId}-item`,
+        turnId: 'turn-1',
+        type: 'message',
+        role: 'assistant',
+        status: 'started',
+        text: '',
+        createdAt: 1,
+      },
+    })
+    emitThreadEvent(threadId, {
+      type: 'item.delta',
+      turnId: 'turn-1',
+      itemId: `${threadId}-item`,
+      textDelta: text,
+    })
+  }
+
+  it('opens a chat beside the active one from the chat menu, and the opened pane has focus', async () => {
+    await openSplit()
+    expect(transcriptIn('Left chat').dataset.threadId).toBe('left-thread')
+    expect(transcriptIn('Right chat').dataset.threadId).toBe('right-thread')
+    expect(isFocused('Right chat')).toBe(true)
+    expect(isFocused('Left chat')).toBe(false)
+    expect(sidebarProps().activeSessionId).toBe('right-thread')
+    expect(sidebarProps().besideSessionId).toBe('left-thread')
+    // Each pane has its own header; the stage-wide one is not shown.
+    expect(within(pane('Left chat')).getByRole('button', { name: 'Close Left chat pane' }))
+    expect(within(pane('Right chat')).getByRole('button', { name: 'Close Right chat pane' }))
+    expect(document.querySelector('.stage__body')!.classList.contains('is-split')).toBe(true)
+  })
+
+  it('opens a chat beside with Alt+click and keeps the open chat mounted', async () => {
+    useTwoChats()
+    render(<App />)
+    fireEvent.click(await waitFor(() => treeChatRow('Left chat')))
+    const first = await screen.findByTestId('thread')
+    fireEvent.click(treeChatRow('Right chat'), { altKey: true })
+    await waitFor(() => expect(screen.getAllByTestId('thread')).toHaveLength(2))
+    expect(isFocused('Right chat')).toBe(true)
+    // Opening the split keeps the chat that was open mounted.
+    expect(transcriptIn('Left chat')).toBe(first)
+  })
+
+  it('streams both chats into their own panes', async () => {
+    await openSplit()
+    streamText('left-thread', 'from the left')
+    streamText('right-thread', 'from the right')
+    await waitFor(() => {
+      expect(within(transcriptIn('Left chat')).getByText('from the left')).toBeTruthy()
+      expect(within(transcriptIn('Right chat')).getByText('from the right')).toBeTruthy()
+    })
+    expect(within(transcriptIn('Left chat')).queryByText('from the right')).toBeNull()
+  })
+
+  it('moves focus on a press in the other pane without remounting either transcript', async () => {
+    await openSplit()
+    const left = transcriptIn('Left chat')
+    const right = transcriptIn('Right chat')
+    const leftComposer = pane('Left chat').querySelector('.composer')!
+    expect(leftComposer.classList.contains('is-dormant')).toBe(true)
+    expect(leftComposer.hasAttribute('inert')).toBe(true)
+
+    fireEvent.pointerDown(left, { button: 0 })
+
+    await waitFor(() => expect(isFocused('Left chat')).toBe(true))
+    expect(sidebarProps().activeSessionId).toBe('left-thread')
+    expect(sidebarProps().besideSessionId).toBe('right-thread')
+    expect(transcriptIn('Left chat')).toBe(left)
+    expect(transcriptIn('Right chat')).toBe(right)
+    expect(pane('Left chat').querySelector('.composer')).toBe(leftComposer)
+    expect(leftComposer.classList.contains('is-dormant')).toBe(false)
+    expect(pane('Right chat').querySelector('.composer')!.classList.contains('is-dormant')).toBe(
+      true,
+    )
+  })
+
+  it('gives the focused pane the live composer and keeps the other one as it was', async () => {
+    await openSplit()
+    type ComposerCall = ComponentProps<typeof import('./ui/Composer.js').Composer>
+    const lastComposer = (dormant: boolean) =>
+      shellRenders.composer.mock.calls
+        .map(([props]) => props as ComposerCall)
+        .findLast((props) => (props.dormant === true) === dormant)!
+    expect(lastComposer(false).threadId).toBe('right-thread')
+    expect(lastComposer(true).threadId).toBe('left-thread')
+    expect(lastComposer(true).errorsVisible).toBe(false)
+
+    fireEvent.pointerDown(transcriptIn('Left chat'), { button: 0 })
+
+    await waitFor(() => expect(lastComposer(false).threadId).toBe('left-thread'))
+    expect(lastComposer(true).threadId).toBe('right-thread')
+  })
+  it('answers an approval in the unfocused pane on that pane’s chat', async () => {
+    await openSplit()
+    act(() => threadPropsById.get('left-thread')!.onDecide('approval-1', 'approve'))
+    expect(transport.request).toHaveBeenCalledWith('thread.respondToApproval', {
+      threadId: 'left-thread',
+      approvalId: 'approval-1',
+      decision: 'approve',
+    })
+  })
+
+  it('replaces the focused pane’s chat from the sidebar, and a chat shown beside only takes focus', async () => {
+    await openSplit([{ id: 'third-thread', title: 'Third chat', provider: 'codex', createdAt: 1 }])
+    fireEvent.click(treeChatRow('Third chat'))
+    await waitFor(() => expect(transcriptIn('Third chat').dataset.threadId).toBe('third-thread'))
+    expect(screen.queryByRole('region', { name: 'Right chat' })).toBeNull()
+    expect(isFocused('Third chat')).toBe(true)
+    const left = transcriptIn('Left chat')
+
+    fireEvent.click(treeChatRow('Left chat'))
+
+    await waitFor(() => expect(isFocused('Left chat')).toBe(true))
+    expect(screen.getAllByTestId('thread')).toHaveLength(2)
+    expect(transcriptIn('Left chat')).toBe(left)
+    expect(sidebarProps().besideSessionId).toBe('third-thread')
+  })
+
+  it('keeps the chat beside read when its turn completes', async () => {
+    await openSplit()
+    startTurn('left-thread', 'turn-1')
+    completeTurn('left-thread', 'turn-1')
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('thread.history', {
+        threadId: 'left-thread',
+        afterSeq: Number.MAX_SAFE_INTEGER,
+      }),
+    )
+    const left = sidebarProps()
+      .projects.flatMap((project) => project.sessions)
+      .find((session) => session.id === 'left-thread')
+    expect(left?.unread).toBe(false)
+  })
+
+  it('closes a pane and returns to the single chat layout with the other chat still mounted', async () => {
+    await openSplit()
+    const left = transcriptIn('Left chat')
+    fireEvent.click(
+      within(pane('Right chat')).getByRole('button', { name: 'Close Right chat pane' }),
+    )
+    await waitFor(() => expect(screen.getAllByTestId('thread')).toHaveLength(1))
+    expect(screen.getByTestId('thread')).toBe(left)
+    expect(sidebarProps().activeSessionId).toBe('left-thread')
+    expect(sidebarProps().besideSessionId).toBeUndefined()
+    expect(document.querySelector('.stage__body')!.classList.contains('is-split')).toBe(false)
+    expect(screen.queryByRole('region', { name: 'Left chat' })).toBeNull()
+    expect(screen.queryByRole('button', { name: /^Close .* pane$/ })).toBeNull()
+  })
+
+  it('closes the pane of a chat that is deleted', async () => {
+    await openSplit()
+    await chooseChatMenuItem('Left chat', 'Delete chat')
+    await waitFor(() => expect(screen.getAllByTestId('thread')).toHaveLength(1))
+    expect(screen.getByTestId('thread').dataset.threadId).toBe('right-thread')
+    expect(sidebarProps().besideSessionId).toBeUndefined()
+  })
+
+  it('draws the chat beside without rendering the app for its streamed text', async () => {
+    await openSplit()
+    // Every frame runs only when the test runs it. A real frame still pending
+    // from the empty delta would draw the text below on its own schedule.
+    const frames: FrameRequestCallback[] = []
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      frames.push(callback)
+      return frames.length
+    })
+    streamText('left-thread', '')
+    act(() => {
+      for (const frame of frames.splice(0)) frame(0)
+    })
+    await waitFor(() => expect(within(transcriptIn('Left chat')).queryByText('x')).toBeNull())
+    frames.length = 0
+    appRenders.mockClear()
+    for (let index = 0; index < 200; index += 1) {
+      emitThreadEvent('left-thread', {
+        type: 'item.delta',
+        turnId: 'turn-1',
+        itemId: 'left-thread-item',
+        textDelta: 'x',
+      })
+    }
+    act(() => frames[0]?.(16))
+    expect(within(transcriptIn('Left chat')).getByText('x'.repeat(200))).toBeTruthy()
+    expect(appRenders).not.toHaveBeenCalled()
+  })
+
+  describe('dropping a chat dragged from the sidebar', () => {
+    /** happy-dom has no layout: a 1000 by 800 chat area, split down the middle. */
+    function layOutStage() {
+      const rect = (left: number, right: number, bottom = 800) =>
+        ({
+          left,
+          right,
+          top: 0,
+          bottom,
+          x: left,
+          y: 0,
+          width: right - left,
+          height: bottom,
+          toJSON: () => ({}),
+        }) as DOMRect
+      vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+        this: HTMLElement,
+      ) {
+        if (this.classList.contains('stage__body')) return rect(0, 1000)
+        if (this.matches('.split__pane[data-split-slot]')) {
+          return this.classList.contains('is-start') ? rect(0, 500) : rect(500, 1000)
+        }
+        return rect(0, 0, 0)
+      })
+      return sidebarProps().sessionDropTarget!
+    }
+    const dropZone = () => document.querySelector<HTMLElement>('.chat-drop')
+    const composerIn = (title: string) =>
+      within(pane(title)).getByPlaceholderText('Do anything') as HTMLTextAreaElement
+
+    it('opens a chat dropped on the right half beside the current one', async () => {
+      useTwoChats()
+      render(<App />)
+      fireEvent.click(await waitFor(() => treeChatRow('Left chat')))
+      const first = await screen.findByTestId('thread')
+      fireEvent.change(screen.getByPlaceholderText('Do anything'), {
+        target: { value: 'left draft' },
+      })
+      const target = layOutStage()
+
+      // The left half would replace the open chat; the right half opens beside it.
+      act(() => target.move('right-thread', 200, 400))
+      expect(dropZone()?.dataset.zone).toBe('pane')
+      expect(dropZone()?.style.width).toBe('1000px')
+      act(() => target.move('right-thread', 800, 400))
+      expect(dropZone()?.dataset.zone).toBe('beside')
+      expect([dropZone()?.style.left, dropZone()?.style.width]).toEqual(['500px', '500px'])
+      // The open chat has nowhere to go.
+      act(() => target.move('left-thread', 800, 400))
+      expect(dropZone()).toBeNull()
+
+      act(() => target.drop('right-thread', 800, 400))
+      expect(dropZone()).toBeNull()
+      await waitFor(() => expect(screen.getAllByTestId('thread')).toHaveLength(2))
+      expect(isFocused('Right chat')).toBe(true)
+      expect(pane('Left chat').classList.contains('is-start')).toBe(true)
+      expect(transcriptIn('Left chat')).toBe(first)
+      expect(composerIn('Left chat').value).toBe('left draft')
+    })
+
+    it('replaces the chat of the pane it is dropped on, keeping every draft', async () => {
+      await openSplit([
+        { id: 'third-thread', title: 'Third chat', provider: 'codex', createdAt: 1 },
+      ])
+      fireEvent.change(composerIn('Right chat'), { target: { value: 'right draft' } })
+      fireEvent.pointerDown(transcriptIn('Left chat'), { button: 0 })
+      await waitFor(() => expect(isFocused('Left chat')).toBe(true))
+      fireEvent.change(composerIn('Left chat'), { target: { value: 'left draft' } })
+      const left = transcriptIn('Left chat')
+      startTurn('right-thread', 'turn-1')
+      const target = layOutStage()
+
+      // The pointer moving over the panes redraws only the highlight.
+      appRenders.mockClear()
+      shellRenders.threadFrame.mockClear()
+      act(() => {
+        target.move('third-thread', 700, 300)
+        target.move('third-thread', 720, 320)
+        target.move('third-thread', 200, 300)
+        target.move('third-thread', 800, 300)
+      })
+      expect(appRenders).not.toHaveBeenCalled()
+      expect(shellRenders.threadFrame).not.toHaveBeenCalled()
+      expect([dropZone()?.style.left, dropZone()?.style.width]).toEqual(['500px', '500px'])
+
+      act(() => target.drop('third-thread', 800, 300))
+      await waitFor(() => expect(transcriptIn('Third chat').dataset.threadId).toBe('third-thread'))
+      expect(screen.queryByRole('region', { name: 'Right chat' })).toBeNull()
+      expect(isFocused('Third chat')).toBe(true)
+      expect(pane('Third chat').classList.contains('is-end')).toBe(true)
+      expect(transcriptIn('Left chat')).toBe(left)
+      expect(composerIn('Left chat').value).toBe('left draft')
+      // The replaced chat keeps running and keeps its draft for later.
+      expect(transport.request).not.toHaveBeenCalledWith('thread.interrupt', expect.anything())
+      fireEvent.click(treeChatRow('Right chat'))
+      await waitFor(() => expect(composerIn('Right chat').value).toBe('right draft'))
+    })
+
+    it('swaps the panes when a chat on screen is dropped on the other one', async () => {
+      await openSplit()
+      fireEvent.change(composerIn('Right chat'), { target: { value: 'right draft' } })
+      const left = transcriptIn('Left chat')
+      const right = transcriptIn('Right chat')
+      streamText('right-thread', 'from the right')
+      await waitFor(() => expect(within(right).getByText('from the right')).toBeTruthy())
+      const target = layOutStage()
+
+      // The focused chat, onto the other pane: the two trade sides and it keeps focus.
+      act(() => target.move('right-thread', 200, 400))
+      expect(dropZone()?.dataset.zone).toBe('pane')
+      act(() => target.drop('right-thread', 200, 400))
+      await waitFor(() => expect(pane('Right chat').classList.contains('is-start')).toBe(true))
+      expect(pane('Left chat').classList.contains('is-end')).toBe(true)
+      expect(isFocused('Right chat')).toBe(true)
+      expect(transcriptIn('Left chat')).toBe(left)
+      expect(transcriptIn('Right chat')).toBe(right)
+      expect(composerIn('Right chat').value).toBe('right draft')
+      // Its answer keeps streaming into the same transcript.
+      emitThreadEvent('right-thread', {
+        type: 'item.delta',
+        turnId: 'turn-1',
+        itemId: 'right-thread-item',
+        textDelta: ' and on',
+      })
+      await waitFor(() => expect(within(right).getByText('from the right and on')).toBeTruthy())
+
+      // The chat beside, onto the focused pane: they trade back and it takes focus.
+      act(() => target.drop('left-thread', 200, 400))
+      await waitFor(() => expect(isFocused('Left chat')).toBe(true))
+      expect(pane('Left chat').classList.contains('is-start')).toBe(true)
+      expect(transcriptIn('Left chat')).toBe(left)
+      expect(transcriptIn('Right chat')).toBe(right)
+      expect(composerIn('Right chat').value).toBe('right draft')
+      expect(transport.request).not.toHaveBeenCalledWith('thread.interrupt', expect.anything())
+      // Dropped where it already is: nothing lights up and nothing changes.
+      act(() => target.move('left-thread', 200, 400))
+      expect(dropZone()).toBeNull()
     })
   })
 })

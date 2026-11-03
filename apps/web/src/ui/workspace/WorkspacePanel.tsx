@@ -46,6 +46,9 @@ import { RowIssue } from '../RowIssue.js'
 import { Skeleton, SkeletonRows, SkeletonStatus } from '../Skeleton.js'
 import '../workspace-panel.css'
 
+/** --dur-slow: the panel's own opacity and slide (workspace-panel.css). */
+const PANEL_LEAVE_MS = 260
+
 const WorkspaceReview = lazy(() =>
   import('./WorkspaceReview.js').then((module) => ({ default: module.WorkspaceReview })),
 )
@@ -373,6 +376,50 @@ function WorkspacePanelComponent(props: {
   }, [props.designPreviewRequest, props.onOpen, showTool])
 
   useEffect(() => () => resizeCleanup.current(), [])
+
+  // Hiding the right panel takes its grid column away in the same frame, so
+  // the panel vanished with it and its fade-out was never seen. For the length
+  // of that fade it now leaves over the chat at its last open width, while the
+  // chat underneath already has its width back.
+  const openWidth = useRef(0)
+  const wasOpen = useRef(props.open)
+  // Edge drags and window resizes while open keep the width current.
+  useEffect(() => {
+    const panel = panelElement.current
+    if (bottom || !props.open || !panel || typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(() => {
+      if (!panel.classList.contains('is-open')) return
+      const width = panel.getBoundingClientRect().width
+      if (width > 0) openWidth.current = width
+    })
+    observer.observe(panel)
+    return () => observer.disconnect()
+  }, [bottom, props.open])
+  useLayoutEffect(() => {
+    const panel = panelElement.current
+    const closing = wasOpen.current && !props.open
+    wasOpen.current = props.open
+    if (!panel || bottom) return
+    // Measured here as well as by the observer: a panel hidden before the
+    // browser rendered a frame of it open would otherwise have no width yet.
+    // The layout this reads is the one the open has to compute anyway.
+    if (props.open) {
+      const width = panel.getBoundingClientRect().width
+      if (width > 0) openWidth.current = width
+    }
+    const settle = () => {
+      panel.removeAttribute('data-leaving')
+      panel.style.removeProperty('--workspace-panel-leave-w')
+    }
+    settle()
+    if (!closing || openWidth.current <= 0) return
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return
+    panel.style.setProperty('--workspace-panel-leave-w', `${openWidth.current}px`)
+    panel.setAttribute('data-leaving', '')
+    const leave = window.setTimeout(settle, PANEL_LEAVE_MS)
+    return () => window.clearTimeout(leave)
+  }, [bottom, props.open])
+
   const beginResize = (event: PointerEvent<HTMLDivElement>) => {
     if (props.expanded) return
     event.preventDefault()

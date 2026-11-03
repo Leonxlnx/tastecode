@@ -31,6 +31,7 @@ import {
   type OpenCodeV2Event,
   type OpenCodeWireEvent,
 } from './events.js'
+import { openCodePromptParts, openCodeV2Files } from './attachments.js'
 import { openCodeModels, type OpenCodeCatalogEntry } from './models.js'
 
 export const OPENCODE_CAPABILITIES: Capabilities = {
@@ -41,7 +42,7 @@ export const OPENCODE_CAPABILITIES: Capabilities = {
   approvals: true,
   // opencode's `question` tool, answered through its v1 question routes.
   userInput: true,
-  images: false,
+  images: true,
 }
 
 type Events = { event: [DomainEvent]; log: [string]; disconnected: [] }
@@ -188,6 +189,7 @@ const ConnectedModelSchema = z.object({
   capabilities: z
     .object({
       toolcall: z.boolean().optional(),
+      input: z.object({ image: z.boolean().optional() }).optional(),
       output: z.object({ text: z.boolean().optional() }).optional(),
     })
     .optional(),
@@ -493,7 +495,6 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
     ) {
       throw new Error('OpenCode session has not started')
     }
-    if (attachments.length) throw new Error('OpenCode attachments are not supported yet')
     if (this.#streamFailure) throw this.#streamFailure
     if (this.#turnId) throw new Error('a turn is already running')
     const selection = applyOpenCodeTurnOptions(
@@ -514,22 +515,62 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
       turn: { id: turnId, threadId, status: 'running', createdAt: Date.now() },
     })
     if (this.#protocol === 'v2') {
-      void this.#sendV2Turn(text, turnId).catch(() => this.#failTurn(turnId))
+      void this.#sendV2Turn(text, turnId, attachments).catch(() => this.#failTurn(turnId))
       return turnId
     }
     const variant =
       this.#effort && this.#effort !== OPENCODE_DEFAULT_VARIANT ? this.#effort : undefined
-    void this.#client!.session.promptAsync({
-      path: { id: this.#sessionId },
-      body: {
-        parts: [{ type: 'text', text }],
-        ...(model ? { model } : {}),
-        ...(variant ? { variant } : {}),
-        ...(this.#instructions ? { system: this.#instructions } : {}),
-      },
-      throwOnError: true,
-    }).catch(() => this.#failTurn(turnId))
+    const sessionId = this.#sessionId
+    const client = this.#client!
+    void (async () => {
+      const command = await this.#listedCommand(text)
+      // Stopped while the list was read.
+      if (this.#turnId !== turnId) return
+      if (command) {
+        // OpenCode expands a command only on its command route; sent as a
+        // prompt, "/name" reaches the model as plain text. The route takes the
+        // model as "provider/model" and has no variant or system field.
+        // The route answers only when the command has finished, so a long
+        // command can outlive the HTTP client's timeout. Once the session
+        // streams activity the event stream owns the turn's outcome.
+        await client.session
+          .command({
+            path: { id: sessionId },
+            body: {
+              command: command.name,
+              arguments: command.arguments,
+              ...(selection.model ? { model: selection.model } : {}),
+            },
+            throwOnError: true,
+          })
+          .catch((error: unknown) => {
+            if (!this.#turnSawActivity) throw error
+          })
+        return
+      }
+      await client.session.promptAsync({
+        path: { id: sessionId },
+        body: {
+          parts: openCodePromptParts(text, attachments),
+          ...(model ? { model } : {}),
+          ...(variant ? { variant } : {}),
+          ...(this.#instructions ? { system: this.#instructions } : {}),
+        },
+        throwOnError: true,
+      })
+    })().catch(() => this.#failTurn(turnId))
     return turnId
+  }
+
+  /** A leading `/name` that this project's OpenCode lists as a command, with its arguments. */
+  async #listedCommand(text: string): Promise<{ name: string; arguments: string } | undefined> {
+    const match = /^\/([^\s/][^\s]*)(?:\s+([\s\S]*))?$/.exec(text.trim())
+    if (!match) return undefined
+    const name = match[1]!
+    // A failed list sends the text as typed, as before commands ran here.
+    const listed = await this.commands(this.#workspacePath).catch(() => [])
+    if (!listed.some((command) => command.name === name)) return undefined
+    return { name, arguments: (match[2] ?? '').trim() }
   }
 
   async interrupt(threadId: string): Promise<void> {
@@ -687,6 +728,7 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
               releaseDate: model.release_date,
               toolCall: model.capabilities?.toolcall,
               textOutput: model.capabilities?.output?.text,
+              imageInput: model.capabilities?.input?.image,
               isDefault: v2
                 ? v2.defaultModel === id
                 : connected.default?.[provider.id] === model.id,
@@ -735,7 +777,7 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
     return stopped
   }
 
-  /** Commands and skills OpenCode runs itself when a message starts with `/name`. */
+  /** Commands and skills a message starting with `/name` runs through OpenCode's command route. */
   async listCommands(_threadId?: string): Promise<ProviderCommand[]> {
     return this.commands(this.#workspacePath)
   }
@@ -879,7 +921,7 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
     return this.#v2Request(path, init).then((value) => result.parse(value))
   }
 
-  async #sendV2Turn(text: string, turnId: string): Promise<void> {
+  async #sendV2Turn(text: string, turnId: string, attachments: string[]): Promise<void> {
     const sessionId = this.#sessionId!
     const model = openCodeV2Model(this.#model, this.#effort)
     if (model) {
@@ -893,7 +935,7 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
       this.#instructionsPending && this.#instructions ? `${this.#instructions}\n\n${text}` : text
     await this.#v2Request(`/api/session/${encodeURIComponent(sessionId)}/prompt`, {
       method: 'POST',
-      body: JSON.stringify({ text: prompt }),
+      body: JSON.stringify({ text: prompt, ...openCodeV2Files(attachments) }),
     })
     this.#instructionsPending = false
   }

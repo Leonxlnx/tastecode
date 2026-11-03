@@ -310,7 +310,8 @@ published bytes, remove beta 6, or alter any existing macOS asset.
    and `EVENT_SHA` to `git rev-parse v0.1.0-beta.7^{commit}` and `EVENT_REF=refs/heads/main`.
    Run `node tools/scripts/verify-release-input.js` and all four local checks.
 2. On Windows x64, configure the trusted signing identity in the process environment. Run
-   `pnpm --filter @harness/desktop dist --win --x64 --publish never`. Verify the installer
+   `pnpm --filter @harness/desktop dist:release --win --x64 --publish never` (plain `dist` and
+   `dist:dir` package a dev build that offers every provider). Verify the installer
    with `Get-AuthenticodeSignature` (status `Valid`), then test installation, app startup,
    native bindings, and an installed beta 6 to beta 7 update on an isolated Windows machine.
 3. Run `node tools/scripts/release-checksums.js release windows`, then

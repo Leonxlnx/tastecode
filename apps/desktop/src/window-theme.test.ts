@@ -44,6 +44,11 @@ describe('window chrome', () => {
     })
   })
 
+  it('lets the caption buttons go see-through over a window background', () => {
+    const clear = parseWindowChrome({ ...slate, caption: '#00000000' })
+    expect(windowChromeOptions(clear).titleBarOverlay.color).toBe('#00000000')
+  })
+
   it.each([
     undefined,
     'light',
@@ -51,6 +56,9 @@ describe('window chrome', () => {
     { ...slate, theme: 'system' },
     { ...slate, caption: 'red' },
     { ...slate, caption: '#fff' },
+    { ...slate, caption: '#00000000ff' },
+    { ...slate, symbol: '#27272a00' },
+    { ...slate, background: '#f8fafc00' },
     { ...slate, symbol: 'var(--text)' },
     { ...slate, background: '#f8fafc; color: red' },
     { theme: 'dark', background: '#000000', caption: '#000000' },

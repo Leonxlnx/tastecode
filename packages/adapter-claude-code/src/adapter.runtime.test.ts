@@ -166,6 +166,7 @@ describe('Claude runtimes', () => {
           effort: 'ultracode',
           approval: 'full',
           ephemeral: true,
+          plugins: [path.join(tmpdir(), 'tastecode default skills')],
         })
       } finally {
         await adapter.dispose()
@@ -190,6 +191,7 @@ describe('Claude runtimes', () => {
         '--no-session-persistence',
       ]),
     )
+    expect(cli).toContain(`--plugin-dir=${path.join(tmpdir(), 'tastecode default skills')}`)
   }, 30_000)
 
   it('creates a resumed session that claude -p has no transcript for, as through the SDK', async () => {

@@ -60,6 +60,18 @@ describe('mapCodexRateLimits', () => {
     ])
   })
 
+  it('groups the digits of a large credit balance', () => {
+    expect(
+      mapCodexRateLimits(
+        response({
+          rateLimits: snapshot({
+            credits: { hasCredits: true, unlimited: false, balance: '43106' },
+          }),
+        }),
+      ).find((limit) => limit.id === 'credits')?.valueLabel,
+    ).toBe('$1,724.24 · 43,106 credits')
+  })
+
   it('labels the two weekly buckets with their friendly names', () => {
     expect(
       mapCodexRateLimits(

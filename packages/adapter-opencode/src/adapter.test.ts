@@ -1,3 +1,6 @@
+import { pathToFileURL } from 'node:url'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
 import { EventEmitter, once } from 'node:events'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { readFileSync } from 'node:fs'
@@ -26,6 +29,10 @@ import type { OpenCodeV2Event, OpenCodeWireEvent } from './events.js'
 const CAPTURED = JSON.parse(
   readFileSync(new URL('./fixtures/events.json', import.meta.url), 'utf8'),
 ) as Event[]
+// Captured from opencode 1.18.13's inventory routes; the mock serves its `/command` answer.
+const OPENCODE_INVENTORY = JSON.parse(
+  readFileSync(new URL('./fixtures/inventory-opencode-1.18.13.json', import.meta.url), 'utf8'),
+) as { command: unknown[] }
 
 // SAFETY: Frames captured from opencode 1.18.31's v1 /event stream against a
 // scripted model (session id normalised to the mock's): a plain answer, a bash
@@ -234,6 +241,35 @@ describe('OpenCode adapter', () => {
   )
 
   it.each(['v1', 'v2'] as const)(
+    'hands attached images to a %s server as files',
+    async (protocol) => {
+      const mock = protocol === 'v1' ? await serveOpenCode() : await serveOpenCodeV2()
+      const adapter = new OpenCodeAdapter({ baseUrl: mock.baseUrl })
+      const image = path.join(tmpdir(), 'TasteCode', 'attachments', 'shot.png')
+      try {
+        const thread = await adapter.startThread('C:\repo')
+        await adapter.sendTurn(thread.id, 'What is wrong here?', [image])
+        const url = pathToFileURL(image).href
+        if (protocol === 'v1') {
+          const prompt = await mock.waitFor('/session/session-1/prompt_async')
+          expect(prompt.body).toMatchObject({
+            parts: [
+              { type: 'text', text: 'What is wrong here?' },
+              { type: 'file', mime: 'image/png', filename: 'shot.png', url },
+            ],
+          })
+        } else {
+          await expect
+            .poll(() => mock.requests.find((request) => request.url.endsWith('/prompt'))?.body)
+            .toMatchObject({ text: 'What is wrong here?', files: [{ uri: url, name: 'shot.png' }] })
+        }
+      } finally {
+        adapter.dispose()
+      }
+    },
+  )
+
+  it.each(['v1', 'v2'] as const)(
     'replays a %s disconnect that happens before the owner attaches its listener',
     async (protocol) => {
       const mock = protocol === 'v1' ? await serveOpenCode() : await serveOpenCodeV2()
@@ -342,6 +378,43 @@ describe('OpenCode adapter', () => {
     } finally {
       adapter.dispose()
     }
+  })
+
+  it('runs a listed command through the command route with its arguments', async () => {
+    const mock = await serveOpenCode()
+    const adapter = new OpenCodeAdapter({ baseUrl: mock.baseUrl })
+    try {
+      const thread = await adapter.resumeThread('opencode-session-1', 'C:\\repo', {
+        model: 'provider-1/model-1',
+      })
+      await adapter.sendTurn(thread.id, '/review  the parser\nand its tests ')
+      const command = await mock.waitFor('/session/session-1/command')
+      expect(command.method).toBe('POST')
+      expect(command.body).toEqual({
+        command: 'review',
+        arguments: 'the parser\nand its tests',
+        model: 'provider-1/model-1',
+      })
+      expect(mock.requests.some((request) => request.url.includes('prompt_async'))).toBe(false)
+    } finally {
+      adapter.dispose()
+    }
+  })
+
+  it('sends an unlisted slash word as typed text', async () => {
+    const mock = await serveOpenCode()
+    const adapter = new OpenCodeAdapter({ baseUrl: mock.baseUrl })
+    try {
+      const thread = await adapter.resumeThread('opencode-session-1', 'C:\\repo')
+      await adapter.sendTurn(thread.id, '/usr/bin is missing')
+      const prompt = await mock.waitFor('/session/session-1/prompt_async')
+      expect(prompt.body).toMatchObject({ parts: [{ type: 'text', text: '/usr/bin is missing' }] })
+    } finally {
+      adapter.dispose()
+    }
+    expect(
+      mock.requests.some((request) => request.url.includes('/session/session-1/command')),
+    ).toBe(false)
   })
 
   it('lets the resuming caller choose the model over the last one used', async () => {
@@ -1306,6 +1379,12 @@ async function serveOpenCode(
     if (request.url?.includes('/prompt_async')) {
       response.writeHead(204)
       return response.end()
+    }
+    if (request.method === 'GET' && request.url?.startsWith('/command')) {
+      return json(response, OPENCODE_INVENTORY.command)
+    }
+    if (request.method === 'POST' && request.url?.startsWith('/session/session-1/command')) {
+      return json(response, { info: { id: 'message-1', role: 'assistant' }, parts: [] })
     }
     return json(response, true)
   })

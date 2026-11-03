@@ -49,6 +49,26 @@ describe('phone access contracts', () => {
     ).toBe('tastecode://pair?x')
   })
 
+  it('reads a missing availability flag as available, so older servers still parse', () => {
+    const status = {
+      enabled: false,
+      listening: false,
+      port: 4317,
+      serverName: 'Studio Mac',
+      addresses: [],
+      devices: [],
+    }
+    expect(methods['phone.status'].result.parse(status).available).toBeUndefined()
+    expect(methods['phone.status'].result.parse({ ...status, available: false })).toEqual({
+      ...status,
+      available: false,
+    })
+    expect(channels['phone.changed'].parse({ ...status, available: true }).available).toBe(true)
+    expect(methods['phone.status'].result.safeParse({ ...status, available: 'no' }).success).toBe(
+      false,
+    )
+  })
+
   it('lists folders without files and names the starting places', () => {
     const result = {
       path: '/Users/me',
