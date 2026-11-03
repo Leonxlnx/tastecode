@@ -1,6 +1,10 @@
+import { mkdtempSync, rmSync } from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Item, ProviderHistorySession, ProviderHistorySource } from '@harness/contracts'
 import { ProviderHistory } from './provider-history.js'
+import { DatabaseSync } from './sqlite.js'
 import { Store } from './store.js'
 
 const call: Item = {
@@ -219,5 +223,57 @@ describe('native subagent transcripts', () => {
       .mockRejectedValueOnce(new Error('Read failed'))
     await expect(history.readSubagentTranscript('parent', call.id)).resolves.toEqual([])
     await expect(history.readSubagentTranscript('parent', call.id)).rejects.toThrow('Read failed')
+  })
+})
+
+describe('stored item snapshots', () => {
+  const directories: string[] = []
+  afterEach(() => {
+    for (const directory of directories.splice(0))
+      rmSync(directory, { recursive: true, force: true })
+  })
+
+  // A delta names the item's quoted id too, but is not a snapshot of it.
+  const chatter = (index: number) => ({
+    type: 'item.delta' as const,
+    turnId: 'turn',
+    itemId: call.id,
+    textDelta: `step ${index}`,
+  })
+
+  it('reads the newest row of an indexed thread and none for an id it never saw', () => {
+    for (let index = 0; index < 50; index++) store.append('parent', chatter(index))
+    const latest: Item = { ...call, subagent: { ...call.subagent!, summary: 'Latest' } }
+    store.append('parent', { type: 'item.completed', item: latest })
+    for (let index = 50; index < 100; index++) store.append('parent', chatter(index))
+    expect(store.historyIndexed('parent')).toBe(true)
+    expect(store.itemSnapshot('parent', call.id)).toEqual(latest)
+    expect(store.itemSnapshot('parent', 'never-seen')).toBeUndefined()
+    expect(store.itemSnapshot('missing-thread', call.id)).toBeUndefined()
+  })
+
+  it('scans a thread the index does not cover, rows of an older build included', () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), 'harness-item-snapshot-'))
+    directories.push(directory)
+    const location = path.join(directory, 'history.db')
+    let file = new Store(location)
+    file.addProject(process.cwd())
+    file.addThread({ id: 'parent', provider: 'codex', projectPath: process.cwd(), title: 'P' })
+    file.append('parent', { type: 'item.completed', item: call })
+    file.close()
+    const older: Item = { ...call, subagent: { ...call.subagent!, summary: 'Older build' } }
+    const raw = new DatabaseSync(location)
+    const insert = raw.prepare(`INSERT INTO events (thread_id, at, payload) VALUES (?, 0, ?)`)
+    insert.run('parent', JSON.stringify({ type: 'item.completed', item: older }))
+    insert.run('parent', JSON.stringify(chatter(0)))
+    raw.close()
+    file = new Store(location)
+    try {
+      expect(file.historyIndexed('parent')).toBe(false)
+      expect(file.itemSnapshot('parent', call.id)).toEqual(older)
+      expect(file.itemSnapshot('parent', 'never-seen')).toBeUndefined()
+    } finally {
+      file.close()
+    }
   })
 })
