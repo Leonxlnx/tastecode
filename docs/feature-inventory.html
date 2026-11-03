@@ -1353,7 +1353,10 @@
                 >Queued prompts are editable and reorderable by drag handle before they fire
                 <span class="d"
                   >a prompt taken back for editing returns to its chat's draft even when another
-                  chat or draft took over the composer before the delete finished</span
+                  chat or draft took over the composer before the delete finished; after a Stop,
+                  prompts queued before it stay queued instead of going out when the stopped turn
+                  ends, until the user sends another prompt (they then go first, in order) or sends
+                  one of them from its row</span
                 ></span
               ></label
             >
