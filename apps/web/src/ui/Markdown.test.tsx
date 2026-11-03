@@ -242,8 +242,27 @@ describe('Markdown inline references', () => {
     )
 
     expect(container.textContent).not.toContain('[blocked]')
-    expect(await screen.findByText('This file is outside the selected project')).toBeTruthy()
+    const reason = await screen.findByText('This file is outside the selected project')
     expect(screen.queryByRole('button', { name: 'secret.txt' })).toBeNull()
+    // Screen readers and the hover tooltip keep the reason; the layout does not repeat it.
+    expect(reason.className).toBe('visually-hidden')
+    expect(reason.closest('.md-file-link--blocked')?.getAttribute('title')).toBe(
+      'This file is outside the selected project',
+    )
+  })
+
+  it('keeps the outside-project reason out of the layout for every cited file', async () => {
+    const files = ['a.ts', 'b.ts', 'c.ts']
+    render(
+      <Markdown
+        text={`Changed ${files.map((name) => `[${name}](file:///E:/elsewhere/${name})`).join(', ')}.`}
+        projectPath="E:\randomtesting\A_personalharness\site"
+      />,
+    )
+
+    const reasons = await screen.findAllByText('This file is outside the selected project')
+    expect(reasons).toHaveLength(files.length)
+    expect(reasons.every((reason) => reason.className === 'visually-hidden')).toBe(true)
   })
 
   it('explains why network file links are unavailable', async () => {
@@ -254,7 +273,9 @@ describe('Markdown inline references', () => {
       />,
     )
 
-    expect(await screen.findByText('Network file links are not allowed')).toBeTruthy()
+    expect((await screen.findByText('Network file links are not allowed')).className).toBe(
+      'visually-hidden',
+    )
   })
 })
 

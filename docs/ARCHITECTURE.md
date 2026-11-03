@@ -109,8 +109,15 @@ the key into desktop main (main never needs it).
 ### Phones connect over an end-to-end encrypted link
 
 **A paired phone is one more client of the same protocol, reached directly over the local
-network or a tailnet, with every frame encrypted end to end.** Phone access is off until the
-user turns it on in Settings › Phone. Then a second listener (`HARNESS_PHONE_PORT`, default 4317) accepts WebSockets on `/link` from private, link-local, loopback and tailnet
+network or a tailnet, with every frame encrypted end to end.** For now phone access is a dev
+feature: a build offers it only when the server runs with `HARNESS_PHONE_ACCESS=1`, which
+`pnpm dev` sets. Without it nothing can open the phone listener (resuming a state an earlier dev
+build stored as on, turning access on and pairing all refuse with "Phone access is not part of
+this build."), `phone.status` answers `available: false`, and the desktop hides Settings › Phone.
+The packaged desktop passes its own environment to the server it starts, so a tester of a dev
+installer turns it on with a user environment variable (on Windows `setx HARNESS_PHONE_ACCESS 1`
+or System Properties › Environment Variables) and then quits and restarts TasteCode. Where it is
+offered, phone access is off until the user turns it on in Settings › Phone. Then a second listener (`HARNESS_PHONE_PORT`, default 4317) accepts WebSockets on `/link` from private, link-local, loopback and tailnet
 (100.64.0.0/10) addresses only, refuses any request carrying an `Origin` header (no page can
 reach it), and speaks nothing but a **Noise IK** handshake (`Noise_IK_25519_ChaChaPoly_SHA256`,
 prologue `tastecode-link/1`) until the phone has proved its key. The pairing code is a
@@ -405,6 +412,24 @@ once. Git checkpoints work identically regardless of which engine made the chang
 Every other adapter in this document, the ACP agent roster and the direct API runtime exist
 only on `nightly`; on `main`, `packages/adapter-acp` remains solely as the protocol client
 behind project-enabled Grok MCP sessions. The decisions below still bind both branches.
+
+**Each build offers the providers of its edition (2026-11-01).** Promotions `dev` → `nightly`
+→ `main` merge whole branches, so the provider code on `dev` reaches `main` with a promotion;
+the build, not the branch, decides what a user is offered. A release build offers exactly Claude Code, Codex,
+Grok, Cursor and Antigravity; a dev build offers every provider. The edition is decided at
+package time through electron-builder `extraMetadata`: `dist` and `dist:dir` write
+`tastecodeEdition=dev` into the packaged `package.json`, and `dist:release` writes nothing.
+Desktop main reads that field; a missing, unknown or unreadable value means release, so a
+package built any other way fails closed. It passes the edition to the server as
+`HARNESS_EDITION`, applied after the inherited environment so a variable set on the machine
+cannot widen a release build; unpackaged runs (`pnpm dev`) pass nothing and offer everything.
+The server reads `HARNESS_EDITION` once at startup, deletes it from `process.env` so agent CLIs
+and terminals do not inherit it, and refuses to start on any value other than `release` or
+`dev`. It enforces the edition at `providers.list` (and `acp.agents`), at provider install and
+launch, in the runtime loader every session passes through, in `startThread` before the
+base-branch switch, and in the custom-harness listing. The renderer only follows
+`providers.list`; shared code never checks a provider by name. The release asset check refuses
+a package whose `tastecodeEdition` is anything other than `release`.
 
 **The product must work with only a direct API provider configured.** TasteCode owns the
 shared session model, persistence, orchestration, queueing, review, worktrees, terminal and
@@ -753,16 +778,30 @@ manual.
 
 ## Dashboard design references (nightly)
 
-**Parked since 2026-10-16 (owner decision).** The dashboard asset set is not good enough to ship,
-so Design mode builds websites only until better assets arrive. One switch,
-`DASHBOARD_REFERENCES_ENABLED` in `packages/design-agent/src/dashboard-references.ts`, turns the
-whole surface off: no dashboard catalog is loaded from any library, no dashboard deck is sampled,
-`isDashboardBrief` and a saved `operate_monitor` page route nothing into dashboard prompts, and
-the Page protocol stops offering that mode and family. A dashboard or app-screen request becomes a
-normal website run built from website references, with the limitation recorded in the brief's
-assumptions; it never fails and never claims a dashboard library. The 400 dashboard WebPs, their
-catalog and provenance left the packaged library (about 42 MB) and stay in git history. The
-history below describes the parked path.
+**Dashboards run as tasteskill app screens since 2026-10-25 (owner request).** A dashboard brief
+is dealt an app sheet from the tasteskill v2.5 app library bundled in
+`packages/design-agent/references/app-screens/` (styles, shells and screen patterns as data, no
+images) and every phase works from that sheet and quoted sections of tasteskill's app-screen
+chapter; see [DESIGN-REFERENCES.md](./DESIGN-REFERENCES.md). `APP_SCREENS_ENABLED` in
+`packages/design-agent/src/app-screen-mode.ts` is the switch. The sheet is dealt by the server
+and persisted with the run, so every provider gets the same deal and nothing depends on running
+tasteskill's scripts inside a provider; the kit files reach the provider through `.taste/app-kit/`
+in the workspace, which every provider can read with ordinary file tools.
+
+_Rejected:_ running tasteskill's `draw.mjs` and `inspect.mjs` inside the provider (needs Node,
+Chrome and shell access in every provider, and the deal would not survive a resume) · inlining
+`charts.js` into the Build prompt (the model would have to retype 60 KB).
+
+**The dashboard image catalog has been parked since 2026-10-16 (owner decision).** The dashboard
+asset set is not good enough to ship. Its switch, `DASHBOARD_REFERENCES_ENABLED` in
+`packages/design-agent/src/dashboard-references.ts`, keeps every dashboard catalog unloaded and
+no dashboard image deck is sampled. While it is off, the website Page protocol does not offer the
+`operate_monitor` mode or the `dashboard` family, and an `operate_monitor` plan on a website run
+routes nothing into dashboard prompts; app screens reach theirs through the dealt sheet and the
+dashboard brief. With both switches off, `isDashboardBrief` routes nothing either, and a dashboard
+request becomes a normal website run. The 400 dashboard WebPs,
+their catalog and provenance left the packaged library (about 42 MB) and stay in git history. The
+history below describes the parked image path.
 
 Nightly dashboard support is integrated through
 [PR #1393](https://github.com/Leonxlnx/tastecode/pull/1393), following
@@ -946,3 +985,6 @@ registry entry, which is deliberately a good first outside contribution.
 | 2026-10-23 | Each chat's setup moved from every client's own storage to the server (`thread.settings`); the desktop shares its hidden models.                                               |
 | 2026-10-25 | Claude Code can also run through `claude -p` (stream-json, same protocol); engines declare `capabilities.runtimes`, the server keeps the choice.                               |
 | 2026-10-25 | Phone app screens moved from SwiftUI to UIKit view controllers under one native view; Expo UI is no longer a dependency.                                                       |
+| 2026-10-25 | Dashboards run again as app screens dealt from the bundled tasteskill v2.1.5 app library, without reference images; the dashboard image catalog stays parked.                  |
+| 2026-10-31 | Phone access became dev-only: offered only with `HARNESS_PHONE_ACCESS=1` (set by `pnpm dev`); other builds never open the phone port.                                          |
+| 2026-11-01 | Each build offers its edition's providers: release offers Claude Code, Codex, Grok, Cursor and Antigravity, dev every provider; missing means release.                         |

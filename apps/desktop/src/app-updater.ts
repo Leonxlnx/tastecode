@@ -1,4 +1,5 @@
 import type { AppUpdater, UpdateInfo } from 'electron-updater'
+import type { BuildEdition } from './owned-server-env.js'
 
 export type UpdateClient = Pick<
   AppUpdater,
@@ -49,6 +50,13 @@ export function createAppUpdateController(
   options: {
     currentVersion: string
     enabled: boolean
+    /**
+     * Whether a downloaded update may install by itself when the app quits.
+     * A dev build passes false: it still finds, downloads and offers the public
+     * release, but installs it only when the user clicks Update, so quitting
+     * never swaps its providers for the release's. Defaults to true.
+     */
+    installOnQuit?: boolean
     /** Receives every failure, including the background ones the UI never shows. */
     onError?: (cause: unknown) => void
     setTimeoutFn?: typeof setTimeout
@@ -80,6 +88,10 @@ export function createAppUpdateController(
   let quiet = false
   let settled = state
   let lastCheckAt = 0
+  const installOnQuit = options.installOnQuit ?? true
+  let quitPrepared = false
+  // Set when a quit begins while agents run; that quit installs nothing.
+  let quitWithAgents = false
 
   const reschedule = (delay: number) => {
     if (!started) return
@@ -133,7 +145,10 @@ export function createAppUpdateController(
     updater = client
     updaterConfigured = true
     client.autoDownload = false
-    client.autoInstallOnAppQuit = true
+    // Read when the download finishes, and again on Windows when the app quits:
+    // electron-updater registers its quit handler only if this is true then, so
+    // a dev build that starts with false never gets one.
+    client.autoInstallOnAppQuit = installOnQuit && !quitWithAgents
     client.allowPrerelease = true
     client.allowDowngrade = false
     client.on('checking-for-update', () =>
@@ -216,6 +231,28 @@ export function createAppUpdateController(
       updater.quitAndInstall(false, true)
       return true
     },
+    /**
+     * Called once, when a quit begins, with whether any agent was running.
+     * Whatever the agents do while the server shuts down, the answer at that
+     * moment decides: such a quit installs nothing, and the ready update waits
+     * for a later quit or the Update button.
+     *
+     * The quit itself ends those agents, so installing would not cut anything
+     * off. But the person was in the middle of work and is likely to start
+     * TasteCode again right away, and on Windows the update runs as a separate
+     * installer after the app has exited, which closes a TasteCode that is
+     * running and replaces its files. A quick relaunch would race it, and so
+     * would the agents started in it. On macOS this flag no longer matters
+     * once the update is ready: Squirrel.Mac already holds it and applies it
+     * after the app has exited.
+     */
+    prepareForQuit: (agentsRunning: boolean) => {
+      if (quitPrepared) return
+      quitPrepared = true
+      if (!agentsRunning) return
+      quitWithAgents = true
+      if (updater) updater.autoInstallOnAppQuit = false
+    },
     subscribe: (listener: (next: AppUpdateState) => void) => {
       listeners.add(listener)
       return () => listeners.delete(listener)
@@ -242,3 +279,22 @@ export function createAppUpdateController(
 }
 
 export type AppUpdateController = ReturnType<typeof createAppUpdateController>
+
+/**
+ * Whether a build's downloaded update may install by itself when the app
+ * quits. Updates come from the public release, which offers fewer providers
+ * than a dev build: a dev build offers them, but installs one only on Update.
+ * An unpackaged run has no edition (and no updater).
+ */
+export function installsUpdateOnQuit(edition: BuildEdition | undefined): boolean {
+  return edition !== 'dev'
+}
+
+/**
+ * How many chats the renderer reports with a running turn (starting, working,
+ * or waiting on an approval or a question), across every project, background
+ * chat and split pane. Anything else is not a count.
+ */
+export function parseRunningAgents(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined
+}

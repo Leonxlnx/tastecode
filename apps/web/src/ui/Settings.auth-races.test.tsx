@@ -104,6 +104,68 @@ describe('provider account revisions', () => {
   )
 })
 
+describe('returning to the page', () => {
+  it("opens on a row's last answer and reads it again behind it", async () => {
+    const reread = deferred<Account>()
+    let reads = 0
+    const transport = new TestTransport((method) => {
+      if (method === 'providers.updates') return { updates: [] }
+      if (method === 'auth.status') return ++reads === 1 ? { signedIn: true } : reread.promise
+      throw new Error(`Unexpected ${method}`)
+    })
+    // The composer is on another provider, so it does not hand this row an account.
+    const props = {
+      provider: 'claude-code' as const,
+      account: undefined,
+      providerStatuses: statuses,
+      transport,
+      onConnectionsChanged,
+      onAccountChange: vi.fn(),
+    }
+    const first = render(<ProviderSettings {...props} />)
+    expect(screen.getByText('Checking account…')).toBeTruthy()
+    await act(async () => undefined)
+    expect(screen.getByRole('button', { name: 'Sign out' })).toBeTruthy()
+    first.unmount()
+
+    render(<ProviderSettings {...props} />)
+    expect(screen.queryByText('Checking account…')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Sign out' })).toBeTruthy()
+    expect(reads).toBe(2)
+    await act(async () => reread.resolve({ signedIn: false }))
+    expect(screen.getByRole('button', { name: 'Sign in' })).toBeTruthy()
+  })
+
+  it('opens on a sign-out made on an earlier visit', async () => {
+    const reread = deferred<Account>()
+    let reads = 0
+    const transport = new TestTransport((method) => {
+      if (method === 'providers.updates') return { updates: [] }
+      if (method === 'auth.status') return ++reads === 1 ? account : reread.promise
+      if (method === 'auth.signOut') return {}
+      throw new Error(`Unexpected ${method}`)
+    })
+    const props = {
+      provider: 'claude-code' as const,
+      account: undefined,
+      providerStatuses: statuses,
+      transport,
+      onConnectionsChanged,
+      onAccountChange: vi.fn(),
+    }
+    const first = render(<ProviderSettings {...props} />)
+    await act(async () => undefined)
+    fireEvent.click(screen.getByRole('button', { name: 'Sign out' }))
+    await act(async () => undefined)
+    expect(screen.getByRole('button', { name: 'Sign in' })).toBeTruthy()
+    first.unmount()
+
+    render(<ProviderSettings {...props} />)
+    expect(screen.getByRole('button', { name: 'Sign in' })).toBeTruthy()
+    expect(reads).toBe(2)
+  })
+})
+
 describe('background account re-checks', () => {
   it('keeps a known sign-in when a re-check fails and marks the row until one succeeds', async () => {
     const known = { signedIn: true, email: 'person@example.test', plan: 'Pro' }

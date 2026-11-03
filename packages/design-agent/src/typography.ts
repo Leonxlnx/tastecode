@@ -1,4 +1,5 @@
 import { randomInt } from 'node:crypto'
+import { appDirectionStyle, appDirectionTypefaces, type AppDirection } from './app-screens.js'
 import type { BrandSystem } from './brand.js'
 import { isDashboardBrief, type DesignBrief } from './brief.js'
 import { ANCHOR_REFERENCE } from './design-language.js'
@@ -84,19 +85,39 @@ First inspect the letter shapes, width, contrast, case, weight, line breaks and 
 Official specimens: https://fonts.google.com/specimen/ followed by the family with spaces replaced by +. Font files, weights and OFL notices: https://github.com/google/fonts/tree/main/ofl/ followed by the lowercase family without spaces. Assets must obtain a real usable font file and its license; Build must load it, wait for document.fonts.ready, and verify a matching loaded FontFace in document.fonts plus document.fonts.check with the actual family and weight. Merely declaring a family above Arial is not proof that it loaded. Match the anchor's scale, width, tracking and line breaks instead of shrinking the composition to fit a fallback. Do not substitute Arial, Inter, Geist or system-ui as the designed face unless the user or existing brand explicitly requires it.`
 }
 
+/**
+ * An app screen takes its typeface from the dealt style instead of the random draw: tasteskill
+ * measured these faces on real product screens, and a display draw would turn the screen into
+ * a landing page.
+ */
+export function appTypographyGuidance(direction: AppDirection): string {
+  const { font } = appDirectionStyle(direction)
+  const [family, second] = appDirectionTypefaces(direction)
+  return `APP TYPE — set by the dealt app sheet for this run, in place of the random typography draw:
+Use "${family}" for the whole interface at the sheet's weights (${font.weights.join(', ')}) and sizes.${second ? ` Add "${second}" only for the one job the sheet gives it (${font.second}).` : ' Add no second family.'} Preserve an explicit or verified existing brand typeface instead when the user or the project requires one. Never add a display face; app type is not display type. Official specimens: https://fonts.google.com/specimen/ followed by the family with spaces replaced by +. Font files, weights and license notices: https://github.com/google/fonts/tree/main/ofl/ followed by the lowercase family without spaces. Assets must obtain a real usable font file and its license; Build must load it, wait for document.fonts.ready, and verify a matching loaded FontFace in document.fonts plus document.fonts.check with the actual family and weight, and check that font-variant-numeric: tabular-nums changes its digit widths. A declared family falling back to a system face is a failed typography check.`
+}
+
 export function validateTypographySelection(
   brief: DesignBrief,
   brand: BrandSystem,
   candidates: TypographyCandidates,
+  appDirection?: AppDirection,
 ): void {
   if (brand.foundation.strategy !== 'create') return
   const explicit =
     `${brief.originalRequest} ${(brief.explicitAnswers ?? []).map((answer) => answer.answer).join(' ')}`.toLowerCase()
-  const drawn = new Set(Object.values(candidates).map((families) => families[0]))
+  // An app screen uses its sheet's faces; the random draw is for websites.
+  const allowed = new Set(
+    appDirection
+      ? appDirectionTypefaces(appDirection)
+      : Object.values(candidates).map((families) => families[0]),
+  )
   for (const { family } of brand.typefaces) {
-    if (drawn.has(family) || explicitlyRequestedTypeface(explicit, family)) continue
+    if (allowed.has(family) || explicitlyRequestedTypeface(explicit, family)) continue
     throw new Error(
-      `Use a persisted first-draw typeface for ${family}, or record the explicit existing-brand requirement. Do not replace the random draw with a habitual font.`,
+      appDirection
+        ? `Use the app sheet's typeface (${[...allowed].join(' or ')}) for ${family}, or record the explicit existing-brand requirement.`
+        : `Use a persisted first-draw typeface for ${family}, or record the explicit existing-brand requirement. Do not replace the random draw with a habitual font.`,
     )
   }
 }

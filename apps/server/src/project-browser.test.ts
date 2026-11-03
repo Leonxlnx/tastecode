@@ -6,8 +6,10 @@ import { browseFolders } from './project-browser.js'
 
 const made: string[] = []
 
+// The browser canonicalizes with fs/promises realpath, which expands Windows 8.3 short names
+// (C:\Users\RUNNER~1 on hosted runners); only realpathSync.native does the same.
 function home(): string {
-  const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'browse-home-')))
+  const root = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), 'browse-home-')))
   made.push(root)
   mkdirSync(path.join(root, 'zeta'))
   mkdirSync(path.join(root, 'App 2'))
@@ -51,9 +53,14 @@ describe('project folder browser', () => {
 
   it('does not follow a link out of the home folder', async () => {
     const root = home()
-    const outside = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'browse-outside-')))
+    const outside = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), 'browse-outside-')))
     made.push(outside)
-    symlinkSync(outside, path.join(root, 'escape'), 'dir')
+    // A directory symlink needs Developer Mode on Windows; a junction does not.
+    symlinkSync(
+      outside,
+      path.join(root, 'escape'),
+      process.platform === 'win32' ? 'junction' : 'dir',
+    )
     const result = await browseFolders(undefined, { home: root, platform: 'linux' })
     expect(result.folders.map((folder) => folder.name)).not.toContain('escape')
     await expect(

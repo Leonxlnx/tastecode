@@ -8,6 +8,7 @@ import {
   appUpdateInstallState,
   cancelAppUpdateInstall,
   INSTALL_SETTLE_MS,
+  installWhenChatsFinish,
   reportRunningChats,
   requestAppUpdateInstall,
   resetAppUpdateInstallForTests,
@@ -56,10 +57,47 @@ describe('app update install', () => {
     expect(appUpdateInstallState()).toEqual({ phase: 'installing' })
   })
 
-  it('waits while chats run instead of installing', async () => {
+  it('asks before stopping running chats, and installs nothing until answered', async () => {
     const server = gate([0])
     reportRunningChats(2)
     await requestAppUpdateInstall()
+    expect(appUpdateInstallState()).toEqual({ phase: 'confirming', running: 2 })
+    reportRunningChats(3)
+    expect(appUpdateInstallState()).toEqual({ phase: 'confirming', running: 3 })
+    await vi.advanceTimersByTimeAsync(60 * 60 * 1000)
+    expect(server.runningChats).not.toHaveBeenCalled()
+    expect(server.stopRunningChats).not.toHaveBeenCalled()
+    expect(bridge.install).not.toHaveBeenCalled()
+  })
+
+  it('drops the question once the chats it asked about have ended', async () => {
+    gate([0])
+    reportRunningChats(1)
+    await requestAppUpdateInstall()
+    reportRunningChats(0)
+    expect(appUpdateInstallState()).toEqual({ phase: 'idle' })
+    await vi.advanceTimersByTimeAsync(INSTALL_SETTLE_MS * 4)
+    expect(bridge.install).not.toHaveBeenCalled()
+  })
+
+  it('closes the question without installing', async () => {
+    gate([0])
+    reportRunningChats(1)
+    await requestAppUpdateInstall()
+    cancelAppUpdateInstall()
+    expect(appUpdateInstallState()).toEqual({ phase: 'idle' })
+    // Not answered, so stopping or waiting is no longer on offer.
+    installWhenChatsFinish()
+    await stopChatsAndInstall()
+    expect(appUpdateInstallState()).toEqual({ phase: 'idle' })
+    expect(bridge.install).not.toHaveBeenCalled()
+  })
+
+  it('waits while chats run when asked to', async () => {
+    const server = gate([0])
+    reportRunningChats(2)
+    await requestAppUpdateInstall()
+    installWhenChatsFinish()
     expect(appUpdateInstallState()).toEqual({ phase: 'waiting', running: 2 })
     reportRunningChats(1)
     expect(appUpdateInstallState()).toEqual({ phase: 'waiting', running: 1 })
@@ -72,6 +110,7 @@ describe('app update install', () => {
     const server = gate([0])
     reportRunningChats(2)
     await requestAppUpdateInstall()
+    installWhenChatsFinish()
     reportRunningChats(1)
     reportRunningChats(0)
     // A queued prompt starts the next turn a moment later; nothing installs before that.
@@ -86,6 +125,7 @@ describe('app update install', () => {
     const server = gate([1, 0])
     reportRunningChats(1)
     await requestAppUpdateInstall()
+    installWhenChatsFinish()
     reportRunningChats(0)
     await vi.advanceTimersByTimeAsync(INSTALL_SETTLE_MS)
     expect(server.runningChats).toHaveBeenCalledOnce()
@@ -103,6 +143,11 @@ describe('app update install', () => {
     const server = gate([1, 1, 0])
     reportRunningChats(0)
     await requestAppUpdateInstall()
+    expect(appUpdateInstallState()).toEqual({ phase: 'confirming', running: 1 })
+    // A status change elsewhere does not end a question about a chat only the server knows.
+    reportRunningChats(0)
+    expect(appUpdateInstallState()).toEqual({ phase: 'confirming', running: 1 })
+    installWhenChatsFinish()
     expect(appUpdateInstallState()).toEqual({ phase: 'waiting', running: 1 })
     await vi.advanceTimersByTimeAsync(INSTALL_SETTLE_MS)
     expect(server.runningChats).toHaveBeenCalledTimes(2)
@@ -112,7 +157,7 @@ describe('app update install', () => {
     expect(bridge.install).toHaveBeenCalledOnce()
   })
 
-  it('stops the running chats first when the user installs now', async () => {
+  it('stops the running chats first, then restarts, when the user confirms', async () => {
     const server = gate([0])
     bridge.install.mockImplementation(async () => {
       server.calls.push('install')
@@ -125,6 +170,16 @@ describe('app update install', () => {
     await stopping
     expect(server.calls).toEqual(['stop', 'install'])
     expect(appUpdateInstallState()).toEqual({ phase: 'installing' })
+  })
+
+  it('stops the running chats on Install now while waiting', async () => {
+    const server = gate([0])
+    reportRunningChats(1)
+    await requestAppUpdateInstall()
+    installWhenChatsFinish()
+    await stopChatsAndInstall()
+    expect(server.stopRunningChats).toHaveBeenCalledOnce()
+    expect(bridge.install).toHaveBeenCalledOnce()
   })
 
   it('still installs now when stopping the chats fails', async () => {
@@ -141,6 +196,7 @@ describe('app update install', () => {
     gate([0])
     reportRunningChats(1)
     await requestAppUpdateInstall()
+    installWhenChatsFinish()
     cancelAppUpdateInstall()
     reportRunningChats(0)
     await vi.advanceTimersByTimeAsync(INSTALL_SETTLE_MS * 4)
@@ -157,7 +213,7 @@ describe('app update install', () => {
     expect(appUpdateInstallState()).toEqual({ phase: 'idle' })
   })
 
-  it('waits instead of installing when a chat starts while the server answers', async () => {
+  it('asks instead of installing when a chat starts while the server answers', async () => {
     let answer: (count: number) => void = () => undefined
     const runningChats = vi.fn(() => new Promise<number>((resolve) => (answer = resolve)))
     setAppUpdateInstallGate({ runningChats, stopRunningChats: async () => undefined })
@@ -169,7 +225,8 @@ describe('app update install', () => {
     answer(0)
     await click
     expect(bridge.install).not.toHaveBeenCalled()
-    expect(appUpdateInstallState()).toEqual({ phase: 'waiting', running: 1 })
+    expect(appUpdateInstallState()).toEqual({ phase: 'confirming', running: 1 })
+    installWhenChatsFinish()
     runningChats.mockResolvedValue(0)
     reportRunningChats(0)
     await vi.advanceTimersByTimeAsync(INSTALL_SETTLE_MS)

@@ -93,13 +93,16 @@
   width: 100%;
 }
 
-.thread__row.is-entering > :is(.reply, .aux, .activity, .turn-error) {
-  animation: thread-item-in 280ms var(--ease-out) both;
+/* A sent message, the working line under it and the docking composer arrive
+   on one clock (--dur-slow), so the turn lands as one motion rather than three
+   that finish at different moments. */
+.thread__row.is-entering > :is(.reply, .aux, .activity, .turn-error, .steer-pending) {
+  animation: thread-item-in var(--dur-slow) var(--ease-out) both;
 }
 
 .thread__row.is-entering > .said {
   transform-origin: right bottom;
-  animation: thread-message-in 300ms var(--ease-out) both;
+  animation: thread-message-in var(--dur-slow) var(--ease-out) both;
 }
 
 @keyframes thread-item-in {
@@ -394,6 +397,27 @@ button.thread__older:hover {
   word-break: break-word;
 }
 
+/* A steered prompt the agent has not answered yet. The spinner sits in the
+   band the prompt row already keeps for its actions, centred on the working
+   rail's 18px glyph column where the agent's next row starts, so showing and
+   clearing it never changes a measured row. */
+.steer-pending {
+  position: absolute;
+  bottom: 0;
+  left: -1.5px;
+  display: grid;
+  width: 18px;
+  height: 27px;
+  place-items: center;
+  pointer-events: none;
+}
+
+.steer-pending > .spinner > svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
 .said__attachments {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 148px));
@@ -675,7 +699,7 @@ button.thread__older:hover {
 .activity--working {
   /* No margin below: the rail is absolutely positioned, so the gap to the
      response is part of --working-rail-h instead. */
-  animation: activity-in 260ms var(--ease-out) both;
+  animation: activity-in var(--dur-slow) var(--ease-out) both;
 }
 
 .activity--working .activity__summary {
@@ -789,7 +813,7 @@ button.thread__older:hover {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .thread__row.is-entering > :is(.reply, .aux, .activity),
+  .thread__row.is-entering > :is(.reply, .aux, .activity, .steer-pending),
   .thread__row.is-entering > .said,
   .activity--working,
   .activity__working-status,

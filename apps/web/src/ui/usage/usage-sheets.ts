@@ -11,10 +11,10 @@ import {
 } from '@harness/contracts'
 import type { AccountLabel } from '../../provider-accounts-state.js'
 import { providerDisplayName, type ProviderMark } from '../../provider-presentation.js'
-import { limitKey, limitTargetOf } from '../../usage-limits-state.js'
+import { limitKey, limitTargetOf, USAGE_LOW_PERCENT } from '../../usage-limits-state.js'
 import type { UsageSummaryState } from '../../usage-summary-state.js'
 import { limitSource, remaining, sourceStatus } from '../AccountLimits.js'
-import { dateFromKey, formatMoney } from './usage-format.js'
+import { dateFromKey, formatMoney, resetText } from './usage-format.js'
 
 type History = ResultOf<'usage.history'>
 type Limit = ResultOf<'usage.summary'>['limits'][number]
@@ -27,9 +27,6 @@ export type PlanLimitsSource = {
   show(): () => void
   refresh(provider?: ProviderId, intent?: UsageReadIntent, accountId?: AccountId): void
 }
-
-/** At or under this share left, a window reads as running low. */
-const LOW_SHARE = 15
 
 /** The value is a partial estimate under this share of priced tokens. */
 const FULL_ESTIMATE_SHARE = 0.95
@@ -119,7 +116,11 @@ function sheetLimit(limit: Limit): SheetLimit {
   const textual = limit.valueLabel !== undefined
   // Reached only when the provider says it is used up, not when 0.4% rounds to none.
   const state =
-    !textual && limit.usedPercent >= 100 ? 'reached' : !textual && left <= LOW_SHARE ? 'low' : 'ok'
+    !textual && limit.usedPercent >= 100
+      ? 'reached'
+      : !textual && left <= USAGE_LOW_PERCENT
+        ? 'low'
+        : 'ok'
   return {
     label: limit.label,
     left,
@@ -275,7 +276,6 @@ export function deriveSheets(
 
 const weekday = new Intl.DateTimeFormat('en-US', { weekday: 'short' })
 const monthDay = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' })
-const clock = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' })
 const monthName = new Intl.DateTimeFormat('en-US', { month: 'short' })
 
 /** "Mar", and the year in January's place so a long axis keeps its years. */
@@ -370,29 +370,6 @@ export function isPeriod(value: string): value is UsageHistoryRange {
 
 export function emptySheetText(range: UsageHistoryRange): string {
   return `No sessions ${PERIODS[range].within}`
-}
-
-/**
- * "resets in 42m" and "resets in 3h 12m" within a day, the weekday and time
- * within the week, the date after that. The exact time is kept for hover.
- */
-export function resetText(at: number, now: number): { label: string; title: string } | undefined {
-  const date = new Date(at)
-  if (Number.isNaN(date.getTime())) return undefined
-  const title = `${weekday.format(date)}, ${monthDay.format(date)}, ${clock.format(date)}`
-  const minutes = Math.ceil((at - now) / 60_000)
-  if (minutes <= 0) return { label: 'resets now', title }
-  if (minutes < 60) return { label: `resets in ${minutes}m`, title }
-  if (minutes < 24 * 60) {
-    const hours = Math.floor(minutes / 60)
-    const rest = minutes % 60
-    return { label: `resets in ${hours}h${rest > 0 ? ` ${rest}m` : ''}`, title }
-  }
-  const label =
-    at - now < 6 * 86_400_000
-      ? `${weekday.format(date)} ${clock.format(date)}`
-      : monthDay.format(date)
-  return { label: `resets ${label}`, title }
 }
 
 /**

@@ -28,6 +28,14 @@ export type CodexLimitSource =
 
 /** Same USD-per-credit rate OpenAI's own surfaces use. */
 const CREDIT_USD_RATE = 0.04
+/** Grouped like every other figure in the app: "$1,724.24 · 43,106 credits". */
+const creditDollars = new Intl.NumberFormat('en-US', {
+  style: 'currency',
+  currency: 'USD',
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+})
+const creditCount = new Intl.NumberFormat('en-US')
 
 /** Pure mapping kept separate from the app-server transport for fixture tests. */
 export function mapCodexRateLimits(response: CodexRateLimitResponse): ProviderLimit[] {
@@ -178,7 +186,7 @@ function creditRows(credits: CodexRateLimitSnapshot['credits'] | undefined): Pro
       id: 'credits',
       label: 'Credits',
       usedPercent: 0,
-      valueLabel: `$${(balance * CREDIT_USD_RATE).toFixed(2)} · ${balance} credits`,
+      valueLabel: `${creditDollars.format(balance * CREDIT_USD_RATE)} · ${creditCount.format(balance)} credits`,
     },
   ]
 }
