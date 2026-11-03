@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -36,6 +36,42 @@ describe('default skills', () => {
     expect(loaded.catalog).toContain('- cinetic: cinematic videos and motion design made in code\n')
     expect(loaded.catalog).toContain('never in a Design mode run')
     expect(loaded.skills.every((skill) => isDefaultSkillId(skill.id))).toBe(true)
+    expect(loaded.commands).toEqual(
+      ['cinetic', 'design-taste-frontend', 'cook'].map((name) => ({
+        name: `tastecode:${name}`,
+        description: `The long ${name} description.`,
+        aliases: [name],
+        kind: 'skill',
+        source: 'plugin',
+      })),
+    )
+  })
+
+  it('names a command after the folder and the plugin, and lists none without a plugin', async () => {
+    const root = await writeDefaultSkillsFixture(await tempDir(), ['cook'])
+    // Claude Code 2.1.296 names a plugin skill `<plugin>:<folder>` and gives it
+    // the SKILL.md name as an alias, the name the skill rows use.
+    await writeFile(
+      path.join(root, 'skills', 'cook', 'SKILL.md'),
+      '---\nname: cook-loop\ndescription: Loops.\n---\n',
+    )
+    expect(loadDefaultSkills(root).commands).toEqual([
+      {
+        name: 'tastecode:cook',
+        description: 'Loops.',
+        aliases: ['cook-loop'],
+        kind: 'skill',
+        source: 'plugin',
+      },
+    ])
+
+    await writeFile(
+      path.join(root, 'skills.json'),
+      JSON.stringify({ skills: [{ folder: 'cook' }] }),
+    )
+    const unnamed = loadDefaultSkills(root)
+    expect(unnamed.skills.map((skill) => skill.name)).toEqual(['cook-loop'])
+    expect(unnamed.commands).toEqual([])
   })
 
   it('keeps the catalog under 700 characters for a long install path', async () => {
@@ -62,7 +98,7 @@ describe('default skills', () => {
     expect(partial.catalog).not.toContain('cinetic')
 
     const missing = loadDefaultSkills(path.join(await tempDir(), 'no-bundle'))
-    expect(missing).toMatchObject({ skills: [], catalog: '' })
+    expect(missing).toMatchObject({ skills: [], commands: [], catalog: '' })
   })
 
   it('reads the packaged folder from the environment and the workspace copy otherwise', () => {

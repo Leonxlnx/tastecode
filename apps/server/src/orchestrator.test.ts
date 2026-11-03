@@ -1502,11 +1502,11 @@ describe('reply style', () => {
 })
 
 describe('default skills', () => {
-  const skillsHarness = async () => {
+  const skillsHarness = async (services?: ProviderControlsOptions['services']) => {
     const parent = mkdtempSync(path.join(os.tmpdir(), 'tc-orchestrator-skills-'))
     onTestFinished(() => rmSync(parent, { recursive: true, force: true }))
     const root = await writeDefaultSkillsFixture(parent)
-    return { root, ...harness(undefined, undefined, undefined, undefined, undefined, root) }
+    return { root, ...harness(undefined, undefined, undefined, undefined, services, root) }
   }
 
   it.each(ProviderIdSchema.options)('lists the bundled skills for %s', async (provider) => {
@@ -1555,6 +1555,63 @@ describe('default skills', () => {
     await orchestrator.startThread('cursor', process.cwd())
     expect(startedOptions[0]?.instructions).not.toContain('Skills included with TasteCode')
     await orchestrator.disposeAll()
+  })
+
+  it('lists the bundled skills as commands where the provider loads them as a plugin', async () => {
+    // Claude Code runs `/cook` as the plugin's `tastecode:cook`, but its probe
+    // starts without the plugin. Without these rows the slash menu offered
+    // `$cook` while the list loaded and after, which Claude does not expand.
+    let finish: (() => void) | undefined
+    const discover = vi.fn(
+      () =>
+        new Promise<{ commands: ProviderCommand[]; servers: McpServer[] }>((resolve) => {
+          finish = () =>
+            resolve({ commands: [{ name: 'context', description: 'Show context' }], servers: [] })
+        }),
+    )
+    const { orchestrator, sessions, commandChanges } = await skillsHarness({
+      'claude-code': { projectInventory: { mcpCapabilities: CLAUDE_MCP_CAPABILITIES, discover } },
+    })
+    const bundled: ProviderCommand[] = ['cinetic', 'design-taste-frontend', 'cook'].map((name) => ({
+      name: `tastecode:${name}`,
+      description: `The long ${name} description.`,
+      aliases: [name],
+      kind: 'skill',
+      source: 'plugin',
+    }))
+    try {
+      await expect(orchestrator.listCommands('claude-code', '/repo')).resolves.toEqual({
+        commands: bundled,
+        loading: true,
+      })
+      await vi.waitFor(() => expect(finish).toBeDefined())
+      finish!()
+      await vi.waitFor(() =>
+        expect(commandChanges).toEqual([{ provider: 'claude-code', projectPath: '/repo' }]),
+      )
+      await expect(orchestrator.listCommands('claude-code', '/repo')).resolves.toEqual({
+        commands: [{ name: 'context', description: 'Show context' }, ...bundled],
+        loading: false,
+      })
+
+      // A chat that loaded the plugin lists them itself, and its row stays.
+      const chat = await orchestrator.startThread('claude-code', '/repo')
+      const live: ProviderCommand = { ...bundled[2]!, description: '(tastecode) Cook.' }
+      sessions[0]!.commands = [live]
+      await expect(orchestrator.listCommands('claude-code', '/repo', chat.id)).resolves.toEqual({
+        commands: [live, bundled[0], bundled[1]],
+        loading: false,
+      })
+
+      // A provider that reads them from the catalog has no such commands.
+      for (const provider of ProviderIdSchema.options) {
+        if (PROVIDER_CAPABILITIES[provider].defaultSkillsPlugin) continue
+        const { commands } = await orchestrator.listCommands(provider, '/repo')
+        expect(commands.filter((command) => command.name.startsWith('tastecode:'))).toEqual([])
+      }
+    } finally {
+      await orchestrator.disposeAll()
+    }
   })
 
   it('refuses to switch off a bundled skill through a provider', async () => {
