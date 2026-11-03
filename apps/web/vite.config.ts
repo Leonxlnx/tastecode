@@ -19,10 +19,12 @@ const sandboxRoot: Plugin = {
   apply: () => process.env['npm_lifecycle_event'] === 'sandbox',
   configureServer(server) {
     server.middlewares.use((request, response, next) => {
-      const path = request.url?.split('?')[0]
+      const url = request.url ?? '/'
+      const query = url.indexOf('?')
+      const path = query < 0 ? url : url.slice(0, query)
       if (path !== '/' && path !== '/index.html') return next()
       response.statusCode = 302
-      response.setHeader('Location', '/sandbox.html')
+      response.setHeader('Location', `/sandbox.html${query < 0 ? '' : url.slice(query)}`)
       response.end()
     })
   },

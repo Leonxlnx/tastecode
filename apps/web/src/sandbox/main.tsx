@@ -58,18 +58,25 @@ createRoot(root).render(
 const requestedChat = new URLSearchParams(window.location.search).get('chat')
 if (requestedChat) openChatWhenListed(requestedChat)
 
-/** Clicks the chat's sidebar row as soon as it renders, giving up after ten seconds. */
+/**
+ * Clicks the chat's sidebar row once it renders. Start-up can still move to a
+ * new chat after the list first appears, so it clicks again until the row has
+ * stayed active for a second, and gives up after ten seconds.
+ */
 function openChatWhenListed(id: string): void {
-  const selector = `[data-archive-session-id="${CSS.escape(id)}"] button.sess`
+  const selector = `[data-archive-session-id="${CSS.escape(id)}"]`
   const startedAt = Date.now()
+  let clickedAt = 0
   const attempt = () => {
-    const row = document.querySelector<HTMLButtonElement>(selector)
-    if (row) {
-      row.click()
-      return
+    const row = document.querySelector(selector)
+    const active = row?.classList.contains('is-active') === true
+    if (active && Date.now() - clickedAt > 1_000) return
+    if (row && !active && Date.now() - clickedAt > 400) {
+      row.querySelector<HTMLButtonElement>('button.sess')?.click()
+      clickedAt = Date.now()
     }
     if (Date.now() - startedAt < 10_000) window.setTimeout(attempt, 100)
-    else console.warn(`[sandbox] chat ${id} did not appear in the sidebar`)
+    else console.warn(`[sandbox] chat ${id} did not open from the sidebar`)
   }
   attempt()
 }
