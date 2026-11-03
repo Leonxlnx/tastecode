@@ -291,12 +291,19 @@
           <a href="./feature-inventory.html">Inventory</a>
           <a href="./CLAUDE-HANDOFF.md">Claude handoff</a>
         </nav>
-        <span class="meta">2026-11-03 dev c3c76d3a · nightly f49f31aa · main 41c61109</span>
+        <span class="meta">2026-11-03 dev a55df2ce · nightly f49f31aa · main 41c61109</span>
       </div>
     </div>
 
     <div class="wrap">
       <section id="scope">
+        <p>
+          November 3, draft PR #2074: unfinished subagents settle as stopped when their owning
+          session ends or their history is recovered after a restart. Completed launchers stay
+          recoverable while their subagent is running; live background work can still outlast its
+          parent turn. Local regression checks are recorded in the PR; no running app or provider
+          process was used for validation. This fix is not merged.
+        </p>
         <p>
           November 3, afternoon, on dev (c3c76d3a): a second fix round, the sub-agent series and
           shorter finished replies, all merged with hosted CI green on windows-latest and

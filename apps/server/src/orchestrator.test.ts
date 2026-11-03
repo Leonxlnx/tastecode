@@ -9005,6 +9005,59 @@ describe('sidebar inbox lifecycle', () => {
   })
 })
 
+describe('session-owned subagent snapshots', () => {
+  it.each(['disconnect', 'close', 'shutdown', 'stop', 'idle release'] as const)(
+    'settles a running subagent on %s and preserves its parent turn outcome',
+    async (end) => {
+      if (end === 'idle release') vi.useFakeTimers()
+      const { orchestrator, sessions, store } = harness(undefined, new Store(':memory:'), 8, 1_000)
+      try {
+        const thread = await orchestrator.startThread('codex', '/repo')
+        const session = sessions[0]!
+        await orchestrator.sendTurn(thread.id, 'Review the design')
+        const item = {
+          id: 'reviewer',
+          turnId: 's1-turn',
+          type: 'tool_call' as const,
+          status: 'completed' as const,
+          text: 'Reviewer launched',
+          createdAt: 1,
+          subagent: { id: 'reviewer', state: 'running' as const, background: true, toolUses: 3 },
+        }
+        session.emit({ type: 'item.completed', item })
+        if (end !== 'stop')
+          session.emit({ type: 'turn.completed', turnId: item.turnId, status: 'completed' })
+        const latest = () => reduceEventLog(emptyThread, store.history(thread.id))
+        expect(latest().items.find(({ id }) => id === item.id)?.subagent?.state).toBe('running')
+
+        if (end === 'disconnect') session.emitDisconnected()
+        else if (end === 'close') await orchestrator.close(thread.id)
+        else if (end === 'shutdown') await orchestrator.disposeAll()
+        else if (end === 'idle release') await vi.advanceTimersByTimeAsync(1_000)
+        else await orchestrator.interrupt(thread.id)
+
+        expect(latest().items.find(({ id }) => id === item.id)).toMatchObject({
+          status: 'completed',
+          text: 'Reviewer launched',
+          subagent: { state: 'interrupted', background: true, toolUses: 3 },
+        })
+        expect(
+          store
+            .history(thread.id)
+            .filter(({ event }) => event.type === 'turn.completed')
+            .at(-1)?.event,
+        ).toMatchObject({
+          turnId: item.turnId,
+          status: end === 'stop' ? 'interrupted' : 'completed',
+        })
+      } finally {
+        await orchestrator.disposeAll()
+        vi.useRealTimers()
+      }
+    },
+  )
+})
+
 describe('queued turns', () => {
   it('bounds empty queue reads while retaining the hottest entries', async () => {
     const store = new Store(':memory:')
