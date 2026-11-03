@@ -31,7 +31,9 @@ describe('window background stylesheet', () => {
       expect(rule?.[1]).toContain('mask:')
       expect(rule?.[1]).toContain(`opacity: calc(var(--app-bg-${effect}) * var(--app-bg-fade));`)
     }
-    expect(sheet).toContain(".app-bg[data-mode='effect']::before {\n  background-color: var(--text);")
+    expect(sheet).toContain(
+      ".app-bg[data-mode='effect']::before {\n  background-color: var(--text);",
+    )
     expect(sheet).toContain('--app-bg-fade: max(0, calc(2 - var(--app-bg-dim, 1)));')
   })
 
