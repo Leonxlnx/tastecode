@@ -1646,11 +1646,32 @@ export class Orchestrator {
             active[1].session.listCommands!(active[1].thread.id),
           )
       : undefined
-    if (control.listCommands) {
-      this.watchProvider(provider, projectPath, ['commands'])
-      return control.listCommands(projectPath, readActive)
-    }
-    return { commands: readActive ? await readActive() : [], loading: false }
+    if (control.listCommands) this.watchProvider(provider, projectPath, ['commands'])
+    const inventory: CommandInventory = control.listCommands
+      ? await control.listCommands(projectPath, readActive)
+      : { commands: readActive ? await readActive() : [], loading: false }
+    return control.capabilities.defaultSkillsPlugin
+      ? this.#withBundledCommands(inventory)
+      : inventory
+  }
+
+  /**
+   * A provider that loads the bundled skills as a plugin runs them as that
+   * plugin's commands, but a list read before any of its chats loaded the
+   * plugin (a probe, a file read) leaves them out. The slash menu then offered
+   * them as `$name`, which such a provider does not expand.
+   */
+  #withBundledCommands(inventory: CommandInventory): CommandInventory {
+    const bundled = this.#bundledSkills().commands
+    // A live probe reports the plugin-qualified alias. Keep just the bare row,
+    // while letting the user's own command keep precedence over a bundled skill.
+    const aliases = new Set(bundled.flatMap((command) => command.aliases ?? []))
+    const commands = inventory.commands.filter((command) => !aliases.has(command.name))
+    const listed = new Set(commands.map((command) => command.name))
+    const missing = bundled.filter((command) => !listed.has(command.name))
+    return missing.length || commands.length !== inventory.commands.length
+      ? { ...inventory, commands: [...commands, ...missing] }
+      : inventory
   }
 
   async listSkills(
@@ -1688,7 +1709,9 @@ export class Orchestrator {
   /** Read once per server: the bundled files do not change while it runs. */
   #bundledSkills(): DefaultSkills {
     const root = this.#defaultSkillsRoot
-    this.#defaultSkills ??= root ? loadDefaultSkills(root) : { root: '', skills: [], catalog: '' }
+    this.#defaultSkills ??= root
+      ? loadDefaultSkills(root)
+      : { root: '', skills: [], commands: [], catalog: '' }
     return this.#defaultSkills
   }
 
