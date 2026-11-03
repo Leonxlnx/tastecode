@@ -192,6 +192,17 @@ export class SubagentRunTable {
     return row ? toRun(row) : undefined
   }
 
+  /** The user prompted a finished run's chat: it runs again and has no result yet. */
+  reopen(itemId: string): void {
+    this.#db
+      .prepare(
+        `UPDATE subagent_runs
+         SET state = 'running', result_text = NULL, finished_at = NULL, delivered_at = NULL
+         WHERE item_id = ?`,
+      )
+      .run(itemId)
+  }
+
   /** A chat's runs, newest first. */
   ofParent(parentThreadId: string): StoredSubagentRun[] {
     return (this.#byParent.all(parentThreadId) as RunRow[])

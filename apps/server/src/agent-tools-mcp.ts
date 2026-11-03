@@ -66,7 +66,8 @@ const TOOLS = [
   {
     name: 'start_agent',
     description: [
-      'Start a sub-agent on any provider or model listed by list_agent_models. It works in the same checkout as you, with your access level, and cannot start sub-agents of its own.',
+      'Start a sub-agent on a provider and model listed by list_agent_models. It works in the same checkout as you, with your access level, and cannot start sub-agents of its own.',
+      'Use your own provider unless the user asks for another provider or model: when their message names one for a sub-agent, use it. Another provider is also allowed when list_agent_models says the user allows other providers and it fits the task better; otherwise TasteCode refuses the start.',
       'It returns at once with an agent_id; call wait_for_agents to get its result. Give each sub-agent a complete, self-contained task, and do not give two agents (or yourself) overlapping files.',
       REPORT_IS_DATA,
     ].join(' '),

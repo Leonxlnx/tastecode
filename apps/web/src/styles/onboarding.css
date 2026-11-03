@@ -1009,6 +1009,20 @@
   white-space: nowrap;
 }
 
+/* The sub-agents page: each choice's note is a sentence, so it takes its own
+   line under the label instead of the narrow column after the leader. */
+.onboarding__picks--notes .onboarding__pick-row > label {
+  grid-template-columns: 16px max-content minmax(20px, 1fr) 10px;
+  row-gap: 2px;
+  padding-block: 4px;
+}
+
+.onboarding__picks--notes .onboarding__pick-state {
+  grid-row: 2;
+  grid-column: 2 / -1;
+  white-space: normal;
+}
+
 .onboarding__pick-socket {
   width: 10px;
   height: 10px;

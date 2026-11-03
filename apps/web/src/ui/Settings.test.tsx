@@ -3195,3 +3195,29 @@ describe('provider roster', () => {
     expect(within(junie).getByRole('button', { name: 'Check again' })).toBeTruthy()
   })
 })
+
+describe('sub-agent provider setting', () => {
+  it('shows an unanswered setting as off and stores a change', async () => {
+    let stored: boolean | undefined
+    const transport = new TestTransport(async (method, params) => {
+      if (method === 'subagents.settings')
+        return stored === undefined ? {} : { otherProviders: stored }
+      if (method === 'subagents.updateSettings') {
+        stored = methods[method].params.parse(params).otherProviders
+        return { otherProviders: stored }
+      }
+      throw new Error(`unexpected ${method}`)
+    })
+    renderSettings({ initialSection: 'models', transport })
+
+    const toggle = await screen.findByRole('switch', { name: 'Sub-agents on other providers' })
+    await waitFor(() => expect(toggle.hasAttribute('disabled')).toBe(false))
+    expect(toggle.getAttribute('aria-checked')).toBe('false')
+    fireEvent.click(toggle)
+    await waitFor(() => expect(toggle.getAttribute('aria-checked')).toBe('true'))
+    expect(transport.requests).toContainEqual({
+      method: 'subagents.updateSettings',
+      params: { otherProviders: true },
+    })
+  })
+})

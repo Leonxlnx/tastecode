@@ -21,6 +21,10 @@ pnpm install
 pnpm dev
 ```
 
+To work on the interface without the desktop app, the local server or a provider sign-in, run
+`pnpm --filter @harness/web sandbox` and open http://127.0.0.1:5420. It renders the real app
+against dummy data from `apps/web/src/sandbox`, with hot reload.
+
 Before requesting review, run:
 
 ```text
