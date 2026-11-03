@@ -13647,6 +13647,11 @@ describe('live sessions', () => {
     serverSidebarSettings.mode = 'inbox'
     render(<App />)
     const inboxSearch = await screen.findByRole('textbox', { name: 'Search threads' })
+    // The composer takes focus on the frame after it restores its draft. Open
+    // the palette after that frame, as a person would; a frame landing while
+    // the palette is open would make the composer the search's opener.
+    const composer = screen.getByRole('textbox', { name: 'Message' })
+    await waitFor(() => expect(document.activeElement).toBe(composer))
     fireEvent.keyDown(window, { key: 'k', metaKey: true })
     const commandSearch = await screen.findByRole('textbox', { name: 'Search commands' })
     fireEvent.change(commandSearch, { target: { value: 'search all chats' } })
