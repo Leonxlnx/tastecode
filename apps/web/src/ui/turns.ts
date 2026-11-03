@@ -542,6 +542,29 @@ export function isBlankReasoning(item: Item): boolean {
 }
 
 /**
+ * The index of a prompt the user steered into the running turn that the agent
+ * has not answered yet: the transcript ends on that prompt, after the turn's
+ * first response. Empty reasoning does not count as an answer because it shows
+ * nothing. Before the first response the working rail already sits under the
+ * last prompt, so there is nothing to mark.
+ *
+ * Walks back from the end only past empty reasoning rows, so it costs a step
+ * or two per structural update and nothing per streamed delta.
+ */
+export function pendingSteerIndex(
+  items: readonly Item[],
+  firstResponseIndex: number,
+): number | undefined {
+  for (let index = items.length - 1; index > firstResponseIndex; index -= 1) {
+    const item = items[index]
+    if (!item) return undefined
+    if (isBlankReasoning(item)) continue
+    return item.type === 'message' && item.role === 'user' ? index : undefined
+  }
+  return undefined
+}
+
+/**
  * The turn to jump to from the current scroll position.
  *
  * Going back from inside a turn returns to that turn's own start first, which

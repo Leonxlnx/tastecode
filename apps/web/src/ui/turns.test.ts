@@ -4,6 +4,7 @@ import {
   activityGroupAt,
   createThreadProjector,
   neighbourTurn,
+  pendingSteerIndex,
   projectThreadItems,
   type ThreadProjection,
   type TurnActivityGroup,
@@ -590,5 +591,66 @@ describe('turn boundaries', () => {
     const idle = project(items)
 
     expect(project(items, undefined, 'local-turn:1')).toBe(idle)
+  })
+})
+
+describe('pending steer', () => {
+  const message = (id: string, turnId: string, role: 'user' | 'assistant', text = id): Item => ({
+    id,
+    turnId,
+    type: 'message',
+    role,
+    status: 'completed',
+    text,
+    createdAt: 0,
+  })
+  const reasoning = (id: string, text?: string): Item => ({
+    id,
+    turnId: 'turn-1',
+    type: 'reasoning',
+    status: 'started',
+    ...(text === undefined ? {} : { text }),
+    createdAt: 0,
+  })
+  const prompt = message('prompt', 'turn-1', 'user')
+  const reply = message('reply', 'turn-1', 'assistant')
+
+  it('finds a prompt sent after the first response while it ends the transcript', () => {
+    const local = message('local:steer', '', 'user')
+    const echoed = message('local:steer', 'turn-1', 'user')
+
+    expect(pendingSteerIndex([prompt, reply, local], 1)).toBe(2)
+    expect(pendingSteerIndex([prompt, reply, echoed], 1)).toBe(2)
+    expect(pendingSteerIndex([prompt, reply, echoed, message('again', '', 'user')], 1)).toBe(3)
+  })
+
+  it('looks past reasoning that shows nothing yet', () => {
+    const steer = message('steer', 'turn-1', 'user')
+
+    expect(pendingSteerIndex([prompt, reply, steer, reasoning('r1')], 1)).toBe(2)
+    expect(pendingSteerIndex([prompt, reply, steer, reasoning('r1', '  ')], 1)).toBe(2)
+    expect(pendingSteerIndex([prompt, reply, steer, reasoning('r1', 'Reading')], 1)).toBeUndefined()
+  })
+
+  it('ends once the agent adds anything after the prompt', () => {
+    const steer = message('steer', 'turn-1', 'user')
+    const answer = { ...message('answer', 'turn-1', 'assistant', ''), status: 'started' as const }
+    const error: Item = {
+      id: 'error',
+      turnId: '',
+      type: 'error',
+      status: 'completed',
+      text: 'Chat failed',
+      createdAt: 0,
+    }
+
+    expect(pendingSteerIndex([prompt, reply, steer, answer], 1)).toBeUndefined()
+    expect(pendingSteerIndex([prompt, reply, steer, error], 1)).toBeUndefined()
+  })
+
+  it('leaves the prompt that opened the turn to the working rail', () => {
+    expect(pendingSteerIndex([prompt], 0)).toBeUndefined()
+    expect(pendingSteerIndex([prompt, reply], 1)).toBeUndefined()
+    expect(pendingSteerIndex([], 0)).toBeUndefined()
   })
 })
