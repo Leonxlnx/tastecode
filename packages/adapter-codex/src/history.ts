@@ -7,6 +7,7 @@ import { parseCodexHistory } from './history-transcript.js'
 import { object, timestamp } from './history-values.js'
 import { allowedFile, jsonLines, stateFiles } from './rollout-files.js'
 import { transcriptRecords } from './rollout-records.js'
+import { readCodexSubagentTranscript } from './subagent-transcript.js'
 import {
   previewTitle,
   readStateIndex,
@@ -125,6 +126,12 @@ export function createCodexHistorySource(options: CodexHistoryOptions = {}): Pro
       const saved = known.get(session.id)
       if (saved?.internal || !saved?.locator || !(await allowedFile(home, saved.locator))) return []
       return parseCodexHistory(await transcriptRecords(saved.locator, options?.localTurnIds), saved)
+    },
+    // Each sub-agent runs in a Codex thread of its own, whose id its snapshot carries;
+    // the parent's session is not needed to find its rollout.
+    readSubagentTranscript(_session, item) {
+      const id = item.subagent?.transcriptId ?? item.subagent?.id
+      return id ? readCodexSubagentTranscript(home, id) : Promise.resolve([])
     },
     dispose() {
       known.clear()
