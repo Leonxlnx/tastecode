@@ -291,7 +291,7 @@
           <a href="./feature-inventory.html">Inventory</a>
           <a href="./CLAUDE-HANDOFF.md">Claude handoff</a>
         </nav>
-        <span class="meta">2026-11-03 dev 54016816 · nightly f49f31aa · main 41c61109</span>
+        <span class="meta">2026-11-03 dev 18c49aaa · nightly f49f31aa · main 41c61109</span>
       </div>
     </div>
 
@@ -299,11 +299,15 @@
       <section id="scope">
         <p>
           November 3, evening: native Claude Code subagent conversations are in draft
-          <a href="https://github.com/Leonxlnx/tastecode/pull/2079">#2079</a>, not merged. Opening a
-          Task/Agent helper in Agents reads its saved prompt, tool calls and complete answer through
-          an optional adapter capability, including separate account histories. Other engines and
-          missing files retain the snapshot. Fixture and rendering tests pass; no running-app or
-          installer check was performed for this draft.
+          <a href="https://github.com/Leonxlnx/tastecode/pull/2079">#2079</a>, not merged, on top of
+          its contracts PR <a href="https://github.com/Leonxlnx/tastecode/pull/2081">#2081</a>.
+          Opening a Task/Agent helper in Agents reads its saved prompt, tool calls and complete
+          answer through an optional adapter capability, including separate account histories. While
+          it runs the detail asks again every five seconds only while the window is visible; the
+          server rereads the file only when it changed, replaces screenshots with a short
+          placeholder and sends the newest 400 items. Other engines and missing files retain the
+          snapshot. Fixture and rendering tests pass; no running-app or installer check was
+          performed for this draft.
         </p>
         <p>
           November 3, afternoon, on dev (c3c76d3a): a second fix round, the sub-agent series and
