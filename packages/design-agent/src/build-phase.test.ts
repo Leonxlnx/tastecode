@@ -574,6 +574,28 @@ describe('build phase', () => {
     }
   })
 
+  it('keeps package-manager caches out of the source scan', () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-package-caches-'))
+    try {
+      writeFileSync(path.join(workspace, 'index.html'), '<main></main>')
+      // A Bun cache inside the workspace pushed a fresh Astro build over the 32 MB scan (#1553).
+      for (const directory of ['.bun-cache/install', '.yarn/cache', '.npm/_cacache']) {
+        mkdirSync(path.join(workspace, directory), { recursive: true })
+        writeFileSync(path.join(workspace, directory, 'package.js'), 'export {}')
+      }
+
+      expect(designWorkspaceFileBaseline(workspace)).toEqual([
+        '.bun-cache/',
+        '.npm/',
+        '.yarn/',
+        'index.html',
+      ])
+      expect(designSourceQualityBaseline(workspace)).toEqual([])
+    } finally {
+      rmSync(workspace, { recursive: true, force: true })
+    }
+  })
+
   it('rejects new files inside nested internal-named directories', () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-exact-nested-internal-'))
     const brief = {
@@ -592,6 +614,28 @@ describe('build phase', () => {
 
       expect(() => validateExactBuildFiles(workspace, brief, baseline)).toThrow(
         'unexpected files: src/.git/hidden.json, src/.taste/hidden.json',
+      )
+    } finally {
+      rmSync(workspace, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects a worktree pointer written into an existing directory', () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-exact-worktree-'))
+    const brief = {
+      ...artifacts[0],
+      originalRequest: 'Create exactly index.html; do not create other files.',
+    }
+    try {
+      mkdirSync(path.join(workspace, 'src'))
+      const baseline = designWorkspaceFileBaseline(workspace)
+
+      writeFileSync(path.join(workspace, 'index.html'), '<main></main>')
+      writeFileSync(path.join(workspace, 'src', '.git'), 'gitdir: ../.git/worktrees/src\n')
+      writeFileSync(path.join(workspace, 'src', 'hidden.json'), '{}')
+
+      expect(() => validateExactBuildFiles(workspace, brief, baseline)).toThrow(
+        'unexpected files: src/.git',
       )
     } finally {
       rmSync(workspace, { recursive: true, force: true })

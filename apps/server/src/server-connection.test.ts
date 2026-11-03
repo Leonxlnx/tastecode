@@ -26,6 +26,7 @@ const state = vi.hoisted(() => ({
   historyClosed: Promise.resolve(),
   historySources: [] as string[][],
   historyLoads: [] as string[],
+  subagentTranscript: vi.fn(async (_threadId: string, _itemId: string) => [] as unknown[]),
   invalidated: [] as string[],
   failGrokHistory: false,
   failHistoryService: false,
@@ -145,6 +146,9 @@ vi.mock('./store.js', () => ({
     renameThread(threadId: string) {
       state.renamed.push(threadId)
     }
+    deleteThread(threadId: string, options?: { keepSessionOut?: boolean }) {
+      state.handled.push(`store.deleteThread(${threadId}, ${JSON.stringify(options)})`)
+    }
     close() {}
   },
 }))
@@ -181,6 +185,12 @@ vi.mock('./orchestrator.js', () => ({
       return operation()
     }
     async undoRestore() {}
+    async close(threadId: string) {
+      state.handled.push(`orchestrator.close(${threadId})`)
+    }
+    forgetDeletedThread(threadId: string) {
+      state.handled.push(`orchestrator.forgetDeletedThread(${threadId})`)
+    }
     isTurnRunning() {
       return true
     }
@@ -360,6 +370,9 @@ vi.mock('./provider-history.js', () => ({
       state.historyLoads.push(threadId)
       return state.historyChanged.has(threadId)
     }
+    readSubagentTranscript(threadId: string, itemId: string) {
+      return state.subagentTranscript(threadId, itemId)
+    }
     async close() {
       state.shutdown.push('history')
       await state.historyClosed
@@ -412,6 +425,7 @@ afterEach(async () => {
   state.historyClosed = Promise.resolve()
   state.historySources.length = 0
   state.historyLoads.length = 0
+  state.subagentTranscript.mockReset().mockResolvedValue([])
   state.invalidated.length = 0
   state.failGrokHistory = false
   state.failHistoryService = false
@@ -1762,6 +1776,114 @@ describe('checkpoint restores across clients', () => {
     } finally {
       reader.client.terminate()
     }
+  })
+})
+
+describe('native subagent transcript route', () => {
+  it('validates the request and reads saved items without starting background provider probes', async () => {
+    const items = [
+      {
+        id: 'prompt',
+        turnId: 'child',
+        type: 'message',
+        role: 'user',
+        text: 'Inspect the project',
+        status: 'completed',
+        createdAt: 1,
+      },
+    ]
+    state.subagentTranscript.mockResolvedValue(items)
+    const { port } = await listen()
+    const client = new WebSocket(`ws://127.0.0.1:${port}`)
+    try {
+      await once(client, 'message')
+      for (const params of [
+        { threadId: 'parent', itemId: '' },
+        { threadId: 'parent', itemId: 'call' },
+      ]) {
+        const reply = once(client, 'message')
+        client.send(JSON.stringify({ id: 'child', method: 'thread.subagentTranscript', params }))
+        const [message] = await reply
+        expect(JSON.parse(String(message))).toMatchObject(
+          params.itemId ? { result: { items } } : { error: { code: 'bad_request' } },
+        )
+      }
+      expect(state.subagentTranscript).toHaveBeenCalledExactlyOnceWith('parent', 'call')
+      expect(state.prewarmed).toBe(0)
+      expect(state.recovered).toBe(0)
+      expect(state.historyLoads).toEqual([])
+      await askForProjects(port)
+      expect(state.historySources).toHaveLength(1)
+    } finally {
+      client.terminate()
+    }
+  })
+
+  it('sends only the newest 400 items and counts the rest', async () => {
+    const items = Array.from({ length: 1_000 }, (_, index) => ({
+      id: `step-${index}`,
+      turnId: 'child',
+      type: 'message',
+      role: 'assistant',
+      text: `Step ${index}`,
+      status: 'completed',
+      createdAt: index,
+    }))
+    state.subagentTranscript.mockResolvedValue(items)
+    const { port } = await listen()
+    const client = new WebSocket(`ws://127.0.0.1:${port}`)
+    try {
+      await once(client, 'message')
+      const reply = once(client, 'message')
+      client.send(
+        JSON.stringify({
+          id: 'long',
+          method: 'thread.subagentTranscript',
+          params: { threadId: 'parent', itemId: 'call' },
+        }),
+      )
+      const { result } = JSON.parse(String((await reply)[0])) as {
+        result: { items: Array<{ id: string }>; omitted?: number }
+      }
+      expect(result.omitted).toBe(600)
+      expect(result.items).toHaveLength(400)
+      expect(result.items[0]?.id).toBe('step-600')
+      expect(result.items.at(-1)?.id).toBe('step-999')
+      expect(items).toHaveLength(1_000)
+    } finally {
+      client.terminate()
+    }
+  })
+})
+
+describe('chat deletes', () => {
+  async function request(port: number, method: string, params: unknown) {
+    const client = new WebSocket(`ws://127.0.0.1:${port}`)
+    try {
+      await once(client, 'message')
+      const reply = once(client, 'message')
+      client.send(JSON.stringify({ id: 'delete', method, params }))
+      const [message] = await reply
+      return JSON.parse(String(message)) as unknown
+    } finally {
+      client.terminate()
+    }
+  }
+
+  it('stops a chat, then deletes it with its provider session kept out of history imports', async () => {
+    // A plain deleteThread leaves the saved session importable, and the next
+    // history scan brings the deleted chat back as a new one.
+    state.threads.set('t', { projectPath: '/project', provider: 'claude-code' })
+    const { port } = await listen()
+    expect(await request(port, 'thread.delete', { threadId: 't' })).toEqual({
+      id: 'delete',
+      result: {},
+    })
+    expect(state.handled.filter((entry) => /^(orchestrator|store)\./.test(entry))).toEqual([
+      'orchestrator.close(t)',
+      'store.deleteThread(t, {"keepSessionOut":true})',
+      'orchestrator.forgetDeletedThread(t)',
+    ])
   })
 })
 

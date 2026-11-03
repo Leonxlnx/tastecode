@@ -18,10 +18,23 @@ describe('window background stylesheet', () => {
     }
   })
 
-  it('stands the aurora still for reduced motion and steps it otherwise', () => {
-    expect(sheet).toMatch(/animation: app-bg-aurora \d+s steps\(\d+\) infinite alternate;/)
-    const reduced = sheet.slice(sheet.indexOf('@media (prefers-reduced-motion: reduce)'))
-    expect(reduced).toMatch(/\.app-bg\[data-effect='aurora'\]::before \{\s*animation: none;/)
+  it('keeps every effect still, so the window never repaints for one', () => {
+    expect(sheet).not.toMatch(/animation|@keyframes|will-change/)
+    expect(sheet).not.toMatch(/aurora|glow/)
+  })
+
+  it('paints each effect in the text colour and fades it with Dim', () => {
+    for (const effect of ['dither', 'halftone', 'dots']) {
+      const rule = sheet.match(
+        new RegExp(`\\.app-bg\\[data-effect='${effect}'\\]::before \\{([^}]*)\\}`),
+      )
+      expect(rule?.[1]).toContain('mask:')
+      expect(rule?.[1]).toContain(`opacity: calc(var(--app-bg-${effect}) * var(--app-bg-fade));`)
+    }
+    expect(sheet).toContain(
+      ".app-bg[data-mode='effect']::before {\n  background-color: var(--text);",
+    )
+    expect(sheet).toContain('--app-bg-fade: max(0, calc(2 - var(--app-bg-dim, 1)));')
   })
 
   it('never blurs live content behind a pane', () => {
@@ -47,6 +60,12 @@ describe('window background stylesheet', () => {
     expect(drawer).toBeGreaterThan(translucent)
     // Nothing after it paints the rail again.
     expect(sheet.slice(drawer + drawerRule.length)).not.toMatch(/\.rail\b/)
+  })
+
+  it('turns the title bar into the sidebar pane, except where a Mac already paints it', () => {
+    expect(sheet).toContain(
+      ':root[data-app-bg][data-theme][data-shell][data-glass] .shell:not(.is-macos) > .titlebar {\n  background: var(--app-bg-rail-pane);\n}',
+    )
   })
 
   it('fades the transcript under the composer without covering the scrollbar', () => {

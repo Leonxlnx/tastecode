@@ -466,6 +466,9 @@ const defaultServices = {
           ...options,
           ...claudeLaunch(runtime),
         }),
+      // Skills and custom commands are files Claude reads; they need no process.
+      localCommands: async (projectPath) =>
+        (await loadClaude()).listClaudeLocalCommands(projectPath),
       watchPaths: async (projectPath) =>
         (await loadClaude()).claudeInventoryWatchPaths(projectPath),
     },
@@ -533,6 +536,10 @@ const accountServices = new Map<ProviderId, (accountHome: string) => ProviderSer
             ...options,
             ...claudeLaunch(runtime),
             accountHome,
+          }),
+        localCommands: async (projectPath) =>
+          (await loadClaude()).listClaudeLocalCommands(projectPath, {
+            environment: withClaudeAccount(process.env, accountHome),
           }),
         watchPaths: async (projectPath) =>
           (await loadClaude()).claudeInventoryWatchPaths(

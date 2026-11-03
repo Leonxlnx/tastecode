@@ -69,6 +69,11 @@ const DEFAULT_RENDERER_ORIGIN = 'http://127.0.0.1:5183'
 /** When no client has asked for its projects by then, background work starts anyway. */
 const BACKGROUND_WORK_DELAY_MS = 1_500
 /**
+ * The newest items a native sub-agent transcript reply carries. Its detail asks again
+ * every few seconds while the agent runs, and one agent can save thousands of steps.
+ */
+const SUBAGENT_TRANSCRIPT_ITEMS = 400
+/**
  * Reads of provider state that may load an adapter or start a vendor CLI on
  * first use. The desktop's Node (24) loads and compiles an imported module
  * graph synchronously inside `import()`, so the first of these held the event
@@ -279,6 +284,15 @@ export function startServer(
         push.broadcastRecordedEvent('sideChat.event', threadId, serializedEvent, seq)
       }
     },
+    onSubagentEvent: (threadId, parentThreadId, event, seq, serializedEvent) => {
+      if (event.type === 'item.delta') streamQuiet.noteDelta()
+      if (serializedEvent === undefined) {
+        push.broadcast('subagent.event', { threadId, parentThreadId, event, seq })
+      } else {
+        push.broadcastRecordedSubagentEvent(threadId, parentThreadId, serializedEvent, seq)
+      }
+    },
+    agentTools: true,
     onQueue: (threadId, state) => push.broadcast('thread.queue', { threadId, ...state }),
     onLog: (line) => console.log(`[agent] ${line}`),
     onLogin: (provider, result, accountId) => {
@@ -381,17 +395,29 @@ export function startServer(
   const historySources = [
     {
       provider: 'codex',
-      load: async () => (await import('@harness/adapter-codex')).createCodexHistorySource(),
+      load: async (accountHome?: string) =>
+        (await import('@harness/adapter-codex')).createCodexHistorySource(
+          accountHome === undefined ? {} : { codexHome: accountHome },
+        ),
     },
     {
       provider: 'claude-code',
-      load: async () => (await import('@harness/adapter-claude-code')).createClaudeHistorySource(),
+      load: async (accountHome?: string) =>
+        (await import('@harness/adapter-claude-code')).createClaudeHistorySource(
+          accountHome === undefined ? {} : { configDir: accountHome },
+        ),
     },
     {
       provider: 'grok',
-      load: async () => (await import('@harness/adapter-grok')).createGrokHistorySource(),
+      load: async (accountHome?: string) =>
+        (await import('@harness/adapter-grok')).createGrokHistorySource(
+          accountHome === undefined ? {} : { root: accountHome },
+        ),
     },
-  ] satisfies Array<{ provider: ProviderId; load(): Promise<ProviderHistorySource> }>
+  ] satisfies Array<{
+    provider: ProviderId
+    load(accountHome?: string): Promise<ProviderHistorySource>
+  }>
   /** Why a source failed to load, keyed by the id prefix of the chats it imports. */
   const unavailableHistory = new Map<string, unknown>()
   const loadHistoryService = () =>
@@ -399,9 +425,10 @@ export function startServer(
       (results) =>
         new ProviderHistory(
           store,
-          historySources.flatMap(({ provider }, index) => {
+          historySources.flatMap(({ provider, load }, index) => {
             const result = results[index]!
-            if (result.status === 'fulfilled') return [{ provider, history: result.value }]
+            if (result.status === 'fulfilled')
+              return [{ provider, history: result.value, forAccount: load }]
             unavailableHistory.set(`external:${provider}:`, result.reason)
             console.log(`[history] ${provider} history could not be loaded`)
             return []
@@ -416,6 +443,11 @@ export function startServer(
               }
             },
             log: (message) => console.log(`[history] ${message}`),
+            accountHome: (threadId) => {
+              const thread = store.thread(threadId)
+              if (!thread) throw new Error('Thread not found')
+              return accounts.home(thread.provider, thread.accountId)
+            },
           },
         ),
     )
@@ -450,8 +482,7 @@ export function startServer(
   const importsAfterInitialScan = new Set<string>()
 
   function startProviderHistory(): void {
-    const service = loadHistoryService()
-    providerHistory = service
+    const service = (providerHistory ??= loadHistoryService())
     // Opening a task during startup must not replay an obsolete imported transcript
     // before adapter revisions and ownership have been refreshed.
     const initial = service.then(async (history) => {
@@ -1384,8 +1415,10 @@ export function startServer(
         if (store.thread(p.threadId)?.worktreePath) {
           throw new Error('discard the isolated session checkout before deleting it')
         }
+        // Closing ends a running turn, so nothing the provider still writes can
+        // land in the chat; its saved session is kept out of history imports.
         await orchestrator.close(p.threadId)
-        store.deleteThread(p.threadId)
+        store.deleteThread(p.threadId, { keepSessionOut: true })
         orchestrator.forgetDeletedThread(p.threadId)
         lifecycleScheduler.changed()
         return {}
@@ -1432,6 +1465,20 @@ export function startServer(
       case 'thread.diff': {
         const p = parseParams(method, params)
         return orchestrator.diff(p.threadId)
+      }
+
+      case 'thread.subagents': {
+        const p = parseParams(method, params)
+        return { subagents: orchestrator.subagents(p.threadId) }
+      }
+
+      case 'thread.subagentTranscript': {
+        const p = parseParams(method, params)
+        // Reading saved children needs no version probes, import scan or live runtime.
+        const history = await (providerHistory ??= loadHistoryService())
+        const items = await history.readSubagentTranscript(p.threadId, p.itemId)
+        const omitted = items.length - SUBAGENT_TRANSCRIPT_ITEMS
+        return omitted > 0 ? { items: items.slice(omitted), omitted } : { items }
       }
 
       case 'thread.undoTurnChanges': {
@@ -1731,6 +1778,12 @@ export function startServer(
 
       case 'sidebar.settings':
         return store.sidebarSettings()
+
+      case 'subagents.settings':
+        return store.subagentSettings()
+
+      case 'subagents.updateSettings':
+        return store.setSubagentOtherProviders(parseParams(method, params).otherProviders)
 
       case 'phone.status':
         return phoneAccess.status()

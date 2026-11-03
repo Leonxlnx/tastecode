@@ -116,11 +116,31 @@ describe('CommandPalette', () => {
 
     const input = screen.getByRole('textbox', { name: 'Search commands' })
     const target = screen.getByRole('option', { name: 'Settings' })
-    fireEvent.mouseEnter(target)
+    fireEvent.mouseMove(target)
     fireEvent.keyDown(input, { key: 'Enter' })
 
     expect(target.getAttribute('aria-selected')).toBe('true')
     expect(ran).toEqual(['settings'])
+  })
+
+  it('keeps the keyboard choice when a row scrolls under a resting pointer', () => {
+    const { commands, ran } = makeCommands()
+    render(<CommandPalette commands={commands} scope="all" onClose={vi.fn()} />)
+
+    const input = screen.getByRole('textbox', { name: 'Search commands' })
+    const first = screen.getAllByRole('option')[0]!
+    fireEvent.keyDown(input, { key: 'ArrowDown' })
+    const chosen = screen
+      .getAllByRole('option')
+      .find((option) => option.getAttribute('aria-selected') === 'true')!
+    // Scrolling moves a row under the pointer: the browser fires mouseenter, not mousemove.
+    fireEvent.mouseEnter(first)
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    expect(chosen).not.toBe(first)
+    expect(chosen.getAttribute('aria-selected')).toBe('true')
+    expect(first.getAttribute('aria-selected')).toBe('false')
+    expect(ran).toHaveLength(1)
   })
 
   it('keeps the highlighted command when the list changes while open', () => {
@@ -141,7 +161,7 @@ describe('CommandPalette', () => {
     expect(screen.getByRole('option', { name: 'c' }).getAttribute('aria-selected')).toBe('true')
     fireEvent.keyDown(input, { key: 'Enter' })
 
-    fireEvent.mouseEnter(screen.getByRole('option', { name: 'd' }))
+    fireEvent.mouseMove(screen.getByRole('option', { name: 'd' }))
     view.rerender(<CommandPalette commands={[d]} scope="all" onClose={vi.fn()} />)
     fireEvent.keyDown(input, { key: 'Enter' })
 

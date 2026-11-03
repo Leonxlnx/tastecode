@@ -1,7 +1,9 @@
 import { execFileSync } from 'node:child_process'
+import { EventEmitter } from 'node:events'
 import {
   appendFileSync,
   copyFileSync,
+  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -13,17 +15,29 @@ import {
 } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { afterAll, afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  onTestFinished,
+  vi,
+} from 'vitest'
 import { CLAUDE_MCP_CAPABILITIES } from '@harness/adapter-claude-code/capabilities'
 import { GROK_MCP_CAPABILITIES } from '@harness/adapter-grok/mcp'
 import { OPENCODE_MCP_CAPABILITIES } from '@harness/adapter-opencode/inventory'
 import { ProviderIdSchema } from '@harness/contracts'
 import type {
+  Account,
   ApprovalMode,
   Capabilities,
   DomainEvent,
   McpServer,
   McpServerConfig,
+  Model,
   ProviderCommand,
   ProviderId,
   ThreadLifecycle,
@@ -62,10 +76,17 @@ import { writeDefaultSkillsFixture } from './default-skills.test-support.js'
 import { McpConfigStore } from './mcp-config.js'
 import { Orchestrator } from './orchestrator.js'
 import { PROVIDER_CAPABILITIES } from './provider-capabilities.js'
-import type { ProviderControlsOptions } from './provider-controls.js'
+import type {
+  CodexControlAdapter,
+  ProviderControlsOptions,
+  ProviderServices,
+} from './provider-controls.js'
 import { StartupCleanupError } from './provider-session.js'
+import { REPLY_STYLE_INSTRUCTIONS } from './reply-style.js'
 import { DatabaseSync } from './sqlite.js'
 import { Store } from './store.js'
+import { subagentRunItem } from './subagent-runs.js'
+import type { StoredSubagentRun } from './subagent-runs.js'
 import * as checkpoint from './checkpoint.js'
 import { beginOptimisticTurn, emptyThread, reduceEventLog } from '../../web/src/thread-store.js'
 import { projectThreadItems } from '../../web/src/ui/turns.js'
@@ -178,6 +199,8 @@ class FakeSession implements AgentSession {
   commands: ProviderCommand[] = []
   commandReads: Array<string | undefined> = []
   emitCommandsChanged: () => void = () => {}
+  backgroundWork = false
+  emitBackgroundWorkChanged: () => void = () => {}
   emitDisconnected: () => void = () => {}
   emitProviderSessionId: (providerSessionId: string) => void = () => {}
   afterEventBarrier: Promise<void> | undefined
@@ -276,6 +299,20 @@ class FakeSession implements AgentSession {
     this.emitCommandsChanged = listener
   }
 
+  hasBackgroundWork(): boolean {
+    return this.backgroundWork
+  }
+
+  onBackgroundWorkChanged(listener: () => void): void {
+    this.emitBackgroundWorkChanged = listener
+  }
+
+  /** Work a turn started keeps running in the background, or stops. */
+  runInBackground(running: boolean): void {
+    this.backgroundWork = running
+    this.emitBackgroundWorkChanged()
+  }
+
   onDisconnected(listener: () => void): () => void {
     this.emitDisconnected = listener
     return () => {
@@ -292,27 +329,94 @@ class FakeSession implements AgentSession {
   }
 }
 
-/** Claude's project probe would start the real CLI; without a chat it finds nothing here. */
-const quietClaudeInventory: NonNullable<ProviderControlsOptions['services']>['claude-code'] = {
-  projectInventory: {
-    mcpCapabilities: CLAUDE_MCP_CAPABILITIES,
-    discover: async () => ({ commands: [], servers: [] }),
-  },
+/** A test that needs a provider to sign in or change its settings passes its own service. */
+function unavailableInTests(what: string) {
+  return async (): Promise<never> => {
+    throw new Error(`${what} is not available in orchestrator tests.`)
+  }
 }
-/** The same for Grok's and OpenCode's probes. */
-const quietGrokInventory: NonNullable<ProviderControlsOptions['services']>['grok'] = {
-  projectInventory: {
-    mcpCapabilities: GROK_MCP_CAPABILITIES,
-    skillCapabilities: { inventory: true, configure: false, install: false },
-    discover: async () => ({ commands: [], servers: [], skills: [] }),
+const signedOut = async (): Promise<Account> => ({ signedIn: false })
+const noLimits = async () => ({ status: 'unavailable' as const })
+const noCommands = async () => ({ commands: [], loading: false })
+
+/**
+ * Each provider service that would start an installed CLI or read its sign-in or
+ * folders answers with nothing here, so no test depends on the providers installed
+ * on the machine that runs it. Services that read nothing (Codex's static commands,
+ * MCP validation, the sign-out notices) stay. A test's own services win.
+ */
+const quietServices = {
+  antigravity: { listCommands: noCommands, account: signedOut, usageLimitSource: noLimits },
+  api: {},
+  // Everything else Codex answers comes from its control process: see QuietCodexControl.
+  codex: {},
+  opencode: {
+    projectInventory: {
+      mcpCapabilities: OPENCODE_MCP_CAPABILITIES,
+      skillCapabilities: { inventory: true, configure: false, install: false },
+      discover: async () => ({ commands: [], servers: [], skills: [] }),
+    },
+    account: signedOut,
   },
-}
-const quietOpenCodeInventory: NonNullable<ProviderControlsOptions['services']>['opencode'] = {
-  projectInventory: {
-    mcpCapabilities: OPENCODE_MCP_CAPABILITIES,
-    skillCapabilities: { inventory: true, configure: false, install: false },
-    discover: async () => ({ commands: [], servers: [], skills: [] }),
+  pi: {},
+  'claude-code': {
+    projectInventory: {
+      mcpCapabilities: CLAUDE_MCP_CAPABILITIES,
+      discover: async () => ({ commands: [], servers: [] }),
+    },
+    account: signedOut,
+    usageLimitSource: noLimits,
+    startLogin: unavailableInTests('Claude Code sign-in'),
+    signOut: unavailableInTests('Claude Code sign-out'),
   },
+  cursor: {
+    listCommands: noCommands,
+    account: signedOut,
+    usageLimitSource: noLimits,
+    startLogin: unavailableInTests('Cursor sign-in'),
+    signOut: unavailableInTests('Cursor sign-out'),
+  },
+  grok: {
+    projectInventory: {
+      mcpCapabilities: GROK_MCP_CAPABILITIES,
+      skillCapabilities: { inventory: true, configure: false, install: false },
+      discover: async () => ({ commands: [], servers: [], skills: [] }),
+    },
+    account: signedOut,
+    usageLimitSource: noLimits,
+    signOut: unavailableInTests('Grok sign-out'),
+  },
+  acp: { account: signedOut, signOut: unavailableInTests('ACP sign-out') },
+} satisfies Record<ProviderId, ProviderServices>
+
+/** Codex's control process would start the installed CLI; this one has nothing to report. */
+class QuietCodexControl extends EventEmitter implements CodexControlAdapter {
+  async start(): Promise<void> {}
+  async dispose(): Promise<void> {}
+  onUsageChanged(): void {}
+  account = signedOut
+  async listModels(): Promise<Model[]> {
+    return []
+  }
+  async listMcpServers(): Promise<McpServer[]> {
+    return []
+  }
+  isMcpLoading(): boolean {
+    return false
+  }
+  async whenMcpServersListed(): Promise<boolean> {
+    return true
+  }
+  async listSkills() {
+    return { skills: [], errors: [] }
+  }
+  rateLimitSource = noLimits
+  setSkillEnabled = unavailableInTests('Codex skill settings')
+  consumeRateLimitReset = unavailableInTests('Codex limit resets')
+  startLogin = unavailableInTests('Codex sign-in')
+  cancelLogin = unavailableInTests('Codex sign-in')
+  useApiKey = unavailableInTests('Codex sign-in')
+  signOut = unavailableInTests('Codex sign-out')
 }
 
 // Every orchestrator under test gets its own MCP config folder. Remove them when the file is done:
@@ -342,6 +446,7 @@ function harness(
   idleThreadRuntimeMs?: number,
   providerServices?: ProviderControlsOptions['services'],
   defaultSkillsRoot?: string,
+  stopSettleMs?: number,
 ) {
   const sessions: FakeSession[] = []
   const received: Array<{
@@ -465,12 +570,16 @@ function harness(
     runtimeFor,
     ...(maxIdleThreadRuntimes === undefined ? {} : { maxIdleThreadRuntimes }),
     ...(idleThreadRuntimeMs === undefined ? {} : { idleThreadRuntimeMs }),
-    providerServices: {
-      ...providerServices,
-      'claude-code': { ...quietClaudeInventory, ...providerServices?.['claude-code'] },
-      grok: { ...quietGrokInventory, ...providerServices?.grok },
-      opencode: { ...quietOpenCodeInventory, ...providerServices?.opencode },
-    },
+    ...(stopSettleMs === undefined ? {} : { stopSettleMs }),
+    providerServices: Object.fromEntries(
+      ProviderIdSchema.options.map((provider) => {
+        // tsc skips the server's tests, so a provider added without an entry is caught here.
+        const quiet = Object.hasOwn(quietServices, provider) ? quietServices[provider] : undefined
+        if (!quiet) throw new Error(`The test harness has no quiet services for ${provider}.`)
+        return [provider, { ...quiet, ...providerServices?.[provider] }]
+      }),
+    ),
+    createCodex: () => new QuietCodexControl(),
     ...(worktreeRoot ? { worktreeRoot } : {}),
     ...(defaultSkillsRoot ? { defaultSkillsRoot } : {}),
   })
@@ -958,6 +1067,83 @@ describe('idle thread runtime retention', () => {
       await orchestrator.disposeAll()
       vi.useRealTimers()
     }
+  })
+
+  it('keeps an idle runtime alive while its agent runs background work that will report', async () => {
+    vi.useFakeTimers()
+    const { orchestrator, sessions, received } = harness(undefined, new Store(':memory:'), 8, 1_000)
+    try {
+      const thread = await orchestrator.startThread('codex', process.cwd())
+      const session = sessions[0]!
+      // The turn starts a long check in the background and ends, waiting for it.
+      session.emit(turnStarted(thread.id, 'waits'))
+      session.runInBackground(true)
+      session.emit({ type: 'turn.completed', turnId: 'waits', status: 'completed' })
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(session.disposed).toBe(false)
+
+      // The check ends and the agent reports it in a turn nobody sent.
+      session.runInBackground(false)
+      session.emit(turnStarted(thread.id, 'reports'))
+      session.emit(message('The check passed.', 'reports'))
+      session.emit({ type: 'turn.completed', turnId: 'reports', status: 'completed' })
+      expect(
+        received.flatMap(({ event }) => (event.type === 'turn.started' ? [event.turn.id] : [])),
+      ).toEqual(['waits', 'reports'])
+      expect(orchestrator.isTurnRunning(thread.id)).toBe(false)
+      await vi.advanceTimersByTimeAsync(999)
+      expect(session.disposed).toBe(false)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(session.disposed).toBe(true)
+    } finally {
+      await orchestrator.disposeAll()
+      vi.useRealTimers()
+    }
+  })
+
+  it('starts the idle window when background work ends without a turn', async () => {
+    vi.useFakeTimers()
+    const { orchestrator, sessions } = harness(undefined, new Store(':memory:'), 8, 1_000)
+    try {
+      const thread = await orchestrator.startThread('codex', process.cwd())
+      const session = sessions[0]!
+      session.emit(turnStarted(thread.id, 'waits'))
+      session.runInBackground(true)
+      session.emit({ type: 'turn.completed', turnId: 'waits', status: 'completed' })
+      await vi.advanceTimersByTimeAsync(5_000)
+      session.runInBackground(false)
+      await vi.advanceTimersByTimeAsync(999)
+      expect(session.disposed).toBe(false)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(session.disposed).toBe(true)
+    } finally {
+      await orchestrator.disposeAll()
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps a runtime with background work out of the warm-runtime limit', async () => {
+    const { orchestrator, sessions } = harness(undefined, new Store(':memory:'), 1)
+    const threads = await Promise.all(
+      Array.from({ length: 3 }, () => orchestrator.startThread('codex', process.cwd())),
+    )
+    sessions[0]!.emit(turnStarted(threads[0]!.id, 'waits'))
+    sessions[0]!.runInBackground(true)
+    for (let index = 0; index < threads.length; index += 1) {
+      sessions[index]!.emit({
+        type: 'turn.completed',
+        turnId: index === 0 ? 'waits' : `turn-${index}`,
+        status: 'completed',
+      })
+    }
+    // The newest idle runtime stays warm; the one still working is never counted.
+    expect(sessions.map((session) => session.disposed)).toEqual([false, true, false])
+
+    sessions[0]!.runInBackground(false)
+    await vi.waitFor(() =>
+      expect(sessions.map((session) => session.disposed)).toEqual([false, true, true]),
+    )
+    await orchestrator.disposeAll()
   })
 
   it('releases an expired runtime when its last queued prompt is removed', async () => {
@@ -1497,21 +1683,40 @@ describe('reply style', () => {
 
       expect(startedOptions[0]?.instructions).toContain('clear, capable teammate')
       expect(startedOptions[0]?.instructions).toContain('Do not use em dashes')
+      expect(startedOptions[0]?.instructions).toContain(
+        'When a task is done, end the turn with a short wrap-up',
+      )
+      expect(startedOptions[0]?.instructions).toContain('Skip file-by-file inventories')
     },
   )
+
+  it('keeps the shared reply instructions free of the em dashes they forbid', () => {
+    expect(REPLY_STYLE_INSTRUCTIONS).not.toContain('—')
+  })
 })
 
 describe('default skills', () => {
-  const skillsHarness = async () => {
+  const skillsHarness = async (services?: ProviderControlsOptions['services']) => {
     const parent = mkdtempSync(path.join(os.tmpdir(), 'tc-orchestrator-skills-'))
     onTestFinished(() => rmSync(parent, { recursive: true, force: true }))
     const root = await writeDefaultSkillsFixture(parent)
-    return { root, ...harness(undefined, undefined, undefined, undefined, undefined, root) }
+    // A provider that loads `.agents/skills` lists the user's and the project's; keep both empty.
+    const project = path.join(parent, 'project')
+    const home = path.join(parent, 'home')
+    mkdirSync(project)
+    mkdirSync(home)
+    const homedir = vi.spyOn(os, 'homedir').mockReturnValue(home)
+    onTestFinished(() => homedir.mockRestore())
+    return {
+      root,
+      project,
+      ...harness(undefined, undefined, undefined, undefined, services, root),
+    }
   }
 
   it.each(ProviderIdSchema.options)('lists the bundled skills for %s', async (provider) => {
-    const { orchestrator } = await skillsHarness()
-    const inventory = await orchestrator.listSkills(provider, process.cwd())
+    const { orchestrator, project } = await skillsHarness()
+    const inventory = await orchestrator.listSkills(provider, project)
 
     expect(
       inventory.skills
@@ -1555,6 +1760,122 @@ describe('default skills', () => {
     await orchestrator.startThread('cursor', process.cwd())
     expect(startedOptions[0]?.instructions).not.toContain('Skills included with TasteCode')
     await orchestrator.disposeAll()
+  })
+
+  it('lists the bundled skills as commands where the provider loads them as a plugin', async () => {
+    // Claude Code runs `/cook` as the plugin's `tastecode:cook`, but its probe
+    // starts without the plugin. Without these rows the slash menu offered
+    // `$cook` while the list loaded and after, which Claude does not expand.
+    let finish: (() => void) | undefined
+    const discover = vi.fn(
+      () =>
+        new Promise<{ commands: ProviderCommand[]; servers: McpServer[] }>((resolve) => {
+          finish = () =>
+            resolve({ commands: [{ name: 'context', description: 'Show context' }], servers: [] })
+        }),
+    )
+    const { orchestrator, sessions, commandChanges } = await skillsHarness({
+      'claude-code': { projectInventory: { mcpCapabilities: CLAUDE_MCP_CAPABILITIES, discover } },
+    })
+    const bundled: ProviderCommand[] = ['cinetic', 'design-taste-frontend', 'cook'].map((name) => ({
+      name,
+      description: `The long ${name} description.`,
+      aliases: [`tastecode:${name}`],
+      kind: 'skill',
+      source: 'plugin',
+    }))
+    try {
+      await expect(orchestrator.listCommands('claude-code', '/repo')).resolves.toEqual({
+        commands: bundled,
+        loading: true,
+      })
+      await vi.waitFor(() => expect(finish).toBeDefined())
+      finish!()
+      await vi.waitFor(() =>
+        expect(commandChanges).toEqual([{ provider: 'claude-code', projectPath: '/repo' }]),
+      )
+      await expect(orchestrator.listCommands('claude-code', '/repo')).resolves.toEqual({
+        commands: [{ name: 'context', description: 'Show context' }, ...bundled],
+        loading: false,
+      })
+
+      // A chat that loaded the plugin reports its qualified name; keep one bare row.
+      const chat = await orchestrator.startThread('claude-code', '/repo')
+      const live: ProviderCommand = {
+        name: 'tastecode:cook',
+        aliases: ['cook'],
+        description: '(tastecode) Cook.',
+        kind: 'skill',
+        source: 'plugin',
+      }
+      sessions[0]!.commands = [live]
+      const inventory = await orchestrator.listCommands('claude-code', '/repo', chat.id)
+      expect(inventory).toEqual({
+        commands: bundled,
+        loading: false,
+      })
+      expect(sessions[0]!.commands).toEqual([live])
+      const selected = inventory.commands.find((command) => command.name === 'cook')!
+      await orchestrator.submitTurn(chat.id, `/${selected.name} Build a site`)
+      expect(sessions[0]!.sent).toEqual(['/cook Build a site'])
+
+      // A provider that reads them from the catalog has no such commands.
+      for (const provider of ProviderIdSchema.options) {
+        if (PROVIDER_CAPABILITIES[provider].defaultSkillsPlugin) continue
+        const { commands } = await orchestrator.listCommands(provider, '/repo')
+        expect(
+          commands.filter((command) =>
+            command.aliases?.some((alias) => alias.startsWith('tastecode:')),
+          ),
+        ).toEqual([])
+      }
+    } finally {
+      await orchestrator.disposeAll()
+    }
+  })
+
+  it('collapses manifest-derived aliases while preserving other plugins and user commands', async () => {
+    const { orchestrator, sessions, root, project } = await skillsHarness()
+    writeFileSync(
+      path.join(root, 'skills.json'),
+      JSON.stringify({ plugin: { name: 'acme' }, skills: [{ folder: 'cook' }] }),
+    )
+    writeFileSync(
+      path.join(root, 'skills', 'cook', 'SKILL.md'),
+      '---\nname: cook-loop\ndescription: Loops.\n---\n',
+    )
+    const bundled: ProviderCommand = {
+      name: 'cook-loop',
+      aliases: ['acme:cook'],
+      description: 'Loops.',
+      kind: 'skill',
+      source: 'plugin',
+    }
+    const probed: ProviderCommand = { name: 'acme:cook', description: 'Probed.' }
+    const other: ProviderCommand = { name: 'other:cook', description: 'Another plugin.' }
+    const custom: ProviderCommand = { name: 'cook-loop', description: 'My own command.' }
+    try {
+      const chat = await orchestrator.startThread('claude-code', project)
+      sessions[0]!.commands = [probed, other]
+      await expect(orchestrator.listCommands('claude-code', project, chat.id)).resolves.toEqual({
+        commands: [other, bundled],
+        loading: false,
+      })
+
+      for (const commands of [
+        [probed, custom, other],
+        [custom, probed, other],
+      ]) {
+        sessions[0]!.commands = commands
+        await expect(orchestrator.listCommands('claude-code', project, chat.id)).resolves.toEqual({
+          commands: [custom, other],
+          loading: false,
+        })
+        expect(sessions[0]!.commands).toEqual(commands)
+      }
+    } finally {
+      await orchestrator.disposeAll()
+    }
   })
 
   it('refuses to switch off a bundled skill through a provider', async () => {
@@ -6847,6 +7168,9 @@ describe('persisted threads', () => {
 
     expect(resumedOptions[0]?.instructions).toContain('clear, capable teammate')
     expect(resumedOptions[0]?.instructions).toContain('Do not use em dashes')
+    expect(resumedOptions[0]?.instructions).toContain(
+      'When a task is done, end the turn with a short wrap-up',
+    )
   })
 
   it('resumes a persisted thread with the model options of the turn that wakes it', async () => {
@@ -7559,15 +7883,16 @@ describe('provider commands', () => {
         loading: true,
       })
 
-      // Without a service only a running chat can answer.
-      await expect(orchestrator.listCommands('cursor', '/repo')).resolves.toEqual({
+      // Without a service only a running chat can answer. ACP agents have none:
+      // they report their commands only from a session.
+      await expect(orchestrator.listCommands('acp', '/repo')).resolves.toEqual({
         commands: [],
         loading: false,
       })
-      await orchestrator.startThread('cursor', '/repo')
-      sessions[3]!.commands = [command('cursor')]
-      await expect(orchestrator.listCommands('cursor', '/repo')).resolves.toEqual({
-        commands: [command('cursor')],
+      await orchestrator.startThread('acp', '/repo')
+      sessions[3]!.commands = [command('acp')]
+      await expect(orchestrator.listCommands('acp', '/repo')).resolves.toEqual({
+        commands: [command('acp')],
         loading: false,
       })
     } finally {
@@ -7787,6 +8112,348 @@ describe('several sessions at once', () => {
 
     prepared()
     await expect(later).resolves.toMatchObject({ queued: true })
+  })
+
+  describe('prompts queued before a Stop', () => {
+    async function stoppedWithQueue() {
+      const context = harness()
+      const { sessions, orchestrator } = context
+      const thread = await orchestrator.startThread('codex', '/repo')
+      const session = sessions[0]!
+      session.turnIds = ['t1', 't2', 't3']
+      await orchestrator.submitTurn(thread.id, 'running')
+      const queued = await orchestrator.submitTurn(thread.id, 'sent by accident')
+      if (!queued.queued) throw new Error('expected the prompt to queue')
+      await orchestrator.interrupt(thread.id)
+      session.emit({ type: 'turn.completed', turnId: 't1', status: 'interrupted' })
+      await new Promise((resolve) => setTimeout(resolve, 10))
+      return { ...context, thread, session, queuedId: queued.queuedTurn.id }
+    }
+
+    it('stay queued when the stopped turn ends', async () => {
+      const { orchestrator, thread, session } = await stoppedWithQueue()
+
+      expect(session.sent).toEqual(['running'])
+      expect(orchestrator.queue(thread.id).items.map((item) => item.text)).toEqual([
+        'sent by accident',
+      ])
+      expect(orchestrator.isTurnRunning(thread.id)).toBe(false)
+      await orchestrator.disposeAll()
+    })
+
+    it('go out in order once the user sends again', async () => {
+      const { orchestrator, thread, session } = await stoppedWithQueue()
+
+      await expect(orchestrator.submitTurn(thread.id, 'next')).resolves.toMatchObject({
+        queued: true,
+      })
+      await vi.waitFor(() => expect(session.sent).toEqual(['running', 'sent by accident']))
+      session.emit({ type: 'turn.completed', turnId: 't2', status: 'completed' })
+      await vi.waitFor(() => expect(session.sent).toEqual(['running', 'sent by accident', 'next']))
+      await orchestrator.disposeAll()
+    })
+
+    it('go out one at a time when the user sends a held one', async () => {
+      const { orchestrator, thread, session, queuedId } = await stoppedWithQueue()
+
+      await orchestrator.steerQueuedTurn(thread.id, queuedId)
+
+      expect(session.sent).toEqual(['running', 'sent by accident'])
+      expect(session.steered).toEqual([])
+      expect(orchestrator.queue(thread.id).items).toEqual([])
+      await orchestrator.disposeAll()
+    })
+
+    it('send the one the user picks first once the agent has ended the stopped turn', async () => {
+      const { sessions, orchestrator } = harness()
+      const thread = await orchestrator.startThread('codex', '/repo')
+      const session = sessions[0]!
+      session.turnIds = ['t1', 't2', 't3']
+      await orchestrator.submitTurn(thread.id, 'running')
+      await orchestrator.submitTurn(thread.id, 'first queued')
+      const picked = await orchestrator.submitTurn(thread.id, 'picked')
+      if (!picked.queued) throw new Error('expected the prompt to queue')
+      let confirm!: () => void
+      session.interruptBarrier = new Promise<void>((resolve) => (confirm = resolve))
+      const stopping = orchestrator.interrupt(thread.id)
+      await vi.waitFor(() => expect(session.interrupted).toBe(true))
+
+      // The agent has not ended the stopped turn yet, so nothing can go out now.
+      await orchestrator.steerQueuedTurn(thread.id, picked.queuedTurn.id)
+      expect(session.sent).toEqual(['running'])
+
+      confirm()
+      await stopping
+      session.emit({ type: 'turn.completed', turnId: 't1', status: 'interrupted' })
+      await vi.waitFor(() => expect(session.sent).toEqual(['running', 'picked']))
+      session.emit({ type: 'turn.completed', turnId: 't2', status: 'completed' })
+      await vi.waitFor(() => expect(session.sent).toEqual(['running', 'picked', 'first queued']))
+      await orchestrator.disposeAll()
+    })
+
+    it('stay held without a new agent process when the Stop ends the old one', async () => {
+      const { sessions, orchestrator } = harness()
+      const thread = await orchestrator.startThread('codex', '/repo')
+      const session = sessions[0]!
+      session.turnIds = ['t1']
+      await orchestrator.submitTurn(thread.id, 'running')
+      const queued = await orchestrator.submitTurn(thread.id, 'sent by accident')
+      if (!queued.queued) throw new Error('expected the prompt to queue')
+      session.interruptError = new Error('Stop failed')
+
+      await orchestrator.interrupt(thread.id)
+      await new Promise((resolve) => setTimeout(resolve, 10))
+      expect(session.disposed).toBe(true)
+      expect(sessions).toHaveLength(1)
+      expect(orchestrator.queue(thread.id).items.map((item) => item.text)).toEqual([
+        'sent by accident',
+      ])
+
+      // Sending the held prompt resumes the chat in a new process.
+      await orchestrator.steerQueuedTurn(thread.id, queued.queuedTurn.id)
+      expect(sessions).toHaveLength(2)
+      expect(sessions[1]!.sent).toEqual(['sent by accident'])
+      await orchestrator.disposeAll()
+    })
+
+    it('still go out after a turn the user did not stop', async () => {
+      const { sessions, orchestrator } = harness()
+      const thread = await orchestrator.startThread('codex', '/repo')
+      const session = sessions[0]!
+      session.turnIds = ['t1', 't2']
+      await orchestrator.submitTurn(thread.id, 'running')
+      await orchestrator.submitTurn(thread.id, 'queued')
+      session.emit({ type: 'turn.completed', turnId: 't1', status: 'completed' })
+
+      await vi.waitFor(() => expect(session.sent).toEqual(['running', 'queued']))
+      await orchestrator.disposeAll()
+    })
+  })
+
+  describe('a Stop the agent has not confirmed yet', () => {
+    const tool = (status: 'started' | 'completed'): DomainEvent => ({
+      type: status === 'started' ? 'item.started' : 'item.completed',
+      item: {
+        id: 'tool-1',
+        turnId: 's1-turn',
+        type: 'tool_call',
+        status,
+        text: 'npm test',
+        createdAt: 1,
+      },
+    })
+    const turnsCompleted = (received: Array<{ event: DomainEvent }>) =>
+      received.flatMap(({ event }) => (event.type === 'turn.completed' ? [event] : []))
+
+    async function stoppedWhileUnconfirmed(stopSettleMs?: number) {
+      const context = harness(
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        stopSettleMs,
+      )
+      const { sessions, orchestrator } = context
+      const thread = await orchestrator.startThread('codex', '/repo')
+      const session = sessions[0]!
+      await orchestrator.submitTurn(thread.id, 'sent by accident')
+      session.emit({
+        type: 'turn.started',
+        turn: { id: 's1-turn', threadId: thread.id, status: 'running', createdAt: 1 },
+      })
+      session.emit(tool('started'))
+      let confirm!: () => void
+      session.interruptBarrier = new Promise<void>((resolve) => (confirm = resolve))
+      const stopping = orchestrator.interrupt(thread.id)
+      await vi.waitFor(() => expect(session.interrupted).toBe(true))
+      return { ...context, thread, session, stopping, confirm }
+    }
+
+    it('ends the turn for the user at once', async () => {
+      const { orchestrator, thread, received, stopping, confirm } = await stoppedWhileUnconfirmed()
+
+      expect(turnsCompleted(received)).toEqual([
+        expect.objectContaining({ turnId: 's1-turn', status: 'interrupted' }),
+      ])
+      expect(received.map(({ event }) => event)).toContainEqual({
+        type: 'item.completed',
+        item: expect.objectContaining({ id: 'tool-1', status: 'failed' }),
+      })
+      expect(orchestrator.isTurnRunning(thread.id)).toBe(false)
+      expect(orchestrator.inboxStatus(thread.id)).not.toBe('working')
+
+      confirm()
+      await expect(stopping).resolves.toBeUndefined()
+      await orchestrator.disposeAll()
+    })
+
+    it('records nothing more of the stopped turn, its end included', async () => {
+      const { orchestrator, thread, session, received, confirm, stopping } =
+        await stoppedWhileUnconfirmed()
+      const recorded = received.length
+
+      session.emit({ type: 'item.delta', turnId: 's1-turn', itemId: 'tool-1', textDelta: 'x' })
+      session.emit(tool('completed'))
+      session.emit({
+        type: 'turn.started',
+        turn: { id: 's1-turn', threadId: thread.id, status: 'running', createdAt: 1 },
+      })
+      session.emit({
+        type: 'approval.requested',
+        request: { id: 'approval-1', kind: 'command', command: 'npm test', createdAt: 1 },
+      })
+      session.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'interrupted' })
+      confirm()
+      await stopping
+
+      expect(received).toHaveLength(recorded)
+      expect(orchestrator.isTurnRunning(thread.id)).toBe(false)
+      expect(orchestrator.inboxStatus(thread.id)).not.toBe('approval')
+      await orchestrator.disposeAll()
+    })
+
+    it('does not let a turn the agent starts on its own run again', async () => {
+      const { orchestrator, thread, session, received, confirm } = await stoppedWhileUnconfirmed()
+
+      session.emit({
+        type: 'turn.started',
+        turn: { id: 'unasked-turn', threadId: thread.id, status: 'running', createdAt: 2 },
+      })
+
+      expect(
+        received.some(
+          ({ event }) => event.type === 'turn.started' && event.turn.id === 'unasked-turn',
+        ),
+      ).toBe(false)
+      expect(orchestrator.isTurnRunning(thread.id)).toBe(false)
+      confirm()
+      await orchestrator.disposeAll()
+    })
+
+    it('stops new work the agent starts in the turn after accepting the Stop', async () => {
+      const { orchestrator, session, received, confirm, stopping } = await stoppedWhileUnconfirmed()
+      confirm()
+      await stopping
+      const interrupt = vi.spyOn(session, 'interrupt')
+      const recorded = received.length
+
+      // A steer Claude kept queued through the Stop starts its own run in the same turn.
+      session.emit({
+        type: 'item.started',
+        item: {
+          id: 'steer-answer',
+          turnId: 's1-turn',
+          type: 'message',
+          role: 'assistant',
+          status: 'started',
+          createdAt: 2,
+        },
+      })
+      session.emit({
+        type: 'item.started',
+        item: {
+          id: 'tool-2',
+          turnId: 's1-turn',
+          type: 'tool_call',
+          status: 'started',
+          createdAt: 3,
+        },
+      })
+
+      expect(interrupt).toHaveBeenCalledTimes(1)
+      expect(received).toHaveLength(recorded)
+      await orchestrator.disposeAll()
+    })
+
+    it('shows no error banner when the agent reports the stopped run as failed', async () => {
+      const { orchestrator, thread, session, received, logs, confirm, stopping } =
+        await stoppedWhileUnconfirmed()
+      confirm()
+      await stopping
+      // A late item of the stopped run looks like new work, and the repeat Stop is refused;
+      // an agent can then report the run it was already ending as an error.
+      session.interruptError = new Error('no run to stop')
+      session.emit({
+        type: 'item.started',
+        item: {
+          id: 'late-answer',
+          turnId: 's1-turn',
+          type: 'message',
+          role: 'assistant',
+          status: 'started',
+          createdAt: 2,
+        },
+      })
+      await vi.waitFor(() =>
+        expect(logs).toContainEqual(expect.stringMatching(/Could not stop.*no run to stop/)),
+      )
+      session.emit({ type: 'thread.error', threadId: thread.id, message: 'aborted by user' })
+      session.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'failed' })
+
+      expect(received.some(({ event }) => event.type === 'thread.error')).toBe(false)
+      expect(logs).toContainEqual(expect.stringMatching(/ending a stopped turn: aborted by user/))
+      expect(turnsCompleted(received)).toEqual([
+        expect.objectContaining({ turnId: 's1-turn', status: 'interrupted' }),
+      ])
+      await orchestrator.disposeAll()
+    })
+
+    it('still shows an error the agent reports before it accepted the Stop', async () => {
+      const { orchestrator, thread, session, received, confirm, stopping } =
+        await stoppedWhileUnconfirmed()
+      session.emit({ type: 'thread.error', threadId: thread.id, message: 'connection lost' })
+      confirm()
+      await stopping
+
+      expect(received.map(({ event }) => event)).toContainEqual(
+        expect.objectContaining({ type: 'thread.error', message: 'connection lost' }),
+      )
+      await orchestrator.disposeAll()
+    })
+
+    it('holds a prompt sent meanwhile until the agent has ended the turn', async () => {
+      const { orchestrator, thread, session, confirm, stopping } = await stoppedWhileUnconfirmed()
+
+      await expect(orchestrator.submitTurn(thread.id, 'the real question')).resolves.toMatchObject({
+        queued: true,
+      })
+      expect(session.sent).toEqual(['sent by accident'])
+
+      confirm()
+      await stopping
+      session.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'interrupted' })
+      await vi.waitFor(() =>
+        expect(session.sent).toEqual(['sent by accident', 'the real question']),
+      )
+      await orchestrator.disposeAll()
+    })
+
+    it('ends the agent process when the agent never ends the turn', async () => {
+      const { orchestrator, thread, session, logs, confirm, stopping } =
+        await stoppedWhileUnconfirmed(20)
+      confirm()
+      await stopping
+
+      await vi.waitFor(() => expect(session.disposed).toBe(true))
+      expect(logs).toContainEqual(expect.stringMatching(/did not end the stopped turn.*ending/))
+      expect(orchestrator.isRunning(thread.id)).toBe(false)
+      await orchestrator.disposeAll()
+    })
+
+    it('ends the agent process when the agent refuses the Stop', async () => {
+      const { orchestrator, thread, session, logs, confirm, stopping } =
+        await stoppedWhileUnconfirmed()
+      session.interruptError = new Error('Stop failed')
+      confirm()
+
+      await expect(stopping).resolves.toBeUndefined()
+      expect(session.disposed).toBe(true)
+      expect(logs).toContainEqual(expect.stringMatching(/refused Stop \(Stop failed\).*ending/))
+      expect(orchestrator.isTurnRunning(thread.id)).toBe(false)
+      await orchestrator.disposeAll()
+    })
   })
 
   it('cancels a cold resume on Stop and allows a later submission', async () => {
@@ -8467,6 +9134,170 @@ describe('sidebar inbox lifecycle', () => {
   })
 })
 
+describe('session-owned subagent snapshots', () => {
+  it.each(['disconnect', 'close', 'shutdown', 'idle release'] as const)(
+    'settles a running subagent on %s and preserves its parent turn outcome',
+    async (end) => {
+      if (end === 'idle release') vi.useFakeTimers()
+      const { orchestrator, sessions, store } = harness(undefined, new Store(':memory:'), 8, 1_000)
+      try {
+        const thread = await orchestrator.startThread('codex', '/repo')
+        const session = sessions[0]!
+        await orchestrator.sendTurn(thread.id, 'Review the design')
+        const item = {
+          id: 'reviewer',
+          turnId: 's1-turn',
+          type: 'tool_call' as const,
+          status: 'completed' as const,
+          text: 'Reviewer launched',
+          createdAt: 1,
+          subagent: { id: 'reviewer', state: 'running' as const, background: true, toolUses: 3 },
+        }
+        session.emit({ type: 'item.completed', item })
+        session.emit({ type: 'turn.completed', turnId: item.turnId, status: 'completed' })
+        const latest = () => reduceEventLog(emptyThread, store.history(thread.id))
+        expect(latest().items.find(({ id }) => id === item.id)?.subagent?.state).toBe('running')
+
+        if (end === 'disconnect') session.emitDisconnected()
+        else if (end === 'close') await orchestrator.close(thread.id)
+        else if (end === 'shutdown') await orchestrator.disposeAll()
+        else await vi.advanceTimersByTimeAsync(1_000)
+
+        expect(latest().items.find(({ id }) => id === item.id)).toMatchObject({
+          status: 'completed',
+          text: 'Reviewer launched',
+          subagent: { state: 'interrupted', background: true, toolUses: 3 },
+        })
+        expect(
+          store
+            .history(thread.id)
+            .filter(({ event }) => event.type === 'turn.completed')
+            .at(-1)?.event,
+        ).toMatchObject({ turnId: item.turnId, status: 'completed' })
+      } finally {
+        await orchestrator.disposeAll()
+        vi.useRealTimers()
+      }
+    },
+  )
+
+  it('leaves a background subagent running on Stop and settles a launch still open', async () => {
+    const { orchestrator, sessions, store } = harness(undefined, new Store(':memory:'))
+    try {
+      const thread = await orchestrator.startThread('codex', '/repo')
+      const session = sessions[0]!
+      session.turnIds = ['launch-turn', 'stopped-turn']
+      await orchestrator.sendTurn(thread.id, 'Review the design in the background')
+      // Launched by an earlier turn: its launching call completed and it runs on.
+      session.emit({
+        type: 'item.completed',
+        item: {
+          id: 'reviewer',
+          turnId: 'launch-turn',
+          type: 'tool_call',
+          status: 'completed',
+          text: 'Reviewer launched',
+          createdAt: 1,
+          subagent: { id: 'reviewer', state: 'running', background: true, toolUses: 3 },
+        },
+      })
+      session.emit({ type: 'turn.completed', turnId: 'launch-turn', status: 'completed' })
+      await orchestrator.sendTurn(thread.id, 'Explore the repo')
+      // The stopped turn's own launching call has not completed yet.
+      session.emit({
+        type: 'item.started',
+        item: {
+          id: 'explorer',
+          turnId: 'stopped-turn',
+          type: 'tool_call',
+          status: 'started',
+          text: 'Explorer launched',
+          createdAt: 2,
+          subagent: { id: 'explorer', state: 'running' },
+        },
+      })
+
+      await orchestrator.interrupt(thread.id)
+
+      // Stop ends the running turn only; background work keeps running (#2058).
+      const items = reduceEventLog(emptyThread, store.history(thread.id)).items
+      expect(items.find(({ id }) => id === 'reviewer')).toMatchObject({
+        status: 'completed',
+        subagent: { state: 'running', background: true, toolUses: 3 },
+      })
+      expect(items.find(({ id }) => id === 'explorer')).toMatchObject({
+        status: 'failed',
+        subagent: { state: 'interrupted' },
+      })
+      expect(
+        store
+          .history(thread.id)
+          .filter(({ event }) => event.type === 'turn.completed')
+          .at(-1)?.event,
+      ).toMatchObject({ turnId: 'stopped-turn', status: 'interrupted' })
+    } finally {
+      await orchestrator.disposeAll()
+    }
+  })
+
+  it.each(['disconnect', 'idle release', 'shutdown'] as const)(
+    "leaves TasteCode's own subagents to the broker on %s",
+    async (end) => {
+      if (end === 'idle release') vi.useFakeTimers()
+      const { orchestrator, sessions, store } = harness(undefined, new Store(':memory:'), 8, 1_000)
+      try {
+        const thread = await orchestrator.startThread('codex', '/repo')
+        const session = sessions[0]!
+        await orchestrator.sendTurn(thread.id, 'Delegate the review')
+        const run = (
+          itemId: string,
+          shortId: string,
+          state: 'running' | 'waiting_for_approval',
+          threadId?: string,
+        ): StoredSubagentRun => ({
+          itemId,
+          parentThreadId: thread.id,
+          shortId,
+          turnId: 's1-turn',
+          ...(threadId ? { threadId } : {}),
+          provider: 'claude-code',
+          task: 'Review src/a.ts',
+          state,
+          snapshot: {
+            id: shortId,
+            state: 'running',
+            ...(threadId ? { threadId } : {}),
+            provider: 'claude-code',
+          },
+          createdAt: 1,
+        })
+        // As the broker records them: one runs in a chat of its own, the other waits for
+        // the user's approval before it has one.
+        for (const entry of [
+          run('broker-running', 'a1', 'running', 'child-thread'),
+          run('broker-waiting', 'a2', 'waiting_for_approval'),
+        ]) {
+          store.subagents.add(entry)
+          store.append(thread.id, { type: 'item.completed', item: subagentRunItem(entry) })
+        }
+        session.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+
+        if (end === 'disconnect') session.emitDisconnected()
+        else if (end === 'idle release') await vi.advanceTimersByTimeAsync(1_000)
+        else await orchestrator.disposeAll()
+
+        expect(orchestrator.isRunning(thread.id)).toBe(false)
+        const items = reduceEventLog(emptyThread, store.history(thread.id)).items
+        for (const id of ['broker-running', 'broker-waiting'])
+          expect(items.find((item) => item.id === id)?.subagent?.state).toBe('running')
+      } finally {
+        await orchestrator.disposeAll()
+        vi.useRealTimers()
+      }
+    },
+  )
+})
+
 describe('queued turns', () => {
   it('bounds empty queue reads while retaining the hottest entries', async () => {
     const store = new Store(':memory:')
@@ -9056,21 +9887,34 @@ describe('queued turns', () => {
   })
 })
 
-describe('isolated sessions', () => {
+// Real Git worktrees, checkpoints and restores can exceed 20 s on loaded Windows runners.
+describe('isolated sessions', { timeout: 60_000 }, () => {
+  let fixtureRepo: string
   let repo: string
   let trees: string
+
+  // Copy a pristine repository per test instead of repeating five Git setup commands.
+  beforeAll(() => {
+    fixtureRepo = mkdtempSync(path.join(os.tmpdir(), 'harness-orch-fixture-'))
+    execFileSync('git', ['init', '-b', 'main', fixtureRepo], { windowsHide: true })
+    const git = (...args: string[]) =>
+      execFileSync('git', args, { cwd: fixtureRepo, windowsHide: true })
+    git('config', 'user.email', 'test@example.com')
+    git('config', 'user.name', 'Test')
+    writeFileSync(path.join(fixtureRepo, 'file.txt'), 'original\n')
+    git('add', '.')
+    git('commit', '-m', 'first')
+  }, 60_000)
+
+  afterAll(() => {
+    rmSync(fixtureRepo, { recursive: true, force: true })
+  })
 
   beforeEach(() => {
     const base = mkdtempSync(path.join(os.tmpdir(), 'harness-orch-'))
     repo = path.join(base, 'repo')
     trees = path.join(base, 'trees')
-    execFileSync('git', ['init', '-b', 'main', repo], { windowsHide: true })
-    const git = (...args: string[]) => execFileSync('git', args, { cwd: repo, windowsHide: true })
-    git('config', 'user.email', 'test@example.com')
-    git('config', 'user.name', 'Test')
-    writeFileSync(path.join(repo, 'file.txt'), 'original\n')
-    git('add', '.')
-    git('commit', '-m', 'first')
+    cpSync(fixtureRepo, repo, { recursive: true })
   })
 
   afterEach(() => {
@@ -9236,14 +10080,21 @@ describe('isolated sessions', () => {
     await orchestrator.disposeAll()
   })
 
-  it('retains checkout guards when an interrupt is rejected', async () => {
+  it('retains checkout guards until an agent that refused Stop has ended', async () => {
     const { orchestrator, sessions } = harness(trees)
     const thread = await orchestrator.startThread('codex', repo)
     await orchestrator.submitTurn(thread.id, 'running')
-    sessions[0]!.interruptError = new Error('Stop failed')
-    await expect(orchestrator.interrupt(thread.id)).rejects.toThrow('Stop failed')
-    expect(orchestrator.isTurnRunning(thread.id)).toBe(true)
+    const session = sessions[0]!
+    session.interruptError = new Error('Stop failed')
+    let ended!: () => void
+    session.disposeBarrier = new Promise<void>((resolve) => (ended = resolve))
+    // The chat shows the turn stopped at once, so the agent that refused is ended.
+    const stopping = orchestrator.interrupt(thread.id)
+    await vi.waitFor(() => expect(session.disposed).toBe(true))
+    expect(orchestrator.isTurnRunning(thread.id)).toBe(false)
     await expect(orchestrator.switchBranch(repo, 'main')).rejects.toThrow(/still working/)
+    ended()
+    await expect(stopping).resolves.toBeUndefined()
     await orchestrator.disposeAll()
   })
 
@@ -9437,7 +10288,7 @@ describe('isolated sessions', () => {
     await orchestrator.discardWorktree(thread.id)
 
     expect(existsSync(worktreePath)).toBe(false)
-  }, 20_000)
+  })
 
   it('closing a session leaves its checkout alone', async () => {
     const { store, orchestrator } = harness(trees)
@@ -10014,6 +10865,36 @@ describe('overnight race pins', () => {
       sessions[0]!.emit({ type: 'thread.error', threadId: thread.id, message: 'late event' }),
     ).not.toThrow()
     expect(store.history(thread.id)).toEqual([])
+    await orchestrator.disposeAll()
+  })
+
+  it('stops a running turn when its chat is deleted, and its later output stays out', async () => {
+    const { orchestrator, sessions, store } = harness()
+    const thread = await orchestrator.startThread('claude-code', '/repo')
+    await orchestrator.submitTurn(thread.id, 'running')
+    expect(orchestrator.isTurnRunning(thread.id)).toBe(true)
+    const savedSession = store.thread(thread.id)!.providerSessionId ?? thread.id
+    // The order thread.delete runs in.
+    await orchestrator.close(thread.id)
+    store.deleteThread(thread.id, { keepSessionOut: true })
+    orchestrator.forgetDeletedThread(thread.id)
+    expect(sessions[0]!.disposed).toBe(true)
+    expect(orchestrator.isTurnRunning(thread.id)).toBe(false)
+    sessions[0]!.emit({
+      type: 'item.completed',
+      item: {
+        id: 'late',
+        turnId: 'late-turn',
+        type: 'message',
+        role: 'assistant',
+        status: 'completed',
+        text: 'late answer',
+        createdAt: Date.now(),
+      },
+    })
+    expect(store.thread(thread.id)).toBeUndefined()
+    expect(store.history(thread.id)).toEqual([])
+    expect(store.leftProviderSessions('claude-code')).toEqual([savedSession])
     await orchestrator.disposeAll()
   })
 

@@ -291,12 +291,79 @@
           <a href="./feature-inventory.html">Inventory</a>
           <a href="./CLAUDE-HANDOFF.md">Claude handoff</a>
         </nav>
-        <span class="meta">2026-11-02 dev 6e620402 · nightly 3eade190 · main 936c6d76</span>
+        <span class="meta">2026-11-03 dev c2364371 · nightly f49f31aa · main 41c61109</span>
       </div>
     </div>
 
     <div class="wrap">
       <section id="scope">
+        <p>
+          November 3, evening: unfinished subagents settle as stopped when their owning session ends
+          or their history is recovered after a restart, while live background work can still
+          outlast its parent turn (<a href="https://github.com/Leonxlnx/tastecode/pull/2074"
+            >#2074</a
+          >). Native Claude Code subagent conversations open in Agents (<a
+            href="https://github.com/Leonxlnx/tastecode/pull/2079"
+            >#2079</a
+          >, contracts <a href="https://github.com/Leonxlnx/tastecode/pull/2081">#2081</a>, merged):
+          the saved prompt, tool calls and answer are read through an optional adapter capability;
+          while a helper runs, the detail asks every five seconds only while visible, the server
+          rereads only changed files, replaces screenshots with a placeholder and sends the newest
+          400 items. Hosted CI passed; no running-app or installer check was performed for these.
+        </p>
+        <p>
+          November 3, afternoon, on dev (c3c76d3a): a second fix round, the sub-agent series and
+          shorter finished replies, all merged with hosted CI green on windows-latest and
+          macos-latest. v0.5.0 is still the candidate on main (41c61109) and is not published.
+          nightly (f49f31aa, #2055) has dev up to the test fixes for this morning's hosted CI
+          failures (#2050, #2052 to #2054); nothing below is on nightly or main yet. Fixes (CI run
+          41639338408): a file note no longer shows inline (#2057); Claude continues after a
+          background task ends (#2058); Antigravity's "finished with status ERROR" is judged by
+          agy's exit code (#2059); Codex work folds under "Worked for" (#2060); a spinner shows
+          under a steered prompt (#2061); Stop clears the sidebar circle at once, and deleting a
+          running chat stops it (#2062); the Design source scan skips package-manager caches (#2063,
+          for #1553); the project-browser symlink test uses a junction on Windows (#2064); a reply
+          over the size budget now fails alone instead of restarting the connection, which caused
+          the reconnect loop on large threads (#2065, for #2036, #1943 and #1933; not tried against
+          a real large thread); and the command palette selection follows only pointer movement
+          (#2066). Sub-agents (#1956, #1957, #1959, #1968, #1969, #1972, #1973; CI run 41651961620):
+          a chat on Claude Code, Codex or OpenCode can start sub-agents on other providers through
+          TasteCode's agent tools, served on a local MCP endpoint; the workspace panel has an Agents
+          tab that lists them and opens a sub-agent's chat; a chat in Ask mode asks before each
+          start; and Stop ends the chat's sub-agents. Shorter finished replies (#2056, approved by
+          Leon; CI run 41656396158 on a tree identical to dev's): every provider is asked to end a
+          finished task with a short plain wrap-up instead of file-by-file inventories and pasted
+          logs. Closed today: 16 old contributor PRs (yqecea's Linux line moves to Karol; the branch
+          feat/linux-release-v1-current is kept), #1952 and #1939; issue #1976 was answered and
+          closed. Open: bundled skills as /cook commands (#2051, in progress), a consent setting for
+          sub-agents on other providers (in progress, a release blocker), and Antigravity servers
+          that outlive a turn (in progress); the design-lab prototypes #1938 and #1940 are kept for
+          after the release.
+        </p>
+        <p>
+          November 3, morning, on dev (3cf6ca13): fixes for what Leon found while testing the
+          release candidate. v0.5.0 reached main on November 2 (#2033) and is not published yet; the
+          CI package proof on main failed only on three split-view tests that leaked a stubbed
+          animation frame, fixed in the tests (#2048). Merged now: Stop ends the turn at once and
+          the server ends the agent process if it does not finish within 30 seconds (#2045); prompts
+          queued behind a stopped turn wait until the user sends again (#2046); a deleted chat stays
+          deleted when an older chat list arrives late (#2043); a slash command no longer shows its
+          raw command-name record as a message (#2042); Claude Code's own skills and commands appear
+          in the / menu while the CLI is still starting, read from disk (#2044); a chip keeps the
+          text after a name that ends before "." or ":" (#2041); a Codex chat start waits while
+          Codex reports progress and starts again once on a fresh process when it hangs (#2047); the
+          model picker names the effort without the dots (#2037); the title bar takes the window
+          background with the sidebar (#2038); a background picture gets Dim and Blur controls with
+          a live preview in Settings (#2039); and the background effects are now Dither, Halftone,
+          Dot grid and Grain, with Glow and Aurora moved to Dither (#2040). Install, lint,
+          typecheck, build and the root tests passed locally on the exact tree dev now has. In
+          hosted CI on Windows and macOS its tests failed only where plain dev fails too: a Codex
+          usage-history test that times out on Windows and two server tests that depend on provider
+          CLIs installed on the machine; fixes for those are in progress. Local Vitest runs were not
+          usable because the machine was saturated by other work. Not verified: real provider turns,
+          any packaged build (none was built), whether Electron draws the title bar see-through on
+          Windows, and the lost space in "/taste-pro a website", which was not reproduced.
+        </p>
         <p>
           November 2, evening, on dev (6e620402 plus #2026 to #2030): everything planned for v0.5.0
           is merged. The state before the polish round below reached nightly with #2024 (synced back
@@ -1804,15 +1871,18 @@
                 <span
                   >v0.5.0 from dev
                   <span class="d"
-                    >the next public release after 0.1.1, in place of the planned 0.1.3; everything
-                    planned for it is merged on dev, most of it promoted to nightly (#2024); the
-                    promotion to main and the release on the evening of 2026-11-02 are next; release
-                    builds offer Claude Code, Codex, Grok, Cursor and Antigravity; merged for it on
-                    November 2: the provider list per build (#2006 to #2009), #2010 to #2018, #1954,
-                    #1941, two packaging fixes (#2022, #2023) and a polish round (#2026 to #2030); a
-                    Windows release candidate passed the release asset check; macOS, real provider
-                    turns in the candidate and the CI package proof are not verified; sub-agents
-                    (#1956, #1957, #1959, #1968, #1969, #1972, #1973) come after v0.5</span
+                    >the next public release after 0.1.1, in place of the planned 0.1.3; promoted to
+                    main on November 2 (#2033) and not published yet; release builds offer Claude
+                    Code, Codex, Grok, Cursor and Antigravity; merged for it on November 2: the
+                    provider list per build (#2006 to #2009), #2010 to #2018, #1954, #1941, two
+                    packaging fixes (#2022, #2023) and a polish round (#2026 to #2030); on November
+                    3: split-view test fix for the CI package proof (#2048) and fixes from Leon's
+                    test of the candidate (#2037 to #2047); a Windows release candidate passed the
+                    release asset check; macOS, real provider turns and a package with the November
+                    3 fixes are not verified; on dev only so far: the afternoon fix round (#2057 to
+                    #2066), shorter finished replies (#2056) and sub-agents (#1956, #1957, #1959,
+                    #1968, #1969, #1972, #1973), whose consent setting for other providers is a
+                    release blocker in progress</span
                   >
                 </span>
               </li>
