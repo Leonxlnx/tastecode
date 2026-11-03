@@ -2573,8 +2573,7 @@ describe('accounts.pool', () => {
         provider: 'codex',
         accounts: [{ ...account, weights: { weekly: 0 } }],
         windows: [],
-      })
-        .success,
+      }).success,
     ).toBe(false)
   })
 })
