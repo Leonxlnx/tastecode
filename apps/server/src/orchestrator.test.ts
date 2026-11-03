@@ -7841,6 +7841,58 @@ describe('several sessions at once', () => {
       await orchestrator.disposeAll()
     })
 
+    it('send the one the user picks first once the agent has ended the stopped turn', async () => {
+      const { sessions, orchestrator } = harness()
+      const thread = await orchestrator.startThread('codex', '/repo')
+      const session = sessions[0]!
+      session.turnIds = ['t1', 't2', 't3']
+      await orchestrator.submitTurn(thread.id, 'running')
+      await orchestrator.submitTurn(thread.id, 'first queued')
+      const picked = await orchestrator.submitTurn(thread.id, 'picked')
+      if (!picked.queued) throw new Error('expected the prompt to queue')
+      let confirm!: () => void
+      session.interruptBarrier = new Promise<void>((resolve) => (confirm = resolve))
+      const stopping = orchestrator.interrupt(thread.id)
+      await vi.waitFor(() => expect(session.interrupted).toBe(true))
+
+      // The agent has not ended the stopped turn yet, so nothing can go out now.
+      await orchestrator.steerQueuedTurn(thread.id, picked.queuedTurn.id)
+      expect(session.sent).toEqual(['running'])
+
+      confirm()
+      await stopping
+      session.emit({ type: 'turn.completed', turnId: 't1', status: 'interrupted' })
+      await vi.waitFor(() => expect(session.sent).toEqual(['running', 'picked']))
+      session.emit({ type: 'turn.completed', turnId: 't2', status: 'completed' })
+      await vi.waitFor(() => expect(session.sent).toEqual(['running', 'picked', 'first queued']))
+      await orchestrator.disposeAll()
+    })
+
+    it('stay held without a new agent process when the Stop ends the old one', async () => {
+      const { sessions, orchestrator } = harness()
+      const thread = await orchestrator.startThread('codex', '/repo')
+      const session = sessions[0]!
+      session.turnIds = ['t1']
+      await orchestrator.submitTurn(thread.id, 'running')
+      const queued = await orchestrator.submitTurn(thread.id, 'sent by accident')
+      if (!queued.queued) throw new Error('expected the prompt to queue')
+      session.interruptError = new Error('Stop failed')
+
+      await orchestrator.interrupt(thread.id)
+      await new Promise((resolve) => setTimeout(resolve, 10))
+      expect(session.disposed).toBe(true)
+      expect(sessions).toHaveLength(1)
+      expect(orchestrator.queue(thread.id).items.map((item) => item.text)).toEqual([
+        'sent by accident',
+      ])
+
+      // Sending the held prompt resumes the chat in a new process.
+      await orchestrator.steerQueuedTurn(thread.id, queued.queuedTurn.id)
+      expect(sessions).toHaveLength(2)
+      expect(sessions[1]!.sent).toEqual(['sent by accident'])
+      await orchestrator.disposeAll()
+    })
+
     it('still go out after a turn the user did not stop', async () => {
       const { sessions, orchestrator } = harness()
       const thread = await orchestrator.startThread('codex', '/repo')

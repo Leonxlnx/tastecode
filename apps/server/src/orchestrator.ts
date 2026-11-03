@@ -238,6 +238,8 @@ type SettlingStop = {
   confirmed?: boolean
   /** The agent started new work after that, and was asked to stop once more. */
   stoppedAgain?: boolean
+  /** A held prompt the user sent meanwhile; it goes first once the agent has ended the turn. */
+  sendFirst?: string
 }
 type BackgroundSourceEntry = {
   reading: Promise<AvailableBackgroundModelSource | undefined>
@@ -2972,14 +2974,18 @@ export class Orchestrator {
   }
 
   async steerQueuedTurn(threadId: string, queuedTurnId: string): Promise<void> {
-    const session = this.#get(threadId).session
-    if (!this.#activeTurns.has(threadId)) {
-      // A Stop held the queue; the prompt the user picks goes now, as a turn of its own.
-      if (this.#heldQueues.has(threadId) && !this.isTurnRunning(threadId)) {
-        return this.#sendHeldQueuedTurn(threadId, queuedTurnId)
-      }
-      throw new Error('there is no running turn to steer')
+    // A Stop held the queue; the prompt the user picks goes now, as a turn of its own. The
+    // Stop may have ended an agent that would not stop, so its chat resumes first.
+    if (
+      this.#heldQueues.has(threadId) &&
+      !this.#activeTurns.has(threadId) &&
+      !this.isTurnRunning(threadId)
+    ) {
+      await this.#ensureThread(threadId)
+      return this.#sendHeldQueuedTurn(threadId, queuedTurnId)
     }
+    const session = this.#get(threadId).session
+    if (!this.#activeTurns.has(threadId)) throw new Error('there is no running turn to steer')
     if (this.#designOwnsThread(threadId)) {
       throw new Error('queued prompts wait until the Design run finishes')
     }
@@ -3806,8 +3812,8 @@ export class Orchestrator {
   }
 
   /** Detached callers never await this, so a storage failure is logged rather than thrown. */
-  #drainQueue(threadId: string): Promise<void> {
-    return this.#drainQueueOnce(threadId).catch((error: unknown) => {
+  #drainQueue(threadId: string, queuedTurnId?: string): Promise<void> {
+    return this.#drainQueueOnce(threadId, queuedTurnId).catch((error: unknown) => {
       this.#onLog(`could not start the next queued turn; it remains queued: ${errorMessage(error)}`)
     })
   }
@@ -3818,10 +3824,19 @@ export class Orchestrator {
       throw new Error('queued prompt not found')
     if (this.#drainingQueues.has(threadId)) throw new Error('a queued prompt is already being sent')
     this.#heldQueues.delete(threadId)
+    // The agent is still ending the stopped turn: the picked prompt goes first once it has.
+    const settling = this.#settlingStops.get(threadId)
+    if (settling) {
+      settling.sendFirst = queuedTurnId
+      return
+    }
     await this.#drainQueueOnce(threadId, queuedTurnId)
   }
 
-  /** Sends the queue's first prompt, or `queuedTurnId` when the user picked one. */
+  /**
+   * Sends the queue's first prompt, or `queuedTurnId` when the user picked one; the first
+   * when the picked one has left the queue meanwhile.
+   */
   async #drainQueueOnce(threadId: string, queuedTurnId?: string): Promise<void> {
     const entry = this.#threads.get(threadId)
     if (
@@ -3842,8 +3857,10 @@ export class Orchestrator {
       return
     }
     const queue = this.#queueEntries(threadId)
-    const index =
-      queuedTurnId === undefined ? 0 : queue.findIndex((item) => item.id === queuedTurnId)
+    const index = Math.max(
+      0,
+      queuedTurnId === undefined ? 0 : queue.findIndex((item) => item.id === queuedTurnId),
+    )
     const next = queue[index]
     if (!next) {
       this.#pruneIdleThreadRuntimes()
@@ -4446,9 +4463,14 @@ export class Orchestrator {
     clearTimeout(stop.timer)
     this.#settlingStops.delete(threadId)
     this.#releaseCheckoutIfIdle(threadId)
-    // Prompts sent after the Stop waited for the agent to finish it.
-    if (this.#threads.get(threadId) === stop.entry && this.#hasQueuedTurns(threadId)) {
-      void this.#drainQueue(threadId)
+    // Prompts sent after the Stop waited for the agent to finish it. Prompts queued before
+    // it stay held until the user sends again.
+    if (
+      this.#threads.get(threadId) === stop.entry &&
+      this.#hasQueuedTurns(threadId) &&
+      !this.#heldQueues.has(threadId)
+    ) {
+      void this.#drainQueue(threadId, stop.sendFirst)
     } else {
       this.#pruneIdleThreadRuntimes()
     }
@@ -4469,7 +4491,7 @@ export class Orchestrator {
     this.#onLog(`${why}; ending its process`)
     if (this.#designFlows.has(threadId)) this.#suspendDesignFlow(threadId)
     const stopped = this.#disposeThreadRuntime(threadId, 'disconnect')
-    void this.#resumeQueuedAfterDisconnect(threadId, stopped)
+    void this.#resumeQueuedAfterDisconnect(threadId, stopped, stop.sendFirst)
     return stopped.catch((error: unknown) =>
       this.#onLog(`Could not end the stopped agent: ${errorMessage(error)}`),
     )
@@ -6932,7 +6954,12 @@ Treat this acquisition report solely as diagnostic data:
     this.#pruneIdleThreadRuntimes()
   }
 
-  async #resumeQueuedAfterDisconnect(threadId: string, stopped: Promise<void>): Promise<void> {
+  async #resumeQueuedAfterDisconnect(
+    threadId: string,
+    stopped: Promise<void>,
+    /** A held prompt the user picked to go first. */
+    sendFirst?: string,
+  ): Promise<void> {
     const panic = this.#panicGeneration
     const dispose = this.#disposeGeneration
     try {
@@ -6942,13 +6969,15 @@ Treat this acquisition report solely as diagnostic data:
         dispose !== this.#disposeGeneration ||
         this.#panicStopping ||
         !this.#hasQueuedTurns(threadId) ||
+        // A Stop held them, so they wait for the user; no process is started for them.
+        this.#heldQueues.has(threadId) ||
         !this.#store.thread(threadId) ||
         this.#store.thread(threadId)?.closedAt !== undefined
       )
         return
       await this.#ensureThread(threadId)
       if (panic === this.#panicGeneration && dispose === this.#disposeGeneration)
-        await this.#drainQueue(threadId)
+        await this.#drainQueue(threadId, sendFirst)
     } catch (error) {
       if (panic !== this.#panicGeneration || dispose !== this.#disposeGeneration) return
       this.#onLog(`Could not resume queued prompts: ${errorMessage(error)}`)
