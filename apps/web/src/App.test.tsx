@@ -8417,6 +8417,68 @@ describe('new chats', () => {
     expect(localStorage.getItem(PENDING_CHAT_DELETES_KEY)).toBeNull()
   })
 
+  describe('a chat list that lands while a delete is on its way', () => {
+    /** Deletes "New session" and lands a list that still has it before the delete replies. */
+    async function deleteWithListInFlight() {
+      const nativeTimeout = globalThis.setTimeout
+      vi.spyOn(globalThis, 'setTimeout').mockImplementation(
+        (...args: Parameters<typeof setTimeout>) => {
+          if (args[1] === 10_000) args[1] = 50
+          return nativeTimeout(...args)
+        },
+      )
+      await openNewSession()
+      const request = transport.request.getMockImplementation()!
+      let reply: { resolve: () => void; reject: (error: Error) => void } | undefined
+      transport.request.mockImplementation((method, params) =>
+        method === 'thread.delete'
+          ? new Promise((resolve, reject) => {
+              reply = {
+                resolve: () => resolve(request(method, params)),
+                reject,
+              }
+            })
+          : request(method, params),
+      )
+      await chooseChatMenuItem('New session', 'Delete chat')
+      await waitFor(() => expect(reply).toBeDefined())
+      const lists = rpcCount('projects.list')
+      // The server has not deleted the chat yet, so this list still has it.
+      act(() => transport.listeners.get('providerHistory.changed')?.({ threadIds: [] }))
+      await waitFor(() => expect(rpcCount('projects.list')).toBe(lists + 1))
+      await act(async () => new Promise((resolve) => nativeTimeout(resolve, 0)))
+      shellRenders.sidebar.mockClear()
+      return reply!
+    }
+
+    function shownChatIds() {
+      return shellRenders.sidebar.mock.calls.flatMap(([props]) =>
+        (props as ComponentProps<typeof import('./ui/Sidebar.js').Sidebar>).projects.flatMap(
+          (project) => project.sessions.map((session) => session.id),
+        ),
+      )
+    }
+
+    it('keeps the chat out once the delete commits', async () => {
+      const reply = await deleteWithListInFlight()
+      await act(async () => reply.resolve())
+      await waitFor(() => expect(localStorage.getItem(PENDING_CHAT_DELETES_KEY)).toBeNull())
+      const lists = rpcCount('projects.list')
+      act(() => transport.listeners.get('providerHistory.changed')?.({ threadIds: [] }))
+      await waitFor(() => expect(rpcCount('projects.list')).toBeGreaterThan(lists))
+      await act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
+      expect(screen.queryByRole('button', { name: chatRowName('New session') })).toBeNull()
+      expect(shownChatIds()).not.toContain('untouched-thread')
+    })
+
+    it('shows the chat again when the delete fails', async () => {
+      const reply = await deleteWithListInFlight()
+      await act(async () => reply.reject(new Error('The chat is still starting.')))
+      expect((await screen.findByRole('alert')).textContent).toBe('The chat is still starting.')
+      expect(await screen.findByRole('button', { name: chatRowName('New session') })).toBeTruthy()
+    })
+  })
+
   it('reconciles workspace ownership when a running session is archived', async () => {
     const nativeTimeout = globalThis.setTimeout
     vi.spyOn(globalThis, 'setTimeout').mockImplementation(
