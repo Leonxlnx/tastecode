@@ -1,4 +1,4 @@
-import type { ApprovalMode, DomainEvent } from './domain.js'
+import type { ApprovalMode, DomainEvent, Item } from './domain.js'
 
 /** Local provider history. These server-only records never carry credentials. */
 export type ProviderHistorySession = {
@@ -56,5 +56,11 @@ export type ProviderHistorySource = {
     session: ProviderHistorySession,
     options?: { localTurnIds?: ReadonlySet<string> },
   ): Promise<DomainEvent[]>
+  /**
+   * Read a native sub-agent's conversation without launching a provider. The server
+   * supplies its stored parent item, never a client-provided path or transcript id.
+   * Missing transcripts return an empty list; sources without this capability omit it.
+   */
+  readSubagentTranscript?(session: ProviderHistorySession, item: Item): Promise<Item[]>
   dispose?(): void | Promise<void>
 }

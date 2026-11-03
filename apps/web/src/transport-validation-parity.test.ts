@@ -50,6 +50,7 @@ const provider = {
       defaultCompactAt: 90,
     },
     subagents: 'progress',
+    subagentTranscript: true,
     multipleAccounts: true,
   },
   setup: {
