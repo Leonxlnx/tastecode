@@ -5,6 +5,7 @@ import {
   createThreadProjector,
   neighbourTurn,
   projectThreadItems,
+  type ThreadProjection,
   type TurnActivityGroup,
   type TurnTiming,
 } from './turns.js'
@@ -499,6 +500,43 @@ describe('turn boundaries', () => {
     })
     expect(appended.presentations.get('old')).toBe(initial.presentations.get('old'))
     expect(completed.presentations.get('old')).toBe(initial.presentations.get('old'))
+  })
+
+  it('keeps a running turn whole around a steered prompt the server has not confirmed', () => {
+    const project = createThreadProjector()
+    const items: Item[] = [
+      { ...item('old-user', 'old'), role: 'user', text: 'Old question' },
+      { ...item('old-answer', 'old'), role: 'assistant', text: 'Old answer' },
+      { ...item('user', 'active'), role: 'user', text: 'New question' },
+      { ...item('tool', 'active'), type: 'tool_call', text: 'Reading files' },
+      { ...item('note', 'active'), role: 'assistant', phase: 'commentary', text: 'Looking.' },
+    ]
+    const steer: Item = { ...item('local:steer', ''), role: 'user', text: 'Use pnpm' }
+    const next: Item = { ...item('next', 'active'), type: 'tool_call', status: 'started' }
+    const confirmed: Item = { ...steer, turnId: 'active' }
+    const expectFull = (projected: ThreadProjection, of: Item[]) =>
+      expect(projected).toEqual({ turns: turnsOf(of), presentations: presentationsOf(of) })
+
+    const initial = project(items, undefined, 'active')
+    const echoed = [...items, steer]
+    expectFull(project(echoed, undefined, 'active'), echoed)
+
+    // The agent goes on before the server confirms the steer.
+    const continued = [...echoed, next]
+    const projected = project(continued, undefined, 'active')
+    expectFull(projected, continued)
+    expect(projected.presentations.get('active')?.firstResponseIndex).toBe(3)
+    expect(projected.presentations.get('old')).toBe(initial.presentations.get('old'))
+
+    // The server confirms it as the transcript's last row, then the agent goes on.
+    const restart = createThreadProjector()
+    restart(echoed, undefined, 'active')
+    const confirmedItems = [...items, confirmed]
+    const afterConfirm = restart(confirmedItems, undefined, 'active')
+    expectFull(afterConfirm, confirmedItems)
+    expect(afterConfirm.presentations.get('active')?.firstResponseIndex).toBe(3)
+    const answered = [...confirmedItems, next]
+    expectFull(restart(answered, undefined, 'active'), answered)
   })
 
   it('rebuilds presentations when durable timing changes', () => {
