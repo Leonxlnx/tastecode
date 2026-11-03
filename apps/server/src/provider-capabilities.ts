@@ -95,6 +95,22 @@ const unsupported: ProviderControlCapabilities = {
  */
 const PROCESS_LIMIT_READ_INTERVAL_MS = 5 * 60_000
 
+/**
+ * The names the app shows for each provider (the web's provider-presentation
+ * labels), for text the server writes, such as an agent tool's answer.
+ */
+export const PROVIDER_NAMES: Readonly<Record<ProviderId, string>> = {
+  codex: 'Codex',
+  'claude-code': 'Claude Code',
+  grok: 'Grok',
+  cursor: 'Cursor',
+  opencode: 'OpenCode',
+  antigravity: 'Antigravity',
+  pi: 'Pi',
+  acp: 'ACP',
+  api: 'API connection',
+}
+
 export const PROVIDER_CAPABILITIES = {
   acp: {
     ...unsupported,

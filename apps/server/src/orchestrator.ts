@@ -61,7 +61,7 @@ import {
   type ProviderControlsOptions,
 } from './provider-controls.js'
 import { ModelListCache } from './model-list-cache.js'
-import { PROVIDER_CAPABILITIES } from './provider-capabilities.js'
+import { PROVIDER_CAPABILITIES, PROVIDER_NAMES } from './provider-capabilities.js'
 import { assertProviderOffered } from './provider-edition.js'
 import {
   contextForLaunch,
@@ -755,6 +755,8 @@ export class Orchestrator {
   #discardedSideThreads = new Set<string>()
   /** Sub-agent chats this process runs, and the chat that started each. */
   #subagentParents = new Map<string, string>()
+  /** Each chat's newest user prompt, which may ask for a sub-agent on another provider. */
+  #latestUserPrompts = new Map<string, string>()
   #onSubagentEvent: SubagentEventHandler
   #subagents: SubagentBroker
   /** TasteCode's agent tools; absent when this orchestrator serves none. */
@@ -1013,6 +1015,7 @@ export class Orchestrator {
     this.#subagents = new SubagentBroker(store.subagents, {
       parent: (threadId) => this.#subagentParent(threadId),
       choices: () => this.#agentModelChoices(),
+      otherProvidersAllowed: () => this.#store.subagentSettings().otherProviders === true,
       createChild: (spec) => this.#startSubagentThread(spec),
       sendToChild: async (threadId, task, options) => {
         await this.submitTurn(
@@ -2805,9 +2808,11 @@ export class Orchestrator {
     if (turnId === undefined) throw new AgentToolError('Sub-agents start from a running turn.')
     return {
       provider: stored.provider,
+      providerName: PROVIDER_NAMES[stored.provider],
       turnId,
       approval:
         this.#threadApprovals.get(threadId) ?? this.#store.threadApproval(threadId) ?? 'ask',
+      prompt: this.#latestUserPrompts.get(threadId),
     }
   }
 
@@ -2828,6 +2833,7 @@ export class Orchestrator {
       if (models.length === 0) continue
       choices.push({
         provider,
+        name: PROVIDER_NAMES[provider],
         models: models.map((model) => ({
           id: model.id,
           name: model.displayName,
@@ -2957,6 +2963,8 @@ export class Orchestrator {
     options: TurnOptions = {},
     submission?: UserSubmission,
   ): Promise<string> {
+    // The words the user sent; whatever the prompt carries in front of them is not theirs.
+    this.#latestUserPrompts.set(threadId, text)
     // A failed change leaves the session on its last applied mode, which is
     // the mode this turn runs under. Its error belongs to whoever changed it.
     const approvalChange = this.#approvalChanges.get(threadId)
@@ -3390,6 +3398,7 @@ export class Orchestrator {
       this.#notifyQueue(threadId)
     }
     try {
+      this.#latestUserPrompts.set(threadId, item.text)
       await session.steer(threadId, item.text, item.attachments)
       if (!current()) return
       // An acknowledged steer belongs to the captured turn even when that turn
@@ -3899,6 +3908,7 @@ export class Orchestrator {
   }
 
   forgetDeletedThread(threadId: string): void {
+    this.#latestUserPrompts.delete(threadId)
     this.#revokeAgentTools(threadId)
     this.#subagents.forget(threadId)
     // The store deleted a chat's sub-agent chats with it.

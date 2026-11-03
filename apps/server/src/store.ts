@@ -35,6 +35,7 @@ import type {
   ProviderRuntimeSettings,
   SidebarSettings,
   SessionSearchResult,
+  SubagentSettings,
   ThreadLifecycle,
   ThreadSettings,
   Usage,
@@ -70,6 +71,7 @@ const PHONE_ACCESS_SETTING = 'phone-access'
 /** The model picker's hidden choice keys, as the desktop resolves them. */
 const HIDDEN_MODELS_SETTING = 'hidden-models'
 const PROVIDER_ROSTER_SETTING = 'provider-roster'
+const SUBAGENT_OTHER_PROVIDERS_SETTING = 'subagent-other-providers'
 const LIMIT_SNAPSHOT_SETTING = 'limit-snapshot'
 const AUTOMATIC_BACKGROUND_MODEL_PREFERENCE: BackgroundModelPreference = Object.freeze({
   mode: 'automatic',
@@ -2555,6 +2557,20 @@ export class Store {
 
   setHiddenModels(keys: readonly string[]): void {
     this.#writeAppSetting.run(HIDDEN_MODELS_SETTING, JSON.stringify(keys))
+  }
+
+  /** Whether sub-agents may use other providers; absent until the user answered. */
+  subagentSettings(): SubagentSettings {
+    const value = sqliteRow<StringValueRow>(
+      this.#readAppSetting,
+      SUBAGENT_OTHER_PROVIDERS_SETTING,
+    )?.value
+    return value === 'true' || value === 'false' ? { otherProviders: value === 'true' } : {}
+  }
+
+  setSubagentOtherProviders(allowed: boolean): SubagentSettings {
+    this.#writeAppSetting.run(SUBAGENT_OTHER_PROVIDERS_SETTING, String(allowed))
+    return { otherProviders: allowed }
   }
 
   /** The desktop's provider roster; null until a desktop saved one. */
