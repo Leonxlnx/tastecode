@@ -98,6 +98,7 @@ import {
   sessionOnProvider,
   updateSession,
   updateSessions,
+  withoutDeletedSessions,
 } from './project-store.js'
 import {
   applyProjectOrder,
@@ -3350,13 +3351,17 @@ export function App() {
 
   // Once per window: chats set up before the server kept setups share theirs.
   const savedSetupsShared = useRef(false)
+  // Chats this window deleted; a list read before the delete must not bring one back.
+  const deletedThreadIds = useRef(new Set<string>())
   const refreshProjects = useCallback(async () => {
     if (!startupMilestones.current.projectsRequested) {
       startupMilestones.current.projectsRequested = true
       reportStartupMilestone('projects-requested')
     }
     const result = await transport.request('projects.list', {})
-    const list = result.projects.filter((project) => !removedProjectPaths.current.has(project.path))
+    const list = withoutDeletedSessions(result.projects, deletedThreadIds.current).filter(
+      (project) => !removedProjectPaths.current.has(project.path),
+    )
     if (!savedSetupsShared.current) {
       savedSetupsShared.current = true
       void shareSavedSetups(
@@ -5687,6 +5692,7 @@ export function App() {
   const deleteSession = useCallback(
     async (id: string) => {
       await transport.request('thread.delete', { threadId: id })
+      deletedThreadIds.current.add(id)
       const projectPath = clearWorkspaceThread(id)
       threadController.discardSnapshot(id)
       threadController.invalidateHistory(id)
