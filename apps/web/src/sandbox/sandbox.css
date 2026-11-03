@@ -1,0 +1,15 @@
+/* Marks every sandbox screenshot as dummy data. It never takes a click. */
+.sandbox-badge {
+  position: fixed;
+  right: 12px;
+  bottom: 12px;
+  z-index: 2147483000;
+  padding: 4px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font: 500 11px / 16px var(--font-ui);
+  pointer-events: none;
+  user-select: none;
+}

@@ -1,4 +1,5 @@
 import { fileURLToPath } from 'node:url'
+import type { Plugin } from 'vite'
 import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 import { sharedGrammarPlugins } from './scripts/shared-grammars.js'
@@ -7,6 +8,25 @@ import { shippedLanguageNames } from './src/ui/shiki-languages.js'
 const harnessServerUrl = process.env['VITE_HARNESS_SERVER_URL'] ?? 'ws://127.0.0.1:4311'
 const here = (relative: string) => fileURLToPath(new URL(relative, import.meta.url))
 const grammarPlugins = sharedGrammarPlugins(here('.'), shippedLanguageNames)
+
+/**
+ * `pnpm sandbox` serves the design sandbox (sandbox.html) on the same config.
+ * Its root URL goes to the sandbox too: index.html is the real app, which
+ * would try to reach the local TasteCode server on port 4311.
+ */
+const sandboxRoot: Plugin = {
+  name: 'harness-design-sandbox-root',
+  apply: () => process.env['npm_lifecycle_event'] === 'sandbox',
+  configureServer(server) {
+    server.middlewares.use((request, response, next) => {
+      const path = request.url?.split('?')[0]
+      if (path !== '/' && path !== '/index.html') return next()
+      response.statusCode = 302
+      response.setHeader('Location', '/sandbox.html')
+      response.end()
+    })
+  },
+}
 
 export default defineConfig({
   resolve: {
@@ -20,6 +40,7 @@ export default defineConfig({
     ],
   },
   plugins: [
+    sandboxRoot,
     react(),
     grammarPlugins.main,
     {
