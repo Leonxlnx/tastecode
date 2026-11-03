@@ -4,7 +4,7 @@ import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { CustomHarnessStore } from './custom-harnesses.js'
 import { ProviderControls } from './provider-controls.js'
-import { providerOffered, takeEdition } from './provider-edition.js'
+import { providerOffered, resetEditionForTests, takeEdition } from './provider-edition.js'
 import {
   detectProviders,
   installCommandFor,
@@ -20,14 +20,33 @@ const everything = (): SystemProbe => ({
   acpAgents: async () => [{ name: 'Gemini CLI', installed: true }],
 })
 
-afterEach(() => takeEdition({}))
+afterEach(resetEditionForTests)
 
 describe('build edition', () => {
-  it('offers every provider when no edition is set or it is dev', () => {
+  it('offers every provider but the withheld ones when no edition is set or it is dev', () => {
     takeEdition({})
-    expect(providerOffered('opencode')).toBe(true)
+    expect(providerOffered('acp')).toBe(true)
+    // OpenCode is withheld from every build for now (Leon, 2026-11-03).
+    expect(providerOffered('opencode')).toBe(false)
     takeEdition({ HARNESS_EDITION: 'dev' })
     expect(providerOffered('acp')).toBe(true)
+    expect(providerOffered('opencode')).toBe(false)
+  })
+
+  it('drives every adapter in tests that never read an edition', () => {
+    expect(providerOffered('opencode')).toBe(true)
+  })
+
+  it('refuses to start or sign in to a withheld provider, and leaves its chats readable', async () => {
+    takeEdition({ HARNESS_EDITION: 'dev' })
+    expect(() => providerRuntime('opencode', () => {})).toThrow(
+      'not part of this TasteCode build',
+    )
+    await expect(installCommandFor('opencode')).rejects.toThrow(
+      'not part of this TasteCode build',
+    )
+    const listed = await detectProviders(everything())
+    expect(listed.map((status) => status.id)).not.toContain('opencode')
   })
 
   it('reads the edition once and removes it from the environment', () => {
@@ -52,14 +71,14 @@ describe('build edition', () => {
     ])
   })
 
-  it('lists every provider and the ACP entry in a dev build', async () => {
+  it('lists every provider and the ACP entry in a dev build, the withheld ones aside', async () => {
+    takeEdition({ HARNESS_EDITION: 'dev' })
     const listed = await detectProviders(everything())
     expect(listed.map((status) => status.id)).toEqual([
       'claude-code',
       'codex',
       'grok',
       'cursor',
-      'opencode',
       'antigravity',
       'pi',
       'acp',

@@ -5,7 +5,7 @@ import { DatabaseSync } from './sqlite.js'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import { ItemTypeSchema, type DomainEvent, type ItemType } from '@harness/contracts'
-import { providerOffered, takeEdition } from './provider-edition.js'
+import { providerOffered, resetEditionForTests, takeEdition } from './provider-edition.js'
 import { Store } from './store.js'
 
 let store: Store
@@ -2924,7 +2924,7 @@ describe('usage totals across providers', () => {
 })
 
 describe('usage totals in a release build', () => {
-  afterEach(() => takeEdition({}))
+  afterEach(resetEditionForTests)
 
   it("leaves a provider the build does not offer out of today's total", () => {
     takeEdition({ HARNESS_EDITION: 'release' })
