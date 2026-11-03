@@ -76,6 +76,7 @@ export const CLAUDE_CAPABILITIES: Capabilities = {
   images: true,
   // task_progress messages count each agent's tool calls and tokens while it runs.
   subagents: 'progress',
+  subagentTranscript: true,
   // Every process can run in another CLAUDE_CONFIG_DIR, which holds that
   // account's sign-in, settings and transcripts (account-home.ts).
   multipleAccounts: true,

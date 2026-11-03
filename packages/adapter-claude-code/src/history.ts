@@ -669,6 +669,58 @@ function eventsFor(rows: SavedRecord[], session: ProviderHistorySession): Domain
   return events
 }
 
+/** Native agents live beside the parent: <session>/subagents/agent-<agentId>.jsonl. */
+async function subagentTranscript(
+  session: ProviderHistorySession,
+  item: Item,
+  options: ClaudeHistoryOptions,
+): Promise<Item[]> {
+  if (!item.subagent) return []
+  const sessionId = session.id.startsWith('claude-') ? session.id.slice(7) : session.id
+  const parent = session.locator ?? (await findClaudeSessionFile(sessionId, options))
+  if (!parent) return []
+  try {
+    if (
+      path.basename(parent) !== `${sessionId}.jsonl` ||
+      !(await isClaudeSessionFile(claudeProjectsRoot(options), parent))
+    )
+      return []
+    let agentId = item.subagent.transcriptId
+    if (!agentId) {
+      // Older stored snapshots only keep the spawning tool-use id. Its saved result
+      // carries the agentId even after the adapter that ran it has gone away.
+      const result = (await records(parent)).find(
+        (row) =>
+          !row.isSidechain &&
+          typeof object(row.toolUseResult).agentId === 'string' &&
+          contentBlocks(row).some(
+            (block) => block.type === 'tool_result' && block.tool_use_id === item.subagent?.id,
+          ),
+      )
+      agentId = string(object(result?.toolUseResult).agentId)
+    }
+    if (!agentId || !/^[a-zA-Z0-9_-]+$/.test(agentId)) return []
+    const project = await realpath(path.dirname(parent))
+    const relative = path.join(sessionId, 'subagents', `agent-${agentId}.jsonl`)
+    const file = await realpath(path.join(project, relative))
+    // A saved reference must never turn into a path outside this session, including
+    // through a symlink or junction in the sidechain directory.
+    if (path.relative(project, file) !== relative) return []
+    const rows = (await records(file))
+      .filter((row) => row.agentId === undefined || row.agentId === agentId)
+      .map((row) => ({ ...row, isSidechain: false }))
+    const items = new Map<string, Item>()
+    for (const event of eventsFor(await conversation(rows, session), session)) {
+      if (event.type === 'item.started' || event.type === 'item.completed')
+        items.set(event.item.id, event.item)
+    }
+    return [...items.values()]
+  } catch {
+    // A new sidechain may not have been written yet, or may have been removed.
+    return []
+  }
+}
+
 export function createClaudeHistorySource(
   options: ClaudeHistoryOptions = {},
 ): ProviderHistorySource {
@@ -682,6 +734,7 @@ export function createClaudeHistorySource(
   const validLocator = (locator: string) => isClaudeSessionFile(projects, locator)
   return {
     resolveSessionId: (threadId) => (threadId.startsWith('claude-') ? threadId.slice(7) : threadId),
+    readSubagentTranscript: (session, item) => subagentTranscript(session, item, options),
     async list(options) {
       const directories = await readdir(projects, { withFileTypes: true }).catch(() => [])
       const sessions = new Map<string, ProviderHistorySession>()
