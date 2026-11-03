@@ -25,6 +25,7 @@ export {
   type ClaudeProjectInventory,
 } from './discovery.js'
 export { claudeInventoryWatchPaths, type ClaudeInventoryWatch } from './watch-paths.js'
+export { listClaudeLocalCommands, type ClaudeLocalCommandOptions } from './local-commands.js'
 export { claudeAccount, parseClaudeAccount, signOutClaude, startClaudeLogin } from './auth.js'
 export { claudeLimitSource, type ClaudeLimitSource } from './limits.js'
 export { toDomainEvents, toUsage, type ClaudeEvent } from './events.js'

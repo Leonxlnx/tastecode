@@ -2829,8 +2829,14 @@ export class Store {
     this.#updateSidebarThread(id, ({ closedAt: _closedAt, ...thread }) => thread)
   }
 
-  deleteThread(id: string): void {
-    if (this.thread(id)?.worktreePath) {
+  /**
+   * `keepSessionOut`: the user deleted the chat. Its provider session stays on
+   * disk, so it is kept as a session the chat left: provider history must never
+   * import it as a chat again, also when no scan had linked the chat to it yet.
+   */
+  deleteThread(id: string, options: { keepSessionOut?: boolean } = {}): void {
+    const thread = this.thread(id)
+    if (thread?.worktreePath) {
       throw new Error('discard the isolated session checkout before deleting it')
     }
     // A chat's sub-agents go with it.
@@ -2839,6 +2845,19 @@ export class Store {
     // no owner and no path to ever clean them up.
     this.#db.exec('BEGIN IMMEDIATE')
     try {
+      if (options.keepSessionOut && thread && !thread.ephemeral) {
+        const session = thread.providerSessionId ?? thread.id
+        // Another chat on the same session still owns it, and still reads it.
+        this.#db
+          .prepare(
+            `INSERT INTO left_provider_sessions (provider, session_id, thread_id, left_at)
+             SELECT ?, ?, ?, ? WHERE NOT EXISTS (
+               SELECT 1 FROM threads
+               WHERE provider = ? AND id <> ? AND COALESCE(provider_session_id, id) = ?)
+             ON CONFLICT(provider, session_id) DO NOTHING`,
+          )
+          .run(thread.provider, session, id, Date.now(), thread.provider, id, session)
+      }
       for (const threadId of ids) {
         this.#db.prepare(`DELETE FROM session_search WHERE thread_id = ?`).run(threadId)
         this.#db.prepare(`DELETE FROM events WHERE thread_id = ?`).run(threadId)
@@ -4307,7 +4326,15 @@ export class Store {
     return events
   }
 
-  usageSummary(threadId: string, since: number): UsageSummary {
+  /**
+   * The thread's own total, and the day's total across the providers `counted`
+   * accepts: every one unless the build leaves some out.
+   */
+  usageSummary(
+    threadId: string,
+    since: number,
+    counted: (provider: ProviderId) => boolean = () => true,
+  ): UsageSummary {
     const thread = this.thread(threadId)
     if (!thread) return { session: emptyUsage(), today: emptyUsage() }
 
@@ -4369,7 +4396,7 @@ export class Store {
         if (usage?.cumulative) previous.set(seed.thread_id, usage.total)
       }
 
-      const rows = sqliteRows<ThreadPayloadRow>(
+      const rows = sqliteRows<ThreadPayloadRow & { provider: string }>(
         this.#db.prepare(
           `SELECT u.thread_id, u.payload, t.provider
            FROM usage_events u JOIN threads t ON t.id = u.thread_id
@@ -4379,6 +4406,8 @@ export class Store {
         since,
       )
       for (const row of rows) {
+        const provider = toProviderId(row.provider)
+        if (provider !== undefined && !counted(provider)) continue
         const sample = parseUsage(row.payload, row.thread_id)
         if (!sample) continue
         const current = sample.total
@@ -5376,6 +5405,13 @@ function parseDomainEvent(serialized: string, context: string): DomainEvent | un
   return undefined
 }
 
+/**
+ * Unknown providers already reported. Readers such as the usage history call
+ * toProviderId once per row, so one such thread would otherwise log the same
+ * line for each of its events.
+ */
+const warnedUnknownProviders = new Set<string>()
+
 function toProviderId(provider: string): ProviderId | undefined {
   switch (provider) {
     case 'codex':
@@ -5388,7 +5424,10 @@ function toProviderId(provider: string): ProviderId | undefined {
       // A provider this build does not ship: a newer build, or one that lives
       // only on the nightly branch. The row stays stored; readers skip it
       // rather than die on it.
-      console.warn(`[store] skipped a thread row with unknown provider '${provider}'`)
+      if (!warnedUnknownProviders.has(provider)) {
+        warnedUnknownProviders.add(provider)
+        console.warn(`[store] skipped a thread row with unknown provider '${provider}'`)
+      }
       return undefined
     }
   }

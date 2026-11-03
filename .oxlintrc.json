@@ -1,6 +1,7 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
   "ignorePatterns": [
+    "packages/default-skills/bundle/**",
     ".agent/**",
     ".agents/**",
     ".claude/**",
@@ -22,6 +23,7 @@
     "logs/**",
     "out/**",
     "packages/adapter-codex/src/generated/**",
+    "packages/design-agent/references/app-screens/charts.js",
     "apps/mobile/ios/**",
     "apps/mobile/android/**",
     "apps/mobile/.expo/**",

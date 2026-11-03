@@ -418,6 +418,7 @@ function ProviderMcpSettings(props: {
         key={server.id}
         server={server}
         capabilities={currentInventory.capabilities}
+        providerName={props.providerName}
         busy={busy.has(server.id)}
         onSignIn={() => void signIn(server)}
         onToggle={() => toggle(server)}
@@ -545,6 +546,7 @@ function ProviderMcpSettings(props: {
               key={server.id}
               server={server}
               capabilities={currentInventory.capabilities}
+              providerName={props.providerName}
               busy={busy.has(server.id)}
               onSignIn={() => void signIn(server)}
               onToggle={() => toggle(server)}
@@ -582,6 +584,7 @@ function serverStatus(server: McpServer): string {
 function ServerRow(props: {
   server: McpServer
   capabilities: Inventory['capabilities']
+  providerName: string
   busy: boolean
   onSignIn: () => void
   onToggle: () => void
@@ -627,6 +630,13 @@ function ServerRow(props: {
             {transportLabel(props.server.transport)}
           </p>
         )}
+        {auth?.status === 'sign_in_required' && !needsOAuth ? (
+          // No Sign in button would work here, so say where signing in happens.
+          <p className="set-entity__detail">
+            Needs sign-in. Sign in through {props.providerName} itself; TasteCode can’t start this
+            sign-in.
+          </p>
+        ) : null}
         {startup?.state === 'failed' ? (
           <p className="set-entity__detail set-entity__detail--error" role="alert">
             <AlertTriangle size={13} aria-hidden />

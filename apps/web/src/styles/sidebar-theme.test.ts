@@ -75,6 +75,18 @@ describe('sidebar theme CSS', () => {
     )
   })
 
+  it('keeps the narrow-window drawer opaque over the chat', () => {
+    // Below 700px the open rail covers the transcript, so glass would show the
+    // chat through the sidebar items instead of the OS material.
+    const drawer = appCss.search(
+      /@media \(max-width: 700px\) \{\s*:root\[data-glass='on'\] \.rail-slot \.rail \{[^}]*background: var\(--bg-rail\);[^}]*backdrop-filter: none;[^}]*-webkit-backdrop-filter: none;/,
+    )
+    const lightGlass = appCss.indexOf(":root[data-theme='light'][data-glass='on'] .rail {")
+    expect(lightGlass).toBeGreaterThan(-1)
+    // It ties the light glass rule on specificity, so it must come after it.
+    expect(drawer).toBeGreaterThan(lightGlass)
+  })
+
   it('paints behind the rounded stage corner in light mode', () => {
     expect(appCss).toMatch(
       /:root\[data-theme='light'\]\[data-glass='on'\]\[data-shell='desktop'\] \.shell__body \{\s*background: var\(--bg-rail-tint\);\s*\}/s,
@@ -101,18 +113,19 @@ describe('sidebar theme CSS', () => {
     )
   })
 
-  it('hangs project chats off a soft guide under the folder mark', () => {
+  it('indents project chats under the folder mark, with no guide beside them', () => {
     expect(appCss).not.toContain('.proj__chevron')
     expect(appCss).toMatch(/\.proj__toggle \{[^}]*gap: 8px;[^}]*padding: 2px 7px;/s)
+    // The first chat follows its project's row directly.
     expect(appCss).toMatch(
-      /\.proj__sessions \{[^}]*--sess-indent: 7px;[^}]*display: grid;[^}]*grid-template-columns: minmax\(0, 1fr\);[^}]*row-gap: 2px;[^}]*margin: 2px 0 8px;[^}]*padding: 0;/s,
+      /\.proj__sessions \{[^}]*--sess-indent: 7px;[^}]*display: grid;[^}]*grid-template-columns: minmax\(0, 1fr\);[^}]*row-gap: 2px;[^}]*margin: 0 0 8px;[^}]*padding: 0;/s,
     )
-    // Pinned chats keep the outer gutter (7px); a project's chats indent past
-    // the guide, which sits on the folder mark's centre (7px + 13px / 2).
+    // Pinned chats keep the outer gutter (7px); a project's chats indent under
+    // its folder mark.
     expect(appCss).toMatch(/\.proj__drawer > \.proj__sessions \{[^}]*--sess-indent: 22px;/s)
-    expect(appCss).toMatch(
-      /\.proj::after \{[^}]*position: absolute;[^}]*left: 13px;[^}]*width: 1px;[^}]*background: var\(--rail-guide\);[^}]*pointer-events: none;/s,
-    )
+    // The hairline down the left of an open project is gone, and its token with it.
+    expect(appCss).not.toContain('.proj::after')
+    expect(appCss).not.toContain('--rail-guide')
     // Pinned chats share the project-chat indent; no override may pull them left.
     expect(appCss).not.toMatch(/\.sessrow\.is-pinned[^{]*\{[^}]*padding-left/s)
     expect(appCss).not.toMatch(/\.proj__sessions \{[^}]*border-left/s)
@@ -123,9 +136,9 @@ describe('sidebar theme CSS', () => {
     expect(appCss).toMatch(
       /\.proj__sessions-toggle \{[^}]*padding: 0 8px 0 calc\(var\(--sess-indent\) \+ 21px\);/s,
     )
-    expect(appCss).toMatch(
-      /\.proj__sessions > \.rail__hint \{[^}]*padding-left: calc\(var\(--sess-indent\) \+ 21px\);/s,
-    )
+    // An empty project's "No chats" starts under the project name, not at the
+    // chat-title indent, where it floated right with no mark in front of it.
+    expect(appCss).toMatch(/\.proj__sessions > \.rail__hint \{[^}]*padding-left: 28px;/s)
     expect(appCss).not.toMatch(/\.sessrow\.is-pinned \.sess \{/s)
   })
 
@@ -194,6 +207,16 @@ describe('sidebar theme CSS', () => {
       /\.menu\.menu--account \{[^}]*width: min\(var\(--menu-trigger-w, 224px\), calc\(100vw - 16px\)\);/s,
     )
     expect(sidebarSource).not.toContain('IconChevronUp')
+  })
+
+  it('keeps the open account card and its popup dark in the dark theme', () => {
+    // The shared pressed grey lit the whole card while its popup was open.
+    expect(accountCardCss).toMatch(
+      /:root:not\(\[data-theme='light'\]\) \.account-card \{\s*--control-pressed: color-mix\(in srgb, var\(--text\) 3%, var\(--rail-raised\)\);/,
+    )
+    expect(accountCardCss).toMatch(
+      /:root:not\(\[data-theme='light'\]\) \.menu\.menu--account \{\s*--menu-bg: color-mix\(in srgb, var\(--surface\) 35%, var\(--bg-rail\)\);/,
+    )
   })
 
   it('marks an unread chat by a heavier title, not a second dot', () => {

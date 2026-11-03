@@ -356,3 +356,18 @@ describe('native menu bridge', () => {
     expect(suspendMenuShortcuts).toHaveBeenCalledWith(true)
   })
 })
+
+describe('running agents bridge', () => {
+  it('sends the running-turn count to the shell only when it changes', async () => {
+    const reportRunningAgents = vi.fn()
+    ;(globalThis as { harness?: unknown }).harness = { isDesktop: true, reportRunningAgents }
+    const bridge = await import('./bridge.js')
+
+    bridge.reportRunningAgents(0)
+    bridge.reportRunningAgents(0)
+    bridge.reportRunningAgents(2)
+    bridge.reportRunningAgents(2)
+    bridge.reportRunningAgents(0)
+    expect(reportRunningAgents.mock.calls).toEqual([[0], [2], [0]])
+  })
+})

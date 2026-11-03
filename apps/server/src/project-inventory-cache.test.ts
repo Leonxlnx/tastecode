@@ -145,6 +145,50 @@ describe('project inventory cache', () => {
     expect(changes).toEqual([['/repo', ['mcp']]])
   })
 
+  it("answers the provider's file-read commands while the first probe runs", async () => {
+    const local = [{ ...command('taste-pro'), kind: 'skill' as const, source: 'custom' as const }]
+    const localCommands = vi.fn(async () => local)
+    const { cache, probes, changes } = setup({
+      service: {
+        mcpCapabilities: capabilities,
+        localCommands,
+        discover: (projectPath, { signal, onUpdate }) =>
+          new Promise((resolve, reject) => {
+            probes.push({ projectPath, signal, update: onUpdate, resolve, reject })
+          }),
+      },
+    })
+
+    await expect(cache.listCommands('/repo')).resolves.toEqual({ commands: local, loading: true })
+    expect(localCommands).toHaveBeenCalledWith('/repo')
+    await vi.advanceTimersByTimeAsync(0)
+    // The files add no process: the one probe still runs, and its answer wins.
+    expect(probes).toHaveLength(1)
+    probes[0]!.resolve(full)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(changes).toEqual([['/repo', ['commands', 'mcp']]])
+    await expect(cache.listCommands('/repo')).resolves.toEqual({
+      commands: full.commands,
+      loading: false,
+    })
+    expect(localCommands).toHaveBeenCalledTimes(1)
+  })
+
+  it('answers no file-read commands when reading them fails', async () => {
+    const { cache } = setup({
+      service: {
+        mcpCapabilities: capabilities,
+        localCommands: async () => {
+          throw new Error('unreadable')
+        },
+        discover: () => new Promise(() => undefined),
+      },
+    })
+
+    await expect(cache.listCommands('/repo')).resolves.toEqual({ commands: [], loading: true })
+    cache.clear()
+  })
+
   it('runs one probe at a time across projects', async () => {
     const { cache, probes } = setup()
     await cache.listMcpServers('/a')

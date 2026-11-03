@@ -36,6 +36,10 @@ export const InitializeResultSchema = z.object({
   agentCapabilities: z
     .object({
       loadSession: z.boolean().optional(),
+      /** MCP transports beyond stdio the agent accepts in session/new; absent means stdio only. */
+      mcpCapabilities: z
+        .object({ http: z.boolean().optional(), sse: z.boolean().optional() })
+        .optional(),
       promptCapabilities: z
         .object({
           image: z.boolean().optional(),

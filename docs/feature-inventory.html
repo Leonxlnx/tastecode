@@ -225,26 +225,28 @@
       <div class="topbar-inner">
         <h1>Feature Inventory</h1>
         <span class="total" id="total">0 checked</span>
-        <span class="meta">2026-10-20 nightly 5da77ebc · includes main 094eac47 (PR #1921)</span>
+        <span class="meta">2026-11-02 dev 90183641 · includes main 936c6d76</span>
       </div>
     </div>
 
     <div class="wrap">
       <p class="intro">
         <a href="./CLAUDE-HANDOFF.md">October 9 Claude handoff</a>: current source, branches,
-        references and verification limits. This nightly source includes main through 094eac47,
-        synchronized on 2026-10-20 (PR #1921), and the October 16 improvement round, which landed on
-        2026-10-18 through PR #1841 (172 lane PRs in ten lanes: streaming, chat column, models, MCP
-        and slash commands, providers, plan limits, usage, Settings, performance, subagents and pull
-        requests). Published desktop 0.1.1 and the old 0.1.2 draft are separate from the source
-        features listed below.
+        references and verification limits. This source is dev (branch model since 2026-10-25: dev →
+        nightly → main). It includes main through 936c6d76 and the October 16 improvement round,
+        which landed on 2026-10-18 through PR #1841 (172 lane PRs in ten lanes: streaming, chat
+        column, models, MCP and slash commands, providers, plan limits, usage, Settings,
+        performance, subagents and pull requests). Published desktop 0.1.1 and the old 0.1.2 draft
+        are separate from the source features listed below.
       </p>
       <p class="intro">
         Every feature the app has today, as concrete as it gets. This is the working checklist for
         deciding the first release scope: tick a box to mark a feature as keep. Ticks are saved in
         this browser only. Checklist entries describe implemented features; pending notes are
-        explicitly marked and are not shipped. Sections marked nightly only are built and tested but
-        absent from main's code (see dashboard.html).
+        explicitly marked and are not shipped. Providers marked dev builds only are in this source
+        but left out of release builds: a release build offers Claude Code, Codex, Grok, Cursor and
+        Antigravity, a dev build every provider (see Provider management and dashboard.html). main,
+        the public beta 0.1.1, has only Codex, Claude Code and Grok in its code.
       </p>
 
       <div class="toc">
@@ -340,17 +342,25 @@
               ><input type="checkbox" /><span
                 >Rate limit windows in the account popup
                 <span class="d"
-                  >space separates provider groups without splitting their windows; each bar is a
-                  red-to-green gauge whose tip colour says how much is left, filling from empty when
-                  the popup opens (not with reduced motion); 5 hour and weekly reset times; earned
-                  resets show each expiry date, soonest first and red within 24 hours, with a Use
-                  control beside each selectable expiry that spends that reset; confirmation keeps
-                  the date visible and moves Confirm away from Use so a second click cannot spend
-                  it; non-ChatGPT accounts are honestly unavailable and malformed provider responses
-                  stay errors; the rolling account/rateLimits/updated values Codex sends during
-                  turns merge into the held read without starting a new app-server, so the bars
-                  follow a running chat within about a second; full reads happen at most every 5
-                  minutes, except when the popup opens, on its refresh icon and in the 15-minute
+                  >space separates provider groups without splitting their windows; a provider opens
+                  closed, as its heading (name, chevron, status) and one line for the window with
+                  the least left, its bar between label and value and its reset time on hover, so
+                  the popup is under half the height it had; the heading opens every row as below,
+                  Credits, resets and Use included, and closes again; each bar is one quiet text-ink
+                  fill that turns red at 15% left or less, every bar filling from empty at once when
+                  the popup opens (not with reduced motion), never row by row; 5 hour and weekly
+                  reset times under each bar in the Usage page's words (Resets in 3h 12m within a
+                  day, the weekday and time within the week, the date after that, the exact time on
+                  hover); an allowance still at 100% left is one line with no bar and no reset time;
+                  earned resets show each expiry in the same words (Expires Nov 30, 9:24 PM, the
+                  year only when it is not this year's), soonest first and red within 24 hours, with
+                  a Use control beside each selectable expiry that spends that reset; confirmation
+                  keeps the date visible and moves Confirm away from Use so a second click cannot
+                  spend it; non-ChatGPT accounts are honestly unavailable and malformed provider
+                  responses stay errors; the rolling account/rateLimits/updated values Codex sends
+                  during turns merge into the held read without starting a new app-server, so the
+                  bars follow a running chat within about a second; full reads happen at most every
+                  5 minutes, except when the popup opens, on its refresh icon and in the 15-minute
                   background read; background reads skip the reset-credit details, which a shown
                   popup reads in full</span
                 ></span
@@ -467,7 +477,9 @@
                   starts once instead of twice; a chat whose first prompt never reached the CLI is
                   created under the same session id instead of failing every later send; a session
                   start allows 60 s, and its timeout says whether Claude Code itself or the
-                  project's MCP servers stalled</span
+                  project's MCP servers stalled; a Stop whose run reports no result within 15 s,
+                  answered or not, ends the turn as stopped together with the CLI process, and the
+                  next send resumes the session in a new one</span
                 ></span
               ></label
             >
@@ -520,7 +532,7 @@
           </li>
         </ul>
 
-        <h3>Cursor (cursor-agent stream-json) <span class="pill-parked">nightly only</span></h3>
+        <h3>Cursor (cursor-agent stream-json)</h3>
         <ul class="check">
           <li>
             <label
@@ -566,9 +578,29 @@
               ></label
             >
           </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Plan limits in the account popup and the Usage page
+                <span class="d"
+                  >cursor-agent's /usage is a TUI screen that print mode does not answer, so the
+                  server makes the one request that screen makes
+                  (DashboardService/GetCurrentPeriodUsage on api2.cursor.sh, binary Connect) with
+                  the access token cursor-agent stored at sign-in (%APPDATA%Cursorauth.json on
+                  Windows, ~/.config/cursor/auth.json on Linux), read at the moment of the request
+                  and never kept, logged, refreshed or written; rows Included, Auto and API as in
+                  /usage, Included alone showing the billing-cycle reset; signed out, an Enterprise
+                  account without plan usage, and macOS (token in the keychain) show no Cursor
+                  block; a refused token reads "Sign in to Cursor again" with Retry; reads at most
+                  every 5 minutes except refresh and retry; checked only against encoded fixtures,
+                  never against Cursor's server</span
+                ></span
+              ></label
+            >
+          </li>
         </ul>
 
-        <h3>OpenCode (local server, HTTP/SSE) <span class="pill-parked">nightly only</span></h3>
+        <h3>OpenCode (local server, HTTP/SSE) <span class="pill-parked">dev builds only</span></h3>
         <ul class="check">
           <li>
             <label
@@ -646,7 +678,7 @@
           </li>
         </ul>
 
-        <h3>Antigravity (agy, stream-json) <span class="pill-parked">nightly only</span></h3>
+        <h3>Antigravity (agy, stream-json)</h3>
         <ul class="check">
           <li>
             <label
@@ -680,6 +712,23 @@
                   signed-out listing says to sign in from Settings &gt; Providers; provider scans
                   never start agy, so no version is shown; Sign out explains where to sign out (agy
                   /logout) instead of pretending to</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Plan limits from agy's own /usage
+                <span class="d"
+                  >agy -p "/usage" --output-format json answers without a turn, quota or saved
+                  conversation since agy 1.1.11, so the read checks agy --version first and never
+                  asks an older agy; each model group's 5-hour and weekly bucket becomes a row
+                  (Gemini 5 hours, Gemini weekly, Claude and GPT 5 hours, Claude and GPT weekly on
+                  agy 1.4.7); an untouched bucket shows no reset time, because agy reports now plus
+                  the window for it; disabled buckets are left out; signed out or no quota groups is
+                  no plan limits; reads start agy (3 to 12 s), so they wait for the account popup or
+                  Usage page and run at most every 5 minutes</span
                 ></span
               ></label
             >
@@ -777,7 +826,7 @@
           </li>
         </ul>
 
-        <h3>Pi (RPC) <span class="pill-parked">nightly only</span></h3>
+        <h3>Pi (RPC) <span class="pill-parked">dev builds only</span></h3>
         <ul class="check">
           <li>
             <label
@@ -793,7 +842,7 @@
           </li>
         </ul>
 
-        <h3>ACP agents (one shared adapter) <span class="pill-parked">nightly only</span></h3>
+        <h3>ACP agents (one shared adapter) <span class="pill-parked">dev builds only</span></h3>
         <ul class="check">
           <li>
             <label
@@ -860,6 +909,29 @@
 
         <h3>Provider management</h3>
         <ul class="check">
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Each build offers the providers of its edition
+                <span class="d"
+                  >a release build offers exactly Claude Code, Codex, Grok, Cursor and Antigravity;
+                  a dev build offers every provider, OpenCode, Pi and the ACP agents included. pnpm
+                  dev and other unpackaged runs are dev builds, and so are local packages from pnpm
+                  run dist or dist:dir, which write tastecodeEdition=dev into the packaged
+                  package.json; dist:release and every other packaging path write nothing, and a
+                  missing or unknown value means release. The desktop passes the edition to the
+                  server as HARNESS_EDITION, after its inherited environment so a machine variable
+                  cannot widen a release build. In a release build providers.list and acp.agents
+                  leave the other providers out; installing, launching, MCP changes and new or
+                  resumed chats on them are refused; custom harnesses on them stay in the shared
+                  file but are not listed; an old chat on one stays readable, and a new turn there
+                  is refused. The renderer shows ACP agents, custom harnesses and model rows only
+                  for providers that providers.list returns. The release asset check refuses a
+                  package that records any edition other than release</span
+                ></span
+              ></label
+            >
+          </li>
           <li>
             <label
               ><input type="checkbox" /><span
@@ -1105,66 +1177,70 @@
                   to return to it), rows named Codex · Work, each with the roster's minus to remove
                   it; Add providers opens on Found on this computer, which offers sibling folders a
                   CLI has used and no account has yet (~/.claude_personal beside ~/.claude,
-                  ~/.codex-deepseek beside ~/.codex; names and dates only, no file opened and no CLI
-                  run, copies kept aside skipped); Ignore takes one out of that list and out of the
-                  count the Providers page names beside its plus, into an Ignored list folded at the
-                  foot of Add providers (kept per profile, Unignore offers it again); Add account at
-                  the foot of Add providers makes a new, empty folder TasteCode manages (nothing is
-                  copied from the default account, whose settings can hold keys and login pins), or
-                  uses an existing folder as it is and asks it once who is signed in there; a folder
-                  that is, holds or sits inside the default folder, another account's folder or
-                  TasteCode's data folder is refused, links resolved; one action per row (Sign in
-                  until the account names who it is, then Set active or Active) after its menu
-                  (Rename, Open in Explorer, Set active for an account not signed in yet, and Delete
-                  folder for a managed folder; the minus removes an account and keeps its folder,
-                  each confirmed). An account is renamed where its name stands (pencil, double click
-                  or Rename; Enter or leaving saves, Escape puts it back), the default one too,
-                  whose provider row reads Claude Code · Default once there are others. Each
-                  signed-in account has its own Model, Access and Context rows, following its
-                  provider's until changed (Model and Access kept as provider@account in
-                  localStorage, Context on the server); a new chat starts with the active account's.
-                  Sign in runs the provider's sign-in terminal in that folder (Codex · Work login).
-                  A chat is pinned to the account it started on and resumes there after a restart; a
-                  new chat's account is picked in the model picker. A chat's title and commit
-                  message are written through its own account when the background model is its
-                  provider's; the model picker lists the active account's models for a new chat and
-                  an open chat's own account's models; a project's MCP list and MCP sign-in come
-                  from a default-account chat only. Removing an account drops it before its
-                  processes stop and deletes a managed folder last. Plan limits, reset credits,
-                  model lists and usage are read per account: the current provider's active account
-                  is read at launch, its other signed-in accounts when the popup or Usage shows
-                  limits; the popup names the provider once and gives each account a line that opens
-                  to its full limits (the account new chats start on first and open; a closed line
-                  shows the % left of each window, such as Session and Weekly, a row each on a short
-                  gauge under the account name; a failed read says Unavailable with Retry on its
-                  line, one still loading says Checking…), the card's figure is each provider's
-                  active account, and a Usage sheet sums its accounts and lists each one with its
-                  tokens and limits. Profile &gt; Accounts lists further accounts (Codex · Work,
-                  plan or Signed out, never an email). When a turn fails while the chat's account is
-                  at a plan limit (a window at 100% that has not reset) and another account of the
-                  provider is signed in, the error offers Continue on Work (a menu, Continue on
-                  another account, when there are several); never automatic. It starts a new chat
-                  pinned to that account in the same project (an isolated chat's branch as base, in
-                  a checkout of its own that gets the earlier checkout's uncommitted changes copied
-                  in; when they cannot be copied, the first prompt and the new chat's note say which
-                  folder still holds them), with the failed request in its composer. Claude Code and
-                  Codex carry the earlier chat's own session on in the new account's folder (Claude
-                  Code a copy of its transcript under a new id, Codex a fork of its rollout copied
-                  with the rollouts it was forked from), so tool results and reasoning come along
-                  and the first prompt is just the request; a carried session whose first turn fails
-                  before any answer gives way to a fresh one that gets the conversation as a
-                  handover. Where the session cannot be carried on, or lacks part of the
-                  conversation, the first prompt carries the earlier chat's conversation as
-                  untrusted context (its first request, the latest exchange, every other user
-                  message and the assistant's messages newest first, then tool steps cut to their
-                  command line, exit code or file paths in what is left of 64,000 characters,
-                  preceded by any chat it continued itself up to where it was continued; kept in the
-                  provider's own session), the transcript shows only the user's words, and until its
-                  first message the new chat says Continues "title" on Work in a neutral note with
-                  Open (for an isolated chat, also that its uncommitted changes are already in this
-                  chat's checkout, or where they still are). The earlier chat is left as it was; its
-                  failed turn's row then reads Continued on Work and opens the new chat. Not yet:
-                  per-account Sign out, MCP/skills inventory and history import per account</span
+                  ~/.codex-deepseek beside ~/.codex, and beside the built-in ~/.codex as well when
+                  CODEX_HOME or CLAUDE_CONFIG_DIR moves the default folder elsewhere; names and
+                  dates only, no file opened and no CLI run, copies kept aside skipped); Ignore
+                  takes one out of that list and out of the count the Providers page names beside
+                  its plus, into an Ignored list folded at the foot of Add providers (kept per
+                  profile, Unignore offers it again); Add account at the foot of Add providers makes
+                  a new, empty folder TasteCode manages (nothing is copied from the default account,
+                  whose settings can hold keys and login pins), or uses an existing folder as it is
+                  and asks it once who is signed in there; a folder that is, holds or sits inside
+                  the default folder, another account's folder or TasteCode's data folder is
+                  refused, links resolved; one action per row (Sign in until the account names who
+                  it is, then Set active or Active) after its menu (Rename, Open in Explorer, Set
+                  active for an account not signed in yet, and Delete folder for a managed folder;
+                  the minus removes an account and keeps its folder, each confirmed). An account is
+                  renamed where its name stands (pencil, double click or Rename; Enter or leaving
+                  saves, Escape puts it back), the default one too, whose provider row reads Claude
+                  Code · Default once there are others. Each signed-in account has its own Model,
+                  Access and Context rows, following its provider's until changed (Model and Access
+                  kept as provider@account in localStorage, Context on the server); a new chat
+                  starts with the active account's. Sign in runs the provider's sign-in terminal in
+                  that folder (Codex · Work login). A chat is pinned to the account it started on
+                  and resumes there after a restart; a new chat's account is picked in the model
+                  picker. The composer's sign-in check asks the account the next message runs on, so
+                  a signed-out default account does not block Send for a chat on a signed-in further
+                  account, nor the reverse. A chat's title and commit message are written through
+                  its own account when the background model is its provider's; the model picker
+                  lists the active account's models for a new chat and an open chat's own account's
+                  models; a project's MCP list and MCP sign-in come from a default-account chat
+                  only. Removing an account drops it before its processes stop and deletes a managed
+                  folder last. Plan limits, reset credits, model lists and usage are read per
+                  account: the current provider's active account is read at launch, its other
+                  signed-in accounts when the popup or Usage shows limits; the popup names the
+                  provider once and gives each account a line that opens to its full limits (the
+                  account new chats start on first and open; a closed line shows the % left of each
+                  window, such as Session and Weekly, a row each on a short gauge under the account
+                  name; a failed read says Unavailable with Retry on its line, one still loading
+                  says Checking…), the card's figure is each provider's active account, and a Usage
+                  sheet sums its accounts and lists each one with its tokens and limits. Profile
+                  &gt; Accounts lists further accounts (Codex · Work, plan or Signed out, never an
+                  email). When a turn fails while the chat's account is at a plan limit (a window at
+                  100% that has not reset) and another account of the provider is signed in, the
+                  error offers Continue on Work (a menu, Continue on another account, when there are
+                  several); never automatic. It starts a new chat pinned to that account in the same
+                  project (an isolated chat's branch as base, in a checkout of its own that gets the
+                  earlier checkout's uncommitted changes copied in; when they cannot be copied, the
+                  first prompt and the new chat's note say which folder still holds them), with the
+                  failed request in its composer. Claude Code and Codex carry the earlier chat's own
+                  session on in the new account's folder (Claude Code a copy of its transcript under
+                  a new id, Codex a fork of its rollout copied with the rollouts it was forked
+                  from), so tool results and reasoning come along and the first prompt is just the
+                  request; a carried session whose first turn fails before any answer gives way to a
+                  fresh one that gets the conversation as a handover. Where the session cannot be
+                  carried on, or lacks part of the conversation, the first prompt carries the
+                  earlier chat's conversation as untrusted context (its first request, the latest
+                  exchange, every other user message and the assistant's messages newest first, then
+                  tool steps cut to their command line, exit code or file paths in what is left of
+                  64,000 characters, preceded by any chat it continued itself up to where it was
+                  continued; kept in the provider's own session), the transcript shows only the
+                  user's words, and until its first message the new chat says Continues "title" on
+                  Work in a neutral note with Open (for an isolated chat, also that its uncommitted
+                  changes are already in this chat's checkout, or where they still are). The earlier
+                  chat is left as it was; its failed turn's row then reads Continued on Work and
+                  opens the new chat. Not yet: per-account Sign out, MCP/skills inventory and
+                  history import per account</span
                 ></span
               ></label
             >
@@ -1251,20 +1327,22 @@
                   can overlap, and the permission chip keeps its icon when its label is hidden, also
                   while the chat's mode is still loading; in a narrow chat column + and the Design
                   chip keep their size, the model button stops short of Send with its name ending in
-                  an ellipsis, and below a 420 px column the level dots carry the effort alone; the
-                  floating composer's dock paints the pane background, so the transcript never shows
-                  under or beside it; the placeholder says Stopping… while a turn stops; window
-                  toasts open above the docked composer and its Jump to latest lane, right-aligned
-                  with the composer box, instead of over the model button and Send; the in-pane
-                  header names the current session or New chat and exposes the shared session menu
-                  plus direct Workspace and Terminal controls, and its Rename opens a visible
-                  bordered field with the title selected, handing focus back to the chat menu
-                  afterwards; the Design chip takes the same hover tint as the other composer chips
-                  instead of fading; Arrow Up in an empty composer puts the last prompt sent in the
-                  chat back to edit, and Escape clears it again; each newly submitted queued turn
-                  gets a stable transcript anchor; the prompt takes focus only for a new focus
-                  request, so a finished Stop no longer pulls focus back from the terminal, a rename
-                  field or find</span
+                  an ellipsis while the effort keeps its name; the floating composer's dock paints
+                  the pane background, so the transcript never shows under or beside it; the
+                  placeholder says Stopping… while a turn stops; window toasts open above the docked
+                  composer and its Jump to latest lane, right-aligned with the composer box, instead
+                  of over the model button and Send, and follow it while open when a chat or split
+                  opens, focus moves to the other pane or the chat comes back from another view; in
+                  a split whose focused pane is a new chat they sit above the right pane's composer,
+                  which keeps the window corner; the in-pane header names the current session or New
+                  chat and exposes the shared session menu plus direct Workspace and Terminal
+                  controls, and its Rename opens a visible bordered field with the title selected,
+                  handing focus back to the chat menu afterwards; the Design chip takes the same
+                  hover tint as the other composer chips instead of fading; Arrow Up in an empty
+                  composer puts the last prompt sent in the chat back to edit, and Escape clears it
+                  again; each newly submitted queued turn gets a stable transcript anchor; the
+                  prompt takes focus only for a new focus request, so a finished Stop no longer
+                  pulls focus back from the terminal, a rename field or find</span
                 ></span
               ></label
             >
@@ -1275,7 +1353,10 @@
                 >Queued prompts are editable and reorderable by drag handle before they fire
                 <span class="d"
                   >a prompt taken back for editing returns to its chat's draft even when another
-                  chat or draft took over the composer before the delete finished</span
+                  chat or draft took over the composer before the delete finished; after a Stop,
+                  prompts queued before it stay queued instead of going out when the stopped turn
+                  ends, until the user sends another prompt (they then go first, in order) or sends
+                  one of them from its row</span
                 ></span
               ></label
             >
@@ -1284,19 +1365,59 @@
             <label
               ><input type="checkbox" /><span
                 >Slash commands, skills and MCP servers from /, $, or @ with keyboard navigation, a
-                compact resource picker, and selected resource chips
+                compact resource picker, and picks that sit inline in the message as chips
                 <span class="d"
-                  >/ at the start of a message lists TasteCode commands (/side and /btw in a started
-                  chat, /feedback while feedback is available), then the provider's commands, then
-                  its skills, and no longer opens mid-message; TasteCode commands win name
-                  collisions in the menu; choosing a command types /name into the draft for the
-                  provider to expand, and Enter on an exactly typed command without arguments sends
-                  it at once; @ lists MCP servers; $ lists skills, with Codex skill chips unchanged;
-                  the provider list comes from commands.list: Claude Code from an open chat or, for
-                  a project without one, the cached background probe, with the built-ins that change
-                  state TasteCode owns and terminal-only commands hidden; Grok, OpenCode and other
-                  ACP agents from a live chat or a probe; when the probe failed, the menu says
-                  "Couldn't load commands." and asks again the next time it opens</span
+                  >/ at the start of a message lists TasteCode commands (/new and its alias /clear
+                  start a new chat and /model opens the model picker for every provider,
+                  /permissions (aliases /approvals, /allowed-tools) opens the permissions picker,
+                  and the screens a CLI opens only in its terminal open TasteCode's own instead:
+                  /resume (/continue) the chat search, /settings (/config) Settings, /mcp, /skills
+                  and /usage (/status, /cost, /stats) their Settings pages, /login (/logout)
+                  Providers; typed with arguments they still go to the provider; /side and /btw in a
+                  started chat, /feedback while feedback is available), then the provider's commands
+                  grouped by the source it reports (built-in, custom, skills, plugin commands and
+                  skills, MCP prompts; an empty description names the kind, such as Custom command),
+                  and no longer opens mid-message; TasteCode commands win name collisions in the
+                  menu; choosing a command, skill or MCP server puts it into the message where its
+                  marker was typed as an inline chip (an icon and the name in the accent colour;
+                  Backspace, Delete and the arrows treat it as one character, copy gives its token),
+                  while the prompt still sends the plain /name, $skill or @server token, and a sent
+                  prompt shows the same chips in the transcript; skills share the Skills screen
+                  icon, MCP servers the MCP screen icon, and built-in commands such as /goal, /init,
+                  /review and /compact have their own; Enter on an exactly typed command without
+                  arguments sends it at once; @ lists MCP servers; $ lists skills; the provider list
+                  comes from commands.list: Claude Code from an open chat or, for a project without
+                  one, the cached background probe, with the built-ins that change state TasteCode
+                  owns and terminal-only commands hidden (only Claude's own rows: a custom, plugin
+                  or MCP command of another name stays, and each Claude row says whether it is
+                  built-in, custom, plugin or MCP; /advisor is listed and runs through the SDK);
+                  Codex from a fixed list of the app-server actions /goal, /compact and /review,
+                  which its chats send as thread/goal/*, thread/compact/start and review/start
+                  requests instead of text (a goal answer shows as a short assistant turn; checked
+                  against a fake app-server only), plus /init, which sends TasteCode's own prompt to
+                  create or improve AGENTS.md as a normal turn (Codex's TUI does the same with its
+                  own prompt; checked against a fake app-server only); Grok, OpenCode and other ACP
+                  agents from a live chat or a probe (a Grok or ACP chat sends a leading /name
+                  without the first prompt's session instructions, which wait for the next prompt,
+                  because the agent runs a command only at the start of a prompt; Grok's print-mode
+                  chats hand the prompt to the same agent session, read from the grok binary,
+                  checked against fakes only; an OpenCode chat sends a leading /name it lists to its
+                  session command route with the rest as arguments; v1 servers only, checked against
+                  a fake server); Cursor from the custom command folders (.cursor/commands and
+                  .claude/commands in the project and home) and skill folders its print-mode turns
+                  expand, read from disk without a process (team, global and plugin commands are not
+                  listed; checked against temp folders only); Antigravity from the read-only
+                  commands agy's print mode answers itself (/quota, /credits, /effort, /hooks,
+                  /help, /changelog, plus /usage, /model, /skills, /permissions and /config with an
+                  argument), run with JSON output and shown as a reply without touching the chat's
+                  conversation, and the skills in .agents/skills, _agents/skills and
+                  ~/.gemini/config/skills, which a leading /name expands (a command goes without the
+                  first prompt's session instructions; checked against fakes and agy 1.4.7's
+                  captured /usage output only); when the probe failed, the menu says "Couldn't load
+                  commands." and asks again the next time it opens; after skill and MCP server chips
+                  / still opens the menu and puts the picked command in front of them, since
+                  providers read a command only at the start; changing the new chat's provider or
+                  project drops skill and MCP server chips from its draft</span
                 ></span
               ></label
             >
@@ -1371,10 +1492,9 @@
                 >Per-model effort slider and Fast toggle only when declared by the model;
                 unsupported control regions are omitted
                 <span class="d"
-                  >the composer model button shows one dot per level the model offers, filled
-                  through the current level, then the level word, for example four dots for Grok and
-                  six for GPT-6-Astra; its short model name keeps the GPT family and version (GPT-6
-                  Astra, GPT-5.6 Sol), while Claude and Grok names show as listed</span
+                  >the composer model button shows the level by name only (High, Extra High), with
+                  no dot row; its short model name keeps the GPT family and version (GPT-6 Astra,
+                  GPT-5.6 Sol), while Claude and Grok names show as listed</span
                 ></span
               ></label
             >
@@ -1452,13 +1572,16 @@
             <label
               ><input type="checkbox" /><span
                 >Selected files, drag/drop, and immediate Ctrl/Command+V image, PDF, video, and
-                ordinary file attachments gated by declared source capability; Codex, Claude Code,
-                and Grok receive their native image and file-reference formats; raster images and
-                videos get lightweight composer previews, sent image previews above their message,
-                and an app-native full-window viewer that opens without a reveal delay or photo size
+                ordinary file attachments gated by declared source capability (pixels, image files
+                the agent opens, and per-model image input); Codex, Claude Code, Grok, OpenCode
+                (file parts) and Cursor (--image) receive images as pixels, Antigravity gets them as
+                files its viewer opens, and Pi has none yet; raster images and videos get
+                lightweight composer previews, sent image previews above their message, and an
+                app-native full-window viewer that opens without a reveal delay or photo size
                 animation; desktop image previews and browser images offer a native Copy Image
                 context menu; links offer a native Open, separator, and Copy Link menu; selected
-                images reach ACP image blocks only after the agent advertises image prompts;
+                images reach ACP image blocks when the agent advertises image prompts and resource
+                links otherwise, so Grok's MCP mode no longer accepts then fails an image;
                 attachments can send without typed text and name a new session from their filenames,
                 while rejected sends restore the original draft and attachment set; in the web build
                 a drop or a paste says by name that it needs the desktop app</span
@@ -1585,7 +1708,16 @@
       </section>
 
       <p class="sub">
-        Nightly dashboard support, not released on public beta: 200 reviewed generated
+        Dashboards and app screens (draft PR #1941 on dev, not on public beta): a dashboard brief is
+        dealt a style, shell and screen patterns from the tasteskill v2.5 app library bundled in
+        packages/design-agent/references/app-screens, and every phase plans, builds and reviews one
+        working screen from that sheet and tasteskill's app-screen rules, with tasteskill's app.css
+        and charts.js copied into the project. No reference images are used, the dashboard image
+        catalog below stays parked (PR #1611), and a finished run still says Dashboard built.
+      </p>
+
+      <p class="sub">
+        Earlier nightly dashboard support, parked since October 16: 200 reviewed generated
         desktop/mobile pairs (400 WebPs) are imported with a separate catalog and provenance. One
         complete app shell is chosen by matching the request's words against each screen's domain,
         tags and cues, uniformly among the best matches and over all screens when nothing matches; a
@@ -1855,7 +1987,15 @@
                   or limit-induced layout shifts; Stop immediately restores Send and removes live
                   Working/Stopping presentation while the provider interrupt finishes; selecting the
                   chat again while it is still starting shows it without asking the server for its
-                  history, so no internal error appears</span
+                  history, so no internal error appears; a Stop pressed while the chat starts, or
+                  right behind any prompt, waits for that prompt's turn to start and then stops it
+                  instead of reaching an agent with no turn and being dropped; in every chat the
+                  server ends a stopped turn at once (Stopped by you, the sidebar row stops
+                  spinning) without waiting for the agent to confirm, records none of that turn's
+                  late output, holds a prompt sent meanwhile in the queue until the agent has ended
+                  the turn, stops new work the agent starts in it after accepting the Stop, and ends
+                  the agent process when it refuses the Stop or has not ended the turn within 30 s
+                  (the next send resumes the session)</span
                 ></span
               ></label
             >
@@ -2229,7 +2369,9 @@
                   the last two days; usage.history reuses computed figures while the index, Harness
                   events, sources and day are unchanged, only changed archive files cross the worker
                   boundary, unchanged scans skip the cache write, and a saved index above 4 MB is
-                  read in the usage worker</span
+                  read in the usage worker. A release build never scans the archive of a provider it
+                  does not offer and leaves that provider out of usage.history and today's total,
+                  while its indexed files stay in the shared index for a dev build</span
                 ></span
               ></label
             >
@@ -2268,6 +2410,31 @@
           <span class="count"></span>
         </header>
         <ul class="check">
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Split view: two chats side by side
+                <span class="d"
+                  >Open beside in a chat's sidebar menu, or Alt+click the chat, shows it in a second
+                  pane to the right with its own header, transcript and composer, for every
+                  provider. The pane opened or pressed last has focus and is the active chat: the
+                  model picker, permission level, queue, workspace panel and bottom terminal follow
+                  it. The other pane keeps streaming and takes approvals, scrolling and copying; its
+                  title and composer are dimmed, and its composer stays as it was and inactive until
+                  the pane is focused, so moving focus moves nothing. Clicking a chat in the sidebar
+                  replaces the focused pane's chat, or moves focus to the pane already showing it.
+                  Both chats stay read. Each pane's X closes it; deleting or archiving a chat closes
+                  its pane. Panes split the stage evenly; open panes are not restored after a
+                  restart. A chat row dragged from the sidebar (project or Pinned) onto the chat
+                  area opens there: the right half of a single chat opens it beside, a pane takes it
+                  in place of its chat, and a chat already on screen dropped on the other pane swaps
+                  the two. The zone it would land in is highlighted in the accent colour; drafts and
+                  running turns are kept, and a click or a drag that stays over the rail works as
+                  before.</span
+                ></span
+              ></label
+            >
+          </li>
           <li>
             <label
               ><input type="checkbox" /><span
@@ -2324,6 +2491,18 @@
           <li>
             <label
               ><input type="checkbox" /><span
+                >Hiding the right panel fades it out over the chat
+                <span class="d"
+                  >its column goes at once, but the panel keeps its last open width while it fades
+                  and slides out in 260 ms instead of vanishing with the column; its first open
+                  slides in like every later one; reduced motion hides it at once</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
                 >Ephemeral Temporary chat seeded from the active conversation
                 <span class="d"
                   >normal Thread presentation and matching composer without duplicate parent-status
@@ -2357,15 +2536,16 @@
                 <span class="d"
                   >open and closed groups use the same chevron-free 28 px row rhythm; scrolling the
                   list reveals a strong divider below the fixed New chat, New project, and Pull
-                  requests actions without shifting them; a 1 px soft guide drops from each folder
-                  mark to the project's last row and its chats indent past it, while pinned chats
-                  keep the outer gutter; one active pill slides to the newly selected chat in 220 ms
-                  (it jumps under reduced motion); a project lists its first 5 chats, plus every
-                  later chat that is starting, working, needs the user, is unread or is open, each
-                  at its own place, and "Show N more" counts the chats still folded (no toggle when
-                  none is); the larger project add action stays clear of the scrollbar; drag-folding
-                  moves the intact rail and grid closed together, even before pointer release; Enter
-                  or Escape in an inline rename returns focus to the row without opening it</span
+                  requests actions without shifting them; a project's chats follow its row directly
+                  and indent under its folder mark with no guide line, an empty project's No chats
+                  starts under its name, and pinned chats keep the outer gutter; one active pill
+                  slides to the newly selected chat in 220 ms (it jumps under reduced motion); a
+                  project lists its first 5 chats, plus every later chat that is starting, working,
+                  needs the user, is unread or is open, each at its own place, and "Show N more"
+                  counts the chats still folded (no toggle when none is); the larger project add
+                  action stays clear of the scrollbar; drag-folding moves the intact rail and grid
+                  closed together, even before pointer release; Enter or Escape in an inline rename
+                  returns focus to the row without opening it</span
                 ></span
               ></label
             >
@@ -2445,6 +2625,18 @@
           <li>
             <label
               ><input type="checkbox" /><span
+                >A project's chats open and close in one motion
+                <span class="d"
+                  >the drawer's height, fade and the list's own spacing share one 260 ms curve, so
+                  the projects below move once instead of jumping 10 px on the first frame and then
+                  sliding</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
                 >Drag the edge to resize <span class="d">240 to 420 px</span>, with
                 velocity-adaptive macOS detents only while the rail tracks the pointer; drag past
                 the minimum to collapse with a distinct stop</span
@@ -2458,6 +2650,19 @@
                 <span class="d"
                   >the same fixed-width surface translates open and closed in 260 ms without
                   clipping its contents</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Folding the rail or showing the right panel carries the chat with it
+                <span class="d"
+                  >the chat pane rides the rail's edge and its centred column slides to its new
+                  centre on the rail's 260 ms curve, by transform only, instead of jumping on the
+                  first frame; edge drags and window resizes still follow the pointer directly, and
+                  reduced motion snaps</span
                 ></span
               ></label
             >
@@ -2654,9 +2859,11 @@
                   off for a project. Hiding inherited servers follows the provider's declared
                   hideInherited capability, with the legacy rule when it is absent, and a server's
                   tool list renders only when its row is expanded; open Codex chats resume with
-                  saved changes, Grok receives selected servers through ACP, and Claude receives
-                  enabled definitions on start and resume with credentials kept out of process
-                  arguments; controls follow the available capabilities, and Claude rejects
+                  saved changes, Grok receives selected servers through ACP, other ACP agents
+                  receive the project's ACP servers in session/new (stdio always, HTTP only when the
+                  agent's initialize answer advertises it; a left-out server is logged), and Claude
+                  receives enabled definitions on start and resume with credentials kept out of
+                  process arguments; controls follow the available capabilities, and Claude rejects
                   unsupported inherited-server hiding before saving</span
                 ></span
               ></label
@@ -2686,7 +2893,11 @@
             <label
               ><input type="checkbox" /><span
                 >MCP OAuth sign-in handled by the server, credentials in the OS store
-                <span class="d">pending until the matching completion event</span></span
+                <span class="d"
+                  >pending until the matching completion event; a provider TasteCode cannot start
+                  MCP sign-in for shows no Sign in button but a line saying to sign in through that
+                  provider, and the @ menu says Sign in outside TasteCode</span
+                ></span
               ></label
             >
           </li>
@@ -2716,6 +2927,25 @@
                   whose CLI loads them (Codex), while the others show their own skill inventory or
                   unavailable; Grok and OpenCode list their skills with scope, and their project
                   skills show here</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Default skills: cinetic, taste-skill (design-taste-frontend) and cook ship with
+                TasteCode for every provider
+                <span class="d"
+                  >pinned to exact upstream commits in packages/default-skills/skills.json, fetched
+                  and hash-checked by its sync script (the files are not in git) and packaged as
+                  real files in resources/default-skills; the Skills page lists them read-only under
+                  Included with TasteCode, and $ offers them in the composer; chats get a short
+                  catalog (names, one line, folder) in their instructions and read SKILL.md only
+                  when needed, Side chats and background sessions do not; Claude Code loads the
+                  folder natively as the plugin tastecode (skills show as tastecode:&lt;name&gt;,
+                  Agent SDK plugins option and claude -p --plugin-dir) and gets no catalog; a
+                  missing bundle lists nothing and adds no catalog</span
                 ></span
               ></label
             >
@@ -2828,7 +3058,8 @@
                 >Sidebar translucency in four steps
                 <span class="d"
                   >Off, Subtle, Medium, Strong, default Medium; previews use flat tones without
-                  decorative gradients</span
+                  decorative gradients; the drawer a narrow window opens over the chat stays
+                  solid</span
                 ></span
               ></label
             >
@@ -3031,19 +3262,20 @@
                   value at API prices, sessions and active days named under the title, and under
                   them each provider's share of the tokens as one bar with a legend; each provider
                   keeps its brand colour (Claude orange, Codex in the text colour, Grok violet, any
-                  other provider grey) on its mark, share, bars and limit meters; one sheet per
-                  provider in value order, read top to bottom: its name with its sessions, tokens
-                  and value on the same line, a bar chart of its tokens on its own scale (a bar a
-                  day, a week on 1 year and All), the other bars fading while one is read, with the
-                  busiest bar labelled and its own dates under it at weekdays, Mondays or month
-                  starts, a tooltip beside the hovered or keyboard-read bar with its date, tokens
-                  and value, then its plan limits beside a table of its models, stacked in a narrow
-                  pane; a provider signed in to more than one account lists Accounts instead of Plan
-                  limits, each with its tokens, value and its own limits under it (one account per
-                  provider until provider accounts land); a provider without sessions in the period
-                  keeps its name and its limits; a skeleton of names and charts while loading;
-                  indexing and failure sentences under the totals, where a refresh of an existing
-                  index is announced only once a later read still finds it running</span
+                  other provider grey) on its mark, share and chart bars, while its limit meters are
+                  the popup's quiet text-ink bars; one sheet per provider in value order, read top
+                  to bottom: its name with its sessions, tokens and value on the same line, a bar
+                  chart of its tokens on its own scale (a bar a day, a week on 1 year and All), the
+                  other bars fading while one is read, with the busiest bar labelled and its own
+                  dates under it at weekdays, Mondays or month starts, a tooltip beside the hovered
+                  or keyboard-read bar with its date, tokens and value, then its plan limits beside
+                  a table of its models, stacked in a narrow pane; a provider signed in to more than
+                  one account lists Accounts instead of Plan limits, each with its tokens, value and
+                  its own limits under it (one account per provider until provider accounts land); a
+                  provider without sessions in the period keeps its name and its limits; a skeleton
+                  of names and charts while loading; indexing and failure sentences under the
+                  totals, where a refresh of an existing index is announced only once a later read
+                  still finds it running</span
                 ></span
               ></label
             >
@@ -3056,9 +3288,11 @@
                   >every window with the share left on a meter and the reset countdown, from the
                   same owner as the account popup, which opening the page asks to read sources it
                   reads only on view; Last known with its age, Updated Xm ago, Checking, and
-                  Unavailable with Retry (a source that failed to read stays); Reached, and a low
-                  state at 15% left or less, both in error ink and also named in one sentence under
-                  the totals; the old section's even-pace tick is not drawn in the sheets</span
+                  Unavailable with Retry (a source that failed to read stays); each meter is the
+                  account popup's bar, one text-ink fill on a faint track, whose fill alone turns
+                  the error colour at 15% left or less; Reached and low windows are also named in
+                  one sentence under the totals; the old section's even-pace tick is not drawn in
+                  the sheets</span
                 ></span
               ></label
             >
@@ -3154,14 +3388,20 @@
                 denied writes, preserving real download and stream-error checks across platforms
                 (#1394). On macOS, a DMG image that cannot be detached afterwards no longer fails a
                 prepared update, and a refused DMG keeps its real reason and is discarded (#1487,
-                not yet run on a real Mac). On nightly, installing no longer cuts off running chats:
-                while chats run, the sidebar button (an hourglass with the count) and Restart to
-                update in About read “Installs when 2 chats finish” and install by themselves once
-                the last one ends, after the server confirms no turn still runs or starts (a chat
-                waiting on an approval or a question counts; one that only holds queued prompts, as
-                after a restart, does not, since they come back after the update); Install now stops
-                them after one confirmation that names how many and keeps every queued prompt for
-                after the restart, and Install later puts it off</span
+                not yet run on a real Mac). On dev, an update never installs while chats run. A
+                ready update shows a small notice under the header (“TasteCode 0.5.0 is ready”,
+                Update, close; once per version) and the sidebar button stays. Update while chats
+                run asks first, in that notice or in About, never with a browser dialog: Stop and
+                update stops them and restarts at once, keeping every queued prompt for after the
+                restart; When they finish installs by itself once the last one ends, after the
+                server confirms no turn still runs or starts (a chat waiting on an approval or a
+                question counts; one that only holds queued prompts, as after a restart, does not,
+                since they come back after the update), with the sidebar hourglass and Install later
+                as before; closing the question stops nothing. A release build installs a ready
+                update on quit only when no chat ran as the quit began (on Windows; macOS applies a
+                ready update after exit either way). A dev build offers updates the same way but
+                never installs one on quit, only after Update (not yet run in a packaged
+                build)</span
               ></label
             >
           </li>
@@ -3188,10 +3428,25 @@
 
       <section id="phone">
         <header>
-          <h2>Phone (nightly only)</h2>
+          <h2>Phone (dev builds only)</h2>
           <span class="count"></span>
         </header>
         <ul class="check">
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Phone access only in builds started with HARNESS_PHONE_ACCESS=1
+                <span class="d"
+                  >pnpm dev sets it; every other build hides Settings › Phone and never opens the
+                  phone port, even when an earlier dev build left access on, and refuses turning it
+                  on or pairing with "Phone access is not part of this build."; turning it off and
+                  removing a paired phone still work; a tester of a dev installer sets
+                  HARNESS_PHONE_ACCESS=1 as a user environment variable (Windows: setx
+                  HARNESS_PHONE_ACCESS 1) and quits and restarts TasteCode</span
+                ></span
+              ></label
+            >
+          </li>
           <li>
             <label
               ><input type="checkbox" /><span

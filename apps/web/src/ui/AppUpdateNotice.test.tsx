@@ -2,7 +2,9 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 import {
+  appUpdateInstallState,
   INSTALL_SETTLE_MS,
+  installWhenChatsFinish,
   reportRunningChats,
   resetAppUpdateInstallForTests,
   setAppUpdateInstallGate,
@@ -127,6 +129,10 @@ it('waits for running chats and installs by itself when the last one ends', asyn
   const restart = await screen.findByRole('button', { name: /Restart to update/ })
   restart.focus()
   fireEvent.click(restart)
+  // Asked first; the answer comes from the update notice.
+  await waitFor(() => expect(appUpdateInstallState()).toEqual({ phase: 'confirming', running: 2 }))
+  expect(bridge.install).not.toHaveBeenCalled()
+  act(() => installWhenChatsFinish())
   const waiting = await screen.findByRole('button', {
     name: 'Installs when 2 chats finish. Update options',
   })
@@ -158,6 +164,7 @@ it('stops the running chats after one confirmation on Install now', async () => 
   reportRunningChats(2)
   render(<AppUpdateNotice />)
   fireEvent.click(await screen.findByRole('button', { name: /Restart to update/ }))
+  act(() => installWhenChatsFinish())
   fireEvent.click(
     await screen.findByRole('button', { name: 'Installs when 2 chats finish. Update options' }),
   )
@@ -184,6 +191,7 @@ it('puts the install off on Install later', async () => {
   reportRunningChats(1)
   render(<AppUpdateNotice />)
   fireEvent.click(await screen.findByRole('button', { name: /Restart to update/ }))
+  act(() => installWhenChatsFinish())
   fireEvent.click(
     await screen.findByRole('button', { name: 'Installs when 1 chat finishes. Update options' }),
   )

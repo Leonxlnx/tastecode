@@ -7,13 +7,20 @@ import {
   useRef,
   useState,
 } from 'react'
-import type { McpServer, ProviderCommand, ProviderId, ResultOf, Skill } from '@harness/contracts'
-import { IconBox as Box, IconServer as Server, IconSlash as Slash } from '@tabler/icons-react'
+import type { McpServer, ProviderCommand, ProviderId, Skill } from '@harness/contracts'
 import type { AppCommand } from '../app-commands.js'
 import { providerDisplayName } from '../provider-presentation.js'
 import type { Transport } from '../transport.js'
 import '../styles/composer-resource-picker.css'
+import { commandIcon, MCP_ICON, SKILL_ICON } from './chip-icons.js'
 import { SkeletonRows, SkeletonStatus } from './Skeleton.js'
+import {
+  cachedInventory,
+  inventoryChanged,
+  loadInventory,
+  type InventoryAnswers,
+  type InventorySource,
+} from './composer-inventory.js'
 import {
   COMPOSER_RESOURCE_LIST_ID,
   composerResourceListLabel,
@@ -25,12 +32,7 @@ import {
 
 export type { ComposerResource } from './composer-resource.js'
 
-type Inventory = {
-  skills?: ResultOf<'skills.list'>
-  mcp?: ResultOf<'mcp.list'>
-  commands?: ResultOf<'commands.list'>
-}
-type InventorySource = keyof Inventory
+type Inventory = Partial<InventoryAnswers>
 type MenuEntry = {
   resource: ComposerResource
   /** Lowercase names that rank as a name match; the first one is the primary name. */
@@ -78,7 +80,8 @@ export const ComposerResourcePicker = forwardRef<
     /** TasteCode's own commands, listed before the provider's under `/`. */
     appCommands?: readonly AppCommand[] | undefined
     trigger: ComposerResourceTrigger | undefined
-    selectedKeys: ReadonlySet<string>
+    /** Tokens already in the draft as chips, which the menu leaves out. */
+    selectedTokens: ReadonlySet<string>
     onSelect: (resource: ComposerResource) => void
   }
 >(function ComposerResourcePicker(props, ref) {
@@ -119,7 +122,9 @@ export const ComposerResourcePicker = forwardRef<
     const forThisProject =
       (sources: readonly InventorySource[]) =>
       ({ provider, projectPath }: { provider: ProviderId; projectPath: string }) => {
-        if (provider === props.provider && projectPath === props.projectPath) invalidate(sources)
+        if (provider !== props.provider || projectPath !== props.projectPath) return
+        inventoryChanged(props.transport, sources, { provider, projectPath })
+        invalidate(sources)
       }
     const offSkills = props.transport.on('skills.changed', forThisProject(['skills']))
     const offMcp = props.transport.on('mcp.changed', forThisProject(['mcp']))
@@ -129,6 +134,7 @@ export const ComposerResourcePicker = forwardRef<
       if (state === 'reconnecting') reconnecting = true
       else if (state === 'open' && reconnecting) {
         reconnecting = false
+        inventoryChanged(props.transport, INVENTORY_SOURCES)
         invalidate(INVENTORY_SOURCES)
       }
     })
@@ -143,41 +149,28 @@ export const ComposerResourcePicker = forwardRef<
   useEffect(() => {
     const projectPath = props.projectPath
     if (!open || !projectPath) return
+    const place = { provider: props.provider, projectPath, threadId: props.threadId }
     for (const source of markerMenu(marker).sources) {
       const key = source === 'commands' ? commandsKey : contextKey
       if (loaded.current.get(source) === key) continue
       loaded.current.set(source, key)
       const generation = ++generations.current[source]
-      setLoading((current) => withSource(current, source, true))
+      // The last answer shows at once; the one asked for now replaces it.
+      const cached = cachedInventory(props.transport, source, place)
+      if (cached) setInventory((current) => ({ ...current, [source]: cached }))
+      setLoading((current) => withSource(current, source, cached === undefined))
       setFailed((current) => withSource(current, source, false))
       const settle = (next: Inventory | undefined) => {
         if (generations.current[source] !== generation) return
         if (next) setInventory((current) => ({ ...current, ...next }))
         else loaded.current.delete(source)
-        setFailed((current) => withSource(current, source, next === undefined))
+        setFailed((current) => withSource(current, source, !next && !cached))
         setLoading((current) => withSource(current, source, false))
       }
-      const params = { provider: props.provider, projectPath }
-      const request =
-        source === 'skills'
-          ? props.transport.request('skills.list', params).then((skills) => ({ skills }))
-          : source === 'mcp'
-            ? props.transport.request('mcp.list', params).then((mcp) => ({ mcp }))
-            : props.transport
-                .request('commands.list', {
-                  ...params,
-                  ...(props.threadId ? { threadId: props.threadId } : {}),
-                })
-                .then(
-                  (commands) => ({ commands }),
-                  // A server from before provider commands has none to offer.
-                  (error: unknown) => {
-                    if (isUnknownMethod(error))
-                      return { commands: { commands: [], loading: false } }
-                    throw error
-                  },
-                )
-      request.then(settle, () => settle(undefined))
+      loadInventory(props.transport, source, place).then(
+        (answer) => settle({ [source]: answer }),
+        () => settle(undefined),
+      )
     }
   }, [
     open,
@@ -196,8 +189,8 @@ export const ComposerResourcePicker = forwardRef<
   const markerEntries = entries[marker]
   const query = props.trigger?.query.trim().toLocaleLowerCase() ?? ''
   const filtered = useMemo(
-    () => rankedRows(markerEntries, query, props.selectedKeys),
-    [markerEntries, query, props.selectedKeys],
+    () => rankedRows(markerEntries, query, props.selectedTokens),
+    [markerEntries, query, props.selectedTokens],
   )
   const resourceSignature = filtered
     .map(({ resource }) => `${resource.key}:${resource.available ? '1' : '0'}`)
@@ -290,13 +283,14 @@ export const ComposerResourcePicker = forwardRef<
         aria-label={labels.label}
       >
         {filtered.map(({ resource }, index) => {
+          // The same icon the resource's chip shows once it is picked.
           const Icon =
             resource.icon ??
             (resource.kind === 'mcp'
-              ? Server
+              ? MCP_ICON
               : resource.kind === 'command' && resource.commandKind !== 'skill'
-                ? Slash
-                : Box)
+                ? commandIcon(resource.id)
+                : SKILL_ICON)
           const selected = index === resolvedActiveIndex
           return (
             <button
@@ -373,7 +367,8 @@ function menuEntries(inventory: Inventory, ownCommands: readonly AppCommand[]) {
   }
   for (const command of ownCommands) addCommand(appCommandResource(command))
   const providerCommands = [...(inventory.commands?.commands ?? [])]
-  // The provider's own order, but its commands before its skills.
+  // The provider's own order within groups: its built-ins, custom commands,
+  // skills, plugin commands and skills, then MCP prompts.
   providerCommands.sort((left, right) => commandOrder(left) - commandOrder(right))
   for (const command of providerCommands) addCommand(commandResource(command))
   const skills = (inventory.skills?.skills ?? []).map((skill) =>
@@ -385,7 +380,10 @@ function menuEntries(inventory: Inventory, ownCommands: readonly AppCommand[]) {
     '/': [...commands, ...slashSkills],
     $: skills,
     '@': (inventory.mcp?.servers ?? []).map((server) =>
-      menuEntry(mcpResource(server), [server.displayName ?? server.id, server.id].map(lowercase)),
+      menuEntry(
+        mcpResource(server, inventory.mcp?.capabilities.startOAuth === true),
+        [server.displayName ?? server.id, server.id].map(lowercase),
+      ),
     ),
   }
 }
@@ -408,11 +406,11 @@ function menuEntry(resource: ComposerResource, names: string[]): MenuEntry {
 function rankedRows(
   entries: readonly MenuEntry[],
   query: string,
-  selectedKeys: ReadonlySet<string>,
+  selectedTokens: ReadonlySet<string>,
 ): MenuRow[] {
   const rows: MenuRow[] = []
   for (const entry of entries) {
-    if (selectedKeys.has(entry.resource.key)) continue
+    if (selectedTokens.has(entry.resource.token)) continue
     if (query === '') {
       rows.push({ resource: entry.resource, rank: 0 })
       continue
@@ -454,8 +452,8 @@ function commandResource(command: ProviderCommand): ComposerResource {
     kind: 'command',
     id: command.name,
     name: `/${command.name}`,
-    description: command.description.trim() || (command.kind === 'skill' ? 'Skill' : 'Command'),
-    scope: command.kind === 'skill' ? 'Skill' : 'Command',
+    description: command.description.trim() || commandScope(command),
+    scope: commandScope(command),
     token: `/${command.name}`,
     available: true,
     commandKind: command.kind ?? 'command',
@@ -487,7 +485,18 @@ function appCommandResource(command: AppCommand): ComposerResource {
 }
 
 function commandOrder(command: ProviderCommand): number {
-  return command.kind === 'skill' ? 1 : 0
+  if (command.source === 'mcp') return 4
+  if (command.source === 'plugin') return 3
+  if (command.kind === 'skill') return 2
+  return command.source === 'custom' ? 1 : 0
+}
+
+/** What the provider says it is, in the words Claude Code's own menu uses. */
+function commandScope(command: ProviderCommand): string {
+  if (command.source === 'mcp') return 'MCP prompt'
+  if (command.kind === 'skill') return command.source === 'plugin' ? 'Plugin skill' : 'Skill'
+  if (command.source === 'plugin') return 'Plugin command'
+  return command.source === 'custom' ? 'Custom command' : 'Command'
 }
 
 function skillResource(skill: Skill): ComposerResource {
@@ -506,11 +515,14 @@ function skillResource(skill: Skill): ComposerResource {
   }
 }
 
-function mcpResource(server: McpServer): ComposerResource {
+/** `canSignIn`: TasteCode can start this provider's MCP sign-in from MCP settings. */
+function mcpResource(server: McpServer, canSignIn: boolean): ComposerResource {
   const unavailableReason = !server.enabled
     ? 'Disabled'
     : server.auth?.status === 'sign_in_required'
-      ? 'Sign in required'
+      ? canSignIn
+        ? 'Sign in required'
+        : 'Sign in outside TasteCode'
       : server.startup?.state === 'failed'
         ? server.startup.message
         : undefined
@@ -558,10 +570,6 @@ function withSource(
   if (present) next.add(source)
   else next.delete(source)
   return next
-}
-
-function isUnknownMethod(error: unknown): boolean {
-  return error instanceof Error && /^unknown method\b/i.test(error.message)
 }
 
 function lowercase(value: string): string {
