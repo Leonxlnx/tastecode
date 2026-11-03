@@ -91,11 +91,13 @@ function MarkdownLink({ children, href: source, node: _node, ...props }: Markdow
         )
       }
       if (reference?.kind === 'blocked') {
+        // The grey link and its tooltip mark it on screen. The reason stays out of the
+        // layout, so an answer citing many such files does not repeat it after every link.
         return (
           <span className="md-file-link md-file-link--blocked" title={reference.reason}>
             <FileTypeIcon path={reference.path} />
             {children}
-            <span className="md-file-link__reason">{reference.reason}</span>
+            <span className="visually-hidden"> {reference.reason}</span>
           </span>
         )
       }
