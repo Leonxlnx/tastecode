@@ -32,15 +32,21 @@ export { shorten }
 /** A provider a sub-agent can run on, and the models its list offers. */
 export type AgentModelChoice = {
   provider: ProviderId
+  /** The provider's name as the app shows it. */
+  name: string
   models: Array<{ id: string; name: string; default?: true; efforts?: string[] }>
 }
 
 /** The calling chat, as a parent that may start sub-agents now. */
 export type SubagentParent = {
   provider: ProviderId
+  /** The provider's name as the app shows it. */
+  providerName: string
   /** The turn that calls the tools; sub-agents count against it. */
   turnId: string
   approval: ApprovalMode
+  /** The user's newest prompt in this chat, if one was recorded. */
+  prompt?: string | undefined
 }
 
 export type SubagentChildSpec = {
@@ -61,6 +67,11 @@ export interface SubagentHost {
   parent(threadId: string): SubagentParent
   /** Providers and models from lists already read; never starts a vendor process. */
   choices(): AgentModelChoice[]
+  /**
+   * Whether the user allows sub-agents on providers other than the chat's own
+   * without asking for one in the prompt. False until the user answered.
+   */
+  otherProvidersAllowed(): boolean
   /** Starts the hidden child chat and returns its id. */
   createChild(spec: SubagentChildSpec): Promise<string>
   /** Sends the child its task as its first prompt. */
@@ -147,6 +158,8 @@ export class SubagentBroker implements AgentToolsBroker {
   /** Runs this process started and has not let go of, by parent item id. */
   #live = new Map<string, LiveRun>()
   #byChild = new Map<string, LiveRun>()
+  /** Sub-agent chats the user sent a prompt whose turn has not started yet. */
+  #prompted = new Set<string>()
   /** Waits to wake when one of a parent's runs changes state. */
   #waiters = new Map<string, Set<() => void>>()
   /** Starts waiting for the user's answer, by the approval id the parent shows. */
@@ -167,10 +180,14 @@ export class SubagentBroker implements AgentToolsBroker {
   }
 
   async listModels(caller: AgentToolsCaller): Promise<unknown> {
-    this.#host.parent(caller.threadId)
+    const parent = this.#host.parent(caller.threadId)
     const providers = this.#host.choices()
     return {
       providers,
+      own_provider: parent.provider,
+      other_providers: this.#host.otherProvidersAllowed()
+        ? 'allowed when another provider or model fits the task better'
+        : "only when the user's own message asks for that provider or model",
       ...(providers.length === 0
         ? {
             note: 'No provider has listed its models in TasteCode yet. Open the model picker once, then try again.',
@@ -197,6 +214,7 @@ export class SubagentBroker implements AgentToolsBroker {
         `"${args.model}" is not a model of ${args.provider}. Call list_agent_models for its models.`,
       )
     }
+    this.#checkProvider(parent, choice, args.model)
     this.#checkLimits(caller.threadId, parent.turnId)
     // A chat that asks before it acts asks before a sub-agent starts, once per start
     // unless its user allowed them for the session.
@@ -332,8 +350,20 @@ export class SubagentBroker implements AgentToolsBroker {
   }
 
   /** A child chat's event; the orchestrator passes no `item.delta`. */
+  /**
+   * The user sent a sub-agent's chat a prompt of their own, from the Agents tab. The
+   * turn it starts reopens the run if it has finished by then, so its row runs again
+   * and the parent hears the new result once. Only such a turn reopens a run: a turn
+   * that starts late after a Stop must not.
+   */
+  userPrompted(threadId: string): void {
+    if (!this.#disposed && this.#runs.forThread(threadId)) this.#prompted.add(threadId)
+  }
+
   childEvent(threadId: string, event: DomainEvent): void {
-    const live = this.#byChild.get(threadId)
+    const live =
+      this.#byChild.get(threadId) ??
+      (event.type === 'turn.started' ? this.#reopen(threadId) : undefined)
     if (!live || FINISHED_SUBAGENT_STATES.has(live.run.state)) return
     switch (event.type) {
       case 'item.started':
@@ -488,7 +518,10 @@ export class SubagentBroker implements AgentToolsBroker {
       if (live.run.parentThreadId !== parentThreadId) continue
       clearTimeout(live.timer)
       this.#live.delete(itemId)
-      if (live.run.threadId) this.#byChild.delete(live.run.threadId)
+      if (live.run.threadId) {
+        this.#byChild.delete(live.run.threadId)
+        this.#prompted.delete(live.run.threadId)
+      }
     }
     this.#allowed.delete(parentThreadId)
   }
@@ -509,6 +542,20 @@ export class SubagentBroker implements AgentToolsBroker {
     this.#disposed = true
     for (const live of this.#live.values()) clearTimeout(live.timer)
     for (const waiters of this.#waiters.values()) for (const wake of waiters) wake()
+  }
+
+  /**
+   * Another provider than the chat's own runs on the user's other subscriptions, so it
+   * needs the user's word: the setting, or their own prompt naming it.
+   */
+  #checkProvider(parent: SubagentParent, choice: AgentModelChoice, model: string | undefined) {
+    if (choice.provider === parent.provider || this.#host.otherProvidersAllowed()) return
+    const models = model === undefined ? choice.models : choice.models.filter((m) => m.id === model)
+    const names = [choice.name, choice.provider, ...models.flatMap((m) => [m.name, m.id])]
+    if (parent.prompt !== undefined && names.some((name) => mentions(parent.prompt!, name))) return
+    throw new AgentToolError(
+      `Sub-agents in this chat run on ${parent.providerName}. ${choice.name} is only allowed when the user's message asks for it, or when the user allows other providers for sub-agents in Settings. Start it on ${parent.provider}, or ask the user.`,
+    )
   }
 
   #checkLimits(parentThreadId: string, turnId: string): void {
@@ -537,6 +584,34 @@ export class SubagentBroker implements AgentToolsBroker {
         `One turn starts at most ${SUBAGENT_LIMITS.startedPerTurn} sub-agents. Finish with the ones you have.`,
       )
     }
+  }
+
+  #reopen(threadId: string): LiveRun | undefined {
+    if (this.#disposed || !this.#prompted.delete(threadId)) return undefined
+    const stored = this.#runs.forThread(threadId)
+    if (!stored) return undefined
+    let live = this.#live.get(stored.itemId)
+    if (!live) {
+      // A run from before a restart: its counts live only in its stored row.
+      live = this.#track(stored)
+      live.tools = stored.snapshot.toolUses ?? 0
+      live.tokens = stored.snapshot.tokens ?? 0
+    }
+    const { run } = live
+    if (!FINISHED_SUBAGENT_STATES.has(run.state)) return live
+    run.state = 'running'
+    delete run.finishedAt
+    delete run.deliveredAt
+    delete run.result
+    live.error = undefined
+    live.lastTool = undefined
+    live.stopRequested = false
+    // The parent did not start this turn; it carries on beside the parent's work.
+    live.background = true
+    this.#runs.reopen(run.itemId)
+    this.#byChild.set(threadId, live)
+    this.#flush(live)
+    return live
   }
 
   #track(run: StoredSubagentRun): LiveRun {
@@ -786,6 +861,14 @@ function subagentState(state: SubagentRunState): SubagentState {
     case 'interrupted':
       return 'interrupted'
   }
+}
+
+/** The text names `name` as a whole word, ignoring case: "Pi" is not in "pipeline". */
+export function mentions(text: string, name: string): boolean {
+  const trimmed = name.trim()
+  if (!trimmed) return false
+  const escaped = trimmed.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, 'iu').test(text)
 }
 
 function toolLabel(item: Item): string {

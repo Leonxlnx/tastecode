@@ -1765,6 +1765,7 @@ function ModelSettings(props: {
   return (
     <SettingsPage title="Models" className="model-settings">
       <BackgroundModelSettings transport={props.transport} />
+      <SubagentProviderSettings transport={props.transport} />
       {sources.length > 0 || failed.length > 0 ? (
         <div className="model-settings__sources">
           {sources.map((group) => (
@@ -1882,6 +1883,69 @@ function ModelSourcesSkeleton() {
         </div>
       ))}
     </SkeletonStatus>
+  )
+}
+
+/**
+ * Whether an agent may start sub-agents on the user's other providers. The server
+ * enforces it; unanswered counts as off.
+ */
+function SubagentProviderSettings(props: { transport: Transport }) {
+  const [allowed, setAllowed] = useState<boolean>()
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string>()
+
+  useEffect(() => {
+    let cancelled = false
+    setError(undefined)
+    void Promise.resolve(props.transport.request('subagents.settings', {}))
+      .then((settings) => {
+        if (!cancelled) setAllowed(settings?.otherProviders === true)
+      })
+      .catch((cause) => {
+        if (!cancelled) setError(cause instanceof Error ? cause.message : String(cause))
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [props.transport])
+
+  const toggle = async () => {
+    if (allowed === undefined) return
+    setBusy(true)
+    setError(undefined)
+    try {
+      const settings = await props.transport.request('subagents.updateSettings', {
+        otherProviders: !allowed,
+      })
+      setAllowed(settings.otherProviders === true)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <SettingsSection title="Sub-agents">
+      {error ? <SettingsNotice tone="error">{error}</SettingsNotice> : null}
+      <SettingsRow
+        name="Sub-agents on other providers"
+        note="Let agents use your other subscriptions when another model fits a task better. When off, sub-agents run on the chat's provider unless your message asks for another one."
+      >
+        <button
+          className={`switch${allowed ? ' is-on' : ''}`}
+          type="button"
+          role="switch"
+          aria-label="Sub-agents on other providers"
+          aria-checked={allowed === true}
+          disabled={allowed === undefined || busy}
+          onClick={() => void toggle()}
+        >
+          <span className="switch__thumb" />
+        </button>
+      </SettingsRow>
+    </SettingsSection>
   )
 }
 

@@ -226,3 +226,14 @@ describe('sub-agent chats in the store', () => {
     }
   })
 })
+
+describe('sub-agent settings', () => {
+  it('stays unanswered until the user chooses, then keeps the answer', () => {
+    const store = new Store(':memory:')
+    expect(store.subagentSettings()).toEqual({})
+    expect(store.setSubagentOtherProviders(true)).toEqual({ otherProviders: true })
+    expect(store.subagentSettings()).toEqual({ otherProviders: true })
+    store.setSubagentOtherProviders(false)
+    expect(store.subagentSettings()).toEqual({ otherProviders: false })
+  })
+})
