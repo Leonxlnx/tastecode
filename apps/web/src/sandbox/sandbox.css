@@ -1,8 +1,10 @@
-/* Marks every sandbox screenshot as dummy data. It never takes a click. */
+/* Marks every sandbox screenshot as dummy data. It sits in the empty title-bar
+   strip, where it covers no control, and never takes a click. */
 .sandbox-badge {
   position: fixed;
-  right: 12px;
-  bottom: 12px;
+  top: 6px;
+  left: 50%;
+  transform: translateX(-50%);
   z-index: 2147483000;
   padding: 4px 10px;
   border: 1px solid var(--line-strong);
