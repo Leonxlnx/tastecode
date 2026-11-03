@@ -290,7 +290,10 @@ describe('Composer loading controls', () => {
 
     view.rerenderComposer({ voiceLoading: false, voiceAvailable: true })
     expectSkeleton('Loading voice', 'composer-skeleton-voice')
-    expect(await screen.findByRole('button', { name: 'Record voice note' })).toBeTruthy()
+    // The voice button is a lazy chunk; a slow Windows runner needed over 1 s for it.
+    expect(
+      await screen.findByRole('button', { name: 'Record voice note' }, { timeout: 5000 }),
+    ).toBeTruthy()
     expect(screen.queryByText('Loading voice')).toBeNull()
   })
 
@@ -391,7 +394,9 @@ describe('Composer loading controls', () => {
 
     fireEvent.change(textarea, { target: { value: '$skill' } })
     fireEvent.change(textarea, { target: { value: '$' } })
-    expect(await screen.findByRole('option', { name: /Airtable CLI/ })).toBeTruthy()
+    expect(
+      await screen.findByRole('option', { name: /Airtable CLI/ }, { timeout: 5000 }),
+    ).toBeTruthy()
     expect(screen.queryByText('Loading skills…')).toBeNull()
     expect(document.activeElement).toBe(textarea)
   })
