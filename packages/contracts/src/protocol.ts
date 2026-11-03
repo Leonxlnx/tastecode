@@ -15,6 +15,7 @@ import {
   CustomHarnessVerificationSchema,
   DetectedAccountHomeSchema,
   DomainEventSchema,
+  ItemSchema,
   ModelSchema,
   ProviderAccountHomeSchema,
   ProviderAccountSchema,
@@ -1914,6 +1915,11 @@ export const methods = {
   'thread.subagents': {
     params: z.object({ threadId: z.string().min(1) }),
     result: z.object({ subagents: z.array(ThreadSubagentSchema) }),
+  },
+  /** A native sub-agent's read-only saved conversation; empty when unavailable. */
+  'thread.subagentTranscript': {
+    params: z.object({ threadId: z.string().min(1), itemId: z.string().min(1) }),
+    result: z.object({ items: z.array(ItemSchema) }),
   },
   'thread.diff': {
     params: z.object({ threadId: z.string() }),
