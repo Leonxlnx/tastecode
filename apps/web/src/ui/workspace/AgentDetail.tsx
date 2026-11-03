@@ -97,7 +97,7 @@ export function AgentDetail(props: {
             subagent={subagent}
             transport={transport}
           >
-            <SnapshotDetail subagent={subagent} />
+            <SnapshotDetail subagent={subagent} transcriptSupported />
           </NativeSubagentTranscript>
         ) : null
       ) : (
@@ -142,14 +142,26 @@ function ChildThread({ threadId, transport }: { threadId: string; transport: Tra
 }
 
 /** What the parent's row knows; the whole story for a sub-agent without a chat of its own. */
-function SnapshotDetail({ subagent }: { subagent: Subagent }) {
+function SnapshotDetail({
+  subagent,
+  transcriptSupported,
+}: {
+  subagent: Subagent
+  /** The engine saves its sub-agents' conversations, but this one's was not found. */
+  transcriptSupported?: boolean
+}) {
   const running = subagent.state === 'running'
   // A TasteCode sub-agent gets its chat once it starts; one that never started has none.
+  // A running native one may not have written its file yet.
   const note = subagent.provider
     ? running
       ? 'Its transcript shows here once it starts.'
       : undefined
-    : 'Transcript not available for this engine yet'
+    : transcriptSupported
+      ? running
+        ? undefined
+        : "This subagent's conversation was not saved."
+      : 'Transcript not available for this engine yet'
   return (
     <div className="agent-detail__snapshot">
       {subagent.description ? (

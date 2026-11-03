@@ -128,9 +128,18 @@ describe('native subagent transcript', () => {
     setup(() => ({ items: [] }))
     await open()
     expect(await screen.findByText('Snapshot report')).toBeTruthy()
+    expect(screen.getByText("This subagent's conversation was not saved.")).toBeTruthy()
+    expect(screen.queryByText('Transcript not available for this engine yet')).toBeNull()
     expect(
       screen.queryByText('Tell the agent what you want to build, then send it below.'),
     ).toBeNull()
+  })
+
+  it('does not call a running agent unsaved before its file exists', async () => {
+    setup(() => ({ items: [] }), true, { ...snapshot, state: 'running' })
+    await open()
+    expect(await screen.findByText('Snapshot report')).toBeTruthy()
+    expect(screen.queryByText("This subagent's conversation was not saved.")).toBeNull()
   })
 
   it('says how many earlier steps a long transcript left out', async () => {
