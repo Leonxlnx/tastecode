@@ -5691,8 +5691,16 @@ export function App() {
 
   const deleteSession = useCallback(
     async (id: string) => {
-      await transport.request('thread.delete', { threadId: id })
+      // Recorded before the reply: a list read before the delete can land
+      // while the request is on its way, and must not bring the chat back.
       deletedThreadIds.current.add(id)
+      try {
+        await transport.request('thread.delete', { threadId: id })
+      } catch (error) {
+        // The chat was not deleted, so the next list shows it again.
+        deletedThreadIds.current.delete(id)
+        throw error
+      }
       const projectPath = clearWorkspaceThread(id)
       threadController.discardSnapshot(id)
       threadController.invalidateHistory(id)
