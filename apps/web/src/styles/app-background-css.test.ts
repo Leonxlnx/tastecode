@@ -23,8 +23,12 @@ describe('window background stylesheet', () => {
     expect(sheet).not.toMatch(/aurora|glow/)
   })
 
+  it('no longer paints the dropped Dot grid and Grain', () => {
+    expect(sheet).not.toMatch(/'dots'|'grain'|--app-bg-dots|--app-bg-grain|--app-bg-noise/)
+  })
+
   it('paints each effect in the text colour and fades it with Dim', () => {
-    for (const effect of ['dither', 'halftone', 'dots']) {
+    for (const effect of ['dither', 'halftone']) {
       const rule = sheet.match(
         new RegExp(`\\.app-bg\\[data-effect='${effect}'\\]::before \\{([^}]*)\\}`),
       )

@@ -44,8 +44,6 @@ const MODE_OPTIONS = [
 const EFFECT_OPTIONS = [
   { value: 'dither', label: 'Dither' },
   { value: 'halftone', label: 'Halftone' },
-  { value: 'dots', label: 'Dot grid' },
-  { value: 'grain', label: 'Grain' },
 ] as const satisfies ReadonlyArray<{ value: AppBackgroundEffect; label: string }>
 
 const MATERIAL_OPTIONS = [

@@ -52,7 +52,7 @@ describe('Window background settings', () => {
     const presets = screen.getByRole('radiogroup', { name: 'Background effect' })
     expect(
       Array.from(presets.querySelectorAll('[role="radio"]')).map((option) => option.textContent),
-    ).toEqual(['Dither', 'Halftone', 'Dot grid', 'Grain'])
+    ).toEqual(['Dither', 'Halftone'])
     expect(choice('Dither').getAttribute('aria-checked')).toBe('true')
 
     // The preview shows the chosen pattern and follows Dim on every step.
@@ -60,10 +60,11 @@ describe('Window background settings', () => {
     expect(preview.dataset['mode']).toBe('effect')
     expect(preview.dataset['effect']).toBe('dither')
     expect(preview.style.getPropertyValue('--app-bg-pattern')).toMatch(/^url\("data:image\/svg/)
-    fireEvent.click(choice('Dot grid'))
-    expect(readAppBackground().effect).toBe('dots')
-    expect(preview.dataset['effect']).toBe('dots')
-    expect(preview.style.getPropertyValue('--app-bg-pattern')).toBe('')
+    const dither = preview.style.getPropertyValue('--app-bg-pattern')
+    fireEvent.click(choice('Halftone'))
+    expect(readAppBackground().effect).toBe('halftone')
+    expect(preview.dataset['effect']).toBe('halftone')
+    expect(preview.style.getPropertyValue('--app-bg-pattern')).not.toBe(dither)
     fireEvent.change(screen.getByRole('slider', { name: 'Dim' }), { target: { value: '20' } })
     expect(readAppBackground().dim).toBe(20)
     expect(preview.style.getPropertyValue('--app-bg-dim')).toBe('0.4')

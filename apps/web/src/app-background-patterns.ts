@@ -127,20 +127,16 @@ function halftonePattern(): EffectPattern {
   }
 }
 
-const patterns = new Map<AppBackgroundEffect, EffectPattern | undefined>()
+const patterns = new Map<AppBackgroundEffect, EffectPattern>()
 
-/**
- * The tile an effect is drawn from, built on first use and then reused.
- * Undefined for effects painted by CSS alone (dot grid, grain).
- */
-export function effectPattern(effect: AppBackgroundEffect): EffectPattern | undefined {
-  if (!patterns.has(effect)) {
-    patterns.set(
-      effect,
-      effect === 'dither' ? ditherPattern() : effect === 'halftone' ? halftonePattern() : undefined,
-    )
+/** The tile an effect is drawn from, built on first use and then reused. */
+export function effectPattern(effect: AppBackgroundEffect): EffectPattern {
+  let pattern = patterns.get(effect)
+  if (!pattern) {
+    pattern = effect === 'dither' ? ditherPattern() : halftonePattern()
+    patterns.set(effect, pattern)
   }
-  return patterns.get(effect)
+  return pattern
 }
 
 /** The CSS variables that hand an effect's tile to app-background.css. */
@@ -151,5 +147,5 @@ export type EffectPatternStyle = {
 
 export function effectPatternStyle(effect: AppBackgroundEffect): EffectPatternStyle {
   const pattern = effectPattern(effect)
-  return pattern ? { '--app-bg-pattern': pattern.image, '--app-bg-pattern-size': pattern.size } : {}
+  return { '--app-bg-pattern': pattern.image, '--app-bg-pattern-size': pattern.size }
 }

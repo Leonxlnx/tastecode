@@ -58,13 +58,12 @@ describe('effect patterns', () => {
     expect(effectPattern('dither')).toBe(effectPattern('dither'))
   })
 
-  it('leaves the CSS-only effects to the stylesheet', () => {
-    expect(effectPattern('dots')).toBeUndefined()
-    expect(effectPattern('grain')).toBeUndefined()
-    expect(effectPatternStyle('grain')).toEqual({})
-    expect(effectPatternStyle('dither')).toEqual({
-      '--app-bg-pattern': effectPattern('dither')?.image,
-      '--app-bg-pattern-size': '16px 448px',
-    })
+  it('hands every effect its tile through CSS variables', () => {
+    for (const effect of ['dither', 'halftone'] as const) {
+      expect(effectPatternStyle(effect)).toEqual({
+        '--app-bg-pattern': effectPattern(effect).image,
+        '--app-bg-pattern-size': '16px 448px',
+      })
+    }
   })
 })
