@@ -241,7 +241,8 @@ function BackgroundPreview(props: { background: AppBackground; images: Backgroun
   } else if (mode === 'effect') {
     const pattern = effectPattern(effect)
     style['--app-bg-pattern'] = pattern.image
-    style['--app-bg-pattern-size'] = `${previewLength(pattern.width)} ${previewLength(pattern.height)}`
+    style['--app-bg-pattern-size'] =
+      `${previewLength(pattern.width)} ${previewLength(pattern.height)}`
   }
   return (
     <div

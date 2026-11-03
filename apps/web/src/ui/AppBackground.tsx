@@ -18,9 +18,7 @@ const AppBackgroundLayer = lazy(() =>
  * shell nothing. Memoised with one rarely changing prop, so the shell re-rendering
  * on a streamed delta never reaches it. `covered`: Settings is open over the window.
  */
-export const AppBackground = memo(function AppBackground(props: {
-  covered?: boolean | undefined
-}) {
+export const AppBackground = memo(function AppBackground(props: { covered?: boolean | undefined }) {
   const background = useSyncExternalStore(
     subscribeAppBackground,
     readAppBackground,

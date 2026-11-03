@@ -31,7 +31,7 @@ describe('window background stylesheet', () => {
       expect(rule?.[1]).toContain(`opacity: calc(var(--app-bg-${effect}) * var(--app-bg-fade));`)
     }
     expect(sheet).toMatch(/\.app-bg__motion \{[^}]*color: var\(--text\);/)
-    expect(sheet).toContain(".app-bg[data-motion]::before {\n  content: none;\n}")
+    expect(sheet).toContain('.app-bg[data-motion]::before {\n  content: none;\n}')
   })
 
   it('no longer paints the dropped Dot grid and Grain', () => {
