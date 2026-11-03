@@ -284,6 +284,14 @@ describe('declared provider controls', () => {
     )
   })
 
+  it("lists Codex's built-in commands without starting its control process", async () => {
+    const { codex, createCodex } = setup()
+    const { commands, loading } = await codex.listCommands!('/project')
+    expect(loading).toBe(false)
+    expect(commands.map((command) => command.name)).toEqual(['goal', 'compact', 'review', 'init'])
+    expect(createCodex).not.toHaveBeenCalled()
+  })
+
   it('offers Claude, Grok and OpenCode project inventories by default without starting anything', () => {
     const { registry, createCodex } = setup()
     const claude = registry.forProvider('claude-code')
@@ -299,7 +307,8 @@ describe('declared provider controls', () => {
     expect(opencode.listMcpServers).toBeDefined()
     expect(opencode.listCommands).toBeDefined()
     expect(opencode.listSkills).toBeDefined()
-    expect(registry.forProvider('cursor').listCommands).toBeUndefined()
+    // Cursor's list is read from folders on disk.
+    expect(registry.forProvider('cursor').listCommands).toBeDefined()
     expect(createCodex).not.toHaveBeenCalled()
   })
 

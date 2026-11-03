@@ -18,6 +18,7 @@ import { createPortal } from 'react-dom'
 import { RowIssue } from './RowIssue.js'
 import { surfaceLoadFailed } from '../surface-load-error.js'
 import { AppearanceColorPicker } from './AppearanceColorPicker.js'
+import { AppBackgroundSettings } from './AppBackgroundSettings.js'
 import {
   accentColor,
   backdropColor,
@@ -127,7 +128,9 @@ import {
   appUpdateInstallState,
   cancelAppUpdateInstall,
   chatCount,
+  installWhenChatsFinish,
   requestAppUpdateInstall,
+  runningLabel,
   stopChatsAndInstall,
   subscribeAppUpdateInstall,
   waitingLabel,
@@ -153,6 +156,7 @@ import {
   type ProviderLoginTerminalTarget,
 } from '../provider-install.js'
 import type { Transport } from '../transport.js'
+import { rememberAccountRead, rememberedAccountReads } from '../provider-account-reads.js'
 import {
   fontFamilyFromPreference,
   fontFamilyStack,
@@ -330,6 +334,29 @@ function noop(): void {}
 function noopKeybindingChange(_action: KeybindingId, _shortcut: Shortcut | null): void {}
 
 /**
+ * Phone access is part of some builds only (the server needs
+ * HARNESS_PHONE_ACCESS=1). Asked once when Settings opens; the page stays
+ * hidden until the server says this build offers it, and on any failure.
+ */
+function usePhoneAccessAvailable(transport: Transport): boolean {
+  const [available, setAvailable] = useState(false)
+  useEffect(() => {
+    let current = true
+    transport
+      .request('phone.status', {})
+      .then((status) => {
+        // Servers from before the flag offered phone access everywhere.
+        if (current) setAvailable(status.available !== false)
+      })
+      .catch(() => undefined)
+    return () => {
+      current = false
+    }
+  }, [transport])
+  return available
+}
+
+/**
  * Settings stays intentionally small: the sidebar reorganizes the decisions
  * the app already exposes without inventing preferences for their own sake.
  */
@@ -400,7 +427,12 @@ function SettingsComponent(props: {
   const [selectedSection, setSection] = useState<SettingsSection>(
     props.initialSection ?? 'workflows',
   )
-  const section = selectedSection === 'debug' && !props.showDebug ? 'workflows' : selectedSection
+  const phoneAvailable = usePhoneAccessAvailable(props.transport)
+  const section =
+    (selectedSection === 'debug' && !props.showDebug) ||
+    (selectedSection === 'phone' && !phoneAvailable)
+      ? 'workflows'
+      : selectedSection
 
   useEffect(() => {
     setSection(props.initialSection ?? 'workflows')
@@ -544,12 +576,14 @@ function SettingsComponent(props: {
             label="Usage"
             onClick={() => setSection('usage')}
           />
-          <SettingsNavItem
-            active={section === 'phone'}
-            icon={<Smartphone size={15} aria-hidden />}
-            label="Phone"
-            onClick={() => setSection('phone')}
-          />
+          {phoneAvailable ? (
+            <SettingsNavItem
+              active={section === 'phone'}
+              icon={<Smartphone size={15} aria-hidden />}
+              label="Phone"
+              onClick={() => setSection('phone')}
+            />
+          ) : null}
           <SettingsNavItem
             active={section === 'data'}
             icon={<Database size={15} aria-hidden />}
@@ -800,12 +834,26 @@ export function ProviderSettings(props: {
     loginId?: string
   }
 
-  const [agentAccounts, setAgentAccounts] = useState<Record<string, Account>>({})
+  // Rows open on the answers of this page's earlier visits and are read again
+  // behind them; only a row read for the first time says "Checking account…".
+  const [agentAccounts, setAgentAccounts] = useState<Record<string, Account>>(() => {
+    const accounts: Record<string, Account> = {}
+    for (const [key, account] of rememberedAccountReads(props.transport)) {
+      const agent = rosterAgent(key)
+      if (agent !== undefined) accounts[agent] = account
+    }
+    return accounts
+  })
   const [agentAccountErrors, setAgentAccountErrors] = useState<Record<string, string>>({})
   const [agentBusy, setAgentBusy] = useState<string>()
-  const [authStates, setAuthStates] = useState<ProviderMap<AuthReadState>>(() =>
-    props.account ? { [props.provider]: { phase: 'ready', account: props.account } } : {},
-  )
+  const [authStates, setAuthStates] = useState<ProviderMap<AuthReadState>>(() => {
+    const states: ProviderMap<AuthReadState> = {}
+    for (const [key, account] of rememberedAccountReads(props.transport)) {
+      if (rosterAgent(key) === undefined) states[key as ProviderId] = { phase: 'ready', account }
+    }
+    if (props.account) states[props.provider] = { phase: 'ready', account: props.account }
+    return states
+  })
   const [authOperations, setAuthOperations] = useState<ProviderMap<AuthOperation>>({})
   const [authErrors, setAuthErrors] = useState<ProviderMap<string>>({})
   const sequence = useRef(0)
@@ -871,6 +919,7 @@ export function ProviderSettings(props: {
           currentTransport.current !== request.transport
         )
           return
+        rememberAccountRead(request.transport, provider, account)
         setAuthStates((current) => ({
           ...current,
           [provider]: { phase: 'ready', account },
@@ -966,6 +1015,7 @@ export function ProviderSettings(props: {
           provider: 'acp',
           agent: agentId,
         })
+        rememberAccountRead(props.transport, agentRosterKey(agentId), account)
         setAgentAccounts((current) => ({ ...current, [agentId]: account }))
         setAgentAccountErrors((current) => ({ ...current, [agentId]: '' }))
       } catch (cause) {
@@ -1047,6 +1097,7 @@ export function ProviderSettings(props: {
       } catch {
         // An optional display cache must not turn a successful sign-out into a failure.
       }
+      rememberAccountRead(operation.transport, provider, account)
       setAuthStates((current) => ({
         ...current,
         [provider]: { phase: 'ready', account },
@@ -1068,6 +1119,7 @@ export function ProviderSettings(props: {
     setAgentAccountErrors((current) => ({ ...current, [agentId]: '' }))
     try {
       await props.transport.request('auth.signOut', { provider: 'acp', agent: agentId })
+      rememberAccountRead(props.transport, agentRosterKey(agentId), { signedIn: false })
       setAgentAccounts((current) => ({ ...current, [agentId]: { signedIn: false } }))
     } catch (cause) {
       setAgentAccountErrors((current) => ({
@@ -2105,6 +2157,7 @@ function AppearanceSettings(props: {
           onChange={(updates) => props.onAppearancePreferenceChange(mode, updates)}
         />
       ))}
+      <AppBackgroundSettings />
       {props.showMacOSHaptics || props.showMacOSFontSmoothing ? (
         <SettingsSection label="Shared appearance controls">
           {props.showMacOSHaptics ? <SidebarHapticsSetting /> : null}
@@ -2650,6 +2703,8 @@ function AboutSettings(props: { transport: Transport }) {
   const nativePreparing = nativeUpdate?.status === 'preparing'
   const nativeReady = nativeUpdate?.status === 'ready'
   const waiting = nativeReady && install.phase === 'waiting'
+  // Restart to update was clicked while chats run: stop them, or wait?
+  const asking = nativeReady && install.phase === 'confirming'
   const stopping = nativeReady && install.phase === 'stopping'
   const restarting = nativeReady && (install.phase === 'checking' || install.phase === 'installing')
   const confirming = waiting && confirmStop
@@ -2694,9 +2749,11 @@ function AboutSettings(props: { transport: Transport }) {
                 detail:
                   install.phase === 'waiting'
                     ? waitingLabel(install.running)
-                    : install.phase === 'stopping'
-                      ? `Stopping ${chatCount(install.running)}`
-                      : `${nativeUpdate.version ?? 'Update'} ready`,
+                    : install.phase === 'confirming'
+                      ? runningLabel(install.running)
+                      : install.phase === 'stopping'
+                        ? `Stopping ${chatCount(install.running)}`
+                        : `${nativeUpdate.version ?? 'Update'} ready`,
               }
             : undefined
 
@@ -2737,7 +2794,32 @@ function AboutSettings(props: { transport: Transport }) {
         {!checking && !nativeChecking && !nativeStatus && updateStatus ? (
           <StateLabel {...updateStatus} live />
         ) : null}
-        {confirming ? (
+        {asking ? (
+          <>
+            <button
+              className="set-button set-button--quiet"
+              type="button"
+              onClick={stepHere(cancelAppUpdateInstall)}
+            >
+              Not now
+            </button>
+            <button
+              ref={stepAction}
+              className="set-button set-button--quiet"
+              type="button"
+              onClick={stepHere(installWhenChatsFinish)}
+            >
+              When they finish
+            </button>
+            <button
+              className="set-button set-button--danger"
+              type="button"
+              onClick={stepHere(() => void stopChatsAndInstall())}
+            >
+              {`Stop ${chatCount(install.running)} and update`}
+            </button>
+          </>
+        ) : confirming ? (
           <>
             <button
               ref={stepAction}

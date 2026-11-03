@@ -72,6 +72,7 @@ import { CopyButton } from './CopyButton.js'
 import { LazyMediaViewer as MediaViewer, preloadMediaViewer } from './LazyMediaViewer.js'
 import { Markdown } from './Markdown.js'
 import { Plan } from './Plan.js'
+import { PromptText } from './PromptText.js'
 import { ThreadSkeleton } from './Skeleton.js'
 import {
   REVEAL_CLOSE_MS,
@@ -2301,7 +2302,11 @@ const Row = memo(function Row({
             ))}
           </div>
         ) : null}
-        {item.text ? <p className="said__text">{item.text}</p> : null}
+        {item.text ? (
+          <p className="said__text">
+            <PromptText text={item.text} />
+          </p>
+        ) : null}
         {item.text ? (
           <div className="response-actions said__actions" aria-label="Prompt actions">
             <CopyButton text={item.text} label="Copy prompt" />

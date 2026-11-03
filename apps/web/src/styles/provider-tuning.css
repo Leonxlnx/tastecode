@@ -23,15 +23,8 @@
 .provider-tune__row {
   position: relative;
   padding-left: 26px;
-  animation: provider-tune-row 340ms var(--ease-out) both;
-}
-
-.provider-tune__row:nth-child(2) {
-  animation-delay: 40ms;
-}
-
-.provider-tune__row:nth-child(3) {
-  animation-delay: 80ms;
+  /* All rows open together: one reveal, not a cascade. */
+  animation: provider-tune-row var(--dur-slow) var(--ease-out) both;
 }
 
 /* Trunk through the row, and the branch out to its name. */

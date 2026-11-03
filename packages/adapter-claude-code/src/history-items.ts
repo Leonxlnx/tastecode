@@ -37,13 +37,55 @@ export function isInterruptMarker(row: SavedRecord): boolean {
   )
 }
 
+// Claude Code saves a slash command it ran (a skill, a custom command, a name it does
+// not know) as a user row of these tags instead of the text that was typed:
+//   <command-name>/name</command-name>
+//   <command-message>name</command-message>
+//   <command-args>the rest of the prompt</command-args>
+// Older versions put the message tag first. Captured from claude 2.1.296.
+const COMMAND_TAG = /<(command-name|command-message|command-args)>([\s\S]*?)<\/\1>/g
+// What a local command printed, saved as a user row of its own after the command.
+const COMMAND_OUTPUT =
+  /^\s*<(local-command-stdout|local-command-stderr|command-stdout|command-stderr)>([\s\S]*)<\/\1>\s*$/
+
+/** The only text of a user row, or undefined when it holds anything else. */
+function soleText(row: SavedRecord): string | undefined {
+  if (row.type !== 'user') return undefined
+  const blocks = contentBlocks(row)
+  return blocks.length === 1 && blocks[0]!.type === 'text' ? string(blocks[0]!.text) : undefined
+}
+
+/** `/name args` for a saved slash-command row: what the user typed and TasteCode sent. */
+export function slashCommandPrompt(row: SavedRecord): string | undefined {
+  const text = soleText(row)
+  if (!text?.trimStart().startsWith('<command-')) return undefined
+  const tags = new Map<string, string>()
+  // The row must be these tags and nothing else, so a prompt that only quotes one stays text.
+  const rest = text.replace(COMMAND_TAG, (_match, tag: string, value: string) => {
+    tags.set(tag, value)
+    return ''
+  })
+  const name = tags.get('command-name')?.trim()
+  if (rest.trim() !== '' || !name) return undefined
+  const command = name.startsWith('/') ? name : `/${name}`
+  const args = tags.get('command-args')?.trim()
+  return args ? `${command} ${args}` : command
+}
+
+/** What a local command printed, from a row Claude Code saved after the command. */
+export function slashCommandOutput(row: SavedRecord): string | undefined {
+  const text = soleText(row)
+  return text === undefined ? undefined : COMMAND_OUTPUT.exec(text)?.[2]
+}
+
 export function isPrompt(row: SavedRecord): boolean {
   return (
     row.type === 'user' &&
     !row.isMeta &&
     !row.isCompactSummary &&
     contentBlocks(row).some((block) => block.type !== 'tool_result') &&
-    !isInterruptMarker(row)
+    !isInterruptMarker(row) &&
+    slashCommandOutput(row) === undefined
   )
 }
 
@@ -85,17 +127,19 @@ export function historyItems(
   const blocks = contentBlocks(row)
   const rowId = String(row.uuid)
   const base = { turnId, status: 'completed' as const, createdAt: at }
-  const userItems: Item[] = []
+  const rowItems: Item[] = []
   if (row.type === 'user' && isPrompt(row)) {
     const attachments = blocks.flatMap((block) => {
       const ref = attachment(block)
       return ref ? [ref] : []
     })
-    const text = blocks
-      .filter((block) => block.type !== 'tool_result' && !attachment(block))
-      .map((block) => string(block.text) ?? JSON.stringify(block))
-      .join('\n')
-    userItems.push({
+    const text =
+      slashCommandPrompt(row) ??
+      blocks
+        .filter((block) => block.type !== 'tool_result' && !attachment(block))
+        .map((block) => string(block.text) ?? JSON.stringify(block))
+        .join('\n')
+    rowItems.push({
       ...base,
       id: rowId,
       type: 'message',
@@ -104,8 +148,13 @@ export function historyItems(
       ...(attachments.length ? { attachments } : {}),
     })
   }
+  // The SDK shows a local command's output as assistant-style text, never as a prompt.
+  const output = slashCommandOutput(row)?.trim()
+  if (output) {
+    rowItems.push({ ...base, id: rowId, type: 'message', role: 'assistant', text: output })
+  }
   return [
-    ...userItems,
+    ...rowItems,
     ...blocks.flatMap((block, index): Item[] => {
       if (row.type === 'user' && block.type !== 'tool_result') return []
       const itemBase: Item = { ...base, id: `${rowId}:${index}`, type: 'unknown' }
