@@ -342,6 +342,48 @@ describe('ComposerResourcePicker', () => {
     expect(transport.requests.filter(({ method }) => method === 'commands.list')).toHaveLength(2)
   })
 
+  it('shows the last list at once when a menu opens again and asks for a new one behind it', async () => {
+    const answers: Array<(inventory: CommandInventory) => void> = []
+    const transport = new TestTransport(async (method) => {
+      if (method === 'skills.list') {
+        return {
+          capabilities: { inventory: false, configure: false, install: false },
+          skills: [],
+          errors: [],
+        }
+      }
+      if (method === 'commands.list')
+        return new Promise<CommandInventory>((resolve) => answers.push(resolve))
+      throw new Error(`Unexpected request: ${method}`)
+    })
+    renderPicker(transport, slash(''))
+    await waitFor(() => expect(answers).toHaveLength(1))
+    act(() =>
+      answers[0]!({
+        commands: [{ name: 'taste-pro', description: 'Builds sites', kind: 'skill' }],
+        loading: false,
+      }),
+    )
+    await screen.findByRole('option', { name: /\/taste-pro/ })
+    cleanup()
+
+    // Another composer, or the same one after a switch: no loading rows first.
+    renderPicker(transport, slash('taste'))
+    expect(screen.getByRole('option', { name: /\/taste-pro/ })).toBeTruthy()
+    expect(screen.queryByText('Loading commands and skills…')).toBeNull()
+    await waitFor(() => expect(answers).toHaveLength(2))
+    act(() =>
+      answers[1]!({
+        commands: [
+          { name: 'taste-pro', description: 'Builds sites', kind: 'skill' },
+          { name: 'taste-check', description: 'Reviews a page', kind: 'skill' },
+        ],
+        loading: false,
+      }),
+    )
+    await screen.findByRole('option', { name: /\/taste-check/ })
+  })
+
   it("puts TasteCode's commands first and leaves out provider commands with their names", async () => {
     const transport = createResourceTransport(
       () => ({
