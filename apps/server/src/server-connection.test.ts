@@ -1818,6 +1818,42 @@ describe('native subagent transcript route', () => {
       client.terminate()
     }
   })
+
+  it('sends only the newest 400 items and counts the rest', async () => {
+    const items = Array.from({ length: 1_000 }, (_, index) => ({
+      id: `step-${index}`,
+      turnId: 'child',
+      type: 'message',
+      role: 'assistant',
+      text: `Step ${index}`,
+      status: 'completed',
+      createdAt: index,
+    }))
+    state.subagentTranscript.mockResolvedValue(items)
+    const { port } = await listen()
+    const client = new WebSocket(`ws://127.0.0.1:${port}`)
+    try {
+      await once(client, 'message')
+      const reply = once(client, 'message')
+      client.send(
+        JSON.stringify({
+          id: 'long',
+          method: 'thread.subagentTranscript',
+          params: { threadId: 'parent', itemId: 'call' },
+        }),
+      )
+      const { result } = JSON.parse(String((await reply)[0])) as {
+        result: { items: Array<{ id: string }>; omitted?: number }
+      }
+      expect(result.omitted).toBe(600)
+      expect(result.items).toHaveLength(400)
+      expect(result.items[0]?.id).toBe('step-600')
+      expect(result.items.at(-1)?.id).toBe('step-999')
+      expect(items).toHaveLength(1_000)
+    } finally {
+      client.terminate()
+    }
+  })
 })
 
 describe('chat deletes', () => {

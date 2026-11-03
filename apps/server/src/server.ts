@@ -69,6 +69,11 @@ const DEFAULT_RENDERER_ORIGIN = 'http://127.0.0.1:5183'
 /** When no client has asked for its projects by then, background work starts anyway. */
 const BACKGROUND_WORK_DELAY_MS = 1_500
 /**
+ * The newest items a native sub-agent transcript reply carries. Its detail asks again
+ * every few seconds while the agent runs, and one agent can save thousands of steps.
+ */
+const SUBAGENT_TRANSCRIPT_ITEMS = 400
+/**
  * Reads of provider state that may load an adapter or start a vendor CLI on
  * first use. The desktop's Node (24) loads and compiles an imported module
  * graph synchronously inside `import()`, so the first of these held the event
@@ -1471,7 +1476,9 @@ export function startServer(
         const p = parseParams(method, params)
         // Reading saved children needs no version probes, import scan or live runtime.
         const history = await (providerHistory ??= loadHistoryService())
-        return { items: await history.readSubagentTranscript(p.threadId, p.itemId) }
+        const items = await history.readSubagentTranscript(p.threadId, p.itemId)
+        const omitted = items.length - SUBAGENT_TRANSCRIPT_ITEMS
+        return omitted > 0 ? { items: items.slice(omitted), omitted } : { items }
       }
 
       case 'thread.undoTurnChanges': {
