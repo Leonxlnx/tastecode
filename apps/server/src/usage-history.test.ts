@@ -18,7 +18,7 @@ import {
   type UsageHistoryResult,
 } from '@harness/contracts'
 import { afterEach, describe, expect, it } from 'vitest'
-import { resetEditionForTests, takeEdition } from './provider-edition.js'
+import { takeEdition } from './provider-edition.js'
 import type { StoredUsageEvent } from './store.js'
 import {
   type CachedUsageFile,
@@ -1370,7 +1370,7 @@ describe('usage history of provider accounts', () => {
 
 /** A Codex rollout of one session whose token count reaches `input` in, a tenth of it out. */
 describe('usage history in a release build', () => {
-  afterEach(resetEditionForTests)
+  afterEach(() => takeEdition({}))
 
   const everyProvider: ProviderId[] = [
     'claude-code',
@@ -1431,8 +1431,9 @@ describe('usage history in a release build', () => {
       'opencode:work',
       'codex:work',
     ]
-    // Every adapter, as before any edition is read; dev and unset builds withhold OpenCode.
-    resetEditionForTests()
+    takeEdition({ HARNESS_EDITION: 'dev' })
+    expect(await scannedArchives()).toEqual(every)
+    takeEdition({})
     expect(await scannedArchives()).toEqual(every)
   })
 
@@ -1534,7 +1535,7 @@ describe('usage history in a release build', () => {
       available: true,
     })
 
-    resetEditionForTests()
+    takeEdition({})
     const indexed: ProviderId[] = []
     const dev = new UsageHistoryService({
       cacheFile,
