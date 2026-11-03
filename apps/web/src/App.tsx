@@ -7530,7 +7530,6 @@ export function App() {
       {isDesktop ? <ZoomHud /> : null}
 
       <div className="shell__body" ref={shellBody}>
-        {/* Inside the body, so its aurora pauses with the shell behind Settings. */}
         <AppBackground />
         <Sidebar
           projects={archiveProjects}

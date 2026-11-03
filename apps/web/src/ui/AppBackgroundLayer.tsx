@@ -5,9 +5,11 @@ import {
   indexedDbBackgroundImages,
   type BackgroundImageStore,
 } from '../app-background-image.js'
+import { effectPatternStyle, type EffectPatternStyle } from '../app-background-patterns.js'
 import '../styles/app-background.css'
 
-type LayerStyle = CSSProperties & { '--app-bg-image'?: string; '--app-bg-dim'?: string }
+type LayerStyle = CSSProperties &
+  EffectPatternStyle & { '--app-bg-image'?: string; '--app-bg-dim'?: string }
 
 /**
  * How long the Blur slider has to rest before the display copy is rebuilt.
@@ -44,7 +46,10 @@ export function AppBackgroundLayer(props: {
 
   // Transparent paints nothing: the OS backdrop is the background.
   if (mode === 'transparent' || mode === 'none') return null
-  const style: LayerStyle = { '--app-bg-dim': dimFactor(dim) }
+  const style: LayerStyle = {
+    '--app-bg-dim': dimFactor(dim),
+    ...(mode === 'effect' ? effectPatternStyle(effect) : {}),
+  }
   if (imageUrl) style['--app-bg-image'] = `url("${imageUrl}")`
   return (
     <div
