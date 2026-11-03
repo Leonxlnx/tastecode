@@ -8,6 +8,10 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
+    "./account-home": {
+      "types": "./dist/account-home.d.ts",
+      "default": "./dist/account-home.js"
+    },
     "./capabilities": {
       "types": "./dist/capabilities.d.ts",
       "default": "./dist/capabilities.js"

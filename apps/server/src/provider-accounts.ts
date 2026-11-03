@@ -15,6 +15,8 @@ import { CLAUDE_ACCOUNT_HOME } from '@harness/adapter-claude-code/account-home'
 import { CLAUDE_CAPABILITIES } from '@harness/adapter-claude-code/capabilities'
 import { CODEX_ACCOUNT_HOME } from '@harness/adapter-codex/account-home'
 import { CODEX_CAPABILITIES } from '@harness/adapter-codex/capabilities'
+import { GROK_ACCOUNT_HOME } from '@harness/adapter-grok/account-home'
+import { GROK_CAPABILITIES } from '@harness/adapter-grok/capabilities'
 import {
   DEFAULT_ACCOUNT_ID,
   ProviderAccountSchema,
@@ -58,12 +60,14 @@ function declared(
 
 /**
  * The providers whose adapter declares `multipleAccounts`, with the folder
- * source it exports. Every other provider runs as its default account only;
- * Grok joins once a captured run proves its own folder keeps sign-ins apart.
+ * source it exports. Every other provider runs as its default account only:
+ * Cursor keeps its sign-in outside its config folder (%APPDATA%\Cursor\auth.json on
+ * Windows, the keychain on macOS), and Antigravity's `agy` has no folder variable.
  */
 export const ACCOUNT_HOMES: AccountHomes = declared([
   ['claude-code', CLAUDE_CAPABILITIES, CLAUDE_ACCOUNT_HOME],
   ['codex', CODEX_CAPABILITIES, CODEX_ACCOUNT_HOME],
+  ['grok', GROK_CAPABILITIES, GROK_ACCOUNT_HOME],
 ])
 
 /** What the default account is called until the user renames it. */
