@@ -476,8 +476,9 @@ export const ProviderContextSettingsMapSchema = z.partialRecord(
 export type ProviderContextSettingsMap = z.infer<typeof ProviderContextSettingsMapSchema>
 
 /**
- * The runtime each provider runs through, by id from its declared `runtimes`.
- * A provider without an entry runs through its default.
+ * The runtime each provider's default account runs through, by id from the
+ * provider's declared `runtimes`. A provider without an entry runs through its
+ * default.
  */
 export const ProviderRuntimeSettingsSchema = z.partialRecord(ProviderIdSchema, z.string().min(1))
 export type ProviderRuntimeSettings = z.infer<typeof ProviderRuntimeSettingsSchema>
@@ -492,6 +493,17 @@ export const AccountContextSettingsSchema = z.object({
   settings: ProviderContextSettingsSchema,
 })
 export type AccountContextSettings = z.infer<typeof AccountContextSettingsSchema>
+
+/**
+ * A further provider account's own runtime. An account without an entry runs
+ * through the provider's default runtime, whatever another account chose.
+ */
+export const AccountRuntimeSettingSchema = z.object({
+  provider: ProviderIdSchema,
+  accountId: AccountIdSchema,
+  runtime: z.string().min(1),
+})
+export type AccountRuntimeSetting = z.infer<typeof AccountRuntimeSettingSchema>
 
 export const SidebarSettingsSchema = z.object({
   mode: z.enum(['classic', 'inbox']),
@@ -988,18 +1000,31 @@ export const methods = {
     }),
     result: ProviderContextSettingsMapSchema,
   },
-  /** The runtime each provider's sessions launch through; applies to every account. */
+  /** The runtime each provider's default account launches through. */
   'providers.runtimeSettings': {
     params: z.object({}),
     result: ProviderRuntimeSettingsSchema,
   },
   /**
-   * Chooses one of the provider's declared runtimes; null returns it to its
-   * default. Sessions already running keep theirs.
+   * Chooses one of the provider's declared runtimes for its default account;
+   * null returns it to the default runtime. Sessions already running keep theirs.
    */
   'providers.updateRuntimeSettings': {
     params: z.object({ provider: ProviderIdSchema, runtime: z.string().min(1).nullable() }),
     result: ProviderRuntimeSettingsSchema,
+  },
+  /** Every further account that has chosen a runtime of its own. */
+  'providers.accountRuntimeSettings': {
+    params: z.object({}),
+    result: z.object({ accounts: z.array(AccountRuntimeSettingSchema) }),
+  },
+  /**
+   * Chooses one of the provider's declared runtimes for a further account; null
+   * returns it to the default runtime. Sessions already running keep theirs.
+   */
+  'providers.updateAccountRuntimeSetting': {
+    params: AccountRuntimeSettingSchema.extend({ runtime: z.string().min(1).nullable() }),
+    result: z.object({ accounts: z.array(AccountRuntimeSettingSchema) }),
   },
   /** Every further account that has context settings of its own. */
   'providers.accountContextSettings': {
@@ -1684,6 +1709,12 @@ export const methods = {
           name: z.string(),
           pinned: z.boolean(),
           createdAt: z.number(),
+          /**
+           * A folder the server made for a chat started without a project
+           * (`projects.createChatFolder`). Clients list its chats on their own
+           * rather than as a project of their own.
+           */
+          chat: z.boolean().optional(),
           sessions: z.array(
             z.object({
               id: z.string(),
@@ -1745,6 +1776,21 @@ export const methods = {
       name: z.string(),
       pinned: z.boolean(),
       createdAt: z.number(),
+    }),
+  },
+  /**
+   * Make a new, empty folder for a chat that belongs to no project and
+   * register it as a project, so the chat can start there. The server names
+   * it after the date and two random words, inside its own data folder.
+   */
+  'projects.createChatFolder': {
+    params: z.object({}),
+    result: z.object({
+      path: z.string(),
+      name: z.string(),
+      pinned: z.boolean(),
+      createdAt: z.number(),
+      chat: z.literal(true),
     }),
   },
   'projects.pin': {

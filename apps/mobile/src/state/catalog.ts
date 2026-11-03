@@ -280,15 +280,18 @@ function isDirectSource(provider: ProviderStatus): boolean {
 }
 
 /**
- * A model's key in the desktop's picker (`model-catalog.ts` there): the
- * source, then the URI-encoded model id. Accounts share their provider's keys.
+ * A model's key in the list of what the desktop hides (`account-models.ts`
+ * there): the source, then the URI-encoded model id. Each further account has
+ * its own, and the default account's are its provider's.
  */
 export function desktopChoiceKey(source: SourceRef, modelId: string): string {
   const base = source.connectionId
     ? `api:${source.connectionId}`
     : source.agent
       ? `${source.provider}:${source.agent}`
-      : source.provider
+      : source.accountId && source.accountId !== DEFAULT_ACCOUNT_ID
+        ? `${source.provider}@${source.accountId}`
+        : source.provider
   return `${base}:${encodeURIComponent(modelId || 'automatic')}`
 }
 

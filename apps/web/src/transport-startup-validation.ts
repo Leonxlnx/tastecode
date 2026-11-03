@@ -180,6 +180,7 @@ const isProject = objectValidator<Project>({
   name: isString,
   pinned: isBoolean,
   createdAt: isFiniteNumber,
+  chat: optional(isBoolean),
   sessions: arrayOf(isSession),
 })
 const isProjectsList = objectValidator<ResultOf<'projects.list'>>({ projects: arrayOf(isProject) })

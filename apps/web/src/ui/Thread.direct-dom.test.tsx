@@ -120,19 +120,21 @@ function streamingThread() {
 }
 
 const total = () => heights.reduce((sum, height) => sum + height, 0)
+/** The room a working turn keeps below its last line (WORKING_TAIL_PX in Thread.tsx). */
+const WORKING_TAIL = 16
 
 describe('Thread virtual rows', () => {
   it('grows the live row line by line without rendering the transcript', () => {
     const { rows, runway } = streamingThread()
     const answer = rows()[1]!
-    expect(runway.style.height).toBe(`${total()}px`)
+    expect(runway.style.height).toBe(`${total() + WORKING_TAIL}px`)
     const before = transcriptRenders.mock.calls.length
 
     for (let line = 0; line < 5; line += 1) {
       heights[1]! += 20
       measured(answer)
       // The runway has the new height in the same callback that measured it.
-      expect(runway.style.height).toBe(`${total()}px`)
+      expect(runway.style.height).toBe(`${total() + WORKING_TAIL}px`)
     }
 
     expect(transcriptRenders.mock.calls.length - before).toBeLessThanOrEqual(2)
@@ -148,11 +150,12 @@ describe('Thread virtual rows', () => {
     )
     const runway = view.container.querySelector<HTMLElement>('.thread__runway')!
     const rail = view.container.querySelector<HTMLElement>('.thread__rail')!
-    // The rail's 42px sit at the end of the runway, under the rail.
-    expect(runway.style.height).toBe('102px')
+    // The rail's 38px sit at the end of the runway, under the rail, and a
+    // working turn keeps 16px below its last line.
+    expect(runway.style.height).toBe('114px')
     expect(rail.style.transform).toBe('translateY(60px)')
 
-    // The answer row pads its top by the same 42px for the rail.
+    // The answer row pads its top by the same 38px for the rail.
     heights = [60, 82]
     act(() =>
       store.publish({
@@ -162,9 +165,18 @@ describe('Thread virtual rows', () => {
       }),
     )
 
-    expect(runway.style.height).toBe('142px')
+    expect(runway.style.height).toBe('158px')
     expect(rail.style.transform).toBe('translateY(60px)')
     expect(view.container.querySelector('.thread__rail-spacer')).toBeNull()
+
+    // A finished turn keeps no extra room.
+    act(() =>
+      store.publish({
+        ...emptyThread,
+        items: [prompt, item('answer', { role: 'assistant', status: 'completed', text: 'It' })],
+      }),
+    )
+    expect(runway.style.height).toBe('142px')
   })
 
   it('reads the heights of the rows a commit mounted before it places any of them', () => {

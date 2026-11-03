@@ -400,17 +400,18 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Runtime choice in Settings: the Agent SDK (default) or claude -p, with the same
-                features through either
+                >Runtime choice in Settings, separate for each account: the Agent SDK (default) or
+                claude -p, with the same features through either
                 <span class="d"
                   >claude -p runs with stream-json on stdin and stdout and TasteCode speaks the
                   protocol the SDK speaks: the same launch flags, initialize request, control
                   requests (interrupt, model, access, MCP status and servers, settings, usage) and
                   tool-permission and question callbacks, without the SDK's sdk-ts entrypoint; the
-                  server keeps the choice per provider and applies it to new and resumed chats,
-                  model lists, plan-limit reads and project inventory probes for every account, so
-                  phone chats use it too; running chats keep theirs, and custom harnesses keep their
-                  own launch</span
+                  server keeps each account's choice and applies it to that account's new and
+                  resumed chats, model lists, plan-limit reads and project inventory probes, so
+                  phone chats use it too; an account without a choice stays on the Agent SDK
+                  whatever another account chose; running chats keep theirs, and custom harnesses
+                  keep their own launch</span
                 ></span
               ></label
             >
@@ -1220,45 +1221,51 @@
                   picker. The composer's sign-in check asks the account the next message runs on, so
                   a signed-out default account does not block Send for a chat on a signed-in further
                   account, nor the reverse. A chat's title and commit message are written through
-                  its own account when the background model is its provider's; the model picker
-                  lists the active account's models for a new chat and an open chat's own account's
-                  models; a project's MCP list and MCP sign-in come from a default-account chat
-                  only. Removing an account drops it before its processes stop and deletes a managed
-                  folder last. Plan limits, reset credits, model lists and usage are read per
-                  account: the current provider's active account is read at launch, its other
-                  signed-in accounts when the popup or Usage shows limits; the popup names the
-                  provider once and gives each account a line that opens to its full limits (the
-                  account new chats start on first and open; a closed line shows the % left of each
-                  window, such as Session and Weekly, a row each on a short gauge under the account
-                  name; a failed read says Unavailable with Retry on its line, one still loading
-                  says Checking…), the card's figure is each provider's active account, and a Usage
-                  sheet sums its accounts and lists each one with its tokens and limits. Profile
-                  &gt; Accounts lists further accounts (Codex · Work, plan or Signed out, never an
-                  email). When a turn fails while the chat's account is at a plan limit (a window at
-                  100% that has not reset) and another account of the provider is signed in, the
-                  error offers Continue on Work (a menu, Continue on another account, when there are
-                  several); never automatic. It starts a new chat pinned to that account in the same
-                  project (an isolated chat's branch as base, in a checkout of its own that gets the
-                  earlier checkout's uncommitted changes copied in; when they cannot be copied, the
-                  first prompt and the new chat's note say which folder still holds them), with the
-                  failed request in its composer. Claude Code and Codex carry the earlier chat's own
-                  session on in the new account's folder (Claude Code a copy of its transcript under
-                  a new id, Codex a fork of its rollout copied with the rollouts it was forked
-                  from), so tool results and reasoning come along and the first prompt is just the
-                  request; a carried session whose first turn fails before any answer gives way to a
-                  fresh one that gets the conversation as a handover. Where the session cannot be
-                  carried on, or lacks part of the conversation, the first prompt carries the
-                  earlier chat's conversation as untrusted context (its first request, the latest
-                  exchange, every other user message and the assistant's messages newest first, then
-                  tool steps cut to their command line, exit code or file paths in what is left of
-                  64,000 characters, preceded by any chat it continued itself up to where it was
-                  continued; kept in the provider's own session), the transcript shows only the
-                  user's words, and until its first message the new chat says Continues "title" on
-                  Work in a neutral note with Open (for an isolated chat, also that its uncommitted
-                  changes are already in this chat's checkout, or where they still are). The earlier
-                  chat is left as it was; its failed turn's row then reads Continued on Work and
-                  opens the new chat. Not yet: per-account Sign out, MCP/skills inventory and
-                  history import per account</span
+                  its own account when the background model is its provider's, with a model that
+                  account's own sign-in and plan offer; the model picker lists the active account's
+                  models for a new chat and an open chat's own account's models. Settings &gt;
+                  Models gives each signed-in account its own section (Claude Code · Work) with its
+                  own switches and starting defaults, kept as provider@account, so hiding a model on
+                  one account leaves the others alone in the picker and on the phone; a failed list
+                  keeps its section with the reason and Retry; a choice made before accounts had
+                  their own switches still holds for a further account until it gets its own. An
+                  account's Model row offers that account's models. A project's MCP list and MCP
+                  sign-in come from a default-account chat only. Removing an account drops it before
+                  its processes stop and deletes a managed folder last. Plan limits, reset credits,
+                  model lists and usage are read per account: the current provider's active account
+                  is read at launch, its other signed-in accounts when the popup or Usage shows
+                  limits; the popup names the provider once and gives each account a line that opens
+                  to its full limits (the account new chats start on first and open; a closed line
+                  shows the % left of each window, such as Session and Weekly, a row each on a short
+                  gauge under the account name; a failed read says Unavailable with Retry on its
+                  line, one still loading says Checking…), the card's figure is each provider's
+                  active account, and a Usage sheet sums its accounts and lists each one with its
+                  tokens and limits. Profile &gt; Accounts lists further accounts (Codex · Work,
+                  plan or Signed out, never an email). When a turn fails while the chat's account is
+                  at a plan limit (a window at 100% that has not reset) and another account of the
+                  provider is signed in, the error offers Continue on Work (a menu, Continue on
+                  another account, when there are several); never automatic. It starts a new chat
+                  pinned to that account in the same project (an isolated chat's branch as base, in
+                  a checkout of its own that gets the earlier checkout's uncommitted changes copied
+                  in; when they cannot be copied, the first prompt and the new chat's note say which
+                  folder still holds them), with the failed request in its composer. Claude Code and
+                  Codex carry the earlier chat's own session on in the new account's folder (Claude
+                  Code a copy of its transcript under a new id, Codex a fork of its rollout copied
+                  with the rollouts it was forked from), so tool results and reasoning come along
+                  and the first prompt is just the request; a carried session whose first turn fails
+                  before any answer gives way to a fresh one that gets the conversation as a
+                  handover. Where the session cannot be carried on, or lacks part of the
+                  conversation, the first prompt carries the earlier chat's conversation as
+                  untrusted context (its first request, the latest exchange, every other user
+                  message and the assistant's messages newest first, then tool steps cut to their
+                  command line, exit code or file paths in what is left of 64,000 characters,
+                  preceded by any chat it continued itself up to where it was continued; kept in the
+                  provider's own session), the transcript shows only the user's words, and until its
+                  first message the new chat says Continues "title" on Work in a neutral note with
+                  Open (for an isolated chat, also that its uncommitted changes are already in this
+                  chat's checkout, or where they still are). The earlier chat is left as it was; its
+                  failed turn's row then reads Continued on Work and opens the new chat. Not yet:
+                  per-account Sign out, MCP/skills inventory and history import per account</span
                 ></span
               ></label
             >
@@ -2624,12 +2631,15 @@
                   and indent under its folder mark with no guide line, an empty project's No chats
                   starts under its name, and pinned chats keep the outer gutter; one active pill
                   slides to the newly selected chat in 220 ms (it jumps under reduced motion); a
-                  project lists its first 5 chats, plus every later chat that is starting, working,
-                  needs the user, is unread or is open, each at its own place, and "Show N more"
-                  counts the chats still folded (no toggle when none is); the larger project add
-                  action stays clear of the scrollbar; drag-folding moves the intact rail and grid
-                  closed together, even before pointer release; Enter or Escape in an inline rename
-                  returns focus to the row without opening it</span
+                  project lists 5 chats: every chat that is starting, working, needs the user, is
+                  unread or is open, all of them even past 5, then the first quiet chats in the rows
+                  left over, each at its own place; "Show more" lists 15 the same way, a second
+                  "Show more" lists every chat and "Show less" folds back (no toggle when nothing is
+                  folded); a long list scrolls with the rail, never in a scroll box of its own, and
+                  mounts only the rows near the view; the larger project add action stays clear of
+                  the scrollbar; drag-folding moves the intact rail and grid closed together, even
+                  before pointer release; Enter or Escape in an inline rename returns focus to the
+                  row without opening it</span
                 ></span
               ></label
             >
@@ -2638,6 +2648,25 @@
             <label
               ><input type="checkbox" /><span
                 >Pin projects and pin sessions, pinned float to the top</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Chats without a project
+                <span class="d"
+                  >the new-chat project picker ends with No project ("Gets a folder of its own"),
+                  and the palette offers New thread without a project; the first message asks the
+                  server (projects.createChatFolder) for an empty folder named after the local date
+                  and two random words, ~/.tastecode/threads/2026-11-01-amber-heron (under
+                  HARNESS_CONFIG_DIR when set), registers it as a project and starts the chat there,
+                  never isolated and without a branch switch; Classic lists these chats under Chats
+                  between Pinned and Projects, grouped like a project's chats and newest first, with
+                  a + for another; their folders stay out of Projects, the picker and the Inbox
+                  project filter; New chat from such a chat starts another one. Not yet on the
+                  phone, which still lists each folder as a project</span
+                ></span
               ></label
             >
           </li>
@@ -2700,9 +2729,11 @@
                 chosen order restored on reload; undragged projects stay newest first, and chats
                 imported later from another provider slot in by date
                 <span class="d"
-                  >in Classic a chat keeps its place when it starts, waits, finishes or is read;
-                  only a new chat (on top), a pin, a drag or archiving moves one, and a drop lands
-                  exactly where it was dropped</span
+                  >in Classic a project lists its chats by group: done and unread first, then the
+                  ones that need you, then working or queued, then read and idle, each group in the
+                  saved order; a chat whose turn ends goes to the top of the saved order, kept after
+                  a refresh, and an open chat that was done stays with the done chats until another
+                  opens; a drop lands exactly where it was dropped</span
                 ></span
               ></label
             >

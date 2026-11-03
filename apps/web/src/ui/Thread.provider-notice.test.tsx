@@ -84,6 +84,18 @@ describe('a chat that switched provider', () => {
     )
   })
 
+  it("names the model by the picker's name once the app lists it", () => {
+    const moved: ProviderNotice = { kind: 'provider', provider: 'claude-code', model: 'opus' }
+    const modelLabel = ({ modelId }: { modelId: string }) =>
+      modelId === 'opus' ? 'Opus 4.7' : undefined
+    expect(providerNoticeLabel(moved, undefined, modelLabel)).toBe(
+      'Switched to Claude Code · Opus 4.7',
+    )
+    expect(providerNoticeLabel({ ...moved, model: 'unlisted' }, undefined, modelLabel)).toBe(
+      'Switched to Claude Code · unlisted',
+    )
+  })
+
   it("names the account a chat moved to, once the app knows the account's name", () => {
     const moved: ProviderNotice = {
       kind: 'provider',

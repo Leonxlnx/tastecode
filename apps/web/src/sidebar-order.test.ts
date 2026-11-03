@@ -4,11 +4,13 @@ import {
   applySessionOrder,
   foldedProjectSessions,
   isArchived,
+  liftSession,
   moveRailSession,
   needsYouSessions,
   parseStoredProjectOrder,
   parseStoredSessionOrder,
   projectAttention,
+  railSessionOrder,
   sidebarRail,
   sidebarSessions,
 } from './sidebar-order.js'
@@ -96,24 +98,81 @@ const shown = (sessions: Session[]) =>
   ids(sidebarRail([{ path: '/p', sessions }]).orderedProjects[0]!.sessions)
 
 describe('the rail keeps its order', () => {
-  it('does not move a chat when it starts, waits, finishes or is read', () => {
-    const saved = [chat('A'), chat('B'), chat('C'), chat('D')]
-    expect(shown(saved)).toEqual(['A', 'B', 'C', 'D'])
+  it('lists done chats first, then the ones that need the user, then working, then read', () => {
+    const saved = [
+      chat('read-1'),
+      chat('working-1', { status: 'working' }),
+      chat('done-1', { status: 'ready', unread: true }),
+      chat('approval', { status: 'approval' }),
+      chat('read-2', { status: 'failed', unread: false }),
+      chat('queued', { status: 'queued' }),
+      chat('failed', { status: 'failed', unread: true }),
+      chat('done-2', { status: 'idle', unread: true }),
+      chat('input', { status: 'input' }),
+      chat('starting', { status: 'starting', unread: true }),
+    ]
+    // Each group keeps the saved order.
+    expect(shown(saved)).toEqual([
+      'done-1',
+      'done-2',
+      'approval',
+      'failed',
+      'input',
+      'working-1',
+      'queued',
+      'starting',
+      'read-1',
+      'read-2',
+    ])
+  })
 
-    for (const changes of [
-      { status: 'working' },
-      { status: 'queued' },
-      { status: 'approval' },
-      { status: 'input' },
-      { status: 'failed', unread: true },
-      { status: 'ready', unread: true },
-      { status: 'idle', unread: false },
-    ] as const) {
-      const next = saved.map((session) =>
-        session.id === 'C' ? { ...session, ...changes } : session,
-      )
-      expect(shown(next)).toEqual(['A', 'B', 'C', 'D'])
-    }
+  it('keeps the open chat that was done with the done chats until another opens', () => {
+    const sessions = [chat('read'), chat('working', { status: 'working' }), chat('opened')]
+    const rail = (held?: string) =>
+      ids(sidebarRail([{ path: '/p', sessions }], held).orderedProjects[0]!.sessions)
+    expect(rail('opened')).toEqual(['opened', 'working', 'read'])
+    expect(rail()).toEqual(['working', 'read', 'opened'])
+    // Holding only keeps a read chat up; it never takes one out of its group.
+    expect(rail('working')).toEqual(['working', 'read', 'opened'])
+  })
+
+  it('places a drop in the order the rail shows, leaving pinned and archived slots alone', () => {
+    const sessions = [
+      chat('read'),
+      chat('pinned', { pinned: true }),
+      chat('working', { status: 'working' }),
+      chat('done', { status: 'ready', unread: true }),
+    ]
+    expect(ids(railSessionOrder(sessions))).toEqual(['done', 'pinned', 'working', 'read'])
+    const grouped = [chat('done', { status: 'ready', unread: true }), chat('read')]
+    expect(railSessionOrder(grouped)).toBe(grouped)
+  })
+
+  it('keeps the project itself when its chats are already in their groups', () => {
+    const projects = [
+      {
+        path: '/p',
+        sessions: [
+          chat('done', { status: 'ready', unread: true }),
+          chat('working', { status: 'working' }),
+          chat('read'),
+        ],
+      },
+    ]
+    expect(sidebarRail(projects).orderedProjects[0]).toBe(projects[0])
+  })
+
+  it('lifts a finished chat to the top of its own project only', () => {
+    const projects = [
+      { path: '/one', sessions: [chat('A', { status: 'working' }), chat('B'), chat('C')] },
+      { path: '/two', sessions: [chat('D'), chat('E')] },
+    ]
+    const lifted = liftSession(projects, 'C')
+    expect(ids(lifted[0]!.sessions)).toEqual(['C', 'A', 'B'])
+    expect(lifted[1]).toBe(projects[1])
+    // Already on top, or not listed: nothing changes.
+    expect(liftSession(lifted, 'C')).toBe(lifted)
+    expect(liftSession(projects, 'gone')).toBe(projects)
   })
 
   it('keeps an unchanged project projection when nothing in it is pinned or archived', () => {
@@ -149,6 +208,43 @@ describe('the rail keeps its order', () => {
         'classic',
       ).map(({ id }) => id),
     ).toEqual(['a'])
+  })
+
+  it('lists chats without a project in their own section, not as projects', () => {
+    const rail = sidebarRail([
+      { path: '/repo', sessions: [chat('work')] },
+      { path: '/chats/older', chat: true, sessions: [chat('older', { createdAt: 1 })] },
+      {
+        path: '/chats/newer',
+        chat: true,
+        sessions: [chat('newer', { createdAt: 3 }), chat('gone', { createdAt: 2, ...archived(4) })],
+      },
+      {
+        path: '/chats/done',
+        chat: true,
+        sessions: [chat('done', { createdAt: 0, unread: true })],
+      },
+      { path: '/chats/pinned', chat: true, sessions: [chat('pin', { pinned: true })] },
+    ])
+
+    expect(rail.orderedProjects.map(({ path }) => path)).toEqual(['/repo'])
+    // Grouped like a project's chats, newest first within each group.
+    expect(rail.chatSessions.map(({ projectPath, session }) => [projectPath, session.id])).toEqual([
+      ['/chats/done', 'done'],
+      ['/chats/newer', 'newer'],
+      ['/chats/older', 'older'],
+    ])
+    expect(rail.pinnedSessions.map(({ session }) => session.id)).toEqual(['pin'])
+    expect(rail.archivedSessions.map(({ session }) => session.id)).toEqual(['gone'])
+    expect(
+      sidebarSessions(
+        [
+          { path: '/repo', sessions: [chat('work')] },
+          { path: '/chats/one', chat: true, sessions: [chat('loose')] },
+        ],
+        'classic',
+      ).map(({ id }) => id),
+    ).toEqual(['loose', 'work'])
   })
 
   it('leaves a chat the server settled on its own in the tree', () => {
@@ -288,7 +384,7 @@ describe('a folded project', () => {
   const folded = (sessions: Session[], activeSessionId?: string) =>
     ids(foldedProjectSessions(sessions, activeSessionId, 5)).join('')
 
-  it('lists its first rows, then each later chat with news at its own place', () => {
+  it('fills its rows with every chat that has news, then the first quiet ones, in order', () => {
     const sessions = [
       ...quiet,
       chat('F'),
@@ -297,9 +393,18 @@ describe('a folded project', () => {
       chat('I'),
     ]
 
-    expect(folded(sessions, 'A')).toBe('ABCDEGH')
-    expect(folded(sessions, 'I')).toBe('ABCDEGHI')
+    expect(folded(sessions, 'A')).toBe('ABCGH')
+    expect(folded(sessions, 'I')).toBe('ABGHI')
     expect(folded(quiet.slice(0, 3))).toBe('ABC')
+  })
+
+  it('lists every running chat even when there are more of them than rows', () => {
+    const running = (id: string) => chat(id, { status: 'working' })
+
+    expect(folded([...quiet, running('F')])).toBe('ABCDF')
+    expect(folded([chat('Q'), ...['F', 'G', 'H', 'I', 'J', 'K'].map(running), ...quiet])).toBe(
+      'FGHIJK',
+    )
   })
 
   it('keeps a chat in sight while it starts, works or needs the user, not once it is quiet', () => {
@@ -312,7 +417,7 @@ describe('a folded project', () => {
       { status: 'ready', unread: true },
       { status: 'idle', unread: true },
     ] as const) {
-      expect(folded([...quiet, chat('F', changes)])).toBe('ABCDEF')
+      expect(folded([...quiet, chat('F', changes)])).toBe('ABCDF')
     }
     for (const changes of [
       { status: 'idle' },

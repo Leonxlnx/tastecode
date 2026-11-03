@@ -103,9 +103,12 @@ import {
 } from './project-store.js'
 import {
   applyProjectOrder,
+  liftSession,
   moveRailSession,
   parseStoredProjectOrder,
   parseStoredSessionOrder,
+  railSessionOrder,
+  sessionGroup,
   sidebarSessions,
 } from './sidebar-order.js'
 import { createSessionOrderSerializer } from './session-order-serializer.js'
@@ -127,11 +130,22 @@ import { Sidebar, type Project, type Session } from './ui/Sidebar.js'
 import {
   accountAtLimit,
   continueAccounts,
+  signedInAccounts,
   continuationNote,
   continuedIn,
   type EarlierChanges,
   lastRequest,
 } from './continue-account.js'
+import {
+  accountListKey,
+  accountModelKey,
+  accountModelRows,
+  accountSourceKey,
+  hiddenListedKeys,
+  modelsByAccount,
+  parseAccountListKey,
+  withOwnModelKeys,
+} from './account-models.js'
 import { Skeleton, SkeletonStatus, ThreadSkeleton } from './ui/Skeleton.js'
 import {
   PullRequestsSkeleton,
@@ -167,6 +181,7 @@ import {
   type AccountLabel,
   type ProviderAccountsSnapshot,
 } from './provider-accounts-state.js'
+import { ModelLabelContext, type ModelLabel } from './model-label.js'
 import {
   agentMark,
   choicesFor,
@@ -174,6 +189,7 @@ import {
   customModelKey,
   isCustomModelChoice,
   modelChoiceKey,
+  modelDisplayName,
   modelVisibilityDefaults,
   providerDisplayName,
   providerMark,
@@ -182,6 +198,7 @@ import {
   type ModelChoice,
 } from './model-catalog.js'
 import {
+  choiceKeySource,
   chooseModelsVisibility,
   EMPTY_MODEL_VISIBILITY,
   hiddenModelKeys,
@@ -850,6 +867,13 @@ export function App() {
     [threadController],
   )
   const [activePath, setActivePath] = useState<string | undefined>()
+  /**
+   * New chat belongs to no project: its first message makes it a folder of its
+   * own (projects.createChatFolder) instead of starting in activePath.
+   */
+  const [chatWithoutProject, setChatWithoutProject] = useState(false)
+  const chatWithoutProjectRef = useRef(chatWithoutProject)
+  chatWithoutProjectRef.current = chatWithoutProject
   const [split, setSplitState] = useState<SplitView>()
   const splitRef = useRef(split)
   const setSplit = useCallback((next: SplitView | undefined) => {
@@ -1345,13 +1369,120 @@ export function App() {
   catalogModelsRef.current = catalogModels
   const modelsRef = useRef(models)
   modelsRef.current = models
-  /** How every listed model starts, recomputed only when the catalog changes. */
-  const modelDefaults = useMemo(() => modelVisibilityDefaults(catalogModels), [catalogModels])
+  /**
+   * Every signed-in account of a provider that has more than one. Each lists
+   * its own models, whose plan may differ, and keeps its own choices about them.
+   */
+  const accountListKeys = useMemo(() => {
+    const keys: string[] = []
+    for (const status of providerStatuses) {
+      if (status.capabilities?.multipleAccounts !== true) continue
+      if (!rosterAllows(providerRoster, sourceKey({ provider: status.id }))) continue
+      if (accountsOf(providerAccounts, status.id).length < 2) continue
+      const defaultSignedIn = status.auth === 'authenticated'
+      for (const account of signedInAccounts(providerAccounts, status.id, defaultSignedIn)) {
+        keys.push(accountListKey(status.id, account.id))
+      }
+    }
+    return keys.join('\u0001')
+  }, [providerStatuses, providerRoster, providerAccounts])
+  const accountListKeysRef = useRef(accountListKeys)
+  accountListKeysRef.current = accountListKeys
+  const [accountModelLists, setAccountModelLists] = useState<ReadonlyMap<string, Model[]>>(
+    () => new Map(),
+  )
+  const [accountModelListsRevision, setAccountModelListsRevision] = useState(0)
+  /** Why an account's models could not be listed, by its source key. */
+  const [accountModelErrors, setAccountModelErrors] = useState<Record<string, ComposerError>>({})
+  const [pendingAccountModels, setPendingAccountModels] = useState<ReadonlySet<string>>(new Set())
+  useEffect(() => {
+    if (!accountListKeys) {
+      setPendingAccountModels(new Set())
+      return
+    }
+    let cancelled = false
+    const keys = accountListKeys.split('\u0001')
+    const sourceOf = (key: string) => {
+      const { provider: id, accountId } = parseAccountListKey(key)
+      return accountSourceKey(id, accountId)
+    }
+    setPendingAccountModels(new Set(keys.map(sourceOf)))
+    for (const key of keys) {
+      const { provider: id, accountId } = parseAccountListKey(key)
+      const source = sourceOf(key)
+      const settled = () => {
+        setPendingAccountModels((current) => {
+          const next = new Set(current)
+          next.delete(source)
+          return next
+        })
+      }
+      void transport
+        .request('models.list', {
+          provider: id,
+          ...(accountId === DEFAULT_ACCOUNT_ID ? {} : { accountId }),
+        })
+        .then(
+          (result) => {
+            if (cancelled) return
+            setAccountModelLists((current) => new Map(current).set(key, result.models))
+            setAccountModelErrors((current) => {
+              if (!Object.hasOwn(current, source)) return current
+              const next = { ...current }
+              delete next[source]
+              return next
+            })
+            settled()
+            updateModelVisibility((record) =>
+              settleModelVisibilitySource(
+                record,
+                source,
+                accountModelRows(id, accountId, result.models),
+                Date.now(),
+              ),
+            )
+          },
+          (cause: unknown) => {
+            if (cancelled) return
+            settled()
+            setAccountModelErrors((current) => ({
+              ...current,
+              [source]: {
+                id: `models:${source}:${crypto.randomUUID()}`,
+                message: `Could not load ${providerName(id)} models. ${cause instanceof Error ? cause.message : String(cause)}`,
+              },
+            }))
+          },
+        )
+    }
+    return () => {
+      cancelled = true
+    }
+  }, [accountListKeys, accountModelListsRevision, transport, updateModelVisibility])
+  /** The catalog with every account of a provider on its own, as Settings lists them. */
+  const accountModels = useMemo(
+    () =>
+      modelsByAccount(
+        models,
+        providerAccounts,
+        new Set(accountListKeys ? accountListKeys.split('\u0001') : []),
+        accountModelLists,
+      ),
+    [models, providerAccounts, accountListKeys, accountModelLists],
+  )
+  /** How every listed model starts, recomputed only when a list changes. */
+  const modelDefaults = useMemo(() => modelVisibilityDefaults(accountModels), [accountModels])
   const modelDefaultsRef = useRef(modelDefaults)
   modelDefaultsRef.current = modelDefaults
+  /** Hidden models by the key their account keeps them under. */
+  const hiddenAccountModels = useMemo(
+    () => hiddenModelKeys(accountModels, modelDefaults, modelVisibility),
+    [accountModels, modelDefaults, modelVisibility],
+  )
+  /** The catalog's own rows that are hidden, by their key in the picker. */
   const hiddenModels = useMemo(
-    () => hiddenModelKeys(models, modelDefaults, modelVisibility),
-    [models, modelDefaults, modelVisibility],
+    () => hiddenListedKeys(models, hiddenAccountModels, providerAccounts),
+    [models, hiddenAccountModels, providerAccounts],
   )
   const visibleModels = useMemo(
     () => models.filter((choice) => !hiddenModels.has(choice.key)),
@@ -1359,7 +1490,10 @@ export function App() {
   )
   // The phone offers the models this picker offers, so neither moves a chat
   // to a model the other hides. Compared as text: the set is rebuilt often.
-  const hiddenModelList = useMemo(() => JSON.stringify([...hiddenModels].sort()), [hiddenModels])
+  const hiddenModelList = useMemo(
+    () => JSON.stringify([...hiddenAccountModels].sort()),
+    [hiddenAccountModels],
+  )
   useEffect(() => {
     if (!modelsLoaded) return
     const timer = window.setTimeout(() => {
@@ -1474,12 +1608,15 @@ export function App() {
   }, [chatModelAccount, chatModelsRevision, transport])
   const selectableModels = useMemo(() => {
     if (chatModelAccount && chatModels?.account === chatModelAccount && chatModels.models.length) {
-      return chatModels.models.filter((choice) => !hiddenModels.has(choice.key))
+      const { provider: id, accountId } = parseAccountListKey(chatModelAccount)
+      return chatModels.models.filter(
+        (choice) => !hiddenAccountModels.has(accountModelKey(id, accountId, choice.model.id)),
+      )
     }
     return activeModelSource
       ? visibleModels.filter((choice) => modelSource(choice) === activeModelSource)
       : visibleModels
-  }, [activeModelSource, visibleModels, chatModelAccount, chatModels, hiddenModels])
+  }, [activeModelSource, visibleModels, chatModelAccount, chatModels, hiddenAccountModels])
   const storedModelChoice = models.find((choice) => choice.key === modelId)
   const sourceHasCatalogModels = useMemo(
     () =>
@@ -1516,48 +1653,19 @@ export function App() {
     }
     return sources
   }, [activeSession, movableChat, providerStatuses, providerRoster, providerAccounts])
-  const otherAccountKeys = otherAccountSources
-    .map(({ provider: id, accountId }) => chatAccountKey(id, accountId))
-    .join('\u0001')
-  const otherAccountKeysRef = useRef(otherAccountKeys)
-  otherAccountKeysRef.current = otherAccountKeys
-  const [otherAccountModels, setOtherAccountModels] = useState<ReadonlyMap<string, Model[]>>(
-    () => new Map(),
-  )
-  const [otherAccountModelsRevision, setOtherAccountModelsRevision] = useState(0)
-  useEffect(() => {
-    if (!otherAccountKeys) return
-    let cancelled = false
-    for (const key of otherAccountKeys.split('\u0001')) {
-      const [id = '', accountId = DEFAULT_ACCOUNT_ID] = key.split('\u0000')
-      void transport
-        .request('models.list', {
-          provider: id as ProviderId,
-          ...(accountId === DEFAULT_ACCOUNT_ID ? {} : { accountId }),
-        })
-        .then(
-          (result) => {
-            if (!cancelled)
-              setOtherAccountModels((current) => new Map(current).set(key, result.models))
-          },
-          // The account is offered once its list arrives.
-          () => undefined,
-        )
-    }
-    return () => {
-      cancelled = true
-    }
-  }, [otherAccountKeys, otherAccountModelsRevision, transport])
   const otherAccountChoices = useMemo(
     () =>
       otherAccountSources.flatMap(({ provider: id, accountId }) =>
         choicesFor(
           { provider: id, accountId, sourceName: providerName(id), mark: providerMark(id) },
-          otherAccountModels.get(chatAccountKey(id, accountId)) ?? [],
+          // The account is offered once its list arrives.
+          accountModelLists.get(chatAccountKey(id, accountId)) ?? [],
           false,
-        ).filter((choice) => !hiddenModels.has(modelChoiceKey(id, choice.model.id))),
+        ).filter(
+          (choice) => !hiddenAccountModels.has(accountModelKey(id, accountId, choice.model.id)),
+        ),
       ),
-    [otherAccountSources, otherAccountModels, hiddenModels],
+    [otherAccountSources, accountModelLists, hiddenAccountModels],
   )
   /** "Claude Code (Team)", once a provider offers more than one of its accounts. */
   const withAccountName = useCallback(
@@ -1915,6 +2023,15 @@ export function App() {
 
   const activeIdRef = useRef(activeId)
   activeIdRef.current = activeId
+  // The open chat that was done when it opened, or finished while open, stays
+  // with the done chats in the rail until another chat opens.
+  const [heldSessionId, setHeldSessionId] = useState<string>()
+  const shownHeldSessionId = heldSessionId === activeId ? heldSessionId : undefined
+  const heldSessionIdRef = useRef(shownHeldSessionId)
+  heldSessionIdRef.current = shownHeldSessionId
+  useEffect(() => {
+    if (heldSessionId !== undefined && heldSessionId !== activeId) setHeldSessionId(undefined)
+  }, [activeId, heldSessionId])
   const activePathRef = useRef(activePath)
   activePathRef.current = activePath
   useEffect(() => {
@@ -2302,10 +2419,17 @@ export function App() {
       }
 
       if (affectsSessionStatus(event)) {
-        // A status change never moves the chat in the sidebar; only a new chat,
-        // a pin or a drag does.
-        setProjects((current) =>
-          updateSession(current, threadId, (session) => {
+        // A finished turn lifts its chat to the top of its project; any other
+        // status change keeps it where it is. The lift is saved like a drag, so
+        // the next project refresh does not put it back by date.
+        const finished = event.type === 'turn.completed'
+        const finishedIn = finished
+          ? findSession(projectsRef.current, threadId)?.project.path
+          : undefined
+        if (finishedIn) draggedSessionOrder.add(finishedIn)
+        if (finished && threadId === activeIdRef.current) setHeldSessionId(threadId)
+        setProjects((current) => {
+          const updated = updateSession(current, threadId, (session) => {
             // A chat in either split pane is in view, so it never turns unread.
             const shown = threadController.isVisible(threadId)
             const status = statusFor(next, event, !shown)
@@ -2319,8 +2443,9 @@ export function App() {
                   }
                 : {}),
             }
-          }),
-        )
+          })
+          return finished ? liftSession(updated, threadId) : updated
+        })
         if (event.type === 'turn.completed' && threadController.isVisible(threadId)) {
           // Only here for the server's mark-as-read side effect — the live event
           // stream already delivered the turn. afterSeq skips serializing,
@@ -2483,6 +2608,7 @@ export function App() {
     isThreadCacheProtected,
     refreshProviderThreadHistory,
     setThreadDesignMode,
+    draggedSessionOrder,
     // The controller, not a column's frame store: a store that changed identity
     // here would close the transport in this effect's cleanup.
     threadController,
@@ -2657,8 +2783,11 @@ export function App() {
         setModelErrors({ ...discoveryErrors })
         // Per source, so a source that fails never holds back the others.
         if (result.discovered) {
+          // A provider's own list is its active account's, whose choices these are.
+          const ownRows = withOwnModelKeys(result.models, providerAccountsRef.current)
+          const ownSource = ownRows[0] ? choiceKeySource(ownRows[0].key) : source
           updateModelVisibility((record) =>
-            settleModelVisibilitySource(record, source, result.models, Date.now()),
+            settleModelVisibilitySource(record, ownSource, ownRows, Date.now()),
           )
         }
         if (result.discovered && !pendingCacheWrite) {
@@ -2954,10 +3083,11 @@ export function App() {
       // A hidden model cannot remain the internal selection. Otherwise the
       // picker shows no such choice while a turn can still silently use it.
       // Every source has settled its visibility above, so the record is current.
-      const hidden = hiddenModelKeys(
+      const ownRows = withOwnModelKeys(all, providerAccountsRef.current)
+      const hidden = hiddenListedKeys(
         all,
-        modelVisibilityDefaults(catalog),
-        modelVisibilityRef.current,
+        hiddenModelKeys(ownRows, modelVisibilityDefaults(ownRows), modelVisibilityRef.current),
+        providerAccountsRef.current,
       )
       const visible = all.filter((choice) => !hidden.has(choice.key))
       const currentSession = activeIdRef.current
@@ -3093,12 +3223,12 @@ export function App() {
         ) {
           setChatModelsRevision((revision) => revision + 1)
         }
-        // So does every other account the picker offers.
+        // So does every other account the picker and Settings list.
         if (
           agent === undefined &&
-          otherAccountKeysRef.current.split('\u0001').includes(chatAccountKey(provider, accountId))
+          accountListKeysRef.current.split('\u0001').includes(chatAccountKey(provider, accountId))
         ) {
-          setOtherAccountModelsRevision((revision) => revision + 1)
+          setAccountModelListsRevision((revision) => revision + 1)
         }
         // A provider's own list is its active account's; a custom harness keeps its own sign-in.
         const listed =
@@ -3390,7 +3520,9 @@ export function App() {
     }
     const savedOrder = loadSessionOrder()
     const projectOrder = loadProjectOrder()
-    const firstProjectPath = applyProjectOrder(list, projectOrder)[0]?.path
+    const firstProjectPath = applyProjectOrder(list, projectOrder).find(
+      (project) => !project.chat,
+    )?.path
     // A full snapshot received after queued pushes is authoritative. Flush the
     // older batch first so its state update cannot replay over this snapshot.
     flushPendingLifecyclePushes.current?.()
@@ -3402,7 +3534,9 @@ export function App() {
       }
       return reconciled
     })
-    setActivePath((current) => current ?? firstProjectPath)
+    setActivePath(
+      (current) => current ?? (chatWithoutProjectRef.current ? undefined : firstProjectPath),
+    )
     return list
   }, [transport])
 
@@ -3783,6 +3917,7 @@ export function App() {
       accountLabelOf(providerAccounts, requestedProvider, accountId),
     [providerAccounts],
   )
+  const modelLabel = useCallback<ModelLabel>((target) => modelDisplayName(models, target), [models])
   const activeAccount = useCallback(
     (requestedProvider: ProviderId) => activeAccountOf(providerAccounts, requestedProvider),
     [providerAccounts],
@@ -4047,7 +4182,15 @@ export function App() {
         connectionId: session.connectionId,
         agentId: session.agent,
       })
-      if (hiddenModels.has(modelChoiceKey(source, settings.model))) {
+      const hiddenKey =
+        session.agent || session.connectionId
+          ? modelChoiceKey(source, settings.model)
+          : accountModelKey(
+              session.provider,
+              session.accountId as AccountId | undefined,
+              settings.model,
+            )
+      if (hiddenAccountModels.has(hiddenKey)) {
         // This picker hides that model and never runs a chat on one it hides,
         // so the chat stays on the model shown here, for every client.
         void transport
@@ -4271,6 +4414,7 @@ export function App() {
       }
       const activePath = added.at(-1)
       if (!refreshed || !activePath) return
+      setChatWithoutProject(false)
       setActivePath(activePath)
       activeIdRef.current = undefined
       setActiveId(undefined)
@@ -4316,6 +4460,8 @@ export function App() {
       provisionalId: string,
       title: string,
       titlePrompt: string,
+      /** The project is a folder just made for a chat without one: no git, no branch. */
+      chatFolder = false,
     ): Promise<string | undefined> => {
       const choice = selectedModelChoice
       if (!choice) return undefined
@@ -4333,7 +4479,8 @@ export function App() {
         // the checked-out branch needs the server to check and switch; asking
         // every time ran git before the agent started, and waiting here for a
         // branch list held the chat for seconds on a busy machine.
-        const shown = newChatBranch(projectPath, isolateSession)
+        const isolate = isolateSession && !chatFolder
+        const shown = chatFolder ? undefined : newChatBranch(projectPath, isolate)
         const branch =
           shown !== undefined && shown !== checkedOutBranches.current.get(projectPath)
             ? shown
@@ -4359,7 +4506,7 @@ export function App() {
               }
             : {}),
           ...(selectedEffort ? { effort: selectedEffort } : {}),
-          ...(isolateSession ? { isolate: true } : {}),
+          ...(isolate ? { isolate: true } : {}),
         })
         let pendingApproval = pendingThreadApprovals.current.get(provisionalId)
         while (pendingApproval && pendingApproval !== sessionApproval && !projectRemoved()) {
@@ -4512,7 +4659,11 @@ export function App() {
   )
 
   const beginSession = useCallback(
-    (projectPath: string, draft?: string) => {
+    /** No `projectPath`, or a chat's own folder, starts a chat without a project. */
+    (projectPath: string | undefined, draft?: string) => {
+      const withoutProject =
+        projectPath === undefined ||
+        projectsRef.current.some((project) => project.path === projectPath && project.chat)
       setSurface('chat')
       if (draft !== undefined) {
         const next = threadController.editDraft(NEW_CHAT_DRAFT_KEY, {
@@ -4527,7 +4678,8 @@ export function App() {
       }
       setNotice(undefined)
       setActionError(undefined)
-      setActivePath(projectPath)
+      setChatWithoutProject(withoutProject)
+      setActivePath(withoutProject ? undefined : projectPath)
       activeIdRef.current = undefined
       setActiveId(undefined)
       setThread(emptyThread)
@@ -4661,8 +4813,34 @@ export function App() {
       const optimisticCreatedAt = Date.now()
       let titledOnCreate = false
       let interruptRequested = false
+      let startPath = activePath
+      if (!threadId && !startPath && chatWithoutProject) {
+        try {
+          const folder = await transport.request('projects.createChatFolder', {})
+          setProjects((current) =>
+            current.some((project) => project.path === folder.path)
+              ? current
+              : [
+                  {
+                    path: folder.path,
+                    name: folder.name,
+                    pinned: folder.pinned,
+                    chat: true,
+                    sessions: [],
+                  },
+                  ...current,
+                ],
+          )
+          setChatWithoutProject(false)
+          startPath = folder.path
+        } catch (error) {
+          restoreDraft()
+          reportError(error instanceof Error ? error.message : String(error))
+          return
+        }
+      }
       if (!threadId) {
-        if (!activePath) {
+        if (!startPath) {
           restoreDraft()
           return
         }
@@ -4686,12 +4864,12 @@ export function App() {
           ...(selectedServiceTier ? { serviceTier: selectedServiceTier } : {}),
         })
         workspaceStartId = provisionalId
-        workspaceStartToken = holdWorkspaceStart(provisionalId, activePath)
+        workspaceStartToken = holdWorkspaceStart(provisionalId, startPath)
         optimisticTurnId = provisional.activeTurn?.id
         threadController.update(provisionalId, provisional)
         setProjects((current) =>
           current.map((project) =>
-            project.path === activePath
+            project.path === startPath
               ? {
                   ...project,
                   sessions: [
@@ -4725,10 +4903,11 @@ export function App() {
         setThread(provisional)
         setThreadRevealRequest((request) => request + 1)
         const promise = createSession(
-          activePath,
+          startPath,
           provisionalId,
           titleFrom(titlePrompt),
           titlePrompt,
+          startPath !== activePath,
         )
         pendingSession.current = { id: provisionalId, promise, title: titleFrom(titlePrompt) }
         threadId = await promise
@@ -5029,6 +5208,7 @@ export function App() {
       transport,
       activeId,
       activePath,
+      chatWithoutProject,
       createSession,
       projects,
       selectedModelChoice,
@@ -5096,7 +5276,16 @@ export function App() {
   // Settings, where a per-render identity would re-trigger them every render.
   const refreshCatalog = useCallback(() => {
     setCatalogRequest((request) => request + 1)
+    setAccountModelListsRevision((revision) => revision + 1)
   }, [])
+  const settingsModelErrors = useMemo(
+    () => ({ ...modelErrors, ...accountModelErrors }),
+    [modelErrors, accountModelErrors],
+  )
+  const settingsPendingModels = useMemo(
+    () => new Set([...pendingModelSources, ...pendingAccountModels]),
+    [pendingModelSources, pendingAccountModels],
+  )
 
   const changeProviderRoster = useCallback(
     (roster: ProviderRoster) => {
@@ -5235,9 +5424,15 @@ export function App() {
   // prettier-ignore
   const steerQueuedTurn = useCallback((queuedTurnId: string) => { if (!activeId) return; holdQueueAction(queuedTurnId, activeId, 'steer'); const projectPath = findSession(projectsRef.current, activeId)?.project.path; void transport.request('thread.steerQueuedTurn', { threadId: activeId, queuedTurnId }).then(() => { updateQueue(activeId, (items) => items.filter((item) => item.id !== queuedTurnId)); settleQueueAction(queuedTurnId, 'steer'); workspaceIdleProbe.current.unknownQueues.delete(activeId); releaseQueuedStart(queuedTurnId); refreshWorkspaceAfterCompletion(projectPath) }).catch((error) => { settleQueueAction(queuedTurnId, 'steer', error instanceof IndeterminateRequestError); reportError(error instanceof Error ? error.message : String(error)) }) }, [transport, activeId, updateQueue, releaseQueuedStart, refreshWorkspaceAfterCompletion, holdQueueAction, settleQueueAction])
 
-  const selectProject = useCallback((path: string) => {
+  /** No `path` makes the new chat one without a project. */
+  const selectProject = useCallback((path: string | undefined) => {
     setSurface('chat')
-    if (path === activePathRef.current) return
+    setChatWithoutProject(path === undefined)
+    const unchanged =
+      path === undefined
+        ? !activePathRef.current && !activeIdRef.current
+        : path === activePathRef.current
+    if (unchanged) return
     setActivePath(path)
     activeIdRef.current = undefined
     setActiveId(undefined)
@@ -5246,6 +5441,7 @@ export function App() {
     setUndoRestore(undefined)
     setRollbackOpen(false)
   }, [])
+  const selectWithoutProject = useCallback(() => selectProject(undefined), [selectProject])
 
   const selectBranch = useCallback(
     async (branch: string) => {
@@ -5358,12 +5554,16 @@ export function App() {
       setActiveThreadApproval(threadApprovals.current.get(id))
       if (!id.startsWith('pending:')) readSharedSettings(id, threadSelection)
       setHistoryFailure(undefined)
+      setHeldSessionId((held) =>
+        held === id || (found && sessionGroup(found.session) === 'done') ? id : undefined,
+      )
       setActiveId(id)
       if (!keepView) {
         setComposerFocusRequest((request) => request + 1)
         setThreadRevealRequest((request) => request + 1)
         setThreadEntryKey(++threadEntryKeys.current)
       }
+      setChatWithoutProject(false)
       setActivePath(found?.project.path)
       threadController.resetBackground(id)
       threadController.flush(id)
@@ -5861,13 +6061,15 @@ export function App() {
   const startNewChat = useCallback(() => {
     const currentProjects = projectsRef.current
     const currentPath = activePathRef.current
-    if (sidebarSettings.mode === 'inbox' && currentProjects.length > 1) {
+    const folders = currentProjects.filter((project) => !project.chat)
+    if (sidebarSettings.mode === 'inbox' && folders.length > 1) {
       setPreferredNewThreadProject(currentPath)
       setPaletteScope('new-thread')
       return
     }
-    const path = currentPath ?? currentProjects[0]?.path
-    if (path) beginSession(path)
+    // A chat without a project is followed by another one, as a project's chat is.
+    const path = currentPath ?? (chatWithoutProjectRef.current ? undefined : folders[0]?.path)
+    if (path || currentProjects.length > 0) beginSession(path)
     else void addProject()
   }, [beginSession, addProject, sidebarSettings.mode])
 
@@ -6043,7 +6245,7 @@ export function App() {
   const startSidebarSession = useCallback(
     (path?: string, chooseProject?: boolean) => {
       setSurface('chat')
-      const currentProjects = projectsRef.current
+      const currentProjects = projectsRef.current.filter((project) => !project.chat)
       const currentPath = activePathRef.current
       if (chooseProject && currentProjects.length > 1) {
         setPreferredNewThreadProject(path ?? currentPath)
@@ -6051,6 +6253,8 @@ export function App() {
       } else if (path) beginSession(path)
       else if (currentProjects.length === 1 && currentProjects[0]) {
         beginSession(currentProjects[0].path)
+      } else if (currentProjects.length === 0) {
+        beginSession(undefined)
       } else {
         setPreferredNewThreadProject(currentPath)
         setPaletteScope('new-thread')
@@ -6058,6 +6262,7 @@ export function App() {
     },
     [beginSession],
   )
+  const startChatWithoutProject = useCallback(() => beginSession(undefined), [beginSession])
   const selectSidebarSession = useCallback((id: string) => void selectSession(id), [selectSession])
 
   /** The focused pane as it is now, to show unchanged while the other pane has focus. */
@@ -6466,7 +6671,12 @@ export function App() {
       setProjects((current) =>
         current.map((project) => {
           if (project.path !== projectPath) return project
-          const sessions = moveRailSession(project.sessions, sourceId, targetId, position)
+          const sessions = moveRailSession(
+            railSessionOrder(project.sessions, heldSessionIdRef.current),
+            sourceId,
+            targetId,
+            position,
+          )
           return sessions === project.sessions ? project : { ...project, sessions }
         }),
       )
@@ -6493,7 +6703,11 @@ export function App() {
   }, [])
   const cycleChat = useCallback(
     (direction: -1 | 1) => {
-      const sessions = sidebarSessions(visibleProjectsRef.current, sidebarSettingsRef.current.mode)
+      const sessions = sidebarSessions(
+        visibleProjectsRef.current,
+        sidebarSettingsRef.current.mode,
+        heldSessionIdRef.current,
+      )
       if (sessions.length === 0) return
       const activeId = activeIdRef.current
       const current = activeId ? sessions.findIndex((session) => session.id === activeId) : -1
@@ -7155,6 +7369,15 @@ export function App() {
         newThreadProject: true,
         run: () => beginSession(project.path),
       })),
+      {
+        id: 'new-chat-without-project',
+        title: 'New thread without a project',
+        detail: 'Gets a folder of its own',
+        group: 'Projects',
+        keywords: 'session conversation chat folder none',
+        newThreadProject: true,
+        run: () => beginSession(undefined),
+      },
     ]
   }, [
     paletteScope,
@@ -7456,6 +7679,7 @@ export function App() {
     projects: projectChoices,
     projectPath: activePath,
     projectName: activeProject ? displayName(activeProject) : undefined,
+    withoutProject: chatWithoutProject && !activePath,
     threadId: activeId && !activeId.startsWith('pending:') ? activeId : undefined,
     projectsLoading: projectsStatus === 'loading',
     branch:
@@ -7518,6 +7742,7 @@ export function App() {
     onTranscribeVoice: transcribeVoice,
     onCancelVoice: cancelVoice,
     onProjectChange: selectProject,
+    onChooseWithoutProject: selectWithoutProject,
     onBranchChange: changeBranch,
     onProjectRequired: requireProject,
     onSetupProvider: sendAvailability === 'no-provider' ? openProviderPicker : openProviderSetup,
@@ -7586,6 +7811,7 @@ export function App() {
           projectsLoading={projectsStatus === 'loading'}
           activeProjectPath={activePath}
           activeSessionId={surface === 'chat' ? activeId : undefined}
+          heldSessionId={surface === 'chat' ? shownHeldSessionId : undefined}
           pullRequestsActive={surface === 'pull-requests'}
           providerName={providerName(provider, sourceAgentName)}
           keybindings={keybindings}
@@ -7608,6 +7834,7 @@ export function App() {
           onAddProject={addSidebarProject}
           onAddDroppedProjects={addDroppedSidebarProjects}
           onNewSession={startSidebarSession}
+          onNewChatWithoutProject={startChatWithoutProject}
           onSelectSession={selectSidebarSession}
           besideSessionId={surface === 'chat' ? besideId : undefined}
           onOpenSessionBeside={openSessionBeside}
@@ -7684,43 +7911,46 @@ export function App() {
                             >
                               {activeId ? (
                                 <AccountLabelContext.Provider value={accountLabel}>
-                                  <Suspense fallback={<ThreadSkeleton />}>
-                                    <LazyThread
-                                      key={threadEntryKey}
-                                      frameStore={threadFrameStore}
-                                      errorsInComposer
-                                      stopping={stopping}
-                                      loading={loadingThreadId === activeId}
-                                      loadFailure={
-                                        historyFailure?.threadId === activeId
-                                          ? historyFailure.message
-                                          : undefined
-                                      }
-                                      onRetryLoad={retryOpenedHistory}
-                                      projectPath={activePath}
-                                      threadId={activeId}
-                                      transport={transport}
-                                      searchJump={
-                                        searchJump?.threadId === activeId ? searchJump : undefined
-                                      }
-                                      onSearchJumpDone={finishSearchJump}
-                                      revealRequest={threadRevealRequest}
-                                      checkpoints={checkpoints}
-                                      onDecide={decideApproval}
-                                      onAnswerUserInput={answerUserInput}
-                                      onEditMessage={editMessage}
-                                      onRevertCheckpoint={revertCheckpoint}
-                                      onUndoChanges={undoTurnChanges}
-                                      onLoadOlderHistory={loadOlderHistory}
-                                      onLoadCompleteHistory={loadCompleteHistory}
-                                      turnRail
-                                    />
-                                  </Suspense>
+                                  <ModelLabelContext.Provider value={modelLabel}>
+                                    <Suspense fallback={<ThreadSkeleton />}>
+                                      <LazyThread
+                                        key={threadEntryKey}
+                                        frameStore={threadFrameStore}
+                                        errorsInComposer
+                                        stopping={stopping}
+                                        loading={loadingThreadId === activeId}
+                                        loadFailure={
+                                          historyFailure?.threadId === activeId
+                                            ? historyFailure.message
+                                            : undefined
+                                        }
+                                        onRetryLoad={retryOpenedHistory}
+                                        projectPath={activePath}
+                                        threadId={activeId}
+                                        transport={transport}
+                                        searchJump={
+                                          searchJump?.threadId === activeId ? searchJump : undefined
+                                        }
+                                        onSearchJumpDone={finishSearchJump}
+                                        revealRequest={threadRevealRequest}
+                                        checkpoints={checkpoints}
+                                        onDecide={decideApproval}
+                                        onAnswerUserInput={answerUserInput}
+                                        onEditMessage={editMessage}
+                                        onRevertCheckpoint={revertCheckpoint}
+                                        onUndoChanges={undoTurnChanges}
+                                        onLoadOlderHistory={loadOlderHistory}
+                                        onLoadCompleteHistory={loadCompleteHistory}
+                                        turnRail
+                                      />
+                                    </Suspense>
+                                  </ModelLabelContext.Provider>
                                 </AccountLabelContext.Provider>
                               ) : (
                                 <Empty
                                   projects={projects}
                                   activePath={activePath}
+                                  withoutProject={chatWithoutProject}
                                   status={projectsStatus}
                                   startupProjectName={startupProjectName}
                                   onAddProject={addSidebarProject}
@@ -7756,40 +7986,43 @@ export function App() {
                             >
                               {besideId ? (
                                 <AccountLabelContext.Provider value={accountLabel}>
-                                  <Suspense fallback={<ThreadSkeleton />}>
-                                    <LazyThread
-                                      key={split.frozen.entryKey}
-                                      frameStore={threadController.columns[slot]}
-                                      errorsInComposer
-                                      keyboardActive={false}
-                                      loading={loadingThreadId === besideId}
-                                      loadFailure={
-                                        historyFailure?.threadId === besideId
-                                          ? historyFailure.message
-                                          : undefined
-                                      }
-                                      onRetryLoad={retryOpenedHistory}
-                                      projectPath={besideSession?.project.path}
-                                      threadId={besideId}
-                                      transport={transport}
-                                      onSearchJumpDone={finishSearchJump}
-                                      revealRequest={split.frozen.revealRequest}
-                                      checkpoints={NO_CHECKPOINTS}
-                                      onDecide={decideBesideApproval}
-                                      onAnswerUserInput={answerBesideUserInput}
-                                      onEditMessage={editBesideMessage}
-                                      onRevertCheckpoint={revertCheckpoint}
-                                      onUndoChanges={undoTurnChanges}
-                                      onLoadOlderHistory={loadOlderHistory}
-                                      onLoadCompleteHistory={loadCompleteHistory}
-                                      turnRail
-                                    />
-                                  </Suspense>
+                                  <ModelLabelContext.Provider value={modelLabel}>
+                                    <Suspense fallback={<ThreadSkeleton />}>
+                                      <LazyThread
+                                        key={split.frozen.entryKey}
+                                        frameStore={threadController.columns[slot]}
+                                        errorsInComposer
+                                        keyboardActive={false}
+                                        loading={loadingThreadId === besideId}
+                                        loadFailure={
+                                          historyFailure?.threadId === besideId
+                                            ? historyFailure.message
+                                            : undefined
+                                        }
+                                        onRetryLoad={retryOpenedHistory}
+                                        projectPath={besideSession?.project.path}
+                                        threadId={besideId}
+                                        transport={transport}
+                                        onSearchJumpDone={finishSearchJump}
+                                        revealRequest={split.frozen.revealRequest}
+                                        checkpoints={NO_CHECKPOINTS}
+                                        onDecide={decideBesideApproval}
+                                        onAnswerUserInput={answerBesideUserInput}
+                                        onEditMessage={editBesideMessage}
+                                        onRevertCheckpoint={revertCheckpoint}
+                                        onUndoChanges={undoTurnChanges}
+                                        onLoadOlderHistory={loadOlderHistory}
+                                        onLoadCompleteHistory={loadCompleteHistory}
+                                        turnRail
+                                      />
+                                    </Suspense>
+                                  </ModelLabelContext.Provider>
                                 </AccountLabelContext.Provider>
                               ) : (
                                 <Empty
                                   projects={projects}
                                   activePath={besideNewPath}
+                                  withoutProject={false}
                                   status={projectsStatus}
                                   startupProjectName={startupProjectName}
                                   onAddProject={addSidebarProject}
@@ -7948,11 +8181,11 @@ export function App() {
               onProviderRosterChange={changeProviderRoster}
               providersView={settingsSection.view}
               providersLoading={catalogAvailability === 'loading'}
-              models={models}
+              models={accountModels}
               modelsLoading={catalogAvailability === 'loading'}
-              modelErrors={modelErrors}
-              pendingModelSources={pendingModelSources}
-              hiddenModels={hiddenModels}
+              modelErrors={settingsModelErrors}
+              pendingModelSources={settingsPendingModels}
+              hiddenModels={hiddenAccountModels}
               onModelVisibilityChange={changeModelVisibility}
               onModelsVisibilityChange={changeModelsVisibility}
               providerDefaults={providerDefaultsControls}
@@ -8024,9 +8257,13 @@ export function App() {
             scope={paletteScope}
             deferredSearch={paletteChatSearch}
             preferredCommandId={
-              paletteScope === 'new-thread' && preferredNewThreadProject
-                ? `new-chat-${encodeURIComponent(preferredNewThreadProject)}`
-                : undefined
+              paletteScope !== 'new-thread' || !preferredNewThreadProject
+                ? undefined
+                : projects.some(
+                      (project) => project.path === preferredNewThreadProject && project.chat,
+                    )
+                  ? 'new-chat-without-project'
+                  : `new-chat-${encodeURIComponent(preferredNewThreadProject)}`
             }
             onClose={closePalette}
           />
@@ -8178,6 +8415,8 @@ function readRailWidth(): number {
 function Empty(props: {
   projects: Project[]
   activePath: string | undefined
+  /** The new chat gets a folder of its own instead of starting in a project. */
+  withoutProject: boolean
   status: 'loading' | 'ready' | 'failed'
   startupProjectName: string | undefined
   onAddProject: () => void
@@ -8204,6 +8443,16 @@ function Empty(props: {
         <button className="btn" type="button" onClick={props.onRetry}>
           Retry
         </button>
+      </div>
+    )
+  }
+
+  if (props.withoutProject) {
+    return (
+      <div className="empty">
+        <div className="empty__prompt" role="heading" aria-level={1}>
+          What should we build?
+        </div>
       </div>
     )
   }
@@ -8237,7 +8486,7 @@ function Empty(props: {
 
 /** One provider account, as a key; the default account however it is named. */
 function chatAccountKey(provider: ProviderId, accountId: AccountId | undefined): string {
-  return `${provider}\u0000${accountId ?? DEFAULT_ACCOUNT_ID}`
+  return accountListKey(provider, accountId ?? DEFAULT_ACCOUNT_ID)
 }
 
 /**

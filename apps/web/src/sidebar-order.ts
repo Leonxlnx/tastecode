@@ -11,6 +11,8 @@ type ProjectSidebarProjection = {
 export type SidebarRail = {
   orderedProjects: Project[]
   pinnedSessions: PinnedSession[]
+  /** Chats without a project, by group like a project's, newest first in each. */
+  chatSessions: PinnedSession[]
   /** Archived chats of every project, the most recently archived first. */
   archivedSessions: PinnedSession[]
 }
@@ -131,28 +133,48 @@ function sameIds<T>(
 }
 
 /**
- * The rail: pinned chats in their own section, then pinned projects ahead of
- * the rest, then archived chats at the end. Every list keeps its saved order.
- * A chat that starts, waits, finishes or is read stays where it is; only a new
- * chat, a pin, a drag or archiving moves one.
+ * The rail: pinned chats in their own section, then the chats without a
+ * project, then pinned projects ahead of the rest, then archived chats at the
+ * end. Every list keeps its saved order,
+ * except that a project's chats are listed by group (sessionGroup): what is
+ * done first, then what needs the user, what is working, and the rest. A
+ * finished turn also lifts its chat to the top of its group (liftSession).
+ * `heldSessionId`, the open chat that was done, stays with the done chats
+ * until another chat opens, so reading it does not move it from under the user.
  */
-export function sidebarRail(projects: Project[]): SidebarRail {
+export function sidebarRail(projects: Project[], heldSessionId?: string): SidebarRail {
   const pinned: PinnedSession[] = []
   const archived: PinnedSession[] = []
+  const chats: PinnedSession[] = []
   const pinnedProjects: Project[] = []
   const unpinnedProjects: Project[] = []
   for (const source of projects) {
-    const projection = projectSidebarProjection(source)
+    const projection = projectSidebarProjection(source, heldSessionId)
     pinned.push(...projection.pinnedSessions)
     archived.push(...projection.archivedSessions)
-    if (source.pinned) pinnedProjects.push(projection.project)
+    if (source.chat) {
+      for (const session of projection.project.sessions) {
+        chats.push({ projectPath: source.path, session })
+      }
+    } else if (source.pinned) pinnedProjects.push(projection.project)
     else unpinnedProjects.push(projection.project)
   }
   return {
     orderedProjects: [...pinnedProjects, ...unpinnedProjects],
     pinnedSessions: pinned,
+    chatSessions: groupChats(chats, heldSessionId),
     archivedSessions: archived.sort((a, b) => archivedAt(b.session) - archivedAt(a.session)),
   }
+}
+
+function groupChats(chats: PinnedSession[], heldSessionId?: string): PinnedSession[] {
+  if (chats.length < 2) return chats
+  const newestFirst = [...chats].sort((a, b) => b.session.createdAt - a.session.createdAt)
+  const byId = new Map(newestFirst.map((chat) => [chat.session.id, chat]))
+  return groupSessions(
+    newestFirst.map(({ session }) => session),
+    heldSessionId,
+  ).map((session) => byId.get(session.id)!)
 }
 
 /**
@@ -173,15 +195,64 @@ function archivedAt(session: Session): number {
  * folded Archived section. The inbox's project filter and search box are not
  * applied, so every chat is reachable.
  */
-export function sidebarSessions(projects: Project[], mode: 'classic' | 'inbox'): Session[] {
+export function sidebarSessions(
+  projects: Project[],
+  mode: 'classic' | 'inbox',
+  heldSessionId?: string,
+): Session[] {
   if (mode === 'inbox') {
     return classifyInboxEntries(projects, '', '').ordered.map(({ session }) => session)
   }
-  const { orderedProjects, pinnedSessions } = sidebarRail(projects)
+  const { orderedProjects, pinnedSessions, chatSessions } = sidebarRail(projects, heldSessionId)
   return [
     ...pinnedSessions.map(({ session }) => session),
+    ...chatSessions.map(({ session }) => session),
     ...orderedProjects.flatMap((project) => project.sessions),
   ]
+}
+
+/**
+ * A chat whose turn just ended goes to the top of the saved order, so it leads
+ * whichever group it lands in: done when unread, read when it was open.
+ */
+export function liftSession<P extends { sessions: readonly { id: string }[] }>(
+  projects: P[],
+  sessionId: string,
+): P[] {
+  for (const [projectIndex, project] of projects.entries()) {
+    const index = project.sessions.findIndex((session) => session.id === sessionId)
+    if (index < 0) continue
+    if (index === 0) return projects
+    const sessions = [
+      project.sessions[index]!,
+      ...project.sessions.slice(0, index),
+      ...project.sessions.slice(index + 1),
+    ]
+    const next = [...projects]
+    next[projectIndex] = { ...project, sessions }
+    return next
+  }
+  return projects
+}
+
+/**
+ * A project's saved order with its tree chats put in the order the rail shows
+ * them, each in a slot a tree chat had, so pinned and archived chats keep
+ * theirs. A drop is placed in this order, so a chat lands where it was dropped.
+ */
+export function railSessionOrder(sessions: Session[], heldSessionId?: string): Session[] {
+  const slots: number[] = []
+  const tree: Session[] = []
+  for (const [index, session] of sessions.entries()) {
+    if (!inProjectTree(session)) continue
+    slots.push(index)
+    tree.push(session)
+  }
+  const grouped = groupSessions(tree, heldSessionId)
+  if (grouped === tree) return sessions
+  const result = [...sessions]
+  for (const [index, slot] of slots.entries()) result[slot] = grouped[index]!
+  return result
 }
 
 /**
@@ -208,11 +279,21 @@ function inProjectTree(session: Session): boolean {
   return !session.pinned && !isArchived(session)
 }
 
-const projectSidebarProjections = new WeakMap<Project, ProjectSidebarProjection>()
+const projectSidebarProjections = new WeakMap<
+  Project,
+  { held: string | undefined; projection: ProjectSidebarProjection }
+>()
 
-function projectSidebarProjection(source: Project): ProjectSidebarProjection {
+function projectSidebarProjection(
+  source: Project,
+  heldSessionId?: string,
+): ProjectSidebarProjection {
+  const held =
+    heldSessionId !== undefined && source.sessions.some(({ id }) => id === heldSessionId)
+      ? heldSessionId
+      : undefined
   const cached = projectSidebarProjections.get(source)
-  if (cached) return cached
+  if (cached && cached.held === held) return cached.projection
 
   const pinnedSessions: PinnedSession[] = []
   const archivedSessions: PinnedSession[] = []
@@ -222,17 +303,54 @@ function projectSidebarProjection(source: Project): ProjectSidebarProjection {
     else if (isArchived(session)) archivedSessions.push({ projectPath: source.path, session })
     else sessions.push(session)
   }
-  const project = sessions.length === source.sessions.length ? source : { ...source, sessions }
+  const grouped = groupSessions(sessions, held)
+  const project =
+    grouped === source.sessions ||
+    (grouped === sessions && sessions.length === source.sessions.length)
+      ? source
+      : { ...source, sessions: grouped }
   const projection = { project, pinnedSessions, archivedSessions }
-  projectSidebarProjections.set(source, projection)
+  projectSidebarProjections.set(source, { held, projection })
   return projection
+}
+
+/** Where a chat is listed in its project, from the top. */
+export type SessionGroup = 'done' | 'attention' | 'working' | 'read'
+
+const SESSION_GROUPS: readonly SessionGroup[] = ['done', 'attention', 'working', 'read']
+
+/**
+ * A finished turn nobody has read is done; an approval, a question or an
+ * unread failure needs the user; a turn running or queued is working; the
+ * rest has been read and is idle.
+ */
+export function sessionGroup(session: Session): SessionGroup {
+  if (sessionAttention(session)) return 'attention'
+  if (session.status === 'starting' || session.status === 'working' || session.status === 'queued')
+    return 'working'
+  return session.unread ? 'done' : 'read'
+}
+
+function groupRank(session: Session, heldSessionId: string | undefined): number {
+  const group = sessionGroup(session)
+  return SESSION_GROUPS.indexOf(group === 'read' && session.id === heldSessionId ? 'done' : group)
+}
+
+/** The chats by group, each group in the saved order. Already grouped: the same array. */
+function groupSessions(sessions: Session[], heldSessionId?: string): Session[] {
+  const ranks = sessions.map((session) => groupRank(session, heldSessionId))
+  if (ranks.every((rank, index) => index === 0 || ranks[index - 1]! <= rank)) return sessions
+  return sessions
+    .map((session, index) => ({ session, rank: ranks[index]! }))
+    .sort((a, b) => a.rank - b.rank)
+    .map(({ session }) => session)
 }
 
 /**
  * What a chat is waiting for, if anything. An approval or a question blocks
  * the agent until it is answered. A failed turn waits only until it is read,
  * so opening the chat clears it. A finished answer does not need the user:
- * the tree shows it unread, with a heavier title, where it already is.
+ * the tree lists it unread, with a heavier title, among the done chats.
  */
 export function sessionAttention(session: Session): Attention | undefined {
   if (session.status === 'approval') return 'approval'
@@ -242,20 +360,27 @@ export function sessionAttention(session: Session): Attention | undefined {
 }
 
 /**
- * The chats a project lists while it is folded to its first `limit` rows: those
- * rows, then every later chat that is working, needs the user, is unread or is
- * open, each at its own place in the order. Nothing moves; only quiet chats
- * below the fold stay hidden, so the fold never hides a chat with news.
+ * The chats a project lists while it is folded to `limit` rows. Every chat that
+ * is working, needs the user, is unread or is open is listed, past the limit if
+ * there are more of them; the rows left over go to the first quiet chats. Each
+ * keeps its place in the order, so nothing moves and the fold never hides news.
  */
 export function foldedProjectSessions(
   sessions: readonly Session[],
   activeSessionId: string | undefined,
   limit: number,
 ): Session[] {
-  const listed = sessions.slice(0, limit)
-  for (let index = limit; index < sessions.length; index += 1) {
-    const session = sessions[index]!
-    if (session.id === activeSessionId || hasNews(session)) listed.push(session)
+  const inSight = (session: Session) => session.id === activeSessionId || hasNews(session)
+  let quietRows = limit
+  for (const session of sessions) if (inSight(session)) quietRows -= 1
+  const listed: Session[] = []
+  for (const session of sessions) {
+    if (inSight(session)) {
+      listed.push(session)
+    } else if (quietRows > 0) {
+      listed.push(session)
+      quietRows -= 1
+    }
   }
   return listed
 }

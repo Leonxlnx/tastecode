@@ -408,6 +408,58 @@ describe('streamed thread renders', () => {
     )
   })
 
+  it('draws neighbouring work rows as one list, and only those', () => {
+    const user = message({ id: 'user-1', turnId: 'turn-2', role: 'user', text: 'Run the checks' })
+    const thought = message({
+      id: 'thought-1',
+      turnId: 'turn-2',
+      type: 'reasoning',
+      role: undefined,
+      text: 'Checking',
+    })
+    const blank = message({
+      id: 'thought-2',
+      turnId: 'turn-2',
+      type: 'reasoning',
+      role: undefined,
+      text: '',
+    })
+    const command = message({
+      id: 'command-1',
+      turnId: 'turn-2',
+      type: 'command',
+      role: undefined,
+      command: 'pnpm test',
+    })
+    const narration = message({
+      id: 'commentary-1',
+      turnId: 'turn-2',
+      role: 'assistant',
+      phase: 'commentary',
+      text: 'One check failed.',
+    })
+    const later = message({
+      id: 'thought-3',
+      turnId: 'turn-2',
+      type: 'reasoning',
+      role: undefined,
+      text: 'Looking again',
+    })
+
+    const rendered = render(view([user, thought, blank, command, narration, later]))
+    const className = (index: number) =>
+      rendered.container.querySelector(`[data-index="${index}"]`)?.className
+
+    // A row with no text between two work rows does not separate them.
+    expect(className(1)).toContain('is-work-to-next')
+    // Against prose, on either side, a work row keeps its normal distance.
+    expect(className(3)).not.toContain('is-work-to-next')
+    expect(className(4)).not.toContain('is-work-to-next')
+    expect(className(0)).not.toContain('is-work-to-next')
+    // The last row of a turn has nothing to close up to.
+    expect(className(5)).not.toContain('is-work-to-next')
+  })
+
   it('crossfades working labels without remounting the rail', () => {
     vi.useFakeTimers()
     const user = message({

@@ -6,6 +6,7 @@ import { methods, type Account, type ProviderId, type ResultOf } from '@harness/
 import { customModelChoice, type ModelChoice } from '../model-catalog.js'
 import { MODEL_PICKER_LAYOUT_KEY, writeModelPickerLayout } from '../model-picker-layout.js'
 import { resetInstalls } from '../provider-install.js'
+import { providerAccountsStore } from '../provider-accounts-state.js'
 import { providerUpdatesStore } from '../provider-updates.js'
 import { SIMULATED_CHECK_MS, stopAppUpdateSimulation } from '../app-update-simulation.js'
 import {
@@ -815,6 +816,67 @@ describe('model sources that failed to load', () => {
     expect(titles()).toEqual(['Codex', 'Cursor'])
     expect(screen.getByRole('switch', { name: 'Include Composer 2 in model picker' })).toBeTruthy()
     expect(sourceList().querySelector('.set-notice')).toBeNull()
+  })
+
+  it("names the account whose models could not be listed, beside its provider's other account", async () => {
+    const transport = new TestTransport((method) => {
+      if (method === 'accounts.list') {
+        return {
+          accounts: [
+            {
+              id: 'default',
+              provider: 'claude-code',
+              label: 'Personal',
+              managed: false,
+              createdAt: 1,
+            },
+            {
+              id: 'work',
+              provider: 'claude-code',
+              label: 'Work',
+              home: '/accounts/work',
+              managed: false,
+              createdAt: 1,
+              plan: 'Max',
+            },
+          ],
+          active: {},
+        }
+      }
+      return undefined
+    })
+    const release = providerAccountsStore(transport).retain()
+    await waitFor(() => expect(providerAccountsStore(transport).snapshot().phase).toBe('ready'))
+    renderSettings({
+      initialSection: 'models',
+      transport,
+      overrides: {
+        providerStatuses: [installedProvider('claude-code', 'Claude Code')],
+        models: [
+          {
+            key: 'claude-code:opus',
+            provider: 'claude-code',
+            sourceName: 'Claude Code · Personal',
+            mark: 'anthropic',
+            model: {
+              id: 'opus',
+              displayName: 'Opus',
+              isDefault: true,
+              reasoningEfforts: [],
+              serviceTiers: [],
+            },
+          },
+        ],
+        modelErrors: {
+          'claude-code@work': { id: 'models:work', message: 'Could not load the Work models.' },
+        },
+      },
+    })
+    const work = screen.getByRole('region', { name: 'Claude Code · Work' })
+    expect(noticeText(within(work).getByRole('alert'))).toBe('Could not load the Work models.')
+    expect(within(work).getByRole('button', { name: 'Retry' })).toBeTruthy()
+    expect(screen.getByRole('switch', { name: 'Include Opus in model picker' })).toBeTruthy()
+    release()
   })
 
   it('lists failed sources instead of the empty line when nothing loaded', () => {
@@ -3176,6 +3238,95 @@ describe('provider roster', () => {
     fireEvent.click(within(max).getByRole('button', { name: /^Codex · Max default access/ }))
     fireEvent.click(screen.getByRole('menuitemradio', { name: /^Ask first/ }))
     expect(onAccessChange).toHaveBeenCalledWith('codex@work-1a2b3c', 'ask')
+  })
+
+  it('gives every Claude Code account a runtime row of its own', async () => {
+    const claude: ProviderStatus = {
+      id: 'claude-code',
+      displayName: 'Claude Code',
+      installed: true,
+      auth: 'authenticated',
+      capabilities: {
+        steer: false,
+        fork: false,
+        interrupt: false,
+        reasoningItems: false,
+        approvals: false,
+        images: false,
+        multipleAccounts: true,
+        runtimes: [
+          { id: 'sdk', label: 'Agent SDK', description: 'The SDK starts Claude Code' },
+          { id: 'cli', label: 'claude -p', description: 'TasteCode starts claude -p itself' },
+        ],
+      },
+    }
+    const personal = {
+      id: 'personal-1a2b3c',
+      provider: 'claude-code',
+      label: 'Personal',
+      home: '/Users/me/.claude_personal',
+      managed: false,
+      email: 'me@example.com',
+    }
+    const second = { ...personal, id: 'side-4d5e6f', label: 'Side', email: 'side@example.com' }
+    const transport = new TestTransport(async (method, params) => {
+      if (method === 'auth.status') return { signedIn: true, email: 'me@example.com' }
+      if (method === 'providers.updates') return { updates: [], checkedAt: 0 }
+      if (method === 'models.list') return { models: [] }
+      if (method === 'accounts.detect') return { found: [] }
+      if (method === 'providers.contextSettings') return {}
+      if (method === 'providers.accountContextSettings') return { accounts: [] }
+      if (method === 'providers.runtimeSettings') return { 'claude-code': 'cli' }
+      if (method === 'providers.accountRuntimeSettings') return { accounts: [] }
+      if (method === 'providers.updateAccountRuntimeSetting') return { accounts: [params] }
+      if (method === 'accounts.list') {
+        return {
+          accounts: [
+            { id: 'default', provider: 'claude-code', label: 'Team', managed: false },
+            personal,
+            second,
+          ],
+          active: {},
+        }
+      }
+      throw new Error(`unexpected ${method}`)
+    })
+    renderSettings({
+      initialSection: 'providers',
+      transport,
+      overrides: {
+        providerStatuses: [claude],
+        acpAgents: library,
+        providerRoster: ['claude-code'],
+        onProviderRosterChange: vi.fn(),
+        providerDefaults: {
+          pins: {},
+          onPinChange: vi.fn(),
+          access: {},
+          onAccessChange: vi.fn(),
+        },
+      },
+    })
+
+    const runtime = async (name: string) =>
+      (await screen.findByRole('button', {
+        name: new RegExp(`^Claude Code · ${name} runtime: `),
+      })) as HTMLButtonElement
+    await waitFor(async () => expect((await runtime('Team')).textContent).toBe('claude -p'))
+    // Team's choice stays Team's.
+    expect((await runtime('Personal')).textContent).toBe('Agent SDK')
+    expect((await runtime('Side')).textContent).toBe('Agent SDK')
+
+    fireEvent.click(await runtime('Personal'))
+    fireEvent.click(await screen.findByRole('menuitemradio', { name: /claude -p/ }))
+    await waitFor(() =>
+      expect(transport.requests).toContainEqual({
+        method: 'providers.updateAccountRuntimeSetting',
+        params: { provider: 'claude-code', accountId: personal.id, runtime: 'cli' },
+      }),
+    )
+    await waitFor(async () => expect((await runtime('Personal')).textContent).toBe('claude -p'))
+    expect((await runtime('Side')).textContent).toBe('Agent SDK')
   })
 
   it('offers Install for an added agent that is not on this machine', () => {

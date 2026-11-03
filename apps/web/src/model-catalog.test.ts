@@ -10,6 +10,7 @@ import {
   groupModelChoicesByLab,
   importLegacyVisibility,
   isCustomModelChoice,
+  modelDisplayName,
   modelVisibilityDefaults,
   providerDisplayName,
   readModelLineage,
@@ -747,5 +748,37 @@ describe('model catalog', () => {
 
     expect(resolveReasoningEffort({ currentEffort: 'ultracode', nextModel: codex })).toBe('ultra')
     expect(resolveReasoningEffort({ currentEffort: 'ultracode', nextModel: luna })).toBe('max')
+  })
+})
+
+describe('model display names', () => {
+  const claude = (accountId: string | undefined, displayName: string) =>
+    choicesFor(
+      {
+        provider: 'claude-code',
+        sourceName: 'Claude Code',
+        mark: 'anthropic',
+        ...(accountId ? { accountId } : {}),
+      },
+      [{ ...model, id: 'opus', displayName }],
+    )
+  const choices = [...claude(undefined, 'Opus 4.7'), ...claude('work', 'Opus 4.6')]
+
+  it("names a model by the picker's name, from the chat's own account first", () => {
+    expect(modelDisplayName(choices, { provider: 'claude-code', modelId: 'opus' })).toBe('Opus 4.7')
+    expect(
+      modelDisplayName(choices, { provider: 'claude-code', accountId: 'work', modelId: 'opus' }),
+    ).toBe('Opus 4.6')
+    expect(
+      modelDisplayName(choices, { provider: 'claude-code', accountId: 'gone', modelId: 'opus' }),
+    ).toBe('Opus 4.7')
+  })
+
+  it('names nothing the app does not list', () => {
+    expect(modelDisplayName(choices, { provider: 'codex', modelId: 'opus' })).toBeUndefined()
+    expect(modelDisplayName(choices, { provider: 'claude-code', modelId: 'haiku' })).toBeUndefined()
+    expect(
+      modelDisplayName(choices, { provider: 'claude-code', agent: 'gemini', modelId: 'opus' }),
+    ).toBeUndefined()
   })
 })

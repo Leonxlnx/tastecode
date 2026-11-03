@@ -16,6 +16,7 @@ import {
 } from '@tabler/icons-react'
 import type {
   AccountContextSettings,
+  AccountRuntimeSetting,
   AccountId,
   ApprovalMode,
   ContextControl,
@@ -254,6 +255,11 @@ export function useProviderContextSettings(transport: Transport, enabled: boolea
   return { state, errors, update }
 }
 
+type AccountRuntimeState =
+  | { phase: 'loading' }
+  | { phase: 'ready'; accounts: readonly AccountRuntimeSetting[] }
+  | { phase: 'error'; message: string }
+
 export type RuntimeSettingsState =
   | { phase: 'loading' }
   | { phase: 'ready'; settings: ProviderRuntimeSettings }
@@ -271,9 +277,10 @@ function withProviderRuntime(
 }
 
 /**
- * The runtime each provider launches through, kept by the server because the
- * server starts every session, the phone's included. A choice shows at once
- * and falls back to the last saved one when the server refuses it.
+ * The runtime each provider's default account launches through, kept by the
+ * server because the server starts every session, the phone's included. A
+ * choice shows at once and falls back to the last saved one when the server
+ * refuses it.
  */
 export function useProviderRuntimeSettings(transport: Transport, enabled: boolean) {
   const [state, setState] = useState<RuntimeSettingsState>({ phase: 'loading' })
@@ -332,6 +339,98 @@ export function useProviderRuntimeSettings(transport: Transport, enabled: boolea
   return { state, errors, update }
 }
 
+function withAccountRuntime(
+  accounts: readonly AccountRuntimeSetting[],
+  provider: ProviderId,
+  accountId: AccountId,
+  runtime: string | null,
+): AccountRuntimeSetting[] {
+  const others = accounts.filter(
+    (each) => each.provider !== provider || each.accountId !== accountId,
+  )
+  return runtime === null ? others : [...others, { provider, accountId, runtime }]
+}
+
+/**
+ * The runtime each further account launches through. An account without one
+ * is on the default runtime, whatever another account chose; edits show at once
+ * and fall back to the last saved state when the server refuses them.
+ */
+export function useAccountRuntimeSettings(transport: Transport, enabled: boolean) {
+  const [state, setState] = useState<AccountRuntimeState>({ phase: 'loading' })
+  const [errors, setErrors] = useState<Record<string, string | undefined>>({})
+  const confirmed = useRef<readonly AccountRuntimeSetting[]>([])
+  const updates = useRef<Record<string, number>>({})
+
+  useEffect(() => {
+    if (!enabled) return
+    let live = true
+    void (async () => {
+      try {
+        const { accounts } = await transport.request('providers.accountRuntimeSettings', {})
+        if (!live) return
+        confirmed.current = accounts
+        setState({ phase: 'ready', accounts })
+      } catch (cause) {
+        if (live) setState({ phase: 'error', message: errorMessage(cause) })
+      }
+    })()
+    return () => {
+      live = false
+    }
+  }, [transport, enabled])
+
+  const update = useCallback(
+    (provider: ProviderId, accountId: AccountId, runtime: string | null) => {
+      const key = accountKey(provider, accountId)
+      const show = (accounts: readonly AccountRuntimeSetting[]) =>
+        setState((current) => (current.phase === 'ready' ? { phase: 'ready', accounts } : current))
+      const request = (updates.current[key] ?? 0) + 1
+      updates.current[key] = request
+      setState((current) =>
+        current.phase === 'ready'
+          ? {
+              phase: 'ready',
+              accounts: withAccountRuntime(current.accounts, provider, accountId, runtime),
+            }
+          : current,
+      )
+      setErrors((current) => ({ ...current, [key]: undefined }))
+      void (async () => {
+        try {
+          const { accounts } = await transport.request('providers.updateAccountRuntimeSetting', {
+            provider,
+            accountId,
+            runtime,
+          })
+          confirmed.current = accounts
+          if (updates.current[key] === request) show(accounts)
+        } catch (cause) {
+          if (updates.current[key] !== request) return
+          show(confirmed.current)
+          setErrors((current) => ({ ...current, [key]: errorMessage(cause) }))
+        }
+      })()
+    },
+    [transport],
+  )
+
+  /** The account's choice in the shape the rows read. */
+  const resolve = (provider: ProviderId, accountId: AccountId): RuntimeSettingsState => {
+    if (state.phase !== 'ready') return state
+    const own = state.accounts.find(
+      (each) => each.provider === provider && each.accountId === accountId,
+    )
+    return { phase: 'ready', settings: own ? { [provider]: own.runtime } : {} }
+  }
+
+  return {
+    update,
+    resolve,
+    errors: (provider: ProviderId, accountId: AccountId) => errors[accountKey(provider, accountId)],
+  }
+}
+
 export function formatTokens(tokens: number): string {
   if (tokens >= 1_000_000) {
     const millions = tokens / 1_000_000
@@ -378,9 +477,8 @@ export function ProviderTuning(props: {
   /** A further account's settings, its own or its provider's, in place of the provider's. */
   accountContext?: ProviderContextState | undefined
   /**
-   * The runtime the provider's sessions launch through, for a provider that
-   * declares more than one. Absent where the rows are an account's: every
-   * account runs through its provider's.
+   * The runtime these rows' sessions launch through, for a provider that
+   * declares more than one. Each account has its own.
    */
   runtime?:
     | {

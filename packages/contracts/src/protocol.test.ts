@@ -563,6 +563,28 @@ describe('protocol envelopes', () => {
     ).toEqual({ path: 'D:\\x', branch: 'feature/shelf' })
   })
 
+  it('marks a chat folder in the project list and when one is created', () => {
+    const folder = {
+      path: '/home/me/.tastecode/threads/2026-11-01-amber-heron',
+      name: '2026-11-01-amber-heron',
+      pinned: false,
+      createdAt: 0,
+      chat: true,
+    }
+    expect(methods['projects.createChatFolder'].params.parse({})).toEqual({})
+    expect(methods['projects.createChatFolder'].result.parse(folder)).toEqual(folder)
+    expect(
+      methods['projects.createChatFolder'].result.safeParse({ ...folder, chat: false }).success,
+    ).toBe(false)
+    const listed = methods['projects.list'].result.parse({
+      projects: [
+        { ...folder, sessions: [] },
+        { path: '/repo', name: 'repo', pinned: false, createdAt: 0, sessions: [] },
+      ],
+    })
+    expect(listed.projects.map((project) => project.chat)).toEqual([true, undefined])
+  })
+
   it('reports every panic-stop target as interrupted or failed', () => {
     const result = methods['system.panicStop'].result.parse({
       sessions: [
@@ -2251,6 +2273,19 @@ describe('provider account contracts', () => {
       expect(update.params.safeParse({ ...own, ...bad }).success).toBe(false)
     }
     expect(update.params.safeParse({ ...own, settings: { compactAt: 5 } }).success).toBe(false)
+  })
+
+  it('keeps a runtime of their own for further accounts', () => {
+    const own = { provider: 'claude-code', accountId: 'personal-1a2b3c', runtime: 'cli' }
+    expect(methods['providers.accountRuntimeSettings'].params.parse({})).toEqual({})
+    const update = methods['providers.updateAccountRuntimeSetting']
+    expect(update.params.parse(own)).toEqual(own)
+    expect(update.params.parse({ ...own, runtime: null })).toEqual({ ...own, runtime: null })
+    expect(update.result.parse({ accounts: [own] })).toEqual({ accounts: [own] })
+    for (const bad of [{ accountId: 'Not An Id' }, { provider: 'nobody' }, { runtime: '' }]) {
+      expect(update.params.safeParse({ ...own, ...bad }).success).toBe(false)
+    }
+    expect(update.result.safeParse({ accounts: [{ ...own, runtime: null }] }).success).toBe(false)
   })
 
   it('lists config folders found on the machine to offer as accounts', () => {

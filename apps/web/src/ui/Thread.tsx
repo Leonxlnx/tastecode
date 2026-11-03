@@ -28,6 +28,7 @@ import {
 import type { ApprovalDecision, Item, ProviderNotice } from '@harness/contracts'
 import { agentMark, providerDisplayName, providerMark } from '../provider-presentation.js'
 import { AccountLabelContext, type AccountLabel } from '../provider-accounts-state.js'
+import { ModelLabelContext, type ModelLabel } from '../model-label.js'
 import { ProviderIcon } from './ProviderIcon.js'
 import {
   IconArrowBarToDown as ArrowDownToLine,
@@ -494,6 +495,9 @@ export const Thread = memo(function Thread(props: ThreadProps) {
   // the row was measured with the rail's room: the transcript was briefly
   // shorter and the scroll was clamped.
   const railReserve = showWorkingRail && railIndex === undefined ? WORKING_RAIL_PX : 0
+  // A working turn's last line keeps clear of the prompt bar. A finished turn
+  // ends on its answer's taller actions row, so the end never moves up.
+  const runwayEnd = railReserve + (showWorkingRail ? WORKING_TAIL_PX : 0)
   // A prompt steered in after the first response sits below the rail, often
   // far below it. Until the agent answers, the prompt carries a spinner of
   // its own. Running already excludes a stop the user asked for.
@@ -612,7 +616,7 @@ export const Thread = memo(function Thread(props: ThreadProps) {
     // the rows it shows change.
     directDomUpdates: true,
     onChange: onVirtualChange,
-    paddingEnd: railReserve,
+    paddingEnd: runwayEnd,
   })
   virtualizerRef.current = virtualizer
   /**
@@ -1118,8 +1122,8 @@ export const Thread = memo(function Thread(props: ThreadProps) {
   // whenever the thread is shorter than the viewport.
   const railIndexRef = useRef(railIndex)
   railIndexRef.current = railIndex
-  const railReserveRef = useRef(railReserve)
-  railReserveRef.current = railReserve
+  const runwayEndRef = useRef(runwayEnd)
+  runwayEndRef.current = runwayEnd
   const rail = useRef<{ element: HTMLDivElement | null; offset: number | undefined }>({
     element: null,
     offset: undefined,
@@ -1131,7 +1135,7 @@ export const Thread = memo(function Thread(props: ThreadProps) {
     if (!element) return
     const index = railIndexRef.current
     // Without a response row, over the room the runway keeps at its end.
-    const reserved = virtualizer.getTotalSize() - railReserveRef.current
+    const reserved = virtualizer.getTotalSize() - runwayEndRef.current
     const next =
       index === undefined ? reserved : (virtualizer.measurementsCache[index]?.start ?? reserved)
     if (next === offset) return
@@ -1793,7 +1797,9 @@ const JUMP_HANDOVER_PX = JUMP_MIN_PX_PER_MS * JUMP_EASE_MS
 /** How long after a turn ends its last changes still glide into view. */
 const FOLLOW_SETTLE_MS = 1_200
 /** The working rail's footprint above its turn's first response: --working-rail-h in thread.css. */
-const WORKING_RAIL_PX = 42
+const WORKING_RAIL_PX = 38
+/** The extra room below a working turn's last line, above the prompt bar. */
+const WORKING_TAIL_PX = 16
 /** How long after a chat opens its rows are still measuring themselves in. */
 const OPEN_SETTLE_MS = 400
 /** A requested end at most this many viewports away glides there; a further one is written at once. */
@@ -2016,6 +2022,15 @@ const ThreadFrameRow = memo(function ThreadFrameRow({
         item.id.startsWith('design-not-applicable-'))) &&
     !(item.type === 'message' && item.role === 'user') &&
     !(nextVisibleItem.type === 'message' && nextVisibleItem.role === 'user')
+  const nextShownItem = compactToNext
+    ? nextItemWithARow(
+        items,
+        liveItems,
+        activityLead && activityGroup ? activityGroup.lastIndex + 1 : index + 1,
+      )
+    : undefined
+  const workToNext =
+    (activityLead || isActivity(item)) && nextShownItem !== undefined && isActivity(nextShownItem)
   const settling = settlingTurnId === item.turnId
   const railAnchor = showWorkingRail && live && presentation?.firstResponseIndex === index
   const activityComplete = presentation?.complete === true && !live && presentation.design !== true
@@ -2042,7 +2057,7 @@ const ThreadFrameRow = memo(function ThreadFrameRow({
 
   return (
     <div
-      className={`thread__row${suppressed ? ' is-suppressed' : ''}${compactToNext ? ' is-compact-to-next' : ''}${entering ? ' is-entering' : ''}${settling ? ' is-settling' : ''}${railAnchor ? ' is-rail-anchor' : ''}`}
+      className={`thread__row${suppressed ? ' is-suppressed' : ''}${compactToNext ? ' is-compact-to-next' : ''}${workToNext ? ' is-work-to-next' : ''}${entering ? ' is-entering' : ''}${settling ? ' is-settling' : ''}${railAnchor ? ' is-rail-anchor' : ''}`}
       data-index={index}
       // The virtual list writes the row's position itself (directDomUpdates).
       ref={measureElement}
@@ -2072,6 +2087,21 @@ const ThreadFrameRow = memo(function ThreadFrameRow({
     </div>
   )
 })
+
+/** The next item that draws anything: reasoning with no text takes no row. */
+function nextItemWithARow(
+  items: readonly Item[],
+  liveItems: ReadonlyMap<number, LiveItemUpdate>,
+  from: number,
+): Item | undefined {
+  let index = from
+  let item = threadItemAt(items, liveItems, index)
+  while (item && isBlankReasoning(item)) {
+    index += 1
+    item = threadItemAt(items, liveItems, index)
+  }
+  return item
+}
 
 /**
  * The transcript's spinner under a steered prompt until the agent answers it.
@@ -2422,9 +2452,10 @@ const Row = memo(function Row({
 /** Where the chat moved to another provider; the turns after it ran there. */
 function NoticeRow({ item }: { item: Item }) {
   const accountLabel = useContext(AccountLabelContext)
+  const modelLabel = useContext(ModelLabelContext)
   const notice = item.notice
   if (notice?.kind !== 'provider') return null
-  const label = providerNoticeLabel(notice, accountLabel)
+  const label = providerNoticeLabel(notice, accountLabel, modelLabel)
   return (
     <div className="aux aux--notice" role="note">
       <div className="aux__row" title={label}>
@@ -2444,7 +2475,11 @@ function NoticeRow({ item }: { item: Item }) {
   )
 }
 
-export function providerNoticeLabel(notice: ProviderNotice, accountLabel?: AccountLabel): string {
+export function providerNoticeLabel(
+  notice: ProviderNotice,
+  accountLabel?: AccountLabel,
+  modelLabel?: ModelLabel,
+): string {
   const provider =
     notice.provider === 'acp' && notice.agent ? notice.agent : providerDisplayName(notice.provider)
   // Another account of a provider is named, so a move between two accounts says where.
@@ -2452,7 +2487,16 @@ export function providerNoticeLabel(notice: ProviderNotice, accountLabel?: Accou
     notice.accountId && accountLabel
       ? `${provider} (${accountLabel(notice.provider, notice.accountId)})`
       : provider
-  return notice.model ? `Switched to ${name} · ${notice.model}` : `Switched to ${name}`
+  if (!notice.model) return `Switched to ${name}`
+  // The model by the name the picker gives it, not the id the server keeps.
+  const model =
+    modelLabel?.({
+      provider: notice.provider,
+      agent: notice.agent,
+      accountId: notice.accountId,
+      modelId: notice.model,
+    }) ?? notice.model
+  return `Switched to ${name} · ${model}`
 }
 
 /** A call that started a subagent draws as that subagent; anything else as a plain row. */

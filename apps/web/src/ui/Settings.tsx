@@ -107,6 +107,7 @@ import {
   ProviderTuning,
   ProviderTuningSkeleton,
   useAccountContextSettings,
+  useAccountRuntimeSettings,
   useProviderContextSettings,
   useProviderRuntimeSettings,
 } from './ProviderTuning.js'
@@ -193,7 +194,9 @@ import {
   activeAccountOf,
   multiAccountProviders,
   useProviderAccounts,
+  type ProviderAccountsSnapshot,
 } from '../provider-accounts-state.js'
+import { accountSourceKey } from '../account-models.js'
 import { sameAccount } from '../usage-summary-state.js'
 import { ProviderIcon } from './ProviderIcon.js'
 import { McpSettings } from './McpSettings.js'
@@ -1052,6 +1055,11 @@ export function ProviderSettings(props: {
     props.transport,
     providerDefaults !== undefined && accountProviders.length > 0,
   )
+  const accountRuntimes = useAccountRuntimeSettings(
+    props.transport,
+    providerDefaults !== undefined &&
+      accountProviders.some((status) => (status.capabilities?.runtimes?.length ?? 0) > 1),
+  )
   const installedAgentKey = agents
     .filter((agent) => agent.installed)
     .map((agent) => agent.id)
@@ -1367,12 +1375,23 @@ export function ProviderSettings(props: {
     const pending = status.installed && status.auth !== 'unauthenticated' && checkingAccount(status)
     if (!pending && !signedIn(status)) return null
     const pin = providerDefaults.pins[status.id]
-    const pinnedName = pinnedModelChoice(props.models ?? [], status.id, pin)?.model.displayName
+    const pinnedName = pinnedModelChoice(
+      props.models ?? [],
+      status.id,
+      pin,
+      undefined,
+      DEFAULT_ACCOUNT_ID,
+    )?.model.displayName
     return (
       <ProviderTuning
         provider={status}
         name={defaultAccountName(status)}
-        models={pinnableModels(props.models ?? [], status.id, props.hiddenModels)}
+        models={pinnableModels(
+          props.models ?? [],
+          status.id,
+          props.hiddenModels,
+          DEFAULT_ACCOUNT_ID,
+        )}
         pinned={pin}
         pinnedName={pinnedName}
         onPinnedChange={(next) => providerDefaults.onPinChange(status.id, next)}
@@ -1404,9 +1423,12 @@ export function ProviderSettings(props: {
       <ProviderTuning
         provider={status}
         name={`${status.displayName} · ${account.label}`}
-        models={pinnableModels(props.models ?? [], status.id, props.hiddenModels)}
+        models={pinnableModels(props.models ?? [], status.id, props.hiddenModels, account.id)}
         pinned={pin}
-        pinnedName={pinnedModelChoice(props.models ?? [], status.id, pin)?.model.displayName}
+        pinnedName={
+          pinnedModelChoice(props.models ?? [], status.id, pin, undefined, account.id)?.model
+            .displayName
+        }
         onPinnedChange={(next) => providerDefaults.onPinChange(scope, next)}
         access={providerApprovalDefault(
           scopedDefault(providerDefaults.access, status.id, account.id),
@@ -1417,6 +1439,11 @@ export function ProviderSettings(props: {
         accountContext={accountContext.resolve(context.state, status.id, account.id)}
         contextError={accountContext.errors(status.id, account.id)}
         onContextChange={(settings) => accountContext.update(status.id, account.id, settings)}
+        runtime={{
+          state: accountRuntimes.resolve(status.id, account.id),
+          error: accountRuntimes.errors(status.id, account.id),
+          onChange: (runtime) => accountRuntimes.update(status.id, account.id, runtime),
+        }}
       />
     )
   }
@@ -1693,6 +1720,7 @@ function ModelSettings(props: {
   onModelsVisibilityChange: (keys: readonly string[], visible: boolean) => void
   onConnectionsChanged: () => void
 }) {
+  const { snapshot: accounts } = useProviderAccounts(props.transport, false)
   // Existing stored custom choices remain usable in the composer, but raw
   // provider-id editing is intentionally absent from beta settings.
   const sources = useMemo(
@@ -1718,7 +1746,7 @@ function ModelSettings(props: {
     const loading = retrying || props.pendingModelSources?.has(key) === true
     const error = errors?.[key]
     if (!loading && !error) return []
-    const presentation = modelSourcePresentation(key, props)
+    const presentation = modelSourcePresentation(key, props, accounts)
     return [{ key, presentation, loading, error }]
   })
   // A refresh that never answers (the server itself went away) must not
@@ -1798,7 +1826,17 @@ function modelSourcePresentation(
     providerStatuses: ProviderStatus[]
     acpAgents?: ResultOf<'acp.agents'>['agents'] | undefined
   },
+  accounts: ProviderAccountsSnapshot,
 ): ProviderPresentation | undefined {
+  // A provider with more than one account has one source per account.
+  for (const status of roster.providerStatuses) {
+    const own = accountsOf(accounts, status.id)
+    const account =
+      own.length > 1 ? own.find((each) => accountSourceKey(status.id, each.id) === key) : undefined
+    if (account) {
+      return { label: `${status.displayName} · ${account.label}`, mark: providerMark(status.id) }
+    }
+  }
   const status = roster.providerStatuses.find((entry) => sourceKey({ provider: entry.id }) === key)
   if (status) return { label: status.displayName, mark: providerMark(status.id) }
   const agent = roster.acpAgents?.find(

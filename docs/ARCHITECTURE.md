@@ -340,7 +340,8 @@ interactive permissions and questions, and live control calls without making sha
 depend on that vendor. A different Claude surface can still replace it without touching the UI.
 The user can instead run it through `claude -p` with stream-json on both pipes, where the adapter
 speaks the same control protocol itself (`cli-runtime.ts`); an engine declares such choices as
-`capabilities.runtimes`, and the server stores the choice and applies it at every launch.
+`capabilities.runtimes`, and the server stores each account's choice and applies it at every
+launch of that account.
 Because the adapter always names that executable, the SDK's optional per-platform CLI packages
 (about 290 MB each) are removed from the dependency graph in `pnpm-workspace.yaml` and excluded
 from the desktop package; the app ships no Claude binary of its own.
@@ -983,7 +984,7 @@ registry entry, which is deliberately a good first outside contribution.
 | 2026-10-22 | Added phone access: a Noise IK link on the LAN or a tailnet, one-time pairing codes, a phone method allowlist, `projects.changed`, and the Expo + SwiftUI phone app.           |
 | 2026-10-22 | Phone app screens moved from React-composed Expo UI to one SwiftUI hierarchy in Swift; TypeScript words the content and sends changed rows only.                               |
 | 2026-10-23 | Each chat's setup moved from every client's own storage to the server (`thread.settings`); the desktop shares its hidden models.                                               |
-| 2026-10-25 | Claude Code can also run through `claude -p` (stream-json, same protocol); engines declare `capabilities.runtimes`, the server keeps the choice.                               |
+| 2026-10-25 | Claude Code can also run through `claude -p` (stream-json, same protocol); engines declare `capabilities.runtimes`, the server keeps each account's choice.                    |
 | 2026-10-25 | Phone app screens moved from SwiftUI to UIKit view controllers under one native view; Expo UI is no longer a dependency.                                                       |
 | 2026-10-25 | Dashboards run again as app screens dealt from the bundled tasteskill v2.1.5 app library, without reference images; the dashboard image catalog stays parked.                  |
 | 2026-10-31 | Phone access became dev-only: offered only with `HARNESS_PHONE_ACCESS=1` (set by `pnpm dev`); other builds never open the phone port.                                          |

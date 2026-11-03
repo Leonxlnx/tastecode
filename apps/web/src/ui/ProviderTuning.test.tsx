@@ -18,6 +18,7 @@ import {
   ProviderTuning,
   ProviderTuningSkeleton,
   useProviderContextSettings,
+  useAccountRuntimeSettings,
   useProviderRuntimeSettings,
 } from './ProviderTuning.js'
 
@@ -527,7 +528,7 @@ describe('provider runtime', () => {
     expect(onChange).toHaveBeenCalledTimes(2)
   })
 
-  it("shows no runtime for a provider with one way to run, or on an account's rows", () => {
+  it('shows no runtime for a provider with one way to run, or without a choice to show', () => {
     const runtime = { state: { phase: 'ready' as const, settings: {} }, onChange: vi.fn() }
     renderTuning({ provider: claude, runtime })
     expect(screen.queryByRole('button', { name: /^Claude Code runtime/ })).toBeNull()
@@ -571,6 +572,77 @@ function ConnectedRuntime(props: { transport: TestTransport }) {
     />
   )
 }
+
+describe('useAccountRuntimeSettings', () => {
+  it('does not ask for the accounts until a provider can use them', () => {
+    const transport = new TestTransport(async () => ({ accounts: [] }))
+    renderHook(() => useAccountRuntimeSettings(transport, false))
+    expect(transport.requests).toEqual([])
+  })
+
+  it("keeps each account's choice to itself and returns a default one to no setting", async () => {
+    const saved: unknown[] = []
+    const transport = new TestTransport(async (method, params) => {
+      if (method === 'providers.accountRuntimeSettings') {
+        return {
+          accounts: [{ provider: 'claude-code', accountId: 'work', runtime: 'cli' }],
+        }
+      }
+      if (method === 'providers.updateAccountRuntimeSetting') {
+        saved.push(params)
+        const { runtime } = params as { runtime: string | null }
+        return {
+          accounts: [
+            { provider: 'claude-code', accountId: 'work', runtime: 'cli' },
+            ...(runtime === null
+              ? []
+              : [{ provider: 'claude-code', accountId: 'personal', runtime }]),
+          ],
+        }
+      }
+      throw new Error(`unexpected ${method}`)
+    })
+    const { result } = renderHook(() => useAccountRuntimeSettings(transport, true))
+    const ready = (accountId: string) => result.current.resolve('claude-code', accountId)
+    expect(ready('work')).toEqual({ phase: 'loading' })
+    await waitFor(() =>
+      expect(ready('work')).toEqual({ phase: 'ready', settings: { 'claude-code': 'cli' } }),
+    )
+    expect(ready('personal')).toEqual({ phase: 'ready', settings: {} })
+
+    act(() => result.current.update('claude-code', 'personal', 'cli'))
+    expect(ready('personal')).toEqual({ phase: 'ready', settings: { 'claude-code': 'cli' } })
+    await waitFor(() => expect(saved).toHaveLength(1))
+    expect(saved[0]).toEqual({ provider: 'claude-code', accountId: 'personal', runtime: 'cli' })
+
+    act(() => result.current.update('claude-code', 'personal', null))
+    await waitFor(() => expect(saved).toHaveLength(2))
+    await waitFor(() => expect(ready('personal')).toEqual({ phase: 'ready', settings: {} }))
+    expect(ready('work')).toEqual({ phase: 'ready', settings: { 'claude-code': 'cli' } })
+  })
+
+  it('falls back to the saved choice and says why when the server refuses', async () => {
+    const transport = new TestTransport(async (method) => {
+      if (method === 'providers.accountRuntimeSettings') return { accounts: [] }
+      throw new Error('This provider cannot run through "cli".')
+    })
+    const { result } = renderHook(() => useAccountRuntimeSettings(transport, true))
+    await waitFor(() =>
+      expect(result.current.resolve('claude-code', 'personal').phase).toBe('ready'),
+    )
+    act(() => result.current.update('claude-code', 'personal', 'cli'))
+    await waitFor(() =>
+      expect(result.current.errors('claude-code', 'personal')).toBe(
+        'This provider cannot run through "cli".',
+      ),
+    )
+    expect(result.current.resolve('claude-code', 'personal')).toEqual({
+      phase: 'ready',
+      settings: {},
+    })
+    expect(result.current.errors('claude-code', 'work')).toBeUndefined()
+  })
+})
 
 describe('useProviderRuntimeSettings', () => {
   it('reads nothing until enabled', () => {

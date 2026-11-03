@@ -34,7 +34,8 @@ describe('model menus', () => {
     expect(desktopChoiceKey({ provider: 'codex' }, 'gpt-5.5')).toBe('codex:gpt-5.5')
     expect(desktopChoiceKey({ provider: 'acp', agent: 'kimi' }, '')).toBe('acp:kimi:automatic')
     expect(desktopChoiceKey({ provider: 'api', connectionId: 'or' }, 'a/b')).toBe('api:or:a%2Fb')
-    expect(desktopChoiceKey({ provider: 'codex', accountId: 'work' }, 'm')).toBe('codex:m')
+    expect(desktopChoiceKey({ provider: 'codex', accountId: 'work' }, 'm')).toBe('codex@work:m')
+    expect(desktopChoiceKey({ provider: 'codex', accountId: 'default' }, 'm')).toBe('codex:m')
   })
 
   it('offers what the desktop offers, in one list, once it says what it hides', () => {

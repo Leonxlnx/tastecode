@@ -3,27 +3,37 @@ export type ProjectChoice = {
   name?: string
 }
 
-/** Keep folder-only consumers asleep when only chat metadata changed. */
+/**
+ * Keep folder-only consumers asleep when only chat metadata changed. A folder
+ * made for a chat without a project is not a project to choose, so it is left out.
+ */
 export function createProjectChoiceProjector(): (
-  projects: ReadonlyArray<ProjectChoice>,
+  projects: ReadonlyArray<ProjectChoice & { chat?: boolean }>,
 ) => ReadonlyArray<ProjectChoice> {
   let previous: ProjectChoice[] = []
 
   return (projects) => {
-    if (
-      previous.length === projects.length &&
-      previous.every(
-        (project, index) =>
-          project.path === projects[index]?.path && project.name === projects[index]?.name,
-      )
-    ) {
-      return previous
+    let index = 0
+    let same = true
+    for (const project of projects) {
+      if (project.chat) continue
+      const prior = previous[index]
+      if (prior?.path !== project.path || prior.name !== project.name) {
+        same = false
+        break
+      }
+      index += 1
     }
+    if (same && index === previous.length) return previous
 
-    previous = projects.map((project) => ({
-      path: project.path,
-      ...(project.name === undefined ? {} : { name: project.name }),
-    }))
+    previous = []
+    for (const project of projects) {
+      if (project.chat) continue
+      previous.push({
+        path: project.path,
+        ...(project.name === undefined ? {} : { name: project.name }),
+      })
+    }
     return previous
   }
 }
