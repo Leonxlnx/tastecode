@@ -60,3 +60,13 @@ export function claudePlanWeights(
       return undefined
   }
 }
+
+/**
+ * Whether a limit row is one of the account's overall windows, which the account pool
+ * sums across accounts: the 5-hour session and the weekly limit over all models. The
+ * model-scoped weekly limits (`seven_day_opus`, `seven_day_sonnet`, …) cover only part
+ * of the plan and stay out of the pool.
+ */
+export function claudeOverallLimit(id: string): boolean {
+  return id === 'five_hour' || id === 'seven_day'
+}

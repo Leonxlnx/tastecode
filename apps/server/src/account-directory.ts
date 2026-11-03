@@ -35,6 +35,11 @@ export type AccountDirectory = {
   accounts?(provider: ProviderId): readonly ProviderAccount[]
   /** A plan's size against the provider's cheapest paid plan, per window kind, when known. */
   planWeights?(provider: ProviderId, plan: string | undefined): PlanWeights | undefined
+  /**
+   * Whether a limit row is one of the account's overall windows, which the pool sums;
+   * model-scoped rows are not. Absent: every session or weekly row counts.
+   */
+  overallLimit?(provider: ProviderId, limitId: string): boolean
 }
 
 /** See `PoolAccount.weights`. */

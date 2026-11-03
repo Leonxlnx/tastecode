@@ -25,17 +25,21 @@ export type PoolMember = {
 }
 
 /**
- * A provider's accounts as one pool, from the limits already held for each. A
- * window counts by its length, never its position: Codex reports the weekly
- * window as `primary` on plans without a 5-hour one. Rows that only hold a value
- * (credits, resets) and windows of other lengths are left out.
+ * A provider's accounts as one pool, from the limits already held for each. Each
+ * account contributes at most one session and one weekly window, its overall ones
+ * (`overall`, as the provider's adapter tells them apart): a model-scoped weekly
+ * limit covers only part of the plan. A window counts by its length, never its id or
+ * position: Codex reports a Plus plan's 5-hour window and a Pro plan's weekly one
+ * both as `codex:primary`. The totals add up the accounts per kind. Rows that only
+ * hold a value (credits, resets) and windows of other lengths are left out.
  */
 export function accountPool(
   provider: ResultOf<'accounts.pool'>['provider'],
   members: readonly PoolMember[],
   now: number,
+  overall: (limitId: string) => boolean = () => true,
 ): ResultOf<'accounts.pool'> {
-  const accounts = members.map((member) => poolAccount(member, now))
+  const accounts = members.map((member) => poolAccount(member, now, overall))
   return {
     provider,
     accounts,
@@ -44,7 +48,11 @@ export function accountPool(
   }
 }
 
-function poolAccount(member: PoolMember, now: number): PoolAccount {
+function poolAccount(
+  member: PoolMember,
+  now: number,
+  overall: (limitId: string) => boolean,
+): PoolAccount {
   const { account, source, weights } = member
   const base = {
     accountId: account.id,
@@ -54,7 +62,14 @@ function poolAccount(member: PoolMember, now: number): PoolAccount {
   }
   if (member.unavailable) return { ...base, status: 'unavailable', windows: [], atLimit: false }
   if (source?.status !== 'ready') return { ...base, status: 'unknown', windows: [], atLimit: false }
-  const windows = source.limits.flatMap(poolWindow)
+  // One window per kind; where an account reports two, the more used one limits it.
+  const byKind = new Map<PoolWindow['kind'], PoolWindow>()
+  for (const window of source.limits.flatMap(poolWindow)) {
+    if (!overall(window.id)) continue
+    const held = byKind.get(window.kind)
+    if (!held || window.usedPercent > held.usedPercent) byKind.set(window.kind, window)
+  }
+  const windows = [...byKind.values()].sort((a, b) => KIND_ORDER[a.kind] - KIND_ORDER[b.kind])
   return {
     ...base,
     status: 'ready',
@@ -87,15 +102,21 @@ function poolWindow(limit: ProviderLimit): PoolWindow[] {
   ]
 }
 
-/** Each window id summed over the accounts that report it and know their weight for its kind. */
+const KIND_ORDER = { session: 0, weekly: 1 } as const satisfies Record<PoolWindow['kind'], number>
+
+/**
+ * Each kind of window summed over the accounts that report one and know their weight
+ * for it. A total's id is its kind (`session` or `weekly`); its label is the first
+ * account's.
+ */
 function poolTotals(accounts: readonly PoolAccount[]): PoolWindowTotal[] {
-  const totals = new Map<string, PoolWindowTotal>()
+  const totals = new Map<PoolWindow['kind'], PoolWindowTotal>()
   for (const account of accounts) {
     for (const window of account.windows) {
       const weight = account.weights?.[window.kind]
       if (weight === undefined) continue
-      const total = totals.get(window.id) ?? {
-        id: window.id,
+      const total = totals.get(window.kind) ?? {
+        id: window.kind,
         label: window.label,
         kind: window.kind,
         accounts: 0,
@@ -110,10 +131,12 @@ function poolTotals(accounts: readonly PoolAccount[]): PoolWindowTotal[] {
         (total.nextResetAt === undefined || window.resetsAt < total.nextResetAt)
       )
         total.nextResetAt = window.resetsAt
-      totals.set(window.id, total)
+      totals.set(window.kind, total)
     }
   }
-  return [...totals.values()].map((total) => ({
+  return [...totals.values()]
+    .sort((a, b) => KIND_ORDER[a.kind] - KIND_ORDER[b.kind])
+    .map((total) => ({
     ...total,
     capacity: round(total.capacity),
     remaining: round(total.remaining),
