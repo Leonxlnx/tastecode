@@ -16,23 +16,33 @@ const unfinished = new Set<ChildProcess>()
 const openGroups = new Set<number>()
 let stopsOwnedTreesAtExit = false
 
+export type OwnedSpawnOptions = SpawnOptions & {
+  /**
+   * POSIX: leave the process group running when its leader exits, until
+   * `killTree` or this process's exit stops it. For a CLI that exits after
+   * every turn while a server it started is meant to stay up.
+   */
+  keepGroupAfterExit?: boolean
+}
+
 /** Native executable spawn with a private process group on POSIX. */
 export function spawnOwned(
   command: string,
   args: readonly string[],
-  options?: SpawnOptions & { stdio?: 'pipe' | ['pipe', 'pipe', 'pipe'] },
+  options?: OwnedSpawnOptions & { stdio?: 'pipe' | ['pipe', 'pipe', 'pipe'] },
 ): ChildProcessWithoutNullStreams
 export function spawnOwned(
   command: string,
   args: readonly string[],
-  options: SpawnOptions,
+  options: OwnedSpawnOptions,
 ): ChildProcess
 export function spawnOwned(
   command: string,
   args: readonly string[],
-  options: SpawnOptions = {},
+  options: OwnedSpawnOptions = {},
 ): ChildProcess {
-  const child = spawn(command, args, { ...options, detached: process.platform !== 'win32' })
+  const { keepGroupAfterExit, ...spawnOptions } = options
+  const child = spawn(command, args, { ...spawnOptions, detached: process.platform !== 'win32' })
   if (child.pid) ownUntilExit(child)
   if (process.platform !== 'win32' && child.pid) {
     const group = child.pid
@@ -40,11 +50,38 @@ export function spawnOwned(
     openGroups.add(group)
     // The leader can exit before a background command. Keep its descendants
     // inside the same owned lifetime, and retire the group before pid reuse.
-    child.once('exit', () => {
-      void killTree(child).catch(() => undefined)
-    })
+    if (keepGroupAfterExit) child.once('exit', () => retireWhenEmpty(child, group))
+    else {
+      child.once('exit', () => {
+        void killTree(child).catch(() => undefined)
+      })
+    }
   }
   return child
+}
+
+/** How often a group kept after its leader's exit is checked for members. */
+const KEPT_GROUP_POLL_MS = 2_000
+
+/**
+ * Retires a group kept after its leader exited once its last member is gone,
+ * so its id is never signalled after the system may hand it out again.
+ */
+function retireWhenEmpty(child: KillableProcess, group: number): void {
+  const timer = setInterval(() => {
+    let empty: boolean
+    try {
+      empty = !groupExists(group)
+    } catch {
+      // EPERM while the last member disappears: look again next time.
+      return
+    }
+    if (!empty && groups.get(child) === group) return
+    clearInterval(timer)
+    if (groups.get(child) === group) groups.delete(child)
+    openGroups.delete(group)
+  }, KEPT_GROUP_POLL_MS)
+  timer.unref()
 }
 
 /** Terminate only a tree we own, then wait for bounded TERM/KILL escalation. */

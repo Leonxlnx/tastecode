@@ -224,6 +224,36 @@ describe('owned process tree termination', () => {
     },
   )
 
+  it.skipIf(process.platform === 'win32')(
+    'keeps a group after its leader exits when asked, until the tree is stopped',
+    async () => {
+      const directory = mkdtempSync(path.join(tmpdir(), 'harness-kept-group-'))
+      const leafFile = path.join(directory, 'leaf')
+      const leaf = heartbeat(leafFile)
+      const parent = `const { spawn } = require('node:child_process'); const fs = require('node:fs'); spawn(process.execPath, ['-e', ${JSON.stringify(leaf)}], { stdio: 'ignore' }).unref(); const ready = setInterval(() => { if (fs.existsSync(${JSON.stringify(leafFile)})) { clearInterval(ready); process.exit(0) } }, 10);`
+      const child = spawnOwned(process.execPath, ['-e', parent], {
+        stdio: 'pipe',
+        keepGroupAfterExit: true,
+      })
+      try {
+        await once(child, 'exit')
+        await waitForFile(leafFile)
+        // The leader is gone; a server it started in the group keeps running.
+        const beat = readFileSync(leafFile, 'utf8')
+        await sleep(300)
+        expect(readFileSync(leafFile, 'utf8')).not.toBe(beat)
+
+        await killTree(child)
+        const stopped = readFileSync(leafFile, 'utf8')
+        await sleep(150)
+        expect(readFileSync(leafFile, 'utf8')).toBe(stopped)
+      } finally {
+        await killTree(child)
+        rmSync(directory, { recursive: true, force: true })
+      }
+    },
+  )
+
   it('stops a live parent and its child before completion', async () => {
     const directory = mkdtempSync(path.join(tmpdir(), 'harness-live-tree-'))
     const file = path.join(directory, 'leaf')
