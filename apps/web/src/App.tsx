@@ -158,7 +158,7 @@ import { sourceSupportsAttachments } from './attachment-capability.js'
 import { canCaptureVoice, type VoiceRecording } from './voice-capability.js'
 import { pollUsageLimits, UsageLimitsController, type LimitTarget } from './usage-limits-state.js'
 import { sameAccount } from './usage-summary-state.js'
-import { poolsOf } from './account-pool.js'
+import { poolsOf, recommendedAccounts } from './account-pool.js'
 import {
   AccountLabelContext,
   accountLabelOf,
@@ -956,11 +956,16 @@ export function App() {
   const providerAccountsRef = useRef(providerAccounts)
   providerAccountsRef.current = providerAccounts
   // A provider's accounts as one pool, worked out again only when the limits
-  // or the accounts change, never per streamed delta. The server's
-  // `accounts.pool` can replace this later.
+  // or the accounts change, never per streamed delta. The account each pool
+  // recommends stands in for the active one until the user picks an account
+  // for new chats. The server's `accounts.pool` can replace this later.
   const accountPools = useMemo(
     () => poolsOf(usageState, providerAccounts.accounts, Date.now()),
     [usageState, providerAccounts.accounts],
+  )
+  useEffect(
+    () => providerAccountsStore.recommend(recommendedAccounts(accountPools)),
+    [providerAccountsStore, accountPools],
   )
   // Undefined until the first catalog run has listed them, so setup can tell
   // an empty library from one that has not answered yet.
@@ -4349,8 +4354,15 @@ export function App() {
         if (projectRemoved())
           throw new Error('The project was removed before the chat could start.')
         let sessionApproval = approval === 'auto-review' && !autoReviewSupported ? 'full' : approval
+        // The server starts a chat on the account it keeps as active; one the
+        // limits recommend in its place is named.
+        const preselectedAccount =
+          choice.agent || choice.connectionId
+            ? undefined
+            : providerAccountsRef.current.preselected?.[choice.provider]
         const { threadId } = await transport.request('thread.start', {
           provider: choice.provider,
+          ...(preselectedAccount ? { accountId: preselectedAccount } : {}),
           workspacePath: projectPath,
           ...(branch ? { baseRef: branch } : {}),
           approval: sessionApproval,
@@ -4424,6 +4436,7 @@ export function App() {
                             id: threadId,
                             title: canonicalTitle,
                             provider: choice.provider,
+                            ...(preselectedAccount ? { accountId: preselectedAccount } : {}),
                             ...(choice.connectionId ? { connectionId: choice.connectionId } : {}),
                             ...(choice.agent
                               ? {

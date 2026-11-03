@@ -1,12 +1,26 @@
 import type { ProviderAccount, ResultOf } from '@harness/contracts'
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  ACCOUNT_CHOSEN_KEY,
   accountLabelOf,
   accountsOf,
   activeAccountOf,
   ProviderAccountsStore,
 } from './provider-accounts-state.js'
 import { TestTransport } from './test-transport.js'
+
+/** Each test starts with nothing remembered about which account the user picked. */
+const stored = new Map<string, string>()
+beforeEach(() => {
+  stored.clear()
+  vi.stubGlobal('localStorage', {
+    getItem: (key: string) => stored.get(key) ?? null,
+    setItem: (key: string, value: string) => stored.set(key, value),
+  })
+})
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
 
 const work: ProviderAccount = {
   id: 'work-1a2b3c',
@@ -96,6 +110,79 @@ describe('ProviderAccountsStore', () => {
     // The server still lists no active choice, so the read brings back default.
     await expect.poll(() => transport.requests.at(-1)?.method).toBe('accounts.list')
     await expect.poll(() => activeAccountOf(store.snapshot(), 'codex')).toBe('default')
+  })
+
+  it('lets the recommended account stand in for new chats until the user picks one', async () => {
+    const transport = new TestTransport((method) => (method === 'accounts.list' ? listing() : {}))
+    const store = new ProviderAccountsStore(transport)
+    store.retain()
+    await expect.poll(() => store.snapshot().phase).toBe('ready')
+    let notified = 0
+    store.subscribe(() => (notified += 1))
+
+    store.recommend({ codex: 'work-1a2b3c' })
+    expect(activeAccountOf(store.snapshot(), 'codex')).toBe('work-1a2b3c')
+    expect(store.snapshot().preselected).toEqual({ codex: 'work-1a2b3c' })
+    expect(notified).toBe(1)
+    // The same recommendation again changes nothing and tells no one.
+    const before = store.snapshot()
+    store.recommend({ codex: 'work-1a2b3c' })
+    expect(store.snapshot()).toBe(before)
+    expect(notified).toBe(1)
+    // Nothing was sent: the server keeps its own active account.
+    expect(transport.requests.map((request) => request.method)).toEqual(['accounts.list'])
+
+    // An account the list does not hold is never preselected.
+    store.recommend({ codex: 'gone-000000' })
+    expect(activeAccountOf(store.snapshot(), 'codex')).toBe('default')
+    expect(store.snapshot().preselected).toBeUndefined()
+
+    // A list read keeps the recommendation standing in.
+    store.recommend({ codex: 'work-1a2b3c' })
+    const beforeRead = store.snapshot()
+    store.refresh()
+    await expect.poll(() => store.snapshot()).not.toBe(beforeRead)
+    expect(transport.requests).toHaveLength(2)
+    expect(activeAccountOf(store.snapshot(), 'codex')).toBe('work-1a2b3c')
+
+    // The user's own pick wins, the default account included, and keeps winning.
+    await store.setActive('codex', 'default')
+    expect(activeAccountOf(store.snapshot(), 'codex')).toBe('default')
+    expect(store.snapshot().preselected).toBeUndefined()
+    store.recommend({})
+    store.recommend({ codex: 'work-1a2b3c' })
+    expect(activeAccountOf(store.snapshot(), 'codex')).toBe('default')
+  })
+
+  it('keeps a further account the server keeps active as the one new chats start on', async () => {
+    const transport = new TestTransport(() => listing({ codex: 'work-1a2b3c' }))
+    const store = new ProviderAccountsStore(transport)
+    store.retain()
+    await expect.poll(() => store.snapshot().phase).toBe('ready')
+    store.recommend({ codex: 'default' })
+    expect(activeAccountOf(store.snapshot(), 'codex')).toBe('work-1a2b3c')
+    expect(store.snapshot().preselected).toBeUndefined()
+  })
+
+  it('remembers across launches which providers the user picked an account for', async () => {
+    const transport = new TestTransport((method) => (method === 'accounts.list' ? listing() : {}))
+    const first = new ProviderAccountsStore(transport)
+    await first.setActive('codex', 'default')
+    expect(JSON.parse(stored.get(ACCOUNT_CHOSEN_KEY) ?? '[]')).toEqual(['codex'])
+
+    const next = new ProviderAccountsStore(transport)
+    next.retain()
+    await expect.poll(() => next.snapshot().phase).toBe('ready')
+    next.recommend({ codex: 'work-1a2b3c' })
+    expect(activeAccountOf(next.snapshot(), 'codex')).toBe('default')
+
+    // A stored value that is not a list of providers reads as no choice.
+    stored.set(ACCOUNT_CHOSEN_KEY, '{"codex":true}')
+    const broken = new ProviderAccountsStore(transport)
+    broken.retain()
+    await expect.poll(() => broken.snapshot().phase).toBe('ready')
+    broken.recommend({ codex: 'work-1a2b3c' })
+    expect(activeAccountOf(broken.snapshot(), 'codex')).toBe('work-1a2b3c')
   })
 
   it('names an account active only while it is listed', () => {
