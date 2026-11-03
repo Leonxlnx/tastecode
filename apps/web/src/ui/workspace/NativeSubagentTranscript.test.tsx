@@ -133,6 +133,59 @@ describe('native subagent transcript', () => {
     ).toBeNull()
   })
 
+  it('says how many earlier steps a long transcript left out', async () => {
+    setup(() => ({ items, omitted: 600 }))
+    await open()
+    expect(await screen.findByText('600 earlier steps are not shown.')).toBeTruthy()
+    expect(await screen.findByText('The first line is Tiny scratch project.')).toBeTruthy()
+  })
+
+  it('asks again every five seconds only while running and visible, then once when done', async () => {
+    // Opened in a hidden window, so the first read schedules nothing before the clock is faked;
+    // Testing Library's async helpers wait on setTimeout and are not used after that.
+    let hidden = true
+    const visibility = vi
+      .spyOn(document, 'visibilityState', 'get')
+      .mockImplementation(() => (hidden ? 'hidden' : 'visible'))
+    const { frameStore, transport } = setup(() => ({ items }), true, {
+      ...snapshot,
+      state: 'running',
+    })
+    const reads = () =>
+      transport.requests.filter(({ method }) => method === 'thread.subagentTranscript').length
+    const visibilityChange = (value: boolean) =>
+      act(async () => {
+        hidden = !value
+        document.dispatchEvent(new Event('visibilitychange'))
+      })
+    const advance = (ms: number) => act(() => vi.advanceTimersByTimeAsync(ms))
+    try {
+      await open()
+      await screen.findByText('The first line is Tiny scratch project.')
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+      await advance(30_000)
+      expect(reads()).toBe(1)
+      await visibilityChange(true)
+      expect(reads()).toBe(2)
+      await advance(4_999)
+      expect(reads()).toBe(2)
+      await advance(1)
+      expect(reads()).toBe(3)
+      await visibilityChange(false)
+      await advance(30_000)
+      expect(reads()).toBe(3)
+      await visibilityChange(true)
+      expect(reads()).toBe(4)
+      await act(async () => frameStore.publish({ ...emptyThread, items: [launcher()] }))
+      expect(reads()).toBe(5)
+      await advance(30_000)
+      expect(reads()).toBe(5)
+    } finally {
+      vi.useRealTimers()
+      visibility.mockRestore()
+    }
+  })
+
   it('retries a failed read and reads again when reopened', async () => {
     let calls = 0
     setup(() => {
