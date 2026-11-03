@@ -8,7 +8,8 @@
  *
  * Two copies are kept: the resized original, and the display copy that is
  * already blurred. Blurring once here means the window paints a plain bitmap,
- * with no CSS filter to recompute while a reply streams over it.
+ * with no CSS filter to recompute while a reply streams over it. Moving the
+ * Blur slider rebuilds the display copy from the original.
  */
 
 export const BACKGROUND_IMAGE_TYPES = [
@@ -24,10 +25,16 @@ export const MAX_BACKGROUND_IMAGE_BYTES = 40 * 1024 * 1024
 export const STORED_IMAGE_EDGE = 2560
 /** Longest edge of the blurred display copy; blur hides anything finer. */
 export const DISPLAY_IMAGE_EDGE = 1600
-/** Gaussian blur of the display copy, in its own pixels (about 18px on a 2K window). */
+/** Default Gaussian blur of the display copy, in its own pixels (about 18px on a 2K window). */
 export const DISPLAY_IMAGE_BLUR = 14
-/** Bumped whenever the display copy is made differently, so stored copies are rebuilt. */
-export const DISPLAY_IMAGE_VERSION = `blur${DISPLAY_IMAGE_BLUR}@${DISPLAY_IMAGE_EDGE}`
+
+/** Changes whenever the display copy is made differently, so stored copies are rebuilt. */
+export function displayImageVersion(blur: number): string {
+  return `blur${blur}@${DISPLAY_IMAGE_EDGE}`
+}
+
+/** The version of a display copy made with the default blur. */
+export const DISPLAY_IMAGE_VERSION = displayImageVersion(DISPLAY_IMAGE_BLUR)
 const ENCODED_TYPE = 'image/webp'
 const ENCODED_QUALITY = 0.9
 
@@ -119,31 +126,36 @@ async function decode(blob: Blob): Promise<ImageBitmap> {
 }
 
 /** The stored and display copies of a picked file. Throws BackgroundImageError. */
-export async function prepareBackgroundImage(file: File): Promise<StoredBackgroundImage> {
+export async function prepareBackgroundImage(
+  file: File,
+  blur: number = DISPLAY_IMAGE_BLUR,
+): Promise<StoredBackgroundImage> {
   const problem = backgroundImageProblem(file)
   if (problem) throw new BackgroundImageError(problem)
   const bitmap = await decode(file)
   try {
     return {
       original: await encode(bitmap, STORED_IMAGE_EDGE, 0),
-      display: await encode(bitmap, DISPLAY_IMAGE_EDGE, DISPLAY_IMAGE_BLUR),
-      displayVersion: DISPLAY_IMAGE_VERSION,
+      display: await encode(bitmap, DISPLAY_IMAGE_EDGE, blur),
+      displayVersion: displayImageVersion(blur),
     }
   } finally {
     bitmap.close()
   }
 }
 
-/** The display copy, rebuilt from the original when it was made differently. */
+/** The display copy at `blur`, rebuilt from the original when it was made differently. */
 export async function backgroundDisplayImage(
   stored: StoredBackgroundImage,
   store: BackgroundImageStore,
+  blur: number = DISPLAY_IMAGE_BLUR,
 ): Promise<Blob> {
-  if (stored.displayVersion === DISPLAY_IMAGE_VERSION) return stored.display
+  const version = displayImageVersion(blur)
+  if (stored.displayVersion === version) return stored.display
   const bitmap = await decode(stored.original)
   try {
-    const display = await encode(bitmap, DISPLAY_IMAGE_EDGE, DISPLAY_IMAGE_BLUR)
-    await store.save({ ...stored, display, displayVersion: DISPLAY_IMAGE_VERSION }).catch(() => {
+    const display = await encode(bitmap, DISPLAY_IMAGE_EDGE, blur)
+    await store.save({ ...stored, display, displayVersion: version }).catch(() => {
       // Rebuilt again next launch; the window still shows it now.
     })
     return display
