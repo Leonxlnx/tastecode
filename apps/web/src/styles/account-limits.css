@@ -71,6 +71,65 @@
   height: 13px;
 }
 
+/* A closed source is its heading and one line under it, closer together than
+   the rows of an open one. */
+.account-menu__source.is-closed {
+  gap: 4px;
+}
+
+.account-menu__source-body {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* The heading of a source with values opens its full rows. The hover wash
+   reaches past the text without moving it, as on an account line. */
+.account-menu__source-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin: -3px -5px;
+  padding: 3px 5px;
+  background: none;
+  border: 0;
+  border-radius: var(--r-sm);
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+
+.account-menu__source-toggle:hover {
+  background: var(--menu-hover);
+}
+
+.account-menu__source-toggle:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.account-menu__source-toggle > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-menu__source .account-menu__source-chevron {
+  width: 12px;
+  height: 12px;
+  margin-left: -2px;
+  color: var(--text-3);
+  transition: rotate var(--dur-fast) var(--ease-out);
+}
+
+.account-menu__source-toggle[aria-expanded='true'] > .account-menu__source-chevron {
+  rotate: 90deg;
+}
+
 /* A provider with more than one account: its name once, then each account
    as a quieter heading over its own limits, at the space between rows. */
 .account-menu__provider {
@@ -119,11 +178,14 @@
 /* One muted word, never an alert colour: a provider that cannot report is a
    missing number, not something that went wrong for the person. */
 .account-menu__source-status {
-  flex: 0 1 auto;
+  /* Takes only the room the name leaves, so the provider's name stays whole
+     and the status is what shortens. */
+  flex: 1 1 0;
   min-width: 0;
   margin-left: auto;
   overflow: hidden;
   color: var(--text-3);
+  text-align: right;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -234,6 +296,34 @@
   white-space: nowrap;
 }
 
+/* An untouched allowance has no bar; its number steps back with it. */
+.account-menu__limit[data-full] .account-menu__limit-value {
+  color: var(--text-3);
+}
+
+/* The one line under a closed heading: label, a short bar, then the value. The
+   bar gives way before the label does, down to a stub. */
+.account-menu__limit.is-inline .account-menu__limit-row {
+  justify-content: flex-start;
+  align-items: center;
+}
+
+.account-menu__limit.is-inline .account-menu__limit-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-menu__limit.is-inline .account-menu__limit-bar {
+  flex: 0 100 48px;
+  min-width: 24px;
+  margin-left: auto;
+}
+
+.account-menu__limit.is-inline .account-menu__limit-label + .account-menu__limit-value {
+  margin-left: auto;
+}
+
 .account-menu__limit-btn {
   border: 0;
   border-radius: var(--r-sm);
@@ -276,10 +366,6 @@
   min-width: 0;
 }
 
-.account-menu__reset-time {
-  display: block;
-}
-
 .account-menu__reset-credit .account-menu__limit-use {
   grid-area: 1 / 2;
 }
@@ -318,13 +404,13 @@
   initial-value: 0;
 }
 
-/* Each bar is a little fuel gauge. The whole red-to-green scale is painted
-   across the track and the fill uncovers it from the empty end, so the
-   colour at the tip says how much is left. */
+/* Each bar is one quiet fill in text ink, the same as the card's meter: the
+   number says how much is left, and only an allowance that is nearly spent
+   turns the error colour. Every bar fills at once, in one calm movement,
+   rather than one row after another. */
 .account-menu__limit[data-gauge] {
   --limit-fill: var(--left);
-  animation: account-limit-fill 820ms var(--ease-overshoot) both;
-  animation-delay: calc(80ms + var(--order) * 70ms);
+  animation: account-limit-fill 520ms var(--ease-out) both;
   transition: --limit-fill var(--dur-slow) var(--ease-out);
 }
 
@@ -334,8 +420,10 @@
   }
 }
 
+/* As thin as the Usage page's meters and the closed account gauges, so a
+   limit is one bar wherever it shows. */
 .account-menu__limit-bar {
-  height: 6px;
+  height: 4px;
   border-radius: var(--r-pill);
   background: color-mix(in srgb, var(--text) 9%, transparent);
   overflow: hidden;
@@ -345,13 +433,13 @@
   display: block;
   height: 100%;
   border-radius: inherit;
-  background: linear-gradient(
-    to right in oklch,
-    var(--gauge-empty),
-    var(--gauge-half),
-    var(--gauge-full)
-  );
+  background: color-mix(in srgb, var(--text) 52%, transparent);
   clip-path: inset(0 calc((1 - var(--limit-fill)) * 100%) 0 0 round var(--r-pill));
+}
+
+.account-menu__limit[data-low] .account-menu__limit-bar > span:not(.account-menu__limit-pace),
+.account-menu__account-gauge[data-low] > span {
+  background: var(--error);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -409,8 +497,8 @@
    limits. The chevron hangs where the provider's mark sits, so account names
    start on the provider name's edge and an open account's limits sit under
    its name. A closed line carries what is left of each window, Session and
-   Weekly, under its name: a row each, on short gauges of the same red-to-green
-   scale as the full bars, set in columns so the gauges line up. */
+   Weekly, under its name: a row each, on short gauges drawn like the full
+   bars, set in columns so the gauges line up. */
 .account-menu__account {
   display: grid;
   gap: 8px;
@@ -544,8 +632,7 @@ button.account-menu__account-line:focus-visible {
   height: 4px;
   border-radius: var(--r-pill);
   background: color-mix(in srgb, var(--text) 9%, transparent);
-  animation: account-limit-fill 820ms var(--ease-overshoot) both;
-  animation-delay: calc(80ms + var(--order) * 70ms);
+  animation: account-limit-fill 520ms var(--ease-out) both;
   transition: --limit-fill var(--dur-slow) var(--ease-out);
 }
 
@@ -553,12 +640,7 @@ button.account-menu__account-line:focus-visible {
   display: block;
   height: 100%;
   border-radius: inherit;
-  background: linear-gradient(
-    to right in oklch,
-    var(--gauge-empty),
-    var(--gauge-half),
-    var(--gauge-full)
-  );
+  background: color-mix(in srgb, var(--text) 52%, transparent);
   clip-path: inset(0 calc((1 - var(--limit-fill)) * 100%) 0 0 round var(--r-pill));
 }
 
@@ -575,7 +657,8 @@ button.account-menu__account-line:focus-visible {
     transition: none;
   }
 
-  .account-menu__account-line > svg {
+  .account-menu__account-line > svg,
+  .account-menu__source .account-menu__source-chevron {
     transition: none;
   }
 }

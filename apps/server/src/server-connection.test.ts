@@ -1,12 +1,13 @@
 import { execFileSync } from 'node:child_process'
 import { once } from 'node:events'
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
-import { connect, type Socket } from 'node:net'
+import { connect, createServer, Server, type Socket } from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { WebSocket, type ServerOptions, type WebSocketServer } from 'ws'
 import { InvalidHistoryCursorError } from './history-page.js'
+import { PHONE_ACCESS_UNAVAILABLE } from './phone-access.js'
 import { generateNoiseKeyPair, NoiseInitiator, type NoiseSession } from './phone-noise.js'
 import { startServer } from './server.js'
 
@@ -51,6 +52,9 @@ const state = vi.hoisted(() => ({
   approvals: new Map<string, string>(),
   hiddenModels: [] as string[],
   providerRoster: null as string[] | null,
+  phoneAccessState: undefined as string | undefined,
+  /** Threads with a prompt on its way, as the orchestrator was told. */
+  submitting: [] as string[],
 }))
 const temporary: string[] = []
 
@@ -133,11 +137,16 @@ vi.mock('./store.js', () => ({
     }
     setFeedbackLedger() {}
     phoneAccessState() {
-      return undefined
+      return state.phoneAccessState
     }
-    setPhoneAccessState() {}
+    setPhoneAccessState(value: string) {
+      state.phoneAccessState = value
+    }
     renameThread(threadId: string) {
       state.renamed.push(threadId)
+    }
+    deleteThread(threadId: string, options?: { keepSessionOut?: boolean }) {
+      state.handled.push(`store.deleteThread(${threadId}, ${JSON.stringify(options)})`)
     }
     close() {}
   },
@@ -175,6 +184,12 @@ vi.mock('./orchestrator.js', () => ({
       return operation()
     }
     async undoRestore() {}
+    async close(threadId: string) {
+      state.handled.push(`orchestrator.close(${threadId})`)
+    }
+    forgetDeletedThread(threadId: string) {
+      state.handled.push(`orchestrator.forgetDeletedThread(${threadId})`)
+    }
     isTurnRunning() {
       return true
     }
@@ -186,6 +201,10 @@ vi.mock('./orchestrator.js', () => ({
     }
     async submitTurn() {
       return { queued: false, turnId: 'turn' }
+    }
+    trackSubmission<T>(threadId: string, submit: () => Promise<T>) {
+      state.submitting.push(threadId)
+      return submit()
     }
     async setThreadApproval(threadId: string, approval: string) {
       state.approvals.set(threadId, approval)
@@ -425,6 +444,8 @@ afterEach(async () => {
   state.approvals.clear()
   state.hiddenModels = []
   state.providerRoster = null
+  state.phoneAccessState = undefined
+  state.submitting.length = 0
   vi.unstubAllEnvs()
   await Promise.all(
     temporary.splice(0).map((directory) => rm(directory, { recursive: true, maxRetries: 5 })),
@@ -1525,6 +1546,36 @@ describe('chat history during the first provider scan', () => {
     }
   })
 
+  it('tells the orchestrator a prompt is on its way before reading its history', async () => {
+    // A Stop sent behind the prompt waits for prompts on their way, not for this read.
+    let finishClaude!: () => void
+    state.historyScans.set('claude-code', new Promise<void>((resolve) => (finishClaude = resolve)))
+    state.historyRefresh = new Promise<void>(() => undefined)
+    state.threads.set('claude-earlier', { projectPath: '/work', provider: 'claude-code' })
+    const { port } = await listen()
+    const viewer = await connect(port)
+    try {
+      viewer.client.send(
+        JSON.stringify({
+          id: 'turn',
+          method: 'thread.sendTurn',
+          params: { threadId: 'claude-earlier', text: 'hi' },
+        }),
+      )
+      await vi.waitFor(() => expect(state.submitting).toEqual(['claude-earlier']))
+      expect(state.historyLoads).toEqual([])
+      expect(viewer.messages.some((message) => message.id === 'turn')).toBe(false)
+
+      finishClaude()
+      await vi.waitFor(() =>
+        expect(viewer.messages).toContainEqual(expect.objectContaining({ id: 'turn' })),
+      )
+      expect(state.historyLoads).toEqual(['claude-earlier'])
+    } finally {
+      viewer.client.terminate()
+    }
+  })
+
   it('merges outside turns into a chat started in this run once a scan linked its session', async () => {
     let finishClaude!: () => void
     state.historyScans.set('claude-code', new Promise<void>((resolve) => (finishClaude = resolve)))
@@ -1723,6 +1774,37 @@ describe('checkpoint restores across clients', () => {
   })
 })
 
+describe('chat deletes', () => {
+  async function request(port: number, method: string, params: unknown) {
+    const client = new WebSocket(`ws://127.0.0.1:${port}`)
+    try {
+      await once(client, 'message')
+      const reply = once(client, 'message')
+      client.send(JSON.stringify({ id: 'delete', method, params }))
+      const [message] = await reply
+      return JSON.parse(String(message)) as unknown
+    } finally {
+      client.terminate()
+    }
+  }
+
+  it('stops a chat, then deletes it with its provider session kept out of history imports', async () => {
+    // A plain deleteThread leaves the saved session importable, and the next
+    // history scan brings the deleted chat back as a new one.
+    state.threads.set('t', { projectPath: '/project', provider: 'claude-code' })
+    const { port } = await listen()
+    expect(await request(port, 'thread.delete', { threadId: 't' })).toEqual({
+      id: 'delete',
+      result: {},
+    })
+    expect(state.handled.filter((entry) => /^(orchestrator|store)\./.test(entry))).toEqual([
+      'orchestrator.close(t)',
+      'store.deleteThread(t, {"keepSessionOut":true})',
+      'orchestrator.forgetDeletedThread(t)',
+    ])
+  })
+})
+
 describe('feedback routes', () => {
   async function ask(port: number, method: string, params: unknown) {
     const client = new WebSocket(`ws://127.0.0.1:${port}`)
@@ -1822,8 +1904,70 @@ describe('phone links', () => {
     link.socket.send(link.session.send.encrypt(Buffer.from(JSON.stringify(frame))))
   }
 
+  async function freePort(): Promise<number> {
+    const probe = createServer()
+    await new Promise<void>((resolve) => probe.listen(0, '127.0.0.1', resolve))
+    const address = probe.address()
+    await new Promise((resolve) => probe.close(resolve))
+    if (!address || typeof address === 'string') throw new Error('Missing probe address')
+    return address.port
+  }
+
+  function tcpConnect(port: number): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const socket = connect({ host: '127.0.0.1', port })
+      socket.once('connect', () => {
+        socket.destroy()
+        resolve()
+      })
+      socket.once('error', reject)
+    })
+  }
+
+  it('keeps the phone port closed in a build without phone access, even if left on', async () => {
+    const phonePort = await freePort()
+    vi.stubEnv('HARNESS_PHONE_PORT', String(phonePort))
+    vi.stubEnv('HARNESS_PHONE_ACCESS', '')
+    // What an earlier dev build left behind.
+    state.phoneAccessState = JSON.stringify({ enabled: true, devices: [] })
+    const listenCalls = vi.spyOn(Server.prototype, 'listen')
+    const { port } = await listen()
+    const desktop = await desktopClient(port)
+    try {
+      const requests = [
+        ['status', 'phone.status', {}],
+        ['on', 'phone.setEnabled', { enabled: true }],
+        ['pair', 'phone.startPairing', {}],
+        ['off', 'phone.setEnabled', { enabled: false }],
+      ] as const
+      for (const [id, method, params] of requests) {
+        desktop.client.send(JSON.stringify({ id, method, params }))
+      }
+      const replies = () => desktop.messages.filter((message) => 'id' in message)
+      await vi.waitFor(() => expect(replies()).toHaveLength(requests.length))
+      const answers = Object.fromEntries(replies().map((reply) => [reply['id'], reply]))
+      expect(answers['status']).toMatchObject({
+        result: { available: false, enabled: false, listening: false, addresses: [] },
+      })
+      expect(answers['on']).toMatchObject({ error: { message: PHONE_ACCESS_UNAVAILABLE } })
+      expect(answers['pair']).toMatchObject({ error: { message: PHONE_ACCESS_UNAVAILABLE } })
+      expect(answers['off']).toMatchObject({ result: { available: false, listening: false } })
+      expect(JSON.parse(state.phoneAccessState ?? '')).toMatchObject({ enabled: false })
+
+      // Nothing was asked to listen on the phone port, and nothing answers there.
+      expect(listenCalls.mock.calls.filter(([first]) => first === phonePort)).toEqual([])
+      await expect(tcpConnect(phonePort)).rejects.toMatchObject({ code: 'ECONNREFUSED' })
+      // No phone link key was made either.
+      expect(state.credentials.size).toBe(0)
+    } finally {
+      listenCalls.mockRestore()
+      desktop.client.terminate()
+    }
+  }, 15_000)
+
   it('serves a paired phone the desktop protocol, limited to what a phone may do', async () => {
     vi.stubEnv('HARNESS_PHONE_PORT', '0')
+    vi.stubEnv('HARNESS_PHONE_ACCESS', '1')
     const { port } = await listen()
     const desktop = await desktopClient(port)
     try {
@@ -1889,6 +2033,7 @@ describe('phone links', () => {
 
   it('keeps one setup per chat that the phone and the desktop both follow', async () => {
     vi.stubEnv('HARNESS_PHONE_PORT', '0')
+    vi.stubEnv('HARNESS_PHONE_ACCESS', '1')
     state.threads.set('t', { projectPath: '/p', provider: 'codex' })
     const { port } = await listen()
     const desktop = await desktopClient(port)

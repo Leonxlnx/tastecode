@@ -16,9 +16,25 @@ type Drag = {
   scrollerTop: number
   scrollerBottom: number
   scrollTop: number
+  lastX: number
   lastY: number
   started: boolean
   autoScroll: number | undefined
+  /** Horizontal edges of the area the row reorders in; past them it is taken away. */
+  areaLeft: number
+  areaRight: number
+  /** Set while the row is outside that area: the target that is following it. */
+  away: RowDropTarget | undefined
+}
+
+/** Somewhere outside the list that a held row can be taken to. */
+export type RowDropTarget = {
+  /** The pointer, outside the list's area, carrying the row with this id. */
+  move: (id: string, x: number, y: number) => void
+  /** Released outside the area. */
+  drop: (id: string, x: number, y: number) => void
+  /** Back inside the area, or the drag ended without a drop. */
+  leave: () => void
 }
 
 export type RowDragOptions = {
@@ -30,6 +46,13 @@ export type RowDragOptions = {
     ((sourceId: string, targetId: string, position: 'before' | 'after') => void) | undefined
   /** A pointer-down inside a match never starts a drag (row actions, menus). */
   ignore?: string
+  /**
+   * Lets a held row leave the list sideways. Inside `area` (read at pick-up)
+   * the row reorders as usual; past its left or right edge the reorder preview
+   * steps back and `target` follows the pointer instead. Movement inside the
+   * area alone never starts this, so a click stays a click.
+   */
+  away?: { area: (row: HTMLElement) => DOMRect | undefined; target: RowDropTarget } | undefined
 }
 
 export type RowDrag = {
@@ -68,7 +91,8 @@ function settle(node: HTMLElement, delta: number) {
  * Pointer-driven reordering of a vertical list. The held row follows the
  * pointer while the others slide aside to open its slot; the data order
  * changes only on release. Rows preview with `translate`, which composes with
- * the `transform` a virtualized row already uses for its position.
+ * the `transform` a virtualized row already uses for its position. With
+ * `away`, a row can also be carried out of the list to a target beside it.
  */
 export function useRowDrag(options: RowDragOptions): RowDrag {
   const latest = useRef(options)
@@ -90,8 +114,41 @@ export function useRowDrag(options: RowDragOptions): RowDrag {
       current.autoScroll = undefined
     }
 
-    const update = (current: Drag, clientY: number) => {
+    /** Out of the area: the row goes back to its slot and the rows that made way close up. */
+    const takeAway = (current: Drag, target: RowDropTarget) => {
+      current.away = target
+      stopAutoScroll(current)
+      if (!current.started) {
+        current.started = true
+        suppressClick.current = true
+        current.parent.classList.add('is-row-reordering')
+      }
+      current.target = current.source
+      for (const item of current.items) {
+        if (item.offset === 0) continue
+        item.offset = 0
+        item.node.style.translate = ''
+      }
+      current.items[current.source]!.node.classList.add('is-row-dragging')
+    }
+
+    const update = (current: Drag, clientX: number, clientY: number) => {
+      current.lastX = clientX
       current.lastY = clientY
+      const awayTarget = latest.current.away?.target
+      if (awayTarget && (clientX < current.areaLeft || clientX > current.areaRight)) {
+        if (current.away !== awayTarget) {
+          current.away?.leave()
+          takeAway(current, awayTarget)
+        }
+        awayTarget.move(current.id, clientX, clientY)
+        return
+      }
+      if (current.away) {
+        current.away.leave()
+        current.away = undefined
+      }
+      if (!latest.current.onReorder) return
       const shift = (current.scroller?.scrollTop ?? 0) - current.scrollTop
       let delta = clientY + shift - current.startY
       if (!current.started && Math.abs(delta) < START_DISTANCE) return
@@ -157,7 +214,7 @@ export function useRowDrag(options: RowDragOptions): RowDrag {
         const before = scroller.scrollTop
         scroller.scrollTop += speed
         if (scroller.scrollTop === before) return stopAutoScroll(current)
-        update(current, current.lastY)
+        update(current, current.lastX, current.lastY)
         current.autoScroll = requestAnimationFrame(step)
       }
       current.autoScroll = requestAnimationFrame(step)
@@ -169,6 +226,17 @@ export function useRowDrag(options: RowDragOptions): RowDrag {
       drag.current = undefined
       stopAutoScroll(current)
       if (!current.started) return
+      if (current.away) {
+        // Taken out of the list: the order stays as it was and the rows are already home.
+        for (const item of current.items) {
+          item.node.style.translate = ''
+          item.node.classList.remove('is-row-dragging', 'is-row-shifting')
+        }
+        current.parent.classList.remove('is-row-reordering')
+        if (commit) current.away.drop(current.id, current.lastX, current.lastY)
+        else current.away.leave()
+        return
+      }
       const before = current.items.map((item) => item.node.getBoundingClientRect().top)
       for (const item of current.items) {
         item.node.style.translate = ''
@@ -208,8 +276,8 @@ export function useRowDrag(options: RowDragOptions): RowDrag {
         event.stopPropagation()
       },
       onPointerDown: (id, event) => {
-        const { rows, attribute, onReorder, ignore } = latest.current
-        if (!onReorder || event.button !== 0 || drag.current) return
+        const { rows, attribute, onReorder, ignore, away } = latest.current
+        if ((!onReorder && !away) || event.button !== 0 || drag.current) return
         if (ignore && (event.target as HTMLElement).closest(ignore)) return
         suppressClick.current = false
         const nodes = rows(id)
@@ -230,6 +298,7 @@ export function useRowDrag(options: RowDragOptions): RowDrag {
         const scrollerBounds = scroller?.getBoundingClientRect()
         const gap =
           items.length > 1 ? Math.max(0, items[1]!.top - items[0]!.top - items[0]!.height) : 0
+        const area = away?.area(items[source]!.node)
         drag.current = {
           id,
           pointerId: event.pointerId,
@@ -243,9 +312,13 @@ export function useRowDrag(options: RowDragOptions): RowDrag {
           scrollerTop: scrollerBounds?.top ?? 0,
           scrollerBottom: scrollerBounds?.bottom ?? 0,
           scrollTop: scroller?.scrollTop ?? 0,
+          lastX: event.clientX,
           lastY: event.clientY,
           started: false,
           autoScroll: undefined,
+          areaLeft: area?.left ?? Number.NEGATIVE_INFINITY,
+          areaRight: area?.right ?? Number.POSITIVE_INFINITY,
+          away: undefined,
         }
         ;(event.target as HTMLElement).setPointerCapture?.(event.pointerId)
         prepareAppHaptics()
@@ -253,10 +326,10 @@ export function useRowDrag(options: RowDragOptions): RowDrag {
       onPointerMove: (event) => {
         const current = drag.current
         if (!current || current.pointerId !== event.pointerId) return
-        update(current, event.clientY)
+        update(current, event.clientX, event.clientY)
         if (current.started) {
           event.preventDefault()
-          autoScroll(current)
+          if (!current.away) autoScroll(current)
         }
       },
       onPointerUp: (event) => {

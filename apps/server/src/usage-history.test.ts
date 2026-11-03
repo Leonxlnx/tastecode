@@ -11,16 +11,24 @@ import {
 import os from 'node:os'
 import path from 'node:path'
 import { readClaudeUsageHistory } from '@harness/adapter-claude-code'
-import type { ProviderId, UsageHistoryRange, UsageHistoryResult } from '@harness/contracts'
+import {
+  DEFAULT_ACCOUNT_ID,
+  type ProviderId,
+  type UsageHistoryRange,
+  type UsageHistoryResult,
+} from '@harness/contracts'
 import { afterEach, describe, expect, it } from 'vitest'
+import { takeEdition } from './provider-edition.js'
 import type { StoredUsageEvent } from './store.js'
 import {
   type CachedUsageFile,
   loadUsageCache,
   readUsageCache,
   runUsageHistoryScan,
+  type UsageCache,
   type UsageCacheLoader,
   UsageHistoryService,
+  type UsageScanRequest,
 } from './usage-history.js'
 
 const temporaryDirectories: string[] = []
@@ -1361,6 +1369,200 @@ describe('usage history of provider accounts', () => {
 })
 
 /** A Codex rollout of one session whose token count reaches `input` in, a tenth of it out. */
+describe('usage history in a release build', () => {
+  afterEach(() => takeEdition({}))
+
+  const everyProvider: ProviderId[] = [
+    'claude-code',
+    'codex',
+    'grok',
+    'cursor',
+    'opencode',
+    'antigravity',
+    'acp',
+    'api',
+  ]
+  const releaseProviders: ProviderId[] = ['claude-code', 'codex', 'grok', 'cursor', 'antigravity']
+
+  /** The archives one scan was asked to read, as provider:account. */
+  async function scannedArchives(): Promise<string[]> {
+    const root = temporaryDirectory()
+    const requests: UsageScanRequest[] = []
+    const service = new UsageHistoryService({
+      cacheFile: path.join(root, 'cache', 'usage.json'),
+      sourceRoots: {
+        'claude-code': path.join(root, 'missing-claude'),
+        codex: path.join(root, 'missing-codex'),
+        grok: path.join(root, 'missing-grok.jsonl'),
+        opencode: path.join(root, 'missing-opencode'),
+      },
+      accountHomes: () => [
+        { provider: 'opencode', accountId: 'work', home: path.join(root, 'opencode-work') },
+        { provider: 'codex', accountId: 'work', home: path.join(root, 'codex-work') },
+      ],
+      scanRunner: (request, onProgress) => {
+        requests.push(request)
+        return runUsageHistoryScan(request, onProgress)
+      },
+      now: () => new Date('2026-08-08T12:00:00.000Z'),
+    })
+    await settledHistory(service, '7d')
+    return requests.flatMap((request) =>
+      request.sources.map((source) => `${source.provider}:${source.accountId ?? 'default'}`),
+    )
+  }
+
+  it("never reads a hidden provider's archive, also not another account's", async () => {
+    takeEdition({ HARNESS_EDITION: 'release' })
+    expect(await scannedArchives()).toEqual([
+      'claude-code:default',
+      'codex:default',
+      'grok:default',
+      'codex:work',
+    ])
+  })
+
+  it('reads every archive in a dev build or without an edition', async () => {
+    const every = [
+      'claude-code:default',
+      'codex:default',
+      'grok:default',
+      'opencode:default',
+      'opencode:work',
+      'codex:work',
+    ]
+    takeEdition({ HARNESS_EDITION: 'dev' })
+    expect(await scannedArchives()).toEqual(every)
+    takeEdition({})
+    expect(await scannedArchives()).toEqual(every)
+  })
+
+  it("counts none of TasteCode's usage events for a hidden provider and names no source for it", async () => {
+    takeEdition({ HARNESS_EDITION: 'release' })
+    const root = temporaryDirectory()
+    const codexRoot = path.join(root, 'codex')
+    const claudeRoot = path.join(root, 'claude')
+    mkdirSync(codexRoot, { recursive: true })
+    mkdirSync(claudeRoot, { recursive: true })
+    const at = new Date('2026-08-08T10:00:00.000Z').getTime()
+    const service = usageService({
+      cacheFile: path.join(root, 'cache', 'usage.json'),
+      sourceRoots: { codex: codexRoot, 'claude-code': claudeRoot },
+      harnessUsage: () =>
+        everyProvider.map((provider) => ({
+          threadId: `${provider}-session`,
+          provider,
+          ...(provider === 'opencode' ? { accountId: 'work' } : {}),
+          at,
+          usage: {
+            inputTokens: 100,
+            cachedInputTokens: 20,
+            outputTokens: 10,
+            reasoningTokens: 2,
+            totalTokens: 130,
+            model: `${provider}-model`,
+            costUsd: 0.01,
+            inputIncludesCached: false,
+          },
+        })),
+      now: () => new Date('2026-08-08T12:00:00.000Z'),
+    })
+
+    const history = await settledHistory(service, '7d')
+    expect(history.sessionCount).toBe(5)
+    expect(new Set(history.providers.map((provider) => provider.provider))).toEqual(
+      new Set(releaseProviders),
+    )
+    expect(new Set(history.models.map((model) => model.provider))).toEqual(
+      new Set(releaseProviders),
+    )
+    expect(
+      new Set(history.daily.flatMap((day) => day.providers.map((entry) => entry.provider))),
+    ).toEqual(new Set(releaseProviders))
+    expect(history.sources.map((source) => source.provider)).toEqual(releaseProviders)
+    expect(history.totals).toMatchObject({ processedTokens: 650, providerReportedTokens: 650 })
+    expect(history.totals.estimatedCostUsd).toBeCloseTo(0.05, 8)
+
+    for (const accountId of [DEFAULT_ACCOUNT_ID, 'work']) {
+      const alone = await service.history('7d', false, { provider: 'opencode', accountId })
+      expect(alone).toMatchObject({ sessionCount: 0, providers: [], models: [], sources: [] })
+      expect(alone.totals.processedTokens).toBe(0)
+    }
+  })
+
+  it("keeps a hidden provider's indexed files for a dev build on the same machine", async () => {
+    const root = temporaryDirectory()
+    const codexFile = path.join(root, 'codex', 'session.jsonl')
+    const cacheFile = path.join(root, 'cache', 'usage.json')
+    const sourceRoots = {
+      'claude-code': path.join(root, 'missing-claude'),
+      codex: path.dirname(codexFile),
+      grok: path.join(root, 'missing-grok.jsonl'),
+      // Missing: a scan that read it would drop OpenCode's files from the index.
+      opencode: path.join(root, 'missing-opencode'),
+    }
+    const now = () => new Date('2026-08-08T12:00:00.000Z')
+    writeCodexRollout(codexFile, 'codex-session', 1_000)
+    await settledHistory(
+      new UsageHistoryService({ cacheFile, sourceRoots, scanRunner: runUsageHistoryScan, now }),
+      'all',
+    )
+    // What a dev build indexed from an OpenCode archive this test does not build.
+    const opencodeFile = uncompactedFixtureFiles(root).find((file) => file.provider === 'opencode')
+    if (!opencodeFile) throw new Error('The fixture has no OpenCode file.')
+    const devIndex = JSON.parse(readFileSync(cacheFile, 'utf8')) as UsageCache
+    devIndex.files.push(opencodeFile)
+    devIndex.sources = devIndex.sources.map((source) =>
+      source.provider === 'opencode' ? { ...source, available: true } : source,
+    )
+    writeFileSync(cacheFile, JSON.stringify(devIndex))
+    const devFigures = (await cachedHistory(cacheFile, 'all')).providers
+
+    // The Codex session grows, so the release build saves the index again.
+    writeCodexRollout(codexFile, 'codex-session', 20_000)
+    takeEdition({ HARNESS_EDITION: 'release' })
+    const release = await settledHistory(
+      new UsageHistoryService({ cacheFile, sourceRoots, scanRunner: runUsageHistoryScan, now }),
+      'all',
+    )
+    expect(release.providers.map((provider) => provider.provider)).toEqual(['codex'])
+    expect(release.totals.processedTokens).toBe(22_000)
+    expect(release.sources.map((source) => source.provider)).not.toContain('opencode')
+    const saved = await readUsageCache(cacheFile)
+    expect(saved.files.find((file) => file.path === codexFile)?.size).toBe(statSync(codexFile).size)
+    expect(saved.files.find((file) => file.provider === 'opencode')).toEqual(opencodeFile)
+    expect(saved.sources.find((source) => source.provider === 'opencode')).toMatchObject({
+      available: true,
+    })
+
+    takeEdition({})
+    const indexed: ProviderId[] = []
+    const dev = new UsageHistoryService({
+      cacheFile,
+      sourceRoots,
+      scanRunner: async (request) => {
+        indexed.push(...request.indexed.map((file) => file.provider))
+        return {
+          paths: request.indexed.map((file) => file.path),
+          files: [],
+          sources: saved.sources,
+          warnings: [],
+        }
+      },
+      now,
+    })
+    const back = await settledHistory(dev, 'all')
+    // The dev build hands OpenCode's file to its scan as indexed, so it is not read again.
+    expect(indexed).toContain('opencode')
+    expect(back.providers.find((provider) => provider.provider === 'opencode')).toEqual(
+      devFigures.find((provider) => provider.provider === 'opencode'),
+    )
+    expect(back.sources.find((source) => source.provider === 'opencode')).toMatchObject({
+      available: true,
+    })
+  })
+})
+
 function writeCodexRollout(filePath: string, sessionId: string, input: number): void {
   mkdirSync(path.dirname(filePath), { recursive: true })
   writeJsonLines(filePath, [

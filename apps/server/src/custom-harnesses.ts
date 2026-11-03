@@ -4,6 +4,7 @@ import path from 'node:path'
 import { CustomHarnessSchema, type CustomHarness } from '@harness/contracts'
 import { z } from 'zod'
 import { configFile } from './product-paths.js'
+import { assertProviderOffered, providerOffered } from './provider-edition.js'
 
 /**
  * `unsupported` holds entries this build cannot run, such as a harness on a
@@ -30,7 +31,8 @@ function parseConfig(raw: string): ConfigFile {
   const unsupported: unknown[] = []
   for (const entry of value.data.harnesses) {
     const harness = CustomHarnessSchema.safeParse(entry)
-    if (harness.success) harnesses.push(harness.data)
+    // A harness on a provider this build does not offer is kept the same way.
+    if (harness.success && providerOffered(harness.data.provider)) harnesses.push(harness.data)
     else unsupported.push(entry)
   }
   return { version: 1, harnesses, unsupported }
@@ -60,6 +62,7 @@ export class CustomHarnessStore {
 
   upsert(input: CustomHarness): CustomHarness {
     const harness = CustomHarnessSchema.parse(input)
+    assertProviderOffered(harness.provider)
     const file = this.#read()
     file.unsupported = file.unsupported.filter((entry) => entryId(entry) !== harness.id)
     const index = file.harnesses.findIndex((entry) => entry.id === harness.id)

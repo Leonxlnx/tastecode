@@ -18,6 +18,7 @@ import {
   isInterruptMarker,
   isPrompt,
   object,
+  slashCommandPrompt,
   string,
   type SavedRecord,
 } from './history-items.js'
@@ -537,9 +538,10 @@ function observe(digest: Digest, row: SavedRecord): void {
     if (digest.cwd === undefined && typeof row.cwd === 'string') digest.cwd = row.cwd
     if (digest.prompt === undefined && isPrompt(row))
       digest.prompt = titleText(
-        contentBlocks(row)
-          .map((block) => string(block.text) ?? '')
-          .join(' '),
+        slashCommandPrompt(row) ??
+          contentBlocks(row)
+            .map((block) => string(block.text) ?? '')
+            .join(' '),
       )
   }
   if (row.type === 'relocated') digest.relocatedCwd = row.relocatedCwd
@@ -719,8 +721,9 @@ export function createClaudeHistorySource(
           if (!info) continue
           try {
             // Reimport saved transcripts that previously exposed machine notifications
-            // or Stop markers, or were listed without their access level.
-            const revision = `4:${info.size}:${info.mtimeMs}:${info.ctimeMs}`
+            // or Stop markers, were listed without their access level, or showed a slash
+            // command as raw command tags beside the prompt it echoes.
+            const revision = `5:${info.size}:${info.mtimeMs}:${info.ctimeMs}`
             const id = path.basename(locator).slice(0, -6)
             const index = byId.get(id)
             // A sessions index entry can name a session without its transcript changing.

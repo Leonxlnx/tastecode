@@ -574,6 +574,28 @@ describe('build phase', () => {
     }
   })
 
+  it('keeps package-manager caches out of the source scan', () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-package-caches-'))
+    try {
+      writeFileSync(path.join(workspace, 'index.html'), '<main></main>')
+      // A Bun cache inside the workspace pushed a fresh Astro build over the 32 MB scan (#1553).
+      for (const directory of ['.bun-cache/install', '.yarn/cache', '.npm/_cacache']) {
+        mkdirSync(path.join(workspace, directory), { recursive: true })
+        writeFileSync(path.join(workspace, directory, 'package.js'), 'export {}')
+      }
+
+      expect(designWorkspaceFileBaseline(workspace)).toEqual([
+        '.bun-cache/',
+        '.npm/',
+        '.yarn/',
+        'index.html',
+      ])
+      expect(designSourceQualityBaseline(workspace)).toEqual([])
+    } finally {
+      rmSync(workspace, { recursive: true, force: true })
+    }
+  })
+
   it('rejects new files inside nested internal-named directories', () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-exact-nested-internal-'))
     const brief = {

@@ -297,8 +297,11 @@ export function selectReviewedReferences(
 ): ReferenceDirection[] {
   const request =
     `${brief.originalRequest} ${(brief.explicitAnswers ?? []).map((answer) => answer.answer).join(' ')}`.toLowerCase()
-  if (!references.length) throw new Error('No Design references are available')
   const dashboard = isDashboardBrief(brief)
+  // While the image catalog is parked, a dashboard is an app screen dealt from the tasteskill
+  // library (app-screens.ts) and draws no reference images at all.
+  if (dashboard && !DASHBOARD_REFERENCES_ENABLED) return []
+  if (!references.length) throw new Error('No Design references are available')
   const families: readonly PageLayoutFamily[] = dashboard ? ['dashboard'] : WEBSITE_LAYOUT_FAMILIES
   // Site profiles describe marketing pages; a dashboard deck is a single screen.
   const profiles: ReferenceStyleProfiles = dashboard

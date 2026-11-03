@@ -8,6 +8,13 @@ export {
 } from './adapter.js'
 export { antigravityCommand } from './command.js'
 export { antigravityInstallCommand } from './install.js'
+export {
+  AGY_USAGE_MIN_VERSION,
+  agyAnswersUsage,
+  antigravityLimitSource,
+  mapAgyUsage,
+  type AntigravityLimitSource,
+} from './limits.js'
 export { antigravityAccount, ANTIGRAVITY_SIGN_IN_REQUIRED } from './sign-in.js'
 export {
   antigravityDisplayName,
@@ -18,3 +25,8 @@ export {
   resetAntigravityIndexForTests,
   type AntigravityModelIndex,
 } from './models.js'
+export {
+  AGY_ANSWERED_COMMANDS,
+  listAntigravityCommands,
+  type AntigravityCommandOptions,
+} from './commands.js'

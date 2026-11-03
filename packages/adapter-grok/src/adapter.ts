@@ -23,6 +23,7 @@ import {
   readNdjson,
 } from '@harness/proc'
 import { captureCli } from '@harness/proc/cli'
+import { startsWithAcpCommand } from '@harness/adapter-acp/commands'
 import { z } from 'zod'
 import { withInstructions } from './prompt-instructions.js'
 import { GROK_CAPABILITIES } from './capabilities.js'
@@ -418,10 +419,14 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
     // A process restart resets in-memory counters. Random ids cannot collide
     // with turns already persisted for this thread before the restart.
     const turnId = `${threadId}-turn-${crypto.randomUUID()}`
-    const prompt =
-      this.#instructionsPending && this.#options.instructions
-        ? withInstructions(text, this.#options.instructions)
-        : text
+    // Print mode hands the prompt to the agent's session, which runs a slash
+    // command only when the prompt starts with it (grok.exe 1.0.x,
+    // xai-grok-shell slash_exec.rs: "GoalSet is intercepted in handle_prompt").
+    // A command goes alone; the instructions wait for the next prompt.
+    const carriesInstructions = Boolean(
+      this.#instructionsPending && this.#options.instructions && !startsWithAcpCommand(text),
+    )
+    const prompt = carriesInstructions ? withInstructions(text, this.#options.instructions!) : text
     const promptDirectory = mkdtempSync(path.join(tmpdir(), 'harness-grok-'))
     const promptFile = path.join(promptDirectory, attachments.length ? 'prompt.json' : 'prompt.md')
     try {
@@ -552,7 +557,7 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
             (frame.type === 'end' && frame.stopReason === 'end_turn'))
         ) {
           this.#nativeSessionCreated = true
-          this.#instructionsPending = false
+          if (carriesInstructions) this.#instructionsPending = false
           this.#announceProviderSessionId(this.#providerSessionId)
         }
         if (frame.type === 'error' && frame.message) {

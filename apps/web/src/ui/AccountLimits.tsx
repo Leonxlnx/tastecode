@@ -17,11 +17,12 @@ import {
 import { IconChevronRight as ChevronRight, IconRefresh as RefreshCw } from '@tabler/icons-react'
 import type { AccountLabel } from '../provider-accounts-state.js'
 import { providerDisplayName, providerMark } from '../provider-presentation.js'
-import { limitKey } from '../usage-limits-state.js'
+import { limitKey, USAGE_LOW_PERCENT } from '../usage-limits-state.js'
 import type { UsageSummaryState } from '../usage-summary-state.js'
 import '../styles/account-limits.css'
 import { ProviderIcon } from './ProviderIcon.js'
 import { compactRelativeTime } from './session-clock.js'
+import { dateTimeText, resetText } from './usage/usage-format.js'
 
 /** Values older than this say how old they are; younger ones read as current. */
 const AGE_SHOWN_AFTER_MS = 10 * 60_000
@@ -302,9 +303,8 @@ function AccountLine(props: {
                   {limit.valueLabel === undefined ? (
                     <span
                       className="account-menu__account-gauge"
-                      style={
-                        { '--left': remaining(limit) / 100, '--order': index } as CSSProperties
-                      }
+                      data-low={remaining(limit) <= USAGE_LOW_PERCENT ? '' : undefined}
+                      style={{ '--left': remaining(limit) / 100 } as CSSProperties}
                     >
                       <span />
                     </span>
@@ -331,7 +331,6 @@ function AccountLine(props: {
               accountId={props.state.accountId}
               limit={limit}
               now={props.now}
-              order={index}
               onConsumeReset={props.onConsumeReset}
             />
           ))}
@@ -400,24 +399,48 @@ function LimitSource(props: {
 }) {
   const titleId = useId()
   const statusId = useId()
+  const bodyId = useId()
+  const [open, setOpen] = useState(false)
   const { limits, status, retryable } = sourceView(props.state, props.now)
   const name = props.name
+  const summary = summaryLimit(limits)
+  const title =
+    props.account === undefined ? (
+      <>
+        <ProviderIcon mark={providerMark(props.state.provider)} size={14} />
+        <span>{name}</span>
+      </>
+    ) : (
+      <span>{props.account}</span>
+    )
+  // With values, the heading opens the full rows; closed, one line carries the
+  // window with the least left, so the popup stays short with every provider.
+  const heading =
+    summary === undefined ? (
+      title
+    ) : (
+      <button
+        className="account-menu__source-toggle"
+        type="button"
+        aria-expanded={open}
+        aria-controls={open ? bodyId : undefined}
+        onClick={() => setOpen((current) => !current)}
+      >
+        {title}
+        <ChevronRight className="account-menu__source-chevron" size={12} aria-hidden />
+      </button>
+    )
   return (
     <section
-      className={`account-menu__source${props.account === undefined ? '' : ' is-account'}`}
+      className={`account-menu__source${props.account === undefined ? '' : ' is-account'}${summary !== undefined && !open ? ' is-closed' : ''}`}
       {...(props.account === undefined ? { 'aria-labelledby': titleId } : { 'aria-label': name })}
       aria-busy={props.state.status === 'loading'}
     >
       <div className="account-menu__source-head">
         {props.account === undefined ? (
-          <h3 id={titleId}>
-            <ProviderIcon mark={providerMark(props.state.provider)} size={14} />
-            <span>{name}</span>
-          </h3>
+          <h3 id={titleId}>{heading}</h3>
         ) : (
-          <h4 id={titleId}>
-            <span>{props.account}</span>
-          </h4>
+          <h4 id={titleId}>{heading}</h4>
         )}
         {status ? (
           <span className="account-menu__source-status" id={statusId} title={status.detail}>
@@ -437,20 +460,45 @@ function LimitSource(props: {
         ) : null}
         {props.action}
       </div>
-      {limits.map((limit, index) => (
+      {summary === undefined ? null : open ? (
+        <div className="account-menu__source-body" id={bodyId}>
+          {limits.map((limit, index) => (
+            <LimitRow
+              key={`${limit.label}:${index}`}
+              name={name}
+              provider={props.state.provider}
+              accountId={props.state.accountId}
+              limit={limit}
+              now={props.now}
+              onConsumeReset={props.onConsumeReset}
+            />
+          ))}
+        </div>
+      ) : (
         <LimitRow
-          key={`${limit.label}:${index}`}
           name={name}
           provider={props.state.provider}
           accountId={props.state.accountId}
-          limit={limit}
+          limit={summary}
           now={props.now}
-          order={index}
-          onConsumeReset={props.onConsumeReset}
+          inline
         />
-      ))}
+      )}
     </section>
   )
+}
+
+/**
+ * The row a closed source shows: the share with the least left, the first of
+ * equals, since that window runs out first; without shares, the first row.
+ */
+export function summaryLimit(limits: readonly Limit[]): Limit | undefined {
+  let least: Limit | undefined
+  for (const limit of limits) {
+    if (limit.valueLabel !== undefined) continue
+    if (least === undefined || remaining(limit) < remaining(least)) least = limit
+  }
+  return least ?? limits[0]
 }
 
 /** A source's limits, the phrase that goes beside its name, and whether it can be retried. */
@@ -529,56 +577,67 @@ function LimitRow(props: {
   accountId?: AccountId | undefined
   limit: Limit
   now: number
-  order: number
   onConsumeReset?: ConsumeReset | undefined
+  /** One line: the bar between label and value, the reset time on hover, no actions. */
+  inline?: boolean
 }) {
-  const consumable = props.limit.action === 'consume-reset' && props.onConsumeReset !== undefined
+  const inline = props.inline === true
+  const consumable =
+    !inline && props.limit.action === 'consume-reset' && props.onConsumeReset !== undefined
   const credits = props.limit.resetCredits
   const hasSelectableCredits = credits?.some((credit) => credit.id !== undefined)
   const left = remaining(props.limit)
-  const gauge = props.limit.valueLabel === undefined
+  // An untouched allowance is one line: a full bar and its reset time say
+  // nothing the number does not, and the rows that are being spent stand out.
+  const full = props.limit.valueLabel === undefined && left === 100
+  const gauge = props.limit.valueLabel === undefined && !full
   const value = props.limit.valueLabel ?? `${left}% left`
   const pace = evenPace(props.limit, props.now)
+  const reset =
+    props.limit.resetsAt === undefined || full
+      ? undefined
+      : resetLine(props.limit.resetsAt, props.now)
+  const bar = gauge ? (
+    <div
+      className="account-menu__limit-bar"
+      role="progressbar"
+      aria-label={`${props.name} ${props.limit.label} left`}
+      aria-valuenow={left}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      title={
+        pace === undefined ? undefined : `At an even pace, ${Math.round(pace)}% would be left now.`
+      }
+    >
+      <span />
+      {pace === undefined ? null : (
+        <span className="account-menu__limit-pace" style={{ left: `${pace}%` }} />
+      )}
+    </div>
+  ) : null
 
   return (
     <div
-      className="account-menu__limit"
+      className={`account-menu__limit${inline ? ' is-inline' : ''}`}
       data-gauge={gauge ? '' : undefined}
-      // The bar takes its length and colour from how much is left.
-      style={
-        gauge ? ({ '--left': left / 100, '--order': props.order } as CSSProperties) : undefined
-      }
+      data-full={full ? '' : undefined}
+      data-low={gauge && left <= USAGE_LOW_PERCENT ? '' : undefined}
+      // The bar takes its length from how much is left.
+      style={gauge ? ({ '--left': left / 100 } as CSSProperties) : undefined}
+      title={inline && reset ? [reset.label, reset.title].filter(Boolean).join(' · ') : undefined}
     >
       <div className="account-menu__limit-row">
         <span className="account-menu__limit-label">{props.limit.label}</span>
+        {inline ? bar : null}
         <span className="account-menu__limit-value">{value}</span>
       </div>
-      {gauge ? (
-        <div
-          className="account-menu__limit-bar"
-          role="progressbar"
-          aria-label={`${props.name} ${props.limit.label} left`}
-          aria-valuenow={left}
-          aria-valuemin={0}
-          aria-valuemax={100}
-          title={
-            pace === undefined
-              ? undefined
-              : `At an even pace, ${Math.round(pace)}% would be left now.`
-          }
-        >
-          <span />
-          {pace === undefined ? null : (
-            <span className="account-menu__limit-pace" style={{ left: `${pace}%` }} />
-          )}
-        </div>
-      ) : null}
-      {props.limit.resetsAt !== undefined ? (
-        <span className="account-menu__limit-reset">
-          {resetLabel(props.limit.resetsAt, props.now)}
+      {inline ? null : bar}
+      {reset && !inline ? (
+        <span className="account-menu__limit-reset" title={reset.title}>
+          {reset.label}
         </span>
       ) : null}
-      {credits?.length ? (
+      {credits?.length && !inline ? (
         <ResetCreditExpiries
           credits={credits}
           provider={props.provider}
@@ -735,17 +794,7 @@ function ResetCreditExpiries(props: {
                   data-expiring-soon={untilExpiry > 0 && untilExpiry < 86_400_000 ? '' : undefined}
                 >
                   {untilExpiry <= 0 ? 'Expired' : 'Expires'}{' '}
-                  {validDate.toLocaleDateString(undefined, {
-                    year: 'numeric',
-                    month: 'short',
-                    day: 'numeric',
-                  })}{' '}
-                  <span className="account-menu__reset-time">
-                    {validDate.toLocaleTimeString(undefined, {
-                      hour: '2-digit',
-                      minute: '2-digit',
-                    })}
-                  </span>
+                  {dateTimeText(validDate.getTime(), now)}
                 </time>
               ) : expiresAt === null ? (
                 'No expiry'
@@ -787,17 +836,13 @@ export function evenPace(limit: Limit, now: number): number | undefined {
   return ahead >= 2 && ahead <= 98 ? ahead : undefined
 }
 
-/** A reset within the week reads as weekday and time; further out, as a date. */
-function resetLabel(at: number, now: number): string {
-  const date = new Date(at)
-  if (Number.isNaN(date.getTime())) return 'Reset time unavailable.'
-  const untilReset = at - now
-  const withinWeek = untilReset >= 0 && untilReset < 6 * 86_400_000
-  const formatted = date.toLocaleString(
-    undefined,
-    withinWeek
-      ? { weekday: 'short', hour: '2-digit', minute: '2-digit' }
-      : { year: 'numeric', month: 'short', day: 'numeric' },
-  )
-  return `Resets ${formatted}`
+/**
+ * The Usage page's words on a line of their own: "Resets in 3h 12m" within a
+ * day, the weekday and time within the week, the date after that, with the
+ * exact time on hover.
+ */
+function resetLine(at: number, now: number) {
+  const reset = resetText(at, now)
+  if (!reset) return { label: 'Reset time unavailable.', title: undefined }
+  return { label: reset.label.charAt(0).toUpperCase() + reset.label.slice(1), title: reset.title }
 }

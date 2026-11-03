@@ -1,5 +1,5 @@
 import { useArchiveMotion } from './useArchiveMotion.js'
-import { useRowDrag, type RowDrag } from './useRowDrag.js'
+import { useRowDrag, type RowDrag, type RowDropTarget } from './useRowDrag.js'
 import {
   lazy,
   memo,
@@ -11,6 +11,7 @@ import {
   type ReactNode,
   type RefObject,
   useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -37,6 +38,7 @@ import {
   IconFolderOpen as FolderOpen,
   IconFolderPlus as FolderPen,
   IconGitPullRequest as GitPullRequest,
+  IconLayoutColumns as SplitColumns,
   IconLayoutSidebarLeftCollapse as PanelLeftClose,
   IconLoader2 as LoaderCircle,
   IconMessage as MessageSquare,
@@ -85,15 +87,18 @@ import {
   shortcutAria,
   type Keybindings,
 } from '../shortcuts.js'
+import { USAGE_LOW_PERCENT } from '../usage-limits-state.js'
 import { GeneratedAvatar } from './GeneratedAvatar.js'
 import { AppUpdateNotice } from './AppUpdateNotice.js'
 import { Menu, MenuItem } from './Menu.js'
 import type { AccountLimitsState } from './AccountLimits.js'
 import type { InboxActions } from './InboxSidebar.js'
 import { ProviderIcon } from './ProviderIcon.js'
+import { SplitSidebarContext, type SplitSidebar } from './split-view-context.js'
 import { activeIndicatorRef } from './active-indicator.js'
 import { compactRelativeTime, readSessionClock, subscribeSessionClock } from './session-clock.js'
 import '../styles/account-card.css'
+import '../styles/rail-motion.css'
 import { InboxRailSkeleton, SidebarTreeSkeleton } from './SurfaceSkeletons.js'
 
 type AccountLimitsModule = typeof import('./AccountLimits.js')
@@ -209,8 +214,6 @@ const MAX_RAIL_WIDTH = 420
 /** Below this a rail (an older saved width) keeps a Needs you or Archived row
  *  to its title: the project name beside it would be cut to a few letters. */
 const NARROW_RAIL_WIDTH = 220
-/** Matches the account menu's own limit bars, which turn red at the same point. */
-const USAGE_LOW_PERCENT = 15
 const INITIAL_PROJECT_RENDER_COUNT = 30
 const DEFERRED_PROJECT_RENDER_COUNT = 20
 const DEFERRED_PROJECT_RENDER_TIMEOUT_MS = 100
@@ -266,6 +269,12 @@ function SidebarComponent(props: {
   onAddDroppedProjects?: ((paths: string[]) => void) | undefined
   onNewSession: (projectPath?: string, chooseProject?: boolean) => void
   onSelectSession: (id: string) => void
+  /** The chat open in split view beside the active one. */
+  besideSessionId?: string | undefined
+  /** Opens a chat in split view beside the active one. */
+  onOpenSessionBeside?: ((id: string) => void) | undefined
+  /** Where a chat row dragged out of the rail can be dropped. Keep it stable. */
+  sessionDropTarget?: RowDropTarget | undefined
   onRenameProject: (path: string, name: string) => void
   onRemoveProject: (path: string) => void
   onTogglePin: (path: string) => void
@@ -613,6 +622,19 @@ function SidebarComponent(props: {
       : undefined,
     ignore: '.menuwrap, .rename',
   })
+  // Pinned chats keep their order, but can still be dragged out to the chat area.
+  const { dragOut } = useContext(SplitSidebarContext)
+  const pinnedList = useRef<HTMLUListElement>(null)
+  const pinnedDrag = useRowDrag({
+    attribute: 'data-archive-session-id',
+    rows: () =>
+      Array.from(
+        pinnedList.current?.querySelectorAll<HTMLElement>('[data-archive-session-id]') ?? [],
+      ),
+    onReorder: undefined,
+    ignore: '.sess__actions',
+    away: dragOut,
+  })
   const [projectRenderLimit, setProjectRenderLimit] = useState(INITIAL_PROJECT_RENDER_COUNT)
   const { renderedProjects, renderedProjectCount } = useMemo(() => {
     let count = Math.min(projectRenderLimit, orderedProjects.length)
@@ -830,7 +852,11 @@ function SidebarComponent(props: {
               {pinnedSessions.length > 0 ? (
                 <>
                   <p className="section">Pinned</p>
-                  <ul className="proj__sessions pinned-sessions">
+                  <ul
+                    ref={pinnedList}
+                    className="proj__sessions pinned-sessions"
+                    onClickCapture={pinnedDrag.onClickCapture}
+                  >
                     {pinnedSessions.map(({ projectPath, session }) => (
                       <SessionRow
                         key={session.id}
@@ -842,7 +868,7 @@ function SidebarComponent(props: {
                         onDelete={() => props.onDeleteSession(session.id)}
                         onTogglePin={() => props.onToggleSessionPin?.(session.id)}
                         onOpenInExplorer={() => void revealPath(projectPath)}
-                        drag={undefined}
+                        drag={dragOut ? pinnedDrag : undefined}
                       />
                     ))}
                   </ul>
@@ -1563,6 +1589,7 @@ const ProjectSessions = memo(function ProjectSessions(props: {
 }) {
   const count = props.project.sessions.length
   const virtualSessionList = useRef<HTMLUListElement>(null)
+  const { dragOut } = useContext(SplitSidebarContext)
   const sessionDrag = useRowDrag({
     attribute: 'data-archive-session-id',
     rows: () =>
@@ -1573,6 +1600,7 @@ const ProjectSessions = memo(function ProjectSessions(props: {
     onReorder: (sourceId, targetId, position) =>
       props.onReorderSession(props.project.path, sourceId, targetId, position),
     ignore: '.sess__actions',
+    away: dragOut,
   })
   // Folded to its first rows, a project still lists each later chat with news.
   const foldedSessions = useMemo(
@@ -1739,7 +1767,7 @@ function SessionRow(props: {
   onTogglePin: () => void
   onOpenInExplorer: () => void
   standalone?: boolean
-  /** Absent where the row cannot be dragged into a new order. */
+  /** Absent where the row cannot be dragged, into a new order or out to the chat area. */
   drag: RowDrag | undefined
   virtualTop?: number | undefined
   virtualPosition?: number | undefined
@@ -1753,6 +1781,12 @@ function SessionRow(props: {
   const archive =
     props.onArchive && !isLiveStatus(props.session.status) ? props.onArchive : undefined
   const archiveOnHover = archive && props.session.status !== 'failed' ? archive : undefined
+  const split = useContext(SplitSidebarContext)
+  const beside = !props.active && split.besideSessionId === props.session.id
+  const openBeside =
+    split.openBeside && !props.active && !beside
+      ? () => split.openBeside?.(props.session.id)
+      : undefined
 
   if (renaming) {
     return (
@@ -1779,7 +1813,7 @@ function SessionRow(props: {
 
   return (
     <li
-      className={`sessrow ${props.active ? 'is-active' : ''} ${props.standalone ? 'is-pinned' : ''} ${
+      className={`sessrow ${props.active ? 'is-active' : ''} ${beside ? 'is-beside' : ''} ${props.standalone ? 'is-pinned' : ''} ${
         props.drag ? 'is-reorderable' : ''
       } ${props.session.unread ? 'is-unread' : ''} ${archiveOnHover ? 'has-action' : ''}`}
       data-archive-session-id={props.session.id}
@@ -1798,7 +1832,11 @@ function SessionRow(props: {
       <button
         ref={contextMenuTarget}
         className={`sess ${props.active ? 'is-active' : ''}`}
-        onClick={props.onSelect}
+        onClick={(event) => {
+          // Alt+click opens the chat beside the active one, as in Claude desktop.
+          if (event.altKey && openBeside) openBeside()
+          else props.onSelect()
+        }}
         onDoubleClick={() => setRenaming(true)}
         aria-label={sessionLabel(props.session)}
         title={sessionLabel(props.session)}
@@ -1842,6 +1880,16 @@ function SessionRow(props: {
       >
         {(close) => (
           <>
+            {openBeside ? (
+              <MenuItem
+                title="Open beside"
+                icon={<SplitColumns size={14} aria-hidden />}
+                onClick={() => {
+                  openBeside()
+                  close()
+                }}
+              />
+            ) : null}
             <MenuItem
               title={props.session.pinned ? 'Unpin chat' : 'Pin chat'}
               icon={
@@ -2473,9 +2521,48 @@ function DialogAction(props: { icon: ReactNode; title: string }) {
 
 function noop() {}
 
+/** A chat row reorders while the pointer stays over the rail; past it, the row is dragged out. */
+function railArea(row: HTMLElement): DOMRect | undefined {
+  return row.closest('.rail')?.getBoundingClientRect()
+}
+
+type SidebarProps = Parameters<typeof SidebarComponent>[0]
+
+/** Gives every chat row split view's state without threading it through each row. */
+function SplitAwareSidebar(props: SidebarProps) {
+  const actions = useRef(props)
+  useLayoutEffect(() => {
+    actions.current = props
+  })
+  const openBeside = useCallback((id: string) => {
+    actions.current.onOpenSessionBeside?.(id)
+    if (globalThis.matchMedia?.('(max-width: 700px)').matches) actions.current.onClose()
+  }, [])
+  const canOpenBeside = props.onOpenSessionBeside !== undefined
+  const dropTarget = props.sessionDropTarget
+  // A folded rail only shows as a flyout over the chat area; nothing is dragged out of it.
+  const dragOut = useMemo(
+    () => (dropTarget && !props.collapsed ? { area: railArea, target: dropTarget } : undefined),
+    [dropTarget, props.collapsed],
+  )
+  const split = useMemo<SplitSidebar>(
+    () => ({
+      besideSessionId: props.besideSessionId,
+      openBeside: canOpenBeside ? openBeside : undefined,
+      dragOut,
+    }),
+    [props.besideSessionId, canOpenBeside, openBeside, dragOut],
+  )
+  return (
+    <SplitSidebarContext.Provider value={split}>
+      <SidebarComponent {...props} />
+    </SplitSidebarContext.Provider>
+  )
+}
+
 /**
  * Memoised: the app root re-renders on every streamed frame, and this subtree
  * does not change while an answer arrives. The owner keeps every callback and
  * composite prop stable, so streamed text does not reconcile the session rail.
  */
-export const Sidebar = memo(SidebarComponent)
+export const Sidebar = memo(SplitAwareSidebar)
