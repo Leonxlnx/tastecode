@@ -196,6 +196,12 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
   /** agy's own conversation id, so follow-up turns resume rather than restart. */
   #conversationId: string | undefined
   #child: ChildProcessWithoutNullStreams | undefined
+  /**
+   * Turns whose agy has exited. On POSIX their process group stays, with any
+   * server the turn started, until dispose; the oldest are let go to the
+   * app-exit cleanup so a long chat does not hold every turn's process.
+   */
+  #finishedTurns = new Set<ChildProcessWithoutNullStreams>()
   /** Why we killed a child: only an explicit Stop completes the turn. */
   #killReasons = new WeakMap<ChildProcessWithoutNullStreams, 'interrupt' | 'silent'>()
   #turnCounter = 0
@@ -224,7 +230,8 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
     this.#workspacePath = workspacePath
     this.#options = options
     this.#conversationId = undefined
-    this.#instructionsPending = Boolean(options.instructions)
+    // The background-process note goes out even without session instructions.
+    this.#instructionsPending = true
     return {
       id: `antigravity-${crypto.randomUUID()}`,
       provider: 'antigravity',
@@ -257,11 +264,12 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
     const request = antigravityImagePrompt(text, attachments)
     // agy expands a slash command or skill only at the start of the prompt, so
     // a command goes alone and the instructions wait for the next prompt.
-    const carriesInstructions = Boolean(
-      this.#instructionsPending && this.#options.instructions && !agyCommandName(text),
-    )
+    const carriesInstructions = this.#instructionsPending && !agyCommandName(text)
+    const instructions = [this.#options.instructions, antigravityBackgroundNote()]
+      .filter(Boolean)
+      .join('\n\n')
     const prompt = carriesInstructions
-      ? `<system-instructions>\n${this.#options.instructions}\n</system-instructions>\n\n${request}`
+      ? `<system-instructions>\n${instructions}\n</system-instructions>\n\n${request}`
       : request
     if (carriesInstructions) this.#instructionsPending = false
     const args = antigravityTurnArgs(prompt, this.#options, this.#conversationId, [
@@ -276,8 +284,16 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
       env: ANTIGRAVITY_ENVIRONMENT,
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
+      keepGroupAfterExit: true,
     })
     this.#child = child
+    child.once('exit', () => {
+      this.#finishedTurns.add(child)
+      for (const old of this.#finishedTurns) {
+        if (this.#finishedTurns.size <= MAX_FINISHED_TURNS) break
+        this.#finishedTurns.delete(old)
+      }
+    })
 
     this.emit('event', {
       type: 'turn.started',
@@ -588,6 +604,9 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
   }
 
   dispose(): Promise<void> {
+    // Servers earlier turns left running end with the chat's runtime.
+    for (const finished of this.#finishedTurns) void killTree(finished).catch(() => undefined)
+    this.#finishedTurns.clear()
     const stopped = this.#child ? this.#stop(this.#child) : this.#processStop
     this.#child = undefined
     this.#processStop = stopped
@@ -603,6 +622,29 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
     this.#processStop = killTree(child)
     return this.#processStop
   }
+}
+
+/** Finished turns whose process groups dispose still stops. */
+const MAX_FINISHED_TURNS = 20
+
+/**
+ * agy runs the commands of a turn in a Windows job object (agy.exe imports
+ * CreateJobObject and AssignProcessToJobObject), and its process ends with the
+ * turn, so a dev server it started stopped as soon as the answer was in. A
+ * process created through WMI is not in that job. On POSIX the turn's process
+ * group is kept after agy exits (keepGroupAfterExit), and a `nohup … &`
+ * command outlives agy's own shell.
+ */
+export function antigravityBackgroundNote(platform: NodeJS.Platform = process.platform): string {
+  const start =
+    platform === 'win32'
+      ? `powershell -NoProfile -Command "Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = 'cmd /c npm run dev > dev-server.log 2>&1'; CurrentDirectory = '<project folder>' }"`
+      : 'nohup npm run dev > dev-server.log 2>&1 &'
+  return [
+    'Every process you start ends when your answer ends. To leave a dev server or another long-running process running for the user after you answer, start it detached and write its output to a log file, for example:',
+    start,
+    'Then check that it responds before you tell the user its address.',
+  ].join('\n')
 }
 
 export function parseAntigravityModels(output: string): Model[] {

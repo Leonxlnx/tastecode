@@ -7,6 +7,7 @@ import {
   AntigravityAdapter,
   ANTIGRAVITY_CAPABILITIES,
   ANTIGRAVITY_RESULT_EXIT_GRACE_MS,
+  antigravityBackgroundNote,
   antigravityImagePrompt,
   antigravityTurnArgs,
   parseAntigravityModels,
@@ -384,7 +385,9 @@ describe('Antigravity turn invocation', () => {
     const image = 'C:\\Temp\\TasteCode\\attachments\\shot.png'
     await adapter.sendTurn(thread.id, 'What is wrong here?', [image])
     const prompt = record.args?.[record.args.indexOf('-p') + 1]
-    expect(prompt?.startsWith('What is wrong here?\n\n<attached-images>')).toBe(true)
+    // The first prompt also carries the session note in front of the request.
+    expect(prompt?.endsWith(antigravityImagePrompt('What is wrong here?', [image]))).toBe(true)
+    expect(prompt).toContain('What is wrong here?\n\n<attached-images>')
     expect(prompt).toContain(`- ${image}`)
     expect(record.args?.slice(record.args.indexOf('--add-dir'))).toEqual([
       '--add-dir',
@@ -408,6 +411,26 @@ describe('Antigravity turn invocation', () => {
     expect(prompt).toContain('<system-instructions>')
     expect(prompt).toContain('No filler.')
     expect(prompt).toContain('Hello there')
+  })
+
+  it('tells agy how to leave a server running, even without session instructions', async () => {
+    const record: SpawnRecord = {}
+    const adapter = new AntigravityAdapter({ spawn: fakeSpawn(record, new FakeChild()) })
+    const thread = await adapter.startThread('C:\\repo')
+    await adapter.sendTurn(thread.id, 'Start the site')
+    const prompt = record.args?.[record.args.indexOf('-p') + 1]
+    expect(prompt).toContain('<system-instructions>')
+    expect(prompt).toContain(antigravityBackgroundNote())
+    expect(prompt).toContain('Start the site')
+  })
+
+  it('starts a lasting server outside agy on each platform', () => {
+    // agy's Windows job object ends what agy started; WMI creates outside it.
+    expect(antigravityBackgroundNote('win32')).toContain(
+      'Invoke-CimMethod -ClassName Win32_Process',
+    )
+    expect(antigravityBackgroundNote('darwin')).toContain('nohup ')
+    expect(antigravityBackgroundNote('linux')).not.toContain('Invoke-CimMethod')
   })
 
   it('resolves a changed effort on the next invocation', async () => {
