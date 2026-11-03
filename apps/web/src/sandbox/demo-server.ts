@@ -527,7 +527,7 @@ export class DemoServer {
       ...this.#answerSteps(
         thread,
         run,
-        `Steering noted: *${oneLine(queued.text, 80)}*. A real agent would change course here; the sandbox only acknowledges it.`,
+        `Steering noted: “${oneLine(queued.text, 80)}”. A real agent would change course here; the sandbox only acknowledges it.`,
       ),
     )
     return {}
