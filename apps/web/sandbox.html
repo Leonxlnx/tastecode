@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <!-- The design sandbox talks to nothing but its own dev server: no local
+         TasteCode server, no provider, no GitHub. -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; connect-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:"
+    />
+    <title>Taste Code · Design sandbox</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/sandbox/main.tsx"></script>
+  </body>
+</html>

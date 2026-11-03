@@ -146,6 +146,7 @@ function WorkspacePanelComponent(props: {
   transport: Transport
   /** The open chat's transcript, which the Agents tab lists sub-agents from. */
   frameStore?: ThreadFrameStore | undefined
+  subagentTranscript?: boolean | undefined
   threadId?: string | undefined
   projectPath?: string | undefined
   projectName?: string | undefined
@@ -619,6 +620,7 @@ function WorkspacePanelComponent(props: {
                   active={props.open && props.nativeSurfacesVisible && tab.id === tool?.id}
                   transport={props.transport}
                   frameStore={props.frameStore}
+                  subagentTranscript={props.subagentTranscript}
                   threadId={props.threadId}
                   projectPath={props.projectPath}
                   projectName={props.projectName}
@@ -669,6 +671,7 @@ function WorkspaceToolSurface(props: {
   active: boolean
   transport: Transport
   frameStore?: ThreadFrameStore | undefined
+  subagentTranscript?: boolean | undefined
   threadId?: string | undefined
   projectPath?: string | undefined
   projectName?: string | undefined
@@ -753,6 +756,7 @@ function WorkspaceToolSurface(props: {
         transport={props.transport}
         threadId={props.threadId}
         frameStore={props.frameStore}
+        subagentTranscript={props.subagentTranscript}
       />
     )
   }

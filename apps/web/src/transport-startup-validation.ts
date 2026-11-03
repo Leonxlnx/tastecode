@@ -120,6 +120,7 @@ const isCapabilities = objectValidator<Capabilities>({
   subagents: optional(
     enumValidator<NonNullable<Capabilities['subagents']>>({ summary: true, progress: true }),
   ),
+  subagentTranscript: optional(isBoolean),
   multipleAccounts: optional(isBoolean),
   runtimes: optional(
     (value) => Array.isArray(value) && value.length > 0 && value.every(isRuntimeOption),

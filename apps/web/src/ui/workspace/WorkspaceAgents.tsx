@@ -27,6 +27,7 @@ export function WorkspaceAgents(props: {
   transport: Transport
   threadId?: string | undefined
   frameStore?: ThreadFrameStore | undefined
+  subagentTranscript?: boolean | undefined
 }) {
   const { active, transport, threadId } = props
   const frameStore = props.frameStore ?? NO_TRANSCRIPT
@@ -81,7 +82,14 @@ export function WorkspaceAgents(props: {
       : undefined
   if (openEntry) {
     return (
-      <AgentDetail entry={openEntry} active={active} transport={transport} onBack={closeDetail} />
+      <AgentDetail
+        entry={openEntry}
+        active={active}
+        transport={transport}
+        threadId={threadId}
+        subagentTranscript={props.subagentTranscript}
+        onBack={closeDetail}
+      />
     )
   }
   if (groups.running.length === 0 && groups.finished.length === 0) {
