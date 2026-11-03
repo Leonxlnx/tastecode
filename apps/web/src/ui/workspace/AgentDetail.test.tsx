@@ -159,7 +159,7 @@ describe('a subagent opened from the Agents tab', () => {
     )
 
     fireEvent.click(screen.getByRole('button', { name: 'All subagents' }))
-    expect(await screen.findByRole('region', { name: 'Running' })).toBeTruthy()
+    expect(await screen.findByRole('region', { name: 'Active' })).toBeTruthy()
     expect(screen.queryByTestId('child-thread')).toBeNull()
   })
 
