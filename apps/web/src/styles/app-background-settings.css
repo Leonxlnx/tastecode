@@ -1,0 +1,31 @@
+/*
+ * Settings › Appearance › Window background: the preview and the sliders.
+ * The preview is an .app-bg layer drawn small, so app-background.css (loaded
+ * with the window's own layer whenever a background is on) paints its
+ * picture, dim and effect exactly as the window does.
+ */
+
+.app-bg.app-bg--preview {
+  position: relative;
+  inset: auto;
+  z-index: auto;
+  width: 176px;
+  height: 110px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+}
+
+/* The window's picture arrives already blurred; the preview blurs the
+   original instead, so the Blur slider shows on every step. It overhangs the
+   frame so the blur never fades out at the edges. */
+.app-bg.app-bg--preview[data-mode='image']::before {
+  inset: calc(var(--app-bg-preview-blur, 0px) * -2);
+  filter: blur(var(--app-bg-preview-blur, 0px));
+}
+
+.app-bg-settings__range {
+  width: 176px;
+  margin: 0;
+  accent-color: var(--light);
+  cursor: pointer;
+}
