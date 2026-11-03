@@ -1519,6 +1519,24 @@ describe('Composer queue', () => {
     expect(onDeleteQueuedTurn).toHaveBeenCalledWith('Polish the queue')
   })
 
+  it('puts the queue before a note shelf, in paint and focus order as on screen', () => {
+    renderComposer(vi.fn(), {
+      running: true,
+      newSession: false,
+      canSteerQueue: true,
+      errors: [{ id: 'note', tone: 'info', message: 'Codex is reconnecting.' }],
+      queuedTurns: [{ id: 'queued-1', text: 'Polish the queue', attachments: [], createdAt: 1 }],
+    })
+
+    const queue = screen.getByLabelText('Queued prompts')
+    const shelf = screen.getByLabelText('Errors')
+    // The panel tucks its lower band under whatever sits on top of the box.
+    // Coming first, it is painted below the shelf instead of over its text,
+    // and Tab reaches the queue (drawn above the shelf) before the shelf.
+    expect(queue.compareDocumentPosition(shelf) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(queue.parentElement).toBe(shelf.parentElement)
+  })
+
   it('keeps a queued-prompt reorder out of the file drop target', () => {
     renderComposer(vi.fn(), {
       running: true,
