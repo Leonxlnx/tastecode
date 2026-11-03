@@ -3195,3 +3195,22 @@ describe('provider roster', () => {
     expect(within(junie).getByRole('button', { name: 'Check again' })).toBeTruthy()
   })
 })
+
+describe('model lists', () => {
+  it('asks for every model list only while Models or Providers is open', () => {
+    const onModelsWanted = vi.fn()
+    renderSettings({ initialSection: 'mcp', overrides: { onModelsWanted } })
+    // MCP servers shows no model, so opening it starts no provider's CLI to list them.
+    expect(onModelsWanted).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'General' }))
+    expect(onModelsWanted).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Providers' }))
+    expect(onModelsWanted).toHaveBeenCalledTimes(1)
+    // Moving between the two pages that show them asks once.
+    fireEvent.click(screen.getByRole('button', { name: 'Models' }))
+    expect(onModelsWanted).toHaveBeenCalledTimes(1)
+    fireEvent.click(screen.getByRole('button', { name: 'Appearance' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Models' }))
+    expect(onModelsWanted).toHaveBeenCalledTimes(2)
+  })
+})

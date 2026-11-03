@@ -1665,14 +1665,12 @@ export function App() {
   useEffect(() => {
     catalogSources.current?.discover(preferredModelSource)
   }, [preferredModelSource])
-  // Stable identity on purpose: the composer passes it to the picker's menu.
+  // Stable identity on purpose: the composer passes it to the picker's menu,
+  // and Settings asks for it while Models or Providers is open.
   const discoverEveryModelSource = useCallback(() => {
     everyModelSourceWanted.current = true
     catalogSources.current?.discover()
   }, [])
-  useEffect(() => {
-    if (settingsOpen) discoverEveryModelSource()
-  }, [settingsOpen, discoverEveryModelSource])
   const selectableImplicitChoice =
     implicitChoice &&
     (activeModelSource
@@ -7952,6 +7950,7 @@ export function App() {
               modelsLoading={catalogAvailability === 'loading'}
               modelErrors={modelErrors}
               pendingModelSources={pendingModelSources}
+              onModelsWanted={discoverEveryModelSource}
               hiddenModels={hiddenModels}
               onModelVisibilityChange={changeModelVisibility}
               onModelsVisibilityChange={changeModelsVisibility}

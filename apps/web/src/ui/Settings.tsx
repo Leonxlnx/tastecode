@@ -392,6 +392,11 @@ function SettingsComponent(props: {
   modelErrors?: Readonly<Record<string, ComposerError>> | undefined
   /** Sources whose models are being listed right now. */
   pendingModelSources?: ReadonlySet<string> | undefined
+  /**
+   * Lists every provider's models. Asked for only while a page that shows
+   * them is open; listing starts each provider's CLI. Give it a stable identity.
+   */
+  onModelsWanted?: (() => void) | undefined
   hiddenModels: Set<string>
   onModelVisibilityChange: (key: string, visible: boolean) => void
   /** Several rows at once, as one change. */
@@ -442,6 +447,14 @@ function SettingsComponent(props: {
   useEffect(() => {
     setSection(props.initialSection ?? 'workflows')
   }, [props.initialSection, props.sectionRequest])
+
+  // Models and Providers show the model lists. Any other page, MCP servers
+  // included, must not wait behind every provider's CLI starting to list them.
+  const onModelsWanted = props.onModelsWanted
+  const showsModels = section === 'models' || section === 'providers'
+  useEffect(() => {
+    if (showsModels) onModelsWanted?.()
+  }, [showsModels, onModelsWanted])
 
   // A request for the provider picker opens it once. Leaving Providers drops
   // it, so coming back shows the providers rather than the picker again.
