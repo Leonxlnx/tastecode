@@ -7,6 +7,7 @@ import {
   AntigravityAdapter,
   ANTIGRAVITY_CAPABILITIES,
   ANTIGRAVITY_RESULT_EXIT_GRACE_MS,
+  antigravityBackgroundNote,
   antigravityImagePrompt,
   antigravityTurnArgs,
   parseAntigravityModels,
@@ -384,7 +385,9 @@ describe('Antigravity turn invocation', () => {
     const image = 'C:\\Temp\\TasteCode\\attachments\\shot.png'
     await adapter.sendTurn(thread.id, 'What is wrong here?', [image])
     const prompt = record.args?.[record.args.indexOf('-p') + 1]
-    expect(prompt?.startsWith('What is wrong here?\n\n<attached-images>')).toBe(true)
+    // The first prompt also carries the session note in front of the request.
+    expect(prompt?.endsWith(antigravityImagePrompt('What is wrong here?', [image]))).toBe(true)
+    expect(prompt).toContain('What is wrong here?\n\n<attached-images>')
     expect(prompt).toContain(`- ${image}`)
     expect(record.args?.slice(record.args.indexOf('--add-dir'))).toEqual([
       '--add-dir',
@@ -408,6 +411,55 @@ describe('Antigravity turn invocation', () => {
     expect(prompt).toContain('<system-instructions>')
     expect(prompt).toContain('No filler.')
     expect(prompt).toContain('Hello there')
+  })
+
+  it('tells agy how to leave a server running, even without session instructions', async () => {
+    const record: SpawnRecord = {}
+    const adapter = new AntigravityAdapter({ spawn: fakeSpawn(record, new FakeChild()) })
+    const thread = await adapter.startThread('C:\\repo')
+    await adapter.sendTurn(thread.id, 'Start the site')
+    const prompt = record.args?.[record.args.indexOf('-p') + 1]
+    expect(prompt).toContain('<system-instructions>')
+    expect(prompt).toContain(antigravityBackgroundNote('C:\\repo'))
+    expect(prompt).toContain('Start the site')
+  })
+
+  it('starts a lasting server outside agy on each platform', () => {
+    // agy's Windows job object ends what agy started; WMI creates outside it,
+    // hidden and in the chat's folder.
+    const windows = antigravityBackgroundNote("C:\\Leon's work", 'win32')
+    expect(windows).toContain('Invoke-CimMethod -ClassName Win32_Process')
+    expect(windows).toContain("CurrentDirectory = 'C:\\Leon''s work'")
+    expect(windows).toContain('ShowWindow = [uint16]0')
+    expect(windows).toContain('%TEMP%\\dev-server.log')
+    expect(antigravityBackgroundNote('/work', 'darwin')).toContain('nohup ')
+    expect(antigravityBackgroundNote('/work', 'darwin')).toContain('< /dev/null &')
+    expect(antigravityBackgroundNote('/work', 'linux')).not.toContain('Invoke-CimMethod')
+  })
+
+  it('lets a queued turn start without stopping what the answered turn left running', async () => {
+    const first = new FakeChild()
+    const second = new FakeChild()
+    let killed = false
+    first.kill = () => {
+      killed = true
+      return true
+    }
+    const children = [first, second]
+    const adapter = new AntigravityAdapter({ spawn: () => children.shift()! })
+    const thread = await adapter.startThread('C:\\repo')
+    await adapter.sendTurn(thread.id, 'Start the site')
+    for (const frame of CAPTURED_FRAMES) first.stdout.write(`${frame}\n`)
+    await new Promise((resolve) => setImmediate(resolve))
+
+    // The SUCCESS result is in and agy is closing when the queued prompt starts.
+    const next = adapter.sendTurn(thread.id, 'Now add a footer')
+    await new Promise((resolve) => setImmediate(resolve))
+    first.emit('exit', 0, null)
+    await next
+
+    expect(killed).toBe(false)
+    expect(children).toEqual([])
   })
 
   it('resolves a changed effort on the next invocation', async () => {
