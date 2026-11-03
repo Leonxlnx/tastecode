@@ -342,6 +342,7 @@ function harness(
   idleThreadRuntimeMs?: number,
   providerServices?: ProviderControlsOptions['services'],
   defaultSkillsRoot?: string,
+  stopSettleMs?: number,
 ) {
   const sessions: FakeSession[] = []
   const received: Array<{
@@ -465,6 +466,7 @@ function harness(
     runtimeFor,
     ...(maxIdleThreadRuntimes === undefined ? {} : { maxIdleThreadRuntimes }),
     ...(idleThreadRuntimeMs === undefined ? {} : { idleThreadRuntimeMs }),
+    ...(stopSettleMs === undefined ? {} : { stopSettleMs }),
     providerServices: {
       ...providerServices,
       'claude-code': { ...quietClaudeInventory, ...providerServices?.['claude-code'] },
@@ -7789,6 +7791,232 @@ describe('several sessions at once', () => {
     await expect(later).resolves.toMatchObject({ queued: true })
   })
 
+  describe('a Stop the agent has not confirmed yet', () => {
+    const tool = (status: 'started' | 'completed'): DomainEvent => ({
+      type: status === 'started' ? 'item.started' : 'item.completed',
+      item: {
+        id: 'tool-1',
+        turnId: 's1-turn',
+        type: 'tool_call',
+        status,
+        text: 'npm test',
+        createdAt: 1,
+      },
+    })
+    const turnsCompleted = (received: Array<{ event: DomainEvent }>) =>
+      received.flatMap(({ event }) => (event.type === 'turn.completed' ? [event] : []))
+
+    async function stoppedWhileUnconfirmed(stopSettleMs?: number) {
+      const context = harness(
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        stopSettleMs,
+      )
+      const { sessions, orchestrator } = context
+      const thread = await orchestrator.startThread('codex', '/repo')
+      const session = sessions[0]!
+      await orchestrator.submitTurn(thread.id, 'sent by accident')
+      session.emit({
+        type: 'turn.started',
+        turn: { id: 's1-turn', threadId: thread.id, status: 'running', createdAt: 1 },
+      })
+      session.emit(tool('started'))
+      let confirm!: () => void
+      session.interruptBarrier = new Promise<void>((resolve) => (confirm = resolve))
+      const stopping = orchestrator.interrupt(thread.id)
+      await vi.waitFor(() => expect(session.interrupted).toBe(true))
+      return { ...context, thread, session, stopping, confirm }
+    }
+
+    it('ends the turn for the user at once', async () => {
+      const { orchestrator, thread, received, stopping, confirm } = await stoppedWhileUnconfirmed()
+
+      expect(turnsCompleted(received)).toEqual([
+        expect.objectContaining({ turnId: 's1-turn', status: 'interrupted' }),
+      ])
+      expect(received.map(({ event }) => event)).toContainEqual({
+        type: 'item.completed',
+        item: expect.objectContaining({ id: 'tool-1', status: 'failed' }),
+      })
+      expect(orchestrator.isTurnRunning(thread.id)).toBe(false)
+      expect(orchestrator.inboxStatus(thread.id)).not.toBe('working')
+
+      confirm()
+      await expect(stopping).resolves.toBeUndefined()
+      await orchestrator.disposeAll()
+    })
+
+    it('records nothing more of the stopped turn, its end included', async () => {
+      const { orchestrator, thread, session, received, confirm, stopping } =
+        await stoppedWhileUnconfirmed()
+      const recorded = received.length
+
+      session.emit({ type: 'item.delta', turnId: 's1-turn', itemId: 'tool-1', textDelta: 'x' })
+      session.emit(tool('completed'))
+      session.emit({
+        type: 'turn.started',
+        turn: { id: 's1-turn', threadId: thread.id, status: 'running', createdAt: 1 },
+      })
+      session.emit({
+        type: 'approval.requested',
+        request: { id: 'approval-1', kind: 'command', command: 'npm test', createdAt: 1 },
+      })
+      session.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'interrupted' })
+      confirm()
+      await stopping
+
+      expect(received).toHaveLength(recorded)
+      expect(orchestrator.isTurnRunning(thread.id)).toBe(false)
+      expect(orchestrator.inboxStatus(thread.id)).not.toBe('approval')
+      await orchestrator.disposeAll()
+    })
+
+    it('does not let a turn the agent starts on its own run again', async () => {
+      const { orchestrator, thread, session, received, confirm } = await stoppedWhileUnconfirmed()
+
+      session.emit({
+        type: 'turn.started',
+        turn: { id: 'unasked-turn', threadId: thread.id, status: 'running', createdAt: 2 },
+      })
+
+      expect(
+        received.some(
+          ({ event }) => event.type === 'turn.started' && event.turn.id === 'unasked-turn',
+        ),
+      ).toBe(false)
+      expect(orchestrator.isTurnRunning(thread.id)).toBe(false)
+      confirm()
+      await orchestrator.disposeAll()
+    })
+
+    it('stops new work the agent starts in the turn after accepting the Stop', async () => {
+      const { orchestrator, session, received, confirm, stopping } = await stoppedWhileUnconfirmed()
+      confirm()
+      await stopping
+      const interrupt = vi.spyOn(session, 'interrupt')
+      const recorded = received.length
+
+      // A steer Claude kept queued through the Stop starts its own run in the same turn.
+      session.emit({
+        type: 'item.started',
+        item: {
+          id: 'steer-answer',
+          turnId: 's1-turn',
+          type: 'message',
+          role: 'assistant',
+          status: 'started',
+          createdAt: 2,
+        },
+      })
+      session.emit({
+        type: 'item.started',
+        item: {
+          id: 'tool-2',
+          turnId: 's1-turn',
+          type: 'tool_call',
+          status: 'started',
+          createdAt: 3,
+        },
+      })
+
+      expect(interrupt).toHaveBeenCalledTimes(1)
+      expect(received).toHaveLength(recorded)
+      await orchestrator.disposeAll()
+    })
+
+    it('shows no error banner when the agent reports the stopped run as failed', async () => {
+      const { orchestrator, thread, session, received, logs, confirm, stopping } =
+        await stoppedWhileUnconfirmed()
+      confirm()
+      await stopping
+      // A late item of the stopped run looks like new work, and the repeat Stop is refused;
+      // an agent can then report the run it was already ending as an error.
+      session.interruptError = new Error('no run to stop')
+      session.emit({
+        type: 'item.started',
+        item: {
+          id: 'late-answer',
+          turnId: 's1-turn',
+          type: 'message',
+          role: 'assistant',
+          status: 'started',
+          createdAt: 2,
+        },
+      })
+      await vi.waitFor(() =>
+        expect(logs).toContainEqual(expect.stringMatching(/Could not stop.*no run to stop/)),
+      )
+      session.emit({ type: 'thread.error', threadId: thread.id, message: 'aborted by user' })
+      session.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'failed' })
+
+      expect(received.some(({ event }) => event.type === 'thread.error')).toBe(false)
+      expect(logs).toContainEqual(expect.stringMatching(/ending a stopped turn: aborted by user/))
+      expect(turnsCompleted(received)).toEqual([
+        expect.objectContaining({ turnId: 's1-turn', status: 'interrupted' }),
+      ])
+      await orchestrator.disposeAll()
+    })
+
+    it('still shows an error the agent reports before it accepted the Stop', async () => {
+      const { orchestrator, thread, session, received, confirm, stopping } =
+        await stoppedWhileUnconfirmed()
+      session.emit({ type: 'thread.error', threadId: thread.id, message: 'connection lost' })
+      confirm()
+      await stopping
+
+      expect(received.map(({ event }) => event)).toContainEqual(
+        expect.objectContaining({ type: 'thread.error', message: 'connection lost' }),
+      )
+      await orchestrator.disposeAll()
+    })
+
+    it('holds a prompt sent meanwhile until the agent has ended the turn', async () => {
+      const { orchestrator, thread, session, confirm, stopping } = await stoppedWhileUnconfirmed()
+
+      await expect(orchestrator.submitTurn(thread.id, 'the real question')).resolves.toMatchObject({
+        queued: true,
+      })
+      expect(session.sent).toEqual(['sent by accident'])
+
+      confirm()
+      await stopping
+      session.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'interrupted' })
+      await vi.waitFor(() =>
+        expect(session.sent).toEqual(['sent by accident', 'the real question']),
+      )
+      await orchestrator.disposeAll()
+    })
+
+    it('ends the agent process when the agent never ends the turn', async () => {
+      const { orchestrator, thread, session, logs, confirm, stopping } =
+        await stoppedWhileUnconfirmed(20)
+      confirm()
+      await stopping
+
+      await vi.waitFor(() => expect(session.disposed).toBe(true))
+      expect(logs).toContainEqual(expect.stringMatching(/did not end the stopped turn.*ending/))
+      expect(orchestrator.isRunning(thread.id)).toBe(false)
+      await orchestrator.disposeAll()
+    })
+
+    it('ends the agent process when the agent refuses the Stop', async () => {
+      const { orchestrator, thread, session, logs, confirm, stopping } =
+        await stoppedWhileUnconfirmed()
+      session.interruptError = new Error('Stop failed')
+      confirm()
+
+      await expect(stopping).resolves.toBeUndefined()
+      expect(session.disposed).toBe(true)
+      expect(logs).toContainEqual(expect.stringMatching(/refused Stop \(Stop failed\).*ending/))
+      expect(orchestrator.isTurnRunning(thread.id)).toBe(false)
+      await orchestrator.disposeAll()
+    })
+  })
+
   it('cancels a cold resume on Stop and allows a later submission', async () => {
     const { sessions, orchestrator, store } = harness()
     store.addProject('/repo')
@@ -9236,14 +9464,21 @@ describe('isolated sessions', () => {
     await orchestrator.disposeAll()
   })
 
-  it('retains checkout guards when an interrupt is rejected', async () => {
+  it('retains checkout guards until an agent that refused Stop has ended', async () => {
     const { orchestrator, sessions } = harness(trees)
     const thread = await orchestrator.startThread('codex', repo)
     await orchestrator.submitTurn(thread.id, 'running')
-    sessions[0]!.interruptError = new Error('Stop failed')
-    await expect(orchestrator.interrupt(thread.id)).rejects.toThrow('Stop failed')
-    expect(orchestrator.isTurnRunning(thread.id)).toBe(true)
+    const session = sessions[0]!
+    session.interruptError = new Error('Stop failed')
+    let ended!: () => void
+    session.disposeBarrier = new Promise<void>((resolve) => (ended = resolve))
+    // The chat shows the turn stopped at once, so the agent that refused is ended.
+    const stopping = orchestrator.interrupt(thread.id)
+    await vi.waitFor(() => expect(session.disposed).toBe(true))
+    expect(orchestrator.isTurnRunning(thread.id)).toBe(false)
     await expect(orchestrator.switchBranch(repo, 'main')).rejects.toThrow(/still working/)
+    ended()
+    await expect(stopping).resolves.toBeUndefined()
     await orchestrator.disposeAll()
   })
 
