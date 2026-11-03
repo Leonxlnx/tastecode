@@ -11772,7 +11772,7 @@ describe('inbox lifecycle', () => {
     await screen.findByRole('button', { name: 'Settle Newest chat' })
 
     vi.spyOn(window, 'requestAnimationFrame').mockImplementation(() => 1)
-    vi.useFakeTimers()
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     try {
       act(() => {
         transport.listeners.get('thread.lifecycle')?.({
@@ -13647,6 +13647,11 @@ describe('live sessions', () => {
     serverSidebarSettings.mode = 'inbox'
     render(<App />)
     const inboxSearch = await screen.findByRole('textbox', { name: 'Search threads' })
+    // The composer takes focus on the frame after it restores its draft. Open
+    // the palette after that frame, as a person would; a frame landing while
+    // the palette is open would make the composer the search's opener.
+    const composer = screen.getByRole('textbox', { name: 'Message' })
+    await waitFor(() => expect(document.activeElement).toBe(composer))
     fireEvent.keyDown(window, { key: 'k', metaKey: true })
     const commandSearch = await screen.findByRole('textbox', { name: 'Search commands' })
     fireEvent.change(commandSearch, { target: { value: 'search all chats' } })
@@ -15318,13 +15323,19 @@ describe('split view', () => {
 
   it('draws the chat beside without rendering the app for its streamed text', async () => {
     await openSplit()
-    streamText('left-thread', '')
-    await waitFor(() => expect(within(transcriptIn('Left chat')).queryByText('x')).toBeNull())
+    // Every frame runs only when the test runs it. A real frame still pending
+    // from the empty delta would draw the text below on its own schedule.
     const frames: FrameRequestCallback[] = []
     vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
       frames.push(callback)
       return frames.length
     })
+    streamText('left-thread', '')
+    act(() => {
+      for (const frame of frames.splice(0)) frame(0)
+    })
+    await waitFor(() => expect(within(transcriptIn('Left chat')).queryByText('x')).toBeNull())
+    frames.length = 0
     appRenders.mockClear()
     for (let index = 0; index < 200; index += 1) {
       emitThreadEvent('left-thread', {
