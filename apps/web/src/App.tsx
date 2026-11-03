@@ -164,6 +164,7 @@ import {
   accountLabelOf,
   accountsOf,
   activeAccountOf,
+  namedNewChatAccount,
   useProviderAccounts,
   type AccountLabel,
   type ProviderAccountsSnapshot,
@@ -4355,15 +4356,16 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
         if (projectRemoved())
           throw new Error('The project was removed before the chat could start.')
         let sessionApproval = approval === 'auto-review' && !autoReviewSupported ? 'full' : approval
-        // The server starts a chat on the account it keeps as active; one the
-        // limits recommend in its place is named.
-        const preselectedAccount =
+        // A chat that names no account starts on the server's recommended one,
+        // else its active one. The account this app shows for new chats is
+        // named, so the user's pick, or the recommendation shown, is what runs.
+        const namedAccount =
           choice.agent || choice.connectionId
             ? undefined
-            : providerAccountsRef.current.preselected?.[choice.provider]
+            : namedNewChatAccount(providerAccountsRef.current, choice.provider)
         const { threadId } = await transport.request('thread.start', {
           provider: choice.provider,
-          ...(preselectedAccount ? { accountId: preselectedAccount } : {}),
+          ...(namedAccount ? { accountId: namedAccount } : {}),
           workspacePath: projectPath,
           ...(branch ? { baseRef: branch } : {}),
           approval: sessionApproval,
@@ -4437,7 +4439,9 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
                             id: threadId,
                             title: canonicalTitle,
                             provider: choice.provider,
-                            ...(preselectedAccount ? { accountId: preselectedAccount } : {}),
+                            ...(namedAccount && namedAccount !== DEFAULT_ACCOUNT_ID
+                              ? { accountId: namedAccount }
+                              : {}),
                             ...(choice.connectionId ? { connectionId: choice.connectionId } : {}),
                             ...(choice.agent
                               ? {

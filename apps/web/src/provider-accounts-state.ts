@@ -22,11 +22,29 @@ export type ProviderAccountsSnapshot = {
   active: AccountMap
   /**
    * Providers whose new chats start on the account their limits recommend
-   * (account-pool.ts) instead of the one the server keeps as active, because
-   * the user has not picked one. A new chat names this account when it starts.
+   * (account-pool.ts), because the user has not picked one; `active` holds
+   * it too. A new chat names this account when it starts.
    */
   preselected?: AccountMap
+  /**
+   * Providers whose account for new chats the user picked: picked in this
+   * app, or a further account the server keeps active. A new chat names it,
+   * so the server's own recommendation does not replace the pick.
+   */
+  picked?: AccountMap
   error?: string
+}
+
+/**
+ * The account a new chat names in `thread.start`: a recommendation standing
+ * in, or the user's pick. Undefined leaves the choice to the server, which
+ * starts the chat on its recommended account, else on its active one.
+ */
+export function namedNewChatAccount(
+  snapshot: ProviderAccountsSnapshot,
+  provider: ProviderId,
+): AccountId | undefined {
+  return snapshot.preselected?.[provider] ?? snapshot.picked?.[provider]
 }
 
 const EMPTY: ProviderAccountsSnapshot = { phase: 'idle', accounts: [], active: {} }
@@ -247,20 +265,25 @@ export class ProviderAccountsStore {
   }
 
   /**
-   * A recommendation stands in only where the server keeps the default
-   * account and the user picked none here: a further account active on the
-   * server was someone's choice.
+   * A recommendation stands in only where the user picked no account: a
+   * further account active on the server was someone's choice, and so is
+   * one picked here, the default account included.
    */
   #withRecommendations(state: ProviderAccountsSnapshot): ProviderAccountsSnapshot {
     const rest = { ...state }
     delete rest.preselected
+    delete rest.picked
     const active = { ...state.active }
     const preselected: AccountChoices = {}
+    const picked: AccountChoices = {}
+    const providers = new Set([...(Object.keys(state.active) as ProviderId[]), ...this.#chosen])
+    for (const provider of providers) {
+      const kept = state.active[provider] ?? DEFAULT_ACCOUNT_ID
+      if (kept !== DEFAULT_ACCOUNT_ID || this.#chosen.has(provider)) picked[provider] = kept
+    }
     for (const provider of Object.keys(this.#recommended) as ProviderId[]) {
       const recommended = this.#recommended[provider]
-      const kept = state.active[provider] ?? DEFAULT_ACCOUNT_ID
-      if (recommended === undefined || recommended === kept) continue
-      if (kept !== DEFAULT_ACCOUNT_ID || this.#chosen.has(provider)) continue
+      if (recommended === undefined || picked[provider] !== undefined) continue
       const listed = state.accounts.some(
         (account) => account.provider === provider && account.id === recommended,
       )
@@ -268,7 +291,12 @@ export class ProviderAccountsStore {
       active[provider] = recommended
       preselected[provider] = recommended
     }
-    return Object.keys(preselected).length > 0 ? { ...rest, active, preselected } : rest
+    return {
+      ...rest,
+      active: Object.keys(preselected).length > 0 ? active : state.active,
+      ...(Object.keys(preselected).length > 0 ? { preselected } : {}),
+      ...(Object.keys(picked).length > 0 ? { picked } : {}),
+    }
   }
 
   #notify(): void {

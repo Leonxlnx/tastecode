@@ -5,6 +5,7 @@ import {
   accountLabelOf,
   accountsOf,
   activeAccountOf,
+  namedNewChatAccount,
   ProviderAccountsStore,
 } from './provider-accounts-state.js'
 import { TestTransport } from './test-transport.js'
@@ -120,9 +121,12 @@ describe('ProviderAccountsStore', () => {
     let notified = 0
     store.subscribe(() => (notified += 1))
 
+    // Before any recommendation, nothing is named: the server chooses.
+    expect(namedNewChatAccount(store.snapshot(), 'codex')).toBeUndefined()
     store.recommend({ codex: 'work-1a2b3c' })
     expect(activeAccountOf(store.snapshot(), 'codex')).toBe('work-1a2b3c')
     expect(store.snapshot().preselected).toEqual({ codex: 'work-1a2b3c' })
+    expect(namedNewChatAccount(store.snapshot(), 'codex')).toBe('work-1a2b3c')
     expect(notified).toBe(1)
     // The same recommendation again changes nothing and tells no one.
     const before = store.snapshot()
@@ -145,13 +149,25 @@ describe('ProviderAccountsStore', () => {
     expect(transport.requests).toHaveLength(2)
     expect(activeAccountOf(store.snapshot(), 'codex')).toBe('work-1a2b3c')
 
-    // The user's own pick wins, the default account included, and keeps winning.
+    // The user's own pick wins, the default account included, and keeps winning;
+    // a new chat names it, so the server's recommendation cannot replace it.
     await store.setActive('codex', 'default')
     expect(activeAccountOf(store.snapshot(), 'codex')).toBe('default')
     expect(store.snapshot().preselected).toBeUndefined()
     store.recommend({})
     store.recommend({ codex: 'work-1a2b3c' })
     expect(activeAccountOf(store.snapshot(), 'codex')).toBe('default')
+    expect(namedNewChatAccount(store.snapshot(), 'codex')).toBe('default')
+  })
+
+  it('names a recommendation that matches the active account too', async () => {
+    const transport = new TestTransport(() => listing())
+    const store = new ProviderAccountsStore(transport)
+    store.retain()
+    await expect.poll(() => store.snapshot().phase).toBe('ready')
+    store.recommend({ codex: 'default' })
+    expect(activeAccountOf(store.snapshot(), 'codex')).toBe('default')
+    expect(namedNewChatAccount(store.snapshot(), 'codex')).toBe('default')
   })
 
   it('keeps a further account the server keeps active as the one new chats start on', async () => {
@@ -162,6 +178,7 @@ describe('ProviderAccountsStore', () => {
     store.recommend({ codex: 'default' })
     expect(activeAccountOf(store.snapshot(), 'codex')).toBe('work-1a2b3c')
     expect(store.snapshot().preselected).toBeUndefined()
+    expect(namedNewChatAccount(store.snapshot(), 'codex')).toBe('work-1a2b3c')
   })
 
   it('remembers across launches which providers the user picked an account for', async () => {
