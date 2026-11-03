@@ -753,7 +753,11 @@
                 >Conversation resume, interrupt, permission mapping
                 <span class="d"
                   >unreadable frames and throwing listeners are logged without ending the turn;
-                  Windows detection also finds agy in %LOCALAPPDATA%\agy\bin</span
+                  Windows detection also finds agy in %LOCALAPPDATA%\agy\bin; a result that is not
+                  SUCCESS waits for agy's exit code, because agy 1.4.7 reports ERROR for the
+                  conversation's latest error step even when it lies in an earlier turn: exit 0
+                  completes the turn with agy's error text in the log only, any other exit (or no
+                  exit within 10 s) still shows Antigravity finished with status ERROR</span
                 ></span
               ></label
             >
