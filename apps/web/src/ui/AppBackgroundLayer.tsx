@@ -6,6 +6,7 @@ import {
   type BackgroundImageStore,
 } from '../app-background-image.js'
 import { effectPatternStyle, type EffectPatternStyle } from '../app-background-patterns.js'
+import { AppBackgroundMotion } from './AppBackgroundMotion.js'
 import '../styles/app-background.css'
 
 type LayerStyle = CSSProperties &
@@ -43,11 +44,13 @@ export function AppBackgroundLayer(props: {
 
   const settledBlur = useSettled(blur, BLUR_SETTLE_MS)
   const imageUrl = useBackgroundImageUrl(mode === 'image' ? image : undefined, settledBlur, images)
+  const [moving, setMoving] = useState(false)
 
   // Transparent paints nothing: the OS backdrop is the background.
   if (mode === 'transparent' || mode === 'none') return null
   const style: LayerStyle = {
     '--app-bg-dim': dimFactor(dim),
+    // The still tile stays ready underneath, for wherever the canvas cannot draw.
     ...(mode === 'effect' ? effectPatternStyle(effect) : {}),
   }
   if (imageUrl) style['--app-bg-image'] = `url("${imageUrl}")`
@@ -56,10 +59,13 @@ export function AppBackgroundLayer(props: {
       className="app-bg"
       data-mode={mode}
       data-effect={mode === 'effect' ? effect : undefined}
+      data-motion={mode === 'effect' && moving ? '' : undefined}
       data-ready={imageUrl ? '' : undefined}
       style={style}
       aria-hidden
-    />
+    >
+      {mode === 'effect' ? <AppBackgroundMotion effect={effect} onDrawing={setMoving} /> : null}
+    </div>
   )
 }
 

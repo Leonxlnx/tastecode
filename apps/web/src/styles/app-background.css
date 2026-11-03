@@ -10,9 +10,11 @@
  * native caption buttons on Windows go see-through over it
  * (window-chrome.ts), so the strip reads as one piece with the sidebar.
  *
- * Everything here is static: each effect is one tile or CSS pattern painted
- * once, so nothing in this sheet runs on a streamed delta. No pane uses
- * backdrop-filter, and the picture arrives already blurred.
+ * Nothing in this sheet moves or runs on a streamed delta. Dither and
+ * Halftone move on a canvas of their own (app-background-motion.ts), which
+ * only the compositor redraws; each also has a still tile, painted once, for
+ * wherever that canvas cannot draw. No pane uses backdrop-filter, and the
+ * picture arrives already blurred.
  *
  * The tokens below are the knobs to tune.
  */
@@ -114,6 +116,31 @@
 .app-bg[data-effect='halftone']::before {
   mask: var(--app-bg-pattern, none) 0 0 / var(--app-bg-pattern-size, auto) repeat-x;
   opacity: calc(var(--app-bg-halftone) * var(--app-bg-fade));
+}
+
+/* The same effects in motion: a canvas along the top edge, drawn in the text
+   colour (read from `color`) and faded by Dim like the tiles. It sizes itself;
+   while it draws, the tile under it steps aside. */
+.app-bg__motion {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: block;
+  color: var(--text);
+}
+
+.app-bg[data-effect='dither'] > .app-bg__motion {
+  /* One buffer pixel per cell, scaled up with hard edges. */
+  image-rendering: pixelated;
+  opacity: calc(var(--app-bg-dither) * var(--app-bg-fade));
+}
+
+.app-bg[data-effect='halftone'] > .app-bg__motion {
+  opacity: calc(var(--app-bg-halftone) * var(--app-bg-fade));
+}
+
+.app-bg[data-motion]::before {
+  content: none;
 }
 
 @media (prefers-reduced-motion: reduce) {

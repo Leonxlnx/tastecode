@@ -18,9 +18,20 @@ describe('window background stylesheet', () => {
     }
   })
 
-  it('keeps every effect still, so the window never repaints for one', () => {
+  it('moves nothing in CSS: the effects move on their own canvas', () => {
     expect(sheet).not.toMatch(/animation|@keyframes|will-change/)
     expect(sheet).not.toMatch(/aurora|glow/)
+  })
+
+  it('fades the moving canvas like the tile and drops the tile while it draws', () => {
+    for (const effect of ['dither', 'halftone']) {
+      const rule = sheet.match(
+        new RegExp(`\\.app-bg\\[data-effect='${effect}'\\] > \\.app-bg__motion \\{([^}]*)\\}`),
+      )
+      expect(rule?.[1]).toContain(`opacity: calc(var(--app-bg-${effect}) * var(--app-bg-fade));`)
+    }
+    expect(sheet).toMatch(/\.app-bg__motion \{[^}]*color: var\(--text\);/)
+    expect(sheet).toContain(".app-bg[data-motion]::before {\n  content: none;\n}")
   })
 
   it('no longer paints the dropped Dot grid and Grain', () => {
