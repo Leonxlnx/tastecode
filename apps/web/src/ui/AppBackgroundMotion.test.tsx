@@ -5,28 +5,31 @@ import type { AppBackground } from '../app-background.js'
 import { resetEffectMotionForTests } from '../app-background-motion.js'
 import { AppBackgroundLayer } from './AppBackgroundLayer.js'
 
-type Gl = Record<string, ReturnType<typeof vi.fn>>
+/** The fake context: every WebGL method the renderer calls, as a spy. */
+interface Gl {
+  [method: string]: ReturnType<typeof vi.fn>
+}
 
 /** Just enough of WebGL for the renderer to compile, link and draw. */
 function fakeWebGl(): Gl {
-  const answers: Record<string, unknown> = {
-    isContextLost: false,
-    createShader: {},
-    getShaderParameter: true,
-    createProgram: {},
-    getProgramParameter: true,
-    createBuffer: {},
-    getAttribLocation: 0,
-    getUniformLocation: {},
-    getExtension: null,
-  }
+  const answers = new Map<string, unknown>([
+    ['isContextLost', false],
+    ['createShader', {}],
+    ['getShaderParameter', true],
+    ['createProgram', {}],
+    ['getProgramParameter', true],
+    ['createBuffer', {}],
+    ['getAttribLocation', 0],
+    ['getUniformLocation', {}],
+    ['getExtension', null],
+  ])
   const methods: Gl = {}
   return new Proxy(methods, {
     get(target, key) {
       if (typeof key !== 'string') return undefined
       // Constants such as COMPILE_STATUS.
       if (/^[A-Z_\d]+$/.test(key)) return key
-      target[key] ??= vi.fn(() => answers[key])
+      target[key] ??= vi.fn(() => answers.get(key))
       return target[key]
     },
   })

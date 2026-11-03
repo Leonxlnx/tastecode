@@ -297,10 +297,10 @@ void main() {
 }
 `
 
-export const EFFECT_SHADERS: Readonly<Record<AppBackgroundEffect, string>> = {
+export const EFFECT_SHADERS = {
   dither: DITHER_SHADER,
   halftone: HALFTONE_SHADER,
-}
+} as const satisfies Record<AppBackgroundEffect, string>
 
 // ---------- the renderer ----------
 
@@ -476,8 +476,10 @@ export function startEffectCanvas(
   effect: AppBackgroundEffect,
   options: EffectCanvasOptions = {},
 ): (() => void) | undefined {
-  const renderer = createEffectRenderer(canvas, effect)
-  if (!renderer) return undefined
+  const created = createEffectRenderer(canvas, effect)
+  if (!created) return undefined
+  // A named const keeps the narrowing inside the hoisted stop() below.
+  const renderer: EffectRenderer = created
   const frameElement = canvas.parentElement ?? canvas
   let color = readColor(canvas)
   let width: number | undefined
