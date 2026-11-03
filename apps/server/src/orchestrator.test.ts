@@ -71,6 +71,7 @@ import type {
   ProviderServices,
 } from './provider-controls.js'
 import { StartupCleanupError } from './provider-session.js'
+import { REPLY_STYLE_INSTRUCTIONS } from './reply-style.js'
 import { DatabaseSync } from './sqlite.js'
 import { Store } from './store.js'
 import * as checkpoint from './checkpoint.js'
@@ -1669,8 +1670,16 @@ describe('reply style', () => {
 
       expect(startedOptions[0]?.instructions).toContain('clear, capable teammate')
       expect(startedOptions[0]?.instructions).toContain('Do not use em dashes')
+      expect(startedOptions[0]?.instructions).toContain(
+        'When a task is done, end the turn with a short wrap-up',
+      )
+      expect(startedOptions[0]?.instructions).toContain('Skip file-by-file inventories')
     },
   )
+
+  it('keeps the shared reply instructions free of the em dashes they forbid', () => {
+    expect(REPLY_STYLE_INSTRUCTIONS).not.toContain('—')
+  })
 })
 
 describe('default skills', () => {
@@ -7030,6 +7039,9 @@ describe('persisted threads', () => {
 
     expect(resumedOptions[0]?.instructions).toContain('clear, capable teammate')
     expect(resumedOptions[0]?.instructions).toContain('Do not use em dashes')
+    expect(resumedOptions[0]?.instructions).toContain(
+      'When a task is done, end the turn with a short wrap-up',
+    )
   })
 
   it('resumes a persisted thread with the model options of the turn that wakes it', async () => {
