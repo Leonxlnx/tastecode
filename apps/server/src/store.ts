@@ -28,6 +28,7 @@ import type {
   BackgroundModelPreference,
   DiffDecision,
   DomainEvent,
+  Item,
   JsonValue,
   ProviderContextSettingsMap,
   ProviderId,
@@ -3529,6 +3530,26 @@ export class Store {
 
   hasUserSubmission(threadId: string, itemId: string): boolean {
     return this.#hasUserSubmission.get(threadId, itemId) !== undefined
+  }
+
+  /** Latest retained item boundary, scoped to its owning thread. */
+  itemSnapshot(threadId: string, itemId: string): Item | undefined {
+    const row = sqliteRow<{ payload: string }>(
+      this.#db.prepare(
+        `SELECT e.payload FROM events e
+         LEFT JOIN provider_history_events p ON p.event_seq = e.seq
+         WHERE e.thread_id = ? AND COALESCE(p.active, 1) = 1
+           AND json_extract(CASE WHEN json_valid(e.payload) THEN e.payload END, '$.item.id') = ?
+         ORDER BY e.seq DESC LIMIT 1`,
+      ),
+      threadId,
+      itemId,
+    )
+    if (!row) return undefined
+    const event = parseDomainEvent(row.payload, `item snapshot for thread ${threadId}`)
+    return event?.type === 'item.started' || event?.type === 'item.completed'
+      ? event.item
+      : undefined
   }
 
   #insertEventRow(threadId: string, at: number, payload: string): number {

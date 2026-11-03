@@ -390,17 +390,29 @@ export function startServer(
   const historySources = [
     {
       provider: 'codex',
-      load: async () => (await import('@harness/adapter-codex')).createCodexHistorySource(),
+      load: async (accountHome?: string) =>
+        (await import('@harness/adapter-codex')).createCodexHistorySource(
+          accountHome === undefined ? {} : { codexHome: accountHome },
+        ),
     },
     {
       provider: 'claude-code',
-      load: async () => (await import('@harness/adapter-claude-code')).createClaudeHistorySource(),
+      load: async (accountHome?: string) =>
+        (await import('@harness/adapter-claude-code')).createClaudeHistorySource(
+          accountHome === undefined ? {} : { configDir: accountHome },
+        ),
     },
     {
       provider: 'grok',
-      load: async () => (await import('@harness/adapter-grok')).createGrokHistorySource(),
+      load: async (accountHome?: string) =>
+        (await import('@harness/adapter-grok')).createGrokHistorySource(
+          accountHome === undefined ? {} : { root: accountHome },
+        ),
     },
-  ] satisfies Array<{ provider: ProviderId; load(): Promise<ProviderHistorySource> }>
+  ] satisfies Array<{
+    provider: ProviderId
+    load(accountHome?: string): Promise<ProviderHistorySource>
+  }>
   /** Why a source failed to load, keyed by the id prefix of the chats it imports. */
   const unavailableHistory = new Map<string, unknown>()
   const loadHistoryService = () =>
@@ -408,9 +420,10 @@ export function startServer(
       (results) =>
         new ProviderHistory(
           store,
-          historySources.flatMap(({ provider }, index) => {
+          historySources.flatMap(({ provider, load }, index) => {
             const result = results[index]!
-            if (result.status === 'fulfilled') return [{ provider, history: result.value }]
+            if (result.status === 'fulfilled')
+              return [{ provider, history: result.value, forAccount: load }]
             unavailableHistory.set(`external:${provider}:`, result.reason)
             console.log(`[history] ${provider} history could not be loaded`)
             return []
@@ -425,6 +438,11 @@ export function startServer(
               }
             },
             log: (message) => console.log(`[history] ${message}`),
+            accountHome: (threadId) => {
+              const thread = store.thread(threadId)
+              if (!thread) throw new Error('Thread not found')
+              return accounts.home(thread.provider, thread.accountId)
+            },
           },
         ),
     )
@@ -459,8 +477,7 @@ export function startServer(
   const importsAfterInitialScan = new Set<string>()
 
   function startProviderHistory(): void {
-    const service = loadHistoryService()
-    providerHistory = service
+    const service = (providerHistory ??= loadHistoryService())
     // Opening a task during startup must not replay an obsolete imported transcript
     // before adapter revisions and ownership have been refreshed.
     const initial = service.then(async (history) => {
@@ -1448,6 +1465,13 @@ export function startServer(
       case 'thread.subagents': {
         const p = parseParams(method, params)
         return { subagents: orchestrator.subagents(p.threadId) }
+      }
+
+      case 'thread.subagentTranscript': {
+        const p = parseParams(method, params)
+        // Reading saved children needs no version probes, import scan or live runtime.
+        const history = await (providerHistory ??= loadHistoryService())
+        return { items: await history.readSubagentTranscript(p.threadId, p.itemId) }
       }
 
       case 'thread.undoTurnChanges': {
