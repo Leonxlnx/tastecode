@@ -99,7 +99,7 @@ const PROCESS_LIMIT_READ_INTERVAL_MS = 5 * 60_000
  * The names the app shows for each provider (the web's provider-presentation
  * labels), for text the server writes, such as an agent tool's answer.
  */
-export const PROVIDER_NAMES: Readonly<Record<ProviderId, string>> = {
+export const PROVIDER_NAMES = {
   codex: 'Codex',
   'claude-code': 'Claude Code',
   grok: 'Grok',
@@ -109,7 +109,7 @@ export const PROVIDER_NAMES: Readonly<Record<ProviderId, string>> = {
   pi: 'Pi',
   acp: 'ACP',
   api: 'API connection',
-}
+} as const satisfies Readonly<Record<ProviderId, string>>
 
 export const PROVIDER_CAPABILITIES = {
   acp: {
