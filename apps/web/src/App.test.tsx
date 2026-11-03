@@ -11772,7 +11772,7 @@ describe('inbox lifecycle', () => {
     await screen.findByRole('button', { name: 'Settle Newest chat' })
 
     vi.spyOn(window, 'requestAnimationFrame').mockImplementation(() => 1)
-    vi.useFakeTimers()
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     try {
       act(() => {
         transport.listeners.get('thread.lifecycle')?.({
