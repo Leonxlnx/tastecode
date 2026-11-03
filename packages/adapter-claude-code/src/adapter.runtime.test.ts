@@ -282,4 +282,53 @@ describe('Claude runtimes', () => {
     expect(cli.launch.argv[0]).toBe('-p')
     expect(sdk.launch.argv).not.toContain('-p')
   }, 15_000)
+
+  it('carries a chat on by itself when work it left running ends, through either runtime', async () => {
+    const run = async (runtime: ClaudeRuntime) => {
+      const fake = fakeClaude()
+      const adapter = new ClaudeCodeAdapter({
+        runtime,
+        spawn: fake.spawn,
+        environment: fake.environment,
+      })
+      const events: DomainEvent[] = []
+      adapter.on('event', (event) => events.push(event))
+      const work: boolean[] = []
+      adapter.on('backgroundWorkChanged', () => work.push(adapter.hasBackgroundWork()))
+      try {
+        const thread = await adapter.startThread(process.cwd())
+        const asked = await adapter.sendTurn(thread.id, 'Run the check in the background')
+        const own = await waitFor(events, (event) =>
+          event.type === 'turn.started' && event.turn.id !== asked ? event.turn.id : undefined,
+        )
+        const status = await waitFor(events, (event) =>
+          event.type === 'turn.completed' && event.turnId === own ? event.status : undefined,
+        )
+        expect(status).toBe('completed')
+        expect(work).toEqual([true, false])
+        return events.map(shape)
+      } finally {
+        await adapter.dispose()
+      }
+    }
+    const sdk = await run('sdk')
+    const cli = await run('cli')
+
+    expect(cli).toEqual(sdk)
+    // The asked turn ends first; the run Claude starts to report the check is a turn of its own.
+    const ends = sdk.flatMap((event, index) => (event.type === 'turn.completed' ? [index] : []))
+    const starts = sdk.flatMap((event, index) => (event.type === 'turn.started' ? [index] : []))
+    expect(starts).toEqual([0, ends[0]! + 1])
+    expect(ends).toEqual([expect.any(Number), sdk.length - 1])
+    const said = (from: number, to: number) =>
+      sdk
+        .slice(from, to)
+        .flatMap((event) =>
+          event.type === 'item.completed' && event.item.type === 'message'
+            ? [`${event.item.role}: ${event.item.text}`]
+            : [],
+        )
+    expect(said(0, ends[0]!)).toEqual(['assistant: Waiting for the check.'])
+    expect(said(ends[0]!, sdk.length)).toEqual(['assistant: Hello there'])
+  }, 30_000)
 })
