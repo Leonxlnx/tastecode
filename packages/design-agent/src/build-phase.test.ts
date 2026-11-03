@@ -620,6 +620,28 @@ describe('build phase', () => {
     }
   })
 
+  it('rejects a worktree pointer written into an existing directory', () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-exact-worktree-'))
+    const brief = {
+      ...artifacts[0],
+      originalRequest: 'Create exactly index.html; do not create other files.',
+    }
+    try {
+      mkdirSync(path.join(workspace, 'src'))
+      const baseline = designWorkspaceFileBaseline(workspace)
+
+      writeFileSync(path.join(workspace, 'index.html'), '<main></main>')
+      writeFileSync(path.join(workspace, 'src', '.git'), 'gitdir: ../.git/worktrees/src\n')
+      writeFileSync(path.join(workspace, 'src', 'hidden.json'), '{}')
+
+      expect(() => validateExactBuildFiles(workspace, brief, baseline)).toThrow(
+        'unexpected files: src/.git',
+      )
+    } finally {
+      rmSync(workspace, { recursive: true, force: true })
+    }
+  })
+
   it('accepts an expected file inside a nested directory', () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-exact-nested-expected-'))
     const brief = {

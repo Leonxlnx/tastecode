@@ -41,6 +41,29 @@ const OPAQUE_DIRECTORIES = new Set([
   '.vite',
   '.angular',
 ])
+const MAX_GIT_POINTER_BYTES = 4096
+
+/**
+ * A `.git` file pointing into a repository's `worktrees/` folder marks a linked worktree: a
+ * second checkout, usually of the same project. Tools that keep worktrees inside the project
+ * (`.worktrees/`, `.claude/worktrees/`) multiply the tree by their count. Submodule pointers
+ * lead into `modules/` and stay part of the scan.
+ */
+function linkedWorktree(directory: string): boolean {
+  const marker = path.join(directory, '.git')
+  let stat
+  try {
+    stat = lstatSync(marker)
+  } catch {
+    return false
+  }
+  if (!stat.isFile() || stat.size > MAX_GIT_POINTER_BYTES) return false
+  const pointer = /^gitdir:\s*(.+?)\s*$/mu.exec(
+    readWorkspaceFile(marker, MAX_GIT_POINTER_BYTES).toString('utf8'),
+  )?.[1]
+  const segments = pointer?.split(/[\\/]+/u).filter(Boolean) ?? []
+  return segments.at(-2) === 'worktrees'
+}
 
 export interface WorkspaceEntry {
   relative: string
@@ -83,6 +106,10 @@ export function workspaceEntries(
           entries.push({ relative, file: entry.isFile() })
         } else if (OPAQUE_DIRECTORIES.has(entry.name) || ignoredDirectories.has(entry.name)) {
           entries.push({ relative: `${relative}/`, file: false })
+        } else if (linkedWorktree(path.join(absolute, entry.name))) {
+          // The marker stays listed, so a pointer written during a Build is still a new file.
+          entries.push({ relative: `${relative}/`, file: false })
+          entries.push({ relative: `${relative}/.git`, file: true })
         } else {
           entries.push({ relative: `${relative}/`, file: false })
           if (depth >= MAX_DEPTH)
