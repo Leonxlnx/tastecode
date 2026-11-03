@@ -139,6 +139,7 @@ const index = (predicate: (message: SDKMessage & Record<string, unknown>) => boo
 describe('Claude subagents', () => {
   it('declares progress reporting', () => {
     expect(CLAUDE_CAPABILITIES.subagents).toBe('progress')
+    expect(CLAUDE_CAPABILITIES.subagentTranscript).toBe(true)
   })
 
   it('reports both captured agents with identity, progress and result', async () => {
@@ -156,6 +157,7 @@ describe('Claude subagents', () => {
       status: 'completed',
       subagent: {
         id: FOREGROUND,
+        transcriptId: 'a07e72187d97f2b90',
         name: 'Explore',
         description: 'Count files',
         state: 'completed',
@@ -171,6 +173,7 @@ describe('Claude subagents', () => {
       status: 'completed',
       subagent: {
         id: BACKGROUND,
+        transcriptId: 'ad5eb828797c51a09',
         name: 'general-purpose',
         description: 'Read notes',
         state: 'completed',
@@ -210,6 +213,22 @@ describe('Claude subagents', () => {
     expect(state.items.find((item) => item.id === `${BACKGROUND}-call`)?.subagent).toMatchObject({
       state: 'completed',
       background: true,
+    })
+  })
+
+  it('remembers the sidechain identity from child snapshots without task_started', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+    const { events, replaySlowly } = await session()
+    await replaySlowly(
+      captured.filter(
+        (message) => !(message.type === 'system' && message.subtype === 'task_started'),
+      ),
+    )
+    expect(itemsFor(events, FOREGROUND).at(-1)?.subagent).toMatchObject({
+      transcriptId: 'a07e72187d97f2b90',
+    })
+    expect(itemsFor(events, BACKGROUND).at(-1)?.subagent).toMatchObject({
+      transcriptId: 'ad5eb828797c51a09',
     })
   })
 
@@ -288,6 +307,53 @@ describe('Claude subagents', () => {
     expect(itemsFor(events, BACKGROUND).at(-1)).toMatchObject({
       status: 'completed',
       subagent: { state: 'interrupted', background: true },
+    })
+  })
+
+  it('interrupts an unreported background agent when its session ends after the turn', async () => {
+    const { events, replay, query, turnId } = await session()
+    const report = index(
+      (message) => message.subtype === 'task_updated' && message.task_id === 'ad5eb828797c51a09',
+    )
+    await replay([
+      ...captured.slice(0, report),
+      captured[index((message) => message.type === 'result')]!,
+    ])
+    expect(events).toContainEqual({ type: 'turn.completed', turnId, status: 'completed' })
+    expect(itemsFor(events, BACKGROUND).at(-1)).toMatchObject({
+      status: 'completed',
+      subagent: { state: 'running', background: true },
+    })
+
+    query().close()
+    await tick()
+
+    expect(itemsFor(events, BACKGROUND).at(-1)).toMatchObject({
+      status: 'completed',
+      subagent: { state: 'interrupted', background: true },
+    })
+    expect(events.filter((event) => event.type === 'turn.completed')).toHaveLength(1)
+  })
+
+  it('flushes a throttled terminal snapshot when the session ends before its report', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+    const { events, replay, query } = await session()
+    const report = index(
+      (message) => message.subtype === 'task_updated' && message.task_id === 'ad5eb828797c51a09',
+    )
+    await replay([
+      ...captured.slice(0, report),
+      captured[index((message) => message.type === 'result')]!,
+      captured[report]!,
+    ])
+    expect(itemsFor(events, BACKGROUND).at(-1)?.subagent?.state).toBe('running')
+
+    query().close()
+    await tick()
+
+    expect(itemsFor(events, BACKGROUND).at(-1)).toMatchObject({
+      status: 'completed',
+      subagent: { state: 'completed', background: true },
     })
   })
 

@@ -50,8 +50,75 @@
   display: inline-flex;
   flex: none;
   justify-content: center;
-  width: 14px;
+  width: 24px;
   color: var(--text-3);
+}
+
+/* ---------- A sub-agent's sigil ----------
+
+   Two tones of one hue per sub-agent, drawn from its id (SubagentAvatar.tsx).
+   Brighter tones on the dark theme, deeper ones on the light theme, so the
+   shapes keep their contrast on either surface. */
+
+.subagent-avatar {
+  --sigil-a: oklch(0.72 0.13 var(--sigil-hue));
+  --sigil-b: oklch(0.87 0.07 var(--sigil-hue));
+  position: relative;
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+}
+
+:root[data-theme='light'] .subagent-avatar {
+  --sigil-a: oklch(0.58 0.15 var(--sigil-hue));
+  --sigil-b: oklch(0.79 0.1 var(--sigil-hue));
+}
+
+.subagent-avatar > svg {
+  display: block;
+  overflow: visible;
+}
+
+/* A running sub-agent: a thin arc turns around its sigil. Only transform
+   animates, on the compositor; nothing is laid out or painted per frame. */
+.subagent-avatar[data-running]::after {
+  position: absolute;
+  inset: -3px;
+  border: 1.5px solid transparent;
+  border-top-color: var(--sigil-a);
+  border-right-color: var(--sigil-a);
+  border-radius: var(--r-circle);
+  animation: subagent-sigil-turn 1.6s linear infinite;
+  content: '';
+}
+
+@keyframes subagent-sigil-turn {
+  to {
+    transform: rotate(1turn);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .subagent-avatar[data-running]::after {
+    border-color: var(--sigil-a);
+    opacity: 0.55;
+    animation: none;
+  }
+}
+
+.agents-group__empty {
+  margin: 0;
+  padding: 2px 8px 6px;
+  color: var(--text-3);
+  font-size: var(--t-sm);
+}
+
+.agents-row__when {
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .agents-row__text {
@@ -281,4 +348,10 @@ button.agents-row:focus-visible {
   margin: 16px 0 0;
   color: var(--text-3);
   font-size: var(--t-xs);
+}
+
+/* Above a cut native transcript, on the snapshot text's left edge. */
+.agent-detail__omitted {
+  flex: none;
+  margin: 10px 16px 0 40px;
 }

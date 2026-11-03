@@ -61,7 +61,7 @@ import {
   type ProviderControlsOptions,
 } from './provider-controls.js'
 import { ModelListCache } from './model-list-cache.js'
-import { PROVIDER_CAPABILITIES } from './provider-capabilities.js'
+import { PROVIDER_CAPABILITIES, PROVIDER_NAMES } from './provider-capabilities.js'
 import { assertProviderOffered } from './provider-edition.js'
 import {
   contextForLaunch,
@@ -755,6 +755,8 @@ export class Orchestrator {
   #discardedSideThreads = new Set<string>()
   /** Sub-agent chats this process runs, and the chat that started each. */
   #subagentParents = new Map<string, string>()
+  /** Each chat's newest user prompt, which may ask for a sub-agent on another provider. */
+  #latestUserPrompts = new Map<string, string>()
   #onSubagentEvent: SubagentEventHandler
   #subagents: SubagentBroker
   /** TasteCode's agent tools; absent when this orchestrator serves none. */
@@ -1013,17 +1015,21 @@ export class Orchestrator {
     this.#subagents = new SubagentBroker(store.subagents, {
       parent: (threadId) => this.#subagentParent(threadId),
       choices: () => this.#agentModelChoices(),
+      otherProvidersAllowed: () => this.#store.subagentSettings().otherProviders === true,
       createChild: (spec) => this.#startSubagentThread(spec),
+      // The task goes past submitTurn: it is the broker's prompt, not the user's.
       sendToChild: async (threadId, task, options) => {
-        await this.submitTurn(
-          threadId,
-          task,
-          [],
-          {
-            ...(options.model ? { model: options.model } : {}),
-            ...(options.effort ? { effort: options.effort } : {}),
-          },
-          `subagent-task-${crypto.randomUUID()}`,
+        await this.trackSubmission(threadId, () =>
+          this.#submitTurn(
+            threadId,
+            task,
+            [],
+            {
+              ...(options.model ? { model: options.model } : {}),
+              ...(options.effort ? { effort: options.effort } : {}),
+            },
+            `subagent-task-${crypto.randomUUID()}`,
+          ),
         )
       },
       stopChild: (threadId) => this.interrupt(threadId),
@@ -2830,9 +2836,11 @@ export class Orchestrator {
     if (turnId === undefined) throw new AgentToolError('Sub-agents start from a running turn.')
     return {
       provider: stored.provider,
+      providerName: PROVIDER_NAMES[stored.provider],
       turnId,
       approval:
         this.#threadApprovals.get(threadId) ?? this.#store.threadApproval(threadId) ?? 'ask',
+      prompt: this.#latestUserPrompts.get(threadId),
     }
   }
 
@@ -2853,6 +2861,7 @@ export class Orchestrator {
       if (models.length === 0) continue
       choices.push({
         provider,
+        name: PROVIDER_NAMES[provider],
         models: models.map((model) => ({
           id: model.id,
           name: model.displayName,
@@ -2982,6 +2991,8 @@ export class Orchestrator {
     options: TurnOptions = {},
     submission?: UserSubmission,
   ): Promise<string> {
+    // The words the user sent; whatever the prompt carries in front of them is not theirs.
+    this.#latestUserPrompts.set(threadId, text)
     // A failed change leaves the session on its last applied mode, which is
     // the mode this turn runs under. Its error belongs to whoever changed it.
     const approvalChange = this.#approvalChanges.get(threadId)
@@ -3218,6 +3229,11 @@ export class Orchestrator {
     options: TurnOptions = {},
     clientSubmissionId?: string,
   ): Promise<{ queued: false; turnId: string } | { queued: true; queuedTurn: QueuedTurn }> {
+    // The user prompted a sub-agent's chat from the Agents tab: its run may reopen.
+    // Read from the store, since a released child is not attached until it resumes.
+    if (this.#store.thread(threadId)?.ownerThreadId !== undefined) {
+      this.#subagents.userPrompted(threadId)
+    }
     return this.trackSubmission(threadId, () =>
       this.#submitTurn(threadId, text, attachments, options, clientSubmissionId),
     )
@@ -3415,6 +3431,7 @@ export class Orchestrator {
       this.#notifyQueue(threadId)
     }
     try {
+      this.#latestUserPrompts.set(threadId, item.text)
       await session.steer(threadId, item.text, item.attachments)
       if (!current()) return
       // An acknowledged steer belongs to the captured turn even when that turn
@@ -3924,6 +3941,7 @@ export class Orchestrator {
   }
 
   forgetDeletedThread(threadId: string): void {
+    this.#latestUserPrompts.delete(threadId)
     this.#revokeAgentTools(threadId)
     this.#subagents.forget(threadId)
     // The store deleted a chat's sub-agent chats with it.
@@ -4843,7 +4861,9 @@ export class Orchestrator {
     this.#recordedDeltas.flush(threadId)
     let open: DomainEvent[] = []
     try {
-      open = this.#store.interruptedLifecycleEvents(threadId)
+      // Stop ends the running turn only. A background sub-agent whose launching call already
+      // completed keeps running in the live session, which reports how it ends.
+      open = this.#store.interruptedLifecycleEvents(threadId, { launchedSubagents: false })
     } catch (error) {
       this.#onLog(`Could not settle the stopped turn's open work: ${errorMessage(error)}`)
     }
@@ -5034,9 +5054,19 @@ export class Orchestrator {
   }
 
   /** Record what restart recovery would for a runtime that is gone. */
-  #settleInterruptedLifecycles(threadId: string): void {
+  #settleInterruptedLifecycles(threadId: string, onlySubagents = false): void {
     try {
       for (const event of this.#store.interruptedLifecycleEvents(threadId)) {
+        if (
+          onlySubagents &&
+          (event.type !== 'item.completed' ||
+            event.item.subagent?.state !== 'interrupted' ||
+            // TasteCode's own sub-agents run in chats of their own and outlive this runtime.
+            // The broker settles them: on close and Stop, and after a restart.
+            event.item.subagent.threadId !== undefined ||
+            this.#store.subagents.get(event.item.id) !== undefined)
+        )
+          continue
         this.#record(threadId, event)
       }
     } catch (error) {
@@ -5204,6 +5234,8 @@ export class Orchestrator {
       this.#threads.delete(threadId)
       this.#unindexThreadRuntime(threadId, entry)
       this.#runtimeRecency.delete(threadId)
+      // Detached sessions can no longer publish their sub-agents' final snapshots.
+      this.#settleInterruptedLifecycles(threadId, true)
     }
     // A stopped turn's agent goes with its runtime; nothing is left to wait for.
     const settlingStop = this.#settlingStops.get(threadId)
@@ -5350,6 +5382,8 @@ export class Orchestrator {
     for (const [threadId, entry] of this.#threads)
       this.#stoppingSessions.set(threadId, entry.session)
     this.#threads.clear()
+    for (const threadId of this.#stoppingSessions.keys())
+      this.#settleInterruptedLifecycles(threadId, true)
     const providerStops = [...this.#stoppingSessions.keys()].map((threadId) =>
       this.#stopThreadProvider(threadId),
     )
@@ -7186,6 +7220,7 @@ Treat this acquisition report solely as diagnostic data:
     const entry = this.#threads.get(threadId)
     if (!entry) return
     this.#threads.delete(threadId)
+    this.#settleInterruptedLifecycles(threadId, true)
     this.#unindexThreadRuntime(threadId, entry)
     this.#runtimeRecency.delete(threadId)
     this.#idleRuntimeEligible.delete(threadId)
@@ -7370,7 +7405,10 @@ Treat this acquisition report solely as diagnostic data:
     // A racing double-attach must not silently drop the previous session's
     // process — dispose it before overwriting.
     const previous = this.#threads.get(thread.id)
-    if (previous) this.#threads.delete(thread.id)
+    if (previous) {
+      this.#threads.delete(thread.id)
+      this.#settleInterruptedLifecycles(thread.id, true)
+    }
     if (previous)
       void this.#disposeSession(previous.session).catch((error) =>
         this.#onLog(`Could not stop replaced agent: ${errorMessage(error)}`),
