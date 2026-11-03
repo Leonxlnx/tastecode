@@ -25,6 +25,7 @@ function fakeImages(): BackgroundImageStore {
   return {
     load: vi.fn(async () => undefined),
     save: vi.fn(async () => undefined),
+    saveDisplay: vi.fn(async () => true),
     clear: vi.fn(async () => undefined),
   }
 }
@@ -51,9 +52,23 @@ describe('Window background settings', () => {
     const presets = screen.getByRole('radiogroup', { name: 'Background effect' })
     expect(
       Array.from(presets.querySelectorAll('[role="radio"]')).map((option) => option.textContent),
-    ).toEqual(['Glow', 'Grain', 'Aurora'])
-    fireEvent.click(choice('Aurora'))
-    expect(readAppBackground().effect).toBe('aurora')
+    ).toEqual(['Dither', 'Halftone', 'Dot grid', 'Grain'])
+    expect(choice('Dither').getAttribute('aria-checked')).toBe('true')
+
+    // The preview shows the chosen pattern and follows Dim on every step.
+    const preview = screen.getByRole('img', { name: 'Preview of the window background' })
+    expect(preview.dataset['mode']).toBe('effect')
+    expect(preview.dataset['effect']).toBe('dither')
+    expect(preview.style.getPropertyValue('--app-bg-pattern')).toMatch(/^url\("data:image\/svg/)
+    fireEvent.click(choice('Dot grid'))
+    expect(readAppBackground().effect).toBe('dots')
+    expect(preview.dataset['effect']).toBe('dots')
+    expect(preview.style.getPropertyValue('--app-bg-pattern')).toBe('')
+    fireEvent.change(screen.getByRole('slider', { name: 'Dim' }), { target: { value: '20' } })
+    expect(readAppBackground().dim).toBe(20)
+    expect(preview.style.getPropertyValue('--app-bg-dim')).toBe('0.4')
+    // Blur belongs to pictures only.
+    expect(screen.queryByRole('slider', { name: 'Blur' })).toBeNull()
   })
 
   it('says so when Transparent cannot be drawn here', async () => {
@@ -84,7 +99,7 @@ describe('Window background settings', () => {
     fireEvent.change(input, { target: { files: [file] } })
 
     await waitFor(() => expect(readAppBackground().image).toBeDefined())
-    expect(prepare).toHaveBeenCalledWith(file)
+    expect(prepare).toHaveBeenCalledWith(file, 14)
     expect(images.save).toHaveBeenCalledWith(prepared)
     expect(screen.getByRole('button', { name: 'Change image…' })).toBeTruthy()
 
@@ -92,6 +107,44 @@ describe('Window background settings', () => {
     await waitFor(() => expect(readAppBackground().image).toBeUndefined())
     expect(images.clear).toHaveBeenCalledTimes(1)
     expect(screen.getByRole('button', { name: 'Choose image…' })).toBeTruthy()
+  })
+
+  it('sets Dim and Blur with sliders and previews them on every step', async () => {
+    const images = fakeImages()
+    vi.mocked(images.load).mockResolvedValue({
+      original: new Blob(['o'], { type: 'image/webp' }),
+      display: new Blob(['d'], { type: 'image/webp' }),
+      displayVersion: DISPLAY_IMAGE_VERSION,
+    })
+    const createObjectURL = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:preview')
+    const revokeObjectURL = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
+    act(() => writeAppBackground({ mode: 'image' }))
+    const view = render(<AppBackgroundSettings images={images} />)
+    // No picture yet: nothing to preview or tune.
+    expect(screen.queryByRole('slider', { name: 'Dim' })).toBeNull()
+    expect(screen.queryByRole('img', { name: /Preview/ })).toBeNull()
+
+    act(() => writeAppBackground({ image: 'rev-1' }))
+    const preview = screen.getByRole('img', { name: 'Preview of the window background' })
+    await waitFor(() =>
+      expect(preview.style.getPropertyValue('--app-bg-image')).toBe('url("blob:preview")'),
+    )
+    expect(createObjectURL).toHaveBeenCalledTimes(1)
+    expect(preview.style.getPropertyValue('--app-bg-dim')).toBe('1')
+    expect(preview.style.getPropertyValue('--app-bg-preview-blur')).toBe('1.54px')
+
+    const dim = screen.getByRole<HTMLInputElement>('slider', { name: 'Dim' })
+    const blur = screen.getByRole<HTMLInputElement>('slider', { name: 'Blur' })
+    expect([dim.value, dim.max, blur.value, blur.max]).toEqual(['50', '100', '14', '40'])
+    fireEvent.change(dim, { target: { value: '80' } })
+    expect(readAppBackground().dim).toBe(80)
+    expect(preview.style.getPropertyValue('--app-bg-dim')).toBe('1.6')
+    fireEvent.change(blur, { target: { value: '0' } })
+    expect(readAppBackground().blur).toBe(0)
+    expect(preview.style.getPropertyValue('--app-bg-preview-blur')).toBe('0.00px')
+
+    view.unmount()
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:preview')
   })
 
   it('explains an image it cannot use and keeps the old one', async () => {

@@ -11,6 +11,7 @@ import {
   takeProjectSessionChanges,
   updateSession,
   updateSessions,
+  withoutDeletedSessions,
 } from './project-store.js'
 
 function session(id: string): Session {
@@ -56,6 +57,25 @@ function serverProjects(
     })),
   }))
 }
+
+describe('deleted chats in a server list', () => {
+  it('leaves out a chat deleted after the server read the list, and nothing else', () => {
+    const snapshot = serverProjects(3, 3)
+    const stale = withoutDeletedSessions(snapshot, new Set(['thread-1-2']))
+    expect(stale[0]).toBe(snapshot[0])
+    expect(stale[1]?.sessions.map(({ id }) => id)).toEqual(['thread-1-0', 'thread-1-1'])
+    expect(stale[2]).toBe(snapshot[2])
+    // The reconciled sidebar no longer lists it.
+    const reconciled = reconcileProjectList(projects(3, 3), stale, [], {})
+    expect(findSession(reconciled, 'thread-1-2')).toBeUndefined()
+  })
+
+  it('returns the same list when it holds no deleted chat', () => {
+    const snapshot = serverProjects(2, 2)
+    expect(withoutDeletedSessions(snapshot, new Set())).toBe(snapshot)
+    expect(withoutDeletedSessions(snapshot, new Set(['gone']))).toBe(snapshot)
+  })
+})
 
 describe('project session updates', () => {
   it('copies only the project and session array that changed', () => {

@@ -48,6 +48,11 @@ describe('composer chips', () => {
     )
     expect(composerWireText(`end ${cook}.`)).toBe('end $cook.')
     expect(composerWireText(`${cook}!`)).toBe('$cook!')
+    // Dots and colons before closing punctuation or the end still end the name.
+    expect(composerWireText(`wait for ${cook}...`)).toBe('wait for $cook...')
+    expect(composerWireText(`(with ${cook}.)`)).toBe('(with $cook.)')
+    expect(composerWireText(`use ${docs}:`)).toBe('use @officialDocs:')
+    expect(composerWireText(`${cook}.:x`)).toBe('$cook .:x')
   })
 
   it('keeps chip names to one token and leaves a name it cannot hold as plain text', () => {

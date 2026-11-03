@@ -2789,14 +2789,33 @@ export class Store {
     this.#updateSidebarThread(id, ({ closedAt: _closedAt, ...thread }) => thread)
   }
 
-  deleteThread(id: string): void {
-    if (this.thread(id)?.worktreePath) {
+  /**
+   * `keepSessionOut`: the user deleted the chat. Its provider session stays on
+   * disk, so it is kept as a session the chat left: provider history must never
+   * import it as a chat again, also when no scan had linked the chat to it yet.
+   */
+  deleteThread(id: string, options: { keepSessionOut?: boolean } = {}): void {
+    const thread = this.thread(id)
+    if (thread?.worktreePath) {
       throw new Error('discard the isolated session checkout before deleting it')
     }
     // One transaction: a failure partway must not leave orphaned rows with
     // no owner and no path to ever clean them up.
     this.#db.exec('BEGIN IMMEDIATE')
     try {
+      if (options.keepSessionOut && thread && !thread.ephemeral) {
+        const session = thread.providerSessionId ?? thread.id
+        // Another chat on the same session still owns it, and still reads it.
+        this.#db
+          .prepare(
+            `INSERT INTO left_provider_sessions (provider, session_id, thread_id, left_at)
+             SELECT ?, ?, ?, ? WHERE NOT EXISTS (
+               SELECT 1 FROM threads
+               WHERE provider = ? AND id <> ? AND COALESCE(provider_session_id, id) = ?)
+             ON CONFLICT(provider, session_id) DO NOTHING`,
+          )
+          .run(thread.provider, session, id, Date.now(), thread.provider, id, session)
+      }
       this.#db.prepare(`DELETE FROM session_search WHERE thread_id = ?`).run(id)
       this.#db.prepare(`DELETE FROM events WHERE thread_id = ?`).run(id)
       this.#db.prepare(`DELETE FROM checkpoints WHERE thread_id = ?`).run(id)

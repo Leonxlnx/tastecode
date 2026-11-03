@@ -7,13 +7,20 @@ import {
   useRef,
   useState,
 } from 'react'
-import type { McpServer, ProviderCommand, ProviderId, ResultOf, Skill } from '@harness/contracts'
+import type { McpServer, ProviderCommand, ProviderId, Skill } from '@harness/contracts'
 import type { AppCommand } from '../app-commands.js'
 import { providerDisplayName } from '../provider-presentation.js'
 import type { Transport } from '../transport.js'
 import '../styles/composer-resource-picker.css'
 import { commandIcon, MCP_ICON, SKILL_ICON } from './chip-icons.js'
 import { SkeletonRows, SkeletonStatus } from './Skeleton.js'
+import {
+  cachedInventory,
+  inventoryChanged,
+  loadInventory,
+  type InventoryAnswers,
+  type InventorySource,
+} from './composer-inventory.js'
 import {
   COMPOSER_RESOURCE_LIST_ID,
   composerResourceListLabel,
@@ -25,12 +32,7 @@ import {
 
 export type { ComposerResource } from './composer-resource.js'
 
-type Inventory = {
-  skills?: ResultOf<'skills.list'>
-  mcp?: ResultOf<'mcp.list'>
-  commands?: ResultOf<'commands.list'>
-}
-type InventorySource = keyof Inventory
+type Inventory = Partial<InventoryAnswers>
 type MenuEntry = {
   resource: ComposerResource
   /** Lowercase names that rank as a name match; the first one is the primary name. */
@@ -120,7 +122,9 @@ export const ComposerResourcePicker = forwardRef<
     const forThisProject =
       (sources: readonly InventorySource[]) =>
       ({ provider, projectPath }: { provider: ProviderId; projectPath: string }) => {
-        if (provider === props.provider && projectPath === props.projectPath) invalidate(sources)
+        if (provider !== props.provider || projectPath !== props.projectPath) return
+        inventoryChanged(props.transport, sources, { provider, projectPath })
+        invalidate(sources)
       }
     const offSkills = props.transport.on('skills.changed', forThisProject(['skills']))
     const offMcp = props.transport.on('mcp.changed', forThisProject(['mcp']))
@@ -130,6 +134,7 @@ export const ComposerResourcePicker = forwardRef<
       if (state === 'reconnecting') reconnecting = true
       else if (state === 'open' && reconnecting) {
         reconnecting = false
+        inventoryChanged(props.transport, INVENTORY_SOURCES)
         invalidate(INVENTORY_SOURCES)
       }
     })
@@ -144,41 +149,28 @@ export const ComposerResourcePicker = forwardRef<
   useEffect(() => {
     const projectPath = props.projectPath
     if (!open || !projectPath) return
+    const place = { provider: props.provider, projectPath, threadId: props.threadId }
     for (const source of markerMenu(marker).sources) {
       const key = source === 'commands' ? commandsKey : contextKey
       if (loaded.current.get(source) === key) continue
       loaded.current.set(source, key)
       const generation = ++generations.current[source]
-      setLoading((current) => withSource(current, source, true))
+      // The last answer shows at once; the one asked for now replaces it.
+      const cached = cachedInventory(props.transport, source, place)
+      if (cached) setInventory((current) => ({ ...current, [source]: cached }))
+      setLoading((current) => withSource(current, source, cached === undefined))
       setFailed((current) => withSource(current, source, false))
       const settle = (next: Inventory | undefined) => {
         if (generations.current[source] !== generation) return
         if (next) setInventory((current) => ({ ...current, ...next }))
         else loaded.current.delete(source)
-        setFailed((current) => withSource(current, source, next === undefined))
+        setFailed((current) => withSource(current, source, !next && !cached))
         setLoading((current) => withSource(current, source, false))
       }
-      const params = { provider: props.provider, projectPath }
-      const request =
-        source === 'skills'
-          ? props.transport.request('skills.list', params).then((skills) => ({ skills }))
-          : source === 'mcp'
-            ? props.transport.request('mcp.list', params).then((mcp) => ({ mcp }))
-            : props.transport
-                .request('commands.list', {
-                  ...params,
-                  ...(props.threadId ? { threadId: props.threadId } : {}),
-                })
-                .then(
-                  (commands) => ({ commands }),
-                  // A server from before provider commands has none to offer.
-                  (error: unknown) => {
-                    if (isUnknownMethod(error))
-                      return { commands: { commands: [], loading: false } }
-                    throw error
-                  },
-                )
-      request.then(settle, () => settle(undefined))
+      loadInventory(props.transport, source, place).then(
+        (answer) => settle({ [source]: answer }),
+        () => settle(undefined),
+      )
     }
   }, [
     open,
@@ -578,10 +570,6 @@ function withSource(
   if (present) next.add(source)
   else next.delete(source)
   return next
-}
-
-function isUnknownMethod(error: unknown): boolean {
-  return error instanceof Error && /^unknown method\b/i.test(error.message)
 }
 
 function lowercase(value: string): string {

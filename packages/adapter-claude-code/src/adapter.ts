@@ -638,6 +638,10 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
         timer: ReturnType<typeof setTimeout>
         ended: Promise<void>
         end: () => void
+        /** Stop requests for this run still waiting for Claude's answer. */
+        asking: number
+        /** Claude accepted a Stop of this run, so the run's end is that Stop's outcome. */
+        accepted?: boolean
       }
     | undefined
   /** The SDK's `total_cost_usd` is a running total for the current query. */
@@ -831,8 +835,11 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     const redactor = this.#redactor
     this.#interruptRequested = true
     const abandoned = this.#awaitStoppedRun(query, turnId)
+    const deadline = this.#stopDeadline
+    if (deadline) deadline.asking += 1
     // The SDK keeps queued async messages through an interrupt and lists them in its receipt.
     const stopping = query.interrupt().then((receipt) => {
+      if (deadline) deadline.accepted = true
       if (
         this.#query === query &&
         this.#activeTurnId === turnId &&
@@ -853,12 +860,20 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
       await Promise.race([stopping, abandoned])
     } catch (error) {
       // The turn keeps running, so a later error result is real and must still surface.
-      if (this.#query === query) {
+      // Not when another Stop of the same run was accepted or is still being asked: a
+      // repeat Stop can fail because the run is already ending, and that leaves the other
+      // Stop standing, its error result still the expected end of a Stop.
+      const otherStop =
+        deadline !== undefined &&
+        this.#stopDeadline === deadline &&
+        (deadline.accepted === true || deadline.asking > 1)
+      if (this.#query === query && !otherStop) {
         this.#interruptRequested = false
         this.#clearStopDeadline(false)
       }
       throw new Error(redactor.redact(error instanceof Error ? error.message : String(error)))
     } finally {
+      if (deadline) deadline.asking -= 1
       if (receipt && this.#stopReceipt === receipt) this.#stopReceipt = undefined
     }
   }
@@ -883,7 +898,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
       end()
     }, this.#stopTimeoutMs)
     timer.unref?.()
-    this.#stopDeadline = { query, turnId, timer, ended, end }
+    this.#stopDeadline = { query, turnId, timer, ended, end, asking: 0 }
     return ended
   }
 

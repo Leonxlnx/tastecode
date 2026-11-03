@@ -773,6 +773,69 @@ describe('Claude Code saved history', () => {
     ).toEqual(['interrupted', 'interrupted', 'completed'])
   })
 
+  it('shows a saved slash command once, as the prompt the user sent', async () => {
+    // Captured claude 2.1.296 rows (SDK entrypoint): an unknown skill sent as
+    // "/taste-proa website …" and stopped before Claude answered.
+    const command =
+      '<command-name>/taste-proa</command-name>\n            <command-message>taste-proa</command-message>\n            <command-args>website make something creative, you can cook</command-args>'
+    const f = await fixture([
+      { type: 'queue-operation', operation: 'enqueue', sessionId: SESSION },
+      row('u1', 'user', command, null, { promptId: 'p1', entrypoint: 'sdk-ts' }),
+      row('stop', 'user', [{ type: 'text', text: '[Request interrupted by user]' }], 'u1'),
+      {
+        type: 'last-prompt',
+        lastPrompt: '/taste-proa website make something creative, you can cook',
+        sessionId: SESSION,
+      },
+    ])
+    const session = (await f.source.list())[0]!
+    expect(session.title).toBe('/taste-proa website make something creative, you can cook')
+    const events = await f.source.read(session)
+    expect(items(events)).toEqual([
+      expect.objectContaining({
+        type: 'message',
+        role: 'user',
+        text: '/taste-proa website make something creative, you can cook',
+      }),
+    ])
+    expect(JSON.stringify(events)).not.toContain('<command-')
+    expect(
+      events.flatMap((event) => (event.type === 'turn.completed' ? [event.status] : [])),
+    ).toEqual(['interrupted'])
+  })
+
+  it('keeps a slash command without arguments, in either tag order, and its output out of the prompts', async () => {
+    const answer = row('a2', 'assistant', [{ type: 'text', text: 'Done.' }], 'u2')
+    answer.message = { ...answer.message, stop_reason: 'end_turn' } as typeof answer.message
+    const f = await fixture([
+      row(
+        'u1',
+        'user',
+        [
+          {
+            type: 'text',
+            text: '<command-message>cost</command-message>\n<command-name>/cost</command-name>\n<command-args></command-args>',
+          },
+        ],
+        null,
+      ),
+      row('out', 'user', '<local-command-stdout>Total cost: $0.00</local-command-stdout>', 'u1'),
+      row('err', 'user', '<local-command-stderr></local-command-stderr>', 'out'),
+      row('u2', 'user', 'What does <command-name>/x</command-name> mean?', 'err'),
+      answer,
+    ])
+    const session = (await f.source.list())[0]!
+    expect(session.title).toBe('/cost')
+    const events = await f.source.read(session)
+    expect(items(events).map(({ role, text }) => ({ role, text }))).toEqual([
+      { role: 'user', text: '/cost' },
+      { role: 'assistant', text: 'Total cost: $0.00' },
+      { role: 'user', text: 'What does <command-name>/x</command-name> mean?' },
+      { role: 'assistant', text: 'Done.' },
+    ])
+    expect(events.filter((event) => event.type === 'turn.started')).toHaveLength(2)
+  })
+
   it('hides SDK task notifications while preserving identical text pasted by the user', async () => {
     // Captured Claude 2.1.273 records use origin.kind, without isMeta or isSidechain.
     const notification =

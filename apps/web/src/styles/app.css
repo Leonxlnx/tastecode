@@ -2333,12 +2333,6 @@
   flex-shrink: 0;
 }
 
-@container chat-stage (max-width: 420px) {
-  .model-selector__trigger-level + .model-selector__trigger-effort {
-    display: none;
-  }
-}
-
 .tool span {
   overflow: hidden;
   text-overflow: ellipsis;
