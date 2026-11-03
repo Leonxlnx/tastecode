@@ -141,6 +141,7 @@ describe('AppBackgroundLayer', () => {
         displayVersion: DISPLAY_IMAGE_VERSION,
       })),
       save: vi.fn(async () => undefined),
+      saveDisplay: vi.fn(async () => true),
       clear: vi.fn(async () => undefined),
     }
     const createObjectURL = vi.fn(() => 'blob:tastecode/one')
@@ -187,6 +188,7 @@ describe('AppBackgroundLayer', () => {
     const images: BackgroundImageStore = {
       load,
       save: vi.fn(async () => undefined),
+      saveDisplay: vi.fn(async () => true),
       clear: vi.fn(async () => undefined),
     }
     let made = 0
@@ -229,6 +231,7 @@ describe('AppBackgroundLayer', () => {
     const images: BackgroundImageStore = {
       load: vi.fn(async () => undefined),
       save: vi.fn(async () => undefined),
+      saveDisplay: vi.fn(async () => true),
       clear: vi.fn(async () => undefined),
     }
     const { AppBackgroundLayer } = await import('./AppBackgroundLayer.js')

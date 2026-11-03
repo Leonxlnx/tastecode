@@ -25,6 +25,7 @@ function fakeImages(): BackgroundImageStore {
   return {
     load: vi.fn(async () => undefined),
     save: vi.fn(async () => undefined),
+    saveDisplay: vi.fn(async () => true),
     clear: vi.fn(async () => undefined),
   }
 }

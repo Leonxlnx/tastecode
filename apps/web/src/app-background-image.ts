@@ -39,6 +39,11 @@ const ENCODED_TYPE = 'image/webp'
 const ENCODED_QUALITY = 0.9
 
 export type StoredBackgroundImage = {
+  /**
+   * Names this picture, so a display copy rebuilt for it is never written over
+   * a picture chosen since. Records stored before it existed have none.
+   */
+  id?: string | undefined
   original: Blob
   display: Blob
   displayVersion: string
@@ -135,6 +140,7 @@ export async function prepareBackgroundImage(
   const bitmap = await decode(file)
   try {
     return {
+      id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`,
       original: await encode(bitmap, STORED_IMAGE_EDGE, 0),
       display: await encode(bitmap, DISPLAY_IMAGE_EDGE, blur),
       displayVersion: displayImageVersion(blur),
@@ -155,7 +161,9 @@ export async function backgroundDisplayImage(
   const bitmap = await decode(stored.original)
   try {
     const display = await encode(bitmap, DISPLAY_IMAGE_EDGE, blur)
-    await store.save({ ...stored, display, displayVersion: version }).catch(() => {
+    // Only while the store still holds this picture: one chosen or removed
+    // during the rebuild must not be replaced by the old one.
+    await store.saveDisplay({ ...stored, display, displayVersion: version }).catch(() => {
       // Rebuilt again next launch; the window still shows it now.
     })
     return display
@@ -167,6 +175,11 @@ export async function backgroundDisplayImage(
 export type BackgroundImageStore = {
   load: () => Promise<StoredBackgroundImage | undefined>
   save: (image: StoredBackgroundImage) => Promise<void>
+  /**
+   * Writes a rebuilt display copy, but only while the stored picture is still
+   * `image.id`, checked and written in one step. Resolves whether it was written.
+   */
+  saveDisplay: (image: StoredBackgroundImage) => Promise<boolean>
   clear: () => Promise<void>
 }
 
@@ -211,7 +224,8 @@ function isStoredImage(value: unknown): value is StoredBackgroundImage {
   return (
     record['original'] instanceof Blob &&
     record['display'] instanceof Blob &&
-    typeof record['displayVersion'] === 'string'
+    typeof record['displayVersion'] === 'string' &&
+    (record['id'] === undefined || typeof record['id'] === 'string')
   )
 }
 
@@ -223,6 +237,22 @@ export const indexedDbBackgroundImages: BackgroundImageStore = {
   },
   save: async (image) => {
     await transact('readwrite', (store) => store.put(image, RECORD))
+  },
+  saveDisplay: async (image) => {
+    let saved = false
+    await transact('readwrite', (store) => {
+      const current = store.get(RECORD)
+      // Still inside the transaction, so nothing can be saved in between.
+      current.onsuccess = () => {
+        const value: unknown = current.result
+        if (isStoredImage(value) && value.id === image.id) {
+          store.put(image, RECORD)
+          saved = true
+        }
+      }
+      return current
+    })
+    return saved
   },
   clear: async () => {
     await transact('readwrite', (store) => store.delete(RECORD))
