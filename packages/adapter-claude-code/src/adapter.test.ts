@@ -1580,6 +1580,58 @@ describe('Claude Agent SDK session', () => {
     adapter.dispose()
   })
 
+  it('keeps an accepted Stop standing when a repeat Stop of the same run fails', async () => {
+    const fake = harness()
+    const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
+    const events: DomainEvent[] = []
+    adapter.on('event', (event) => events.push(event))
+    const thread = await adapter.startThread('/repo')
+    await adapter.sendTurn(thread.id, 'Run tests')
+    await adapter.interrupt()
+    // The run is already ending, so Claude turns down the repeat request.
+    vi.spyOn(fake.queries[0]!, 'interrupt').mockRejectedValueOnce(new Error('no run to stop'))
+    await expect(adapter.interrupt()).rejects.toThrow('no run to stop')
+    fake.queries[0]!.emitMessage({
+      ...(resultMessage(true) as object),
+      terminal_reason: 'aborted_tools',
+      errors: ['[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=tool_use'],
+    } as SDKMessage)
+    await tick()
+    expect(events.find((event) => event.type === 'turn.completed')).toMatchObject({
+      status: 'interrupted',
+    })
+    expect(events.filter((event) => event.type === 'thread.error')).toEqual([])
+    adapter.dispose()
+  })
+
+  it('keeps a pending Stop standing when a repeat Stop of the same run fails first', async () => {
+    const fake = harness()
+    const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
+    const events: DomainEvent[] = []
+    adapter.on('event', (event) => events.push(event))
+    const thread = await adapter.startThread('/repo')
+    await adapter.sendTurn(thread.id, 'Run tests')
+    const query = fake.queries[0]!
+    let accept!: () => void
+    vi.spyOn(query, 'interrupt')
+      .mockReturnValueOnce(new Promise<undefined>((resolve) => (accept = () => resolve(undefined))))
+      .mockRejectedValueOnce(new Error('already stopping'))
+    const first = adapter.interrupt()
+    await expect(adapter.interrupt()).rejects.toThrow('already stopping')
+    accept()
+    await first
+    query.emitMessage({
+      ...(resultMessage(true) as object),
+      errors: ['[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=tool_use'],
+    } as SDKMessage)
+    await tick()
+    expect(events.find((event) => event.type === 'turn.completed')).toMatchObject({
+      status: 'interrupted',
+    })
+    expect(events.filter((event) => event.type === 'thread.error')).toEqual([])
+    adapter.dispose()
+  })
+
   it.each(['answers the Stop', 'never answers the Stop'] as const)(
     'ends a stopped turn whose run never reports, process and all, when Claude %s',
     async (variant) => {
