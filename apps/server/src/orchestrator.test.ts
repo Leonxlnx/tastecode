@@ -7559,15 +7559,16 @@ describe('provider commands', () => {
         loading: true,
       })
 
-      // Without a service only a running chat can answer.
-      await expect(orchestrator.listCommands('cursor', '/repo')).resolves.toEqual({
+      // Without a service only a running chat can answer. ACP agents have none:
+      // they report their commands only from a session.
+      await expect(orchestrator.listCommands('acp', '/repo')).resolves.toEqual({
         commands: [],
         loading: false,
       })
-      await orchestrator.startThread('cursor', '/repo')
-      sessions[3]!.commands = [command('cursor')]
-      await expect(orchestrator.listCommands('cursor', '/repo')).resolves.toEqual({
-        commands: [command('cursor')],
+      await orchestrator.startThread('acp', '/repo')
+      sessions[3]!.commands = [command('acp')]
+      await expect(orchestrator.listCommands('acp', '/repo')).resolves.toEqual({
+        commands: [command('acp')],
         loading: false,
       })
     } finally {
