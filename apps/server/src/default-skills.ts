@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import type { Skill } from '@harness/contracts'
+import type { ProviderCommand, Skill } from '@harness/contracts'
 import { parseSkillFrontmatter, skillName } from './skill-inventory.js'
 
 /** Ids of the skills that ship with TasteCode; no provider owns them, so none can switch them. */
@@ -14,11 +14,20 @@ export type DefaultSkills = {
    */
   root: string
   skills: Skill[]
+  /**
+   * The skills as slash commands, with bare SKILL.md names preferred over
+   * plugin-qualified aliases. None when skills.json names no plugin.
+   */
+  commands: ProviderCommand[]
   /** A few lines for shared instructions, or '' when no skill is installed. */
   catalog: string
 }
 
 type BundledEntry = { folder?: unknown; summary?: unknown }
+
+const BUNDLE_NAME = /^[\w.-]+$/
+/** The longest command name or alias the contracts accept. */
+const MAX_COMMAND_NAME = 200
 
 /**
  * A packaged app names its resources copy; an unpackaged run reads the folder
@@ -40,18 +49,23 @@ export function defaultSkillsRoot(env: NodeJS.ProcessEnv = process.env): string 
  */
 export function loadDefaultSkills(root = defaultSkillsRoot()): DefaultSkills {
   let entries: BundledEntry[]
+  let plugin: string | undefined
   try {
     const manifest = JSON.parse(readFileSync(path.join(root, 'skills.json'), 'utf8')) as {
       skills?: unknown
+      plugin?: { name?: unknown }
     }
     entries = Array.isArray(manifest.skills) ? (manifest.skills as BundledEntry[]) : []
+    const name = manifest.plugin?.name
+    plugin = typeof name === 'string' && BUNDLE_NAME.test(name) ? name : undefined
   } catch {
-    return { root, skills: [], catalog: '' }
+    return { root, skills: [], commands: [], catalog: '' }
   }
   const skills: Skill[] = []
+  const commands: ProviderCommand[] = []
   const lines: string[] = []
   for (const entry of entries) {
-    if (typeof entry.folder !== 'string' || !/^[\w.-]+$/.test(entry.folder)) continue
+    if (typeof entry.folder !== 'string' || !BUNDLE_NAME.test(entry.folder)) continue
     const dir = path.join(root, 'skills', entry.folder)
     let markdown: string
     try {
@@ -70,6 +84,8 @@ export function loadDefaultSkills(root = defaultSkillsRoot()): DefaultSkills {
       enabled: true,
       dependencyErrors: [],
     })
+    const command = plugin ? pluginCommand(plugin, entry.folder, frontmatter) : undefined
+    if (command) commands.push(command)
     const summary = typeof entry.summary === 'string' ? entry.summary.trim() : ''
     const where = entry.folder === name ? '' : ` (folder ${entry.folder})`
     lines.push(`- ${name}${where}${summary ? `: ${summary}` : ''}`)
@@ -77,7 +93,31 @@ export function loadDefaultSkills(root = defaultSkillsRoot()): DefaultSkills {
   return {
     root,
     skills,
+    commands,
     catalog: lines.length ? catalogText(path.join(root, 'skills'), lines) : '',
+  }
+}
+
+/**
+ * Plugin skills run by their bare SKILL.md name as well as `<plugin>:<folder>`
+ * (the acme-docs row of inventory-claude-2.1.296.json). Prefer the bare name in
+ * the slash menu and keep the qualified name as an alias.
+ */
+function pluginCommand(
+  plugin: string,
+  folder: string,
+  frontmatter: { name?: string; description?: string },
+): ProviderCommand | undefined {
+  const qualified = `${plugin}:${folder}`
+  if (qualified.length > MAX_COMMAND_NAME) return undefined
+  const bare = frontmatter.name?.trim()
+  const validBare = bare && bare.length <= MAX_COMMAND_NAME && /^[^/\s:][^\s:]*$/.test(bare)
+  return {
+    name: validBare ? bare : qualified,
+    description: frontmatter.description ?? '',
+    ...(validBare ? { aliases: [qualified] } : {}),
+    kind: 'skill',
+    source: 'plugin',
   }
 }
 

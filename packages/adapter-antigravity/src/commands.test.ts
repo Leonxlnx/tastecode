@@ -5,7 +5,7 @@ import path from 'node:path'
 import { PassThrough } from 'node:stream'
 import type { DomainEvent } from '@harness/contracts'
 import { afterEach, describe, expect, it } from 'vitest'
-import { AntigravityAdapter } from './adapter.js'
+import { AntigravityAdapter, antigravityBackgroundNote } from './adapter.js'
 import { agyCommandName, isAgyAnsweredCommand, listAntigravityCommands } from './commands.js'
 
 class FakeChild extends ChildProcess {
@@ -28,7 +28,11 @@ class FakeChild extends ChildProcess {
   finish(stdout: string): void {
     this.stdout.end(stdout)
     this.stderr.end()
-    setImmediate(() => this.emit('close', 0))
+    // A real process reports its exit before its pipes close.
+    setImmediate(() => {
+      this.emit('exit', 0, null)
+      this.emit('close', 0)
+    })
   }
 }
 
@@ -133,7 +137,7 @@ describe('Antigravity commands', () => {
     expect(calls[1]).not.toContain('--conversation')
     expect(calls[2]!.slice(0, 2)).toEqual([
       '-p',
-      '<system-instructions>\nAnswer plainly.\n</system-instructions>\n\nThanks',
+      `<system-instructions>\nAnswer plainly.\n\n${antigravityBackgroundNote('C:\\repo')}\n</system-instructions>\n\nThanks`,
     ])
     expect(calls[2]!.slice(-2)).toEqual(['--conversation', 'c-1'])
     const replies = events.flatMap((event) =>
