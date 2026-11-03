@@ -53,8 +53,21 @@ describe('Window background settings', () => {
       Array.from(presets.querySelectorAll('[role="radio"]')).map((option) => option.textContent),
     ).toEqual(['Dither', 'Halftone', 'Dot grid', 'Grain'])
     expect(choice('Dither').getAttribute('aria-checked')).toBe('true')
+
+    // The preview shows the chosen pattern and follows Dim on every step.
+    const preview = screen.getByRole('img', { name: 'Preview of the window background' })
+    expect(preview.dataset['mode']).toBe('effect')
+    expect(preview.dataset['effect']).toBe('dither')
+    expect(preview.style.getPropertyValue('--app-bg-pattern')).toMatch(/^url\("data:image\/svg/)
     fireEvent.click(choice('Dot grid'))
     expect(readAppBackground().effect).toBe('dots')
+    expect(preview.dataset['effect']).toBe('dots')
+    expect(preview.style.getPropertyValue('--app-bg-pattern')).toBe('')
+    fireEvent.change(screen.getByRole('slider', { name: 'Dim' }), { target: { value: '20' } })
+    expect(readAppBackground().dim).toBe(20)
+    expect(preview.style.getPropertyValue('--app-bg-dim')).toBe('0.4')
+    // Blur belongs to pictures only.
+    expect(screen.queryByRole('slider', { name: 'Blur' })).toBeNull()
   })
 
   it('says so when Transparent cannot be drawn here', async () => {

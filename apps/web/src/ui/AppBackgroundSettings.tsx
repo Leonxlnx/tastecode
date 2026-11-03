@@ -28,6 +28,7 @@ import {
   prepareBackgroundImage,
   type BackgroundImageStore,
 } from '../app-background-image.js'
+import { effectPatternStyle, type EffectPatternStyle } from '../app-background-patterns.js'
 import { isDesktop, type WindowMaterial } from '../bridge.js'
 import { SettingsRow, SettingsSection } from './settings/SettingsLayout.js'
 import { SettingsSegmented } from './settings/SettingsSegmented.js'
@@ -150,16 +151,27 @@ export function AppBackgroundSettings(props: {
         </>
       ) : null}
       {background.mode === 'effect' ? (
-        <SettingsRow name="Effect">
-          <SettingsSegmented
-            ariaLabel="Background effect"
-            value={background.effect}
-            options={EFFECT_OPTIONS}
-            onChange={(effect) => {
-              if (isEffect(effect)) writeAppBackground({ effect })
-            }}
+        <>
+          <SettingsRow name="Effect">
+            <SettingsSegmented
+              ariaLabel="Background effect"
+              value={background.effect}
+              options={EFFECT_OPTIONS}
+              onChange={(effect) => {
+                if (isEffect(effect)) writeAppBackground({ effect })
+              }}
+            />
+          </SettingsRow>
+          <SettingsRow name="Preview">
+            <BackgroundEffectPreview background={background} />
+          </SettingsRow>
+          <LevelRow
+            name="Dim"
+            value={background.dim}
+            max={MAX_APP_BACKGROUND_DIM}
+            onChange={(dim) => writeAppBackground({ dim })}
           />
-        </SettingsRow>
+        </>
       ) : null}
     </SettingsSection>
   )
@@ -219,6 +231,28 @@ function BackgroundImagePreview(props: { background: AppBackground; images: Back
       className="app-bg app-bg--preview"
       data-mode="image"
       data-ready={url ? '' : undefined}
+      style={style}
+      role="img"
+      aria-label="Preview of the window background"
+    />
+  )
+}
+
+/**
+ * The effect as the window shows it, at its real size: the top-left corner
+ * of the window, where the patterns are densest.
+ */
+function BackgroundEffectPreview(props: { background: AppBackground }) {
+  const { effect, dim } = props.background
+  const style: CSSProperties & EffectPatternStyle & { '--app-bg-dim'?: string } = {
+    '--app-bg-dim': dimFactor(dim),
+    ...effectPatternStyle(effect),
+  }
+  return (
+    <div
+      className="app-bg app-bg--preview"
+      data-mode="effect"
+      data-effect={effect}
       style={style}
       role="img"
       aria-label="Preview of the window background"
