@@ -372,6 +372,15 @@ describe('settings viewport CSS', () => {
     expect(systemCss).toMatch(
       /\.settings \.set-entity__detail \{[^}]*color: var\(--text-3\);[^}]*font-size: var\(--t-sm\);/s,
     )
+    // A skill's details span the row, under its switch too, and a long
+    // description holds to two lines until opened.
+    expect(systemCss).toMatch(/\.settings \.set-entity__details \{[^}]*grid-column: 1 \/ -1;/s)
+    expect(systemCss).toMatch(
+      /\.settings \.set-entity__details > \.set-entity__detail \{[^}]*max-width: none;/s,
+    )
+    expect(systemCss).toMatch(
+      /\.settings \.set-entity__detail--clamped \{[^}]*overflow: hidden;[^}]*-webkit-line-clamp: 2;/s,
+    )
     // The entity rows step aside from their leader where every row does.
     expect(systemCss).toMatch(
       /@container settings-content \(max-width: 560px\) \{[\s\S]*?\.settings \.set-entity__head \{[^}]*grid-template-columns: minmax\(0, max-content\) minmax\(0, 1fr\);/s,
