@@ -268,4 +268,40 @@ describe('subagents in the transcript', () => {
     ])
     expect(screen.getByRole('button', { name: /Worked for 3s · 1 subagent running/ })).toBeDefined()
   })
+
+  it('stops showing a background subagent as running when its session settles it', () => {
+    vi.useFakeTimers({ now: NOW })
+    const running = spawn('later', { name: 'Explore', background: true }, { createdAt: 2 })
+    const items = [
+      message('prompt', 1, { role: 'user', text: 'Look around' }),
+      running,
+      message('answer', 3_000, { role: 'assistant', phase: 'final_answer', text: 'Started it.' }),
+    ]
+    const frameStore = new ThreadFrameStore({ ...emptyThread, items })
+    const { container } = render(
+      <Thread
+        frameStore={frameStore}
+        onDecide={() => undefined}
+        onAnswerUserInput={() => undefined}
+      />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: /Worked for 3s · 1 subagent running/ }))
+    expect(subagentClockRunning()).toBe(true)
+
+    act(() => {
+      frameStore.publish({
+        ...frameStore.getSnapshot(),
+        items: items.map((item) =>
+          item === running
+            ? { ...item, subagent: { ...item.subagent!, state: 'interrupted' } }
+            : item,
+        ),
+      })
+    })
+
+    expect(screen.getByRole('button', { name: 'Worked for 3s' })).toBeDefined()
+    expect(container.querySelector('.subagent__state')?.textContent).toBe('Stopped')
+    expect(container.querySelector('.subagent__pulse')).toBeNull()
+    expect(subagentClockRunning()).toBe(false)
+  })
 })

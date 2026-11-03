@@ -687,8 +687,9 @@ function replaceSourceRows(
   return at < 0 ? [...others, ...rows] : [...others.slice(0, at), ...rows, ...others.slice(at)]
 }
 
-export function App() {
-  const [transport] = useState(() => new Transport(SERVER_BASE_URL))
+/** `transport` replaces the local server connection; the design sandbox passes one. */
+export function App({ transport: givenTransport }: { transport?: Transport } = {}) {
+  const [transport] = useState<Transport>(() => givenTransport ?? new Transport(SERVER_BASE_URL))
   // StrictMode replays effect cleanup against this same memoized instance.
   const usageController = useMemo(
     () => new UsageLimitsController((params) => transport.request('usage.summary', params)),
@@ -7894,6 +7895,10 @@ export function App() {
                 terminalToggleRequest={workspaceTerminalToggleRequest}
                 externalToolRequest={workspaceToolRequest}
                 frameStore={threadFrameStore}
+                subagentTranscript={
+                  providerStatuses.find((status) => status.id === activeSession?.provider)
+                    ?.capabilities?.subagentTranscript
+                }
                 designPreviewRequest={workspaceDesignPreviewRequest}
                 onOpenPullRequest={openCheckoutPullRequest}
                 providerLogin={
