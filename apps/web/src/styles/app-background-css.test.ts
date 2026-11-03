@@ -49,6 +49,12 @@ describe('window background stylesheet', () => {
     expect(sheet.slice(drawer + drawerRule.length)).not.toMatch(/\.rail\b/)
   })
 
+  it('turns the title bar into the sidebar pane, except where a Mac already paints it', () => {
+    expect(sheet).toContain(
+      ':root[data-app-bg][data-theme][data-shell][data-glass] .shell:not(.is-macos) > .titlebar {\n  background: var(--app-bg-rail-pane);\n}',
+    )
+  })
+
   it('fades the transcript under the composer without covering the scrollbar', () => {
     const dock = read('./app.css').match(
       /\.stage__conversation:not\(\.is-new-session\) > \.composer::before \{[^}]*inset: 0 (\d+)px 0 0;/,
