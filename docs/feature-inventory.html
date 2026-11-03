@@ -225,7 +225,7 @@
       <div class="topbar-inner">
         <h1>Feature Inventory</h1>
         <span class="total" id="total">0 checked</span>
-        <span class="meta">2026-11-02 dev 90183641 · includes main 936c6d76</span>
+        <span class="meta">2026-11-03 dev c3c76d3a · includes main 41c61109</span>
       </div>
     </div>
 
@@ -233,7 +233,7 @@
       <p class="intro">
         <a href="./CLAUDE-HANDOFF.md">October 9 Claude handoff</a>: current source, branches,
         references and verification limits. This source is dev (branch model since 2026-10-25: dev →
-        nightly → main). It includes main through 936c6d76 and the October 16 improvement round,
+        nightly → main). It includes main through 41c61109 and the October 16 improvement round,
         which landed on 2026-10-18 through PR #1841 (172 lane PRs in ten lanes: streaming, chat
         column, models, MCP and slash commands, providers, plan limits, usage, Settings,
         performance, subagents and pull requests). Published desktop 0.1.1 and the old 0.1.2 draft
@@ -1716,10 +1716,11 @@
                   cleanup and a static preview's open media responses ended when it stops; exhausted
                   validation corrections finish their turn and activity as failed; completed queued
                   phases remain idle when their provider promise settles late; source checks accept
-                  HTML with embedded images above 2 MB while retaining a 32 MB total scan limit;
-                  since 0.1.1, history replies and live pushes have separate bounded output budgets,
-                  and failed repair validation retains its correction guard to prevent unlimited
-                  retries</span
+                  HTML with embedded images above 2 MB while retaining a 32 MB total scan limit, and
+                  the scan skips package-manager caches (.bun-cache, .npm, .yarn, .pnpm-cache and
+                  others) like node_modules; since 0.1.1, history replies and live pushes have
+                  separate bounded output budgets, and failed repair validation retains its
+                  correction guard to prevent unlimited retries</span
                 ></span
               ></label
             >
@@ -2545,6 +2546,21 @@
           <li>
             <label
               ><input type="checkbox" /><span
+                >Start subagents on another provider
+                <span class="d"
+                  >a chat on Claude Code, Codex or OpenCode gets TasteCode's agent tools from a
+                  local MCP endpoint (127.0.0.1, a token per chat) and can start subagents on other
+                  providers and wait for them; a subagent starts like a Side chat, in the chat's
+                  checkout at its access level with the project's MCP servers, and only one level
+                  deep (Side chats and subagents get no agent tools); Grok chats do not get them; a
+                  subagent's events stay out of the chat's stream</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
                 >Agents tab lists the chat's subagents
                 <span class="d"
                   >the engine's own subagents and the ones TasteCode started on another provider, a
@@ -2830,7 +2846,12 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Command palette with readable result spacing and reachable keybind settings</span
+                >Command palette with readable result spacing and reachable keybind settings
+                <span class="d"
+                  >the arrow keys move the selection, and only a moving pointer changes it, so a row
+                  that scrolls under a resting pointer does not take the selection from the
+                  keyboard</span
+                ></span
               ></label
             >
           </li>
@@ -3702,7 +3723,10 @@
                   declared method without a route answers bad_request (unknown method); the health
                   check on window focus does not ask when a frame arrived in the last 5 s, counts
                   any frame during its wait as an answer and replaces the socket only after 10 s
-                  without one, so a busy server keeps its socket and the requests in flight</span
+                  without one, so a busy server keeps its socket and the requests in flight; a reply
+                  over the validation budget fails only its own request instead of restarting the
+                  socket, which looped on large threads, and one reply larger than the whole budget
+                  is still admitted when no other reply waits</span
                 ></span
               ></label
             >
