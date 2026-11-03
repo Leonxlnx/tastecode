@@ -4,7 +4,8 @@ import type { McpServer, McpStartupStatus, ProviderCommand } from '@harness/cont
 /**
  * Built-ins that change state TasteCode owns (the chat, model, effort, settings
  * and account), internal handoffs, and retired stubs claude 2.1.296 still
- * lists. A user can still type any of them in full.
+ * lists. A user can still type any of them in full. Only Claude's own rows
+ * are hidden: a user, project or plugin command is not TasteCode's state.
  */
 export const CLAUDE_HIDDEN_COMMANDS: ReadonlySet<string> = new Set([
   'clear',
@@ -19,7 +20,6 @@ export const CLAUDE_HIDDEN_COMMANDS: ReadonlySet<string> = new Set([
   'exit',
   'login',
   'logout',
-  'advisor',
   'output-style',
   'autocompact',
   'heapdump',
@@ -59,6 +59,21 @@ function commandName(value: unknown): value is string {
   )
 }
 
+/**
+ * Claude marks its own rows; the rest come from the user or project, a plugin
+ * (`plugin:name`, which claude.ai skills such as `anthropic-skills:pdf` also
+ * use) or an MCP server's prompt (`mcp__server__prompt`).
+ */
+function commandSource(
+  names: readonly string[],
+  builtin: boolean,
+): NonNullable<ProviderCommand['source']> {
+  if (builtin) return 'builtin'
+  if (names[0]!.startsWith('mcp__')) return 'mcp'
+  // A claude.ai skill can be listed by its short name with the plugin name as an alias.
+  return names.some((entry) => entry.includes(':')) ? 'plugin' : 'custom'
+}
+
 /** Claude's commands and skills as the composer offers them, without the ones it must not. */
 export function mapClaudeCommands(
   commands: readonly SlashCommand[],
@@ -66,11 +81,18 @@ export function mapClaudeCommands(
 ): ProviderCommand[] {
   const terminal = hints.terminal ?? CLAUDE_TERMINAL_COMMANDS
   const seen = new Set<string>()
+  const marked = commands.some((command) => command.builtin === true)
+  const builtins = new Set(commands.flatMap((command) => (command.builtin ? [command.name] : [])))
   const mapped: ProviderCommand[] = []
   for (const command of commands) {
     const name = command.name
     if (!commandName(name) || seen.has(name)) continue
-    if (CLAUDE_HIDDEN_COMMANDS.has(name) || terminal.has(name)) continue
+    // A CLI older than the `builtin` flag marks no row; then every name counts as Claude's.
+    const builtin = command.builtin === true || !marked
+    if (builtin && (CLAUDE_HIDDEN_COMMANDS.has(name) || terminal.has(name))) continue
+    // Rows can share a name. Claude runs its own row for `/name`, so a shadowed
+    // custom command cannot run by that name and is left out with it.
+    if (!builtin && builtins.has(name)) continue
     seen.add(name)
     const aliases = [
       ...new Set((command.aliases ?? []).filter((alias) => commandName(alias) && alias !== name)),
@@ -85,6 +107,7 @@ export function mapClaudeCommands(
         : {}),
       ...(aliases.length ? { aliases } : {}),
       ...(skill ? { kind: 'skill' as const } : {}),
+      ...(marked ? { source: commandSource([name, ...aliases], builtin) } : {}),
     })
   }
   return mapped

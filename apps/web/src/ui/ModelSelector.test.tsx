@@ -402,11 +402,9 @@ describe('ModelSelector', () => {
   it('previews a hovered level with a ring and names the default', async () => {
     const { onEffortChange } = renderSelector({ effort: 'high' })
     const trigger = screen.getByRole('button', { name: 'Model and reasoning' })
-    expect(
-      Array.from(trigger.querySelectorAll('.model-selector__trigger-dot')).map((mark) =>
-        mark.classList.contains('is-filled'),
-      ),
-    ).toEqual([true, true, true, false])
+    // The trigger names the level; it draws no dot row for it.
+    expect(trigger.querySelector('.model-selector__trigger-effort')?.textContent).toBe('High')
+    expect(trigger.querySelector('.model-selector__trigger-level')).toBeNull()
 
     await openSelector()
     const slider = screen.getByRole('slider', { name: 'Reasoning effort' })
@@ -471,12 +469,8 @@ describe('ModelSelector', () => {
     )
 
     const trigger = screen.getByRole('button', { name: 'Model and reasoning' })
-    const marks = () =>
-      Array.from(trigger.querySelectorAll('.model-selector__trigger-dot')).map((mark) =>
-        mark.classList.contains('is-filled'),
-      )
-    expect(marks()).toEqual([true, true, true, true, true, true])
-    expect(trigger.textContent).toContain('Ultra')
+    expect(trigger.querySelector('.model-selector__trigger-effort')?.textContent).toBe('Ultra')
+    expect(trigger.querySelector('.model-selector__trigger-level')).toBeNull()
 
     await openSelector()
     const slider = screen.getByRole('slider', { name: 'Reasoning effort' })

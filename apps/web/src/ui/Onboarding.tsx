@@ -19,14 +19,20 @@ import {
 } from 'react'
 import { flushSync } from 'react-dom'
 import '../styles/onboarding.css'
-import { isDesktop, setDesktopTheme } from '../bridge.js'
+import { buildEdition, isDesktop, setDesktopTheme } from '../bridge.js'
 import { providerDisplayName, providerMark, type ProviderMark } from '../model-catalog.js'
-import { agentMark } from '../provider-presentation.js'
-import { DIRECT_PROVIDERS, agentRosterKey, type ProviderRoster } from '../provider-roster.js'
+import { agentMark, agentPresentation } from '../provider-presentation.js'
+import {
+  DIRECT_PROVIDERS,
+  agentRosterKey,
+  rosterAgent,
+  type ProviderRoster,
+} from '../provider-roster.js'
 import { DARK_THEME_QUERY, type ThemePreference } from '../theme.js'
 import { GeneratedAvatar } from './GeneratedAvatar.js'
 import { OnboardingPreview, type PreviewAgent, type PreviewHint } from './OnboardingPreview.js'
 import { ProviderIcon } from './ProviderIcon.js'
+import { Skeleton, SkeletonGroup, SkeletonStatus } from './Skeleton.js'
 import { useDialogFocus } from './dialog-focus.js'
 import { catchIn, fly, flyText, morphInto, prefersReducedMotion } from './onboarding-motion.js'
 
@@ -113,7 +119,12 @@ export function Onboarding(props: {
   themePreference: ThemePreference
   onThemePreferenceChange: (theme: ThemePreference) => void
   providerStatuses: ProviderStatus[]
-  acpAgents: ResultOf<'acp.agents'>['agents']
+  /** True until the server first answers which providers this build offers. */
+  providersLoading: boolean
+  /** Why that answer failed, when it never came. */
+  providersError?: string | undefined
+  /** Undefined until the server has listed them. */
+  acpAgents: ResultOf<'acp.agents'>['agents'] | undefined
   /** What is added so far; the agents page adds to it and takes away from it. */
   providerRoster: ProviderRoster
   onProviderRosterChange: (roster: ProviderRoster) => void
@@ -168,11 +179,18 @@ export function Onboarding(props: {
     focusTarget.current = node
   }
 
-  // Every provider the server reports, or all of them while it has not yet.
-  const direct: PickEntry[] = DIRECT_PROVIDERS.filter(
-    (entry) =>
-      props.providerStatuses.length === 0 ||
-      props.providerStatuses.some((status) => status.id === entry.id),
+  // The agents page shows its list once all of it is known, so no row is
+  // added, dropped or relabelled after it appears. A list that never comes
+  // ends in the server's error instead of placeholders.
+  const listState: 'loading' | 'ready' | 'failed' =
+    props.providersError !== undefined
+      ? 'failed'
+      : props.providersLoading || props.acpAgents === undefined
+        ? 'loading'
+        : 'ready'
+  // Every provider the server reports, and only those.
+  const direct: PickEntry[] = DIRECT_PROVIDERS.filter((entry) =>
+    props.providerStatuses.some((status) => status.id === entry.id),
   ).map((entry) => {
     const status = props.providerStatuses.find((candidate) => candidate.id === entry.id)
     const readiness = providerReadiness(status)
@@ -185,7 +203,7 @@ export function Onboarding(props: {
       installed: status?.installed ?? true,
     }
   })
-  const agents: PickEntry[] = props.acpAgents.map((agent) => ({
+  const agents: PickEntry[] = (props.acpAgents ?? []).map((agent) => ({
     key: agentRosterKey(agent.id),
     name: agent.name,
     maker: agent.maker,
@@ -194,7 +212,6 @@ export function Onboarding(props: {
     installed: agent.installed,
   }))
   const offered = [...direct, ...agents]
-  const checking = props.providerStatuses.length === 0
   const addedCount = props.providerRoster.length
   const profileName = props.displayName?.trim() || 'Local profile'
   const selectedTheme = themeChoice ?? props.themePreference
@@ -421,8 +438,23 @@ export function Onboarding(props: {
     advance()
   }
 
+  // An agent added on an earlier visit is drawn from what the app already
+  // knows about it wherever the list does not offer it, so the preview's
+  // model picker shows it from the first frame and keeps it when the list
+  // arrives instead of filling in or dropping it then.
+  const knownAgent = (key: string): { name: string; mark: ProviderMark } | undefined => {
+    const agentId = rosterAgent(key)
+    if (agentId !== undefined) {
+      const known = agentPresentation(agentId)
+      return { name: known.label, mark: known.mark }
+    }
+    const provider = DIRECT_PROVIDERS.find((entry) => entry.id === key)
+    return provider
+      ? { name: providerDisplayName(provider.id), mark: providerMark(provider.id) }
+      : undefined
+  }
   const previewAgent = (key: string, arriving?: boolean): PreviewAgent[] => {
-    const entry = offered.find((candidate) => candidate.key === key)
+    const entry = offered.find((candidate) => candidate.key === key) ?? knownAgent(key)
     return entry ? [{ id: key, name: entry.name, mark: entry.mark, arriving }] : []
   }
   const previewAgents: PreviewAgent[] = [
@@ -610,26 +642,44 @@ export function Onboarding(props: {
                 <h1 className="onboarding__title" id={titleId} ref={setFocusTarget} tabIndex={-1}>
                   Choose your coding agents
                 </h1>
+                {/* Counted from what is added, which is known from the first
+                    frame, so the line stays put while the list loads. */}
                 <p className="onboarding__lead" role="status">
-                  {checking
-                    ? 'Looking for the coding agents installed on this machine…'
+                  {listState === 'failed'
+                    ? props.providersError
                     : addedCount === 0
                       ? 'Pick the ones you use. Nothing is added until you do.'
                       : `${addedCount} added. Change this any time in Settings › Providers.`}
                 </p>
                 <div className="onboarding__pick">
-                  <PickGroup
-                    title="Providers"
-                    entries={direct}
-                    roster={props.providerRoster}
-                    onToggle={toggleAgent}
-                  />
-                  <PickGroup
-                    title="ACP agents"
-                    entries={agents}
-                    roster={props.providerRoster}
-                    onToggle={toggleAgent}
-                  />
+                  {listState === 'loading'
+                    ? (buildEdition === 'release' ? RELEASE_PICK_SKELETON : FULL_PICK_SKELETON).map(
+                        (group, index) => (
+                          <PickGroupSkeleton
+                            key={group.title}
+                            title={group.title}
+                            rows={group.rows}
+                            announce={index === 0}
+                          />
+                        ),
+                      )
+                    : null}
+                  {listState === 'ready' ? (
+                    <>
+                      <PickGroup
+                        title="Providers"
+                        entries={direct}
+                        roster={props.providerRoster}
+                        onToggle={toggleAgent}
+                      />
+                      <PickGroup
+                        title="ACP agents"
+                        entries={agents}
+                        roster={props.providerRoster}
+                        onToggle={toggleAgent}
+                      />
+                    </>
+                  ) : null}
                 </div>
                 <StepActions onBack={() => go(index - 1)} onNext={advance} pressed={enterHeld} />
               </>
@@ -764,6 +814,64 @@ function PickGroup(props: {
           )
         })}
       </ul>
+    </section>
+  )
+}
+
+type PickSkeletonGroup = { title: string; rows: number }
+// A release build lists five providers and no ACP library, so its answer
+// fills these lines in without moving the page.
+const RELEASE_PICK_SKELETON: readonly PickSkeletonGroup[] = [{ title: 'Providers', rows: 5 }]
+// Every other build lists every provider and then the ACP library, which
+// runs past the list's tallest max height. Eight agent lines do as well, so
+// the list area already has the height the answer keeps.
+const FULL_PICK_SKELETON: readonly PickSkeletonGroup[] = [
+  { title: 'Providers', rows: DIRECT_PROVIDERS.length },
+  { title: 'ACP agents', rows: 8 },
+]
+// Fixed widths: a placeholder that reshuffles between renders jitters.
+const PICK_SKELETON_NAME_WIDTHS = [52, 88, 40] as const
+const PICK_SKELETON_STATE_WIDTHS = [48, 60, 40] as const
+
+/**
+ * A group of the agents list before the server has said what it offers: the
+ * same lines, with bars where each mark, name and state will be. The first
+ * group announces the loading line in place of the list.
+ */
+function PickGroupSkeleton(props: { title: string; rows: number; announce: boolean }) {
+  const titleId = useId()
+  const lines = Array.from({ length: props.rows }, (_, index) => (
+    <div className="onboarding__pick-row" key={index} aria-hidden>
+      <span className="onboarding__pick-line">
+        <Skeleton className="skeleton--block" width={16} height={16} />
+        <Skeleton
+          className="onboarding__pick-name-bar"
+          width={PICK_SKELETON_NAME_WIDTHS[index % PICK_SKELETON_NAME_WIDTHS.length]}
+        />
+        <span className="onboarding__pick-wire" />
+        <Skeleton
+          className="onboarding__pick-state-bar"
+          width={PICK_SKELETON_STATE_WIDTHS[index % PICK_SKELETON_STATE_WIDTHS.length]}
+        />
+        <span className="onboarding__pick-socket" />
+      </span>
+    </div>
+  ))
+  return (
+    <section className="onboarding__pick-group" aria-labelledby={titleId}>
+      <h2 className="onboarding__pick-title" id={titleId}>
+        {props.title}
+      </h2>
+      {props.announce ? (
+        <SkeletonStatus
+          label="Looking for the coding agents installed on this machine…"
+          className="onboarding__picks"
+        >
+          {lines}
+        </SkeletonStatus>
+      ) : (
+        <SkeletonGroup className="onboarding__picks">{lines}</SkeletonGroup>
+      )}
     </section>
   )
 }

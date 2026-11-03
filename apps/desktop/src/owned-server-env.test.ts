@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { ownedServerEnvironment, withFeedbackDetails } from './owned-server-env.js'
+import {
+  editionArgument,
+  editionFromArguments,
+  ownedServerEnvironment,
+  packagedEdition,
+  withDefaultSkills,
+  withEdition,
+  withFeedbackDetails,
+} from './owned-server-env.js'
 
 const html = (url: string) =>
   `<meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' ${url}; img-src 'self'">`
@@ -74,5 +82,44 @@ describe('server feedback details', () => {
     expect(withFeedbackDetails({}, { appVersion: '0.1.2', feedbackConfig: undefined })).toEqual({
       HARNESS_APP_VERSION: '0.1.2',
     })
+  })
+})
+
+describe('default skills folder', () => {
+  it('points a packaged server at the resources copy and leaves an unpackaged run alone', () => {
+    const inherited = { PATH: 'retained' }
+    expect(withDefaultSkills(inherited, '/Resources/default-skills')).toEqual({
+      PATH: 'retained',
+      HARNESS_DEFAULT_SKILLS_DIR: '/Resources/default-skills',
+    })
+    expect(withDefaultSkills(inherited, undefined)).toBe(inherited)
+  })
+})
+
+describe('build edition', () => {
+  it('reads dev only from an explicit dev package and treats everything else as release', () => {
+    expect(packagedEdition({ tastecodeEdition: 'dev' })).toBe('dev')
+    expect(packagedEdition({ tastecodeEdition: 'release' })).toBe('release')
+    expect(packagedEdition({})).toBe('release')
+    expect(packagedEdition({ tastecodeEdition: 'nightly' })).toBe('release')
+    expect(packagedEdition({ tastecodeEdition: true })).toBe('release')
+  })
+
+  it('overrides an inherited edition and leaves an unpackaged run alone', () => {
+    const inherited = { PATH: 'retained', HARNESS_EDITION: 'dev' }
+    expect(withEdition(inherited, 'release')).toEqual({
+      PATH: 'retained',
+      HARNESS_EDITION: 'release',
+    })
+    expect(withEdition(inherited, undefined)).toBe(inherited)
+  })
+
+  it('carries the edition to the preload and ignores anything it does not know', () => {
+    const argv = (...extra: string[]) => ['electron', '--type=renderer', ...extra]
+    expect(editionFromArguments(argv(editionArgument('release')))).toBe('release')
+    expect(editionFromArguments(argv(editionArgument('dev')))).toBe('dev')
+    expect(editionFromArguments(argv())).toBeUndefined()
+    expect(editionFromArguments(argv('--tastecode-edition=nightly'))).toBeUndefined()
+    expect(editionFromArguments(argv('--tastecode-edition='))).toBeUndefined()
   })
 })

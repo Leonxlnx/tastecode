@@ -4,8 +4,10 @@ import type { AppUpdateState } from './app-updater.js'
 import { isBrowserShortcutMessage, type BrowserShortcutAction } from './browser-shortcuts.js'
 import { clipboardText } from './clipboard-text.js'
 import { isNativeMenuActionMessage, type NativeMenuActionSource } from './menu-contract.js'
+import { editionFromArguments } from './owned-server-env.js'
 import { droppedFilePath, isAppUpdateState, isFiniteNumber } from './preload-validation.js'
 import type { WindowChrome } from './window-theme.js'
+import type { WindowMaterial, WindowMaterialSupport } from './window-material.js'
 
 type PickedAttachment = {
   path: string
@@ -17,6 +19,7 @@ type PickedAttachment = {
 
 const startupStartedAt = Number(process.env['HARNESS_STARTUP_STARTED_AT'])
 const startupBenchmarkEnabled = Number.isFinite(startupStartedAt) && startupStartedAt > 0
+const edition = editionFromArguments(process.argv)
 
 /**
  * The entire native surface exposed to the renderer.
@@ -64,6 +67,10 @@ const api = {
     ipcRenderer.invoke('harness:setTheme', preference),
   setWindowChrome: (chrome: WindowChrome): Promise<void> =>
     ipcRenderer.invoke('harness:setWindowChrome', chrome),
+  getWindowMaterialSupport: (): Promise<WindowMaterialSupport> =>
+    ipcRenderer.invoke('harness:getWindowMaterialSupport'),
+  setWindowMaterial: (material: WindowMaterial): Promise<void> =>
+    ipcRenderer.invoke('harness:setWindowMaterial', material),
   prepareHaptics: (): void => ipcRenderer.send('harness:hapticsPrepare'),
   performHaptic: (pattern: NativeHapticPattern): void =>
     ipcRenderer.send('harness:hapticFeedback', pattern),
@@ -85,6 +92,8 @@ const api = {
   getUpdateState: (): Promise<AppUpdateState> => ipcRenderer.invoke('harness:getUpdateState'),
   checkForUpdates: (): Promise<AppUpdateState> => ipcRenderer.invoke('harness:checkForUpdates'),
   installUpdate: (): Promise<boolean> => ipcRenderer.invoke('harness:installUpdate'),
+  /** Chats with a running turn; a quit that begins while any runs installs no update. */
+  reportRunningAgents: (count: number): void => ipcRenderer.send('harness:runningAgents', count),
   setMenuShortcuts: (shortcuts: unknown): void =>
     ipcRenderer.send('harness:setMenuShortcuts', shortcuts),
   onMenuAction: (
@@ -139,6 +148,8 @@ const api = {
           ipcRenderer.send('harness:startupRendererMilestone', name),
       }
     : {}),
+  /** Which providers a packaged build's server offers; absent in an unpackaged run. */
+  ...(edition ? { edition } : {}),
   isDesktop: true,
 }
 

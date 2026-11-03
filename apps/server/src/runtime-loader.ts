@@ -8,6 +8,7 @@ import type {
 } from './adapters.js'
 import { retryableLazy } from './retryable-lazy.js'
 import { PROVIDER_CAPABILITIES } from './provider-capabilities.js'
+import { assertProviderOffered } from './provider-edition.js'
 
 type AdaptersModule = typeof import('./adapters.js')
 
@@ -65,6 +66,7 @@ export function providerRuntime(
       'API key connections were removed from TasteCode. This chat stays readable; to use your own key, sign in to OpenCode with it.',
     )
   }
+  assertProviderOffered(provider)
   const { resume, forkSession } = PROVIDER_CAPABILITIES[provider]
   return deferredRuntime(
     async () =>
@@ -79,6 +81,7 @@ export async function verifyCustomHarness(
   workspacePath?: string,
   onLog?: (line: string) => void,
 ): Promise<CustomHarnessVerification> {
+  assertProviderOffered(harness.provider)
   return (await loadAdapters()).verifyCustomHarness(harness, workspacePath, onLog)
 }
 

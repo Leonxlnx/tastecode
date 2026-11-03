@@ -363,6 +363,11 @@ export const ProviderCommandSchema = z.object({
   aliases: z.array(ProviderCommandNameSchema).max(20).optional(),
   /** Absent means a plain command. */
   kind: z.enum(['command', 'skill']).optional(),
+  /**
+   * Who defined it, so a menu can group it: the provider itself, the user or
+   * project, a plugin, or an MCP server's prompt. Absent means unknown.
+   */
+  source: z.enum(['builtin', 'custom', 'plugin', 'mcp']).optional(),
 })
 export type ProviderCommand = z.infer<typeof ProviderCommandSchema>
 

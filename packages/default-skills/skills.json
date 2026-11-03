@@ -1,0 +1,54 @@
+{
+  "plugin": {
+    "name": "tastecode",
+    "description": "Agent Skills that ship with TasteCode.",
+    "author": {
+      "name": "TasteCode"
+    }
+  },
+  "skills": [
+    {
+      "folder": "cinetic",
+      "summary": "cinematic videos and motion design made in code",
+      "repository": "Leonxlnx/cinetic",
+      "ref": "main",
+      "commit": "ecfa6605de1adb9345ce937724810dc32267d068",
+      "path": "skills/cinetic",
+      "license": "MIT",
+      "licenseFile": "LICENSE",
+      "archiveSha256": "c613676f9adbf163ff3cb1c88ab597eac7fd67c884e3d0fcc5348507f1ff0cca",
+      "treeSha256": "f935393e436ca7bba81bd1b2da5de72a47236ee9b9e3e44129f271e3327cc82e",
+      "files": 147,
+      "bytes": 2749108
+    },
+    {
+      "folder": "design-taste-frontend",
+      "summary": "art direction for websites and app screens (tasteskill)",
+      "repository": "Leonxlnx/taste-skill",
+      "ref": "v2.5",
+      "commit": "939b5640b56614f0e4cd1189311d106c451497e6",
+      "path": "skills/taste-skill",
+      "license": "MIT",
+      "licenseFile": "LICENSE",
+      "archiveSha256": "e16faf9fc55ce08d0472b440b6e5a37f6386c4982b269d6ae87a4f69abc8cb67",
+      "treeSha256": "9e16a4b47eae6ccf8784da95555977b02d40ae5df129a585bf69d2eafe307fa6",
+      "files": 212,
+      "bytes": 9693274
+    },
+    {
+      "folder": "cook",
+      "summary": "long reference-matching loops for ambitious visual builds",
+      "repository": "Leonxlnx/cook",
+      "ref": "main",
+      "commit": "b23cac6fd9439dfddcab61b14808e7bf72549b46",
+      "path": "",
+      "license": "MIT",
+      "licenseFile": "LICENSE",
+      "exclude": [".gitignore", "README.md"],
+      "archiveSha256": "da47160d18e41b31863a33ef74f72a8e3505ec38b9c926cce8dcb441d46ff708",
+      "treeSha256": "51681e41a3e59d2e4646e84d54d71499773f939025f63afead18277a33c7f0f4",
+      "files": 10,
+      "bytes": 44021
+    }
+  ]
+}

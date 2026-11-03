@@ -39,6 +39,12 @@ export type ProjectInventoryService = {
   /** Declared when the probe also reports the provider's skills. */
   skillCapabilities?: SkillCapabilities | undefined
   discover: ProjectInventoryProbe
+  /**
+   * The commands and skills the provider reads from files, read without a
+   * process. They answer while the first probe runs, so a cold menu shows the
+   * user's own skills at once; the probe's answer replaces them.
+   */
+  localCommands?: ((projectPath: string) => Promise<ProviderCommand[]>) | undefined
   /** Folders whose changes can change a project's answer, watched while someone looks. */
   watchPaths?: (projectPath: string) => InventoryWatchTarget[] | Promise<InventoryWatchTarget[]>
 }
@@ -189,6 +195,11 @@ export class ProjectInventoryCache {
     // The answer has no failure flag, so a probe that failed with nothing
     // known fails the read; clients show that, and ask again later.
     if (failed) throw new Error(COMMANDS_UNAVAILABLE)
+    const local = this.#options.service.localCommands
+    // A probe takes 10-15 s; the files answer now, marked as still loading.
+    if (value === undefined && loading && local) {
+      return { commands: await local(projectPath).catch(() => []), loading }
+    }
     return { commands: value ?? [], loading }
   }
 

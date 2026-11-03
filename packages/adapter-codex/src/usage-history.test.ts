@@ -302,6 +302,9 @@ describe('continued Codex usage history', () => {
     }),
   ]
 
+  // Each of the 20 cuts writes a rollout, reads it, appends the rest and reads on: over 400
+  // file system calls, every one needed. That takes about 0.3 s on a Windows laptop but ran
+  // past Vitest's 5 s default on the windows-latest CI runner, where file calls are slower.
   it('adds up to a full read wherever the rollout was cut', async () => {
     for (const [name, records] of Object.entries({
       plainRollout,
@@ -322,7 +325,7 @@ describe('continued Codex usage history', () => {
       // Only a cut while copied parent usage is buffered makes the next read start over.
       expect(startedOver, name).toEqual(name === 'plainRollout' ? [] : [5])
     }
-  })
+  }, 20_000)
 
   it('reads the whole rollout again when its saved state is not one it wrote', async () => {
     const filePath = await usageFile(plainRollout.slice(0, 4))
