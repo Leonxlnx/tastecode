@@ -4,7 +4,9 @@ import {
   activityGroupAt,
   createThreadProjector,
   neighbourTurn,
+  pendingSteerIndex,
   projectThreadItems,
+  type ThreadProjection,
   type TurnActivityGroup,
   type TurnTiming,
 } from './turns.js'
@@ -501,6 +503,43 @@ describe('turn boundaries', () => {
     expect(completed.presentations.get('old')).toBe(initial.presentations.get('old'))
   })
 
+  it('keeps a running turn whole around a steered prompt the server has not confirmed', () => {
+    const project = createThreadProjector()
+    const items: Item[] = [
+      { ...item('old-user', 'old'), role: 'user', text: 'Old question' },
+      { ...item('old-answer', 'old'), role: 'assistant', text: 'Old answer' },
+      { ...item('user', 'active'), role: 'user', text: 'New question' },
+      { ...item('tool', 'active'), type: 'tool_call', text: 'Reading files' },
+      { ...item('note', 'active'), role: 'assistant', phase: 'commentary', text: 'Looking.' },
+    ]
+    const steer: Item = { ...item('local:steer', ''), role: 'user', text: 'Use pnpm' }
+    const next: Item = { ...item('next', 'active'), type: 'tool_call', status: 'started' }
+    const confirmed: Item = { ...steer, turnId: 'active' }
+    const expectFull = (projected: ThreadProjection, of: Item[]) =>
+      expect(projected).toEqual({ turns: turnsOf(of), presentations: presentationsOf(of) })
+
+    const initial = project(items, undefined, 'active')
+    const echoed = [...items, steer]
+    expectFull(project(echoed, undefined, 'active'), echoed)
+
+    // The agent goes on before the server confirms the steer.
+    const continued = [...echoed, next]
+    const projected = project(continued, undefined, 'active')
+    expectFull(projected, continued)
+    expect(projected.presentations.get('active')?.firstResponseIndex).toBe(3)
+    expect(projected.presentations.get('old')).toBe(initial.presentations.get('old'))
+
+    // The server confirms it as the transcript's last row, then the agent goes on.
+    const restart = createThreadProjector()
+    restart(echoed, undefined, 'active')
+    const confirmedItems = [...items, confirmed]
+    const afterConfirm = restart(confirmedItems, undefined, 'active')
+    expectFull(afterConfirm, confirmedItems)
+    expect(afterConfirm.presentations.get('active')?.firstResponseIndex).toBe(3)
+    const answered = [...confirmedItems, next]
+    expectFull(restart(answered, undefined, 'active'), answered)
+  })
+
   it('rebuilds presentations when durable timing changes', () => {
     const project = createThreadProjector()
     const items: Item[] = [
@@ -552,5 +591,66 @@ describe('turn boundaries', () => {
     const idle = project(items)
 
     expect(project(items, undefined, 'local-turn:1')).toBe(idle)
+  })
+})
+
+describe('pending steer', () => {
+  const message = (id: string, turnId: string, role: 'user' | 'assistant', text = id): Item => ({
+    id,
+    turnId,
+    type: 'message',
+    role,
+    status: 'completed',
+    text,
+    createdAt: 0,
+  })
+  const reasoning = (id: string, text?: string): Item => ({
+    id,
+    turnId: 'turn-1',
+    type: 'reasoning',
+    status: 'started',
+    ...(text === undefined ? {} : { text }),
+    createdAt: 0,
+  })
+  const prompt = message('prompt', 'turn-1', 'user')
+  const reply = message('reply', 'turn-1', 'assistant')
+
+  it('finds a prompt sent after the first response while it ends the transcript', () => {
+    const local = message('local:steer', '', 'user')
+    const echoed = message('local:steer', 'turn-1', 'user')
+
+    expect(pendingSteerIndex([prompt, reply, local], 1)).toBe(2)
+    expect(pendingSteerIndex([prompt, reply, echoed], 1)).toBe(2)
+    expect(pendingSteerIndex([prompt, reply, echoed, message('again', '', 'user')], 1)).toBe(3)
+  })
+
+  it('looks past reasoning that shows nothing yet', () => {
+    const steer = message('steer', 'turn-1', 'user')
+
+    expect(pendingSteerIndex([prompt, reply, steer, reasoning('r1')], 1)).toBe(2)
+    expect(pendingSteerIndex([prompt, reply, steer, reasoning('r1', '  ')], 1)).toBe(2)
+    expect(pendingSteerIndex([prompt, reply, steer, reasoning('r1', 'Reading')], 1)).toBeUndefined()
+  })
+
+  it('ends once the agent adds anything after the prompt', () => {
+    const steer = message('steer', 'turn-1', 'user')
+    const answer = { ...message('answer', 'turn-1', 'assistant', ''), status: 'started' as const }
+    const error: Item = {
+      id: 'error',
+      turnId: '',
+      type: 'error',
+      status: 'completed',
+      text: 'Chat failed',
+      createdAt: 0,
+    }
+
+    expect(pendingSteerIndex([prompt, reply, steer, answer], 1)).toBeUndefined()
+    expect(pendingSteerIndex([prompt, reply, steer, error], 1)).toBeUndefined()
+  })
+
+  it('leaves the prompt that opened the turn to the working rail', () => {
+    expect(pendingSteerIndex([prompt], 0)).toBeUndefined()
+    expect(pendingSteerIndex([prompt, reply], 1)).toBeUndefined()
+    expect(pendingSteerIndex([], 0)).toBeUndefined()
   })
 })

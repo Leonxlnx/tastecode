@@ -2219,6 +2219,110 @@ describe('web client', () => {
     expect(screen.queryByText('Chat deleted')).toBeNull()
   })
 
+  describe('deleting a running chat', () => {
+    const listed = (id: string) =>
+      sidebarProps().projects.some((project) => project.sessions.some((entry) => entry.id === id))
+
+    it.each([
+      ['works', 'doomed-thread'],
+      ['waits on an approval', 'doomed-thread'],
+      ['is the open one', 'untouched-thread'],
+    ] as const)(
+      'stops it at once when it %s, not when the Undo window closes',
+      async (state, id) => {
+        serverProjects[0]!.sessions.push({
+          id: 'doomed-thread',
+          title: 'Doomed chat',
+          createdAt: 5,
+        })
+        await openNewSession()
+        startTurn(id, 'turn-1')
+        if (state === 'waits on an approval')
+          emitThreadEvent(id, {
+            type: 'approval.requested',
+            request: { id: 'approval-1', kind: 'command', command: 'pnpm test', createdAt: 1 },
+          })
+
+        act(() => sidebarProps().onDeleteSession(id))
+        await screen.findByText('Chat deleted')
+
+        expect(transport.request).toHaveBeenCalledWith('thread.interrupt', { threadId: id })
+        expect(rpcCount('thread.delete')).toBe(0)
+        expect(listed(id)).toBe(false)
+        await act(async () => window.dispatchEvent(new Event('pagehide')))
+        await waitFor(() =>
+          expect(transport.request).toHaveBeenCalledWith('thread.delete', { threadId: id }),
+        )
+        const calls = transport.request.mock.calls.map(([method]) => method)
+        expect(calls.indexOf('thread.interrupt')).toBeLessThan(calls.indexOf('thread.delete'))
+      },
+    )
+
+    it('sends no Stop for a chat that is not running', async () => {
+      serverProjects[0]!.sessions.push({ id: 'doomed-thread', title: 'Doomed chat', createdAt: 5 })
+      await openNewSession()
+      act(() => sidebarProps().onDeleteSession('doomed-thread'))
+      await screen.findByText('Chat deleted')
+      await act(async () => window.dispatchEvent(new Event('pagehide')))
+      await waitFor(() => expect(rpcCount('thread.delete')).toBe(1))
+      expect(rpcCount('thread.interrupt')).toBe(0)
+    })
+
+    it('brings the chat back stopped on Undo, even before the server has ended its turn', async () => {
+      serverProjects[0]!.sessions.push({ id: 'doomed-thread', title: 'Doomed chat', createdAt: 5 })
+      const request = transport.request.getMockImplementation()!
+      transport.request.mockImplementation((method: string, params: unknown) =>
+        method === 'thread.interrupt' ? new Promise(() => {}) : request(method, params),
+      )
+      await openNewSession()
+      startTurn('doomed-thread', 'turn-1')
+      act(() => sidebarProps().onDeleteSession('doomed-thread'))
+      await screen.findByText('Chat deleted')
+
+      fireEvent.click(screen.getByRole('button', { name: 'Undo' }))
+
+      await waitFor(() => expect(listed('doomed-thread')).toBe(true))
+      expect(treeChatRow('Doomed chat').querySelector('.sess__spinner')).toBeNull()
+      emitThreadEvent('doomed-thread', {
+        type: 'turn.completed',
+        turnId: 'turn-1',
+        status: 'interrupted',
+      })
+      expect(treeChatRow('Doomed chat').querySelector('.sess__spinner')).toBeNull()
+      await act(async () => window.dispatchEvent(new Event('pagehide')))
+      expect(rpcCount('thread.delete')).toBe(0)
+    })
+
+    it('keeps the chat out of the sidebar when its stopped run reports late', async () => {
+      serverProjects[0]!.sessions.push({ id: 'doomed-thread', title: 'Doomed chat', createdAt: 5 })
+      await openNewSession()
+      startTurn('doomed-thread', 'turn-1')
+      act(() => sidebarProps().onDeleteSession('doomed-thread'))
+      await screen.findByText('Chat deleted')
+      await act(async () => window.dispatchEvent(new Event('pagehide')))
+      await waitFor(() => expect(rpcCount('thread.delete')).toBe(1))
+      await waitFor(() => expect(listed('doomed-thread')).toBe(false))
+
+      startTurn('doomed-thread', 'turn-2')
+      emitThreadEvent('doomed-thread', {
+        type: 'item.started',
+        item: {
+          id: 'late',
+          turnId: 'turn-2',
+          type: 'message',
+          role: 'assistant',
+          status: 'started',
+          text: 'late answer',
+          createdAt: 2,
+        },
+      })
+
+      expect(listed('doomed-thread')).toBe(false)
+      expect(screen.queryByRole('button', { name: chatRowName('Doomed chat') })).toBeNull()
+      expect(document.querySelector('.sess__spinner')).toBeNull()
+    })
+  })
+
   it('keeps populated histories and drafts even when titled New session', async () => {
     const request = transport.request.getMockImplementation()!
     transport.request.mockImplementation((method, params) =>
@@ -13990,6 +14094,185 @@ describe('live sessions', () => {
         .getByRole('button', { name: 'Background chat, Codex, ready, unread' })
         .querySelector('.sess__status-dot.is-success'),
     ).not.toBeNull()
+  })
+})
+
+describe('the sidebar circle on Stop', () => {
+  beforeEach(() => {
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'project',
+        pinned: false,
+        createdAt: 0,
+        sessions: [
+          { id: 'thread-1', title: 'Existing work', running: false },
+          { id: 'thread-2', title: 'Other work', running: false },
+        ],
+      },
+    ]
+  })
+
+  /** Stops the server has not answered yet, in the order they were sent. */
+  function holdStops() {
+    const request = transport.request.getMockImplementation()!
+    const stops: Array<{ answer: () => void; fail: (error: Error) => void }> = []
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'thread.interrupt'
+        ? new Promise((resolve, reject) => stops.push({ answer: () => resolve({}), fail: reject }))
+        : request(method, params),
+    )
+    return stops
+  }
+
+  function spinning(title: string): boolean {
+    return treeChatRow(title).querySelector('.sess__spinner') !== null
+  }
+
+  async function openRunningChat() {
+    render(<App />)
+    fireEvent.click(await waitFor(() => treeChatRow('Existing work')))
+    startTurn('thread-1', 'turn-1')
+    expect(spinning('Existing work')).toBe(true)
+  }
+
+  it('stops at the click, before the server has ended the turn', async () => {
+    const stops = holdStops()
+    await openRunningChat()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Stop' }))
+
+    expect(stops).toHaveLength(1)
+    expect(spinning('Existing work')).toBe(false)
+    expect(treeChatRow('Existing work').getAttribute('aria-label')).toBe('Existing work, Codex')
+    expect(screen.queryByText('Working')).toBeNull()
+
+    // The server ends the turn at once and answers once the agent took the Stop.
+    emitThreadEvent('thread-1', { type: 'turn.completed', turnId: 'turn-1', status: 'interrupted' })
+    expect(spinning('Existing work')).toBe(false)
+    await act(async () => stops[0]!.answer())
+    expect(spinning('Existing work')).toBe(false)
+    expect(treeChatRow('Existing work').getAttribute('aria-label')).toBe('Existing work, Codex')
+  })
+
+  it('stays stopped while a turn that was still starting comes up and is ended', async () => {
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'thread.sendTurn' ? new Promise(() => {}) : request(method, params),
+    )
+    const stops = holdStops()
+    render(<App />)
+    fireEvent.click(await waitFor(() => treeChatRow('Existing work')))
+    const composer = screen.getByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: 'A turn that starts slowly' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    fireEvent.click(await screen.findByRole('button', { name: 'Stop' }))
+    expect(stops).toHaveLength(1)
+
+    // The server delivers the Stop once the agent has taken the prompt: the turn starts,
+    // then ends as stopped.
+    startTurn('thread-1', 'turn-1')
+    expect(spinning('Existing work')).toBe(false)
+    emitThreadEvent('thread-1', { type: 'turn.completed', turnId: 'turn-1', status: 'interrupted' })
+    expect(spinning('Existing work')).toBe(false)
+  })
+
+  it('stays stopped when a chat list read before the Stop arrives after it', async () => {
+    const stops = holdStops()
+    await openRunningChat()
+    fireEvent.click(screen.getByRole('button', { name: 'Stop' }))
+    const lists = rpcCount('projects.list')
+
+    serverProjects[0]!.sessions[0] = {
+      ...serverProjects[0]!.sessions[0]!,
+      running: true,
+      status: 'working',
+    }
+    act(() => transport.listeners.get('projects.changed')?.({}))
+    await waitFor(() => expect(rpcCount('projects.list')).toBe(lists + 1))
+    await act(async () => Promise.resolve())
+
+    expect(spinning('Existing work')).toBe(false)
+    expect(stops).toHaveLength(1)
+  })
+
+  it.each([
+    ['the Stop fails', 'fail'],
+    ['the server answers and the turn still runs', 'answer'],
+  ] as const)('spins again when %s', async (_case, outcome) => {
+    const stops = holdStops()
+    await openRunningChat()
+    fireEvent.click(screen.getByRole('button', { name: 'Stop' }))
+    expect(spinning('Existing work')).toBe(false)
+
+    await act(async () =>
+      outcome === 'fail' ? stops[0]!.fail(new Error('Stop failed')) : stops[0]!.answer(),
+    )
+
+    expect(spinning('Existing work')).toBe(true)
+  })
+
+  it('stops for a chat the user left before the server ended its turn', async () => {
+    const stops = holdStops()
+    await openRunningChat()
+    fireEvent.click(screen.getByRole('button', { name: 'Stop' }))
+
+    fireEvent.click(treeChatRow('Other work'))
+    await waitFor(() =>
+      expect(screen.getByTestId('thread').getAttribute('data-thread-id')).toBe('thread-2'),
+    )
+    expect(spinning('Existing work')).toBe(false)
+
+    emitThreadEvent('thread-1', { type: 'turn.completed', turnId: 'turn-1', status: 'interrupted' })
+    expect(spinning('Existing work')).toBe(false)
+    expect(treeChatRow('Existing work').getAttribute('aria-label')).toBe(
+      'Existing work, Codex, ready, unread',
+    )
+    await act(async () => stops[0]!.answer())
+    expect(spinning('Existing work')).toBe(false)
+  })
+
+  it('stops for a chat another window stopped', async () => {
+    render(<App />)
+    await waitFor(() => treeChatRow('Other work'))
+    startTurn('thread-2', 'turn-2')
+    expect(spinning('Other work')).toBe(true)
+
+    emitThreadEvent('thread-2', { type: 'turn.completed', turnId: 'turn-2', status: 'interrupted' })
+
+    expect(spinning('Other work')).toBe(false)
+  })
+
+  it('stops for a new chat stopped while it starts, through to the stopped turn', async () => {
+    serverProjects = [
+      { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },
+    ]
+    const request = transport.request.getMockImplementation()!
+    let releaseStart!: () => void
+    const startGate = new Promise<void>((resolve) => (releaseStart = resolve))
+    transport.request.mockImplementation(async (method: string, params: unknown) => {
+      if (method === 'thread.start') await startGate
+      return request(method, params)
+    })
+    const stops = holdStops()
+    render(<App />)
+    const composer = await screen.findByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: 'Stop this new chat' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    await waitFor(() => expect(spinning('Stop this new chat')).toBe(true))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Stop' }))
+    expect(spinning('Stop this new chat')).toBe(false)
+
+    await act(async () => releaseStart())
+    await waitFor(() => expect(stops).toHaveLength(1))
+    expect(transport.request).toHaveBeenCalledWith('thread.interrupt', { threadId: 'thread-1' })
+    expect(spinning('Stop this new chat')).toBe(false)
+    startTurn('thread-1', 'turn-1')
+    expect(spinning('Stop this new chat')).toBe(false)
+    emitThreadEvent('thread-1', { type: 'turn.completed', turnId: 'turn-1', status: 'interrupted' })
+    await act(async () => stops[0]!.answer())
+    expect(spinning('Stop this new chat')).toBe(false)
   })
 })
 

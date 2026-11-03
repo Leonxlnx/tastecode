@@ -101,6 +101,10 @@ function assistant(id, content) {
   })
 }
 
+function ids() {
+  return { session_id: sessionId, uuid: crypto.randomUUID() }
+}
+
 function stream(event) {
   send({
     type: 'stream_event',
@@ -134,6 +138,29 @@ async function play(text) {
       running = resolve
     })
     result(true, ['[ede_diagnostic] stopped by the user'])
+    return
+  }
+  if (text.includes('background')) {
+    // Shaped after claude 2.1.296 (subagent-claude-2.1.296.jsonl): the turn leaves a shell
+    // running and ends; when the shell ends, the CLI reports it in a run of its own.
+    const task = { task_id: 'bfake01', task_type: 'local_bash', description: 'Long check' }
+    send({ type: 'system', subtype: 'background_tasks_changed', tasks: [task], ...ids() })
+    send({ type: 'system', subtype: 'task_started', ...task, is_backgrounded: true, ...ids() })
+    assistant('msg-waiting', [{ type: 'text', text: 'Waiting for the check.' }])
+    result(false)
+    setTimeout(() => {
+      send({
+        type: 'system',
+        subtype: 'task_notification',
+        task_id: task.task_id,
+        status: 'completed',
+        output_file: '',
+        summary: 'Background command "Long check" completed (exit code 0)',
+        ...ids(),
+      })
+      send({ type: 'system', subtype: 'background_tasks_changed', tasks: [], ...ids() })
+      void play('<task-notification>')
+    }, 200)
     return
   }
   if (text.includes('tool')) {

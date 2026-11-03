@@ -235,6 +235,47 @@ describe('Codex transport lifetime', () => {
     expect(disconnected).toHaveBeenCalledOnce()
   })
 
+  it('fails the work a crashed turn left running before the turn itself', async () => {
+    const { adapter, first, events } = fixture()
+    await adapter.start()
+    await adapter.startThread(process.cwd())
+    await adapter.sendTurn('thread-1', 'Hello')
+    first.send({
+      method: 'item/started',
+      params: {
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        startedAtMs: 1_000,
+        item: {
+          type: 'commandExecution',
+          id: 'exec-1',
+          command: 'npm run dev',
+          status: 'inProgress',
+          aggregatedOutput: null,
+          exitCode: null,
+          durationMs: null,
+        },
+      },
+    })
+    await vi.waitFor(() => expect(events.some(({ type }) => type === 'item.started')).toBe(true))
+    first.close()
+    expect(events.slice(-3)).toEqual([
+      { type: 'thread.error', threadId: 'thread-1', message: 'Codex exited (code 23)' },
+      {
+        type: 'item.completed',
+        item: {
+          id: 'exec-1',
+          turnId: 'turn-1',
+          type: 'command',
+          status: 'failed',
+          command: 'npm run dev',
+          createdAt: 1_000,
+        },
+      },
+      { type: 'turn.completed', turnId: 'turn-1', status: 'failed' },
+    ])
+  })
+
   it('does not resurrect a turn that completed before its start reply', async () => {
     const { adapter, first, events } = fixture({ completeBeforeReply: true })
     await adapter.start()

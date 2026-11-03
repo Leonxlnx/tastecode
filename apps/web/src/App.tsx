@@ -99,6 +99,7 @@ import {
   updateSession,
   updateSessions,
   withoutDeletedSessions,
+  withStoppingSessions,
 } from './project-store.js'
 import {
   applyProjectOrder,
@@ -337,6 +338,7 @@ const MODEL_BY_THREAD_PREFIX = 'harness.modelByThread:'
 const COMPOSER_DRAFTS_KEY = 'harness.composerDrafts.v1'
 const EMPTY_PALETTE_COMMANDS: PaletteCommand[] = []
 const EMPTY_PROVIDER_ROSTER: ProviderRoster = []
+const NO_STOPPING_ROWS: ReadonlyMap<string, number> = new Map()
 /** Only the user's own visibility choices; the defaults follow the catalog. */
 const MODEL_VISIBILITY_KEY = 'harness.modelVisibility.v2'
 /** One complete hidden list, which mixed the defaults of the build that saved it with choices. */
@@ -808,6 +810,12 @@ export function App() {
   const [onboardingPreview, setOnboardingPreview] = useState(false)
   /** The thread whose interrupt has been sent but not yet acknowledged. */
   const [stoppingThreadId, setStoppingThreadId] = useState<string | undefined>()
+  /**
+   * Every chat whose Stop is on its way, with when it was clicked. Its sidebar row stops
+   * spinning at the click, as the chat does, not when the server has ended the turn: that
+   * waits for a turn still starting, which can take seconds.
+   */
+  const [stoppingRows, setStoppingRows] = useState<ReadonlyMap<string, number>>(NO_STOPPING_ROWS)
 
   useEffect(() => {
     if (projectsStatus !== 'ready' || projects.length === 0 || onboardingDismissed) return
@@ -1205,6 +1213,10 @@ export function App() {
       sessions: project.sessions.filter((session) => !hidden.has(session.id)),
     }))
   }, [projects, archivingIds])
+  const sidebarProjects = useMemo(
+    () => withStoppingSessions(archiveProjects, stoppingRows),
+    [archiveProjects, stoppingRows],
+  )
 
   const [checkpoints, setCheckpoints] = useState<Checkpoint[]>([])
   const [rollbackOpen, setRollbackOpen] = useState(false)
@@ -2323,6 +2335,8 @@ export function App() {
       }
       if (event.type === 'turn.completed' || event.type === 'thread.error') {
         threadController.resetBackground(threadId)
+        // The turn has ended, so the row shows the server's status again.
+        setStoppingRows((rows) => withoutStoppingRow(rows, threadId))
         if (pendingProviderHistoryIds.current.has(threadId)) {
           refreshProviderThreadHistory(threadId)
         }
@@ -4547,10 +4561,16 @@ export function App() {
   const requestInterrupt = useCallback(
     (threadId: string) => {
       setStoppingThreadId(threadId)
-      void transport.request('thread.interrupt', { threadId }).catch((error) => {
-        setStoppingThreadId((current) => (current === threadId ? undefined : current))
-        reportError(error instanceof Error ? error.message : String(error))
-      })
+      setStoppingRows((rows) => withStoppingRow(rows, threadId, Date.now()))
+      void transport
+        .request('thread.interrupt', { threadId })
+        .catch((error) => {
+          setStoppingThreadId((current) => (current === threadId ? undefined : current))
+          reportError(error instanceof Error ? error.message : String(error))
+        })
+        // A Stop that reached a running turn has ended it by the time the server answers.
+        // A turn that still runs after the answer, as when the Stop failed, spins again.
+        .finally(() => setStoppingRows((rows) => withoutStoppingRow(rows, threadId)))
     },
     [transport],
   )
@@ -4713,6 +4733,8 @@ export function App() {
         pendingSession.current = { id: provisionalId, promise, title: titleFrom(titlePrompt) }
         threadId = await promise
         interruptRequested = pendingInterruptThreadIds.current.delete(provisionalId)
+        // The row has its real id now, or is gone. A Stop goes on below under that id.
+        setStoppingRows((rows) => withoutStoppingRow(rows, provisionalId))
         if (pendingSession.current?.id === provisionalId) pendingSession.current = undefined
         if (!threadId) {
           setStoppingThreadId((current) => (current === provisionalId ? undefined : current))
@@ -5035,6 +5057,7 @@ export function App() {
     if (activeId.startsWith('pending:')) {
       pendingInterruptThreadIds.current.add(activeId)
       setStoppingThreadId(activeId)
+      setStoppingRows((rows) => withStoppingRow(rows, activeId, Date.now()))
       return
     }
     requestInterrupt(activeId)
@@ -5744,13 +5767,26 @@ export function App() {
       setArchiveToastDismissed(false)
       savePendingChatDelete(pending)
       enqueueArchive(id, () => commitChatDelete(pending))
+      // A deleted chat stops now, not when the Undo window closes: until then its agent
+      // would go on working in the folder for a chat the user has thrown away. Undo brings
+      // the chat back stopped. Should this Stop fail, the delete still ends the agent.
+      if (
+        threadController.snapshot(id)?.running ||
+        runsTurn(findSession(projectsRef.current, id)?.session.status)
+      ) {
+        setStoppingRows((rows) => withStoppingRow(rows, id, Date.now()))
+        void transport
+          .request('thread.interrupt', { threadId: id })
+          .catch(() => undefined)
+          .finally(() => setStoppingRows((rows) => withoutStoppingRow(rows, id)))
+      }
       if (!splitRemovals.current.chats([id]) && activeIdRef.current === id) {
         activeIdRef.current = undefined
         setActiveId(undefined)
         setThread(emptyThread)
       }
     },
-    [enqueueArchive, commitChatDelete],
+    [enqueueArchive, commitChatDelete, threadController, transport],
   )
 
   const undoArchive = useCallback(() => {
@@ -7546,7 +7582,7 @@ export function App() {
       <div className="shell__body" ref={shellBody}>
         <AppBackground />
         <Sidebar
-          projects={archiveProjects}
+          projects={sidebarProjects}
           projectsLoading={projectsStatus === 'loading'}
           activeProjectPath={activePath}
           activeSessionId={surface === 'chat' ? activeId : undefined}
@@ -8266,6 +8302,31 @@ function statusFor(
   if (state.approvals.length > 0) return 'approval'
   if (state.userInputs.length > 0) return 'input'
   return state.running ? 'working' : 'idle'
+}
+
+/** The chat runs a turn, starts one, or its turn waits on the user. */
+function runsTurn(status: Project['sessions'][number]['status'] | undefined): boolean {
+  return (
+    status === 'starting' || status === 'working' || status === 'approval' || status === 'input'
+  )
+}
+
+function withStoppingRow(
+  rows: ReadonlyMap<string, number>,
+  threadId: string,
+  stoppedAt: number,
+): ReadonlyMap<string, number> {
+  return rows.has(threadId) ? rows : new Map(rows).set(threadId, stoppedAt)
+}
+
+function withoutStoppingRow(
+  rows: ReadonlyMap<string, number>,
+  threadId: string,
+): ReadonlyMap<string, number> {
+  if (!rows.has(threadId)) return rows
+  const next = new Map(rows)
+  next.delete(threadId)
+  return next.size === 0 ? NO_STOPPING_ROWS : next
 }
 
 function basename(path: string): string {
