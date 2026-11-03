@@ -5,6 +5,7 @@ import {
   IconWorld as Globe2,
   IconWorldOff as GlobeOff,
   IconMessageCirclePlus as MessageCirclePlus,
+  IconSubtask as Subtask,
   IconTerminal2 as SquareTerminal,
 } from '@tabler/icons-react'
 
@@ -15,6 +16,7 @@ const ICONS = {
   'browser-failed': GlobeOff,
   files: FolderOpen,
   chat: MessageCirclePlus,
+  agents: Subtask,
 }
 
 export function WorkspaceEmptyState(props: {
