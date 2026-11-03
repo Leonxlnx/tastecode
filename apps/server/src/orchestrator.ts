@@ -2102,7 +2102,8 @@ export class Orchestrator {
    * its own sign-in; the provider's active account decides then.
    */
   #recommendedAccount(provider: ProviderId, agent: string | undefined): AccountId | undefined {
-    if (agent !== undefined || (this.#accounts.accounts?.(provider).length ?? 0) < 2) return undefined
+    if (agent !== undefined || (this.#accounts.accounts?.(provider).length ?? 0) < 2)
+      return undefined
     try {
       return this.accountPool(provider).recommended
     } catch (error) {

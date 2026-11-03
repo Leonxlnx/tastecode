@@ -75,7 +75,9 @@ describe('accountPool', () => {
       ],
       NOW,
     )
-    expect(pool.accounts.map(({ accountId, status, atLimit }) => [accountId, status, atLimit])).toEqual([
+    expect(
+      pool.accounts.map(({ accountId, status, atLimit }) => [accountId, status, atLimit]),
+    ).toEqual([
       ['default', 'ready', true],
       ['work', 'ready', false],
       ['spare', 'unknown', false],

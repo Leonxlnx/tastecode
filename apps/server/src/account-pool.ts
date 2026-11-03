@@ -61,7 +61,8 @@ function poolAccount(member: PoolMember, now: number): PoolAccount {
     ...(source.stale ? { stale: true as const } : {}),
     windows,
     atLimit: windows.some(
-      (window) => window.usedPercent >= 100 && (window.resetsAt === undefined || window.resetsAt > now),
+      (window) =>
+        window.usedPercent >= 100 && (window.resetsAt === undefined || window.resetsAt > now),
     ),
   }
 }
