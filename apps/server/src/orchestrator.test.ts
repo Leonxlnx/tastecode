@@ -1765,9 +1765,9 @@ describe('default skills', () => {
       'claude-code': { projectInventory: { mcpCapabilities: CLAUDE_MCP_CAPABILITIES, discover } },
     })
     const bundled: ProviderCommand[] = ['cinetic', 'design-taste-frontend', 'cook'].map((name) => ({
-      name: `tastecode:${name}`,
+      name,
       description: `The long ${name} description.`,
-      aliases: [name],
+      aliases: [`tastecode:${name}`],
       kind: 'skill',
       source: 'plugin',
     }))
@@ -1786,20 +1786,79 @@ describe('default skills', () => {
         loading: false,
       })
 
-      // A chat that loaded the plugin lists them itself, and its row stays.
+      // A chat that loaded the plugin reports its qualified name; keep one bare row.
       const chat = await orchestrator.startThread('claude-code', '/repo')
-      const live: ProviderCommand = { ...bundled[2]!, description: '(tastecode) Cook.' }
+      const live: ProviderCommand = {
+        name: 'tastecode:cook',
+        aliases: ['cook'],
+        description: '(tastecode) Cook.',
+        kind: 'skill',
+        source: 'plugin',
+      }
       sessions[0]!.commands = [live]
-      await expect(orchestrator.listCommands('claude-code', '/repo', chat.id)).resolves.toEqual({
-        commands: [live, bundled[0], bundled[1]],
+      const inventory = await orchestrator.listCommands('claude-code', '/repo', chat.id)
+      expect(inventory).toEqual({
+        commands: bundled,
         loading: false,
       })
+      expect(sessions[0]!.commands).toEqual([live])
+      const selected = inventory.commands.find((command) => command.name === 'cook')!
+      await orchestrator.submitTurn(chat.id, `/${selected.name} Build a site`)
+      expect(sessions[0]!.sent).toEqual(['/cook Build a site'])
 
       // A provider that reads them from the catalog has no such commands.
       for (const provider of ProviderIdSchema.options) {
         if (PROVIDER_CAPABILITIES[provider].defaultSkillsPlugin) continue
         const { commands } = await orchestrator.listCommands(provider, '/repo')
-        expect(commands.filter((command) => command.name.startsWith('tastecode:'))).toEqual([])
+        expect(
+          commands.filter((command) =>
+            command.aliases?.some((alias) => alias.startsWith('tastecode:')),
+          ),
+        ).toEqual([])
+      }
+    } finally {
+      await orchestrator.disposeAll()
+    }
+  })
+
+  it('collapses manifest-derived aliases while preserving other plugins and user commands', async () => {
+    const { orchestrator, sessions, root, project } = await skillsHarness()
+    writeFileSync(
+      path.join(root, 'skills.json'),
+      JSON.stringify({ plugin: { name: 'acme' }, skills: [{ folder: 'cook' }] }),
+    )
+    writeFileSync(
+      path.join(root, 'skills', 'cook', 'SKILL.md'),
+      '---\nname: cook-loop\ndescription: Loops.\n---\n',
+    )
+    const bundled: ProviderCommand = {
+      name: 'cook-loop',
+      aliases: ['acme:cook'],
+      description: 'Loops.',
+      kind: 'skill',
+      source: 'plugin',
+    }
+    const probed: ProviderCommand = { name: 'acme:cook', description: 'Probed.' }
+    const other: ProviderCommand = { name: 'other:cook', description: 'Another plugin.' }
+    const custom: ProviderCommand = { name: 'cook-loop', description: 'My own command.' }
+    try {
+      const chat = await orchestrator.startThread('claude-code', project)
+      sessions[0]!.commands = [probed, other]
+      await expect(orchestrator.listCommands('claude-code', project, chat.id)).resolves.toEqual({
+        commands: [other, bundled],
+        loading: false,
+      })
+
+      for (const commands of [
+        [probed, custom, other],
+        [custom, probed, other],
+      ]) {
+        sessions[0]!.commands = commands
+        await expect(orchestrator.listCommands('claude-code', project, chat.id)).resolves.toEqual({
+          commands: [custom, other],
+          loading: false,
+        })
+        expect(sessions[0]!.commands).toEqual(commands)
       }
     } finally {
       await orchestrator.disposeAll()

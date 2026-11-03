@@ -38,28 +38,30 @@ describe('default skills', () => {
     expect(loaded.skills.every((skill) => isDefaultSkillId(skill.id))).toBe(true)
     expect(loaded.commands).toEqual(
       ['cinetic', 'design-taste-frontend', 'cook'].map((name) => ({
-        name: `tastecode:${name}`,
+        name,
         description: `The long ${name} description.`,
-        aliases: [name],
+        aliases: [`tastecode:${name}`],
         kind: 'skill',
         source: 'plugin',
       })),
     )
   })
 
-  it('names a command after the folder and the plugin, and lists none without a plugin', async () => {
+  it('uses the skill name with a manifest plugin alias, and lists none without a plugin', async () => {
     const root = await writeDefaultSkillsFixture(await tempDir(), ['cook'])
-    // Claude Code 2.1.296 names a plugin skill `<plugin>:<folder>` and gives it
-    // the SKILL.md name as an alias, the name the skill rows use.
+    await writeFile(
+      path.join(root, 'skills.json'),
+      JSON.stringify({ plugin: { name: 'acme' }, skills: [{ folder: 'cook' }] }),
+    )
     await writeFile(
       path.join(root, 'skills', 'cook', 'SKILL.md'),
       '---\nname: cook-loop\ndescription: Loops.\n---\n',
     )
     expect(loadDefaultSkills(root).commands).toEqual([
       {
-        name: 'tastecode:cook',
+        name: 'cook-loop',
         description: 'Loops.',
-        aliases: ['cook-loop'],
+        aliases: ['acme:cook'],
         kind: 'skill',
         source: 'plugin',
       },
@@ -72,6 +74,47 @@ describe('default skills', () => {
     const unnamed = loadDefaultSkills(root)
     expect(unnamed.skills.map((skill) => skill.name)).toEqual(['cook-loop'])
     expect(unnamed.commands).toEqual([])
+  })
+
+  it.each([
+    ['missing', undefined],
+    ['empty', ''],
+    ['colon', 'acme:cook'],
+    ['whitespace', 'cook loop'],
+    ['leading slash', '/cook'],
+    ['over 200 characters', 'c'.repeat(201)],
+  ])('keeps the qualified name when the skill name is %s', async (_label, name) => {
+    const root = await writeDefaultSkillsFixture(await tempDir(), ['cook'])
+    await writeFile(
+      path.join(root, 'skills', 'cook', 'SKILL.md'),
+      `---\n${name === undefined ? '' : `name: ${JSON.stringify(name)}\n`}description: Loops.\n---\n`,
+    )
+    expect(loadDefaultSkills(root).commands).toEqual([
+      {
+        name: 'tastecode:cook',
+        description: 'Loops.',
+        kind: 'skill',
+        source: 'plugin',
+      },
+    ])
+  })
+
+  it('accepts a trimmed bare name at the 200-character limit', async () => {
+    const root = await writeDefaultSkillsFixture(await tempDir(), ['cook'])
+    const name = 'c'.repeat(200)
+    await writeFile(
+      path.join(root, 'skills', 'cook', 'SKILL.md'),
+      `---\nname: "  ${name}  "\n---\n`,
+    )
+    expect(loadDefaultSkills(root).commands).toEqual([
+      {
+        name,
+        description: '',
+        aliases: ['tastecode:cook'],
+        kind: 'skill',
+        source: 'plugin',
+      },
+    ])
   })
 
   it('keeps the catalog under 700 characters for a long install path', async () => {

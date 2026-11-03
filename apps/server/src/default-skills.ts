@@ -15,8 +15,8 @@ export type DefaultSkills = {
   root: string
   skills: Skill[]
   /**
-   * The skills as slash commands, listed the way a runtime that loads the
-   * bundle as a plugin lists them. None when skills.json names no plugin.
+   * The skills as slash commands, with bare SKILL.md names preferred over
+   * plugin-qualified aliases. None when skills.json names no plugin.
    */
   commands: ProviderCommand[]
   /** A few lines for shared instructions, or '' when no skill is installed. */
@@ -99,23 +99,23 @@ export function loadDefaultSkills(root = defaultSkillsRoot()): DefaultSkills {
 }
 
 /**
- * Claude Code 2.1.296 lists a plugin's skill as `<plugin>:<folder>` and gives
- * it its SKILL.md name, when that has no colon, as an alias that runs it too
- * (the acme-docs row of inventory-claude-2.1.296.json).
+ * Plugin skills run by their bare SKILL.md name as well as `<plugin>:<folder>`
+ * (the acme-docs row of inventory-claude-2.1.296.json). Prefer the bare name in
+ * the slash menu and keep the qualified name as an alias.
  */
 function pluginCommand(
   plugin: string,
   folder: string,
   frontmatter: { name?: string; description?: string },
 ): ProviderCommand | undefined {
-  const name = `${plugin}:${folder}`
-  if (name.length > MAX_COMMAND_NAME) return undefined
-  const alias = frontmatter.name?.trim()
-  const aliased = alias && alias.length <= MAX_COMMAND_NAME && /^[^/\s:][^\s:]*$/.test(alias)
+  const qualified = `${plugin}:${folder}`
+  if (qualified.length > MAX_COMMAND_NAME) return undefined
+  const bare = frontmatter.name?.trim()
+  const validBare = bare && bare.length <= MAX_COMMAND_NAME && /^[^/\s:][^\s:]*$/.test(bare)
   return {
-    name,
+    name: validBare ? bare : qualified,
     description: frontmatter.description ?? '',
-    ...(aliased ? { aliases: [alias] } : {}),
+    ...(validBare ? { aliases: [qualified] } : {}),
     kind: 'skill',
     source: 'plugin',
   }

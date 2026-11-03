@@ -1662,10 +1662,15 @@ export class Orchestrator {
    * them as `$name`, which such a provider does not expand.
    */
   #withBundledCommands(inventory: CommandInventory): CommandInventory {
-    const listed = new Set(inventory.commands.map((command) => command.name))
-    const missing = this.#bundledSkills().commands.filter((command) => !listed.has(command.name))
-    return missing.length
-      ? { ...inventory, commands: [...inventory.commands, ...missing] }
+    const bundled = this.#bundledSkills().commands
+    // A live probe reports the plugin-qualified alias. Keep just the bare row,
+    // while letting the user's own command keep precedence over a bundled skill.
+    const aliases = new Set(bundled.flatMap((command) => command.aliases ?? []))
+    const commands = inventory.commands.filter((command) => !aliases.has(command.name))
+    const listed = new Set(commands.map((command) => command.name))
+    const missing = bundled.filter((command) => !listed.has(command.name))
+    return missing.length || commands.length !== inventory.commands.length
+      ? { ...inventory, commands: [...commands, ...missing] }
       : inventory
   }
 
