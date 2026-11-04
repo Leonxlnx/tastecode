@@ -2445,7 +2445,7 @@ function ComposerComponent(props: {
                     onClick={() => void pickFiles().then(attachFiles)}
                   >
                     <span className="tool tool--icon">
-                      <Plus size={15} aria-hidden />
+                      <Plus size={16} aria-hidden />
                     </span>
                   </button>
                 ) : props.attachmentsLoading ? (
@@ -2654,10 +2654,10 @@ function ComposerComponent(props: {
                         }
                       >
                         <IconMorph active={showStop ? 1 : 0}>
-                          <ArrowUp size={15} aria-hidden />
+                          <ArrowUp size={16} aria-hidden />
                           <Square
                             className="orb__stop-glyph"
-                            size={9}
+                            size={10}
                             fill="currentColor"
                             strokeWidth={0}
                             aria-hidden

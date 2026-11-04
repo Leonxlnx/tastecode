@@ -810,7 +810,7 @@ function SidebarComponent(props: {
                   title="Search chats"
                   aria-keyshortcuts={shortcutAria(keybindings.searchSessions)}
                 >
-                  <Search size={13} aria-hidden />
+                  <Search size={14} aria-hidden />
                 </button>
               </div>
               <button
@@ -1069,7 +1069,7 @@ function SidebarComponent(props: {
                 closeOnNarrowViewport()
               }}
             >
-              <Settings size={15} aria-hidden />
+              <Settings size={16} aria-hidden />
             </button>
           </div>
           {isDesktop ? <AppUpdateNotice /> : null}
