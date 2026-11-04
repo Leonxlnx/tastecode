@@ -10542,6 +10542,32 @@ describe('new chats', () => {
     })
   })
 
+  it('refuses Ask first for a provider that cannot ask, and says what to choose', async () => {
+    serverProviders[0]!.capabilities = { ...serverProviders[0]!.capabilities!, askFirst: false }
+    localStorage.setItem('harness.approvalByProvider', JSON.stringify({ codex: 'ask' }))
+    serverProjects = [
+      { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },
+    ]
+    render(<App />)
+
+    expect(
+      await screen.findByText(
+        "Codex can't ask before running commands. Choose Auto-approve or Full access.",
+      ),
+    ).toBeTruthy()
+    submitTurn('Do not start in Ask first')
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 50)))
+    expect(transport.request).not.toHaveBeenCalledWith('thread.start', expect.anything())
+    expect((screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement).value).toBe(
+      'Do not start in Ask first',
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Permissions' }))
+    const ask = (await screen.findByRole('menuitem', { name: /^Ask first/ })) as HTMLButtonElement
+    expect(ask.disabled).toBe(true)
+    expect(ask.textContent).toContain("Codex can't ask before running commands")
+  })
+
   it('pushes a mid-chat access-level change to the live thread', async () => {
     serverProjects = [
       { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },
