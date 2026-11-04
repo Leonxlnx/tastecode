@@ -2381,7 +2381,6 @@
   color: var(--composer-danger);
 }
 
-/* Even icons in even buttons centre on a whole pixel. */
 .tool--icon {
   display: grid;
   place-items: center;
@@ -2448,7 +2447,7 @@
     .menutrigger--model-selector,
     .composer-voice-button
   ) {
-  /* Ghost chips: the label alone at rest, a soft wash on hover or while open. */
+  /* Ghost chips: a wash on hover or while open. */
   background: transparent;
   border-color: transparent;
   box-shadow: none;
@@ -3212,7 +3211,6 @@
     color 150ms var(--ease-out);
 }
 
-/* Send is the one solid thing in the bar: a crisp, fully opaque circle. */
 .orb:not(.orb--stop) {
   background: var(--composer-orb);
   box-shadow: var(--composer-orb-shadow);
