@@ -21,7 +21,7 @@ import type {
   UserInputRequest,
 } from '@harness/contracts'
 import { UserInputRequestSchema } from '@harness/contracts'
-import { mapThreadItem } from './map-item.js'
+import { mapThreadItem, type CodexThreadItem } from './map-item.js'
 import { orderCodexModels } from './model-order.js'
 import {
   JsonRpcError,
@@ -681,6 +681,12 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
    * when the process exits.
    */
   readonly #openItems = new Map<string, Map<string, Item>>()
+  /**
+   * Review turns whose reviewer is at work. Codex 0.166 starts each reviewer message under
+   * the review turn but never streams or completes it; the review follows as
+   * exitedReviewMode and a message of its own (fixtures/review-codex-0.166.jsonl).
+   */
+  readonly #reviewingTurns = new Set<string>()
   #pendingTurnCompletions = new Set<Set<string>>()
   /** A command waiting to learn the id of the turn its request started. */
   #turnStartWaiters = new Map<string, (turnId: string | undefined) => void>()
@@ -879,6 +885,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
       this.emit('event', { type: 'turn.completed', turnId, status: 'failed' })
     }
     this.#openItems.clear()
+    this.#reviewingTurns.clear()
     this.emit('disconnected')
   }
 
@@ -1698,6 +1705,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     this.#threadApprovals.clear()
     this.#activeTurns.clear()
     this.#openItems.clear()
+    this.#reviewingTurns.clear()
     this.#sessionThread = undefined
     // Held responders close over the dead transport; answering one after
     // disposal would write into nothing. Drop them with the process.
@@ -1934,6 +1942,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
         const activeTurn = this.#activeTurns.get(p.threadId)
         for (const completed of this.#pendingTurnCompletions) completed.add(p.turn.id)
         if (this.#activeTurns.get(p.threadId) === p.turn.id) this.#activeTurns.delete(p.threadId)
+        this.#reviewingTurns.delete(p.turn.id)
         this.#declineOpenRequests(p.threadId, p.turn.id, activeTurn)
         // `inProgress` should not reach us here, but map it rather than crash.
         const status = p.turn.status === 'inProgress' ? 'completed' : p.turn.status
@@ -1944,6 +1953,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
 
       case 'item/started': {
         const p = ItemStartedNotificationSchema.parse(params)
+        if (this.#reviewerMessage(p.item, p.turnId)) return
         const item = this.#subagents.onItem(
           p.item,
           mapThreadItem(p.item, {
@@ -1966,6 +1976,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
 
       case 'item/completed': {
         const p = ItemCompletedNotificationSchema.parse(params)
+        if (this.#reviewerMessage(p.item, p.turnId)) return
         if (p.item.id !== undefined) this.#openItems.get(p.turnId)?.delete(p.item.id)
         const item = this.#subagents.onItem(
           p.item,
@@ -2157,6 +2168,17 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
       this.#declineOpenRequests(p.threadId, p.turn.id, undefined)
     }
     this.#subagents.onThreadNotification(threadId, method, params)
+  }
+
+  /**
+   * Follows a turn into and out of review mode and says whether the item is a reviewer
+   * message. Codex leaves those empty and open; settled with the turn, one would become
+   * its answer and fold the review that follows it out of sight.
+   */
+  #reviewerMessage(item: CodexThreadItem, turnId: string): boolean {
+    if (item.type === 'enteredReviewMode') this.#reviewingTurns.add(turnId)
+    else if (item.type === 'exitedReviewMode') this.#reviewingTurns.delete(turnId)
+    return item.type === 'agentMessage' && this.#reviewingTurns.has(turnId)
   }
 
   /**

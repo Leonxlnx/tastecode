@@ -41,6 +41,10 @@ const [header, ...frames] = readFileSync(
 const { threadId: THREAD, turnId: TURN, reviewerTurnId: REVIEWER_TURN } = header!.meta!
 /** The frame that starts the reviewer's turn inside the review turn. */
 const reviewerStarted = frames.findIndex((frame) => frame.method === 'turn/started')
+/** The reviewer's own message: phase final_answer, no text, never completed. */
+const REVIEWER_MESSAGE = 'msg_0cab99b2285d0a74016aeaa29404e087d2a1b34633e7905011'
+/** The message after exitedReviewMode that carries the review. */
+const REVIEW_MESSAGE = 'msg_01a1a48b-10f6-7052-a096-3f41ceb96d3f'
 
 const adapters: CodexAdapter[] = []
 
@@ -95,6 +99,31 @@ describe('Codex /review', () => {
       { type: 'turn.completed', turnId: TURN, status: 'completed' },
     ])
     expect(events.at(-1)).toEqual({ type: 'turn.completed', turnId: TURN, status: 'completed' })
+  })
+
+  it('shows the review as the answer of the turn', async () => {
+    const { events, replay } = await reviewTurn()
+    replay()
+
+    const messages = events.flatMap((event) =>
+      (event.type === 'item.started' || event.type === 'item.completed') &&
+      event.item.type === 'message' &&
+      event.item.role === 'assistant'
+        ? [{ ...event.item, event: event.type }]
+        : [],
+    )
+    // Settled with the turn, the reviewer's empty final_answer would be the one the
+    // transcript shows, with the review folded away under the turn's work.
+    expect(messages.map(({ id }) => id)).not.toContain(REVIEWER_MESSAGE)
+    expect(messages.some(({ phase }) => phase === 'final_answer')).toBe(false)
+    expect(messages.filter(({ event }) => event === 'item.completed')).toEqual([
+      expect.objectContaining({
+        id: REVIEW_MESSAGE,
+        turnId: TURN,
+        status: 'completed',
+        text: expect.stringContaining('[P1] Preserve the empty-list result'),
+      }),
+    ])
   })
 
   it('stops the review turn rather than the reviewer turn inside it', async () => {
