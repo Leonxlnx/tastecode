@@ -12,6 +12,7 @@ import type { Transport } from '../transport.js'
 import { useProviderWatch } from '../provider-watch.js'
 import { isComposingKey } from '../shortcuts.js'
 import { AppSelect } from './AppSelect.js'
+import { cachedInventory, inventoryChanged, loadInventory } from './composer-inventory.js'
 import {
   SettingsEmpty,
   SettingsEntitySkeleton,
@@ -41,6 +42,20 @@ type PendingOAuth = {
   completion?: OAuthCompletion
 }
 type Context = { transport: Transport; provider: ProviderId; projectPath: string | undefined }
+
+/**
+ * The last list this window saw for the provider and project, from this page
+ * or the composer's `@` menu. Each list request can wait on the provider:
+ * Codex starts its app-server, Claude Code and Grok start an agent for a
+ * project without a chat. The page opens on this answer and asks again behind it.
+ */
+function lastInventory(context: Context): Inventory | undefined {
+  if (!context.projectPath) return undefined
+  return cachedInventory(context.transport, 'mcp', {
+    provider: context.provider,
+    projectPath: context.projectPath,
+  })
+}
 
 export function McpSettings(props: {
   transport: Transport
@@ -101,14 +116,18 @@ function ProviderMcpSettings(props: {
   providerPicker?: ReactNode
 }) {
   useProviderWatch(props.transport, props.provider, props.projectPath, 'mcp')
-  const [inventory, setInventory] = useState<Inventory>()
+  const [inventory, setInventory] = useState(() => lastInventory(props))
   const [loading, setLoading] = useState(false)
   const [editor, setEditor] = useState<Editor>()
   // Per id: one row settling must not unlock another row still in flight.
   const [busy, setBusy] = useState<ReadonlySet<string>>(() => new Set())
   const [error, setError] = useState<string>()
   const [notice, setNotice] = useState<string>()
-  const inventoryContext = useRef<Context | undefined>(undefined)
+  const inventoryContext = useRef<Context | undefined>(
+    inventory
+      ? { transport: props.transport, provider: props.provider, projectPath: props.projectPath }
+      : undefined,
+  )
   const errorContext = useRef<Context | undefined>(undefined)
   const pendingOAuth = useRef<PendingOAuth | undefined>(undefined)
   const activeContext = useRef({
@@ -136,33 +155,39 @@ function ProviderMcpSettings(props: {
     [],
   )
 
-  const refresh = useCallback(async () => {
-    if (!props.projectPath || !isCurrentContext()) return
-    const context = {
-      transport: props.transport,
-      provider: props.provider,
-      projectPath: props.projectPath,
-    }
-    const generation = ++refreshGeneration.current
-    setLoading(true)
-    try {
-      const inventory = await props.transport.request('mcp.list', {
+  /**
+   * Opening the page joins a list already on its way (the composer's, say). A
+   * change, a sign-in or a reconnect may postdate that one, so those ask anew.
+   */
+  const refresh = useCallback(
+    async (join = false) => {
+      if (!props.projectPath || !isCurrentContext()) return
+      const context = {
+        transport: props.transport,
         provider: props.provider,
         projectPath: props.projectPath,
-      })
-      if (refreshGeneration.current !== generation || !isCurrentContext()) return
-      inventoryContext.current = context
-      errorContext.current = undefined
-      setInventory(inventory)
-      setError(undefined)
-    } catch (cause) {
-      if (refreshGeneration.current !== generation || !isCurrentContext()) return
-      errorContext.current = context
-      setError(message(cause))
-    } finally {
-      if (refreshGeneration.current === generation && isCurrentContext()) setLoading(false)
-    }
-  }, [props.transport, props.provider, props.projectPath])
+      }
+      const place = { provider: props.provider, projectPath: props.projectPath }
+      const generation = ++refreshGeneration.current
+      setLoading(true)
+      try {
+        if (!join) inventoryChanged(props.transport, ['mcp'], place)
+        const inventory = await loadInventory(props.transport, 'mcp', place)
+        if (refreshGeneration.current !== generation || !isCurrentContext()) return
+        inventoryContext.current = context
+        errorContext.current = undefined
+        setInventory(inventory)
+        setError(undefined)
+      } catch (cause) {
+        if (refreshGeneration.current !== generation || !isCurrentContext()) return
+        errorContext.current = context
+        setError(message(cause))
+      } finally {
+        if (refreshGeneration.current === generation && isCurrentContext()) setLoading(false)
+      }
+    },
+    [props.transport, props.provider, props.projectPath],
+  )
 
   const completeOAuth = useCallback(
     (result: OAuthCompletion) => {
@@ -181,8 +206,15 @@ function ProviderMcpSettings(props: {
   )
 
   useEffect(() => {
-    setInventory(undefined)
-    inventoryContext.current = undefined
+    const context = {
+      transport: props.transport,
+      provider: props.provider,
+      projectPath: props.projectPath,
+    }
+    // The list this window last saw here shows at once; the read below replaces it.
+    const last = lastInventory(context)
+    setInventory(last)
+    inventoryContext.current = last ? context : undefined
     errorContext.current = undefined
     setError(undefined)
     // "Server added." must not survive into an unrelated project's panel.
@@ -194,7 +226,7 @@ function ProviderMcpSettings(props: {
       setLoading(false)
       return
     }
-    void refresh()
+    void refresh(true)
     const offOAuth = props.transport.on('mcp.oauth', (result) => {
       if (result.provider !== props.provider || result.projectPath !== props.projectPath) return
       const pending = pendingOAuth.current

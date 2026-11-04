@@ -3299,9 +3299,14 @@ describe('web client', () => {
       expect(listedProviders()).toEqual(['codex', 'claude-code'])
     })
 
-    it('lists it when Settings opens', async () => {
+    it('lists it when Settings shows Providers or Models, not on other pages', async () => {
       await launchWithCachedClaude()
       openSettings()
+      await settled()
+      // General opens first; it shows no model lists, so no provider CLI is asked to list.
+      expect(listedProviders()).not.toContain('claude-code')
+      const settings = await screen.findByRole('dialog', { name: 'Settings' })
+      fireEvent.click(await within(settings).findByRole('button', { name: 'Providers' }))
       await waitFor(() => expect(listedProviders()).toContain('claude-code'))
     })
 
