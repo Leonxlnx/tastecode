@@ -131,11 +131,7 @@ export function Diff({
           <button type="button" className="diff__review" onClick={() => void undo()}>
             Undo changes
           </button>
-          <button
-            type="button"
-            className="diff__review"
-            onClick={() => setConfirmingUndo(false)}
-          >
+          <button type="button" className="diff__review" onClick={() => setConfirmingUndo(false)}>
             Keep
           </button>
         </div>

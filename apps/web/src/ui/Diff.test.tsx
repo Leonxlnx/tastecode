@@ -91,10 +91,12 @@ diff --git a/src/other.ts b/src/other.ts
     expect(undoQuestion(parseDiff(created).fileEntries)).toBe(
       'Undo these changes? 2 new files are deleted.',
     )
-    expect(undoQuestion(parseDiff(`${created}
-${DIFF}`).fileEntries)).toBe(
-      'Undo these changes? 2 new files are deleted and 1 file restored.',
-    )
+    expect(
+      undoQuestion(
+        parseDiff(`${created}
+${DIFF}`).fileEntries,
+      ),
+    ).toBe('Undo these changes? 2 new files are deleted and 1 file restored.')
     expect(undoQuestion(parseDiff(DIFF).fileEntries)).toBe(
       'Undo these changes? 1 file is restored.',
     )
