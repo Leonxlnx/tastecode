@@ -3049,10 +3049,12 @@
                   place of the old provider-capability status line, and Install from folder as the
                   page action; a provider that cannot list skills gets an info notice, skill load
                   errors share one notice with a line each, and each skill is an entity row with its
-                  switch at the end of the leader; .agents/skills are listed only for providers
-                  whose CLI loads them (Codex), while the others show their own skill inventory or
-                  unavailable; Grok and OpenCode list their skills with scope, and their project
-                  skills show here</span
+                  switch at the end of the leader; its description and folder path run the full row
+                  width, and a description longer than two lines is clamped there with Show more (or
+                  a click on the text) to open and close it; .agents/skills are listed only for
+                  providers whose CLI loads them (Codex), while the others show their own skill
+                  inventory or unavailable; Grok and OpenCode list their skills with scope, and
+                  their project skills show here</span
                 ></span
               ></label
             >
@@ -3378,7 +3380,7 @@
                 searchable
                 <span class="d"
                   >Background work is an open section with inline selects and the shared error
-                  notice; each source is an open section (identity heading, All and None, 40 px
+                  notice; each source is an open section (identity heading, All and None, 30 px
                   leader rows with the 30x18 switch, hidden models muted) with the shared empty
                   line; All and None apply as one change; a large source shows how many of its
                   models the picker shows, a search over name, id and lab, and one collapsed row per

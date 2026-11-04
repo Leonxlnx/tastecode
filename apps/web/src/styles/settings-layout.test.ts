@@ -164,6 +164,10 @@ describe('settings viewport CSS', () => {
     expect(settingsCss).toMatch(
       /\.settings \.model-settings \.set-section__head \{[^}]*align-items: center;/s,
     )
+    // Model rows run denser than the 40px rhythm: a long list of switches.
+    expect(settingsCss).toMatch(
+      /\.settings \.set-row\.model-visibility__model \{[^}]*min-height: 30px;[^}]*padding-block: 6px;/s,
+    )
     // A model left out of the picker is a muted row whose name steps down.
     expect(settingsCss).toMatch(
       /\.settings \.model-visibility__model\[data-tone='muted'\]:not\(:hover, :focus-within\) \.set-row__name \{[^}]*color: var\(--text-3\);/s,
@@ -367,6 +371,19 @@ describe('settings viewport CSS', () => {
     )
     expect(systemCss).toMatch(
       /\.settings \.set-entity__detail \{[^}]*color: var\(--text-3\);[^}]*font-size: var\(--t-sm\);/s,
+    )
+    // A skill's details span the row, under its switch too, and a long
+    // description holds to two lines until opened.
+    expect(systemCss).toMatch(/\.settings \.set-entity__details \{[^}]*grid-column: 1 \/ -1;/s)
+    expect(systemCss).toMatch(
+      /\.settings \.set-entity__details > \.set-entity__detail \{[^}]*max-width: none;/s,
+    )
+    expect(systemCss).toMatch(
+      /\.settings \.set-entity__detail--clamped \{[^}]*overflow: hidden;[^}]*-webkit-line-clamp: 2;/s,
+    )
+    // Show more is reached from the keyboard and shows the system focus ring.
+    expect(systemCss).toMatch(
+      /\.settings \.set-entity__more:focus-visible \{\s*outline: var\(--focus-ring\);\s*outline-offset: var\(--focus-ring-offset\);/s,
     )
     // The entity rows step aside from their leader where every row does.
     expect(systemCss).toMatch(

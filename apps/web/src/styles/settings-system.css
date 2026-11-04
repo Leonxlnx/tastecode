@@ -368,6 +368,56 @@
   margin-top: 2px;
 }
 
+/* Details that run the whole row, under the controls too (a skill's): the
+   text drops the 64ch note measure and stops only at the column edge. */
+.settings .set-entity__details {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+
+.settings .set-entity__details > .set-entity__detail {
+  max-width: none;
+}
+
+/* A long description holds to two lines until it is opened. */
+.settings .set-entity__detail--clamped {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.settings .set-entity__detail[data-expandable] {
+  cursor: pointer;
+}
+
+/* Show more and Show less: a quiet text button at the fine-print size, on
+   the description's left edge. */
+.settings .set-entity__more {
+  display: block;
+  margin: 1px 0 0;
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: var(--r-sm);
+  color: var(--text-2);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--t-xs);
+  font-weight: 500;
+  line-height: 1.45;
+  transition: color var(--dur-fast) var(--ease-out);
+}
+
+.settings .set-entity__more:hover {
+  color: var(--text);
+}
+
+.settings .set-entity__more:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
 /* Centred where the first detail line's text would sit. */
 .settings .set-entity__skeleton-detail {
   max-width: 100%;
