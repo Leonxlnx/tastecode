@@ -212,6 +212,8 @@ export const PreviewCaptureRequestSchema = z.object({
   requestId: z.string().uuid(),
   url: LoopbackPreviewUrlSchema,
   viewports: z.array(PreviewViewportSchema).min(1).max(4),
+  /** The chat whose Design run asked for it; a window shows the preview with that chat only. */
+  threadId: z.string().min(1).optional(),
 })
 export type PreviewCaptureRequest = z.infer<typeof PreviewCaptureRequestSchema>
 

@@ -1333,6 +1333,8 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
   const nextWorkspaceToolRequest = useRef(0)
   const [workspaceDesignPreviewRequest, setWorkspaceDesignPreviewRequest] =
     useState<BrowserNavigationRequest>()
+  /** The newest Design preview of each chat in the background, shown once that chat opens. */
+  const backgroundDesignPreviews = useRef(new Map<string, BrowserNavigationRequest>())
   const [providerLoginTerminal, setProviderLoginTerminal] = useState<ProviderLoginTerminalSession>()
   const nextProviderLoginTerminalId = useRef(1)
   const providerLoginState = useSyncExternalStore(subscribeInstalls, () =>
@@ -1927,6 +1929,13 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
   )
 
   const activeIdRef = useRef(activeId)
+  useEffect(() => {
+    const preview = activeId ? backgroundDesignPreviews.current.get(activeId) : undefined
+    if (!activeId || !preview) return
+    backgroundDesignPreviews.current.delete(activeId)
+    setWorkspacePanelHasMounted(true)
+    setWorkspaceDesignPreviewRequest(preview)
+  }, [activeId])
   activeIdRef.current = activeId
   const activePathRef = useRef(activePath)
   activePathRef.current = activePath
@@ -2395,8 +2404,14 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       lifecycleFallback = window.setTimeout(flushLifecyclePushes, 100)
     })
     const offPreviewCapture = transport.on('preview.captureRequested', (request) => {
+      const preview = { requestId: request.requestId, url: request.url }
+      // The panel belongs to the chat on screen: another chat's preview waits for that chat.
+      if (request.threadId && request.threadId !== activeIdRef.current) {
+        backgroundDesignPreviews.current.set(request.threadId, preview)
+        return
+      }
       setWorkspacePanelHasMounted(true)
-      setWorkspaceDesignPreviewRequest({ requestId: request.requestId, url: request.url })
+      setWorkspaceDesignPreviewRequest(preview)
     })
     const offSidebarSettings = transport.on('sidebar.settings', acceptSidebarSettings)
     const offUsageChanged = transport.on('usage.changed', ({ provider, accountId }) => {
