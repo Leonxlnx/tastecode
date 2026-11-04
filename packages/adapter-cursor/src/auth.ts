@@ -6,9 +6,15 @@ import { readCursorModels } from './listing.js'
 /**
  * A read that runs out of time rejects, so the caller keeps the last answer
  * it had instead of hearing that a signed-in account is signed out.
+ *
+ * The plan comes from `about`, which only adds detail: each command is its
+ * own cursor-agent start (3.5–12.8 s on a busy machine), so both start at
+ * once, and a failed `about` leaves the row at plain "Signed in".
  */
 export async function cursorAccount(run: typeof runCli = runCursorAgent): Promise<Account> {
-  const status = await run('cursor-agent', ['status'], CURSOR_COMMAND_TIMEOUT_MS)
+  const reading = run('cursor-agent', ['status'], CURSOR_COMMAND_TIMEOUT_MS)
+  const plan = readCursorPlan(run)
+  const status = await reading
   if (status.code !== 0 || !isCursorSignedIn(status.stdout)) return { signedIn: false }
   // `status` calls any stored token pair logged in, even one that expired
   // weeks ago. It only adds that it could not fetch the user, which an
@@ -19,10 +25,57 @@ export async function cursorAccount(run: typeof runCli = runCursorAgent): Promis
   // asks for the same listing, so a read already under way answers both.
   if (!/unable to fetch user details/i.test(status.stdout)) {
     const email = cursorEmail(status.stdout)
-    return { signedIn: true, ...(email ? { email } : {}) }
+    const name = await plan
+    return { signedIn: true, ...(email ? { email } : {}), ...(name ? { plan: name } : {}) }
   }
+  // `about` asks for the plan with the same sign-in that just failed to
+  // fetch the user, so it has nothing to add here.
   const probe = await readCursorModels(run).catch(() => undefined)
   return { signedIn: !(probe && cursorNeedsSignIn(probe)) }
+}
+
+async function readCursorPlan(run: typeof runCli): Promise<string | undefined> {
+  try {
+    const about = await run(
+      'cursor-agent',
+      ['about', '--format', 'json'],
+      CURSOR_COMMAND_TIMEOUT_MS,
+    )
+    return about.code === 0 ? cursorPlan(about.stdout) : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** A plan name fit for a row: one short line, no control characters. */
+const PLAN_NAME = /^[^\p{Cc}]{1,60}$/u
+
+/**
+ * The plan `cursor-agent about --format json` names. In 2026.07.23-e383d2b
+ * (`./src/commands/about.ts`, 5814.index.js) `about` asks Cursor's
+ * `DashboardService/GetPlanInfo` with the CLI's own sign-in and prints
+ * `subscriptionTier`: `planInfo.planName`, the name the CLI's `/usage` screen
+ * shows as is, or null when signed out or the request failed. The object is
+ * printed two-space indented; a notice printed around it is skipped. Nothing
+ * here reads a credential.
+ */
+export function cursorPlan(output: string): string | undefined {
+  const start = output.indexOf('{')
+  const end = output.lastIndexOf('}')
+  if (start === -1 || end < start) return undefined
+  let value: unknown
+  try {
+    value = JSON.parse(output.slice(start, end + 1))
+  } catch {
+    return undefined
+  }
+  if (typeof value !== 'object' || value === null || !('subscriptionTier' in value)) {
+    return undefined
+  }
+  const tier = value.subscriptionTier
+  if (typeof tier !== 'string') return undefined
+  const name = tier.trim().replace(/\s+/g, ' ')
+  return PLAN_NAME.test(name) ? name : undefined
 }
 
 export function isCursorSignedIn(output: string): boolean {
