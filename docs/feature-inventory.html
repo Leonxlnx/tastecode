@@ -225,7 +225,7 @@
       <div class="topbar-inner">
         <h1>Feature Inventory</h1>
         <span class="total" id="total">0 checked</span>
-        <span class="meta">2026-11-03 dev f84a6dfc · includes main 41c61109</span>
+        <span class="meta">2026-11-04 dev 7b38f04b · includes main db5fba4d</span>
       </div>
     </div>
 
@@ -1188,23 +1188,24 @@
               ><input type="checkbox" /><span
                 >Multiple accounts per provider
                 <span class="d"
-                  >nightly, Codex and Claude Code only (providers that declare multipleAccounts;
-                  Grok and the others run as their one account): each account has its own CLI folder
-                  (CODEX_HOME or CLAUDE_CONFIG_DIR). Settings &gt; Providers lists a provider's
-                  further accounts under its own row (which is the default account, with Set active
-                  to return to it), rows named Codex · Work, each with the roster's minus to remove
-                  it; Add providers opens on Found on this computer, which offers sibling folders a
-                  CLI has used and no account has yet (~/.claude_personal beside ~/.claude,
-                  ~/.codex-deepseek beside ~/.codex, and beside the built-in ~/.codex as well when
-                  CODEX_HOME or CLAUDE_CONFIG_DIR moves the default folder elsewhere; names and
-                  dates only, no file opened and no CLI run, copies kept aside skipped); Ignore
-                  takes one out of that list and out of the count the Providers page names beside
-                  its plus, into an Ignored list folded at the foot of Add providers (kept per
-                  profile, Unignore offers it again); Add account at the foot of Add providers makes
-                  a new, empty folder TasteCode manages (nothing is copied from the default account,
-                  whose settings can hold keys and login pins), or uses an existing folder as it is
-                  and asks it once who is signed in there; a folder that is, holds or sits inside
-                  the default folder, another account's folder or TasteCode's data folder is
+                  >nightly, Codex, Claude Code and Grok (providers that declare multipleAccounts;
+                  Cursor, Antigravity and the others run as their one account, since their CLIs keep
+                  the sign-in where no folder variable reaches it): each account has its own CLI
+                  folder (CODEX_HOME, CLAUDE_CONFIG_DIR or GROK_HOME). Settings &gt; Providers lists
+                  a provider's further accounts under its own row (which is the default account,
+                  with Set active to return to it), rows named Codex · Work, each with the roster's
+                  minus to remove it; Add providers opens on Found on this computer, which offers
+                  sibling folders a CLI has used and no account has yet (~/.claude_personal beside
+                  ~/.claude, ~/.codex-deepseek beside ~/.codex, and beside the built-in ~/.codex as
+                  well when CODEX_HOME or CLAUDE_CONFIG_DIR moves the default folder elsewhere;
+                  names and dates only, no file opened and no CLI run, copies kept aside skipped);
+                  Ignore takes one out of that list and out of the count the Providers page names
+                  beside its plus, into an Ignored list folded at the foot of Add providers (kept
+                  per profile, Unignore offers it again); Add account at the foot of Add providers
+                  makes a new, empty folder TasteCode manages (nothing is copied from the default
+                  account, whose settings can hold keys and login pins), or uses an existing folder
+                  as it is and asks it once who is signed in there; a folder that is, holds or sits
+                  inside the default folder, another account's folder or TasteCode's data folder is
                   refused, links resolved; one action per row (Sign in until the account names who
                   it is, then Set active or Active) after its menu (Rename, Open in Explorer, Set
                   active for an account not signed in yet, and Delete folder for a managed folder;
@@ -1235,45 +1236,46 @@
                   sheet sums its accounts and lists each one with its tokens and limits. Above a
                   provider's account lines the popup sums them into one pool (All accounts, worked
                   out in the client from the limits it holds until the server sends one): per
-                  window, Session and Weekly told apart by their length, the % left of the pool, its
-                  size in the provider's cheapest plan (Weekly · 16× Pro), how much of it is left,
-                  how many accounts it counts and which account resets next, over a bar with a
-                  segment per account, as long as its plan is big and the soonest reset first. Plan
-                  sizes: Claude Pro 1, Max 5, Ultra (Max x20) 10 a week and no session window, Team
-                  (Standard) 1.25 and Team Premium 6.25 per session; Codex Plus, Team and Business
-                  1, Pro x5 5 and Pro x20 20 a week with no session window; an account on any other
-                  plan stays out of the sum. The account whose weekly window resets soonest and that
-                  is not at a limit is marked Recommended, and a new chat starts on it until the
-                  user picks an account for new chats (model picker or Set active, remembered per
-                  provider in this app; a further account the server keeps active counts as picked);
-                  the app names that account when the chat starts, so the server's own
-                  recommendation (accounts.pool) never replaces a pick. Profile &gt; Accounts lists
-                  further accounts (Codex · Work, plan or Signed out, never an email). When a turn
-                  fails while the chat's account is at a plan limit (a window at 100% that has not
-                  reset) and another account of the provider is signed in, the error offers Continue
-                  on Work (a menu, Continue on another account, when there are several); never
-                  automatic. It starts a new chat pinned to that account in the same project (an
-                  isolated chat's branch as base, in a checkout of its own that gets the earlier
-                  checkout's uncommitted changes copied in; when they cannot be copied, the first
-                  prompt and the new chat's note say which folder still holds them), with the failed
-                  request in its composer. Claude Code and Codex carry the earlier chat's own
-                  session on in the new account's folder (Claude Code a copy of its transcript under
-                  a new id, Codex a fork of its rollout copied with the rollouts it was forked
-                  from), so tool results and reasoning come along and the first prompt is just the
-                  request; a carried session whose first turn fails before any answer gives way to a
-                  fresh one that gets the conversation as a handover. Where the session cannot be
-                  carried on, or lacks part of the conversation, the first prompt carries the
-                  earlier chat's conversation as untrusted context (its first request, the latest
-                  exchange, every other user message and the assistant's messages newest first, then
-                  tool steps cut to their command line, exit code or file paths in what is left of
-                  64,000 characters, preceded by any chat it continued itself up to where it was
-                  continued; kept in the provider's own session), the transcript shows only the
-                  user's words, and until its first message the new chat says Continues "title" on
-                  Work in a neutral note with Open (for an isolated chat, also that its uncommitted
-                  changes are already in this chat's checkout, or where they still are). The earlier
-                  chat is left as it was; its failed turn's row then reads Continued on Work and
-                  opens the new chat. Not yet: per-account Sign out, MCP/skills inventory and
-                  history import per account</span
+                  window, Session and Weekly told apart by their length (only overall windows count,
+                  not a limit on one model, and an account that reports two of one kind counts the
+                  more used one), the % left of the pool, its size in the provider's cheapest plan
+                  (Weekly · 16× Pro), how much of it is left, how many accounts it counts and which
+                  account resets next, over a bar with a segment per account, as long as its plan is
+                  big and the soonest reset first. Plan sizes: Claude Pro 1, Max 5, Ultra (Max x20)
+                  10 a week and no session window, Team (Standard) 1.25 and Team Premium 6.25 per
+                  session; Codex Plus, Team and Business 1, Pro x5 5 and Pro x20 20 a week with no
+                  session window; an account on any other plan stays out of the sum. The account
+                  whose weekly window resets soonest and that is not at a limit is marked
+                  Recommended, and a new chat starts on it until the user picks an account for new
+                  chats (model picker or Set active, remembered per provider in this app; a further
+                  account the server keeps active counts as picked); the app names that account when
+                  the chat starts, so the server's own recommendation (accounts.pool) never replaces
+                  a pick. Profile &gt; Accounts lists further accounts (Codex · Work, plan or Signed
+                  out, never an email). When a turn fails while the chat's account is at a plan
+                  limit (a window at 100% that has not reset) and another account of the provider is
+                  signed in, the error offers Continue on Work (a menu, Continue on another account,
+                  when there are several); never automatic. It starts a new chat pinned to that
+                  account in the same project (an isolated chat's branch as base, in a checkout of
+                  its own that gets the earlier checkout's uncommitted changes copied in; when they
+                  cannot be copied, the first prompt and the new chat's note say which folder still
+                  holds them), with the failed request in its composer. Claude Code and Codex carry
+                  the earlier chat's own session on in the new account's folder (Claude Code a copy
+                  of its transcript under a new id, Codex a fork of its rollout copied with the
+                  rollouts it was forked from), so tool results and reasoning come along and the
+                  first prompt is just the request; a carried session whose first turn fails before
+                  any answer gives way to a fresh one that gets the conversation as a handover.
+                  Where the session cannot be carried on, or lacks part of the conversation, the
+                  first prompt carries the earlier chat's conversation as untrusted context (its
+                  first request, the latest exchange, every other user message and the assistant's
+                  messages newest first, then tool steps cut to their command line, exit code or
+                  file paths in what is left of 64,000 characters, preceded by any chat it continued
+                  itself up to where it was continued; kept in the provider's own session), the
+                  transcript shows only the user's words, and until its first message the new chat
+                  says Continues "title" on Work in a neutral note with Open (for an isolated chat,
+                  also that its uncommitted changes are already in this chat's checkout, or where
+                  they still are). The earlier chat is left as it was; its failed turn's row then
+                  reads Continued on Work and opens the new chat. Not yet: per-account Sign out,
+                  MCP/skills inventory and history import per account</span
                 ></span
               ></label
             >
@@ -3219,14 +3221,16 @@
                 >Window background: None, Transparent, Image, Effect
                 <span class="d"
                   >One choice for light and dark. Transparent shows the OS backdrop (Acrylic or Mica
-                  on Windows 11). Image keeps a local picture inside the app, blurred and dimmed
-                  behind the panes, with Dim and Blur sliders. Effect is Dither or Halftone along
-                  the top edge, moving slowly as a soft light drifts through it (still with reduced
-                  motion, paused while the window is hidden or out of focus, a still tile where
-                  WebGL is missing), faded by Dim; a stored Dot grid or Grain falls back to None.
-                  For Image and Effect, Settings previews the whole window in miniature (title bar,
-                  sidebar, a chat and the prompt bar in the theme's colors) over the background,
-                  following every slider and color</span
+                  on Windows 11, vibrancy on macOS); the window itself is see-through only for
+                  Transparent and for sidebar translucency in the dark theme, and keeps the theme's
+                  solid base color otherwise. Image keeps a local picture inside the app, blurred
+                  and dimmed behind the panes, with Dim and Blur sliders. Effect is Dither or
+                  Halftone along the top edge, moving slowly as a soft light drifts through it
+                  (still with reduced motion, paused while the window is hidden or out of focus, a
+                  still tile where WebGL is missing), faded by Dim; a stored Dot grid or Grain falls
+                  back to None. For Image and Effect, Settings previews the whole window in
+                  miniature (title bar, sidebar, a chat and the prompt bar in the theme's colors)
+                  over the background, following every slider and color</span
                 ></span
               ></label
             >
@@ -3329,14 +3333,14 @@
               ><input type="checkbox" /><span
                 >Profile accounts and local activity
                 <span class="d"
-                  >Accounts lists each installed provider that signs in with its plan, Signed in,
-                  Signed out or Unavailable, opens on the last known plans (kept on this device
-                  across launches, sign-in state and plan only, never the email) while every
-                  provider is asked again, and Manage opens Providers; Local activity is a 12-month
-                  heatmap from the shared usage store, with month labels from the first full month,
-                  an Open Usage link and a refresh icon; the streak and the model breakdown are on
-                  Usage now; on nightly a provider's further accounts are listed as their own rows
-                  (see Multiple accounts per provider)</span
+                  >Accounts lists each installed provider that signs in with its plan (Cursor's from
+                  cursor-agent about), Signed in, Signed out or Unavailable, opens on the last known
+                  plans (kept on this device across launches, sign-in state and plan only, never the
+                  email) while every provider is asked again, and Manage opens Providers; Local
+                  activity is a 12-month heatmap from the shared usage store, with month labels from
+                  the first full month, an Open Usage link and a refresh icon; the streak and the
+                  model breakdown are on Usage now; on nightly a provider's further accounts are
+                  listed as their own rows (see Multiple accounts per provider)</span
                 ></span
               ></label
             >
