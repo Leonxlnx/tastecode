@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import type { DomainEvent, ProviderHistorySession, ProviderHistorySource } from '@harness/contracts'
 import { createClaudeHistorySource } from '@harness/adapter-claude-code'
+import { createGrokHistorySource } from '@harness/adapter-grok'
 import { ProviderHistory } from './provider-history.js'
 import { Store } from './store.js'
 import { compactHistoryReplay } from './history-replay.js'
@@ -673,6 +674,140 @@ describe('provider history integration', () => {
       'Asked outside TasteCode',
       'Outside answer',
     ])
+  })
+
+  describe('a finished Design run', () => {
+    const closing =
+      'Website built. Preview ready at http://127.0.0.1:5173/. Visual review passed after 1 repair attempt.'
+    const verdict = (value: 'repair' | 'pass') =>
+      JSON.stringify({ version: 1, verdict: value, summary: 'Checked.', findings: [] })
+    const started = (id: string, threadId: string) =>
+      ({
+        type: 'turn.started',
+        turn: { id, threadId, status: 'running', createdAt: 1000 },
+      }) satisfies DomainEvent
+    const message = (id: string, turnId: string, role: 'user' | 'assistant', text: string) =>
+      ({
+        type: 'item.completed',
+        item: {
+          id,
+          turnId,
+          type: 'message',
+          role,
+          ...(role === 'assistant' ? { phase: 'final_answer' as const } : {}),
+          status: 'completed',
+          text,
+          createdAt: 1000,
+        },
+      }) satisfies DomainEvent
+    const completed = (turnId: string) =>
+      ({ type: 'turn.completed', turnId, status: 'completed' }) satisfies DomainEvent
+
+    /** What a finished run left in the local log: the request and the flow's closing message. */
+    function localDesignRun(provider: 'codex' | 'grok', providerSessionId: string) {
+      store.addThread({
+        id: 'local',
+        projectPath: process.cwd(),
+        provider,
+        providerSessionId,
+        title: 'Local',
+      })
+      for (const event of [
+        started('brief', 'local'),
+        message('request', 'brief', 'user', 'A bakery page'),
+        completed('brief'),
+        started('review', 'local'),
+        message('design-complete', 'review', 'assistant', closing),
+        completed('review'),
+      ])
+        store.append('local', event)
+    }
+
+    it('keeps the Review JSON of a Grok run out although each turn restarted its event ids', async () => {
+      const root = mkdtempSync(path.join(tmpdir(), 'grok-design-history-'))
+      try {
+        const directory = path.join(root, 'sessions', encodeURIComponent(process.cwd()), 'grok-run')
+        mkdirSync(directory, { recursive: true })
+        writeFileSync(
+          path.join(directory, 'summary.json'),
+          JSON.stringify({ info: { id: 'grok-run', cwd: process.cwd() }, created_at: 1000 }),
+        )
+        // Saved by grok 1.0.x print mode: one process per turn, each numbering its
+        // event ids from the start, so a later prompt reuses an earlier prompt's id.
+        const row = (id: number, tick: number, update: object, promptId?: string) =>
+          JSON.stringify({
+            timestamp: tick,
+            method: 'session/update',
+            params: {
+              sessionId: 'grok-run',
+              update,
+              _meta: { eventId: `grok-run-${id}`, agentTimestampMs: tick * 1000, promptId },
+            },
+          })
+        const turn = (
+          tick: number,
+          ids: [number, number, number],
+          prompt: string,
+          answer: string,
+        ) => [
+          row(2, tick, { sessionUpdate: 'background_tasks' }),
+          row(ids[0], tick, {
+            sessionUpdate: 'user_message_chunk',
+            content: { type: 'text', text: `${DESIGN_PHASE_NOTICE}${prompt}` },
+          }),
+          row(
+            ids[1],
+            tick + 1,
+            { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: answer } },
+            `native-${tick}`,
+          ),
+          row(ids[2], tick + 2, {
+            sessionUpdate: 'turn_completed',
+            prompt_id: `native-${tick}`,
+            stop_reason: 'end_turn',
+          }),
+        ]
+        writeFileSync(
+          path.join(directory, 'updates.jsonl'),
+          [
+            ...turn(1, [3, 127, 131], 'Brief', '{"status":"complete"}'),
+            ...turn(5, [4, 480, 485], 'Review', verdict('repair')),
+            ...turn(9, [4, 1341, 1345], 'Review', verdict('pass')),
+          ].join('\n'),
+        )
+        localDesignRun('grok', 'grok-run')
+        const history = new ProviderHistory(
+          store,
+          [{ provider: 'grok', history: createGrokHistorySource({ root }) }],
+          { isBusy: () => false, changed: vi.fn(), log: vi.fn() },
+        )
+        histories.push(history)
+        await history.refresh()
+        await history.load('local')
+        expect(messages('local').map((item) => item.text)).toEqual(['A bakery page', closing])
+      } finally {
+        rmSync(root, { recursive: true, force: true })
+      }
+    })
+
+    it('keeps the Review JSON of a Codex run out, whose saved turns keep their ids', async () => {
+      localDesignRun('codex', 'native')
+      const { history, source } = setup()
+      const native = (turnId: string, prompt: string, answer: string) => [
+        started(turnId, 'native'),
+        message(`${turnId}-prompt`, turnId, 'user', `${DESIGN_PHASE_NOTICE}${prompt}`),
+        message(`${turnId}-answer`, turnId, 'assistant', answer),
+        completed(turnId),
+      ]
+      vi.mocked(source.read).mockResolvedValue([
+        transcript()[0]!,
+        ...native('brief', 'Brief', '{"status":"complete"}'),
+        ...native('review', 'Review', verdict('pass')),
+      ])
+      await history.refresh()
+      await history.load('local')
+      expect(messages('local').map((item) => item.text)).toEqual(['A bakery page', closing])
+    })
   })
 
   it('never imports provider-owned helper chats', async () => {

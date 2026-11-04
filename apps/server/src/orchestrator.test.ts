@@ -6481,6 +6481,67 @@ describe('provider-neutral design briefing', () => {
     }
   })
 
+  const reviewAnswer = (turnId: string) => ({
+    id: 'review-json',
+    turnId,
+    type: 'message' as const,
+    role: 'assistant' as const,
+    status: 'completed' as const,
+    text: passingReview,
+    createdAt: 1,
+  })
+
+  it.each([
+    {
+      // Grok print mode streams the answer unphased and marks it final at the end frame.
+      shape: 'Grok',
+      events: (turnId: string): DomainEvent[] => [
+        { type: 'item.started', item: { ...reviewAnswer(turnId), status: 'started', text: '' } },
+        { type: 'item.delta', turnId, itemId: 'review-json', textDelta: passingReview },
+        { type: 'item.completed', item: { ...reviewAnswer(turnId), phase: 'final_answer' } },
+      ],
+    },
+    {
+      shape: 'Codex',
+      events: (turnId: string): DomainEvent[] => [
+        {
+          type: 'item.started',
+          item: { ...reviewAnswer(turnId), phase: 'final_answer', status: 'started', text: '' },
+        },
+        { type: 'item.delta', turnId, itemId: 'review-json', textDelta: passingReview },
+        { type: 'item.completed', item: { ...reviewAnswer(turnId), phase: 'final_answer' } },
+      ],
+    },
+    {
+      // Claude Code's text blocks carry no phase; one opened with prose before its JSON.
+      shape: 'Claude Code',
+      events: (turnId: string): DomainEvent[] => [
+        message(`I compared both captures with the references.\n\n${passingReview}`, turnId),
+        message(passingReview, turnId),
+      ],
+    },
+  ])('keeps the Review verdict JSON out of a $shape transcript', async ({ events }) => {
+    const { orchestrator, sessions, received, store, workspace } =
+      await consistencyReviewHarness(false)
+    try {
+      for (const event of events('s1-turn')) sessions[0]?.emit(event)
+      sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+      await vi.waitFor(() => expect(designCompletion(received)).toContain('Visual review passed.'))
+
+      expect(JSON.stringify(received)).not.toContain('verdict')
+      const { presentations } = projectThreadItems(
+        reduceEventLog(emptyThread, store.history('preview-recovery')).items,
+      )
+      expect(presentations.get('s1-turn')?.responseText).toMatch(
+        /^Website built\. Preview ready at \S+\. Visual review passed\.$/,
+      )
+    } finally {
+      await orchestrator.disposeAll()
+      store.close()
+      rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
+    }
+  })
+
   it.each([
     { restart: false, phase: 'preview' as const },
     { restart: true, phase: 'preview' as const },

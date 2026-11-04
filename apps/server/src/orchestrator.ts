@@ -6491,8 +6491,10 @@ ${JSON.stringify(deck, null, 2)}
           this.#acceptedDesignOutputs.add(turnId)
         }
       } catch (error) {
-        // Providers without commentary phases still expose completed progress text.
-        if (event.item.text?.trim() && !/^\s*(?:[{[]|```)/.test(event.item.text)) {
+        // Providers without commentary phases still expose completed progress text,
+        // but not a phase result: one that opens with prose and puts its JSON on a
+        // line of its own fails the parse too (Claude Code's asset manifest did).
+        if (event.item.text?.trim() && !/^\s*(?:[{[]|```)/m.test(event.item.text)) {
           this.#record(threadId, { ...event, item: { ...event.item, phase: 'commentary' } })
         }
         this.#designOutputErrors.set(turnId, error)
