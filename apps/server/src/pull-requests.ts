@@ -32,6 +32,11 @@ const REPOSITORY_TTL_MS = 5 * 60_000
 const REVIEW_THREADS_TTL_MS = 30_000
 const METADATA_OPTIONS_TTL_MS = 5 * 60_000
 const SEARCH_LIMIT = 1_000
+// GitHub's edge answers 502 when a request runs past about ten seconds. One
+// search page of 52 open pull requests did, so the open searches ask for 20.
+const SEARCH_PAGE_SIZE = 20
+// A page that still times out is asked for again in this smaller size.
+const SEARCH_RETRY_PAGE_SIZE = 5
 const METADATA_OPTIONS_LIMIT = 1_000
 const FILES_PAGE_SIZE = 30
 const REVIEW_THREAD_LIMIT = 500
@@ -218,6 +223,22 @@ const RawSearchPageSchema = z.object({
     })
     .optional(),
 })
+const RawMergeStatesSchema = z.object({
+  data: z
+    .object({
+      nodes: z
+        .array(
+          z
+            .object({
+              id: z.string().optional(),
+              mergeStateStatus: z.string().nullable().optional(),
+            })
+            .nullable(),
+        )
+        .optional(),
+    })
+    .optional(),
+})
 const RawPullRequestSchema = RawSearchNodeSchema.omit({ comments: true }).extend({
   body: z.string().optional(),
   createdAt: z.string().optional(),
@@ -334,7 +355,14 @@ type ParsedRawReviewThread = z.infer<typeof RawReviewThreadSchema>
 type ParsedRawRepository = z.infer<typeof RawRepositorySchema>
 
 const SEARCH_QUERY =
-  'query($q:String!,$cursor:String){search(query:$q,type:ISSUE,first:100,after:$cursor){nodes{... on PullRequest{id number title url state isDraft updatedAt additions deletions comments{totalCount} author{login} repository{nameWithOwner} headRefName baseRefName reviewDecision mergeStateStatus}}pageInfo{hasNextPage endCursor}}}'
+  'query($q:String!,$first:Int!,$cursor:String){search(query:$q,type:ISSUE,first:$first,after:$cursor){nodes{... on PullRequest{id number title url state isDraft updatedAt additions deletions comments{totalCount} author{login} repository{nameWithOwner} headRefName baseRefName reviewDecision}}pageInfo{hasNextPage endCursor}}}'
+
+// Merge state makes search pages slow: the same page of 20 open pull requests
+// took 9.6 to 11 s three times with it (once a 502) and 3 s without it, while
+// nodes(ids:) returned their merge states in 1.4 s. The list's row state and
+// merge filters read it, so each search page reads its merge states by ID.
+const MERGE_STATE_QUERY =
+  'query($ids:[ID!]!){nodes(ids:$ids){... on PullRequest{id mergeStateStatus}}}'
 
 const REVIEW_THREADS_QUERY =
   'query($owner:String!,$name:String!,$number:Int!,$cursor:String){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100,after:$cursor){nodes{id isResolved isOutdated path line startLine originalLine originalStartLine diffSide startDiffSide comments(first:100){totalCount nodes{id databaseId body createdAt updatedAt url author{login}}}}pageInfo{hasNextPage endCursor}}}}}'
@@ -819,32 +847,30 @@ export class PullRequestService {
       return value
     }
 
-    const [
-      authored,
-      reviewRequested,
-      reviewed,
-      activeAuthored,
-      activeRequested,
-      activeReviewed,
-      projects,
-    ] = await Promise.all([
-      this.#searchHistory('authored'),
-      this.#searchHistory('review-requested'),
-      this.#searchHistory('reviewed'),
-      this.#searchActive('authored'),
-      this.#searchActive('review-requested'),
-      this.#searchActive('reviewed'),
+    const [history, active, projects] = await Promise.all([
+      Promise.allSettled([
+        this.#searchHistory('authored'),
+        this.#searchHistory('review-requested'),
+        this.#searchHistory('reviewed'),
+      ]),
+      Promise.allSettled([
+        this.#searchActive('authored'),
+        this.#searchActive('review-requested'),
+        this.#searchActive('reviewed'),
+      ]),
       this.#projects(projectPaths, refresh),
     ])
+    // Each search fails on its own: authored pull requests still list when the
+    // review-requested search fails, and the other way round. An open pull
+    // request whose open search failed still lists from its history search,
+    // without merge state. Only when every search failed does the list fail.
+    const searches = [...history, ...active]
+    const failure = searches.find((search) => search.status === 'rejected')
+    if (failure && searches.every((search) => search.status === 'rejected')) throw failure.reason
     const combined = new Map<string, PullRequestListItem>()
-    for (const item of [
-      ...authored.items,
-      ...reviewRequested.items,
-      ...reviewed.items,
-      ...activeAuthored.items,
-      ...activeRequested.items,
-      ...activeReviewed.items,
-    ]) {
+    for (const item of searches.flatMap((search) =>
+      search.status === 'fulfilled' ? search.value.items : [],
+    )) {
       const existing = combined.get(item.id)
       const relationship =
         existing && existing.relationship !== item.relationship
@@ -865,7 +891,10 @@ export class PullRequestService {
       account,
       items,
       fetchedAt: this.#now(),
-      truncated: authored.truncated || reviewRequested.truncated || reviewed.truncated,
+      // A failed search leaves the list incomplete, the same as a capped one.
+      truncated:
+        failure !== undefined ||
+        history.some((search) => search.status === 'fulfilled' && search.value.truncated),
     }
     this.#listCache = { projectKey, value, expiresAt: this.#now() + LIST_TTL_MS }
     return value
@@ -1084,21 +1113,71 @@ export class PullRequestService {
     const items: PullRequestListItem[] = []
     let cursor: string | undefined
     let hasNextPage = true
+    let pageSize = SEARCH_PAGE_SIZE
+    const readPage = () => {
+      const args = ['api', 'graphql', '-f', `query=${SEARCH_QUERY}`, '-f', `q=${query}`]
+      // -F sends the page size as a number; GraphQL rejects a string for Int!.
+      args.push('-F', `first=${pageSize}`)
+      if (cursor) args.push('-f', `cursor=${cursor}`)
+      return this.#run(args)
+    }
+
+    const mergeStates: Array<Promise<Map<string, string>>> = []
 
     while (hasNextPage && items.length < SEARCH_LIMIT) {
-      const args = ['api', 'graphql', '-f', `query=${SEARCH_QUERY}`, '-f', `q=${query}`]
-      if (cursor) args.push('-f', `cursor=${cursor}`)
-      const page = parseJson(await this.#run(args), 'pull-request search', RawSearchPageSchema)
-      const search = page.data?.search
-      for (const node of search?.nodes ?? []) {
-        if (node) items.push(normalizeListItem(node, relationship))
+      let output: string
+      try {
+        output = await readPage()
+      } catch (error) {
+        // A smaller page asks GitHub for fewer pull requests at once. The pages
+        // after it stay small; a second timeout fails this search.
+        if (pageSize === SEARCH_RETRY_PAGE_SIZE || !isGatewayTimeout(error)) throw error
+        pageSize = SEARCH_RETRY_PAGE_SIZE
+        output = await readPage()
       }
+      const page = parseJson(output, 'pull-request search', RawSearchPageSchema)
+      const search = page.data?.search
+      const pageItems = (search?.nodes ?? []).flatMap((node) =>
+        node ? [normalizeListItem(node, relationship)] : [],
+      )
+      items.push(...pageItems)
+      // Loads while the next search page does.
+      if (pageItems.length > 0) mergeStates.push(this.#mergeStates(pageItems.map(({ id }) => id)))
       hasNextPage = search?.pageInfo?.hasNextPage === true
       cursor = search?.pageInfo?.endCursor ?? undefined
       if (hasNextPage && !cursor) break
     }
 
-    return { items: items.slice(0, SEARCH_LIMIT), truncated: hasNextPage }
+    const states = new Map((await Promise.all(mergeStates)).flatMap((page) => [...page]))
+    return {
+      items: items.slice(0, SEARCH_LIMIT).map((item) => {
+        const mergeStateStatus = states.get(item.id)
+        return mergeStateStatus ? { ...item, mergeStateStatus } : item
+      }),
+      truncated: hasNextPage,
+    }
+  }
+
+  /**
+   * Merge states by pull-request node ID. It never rejects: a later search page
+   * that fails leaves these reads unawaited, and a missing merge state only
+   * leaves a row without its merge status.
+   */
+  async #mergeStates(ids: readonly string[]): Promise<Map<string, string>> {
+    const args = ['api', 'graphql', '-f', `query=${MERGE_STATE_QUERY}`]
+    for (const id of ids) args.push('-f', `ids[]=${id}`)
+    try {
+      const output = await this.#run(args)
+      const page = parseJson(output, 'pull-request merge states', RawMergeStatesSchema)
+      return new Map(
+        (page.data?.nodes ?? []).flatMap((node) =>
+          node?.id && node.mergeStateStatus ? [[node.id, node.mergeStateStatus] as const] : [],
+        ),
+      )
+    } catch {
+      // The rows still list, without merge state, until the next refresh.
+      return new Map()
+    }
   }
 
   async #reviewThreads(repository: string, number: number): Promise<ReviewThreadsResult> {
@@ -1995,6 +2074,11 @@ function targetKey(repository: string, number: number): string {
 
 function sortedProjectKey(paths: readonly string[]): string {
   return [...paths].sort().join('\u0000')
+}
+
+/** GitHub's edge answers 502 or 504 when a request runs past its time limit. */
+function isGatewayTimeout(error: unknown): boolean {
+  return error instanceof Error && /\bHTTP 50[24]\b/.test(error.message)
 }
 
 function firstUsefulLine(value: string): string {
