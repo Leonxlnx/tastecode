@@ -62,12 +62,13 @@ export class PreviewCaptureCoordinator<Client extends object = WebSocket> {
     url: string,
     viewports: PreviewViewport[],
     signal?: AbortSignal,
+    threadId?: string,
   ): Promise<PreviewScreenshot[]> {
     if (signal?.aborted) return Promise.reject(captureAborted())
     if (!this.available) return Promise.reject(new Error('Preview capture is unavailable'))
     if (this.#queue.length >= 16) return Promise.reject(new Error('Preview capture queue is full'))
 
-    const request = { requestId: randomUUID(), url, viewports }
+    const request = { requestId: randomUUID(), url, viewports, ...(threadId ? { threadId } : {}) }
     return new Promise((resolve, reject) => {
       const onAbort = () => this.#abort(queued.resolve)
       const queued: QueuedCapture<Client> = {

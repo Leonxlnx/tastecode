@@ -3813,6 +3813,30 @@ describe('web client', () => {
     expect(document.querySelector('.workspace-panel')?.classList).toContain('is-open')
   })
 
+  it("keeps a background chat's Design preview out of the panel until that chat opens", async () => {
+    render(<App />)
+
+    await waitFor(() => {
+      expect(transport.listeners.has('preview.captureRequested')).toBe(true)
+    })
+    act(() => {
+      transport.listeners.get('preview.captureRequested')?.({
+        requestId: '00000000-0000-4000-8000-000000000002',
+        url: 'http://127.0.0.1:4173/',
+        viewports: [{ width: 1_280, height: 800 }],
+        threadId: 'untouched-thread',
+      })
+    })
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 50)))
+    expect(screen.queryByRole('textbox', { name: 'Browser address' })).toBeNull()
+    expect(document.querySelector('.workspace-panel.is-open')).toBeNull()
+
+    fireEvent.click(await waitFor(() => treeChatRow('New session')))
+
+    expect(await screen.findByRole('textbox', { name: 'Browser address' })).toBeTruthy()
+    expect(document.querySelector('.workspace-panel')?.classList).toContain('is-open')
+  })
+
   it('opens workspace tools from the app surface instead of native window chrome', async () => {
     render(<App />)
 
@@ -7777,6 +7801,88 @@ describe('new chats', () => {
     )
     expect(transport.request).not.toHaveBeenCalledWith('workspace.switchBranch', expect.anything())
     expect(screen.queryByText('The shared checkout is busy')).toBeNull()
+  })
+
+  it('starts a new chat Local in a project that is not a Git repository', async () => {
+    serverProjects = [
+      { path: '/work/repo', name: 'repo', pinned: false, createdAt: 0, sessions: [] },
+      { path: '/work/plain', name: 'plain', pinned: false, createdAt: 0, sessions: [] },
+    ]
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'workspace.info' && (params as { path: string }).path === '/work/plain'
+        ? Promise.resolve({ added: 0, removed: 0, dirtyFiles: 0 })
+        : request(method, params),
+    )
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace mode' }))
+    fireEvent.click(await screen.findByRole('menuitemradio', { name: 'Isolated' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Choose project' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: /^plain/ }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace mode' }))
+    const isolated = await waitFor(() => {
+      const item = screen.getByRole('menuitemradio', { name: /^Isolated/ }) as HTMLButtonElement
+      expect(item.disabled).toBe(true)
+      return item
+    })
+    expect(isolated.textContent).toContain('Isolated needs a Git repository')
+    expect(screen.getByRole('menuitemradio', { name: 'Local' }).getAttribute('aria-checked')).toBe(
+      'true',
+    )
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' })
+    submitTurn('Work on plain files')
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith(
+        'thread.start',
+        expect.objectContaining({ workspacePath: '/work/plain' }),
+      ),
+    )
+    const start = transport.request.mock.calls.find(([method]) => method === 'thread.start')
+    expect(start?.[1]).not.toHaveProperty('isolate')
+  })
+
+  it('starts the next new chat without Design', async () => {
+    serverProjects = [
+      { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },
+    ]
+    render(<App />)
+    await screen.findByPlaceholderText('Do anything')
+    fireEvent.click(screen.getByRole('button', { name: 'Design' }))
+    submitTurn('Design a landing page')
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('thread.start', expect.anything()),
+    )
+    expect(screen.getByRole('button', { name: 'Design' }).getAttribute('aria-pressed')).toBe('true')
+
+    fireEvent.click(screen.getByRole('button', { name: 'New chat' }))
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Design' }).getAttribute('aria-pressed')).toBe(
+        'false',
+      ),
+    )
+  })
+
+  it("does not carry a failed new chat prompt into another project's new chat", async () => {
+    serverProjects = [
+      { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },
+      { path: '/work/other', name: 'other', pinned: false, createdAt: 0, sessions: [] },
+    ]
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'thread.start'
+        ? Promise.reject(new Error('could not start'))
+        : request(method, params),
+    )
+    render(<App />)
+    const composer = (await screen.findByPlaceholderText('Do anything')) as HTMLTextAreaElement
+    submitTurn('Words from a failed start')
+    await waitFor(() => expect(composer.value).toBe('Words from a failed start'))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Choose project' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: /^other/ }))
+    await waitFor(() =>
+      expect((screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement).value).toBe(''),
+    )
   })
 
   it('switches the project checkout from the branch shelf before starting a chat', async () => {

@@ -1084,10 +1084,15 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
   )
   const [branchMenuOpened, setBranchMenuOpened] = useState(0)
   const openBranchMenu = useCallback(() => setBranchMenuOpened((count) => count + 1), [])
+  /** Projects workspace.info read as folders without a branch: they cannot start isolated chats. */
+  const unbranchedProjects = useRef(new Set<string>())
   const recordCheckout = useCallback((path: string, info: WorkspaceInfo | undefined) => {
     checkedOutBranches.current.set(path, info?.branch)
     if (info?.dirtyFiles) dirtyCheckouts.current.add(path)
     else dirtyCheckouts.current.delete(path)
+    // A failed read says nothing about the folder, so only an answer changes this.
+    if (info && info.branch === undefined) unbranchedProjects.current.add(path)
+    else if (info) unbranchedProjects.current.delete(path)
   }, [])
   // A new chat in the shared checkout starts where it is while the checkout
   // has uncommitted changes. Switching it then fails when a change touches a
@@ -1334,6 +1339,8 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
   const nextWorkspaceToolRequest = useRef(0)
   const [workspaceDesignPreviewRequest, setWorkspaceDesignPreviewRequest] =
     useState<BrowserNavigationRequest>()
+  /** The newest Design preview of each chat in the background, shown once that chat opens. */
+  const backgroundDesignPreviews = useRef(new Map<string, BrowserNavigationRequest>())
   const [providerLoginTerminal, setProviderLoginTerminal] = useState<ProviderLoginTerminalSession>()
   const nextProviderLoginTerminalId = useRef(1)
   const providerLoginState = useSyncExternalStore(subscribeInstalls, () =>
@@ -1928,6 +1935,13 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
   )
 
   const activeIdRef = useRef(activeId)
+  useEffect(() => {
+    const preview = activeId ? backgroundDesignPreviews.current.get(activeId) : undefined
+    if (!activeId || !preview) return
+    backgroundDesignPreviews.current.delete(activeId)
+    setWorkspacePanelHasMounted(true)
+    setWorkspaceDesignPreviewRequest(preview)
+  }, [activeId])
   activeIdRef.current = activeId
   const activePathRef = useRef(activePath)
   activePathRef.current = activePath
@@ -1962,6 +1976,23 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       threadController.draftOwner = key
       composerDraftKeyRef.current = key
       publishComposerDraft(threadController.draft(key))
+    },
+    [publishComposerDraft],
+  )
+  /** The project the new-chat draft was written for; another project starts without it. */
+  const newChatDraftProject = useRef<string | undefined>(undefined)
+  const enterNewChatDraft = useCallback(
+    (projectPath: string) => {
+      // Until a draft is tied to a project, it is the one on screen's.
+      const owner = newChatDraftProject.current ?? activePathRef.current
+      newChatDraftProject.current = projectPath
+      if (owner === undefined || owner === projectPath) return
+      const next = threadController.editDraft(NEW_CHAT_DRAFT_KEY, {
+        text: '',
+        attachments: [],
+        resources: [],
+      })
+      if (activeIdRef.current === undefined) publishComposerDraft(next)
     },
     [publishComposerDraft],
   )
@@ -2396,8 +2427,14 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       lifecycleFallback = window.setTimeout(flushLifecyclePushes, 100)
     })
     const offPreviewCapture = transport.on('preview.captureRequested', (request) => {
+      const preview = { requestId: request.requestId, url: request.url }
+      // The panel belongs to the chat on screen: another chat's preview waits for that chat.
+      if (request.threadId && request.threadId !== activeIdRef.current) {
+        backgroundDesignPreviews.current.set(request.threadId, preview)
+        return
+      }
       setWorkspacePanelHasMounted(true)
-      setWorkspaceDesignPreviewRequest({ requestId: request.requestId, url: request.url })
+      setWorkspaceDesignPreviewRequest(preview)
     })
     const offSidebarSettings = transport.on('sidebar.settings', acceptSidebarSettings)
     const offUsageChanged = transport.on('usage.changed', ({ provider, accountId }) => {
@@ -4354,7 +4391,9 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
         // the checked-out branch needs the server to check and switch; asking
         // every time ran git before the agent started, and waiting here for a
         // branch list held the chat for seconds on a busy machine.
-        const shown = newChatBranch(projectPath, isolateSession)
+        // A folder that is not a Git repository has nothing to isolate from: it starts Local.
+        const isolate = isolateSession && !unbranchedProjects.current.has(projectPath)
+        const shown = newChatBranch(projectPath, isolate)
         const branch =
           shown !== undefined && shown !== checkedOutBranches.current.get(projectPath)
             ? shown
@@ -4388,7 +4427,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
               }
             : {}),
           ...(selectedEffort ? { effort: selectedEffort } : {}),
-          ...(isolateSession ? { isolate: true } : {}),
+          ...(isolate ? { isolate: true } : {}),
         })
         let pendingApproval = pendingThreadApprovals.current.get(provisionalId)
         while (pendingApproval && pendingApproval !== sessionApproval && !projectRemoved()) {
@@ -4507,6 +4546,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
         const laterDraft = threadController.draft(provisionalId)
         threadController.forgetDraft(provisionalId)
         if (!isEmptyComposerDraft(laterDraft)) {
+          newChatDraftProject.current = projectPath
           const recovered = threadController.recoverDraft(NEW_CHAT_DRAFT_KEY, laterDraft)
           threadController.editDraft(NEW_CHAT_DRAFT_KEY, {
             resources: [...recovered.resources, ...laterDraft.resources],
@@ -4556,7 +4596,10 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
         composerDraftKeyRef.current = NEW_CHAT_DRAFT_KEY
         injectedDraftTransition.current = activeIdRef.current !== undefined
         publishComposerDraft(next)
-      }
+        newChatDraftProject.current = projectPath
+      } else enterNewChatDraft(projectPath)
+      // Design is a choice for one chat; the next new chat starts without it.
+      setThreadDesignMode(undefined, false)
       setNotice(undefined)
       setActionError(undefined)
       setActivePath(projectPath)
@@ -4576,7 +4619,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       }
       setComposerFocusRequest((request) => request + 1)
     },
-    [publishComposerDraft, applyProviderDefault],
+    [publishComposerDraft, applyProviderDefault, setThreadDesignMode, enterNewChatDraft],
   )
 
   const updateQueue = useCallback(
@@ -4617,8 +4660,10 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       // if it fails. Only a send that waited on that failed startup goes there.
       const restoreDraft = () =>
         restoreRejectedDraft(composerDraftKey(activeId), { text, attachments })
-      const restoreDraftAfterFailedStart = () =>
+      const restoreDraftAfterFailedStart = () => {
+        if (activePath) newChatDraftProject.current = activePath
         restoreRejectedDraft(NEW_CHAT_DRAFT_KEY, { text, attachments })
+      }
       if (activeId) pendingDeletionChecks.current.delete(activeId)
       if (activeId && !cancelArchive(activeId)) {
         restoreDraft()
@@ -4717,6 +4762,8 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
           ...(selectedEffort ? { effort: selectedEffort } : {}),
           ...(selectedServiceTier ? { serviceTier: selectedServiceTier } : {}),
         })
+        // The chat keeps Design; the next new chat starts without it.
+        setThreadDesignMode(undefined, false)
         workspaceStartId = provisionalId
         workspaceStartToken = holdWorkspaceStart(provisionalId, activePath)
         optimisticTurnId = provisional.activeTurn?.id
@@ -4778,6 +4825,8 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
           }
           releasePendingStart()
           restoreDraftAfterFailedStart()
+          // The words return to the new chat's composer, and with them the Design choice.
+          setThreadDesignMode(undefined, designMode)
           return
         }
         workspaceStartId = threadId
@@ -5069,6 +5118,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       updateQueue,
       requestInterrupt,
       designMode,
+      setThreadDesignMode,
       holdWorkspaceStart,
       releaseWorkspaceStart,
       refreshWorkspaceAfterCompletion,
@@ -5267,17 +5317,21 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
   // prettier-ignore
   const steerQueuedTurn = useCallback((queuedTurnId: string) => { if (!activeId) return; holdQueueAction(queuedTurnId, activeId, 'steer'); const projectPath = findSession(projectsRef.current, activeId)?.project.path; void transport.request('thread.steerQueuedTurn', { threadId: activeId, queuedTurnId }).then(() => { updateQueue(activeId, (items) => items.filter((item) => item.id !== queuedTurnId)); settleQueueAction(queuedTurnId, 'steer'); workspaceIdleProbe.current.unknownQueues.delete(activeId); releaseQueuedStart(queuedTurnId); refreshWorkspaceAfterCompletion(projectPath) }).catch((error) => { settleQueueAction(queuedTurnId, 'steer', error instanceof IndeterminateRequestError); reportError(error instanceof Error ? error.message : String(error)) }) }, [transport, activeId, updateQueue, releaseQueuedStart, refreshWorkspaceAfterCompletion, holdQueueAction, settleQueueAction])
 
-  const selectProject = useCallback((path: string) => {
-    setSurface('chat')
-    if (path === activePathRef.current) return
-    setActivePath(path)
-    activeIdRef.current = undefined
-    setActiveId(undefined)
-    setActiveThreadApproval(undefined)
-    setThread(emptyThread)
-    setUndoRestore(undefined)
-    setRollbackOpen(false)
-  }, [])
+  const selectProject = useCallback(
+    (path: string) => {
+      setSurface('chat')
+      if (path === activePathRef.current) return
+      enterNewChatDraft(path)
+      setActivePath(path)
+      activeIdRef.current = undefined
+      setActiveId(undefined)
+      setActiveThreadApproval(undefined)
+      setThread(emptyThread)
+      setUndoRestore(undefined)
+      setRollbackOpen(false)
+    },
+    [enterNewChatDraft],
+  )
 
   const selectBranch = useCallback(
     async (branch: string) => {
@@ -7482,6 +7536,8 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
     ...(offlineError ? [offlineError] : []),
   ]
 
+  // workspace.info answered for this project without a branch: no Git repository to isolate from.
+  const newChatUnbranched = !activeId && workspace !== undefined && workspace.branch === undefined
   const composerProps: ComposerProps = {
     transport: transport,
     provider: provider,
@@ -7526,7 +7582,8 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
     ),
     running: visibleRunning,
     newSession: !activeId,
-    isolate: active?.session.worktreeBranch ? true : isolateSession,
+    isolate: active?.session.worktreeBranch ? true : isolateSession && !newChatUnbranched,
+    ...(newChatUnbranched ? { isolateUnavailable: 'Isolated needs a Git repository' } : {}),
     designMode: designMode,
     keybindings: keybindings,
     focusRequest: composerFocusRequest,

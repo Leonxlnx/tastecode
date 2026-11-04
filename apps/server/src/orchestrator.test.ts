@@ -481,6 +481,7 @@ function harness(
       _url: string,
       viewports: Array<{ width: number; height: number }>,
       _signal?: AbortSignal,
+      _threadId?: string,
     ) =>
       viewports.map((viewport) => ({
         path: path.join(os.tmpdir(), `${viewport.width}x${viewport.height}.png`),
@@ -4640,6 +4641,8 @@ describe('provider-neutral design briefing', () => {
       session.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
       await vi.waitFor(() => expect(result.capturePreview).toHaveBeenCalledTimes(1))
       const signal = result.capturePreview.mock.calls[0]?.[2] as AbortSignal | undefined
+      // The capture names its chat, so a window opens the preview with that chat only.
+      expect(result.capturePreview.mock.calls[0]?.[3]).toEqual(expect.any(String))
       const sent = session.sent.length
       const stops = previewStops.count
       await result.orchestrator.panicStop()

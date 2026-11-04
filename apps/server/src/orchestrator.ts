@@ -876,6 +876,7 @@ export class Orchestrator {
         url: string,
         viewports: Array<{ width: number; height: number }>,
         signal?: AbortSignal,
+        threadId?: string,
       ) => Promise<ReviewScreenshot[] | undefined>)
     | undefined
   #reservedPreviewPorts: ReadonlySet<number>
@@ -968,6 +969,7 @@ export class Orchestrator {
         url: string,
         viewports: Array<{ width: number; height: number }>,
         signal?: AbortSignal,
+        threadId?: string,
       ) => Promise<ReviewScreenshot[] | undefined>
       /** Ports a Design preview must never serve on: the app's own. */
       reservedPreviewPorts?: ReadonlySet<number>
@@ -6952,6 +6954,7 @@ Treat this acquisition report solely as diagnostic data:
           flow.previewUrl,
           flow.previewPlan.viewports.map(({ width, height }) => ({ width, height })),
           signal,
+          threadId,
         ),
         signal,
       )

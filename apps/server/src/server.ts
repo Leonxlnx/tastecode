@@ -334,9 +334,9 @@ export function startServer(
       if (setupTerminals.delete(terminalId)) invalidateCliProbes()
       push.broadcast('terminal.exit', { terminalId, exitCode })
     },
-    capturePreview: (url, viewports, signal) =>
+    capturePreview: (url, viewports, signal, threadId) =>
       previewCapture.available
-        ? previewCapture.capture(url, viewports, signal)
+        ? previewCapture.capture(url, viewports, signal, threadId)
         : Promise.resolve(undefined),
     // A preview on the control port or the trusted renderer's port would pass
     // the Origin check whenever nothing else holds that port.
