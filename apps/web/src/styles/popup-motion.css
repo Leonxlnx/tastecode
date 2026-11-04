@@ -1,13 +1,18 @@
-/* Short travel connects each surface to its button without moving its layout. */
+/*
+ * Every menu and popover (Menu, AppSelect, the color picker, the update
+ * notice) opens out of its anchor: each sets transform-origin on the anchor's
+ * side, and the short travel comes from that side too. It closes faster, with
+ * a fade and a slight shrink in place.
+ */
 .popup {
   --popup-offset: -4px;
 
   opacity: 0;
-  transform: translateY(var(--popup-offset)) scale(0.97);
+  transform: scale(0.98);
   pointer-events: none;
   transition:
-    transform 120ms var(--ease-out),
-    opacity 90ms var(--ease-out);
+    transform var(--dur-popup-out) var(--ease-out),
+    opacity var(--dur-popup-out) var(--ease-out);
 }
 
 .popup:is(.menu--up, .app-select__listbox--up) {
@@ -18,13 +23,15 @@
   opacity: 1;
   transform: none;
   pointer-events: auto;
-  transition-duration: 180ms, 140ms;
+  transition:
+    transform var(--dur-popup-in) var(--ease-popup),
+    opacity var(--dur-popup-in) var(--ease-popup);
 }
 
 @starting-style {
   .popup[data-popup-state='open'] {
     opacity: 0;
-    transform: translateY(var(--popup-offset)) scale(0.97);
+    transform: translateY(var(--popup-offset)) scale(0.96);
   }
 }
 
