@@ -45,12 +45,16 @@ export function grokHistoryEvents(
     const params = record(row.params),
       update = record(params.update),
       meta = record(params._meta)
-    const eventId = text(meta.eventId)
-    if (eventId && seen.has(eventId)) continue
-    if (eventId) seen.add(eventId)
     const type = update.sessionUpdate
     const time =
       number(meta.agentTimestampMs) ?? (number(row.timestamp) ?? session.createdAt / 1000) * 1000
+    // Each print-mode turn is a new grok process, which numbers its event ids
+    // from the start again. By id alone, a later turn's prompt repeats an
+    // earlier turn's row and was dropped; a row written twice keeps its time.
+    const eventId = text(meta.eventId)
+    const eventKey = eventId && `${eventId}@${time}`
+    if (eventKey && seen.has(eventKey)) continue
+    if (eventKey) seen.add(eventKey)
     if (type === 'user_message_chunk' && record(update._meta).hideFromScrollback !== true) {
       replay.user(
         update.content,

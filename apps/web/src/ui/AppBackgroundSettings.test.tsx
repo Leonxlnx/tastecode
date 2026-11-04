@@ -52,23 +52,53 @@ describe('Window background settings', () => {
     const presets = screen.getByRole('radiogroup', { name: 'Background effect' })
     expect(
       Array.from(presets.querySelectorAll('[role="radio"]')).map((option) => option.textContent),
-    ).toEqual(['Dither', 'Halftone', 'Dot grid', 'Grain'])
+    ).toEqual(['Dither', 'Halftone'])
     expect(choice('Dither').getAttribute('aria-checked')).toBe('true')
 
-    // The preview shows the chosen pattern and follows Dim on every step.
+    // The preview shows the whole window over the chosen pattern, which it
+    // draws at the preview's scale, and follows Dim on every step.
     const preview = screen.getByRole('img', { name: 'Preview of the window background' })
-    expect(preview.dataset['mode']).toBe('effect')
-    expect(preview.dataset['effect']).toBe('dither')
+    const layer = preview.querySelector<HTMLElement>(':scope > .app-bg')!
+    expect(layer.dataset['mode']).toBe('effect')
+    expect(layer.dataset['effect']).toBe('dither')
+    expect(layer.querySelector('canvas.app-bg__motion')).not.toBeNull()
     expect(preview.style.getPropertyValue('--app-bg-pattern')).toMatch(/^url\("data:image\/svg/)
-    fireEvent.click(choice('Dot grid'))
-    expect(readAppBackground().effect).toBe('dots')
-    expect(preview.dataset['effect']).toBe('dots')
-    expect(preview.style.getPropertyValue('--app-bg-pattern')).toBe('')
+    expect(preview.style.getPropertyValue('--app-bg-pattern-size')).toBe(
+      'calc(16 * 100cqw / 1120) calc(448 * 100cqw / 1120)',
+    )
+    const dither = preview.style.getPropertyValue('--app-bg-pattern')
+    fireEvent.click(choice('Halftone'))
+    expect(readAppBackground().effect).toBe('halftone')
+    expect(layer.dataset['effect']).toBe('halftone')
+    expect(preview.style.getPropertyValue('--app-bg-pattern')).not.toBe(dither)
     fireEvent.change(screen.getByRole('slider', { name: 'Dim' }), { target: { value: '20' } })
     expect(readAppBackground().dim).toBe(20)
     expect(preview.style.getPropertyValue('--app-bg-dim')).toBe('0.4')
     // Blur belongs to pictures only.
     expect(screen.queryByRole('slider', { name: 'Blur' })).toBeNull()
+  })
+
+  it('previews the sidebar, a chat and the prompt bar over the background', () => {
+    act(() => writeAppBackground({ mode: 'effect', effect: 'halftone' }))
+    render(<AppBackgroundSettings images={fakeImages()} />)
+    const preview = screen.getByRole('img', { name: 'Preview of the window background' })
+    const miniature = preview.querySelector<HTMLElement>('.app-bg-preview__window')!
+    expect(miniature.getAttribute('aria-hidden')).toBe('true')
+    for (const part of ['titlebar', 'rail', 'stage', 'chat', 'code', 'prompt']) {
+      expect(miniature.querySelector(`.app-bg-preview__${part}`)).not.toBeNull()
+    }
+    // The background sits under the panes, not over them.
+    expect(preview.firstElementChild?.classList.contains('app-bg')).toBe(true)
+    expect(preview.lastElementChild).toBe(miniature)
+    // Nothing in it is text a screen reader would read out.
+    expect(preview.textContent).toBe('')
+  })
+
+  it('shows no preview for None or Transparent', () => {
+    render(<AppBackgroundSettings images={fakeImages()} />)
+    expect(screen.queryByRole('img', { name: /Preview/ })).toBeNull()
+    fireEvent.click(choice('Transparent'))
+    expect(screen.queryByRole('img', { name: /Preview/ })).toBeNull()
   })
 
   it('says so when Transparent cannot be drawn here', async () => {
@@ -129,9 +159,15 @@ describe('Window background settings', () => {
     await waitFor(() =>
       expect(preview.style.getPropertyValue('--app-bg-image')).toBe('url("blob:preview")'),
     )
+    const layer = preview.querySelector<HTMLElement>(':scope > .app-bg')!
+    expect(layer.dataset['mode']).toBe('image')
+    expect(layer.dataset['ready']).toBe('')
+    // A picture has nothing to move.
+    expect(layer.querySelector('canvas')).toBeNull()
     expect(createObjectURL).toHaveBeenCalledTimes(1)
     expect(preview.style.getPropertyValue('--app-bg-dim')).toBe('1')
-    expect(preview.style.getPropertyValue('--app-bg-preview-blur')).toBe('1.54px')
+    // The display copy's blur, at the preview's width.
+    expect(preview.style.getPropertyValue('--app-bg-preview-blur')).toBe('calc(14 * 100cqw / 1600)')
 
     const dim = screen.getByRole<HTMLInputElement>('slider', { name: 'Dim' })
     const blur = screen.getByRole<HTMLInputElement>('slider', { name: 'Blur' })
@@ -141,7 +177,7 @@ describe('Window background settings', () => {
     expect(preview.style.getPropertyValue('--app-bg-dim')).toBe('1.6')
     fireEvent.change(blur, { target: { value: '0' } })
     expect(readAppBackground().blur).toBe(0)
-    expect(preview.style.getPropertyValue('--app-bg-preview-blur')).toBe('0.00px')
+    expect(preview.style.getPropertyValue('--app-bg-preview-blur')).toBe('calc(0 * 100cqw / 1600)')
 
     view.unmount()
     expect(revokeObjectURL).toHaveBeenCalledWith('blob:preview')

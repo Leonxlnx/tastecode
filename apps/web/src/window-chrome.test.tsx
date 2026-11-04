@@ -14,14 +14,18 @@ vi.mock('./bridge.js', () => ({
   isDesktop: true,
   setDesktopWindowChrome: bridge.setChrome,
 }))
+const choice = vi.hoisted(() => ({ mode: 'none' }))
+vi.mock('./app-background.js', () => ({ readAppBackground: () => ({ mode: choice.mode }) }))
 
 afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
   bridge.setChrome.mockClear()
+  choice.mode = 'none'
   document.body.replaceChildren()
   document.documentElement.removeAttribute('style')
   document.documentElement.removeAttribute('data-app-bg')
+  document.documentElement.removeAttribute('data-glass')
 })
 
 describe('opaqueHex', () => {
@@ -90,6 +94,41 @@ describe('readWindowChrome', () => {
     // Only the caption: the symbols and the page background stay opaque colours.
     expect(chrome.symbol).toMatch(/^#[0-9a-f]{6}$/)
     expect(chrome.background).toMatch(/^#[0-9a-f]{6}$/)
+  })
+
+  it('asks the shell to clear the window only for Transparent', () => {
+    vi.spyOn(document, 'elementFromPoint').mockReturnValue(null)
+    expect(readWindowChrome('dark')).not.toHaveProperty('seeThrough')
+    choice.mode = 'transparent'
+    document.documentElement.dataset['appBg'] = 'transparent'
+    const chrome = readWindowChrome('dark')
+    expect(chrome.seeThrough).toBe(true)
+    expect(chrome.caption).toBe(SEE_THROUGH_CAPTION)
+    // The opaque page colour still travels, for when Transparent is turned off.
+    expect(chrome.background).toMatch(/^#[0-9a-f]{6}$/)
+    // A picture or an effect paints its own opaque layer over the window.
+    for (const mode of ['image', 'effect']) {
+      choice.mode = mode
+      document.documentElement.dataset['appBg'] = mode
+      expect(readWindowChrome('dark')).not.toHaveProperty('seeThrough')
+    }
+  })
+
+  it('keeps the window opaque behind the translucent sidebar when no window background is set', () => {
+    vi.spyOn(document, 'elementFromPoint').mockReturnValue(null)
+    for (const glass of ['off', 'on']) {
+      document.documentElement.dataset['glass'] = glass
+      // A cleared window let the OS material wash the dark sidebar grey.
+      expect(readWindowChrome('dark')).not.toHaveProperty('seeThrough')
+      expect(readWindowChrome('light')).not.toHaveProperty('seeThrough')
+    }
+  })
+
+  it('keeps a window that opened clear clear before the lazy layer applies', () => {
+    // At startup the choice is known before data-app-bg reaches the page.
+    vi.spyOn(document, 'elementFromPoint').mockReturnValue(null)
+    choice.mode = 'transparent'
+    expect(readWindowChrome('dark').seeThrough).toBe(true)
   })
 
   it('keeps the caption opaque where something opaque covers the title bar', () => {
@@ -187,6 +226,38 @@ describe('useWindowChrome', () => {
     expect(bridge.setChrome).toHaveBeenCalledTimes(3)
     expect(bridge.setChrome).not.toHaveBeenLastCalledWith(
       expect.objectContaining({ caption: SEE_THROUGH_CAPTION }),
+    )
+  })
+
+  it('tells the shell when Transparent starts and stops showing the desktop', async () => {
+    const frame = frames()
+    vi.spyOn(document, 'elementFromPoint').mockReturnValue(null)
+    render(<Shell theme="dark" surface="chat" frame={0} />)
+    frame.paint()
+    expect(bridge.setChrome).toHaveBeenLastCalledWith(
+      expect.not.objectContaining({ seeThrough: true }),
+    )
+
+    // Settings › Window background › Transparent: the choice is stored, then
+    // the layer marks the page.
+    choice.mode = 'transparent'
+    document.documentElement.dataset['appBg'] = 'transparent'
+    await Promise.resolve()
+    frame.paint()
+    expect(bridge.setChrome).toHaveBeenCalledTimes(2)
+    expect(bridge.setChrome).toHaveBeenLastCalledWith(
+      expect.objectContaining({ seeThrough: true, caption: SEE_THROUGH_CAPTION }),
+    )
+
+    // Image keeps the clear caption but paints an opaque layer: the window
+    // must turn solid again, so this is a change worth reporting.
+    choice.mode = 'image'
+    document.documentElement.dataset['appBg'] = 'image'
+    await Promise.resolve()
+    frame.paint()
+    expect(bridge.setChrome).toHaveBeenCalledTimes(3)
+    expect(bridge.setChrome).toHaveBeenLastCalledWith(
+      expect.not.objectContaining({ seeThrough: true }),
     )
   })
 

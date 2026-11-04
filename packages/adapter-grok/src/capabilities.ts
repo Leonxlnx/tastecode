@@ -15,4 +15,7 @@ export const GROK_CAPABILITIES: Capabilities = {
   // spawn_subagent calls carry the subagent's state and result; its tool count
   // moves live while it is the only subagent running (see subagents.ts).
   subagents: 'progress',
+  // Every process can run in another GROK_HOME, which holds that account's
+  // sign-in, settings and sessions (account-home.ts).
+  multipleAccounts: true,
 }

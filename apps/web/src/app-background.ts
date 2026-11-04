@@ -15,15 +15,19 @@ import {
  *   vibrancy). Where the OS cannot draw one the look stays unchanged.
  * - image: a local picture, resized, blurred and dimmed behind the panes;
  *   how much of each is set with Dim and Blur.
- * - effect: a static pattern (ordered dither, halftone, dot grid or grain),
- *   faded by Dim.
+ * - effect: an ordered dither or a halftone pattern, faded by Dim.
  */
 export type AppBackgroundMode = 'none' | 'transparent' | 'image' | 'effect'
-export type AppBackgroundEffect = 'dither' | 'halftone' | 'dots' | 'grain'
+export type AppBackgroundEffect = 'dither' | 'halftone'
 
 export const DEFAULT_APP_BACKGROUND_EFFECT: AppBackgroundEffect = 'dither'
-/** Effects that were removed; a stored one becomes the default effect. */
+/** Effects that were replaced; a stored one becomes the default effect. */
 const RETIRED_EFFECTS = new Set(['glow', 'aurora'])
+/**
+ * Effects that were taken out without a replacement (Dot grid and Grain):
+ * whoever had one showing gets the default window background, None.
+ */
+const DROPPED_EFFECTS = new Set(['dots', 'grain'])
 
 export type AppBackground = {
   mode: AppBackgroundMode
@@ -57,7 +61,7 @@ export const APP_BACKGROUND_BLUR_KEY = 'harness.appBackground.blur'
 const CHANGE_EVENT = 'harness:appBackground'
 
 const MODES = new Set<AppBackgroundMode>(['none', 'transparent', 'image', 'effect'])
-const EFFECTS = new Set<AppBackgroundEffect>(['dither', 'halftone', 'dots', 'grain'])
+const EFFECTS = new Set<AppBackgroundEffect>(['dither', 'halftone'])
 const IMAGE_REVISION = /^[a-z0-9-]{1,64}$/i
 
 /** Kept in memory so a render never reads storage; refreshed by every write. */
@@ -112,8 +116,12 @@ export function parseAppBackground(values: {
 }): AppBackground {
   const image =
     values.image !== null && IMAGE_REVISION.test(values.image) ? values.image : undefined
+  const mode = MODES.has(values.mode as AppBackgroundMode)
+    ? (values.mode as AppBackgroundMode)
+    : 'none'
+  const dropped = values.effect !== null && DROPPED_EFFECTS.has(values.effect)
   return {
-    mode: MODES.has(values.mode as AppBackgroundMode) ? (values.mode as AppBackgroundMode) : 'none',
+    mode: dropped && mode === 'effect' ? 'none' : mode,
     effect: EFFECTS.has(values.effect as AppBackgroundEffect)
       ? (values.effect as AppBackgroundEffect)
       : DEFAULT_APP_BACKGROUND_EFFECT,
@@ -131,6 +139,12 @@ export function readAppBackground(): AppBackground {
   // stored so the old value is not read again.
   if (effect !== null && RETIRED_EFFECTS.has(effect)) {
     writeStored(APP_BACKGROUND_EFFECT_KEY, DEFAULT_APP_BACKGROUND_EFFECT)
+  }
+  // Dot grid and Grain were dropped; whoever had one showing gets None, and
+  // the stored effect goes, so Effect offers the default when picked again.
+  if (effect !== null && DROPPED_EFFECTS.has(effect)) {
+    if (readStored(APP_BACKGROUND_KEY) === 'effect') writeStored(APP_BACKGROUND_KEY, 'none')
+    writeStored(APP_BACKGROUND_EFFECT_KEY, undefined)
   }
   snapshot = parseAppBackground({
     mode: readStored(APP_BACKGROUND_KEY),

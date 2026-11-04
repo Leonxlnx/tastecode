@@ -376,6 +376,26 @@ describe('structured diff review', () => {
     expect(readFileSync(path.join(repo, 'unrelated.txt'), 'utf8')).toBe('keep this\n')
   })
 
+  it("keeps Git's own reason as the cause when a patch no longer applies", async () => {
+    writeFileSync(path.join(repo, 'file.txt'), lines({ 2: 'agent change' }))
+    const patch = absolutePatch(git('diff', '--binary', '--no-color', '--', 'file.txt'))
+    writeFileSync(path.join(repo, 'file.txt'), lines({ 2: 'changed again by the user' }))
+
+    const error = await reverseUnifiedDiff(repo, patch).then(
+      () => undefined,
+      (reason: unknown) => reason,
+    )
+
+    expect(error).toBeInstanceOf(Error)
+    expect((error as Error).message).toBe(
+      'Could not apply diff decision. Check the working tree and retry.',
+    )
+    expect(((error as Error).cause as Error).message).toMatch(/file.txt/)
+    expect(readFileSync(path.join(repo, 'file.txt'), 'utf8')).toBe(
+      lines({ 2: 'changed again by the user' }),
+    )
+  })
+
   it.each(['space name.txt', 'quoted 文档.txt'])(
     'normalizes absolute patch paths while preserving %s',
     async (name) => {

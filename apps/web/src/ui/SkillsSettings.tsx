@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import type { ProviderId, ResultOf, Skill } from '@harness/contracts'
 import {
   IconAlertTriangle as AlertTriangle,
@@ -291,7 +291,7 @@ function pageDescription(
 /**
  * One skill: its name along the leader to its switch (or to its state when
  * the provider does not let TasteCode change it), with what it does, where
- * it lives and anything it is missing underneath.
+ * it lives and anything it is missing underneath, across the whole row.
  */
 function SkillRow(props: {
   skill: Skill
@@ -314,23 +314,6 @@ function SkillRow(props: {
             </span>
           )}
         </div>
-        {props.skill.description ? (
-          <p className="set-entity__detail">{props.skill.description}</p>
-        ) : null}
-        <p className="set-entity__detail set-entity__detail--code" title={source}>
-          {source}
-        </p>
-        {props.skill.dependencyErrors.map((entry) => (
-          <p
-            className="set-entity__detail set-entity__detail--error"
-            key={`${entry.dependency}:${entry.message}`}
-          >
-            <AlertTriangle size={13} aria-hidden />
-            <span>
-              <strong>{entry.dependency}</strong> · {entry.message}
-            </span>
-          </p>
-        ))}
       </div>
       {props.configurable ? (
         <div className="set-entity__actions">
@@ -347,7 +330,86 @@ function SkillRow(props: {
           </button>
         </div>
       ) : null}
+      <div className="set-entity__details">
+        {props.skill.description ? (
+          <SkillDescription name={name} text={props.skill.description} />
+        ) : null}
+        <p className="set-entity__detail set-entity__detail--code" title={source}>
+          {source}
+        </p>
+        {props.skill.dependencyErrors.map((entry) => (
+          <p
+            className="set-entity__detail set-entity__detail--error"
+            key={`${entry.dependency}:${entry.message}`}
+          >
+            <AlertTriangle size={13} aria-hidden />
+            <span>
+              <strong>{entry.dependency}</strong> · {entry.message}
+            </span>
+          </p>
+        ))}
+      </div>
     </article>
+  )
+}
+
+/**
+ * What a skill does, held to two lines. Only a description that runs past
+ * them offers Show more; that button and a click on the text itself open
+ * the rest and close it again. Selecting part of the text is not a click.
+ */
+function SkillDescription(props: { name: string; text: string }) {
+  const id = useId()
+  const paragraph = useRef<HTMLParagraphElement>(null)
+  const [expanded, setExpanded] = useState(false)
+  const [overflows, setOverflows] = useState(false)
+
+  // Measured while clamped, and again whenever the row's width changes. An
+  // open description keeps its Show less until it is closed and measured anew.
+  useLayoutEffect(() => {
+    const element = paragraph.current
+    if (!element || expanded) return
+    const measure = () => setOverflows(element.scrollHeight > element.clientHeight + 1)
+    measure()
+    if (typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(measure)
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [props.text, expanded])
+
+  const expandable = overflows || expanded
+  const toggle = () => setExpanded((open) => !open)
+  const label = expanded ? 'Show less' : 'Show more'
+  return (
+    <>
+      <p
+        className={`set-entity__detail${expanded ? '' : ' set-entity__detail--clamped'}`}
+        id={id}
+        ref={paragraph}
+        data-expandable={expandable || undefined}
+        onClick={
+          expandable
+            ? () => {
+                if (window.getSelection()?.type !== 'Range') toggle()
+              }
+            : undefined
+        }
+      >
+        {props.text}
+      </p>
+      {expandable ? (
+        <button
+          className="set-entity__more"
+          type="button"
+          aria-label={`${label} about ${props.name}`}
+          aria-expanded={expanded}
+          aria-controls={id}
+          onClick={toggle}
+        >
+          {label}
+        </button>
+      ) : null}
+    </>
   )
 }
 

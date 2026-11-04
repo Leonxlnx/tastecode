@@ -27,6 +27,7 @@ import type {
   ThreadInboxStatus,
   ThreadLifecycle,
 } from '@harness/contracts'
+import type { ProviderPool } from '../account-pool.js'
 import type { AccountLabel } from '../provider-accounts-state.js'
 import {
   IconArchive as Archive,
@@ -97,6 +98,7 @@ import { ProviderIcon } from './ProviderIcon.js'
 import { SplitSidebarContext, type SplitSidebar } from './split-view-context.js'
 import { activeIndicatorRef } from './active-indicator.js'
 import { compactRelativeTime, readSessionClock, subscribeSessionClock } from './session-clock.js'
+import { rememberProjectOpen, wasProjectOpen } from './project-open-memory.js'
 import '../styles/account-card.css'
 import '../styles/rail-motion.css'
 import { InboxRailSkeleton, SidebarTreeSkeleton } from './SurfaceSkeletons.js'
@@ -246,6 +248,8 @@ function SidebarComponent(props: {
   accountLabel?: AccountLabel | undefined
   /** The account a new chat with each provider starts on, marked in the plan limits. */
   activeAccount?: ((provider: ProviderId) => AccountId) | undefined
+  /** Each provider's accounts as one pool, summed over the top of its accounts. */
+  accountPools?: readonly ProviderPool[] | undefined
   /** The account popup shows plan limits; returns the release for when it closes. */
   onShowUsage?: (() => () => void) | undefined
   onRetryUsage?: ((provider: ProviderId, accountId?: AccountId) => void) | undefined
@@ -998,6 +1002,7 @@ function SidebarComponent(props: {
                           states={props.usageStates}
                           accountLabel={props.accountLabel}
                           activeAccount={props.activeAccount}
+                          pools={props.accountPools}
                           onShow={props.onShowUsage}
                           onRetry={props.onRetryUsage ?? noop}
                           onRefresh={props.onRefreshUsage}
@@ -1321,9 +1326,11 @@ const ProjectRow = memo(function ProjectRow(props: {
   ) => void
 }) {
   const count = props.project.sessions.length
+  const projectPath = props.project.path
   const attention = useMemo(() => projectAttention(props.project), [props.project])
-  const [open, setOpen] = useState(props.active)
-  const [sessionsMounted, setSessionsMounted] = useState(props.active)
+  const [initiallyOpen] = useState(() => props.active || wasProjectOpen(projectPath))
+  const [open, setOpen] = useState(initiallyOpen)
+  const [sessionsMounted, setSessionsMounted] = useState(initiallyOpen)
   const [showAllSessions, setShowAllSessions] = useState(false)
   const [actionsReady, setActionsReady] = useState(false)
   const [renaming, setRenaming] = useState(false)
@@ -1331,7 +1338,7 @@ const ProjectRow = memo(function ProjectRow(props: {
   const contextMenuTarget = useRef<HTMLButtonElement>(null)
   const finishRename = useRenameFocusReturn(renaming, setRenaming, contextMenuTarget)
   const previousCount = useRef(count)
-  const openRef = useRef(props.active)
+  const openRef = useRef(initiallyOpen)
   const sessionUnmountTimer = useRef<number | undefined>(undefined)
   const expanded = open
   const folded = expanded ? undefined : attention
@@ -1351,6 +1358,7 @@ const ProjectRow = memo(function ProjectRow(props: {
     (next: boolean) => {
       if (next === openRef.current) return
       openRef.current = next
+      rememberProjectOpen(projectPath, next)
       cancelSessionUnmount()
       if (next) {
         setSessionsMounted(true)
@@ -1360,7 +1368,7 @@ const ProjectRow = memo(function ProjectRow(props: {
       setOpen(false)
       sessionUnmountTimer.current = window.setTimeout(finishSessionUnmount, RAIL_FOLD_MS)
     },
-    [cancelSessionUnmount, finishSessionUnmount],
+    [cancelSessionUnmount, finishSessionUnmount, projectPath],
   )
 
   useEffect(() => {

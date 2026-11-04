@@ -18,6 +18,7 @@ const expired = JSON.parse(
 ) as { status: CapturedRun; models: CapturedRun }
 
 const answered: CapturedRun = { code: 0, stdout: today, stderr: '' }
+const noPlan: CapturedRun = { code: 0, stdout: '{ "subscriptionTier": null }\n', stderr: '' }
 
 afterEach(() => {
   vi.useRealTimers()
@@ -26,13 +27,16 @@ afterEach(() => {
 
 /**
  * A cursor-agent whose `status` is the ambiguous "unable to fetch user
- * details" answer, so the sign-in check asks `models` as well.
+ * details" answer, so the sign-in check asks `models` as well. `about`, which
+ * the sign-in check starts beside `status` for the plan, names none.
  */
 function cursorAgent(models: () => Promise<CapturedRun>) {
   const calls: string[] = []
   const run = async (_command: string, args: string[], timeoutMs?: number) => {
     calls.push(`${args.join(' ')} ${timeoutMs}`)
-    return args[0] === 'status' ? expired.status : models()
+    if (args[0] === 'status') return expired.status
+    if (args[0] === 'about') return noPlan
+    return models()
   }
   return { run, calls }
 }
@@ -54,7 +58,7 @@ describe('shared Cursor model listing', () => {
 
     await expect(listing).resolves.toHaveLength(53)
     await expect(account).resolves.toEqual({ signedIn: true })
-    expect(calls).toEqual(['models 60000', 'status 30000'])
+    expect(calls).toEqual(['models 60000', 'status 30000', 'about --format json 30000'])
   })
 
   it('reuses an answered read for a minute and then reads again', async () => {

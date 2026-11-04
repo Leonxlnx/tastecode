@@ -156,7 +156,12 @@ import {
   type ProviderLoginTerminalTarget,
 } from '../provider-install.js'
 import type { Transport } from '../transport.js'
-import { rememberAccountRead, rememberedAccountReads } from '../provider-account-reads.js'
+import {
+  readAccount,
+  rememberAccountRead,
+  rememberedAccountReads,
+} from '../provider-account-reads.js'
+import { lastSignIn } from '../remembered-sign-in.js'
 import {
   fontFamilyFromPreference,
   fontFamilyStack,
@@ -387,6 +392,11 @@ function SettingsComponent(props: {
   modelErrors?: Readonly<Record<string, ComposerError>> | undefined
   /** Sources whose models are being listed right now. */
   pendingModelSources?: ReadonlySet<string> | undefined
+  /**
+   * Lists every provider's models. Asked for only while a page that shows
+   * them is open; listing starts each provider's CLI. Give it a stable identity.
+   */
+  onModelsWanted?: (() => void) | undefined
   hiddenModels: Set<string>
   onModelVisibilityChange: (key: string, visible: boolean) => void
   /** Several rows at once, as one change. */
@@ -437,6 +447,14 @@ function SettingsComponent(props: {
   useEffect(() => {
     setSection(props.initialSection ?? 'workflows')
   }, [props.initialSection, props.sectionRequest])
+
+  // Models and Providers show the model lists. Any other page, MCP servers
+  // included, must not wait behind every provider's CLI starting to list them.
+  const onModelsWanted = props.onModelsWanted
+  const showsModels = section === 'models' || section === 'providers'
+  useEffect(() => {
+    if (showsModels) onModelsWanted?.()
+  }, [showsModels, onModelsWanted])
 
   // A request for the provider picker opens it once. Leaving Providers drops
   // it, so coming back shows the providers rather than the picker again.
@@ -848,6 +866,10 @@ export function ProviderSettings(props: {
   const [agentBusy, setAgentBusy] = useState<string>()
   const [authStates, setAuthStates] = useState<ProviderMap<AuthReadState>>(() => {
     const states: ProviderMap<AuthReadState> = {}
+    for (const status of props.providerStatuses) {
+      const kept = status.installed ? keptSignIn(status.id) : undefined
+      if (kept) states[status.id] = { phase: 'ready', account: kept }
+    }
     for (const [key, account] of rememberedAccountReads(props.transport)) {
       if (rosterAgent(key) === undefined) states[key as ProviderId] = { phase: 'ready', account }
     }
@@ -907,19 +929,28 @@ export function ProviderSettings(props: {
     async (provider: ProviderId, forceLoading = false) => {
       const request = { id: ++sequence.current, transport: props.transport }
       statusRequests.current = { ...statusRequests.current, [provider]: request }
-      setAuthStates((current) =>
-        !forceLoading && current[provider]?.phase === 'ready'
-          ? current
-          : { ...current, [provider]: { phase: 'loading' } },
-      )
+      setAuthStates((current) => {
+        if (!forceLoading && current[provider]?.phase === 'ready') return current
+        // A row read for the first time this run opens on what the last read said.
+        const kept = !forceLoading && !current[provider] ? keptSignIn(provider) : undefined
+        return {
+          ...current,
+          [provider]: kept ? { phase: 'ready', account: kept } : { phase: 'loading' },
+        }
+      })
       try {
-        const account = await props.transport.request('auth.status', { provider })
+        // Joins a read a closed visit left running; kept for the next visit either way.
+        const account = await readAccount(
+          request.transport,
+          provider,
+          () => request.transport.request('auth.status', { provider }),
+          { fresh: forceLoading, revision: props.authRefreshRevision ?? 0 },
+        )
         if (
           statusRequests.current[provider] !== request ||
           currentTransport.current !== request.transport
         )
           return
-        rememberAccountRead(request.transport, provider, account)
         setAuthStates((current) => ({
           ...current,
           [provider]: { phase: 'ready', account },
@@ -946,7 +977,7 @@ export function ProviderSettings(props: {
         })
       }
     },
-    [props.transport, props.onAccountChange],
+    [props.transport, props.onAccountChange, props.authRefreshRevision],
   )
 
   const authProviderIds = props.providerStatuses
@@ -1009,13 +1040,14 @@ export function ProviderSettings(props: {
   }, [props.transport])
 
   const refreshAgentAccount = useCallback(
-    async (agentId: string) => {
+    async (agentId: string, fresh = false) => {
       try {
-        const account = await props.transport.request('auth.status', {
-          provider: 'acp',
-          agent: agentId,
-        })
-        rememberAccountRead(props.transport, agentRosterKey(agentId), account)
+        const account = await readAccount(
+          props.transport,
+          agentRosterKey(agentId),
+          () => props.transport.request('auth.status', { provider: 'acp', agent: agentId }),
+          { fresh },
+        )
         setAgentAccounts((current) => ({ ...current, [agentId]: account }))
         setAgentAccountErrors((current) => ({ ...current, [agentId]: '' }))
       } catch (cause) {
@@ -1313,7 +1345,7 @@ export function ProviderSettings(props: {
           mark={mark}
           target={{ provider: 'acp', agent: agent.id }}
           transport={props.transport}
-          onSignedIn={() => void refreshAgentAccount(agent.id)}
+          onSignedIn={() => void refreshAgentAccount(agent.id, true)}
           onOpenExpandedTerminal={props.onProviderLoginTerminalOpen}
         />
       )
@@ -3355,6 +3387,16 @@ function ProviderTerminal(props: { transport: Transport; installKey: string }) {
  */
 function providerEmailKey(provider: ProviderId): string {
   return `harness.providerEmail.${provider}`
+}
+
+/**
+ * Whether the last read of a provider's default account, in this run or an
+ * earlier one, said signed in (remembered-sign-in.ts). A row opens on it while
+ * its account is read again; the saved email names who, as after any read.
+ */
+function keptSignIn(provider: ProviderId): Account | undefined {
+  const signedIn = lastSignIn(provider)
+  return signedIn === undefined ? undefined : { signedIn }
 }
 
 function AccountIdentity(props: { provider: ProviderId; account: Account }) {

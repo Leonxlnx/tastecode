@@ -1,4 +1,5 @@
 import { captureCli, spawnCli } from '@harness/proc/cli'
+import { ownershipRefusal } from './git-ownership.js'
 
 const HEADS = 'refs/heads/'
 const READ_TIMEOUT_MS = 10_000
@@ -53,7 +54,7 @@ export async function commitCheckout(
   git: GitCommand = runGitCommand,
 ): Promise<{ commit: string; branch?: string }> {
   const prefix = await git(cwd, ['rev-parse', '--show-prefix'])
-  if (prefix.code !== 0) throw new Error('This folder is not a git checkout.')
+  if (prefix.code !== 0) throw notACheckout(cwd, prefix)
   // A path-limited commit is refused during a merge, so the repository root
   // commits without one.
   const scope = prefix.stdout.trim() ? ['--', '.'] : []
@@ -108,7 +109,7 @@ export async function pushCheckout(
   git: GitCommand = runGitCommand,
 ): Promise<{ branch: string; remote: string }> {
   const head = await git(cwd, ['symbolic-ref', '--quiet', 'HEAD'])
-  if (head.code === 128 || head.code === -1) throw new Error('This folder is not a git checkout.')
+  if (head.code === 128 || head.code === -1) throw notACheckout(cwd, head)
   const ref = head.stdout.trim()
   const branch = branchOf(head)
   if (!branch) throw new Error('Check out a branch before pushing.')
@@ -157,6 +158,11 @@ export async function pushCheckout(
     throw gitError(pushed, 'Git could not push the branch.')
   }
   return { branch, remote }
+}
+
+/** Git refuses another user's repository with the same exit as a folder that is none. */
+function notACheckout(cwd: string, result: GitCommandResult): Error {
+  return ownershipRefusal(cwd, result.stderr) ?? new Error('This folder is not a git checkout.')
 }
 
 function branchOf(result: GitCommandResult): string | undefined {

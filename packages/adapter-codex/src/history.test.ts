@@ -945,6 +945,62 @@ describe('native Codex history', () => {
     ])
   })
 
+  it("reads a review as the one turn it ran in, without the reviewer's turn or messages", async () => {
+    // codex-cli 0.166.0's rollout of an inline /review: the reviewer's turn starts inside
+    // the review turn and never ends, and its prompt and the review handed back to the
+    // model are messages of their own.
+    const review = '01a1a489-9d1d-7c53-8998-4f58dcc550c7'
+    const reviewer = '01a1a48a-599f-7510-a828-7657da72f6a9'
+    const rollout = await readFile(
+      new URL('./fixtures/review-rollout-codex-0.166.jsonl', import.meta.url),
+      'utf8',
+    )
+    const { source } = await store(
+      rollout
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as unknown),
+    )
+    const session = (await source.list())[0]!
+    const turnIds = (events: DomainEvent[]) =>
+      new Set(
+        events.flatMap((entry) =>
+          entry.type === 'turn.started'
+            ? [entry.turn.id]
+            : entry.type === 'item.completed'
+              ? [entry.item.turnId]
+              : 'turnId' in entry
+                ? [entry.turnId]
+                : [],
+        ),
+      )
+
+    const events = await source.read(session)
+    expect(turnIds(events)).toEqual(new Set([review]))
+    expect(events.filter((entry) => entry.type === 'turn.completed')).toEqual([
+      expect.objectContaining({ turnId: review, status: 'completed' }),
+    ])
+    expect(items(events).filter((item) => item.type === 'message')).toEqual([
+      expect.objectContaining({
+        role: 'assistant',
+        text: expect.stringContaining('[P1] Preserve the empty-list result'),
+      }),
+    ])
+    expect(items(events).map((item) => item.command)).toContainEqual(
+      expect.stringContaining('git status --short'),
+    )
+
+    // The chat that ran the review has that turn; nothing else is left to import, and the
+    // review's own records are skipped without being parsed.
+    const parse = vi.spyOn(JSON, 'parse')
+    const skipped = await source.read(session, { localTurnIds: new Set([review]) })
+    const parsed = parse.mock.calls.map(([text]) => String(text))
+    parse.mockRestore()
+    expect([...turnIds(skipped)].filter((id) => id !== review)).toEqual([])
+    expect(turnIds(skipped)).not.toContain(reviewer)
+    expect(parsed.some((text) => text.includes('<user_action>'))).toBe(false)
+  })
+
   it('keeps late native activities in their completed turn without duplicating the turn', async () => {
     const { source } = await store([
       event({ type: 'task_started', turn_id: 'turn-one' }),

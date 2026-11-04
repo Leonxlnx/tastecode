@@ -28,8 +28,9 @@ import {
   prepareBackgroundImage,
   type BackgroundImageStore,
 } from '../app-background-image.js'
-import { effectPatternStyle, type EffectPatternStyle } from '../app-background-patterns.js'
+import { effectPattern, type EffectPatternStyle } from '../app-background-patterns.js'
 import { isDesktop, type WindowMaterial } from '../bridge.js'
+import { AppBackgroundMotion } from './AppBackgroundMotion.js'
 import { SettingsRow, SettingsSection } from './settings/SettingsLayout.js'
 import { SettingsSegmented } from './settings/SettingsSegmented.js'
 import '../styles/app-background-settings.css'
@@ -44,8 +45,6 @@ const MODE_OPTIONS = [
 const EFFECT_OPTIONS = [
   { value: 'dither', label: 'Dither' },
   { value: 'halftone', label: 'Halftone' },
-  { value: 'dots', label: 'Dot grid' },
-  { value: 'grain', label: 'Grain' },
 ] as const satisfies ReadonlyArray<{ value: AppBackgroundEffect; label: string }>
 
 const MATERIAL_OPTIONS = [
@@ -130,12 +129,10 @@ export function AppBackgroundSettings(props: {
       ) : null}
       {background.mode === 'image' && background.image !== undefined ? (
         <>
-          <SettingsRow name="Preview">
-            <BackgroundImagePreview
-              background={background}
-              images={props.images ?? indexedDbBackgroundImages}
-            />
-          </SettingsRow>
+          <BackgroundPreview
+            background={background}
+            images={props.images ?? indexedDbBackgroundImages}
+          />
           <LevelRow
             name="Dim"
             value={background.dim}
@@ -162,9 +159,10 @@ export function AppBackgroundSettings(props: {
               }}
             />
           </SettingsRow>
-          <SettingsRow name="Preview">
-            <BackgroundEffectPreview background={background} />
-          </SettingsRow>
+          <BackgroundPreview
+            background={background}
+            images={props.images ?? indexedDbBackgroundImages}
+          />
           <LevelRow
             name="Dim"
             value={background.dim}
@@ -203,63 +201,121 @@ function LevelRow(props: {
   )
 }
 
-/** Width of the preview, in CSS pixels; the blur is scaled down to it. */
-const PREVIEW_WIDTH = 176
+/**
+ * The window the preview stands for, in CSS pixels; the preview draws it at
+ * whatever width Settings gives it (half of it at most), and the effects,
+ * the blur and the miniature panes all shrink by the same factor
+ * (app-background-settings.css builds its --u from the same number).
+ */
+const PREVIEW_WINDOW_WIDTH = 1120
 
-type PreviewStyle = CSSProperties & {
-  '--app-bg-image'?: string
-  '--app-bg-dim'?: string
-  '--app-bg-preview-blur'?: string
+type PreviewStyle = CSSProperties &
+  EffectPatternStyle & {
+    '--app-bg-image'?: string
+    '--app-bg-dim'?: string
+    '--app-bg-preview-blur'?: string
+  }
+
+/** `px` CSS pixels of the full-size window, at the preview's width. */
+function previewLength(px: number): string {
+  return `calc(${px} * 100cqw / ${PREVIEW_WINDOW_WIDTH})`
 }
 
 /**
- * The picture as the window will show it, drawn small from the stored
- * original: the blur scaled from the display copy to this width and the same
- * dim over it. Both follow the sliders on every step; the CSS blur here
- * covers a thumbnail, never the window.
+ * The whole window in miniature over the chosen background: the title bar,
+ * the sidebar, a chat and the prompt bar, painted in the theme's own colours
+ * and panes exactly as the window paints them, so the picture or effect, Dim,
+ * Blur and the colours show together. A picture is drawn from the stored
+ * original, its blur scaled from the display copy to this width, so the
+ * sliders show on every step; the CSS blur covers this preview, never the
+ * window. An effect moves here as it does in the window, on the same clock.
  */
-function BackgroundImagePreview(props: {
-  background: AppBackground
-  images: BackgroundImageStore
-}) {
-  const { image, dim, blur } = props.background
-  const url = useOriginalImageUrl(image, props.images)
-  const style: PreviewStyle = {
-    '--app-bg-dim': dimFactor(dim),
-    '--app-bg-preview-blur': `${((blur * PREVIEW_WIDTH) / DISPLAY_IMAGE_EDGE).toFixed(2)}px`,
+function BackgroundPreview(props: { background: AppBackground; images: BackgroundImageStore }) {
+  const { mode, effect, image, dim, blur } = props.background
+  const url = useOriginalImageUrl(mode === 'image' ? image : undefined, props.images)
+  const [moving, setMoving] = useState(false)
+  const style: PreviewStyle = { '--app-bg-dim': dimFactor(dim) }
+  if (mode === 'image') {
+    style['--app-bg-preview-blur'] = `calc(${blur} * 100cqw / ${DISPLAY_IMAGE_EDGE})`
+    if (url) style['--app-bg-image'] = `url("${url}")`
+  } else if (mode === 'effect') {
+    const pattern = effectPattern(effect)
+    style['--app-bg-pattern'] = pattern.image
+    style['--app-bg-pattern-size'] =
+      `${previewLength(pattern.width)} ${previewLength(pattern.height)}`
   }
-  if (url) style['--app-bg-image'] = `url("${url}")`
   return (
     <div
-      className="app-bg app-bg--preview"
-      data-mode="image"
-      data-ready={url ? '' : undefined}
+      className="app-bg-preview"
       style={style}
       role="img"
       aria-label="Preview of the window background"
-    />
+    >
+      <div
+        className="app-bg"
+        data-mode={mode}
+        data-effect={mode === 'effect' ? effect : undefined}
+        data-motion={mode === 'effect' && moving ? '' : undefined}
+        data-ready={url ? '' : undefined}
+      >
+        {mode === 'effect' ? (
+          <AppBackgroundMotion
+            effect={effect}
+            windowWidth={PREVIEW_WINDOW_WIDTH}
+            onDrawing={setMoving}
+          />
+        ) : null}
+      </div>
+      <PreviewWindow />
+    </div>
   )
 }
 
-/**
- * The effect as the window shows it, at its real size: the top-left corner
- * of the window, where the patterns are densest.
- */
-function BackgroundEffectPreview(props: { background: AppBackground }) {
-  const { effect, dim } = props.background
-  const style: CSSProperties & EffectPatternStyle & { '--app-bg-dim'?: string } = {
-    '--app-bg-dim': dimFactor(dim),
-    ...effectPatternStyle(effect),
-  }
+type BarStyle = CSSProperties & { '--w': string }
+
+/** A line of text in the miniature, `width` of its column. */
+function bar(width: string): BarStyle {
+  return { '--w': width }
+}
+
+/** The panes of the miniature window; nothing in it is text or can be focused. */
+function PreviewWindow() {
   return (
-    <div
-      className="app-bg app-bg--preview"
-      data-mode="effect"
-      data-effect={effect}
-      style={style}
-      role="img"
-      aria-label="Preview of the window background"
-    />
+    <div className="app-bg-preview__window" aria-hidden>
+      <span className="app-bg-preview__titlebar" />
+      <span className="app-bg-preview__rail">
+        <i data-new style={bar('46%')} />
+        <i data-label style={bar('24%')} />
+        <i style={bar('64%')} />
+        <i data-active style={bar('52%')} />
+        <i style={bar('72%')} />
+        <i style={bar('44%')} />
+        <i style={bar('58%')} />
+        <i style={bar('38%')} />
+      </span>
+      <span className="app-bg-preview__notch" />
+      <span className="app-bg-preview__stage">
+        <i className="app-bg-preview__title" />
+        <span className="app-bg-preview__chat">
+          <i data-you style={bar('62%')} />
+          <i style={bar('96%')} />
+          <i style={bar('90%')} />
+          <i style={bar('58%')} />
+          <span className="app-bg-preview__code">
+            <i style={bar('34%')} />
+            <i data-accent style={bar('52%')} />
+            <i style={bar('28%')} />
+          </span>
+          <i data-file style={bar('84%')} />
+          <i style={bar('46%')} />
+        </span>
+        <span className="app-bg-preview__prompt">
+          <i style={bar('34%')} />
+          <i data-chip style={bar('11%')} />
+          <b />
+        </span>
+      </span>
+    </div>
   )
 }
 

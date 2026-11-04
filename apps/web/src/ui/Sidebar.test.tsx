@@ -45,6 +45,7 @@ class TestMediaQueryList extends EventTarget implements MediaQueryList {
 afterEach(() => {
   vi.useRealTimers()
   cleanup()
+  localStorage.removeItem('harness.openProjects')
   vi.unstubAllGlobals()
   performHaptic.mockClear()
   prepareHaptics.mockClear()
@@ -554,6 +555,28 @@ describe('Sidebar chat actions', () => {
     fireEvent.click(projectButton)
     expect(projectButton.getAttribute('aria-expanded')).toBe('false')
     expect(onClose).not.toHaveBeenCalled()
+  })
+
+  it('keeps the projects the user opened open after a reload', () => {
+    const projects = [
+      { path: 'C:/work/alpha', name: 'Alpha', sessions: [] as [] },
+      { path: 'C:/work/beta', name: 'Beta', sessions: [] as [] },
+    ]
+    const first = renderProjectCatalog(projects)
+    fireEvent.click(screen.getByRole('button', { name: 'Beta' }))
+    expect(screen.getByRole('button', { name: 'Beta' }).getAttribute('aria-expanded')).toBe('true')
+    first.unmount()
+
+    const second = renderProjectCatalog(projects)
+    expect(screen.getByRole('button', { name: 'Beta' }).getAttribute('aria-expanded')).toBe('true')
+    expect(screen.getByRole('button', { name: 'Alpha' }).getAttribute('aria-expanded')).toBe(
+      'false',
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Beta' }))
+    second.unmount()
+
+    renderProjectCatalog(projects)
+    expect(screen.getByRole('button', { name: 'Beta' }).getAttribute('aria-expanded')).toBe('false')
   })
 
   it('uses the latest project action after its owner callback changes', () => {

@@ -750,7 +750,9 @@ export function Onboarding(props: {
                     aria-label="Sub-agents on other providers"
                   >
                     {SUBAGENT_CHOICES.map((choice) => {
-                      const selected = otherProviders === choice.allowed
+                      // Unanswered counts as not allowed, so that choice shows as the one in
+                      // effect; nothing is stored until the user picks.
+                      const selected = (otherProviders ?? false) === choice.allowed
                       return (
                         <li
                           className="onboarding__pick-row"
@@ -765,7 +767,6 @@ export function Onboarding(props: {
                               checked={selected}
                               onChange={() => void chooseSubagents(choice.allowed)}
                             />
-                            <span className="onboarding__pick-mark" aria-hidden />
                             <span className="onboarding__pick-name">{choice.label}</span>
                             <span className="onboarding__pick-wire" aria-hidden />
                             <span className="onboarding__pick-state">{choice.note}</span>

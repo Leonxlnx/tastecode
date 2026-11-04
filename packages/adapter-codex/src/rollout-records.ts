@@ -1,4 +1,5 @@
 import { createReadStream } from 'node:fs'
+import { innerRoot } from './history-transcript.js'
 import { object } from './history-values.js'
 
 type JsonObject = Record<string, unknown>
@@ -76,15 +77,21 @@ function currentTurn(localTurnIds: ReadonlySet<string> | undefined) {
   let current: string | undefined
   const seen = new Set<string>()
   const ended = new Set<string>()
+  /** Turns that run inside another, by that root turn, as the parser joins them. */
+  const roots = new Map<string, string>()
   return {
     isLocal: () =>
       current !== undefined && localTurnIds?.has(current) === true && !ended.has(current),
     observe(record: JsonObject): void {
       const payload = object(record.payload)
-      const turnId = typeof payload.turn_id === 'string' ? payload.turn_id : undefined
       const event = record.type === 'event_msg' ? String(payload.type) : undefined
       const start = record.type === 'turn_context' || event === 'task_started'
       const end = event !== undefined && TURN_ENDS.has(event)
+      const root = start ? innerRoot(payload) : undefined
+      if (root) roots.set(String(payload.turn_id), root)
+      const own = typeof payload.turn_id === 'string' ? payload.turn_id : undefined
+      if (end && own && roots.has(own)) return
+      const turnId = own === undefined ? undefined : (roots.get(own) ?? own)
       if (start || end || event === 'item_completed') {
         // A late item or end of an earlier turn does not make that turn current again.
         if (turnId && (start || !seen.has(turnId))) current = turnId

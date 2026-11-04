@@ -420,6 +420,44 @@ describe('Grok native history', () => {
     expect(events.at(-1)).toMatchObject({ type: 'turn.completed', status: 'interrupted' })
   })
 
+  it('keeps each turn although every grok process numbers its events from the start', async () => {
+    const { source, directory } = await fixture()
+    // Captured from grok 1.0.x print mode: each turn is a new process, whose
+    // event ids start again at `<session>-2`.
+    const event = (id: number, ...values: Parameters<typeof update>) => {
+      const row = update(...values)
+      return {
+        ...row,
+        params: { ...row.params, _meta: { ...row.params._meta, eventId: `saved-session-${id}` } },
+      }
+    }
+    const turn = (tick: number, prompt: string, answer: string, promptId: string) => [
+      event(2, 'background_tasks', {}, tick),
+      event(4, 'user_message_chunk', { content: { type: 'text', text: prompt } }, tick + 1),
+      event(
+        9,
+        'agent_message_chunk',
+        { content: { type: 'text', text: answer } },
+        tick + 2,
+        promptId,
+      ),
+      event(10, 'turn_completed', { prompt_id: promptId, stop_reason: 'end_turn' }, tick + 3),
+    ]
+    await save(directory, 'updates.jsonl', [
+      ...turn(1, 'Page phase', '{"version":1}', 'page'),
+      ...turn(5, 'Review phase', '{"version":1,"verdict":"pass"}', 'review'),
+    ])
+    const [session] = await source.list()
+    expect(
+      items(await source.read(session!)).map(({ turnId, role, text }) => [turnId, role, text]),
+    ).toEqual([
+      ['page', 'user', 'Page phase'],
+      ['page', 'assistant', '{"version":1}'],
+      ['review', 'user', 'Review phase'],
+      ['review', 'assistant', '{"version":1,"verdict":"pass"}'],
+    ])
+  })
+
   it('keeps tool input and late background output on the original tool item', async () => {
     const { source, directory } = await fixture()
     await save(directory, 'updates.jsonl', [

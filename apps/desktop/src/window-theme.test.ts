@@ -49,10 +49,27 @@ describe('window chrome', () => {
     expect(windowChromeOptions(clear).titleBarOverlay.color).toBe('#00000000')
   })
 
+  it('carries see-through only while it is on, so opaque chrome reads as before', () => {
+    expect(parseWindowChrome({ ...slate, seeThrough: true })).toEqual({
+      ...slate,
+      seeThrough: true,
+    })
+    expect(parseWindowChrome({ ...slate, seeThrough: false })).toEqual(slate)
+    expect(parseWindowChrome({ ...slate, seeThrough: false })).not.toHaveProperty('seeThrough')
+    expect(parseWindowChrome(slate)).not.toHaveProperty('seeThrough')
+    // The opaque colour stays known, for when Transparent is turned off.
+    expect(windowChromeOptions(parseWindowChrome({ ...slate, seeThrough: true }))).toMatchObject({
+      backgroundColor: '#f8fafc',
+    })
+  })
+
   it.each([
     undefined,
     'light',
     [],
+    { ...slate, seeThrough: 'yes' },
+    { ...slate, seeThrough: 1 },
+    { ...slate, seeThrough: null },
     { ...slate, theme: 'system' },
     { ...slate, caption: 'red' },
     { ...slate, caption: '#fff' },
@@ -74,6 +91,9 @@ describe('window chrome', () => {
       saveWindowChrome(file, parseWindowChrome(slate))
       expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual(slate)
       expect(loadWindowChrome(file)).toEqual(slate)
+      // A window that showed the desktop through it reopens that way.
+      saveWindowChrome(file, parseWindowChrome({ ...slate, seeThrough: true }))
+      expect(loadWindowChrome(file)).toEqual({ ...slate, seeThrough: true })
       writeFileSync(file, '{"theme":"light","caption":"javascript:alert(1)"}')
       expect(loadWindowChrome(file)).toBeUndefined()
     } finally {

@@ -83,6 +83,35 @@ describe('window background preference', () => {
     expect(localStorage.getItem(APP_BACKGROUND_EFFECT_KEY)).toBe('dither')
   })
 
+  it.each(['dots', 'grain'])('turns a stored %s, which was dropped, back into None', (dropped) => {
+    localStorage.setItem(APP_BACKGROUND_KEY, 'effect')
+    localStorage.setItem(APP_BACKGROUND_EFFECT_KEY, dropped)
+    expect(readAppBackground()).toMatchObject({ mode: 'none', effect: 'dither' })
+    expect(localStorage.getItem(APP_BACKGROUND_KEY)).toBe('none')
+    expect(localStorage.getItem(APP_BACKGROUND_EFFECT_KEY)).toBeNull()
+    // Picking Effect again starts from the default effect.
+    writeAppBackground({ mode: 'effect' })
+    expect(readAppBackground()).toMatchObject({ mode: 'effect', effect: 'dither' })
+  })
+
+  it('keeps a picture when the effect stored beside it was dropped', () => {
+    localStorage.setItem(APP_BACKGROUND_KEY, 'image')
+    localStorage.setItem(APP_BACKGROUND_EFFECT_KEY, 'grain')
+    localStorage.setItem(APP_BACKGROUND_IMAGE_KEY, 'rev-1')
+    expect(readAppBackground()).toMatchObject({ mode: 'image', effect: 'dither', image: 'rev-1' })
+    expect(localStorage.getItem(APP_BACKGROUND_KEY)).toBe('image')
+    expect(localStorage.getItem(APP_BACKGROUND_EFFECT_KEY)).toBeNull()
+  })
+
+  it('parses a dropped effect as None without touching storage', () => {
+    expect(
+      parseAppBackground({ mode: 'effect', effect: 'dots', material: null, image: null }),
+    ).toMatchObject({ mode: 'none', effect: 'dither' })
+    expect(
+      parseAppBackground({ mode: 'image', effect: 'grain', material: null, image: null }),
+    ).toMatchObject({ mode: 'image', effect: 'dither' })
+  })
+
   it('keeps one snapshot until a write, then persists only what changed and notifies', () => {
     const first = readAppBackground()
     expect(readAppBackground()).toBe(first)
@@ -136,8 +165,8 @@ describe('window background preference', () => {
       throw new DOMException('blocked', 'SecurityError')
     })
     expect(readAppBackground().mode).toBe('none')
-    writeAppBackground({ mode: 'effect', effect: 'grain' })
-    expect(readAppBackground()).toMatchObject({ mode: 'effect', effect: 'grain' })
+    writeAppBackground({ mode: 'effect', effect: 'halftone' })
+    expect(readAppBackground()).toMatchObject({ mode: 'effect', effect: 'halftone' })
     resetAppBackgroundForTests()
     // The session copy is gone with the reset, the way a reload would lose it.
     expect(readAppBackground().mode).toBe('none')

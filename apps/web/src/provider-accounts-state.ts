@@ -10,17 +10,74 @@ import {
 import { errorMessage } from './boundary.js'
 import type { Transport } from './transport.js'
 
+/** An account per provider, such as the one new chats start on. */
+type AccountChoices = Partial<Record<ProviderId, AccountId>>
+type AccountMap = Readonly<AccountChoices>
+
 export type ProviderAccountsSnapshot = {
   /** `idle` until a view asks; `ready` once one list answered. */
   phase: 'idle' | 'loading' | 'ready' | 'error'
   accounts: readonly ProviderAccount[]
   /** The account a new chat with each provider starts on. Absent means `default`. */
-  active: Readonly<Partial<Record<ProviderId, AccountId>>>
+  active: AccountMap
+  /**
+   * Providers whose new chats start on the account their limits recommend
+   * (account-pool.ts), because the user has not picked one; `active` holds
+   * it too. A new chat names this account when it starts.
+   */
+  preselected?: AccountMap
+  /**
+   * Providers whose account for new chats the user picked: picked in this
+   * app, or a further account the server keeps active. A new chat names it,
+   * so the server's own recommendation does not replace the pick.
+   */
+  picked?: AccountMap
   error?: string
+}
+
+/**
+ * The account a new chat names in `thread.start`: a recommendation standing
+ * in, or the user's pick. Undefined leaves the choice to the server, which
+ * starts the chat on its recommended account, else on its active one.
+ */
+export function namedNewChatAccount(
+  snapshot: ProviderAccountsSnapshot,
+  provider: ProviderId,
+): AccountId | undefined {
+  return snapshot.preselected?.[provider] ?? snapshot.picked?.[provider]
 }
 
 const EMPTY: ProviderAccountsSnapshot = { phase: 'idle', accounts: [], active: {} }
 const stores = new WeakMap<Transport, ProviderAccountsStore>()
+
+/** The providers whose account for new chats the user picked; theirs is never preselected. */
+export const ACCOUNT_CHOSEN_KEY = 'harness.newChatAccountChosen'
+
+function readChosen(): Set<ProviderId> {
+  try {
+    const parsed: unknown = JSON.parse(localStorage.getItem(ACCOUNT_CHOSEN_KEY) ?? '[]')
+    return new Set(
+      Array.isArray(parsed)
+        ? parsed.filter((each): each is ProviderId => typeof each === 'string')
+        : [],
+    )
+  } catch {
+    return new Set()
+  }
+}
+
+function writeChosen(chosen: ReadonlySet<ProviderId>): void {
+  try {
+    localStorage.setItem(ACCOUNT_CHOSEN_KEY, JSON.stringify([...chosen].sort()))
+  } catch {
+    // Kept for this session only; the server still keeps the active account.
+  }
+}
+
+function sameAccounts(left: AccountMap, right: AccountMap): boolean {
+  const keys = Object.keys(left) as ProviderId[]
+  return keys.length === Object.keys(right).length && keys.every((key) => left[key] === right[key])
+}
 
 /** A server from before accounts answers this; it runs every provider as its default account. */
 function unknownMethod(error: unknown): boolean {
@@ -37,6 +94,12 @@ export class ProviderAccountsStore {
   readonly #transport: Transport
   readonly #listeners = new Set<() => void>()
   #state: ProviderAccountsSnapshot = EMPTY
+  /** The active accounts as the server keeps them, with a local choice shown at once. */
+  #kept: AccountMap = {}
+  /** What the limits recommend for new chats, per provider with several accounts. */
+  #recommended: AccountMap = {}
+  /** Providers whose account for new chats the user picked in this app. */
+  readonly #chosen: Set<ProviderId>
   #users = 0
   #detach: (() => void) | undefined
   #reading = false
@@ -46,6 +109,7 @@ export class ProviderAccountsStore {
 
   constructor(transport: Transport) {
     this.#transport = transport
+    this.#chosen = readChosen()
   }
 
   snapshot = (): ProviderAccountsSnapshot => this.#state
@@ -94,7 +158,7 @@ export class ProviderAccountsStore {
       (listed) => {
         const accounts = Array.isArray(listed?.accounts) ? listed.accounts : []
         // A choice made while this read ran is newer than its answer.
-        const active = choice === this.#choice ? (listed?.active ?? {}) : this.#state.active
+        const active = choice === this.#choice ? (listed?.active ?? {}) : this.#kept
         this.#set({ phase: 'ready', accounts, active })
         this.#settle()
       },
@@ -104,6 +168,7 @@ export class ProviderAccountsStore {
             ? { phase: 'ready', accounts: [], active: {} }
             : {
                 ...this.#state,
+                active: this.#kept,
                 phase: this.#state.phase === 'ready' ? 'ready' : 'error',
                 error: errorMessage(error, 'Accounts could not be loaded.'),
               },
@@ -146,10 +211,18 @@ export class ProviderAccountsStore {
     }
   }
 
-  /** Shown at once; a refused choice falls back to what the server keeps. */
+  /**
+   * The user's own pick of the account new chats start on. Shown at once; a
+   * refused choice falls back to what the server keeps. From then on the
+   * provider's recommended account no longer stands in for it.
+   */
   async setActive(provider: ProviderId, accountId: AccountId): Promise<void> {
     this.#choice += 1
-    this.#set({ ...this.#state, active: { ...this.#state.active, [provider]: accountId } })
+    if (!this.#chosen.has(provider)) {
+      this.#chosen.add(provider)
+      writeChosen(this.#chosen)
+    }
+    this.#set({ ...this.#state, active: { ...this.#kept, [provider]: accountId } })
     try {
       await this.#transport.request('accounts.setActive', { provider, accountId })
     } catch (error) {
@@ -159,13 +232,74 @@ export class ProviderAccountsStore {
     }
   }
 
+  /**
+   * The accounts the limits recommend for new chats (`recommendedAccounts`).
+   * Each stands in for its provider's active account until the user picks
+   * one; nothing is sent to the server, and a new chat names the account
+   * when it starts. Unchanged recommendations notify no one.
+   */
+  recommend(recommended: AccountMap): void {
+    if (sameAccounts(recommended, this.#recommended)) return
+    this.#recommended = { ...recommended }
+    const next = this.#withRecommendations({ ...this.#state, active: this.#kept })
+    if (
+      sameAccounts(next.active, this.#state.active) &&
+      sameAccounts(next.preselected ?? {}, this.#state.preselected ?? {})
+    ) {
+      return
+    }
+    this.#state = next
+    this.#notify()
+  }
+
   #settle(): void {
     this.#reading = false
     if (this.#again) this.refresh()
   }
 
+  /** `state.active` is what the server keeps; the snapshot adds the recommendations. */
   #set(state: ProviderAccountsSnapshot): void {
-    this.#state = state
+    this.#kept = state.active
+    this.#state = this.#withRecommendations(state)
+    this.#notify()
+  }
+
+  /**
+   * A recommendation stands in only where the user picked no account: a
+   * further account active on the server was someone's choice, and so is
+   * one picked here, the default account included.
+   */
+  #withRecommendations(state: ProviderAccountsSnapshot): ProviderAccountsSnapshot {
+    const rest = { ...state }
+    delete rest.preselected
+    delete rest.picked
+    const active = { ...state.active }
+    const preselected: AccountChoices = {}
+    const picked: AccountChoices = {}
+    const providers = new Set([...(Object.keys(state.active) as ProviderId[]), ...this.#chosen])
+    for (const provider of providers) {
+      const kept = state.active[provider] ?? DEFAULT_ACCOUNT_ID
+      if (kept !== DEFAULT_ACCOUNT_ID || this.#chosen.has(provider)) picked[provider] = kept
+    }
+    for (const provider of Object.keys(this.#recommended) as ProviderId[]) {
+      const recommended = this.#recommended[provider]
+      if (recommended === undefined || picked[provider] !== undefined) continue
+      const listed = state.accounts.some(
+        (account) => account.provider === provider && account.id === recommended,
+      )
+      if (!listed) continue
+      active[provider] = recommended
+      preselected[provider] = recommended
+    }
+    return {
+      ...rest,
+      active: Object.keys(preselected).length > 0 ? active : state.active,
+      ...(Object.keys(preselected).length > 0 ? { preselected } : {}),
+      ...(Object.keys(picked).length > 0 ? { picked } : {}),
+    }
+  }
+
+  #notify(): void {
     for (const listener of this.#listeners) listener()
   }
 }

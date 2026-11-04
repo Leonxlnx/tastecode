@@ -15,10 +15,10 @@ const AppBackgroundLayer = lazy(() =>
 /**
  * Settings › Appearance › Window background, applied to the window. With
  * None (the default) it renders nothing, loads nothing and asks the desktop
- * shell nothing. Memoised without props, so the shell re-rendering on a
- * streamed delta never reaches it.
+ * shell nothing. Memoised with one rarely changing prop, so the shell re-rendering
+ * on a streamed delta never reaches it. `covered`: Settings is open over the window.
  */
-export const AppBackground = memo(function AppBackground() {
+export const AppBackground = memo(function AppBackground(props: { covered?: boolean | undefined }) {
   const background = useSyncExternalStore(
     subscribeAppBackground,
     readAppBackground,
@@ -40,7 +40,7 @@ export const AppBackground = memo(function AppBackground() {
   if (transparent && (support === undefined || support === 'none')) return null
   return (
     <Suspense fallback={null}>
-      <AppBackgroundLayer background={background} />
+      <AppBackgroundLayer background={background} covered={props.covered} />
     </Suspense>
   )
 })

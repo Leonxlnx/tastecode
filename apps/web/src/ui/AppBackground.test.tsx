@@ -53,11 +53,12 @@ describe('AppBackground in the browser shell', () => {
     act(() => writeAppBackground({ dim: 75 }))
     expect(layer.style.getPropertyValue('--app-bg-dim')).toBe('1.5')
 
-    act(() => writeAppBackground({ effect: 'grain' }))
-    expect(layer.dataset['effect']).toBe('grain')
-    expect(root()['appBgEffect']).toBe('grain')
-    // Grain is painted by the stylesheet alone.
-    expect(layer.style.getPropertyValue('--app-bg-pattern')).toBe('')
+    const halftone = layer.style.getPropertyValue('--app-bg-pattern')
+    act(() => writeAppBackground({ effect: 'dither' }))
+    expect(layer.dataset['effect']).toBe('dither')
+    expect(root()['appBgEffect']).toBe('dither')
+    expect(layer.style.getPropertyValue('--app-bg-pattern')).toMatch(/^url\("data:image\/svg/)
+    expect(layer.style.getPropertyValue('--app-bg-pattern')).not.toBe(halftone)
 
     act(() => writeAppBackground({ mode: 'none' }))
     expect(container.querySelector('.app-bg')).toBeNull()

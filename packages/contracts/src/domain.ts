@@ -392,6 +392,11 @@ export const CapabilitiesSchema = z.object({
   interrupt: z.boolean(),
   reasoningItems: z.boolean(),
   approvals: z.boolean(),
+  /**
+   * False when Ask first cannot run: the engine has no way to ask before an
+   * action and fails instead. Absent means Ask first works.
+   */
+  askFirst: z.boolean().optional(),
   /** Can pause a turn for structured questions and resume it with the user's answers. */
   userInput: z.boolean().optional(),
   /** Can route elevated approval requests through an automatic risk reviewer. */

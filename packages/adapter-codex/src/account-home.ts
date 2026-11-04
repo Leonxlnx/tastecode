@@ -21,3 +21,36 @@ export const CODEX_ACCOUNT_HOME: AccountHomeSource = {
 export function codexAccountEnvironment(accountHome: string | undefined): NodeJS.ProcessEnv {
   return accountHome === undefined ? {} : CODEX_ACCOUNT_HOME.environment(accountHome)
 }
+
+/**
+ * How much a plan holds against Plus, per window, for the account pool. From
+ * OpenAI's published limits as of 2026-11-03: a Business or Team seat has the
+ * same limits as Plus; Pro has no 5-hour window, and the $100 plan is 5x Plus
+ * per week, the $200 plan 20x at its launch (new subscriptions may get less).
+ * The labels are the ones the adapter's `planLabel` makes. Other plans have no known size.
+ */
+export function codexPlanWeights(
+  plan: string | undefined,
+): { session?: number; weekly?: number } | undefined {
+  switch (plan) {
+    case 'Plus':
+    case 'Team':
+    case 'Business':
+      return { session: 1, weekly: 1 }
+    case 'Pro x5':
+      return { weekly: 5 }
+    case 'Pro x20':
+      return { weekly: 20 }
+    default:
+      return undefined
+  }
+}
+
+/**
+ * Whether a limit row is one of the account's overall windows, which the account pool
+ * sums across accounts: the main `codex` bucket's rows (`codex:primary`,
+ * `codex:secondary`). Other buckets, such as Spark, meter one model and stay out.
+ */
+export function codexOverallLimit(id: string): boolean {
+  return id.startsWith('codex:')
+}

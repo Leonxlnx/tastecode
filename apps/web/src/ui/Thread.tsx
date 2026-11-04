@@ -28,6 +28,7 @@ import {
 import type { ApprovalDecision, Item, ProviderNotice } from '@harness/contracts'
 import { agentMark, providerDisplayName, providerMark } from '../provider-presentation.js'
 import { AccountLabelContext, type AccountLabel } from '../provider-accounts-state.js'
+import { ModelNameContext, type ModelName } from '../model-name.js'
 import { ProviderIcon } from './ProviderIcon.js'
 import {
   IconArrowBarToDown as ArrowDownToLine,
@@ -67,6 +68,7 @@ import {
 import type { Transport } from '../transport.js'
 import { Approval } from './Approval.js'
 import { ChangeStats, Diff, parseDiff } from './Diff.js'
+import { ProjectRootContext, projectRelativePath } from './project-relative-path.js'
 import { parseToolCall, toolArgumentEntries, toolArgumentSnippet } from './tool-call-text.js'
 import { CopyButton } from './CopyButton.js'
 import { LazyMediaViewer as MediaViewer, preloadMediaViewer } from './LazyMediaViewer.js'
@@ -1351,7 +1353,7 @@ export const Thread = memo(function Thread(props: ThreadProps) {
     // of a scroll container scrolls away with the content — Ctrl+F used to
     // yank the transcript to the top just to show the find bar, and "Jump to
     // latest" rendered below the viewport exactly when it was needed.
-    <ThreadContexts measureRow={measureRow} chatImages={chatImages}>
+    <ThreadContexts measureRow={measureRow} chatImages={chatImages} projectPath={props.projectPath}>
       <div className="thread-shell">
         {finding ? (
           <Suspense fallback={<FindBarSkeleton />}>
@@ -1573,15 +1575,19 @@ export const Thread = memo(function Thread(props: ThreadProps) {
 function ThreadContexts({
   measureRow,
   chatImages,
+  projectPath,
   children,
 }: {
   measureRow: ContextType<typeof RowMeasureContext>
   chatImages: ContextType<typeof ChatImageContext>
+  projectPath: string | undefined
   children: ReactNode
 }) {
   return (
     <ChatImageContext.Provider value={chatImages}>
-      <RowMeasureContext.Provider value={measureRow}>{children}</RowMeasureContext.Provider>
+      <ProjectRootContext.Provider value={projectPath}>
+        <RowMeasureContext.Provider value={measureRow}>{children}</RowMeasureContext.Provider>
+      </ProjectRootContext.Provider>
     </ChatImageContext.Provider>
   )
 }
@@ -2422,9 +2428,10 @@ const Row = memo(function Row({
 /** Where the chat moved to another provider; the turns after it ran there. */
 function NoticeRow({ item }: { item: Item }) {
   const accountLabel = useContext(AccountLabelContext)
+  const modelName = useContext(ModelNameContext)
   const notice = item.notice
   if (notice?.kind !== 'provider') return null
-  const label = providerNoticeLabel(notice, accountLabel)
+  const label = providerNoticeLabel(notice, accountLabel, modelName)
   return (
     <div className="aux aux--notice" role="note">
       <div className="aux__row" title={label}>
@@ -2444,15 +2451,18 @@ function NoticeRow({ item }: { item: Item }) {
   )
 }
 
-export function providerNoticeLabel(notice: ProviderNotice, accountLabel?: AccountLabel): string {
-  const provider =
-    notice.provider === 'acp' && notice.agent ? notice.agent : providerDisplayName(notice.provider)
+export function providerNoticeLabel(
+  notice: ProviderNotice,
+  accountLabel?: AccountLabel,
+  modelName?: ModelName,
+): string {
+  const parts = [
+    notice.provider === 'acp' && notice.agent ? notice.agent : providerDisplayName(notice.provider),
+  ]
   // Another account of a provider is named, so a move between two accounts says where.
-  const name =
-    notice.accountId && accountLabel
-      ? `${provider} (${accountLabel(notice.provider, notice.accountId)})`
-      : provider
-  return notice.model ? `Switched to ${name} · ${notice.model}` : `Switched to ${name}`
+  if (notice.accountId && accountLabel) parts.push(accountLabel(notice.provider, notice.accountId))
+  if (notice.model) parts.push(modelName?.(notice.provider, notice.model) ?? notice.model)
+  return `Switched to ${parts.join(' · ')}`
 }
 
 /** A call that started a subagent draws as that subagent; anything else as a plain row. */
@@ -2723,13 +2733,16 @@ function FileChangeDetail({
   diff: ReturnType<typeof parseDiff>
   className: string
 }) {
+  const projectRoot = useContext(ProjectRootContext)
   return (
     <div className={`${className} change-detail`}>
       {diff.fileEntries.length > 1 ? (
         <ul className="change-detail__files">
           {diff.fileEntries.map((file, index) => (
             <li key={`${file.path}:${index}`}>
-              <span className="change-detail__path">{file.path}</span>
+              <span className="change-detail__path" title={file.path}>
+                {projectRelativePath(file.path, projectRoot)}
+              </span>
               <ChangeStats
                 added={file.added}
                 removed={file.removed}

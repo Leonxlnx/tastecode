@@ -79,29 +79,61 @@ function withAccountSettings(
 }
 
 /**
+ * The last saved settings each connection answered with. Settings › Providers
+ * showed placeholders for these rows on every visit until the server answered;
+ * it now opens on the last answer and reads again behind it. An edit made on
+ * that answer before the read returns is newer than the read, so the read
+ * does not replace it. Kept in memory for the session only.
+ */
+type KeptSettings = {
+  context?: ProviderContextSettingsMap
+  runtime?: ProviderRuntimeSettings
+  accounts?: readonly AccountContextSettings[]
+}
+const keptSettings = new WeakMap<Transport, KeptSettings>()
+
+function keptFor(transport: Transport): KeptSettings {
+  let kept = keptSettings.get(transport)
+  if (!kept) {
+    kept = {}
+    keptSettings.set(transport, kept)
+  }
+  return kept
+}
+
+/**
  * Further accounts' own context settings, kept by the server beside the
  * providers'. An account without any follows its provider's; edits show at
  * once and fall back to the last saved state when the server refuses them.
  */
 export function useAccountContextSettings(transport: Transport, enabled: boolean) {
-  const [state, setState] = useState<AccountContextState>({ phase: 'loading' })
+  const [state, setState] = useState<AccountContextState>(() => {
+    const kept = keptSettings.get(transport)?.accounts
+    return kept ? { phase: 'ready', accounts: kept } : { phase: 'loading' }
+  })
   const [errors, setErrors] = useState<Record<string, string | undefined>>({})
   const confirmed = useRef<readonly AccountContextSettings[]>([])
   const updates = useRef<Record<string, number>>({})
+  const edits = useRef(0)
 
   useEffect(() => {
     if (!enabled) return
     let live = true
+    const kept = keptSettings.get(transport)?.accounts
+    if (kept) confirmed.current = kept
+    const editsBefore = edits.current
     void (async () => {
       try {
         const result = await transport.request('providers.accountContextSettings', {})
-        if (!live) return
+        if (!live || (kept && edits.current !== editsBefore)) return
         // An answer without the list, as from a server that only half knows the method, is none.
         const accounts = Array.isArray(result?.accounts) ? result.accounts : []
+        keptFor(transport).accounts = accounts
         confirmed.current = accounts
         setState({ phase: 'ready', accounts })
       } catch (cause) {
-        if (live) setState({ phase: 'error', message: errorMessage(cause) })
+        // A failed re-read leaves the last answer showing.
+        if (live && !kept) setState({ phase: 'error', message: errorMessage(cause) })
       }
     })()
     return () => {
@@ -116,6 +148,7 @@ export function useAccountContextSettings(transport: Transport, enabled: boolean
         setState((current) => (current.phase === 'ready' ? { phase: 'ready', accounts } : current))
       const request = (updates.current[key] ?? 0) + 1
       updates.current[key] = request
+      edits.current += 1
       setState((current) =>
         current.phase === 'ready'
           ? {
@@ -132,6 +165,7 @@ export function useAccountContextSettings(transport: Transport, enabled: boolean
             accountId,
             settings,
           })
+          keptFor(transport).accounts = accounts
           confirmed.current = accounts
           if (updates.current[key] === request) show(accounts)
         } catch (cause) {
@@ -190,25 +224,41 @@ function withProviderSettings(
  * server refuses them.
  */
 export function useProviderContextSettings(transport: Transport, enabled: boolean) {
-  const [state, setState] = useState<ContextSettingsState>({ phase: 'loading' })
+  const [state, setState] = useState<ContextSettingsState>(() => {
+    const kept = keptSettings.get(transport)?.context
+    return kept ? { phase: 'ready', settings: kept } : { phase: 'loading' }
+  })
   const [errors, setErrors] = useState<Partial<Record<ProviderId, string>>>({})
   const confirmed = useRef<ProviderContextSettingsMap>({})
   const loads = useRef(0)
   // Per provider: saving one provider must not drop another's answer.
   const updates = useRef<Partial<Record<ProviderId, number>>>({})
+  const edits = useRef(0)
 
   useEffect(() => {
     if (!enabled) return
     const load = ++loads.current
-    setState({ phase: 'loading' })
+    const kept = keptSettings.get(transport)?.context
+    if (kept) confirmed.current = kept
+    setState((current) =>
+      kept
+        ? current.phase === 'ready' && current.settings === kept
+          ? current
+          : { phase: 'ready', settings: kept }
+        : { phase: 'loading' },
+    )
+    const editsBefore = edits.current
     void (async () => {
       try {
         const settings = await transport.request('providers.contextSettings', {})
-        if (loads.current !== load) return
+        if (loads.current !== load || (kept && edits.current !== editsBefore)) return
+        keptFor(transport).context = settings
         confirmed.current = settings
         setState({ phase: 'ready', settings })
       } catch (cause) {
-        if (loads.current === load) setState({ phase: 'error', message: errorMessage(cause) })
+        // A failed re-read leaves the last answer showing.
+        if (loads.current === load && !kept)
+          setState({ phase: 'error', message: errorMessage(cause) })
       }
     })()
     return () => {
@@ -226,6 +276,7 @@ export function useProviderContextSettings(transport: Transport, enabled: boolea
         )
       const request = (updates.current[provider] ?? 0) + 1
       updates.current[provider] = request
+      edits.current += 1
       show(settings)
       setErrors((current) => {
         if (current[provider] === undefined) return current
@@ -239,6 +290,7 @@ export function useProviderContextSettings(transport: Transport, enabled: boolea
             provider,
             settings,
           })
+          keptFor(transport).context = saved
           confirmed.current = saved
           if (updates.current[provider] === request) show(saved[provider])
         } catch (cause) {
@@ -276,22 +328,31 @@ function withProviderRuntime(
  * and falls back to the last saved one when the server refuses it.
  */
 export function useProviderRuntimeSettings(transport: Transport, enabled: boolean) {
-  const [state, setState] = useState<RuntimeSettingsState>({ phase: 'loading' })
+  const [state, setState] = useState<RuntimeSettingsState>(() => {
+    const kept = keptSettings.get(transport)?.runtime
+    return kept ? { phase: 'ready', settings: kept } : { phase: 'loading' }
+  })
   const [errors, setErrors] = useState<Partial<Record<ProviderId, string>>>({})
   const confirmed = useRef<ProviderRuntimeSettings>({})
   const updates = useRef<Partial<Record<ProviderId, number>>>({})
+  const edits = useRef(0)
 
   useEffect(() => {
     if (!enabled) return
     let live = true
+    const kept = keptSettings.get(transport)?.runtime
+    if (kept) confirmed.current = kept
+    const editsBefore = edits.current
     void (async () => {
       try {
         const settings = await transport.request('providers.runtimeSettings', {})
-        if (!live) return
+        if (!live || (kept && edits.current !== editsBefore)) return
+        keptFor(transport).runtime = settings
         confirmed.current = settings
         setState({ phase: 'ready', settings })
       } catch (cause) {
-        if (live) setState({ phase: 'error', message: errorMessage(cause) })
+        // A failed re-read leaves the last answer showing.
+        if (live && !kept) setState({ phase: 'error', message: errorMessage(cause) })
       }
     })()
     return () => {
@@ -309,6 +370,7 @@ export function useProviderRuntimeSettings(transport: Transport, enabled: boolea
         )
       const request = (updates.current[provider] ?? 0) + 1
       updates.current[provider] = request
+      edits.current += 1
       show(runtime)
       setErrors((current) => ({ ...current, [provider]: undefined }))
       void (async () => {
@@ -317,6 +379,7 @@ export function useProviderRuntimeSettings(transport: Transport, enabled: boolea
             provider,
             runtime,
           })
+          keptFor(transport).runtime = saved
           confirmed.current = saved
           if (updates.current[provider] === request) show(saved[provider])
         } catch (cause) {

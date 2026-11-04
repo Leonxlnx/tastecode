@@ -17,6 +17,7 @@ import {
   formatTokens,
   ProviderTuning,
   ProviderTuningSkeleton,
+  useAccountContextSettings,
   useProviderContextSettings,
   useProviderRuntimeSettings,
 } from './ProviderTuning.js'
@@ -749,5 +750,105 @@ describe('useProviderContextSettings', () => {
       phase: 'ready',
       settings: { 'claude-code': { compactAt: 60 }, codex: { compactAt: 50 } },
     })
+  })
+})
+
+describe('opening the providers page again', () => {
+  /** Answers each settings read only when the test says so. */
+  function heldReads(answers: Record<string, unknown>) {
+    const held: Array<() => void> = []
+    const transport = new TestTransport(
+      (method, params) =>
+        new Promise((resolve) => {
+          if (method === 'providers.updateContextSettings') {
+            const { provider, settings } = params as { provider: ProviderId; settings: object }
+            resolve({ [provider]: settings })
+            return
+          }
+          if (!(method in answers)) throw new Error(`unexpected ${method}`)
+          held.push(() => resolve(answers[method]))
+        }),
+    )
+    const reads = (method: string) =>
+      transport.requests.filter((request) => request.method === method).length
+    return { transport, held, answers, reads }
+  }
+
+  it('opens on the settings the last visit read and reads them again behind them', async () => {
+    const { transport, held, answers, reads } = heldReads({
+      'providers.contextSettings': { 'claude-code': { compactAt: 60 } },
+      'providers.runtimeSettings': { 'claude-code': 'cli' },
+    })
+    const first = render(<ConnectedTuning transport={transport} />)
+    // The first visit has nothing to show yet.
+    expect(screen.queryByRole('button', { name: /^Claude Code context: / })).toBeNull()
+    await act(async () => held.shift()?.())
+    expect(trigger('Claude Code context').textContent).toBe('Compacts at 60%')
+    first.unmount()
+
+    answers['providers.contextSettings'] = { 'claude-code': { compactAt: 50 } }
+    const second = render(<ConnectedTuning transport={transport} />)
+    // The second visit shows the last answer in its first render, with none in yet.
+    expect(trigger('Claude Code context').textContent).toBe('Compacts at 60%')
+    expect(reads('providers.contextSettings')).toBe(2)
+    await act(async () => held.shift()?.())
+    expect(trigger('Claude Code context').textContent).toBe('Compacts at 50%')
+    second.unmount()
+
+    const runtime = render(<ConnectedRuntime transport={transport} />)
+    await act(async () => held.shift()?.())
+    expect(trigger('Claude Code runtime').textContent).toBe('claude -p')
+    runtime.unmount()
+    render(<ConnectedRuntime transport={transport} />)
+    expect(trigger('Claude Code runtime').textContent).toBe('claude -p')
+    expect(reads('providers.runtimeSettings')).toBe(2)
+  })
+
+  it('keeps an edit made on the last answer when the read behind it returns later', async () => {
+    const { transport, held } = heldReads({
+      'providers.contextSettings': { 'claude-code': { compactAt: 60 } },
+    })
+    const first = renderHook(() => useProviderContextSettings(transport, true))
+    await act(async () => held.shift()?.())
+    first.unmount()
+
+    const { result } = renderHook(() => useProviderContextSettings(transport, true))
+    expect(result.current.state).toEqual({
+      phase: 'ready',
+      settings: { 'claude-code': { compactAt: 60 } },
+    })
+    await act(async () => result.current.update('claude-code', { compactAt: 'off' }))
+    // The read that started before the edit answers with the old value.
+    await act(async () => held.shift()?.())
+    expect(result.current.state).toEqual({
+      phase: 'ready',
+      settings: { 'claude-code': { compactAt: 'off' } },
+    })
+
+    // The next visit opens on the saved edit, not on the older read.
+    const next = renderHook(() => useProviderContextSettings(transport, true))
+    expect(next.result.current.state).toEqual({
+      phase: 'ready',
+      settings: { 'claude-code': { compactAt: 'off' } },
+    })
+  })
+
+  it('keeps showing the last answer when the read behind it fails', async () => {
+    let fail = false
+    const transport = new TestTransport((method) => {
+      if (method !== 'providers.accountContextSettings') throw new Error(`unexpected ${method}`)
+      if (fail) throw new Error('offline')
+      return { accounts: [] }
+    })
+    const first = renderHook(() => useAccountContextSettings(transport, true))
+    await waitFor(() => expect(first.result.current.state.phase).toBe('ready'))
+    first.unmount()
+
+    fail = true
+    const { result } = renderHook(() => useAccountContextSettings(transport, true))
+    expect(result.current.state).toEqual({ phase: 'ready', accounts: [] })
+    await act(async () => undefined)
+    expect(transport.requests).toHaveLength(2)
+    expect(result.current.state).toEqual({ phase: 'ready', accounts: [] })
   })
 })

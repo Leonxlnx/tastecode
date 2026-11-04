@@ -1,7 +1,7 @@
 import type { Account } from '@harness/contracts'
 import { z } from 'zod'
 import { requestGrokExtension } from './acp.js'
-import { grokSignIn, type GrokSignIn } from './adapter.js'
+import { grokSignIn, type GrokAccountTarget, type GrokSignIn } from './adapter.js'
 
 /** Only the display fields of the signed-in principal; nulls read as absent. */
 const DisplayStringSchema = z.string().trim().min(1).optional().catch(undefined)
@@ -32,13 +32,13 @@ export function parseGrokSubscription(body: unknown): GrokSubscription | undefin
   }
 }
 
-async function readGrokSubscription(): Promise<GrokSubscription | undefined> {
+async function readGrokSubscription(accountHome?: string): Promise<GrokSubscription | undefined> {
   return parseGrokSubscription(
-    await requestGrokExtension('_x.ai/auth/check_subscription', 'grok account'),
+    await requestGrokExtension('_x.ai/auth/check_subscription', 'grok account', accountHome),
   )
 }
 
-export type GrokAccountOptions = {
+export type GrokAccountOptions = GrokAccountTarget & {
   signIn?: () => Promise<GrokSignIn>
   subscription?: () => Promise<GrokSubscription | undefined>
 }
@@ -54,9 +54,9 @@ export type GrokAccountOptions = {
  */
 export async function grokAccount(options: GrokAccountOptions = {}): Promise<Account> {
   const subscription = Promise.resolve()
-    .then(options.subscription ?? readGrokSubscription)
+    .then(options.subscription ?? (() => readGrokSubscription(options.accountHome)))
     .catch(() => undefined)
-  const signIn = await (options.signIn ?? grokSignIn)()
+  const signIn = await (options.signIn ?? (() => grokSignIn(options)))()
   if (!signIn.signedIn) return { signedIn: false }
   return { signedIn: true, ...(await subscription) }
 }

@@ -35,6 +35,7 @@ const loadClaudeAdapter = retryableLazy(() => import('@harness/adapter-claude-co
 const loadCodexAdapter = retryableLazy(() => import('@harness/adapter-codex'))
 const loadCursorAdapter = retryableLazy(() => import('@harness/adapter-cursor'))
 const loadGrokAdapter = retryableLazy(() => import('@harness/adapter-grok'))
+const loadGrokAccountHome = retryableLazy(() => import('@harness/adapter-grok/account-home'))
 const loadOpenCodeAdapter = retryableLazy(() => import('@harness/adapter-opencode'))
 const loadPiAdapter = retryableLazy(() => import('@harness/adapter-pi'))
 
@@ -231,7 +232,7 @@ export function providerRuntime(
     case 'antigravity':
       return antigravityRuntime(onLog, resolveHarness)
     case 'grok':
-      return grokRuntime(onLog, resolveHarness)
+      return grokRuntime(onLog, resolveHarness, accountHome)
     case 'pi':
       return piRuntime(onLog, resolveHarness)
     default:
@@ -526,10 +527,16 @@ async function startedSession<TSession extends { dispose(): void | Promise<void>
 function grokRuntime(
   onLog: (line: string) => void,
   resolveHarness: (id: string) => CustomHarness | undefined,
+  accountHome: string | undefined,
 ): ProviderRuntime {
+  // A custom harness runs with its own sign-in; every other Grok process runs as
+  // the account, in its GROK_HOME.
+  const grokAdapterOptions = (harness: CustomHarness | undefined) =>
+    harness ? { spawn: customHarnessSpawn(harness) } : accountOption(accountHome)
   const acpAdapterFor = async (harness: CustomHarness | undefined, options: StartOptions) => {
     const [{ AcpAdapter, prepareAcpMcpServers }, { grokCommand, grokContextEnvironment }] =
       await Promise.all([loadAcpAdapter(), loadGrokAdapter()])
+    const { grokAccountEnvironment } = await loadGrokAccountHome()
     return new AcpAdapter('grok', {
       name: harness?.displayName ?? 'Grok',
       command: grokCommand(),
@@ -544,7 +551,10 @@ function grokRuntime(
       settings: { model: options.model, effort: options.effort },
       provider: 'grok',
       mcpServers: prepareAcpMcpServers(options.mcpServers ?? [], options.mcpCredentials ?? {}),
-      env: grokContextEnvironment(options.context),
+      env: {
+        ...(harness ? {} : grokAccountEnvironment(accountHome)),
+        ...grokContextEnvironment(options.context),
+      },
       ...(harness ? { spawn: customHarnessSpawn(harness) } : {}),
     })
   }
@@ -588,7 +598,7 @@ function grokRuntime(
         })
       }
       const { GrokAdapter } = await loadGrokAdapter()
-      const adapter = new GrokAdapter(harness ? { spawn: customHarnessSpawn(harness) } : {})
+      const adapter = new GrokAdapter(grokAdapterOptions(harness))
       adapter.on('log', onLog)
       const thread = await adapter.startThread(workspacePath, {
         model: options.model,
@@ -630,7 +640,7 @@ function grokRuntime(
         )
       }
       const { GrokAdapter } = await loadGrokAdapter()
-      const adapter = new GrokAdapter(harness ? { spawn: customHarnessSpawn(harness) } : {})
+      const adapter = new GrokAdapter(grokAdapterOptions(harness))
       adapter.on('log', onLog)
       const thread = await adapter.resumeThread(
         threadId,
@@ -650,7 +660,7 @@ function grokRuntime(
     async listModels(agent) {
       const harness = harnessFor('grok', agent, resolveHarness)
       const { GrokAdapter } = await loadGrokAdapter()
-      return new GrokAdapter(harness ? { spawn: customHarnessSpawn(harness) } : {}).listModels()
+      return new GrokAdapter(grokAdapterOptions(harness)).listModels()
     },
   }
 }

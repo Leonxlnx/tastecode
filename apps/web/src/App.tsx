@@ -149,6 +149,7 @@ import { preloadWhenIdle } from './idle-preload.js'
 import { NoticePresence } from './ui/NoticePresence.js'
 import type { ComposerError } from './ui/ComposerErrors.js'
 import { LazyThread } from './ui/LazyThread.js'
+import { ModelNameContext, type ModelName } from './model-name.js'
 import { TitleBar } from './ui/TitleBar.js'
 import { ZoomHud } from './ui/ZoomHud.js'
 import { useDeferredArchiveQueue } from './ui/useDeferredArchiveQueue.js'
@@ -158,11 +159,13 @@ import { sourceSupportsAttachments } from './attachment-capability.js'
 import { canCaptureVoice, type VoiceRecording } from './voice-capability.js'
 import { pollUsageLimits, UsageLimitsController, type LimitTarget } from './usage-limits-state.js'
 import { sameAccount } from './usage-summary-state.js'
+import { poolsOf, recommendedAccounts } from './account-pool.js'
 import {
   AccountLabelContext,
   accountLabelOf,
   accountsOf,
   activeAccountOf,
+  namedNewChatAccount,
   useProviderAccounts,
   type AccountLabel,
   type ProviderAccountsSnapshot,
@@ -955,6 +958,18 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
   /** For the model catalog's runs, which outlive a render. */
   const providerAccountsRef = useRef(providerAccounts)
   providerAccountsRef.current = providerAccounts
+  // A provider's accounts as one pool, worked out again only when the limits
+  // or the accounts change, never per streamed delta. The account each pool
+  // recommends stands in for the active one until the user picks an account
+  // for new chats. The server's `accounts.pool` can replace this later.
+  const accountPools = useMemo(
+    () => poolsOf(usageState, providerAccounts.accounts, Date.now()),
+    [usageState, providerAccounts.accounts],
+  )
+  useEffect(
+    () => providerAccountsStore.recommend(recommendedAccounts(accountPools)),
+    [providerAccountsStore, accountPools],
+  )
   // Undefined until the first catalog run has listed them, so setup can tell
   // an empty library from one that has not answered yet.
   const [acpAgents, setAcpAgents] = useState<ResultOf<'acp.agents'>['agents'] | undefined>()
@@ -1069,10 +1084,15 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
   )
   const [branchMenuOpened, setBranchMenuOpened] = useState(0)
   const openBranchMenu = useCallback(() => setBranchMenuOpened((count) => count + 1), [])
+  /** Projects workspace.info read as folders without a branch: they cannot start isolated chats. */
+  const unbranchedProjects = useRef(new Set<string>())
   const recordCheckout = useCallback((path: string, info: WorkspaceInfo | undefined) => {
     checkedOutBranches.current.set(path, info?.branch)
     if (info?.dirtyFiles) dirtyCheckouts.current.add(path)
     else dirtyCheckouts.current.delete(path)
+    // A failed read says nothing about the folder, so only an answer changes this.
+    if (info && info.branch === undefined) unbranchedProjects.current.add(path)
+    else if (info) unbranchedProjects.current.delete(path)
   }, [])
   // A new chat in the shared checkout starts where it is while the checkout
   // has uncommitted changes. Switching it then fails when a change touches a
@@ -1319,6 +1339,8 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
   const nextWorkspaceToolRequest = useRef(0)
   const [workspaceDesignPreviewRequest, setWorkspaceDesignPreviewRequest] =
     useState<BrowserNavigationRequest>()
+  /** The newest Design preview of each chat in the background, shown once that chat opens. */
+  const backgroundDesignPreviews = useRef(new Map<string, BrowserNavigationRequest>())
   const [providerLoginTerminal, setProviderLoginTerminal] = useState<ProviderLoginTerminalSession>()
   const nextProviderLoginTerminalId = useRef(1)
   const providerLoginState = useSyncExternalStore(subscribeInstalls, () =>
@@ -1666,14 +1688,12 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
   useEffect(() => {
     catalogSources.current?.discover(preferredModelSource)
   }, [preferredModelSource])
-  // Stable identity on purpose: the composer passes it to the picker's menu.
+  // Stable identity on purpose: the composer passes it to the picker's menu,
+  // and Settings asks for it while Models or Providers is open.
   const discoverEveryModelSource = useCallback(() => {
     everyModelSourceWanted.current = true
     catalogSources.current?.discover()
   }, [])
-  useEffect(() => {
-    if (settingsOpen) discoverEveryModelSource()
-  }, [settingsOpen, discoverEveryModelSource])
   const selectableImplicitChoice =
     implicitChoice &&
     (activeModelSource
@@ -1766,6 +1786,11 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       providerStatuses.find((entry) => entry.id === provider)?.capabilities?.autoReview === true,
     [provider, providerStatuses],
   )
+  // An engine that cannot ask before it acts fails in Ask first instead of asking.
+  const askFirstUnsupported = useMemo(
+    () => providerStatuses.find((entry) => entry.id === provider)?.capabilities?.askFirst === false,
+    [provider, providerStatuses],
+  )
   // A new chat with such a provider runs as one of its accounts.
   const providerHasAccounts = useMemo(
     () =>
@@ -1799,6 +1824,15 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
     : approval === 'auto-review' && !autoReviewSupported
       ? 'full'
       : approval
+  // Ask first is never raised to another access level behind the user's back:
+  // the composer says why it cannot send, and Send waits for another choice.
+  // A chat whose own mode is still loading shows Ask first as a placeholder only.
+  const askFirstBlock =
+    askFirstUnsupported && displayedApproval === 'ask' && !approvalLoading
+      ? `${providerName(provider, sourceAgentName)} can't ask before running commands. Choose Auto-approve or Full access.`
+      : undefined
+  const askFirstBlockRef = useRef(askFirstBlock)
+  askFirstBlockRef.current = askFirstBlock
 
   useEffect(() => {
     const checkConnection = () => void transport.ensureHealthy()
@@ -1915,6 +1949,13 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
   )
 
   const activeIdRef = useRef(activeId)
+  useEffect(() => {
+    const preview = activeId ? backgroundDesignPreviews.current.get(activeId) : undefined
+    if (!activeId || !preview) return
+    backgroundDesignPreviews.current.delete(activeId)
+    setWorkspacePanelHasMounted(true)
+    setWorkspaceDesignPreviewRequest(preview)
+  }, [activeId])
   activeIdRef.current = activeId
   const activePathRef = useRef(activePath)
   activePathRef.current = activePath
@@ -1949,6 +1990,23 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       threadController.draftOwner = key
       composerDraftKeyRef.current = key
       publishComposerDraft(threadController.draft(key))
+    },
+    [publishComposerDraft],
+  )
+  /** The project the new-chat draft was written for; another project starts without it. */
+  const newChatDraftProject = useRef<string | undefined>(undefined)
+  const enterNewChatDraft = useCallback(
+    (projectPath: string) => {
+      // Until a draft is tied to a project, it is the one on screen's.
+      const owner = newChatDraftProject.current ?? activePathRef.current
+      newChatDraftProject.current = projectPath
+      if (owner === undefined || owner === projectPath) return
+      const next = threadController.editDraft(NEW_CHAT_DRAFT_KEY, {
+        text: '',
+        attachments: [],
+        resources: [],
+      })
+      if (activeIdRef.current === undefined) publishComposerDraft(next)
     },
     [publishComposerDraft],
   )
@@ -2383,8 +2441,14 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       lifecycleFallback = window.setTimeout(flushLifecyclePushes, 100)
     })
     const offPreviewCapture = transport.on('preview.captureRequested', (request) => {
+      const preview = { requestId: request.requestId, url: request.url }
+      // The panel belongs to the chat on screen: another chat's preview waits for that chat.
+      if (request.threadId && request.threadId !== activeIdRef.current) {
+        backgroundDesignPreviews.current.set(request.threadId, preview)
+        return
+      }
       setWorkspacePanelHasMounted(true)
-      setWorkspaceDesignPreviewRequest({ requestId: request.requestId, url: request.url })
+      setWorkspaceDesignPreviewRequest(preview)
     })
     const offSidebarSettings = transport.on('sidebar.settings', acceptSidebarSettings)
     const offUsageChanged = transport.on('usage.changed', ({ provider, accountId }) => {
@@ -3784,6 +3848,13 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       accountLabelOf(providerAccounts, requestedProvider, accountId),
     [providerAccounts],
   )
+  const modelName = useCallback<ModelName>(
+    (requestedProvider, model) =>
+      catalogModels.find(
+        (choice) => choice.provider === requestedProvider && choice.model.id === model,
+      )?.model.displayName,
+    [catalogModels],
+  )
   const activeAccount = useCallback(
     (requestedProvider: ProviderId) => activeAccountOf(providerAccounts, requestedProvider),
     [providerAccounts],
@@ -4334,7 +4405,9 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
         // the checked-out branch needs the server to check and switch; asking
         // every time ran git before the agent started, and waiting here for a
         // branch list held the chat for seconds on a busy machine.
-        const shown = newChatBranch(projectPath, isolateSession)
+        // A folder that is not a Git repository has nothing to isolate from: it starts Local.
+        const isolate = isolateSession && !unbranchedProjects.current.has(projectPath)
+        const shown = newChatBranch(projectPath, isolate)
         const branch =
           shown !== undefined && shown !== checkedOutBranches.current.get(projectPath)
             ? shown
@@ -4342,8 +4415,16 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
         if (projectRemoved())
           throw new Error('The project was removed before the chat could start.')
         let sessionApproval = approval === 'auto-review' && !autoReviewSupported ? 'full' : approval
+        // A chat that names no account starts on the server's recommended one,
+        // else its active one. The account this app shows for new chats is
+        // named, so the user's pick, or the recommendation shown, is what runs.
+        const namedAccount =
+          choice.agent || choice.connectionId
+            ? undefined
+            : namedNewChatAccount(providerAccountsRef.current, choice.provider)
         const { threadId } = await transport.request('thread.start', {
           provider: choice.provider,
+          ...(namedAccount ? { accountId: namedAccount } : {}),
           workspacePath: projectPath,
           ...(branch ? { baseRef: branch } : {}),
           approval: sessionApproval,
@@ -4360,7 +4441,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
               }
             : {}),
           ...(selectedEffort ? { effort: selectedEffort } : {}),
-          ...(isolateSession ? { isolate: true } : {}),
+          ...(isolate ? { isolate: true } : {}),
         })
         let pendingApproval = pendingThreadApprovals.current.get(provisionalId)
         while (pendingApproval && pendingApproval !== sessionApproval && !projectRemoved()) {
@@ -4417,6 +4498,9 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
                             id: threadId,
                             title: canonicalTitle,
                             provider: choice.provider,
+                            ...(namedAccount && namedAccount !== DEFAULT_ACCOUNT_ID
+                              ? { accountId: namedAccount }
+                              : {}),
                             ...(choice.connectionId ? { connectionId: choice.connectionId } : {}),
                             ...(choice.agent
                               ? {
@@ -4476,6 +4560,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
         const laterDraft = threadController.draft(provisionalId)
         threadController.forgetDraft(provisionalId)
         if (!isEmptyComposerDraft(laterDraft)) {
+          newChatDraftProject.current = projectPath
           const recovered = threadController.recoverDraft(NEW_CHAT_DRAFT_KEY, laterDraft)
           threadController.editDraft(NEW_CHAT_DRAFT_KEY, {
             resources: [...recovered.resources, ...laterDraft.resources],
@@ -4525,7 +4610,10 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
         composerDraftKeyRef.current = NEW_CHAT_DRAFT_KEY
         injectedDraftTransition.current = activeIdRef.current !== undefined
         publishComposerDraft(next)
-      }
+        newChatDraftProject.current = projectPath
+      } else enterNewChatDraft(projectPath)
+      // Design is a choice for one chat; the next new chat starts without it.
+      setThreadDesignMode(undefined, false)
       setNotice(undefined)
       setActionError(undefined)
       setActivePath(projectPath)
@@ -4545,7 +4633,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       }
       setComposerFocusRequest((request) => request + 1)
     },
-    [publishComposerDraft, applyProviderDefault],
+    [publishComposerDraft, applyProviderDefault, setThreadDesignMode, enterNewChatDraft],
   )
 
   const updateQueue = useCallback(
@@ -4586,9 +4674,15 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       // if it fails. Only a send that waited on that failed startup goes there.
       const restoreDraft = () =>
         restoreRejectedDraft(composerDraftKey(activeId), { text, attachments })
-      const restoreDraftAfterFailedStart = () =>
+      const restoreDraftAfterFailedStart = () => {
+        if (activePath) newChatDraftProject.current = activePath
         restoreRejectedDraft(NEW_CHAT_DRAFT_KEY, { text, attachments })
+      }
       if (activeId) pendingDeletionChecks.current.delete(activeId)
+      if (askFirstBlockRef.current) {
+        restoreDraft()
+        return
+      }
       if (activeId && !cancelArchive(activeId)) {
         restoreDraft()
         reportError('This chat is being deleted.')
@@ -4686,6 +4780,8 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
           ...(selectedEffort ? { effort: selectedEffort } : {}),
           ...(selectedServiceTier ? { serviceTier: selectedServiceTier } : {}),
         })
+        // The chat keeps Design; the next new chat starts without it.
+        setThreadDesignMode(undefined, false)
         workspaceStartId = provisionalId
         workspaceStartToken = holdWorkspaceStart(provisionalId, activePath)
         optimisticTurnId = provisional.activeTurn?.id
@@ -4747,6 +4843,8 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
           }
           releasePendingStart()
           restoreDraftAfterFailedStart()
+          // The words return to the new chat's composer, and with them the Design choice.
+          setThreadDesignMode(undefined, designMode)
           return
         }
         workspaceStartId = threadId
@@ -5038,6 +5136,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       updateQueue,
       requestInterrupt,
       designMode,
+      setThreadDesignMode,
       holdWorkspaceStart,
       releaseWorkspaceStart,
       refreshWorkspaceAfterCompletion,
@@ -5236,17 +5335,21 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
   // prettier-ignore
   const steerQueuedTurn = useCallback((queuedTurnId: string) => { if (!activeId) return; holdQueueAction(queuedTurnId, activeId, 'steer'); const projectPath = findSession(projectsRef.current, activeId)?.project.path; void transport.request('thread.steerQueuedTurn', { threadId: activeId, queuedTurnId }).then(() => { updateQueue(activeId, (items) => items.filter((item) => item.id !== queuedTurnId)); settleQueueAction(queuedTurnId, 'steer'); workspaceIdleProbe.current.unknownQueues.delete(activeId); releaseQueuedStart(queuedTurnId); refreshWorkspaceAfterCompletion(projectPath) }).catch((error) => { settleQueueAction(queuedTurnId, 'steer', error instanceof IndeterminateRequestError); reportError(error instanceof Error ? error.message : String(error)) }) }, [transport, activeId, updateQueue, releaseQueuedStart, refreshWorkspaceAfterCompletion, holdQueueAction, settleQueueAction])
 
-  const selectProject = useCallback((path: string) => {
-    setSurface('chat')
-    if (path === activePathRef.current) return
-    setActivePath(path)
-    activeIdRef.current = undefined
-    setActiveId(undefined)
-    setActiveThreadApproval(undefined)
-    setThread(emptyThread)
-    setUndoRestore(undefined)
-    setRollbackOpen(false)
-  }, [])
+  const selectProject = useCallback(
+    (path: string) => {
+      setSurface('chat')
+      if (path === activePathRef.current) return
+      enterNewChatDraft(path)
+      setActivePath(path)
+      activeIdRef.current = undefined
+      setActiveId(undefined)
+      setActiveThreadApproval(undefined)
+      setThread(emptyThread)
+      setUndoRestore(undefined)
+      setRollbackOpen(false)
+    },
+    [enterNewChatDraft],
+  )
 
   const selectBranch = useCallback(
     async (branch: string) => {
@@ -7449,8 +7552,15 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
         ]
       : []),
     ...(offlineError ? [offlineError] : []),
+    ...(askFirstBlock
+      ? [{ id: `ask-first:${provider}`, role: 'alert' as const, message: askFirstBlock }]
+      : []),
   ]
 
+  // workspace.info answered for this very project without a branch: no Git repository to isolate
+  // from. Until it answers for the project on screen, Isolated stays offered.
+  const newChatUnbranched =
+    !activeId && activePath !== undefined && unbranchedProjects.current.has(activePath)
   const composerProps: ComposerProps = {
     transport: transport,
     provider: provider,
@@ -7495,8 +7605,14 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
     ),
     running: visibleRunning,
     newSession: !activeId,
-    isolate: active?.session.worktreeBranch ? true : isolateSession,
+    isolate: active?.session.worktreeBranch ? true : isolateSession && !newChatUnbranched,
+    ...(newChatUnbranched ? { isolateUnavailable: 'Isolated needs a Git repository' } : {}),
     designMode: designMode,
+    ...(askFirstUnsupported
+      ? {
+          askFirstUnavailable: `${providerName(provider, sourceAgentName)} can't ask before running commands`,
+        }
+      : {}),
     keybindings: keybindings,
     focusRequest: composerFocusRequest,
     draftRequest: composerDraft,
@@ -7581,7 +7697,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       {isDesktop ? <ZoomHud /> : null}
 
       <div className="shell__body" ref={shellBody}>
-        <AppBackground />
+        <AppBackground covered={settingsOpen} />
         <Sidebar
           projects={sidebarProjects}
           projectsLoading={projectsStatus === 'loading'}
@@ -7594,6 +7710,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
           usageCardStates={cardUsageState}
           accountLabel={accountLabel}
           activeAccount={activeAccount}
+          accountPools={accountPools}
           onShowUsage={showUsage}
           onRetryUsage={retryUsage}
           onRefreshUsage={refreshAllUsage}
@@ -7685,38 +7802,40 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
                             >
                               {activeId ? (
                                 <AccountLabelContext.Provider value={accountLabel}>
-                                  <Suspense fallback={<ThreadSkeleton />}>
-                                    <LazyThread
-                                      key={threadEntryKey}
-                                      frameStore={threadFrameStore}
-                                      errorsInComposer
-                                      stopping={stopping}
-                                      loading={loadingThreadId === activeId}
-                                      loadFailure={
-                                        historyFailure?.threadId === activeId
-                                          ? historyFailure.message
-                                          : undefined
-                                      }
-                                      onRetryLoad={retryOpenedHistory}
-                                      projectPath={activePath}
-                                      threadId={activeId}
-                                      transport={transport}
-                                      searchJump={
-                                        searchJump?.threadId === activeId ? searchJump : undefined
-                                      }
-                                      onSearchJumpDone={finishSearchJump}
-                                      revealRequest={threadRevealRequest}
-                                      checkpoints={checkpoints}
-                                      onDecide={decideApproval}
-                                      onAnswerUserInput={answerUserInput}
-                                      onEditMessage={editMessage}
-                                      onRevertCheckpoint={revertCheckpoint}
-                                      onUndoChanges={undoTurnChanges}
-                                      onLoadOlderHistory={loadOlderHistory}
-                                      onLoadCompleteHistory={loadCompleteHistory}
-                                      turnRail
-                                    />
-                                  </Suspense>
+                                  <ModelNameContext.Provider value={modelName}>
+                                    <Suspense fallback={<ThreadSkeleton />}>
+                                      <LazyThread
+                                        key={threadEntryKey}
+                                        frameStore={threadFrameStore}
+                                        errorsInComposer
+                                        stopping={stopping}
+                                        loading={loadingThreadId === activeId}
+                                        loadFailure={
+                                          historyFailure?.threadId === activeId
+                                            ? historyFailure.message
+                                            : undefined
+                                        }
+                                        onRetryLoad={retryOpenedHistory}
+                                        projectPath={activePath}
+                                        threadId={activeId}
+                                        transport={transport}
+                                        searchJump={
+                                          searchJump?.threadId === activeId ? searchJump : undefined
+                                        }
+                                        onSearchJumpDone={finishSearchJump}
+                                        revealRequest={threadRevealRequest}
+                                        checkpoints={checkpoints}
+                                        onDecide={decideApproval}
+                                        onAnswerUserInput={answerUserInput}
+                                        onEditMessage={editMessage}
+                                        onRevertCheckpoint={revertCheckpoint}
+                                        onUndoChanges={undoTurnChanges}
+                                        onLoadOlderHistory={loadOlderHistory}
+                                        onLoadCompleteHistory={loadCompleteHistory}
+                                        turnRail
+                                      />
+                                    </Suspense>
+                                  </ModelNameContext.Provider>
                                 </AccountLabelContext.Provider>
                               ) : (
                                 <Empty
@@ -7757,35 +7876,37 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
                             >
                               {besideId ? (
                                 <AccountLabelContext.Provider value={accountLabel}>
-                                  <Suspense fallback={<ThreadSkeleton />}>
-                                    <LazyThread
-                                      key={split.frozen.entryKey}
-                                      frameStore={threadController.columns[slot]}
-                                      errorsInComposer
-                                      keyboardActive={false}
-                                      loading={loadingThreadId === besideId}
-                                      loadFailure={
-                                        historyFailure?.threadId === besideId
-                                          ? historyFailure.message
-                                          : undefined
-                                      }
-                                      onRetryLoad={retryOpenedHistory}
-                                      projectPath={besideSession?.project.path}
-                                      threadId={besideId}
-                                      transport={transport}
-                                      onSearchJumpDone={finishSearchJump}
-                                      revealRequest={split.frozen.revealRequest}
-                                      checkpoints={NO_CHECKPOINTS}
-                                      onDecide={decideBesideApproval}
-                                      onAnswerUserInput={answerBesideUserInput}
-                                      onEditMessage={editBesideMessage}
-                                      onRevertCheckpoint={revertCheckpoint}
-                                      onUndoChanges={undoTurnChanges}
-                                      onLoadOlderHistory={loadOlderHistory}
-                                      onLoadCompleteHistory={loadCompleteHistory}
-                                      turnRail
-                                    />
-                                  </Suspense>
+                                  <ModelNameContext.Provider value={modelName}>
+                                    <Suspense fallback={<ThreadSkeleton />}>
+                                      <LazyThread
+                                        key={split.frozen.entryKey}
+                                        frameStore={threadController.columns[slot]}
+                                        errorsInComposer
+                                        keyboardActive={false}
+                                        loading={loadingThreadId === besideId}
+                                        loadFailure={
+                                          historyFailure?.threadId === besideId
+                                            ? historyFailure.message
+                                            : undefined
+                                        }
+                                        onRetryLoad={retryOpenedHistory}
+                                        projectPath={besideSession?.project.path}
+                                        threadId={besideId}
+                                        transport={transport}
+                                        onSearchJumpDone={finishSearchJump}
+                                        revealRequest={split.frozen.revealRequest}
+                                        checkpoints={NO_CHECKPOINTS}
+                                        onDecide={decideBesideApproval}
+                                        onAnswerUserInput={answerBesideUserInput}
+                                        onEditMessage={editBesideMessage}
+                                        onRevertCheckpoint={revertCheckpoint}
+                                        onUndoChanges={undoTurnChanges}
+                                        onLoadOlderHistory={loadOlderHistory}
+                                        onLoadCompleteHistory={loadCompleteHistory}
+                                        turnRail
+                                      />
+                                    </Suspense>
+                                  </ModelNameContext.Provider>
                                 </AccountLabelContext.Provider>
                               ) : (
                                 <Empty
@@ -7957,6 +8078,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
               modelsLoading={catalogAvailability === 'loading'}
               modelErrors={modelErrors}
               pendingModelSources={pendingModelSources}
+              onModelsWanted={discoverEveryModelSource}
               hiddenModels={hiddenModels}
               onModelVisibilityChange={changeModelVisibility}
               onModelsVisibilityChange={changeModelsVisibility}

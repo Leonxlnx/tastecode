@@ -60,7 +60,7 @@ function setup() {
 
 describe('provider accounts', () => {
   it('offers accounts only where the adapter declares them', () => {
-    expect(Object.keys(ACCOUNT_HOMES).sort()).toEqual(['claude-code', 'codex'])
+    expect(Object.keys(ACCOUNT_HOMES).sort()).toEqual(['claude-code', 'codex', 'grok'])
     const { accounts } = setup()
     expect(accounts.list()).toEqual({
       accounts: [

@@ -189,10 +189,10 @@ export function mapGrokBilling(body: unknown): ProviderLimit[] {
 
 const BILLING_NOT_REPORTED = 'Grok Build did not report its credits.'
 
-async function readGrokBilling(): Promise<GrokBilling> {
+async function readGrokBilling(accountHome: string | undefined): Promise<GrokBilling> {
   let body: unknown
   try {
-    body = await requestGrokExtension('_x.ai/billing', 'grok billing')
+    body = await requestGrokExtension('_x.ai/billing', 'grok billing', accountHome)
   } catch (error) {
     // Grok Build answers with a JSON-RPC error when its billing service fails.
     // 1.0.60 sends -32603 "Internal error" with the data "Billing service
@@ -206,13 +206,19 @@ async function readGrokBilling(): Promise<GrokBilling> {
   return parsed.data
 }
 
-let billingRead: Promise<GrokBilling> | undefined
+/** Each account's billing read in flight, keyed by its GROK_HOME (`""` for the default). */
+const billingReads = new Map<string, Promise<GrokBilling>>()
 
-function grokBilling(): Promise<GrokBilling> {
-  billingRead ??= readGrokBilling().finally(() => {
-    billingRead = undefined
-  })
-  return billingRead
+function grokBilling(accountHome: string | undefined): Promise<GrokBilling> {
+  const key = accountHome ?? ''
+  let read = billingReads.get(key)
+  if (!read) {
+    read = readGrokBilling(accountHome).finally(() => {
+      if (billingReads.get(key) === read) billingReads.delete(key)
+    })
+    billingReads.set(key, read)
+  }
+  return read
 }
 
 /**
@@ -222,12 +228,15 @@ function grokBilling(): Promise<GrokBilling> {
  * sign-in says signed in.
  */
 export async function grokLimitSource(
-  signIn: () => Promise<GrokSignIn> = grokSignIn,
+  signIn?: () => Promise<GrokSignIn>,
+  /** Read as this account; absent, the default account. */
+  accountHome?: string,
 ): Promise<GrokLimitSource> {
-  const billing = grokBilling()
+  const billing = grokBilling(accountHome)
   // A signed-out answer, or a failed sign-in check, leaves this read unused.
   billing.catch(() => undefined)
-  if (!(await signIn()).signedIn) return { status: 'unavailable' }
+  if (!(await (signIn ?? (() => grokSignIn({ accountHome })))()).signedIn)
+    return { status: 'unavailable' }
   const body = await billing
   return { status: 'ready', limits: mapGrokBilling(body) }
 }
