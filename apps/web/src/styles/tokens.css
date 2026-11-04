@@ -249,6 +249,12 @@
      settle instead of a snap. Composer.tsx uses the same values. */
   --ease-dock: cubic-bezier(0.2, 0.9, 0.25, 1);
   --dur-dock: 320ms;
+
+  /* Menus and popovers grow out of their anchor with a soft settle and leave
+     faster than they came. */
+  --ease-popup: cubic-bezier(0.2, 0.9, 0.25, 1);
+  --dur-popup-in: 160ms;
+  --dur-popup-out: 110ms;
 }
 
 :root[data-font='system'] {
