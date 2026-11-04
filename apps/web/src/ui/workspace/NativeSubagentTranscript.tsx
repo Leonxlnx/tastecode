@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import type { Subagent } from '@harness/contracts'
 import { ThreadFrameStore } from '../../thread-frame-store.js'
 import { emptyThread } from '../../thread-state.js'
@@ -28,6 +28,8 @@ export function NativeSubagentTranscript(props: {
   const [omitted, setOmitted] = useState(0)
   const [failure, setFailure] = useState<string>()
   const [attempt, setAttempt] = useState(0)
+  /** Items are on screen; later reads refresh them without the loading state. */
+  const shown = useRef(false)
   const retry = useCallback(() => setAttempt((value) => value + 1), [])
 
   // Reads once on open and once more when the agent finishes (its state changes); while
@@ -49,6 +51,7 @@ export function NativeSubagentTranscript(props: {
         const reply = await transport.request('thread.subagentTranscript', { threadId, itemId })
         if (disposed) return
         frameStore.publish({ ...emptyThread, items: reply.items, liveStart: reply.items.length })
+        shown.current = true
         setEmpty(reply.items.length === 0)
         setOmitted(reply.omitted ?? 0)
         setFailure(undefined)
@@ -68,7 +71,7 @@ export function NativeSubagentTranscript(props: {
       if (!visible()) schedule()
       else if (!reading) void load()
     }
-    setLoading(true)
+    if (!shown.current) setLoading(true)
     void load()
     if (running) document.addEventListener('visibilitychange', onVisibility)
     return () => {
