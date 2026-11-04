@@ -291,12 +291,27 @@
           <a href="./feature-inventory.html">Inventory</a>
           <a href="./CLAUDE-HANDOFF.md">Claude handoff</a>
         </nav>
-        <span class="meta">2026-11-04 dev 1406eb68 · nightly 9bdb0541 · main deda8c01</span>
+        <span class="meta">2026-11-04 dev 116e2d36 · nightly 681a5e89 · main d5e45826</span>
       </div>
     </div>
 
     <div class="wrap">
       <section id="scope">
+        <p>
+          November 4, evening: v0.5.1 is published as Latest (<a
+            href="https://github.com/Leonxlnx/tastecode/releases/tag/v0.5.1"
+            >v0.5.1</a
+          >, 17:54 UTC, main d5e45826, promoted through #2159 and #2160 and synced back through
+          #2161 and #2162). It has three installers: Windows x64 (unsigned), macOS Apple Silicon
+          (signed and notarized) and, for the first time, macOS Intel (#2158); each Mac updates from
+          the DMG for its own architecture. It ships the account pool, math in replies, more Grok
+          accounts, the design round and the fixes from the overnight run of v0.5.0 described below.
+          Verified: the update check against the draft for both client generations, the same check
+          without a token after publishing with all three downloads answering, and hosted CI on
+          d5e45826 green on Windows. Not verified: the macOS CI leg, where one WorkspaceTabs test
+          failed as flaky and a rerun is going; the NSIS installed-upgrade proof, which was not run;
+          and the real update from an installed v0.5.0, which Leon is testing.
+        </p>
         <p>
           November 4, late afternoon: a design round Leon handed to the agents (#2141 to #2151,
           built by m5, checked live by main in a packaged Windows build of 1406eb68): menus and
@@ -1420,11 +1435,10 @@
           <a href="./verification/pr-quality-2026-09-09.md">scope, evidence, and release limits</a>.
         </p>
         <p class="sub">
-          The public beta on main (v0.1.1) ships three subscription plans and nothing else: Codex,
-          Claude Code, and Grok. v0.5.0 is next: its release builds offer exactly Claude Code,
-          Codex, Grok, Cursor and Antigravity, while OpenCode, Pi and the ACP agents stay in the
-          code and appear only in dev builds. Everything below either exists and is checked, is
-          being worked on, or must happen before the beta goes out.
+          The public release on main is v0.5.1. Its release builds offer Claude Code, Codex, Grok
+          and Cursor; Antigravity is left out of public builds (#2096), while OpenCode, Pi and the
+          ACP agents stay in the code and appear only in dev builds. Everything below either exists
+          and is checked, is being worked on, or must happen before the beta goes out.
         </p>
         <div class="hero">
           <div class="kpi">
