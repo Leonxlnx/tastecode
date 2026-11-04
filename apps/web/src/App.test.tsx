@@ -5121,6 +5121,37 @@ describe('web client', () => {
   })
 })
 describe('new chats', () => {
+  it('keeps a prompt that failed to send in its own chat, never in New chat', async () => {
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'project',
+        pinned: false,
+        createdAt: 0,
+        sessions: [{ id: 'thread-1', title: 'Existing work', running: false }],
+      },
+    ]
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'thread.sendTurn'
+        ? Promise.reject(new Error('send refused'))
+        : request(method, params),
+    )
+    render(<App />)
+    const draft = () => (screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement).value
+
+    fireEvent.click(await screen.findByRole('button', { name: /^Existing work,/ }))
+    submitTurn('Words for this chat only')
+    await waitFor(() => expect(rpcCount('thread.sendTurn')).toBe(1))
+    await waitFor(() => expect(draft()).toBe('Words for this chat only'))
+
+    fireEvent.click(screen.getByRole('button', { name: 'New chat' }))
+    await waitFor(() => expect(draft()).toBe(''))
+
+    fireEvent.click(screen.getByRole('button', { name: /^Existing work,/ }))
+    await waitFor(() => expect(draft()).toBe('Words for this chat only'))
+  })
+
   it('keeps composer drafts separate for new chat and each session', async () => {
     serverProjects = [
       {
