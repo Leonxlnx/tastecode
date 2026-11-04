@@ -2,7 +2,8 @@ import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, existsSync, rmSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { DubiousOwnership } from './git-ownership.js'
 import {
   carryUncommittedChanges,
   createWorktree,
@@ -104,6 +105,29 @@ describe('createWorktree', () => {
     const plain = mkdtempSync(path.join(os.tmpdir(), 'harness-plain-'))
     await expect(createWorktree(plain, 'thread-1', root)).rejects.toBeInstanceOf(NotARepository)
     rmSync(plain, { recursive: true, force: true })
+  })
+
+  it('says git refuses a repository another user owns, not that there is none', async () => {
+    // Git's own test switch refuses the repository as if another account owned
+    // it, and an empty global config keeps this machine's safe.directory out.
+    const config = path.join(path.dirname(repo), 'empty.gitconfig')
+    writeFileSync(config, '')
+    vi.stubEnv('GIT_TEST_ASSUME_DIFFERENT_OWNER', '1')
+    vi.stubEnv('GIT_CONFIG_GLOBAL', config)
+    vi.stubEnv('GIT_CONFIG_NOSYSTEM', '1')
+    try {
+      const refused = await createWorktree(repo, 'thread-owner-0001', root).catch(
+        (error: unknown) => error,
+      )
+      expect(refused).toBeInstanceOf(DubiousOwnership)
+      expect((refused as DubiousOwnership).message).toContain(repo)
+      expect((refused as DubiousOwnership).fix).toMatch(
+        /^git config --global --add safe\.directory /,
+      )
+      expect(existsSync(root)).toBe(false)
+    } finally {
+      vi.unstubAllEnvs()
+    }
   })
 
   it('recovers from a worktree that a crash left registered but gone', async () => {

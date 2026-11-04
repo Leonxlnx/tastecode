@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promis
 import os from 'node:os'
 import path from 'node:path'
 import { canCreateSymlinks } from '@harness/proc/symlink.test-support'
-import { PickedImagePaths, viewedImagePath } from './viewed-image-path.js'
+import { nativeAttachment, PickedImagePaths, viewedImagePath } from './viewed-image-path.js'
 import { attachmentPreviewFromUrl, pickedAttachment } from './attachment-preview.js'
 
 const canSymlink = canCreateSymlinks()
@@ -46,6 +46,29 @@ describe('viewed image paths', () => {
     }
     await expect(viewedImagePath(privateFile, pasted, grants)).resolves.toBeUndefined()
     await expect(viewedImagePath(picked, pasted, new PickedImagePaths())).resolves.toBeUndefined()
+  })
+
+  it('previews a dropped image like a picked one, but no path the renderer only names', async () => {
+    const { root, pasted } = await fixture()
+    const dropped = path.join(root, 'dropped.png')
+    const notes = path.join(root, 'notes.txt')
+    const named = path.join(root, 'named.png')
+    await writeFile(dropped, 'dropped')
+    await writeFile(notes, 'notes')
+    await writeFile(named, 'named')
+    const grants = new PickedImagePaths()
+    const secret = Buffer.alloc(32, 7)
+    await expect(nativeAttachment(dropped, secret, grants)).resolves.toMatchObject({
+      path: dropped,
+      mediaType: 'image',
+    })
+    await expect(nativeAttachment(notes, secret, grants)).resolves.toEqual({
+      path: notes,
+      name: 'notes.txt',
+    })
+    await expect(viewedImagePath(dropped, pasted, grants)).resolves.toBe(await realpath(dropped))
+    await expect(viewedImagePath(notes, pasted, grants)).resolves.toBeUndefined()
+    await expect(viewedImagePath(named, pasted, grants)).resolves.toBeUndefined()
   })
 
   it('does not widen picked-file grants to directories or siblings', async () => {

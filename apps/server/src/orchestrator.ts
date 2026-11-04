@@ -3234,22 +3234,35 @@ export class Orchestrator {
         }
         return turnId
       }
-      const ownPrompt = existsSync(path.join(this.#repoPath(threadId), '.taste', 'brief.json'))
+      const brief = existsSync(path.join(this.#repoPath(threadId), '.taste', 'brief.json'))
+      // A provider runs its own slash command only when the prompt starts with
+      // it, so a command goes as typed and whatever would go in front of it waits
+      // for the next prompt. Only a turn that would carry something reads the list.
+      const command =
+        (brief ||
+          handover ||
+          continuation ||
+          unreadSubagents !== undefined ||
+          this.#store.threadNeedsRestoreContext(threadId)) &&
+        (await this.#isProviderCommand(threadId, entry, text))
+      const ownPrompt = brief
         ? `This is an ordinary user turn, not an active TasteCode Design phase. Earlier phase-only JSON protocols no longer apply. Follow the current request normally and explain your work in normal prose, unless the user explicitly requests structured data. If asked to launch a preview, perform the launch on an available local port and report its URL instead of returning a preview-plan JSON object.\n\nUser request:\n${text}`
         : text
       const prompt = unreadSubagents ? `${unreadSubagents.text}${ownPrompt}` : ownPrompt
-      const sent = handover
-        ? await this.#handoverPrompt(
-            threadId,
-            prompt,
-            handoverThrough,
-            entry.session,
-            options.model,
-          )
-        : this.#promptAfterRestore(
-            threadId,
-            continuation ? await this.#promptWithEarlierChat(threadId, prompt) : prompt,
-          )
+      const sent = command
+        ? text
+        : handover
+          ? await this.#handoverPrompt(
+              threadId,
+              prompt,
+              handoverThrough,
+              entry.session,
+              options.model,
+            )
+          : this.#promptAfterRestore(
+              threadId,
+              continuation ? await this.#promptWithEarlierChat(threadId, prompt) : prompt,
+            )
       this.#notePromptWrapping(threadId, sent !== text)
       const turnId = await entry.session.sendTurn(threadId, sent, attachments, options)
       if (panicGeneration !== this.#panicGeneration) {
@@ -3263,10 +3276,13 @@ export class Orchestrator {
         throw new Error('turn cancelled because the provider session changed')
       }
       this.#acceptTurnStart(threadId, turnId, pendingStart)
-      this.#store.clearThreadRestoreContext(threadId)
-      if (continuation) this.#store.clearThreadContinueContext(threadId)
-      if (unreadSubagents) this.#subagents.markRead(unreadSubagents.itemIds)
-      if (handover) {
+      // A command delivered none of it; the next prompt still does.
+      if (!command) {
+        this.#store.clearThreadRestoreContext(threadId)
+        if (continuation) this.#store.clearThreadContinueContext(threadId)
+        if (unreadSubagents) this.#subagents.markRead(unreadSubagents.itemIds)
+      }
+      if (handover && !command) {
         this.#store.clearThreadHandover(threadId)
         this.#handoverTurns.set(threadId, { turnId, answered: false })
       } else if (this.#carriedThreads.delete(threadId)) {
@@ -4710,6 +4726,30 @@ export class Orchestrator {
   #promptAfterRestore(threadId: string, prompt: string): string {
     if (!this.#store.threadNeedsRestoreContext(threadId)) return prompt
     return `${RESTORE_CONTEXT_NOTICE}${prompt}`
+  }
+
+  /**
+   * Whether `text` starts with a command the chat's provider lists, the list
+   * the slash menu offers. Text that only looks like one, or a list that
+   * cannot be read, leaves the turn an ordinary prompt.
+   */
+  async #isProviderCommand(
+    threadId: string,
+    entry: AttachedThreadRuntime,
+    text: string,
+  ): Promise<boolean> {
+    const name = /^\/([^/\s]\S*)(?:\s|$)/.exec(text.trimStart())?.[1]
+    if (name === undefined) return false
+    const inventory = await this.listCommands(
+      entry.thread.provider,
+      entry.projectPath,
+      threadId,
+    ).catch(() => undefined)
+    return (
+      inventory?.commands.some(
+        (command) => command.name === name || command.aliases?.includes(name),
+      ) === true
+    )
   }
 
   async #restoreSnapshotWithRecovery(threadId: string, repoPath: string, commit: string) {
