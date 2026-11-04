@@ -3858,8 +3858,13 @@ export class Orchestrator {
         }
         try {
           await reverseUnifiedDiff(this.#repoPath(threadId), diff)
-        } catch {
-          throw new Error('These files changed after this edit block. Undo did not change them.')
+        } catch (error) {
+          const reason =
+            error instanceof Error && error.cause instanceof Error ? error.cause : error
+          this.#onLog(`Undo of an edit block did not apply: ${errorMessage(reason)}`)
+          throw new Error('These files changed after this edit block. Undo did not change them.', {
+            cause: error,
+          })
         }
         this.#record(threadId, { type: 'diff.updated', turnId, diff: '' })
       } finally {
