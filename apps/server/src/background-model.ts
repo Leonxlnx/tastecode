@@ -416,16 +416,31 @@ ${request}
 }
 
 export function cleanGeneratedTitle(output: string, fallback: string): string {
-  const title = stripFence(output)
-    .split(/\r?\n/)
-    .find((line) => line.trim())
-    ?.trim()
-    .replace(/^#+\s*/, '')
-    .replace(/^(?:title\s*:\s*)/i, '')
-    // Models asked for plain text still wrap titles in bold or quotes.
+  let line =
+    stripFence(output)
+      .split(/\r?\n/)
+      .find((line) => line.trim())
+      ?.trim()
+      .replace(/^#+\s*/, '')
+      .replace(/^(?:title\s*:\s*)/i, '') ?? ''
+  // "**Title**: what it covers" names the title in bold and then explains it.
+  const lead = /^(\*\*|__)(.+?)\1(?=\s*[:\-–—]|\s*$)/u.exec(line)
+  if (lead) line = lead[2]!
+  const title = line
+    // Models asked for plain text still wrap titles, or words in them, in bold or quotes.
+    .replace(/\*\*|`/g, '')
     .replace(/^[*_"'`]+|[*_"'`.]+$/g, '')
     .trim()
-  return sliceCodeUnits(title || fallback, 60).trim() || fallback
+  return titleSlice(title || fallback, 60) || fallback
+}
+
+/** Cuts a long title at the last word that fits, without a dangling comma or colon. */
+function titleSlice(text: string, limit: number): string {
+  if (text.length <= limit) return text.trim()
+  let cut = sliceCodeUnits(text, limit)
+  const space = cut.lastIndexOf(' ')
+  if (space >= limit / 2 && text[cut.length] !== ' ') cut = cut.slice(0, space)
+  return cut.replace(/[\s,;:\-–—]+$/u, '').trim()
 }
 
 export function commitMessagePrompt(diff: SessionDiff): string {

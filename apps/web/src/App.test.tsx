@@ -5121,6 +5121,37 @@ describe('web client', () => {
   })
 })
 describe('new chats', () => {
+  it('keeps a prompt that failed to send in its own chat, never in New chat', async () => {
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'project',
+        pinned: false,
+        createdAt: 0,
+        sessions: [{ id: 'thread-1', title: 'Existing work', running: false }],
+      },
+    ]
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'thread.sendTurn'
+        ? Promise.reject(new Error('send refused'))
+        : request(method, params),
+    )
+    render(<App />)
+    const draft = () => (screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement).value
+
+    fireEvent.click(await screen.findByRole('button', { name: /^Existing work,/ }))
+    submitTurn('Words for this chat only')
+    await waitFor(() => expect(rpcCount('thread.sendTurn')).toBe(1))
+    await waitFor(() => expect(draft()).toBe('Words for this chat only'))
+
+    fireEvent.click(screen.getByRole('button', { name: 'New chat' }))
+    await waitFor(() => expect(draft()).toBe(''))
+
+    fireEvent.click(screen.getByRole('button', { name: /^Existing work,/ }))
+    await waitFor(() => expect(draft()).toBe('Words for this chat only'))
+  })
+
   it('keeps composer drafts separate for new chat and each session', async () => {
     serverProjects = [
       {
@@ -10540,6 +10571,91 @@ describe('new chats', () => {
         approval: 'auto-review',
       })
     })
+  })
+
+  it('refuses Ask first for a provider that cannot ask, and says what to choose', async () => {
+    serverProviders[0]!.capabilities = { ...serverProviders[0]!.capabilities!, askFirst: false }
+    localStorage.setItem('harness.approvalByProvider', JSON.stringify({ codex: 'ask' }))
+    serverProjects = [
+      { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },
+    ]
+    render(<App />)
+
+    expect(
+      await screen.findByText(
+        "Codex can't ask before running commands. Choose Auto-approve or Full access.",
+      ),
+    ).toBeTruthy()
+    submitTurn('Do not start in Ask first')
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 50)))
+    expect(transport.request).not.toHaveBeenCalledWith('thread.start', expect.anything())
+    expect((screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement).value).toBe(
+      'Do not start in Ask first',
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Permissions' }))
+    const ask = (await screen.findByRole('menuitem', { name: /^Ask first/ })) as HTMLButtonElement
+    expect(ask.disabled).toBe(true)
+    expect(ask.textContent).toContain("Codex can't ask before running commands")
+  })
+
+  it("does not refuse Ask first while an open chat's own mode is still loading", async () => {
+    serverProviders[0]!.capabilities = { ...serverProviders[0]!.capabilities!, askFirst: false }
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'project',
+        pinned: false,
+        createdAt: 0,
+        sessions: [{ id: 'thread-1', title: 'Existing work', provider: 'codex', createdAt: 1 }],
+      },
+    ]
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'thread.history' ? new Promise(() => {}) : request(method, params),
+    )
+    render(<App />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /^Existing work,/ }))
+    await waitFor(() => expect(rpcCount('thread.history')).toBeGreaterThan(0))
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 50)))
+    expect(screen.queryByText(/can't ask before running commands/)).toBeNull()
+  })
+
+  it('offers Isolated after a switch until the new project answers it has no branch', async () => {
+    serverProjects = [
+      { path: '/work/plain', name: 'plain', pinned: false, createdAt: 0, sessions: [] },
+      { path: '/work/repo', name: 'repo', pinned: false, createdAt: 0, sessions: [] },
+    ]
+    let answerRepo!: (info: ResultOf<'workspace.info'>) => void
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method !== 'workspace.info') return request(method, params)
+      const { path } = params as { path: string }
+      if (path === '/work/plain') return Promise.resolve({ added: 0, removed: 0, dirtyFiles: 0 })
+      return new Promise((resolve) => {
+        answerRepo = resolve
+      })
+    })
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Choose project' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: /^plain/ }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace mode' }))
+    await waitFor(() =>
+      expect(
+        (screen.getByRole('menuitemradio', { name: /^Isolated/ }) as HTMLButtonElement).disabled,
+      ).toBe(true),
+    )
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Choose project' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: /^repo/ }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace mode' }))
+    // The repository has not answered yet: the plain folder's state does not carry over.
+    expect(
+      (screen.getByRole('menuitemradio', { name: /^Isolated/ }) as HTMLButtonElement).disabled,
+    ).toBe(false)
+    await act(async () => answerRepo({ branch: 'main', added: 0, removed: 0, dirtyFiles: 0 }))
   })
 
   it('pushes a mid-chat access-level change to the live thread', async () => {

@@ -1786,6 +1786,11 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       providerStatuses.find((entry) => entry.id === provider)?.capabilities?.autoReview === true,
     [provider, providerStatuses],
   )
+  // An engine that cannot ask before it acts fails in Ask first instead of asking.
+  const askFirstUnsupported = useMemo(
+    () => providerStatuses.find((entry) => entry.id === provider)?.capabilities?.askFirst === false,
+    [provider, providerStatuses],
+  )
   // A new chat with such a provider runs as one of its accounts.
   const providerHasAccounts = useMemo(
     () =>
@@ -1819,6 +1824,15 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
     : approval === 'auto-review' && !autoReviewSupported
       ? 'full'
       : approval
+  // Ask first is never raised to another access level behind the user's back:
+  // the composer says why it cannot send, and Send waits for another choice.
+  // A chat whose own mode is still loading shows Ask first as a placeholder only.
+  const askFirstBlock =
+    askFirstUnsupported && displayedApproval === 'ask' && !approvalLoading
+      ? `${providerName(provider, sourceAgentName)} can't ask before running commands. Choose Auto-approve or Full access.`
+      : undefined
+  const askFirstBlockRef = useRef(askFirstBlock)
+  askFirstBlockRef.current = askFirstBlock
 
   useEffect(() => {
     const checkConnection = () => void transport.ensureHealthy()
@@ -4665,6 +4679,10 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
         restoreRejectedDraft(NEW_CHAT_DRAFT_KEY, { text, attachments })
       }
       if (activeId) pendingDeletionChecks.current.delete(activeId)
+      if (askFirstBlockRef.current) {
+        restoreDraft()
+        return
+      }
       if (activeId && !cancelArchive(activeId)) {
         restoreDraft()
         reportError('This chat is being deleted.')
@@ -7534,10 +7552,15 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
         ]
       : []),
     ...(offlineError ? [offlineError] : []),
+    ...(askFirstBlock
+      ? [{ id: `ask-first:${provider}`, role: 'alert' as const, message: askFirstBlock }]
+      : []),
   ]
 
-  // workspace.info answered for this project without a branch: no Git repository to isolate from.
-  const newChatUnbranched = !activeId && workspace !== undefined && workspace.branch === undefined
+  // workspace.info answered for this very project without a branch: no Git repository to isolate
+  // from. Until it answers for the project on screen, Isolated stays offered.
+  const newChatUnbranched =
+    !activeId && activePath !== undefined && unbranchedProjects.current.has(activePath)
   const composerProps: ComposerProps = {
     transport: transport,
     provider: provider,
@@ -7585,6 +7608,11 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
     isolate: active?.session.worktreeBranch ? true : isolateSession && !newChatUnbranched,
     ...(newChatUnbranched ? { isolateUnavailable: 'Isolated needs a Git repository' } : {}),
     designMode: designMode,
+    ...(askFirstUnsupported
+      ? {
+          askFirstUnavailable: `${providerName(provider, sourceAgentName)} can't ask before running commands`,
+        }
+      : {}),
     keybindings: keybindings,
     focusRequest: composerFocusRequest,
     draftRequest: composerDraft,
