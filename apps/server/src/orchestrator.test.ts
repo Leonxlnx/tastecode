@@ -7929,6 +7929,41 @@ describe('provider commands', () => {
       await orchestrator.disposeAll()
     }
   })
+
+  // Codex lists its commands from the adapter, Claude Code from the live session.
+  it.each(['codex', 'claude-code'] as const)(
+    'sends a listed %s command as typed in a Design project and wraps any other prompt',
+    async (provider) => {
+      const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-command-'))
+      mkdirSync(path.join(workspace, '.taste'))
+      writeFileSync(path.join(workspace, '.taste', 'brief.json'), '{}')
+      const { orchestrator, sessions } = harness()
+      try {
+        const thread = await orchestrator.startThread(provider, workspace)
+        const session = sessions[0]!
+        session.commands = [command('compact')]
+        for (const [turnId, text] of [
+          ['compact', '/compact'],
+          ['ordinary', 'Tighten the hero spacing.'],
+          ['unlisted', '/foo bar'],
+        ] as const) {
+          session.turnIds.push(turnId)
+          await orchestrator.sendTurn(thread.id, text)
+          session.emit(turnStarted(thread.id, turnId))
+          session.emit({ type: 'turn.completed', turnId, status: 'completed' })
+        }
+        // The provider runs the command only when the prompt is the command itself.
+        expect(session.sent[0]).toBe('/compact')
+        expect(session.sent[1]).toContain('Earlier phase-only JSON protocols no longer apply')
+        expect(session.sent[1]!.endsWith('User request:\nTighten the hero spacing.')).toBe(true)
+        expect(session.sent[2]).toContain('Earlier phase-only JSON protocols no longer apply')
+        expect(session.sent[2]!.endsWith('User request:\n/foo bar')).toBe(true)
+      } finally {
+        await orchestrator.disposeAll()
+        rmSync(workspace, { recursive: true, force: true })
+      }
+    },
+  )
 })
 
 describe('skills inventory', () => {

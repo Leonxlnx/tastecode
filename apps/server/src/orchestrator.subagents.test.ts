@@ -408,6 +408,43 @@ describe('sub-agents on another provider', { timeout: 30_000 }, () => {
     expect(h.sessions[0]!.sent.at(-1)).toBe('And then?')
   })
 
+  it('sends a provider command alone and keeps unread results for the next prompt', async () => {
+    const h = harness()
+    const { parent, childSession } = await runningChild(h)
+    childSession.emit({
+      type: 'item.completed',
+      item: {
+        id: 'answer',
+        turnId: childSession.turnId,
+        type: 'message',
+        role: 'assistant',
+        status: 'completed',
+        text: 'Found two bugs.',
+        createdAt: Date.now(),
+      },
+    })
+    childSession.emit({ type: 'turn.completed', turnId: childSession.turnId, status: 'completed' })
+    h.sessions[0]!.emit({ type: 'turn.completed', turnId: 'turn-0', status: 'completed' })
+
+    // Codex lists /review and starts a review only when the prompt is the command itself.
+    await h.orchestrator.sendTurn(parent.id, '/review')
+    expect(h.sessions[0]!.sent.at(-1)).toBe('/review')
+    expect(h.store.subagents.ofParent(parent.id)[0]!.deliveredAt).toBeUndefined()
+
+    h.sessions[0]!.emit({
+      type: 'turn.completed',
+      turnId: h.sessions[0]!.turnId,
+      status: 'completed',
+    })
+    await h.orchestrator.sendTurn(parent.id, 'What next?')
+    const prompt = h.sessions[0]!.sent.at(-1)!
+    expect(prompt).toContain(
+      '<subagent agent_id="a1" provider="claude-code" status="completed">\nFound two bugs.\n</subagent>',
+    )
+    expect(prompt.endsWith('The user’s message follows.\n\nWhat next?')).toBe(true)
+    expect(h.store.subagents.ofParent(parent.id)[0]!.deliveredAt).toBeDefined()
+  })
+
   it('reserves the agent tools server id', async () => {
     const h = harness()
     expect(() =>
