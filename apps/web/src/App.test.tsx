@@ -5434,6 +5434,72 @@ describe('new chats', () => {
     )
   })
 
+  it('starts a new chat on the account the pool recommends while none was picked', async () => {
+    const codex = serverProviders[0]!
+    serverProviders = [
+      { ...codex, capabilities: { ...codex.capabilities!, multipleAccounts: true } },
+    ]
+    const now = Date.now()
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'accounts.list') {
+        return Promise.resolve({
+          accounts: [
+            { id: 'default', provider: 'codex', label: 'Personal', managed: false, plan: 'Plus' },
+            {
+              id: 'work-1a2b3c',
+              provider: 'codex',
+              label: 'Work',
+              home: 'C:\\TasteCode\\accounts\\codex\\work-1a2b3c',
+              managed: true,
+              email: 'work@example.test',
+              plan: 'Plus',
+            },
+          ],
+          active: {},
+        })
+      }
+      if (method === 'usage.summary') {
+        const { accountId } = params as { accountId?: string }
+        const days = accountId === 'work-1a2b3c' ? 1 : 3
+        return (request(method, params) as Promise<ResultOf<'usage.summary'>>).then((summary) => ({
+          ...summary,
+          limits: [
+            {
+              label: 'Weekly',
+              usedPercent: 20,
+              windowMinutes: 10_080,
+              resetsAt: now + days * 86_400_000,
+            },
+          ],
+        }))
+      }
+      return request(method, params)
+    })
+    render(<App />)
+
+    // Once both accounts are read, Work resets its week first and is marked.
+    fireEvent.click(await screen.findByRole('button', { name: 'Account' }))
+    expect(await screen.findByText('Recommended')).toBeTruthy()
+    expect(screen.getByRole('region', { name: 'Codex · All accounts' })).toBeTruthy()
+    expect(await screen.findByRole('button', { name: /^Work, recommended, / })).toBeTruthy()
+
+    const composer = screen.getByPlaceholderText('Do anything')
+    const sendButton = screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement
+    fireEvent.change(composer, { target: { value: 'Start where the week resets first' } })
+    await waitFor(() => expect(sendButton.disabled).toBe(false))
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith(
+        'thread.start',
+        expect.objectContaining({ provider: 'codex', accountId: 'work-1a2b3c' }),
+      ),
+    )
+    // The server keeps its own active account; nothing was picked for the user.
+    expect(transport.request).not.toHaveBeenCalledWith('accounts.setActive', expect.anything())
+  })
+
   it("offers each account's own models: the active one for new chats, a chat's own for it", async () => {
     const codex = serverProviders[0]!
     serverProviders = [

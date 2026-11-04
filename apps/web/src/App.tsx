@@ -158,11 +158,13 @@ import { sourceSupportsAttachments } from './attachment-capability.js'
 import { canCaptureVoice, type VoiceRecording } from './voice-capability.js'
 import { pollUsageLimits, UsageLimitsController, type LimitTarget } from './usage-limits-state.js'
 import { sameAccount } from './usage-summary-state.js'
+import { poolsOf, recommendedAccounts } from './account-pool.js'
 import {
   AccountLabelContext,
   accountLabelOf,
   accountsOf,
   activeAccountOf,
+  namedNewChatAccount,
   useProviderAccounts,
   type AccountLabel,
   type ProviderAccountsSnapshot,
@@ -955,6 +957,18 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
   /** For the model catalog's runs, which outlive a render. */
   const providerAccountsRef = useRef(providerAccounts)
   providerAccountsRef.current = providerAccounts
+  // A provider's accounts as one pool, worked out again only when the limits
+  // or the accounts change, never per streamed delta. The account each pool
+  // recommends stands in for the active one until the user picks an account
+  // for new chats. The server's `accounts.pool` can replace this later.
+  const accountPools = useMemo(
+    () => poolsOf(usageState, providerAccounts.accounts, Date.now()),
+    [usageState, providerAccounts.accounts],
+  )
+  useEffect(
+    () => providerAccountsStore.recommend(recommendedAccounts(accountPools)),
+    [providerAccountsStore, accountPools],
+  )
   // Undefined until the first catalog run has listed them, so setup can tell
   // an empty library from one that has not answered yet.
   const [acpAgents, setAcpAgents] = useState<ResultOf<'acp.agents'>['agents'] | undefined>()
@@ -4342,8 +4356,16 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
         if (projectRemoved())
           throw new Error('The project was removed before the chat could start.')
         let sessionApproval = approval === 'auto-review' && !autoReviewSupported ? 'full' : approval
+        // A chat that names no account starts on the server's recommended one,
+        // else its active one. The account this app shows for new chats is
+        // named, so the user's pick, or the recommendation shown, is what runs.
+        const namedAccount =
+          choice.agent || choice.connectionId
+            ? undefined
+            : namedNewChatAccount(providerAccountsRef.current, choice.provider)
         const { threadId } = await transport.request('thread.start', {
           provider: choice.provider,
+          ...(namedAccount ? { accountId: namedAccount } : {}),
           workspacePath: projectPath,
           ...(branch ? { baseRef: branch } : {}),
           approval: sessionApproval,
@@ -4417,6 +4439,9 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
                             id: threadId,
                             title: canonicalTitle,
                             provider: choice.provider,
+                            ...(namedAccount && namedAccount !== DEFAULT_ACCOUNT_ID
+                              ? { accountId: namedAccount }
+                              : {}),
                             ...(choice.connectionId ? { connectionId: choice.connectionId } : {}),
                             ...(choice.agent
                               ? {
@@ -7594,6 +7619,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
           usageCardStates={cardUsageState}
           accountLabel={accountLabel}
           activeAccount={activeAccount}
+          accountPools={accountPools}
           onShowUsage={showUsage}
           onRetryUsage={retryUsage}
           onRefreshUsage={refreshAllUsage}

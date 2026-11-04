@@ -27,6 +27,7 @@ import type {
   ThreadInboxStatus,
   ThreadLifecycle,
 } from '@harness/contracts'
+import type { ProviderPool } from '../account-pool.js'
 import type { AccountLabel } from '../provider-accounts-state.js'
 import {
   IconArchive as Archive,
@@ -246,6 +247,8 @@ function SidebarComponent(props: {
   accountLabel?: AccountLabel | undefined
   /** The account a new chat with each provider starts on, marked in the plan limits. */
   activeAccount?: ((provider: ProviderId) => AccountId) | undefined
+  /** Each provider's accounts as one pool, summed over the top of its accounts. */
+  accountPools?: readonly ProviderPool[] | undefined
   /** The account popup shows plan limits; returns the release for when it closes. */
   onShowUsage?: (() => () => void) | undefined
   onRetryUsage?: ((provider: ProviderId, accountId?: AccountId) => void) | undefined
@@ -998,6 +1001,7 @@ function SidebarComponent(props: {
                           states={props.usageStates}
                           accountLabel={props.accountLabel}
                           activeAccount={props.activeAccount}
+                          pools={props.accountPools}
                           onShow={props.onShowUsage}
                           onRetry={props.onRetryUsage ?? noop}
                           onRefresh={props.onRefreshUsage}
