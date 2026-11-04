@@ -1010,16 +1010,17 @@
 }
 
 /* The sub-agents page: each choice's note is a sentence, so it takes its own
-   line under the label instead of the narrow column after the leader. */
+   line under the label instead of the narrow column after the leader. The
+   choices have no mark, so the label starts on the text edge of the title. */
 .onboarding__picks--notes .onboarding__pick-row > label {
-  grid-template-columns: 16px max-content minmax(20px, 1fr) 10px;
+  grid-template-columns: max-content minmax(20px, 1fr) 10px;
   row-gap: 2px;
   padding-block: 4px;
 }
 
 .onboarding__picks--notes .onboarding__pick-state {
   grid-row: 2;
-  grid-column: 2 / -1;
+  grid-column: 1 / -1;
   white-space: normal;
 }
 
