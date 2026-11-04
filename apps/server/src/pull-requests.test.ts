@@ -100,6 +100,69 @@ describe('PullRequestService', () => {
     expect(run).toHaveBeenCalledTimes(8)
   })
 
+  it('pages open searches in small steps and retries a gateway timeout with a smaller page', async () => {
+    const open = Array.from({ length: 7 }, (_, index) =>
+      pullRequest({
+        id: `PR_open_${index}`,
+        number: 100 + index,
+        title: `Open change ${index}`,
+        repository: 'Blueemi/harness',
+        updatedAt: `2026-08-09T1${index}:00:00Z`,
+      }),
+    )
+    const pages: string[] = []
+    const run = vi.fn<GhRunner>(async (args) => {
+      if (args[0] === 'api' && args[1] === 'user') return JSON.stringify({ login: 'Blueemi' })
+      if (args[0] === 'search') return '[]'
+      if (!args.includes('q=is:pr is:open author:@me sort:updated-desc')) return searchPage([])
+      const first = args[args.indexOf('-F') + 1]
+      const cursor = args.find((argument) => argument.startsWith('cursor='))
+      pages.push(`${first} ${cursor ?? 'start'}`)
+      // GitHub's edge gives up on a page of many cold pull requests.
+      if (first === 'first=20') throw new Error('gh: HTTP 502')
+      return cursor
+        ? searchPage(open.slice(5))
+        : searchPage(open.slice(0, 5), { hasNextPage: true, endCursor: 'page-2' })
+    })
+    const service = new PullRequestService({
+      run,
+      installed: async () => true,
+      resolveProjects: async () => new Map(),
+    })
+
+    const result = await service.list([])
+
+    const query = run.mock.calls
+      .flatMap(([args]) => args)
+      .find((argument) => argument.startsWith('query=query($q:String!,$first:Int!'))
+    expect(query).toContain('first:$first')
+    expect(query).not.toContain('first:100')
+    // The list's row state and merge filters read the merge state.
+    expect(query).toContain('mergeStateStatus')
+    expect(pages).toEqual(['first=20 start', 'first=5 start', 'first=5 cursor=page-2'])
+    expect(result.truncated).toBe(false)
+    expect(result.items).toHaveLength(7)
+    expect(result.items.every((item) => item.mergeStateStatus === 'CLEAN')).toBe(true)
+  })
+
+  it('does not retry an open search that failed for another reason', async () => {
+    const run = vi.fn<GhRunner>(async (args) => {
+      if (args[0] === 'api' && args[1] === 'user') return JSON.stringify({ login: 'Blueemi' })
+      throw new Error('gh: Bad credentials (HTTP 401)')
+    })
+    const service = new PullRequestService({
+      run,
+      installed: async () => true,
+      resolveProjects: async () => new Map(),
+    })
+
+    await expect(service.list([])).rejects.toThrow('HTTP 401')
+    // One request for each of the three open searches, none repeated.
+    expect(
+      run.mock.calls.filter(([args]) => args[0] === 'api' && args[1] === 'graphql'),
+    ).toHaveLength(3)
+  })
+
   it('loads detail, checks, review threads, permissions, and repository merge settings', async () => {
     const run = vi.fn<GhRunner>(async (args) => {
       if (args[0] === 'api' && args[1] === 'user') return JSON.stringify({ login: 'Blueemi' })
@@ -247,6 +310,7 @@ describe('PullRequestService', () => {
     expect(detail).toMatchObject({
       relationship: 'authored',
       localProjectPath: '/work/harness',
+      mergeStateStatus: 'CLEAN',
       changedFiles: 2,
       permissions: { canPush: true, canAdmin: false },
       mergeMethods: { merge: false, rebase: true, squash: true, deleteBranchOnMerge: true },
@@ -1063,15 +1127,14 @@ function pullRequest(input: {
   }
 }
 
-function searchPage(nodes: unknown[]): string {
-  return JSON.stringify({
-    data: {
-      search: {
-        nodes,
-        pageInfo: { hasNextPage: false, endCursor: null },
-      },
-    },
-  })
+function searchPage(
+  nodes: unknown[],
+  pageInfo: { hasNextPage: boolean; endCursor: string | null } = {
+    hasNextPage: false,
+    endCursor: null,
+  },
+): string {
+  return JSON.stringify({ data: { search: { nodes, pageInfo } } })
 }
 
 function searchItem(item: ReturnType<typeof pullRequest>) {

@@ -32,6 +32,12 @@ const REPOSITORY_TTL_MS = 5 * 60_000
 const REVIEW_THREADS_TTL_MS = 30_000
 const METADATA_OPTIONS_TTL_MS = 5 * 60_000
 const SEARCH_LIMIT = 1_000
+// GitHub computes merge state and other fields per pull request when it has
+// none cached, and its edge answers 502 after about ten seconds. One page of 52
+// cold pull requests ran past that, so the open searches ask for smaller pages.
+const SEARCH_PAGE_SIZE = 20
+// A page that still times out is asked for again in this smaller size.
+const SEARCH_RETRY_PAGE_SIZE = 5
 const METADATA_OPTIONS_LIMIT = 1_000
 const FILES_PAGE_SIZE = 30
 const REVIEW_THREAD_LIMIT = 500
@@ -334,7 +340,7 @@ type ParsedRawReviewThread = z.infer<typeof RawReviewThreadSchema>
 type ParsedRawRepository = z.infer<typeof RawRepositorySchema>
 
 const SEARCH_QUERY =
-  'query($q:String!,$cursor:String){search(query:$q,type:ISSUE,first:100,after:$cursor){nodes{... on PullRequest{id number title url state isDraft updatedAt additions deletions comments{totalCount} author{login} repository{nameWithOwner} headRefName baseRefName reviewDecision mergeStateStatus}}pageInfo{hasNextPage endCursor}}}'
+  'query($q:String!,$first:Int!,$cursor:String){search(query:$q,type:ISSUE,first:$first,after:$cursor){nodes{... on PullRequest{id number title url state isDraft updatedAt additions deletions comments{totalCount} author{login} repository{nameWithOwner} headRefName baseRefName reviewDecision mergeStateStatus}}pageInfo{hasNextPage endCursor}}}'
 
 const REVIEW_THREADS_QUERY =
   'query($owner:String!,$name:String!,$number:Int!,$cursor:String){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100,after:$cursor){nodes{id isResolved isOutdated path line startLine originalLine originalStartLine diffSide startDiffSide comments(first:100){totalCount nodes{id databaseId body createdAt updatedAt url author{login}}}}pageInfo{hasNextPage endCursor}}}}}'
@@ -1084,11 +1090,27 @@ export class PullRequestService {
     const items: PullRequestListItem[] = []
     let cursor: string | undefined
     let hasNextPage = true
+    let pageSize = SEARCH_PAGE_SIZE
+    const readPage = () => {
+      const args = ['api', 'graphql', '-f', `query=${SEARCH_QUERY}`, '-f', `q=${query}`]
+      // -F sends the page size as a number; GraphQL rejects a string for Int!.
+      args.push('-F', `first=${pageSize}`)
+      if (cursor) args.push('-f', `cursor=${cursor}`)
+      return this.#run(args)
+    }
 
     while (hasNextPage && items.length < SEARCH_LIMIT) {
-      const args = ['api', 'graphql', '-f', `query=${SEARCH_QUERY}`, '-f', `q=${query}`]
-      if (cursor) args.push('-f', `cursor=${cursor}`)
-      const page = parseJson(await this.#run(args), 'pull-request search', RawSearchPageSchema)
+      let output: string
+      try {
+        output = await readPage()
+      } catch (error) {
+        // A smaller page asks GitHub for fewer cold pull requests at once. The
+        // pages after it stay small; a second timeout fails this search.
+        if (pageSize === SEARCH_RETRY_PAGE_SIZE || !isGatewayTimeout(error)) throw error
+        pageSize = SEARCH_RETRY_PAGE_SIZE
+        output = await readPage()
+      }
+      const page = parseJson(output, 'pull-request search', RawSearchPageSchema)
       const search = page.data?.search
       for (const node of search?.nodes ?? []) {
         if (node) items.push(normalizeListItem(node, relationship))
@@ -1995,6 +2017,11 @@ function targetKey(repository: string, number: number): string {
 
 function sortedProjectKey(paths: readonly string[]): string {
   return [...paths].sort().join('\u0000')
+}
+
+/** GitHub's edge answers 502 or 504 when a request runs past its time limit. */
+function isGatewayTimeout(error: unknown): boolean {
+  return error instanceof Error && /\bHTTP 50[24]\b/.test(error.message)
 }
 
 function firstUsefulLine(value: string): string {
