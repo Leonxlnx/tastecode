@@ -5468,17 +5468,21 @@ describe('new chats', () => {
     expect(screen.queryByText('75% left')).toBeNull()
 
     fireEvent.click(screen.getByRole('button', { name: 'Account' }))
-    // The active account comes first and open; the other shows what it has left.
-    const work = await screen.findByRole('region', { name: 'Codex · Work' })
-    expect(within(work).getByText('40% left')).toBeTruthy()
+    // Every account is one closed line, named, with what it has left; the
+    // active one comes first and opens to its full limits by its name.
+    const workLine = await screen.findByRole('button', { name: 'Work, 5 hours 40% left' })
     const personal = await screen.findByRole('button', { name: 'Personal, 5 hours 75% left' })
+    expect(workLine.getAttribute('aria-expanded')).toBe('false')
     expect(personal.getAttribute('aria-expanded')).toBe('false')
     expect(
       within(screen.getByRole('group', { name: 'Codex' }))
         .getAllByRole('button')
         .filter((line) => line.hasAttribute('aria-expanded'))
         .map((line) => line.textContent),
-    ).toEqual(['Work', 'Personal5 hours75%'])
+    ).toEqual(['Work5 hours 40%', 'Personal5 hours 75%'])
+    fireEvent.click(workLine)
+    const work = await screen.findByRole('region', { name: 'Codex · Work' })
+    expect(within(work).getByText('40% left')).toBeTruthy()
     await waitFor(() =>
       expect(transport.request).toHaveBeenCalledWith('usage.summary', {
         provider: 'codex',
