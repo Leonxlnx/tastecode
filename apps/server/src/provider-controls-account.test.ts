@@ -135,6 +135,7 @@ describe('provider controls for one account', () => {
     expect(() => controls(home, ['claude-code']).forProvider('codex')).toThrow(
       'unknown provider "codex"',
     )
-    expect(() => controls(home, ['grok'])).toThrow('grok cannot run as another account')
+    // Grok runs per account since #2105 (GROK_HOME); Cursor keeps one sign-in per machine.
+    expect(() => controls(home, ['cursor'])).toThrow('cursor cannot run as another account')
   })
 })
