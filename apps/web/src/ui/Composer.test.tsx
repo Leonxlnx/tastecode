@@ -633,6 +633,63 @@ describe('Composer docking motion', () => {
   })
 })
 
+describe('Composer docking from the prompt box', () => {
+  it('docks from where the prompt box stood, so a shelf leaving above it never makes it hop', () => {
+    let shelf = true
+    let boxTop = 400
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      // The project and branch shelf sits 33px above the prompt until the send.
+      const top = this.classList.contains('composer__prompt') && shelf ? boxTop + 33 : boxTop
+      return {
+        x: 100,
+        y: top,
+        top,
+        right: 720,
+        bottom: top + 120,
+        left: 100,
+        width: 620,
+        height: 120,
+        toJSON: () => ({}),
+      } as DOMRect
+    })
+    const animation = {
+      id: '',
+      cancel: vi.fn(),
+      finished: new Promise<void>(() => undefined),
+    } as unknown as Animation
+    const animate = vi.fn(function (this: Element) {
+      return animation
+    })
+    const originalAnimate = Object.getOwnPropertyDescriptor(Element.prototype, 'animate')
+    Object.defineProperty(Element.prototype, 'animate', {
+      configurable: true,
+      writable: true,
+      value: animate,
+    })
+
+    try {
+      const view = renderComposer(vi.fn(), { newSession: true })
+      shelf = false
+      boxTop = 700
+      view.rerenderComposer({ newSession: false })
+
+      // From the prompt's own 433px, not the group's 400px: no 33px hop first.
+      expect(animate).toHaveBeenCalledWith(
+        [{ transform: 'translate3d(0px, -267px, 0)' }, { transform: 'translate3d(0, 0, 0)' }],
+        { duration: 420, easing: 'cubic-bezier(0.45, 0, 0.2, 1)' },
+      )
+    } finally {
+      if (originalAnimate) {
+        Object.defineProperty(Element.prototype, 'animate', originalAnimate)
+      } else {
+        Reflect.deleteProperty(Element.prototype, 'animate')
+      }
+    }
+  })
+})
+
 describe('Composer media attachments', () => {
   it('attaches native drops larger than 25 MiB without copying them', () => {
     const onSend = vi.fn()
