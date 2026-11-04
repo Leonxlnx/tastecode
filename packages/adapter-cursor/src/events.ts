@@ -31,14 +31,13 @@ export type CursorEvent = z.infer<typeof CursorEventSchema>
 
 export class CursorEventMapper {
   readonly #turnId: string
-  readonly #messageId: string
-  #messageStarted = false
-  #message = ''
+  /** The message the last `assistant` event opened, until something closes it. */
+  #message: { id: string; text: string } | undefined
+  #messageCount = 0
   readonly #tools = new Map<string, Item>()
 
   constructor(turnId: string) {
     this.#turnId = turnId
-    this.#messageId = `${turnId}-message`
   }
 
   translate(event: CursorEvent): DomainEvent[] {
@@ -49,21 +48,7 @@ export class CursorEventMapper {
   }
 
   finish(): DomainEvent[] {
-    const events: DomainEvent[] = []
-    if (this.#messageStarted) {
-      events.push({
-        type: 'item.completed',
-        item: {
-          id: this.#messageId,
-          turnId: this.#turnId,
-          type: 'message',
-          role: 'assistant',
-          status: 'failed',
-          text: this.#message,
-          createdAt: Date.now(),
-        },
-      })
-    }
+    const events = this.#closeMessage('failed')
     for (const item of this.#tools.values()) {
       events.push({ type: 'item.completed', item: { ...item, status: 'failed' } })
     }
@@ -71,19 +56,31 @@ export class CursorEventMapper {
     return events
   }
 
+  /**
+   * Without --stream-partial-output, cursor-agent buffers the model's text and
+   * prints it as one `assistant` event before each tool call, retry,
+   * interaction query and the `result`. Every event is a whole segment, so
+   * each gets a message of its own and text around tool calls stays in order.
+   */
   #assistant(event: CursorEvent): DomainEvent[] {
-    const delta = event.message?.content
+    const text = event.message?.content
       ?.filter((part) => part.type === 'text')
       .map((part) => part.text ?? '')
       .join('')
-    if (!delta) return []
-    const events: DomainEvent[] = []
-    if (!this.#messageStarted) {
-      this.#messageStarted = true
-      events.push({
+    if (!text) return []
+    const events = this.#closeMessage('completed')
+    this.#messageCount += 1
+    // The first message keeps the id a single-message turn always had.
+    const id =
+      this.#messageCount === 1
+        ? `${this.#turnId}-message`
+        : `${this.#turnId}-message-${this.#messageCount}`
+    this.#message = { id, text }
+    events.push(
+      {
         type: 'item.started',
         item: {
-          id: this.#messageId,
+          id,
           turnId: this.#turnId,
           type: 'message',
           role: 'assistant',
@@ -91,15 +88,9 @@ export class CursorEventMapper {
           text: '',
           createdAt: Date.now(),
         },
-      })
-    }
-    this.#message += delta
-    events.push({
-      type: 'item.delta',
-      turnId: this.#turnId,
-      itemId: this.#messageId,
-      textDelta: delta,
-    })
+      },
+      { type: 'item.delta', turnId: this.#turnId, itemId: id, textDelta: text },
+    )
     return events
   }
 
@@ -108,40 +99,43 @@ export class CursorEventMapper {
     const [name, call] = Object.entries(event.tool_call)[0] ?? []
     if (!name || !call) return []
     const id = `${this.#turnId}-${event.call_id}`
+    // The text before a tool call is complete; later text is a new message.
+    const events = this.#closeMessage('completed')
     if (event.subtype === 'started') {
       const item = toolItem(id, this.#turnId, name, call.args ?? {})
       this.#tools.set(id, item)
-      return [{ type: 'item.started', item }]
-    }
-    if (event.subtype === 'completed') {
+      events.push({ type: 'item.started', item })
+    } else if (event.subtype === 'completed') {
       const item = this.#tools.get(id) ?? toolItem(id, this.#turnId, name, call.args ?? {})
       this.#tools.delete(id)
-      return [{ type: 'item.completed', item: { ...item, status: 'completed' } }]
+      events.push({ type: 'item.completed', item: { ...item, status: 'completed' } })
     }
-    return []
+    return events
   }
 
-  #result(event: CursorEvent): DomainEvent[] {
-    const events: DomainEvent[] = []
-    if (this.#messageStarted) {
-      events.push({
+  #closeMessage(status: 'completed' | 'failed', durationMs?: number): DomainEvent[] {
+    const message = this.#message
+    if (!message) return []
+    this.#message = undefined
+    return [
+      {
         type: 'item.completed',
         item: {
-          id: this.#messageId,
+          id: message.id,
           turnId: this.#turnId,
           type: 'message',
           role: 'assistant',
-          status: event.is_error ? 'failed' : 'completed',
-          text: this.#message,
+          status,
+          text: message.text,
           createdAt: Date.now(),
-          ...(!(event.duration_ms === undefined)
-            ? {
-                durationMs: event.duration_ms,
-              }
-            : {}),
+          ...(durationMs === undefined ? {} : { durationMs }),
         },
-      })
-    }
+      },
+    ]
+  }
+
+  #result(event: CursorEvent): DomainEvent[] {
+    const events = this.#closeMessage(event.is_error ? 'failed' : 'completed', event.duration_ms)
     for (const item of this.#tools.values()) {
       events.push({ type: 'item.completed', item: { ...item, status: 'failed' } })
     }

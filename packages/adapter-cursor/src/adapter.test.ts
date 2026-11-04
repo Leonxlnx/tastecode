@@ -467,6 +467,217 @@ describe('Cursor adapter', () => {
     adapter.dispose()
   })
 
+  it('keeps text before, between and after tool calls as separate messages', async () => {
+    // The shape of a 2026-11-04 Grok 4.7 turn (cursor-agent 2026.07.23) that
+    // showed as one message with its segments glued together. Built from the
+    // CLI's stream-json writer: each `assistant` line is the whole text since
+    // the previous flush, and `result` repeats all of it without separators.
+    const child = new FakeChild()
+    const adapter = new CursorAdapter({ spawn: () => child })
+    const events: DomainEvent[] = []
+    adapter.on('event', (event) => events.push(event))
+    const thread = await adapter.startThread('C:\\repo')
+    const turnId = await adapter.sendTurn(thread.id, 'Count the words')
+    const completed = new Promise<void>((resolve) => {
+      adapter.on('event', (event) => {
+        if (event.type === 'turn.completed') resolve()
+      })
+    })
+    const intro = "I'll write a script that counts the words so you can see the top 10 words."
+    const middle = "The workspace is empty, so I'll add the script and then run it."
+    const answer = '`wordfreq.mjs` prints the 10 most frequent words with their counts.'
+    const say = (text: string) =>
+      JSON.stringify({
+        type: 'assistant',
+        message: { role: 'assistant', content: [{ type: 'text', text }] },
+        session_id: 's1',
+        model_call_id: 'm1',
+        timestamp_ms: 1,
+      })
+    const tool = (subtype: string, callId: string, call: object) =>
+      JSON.stringify({ type: 'tool_call', subtype, call_id: callId, tool_call: call })
+    const list = { lsToolCall: { args: { path: 'C:\\repo' } } }
+    const write = { writeToolCall: { args: { path: 'wordfreq.mjs', fileText: 'x' } } }
+    const run = { shellToolCall: { args: { command: 'node wordfreq.mjs' } } }
+
+    child.stdout.end(
+      [
+        say(intro),
+        tool('started', 'call-1', list),
+        tool('completed', 'call-1', list),
+        say(middle),
+        tool('started', 'call-2', write),
+        tool('completed', 'call-2', write),
+        tool('started', 'call-3', run),
+        tool('completed', 'call-3', run),
+        say(answer),
+        JSON.stringify({
+          type: 'result',
+          subtype: 'success',
+          duration_ms: 4200,
+          is_error: false,
+          result: intro + middle + answer,
+          session_id: 's1',
+        }),
+      ].join('\n'),
+    )
+    await completed
+
+    const trace = events.flatMap((event) => {
+      if (event.type === 'item.delta') return [`delta ${event.itemId.slice(turnId.length + 1)}`]
+      if (event.type !== 'item.started' && event.type !== 'item.completed') return []
+      return [`${event.type.slice(5)} ${event.item.id.slice(turnId.length + 1)}`]
+    })
+    expect(trace).toEqual([
+      'started message',
+      'delta message',
+      'completed message',
+      'started call-1',
+      'completed call-1',
+      'started message-2',
+      'delta message-2',
+      'completed message-2',
+      'started call-2',
+      'completed call-2',
+      'started call-3',
+      'completed call-3',
+      'started message-3',
+      'delta message-3',
+      'completed message-3',
+    ])
+    const messages = events.flatMap((event) =>
+      event.type === 'item.completed' && event.item.type === 'message' ? [event.item] : [],
+    )
+    expect(messages).toEqual([
+      expect.objectContaining({ id: `${turnId}-message`, status: 'completed', text: intro }),
+      expect.objectContaining({ id: `${turnId}-message-2`, status: 'completed', text: middle }),
+      expect.objectContaining({
+        id: `${turnId}-message-3`,
+        status: 'completed',
+        text: answer,
+        durationMs: 4200,
+      }),
+    ])
+    expect(messages[0]).not.toHaveProperty('durationMs')
+    expect(events.at(-1)).toEqual({ type: 'turn.completed', turnId, status: 'completed' })
+    adapter.dispose()
+  })
+
+  it('maps a turn with one text segment to the same single message as before', async () => {
+    const child = new FakeChild()
+    const adapter = new CursorAdapter({ spawn: () => child })
+    const events: DomainEvent[] = []
+    adapter.on('event', (event) => events.push(event))
+    const thread = await adapter.startThread('C:\\repo')
+    const turnId = await adapter.sendTurn(thread.id, 'Say hi')
+    const completed = new Promise<void>((resolve) => {
+      adapter.on('event', (event) => {
+        if (event.type === 'turn.completed') resolve()
+      })
+    })
+
+    child.stdout.end(
+      [
+        '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Hi there."}]},"session_id":"s1"}',
+        '{"type":"result","subtype":"success","duration_ms":25,"is_error":false,"result":"Hi there.","session_id":"s1"}',
+      ].join('\n'),
+    )
+    await completed
+
+    const id = `${turnId}-message`
+    const message = {
+      id,
+      turnId,
+      type: 'message',
+      role: 'assistant',
+      createdAt: expect.any(Number),
+    }
+    expect(events.filter((event) => event.type !== 'turn.started')).toEqual([
+      { type: 'item.started', item: { ...message, status: 'started', text: '' } },
+      { type: 'item.delta', turnId, itemId: id, textDelta: 'Hi there.' },
+      {
+        type: 'item.completed',
+        item: { ...message, status: 'completed', text: 'Hi there.', durationMs: 25 },
+      },
+      { type: 'turn.completed', turnId, status: 'completed' },
+    ])
+    adapter.dispose()
+  })
+
+  it('keeps back-to-back segments apart and fails the open tool when interrupted', async () => {
+    const child = new FakeChild()
+    const adapter = new CursorAdapter({ spawn: () => child })
+    const events: DomainEvent[] = []
+    adapter.on('event', (event) => events.push(event))
+    const thread = await adapter.startThread('C:\\repo')
+    const turnId = await adapter.sendTurn(thread.id, 'go')
+    const say = (text: string) =>
+      `{"type":"assistant","message":{"content":[{"type":"text","text":"${text}"}]}}\n`
+    const run = (subtype: string, callId: string) =>
+      `{"type":"tool_call","subtype":"${subtype}","call_id":"${callId}","tool_call":{"shellToolCall":{"args":{"command":"node a.mjs"}}}}\n`
+
+    // The CLI also flushes its text before a retry or an interaction query,
+    // so two whole segments can follow each other without a tool between.
+    child.stdout.write(
+      say('Checking first.') +
+        run('started', 'call-1') +
+        run('completed', 'call-1') +
+        say('Now') +
+        say('Then this.') +
+        run('started', 'call-2'),
+    )
+    await new Promise((resolve) => setImmediate(resolve))
+    await adapter.interrupt()
+
+    const completedItems = events.flatMap((event) =>
+      event.type === 'item.completed'
+        ? [[event.item.id.slice(turnId.length + 1), event.item.status, event.item.text]]
+        : [],
+    )
+    expect(completedItems).toEqual([
+      ['message', 'completed', 'Checking first.'],
+      ['call-1', 'completed', undefined],
+      ['message-2', 'completed', 'Now'],
+      ['message-3', 'completed', 'Then this.'],
+      ['call-2', 'failed', undefined],
+    ])
+    expect(events.at(-1)).toEqual({ type: 'turn.completed', turnId, status: 'interrupted' })
+  })
+
+  it('fails an open text segment after a tool call when interrupted', async () => {
+    const child = new FakeChild()
+    const adapter = new CursorAdapter({ spawn: () => child })
+    const events: DomainEvent[] = []
+    adapter.on('event', (event) => events.push(event))
+    const thread = await adapter.startThread('C:\\repo')
+    const turnId = await adapter.sendTurn(thread.id, 'go')
+
+    child.stdout.write(
+      [
+        '{"type":"assistant","message":{"content":[{"type":"text","text":"Looking."}]}}',
+        '{"type":"tool_call","subtype":"started","call_id":"call-1","tool_call":{"readToolCall":{"args":{"path":"a.md"}}}}',
+        '{"type":"tool_call","subtype":"completed","call_id":"call-1","tool_call":{"readToolCall":{"args":{"path":"a.md"}}}}',
+        '{"type":"assistant","message":{"content":[{"type":"text","text":"Half an answer"}]}}',
+        '',
+      ].join('\n'),
+    )
+    await new Promise((resolve) => setImmediate(resolve))
+    await adapter.interrupt()
+
+    const messages = events.flatMap((event) =>
+      event.type === 'item.completed' && event.item.type === 'message' ? [event.item] : [],
+    )
+    expect(messages).toEqual([
+      expect.objectContaining({ id: `${turnId}-message`, status: 'completed', text: 'Looking.' }),
+      expect.objectContaining({
+        id: `${turnId}-message-2`,
+        status: 'failed',
+        text: 'Half an answer',
+      }),
+    ])
+    expect(events.at(-1)).toEqual({ type: 'turn.completed', turnId, status: 'interrupted' })
+  })
+
   it('lets the next turn start while the finished process is still exiting', async () => {
     const children: FakeChild[] = []
     const adapter = new CursorAdapter({
