@@ -31,7 +31,9 @@ describe('plan-limit bars', () => {
     // No provider colour and no gradient on a limit: only the charts keep the brand.
     expect(usageMeter).not.toContain('--usage-ink')
     expect(rule(usage, '.settings .usage-limit__fill')).not.toContain('--usage-ink')
-    expect(`${popup}\n${usage}`).not.toContain('gradient')
+    // The popup's scroll fade masks with a gradient; no limit is drawn with one.
+    const fills = `${popup}\n${usage}`.replace(/mask-image: linear-gradient\([^;]*\);/g, '')
+    expect(fills).not.toContain('gradient')
   })
 
   it('turns only the fill of a nearly spent window the error colour', () => {

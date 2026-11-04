@@ -67,7 +67,9 @@ describe('chat column', () => {
     expect(rule(appCss, '.composer textarea')).toContain(
       'padding: 12px calc(var(--chat-text-inset) - 1px) 6px;',
     )
-    expect(rule(appCss, '.composer__prompt')).toContain('border: 1px solid var(--line);')
+    expect(rule(appCss, '.composer__prompt')).toContain(
+      'border: 1px solid var(--composer-hairline);',
+    )
     expect(rule(voiceCss, '.composer__voice-error')).toContain('padding: 0 var(--chat-text-inset);')
   })
 
