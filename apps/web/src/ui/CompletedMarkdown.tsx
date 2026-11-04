@@ -16,6 +16,8 @@ import {
   type Components,
 } from 'streamdown'
 import 'streamdown/styles.css'
+import { createMathPlugin } from '@streamdown/math'
+import 'katex/dist/katex.min.css'
 import { canRevealProjectFile, revealProjectFile } from '../bridge.js'
 import {
   preserveProjectFileLinks,
@@ -35,6 +37,7 @@ import {
 } from './MarkdownImage.js'
 import { MarkdownBlock, MarkdownCode, MarkdownPre } from './LargeCodeBlock.js'
 import { closedBlockCount, createBlockSplitter } from './markdown-blocks.js'
+import { normalizeMathDelimiters } from './math-delimiters.js'
 
 type InlineCodeProps = ComponentPropsWithoutRef<'code'> & { node?: unknown }
 
@@ -295,7 +298,12 @@ function dropFormattingLineEndings() {
 const REMARK_PLUGINS = Object.values(defaultRemarkPlugins)
 const LITERAL_HTML_REMARK_PLUGINS = [...REMARK_PLUGINS, literalHtmlNodes]
 const { raw: RAW_HTML_REHYPE_PLUGIN, ...HARDENING_REHYPE_PLUGINS } = defaultRehypePlugins
-const STREAMDOWN_PLUGINS = { code: shikiPlugin }
+const STREAMDOWN_PLUGINS = {
+  code: shikiPlugin,
+  // Single dollars stay text ("$5 and $10"); normalizeMathDelimiters turns real
+  // formulas into $$ forms first. A formula KaTeX cannot parse shows its source.
+  math: createMathPlugin({ singleDollarTextMath: false, errorColor: 'var(--text-3)' }),
+}
 const STREAMDOWN_CONTROLS = { code: true, table: true, mermaid: false }
 
 /**
@@ -350,7 +358,9 @@ const ReportedBlock = memo(function ReportedBlock(props: BlockProps) {
     commits?.commit(index, content)
     return () => commits?.forget(index, content)
   }, [commits, content, index])
-  return <MarkdownBlock {...props} />
+  // Per block, so a streamed reply rewrites only the block that changed.
+  const rendered = useMemo(() => normalizeMathDelimiters(content), [content])
+  return <MarkdownBlock {...props} content={rendered} />
 })
 
 /** Full Markdown is loaded only for completed output that uses Markdown syntax.
