@@ -114,15 +114,14 @@ describe('readWindowChrome', () => {
     }
   })
 
-  it('clears the window behind the dark translucent sidebar, not the light one', () => {
+  it('keeps the window opaque behind the translucent sidebar when no window background is set', () => {
     vi.spyOn(document, 'elementFromPoint').mockReturnValue(null)
-    document.documentElement.dataset['glass'] = 'off'
-    expect(readWindowChrome('dark')).not.toHaveProperty('seeThrough')
-    document.documentElement.dataset['glass'] = 'on'
-    // Dark leaves body and .shell__body clear behind the sidebar (app.css).
-    expect(readWindowChrome('dark').seeThrough).toBe(true)
-    // Light keeps its chrome opaque.
-    expect(readWindowChrome('light')).not.toHaveProperty('seeThrough')
+    for (const glass of ['off', 'on']) {
+      document.documentElement.dataset['glass'] = glass
+      // A cleared window let the OS material wash the dark sidebar grey.
+      expect(readWindowChrome('dark')).not.toHaveProperty('seeThrough')
+      expect(readWindowChrome('light')).not.toHaveProperty('seeThrough')
+    }
   })
 
   it('keeps a window that opened clear clear before the lazy layer applies', () => {
