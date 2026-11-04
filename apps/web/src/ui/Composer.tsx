@@ -302,11 +302,11 @@ function BranchMenu(props: {
   )
 }
 const COMPOSER_DOCK_ANIMATION_ID = 'harness-composer-dock'
-// --dur-slow and --ease-rail: the dock lands with the sent message's entrance
-// (also --dur-slow) instead of 60ms after it, and a move this long settles
-// rather than covering most of its distance in the first frames.
-const COMPOSER_DOCK_MOTION_MS = 260
-const COMPOSER_DOCK_EASING = 'cubic-bezier(0.32, 0.72, 0, 1)'
+// --dur-dock and --ease-dock: the dock lands with the sent message's entrance
+// (also --dur-dock) instead of after it, and a move this long glides and
+// settles softly rather than covering most of its distance in the first frames.
+const COMPOSER_DOCK_MOTION_MS = 320
+const COMPOSER_DOCK_EASING = 'cubic-bezier(0.2, 0.9, 0.25, 1)'
 const COMPOSER_QUEUE_ANIMATION_ID = 'harness-composer-queue'
 // Match --dur-slow and --ease-rail so the panel and row reveal settle together.
 const COMPOSER_QUEUE_MOTION_MS = 260
