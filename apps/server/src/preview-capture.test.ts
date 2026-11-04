@@ -18,6 +18,17 @@ describe('preview capture coordinator', () => {
     expect(send).not.toHaveBeenCalled()
   })
 
+  it('names the chat that asked for a capture', () => {
+    const send = vi.fn()
+    const coordinator = new PreviewCaptureCoordinator<object>(send)
+    coordinator.setCapability(socket, true)
+
+    void coordinator.capture('http://127.0.0.1:5183/', viewports, undefined, 'thread-7')
+    void coordinator.capture('http://127.0.0.1:5184/', viewports)
+
+    expect(send.mock.calls[0]![1]).toMatchObject({ threadId: 'thread-7' })
+  })
+
   it('drops an aborted queued capture without dispatching it', async () => {
     const send = vi.fn()
     const coordinator = new PreviewCaptureCoordinator<object>(send)

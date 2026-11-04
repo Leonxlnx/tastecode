@@ -3813,6 +3813,30 @@ describe('web client', () => {
     expect(document.querySelector('.workspace-panel')?.classList).toContain('is-open')
   })
 
+  it("keeps a background chat's Design preview out of the panel until that chat opens", async () => {
+    render(<App />)
+
+    await waitFor(() => {
+      expect(transport.listeners.has('preview.captureRequested')).toBe(true)
+    })
+    act(() => {
+      transport.listeners.get('preview.captureRequested')?.({
+        requestId: '00000000-0000-4000-8000-000000000002',
+        url: 'http://127.0.0.1:4173/',
+        viewports: [{ width: 1_280, height: 800 }],
+        threadId: 'untouched-thread',
+      })
+    })
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 50)))
+    expect(screen.queryByRole('textbox', { name: 'Browser address' })).toBeNull()
+    expect(document.querySelector('.workspace-panel.is-open')).toBeNull()
+
+    fireEvent.click(await waitFor(() => treeChatRow('New session')))
+
+    expect(await screen.findByRole('textbox', { name: 'Browser address' })).toBeTruthy()
+    expect(document.querySelector('.workspace-panel')?.classList).toContain('is-open')
+  })
+
   it('opens workspace tools from the app surface instead of native window chrome', async () => {
     render(<App />)
 
