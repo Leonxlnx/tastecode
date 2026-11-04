@@ -187,11 +187,11 @@ describe('sidebar theme CSS', () => {
     )
   })
 
-  it('ends the rail in a raised identity card instead of a hard rule', () => {
+  it('ends the rail in a lifted identity card instead of a hard rule', () => {
     expect(appCss).toMatch(/\.rail__foot \{[^}]*padding: 4px 8px 8px;/s)
     expect(appCss).not.toMatch(/\.rail__foot \{[^}]*border-top/s)
     expect(accountCardCss).toMatch(
-      /\.account-card \{[^}]*border-radius: var\(--r-card\);[^}]*background: var\(--rail-raised\);[^}]*var\(--shadow-raised\);/s,
+      /\n\.account-card \{[^}]*border-radius: var\(--r-card\);[^}]*background: color-mix\(in srgb, var\(--rail-raised\) 55%, transparent\);[^}]*inset 0 0 0 1px color-mix\(in srgb, var\(--text\) 9%, transparent\)/s,
     )
     expect(accountCardCss).toMatch(
       /\.account-card__trigger\.menutrigger \{[^}]*width: 100%;[^}]*min-height: 46px;/s,

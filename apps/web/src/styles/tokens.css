@@ -61,8 +61,19 @@
   --composer-placeholder: #828282;
   --composer-review: #65b8ff;
   --composer-danger: #fe8549;
-  --composer-shadow: 0 14px 34px -26px rgb(0 0 0 / 70%);
-  --composer-orb: #ededed;
+  --composer-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 4%), 0 1px 2px rgb(0 0 0 / 28%),
+    0 18px 40px -24px rgb(0 0 0 / 72%);
+  /* The prompt bar: the prompt colour, a touch see-through so a window
+     background shows faintly, edged by a hairline instead of a grey line. */
+  --composer-surface: color-mix(in srgb, var(--bg-prompt) 92%, transparent);
+  --composer-hairline: color-mix(in srgb, var(--text) 10%, transparent);
+  --composer-hairline-focus: color-mix(in srgb, var(--text) 18%, transparent);
+  /* Chips in the bar are ghosts: no fill until hover or while their menu is open. */
+  --composer-chip-bg-hover: color-mix(in srgb, var(--text) 7%, transparent);
+  --composer-chip-bg-open: color-mix(in srgb, var(--text) 10%, transparent);
+  --composer-orb-shadow: 0 1px 2px rgb(0 0 0 / 35%), inset 0 0 0 1px rgb(255 255 255 / 8%);
+  --composer-orb: #f2f2f2;
   --composer-on-orb: #101010;
   --composer-stop: #2b2b2b;
   --composer-control-bg: var(--control-hover);
@@ -369,8 +380,9 @@
   --composer-placeholder: #71717a;
   --composer-review: #2d72dc;
   --composer-danger: #ef4d05;
-  --composer-shadow: 0 12px 30px -18px rgb(24 24 27 / 18%);
-  --composer-orb: #1d1d1f;
+  --composer-shadow: 0 1px 2px rgb(24 24 27 / 6%), 0 14px 34px -20px rgb(24 24 27 / 20%);
+  --composer-orb-shadow: 0 1px 2px rgb(24 24 27 / 22%), inset 0 0 0 1px rgb(255 255 255 / 10%);
+  --composer-orb: #18181b;
   --composer-on-orb: #ffffff;
   --composer-stop: #1d1d1f;
   --composer-control-bg: var(--control-hover);

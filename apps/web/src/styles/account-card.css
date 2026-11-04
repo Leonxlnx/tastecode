@@ -2,19 +2,21 @@
    row: the rail ends in something soft instead of a hard line. The whole card
    is the account trigger, so the popup can sit flush with it; the settings
    gear rides on its right edge as a sibling, because a button cannot nest. */
+/* The prompt bar's language: no flat grey block, but a faint lift over the
+   rail, edged by a hairline, with a soft wash only on hover or while open. */
 .account-card {
   position: relative;
   min-width: 0;
   border-radius: var(--r-card);
-  background: var(--rail-raised);
+  background: color-mix(in srgb, var(--rail-raised) 55%, transparent);
   box-shadow:
-    inset 0 0 0 1px var(--rail-raised-ring),
-    var(--shadow-raised);
+    inset 0 0 0 1px color-mix(in srgb, var(--text) 9%, transparent),
+    0 1px 2px rgb(0 0 0 / 12%);
   transition: background-color var(--dur-fast) var(--ease-out);
 }
 
 .account-card:has(.account-card__trigger:hover:not(:disabled)) {
-  background: var(--control-hover);
+  background: color-mix(in srgb, var(--text) 6%, transparent);
 }
 
 .account-card:has(.account-card__trigger[aria-expanded='true']) {

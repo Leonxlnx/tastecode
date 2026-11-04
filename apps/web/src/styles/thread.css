@@ -339,6 +339,10 @@ button.thread__older:hover {
    changes a measured virtual row. The transparent tail also lets a pointer
    enter from just below a short bubble. */
 .thread__row:has(> .said) {
+  /* A new prompt starts a new exchange: 28px above it, more than twice the
+     12px between rows of one turn, so an answer and the next question read
+     as two beats. Rows are measured, so the extra height moves nothing. */
+  padding-top: 16px;
   padding-bottom: 27px;
 }
 

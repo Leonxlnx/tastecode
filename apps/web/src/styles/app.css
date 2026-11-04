@@ -304,6 +304,7 @@
   place-items: center;
   width: 26px;
   height: 26px;
+  padding: 0;
   background: none;
   border: 1px solid transparent;
   border-radius: var(--r-md);
@@ -1683,8 +1684,8 @@
 .composer__prompt {
   position: relative;
   z-index: 1;
-  background: var(--bg-prompt);
-  border: 1px solid var(--line);
+  background: var(--composer-surface);
+  border: 1px solid var(--composer-hairline);
   border-radius: var(--r-composer);
   box-shadow: var(--composer-shadow);
   transition: border-color var(--dur-fast) var(--ease-out);
@@ -1695,7 +1696,7 @@
 }
 
 .composer__prompt:focus-within {
-  border-color: var(--line-strong);
+  border-color: var(--composer-hairline-focus);
 }
 
 .composer__box.is-dropping .composer__prompt {
@@ -2380,8 +2381,12 @@
   color: var(--composer-danger);
 }
 
+/* Even icons in even buttons centre on a whole pixel. */
 .tool--icon {
+  display: grid;
+  place-items: center;
   gap: 0;
+  line-height: 0;
 }
 
 .tool--icon svg {
@@ -2443,9 +2448,21 @@
     .menutrigger--model-selector,
     .composer-voice-button
   ) {
-  background: var(--composer-action-bg);
-  border-color: var(--composer-action-border);
-  box-shadow: var(--composer-action-shadow);
+  /* Ghost chips: the label alone at rest, a soft wash on hover or while open. */
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.tools
+  :is(
+    .composer__add,
+    .composer__permission,
+    .composer__design,
+    .menutrigger--model-selector,
+    .composer-voice-button
+  )[aria-expanded='true'] {
+  background: var(--composer-chip-bg-open);
 }
 
 /* Scoped under .tools so these outrank the later generic .menutrigger
@@ -3121,9 +3138,9 @@
       .menutrigger--model-selector,
       .composer-voice-button
     ):hover:not(:disabled) {
-    background: var(--composer-action-bg-hover);
-    border-color: var(--composer-action-border-hover);
-    box-shadow: var(--composer-action-shadow-hover);
+    background: var(--composer-chip-bg-hover);
+    border-color: transparent;
+    box-shadow: none;
   }
 
   /* Hover inks the label like every other chip instead of fading it. */
@@ -3195,9 +3212,10 @@
     color 150ms var(--ease-out);
 }
 
+/* Send is the one solid thing in the bar: a crisp, fully opaque circle. */
 .orb:not(.orb--stop) {
-  background: color-mix(in srgb, var(--composer-orb) 90%, transparent);
-  box-shadow: none;
+  background: var(--composer-orb);
+  box-shadow: var(--composer-orb-shadow);
 }
 
 .orb:disabled {
