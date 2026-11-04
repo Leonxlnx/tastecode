@@ -625,7 +625,8 @@ function createWindow(): void {
     // behind the window (Windows 11 acrylic/Mica, macOS vibrancy) and shows
     // it wherever the page and the window colour above are transparent. CSS
     // backdrop-filter cannot do this — inside the page there is nothing
-    // behind it to blur. Never `transparent: true`; see windowBackdropOptions.
+    // behind it to blur. Never a transparent window (Electron's `transparent` option);
+    // see windowBackdropOptions.
     ...windowBackdropOptions(process.platform, materialSupport, windowMaterial),
     // Draw our own top bar, but keep native window controls on Windows.
     titleBarStyle: 'hidden',
