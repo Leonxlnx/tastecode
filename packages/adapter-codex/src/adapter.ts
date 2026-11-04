@@ -1545,8 +1545,14 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
       } finally {
         this.#pendingTurnCompletions.delete(completed)
       }
-      if (!completed.has(turnId) && !this.#activeTurns.has(threadId)) {
+      // Codex 0.166 sends no turn/started for the review turn, only for the reviewer's
+      // turn inside it (fixtures/review-codex-0.166.jsonl), so the answer starts it.
+      if (!completed.has(turnId) && this.#rpc === rpc) {
         this.#activeTurns.set(threadId, turnId)
+        this.emit('event', {
+          type: 'turn.started',
+          turn: { id: turnId, threadId, status: 'running', createdAt: Date.now() },
+        })
       }
     } else if (command.method === 'thread/compact/start') {
       // The request answers with nothing; the turn it starts names itself.
@@ -1905,6 +1911,10 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
 
       case 'turn/started': {
         const p = TurnStartedNotificationSchema.parse(params)
+        // An inline review runs its reviewer as a turn inside the review turn. Codex 0.166
+        // sends that turn's items under the review turn and never completes it on this
+        // thread, so it is not a turn of this chat (fixtures/review-codex-0.166.jsonl).
+        if (p.turn.rootTurnId && p.turn.rootTurnId !== p.turn.id) return
         this.#activeTurns.set(p.threadId, p.turn.id)
         this.#turnStartWaiters.get(p.threadId)?.(p.turn.id)
         emit({
