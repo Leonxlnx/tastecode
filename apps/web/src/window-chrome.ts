@@ -121,12 +121,10 @@ export function readWindowChrome(theme: Theme): WindowChrome {
   // opened clear solid for a moment. The shell clears it only where the OS
   // draws a material, and the page stays opaque until the layer applies.
   //
-  // The translucent sidebar (data-glass) also needs it: in the dark theme the
-  // page leaves body and .shell__body clear behind the sidebar (app.css), but
-  // an opaque window colour under them covered the material, so the sidebar
-  // only ever showed its own tint. The light theme keeps its chrome opaque.
-  const glass = document.documentElement.dataset['glass'] === 'on' && theme === 'dark'
-  if (glass || readAppBackground().mode === 'transparent') chrome.seeThrough = true
+  // The translucent sidebar (data-glass) keeps an opaque window colour: clearing it let
+  // the OS material (light on Windows 11) wash the dark sidebar grey with Window
+  // background set to None (Leon, 2026-11-04). Only Transparent shows the desktop.
+  if (readAppBackground().mode === 'transparent') chrome.seeThrough = true
   return chrome
 }
 
