@@ -554,7 +554,10 @@
                 >Forty-plus wire variants collapsed to base models, effort on the slider
                 <span class="d"
                   >a frame that fails its schema or a listener that throws is logged and the stream
-                  keeps reading; only an oversized frame ends the turn; the text written before,
+                  keeps reading; only an oversized frame ends the turn; a turn the CLI refuses (exit
+                  code 1 without a result, such as a model outside the plan's usage or a folder it
+                  does not trust) fails with the reason the CLI printed, an Error line without its
+                  class name, instead of "cursor-agent exited with code 1"; the text written before,
                   between and after tool calls shows as separate messages in order, since each
                   assistant line is a whole segment; on Windows a turn starts the CLI's bundled
                   node.exe instead of the cmd.exe shim, so multi-line prompts and the first turn of
