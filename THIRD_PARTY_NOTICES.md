@@ -23,6 +23,7 @@ The table below is generated from `licenses/direct-runtime-dependencies.json` an
 | `@pierre/diffs` | Pull-request diff rendering | Apache-2.0 | [source](https://github.com/pierrecomputer/pierre) |
 | `@shikijs/langs` | Syntax highlighting grammars | MIT | [source](https://github.com/shikijs/shiki) |
 | `@shikijs/themes` | Syntax highlighting themes | MIT | [source](https://github.com/shikijs/shiki) |
+| `@streamdown/math` | Math rendering in replies | Apache-2.0 | [source](https://github.com/vercel/streamdown) |
 | `@tabler/icons-react` | Interface icons | MIT | [source](https://github.com/tabler/tabler-icons) |
 | `@tanstack/react-virtual` | Thread virtualization | MIT | [source](https://github.com/TanStack/virtual) |
 | `@xterm/addon-fit` | Terminal sizing | MIT | [source](https://github.com/xtermjs/xterm.js) |
@@ -32,6 +33,7 @@ The table below is generated from `licenses/direct-runtime-dependencies.json` an
 | `@xterm/xterm` | Terminal UI | MIT | [source](https://github.com/xtermjs/xterm.js) |
 | `electron` | Desktop runtime | MIT | [source](https://github.com/electron/electron) |
 | `electron-updater` | Desktop update client | MIT | [source](https://github.com/electron-userland/electron-builder) |
+| `katex` | Math typesetting and its fonts | MIT | [source](https://github.com/KaTeX/KaTeX) |
 | `micromark` | Markdown parsing | MIT | [source](https://github.com/micromark/micromark) |
 | `micromark-util-decode-string` | Markdown string decoding | MIT | [source](https://github.com/micromark/micromark) |
 | `node-pty` | Pseudoterminal integration | MIT | [source](https://github.com/microsoft/node-pty) |
