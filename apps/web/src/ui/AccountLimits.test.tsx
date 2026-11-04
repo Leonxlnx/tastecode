@@ -438,7 +438,7 @@ describe('account limits', () => {
     const group = screen.getByRole('group', { name: 'Claude Code' })
     // The pool comes before every account line.
     expect(group.querySelector('.account-menu__pool, .account-menu__account')).toBe(pool)
-    expect(within(pool).getByText('3 accounts')).toBeTruthy()
+    expect(pool.querySelector<HTMLElement>('.account-menu__pool-name')?.title).toBe('3 accounts')
 
     // Session: Pro and Max (Ultra has no 5-hour window), 5.1 of 6 left.
     const session = within(pool).getByRole('progressbar', {

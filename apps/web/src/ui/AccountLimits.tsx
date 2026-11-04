@@ -226,7 +226,6 @@ function ProviderAccountLimits(props: {
           key={limitKey(state.provider, state.accountId)}
           state={state}
           provider={name}
-          providerId={props.provider}
           account={props.label(state)}
           plan={pool?.accounts.find((account) => account.accountId === accountOf(state))?.plan}
           recommended={recommended !== undefined && accountOf(state) === recommended}
@@ -252,9 +251,9 @@ function ProviderAccountLimits(props: {
 function AccountPool(props: { pool: ProviderPool; provider: string; now: number }) {
   return (
     <section className="account-menu__pool" aria-label={`${props.provider} · All accounts`}>
-      <span className="account-menu__pool-name">
+      <span className="account-menu__pool-name" title={`${props.pool.accounts.length} accounts`}>
         All accounts
-        <span className="account-menu__pool-count">{props.pool.accounts.length} accounts</span>
+        <span className="visually-hidden"> · {props.pool.accounts.length} accounts</span>
       </span>
       <span className="account-menu__glance">
         {props.pool.windows.map((total) => (
@@ -341,7 +340,6 @@ function PoolWindow(props: {
 function AccountLine(props: {
   state: AccountLimitsState
   provider: string
-  providerId: ProviderId
   account: string
   /** The account's plan, such as "Max x5", when the pool knows it. */
   plan?: string | undefined
@@ -362,16 +360,18 @@ function AccountLine(props: {
     .join(', ')
   const badge = (
     <>
-      <ProviderIcon
-        className="account-menu__account-icon"
-        mark={providerMark(props.providerId)}
-        size={12}
-      />
       <span className="account-menu__account-name">{props.account}</span>
-      {props.plan ? <span className="account-menu__account-plan">{props.plan}</span> : null}
+      {props.plan ? (
+        <span className="account-menu__account-plan" title={props.plan}>
+          {props.plan}
+        </span>
+      ) : null}
       {props.recommended ? (
-        <span className="account-menu__account-badge" title="Resets soonest and has room left">
-          Recommended
+        <span
+          className="account-menu__account-badge"
+          title="Recommended: resets soonest and has room left"
+        >
+          <span className="visually-hidden">Recommended</span>
         </span>
       ) : null}
     </>

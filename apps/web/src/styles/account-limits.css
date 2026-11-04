@@ -543,7 +543,7 @@
   display: flex;
   flex: 1;
   align-items: center;
-  gap: 7px;
+  gap: 5px;
   min-width: 0;
   /* The hover wash reaches past the text without moving it. */
   margin: -3px -5px;
@@ -588,13 +588,10 @@ button.account-menu__account-line:focus-visible {
   rotate: 90deg;
 }
 
-.account-menu__account-icon {
-  flex: none;
-  color: var(--text-2);
-}
-
 .account-menu__account-name {
-  min-width: 0;
+  /* The name keeps a few letters before the plan chip gives way. */
+  flex: 0 1 auto;
+  min-width: min(4.5em, 100%);
   overflow: hidden;
   font-weight: 500;
   text-overflow: ellipsis;
@@ -622,7 +619,7 @@ button.account-menu__account-line:focus-visible {
   display: flex;
   flex: none;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   margin-left: auto;
 }
 
@@ -633,7 +630,7 @@ button.account-menu__account-line:focus-visible {
 }
 
 .account-menu__account-value {
-  min-width: 2.6em;
+  min-width: 2.4em;
   color: var(--text);
   font-variant-numeric: tabular-nums;
   text-align: right;
@@ -642,12 +639,12 @@ button.account-menu__account-line:focus-visible {
 
 /* A count or balance has no gauge; its text takes the gauge's room too. */
 .account-menu__account-value.is-text {
-  min-width: calc(2.6em + 28px);
+  min-width: calc(2.4em + 24px);
 }
 
 .account-menu__account-gauge {
   --limit-fill: var(--left);
-  width: 24px;
+  width: 20px;
   height: 3px;
   border-radius: var(--r-pill);
   background: color-mix(in srgb, var(--text) 9%, transparent);
@@ -670,24 +667,30 @@ button.account-menu__account-line:focus-visible {
   padding-left: 19px;
 }
 
-/* The account's plan and, for one account, that the pool recommends it next:
-   quiet tags beside its name, in the bars' ink rather than an accent. */
-.account-menu__account-plan,
-.account-menu__account-badge {
-  flex: none;
+/* The account's plan: a quiet tag beside its name, in the bars' ink rather
+   than an accent, that shortens before the name does. */
+.account-menu__account-plan {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   padding: 0 5px;
   border-radius: var(--r-pill);
   background: color-mix(in srgb, var(--text) 8%, transparent);
-  color: var(--text-2);
+  color: var(--text-3);
   font-size: 10px;
-  font-weight: 500;
   line-height: 15px;
   white-space: nowrap;
 }
 
-.account-menu__account-plan {
-  color: var(--text-3);
-  font-weight: 400;
+/* The account the pool recommends for the next chat: a small dot after its
+   name; the word is on hover and for assistive tech. */
+.account-menu__account-badge {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--r-pill);
+  background: var(--text-2);
 }
 
 /* A provider's accounts summed into one pool: one line on a slightly raised
@@ -712,18 +715,12 @@ button.account-menu__account-line:focus-visible {
   white-space: nowrap;
 }
 
-.account-menu__pool-count {
-  margin-left: 5px;
-  color: var(--text-3);
-  font-weight: 400;
-}
-
 /* One short bar per window: a segment per account, as long as its plan is big
    and filled to what that account has left, the soonest reset first. */
 .account-menu__pool-bar {
   display: flex;
   gap: 1px;
-  width: 24px;
+  width: 20px;
   height: 3px;
 }
 
