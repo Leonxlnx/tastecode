@@ -191,10 +191,12 @@ export function assertInstallerProofHost(env = process.env) {
 export async function verifyPackageContainers(directory, platform, config = releaseConfig) {
   await verifyReleasePayload(directory, platform, config)
   const detail = platformConfig(platform, config)
-  if (platform === 'macos') {
+  if (detail.os === 'mac') {
     if (process.platform !== 'darwin' || process.arch !== detail.arch)
-      throw new Error('macOS proof must run on Apple Silicon macOS')
-    const app = path.join(directory, 'mac-arm64', `${config.productName}.app`)
+      throw new Error(`macOS proof must run on a ${detail.arch} Mac`)
+    // electron-builder names an arm64 app's folder mac-arm64 and an x64 one mac.
+    const appFolder = detail.arch === 'x64' ? 'mac' : `mac-${detail.arch}`
+    const app = path.join(directory, appFolder, `${config.productName}.app`)
     await verifyPackagedResources(path.join(app, 'Contents', 'Resources'), config)
     run(process.execPath, [
       path.join(desktopDirectory, 'scripts', 'run-native-binding-proof.js'),
@@ -278,7 +280,7 @@ export async function buildPackageProof(directory, platform) {
   const targets =
     platform === 'windows'
       ? ['--win', 'nsis', '--x64']
-      : ['--mac', 'dmg', 'zip', '--arm64', '--config.mac.notarize=false']
+      : ['--mac', 'dmg', 'zip', `--${detail.arch}`, '--config.mac.notarize=false']
   run(
     process.execPath,
     [
@@ -303,7 +305,7 @@ if (isMain(import.meta.url)) {
   if (first === '--package' || first === '--containers') {
     if (!second || !third)
       throw new Error(
-        'Usage: node verify-release-assets.js <--package|--containers> <directory> <windows|macos>',
+        'Usage: node verify-release-assets.js <--package|--containers> <directory> <windows|macos|macos-x64>',
       )
     if (first === '--package') await buildPackageProof(path.resolve(second), third)
     else await verifyPackageContainers(path.resolve(second), third)

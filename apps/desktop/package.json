@@ -4,7 +4,7 @@
   "description": "A local desktop workspace for coding agents.",
   "author": "Tasteskill Team",
   "copyright": "made by @blueemi99 and @lexnlin on X :)",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "private": true,
   "type": "module",
   "main": "./dist/main.js",
@@ -159,8 +159,20 @@
     "mac": {
       "icon": "assets/tastecode-icon.icon",
       "target": [
-        "dmg",
-        "zip"
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
       ],
       "hardenedRuntime": true,
       "extendInfo": {
