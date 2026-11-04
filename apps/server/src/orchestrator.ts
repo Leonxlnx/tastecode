@@ -752,6 +752,11 @@ export class Orchestrator {
   #providerNamePrompts = new Map<string, string>()
   /** Chats that already had their fallback title written, or tried, this run. */
   #fallbackTitled = new Set<string>()
+  /**
+   * Chats whose newest user prompt went to their provider as more than the
+   * user's words: a Design briefing, a handover, earlier context.
+   */
+  #wrappedPrompts = new Set<string>()
   #sideThreads = new Map<string, string>()
   #sideParents = new Map<string, string>()
   #startingSideThreads = new Map<string, Promise<Thread>>()
@@ -1361,9 +1366,15 @@ export class Orchestrator {
       PROVIDER_CAPABILITIES[before.provider].nativeTitles &&
       threadAccountHome(this.#accounts, before) === undefined
     ) {
-      this.#store.setProvisionalTitle(threadId, expectedTitle)
-      this.#providerNamePrompts.set(threadId, request)
-      return { title: expectedTitle, applied: false }
+      // The provider names a chat after its first prompt, which may still be on
+      // its way. One that went out wrapped, such as a Design briefing, would get
+      // the chat named after TasteCode's wrapping, so the title model names it.
+      await Promise.allSettled(this.#incomingSubmissions.get(threadId) ?? [])
+      if (!this.#wrappedPrompts.has(threadId)) {
+        this.#store.setProvisionalTitle(threadId, expectedTitle)
+        this.#providerNamePrompts.set(threadId, request)
+        return { title: expectedTitle, applied: false }
+      }
     }
 
     const output = await this.#runBackgroundTask(titlePrompt(request), before)
@@ -1400,6 +1411,22 @@ export class Orchestrator {
     if (this.#store.provisionalTitle(threadId) !== provisional) return false
     this.#store.renameThread(threadId, cleanGeneratedTitle(output, provisional))
     return true
+  }
+
+  /**
+   * Notes whether a user prompt goes to the provider as the user's own words.
+   * A chat already left for its provider to name keeps its stand-in, the start
+   * of the user's request, instead of a name that describes the wrapping.
+   */
+  #notePromptWrapping(threadId: string, wrapped: boolean): void {
+    if (!wrapped) {
+      this.#wrappedPrompts.delete(threadId)
+      return
+    }
+    this.#wrappedPrompts.add(threadId)
+    if (!this.#providerNamePrompts.delete(threadId)) return
+    const standIn = this.#store.provisionalTitle(threadId)
+    if (standIn !== undefined) this.#store.renameThread(threadId, standIn)
   }
 
   /** `threadId`: the chat whose checkout the diff is, when the request names one. */
@@ -3133,6 +3160,7 @@ export class Orchestrator {
               const prompt = flow.pendingPrompt ?? this.#designPromptFor(flow)
               delete flow.pendingPrompt
               this.#saveDesignFlow(threadId)
+              this.#notePromptWrapping(threadId, true)
               return await this.#sendDesignTurn(
                 threadId,
                 prompt,
@@ -3188,6 +3216,7 @@ export class Orchestrator {
         }
         this.#claimDesignFlow(threadId, flow)
         this.#saveDesignFlow(threadId)
+        this.#notePromptWrapping(threadId, true)
         let turnId: string
         try {
           turnId = await this.#sendDesignTurn(
@@ -3209,23 +3238,20 @@ export class Orchestrator {
         ? `This is an ordinary user turn, not an active TasteCode Design phase. Earlier phase-only JSON protocols no longer apply. Follow the current request normally and explain your work in normal prose, unless the user explicitly requests structured data. If asked to launch a preview, perform the launch on an available local port and report its URL instead of returning a preview-plan JSON object.\n\nUser request:\n${text}`
         : text
       const prompt = unreadSubagents ? `${unreadSubagents.text}${ownPrompt}` : ownPrompt
-      const turnId = await entry.session.sendTurn(
-        threadId,
-        handover
-          ? await this.#handoverPrompt(
-              threadId,
-              prompt,
-              handoverThrough,
-              entry.session,
-              options.model,
-            )
-          : this.#promptAfterRestore(
-              threadId,
-              continuation ? await this.#promptWithEarlierChat(threadId, prompt) : prompt,
-            ),
-        attachments,
-        options,
-      )
+      const sent = handover
+        ? await this.#handoverPrompt(
+            threadId,
+            prompt,
+            handoverThrough,
+            entry.session,
+            options.model,
+          )
+        : this.#promptAfterRestore(
+            threadId,
+            continuation ? await this.#promptWithEarlierChat(threadId, prompt) : prompt,
+          )
+      this.#notePromptWrapping(threadId, sent !== text)
+      const turnId = await entry.session.sendTurn(threadId, sent, attachments, options)
       if (panicGeneration !== this.#panicGeneration) {
         await entry.session.interrupt(threadId)
         throw new Error('turn cancelled by panic stop')
@@ -3996,6 +4022,7 @@ export class Orchestrator {
 
   forgetDeletedThread(threadId: string): void {
     this.#latestUserPrompts.delete(threadId)
+    this.#wrappedPrompts.delete(threadId)
     this.#revokeAgentTools(threadId)
     this.#subagents.forget(threadId)
     // The store deleted a chat's sub-agent chats with it.

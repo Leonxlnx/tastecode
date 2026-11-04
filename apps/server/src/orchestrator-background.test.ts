@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -11,9 +11,12 @@ import type {
   Model,
   ProviderId,
 } from '@harness/contracts'
+import { DESIGN_BRIEF_ATTACHMENT } from '@harness/design-agent/attachment'
 import { AccountNotFoundError, type AccountDirectory } from './account-directory.js'
 import type { AgentSession, ProviderRuntime } from './adapters.js'
+import { titlePrompt } from './background-model.js'
 import { CustomHarnessStore } from './custom-harnesses.js'
+import { McpConfigStore } from './mcp-config.js'
 import { Store } from './store.js'
 
 /**
@@ -105,12 +108,15 @@ class TitleSession implements AgentSession {
   readonly capabilities = CAPABILITIES
   #events = new EventEmitter()
   readonly #failure: Error | 'turn' | undefined
+  readonly #prompts: string[]
 
-  constructor(failure?: Error | 'turn') {
+  constructor(prompts: string[], failure?: Error | 'turn') {
+    this.#prompts = prompts
     this.#failure = failure
   }
 
-  async sendTurn(): Promise<string> {
+  async sendTurn(_threadId: string, text: string): Promise<string> {
+    this.#prompts.push(text)
     const failure = this.#failure
     if (failure instanceof Error) throw failure
     queueMicrotask(() => {
@@ -147,6 +153,25 @@ class TitleSession implements AgentSession {
   }
 }
 
+/** A chat's own session: it takes prompts, Design ones included, and never answers. */
+class ChatSession implements AgentSession {
+  readonly capabilities = { ...CAPABILITIES, images: true }
+  readonly sent: string[] = []
+  /** Holds the next prompt on its way to the provider until released. */
+  hold: Promise<void> | undefined
+
+  async sendTurn(_threadId: string, text: string): Promise<string> {
+    this.sent.push(text)
+    await this.hold
+    return `chat-turn-${this.sent.length}`
+  }
+
+  async interrupt(): Promise<void> {}
+  respondToApproval(): void {}
+  dispose(): void {}
+  on(): void {}
+}
+
 const roots: string[] = []
 const active: Array<{ orchestrator: InstanceType<typeof Orchestrator>; store: Store }> = []
 
@@ -163,12 +188,24 @@ function harness(
     agent?: string | undefined
     accountHome?: string
   }> = []
+  /** What each background run was asked. */
+  const prompts: string[] = []
+  const chats: ChatSession[] = []
   const runtimeFor = (
     provider: ProviderId,
     _onLog: (line: string) => void,
     accountHome?: string,
   ): ProviderRuntime => ({
     async start(workspacePath, options) {
+      // Background writing starts ephemeral sessions; anything else is a chat.
+      if (!options.ephemeral) {
+        const session = new ChatSession()
+        chats.push(session)
+        return {
+          thread: { id: `chat-${chats.length}`, provider, workspacePath, createdAt: 0 },
+          session,
+        }
+      }
       started.push({
         provider,
         model: options.model,
@@ -177,7 +214,7 @@ function harness(
       })
       return {
         thread: { id: 'background-thread', provider, workspacePath, createdAt: 0 },
-        session: new TitleSession(failure?.(provider, options.agent)),
+        session: new TitleSession(prompts, failure?.(provider, options.agent)),
       }
     },
     listModels: (agent) => {
@@ -194,6 +231,8 @@ function harness(
     onLogin: () => {},
     runtimeFor,
     customHarnesses,
+    // A chat start reads MCP settings; never the user's own.
+    mcpConfig: new McpConfigStore(path.join(root, 'mcp.json')),
     worktreeRoot: path.join(root, 'worktrees'),
     ...(accounts ? { accounts } : {}),
   })
@@ -211,7 +250,7 @@ function harness(
     })
     return orchestrator.generateBackgroundTitle(threadId, 'Fix the queue order', 'New chat')
   }
-  return { orchestrator, store, customHarnesses, started, title }
+  return { orchestrator, store, customHarnesses, started, prompts, chats, root, title }
 }
 
 function signIn(provider: ProviderId, models: Model[], account: Partial<Account> = {}): void {
@@ -614,6 +653,140 @@ describe('background title source discovery', () => {
       'models:grok',
     ])
   })
+})
+
+describe('a new chat whose provider would name it', () => {
+  const request = 'A one-page website for "Seilbahn Kaffee", a coffee bar above Grindelwald'
+  /** What the app titles the chat with at once: the start of the first prompt. */
+  const standIn = 'A one-page website for "Seilbahn Kaffee"'
+
+  beforeEach(() => {
+    signIn('claude-code', [model('claude-haiku-5-5', ['low', 'medium', 'high'])])
+    signIn('codex', [model('gpt-5.6-luna')], { plan: 'Pro' })
+    signIn('grok', [model('grok-4.6')])
+  })
+
+  /** A chat started the way the app starts one, already showing its stand-in title. */
+  async function newChat(provider: ProviderId) {
+    const setup = harness()
+    const { id } = await setup.orchestrator.startThread(provider, setup.root)
+    setup.store.renameThread(id, standIn)
+    return { ...setup, threadId: id, chat: setup.chats.at(-1)! }
+  }
+
+  /**
+   * Sends the first prompt and asks for the title the way the app does: the
+   * title request either follows the prompt or arrives while it is on its way.
+   */
+  async function sendAndTitle(
+    { orchestrator, threadId, chat }: Awaited<ReturnType<typeof newChat>>,
+    attachments: string[],
+    onItsWay: boolean,
+  ) {
+    if (!onItsWay) {
+      await orchestrator.submitTurn(threadId, request, attachments)
+      return orchestrator.generateBackgroundTitle(threadId, request, standIn)
+    }
+    let release!: () => void
+    chat.hold = new Promise<void>((resolve) => (release = resolve))
+    const sending = orchestrator.submitTurn(threadId, request, attachments)
+    const titling = orchestrator.generateBackgroundTitle(threadId, request, standIn)
+    await vi.waitFor(() => expect(chat.sent).toHaveLength(1))
+    release()
+    await sending
+    return titling
+  }
+
+  it.each([false, true])(
+    'titles a Grok Design chat from the request, not its briefing (title asked on the way: %s)',
+    async (onItsWay) => {
+      const setup = await newChat('grok')
+      const { orchestrator, store, threadId, chat, started, prompts } = setup
+
+      await expect(sendAndTitle(setup, [DESIGN_BRIEF_ATTACHMENT], onItsWay)).resolves.toEqual({
+        title: 'Generated title',
+        applied: true,
+      })
+
+      // Grok got TasteCode's briefing, so its own name would describe that.
+      expect(chat.sent).toHaveLength(1)
+      expect(chat.sent[0]).not.toBe(request)
+      expect(prompts).toEqual([titlePrompt(request)])
+      expect(started).toEqual([{ provider: 'claude-code', model: 'claude-haiku-5-5' }])
+      expect(store.thread(threadId)?.title).toBe('Generated title')
+      // History puts the provider's name in place only of a stand-in.
+      expect(store.provisionalTitle(threadId)).toBeUndefined()
+      expect(orchestrator.awaitsProviderTitle(threadId)).toBe(false)
+    },
+  )
+
+  it("titles a Grok chat from the request when a Design brief's preamble wraps its first prompt", async () => {
+    const setup = await newChat('grok')
+    mkdirSync(path.join(setup.root, '.taste'))
+    writeFileSync(path.join(setup.root, '.taste', 'brief.json'), '{}')
+
+    await expect(sendAndTitle(setup, [], false)).resolves.toEqual({
+      title: 'Generated title',
+      applied: true,
+    })
+
+    expect(setup.chat.sent[0]).toMatch(/^This is an ordinary user turn/)
+    expect(setup.prompts).toEqual([titlePrompt(request)])
+    expect(setup.store.provisionalTitle(setup.threadId)).toBeUndefined()
+  })
+
+  it.each([false, true])(
+    "leaves a Grok chat that got the user's own words to its provider (title asked on the way: %s)",
+    async (onItsWay) => {
+      const setup = await newChat('grok')
+      const { orchestrator, store, threadId, chat, started, prompts } = setup
+
+      await expect(sendAndTitle(setup, [], onItsWay)).resolves.toEqual({
+        title: standIn,
+        applied: false,
+      })
+
+      expect(chat.sent).toEqual([request])
+      expect(started).toEqual([])
+      expect(prompts).toEqual([])
+      expect(store.provisionalTitle(threadId)).toBe(standIn)
+      expect(orchestrator.awaitsProviderTitle(threadId)).toBe(true)
+    },
+  )
+
+  it('keeps the stand-in when the Design briefing goes out after the provider was left to name the chat', async () => {
+    const { orchestrator, store, threadId, chat, started } = await newChat('grok')
+    await expect(orchestrator.generateBackgroundTitle(threadId, request, standIn)).resolves.toEqual(
+      { title: standIn, applied: false },
+    )
+    expect(store.provisionalTitle(threadId)).toBe(standIn)
+
+    await orchestrator.submitTurn(threadId, request, [DESIGN_BRIEF_ATTACHMENT])
+
+    expect(chat.sent).toHaveLength(1)
+    expect(store.thread(threadId)?.title).toBe(standIn)
+    expect(store.provisionalTitle(threadId)).toBeUndefined()
+    expect(orchestrator.awaitsProviderTitle(threadId)).toBe(false)
+    expect(started).toEqual([])
+  })
+
+  it.each([false, true])(
+    'titles a Codex chat from the request as before (Design: %s)',
+    async (design) => {
+      const setup = await newChat('codex')
+
+      await expect(
+        sendAndTitle(setup, design ? [DESIGN_BRIEF_ATTACHMENT] : [], false),
+      ).resolves.toEqual({
+        title: 'Generated title',
+        applied: true,
+      })
+
+      expect(setup.chat.sent).toHaveLength(1)
+      expect(setup.prompts).toEqual([titlePrompt(request)])
+      expect(setup.store.provisionalTitle(setup.threadId)).toBeUndefined()
+    },
+  )
 })
 
 describe('background writing for a chat on another account', () => {
