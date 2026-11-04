@@ -291,12 +291,43 @@
           <a href="./feature-inventory.html">Inventory</a>
           <a href="./CLAUDE-HANDOFF.md">Claude handoff</a>
         </nav>
-        <span class="meta">2026-11-03 dev c2364371 · nightly f49f31aa · main 41c61109</span>
+        <span class="meta">2026-11-04 dev 7b38f04b · nightly 16bdd523 · main db5fba4d</span>
       </div>
     </div>
 
     <div class="wrap">
       <section id="scope">
+        <p>
+          November 4, night: v0.5.0 is published as Latest (<a
+            href="https://github.com/Leonxlnx/tastecode/releases/tag/v0.5.0"
+            >v0.5.0</a
+          >, main db5fba4d). Public builds leave Antigravity out (<a
+            href="https://github.com/Leonxlnx/tastecode/pull/2096"
+            >#2096</a
+          >): Google's Antigravity FAQ says wrapping agy inside third-party apps is not supported
+          under consumer plans. v0.5.0 also carries consent for sub-agents on other providers
+          (#2077) and prompting a sub-agent from its detail in Agents (#2082). Merged into dev for
+          v0.5.1 (7b38f04b), planned for November 4 around 17:00 with Karol: an account pool, where
+          the server reports each provider's accounts with their plans, 5-hour and weekly windows
+          and resets and the combined capacity per kind of window, weighted by plan, and a new chat
+          the user did not pin starts on the account whose weekly allowance refills first; nothing
+          switches accounts on its own, since no vendor's terms allow rotating accounts past a limit
+          (#2095, #2109, contracts #2085; the limits popup shows the pool, #2101); further Grok
+          accounts, each in its own GROK_HOME, while Cursor and Antigravity stay one account each
+          (#2105); Cursor's plan name from cursor-agent (#2106); a sub-agent's transcript stays
+          inside the Agents panel (#2104); native Codex sub-agent conversations open in Agents
+          (#2094) and a native transcript refreshes without a loading flash (#2102); Settings ›
+          Providers and MCP servers open on known state (#2092) and model rows are denser (#2093);
+          Window background: Dither and Halftone move slowly, Dot grid and Grain are gone, and the
+          Appearance preview shows the whole window (#2107, screenshots in
+          docs/evidence/appearance-effects-20261104-*); the window lets Windows 11 acrylic or Mica
+          and macOS vibrancy show through for Transparent and the dark translucent sidebar (#2108);
+          an undo that git cannot apply now logs git's reason (#2103); a flaky reply line-break test
+          loads its renderer first (#2087). Hosted CI passed on windows-latest and macos-latest for
+          the combined tree (run 41747743981). Not verified: real provider turns, a packaged build
+          from dev, and the window material on a real Windows 11 and macOS window, which Leon checks
+          in the next build.
+        </p>
         <p>
           November 3, evening: unfinished subagents settle as stopped when their owning session ends
           or their history is recovered after a restart, while live background work can still
