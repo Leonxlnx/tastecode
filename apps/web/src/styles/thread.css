@@ -94,15 +94,14 @@
 }
 
 /* A sent message, the working line under it and the docking composer arrive
-   on one clock (--dur-slow), so the turn lands as one motion rather than three
+   on one clock (--dur-dock), so the turn lands as one motion rather than three
    that finish at different moments. */
 .thread__row.is-entering > :is(.reply, .aux, .activity, .turn-error, .steer-pending) {
-  animation: thread-item-in var(--dur-slow) var(--ease-out) both;
+  animation: thread-item-in var(--dur-dock) var(--ease-dock) both;
 }
 
 .thread__row.is-entering > .said {
-  transform-origin: right bottom;
-  animation: thread-message-in var(--dur-slow) var(--ease-out) both;
+  animation: thread-message-in var(--dur-dock) var(--ease-dock) both;
 }
 
 @keyframes thread-item-in {
@@ -112,10 +111,11 @@
   }
 }
 
+/* The prompt rises a short way into place as it fades in. */
 @keyframes thread-message-in {
   from {
     opacity: 0;
-    transform: translateY(6px) scale(0.985);
+    transform: translateY(10px);
   }
 }
 
