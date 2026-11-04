@@ -10,9 +10,11 @@
  * native caption buttons on Windows go see-through over it
  * (window-chrome.ts), so the strip reads as one piece with the sidebar.
  *
- * Everything here is static: each effect is one tile or CSS pattern painted
- * once, so nothing in this sheet runs on a streamed delta. No pane uses
- * backdrop-filter, and the picture arrives already blurred.
+ * Nothing in this sheet moves or runs on a streamed delta. Dither and
+ * Halftone move on a canvas of their own (app-background-motion.ts), which
+ * only the compositor redraws; each also has a still tile, painted once, for
+ * wherever that canvas cannot draw. No pane uses backdrop-filter, and the
+ * picture arrives already blurred.
  *
  * The tokens below are the knobs to tune.
  */
@@ -30,9 +32,6 @@
      pattern lays over --bg. */
   --app-bg-dither: 0.13;
   --app-bg-halftone: 0.12;
-  --app-bg-dots: 0.2;
-  --app-bg-grain: 0.11;
-  --app-bg-noise: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
 }
 
 :root[data-app-bg='image'] {
@@ -50,8 +49,6 @@
   --app-bg-scrim-strength: 0.45;
   --app-bg-dither: 0.1;
   --app-bg-halftone: 0.09;
-  --app-bg-dots: 0.16;
-  --app-bg-grain: 0.12;
 }
 
 :root[data-theme='light'][data-app-bg='image'] {
@@ -121,25 +118,29 @@
   opacity: calc(var(--app-bg-halftone) * var(--app-bg-fade));
 }
 
-/* Dot grid: one fine dot every 14px, evenly over the whole window. */
-.app-bg[data-effect='dots']::before {
-  mask: radial-gradient(circle, #000 0.8px, transparent 1.3px) 0 0 / 14px 14px;
-  opacity: calc(var(--app-bg-dots) * var(--app-bg-fade));
+/* The same effects in motion: a canvas along the top edge, drawn in the text
+   colour (read from `color`) and faded by Dim like the tiles. It sizes itself;
+   while it draws, the tile under it steps aside. */
+.app-bg__motion {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: block;
+  color: var(--text);
 }
 
-/* Grain: film grain over a slight diagonal lift. */
-.app-bg[data-effect='grain']::before {
-  background: linear-gradient(
-    165deg,
-    color-mix(in srgb, var(--text) 6%, transparent),
-    transparent 60%
-  );
-  opacity: min(1, var(--app-bg-fade));
+.app-bg[data-effect='dither'] > .app-bg__motion {
+  /* One buffer pixel per cell, scaled up with hard edges. */
+  image-rendering: pixelated;
+  opacity: calc(var(--app-bg-dither) * var(--app-bg-fade));
 }
 
-.app-bg[data-effect='grain']::after {
-  background: var(--app-bg-noise) 0 0 / 180px 180px;
-  opacity: calc(var(--app-bg-grain) * var(--app-bg-fade));
+.app-bg[data-effect='halftone'] > .app-bg__motion {
+  opacity: calc(var(--app-bg-halftone) * var(--app-bg-fade));
+}
+
+.app-bg[data-motion]::before {
+  content: none;
 }
 
 @media (prefers-reduced-motion: reduce) {

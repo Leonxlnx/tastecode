@@ -7581,7 +7581,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
       {isDesktop ? <ZoomHud /> : null}
 
       <div className="shell__body" ref={shellBody}>
-        <AppBackground />
+        <AppBackground covered={settingsOpen} />
         <Sidebar
           projects={sidebarProjects}
           projectsLoading={projectsStatus === 'loading'}

@@ -1,26 +1,296 @@
 /*
  * Settings › Appearance › Window background: the preview and the sliders.
- * The preview is an .app-bg layer drawn small, so app-background.css (loaded
- * with the window's own layer whenever a background is on) paints its
- * picture, dim and effect exactly as the window does.
+ *
+ * The preview is the whole window in miniature: an .app-bg layer, which
+ * app-background.css (loaded with the window's own layer whenever a
+ * background is on) paints with the same picture, dim and effect as the
+ * window, under the title bar, sidebar, chat and prompt bar drawn with the
+ * panes and colours the window uses. Every length inside is a length of the
+ * full-size window (PREVIEW_WINDOW_WIDTH, 1120px) times --u, so the whole
+ * miniature scales with the preview's width.
  */
 
-.app-bg.app-bg--preview {
+.app-bg-preview {
+  /* One CSS pixel of the full-size window; used by the parts inside only,
+     since 100cqw means the preview's width there. */
+  --u: calc(100cqw / 1120);
+  --preview-pane: var(--app-bg-rail-pane, var(--bg-rail));
+  --preview-ink: color-mix(in srgb, var(--text) 62%, transparent);
+  --preview-ink-soft: color-mix(in srgb, var(--text) 34%, transparent);
+
   position: relative;
-  inset: auto;
-  z-index: auto;
-  width: 176px;
-  height: 110px;
-  border: 1px solid var(--line);
+  width: min(100%, 560px);
+  aspect-ratio: 1120 / 700;
+  margin: 12px 0 8px;
+  overflow: hidden;
   border-radius: var(--r-md);
+  container-type: inline-size;
+  isolation: isolate;
+}
+
+/* A hairline ring above everything, as on the theme previews. */
+.app-bg-preview::after {
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 14%, transparent);
+  content: '';
+  pointer-events: none;
+}
+
+/* The background layer, held inside the preview instead of behind the window. */
+.app-bg-preview > .app-bg {
+  position: absolute;
+  z-index: 0;
 }
 
 /* The window's picture arrives already blurred; the preview blurs the
    original instead, so the Blur slider shows on every step. It overhangs the
    frame so the blur never fades out at the edges. */
-.app-bg.app-bg--preview[data-mode='image']::before {
+.app-bg-preview > .app-bg[data-mode='image']::before {
   inset: calc(var(--app-bg-preview-blur, 0px) * -2);
   filter: blur(var(--app-bg-preview-blur, 0px));
+}
+
+/* ---------- the window in miniature ---------- */
+
+.app-bg-preview__window {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+}
+
+.app-bg-preview__window i,
+.app-bg-preview__window b {
+  display: block;
+}
+
+.app-bg-preview__titlebar {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: calc(34 * var(--u));
+  background: var(--preview-pane);
+}
+
+/* The sidebar: New chat, a group label and its chats, one of them open. */
+.app-bg-preview__rail {
+  position: absolute;
+  top: calc(34 * var(--u));
+  bottom: 0;
+  left: 0;
+  display: flex;
+  width: calc(248 * var(--u));
+  flex-direction: column;
+  padding: calc(6 * var(--u)) calc(10 * var(--u));
+  background: var(--preview-pane);
+}
+
+.app-bg-preview__rail i {
+  position: relative;
+  height: calc(30 * var(--u));
+  flex: none;
+  border-radius: calc(8 * var(--u));
+}
+
+.app-bg-preview__rail i::before {
+  position: absolute;
+  top: 50%;
+  left: calc(12 * var(--u));
+  width: var(--w);
+  height: calc(7 * var(--u));
+  border-radius: var(--r-pill);
+  background: var(--preview-ink-soft);
+  content: '';
+  translate: 0 -50%;
+}
+
+.app-bg-preview__rail i[data-new]::before {
+  left: calc(36 * var(--u));
+  background: var(--preview-ink);
+}
+
+/* New chat's icon. */
+.app-bg-preview__rail i[data-new]::after {
+  position: absolute;
+  top: 50%;
+  left: calc(12 * var(--u));
+  width: calc(14 * var(--u));
+  height: calc(14 * var(--u));
+  border-radius: calc(4 * var(--u));
+  box-shadow: inset 0 0 0 calc(1.5 * var(--u)) var(--preview-ink);
+  content: '';
+  translate: 0 -50%;
+}
+
+.app-bg-preview__rail i[data-label] {
+  height: calc(22 * var(--u));
+  margin-top: calc(14 * var(--u));
+}
+
+.app-bg-preview__rail i[data-label]::before {
+  height: calc(5 * var(--u));
+  background: color-mix(in srgb, var(--text) 22%, transparent);
+}
+
+.app-bg-preview__rail i[data-active] {
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+.app-bg-preview__rail i[data-active]::before {
+  background: var(--preview-ink);
+}
+
+/* The chat pane, with the rounded corner and hairline it has in the window. */
+.app-bg-preview__stage {
+  position: absolute;
+  top: calc(34 * var(--u));
+  right: 0;
+  bottom: 0;
+  left: calc(248 * var(--u));
+  overflow: hidden;
+  border-top: 1px solid var(--line);
+  border-left: 1px solid var(--line);
+  border-top-left-radius: calc(12 * var(--u));
+  background: color-mix(in srgb, var(--bg) var(--app-bg-stage, 100%), transparent);
+}
+
+/* The corner the stage leaves open takes the sidebar's pane, as in the window. */
+.app-bg-preview__notch {
+  position: absolute;
+  top: calc(34 * var(--u));
+  left: calc(248 * var(--u));
+  width: calc(12 * var(--u));
+  height: calc(12 * var(--u));
+  background: radial-gradient(
+    circle at 100% 100%,
+    transparent calc(12 * var(--u) - 0.5px),
+    var(--preview-pane) calc(12 * var(--u))
+  );
+}
+
+.app-bg-preview__stage > .app-bg-preview__title {
+  position: absolute;
+  top: calc(16 * var(--u));
+  left: calc(20 * var(--u));
+  width: calc(150 * var(--u));
+  height: calc(7 * var(--u));
+  border-radius: var(--r-pill);
+  background: var(--preview-ink);
+}
+
+/* Your message, the reply under it with a code block and a file chip. */
+.app-bg-preview__chat {
+  position: absolute;
+  top: calc(56 * var(--u));
+  left: calc(96 * var(--u));
+  display: flex;
+  width: calc(680 * var(--u));
+  flex-direction: column;
+  gap: calc(13 * var(--u));
+}
+
+.app-bg-preview__chat i {
+  width: var(--w);
+  height: calc(7 * var(--u));
+  flex: none;
+  border-radius: var(--r-pill);
+  background: var(--preview-ink);
+}
+
+.app-bg-preview__chat i[data-you] {
+  position: relative;
+  width: calc(300 * var(--u));
+  height: calc(34 * var(--u));
+  align-self: flex-end;
+  margin-bottom: calc(12 * var(--u));
+  border-radius: calc(12 * var(--u));
+  background: var(--surface-2);
+}
+
+.app-bg-preview__chat i[data-you]::before {
+  position: absolute;
+  top: 50%;
+  left: calc(11 * var(--u));
+  width: var(--w);
+  height: calc(7 * var(--u));
+  border-radius: var(--r-pill);
+  background: var(--preview-ink);
+  content: '';
+  translate: 0 -50%;
+}
+
+/* A file reference in the accent colour, inside a line of the reply. */
+.app-bg-preview__chat i[data-file] {
+  background: linear-gradient(
+    to right,
+    var(--preview-ink) 0 34%,
+    transparent 34% 36%,
+    var(--file-reference, var(--attention)) 36% 58%,
+    transparent 58% 60%,
+    var(--preview-ink) 60%
+  );
+}
+
+/* Code keeps its own opaque surface over any background. */
+.app-bg-preview__code {
+  display: flex;
+  margin: calc(6 * var(--u)) 0;
+  padding: calc(18 * var(--u)) calc(16 * var(--u));
+  flex-direction: column;
+  gap: calc(13 * var(--u));
+  border: 1px solid var(--line);
+  border-radius: calc(10 * var(--u));
+  background: var(--surface);
+}
+
+.app-bg-preview__chat .app-bg-preview__code i {
+  background: var(--preview-ink-soft);
+}
+
+.app-bg-preview__chat .app-bg-preview__code i[data-accent] {
+  background: color-mix(in srgb, var(--attention) 80%, transparent);
+}
+
+/* The prompt bar keeps its own opaque surface too, with the send button. */
+.app-bg-preview__prompt {
+  position: absolute;
+  right: calc(76 * var(--u));
+  bottom: calc(18 * var(--u));
+  left: calc(76 * var(--u));
+  height: calc(104 * var(--u));
+  border: 1px solid var(--line);
+  border-radius: calc(20 * var(--u));
+  background: var(--bg-prompt);
+}
+
+.app-bg-preview__prompt i {
+  position: absolute;
+  top: calc(22 * var(--u));
+  left: calc(20 * var(--u));
+  width: var(--w);
+  height: calc(7 * var(--u));
+  border-radius: var(--r-pill);
+  background: var(--preview-ink-soft);
+}
+
+.app-bg-preview__prompt i[data-chip] {
+  top: auto;
+  bottom: calc(18 * var(--u));
+  height: calc(22 * var(--u));
+  background: color-mix(in srgb, var(--text) 10%, transparent);
+}
+
+.app-bg-preview__prompt b {
+  position: absolute;
+  right: calc(14 * var(--u));
+  bottom: calc(14 * var(--u));
+  width: calc(32 * var(--u));
+  height: calc(32 * var(--u));
+  border-radius: var(--r-circle);
+  background: var(--composer-orb);
 }
 
 .app-bg-settings__range {
