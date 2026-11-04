@@ -891,10 +891,15 @@ export class PullRequestService {
       account,
       items,
       fetchedAt: this.#now(),
-      // A failed search leaves the list incomplete, the same as a capped one.
-      truncated:
-        failure !== undefined ||
-        history.some((search) => search.status === 'fulfilled' && search.value.truncated),
+      truncated: history.some((search) => search.status === 'fulfilled' && search.value.truncated),
+      // A failed search leaves the list incomplete too, for a reason of its own.
+      ...(failure
+        ? {
+            searchFailed: searchTimedOut(failure.reason)
+              ? ('timeout' as const)
+              : ('error' as const),
+          }
+        : {}),
     }
     this.#listCache = { projectKey, value, expiresAt: this.#now() + LIST_TTL_MS }
     return value
@@ -1655,7 +1660,7 @@ export function runGh(args: string[], options: GhRunOptions = {}): Promise<strin
       }, reject)
     }
     const timer = setTimeout(() => {
-      finish(new Error('GitHub did not respond in time'))
+      finish(new Error(GITHUB_TIMEOUT_MESSAGE))
     }, options.timeoutMs ?? 30_000)
 
     if (options.encoding !== 'base64') child.stdout.setEncoding('utf8')
@@ -2080,6 +2085,15 @@ function sortedProjectKey(paths: readonly string[]): string {
 function isGatewayTimeout(error: unknown): boolean {
   return error instanceof Error && /\bHTTP 50[24]\b/.test(error.message)
 }
+
+/** GitHub, or gh waiting on it, did not answer in time. */
+function searchTimedOut(error: unknown): boolean {
+  return (
+    isGatewayTimeout(error) || (error instanceof Error && error.message === GITHUB_TIMEOUT_MESSAGE)
+  )
+}
+
+const GITHUB_TIMEOUT_MESSAGE = 'GitHub did not respond in time'
 
 function firstUsefulLine(value: string): string {
   return (
