@@ -35,6 +35,8 @@ export const CURSOR_CAPABILITIES: Capabilities = {
   interrupt: true,
   reasoningItems: false,
   approvals: false,
+  // Without --force the CLI refuses a folder it does not trust instead of asking.
+  askFirst: false,
   images: true,
 }
 
