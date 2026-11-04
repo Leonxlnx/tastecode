@@ -126,6 +126,30 @@ describe('Codex /review', () => {
     ])
   })
 
+  it("keeps the reviewer's prompt out of the chat", async () => {
+    // Codex sends it under the review turn, on the chat's own thread.
+    expect(frames).toContainEqual(
+      expect.objectContaining({
+        method: 'item/started',
+        params: expect.objectContaining({
+          threadId: THREAD,
+          turnId: TURN,
+          item: expect.objectContaining({ type: 'userMessage' }),
+        }),
+      }),
+    )
+    const { events, replay } = await reviewTurn()
+    replay()
+
+    const users = events.flatMap((event) =>
+      (event.type === 'item.started' || event.type === 'item.completed') &&
+      event.item.role === 'user'
+        ? [event.item]
+        : [],
+    )
+    expect(users).toEqual([])
+  })
+
   it('stops the review turn rather than the reviewer turn inside it', async () => {
     const { adapter, rpc, replay } = await reviewTurn()
     replay(frames.slice(0, reviewerStarted + 1))

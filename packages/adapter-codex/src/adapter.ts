@@ -682,9 +682,10 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
    */
   readonly #openItems = new Map<string, Map<string, Item>>()
   /**
-   * Review turns whose reviewer is at work. Codex 0.166 starts each reviewer message under
-   * the review turn but never streams or completes it; the review follows as
-   * exitedReviewMode and a message of its own (fixtures/review-codex-0.166.jsonl).
+   * Review turns whose reviewer is at work. Codex 0.166 sends the reviewer's prompt and
+   * starts each reviewer message under the review turn, but never streams or completes
+   * those; the review follows as exitedReviewMode and a message of its own
+   * (fixtures/review-codex-0.166.jsonl).
    */
   readonly #reviewingTurns = new Set<string>()
   #pendingTurnCompletions = new Set<Set<string>>()
@@ -2171,14 +2172,18 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
   }
 
   /**
-   * Follows a turn into and out of review mode and says whether the item is a reviewer
-   * message. Codex leaves those empty and open; settled with the turn, one would become
-   * its answer and fold the review that follows it out of sight.
+   * Follows a turn into and out of review mode and says whether the item is a message of
+   * the reviewer. Its prompt is not the user's, and Codex leaves its own messages empty
+   * and open; settled with the turn, one would become its answer and fold the review that
+   * follows it out of sight.
    */
   #reviewerMessage(item: CodexThreadItem, turnId: string): boolean {
     if (item.type === 'enteredReviewMode') this.#reviewingTurns.add(turnId)
     else if (item.type === 'exitedReviewMode') this.#reviewingTurns.delete(turnId)
-    return item.type === 'agentMessage' && this.#reviewingTurns.has(turnId)
+    return (
+      (item.type === 'agentMessage' || item.type === 'userMessage') &&
+      this.#reviewingTurns.has(turnId)
+    )
   }
 
   /**
