@@ -47,8 +47,12 @@ const api = {
   },
   pickSkillFolder: (): Promise<string | undefined> => ipcRenderer.invoke('harness:pickSkillFolder'),
   pickFiles: (): Promise<PickedAttachment[]> => ipcRenderer.invoke('harness:pickFiles'),
-  droppedFilePath: (file: File): string | undefined =>
-    droppedFilePath(file, (value) => webUtils.getPathForFile(value)),
+  droppedFilePath: (file: File): string | undefined => {
+    const filePath = droppedFilePath(file, (value) => webUtils.getPathForFile(value))
+    // Lets main preview a dropped image in the sent message, as it does a picked one.
+    if (filePath) ipcRenderer.send('harness:droppedFile', filePath)
+    return filePath
+  },
   previewViewedImage: (reference: string): Promise<PickedAttachment | undefined> =>
     ipcRenderer.invoke('harness:previewViewedImage', reference),
   revealPath: (path: string): Promise<void> => ipcRenderer.invoke('harness:revealPath', path),
