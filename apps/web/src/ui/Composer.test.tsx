@@ -2545,6 +2545,21 @@ describe('Composer branch shelf', () => {
     expect(screen.getByRole('menuitemradio', { name: 'Isolated' })).toBeTruthy()
   })
 
+  it('disables Isolated with its reason when the project cannot isolate', () => {
+    const onIsolateChange = vi.fn()
+    renderComposer(vi.fn(), {
+      isolateUnavailable: 'Isolated needs a Git repository',
+      onIsolateChange,
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Workspace mode' }))
+
+    const isolated = screen.getByRole('menuitemradio', { name: /^Isolated/ }) as HTMLButtonElement
+    expect(isolated.disabled).toBe(true)
+    expect(isolated.textContent).toContain('Isolated needs a Git repository')
+    fireEvent.click(isolated)
+    expect(onIsolateChange).not.toHaveBeenCalled()
+  })
+
   it('shows the branch picker only when the project has branches', () => {
     renderComposer(vi.fn())
     expect(screen.getByRole('button', { name: 'Choose branch' })).toBeTruthy()

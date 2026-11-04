@@ -585,6 +585,8 @@ function ComposerComponent(props: {
   running: boolean
   newSession: boolean
   isolate: boolean
+  /** Why this project cannot start an isolated chat; the option is disabled with it. */
+  isolateUnavailable?: string | undefined
   designMode: boolean
   keybindings?: Keybindings | undefined
   focusRequest: number
@@ -2094,6 +2096,8 @@ function ComposerComponent(props: {
                     <MenuItem
                       title="Isolated"
                       icon={<GitBranch size={14} aria-hidden />}
+                      detail={props.isolateUnavailable}
+                      disabled={props.isolateUnavailable !== undefined}
                       checked={props.isolate}
                       onClick={() => {
                         props.onIsolateChange(true)
