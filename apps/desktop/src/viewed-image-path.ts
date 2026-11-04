@@ -1,5 +1,6 @@
 import { realpath, stat } from 'node:fs/promises'
 import path from 'node:path'
+import { pickedAttachment, type PickedAttachment } from './attachment-preview.js'
 
 /** Grants come only from the native picker, never from renderer-supplied paths. */
 export class PickedImagePaths {
@@ -26,6 +27,17 @@ export class PickedImagePaths {
       return undefined
     }
   }
+}
+
+/** A picked file. Its image or video previews again later in this app session. */
+export async function nativeAttachment(
+  filePath: string,
+  secret: Buffer,
+  grants: PickedImagePaths,
+): Promise<PickedAttachment> {
+  const attachment = pickedAttachment(filePath, secret)
+  if (attachment.mediaType) await grants.authorize(filePath)
+  return attachment
 }
 
 /** Resolve old and current transcript references inside TasteCode's own paste folder. */

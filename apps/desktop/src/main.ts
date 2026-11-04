@@ -119,7 +119,7 @@ import {
   type ZoomAction,
   zoomShortcut,
 } from './zoom-shortcuts.js'
-import { PickedImagePaths, viewedImagePath } from './viewed-image-path.js'
+import { nativeAttachment, PickedImagePaths, viewedImagePath } from './viewed-image-path.js'
 
 applyDesktopPath()
 
@@ -1207,11 +1207,9 @@ ipcMain.handle('harness:pickFiles', async (event) => {
   return result.canceled
     ? []
     : Promise.all(
-        result.filePaths.map(async (filePath) => {
-          const attachment = pickedAttachment(filePath, attachmentPreviewSecret)
-          if (attachment.mediaType) await pickedImagePaths.authorize(filePath)
-          return attachment
-        }),
+        result.filePaths.map((filePath) =>
+          nativeAttachment(filePath, attachmentPreviewSecret, pickedImagePaths),
+        ),
       )
 })
 
