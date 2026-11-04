@@ -621,7 +621,7 @@ describe('Composer docking motion', () => {
       expect(animate.mock.instances[0]).toBe(box)
       expect(animate).toHaveBeenCalledWith(
         [{ transform: 'translate3d(0px, 420px, 0)' }, { transform: 'translate3d(0, 0, 0)' }],
-        { duration: 260, easing: 'cubic-bezier(0.32, 0.72, 0, 1)' },
+        { duration: 320, easing: 'cubic-bezier(0.2, 0.9, 0.25, 1)' },
       )
     } finally {
       if (originalAnimate) {
