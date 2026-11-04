@@ -55,12 +55,17 @@ async function temporary(t) {
 
 async function fixture(t, { platform = 'all', config = releaseConfig } = {}) {
   const directory = await temporary(t)
-  for (const current of platform === 'all' ? ['windows', 'macos'] : [platform]) {
+  for (const current of platform === 'all' ? ['windows', 'macos', 'macos-x64'] : [platform]) {
     const detail = platformConfig(current, config)
     for (const name of releasePayloadAssets(current, config).filter(
       (name) => name !== detail.metadata,
     )) {
       await writeFile(path.join(directory, name), `fixture:${name}\n`)
+    }
+    // The Intel Mac build ships no updater metadata of its own.
+    if (!detail.metadata) {
+      await generateReleaseChecksums(directory, current, { approvedSha, config })
+      continue
     }
     const files = []
     for (const name of detail.artifacts) {
@@ -239,7 +244,7 @@ test('version, channel, product, and artifact names come from package config', a
   assert.throws(() => createReleaseConfig(desktop), /Unsupported artifactName/)
 })
 
-test('releases upload only EXE and DMG with verified digests', async (t) => {
+test('releases upload only the EXE and one DMG per Mac architecture with verified digests', async (t) => {
   const desktop = JSON.parse(await readFile(path.join(desktopDirectory, 'package.json'), 'utf8'))
   for (const version of ['0.1.0-beta.8', '0.1.0-beta.10', '0.1.0', '0.1.1']) {
     desktop.version = version
@@ -249,10 +254,11 @@ test('releases upload only EXE and DMG with verified digests', async (t) => {
     const result = await upload(directory, mock, { config })
     assert.deepEqual(result.assets.map((asset) => asset.name).sort(), [
       `TasteCode-${version}-mac-arm64.dmg`,
+      `TasteCode-${version}-mac-x64.dmg`,
       `TasteCode-${version}-win-x64.exe`,
     ])
     assert.equal(result.release.draft, true)
-    // Local proof is still complete even though only two files reach GitHub.
+    // Local proof is still complete even though only three files reach GitHub.
     await verifyReleaseDirectory(directory, { approvedSha, config })
   }
 })
@@ -1000,7 +1006,7 @@ test('workflow is manual, pinned, read-only by default, and has one optional wri
         assert.equal(step.with.pattern, undefined)
         assert.match(
           step.with.name,
-          /^\$\{\{ needs\.package\.outputs\.(windows|macos)_artifact \}\}$/,
+          /^\$\{\{ needs\.package\.outputs\.(windows|macos|macos_x64)_artifact \}\}$/,
         )
       }
     }
@@ -1009,6 +1015,7 @@ test('workflow is manual, pinned, read-only by default, and has one optional wri
   assert.deepEqual(packageJob.outputs, {
     windows_artifact: '${{ steps.artifact.outputs.windows }}',
     macos_artifact: '${{ steps.artifact.outputs.macos }}',
+    macos_x64_artifact: "${{ steps.artifact.outputs['macos-x64'] }}",
   })
   const naming = packageJob.steps.find((step) => step.id === 'artifact')
   assert.match(

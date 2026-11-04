@@ -10,6 +10,16 @@ export const desktopDirectory = path.join(repositoryRoot, 'apps', 'desktop')
 const platforms = {
   windows: { os: 'win', arch: 'x64', label: 'windows-x64', extensions: ['exe'] },
   macos: { os: 'mac', arch: 'arm64', label: 'macos-arm64', extensions: ['zip', 'dmg'] },
+  // Intel Macs. electron-builder writes latest-mac.yml for every Mac build, so
+  // only the arm64 one is part of the release; the app's updater reads GitHub's
+  // own asset digests, never that file, so the x64 build needs none.
+  'macos-x64': {
+    os: 'mac',
+    arch: 'x64',
+    label: 'macos-x64',
+    extensions: ['zip', 'dmg'],
+    updaterMetadata: false,
+  },
 }
 
 export function assertAssetName(name) {
@@ -106,7 +116,10 @@ export function createReleaseConfig(packageJson) {
       ...detail,
       artifacts,
       primaryArtifact: artifacts[0],
-      metadata: `${channel}${platform === 'macos' ? '-mac' : ''}.yml`,
+      metadata:
+        detail.updaterMetadata === false
+          ? undefined
+          : `${channel}${detail.os === 'mac' ? '-mac' : ''}.yml`,
       checksums: `SHA256SUMS-${detail.label}.txt`,
       provenance: `PROVENANCE-${detail.label}.json`,
     }
@@ -137,7 +150,10 @@ export function platformConfig(platform, config = releaseConfig) {
 
 export function releasePayloadAssets(platform, config = releaseConfig) {
   const detail = platformConfig(platform, config)
-  return [...detail.artifacts.flatMap((name) => [name, `${name}.blockmap`]), detail.metadata].sort()
+  return [
+    ...detail.artifacts.flatMap((name) => [name, `${name}.blockmap`]),
+    ...(detail.metadata ? [detail.metadata] : []),
+  ].sort()
 }
 
 export function checksumPayloadAssets(platform, config = releaseConfig) {
@@ -156,12 +172,14 @@ export function releaseAssets(platform = 'all', config = releaseConfig) {
     .sort()
 }
 
-// GitHub supplies the public asset SHA-256 digests itself.
+// GitHub supplies the public asset SHA-256 digests itself: the Windows
+// installer and one DMG per Mac architecture.
 export function releaseUploadAssets(config = releaseConfig) {
-  return [
-    ...config.platforms.windows.artifacts.filter((name) => name.endsWith('.exe')),
-    ...config.platforms.macos.artifacts.filter((name) => name.endsWith('.dmg')),
-  ].sort()
+  return Object.values(config.platforms)
+    .flatMap((detail) =>
+      detail.artifacts.filter((name) => name.endsWith(detail.os === 'mac' ? '.dmg' : '.exe')),
+    )
+    .sort()
 }
 
 export async function openRegularFile(filePath) {
@@ -249,6 +267,7 @@ export async function verifyReleasePayload(directory, platform, config = release
     const handle = await openRegularFile(path.join(directory, name))
     await handle.close()
   }
+  if (!detail.metadata) return releasePayloadAssets(platform, config)
   const metadata = parseMetadata(await readSmallFile(path.join(directory, detail.metadata)))
   exactKeys(metadata, ['version', 'files', 'path', 'sha512', 'releaseDate'], 'updater metadata')
   if (metadata.version !== config.version)
