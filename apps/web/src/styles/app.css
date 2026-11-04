@@ -2095,14 +2095,6 @@
   text-align: center;
 }
 
-.stat--add {
-  color: var(--success);
-}
-
-.stat--del {
-  color: var(--error);
-}
-
 .composer textarea {
   display: block;
   width: 100%;
@@ -2430,28 +2422,14 @@
     .menutrigger--model-selector,
     .composer-voice-button
   ) {
-  /* Composer controls use the same flat surfaces in every theme. */
-  background: var(--composer-control-bg);
-  border: 1px solid var(--composer-control-border);
-  box-shadow: var(--composer-control-shadow);
+  /* Ghost chips: the label alone at rest, a soft wash on hover or while open. */
+  background: transparent;
+  border: 1px solid transparent;
+  box-shadow: none;
   transition:
     border-color var(--dur-fast) var(--ease-out),
     box-shadow var(--dur-fast) var(--ease-out),
     color var(--dur-fast) var(--ease-out);
-}
-
-.tools
-  :is(
-    .composer__add,
-    .composer__permission,
-    .composer__design,
-    .menutrigger--model-selector,
-    .composer-voice-button
-  ) {
-  /* Ghost chips: the label alone at rest, a soft wash on hover or while open. */
-  background: transparent;
-  border-color: transparent;
-  box-shadow: none;
 }
 
 .tools
@@ -3125,19 +3103,6 @@
       .menutrigger--model-selector,
       .composer-voice-button
     ):hover:not(:disabled) {
-    background: var(--composer-control-bg-hover);
-    border-color: var(--composer-control-border-hover);
-    box-shadow: var(--composer-control-shadow-hover);
-  }
-
-  .tools
-    :is(
-      .composer__add,
-      .composer__permission,
-      .composer__design,
-      .menutrigger--model-selector,
-      .composer-voice-button
-    ):hover:not(:disabled) {
     background: var(--composer-chip-bg-hover);
     border-color: transparent;
     box-shadow: none;
@@ -3350,11 +3315,6 @@
   min-height: 0;
   min-width: 0;
   padding: 24px;
-}
-
-.thread__empty {
-  position: absolute;
-  inset: 0;
 }
 
 .empty__prompt {

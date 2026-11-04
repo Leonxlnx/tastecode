@@ -1978,3 +1978,17 @@ button.thread__older:hover {
   min-width: 34px;
   text-align: right;
 }
+
+/* Thread-only rules, kept out of the startup stylesheet. */
+.thread__empty {
+  position: absolute;
+  inset: 0;
+}
+
+.stat--add {
+  color: var(--success);
+}
+
+.stat--del {
+  color: var(--error);
+}
