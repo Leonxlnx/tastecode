@@ -588,6 +588,8 @@ function ComposerComponent(props: {
   /** Why this project cannot start an isolated chat; the option is disabled with it. */
   isolateUnavailable?: string | undefined
   designMode: boolean
+  /** Why Ask first cannot run with this provider; the option is disabled with it. */
+  askFirstUnavailable?: string | undefined
   keybindings?: Keybindings | undefined
   focusRequest: number
   draftRequest?:
@@ -2515,7 +2517,12 @@ function ComposerComponent(props: {
                                 <MenuItem
                                   key={mode.id}
                                   title={mode.title}
-                                  detail={mode.detail}
+                                  detail={
+                                    mode.id === 'ask' && props.askFirstUnavailable
+                                      ? props.askFirstUnavailable
+                                      : mode.detail
+                                  }
+                                  disabled={mode.id === 'ask' && Boolean(props.askFirstUnavailable)}
                                   icon={<ModeIcon size={14} aria-hidden />}
                                   className={`composer__permission-option composer__permission-option--${mode.id}`}
                                   active={mode.id === props.approval}

@@ -112,6 +112,7 @@ const isCapabilities = objectValidator<Capabilities>({
   interrupt: isBoolean,
   reasoningItems: isBoolean,
   approvals: isBoolean,
+  askFirst: optional(isBoolean),
   userInput: optional(isBoolean),
   autoReview: optional(isBoolean),
   images: isBoolean,
