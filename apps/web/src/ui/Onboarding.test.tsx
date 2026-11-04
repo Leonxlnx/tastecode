@@ -195,6 +195,16 @@ describe('first-run onboarding', () => {
     expect(props.onProviderRosterChange).toHaveBeenCalledWith(['acp:devin'])
   })
 
+  it('ends the welcome animation at once on the first click or key', () => {
+    renderOnboarding()
+    const dialog = screen.getByRole('dialog')
+    expect(dialog.hasAttribute('data-intro')).toBe(false)
+    fireEvent.pointerDown(dialog)
+    expect(dialog.getAttribute('data-intro')).toBe('skipped')
+    // Skipping is not advancing: the welcome page stays.
+    expect(screen.getByRole('heading', { name: 'Welcome to TasteCode' })).toBeTruthy()
+  })
+
   it('advances with Enter from bare surfaces and inputs but not from buttons', () => {
     renderOnboarding()
     const dialog = screen.getByRole('dialog')

@@ -189,8 +189,31 @@
   margin: auto;
 }
 
+/* The preview window floats in once, as the greeting resolves beside it. */
 .onboarding__preview {
   min-width: 0;
+  animation: onboarding-preview-in 900ms var(--ease-out) 300ms both;
+}
+
+@keyframes onboarding-preview-in {
+  from {
+    opacity: 0;
+    transform: translateY(18px) scale(0.98);
+  }
+}
+
+/* A click or a key on the first page ends its start animation at once; later
+   pages keep their own motion. */
+.onboarding[data-intro='skipped'][data-step='welcome']
+  :is(
+    .onboarding__preview,
+    .onboarding__step[data-phase='entering'],
+    .onboarding__step[data-phase='entering'] > *,
+    .onboarding__step[data-phase='entering'] .onboarding__mark path,
+    .onboarding__step[data-phase='entering'] .onboarding__word
+  ) {
+  animation-delay: 0s !important;
+  animation-duration: 1ms !important;
 }
 
 @media (max-width: 960px) {
@@ -1829,6 +1852,7 @@
    finished picture from the start. */
 @media (prefers-reduced-motion: reduce) {
   .onboarding,
+  .onboarding__preview,
   .onboarding__step[data-phase='entering'] > *,
   .onboarding__step[data-phase='entering'] .onboarding__mark path,
   .onboarding__step[data-phase='entering'] .onboarding__word,
