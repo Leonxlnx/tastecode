@@ -10838,6 +10838,7 @@ describe('rolling a session back', () => {
     }
   })
 
+  // Real Git worktrees, a checkpoint and a held rejection: ~5.7 s on a loaded Windows laptop.
   it('refuses restore and undo while a diff rejection is still in progress', async () => {
     const trees = path.join(path.dirname(repo), 'trees')
     const { orchestrator, store, sessions } = harness(trees)
@@ -10878,7 +10879,7 @@ describe('rolling a session back', () => {
       release(heldSnapshot)
       await reviewing.catch(() => undefined)
     }
-  })
+  }, 60_000)
 
   it('keeps the original files as a recovery checkpoint when restore and rollback both fail', async () => {
     const { orchestrator, sessions } = harness()
