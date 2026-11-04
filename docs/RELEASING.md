@@ -107,9 +107,17 @@ From **0.1.0-beta.8**, `upload-draft-release.js` uploads exactly two public asse
 - `TasteCode-<version>-win-x64.exe`
 - `TasteCode-<version>-mac-arm64.dmg`
 
+From **0.5.1** there is a third public asset for Intel Macs:
+
+- `TasteCode-<version>-mac-x64.dmg`
+
+Each client picks the DMG for its own architecture (`process.arch`). A release without the
+x64 DMG still updates Apple Silicon Macs; only an Intel Mac's own check reports the missing
+file. 0.5.0 and older clients know only the arm64 DMG and keep using it.
+
 The local package proof still includes generated metadata, ZIP, blockmaps, checksums, and
 provenance. These remain local/CI proof files. The upload script verifies the complete
-local proof and checks GitHub's SHA-256 digest for each of the two uploaded files.
+local proof and checks GitHub's SHA-256 digest for each uploaded file (three from 0.5.1).
 
 The new client checks the downloaded installer against GitHub's digest and size. On macOS,
 it mounts the DMG read-only, checks the bundle ID, version, and code signature, and makes a
@@ -205,9 +213,21 @@ works without a GitHub login and can be used on the landing page.
    Run the Windows installer proof only on its isolated runner; never install/uninstall a
    test package over an active developer installation.
 5. Generate each platform's checksums/provenance with
-   `node tools/scripts/release-checksums.js <output-directory> <windows|macos>`, then use
-   `stage-release-assets.js` to copy its exact assets into a new directory. Combine both
-   staged directories and run `node tools/scripts/verify-release-assets.js <combined-directory>`.
+   `node tools/scripts/release-checksums.js <output-directory> <windows|macos|macos-x64>`,
+   then use `stage-release-assets.js` to copy its exact assets into a new directory. Combine
+   the three staged directories and run
+   `node tools/scripts/verify-release-assets.js <combined-directory>`.
+
+   Build each Mac architecture in its own electron-builder run and output directory
+   (`--mac --arm64`, then `--mac --x64`). electron-builder writes one `latest-mac.yml` per
+   run: the arm64 run's file is part of the release, and the x64 platform (`macos-x64`)
+   ships none, since clients read GitHub's own digests. A single run with both
+   architectures lists all four Mac files in one `latest-mac.yml` and fails the arm64
+   check. An x64 build made on Apple Silicon needs the x64 optional native packages
+   (`@napi-rs/keyring-darwin-x64`) installed; `verify-release-assets.js --containers <dir>
+macos-x64` runs the native-binding proof and must run as x64 (an Intel Mac, or Node
+   under Rosetta).
+
 6. There must be one draft for the version. A preparation draft is an empty reservation,
    not a source approval. Before upload, explicitly align its target to the approved SHA,
    its title to `Taste Code <version> — packaging proof`, and its body to
@@ -240,6 +260,93 @@ After the first publication, verify a real old-to-new installed upgrade with exi
 chats/settings on each OS. Unit tests and a draft cannot establish that result. For a
 bad published build, ship a higher patched version; never silently downgrade or replace
 the published bytes.
+
+## Both Mac builds on one Apple Silicon Mac (from 0.5.1)
+
+The arm64 and Intel (x64) DMGs come from the same approved `main` commit, each from its own
+electron-builder run and output directory. Written before the first Intel build; a step
+that fails here must stop the release, not be worked around.
+
+1. Check out the approved commit and set its SHA:
+
+   ```sh
+   git fetch origin && git checkout --detach <approved-sha>
+   export APPROVED_SHA=$(git rev-parse HEAD) EVENT_SHA=$(git rev-parse HEAD) EVENT_REF=refs/heads/main
+   node tools/scripts/verify-release-input.js
+   ```
+
+2. Install as usual (arm64 native packages), then run the gates and the build once:
+
+   ```sh
+   pnpm install --frozen-lockfile
+   pnpm licenses:verify && pnpm lint && pnpm typecheck && pnpm test
+   pnpm --filter @harness/default-skills sync && pnpm build
+   pnpm --filter @harness/desktop exec node scripts/build-preload.js
+   ```
+
+3. Build, sign and notarize arm64 into its own directory (your usual `CSC_*` and `APPLE_*`
+   variables set in this shell):
+
+   ```sh
+   cd apps/desktop
+   pnpm exec electron-builder --mac dmg zip --arm64 --publish never --config.directories.output=../../release/mac-arm64-out
+   cd ../..
+   node tools/scripts/verify-release-assets.js --containers release/mac-arm64-out macos
+   ```
+
+4. Reinstall with the Intel native packages. `pnpm install --cpu=x64` installs the optional
+   native modules (such as `@napi-rs/keyring-darwin-x64`) for x64 instead of the host CPU;
+   without it the Intel app has no keyring binding. node-pty needs nothing: an arm64
+   `build/Release` binding fails to load in the x64 app and it falls back to its bundled
+   `prebuilds/darwin-x64`, which step 5's proof exercises.
+
+   ```sh
+   pnpm install --frozen-lockfile --cpu=x64
+   ls node_modules/.pnpm | grep keyring-darwin-x64
+   ```
+
+5. Build, sign and notarize x64 into its own directory, and prove it as x64 under Rosetta
+   (`softwareupdate --install-rosetta` once if needed):
+
+   ```sh
+   cd apps/desktop
+   pnpm exec electron-builder --mac dmg zip --x64 --publish never --config.directories.output=../../release/mac-x64-out
+   cd ../..
+   arch -x86_64 node tools/scripts/verify-release-assets.js --containers release/mac-x64-out macos-x64
+   lipo -archs "release/mac-x64-out/mac/Taste Code.app/Contents/MacOS/Taste Code"
+   ```
+
+   `lipo` must print `x86_64` (and `arm64` for `release/mac-arm64-out/mac-arm64/...`). The
+   `arch -x86_64 node` needs an x64 Node; `node -p process.arch` under `arch -x86_64` must
+   print `x64`.
+
+6. Check signing and notarization of both:
+
+   ```sh
+   for dir in release/mac-arm64-out/mac-arm64 release/mac-x64-out/mac; do
+     codesign --verify --deep --strict --verbose=2 "$dir/Taste Code.app"
+     spctl --assess --type execute -vv "$dir/Taste Code.app"
+   done
+   for dmg in release/mac-arm64-out/TasteCode-*-mac-arm64.dmg release/mac-x64-out/TasteCode-*-mac-x64.dmg; do
+     xcrun stapler validate "$dmg"
+     spctl --assess --type open --context context:primary-signature -vv "$dmg"
+   done
+   ```
+
+7. Upload both DMGs into the existing draft (never into a published release):
+
+   ```sh
+   gh release view v<version> --repo Leonxlnx/tastecode --json isDraft --jq .isDraft   # must print true
+   gh release upload v<version> --repo Leonxlnx/tastecode \
+     release/mac-arm64-out/TasteCode-<version>-mac-arm64.dmg \
+     release/mac-x64-out/TasteCode-<version>-mac-x64.dmg
+   ```
+
+8. Put the arm64 native packages back for day-to-day work:
+
+   ```sh
+   pnpm install --frozen-lockfile
+   ```
 
 ## Feedback inbox key
 
