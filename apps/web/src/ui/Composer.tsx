@@ -307,6 +307,14 @@ const COMPOSER_DOCK_ANIMATION_ID = 'harness-composer-dock'
 // settles softly rather than covering most of its distance in the first frames.
 const COMPOSER_DOCK_MOTION_MS = 420
 const COMPOSER_DOCK_EASING = 'cubic-bezier(0.45, 0, 0.2, 1)'
+/**
+ * Where the dock measures from: the prompt box itself. The shelves above it
+ * (project, branch, queue) can go away in the same frame as the send, and
+ * measuring the whole group made the prompt hop up by their height first.
+ */
+function dockRect(group: HTMLElement | null): DOMRect | null {
+  return (group?.querySelector('.composer__prompt') ?? group)?.getBoundingClientRect() ?? null
+}
 const COMPOSER_QUEUE_ANIMATION_ID = 'harness-composer-queue'
 // Match --dur-slow and --ease-rail so the panel and row reveal settle together.
 const COMPOSER_QUEUE_MOTION_MS = 260
@@ -940,7 +948,7 @@ function ComposerComponent(props: {
   // that positional delta. This keeps focus and textarea state on one DOM tree.
   useLayoutEffect(() => {
     const group = composerAnchor.current
-    const nextRect = group?.getBoundingClientRect() ?? null
+    const nextRect = dockRect(group)
     const stateChanged = previousNewSession.current !== props.newSession
     const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
 
@@ -1544,7 +1552,7 @@ function ComposerComponent(props: {
     }
     const el = area.current
     const currentHeight = el?.offsetHeight ?? COMPOSER_MIN_HEIGHT
-    previousComposerRect.current = composerAnchor.current?.getBoundingClientRect() ?? null
+    previousComposerRect.current = dockRect(composerAnchor.current)
     // Clear before handing the text over. A send that is rejected on the spot
     // puts the words back into this chat's draft, and a later clear would
     // erase them from the saved draft while the box still showed them.
