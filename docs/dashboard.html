@@ -291,12 +291,25 @@
           <a href="./feature-inventory.html">Inventory</a>
           <a href="./CLAUDE-HANDOFF.md">Claude handoff</a>
         </nav>
-        <span class="meta">2026-11-04 dev 179282fa · nightly 16bdd523 · main db5fba4d</span>
+        <span class="meta">2026-11-04 dev 1406eb68 · nightly 9bdb0541 · main deda8c01</span>
       </div>
     </div>
 
     <div class="wrap">
       <section id="scope">
+        <p>
+          November 4, late afternoon: a design round Leon handed to the agents (#2141 to #2151,
+          built by m5, checked live by main in a packaged Windows build of 1406eb68): menus and
+          popovers open from their anchor with a soft settle and close faster (#2141); the first
+          prompt docks the composer with a 420 ms ease-in-out glide measured on the prompt box, so
+          nothing hops, and the prompt rises into place (#2142, #2150, #2151); the limits popup
+          shows one line per account with two bars and stays under half the window (#2143, #2147);
+          the prompt bar and profile card use ghost chips, a hairline edge and a crisp Send (#2144);
+          icons sit on whole pixels in their buttons, measured at 0 px offset for every icon button
+          (#2146); a new prompt gets 28 px above it (#2145, #2148); the welcome page’s preview
+          floats in once and a click or key ends the start animation (#2149). Not verified live: the
+          limits popup with several real accounts and the menus on macOS.
+        </p>
         <p>
           November 4, afternoon: the findings from the overnight run that were not fixed in the
           morning are merged into dev for v0.5.1 (179282fa), with Leon handing the taste calls to
