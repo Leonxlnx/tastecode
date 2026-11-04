@@ -825,32 +825,30 @@ export class PullRequestService {
       return value
     }
 
-    const [
-      authored,
-      reviewRequested,
-      reviewed,
-      activeAuthored,
-      activeRequested,
-      activeReviewed,
-      projects,
-    ] = await Promise.all([
-      this.#searchHistory('authored'),
-      this.#searchHistory('review-requested'),
-      this.#searchHistory('reviewed'),
-      this.#searchActive('authored'),
-      this.#searchActive('review-requested'),
-      this.#searchActive('reviewed'),
+    const [history, active, projects] = await Promise.all([
+      Promise.allSettled([
+        this.#searchHistory('authored'),
+        this.#searchHistory('review-requested'),
+        this.#searchHistory('reviewed'),
+      ]),
+      Promise.allSettled([
+        this.#searchActive('authored'),
+        this.#searchActive('review-requested'),
+        this.#searchActive('reviewed'),
+      ]),
       this.#projects(projectPaths, refresh),
     ])
+    // Each search fails on its own: authored pull requests still list when the
+    // review-requested search fails, and the other way round. An open pull
+    // request whose open search failed still lists from its history search,
+    // without merge state. Only when every search failed does the list fail.
+    const searches = [...history, ...active]
+    const failure = searches.find((search) => search.status === 'rejected')
+    if (failure && searches.every((search) => search.status === 'rejected')) throw failure.reason
     const combined = new Map<string, PullRequestListItem>()
-    for (const item of [
-      ...authored.items,
-      ...reviewRequested.items,
-      ...reviewed.items,
-      ...activeAuthored.items,
-      ...activeRequested.items,
-      ...activeReviewed.items,
-    ]) {
+    for (const item of searches.flatMap((search) =>
+      search.status === 'fulfilled' ? search.value.items : [],
+    )) {
       const existing = combined.get(item.id)
       const relationship =
         existing && existing.relationship !== item.relationship
@@ -871,7 +869,10 @@ export class PullRequestService {
       account,
       items,
       fetchedAt: this.#now(),
-      truncated: authored.truncated || reviewRequested.truncated || reviewed.truncated,
+      // A failed search leaves the list incomplete, the same as a capped one.
+      truncated:
+        failure !== undefined ||
+        history.some((search) => search.status === 'fulfilled' && search.value.truncated),
     }
     this.#listCache = { projectKey, value, expiresAt: this.#now() + LIST_TTL_MS }
     return value

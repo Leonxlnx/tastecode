@@ -145,7 +145,52 @@ describe('PullRequestService', () => {
     expect(result.items.every((item) => item.mergeStateStatus === 'CLEAN')).toBe(true)
   })
 
-  it('does not retry an open search that failed for another reason', async () => {
+  it('keeps the searches that loaded when others fail', async () => {
+    const run = vi.fn<GhRunner>(async (args) => {
+      if (args[0] === 'api' && args[1] === 'user') return JSON.stringify({ login: 'Blueemi' })
+      if (args[0] === 'search') {
+        if (args.includes('--review-requested')) throw new Error('gh: HTTP 500')
+        return JSON.stringify(
+          args.includes('--author') ? [authored, historicalDraft].map(searchItem) : [],
+        )
+      }
+      // Both attempts at the open authored search time out.
+      if (args.includes('q=is:pr is:open author:@me sort:updated-desc')) {
+        throw new Error('gh: HTTP 502')
+      }
+      return searchPage(
+        args.includes('q=is:pr is:open review-requested:@me sort:updated-desc') ? [reviewing] : [],
+      )
+    })
+    const service = new PullRequestService({
+      run,
+      installed: async () => true,
+      resolveProjects: async () => new Map(),
+    })
+
+    const result = await service.list([])
+
+    expect(result.items.map((item) => item.id)).toEqual(['PR_draft', 'PR_reviewing', 'PR_authored'])
+    // The authored open pull request lists from its history, without merge state.
+    expect(result.items.find((item) => item.id === 'PR_authored')).toMatchObject({
+      state: 'OPEN',
+      relationship: 'authored',
+      headRefName: '',
+    })
+    expect(result.items.find((item) => item.id === 'PR_authored')?.mergeStateStatus).toBeUndefined()
+    expect(result.items.find((item) => item.id === 'PR_reviewing')).toMatchObject({
+      relationship: 'reviewing',
+      mergeStateStatus: 'CLEAN',
+    })
+    expect(result.truncated).toBe(true)
+    expect(
+      run.mock.calls
+        .filter(([args]) => args.includes('q=is:pr is:open author:@me sort:updated-desc'))
+        .map(([args]) => args[args.indexOf('-F') + 1]),
+    ).toEqual(['first=20', 'first=5'])
+  })
+
+  it('does not retry other failures and fails the list only when every search failed', async () => {
     const run = vi.fn<GhRunner>(async (args) => {
       if (args[0] === 'api' && args[1] === 'user') return JSON.stringify({ login: 'Blueemi' })
       throw new Error('gh: Bad credentials (HTTP 401)')
