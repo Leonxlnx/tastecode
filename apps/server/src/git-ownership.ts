@@ -21,7 +21,7 @@ export class DubiousOwnership extends Error {
       (owner
         ? `Git refuses to use ${repoPath} because the repository belongs to another Windows user (${owner}).`
         : `Git refuses to use ${repoPath} because it cannot confirm that the repository belongs to the current user.`) +
-        (fix ? ` Git's own fix is \`${fix}\`.` : ''),
+        (fix ? ` Git's own fix: ${fix}` : ''),
     )
     this.name = 'DubiousOwnership'
   }

@@ -119,6 +119,21 @@ function scriptedListTransport(...replies: Array<PullRequestListResult | Error>)
 const listPane = () => within(document.querySelector<HTMLElement>('.pr-list-pane')!)
 
 describe('PullRequestsView', () => {
+  it('says a failed search apart from a capped one', async () => {
+    const transport = scriptedListTransport({ ...result, searchFailed: 'timeout' })
+
+    render(
+      <PullRequestsView transport={transport} onOpenChat={vi.fn()} onSetupTerminalOpen={vi.fn()} />,
+    )
+
+    expect(
+      await screen.findByText(
+        'Some pull requests could not be loaded: GitHub did not answer in time.',
+      ),
+    ).toBeTruthy()
+    expect(screen.queryByText(/GitHub capped one or more searches/)).toBeNull()
+  })
+
   it('shows authored and reviewing work, then filters without another request', async () => {
     const transport = pullRequestTransport()
 

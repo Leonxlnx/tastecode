@@ -423,6 +423,13 @@ export function PullRequestsView(props: {
                 selectedKey={selectedKey}
                 onSelect={setSelectedKey}
               />
+              {result.searchFailed ? (
+                <p className="pr-list-note">
+                  {result.searchFailed === 'timeout'
+                    ? 'Some pull requests could not be loaded: GitHub did not answer in time.'
+                    : 'Some pull requests could not be loaded: a GitHub search failed.'}
+                </p>
+              ) : null}
               {result.truncated ? (
                 <p className="pr-list-note">
                   GitHub capped one or more searches, so some older pull requests may be omitted.

@@ -6518,12 +6518,14 @@ describe('provider-neutral design briefing', () => {
     {
       // Claude Code's text blocks carry no phase; one opened with prose before its JSON.
       shape: 'Claude Code',
+      prose: 'I compared both captures with the references.',
       events: (turnId: string): DomainEvent[] => [
         message(`I compared both captures with the references.\n\n${passingReview}`, turnId),
         message(passingReview, turnId),
       ],
     },
-  ])('keeps the Review verdict JSON out of a $shape transcript', async ({ events }) => {
+  ])('keeps the Review verdict JSON out of a $shape transcript', async (shape) => {
+    const { events } = shape
     const { orchestrator, sessions, received, store, workspace } =
       await consistencyReviewHarness(false)
     try {
@@ -6531,7 +6533,13 @@ describe('provider-neutral design briefing', () => {
       sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
       await vi.waitFor(() => expect(designCompletion(received)).toContain('Visual review passed.'))
 
-      expect(JSON.stringify(received)).not.toContain('verdict')
+      // Item ids made from the message text carry it too, so only the shown text is checked.
+      const shown = JSON.stringify(
+        received.map(({ event }) => ('item' in event ? event.item.text : undefined)),
+      )
+      expect(shown).not.toContain('verdict')
+      // The prose before the JSON is still the agent's own progress.
+      if ('prose' in shape) expect(shown).toContain(shape.prose)
       const { presentations } = projectThreadItems(
         reduceEventLog(emptyThread, store.history('preview-recovery')).items,
       )

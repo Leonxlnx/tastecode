@@ -92,8 +92,32 @@ describe('a chat that switched provider', () => {
       model: 'gpt-6.1',
     }
     expect(providerNoticeLabel(moved, (_provider, accountId) => `Team ${accountId}`)).toBe(
-      'Switched to Codex (Team team-9z8y7x) · gpt-6.1',
+      'Switched to Codex · Team team-9z8y7x · gpt-6.1',
     )
     expect(providerNoticeLabel(moved)).toBe('Switched to Codex · gpt-6.1')
+  })
+
+  it('names the model by its display name once the app knows it', () => {
+    const moved: ProviderNotice = {
+      kind: 'provider',
+      provider: 'claude-code',
+      accountId: 'ultra-2',
+      model: 'sonnet',
+    }
+    expect(
+      providerNoticeLabel(
+        moved,
+        () => 'Ultra2',
+        (provider, model) =>
+          provider === 'claude-code' && model === 'sonnet' ? 'Sonnet 5.5' : undefined,
+      ),
+    ).toBe('Switched to Claude Code · Ultra2 · Sonnet 5.5')
+    expect(
+      providerNoticeLabel(
+        moved,
+        () => 'Ultra2',
+        () => undefined,
+      ),
+    ).toBe('Switched to Claude Code · Ultra2 · sonnet')
   })
 })

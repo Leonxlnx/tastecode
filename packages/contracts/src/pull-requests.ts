@@ -62,7 +62,10 @@ export const PullRequestListResultSchema = z.object({
   account: PullRequestAccountSchema,
   items: z.array(PullRequestListItemSchema),
   fetchedAt: z.number().int().nonnegative(),
+  /** GitHub capped a search, so older pull requests may be missing. */
   truncated: z.boolean(),
+  /** A search failed, so the list is missing what it would have found. */
+  searchFailed: z.enum(['timeout', 'error']).optional(),
 })
 export type PullRequestListResult = z.infer<typeof PullRequestListResultSchema>
 
