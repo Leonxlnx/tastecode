@@ -81,6 +81,31 @@ describe('GitHub asset releases', () => {
     expect(() => releaseUpdateInfo(latest, 'darwin', 'x64')).toThrow(/missing/)
   })
 
+  it('gives an Intel Mac the x64 DMG and an Apple Silicon Mac the arm64 DMG', () => {
+    const base = release('0.5.1')
+    const intel = {
+      ...base.assets[0]!,
+      name: 'TasteCode-0.5.1-mac-x64.dmg',
+      browser_download_url:
+        'https://github.com/Leonxlnx/tastecode/releases/download/v0.5.1/TasteCode-0.5.1-mac-x64.dmg',
+    }
+    const latest = selectLatestRelease([{ ...base, assets: [...base.assets, intel] }])
+    expect(releaseUpdateInfo(latest, 'darwin', 'x64').asset.name).toBe(
+      'TasteCode-0.5.1-mac-x64.dmg',
+    )
+    expect(releaseUpdateInfo(latest, 'darwin', 'arm64').asset.name).toBe(
+      'TasteCode-0.5.1-mac-arm64.dmg',
+    )
+    expect(releaseUpdateInfo(latest, 'win32', 'x64').asset.name).toBe('TasteCode-0.5.1-win-x64.exe')
+    // Without its x64 DMG a release still updates Apple Silicon Macs; only an
+    // Intel Mac's own check reports the missing file.
+    const armOnly = selectLatestRelease([base])
+    expect(releaseUpdateInfo(armOnly, 'darwin', 'arm64').asset.name).toBe(
+      'TasteCode-0.5.1-mac-arm64.dmg',
+    )
+    expect(() => releaseUpdateInfo(armOnly, 'darwin', 'x64')).toThrow(/missing/)
+  })
+
   it('does not silently choose an older release when the newest one is incomplete', () => {
     const latest = selectLatestRelease([
       release('0.1.0-beta.7', '2026-09-19T00:00:00Z'),
