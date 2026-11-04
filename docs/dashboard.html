@@ -304,14 +304,16 @@
           >, 17:54 UTC, main d5e45826, promoted through #2159 and #2160 and synced back through
           #2161 and #2162). It has three installers: Windows x64 (unsigned), macOS Apple Silicon
           and, for the first time, macOS Intel (#2158); each Mac updates from the DMG for its own
-          architecture. Karol built and uploaded both DMGs; signing, notarization and Gatekeeper
-          follow his report, which is still pending. It ships the account pool, math in replies,
-          more Grok accounts, the design round and the fixes from the overnight run of v0.5.0
-          described below. Verified: the update check against the draft for both client generations,
-          the same check without a token after publishing with all three downloads answering, and
-          hosted CI on d5e45826 green on Windows. Not verified: the macOS CI leg, where one
-          WorkspaceTabs test failed as flaky and a rerun is going; the NSIS installed-upgrade proof,
-          which was not run; and the real update from an installed v0.5.0, which Leon is testing.
+          architecture. Karol built and uploaded both DMGs; per his report Apple notarized the app
+          and the DMG of both architectures, the stapled tickets validate and Gatekeeper accepts
+          both DMGs as Notarized Developer ID. Whether the Intel app was started is not in the
+          report. It ships the account pool, math in replies, more Grok accounts, the design round
+          and the fixes from the overnight run of v0.5.0 described below. Verified: the update check
+          against the draft for both client generations, the same check without a token after
+          publishing with all three downloads answering, and hosted CI on d5e45826 green on Windows.
+          Not verified: the macOS CI leg, where one WorkspaceTabs test failed as flaky and a rerun
+          is going; the NSIS installed-upgrade proof, which was not run; and the real update from an
+          installed v0.5.0, which Leon is testing.
         </p>
         <p>
           November 4, late afternoon: a design round Leon handed to the agents (#2141 to #2151,

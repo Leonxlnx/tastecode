@@ -34,9 +34,17 @@ the calmer first start, and the fixes from the overnight run of 0.5.0.
 
 The Windows installer was built on the release owner's machine and remains unsigned. The
 macOS maintainer, Karol (Blueemi), built and uploaded both DMGs
-([steps](#both-mac-builds-on-one-apple-silicon-mac-from-051)). Signing, notarization and
-Gatekeeper for both DMGs follow his report, which is still pending. The SHA-256 values below
-are GitHub's digests of the uploaded files.
+([steps](#both-mac-builds-on-one-apple-silicon-mac-from-051)). The SHA-256 values below are
+GitHub's digests of the uploaded files. His report, forwarded by the release owner:
+
+- Apple notarization accepted all four submissions, rechecked with Apple: the app ZIP and the
+  DMG for each of arm64 and Intel. Submission IDs: arm64 app
+  `ab211f5c-fd6f-448c-8a31-6ba1f7b9e7a9`, arm64 DMG `96445962-…`, Intel app
+  `56ddf684-8f2d-4397-a855-a4e47c8e41e4`, Intel DMG `398abb54-d2ab-4526-…ab31f` (the two DMG
+  IDs are cut off in the report).
+- `xcrun stapler validate` reported "The validate action worked!" for both DMGs.
+- Gatekeeper (`spctl -a -vvv -t install`) accepted both DMGs as "Notarized Developer ID".
+- The report does not say whether the Intel app was started, for example under Rosetta.
 
 | Installer                       |     Bytes | SHA-256                                                            |
 | ------------------------------- | --------: | ------------------------------------------------------------------ |
