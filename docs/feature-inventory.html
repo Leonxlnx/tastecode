@@ -1432,7 +1432,9 @@
                   Codex from a fixed list of the app-server actions /goal, /compact and /review,
                   which its chats send as thread/goal/*, thread/compact/start and review/start
                   requests instead of text (a goal answer shows as a short assistant turn; checked
-                  against a fake app-server only), plus /init, which sends TasteCode's own prompt to
+                  against a fake app-server only; a review is one turn that ends when Codex ends it
+                  and answers with the review, not the reviewer's inner turn and messages; checked
+                  on a Codex 0.166 capture only), plus /init, which sends TasteCode's own prompt to
                   create or improve AGENTS.md as a normal turn (Codex's TUI does the same with its
                   own prompt; checked against a fake app-server only); Grok, OpenCode and other ACP
                   agents from a live chat or a probe (a Grok or ACP chat sends a leading /name
