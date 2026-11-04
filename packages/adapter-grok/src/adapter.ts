@@ -26,6 +26,7 @@ import { captureCli } from '@harness/proc/cli'
 import { startsWithAcpCommand } from '@harness/adapter-acp/commands'
 import { z } from 'zod'
 import { withInstructions } from './prompt-instructions.js'
+import { grokAccountEnvironment } from './account-home.js'
 import { GROK_CAPABILITIES } from './capabilities.js'
 import { GrokSubagents } from './subagents.js'
 
@@ -335,9 +336,13 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
   /** Set by dispose. A turn waiting on the previous child must not launch after it. */
   #disposed = false
 
-  constructor(options: { spawn?: SpawnFn } = {}) {
+  /** The account's GROK_HOME, absent for the default account. */
+  readonly #accountHome: string | undefined
+
+  constructor(options: { spawn?: SpawnFn; accountHome?: string | undefined } = {}) {
     super()
     this.#spawn = options.spawn ?? spawnOwned
+    this.#accountHome = options.accountHome
   }
 
   get capabilities(): Capabilities {
@@ -446,7 +451,10 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
         }
       : undefined
     const args = grokTurnArgs(promptFile, this.#options, session)
-    const environment = grokContextEnvironment(this.#options.context)
+    const environment = {
+      ...grokAccountEnvironment(this.#accountHome),
+      ...grokContextEnvironment(this.#options.context),
+    }
 
     // A turn already in flight would be orphaned by the reassignment below.
     if (this.#child) await this.#stop(this.#child)
@@ -460,7 +468,7 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
     try {
       child = this.#spawn(grokCommand(), args, {
         cwd: this.#workspacePath,
-        ...(environment ? { env: { ...process.env, ...environment } } : {}),
+        ...(Object.keys(environment).length > 0 ? { env: { ...process.env, ...environment } } : {}),
         stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true,
       })
@@ -764,7 +772,8 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
   /** `grok models` prints a default line plus an "Available models:" list. */
   async listModels(): Promise<Model[]> {
     // A custom harness launches its own binary, so only the built-in CLI shares a read.
-    const shared = this.#spawn === spawnOwned ? await sharedSignInModels() : undefined
+    const shared =
+      this.#spawn === spawnOwned ? await sharedSignInModels(this.#accountHome) : undefined
     return parseGrokModels(shared ?? (await this.#capture(['models'])))
   }
 
@@ -805,12 +814,20 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
   }
 
   #capture(args: string[], timeoutMs = 15000): Promise<string> {
-    return captureGrok(this.#spawn, args, timeoutMs)
+    return captureGrok(this.#spawn, args, timeoutMs, this.#accountHome)
   }
 }
 
-async function captureGrok(spawnFn: SpawnFn, args: string[], timeoutMs = 15000): Promise<string> {
+async function captureGrok(
+  spawnFn: SpawnFn,
+  args: string[],
+  timeoutMs = 15000,
+  accountHome?: string,
+): Promise<string> {
   const child = spawnFn(grokCommand(), args, {
+    ...(accountHome === undefined
+      ? {}
+      : { env: { ...process.env, ...grokAccountEnvironment(accountHome) } }),
     stdio: ['pipe', 'pipe', 'pipe'],
     windowsHide: true,
   })
@@ -966,40 +983,51 @@ export type GrokSignIn = { signedIn: boolean }
  */
 const SIGN_IN_MODELS_SHARE_MS = 30_000
 
-/** The newest sign-in check's `grok models` read; infinite expiry while in flight. */
-let signInModels: { output: Promise<string>; expiresAt: number } | undefined
+/**
+ * Each account's newest sign-in check's `grok models` read, keyed by its GROK_HOME
+ * (`""` for the default account); infinite expiry while in flight.
+ */
+const signInModels = new Map<string, { output: Promise<string>; expiresAt: number }>()
 
-export async function grokSignIn(): Promise<GrokSignIn> {
+/** Which account a Grok call runs as; absent, the default account. */
+export type GrokAccountTarget = { accountHome?: string | undefined }
+
+export async function grokSignIn(target: GrokAccountTarget = {}): Promise<GrokSignIn> {
+  const key = target.accountHome ?? ''
   // The sign-in state itself is always read fresh; only its model list is shared.
-  const read = { output: captureGrok(spawnOwned, ['models']), expiresAt: Number.POSITIVE_INFINITY }
-  signInModels = read
+  const read = {
+    output: captureGrok(spawnOwned, ['models'], undefined, target.accountHome),
+    expiresAt: Number.POSITIVE_INFINITY,
+  }
+  signInModels.set(key, read)
   try {
     const signIn = parseGrokAccount(await read.output)
-    if (signInModels === read) {
+    if (signInModels.get(key) === read) {
       if (signIn.signedIn) read.expiresAt = Date.now() + SIGN_IN_MODELS_SHARE_MS
-      else signInModels = undefined
+      else signInModels.delete(key)
     }
     return signIn
   } catch (error) {
-    if (signInModels === read) signInModels = undefined
+    if (signInModels.get(key) === read) signInModels.delete(key)
     throw error
   }
 }
 
-/** A sign-in check's output that is still in flight, or signed in and recent. */
-async function sharedSignInModels(): Promise<string | undefined> {
-  const read = signInModels
+/** A sign-in check's output for this account that is still in flight, or signed in and recent. */
+async function sharedSignInModels(accountHome: string | undefined): Promise<string | undefined> {
+  const read = signInModels.get(accountHome ?? '')
   if (!read || read.expiresAt <= Date.now()) return undefined
   return read.output.catch(() => undefined)
 }
 
-/** `grok logout` clears the CLI's own cached credentials. */
-export async function signOutGrok(): Promise<void> {
-  signInModels = undefined
+/** `grok logout` clears the account's own cached credentials, in its GROK_HOME. */
+export async function signOutGrok(target: GrokAccountTarget = {}): Promise<void> {
+  const key = target.accountHome ?? ''
+  signInModels.delete(key)
   try {
-    await captureGrok(spawnOwned, ['logout'])
+    await captureGrok(spawnOwned, ['logout'], undefined, target.accountHome)
   } finally {
-    signInModels = undefined
+    signInModels.delete(key)
   }
 }
 
