@@ -291,12 +291,29 @@
           <a href="./feature-inventory.html">Inventory</a>
           <a href="./CLAUDE-HANDOFF.md">Claude handoff</a>
         </nav>
-        <span class="meta">2026-11-04 dev 7b38f04b · nightly 16bdd523 · main db5fba4d</span>
+        <span class="meta">2026-11-04 dev 1f6aa7c3 · nightly 16bdd523 · main db5fba4d</span>
       </div>
     </div>
 
     <div class="wrap">
       <section id="scope">
+        <p>
+          November 4, morning: nine fixes from an overnight run of v0.5.0 in the installed app are
+          merged into dev for v0.5.1 (1f6aa7c3): an image dropped from the file manager previews in
+          the sent message (#2112); a turn Cursor refuses fails with the CLI's own reason (#2113)
+          and Cursor's text around tool calls stays as separate messages (#2114); a Codex /review
+          turn ends and shows its findings (#2115); provider slash commands such as /goal, /compact
+          and /review go out without prompt prefixes (#2116); git refusing a repository for its
+          owner is reported as that, not as no repository (#2117); the pull-request list loads for
+          accounts with many open PRs (#2118); a chat whose first prompt went out wrapped still gets
+          a title from the request (#2119); Design phase JSON stays out of Grok and Claude Code
+          chats (#2120). Verified locally on Windows: lint, typecheck, all tests and dist:release on
+          the combined tree, and each fix in a packaged check build beside the installed app; dev's
+          code is identical to that tree. Not verified: macOS, hosted CI, and an installer built
+          from dev. The rollback test "refuses restore and undo while a diff rejection is still in
+          progress" now runs about 5.7 s against its 5 s timeout on Leon's laptop, with or without
+          these changes.
+        </p>
         <p>
           November 4, night: v0.5.0 is published as Latest (<a
             href="https://github.com/Leonxlnx/tastecode/releases/tag/v0.5.0"
