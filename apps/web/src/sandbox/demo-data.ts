@@ -559,6 +559,17 @@ export const DEMO_PROJECTS: ReadonlyArray<DemoProject> = [
             ],
             usage: usage(44_900, 200_000, 'claude-opus-5-5'),
           },
+          {
+            prompt: 'Keep 55%. Anything else to check before I merge?',
+            agoMs: 100 * 60_000,
+            durationMs: 8_000,
+            items: [
+              assistant(
+                'Nothing else. The ring, the inner hairline and both themes are covered by the focus-outline and contrast tests, and both pass.',
+              ),
+            ],
+            usage: usage(46_100, 200_000, 'claude-opus-5-5'),
+          },
         ],
       },
       {
