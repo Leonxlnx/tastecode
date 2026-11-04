@@ -8,6 +8,16 @@
 .account-menu__usage {
   flex: 0 1 auto;
   min-height: 0;
+  /* However many accounts there are, the limits never take more than half
+     the window; a longer list scrolls inside and fades at its bottom edge
+     while rows wait below, the way the model list does. A list that fits has
+     no scroll range and never fades. */
+  max-height: 50vh;
+  --usage-fade-size: 22px;
+  mask-image: linear-gradient(to bottom, #000 calc(100% - var(--usage-fade)), transparent);
+  animation: account-usage-fade linear both;
+  animation-timeline: scroll(self);
+  animation-range: calc(100% - var(--usage-fade-size)) 100%;
   display: grid;
   align-content: start;
   gap: 14px;
@@ -21,6 +31,22 @@
   color: var(--text-2);
   font-size: var(--t-xs);
   line-height: 1.3;
+}
+
+@property --usage-fade {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 0px;
+}
+
+@keyframes account-usage-fade {
+  from {
+    --usage-fade: var(--usage-fade-size);
+  }
+
+  to {
+    --usage-fade: 0px;
+  }
 }
 
 .account-menu__usage:focus-visible {
@@ -513,16 +539,11 @@
   min-height: 18px;
 }
 
-/* Retry stays level with the name when the windows add rows under it. */
-.account-menu__account-head:has(.account-menu__account-glance) {
-  align-items: flex-start;
-}
-
 .account-menu__account-line {
   display: flex;
   flex: 1;
   align-items: center;
-  gap: 7px;
+  gap: 5px;
   min-width: 0;
   /* The hover wash reaches past the text without moving it. */
   margin: -3px -5px;
@@ -538,9 +559,6 @@
 }
 
 button.account-menu__account-line {
-  /* The windows wrap onto their own rows under the name. */
-  flex-wrap: wrap;
-  row-gap: 4px;
   padding-left: 5px;
   cursor: pointer;
   transition:
@@ -558,7 +576,7 @@ button.account-menu__account-line:focus-visible {
   outline-offset: var(--focus-ring-offset);
 }
 
-.account-menu__account-line > svg {
+.account-menu__account-line > .account-menu__chevron {
   flex: none;
   width: 12px;
   height: 12px;
@@ -566,12 +584,14 @@ button.account-menu__account-line:focus-visible {
   transition: rotate var(--dur-fast) var(--ease-out);
 }
 
-.account-menu__account-line[aria-expanded='true'] > svg {
+.account-menu__account-line[aria-expanded='true'] > .account-menu__chevron {
   rotate: 90deg;
 }
 
 .account-menu__account-name {
-  min-width: 0;
+  /* The name keeps a few letters before the plan chip gives way. */
+  flex: 0 1 auto;
+  min-width: min(4.5em, 100%);
   overflow: hidden;
   font-weight: 500;
   text-overflow: ellipsis;
@@ -592,44 +612,40 @@ button.account-menu__account-line:focus-visible {
   white-space: nowrap;
 }
 
-.account-menu__account-glance {
-  display: grid;
-  flex-basis: 100%;
-  /* Room for "100%", so the gauges line up from one account to the next. */
-  grid-template-columns: minmax(0, 1fr) 36px minmax(2.7em, auto);
+/* At the end of the line: Session and Weekly as two short bars, each with
+   its share left; the label and reset are on hover. Widths are fixed so the
+   bars line up from the pool line through every account. */
+.account-menu__glance {
+  display: flex;
+  flex: none;
   align-items: center;
-  gap: 3px 8px;
-  min-width: 0;
-  /* Under the name, past the chevron's column. */
-  padding-left: 19px;
+  gap: 6px;
+  margin-left: auto;
 }
 
-.account-menu__account-label {
-  grid-column: 1;
-  min-width: 0;
-  overflow: hidden;
-  color: var(--text-3);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.account-menu__glance-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .account-menu__account-value {
-  grid-column: 3;
-  justify-self: end;
+  min-width: 2.4em;
   color: var(--text);
   font-variant-numeric: tabular-nums;
+  text-align: right;
   white-space: nowrap;
 }
 
-/* A count or balance has no gauge and takes its column too. */
+/* A count or balance has no gauge; its text takes the gauge's room too. */
 .account-menu__account-value.is-text {
-  grid-column: 2 / -1;
+  min-width: calc(2.4em + 24px);
 }
 
 .account-menu__account-gauge {
   --limit-fill: var(--left);
-  grid-column: 2;
-  height: 4px;
+  width: 20px;
+  height: 3px;
   border-radius: var(--r-pill);
   background: color-mix(in srgb, var(--text) 9%, transparent);
   animation: account-limit-fill 520ms var(--ease-out) both;
@@ -651,36 +667,43 @@ button.account-menu__account-line:focus-visible {
   padding-left: 19px;
 }
 
-/* The account the pool recommends for the next chat: one quiet tag beside
-   its name, in the bars' ink rather than an accent. */
-.account-menu__account-badge {
-  flex: none;
+/* The account's plan: a quiet tag beside its name, in the bars' ink rather
+   than an accent, that shortens before the name does. */
+.account-menu__account-plan {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   padding: 0 5px;
   border-radius: var(--r-pill);
   background: color-mix(in srgb, var(--text) 8%, transparent);
-  color: var(--text-2);
-  font-weight: 500;
-  line-height: 16px;
+  color: var(--text-3);
+  font-size: 10px;
+  line-height: 15px;
   white-space: nowrap;
 }
 
-/* A provider's accounts summed into one pool, on a slightly raised panel
-   above them, so it reads as their summary rather than one more account. */
-.account-menu__pool {
-  display: grid;
-  gap: 8px;
-  min-width: 0;
-  padding: 8px 9px 9px;
-  border-radius: var(--r-md);
-  background: color-mix(in srgb, var(--text) 4%, transparent);
+/* The account the pool recommends for the next chat: a small dot after its
+   name; the word is on hover and for assistive tech. */
+.account-menu__account-badge {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--r-pill);
+  background: var(--text-2);
 }
 
-.account-menu__pool-head {
+/* A provider's accounts summed into one pool: one line on a slightly raised
+   wash above them, so it reads as their summary rather than one more account. */
+.account-menu__pool {
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
+  align-items: center;
   gap: 8px;
   min-width: 0;
+  margin: 0 -5px;
+  padding: 4px 5px;
+  border-radius: var(--r-sm);
+  background: color-mix(in srgb, var(--text) 4%, transparent);
 }
 
 .account-menu__pool-name {
@@ -692,29 +715,19 @@ button.account-menu__account-line:focus-visible {
   white-space: nowrap;
 }
 
-.account-menu__pool-count,
-.account-menu__pool-size {
-  color: var(--text-3);
-}
-
-.account-menu__pool-count {
-  flex: none;
-}
-
-/* One bar per window: a segment per account, as long as its plan is big and
-   filled to what that account has left, the soonest reset first. Drawn like
-   every other limit bar. */
+/* One short bar per window: a segment per account, as long as its plan is big
+   and filled to what that account has left, the soonest reset first. */
 .account-menu__pool-bar {
   display: flex;
-  gap: 2px;
-  height: 4px;
-  min-width: 0;
+  gap: 1px;
+  width: 20px;
+  height: 3px;
 }
 
 .account-menu__pool-segment {
   --limit-fill: var(--left);
   flex: 1 1 0;
-  min-width: 3px;
+  min-width: 2px;
   border-radius: var(--r-pill);
   background: color-mix(in srgb, var(--text) 9%, transparent);
   animation: account-limit-fill 520ms var(--ease-out) both;
@@ -733,17 +746,6 @@ button.account-menu__account-line:focus-visible {
   background: var(--error);
 }
 
-/* Under the bar: how much of the pool is left, then which account resets
-   next, a line each so neither breaks mid-phrase in the narrow popup. */
-.account-menu__pool-detail {
-  display: grid;
-  gap: 1px;
-  min-width: 0;
-  color: var(--text-3);
-  font-size: var(--t-xs);
-  line-height: 1.3;
-}
-
 @media (prefers-reduced-motion: reduce) {
   .account-menu__account-gauge,
   .account-menu__pool-segment {
@@ -751,7 +753,7 @@ button.account-menu__account-line:focus-visible {
     transition: none;
   }
 
-  .account-menu__account-line > svg,
+  .account-menu__account-line > .account-menu__chevron,
   .account-menu__source .account-menu__source-chevron {
     transition: none;
   }
