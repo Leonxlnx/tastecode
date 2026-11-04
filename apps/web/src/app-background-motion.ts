@@ -16,7 +16,11 @@ import {
  * dot sizes shift slowly under it.
  *
  * The main thread does almost nothing per frame: one uniform and one draw
- * call, about 30 times a second, with no layout, style or DOM paint. Every
+ * call, about 30 times a second, with no layout, style or DOM paint, and no
+ * object made for the frame: one repeating timer drives every frame instead
+ * of a new timer plus an animation frame each time. (A window left on the
+ * effect overnight grew to 5 GB of garbage that only a forced GC freed;
+ * per-frame scheduler records are the suspected source.) Every
  * canvas on screen (the window's and Settings' preview) shares one clock and
  * one timer, which stops while the window is hidden or out of focus and never
  * starts with reduced motion; each canvas then keeps its last frame. Where
@@ -27,8 +31,6 @@ import {
 /** Frames a second while the effect moves. */
 export const EFFECT_FPS = 30
 const FRAME_MS = 1000 / EFFECT_FPS
-/** The timer wakes this much before a frame is due; the animation frame after it draws. */
-const FRAME_SLACK_MS = 8
 /** The most one frame advances the clock, so a stalled frame does not jump. */
 const MAX_STEP_MS = 100
 /** Sharper than this costs pixels without showing more. */
@@ -47,8 +49,7 @@ const sinks = new Set<MotionSink>()
 /** Seconds the effects have moved; it only runs while they do. */
 let seconds = 0
 let lastFrame: number | undefined
-let frame = 0
-let timer: ReturnType<typeof setTimeout> | undefined
+let timer: ReturnType<typeof setInterval> | undefined
 let focusCheck: ReturnType<typeof setTimeout> | undefined
 let focused = true
 let reducedMotion: MediaQueryList | undefined
@@ -73,38 +74,32 @@ function shouldMove(): boolean {
 }
 
 function stopFrames(): void {
-  if (frame) cancelAnimationFrame(frame)
-  if (timer !== undefined) clearTimeout(timer)
-  frame = 0
+  if (timer !== undefined) clearInterval(timer)
   timer = undefined
   lastFrame = undefined
 }
 
-function requestFrame(): void {
-  if (frame || timer !== undefined || !shouldMove()) return
-  frame = requestAnimationFrame(tick)
+function drawSink(sink: MotionSink): void {
+  sink.draw(seconds)
 }
 
-function tick(now: number): void {
-  frame = 0
+function tick(): void {
   if (!shouldMove()) {
-    lastFrame = undefined
+    stopFrames()
     return
   }
+  const now = performance.now()
   if (lastFrame !== undefined) seconds += Math.min(Math.max(0, now - lastFrame), MAX_STEP_MS) / 1000
   lastFrame = now
-  for (const sink of sinks) sink.draw(seconds)
-  // A timer, not an animation frame per refresh: the main thread wakes about
-  // 30 times a second instead of 60 to 144, and the frame after it draws.
-  timer = setTimeout(() => {
-    timer = undefined
-    requestFrame()
-  }, FRAME_MS - FRAME_SLACK_MS)
+  // forEach with a named function: no iterator or closure is made per frame.
+  sinks.forEach(drawSink)
 }
 
 function update(): void {
-  if (shouldMove()) requestFrame()
-  else stopFrames()
+  // One repeating timer, not an animation frame per refresh: the main thread
+  // wakes about 30 times a second instead of 60 to 144.
+  if (!shouldMove()) stopFrames()
+  else if (timer === undefined) timer = setInterval(tick, FRAME_MS)
 }
 
 function onFocus(): void {

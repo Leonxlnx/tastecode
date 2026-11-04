@@ -19,6 +19,8 @@ beforeEach(() => {
     toFake: [
       'setTimeout',
       'clearTimeout',
+      'setInterval',
+      'clearInterval',
       'requestAnimationFrame',
       'cancelAnimationFrame',
       'performance',
