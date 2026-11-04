@@ -249,10 +249,14 @@ export class CursorAdapter extends EventEmitter<Events> {
       type: 'turn.started',
       turn: { id: turnId, threadId, status: 'running', createdAt: Date.now() },
     })
+    const exitReason = new CursorExitReason()
     readNdjson(
       child.stdout,
       (value) => this.#onEvent(CursorEventSchema.parse(value)),
-      (line) => this.emit('log', `unparsable stdout: ${line.slice(0, 200)}`),
+      (line) => {
+        exitReason.addLine(line)
+        this.emit('log', `unparsable stdout: ${line.slice(0, 200)}`)
+      },
       {
         onError: (error) => {
           // A frame that does not match the schema, or a throwing event
@@ -267,17 +271,22 @@ export class CursorAdapter extends EventEmitter<Events> {
       },
     )
     child.stderr.setEncoding('utf8')
-    child.stderr.on('data', (chunk: string) => this.emit('log', chunk.trimEnd()))
+    child.stderr.on('data', (chunk: string) => {
+      exitReason.addChunk(chunk)
+      this.emit('log', chunk.trimEnd())
+    })
     child.on('error', () => this.#fail(turnId, 'Cursor Agent CLI could not start.'))
     child.on('exit', () => {
       if (this.#child === child) this.#child = undefined
     })
     // 'close', not 'exit': at exit the stdio pipes may still hold the final
     // `result` chunk, and failing here would report a successful turn as a
-    // crash. 'close' fires only once all output has been delivered.
+    // crash. 'close' fires only once all output has been delivered, the
+    // plain-text reason of a refused turn included.
     child.on('close', (code) => {
       if (this.#child === child) this.#child = undefined
-      this.#fail(turnId, `cursor-agent exited with code ${code ?? 'unknown'}`)
+      const reason = code === 0 ? undefined : exitReason.text()
+      this.#fail(turnId, reason ?? `cursor-agent exited with code ${code ?? 'unknown'}`)
     })
     return turnId
   }
@@ -385,5 +394,62 @@ export function parseCursorModels(output: string): Model[] {
 function validateApproval(approval: ApprovalMode | undefined): void {
   if (approval === 'auto-review') {
     throw new Error('Cursor CLI does not support automatic approval review')
+  }
+}
+
+/** How much of the CLI's own words a failed turn's message carries. */
+const REASON_LIMIT = 400
+const REASON_LINES = 6
+/** "ActionRequiredError: …", "Error: …", or commander's "error: …". */
+const ERROR_LINE = /^(?:[A-Z][\w$]*Error|[Ee]rror):\s*(\S.*)$/
+
+/**
+ * Why cursor-agent ended a turn it never ran, in its own words. A turn the
+ * CLI refuses ends with exit code 1 and no `result` frame; the reason is
+ * plain text, on stderr or as a stdout line that is not JSON. 2026.07.23-e383d2b
+ * printed "ActionRequiredError: Kimi K3 is not included in your weekly usage …"
+ * for a model outside the plan (2026-11-04), and a multi-line notice for a
+ * folder it does not trust. The last `…Error:` line wins, without its class
+ * name; otherwise the last few lines are joined.
+ */
+class CursorExitReason {
+  #partial = ''
+  #lines: string[] = []
+  #error: string | undefined
+
+  /** A stderr chunk, which can end mid-line. */
+  addChunk(chunk: string): void {
+    const lines = `${this.#partial}${chunk}`.split(/\r\n|\n|\r/)
+    // Only a line's start is ever used, so an endless line stays bounded.
+    this.#partial = (lines.pop() ?? '').slice(0, REASON_LIMIT * 2)
+    for (const line of lines) this.addLine(line)
+  }
+
+  addLine(raw: string): void {
+    const line = raw
+      .replace(ANSI, '')
+      .trim()
+      .slice(0, REASON_LIMIT + 1)
+    // Blank lines, rules and box borders say nothing.
+    if (!/[\p{L}\p{N}]/u.test(line)) return
+    this.#error = ERROR_LINE.exec(line)?.[1] ?? this.#error
+    this.#lines = [...this.#lines, line].slice(-REASON_LINES)
+  }
+
+  /** The reason as one short paragraph, or undefined when the CLI printed nothing useful. */
+  text(): string | undefined {
+    this.addChunk('\n')
+    let text = this.#error
+    if (!text) {
+      // The newest lines, as many as fit; a notice ends with what to do.
+      const kept: string[] = []
+      for (const line of this.#lines.toReversed()) {
+        if (kept.length && [line, ...kept].join(' ').length > REASON_LIMIT) break
+        kept.unshift(line)
+      }
+      text = kept.join(' ')
+    }
+    if (!text) return undefined
+    return text.length > REASON_LIMIT ? `${text.slice(0, REASON_LIMIT - 1).trimEnd()}…` : text
   }
 }

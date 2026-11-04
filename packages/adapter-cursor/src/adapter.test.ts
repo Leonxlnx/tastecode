@@ -1,4 +1,5 @@
 import { ChildProcess } from 'node:child_process'
+import { once } from 'node:events'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -57,6 +58,55 @@ class FakeChild extends ChildProcess {
     this.killed = true
     setImmediate(() => this.emit('exit', null))
     return true
+  }
+}
+
+/**
+ * `cursor-agent --print --output-format stream-json --force --model kimi-k3
+ * "Reply with the single word: pong"` on Windows, 2026.07.23-e383d2b,
+ * 2026-11-04. The capture merged stdout and stderr and shortened the cwd and
+ * session id. The frames came first, then the refusal, then exit code 1.
+ */
+const REFUSED_FRAMES = [
+  '{"type":"system","subtype":"init","apiKeySource":"login","cwd":"...","session_id":"35b81d1b-...","model":"Kimi K3 High","permissionMode":"default"}',
+  '{"type":"user","message":{"role":"user","content":[{"type":"text","text":"Reply with the single word: pong"}]},"session_id":"35b81d1b-..."}',
+].join('\n')
+const REFUSAL =
+  'ActionRequiredError: Kimi K3 is not included in your weekly usage Buy credits or switch to a Grok model to continue.'
+
+/** What a turn's process prints: all of stdout, and stderr in the chunks it arrives in. */
+type TurnOutput = { stdout?: string; stderr?: string[] }
+
+/**
+ * One turn whose process prints `output` and then exits with `code`, reduced
+ * to the errors, end states and log lines the adapter reported.
+ */
+async function finishTurn(
+  output: TurnOutput,
+  code: number,
+): Promise<{ errors: string[]; statuses: string[]; logs: string[] }> {
+  const child = new FakeChild()
+  const adapter = new CursorAdapter({ spawn: () => child })
+  const events: DomainEvent[] = []
+  const logs: string[] = []
+  adapter.on('event', (event) => events.push(event))
+  adapter.on('log', (line: string) => logs.push(line))
+  const thread = await adapter.startThread('C:\\repo')
+  await adapter.sendTurn(thread.id, 'Reply with the single word: pong')
+
+  const drained = Promise.all([once(child.stdout, 'end'), once(child.stderr, 'end')])
+  for (const chunk of output.stderr ?? []) child.stderr.write(chunk)
+  child.stderr.end()
+  child.stdout.end(output.stdout ?? '')
+  await drained
+  child.emit('exit', code)
+  child.emit('close', code)
+  await adapter.dispose()
+
+  return {
+    errors: events.flatMap((event) => (event.type === 'thread.error' ? [event.message] : [])),
+    statuses: events.flatMap((event) => (event.type === 'turn.completed' ? [event.status] : [])),
+    logs,
   }
 }
 
@@ -401,6 +451,76 @@ describe('Cursor adapter', () => {
       expect.objectContaining({ status: 'completed' }),
     ])
     expect(events.some((event) => event.type === 'thread.error')).toBe(false)
+  })
+
+  it.each<[string, TurnOutput]>([
+    // The CLI's other refusals ("Error: Authentication required", in
+    // fixtures/cursor-expired-sign-in-2026-10-14.json) went to stderr. A pipe
+    // may hand that line over in pieces.
+    [
+      'stderr',
+      { stdout: `${REFUSED_FRAMES}\n`, stderr: [REFUSAL.slice(0, 30), `${REFUSAL.slice(30)}\n`] },
+    ],
+    ['stdout', { stdout: `${REFUSED_FRAMES}\n${REFUSAL}\n` }],
+  ])('fails a turn the CLI refuses with the reason it printed on %s', async (_stream, output) => {
+    const result = await finishTurn(output, 1)
+
+    expect(result).toMatchObject({
+      errors: [
+        'Kimi K3 is not included in your weekly usage Buy credits or switch to a Grok model to continue.',
+      ],
+      statuses: ['failed'],
+    })
+  })
+
+  it.each(['stdout', 'stderr'] as const)(
+    'fails a turn in a folder Cursor does not trust with its notice on %s',
+    async (stream) => {
+      // Without --force the CLI prints this notice and exits 1. Only these
+      // lines of it were captured; the ones between the question and the
+      // last line are left out.
+      const notice = [
+        'Cursor Agent can execute code and access files in this directory.',
+        '',
+        'Do you trust the contents of this directory?',
+        '',
+        'Pass --trust, --yolo, or -f if you trust this directory',
+        '',
+      ].join('\n')
+
+      const output: TurnOutput = stream === 'stdout' ? { stdout: notice } : { stderr: [notice] }
+      const result = await finishTurn(output, 1)
+
+      expect(result).toMatchObject({
+        errors: [
+          'Cursor Agent can execute code and access files in this directory. Do you trust the contents of this directory? Pass --trust, --yolo, or -f if you trust this directory',
+        ],
+        statuses: ['failed'],
+      })
+    },
+  )
+
+  it('keeps the exit code as the message when the CLI exits without a reason', async () => {
+    const result = await finishTurn({ stdout: `${REFUSED_FRAMES}\n` }, 1)
+
+    expect(result).toMatchObject({
+      errors: ['cursor-agent exited with code 1'],
+      statuses: ['failed'],
+    })
+  })
+
+  it('leaves a successful turn as it was, whatever else the CLI printed', async () => {
+    // Made-up stderr: even an error line does not fail a turn that completed.
+    const result = await finishTurn(
+      {
+        stdout: readFileSync(new URL('./fixtures/stream.jsonl', import.meta.url), 'utf8'),
+        stderr: ['Error: a warning the turn survived\n'],
+      },
+      0,
+    )
+
+    expect(result).toMatchObject({ errors: [], statuses: ['completed'] })
+    expect(result.logs).toContain('Error: a warning the turn survived')
   })
 
   it('keeps the turn alive past a frame it cannot read', async () => {
