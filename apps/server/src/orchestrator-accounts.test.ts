@@ -886,7 +886,7 @@ describe('the account pool', () => {
           { accountId: 'default', plan: 'Pro', weights: { session: 1, weekly: 1 } },
           { accountId: 'work', plan: 'Max x5', weights: { session: 5, weekly: 5 } },
         ],
-        windows: [{ id: 'seven_day', kind: 'weekly', accounts: 2, capacity: 6, remaining: 3.4 }],
+        windows: [{ id: 'weekly', kind: 'weekly', accounts: 2, capacity: 6, remaining: 3.4 }],
       })
       // The pool reads only what is held; it never asks the vendor.
       expect(claude.calls.filter(([kind]) => kind === 'limits')).toHaveLength(reads)

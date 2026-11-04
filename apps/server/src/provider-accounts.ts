@@ -11,9 +11,17 @@ import {
 } from 'node:fs'
 import { rm } from 'node:fs/promises'
 import path from 'node:path'
-import { CLAUDE_ACCOUNT_HOME, claudePlanWeights } from '@harness/adapter-claude-code/account-home'
+import {
+  CLAUDE_ACCOUNT_HOME,
+  claudeOverallLimit,
+  claudePlanWeights,
+} from '@harness/adapter-claude-code/account-home'
 import { CLAUDE_CAPABILITIES } from '@harness/adapter-claude-code/capabilities'
-import { CODEX_ACCOUNT_HOME, codexPlanWeights } from '@harness/adapter-codex/account-home'
+import {
+  CODEX_ACCOUNT_HOME,
+  codexOverallLimit,
+  codexPlanWeights,
+} from '@harness/adapter-codex/account-home'
 import { CODEX_CAPABILITIES } from '@harness/adapter-codex/capabilities'
 import { GROK_ACCOUNT_HOME } from '@harness/adapter-grok/account-home'
 import { GROK_CAPABILITIES } from '@harness/adapter-grok/capabilities'
@@ -81,6 +89,12 @@ export const ACCOUNT_PLAN_WEIGHTS = {
 } as const satisfies Partial<
   Record<ProviderId, (plan: string | undefined) => PlanWeights | undefined>
 >
+
+/** Which of a provider's limit rows are overall windows the pool sums, as each adapter knows. */
+export const ACCOUNT_OVERALL_LIMITS = {
+  'claude-code': claudeOverallLimit,
+  codex: codexOverallLimit,
+} as const satisfies Partial<Record<ProviderId, (limitId: string) => boolean>>
 
 /** What the default account is called until the user renames it. */
 const DEFAULT_LABEL = 'Default'
@@ -174,6 +188,16 @@ export class ProviderAccounts implements AccountDirectory {
         ? ACCOUNT_PLAN_WEIGHTS[provider as keyof typeof ACCOUNT_PLAN_WEIGHTS]
         : undefined
     return weigh?.(plan)
+  }
+
+  overallLimit(provider: ProviderId, limitId: string): boolean {
+    const overall: ((limitId: string) => boolean) | undefined = Object.hasOwn(
+      ACCOUNT_OVERALL_LIMITS,
+      provider,
+    )
+      ? ACCOUNT_OVERALL_LIMITS[provider as keyof typeof ACCOUNT_OVERALL_LIMITS]
+      : undefined
+    return overall?.(limitId) ?? true
   }
 
   /** The account a new chat with this provider starts on. */

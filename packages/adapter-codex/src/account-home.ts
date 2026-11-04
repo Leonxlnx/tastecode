@@ -45,3 +45,12 @@ export function codexPlanWeights(
       return undefined
   }
 }
+
+/**
+ * Whether a limit row is one of the account's overall windows, which the account pool
+ * sums across accounts: the main `codex` bucket's rows (`codex:primary`,
+ * `codex:secondary`). Other buckets, such as Spark, meter one model and stay out.
+ */
+export function codexOverallLimit(id: string): boolean {
+  return id.startsWith('codex:')
+}

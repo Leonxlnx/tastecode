@@ -2092,7 +2092,9 @@ export class Orchestrator {
         return { account, weights, source: undefined, unavailable: true }
       }
     })
-    return accountPool(provider, members, Date.now())
+    return accountPool(provider, members, Date.now(), (limitId) =>
+      this.#accounts.overallLimit ? this.#accounts.overallLimit(provider, limitId) : true,
+    )
   }
 
   /**
