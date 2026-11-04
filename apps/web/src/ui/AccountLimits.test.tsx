@@ -312,7 +312,7 @@ describe('account limits', () => {
     }
   })
 
-  it('opens the account new chats start on, and shows what the others have left at a glance', () => {
+  it('starts every account closed, each on one line with what it has left at a glance', () => {
     render(
       <AccountLimits
         states={[
@@ -340,29 +340,33 @@ describe('account limits', () => {
         onRetry={() => {}}
       />,
     )
-    const personal = screen.getByRole('button', { name: 'Personal' })
-    expect(personal.getAttribute('aria-expanded')).toBe('true')
-    const personalLimits = screen.getByRole('region', { name: 'Claude Code · Personal' })
-    expect(within(personalLimits).getByText('0% left')).toBeTruthy()
-    expect(within(personalLimits).getByText('2% left')).toBeTruthy()
+    // Even the account new chats start on is one line until opened.
+    const personal = screen.getByRole('button', {
+      name: 'Personal, Session 0% left, Weekly 2% left',
+    })
+    expect(personal.getAttribute('aria-expanded')).toBe('false')
+    expect(screen.queryByRole('region', { name: 'Claude Code · Personal' })).toBeNull()
 
-    // Closed, an account shows each window once: Session and Weekly, not Fable weekly.
+    // Closed, an account shows each window once: Session and Weekly, not Fable weekly,
+    // as a short bar and its share; the label and reset are on hover.
     const other = screen.getByRole('button', {
       name: 'Default, Session 27% left, Weekly 60% left',
     })
     expect(other.getAttribute('aria-expanded')).toBe('false')
-    expect(other.textContent).toBe('DefaultSession27%Weekly60%')
-    expect(screen.queryByRole('region', { name: 'Claude Code · Default' })).toBeNull()
+    expect(other.textContent).toBe('DefaultSession 27%Weekly 60%')
+    const windows = [...other.querySelectorAll<HTMLElement>('.account-menu__glance-item')]
+    expect(windows.map((item) => item.title)).toEqual(['Session: 27% left', 'Weekly: 60% left'])
     fireEvent.click(other)
     const defaultLimits = screen.getByRole('region', { name: 'Claude Code · Default' })
     expect(within(defaultLimits).getByText('100% left')).toBeTruthy()
 
-    // Either can close again, leaving its own figure on its line.
+    // Opening one leaves the other as it was; each closes again to its line.
+    fireEvent.click(personal)
+    const personalLimits = screen.getByRole('region', { name: 'Claude Code · Personal' })
+    expect(within(personalLimits).getByText('0% left')).toBeTruthy()
+    expect(within(personalLimits).getByText('2% left')).toBeTruthy()
     fireEvent.click(personal)
     expect(screen.queryByRole('region', { name: 'Claude Code · Personal' })).toBeNull()
-    expect(
-      screen.getByRole('button', { name: 'Personal, Session 0% left, Weekly 2% left' }),
-    ).toBeTruthy()
   })
 
   it('sums a provider’s accounts into one pool above them and marks the one to use next', () => {
@@ -434,7 +438,7 @@ describe('account limits', () => {
     const group = screen.getByRole('group', { name: 'Claude Code' })
     // The pool comes before every account line.
     expect(group.querySelector('.account-menu__pool, .account-menu__account')).toBe(pool)
-    expect(within(pool).getByText('3 accounts')).toBeTruthy()
+    expect(pool.querySelector<HTMLElement>('.account-menu__pool-name')?.title).toBe('3 accounts')
 
     // Session: Pro and Max (Ultra has no 5-hour window), 5.1 of 6 left.
     const session = within(pool).getByRole('progressbar', {
@@ -442,8 +446,11 @@ describe('account limits', () => {
     })
     expect(session.getAttribute('aria-valuenow')).toBe('85')
     expect(session.getAttribute('aria-valuetext')).toBe('85% left, 5.1 of 6× Pro left')
-    expect(within(pool).getByText('5.1× Pro left · 2 of 3 accounts')).toBeTruthy()
-    expect(within(pool).getByText(/^Personal resets in 2h/)).toBeTruthy()
+    // One line: the size, the amount, what it counts and the next reset are on hover.
+    const sessionTitle = session.closest<HTMLElement>('.account-menu__glance-item')!.title
+    expect(sessionTitle).toContain('Session · 6× Pro: 85% left')
+    expect(sessionTitle).toContain('5.1× Pro left · 2 of 3 accounts')
+    expect(sessionTitle).toMatch(/Personal resets in 2h/)
     // Weekly: 11.2 of 16 left, a segment per account, the soonest reset first.
     const weekly = within(pool).getByRole('progressbar', {
       name: 'Claude Code Weekly left, all accounts',
@@ -456,13 +463,21 @@ describe('account limits', () => {
       'Studio',
     ])
     expect(segments.map((segment) => segment.style.flexGrow)).toEqual(['5', '1', '10'])
-    expect(within(pool).getByText('11.2× Pro left')).toBeTruthy()
-    expect(within(pool).getByText(/^Work resets /)).toBeTruthy()
+    const weeklyTitle = weekly.closest<HTMLElement>('.account-menu__glance-item')!.title
+    expect(weeklyTitle).toContain('11.2× Pro left')
+    expect(weeklyTitle).toMatch(/Work resets /)
 
     // Work resets its week soonest with room left: it is the one to use next.
     const work = screen.getByRole('button', { name: /^Work, recommended, / })
     expect(within(work).getByText('Recommended')).toBeTruthy()
     expect(screen.getAllByText('Recommended')).toHaveLength(1)
+    // A closed line names its plan on hover; the open details name it first.
+    expect(work.title).toMatch(/^Max x5 · /)
+    expect(within(work).queryByText('Max x5')).toBeNull()
+    fireEvent.click(work)
+    expect(
+      within(screen.getByRole('region', { name: 'Claude Code · Work' })).getByText('Max x5 plan'),
+    ).toBeTruthy()
   })
 
   it('shows no pool without plan sizes, and none for a single account', () => {

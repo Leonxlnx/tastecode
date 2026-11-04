@@ -25,7 +25,7 @@ function TitleBarComponent(props: {
         aria-pressed={!props.collapsed}
         aria-keyshortcuts={shortcutAria(keybindings.toggleSidebar)}
       >
-        <PanelLeft size={15} aria-hidden />
+        <PanelLeft size={16} aria-hidden />
       </button>
       <span className="titlebar__drag-region" aria-hidden />
     </header>

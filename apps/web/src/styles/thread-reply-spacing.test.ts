@@ -64,6 +64,8 @@ describe('thread reply spacing', () => {
     expect(actions).toContain('padding-top: 1px')
     expect(actions).toContain('margin: 0')
     expect(promptRow).toContain('padding-bottom: 27px')
+    // A new prompt gets 16px more than the 12px row gap above it.
+    expect(promptRow).toContain('padding-top: 16px')
     expect(hoverTail).toContain('height: 25px')
     expect(css).not.toContain('.thread__row:has(> .said:hover)')
   })
