@@ -361,11 +361,6 @@ function AccountLine(props: {
   const badge = (
     <>
       <span className="account-menu__account-name">{props.account}</span>
-      {props.plan ? (
-        <span className="account-menu__account-plan" title={props.plan}>
-          {props.plan}
-        </span>
-      ) : null}
       {props.recommended ? (
         <span
           className="account-menu__account-badge"
@@ -413,7 +408,7 @@ function AccountLine(props: {
           ]
             .filter(Boolean)
             .join(', ')}
-          title={props.open ? status?.detail : glance}
+          title={props.open ? status?.detail : [props.plan, glance].filter(Boolean).join(' · ')}
           onClick={props.onToggle}
         >
           <ChevronRight className="account-menu__chevron" size={12} aria-hidden />
@@ -454,6 +449,7 @@ function AccountLine(props: {
       </div>
       {props.open ? (
         <section className="account-menu__account-body" id={bodyId} aria-label={name}>
+          {props.plan ? <p className="account-menu__account-plan">{props.plan} plan</p> : null}
           {limits.map((limit, index) => (
             <LimitRow
               key={`${limit.label}:${index}`}
