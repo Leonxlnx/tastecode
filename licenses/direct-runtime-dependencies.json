@@ -77,6 +77,13 @@
       "source": "https://github.com/shikijs/shiki"
     },
     {
+      "name": "@streamdown/math",
+      "use": "Math rendering in replies",
+      "license": "Apache-2.0",
+      "metadataLicenses": ["Apache-2.0"],
+      "source": "https://github.com/vercel/streamdown"
+    },
+    {
       "name": "@tabler/icons-react",
       "use": "Interface icons",
       "license": "MIT",
@@ -138,6 +145,13 @@
       "license": "MIT",
       "metadataLicenses": ["MIT"],
       "source": "https://github.com/electron-userland/electron-builder"
+    },
+    {
+      "name": "katex",
+      "use": "Math typesetting and its fonts",
+      "license": "MIT",
+      "metadataLicenses": ["MIT"],
+      "source": "https://github.com/KaTeX/KaTeX"
     },
     {
       "name": "micromark",
@@ -307,6 +321,22 @@
       "metadataLicenses": ["MIT"],
       "bundledLicense": "licenses/npm/napi-keyring-linux-x64-gnu-1.3.0-MIT.txt",
       "licenseSource": "https://github.com/Brooooooklyn/keyring-node/blob/e46be75c3ba8d5fde6b88a17c6153b87ffe4b946/LICENSE"
+    },
+    {
+      "name": "rehype-katex",
+      "version": "7.0.1",
+      "license": "MIT",
+      "metadataLicenses": ["MIT"],
+      "bundledLicense": "licenses/npm/rehype-katex-7.0.1-MIT.txt",
+      "licenseSource": "https://github.com/remarkjs/remark-math/blob/88a9497e1ede93b958237c85edbf5651faeca7af/license"
+    },
+    {
+      "name": "remark-math",
+      "version": "6.0.0",
+      "license": "MIT",
+      "metadataLicenses": ["MIT"],
+      "bundledLicense": "licenses/npm/remark-math-6.0.0-MIT.txt",
+      "licenseSource": "https://github.com/remarkjs/remark-math/blob/d5d0660b150810a535bbb07eac6cc96a4510aa24/license"
     }
   ]
 }

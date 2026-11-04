@@ -218,7 +218,10 @@ describe('PullRequestService', () => {
       relationship: 'reviewing',
       mergeStateStatus: 'CLEAN',
     })
-    expect(result.truncated).toBe(true)
+    // A failed search is not a capped one: the list says why it is incomplete.
+    expect(result.truncated).toBe(false)
+    // One search failed with HTTP 500, so the list does not blame a timeout.
+    expect(result.searchFailed).toBe('error')
     expect(
       run.mock.calls
         .filter(([args]) => args.includes('q=is:pr is:open author:@me sort:updated-desc'))

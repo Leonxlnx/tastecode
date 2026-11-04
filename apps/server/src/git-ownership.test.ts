@@ -40,8 +40,8 @@ describe('ownershipRefusal', () => {
     )
     expect(refusal?.message).toBe(
       'Git refuses to use E:\\tastecodetests\\testv0.5\\test18 because the repository ' +
-        "belongs to another Windows user (LEXN/CodexSandboxOffline). Git's own fix is " +
-        '`git config --global --add safe.directory E:/tastecodetests/testv0.5/test18`.',
+        "belongs to another Windows user (LEXN/CodexSandboxOffline). Git's own fix: " +
+        'git config --global --add safe.directory E:/tastecodetests/testv0.5/test18',
     )
   })
 
@@ -57,8 +57,8 @@ describe('ownershipRefusal', () => {
     expect(refusal?.owner).toBeUndefined()
     expect(refusal?.message).toBe(
       'Git refuses to use /home/me/my repo because it cannot confirm that the repository ' +
-        "belongs to the current user. Git's own fix is " +
-        "`git config --global --add safe.directory '/home/me/my repo'`.",
+        "belongs to the current user. Git's own fix: " +
+        "git config --global --add safe.directory '/home/me/my repo'",
     )
     const inconvertible = windows.replace('LEXN/CodexSandboxOffline (', '(inconvertible) (')
     expect(ownershipRefusal(repoPath, inconvertible)?.owner).toBeUndefined()
