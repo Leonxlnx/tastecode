@@ -14,7 +14,7 @@
      no scroll range and never fades. */
   max-height: 50vh;
   --usage-fade-size: 22px;
-  mask-image: linear-gradient(to bottom, #000 calc(100% - var(--usage-fade)), transparent);
+  mask-image: linear-gradient(to bottom, black calc(100% - var(--usage-fade)), transparent);
   animation: account-usage-fade linear both;
   animation-timeline: scroll(self);
   animation-range: calc(100% - var(--usage-fade-size)) 100%;
@@ -591,7 +591,7 @@ button.account-menu__account-line:focus-visible {
 .account-menu__account-name {
   /* The name keeps a few letters before the plan chip gives way. */
   flex: 0 1 auto;
-  min-width: min(4.5em, 100%);
+  min-width: min(3em, 100%);
   overflow: hidden;
   font-weight: 500;
   text-overflow: ellipsis;
@@ -639,12 +639,12 @@ button.account-menu__account-line:focus-visible {
 
 /* A count or balance has no gauge; its text takes the gauge's room too. */
 .account-menu__account-value.is-text {
-  min-width: calc(2.4em + 24px);
+  min-width: calc(2.4em + 40px);
 }
 
 .account-menu__account-gauge {
   --limit-fill: var(--left);
-  width: 20px;
+  width: 36px;
   height: 3px;
   border-radius: var(--r-pill);
   background: color-mix(in srgb, var(--text) 9%, transparent);
@@ -667,20 +667,11 @@ button.account-menu__account-line:focus-visible {
   padding-left: 19px;
 }
 
-/* The account's plan: a quiet tag beside its name, in the bars' ink rather
-   than an accent, that shortens before the name does. */
+/* The account's plan, first in its open details; on the closed line it is
+   on hover only, so the name and two readable bars keep the room. */
 .account-menu__account-plan {
-  flex: 0 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  padding: 0 5px;
-  border-radius: var(--r-pill);
-  background: color-mix(in srgb, var(--text) 8%, transparent);
+  margin: 0;
   color: var(--text-3);
-  font-size: 10px;
-  line-height: 15px;
-  white-space: nowrap;
 }
 
 /* The account the pool recommends for the next chat: a small dot after its
@@ -720,7 +711,7 @@ button.account-menu__account-line:focus-visible {
 .account-menu__pool-bar {
   display: flex;
   gap: 1px;
-  width: 20px;
+  width: 36px;
   height: 3px;
 }
 

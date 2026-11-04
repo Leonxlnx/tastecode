@@ -15,10 +15,10 @@ describe('account limits layout', () => {
     expect(usage).toContain('font-size: var(--t-xs)')
     expect(usage).toContain('border-radius: var(--r-lg)')
     expect(usage).toContain('background: color-mix(in srgb, var(--text) 4%, var(--menu-bg))')
-    // No height of its own: a fixed cap made the well scroll with the window
-    // nowhere near full once a provider listed several accounts. The popup's
-    // viewport bound and the well's flex shrink are what limit it.
-    expect(usage).not.toContain('max-height')
+    // However many accounts, the well never takes more than half the window;
+    // a longer list scrolls inside and fades at its bottom while rows wait.
+    expect(usage).toContain('max-height: 50vh')
+    expect(usage).toContain('animation-timeline: scroll(self)')
     expect(usage).toContain('flex: 0 1 auto')
     expect(usage).toContain('overflow-y: auto')
     expect(usage).toContain('overscroll-behavior: contain')
@@ -54,11 +54,13 @@ describe('account limits layout', () => {
     expect(rule('.account-menu__limit')).toContain('gap: 5px')
     const bar = rule('.account-menu__limit-bar')
     expect(bar).toContain('height: 4px')
-    expect(rule('.account-menu__account-gauge')).toContain('height: 4px')
+    // A closed account line's bars are the thin 3px kind, so a row stays one line.
+    expect(rule('.account-menu__account-gauge')).toContain('height: 3px')
     expect(bar).toContain('border-radius: var(--r-pill)')
     const fill = rule('.account-menu__limit-bar > span')
     // A red-to-green gradient read as noise; the fill matches the card's meter.
-    expect(css).not.toContain('gradient')
+    // The only gradient is the scroll fade's mask, never a fill.
+    expect(css.replace(/mask-image: linear-gradient\([^;]*\);/g, '')).not.toContain('gradient')
     expect(fill).toContain('background: color-mix(in srgb, var(--text) 52%, transparent)')
     expect(rule('.account-menu__account-gauge > span')).toContain(
       'background: color-mix(in srgb, var(--text) 52%, transparent)',
@@ -97,7 +99,7 @@ describe('account limits layout', () => {
       'text-overflow: ellipsis',
     )
     expect(css).toMatch(
-      /\.account-menu__account-line > svg,\s*\.account-menu__source \.account-menu__source-chevron \{\s*transition: none;/,
+      /\.account-menu__account-line > \.account-menu__chevron,\s*\.account-menu__source \.account-menu__source-chevron \{\s*transition: none;/,
     )
   })
 

@@ -471,10 +471,12 @@ describe('account limits', () => {
     const work = screen.getByRole('button', { name: /^Work, recommended, / })
     expect(within(work).getByText('Recommended')).toBeTruthy()
     expect(screen.getAllByText('Recommended')).toHaveLength(1)
-    // Each line names its plan as the pool knows it.
-    expect(within(work).getByText('Max x5')).toBeTruthy()
+    // A closed line names its plan on hover; the open details name it first.
+    expect(work.title).toMatch(/^Max x5 · /)
+    expect(within(work).queryByText('Max x5')).toBeNull()
+    fireEvent.click(work)
     expect(
-      within(screen.getByRole('button', { name: /^Studio, / })).getByText('Max x20'),
+      within(screen.getByRole('region', { name: 'Claude Code · Work' })).getByText('Max x5 plan'),
     ).toBeTruthy()
   })
 
