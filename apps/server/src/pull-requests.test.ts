@@ -48,6 +48,7 @@ describe('PullRequestService', () => {
   it('combines authored and reviewing history across states without duplicating a pull request', async () => {
     const run = vi.fn<GhRunner>(async (args) => {
       if (args[0] === 'api' && args[1] === 'user') return JSON.stringify({ login: 'Blueemi' })
+      if (isMergeStateRead(args)) return mergeStatePage(args, 'DIRTY')
       const qualifier =
         args.find((argument) => argument.startsWith('q=')) ??
         (args.includes('--author')
@@ -78,6 +79,7 @@ describe('PullRequestService', () => {
     expect(result.items.find((item) => item.id === 'PR_authored')).toMatchObject({
       relationship: 'both',
       localProjectPath: '/work/harness',
+      mergeStateStatus: 'DIRTY',
     })
     expect(result.items.find((item) => item.id === 'PR_reviewing')?.relationship).toBe('reviewing')
     expect(result.items.find((item) => item.id === 'PR_draft')).toMatchObject({
@@ -85,9 +87,11 @@ describe('PullRequestService', () => {
       isDraft: true,
       relationship: 'authored',
     })
+    expect(result.items.find((item) => item.id === 'PR_draft')?.mergeStateStatus).toBeUndefined()
 
     await service.list(['/work/harness'])
-    expect(run).toHaveBeenCalledTimes(7)
+    // The account, six searches, and one merge-state read per open search page.
+    expect(run).toHaveBeenCalledTimes(10)
 
     await service.action('Blueemi/harness', 7, { type: 'set_draft', draft: true })
     const afterAction = await service.list(['/work/harness'])
@@ -97,7 +101,7 @@ describe('PullRequestService', () => {
     })
     // The mutation is one gh process. Returning to the list reuses and patches
     // the complete cache instead of launching all six searches again.
-    expect(run).toHaveBeenCalledTimes(8)
+    expect(run).toHaveBeenCalledTimes(11)
   })
 
   it('pages open searches in small steps and retries a gateway timeout with a smaller page', async () => {
@@ -114,6 +118,7 @@ describe('PullRequestService', () => {
     const run = vi.fn<GhRunner>(async (args) => {
       if (args[0] === 'api' && args[1] === 'user') return JSON.stringify({ login: 'Blueemi' })
       if (args[0] === 'search') return '[]'
+      if (isMergeStateRead(args)) return mergeStatePage(args, 'BLOCKED')
       if (!args.includes('q=is:pr is:open author:@me sort:updated-desc')) return searchPage([])
       const first = args[args.indexOf('-F') + 1]
       const cursor = args.find((argument) => argument.startsWith('cursor='))
@@ -137,17 +142,48 @@ describe('PullRequestService', () => {
       .find((argument) => argument.startsWith('query=query($q:String!,$first:Int!'))
     expect(query).toContain('first:$first')
     expect(query).not.toContain('first:100')
-    // The list's row state and merge filters read the merge state.
-    expect(query).toContain('mergeStateStatus')
+    // Merge state made search pages slow enough to time out at GitHub's edge.
+    expect(query).not.toContain('mergeStateStatus')
     expect(pages).toEqual(['first=20 start', 'first=5 start', 'first=5 cursor=page-2'])
     expect(result.truncated).toBe(false)
     expect(result.items).toHaveLength(7)
-    expect(result.items.every((item) => item.mergeStateStatus === 'CLEAN')).toBe(true)
+    // The list's row state and merge filters still get it, one read per page.
+    expect(
+      run.mock.calls
+        .filter(([args]) => isMergeStateRead(args))
+        .map(([args]) => args.filter((argument) => argument.startsWith('ids[]=')).length),
+    ).toEqual([5, 2])
+    expect(result.items.every((item) => item.mergeStateStatus === 'BLOCKED')).toBe(true)
+  })
+
+  it('lists open pull requests without merge state when its read fails', async () => {
+    const run = vi.fn<GhRunner>(async (args) => {
+      if (args[0] === 'api' && args[1] === 'user') return JSON.stringify({ login: 'Blueemi' })
+      if (args[0] === 'search') return '[]'
+      if (isMergeStateRead(args)) throw new Error('gh: HTTP 502')
+      return searchPage(
+        args.includes('q=is:pr is:open author:@me sort:updated-desc') ? [authored] : [],
+      )
+    })
+    const service = new PullRequestService({
+      run,
+      installed: async () => true,
+      resolveProjects: async () => new Map(),
+    })
+
+    const result = await service.list([])
+
+    expect(result.items).toEqual([
+      expect.objectContaining({ id: 'PR_authored', headRefName: 'feature/change' }),
+    ])
+    expect(result.items[0]?.mergeStateStatus).toBeUndefined()
+    expect(result.truncated).toBe(false)
   })
 
   it('keeps the searches that loaded when others fail', async () => {
     const run = vi.fn<GhRunner>(async (args) => {
       if (args[0] === 'api' && args[1] === 'user') return JSON.stringify({ login: 'Blueemi' })
+      if (isMergeStateRead(args)) return mergeStatePage(args, 'CLEAN')
       if (args[0] === 'search') {
         if (args.includes('--review-requested')) throw new Error('gh: HTTP 500')
         return JSON.stringify(
@@ -214,6 +250,7 @@ describe('PullRequestService', () => {
       if (args[0] === 'pr' && args[1] === 'view') {
         return JSON.stringify({
           ...authored,
+          mergeStateStatus: 'CLEAN',
           body: 'A useful description',
           createdAt: '2026-08-08T10:00:00Z',
           closedAt: null,
@@ -1168,8 +1205,20 @@ function pullRequest(input: {
     headRefName: 'feature/change',
     baseRefName: 'main',
     reviewDecision: null,
-    mergeStateStatus: 'CLEAN',
   }
+}
+
+function isMergeStateRead(args: string[]): boolean {
+  return args.some((argument) => argument.startsWith('query=query($ids:'))
+}
+
+function mergeStatePage(args: string[], mergeStateStatus: string): string {
+  const nodes = args.flatMap((argument) =>
+    argument.startsWith('ids[]=')
+      ? [{ id: argument.slice('ids[]='.length), mergeStateStatus }]
+      : [],
+  )
+  return JSON.stringify({ data: { nodes } })
 }
 
 function searchPage(
