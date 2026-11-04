@@ -400,8 +400,11 @@ function validateApproval(approval: ApprovalMode | undefined): void {
 /** How much of the CLI's own words a failed turn's message carries. */
 const REASON_LIMIT = 400
 const REASON_LINES = 6
-/** "ActionRequiredError: …", "Error: …", or commander's "error: …". */
-const ERROR_LINE = /^(?:[A-Z][\w$]*Error|[Ee]rror):\s*(\S.*)$/
+/**
+ * A typed "ActionRequiredError: …" (its class in group 1), a plain "Error: …",
+ * or commander's "error: …".
+ */
+const ERROR_LINE = /^(?:([A-Z][\w$]*)Error|[Ee]rror):\s*(\S.*)$/
 
 /**
  * Why cursor-agent ended a turn it never ran, in its own words. A turn the
@@ -409,13 +412,17 @@ const ERROR_LINE = /^(?:[A-Z][\w$]*Error|[Ee]rror):\s*(\S.*)$/
  * plain text, on stderr or as a stdout line that is not JSON. 2026.07.23-e383d2b
  * printed "ActionRequiredError: Kimi K3 is not included in your weekly usage …"
  * for a model outside the plan (2026-11-04), and a multi-line notice for a
- * folder it does not trust. The last `…Error:` line wins, without its class
- * name; otherwise the last few lines are joined.
+ * folder it does not trust. After the cause it may add a generic "Error:
+ * command failed unexpectedly." (Gemini 4 Argon, 2026-11-04), so the first
+ * typed `…Error:` line wins, then the first plain `Error:` line, either
+ * without its class name; otherwise the last few lines are joined. Typed
+ * beats plain whatever the order, since the two may come on different pipes.
  */
 class CursorExitReason {
   #partial = ''
   #lines: string[] = []
-  #error: string | undefined
+  #typedError: string | undefined
+  #plainError: string | undefined
 
   /** A stderr chunk, which can end mid-line. */
   addChunk(chunk: string): void {
@@ -432,14 +439,16 @@ class CursorExitReason {
       .slice(0, REASON_LIMIT + 1)
     // Blank lines, rules and box borders say nothing.
     if (!/[\p{L}\p{N}]/u.test(line)) return
-    this.#error = ERROR_LINE.exec(line)?.[1] ?? this.#error
+    const error = ERROR_LINE.exec(line)
+    if (error?.[1]) this.#typedError ??= error[2]
+    else if (error) this.#plainError ??= error[2]
     this.#lines = [...this.#lines, line].slice(-REASON_LINES)
   }
 
   /** The reason as one short paragraph, or undefined when the CLI printed nothing useful. */
   text(): string | undefined {
     this.addChunk('\n')
-    let text = this.#error
+    let text = this.#typedError ?? this.#plainError
     if (!text) {
       // The newest lines, as many as fit; a notice ends with what to do.
       const kept: string[] = []

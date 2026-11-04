@@ -74,6 +74,20 @@ const REFUSED_FRAMES = [
 const REFUSAL =
   'ActionRequiredError: Kimi K3 is not included in your weekly usage Buy credits or switch to a Grok model to continue.'
 
+/**
+ * The same command with `--model gemini-4-argon`, 2026.07.23, 2026-11-04,
+ * stdout and stderr merged, in this order, then exit code 1. The capture
+ * elided most frame fields, filled in here as in the Kimi capture; the two
+ * text lines are verbatim: the cause, then a generic trailer.
+ */
+const ARGON_FRAMES = [
+  '{"type":"system","subtype":"init","apiKeySource":"login","cwd":"...","session_id":"...","model":"Gemini 4 Argon Medium","permissionMode":"default"}',
+  '{"type":"user","message":{"role":"user","content":[{"type":"text","text":"..."}]},"session_id":"..."}',
+].join('\n')
+const ARGON_REFUSAL =
+  'ActionRequiredError: Gemini 4 Argon is not included in your weekly usage Buy credits or switch to a Grok model to continue.'
+const GENERIC_TRAILER = 'Error: command failed unexpectedly.'
+
 /** What a turn's process prints: all of stdout, and stderr in the chunks it arrives in. */
 type TurnOutput = { stdout?: string; stderr?: string[] }
 
@@ -471,6 +485,50 @@ describe('Cursor adapter', () => {
       ],
       statuses: ['failed'],
     })
+  })
+
+  it.each<[string, TurnOutput]>([
+    [
+      'both on stderr',
+      { stdout: `${ARGON_FRAMES}\n`, stderr: [`${ARGON_REFUSAL}\n${GENERIC_TRAILER}\n`] },
+    ],
+    ['both on stdout', { stdout: `${ARGON_FRAMES}\n${ARGON_REFUSAL}\n${GENERIC_TRAILER}\n` }],
+    // Two pipes do not keep the order between them; the trailer may come first.
+    [
+      'the cause on stdout, the trailer on stderr',
+      { stdout: `${ARGON_FRAMES}\n${ARGON_REFUSAL}\n`, stderr: [`${GENERIC_TRAILER}\n`] },
+    ],
+    [
+      'the cause on stderr, the trailer on stdout',
+      { stdout: `${ARGON_FRAMES}\n${GENERIC_TRAILER}\n`, stderr: [`${ARGON_REFUSAL}\n`] },
+    ],
+  ])('names the cause, not the generic error after it, with %s', async (_where, output) => {
+    const result = await finishTurn(output, 1)
+
+    expect(result).toMatchObject({
+      errors: [
+        'Gemini 4 Argon is not included in your weekly usage Buy credits or switch to a Grok model to continue.',
+      ],
+      statuses: ['failed'],
+    })
+  })
+
+  it('names the first plain error when no typed one was printed', async () => {
+    // Not captured together: the sign-in refusal from
+    // fixtures/cursor-expired-sign-in-2026-10-14.json, then the trailer.
+    const result = await finishTurn(
+      {
+        stderr: [
+          "Error: Authentication required. Run 'agent login', pass --api-key/--auth-token, or set CURSOR_API_KEY/CURSOR_AUTH_TOKEN.\n",
+          `${GENERIC_TRAILER}\n`,
+        ],
+      },
+      1,
+    )
+
+    expect(result.errors).toEqual([
+      "Authentication required. Run 'agent login', pass --api-key/--auth-token, or set CURSOR_API_KEY/CURSOR_AUTH_TOKEN.",
+    ])
   })
 
   it.each(['stdout', 'stderr'] as const)(
