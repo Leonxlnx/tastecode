@@ -243,6 +243,12 @@
   /* The hover reveal is a flyout, not a layout change: it comes and goes
      quickly. Only the deliberate collapse keeps the slower --dur-rail. */
   --dur-reveal: 160ms;
+
+  /* Menus and popovers grow out of their anchor with a soft settle and leave
+     faster than they came. */
+  --ease-popup: cubic-bezier(0.2, 0.9, 0.25, 1);
+  --dur-popup-in: 160ms;
+  --dur-popup-out: 110ms;
 }
 
 :root[data-font='system'] {
