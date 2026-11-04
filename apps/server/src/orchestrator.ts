@@ -6494,8 +6494,14 @@ ${JSON.stringify(deck, null, 2)}
         // Providers without commentary phases still expose completed progress text,
         // but not a phase result: one that opens with prose and puts its JSON on a
         // line of its own fails the parse too (Claude Code's asset manifest did).
-        if (event.item.text?.trim() && !/^\s*(?:[{[]|```)/m.test(event.item.text)) {
-          this.#record(threadId, { ...event, item: { ...event.item, phase: 'commentary' } })
+        const text = event.item.text ?? ''
+        const json = text.search(/^\s*(?:[{[]|```)/m)
+        const prose = (json < 0 ? text : text.slice(0, json)).trim()
+        if (prose) {
+          this.#record(threadId, {
+            ...event,
+            item: { ...event.item, text: prose, phase: 'commentary' },
+          })
         }
         this.#designOutputErrors.set(turnId, error)
       }
