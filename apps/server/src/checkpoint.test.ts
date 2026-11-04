@@ -26,6 +26,7 @@ import {
   RestoreSnapshotError,
   takeSnapshot,
 } from './checkpoint.js'
+import { DubiousOwnership } from './git-ownership.js'
 import { runHistoryCli } from './history-cli.js'
 import { DatabaseSync } from './sqlite.js'
 import { Store } from './store.js'
@@ -114,6 +115,25 @@ describe('takeSnapshot', () => {
     const plain = mkdtempSync(path.join(os.tmpdir(), 'harness-plain-'))
     await expect(takeSnapshot(plain)).rejects.toBeInstanceOf(NotARepositoryForCheckpoint)
     rmSync(plain, { recursive: true, force: true })
+  })
+
+  it('says git refuses a repository another user owns, not that there is none', async () => {
+    // Git's own test switch refuses the repository as if another account owned
+    // it, and an empty global config keeps this machine's safe.directory out.
+    const configDir = mkdtempSync(path.join(os.tmpdir(), 'harness-cp-config-'))
+    const config = path.join(configDir, 'empty.gitconfig')
+    writeFileSync(config, '')
+    vi.stubEnv('GIT_TEST_ASSUME_DIFFERENT_OWNER', '1')
+    vi.stubEnv('GIT_CONFIG_GLOBAL', config)
+    vi.stubEnv('GIT_CONFIG_NOSYSTEM', '1')
+    try {
+      const refused = await takeSnapshot(repo).catch((error: unknown) => error)
+      expect(refused).toBeInstanceOf(DubiousOwnership)
+      expect((refused as DubiousOwnership).message).toContain(repo)
+    } finally {
+      vi.unstubAllEnvs()
+      rmSync(configDir, { recursive: true, force: true })
+    }
   })
 
   it('keeps a snapshot reachable during Git garbage collection', async () => {
