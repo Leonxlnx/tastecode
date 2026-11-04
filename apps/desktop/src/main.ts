@@ -1213,6 +1213,15 @@ ipcMain.handle('harness:pickFiles', async (event) => {
       )
 })
 
+// Sent only by the preload's droppedFilePath, with the path webUtils read from a
+// File the operating system dropped or pasted. The page has no ipcRenderer, and
+// a File it makes itself has no path, so it cannot name one here.
+ipcMain.on('harness:droppedFile', (event, filePath: unknown) => {
+  if (!isOwnRenderer(event.sender) || typeof filePath !== 'string' || filePath.length > 32_768)
+    return
+  void nativeAttachment(filePath, attachmentPreviewSecret, pickedImagePaths)
+})
+
 ipcMain.handle('harness:previewViewedImage', async (event, reference: unknown) => {
   requireOwnRenderer(event.sender)
   const filePath = await viewedImagePath(

@@ -2,7 +2,10 @@ import { realpath, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { pickedAttachment, type PickedAttachment } from './attachment-preview.js'
 
-/** Grants come only from the native picker, never from renderer-supplied paths. */
+/**
+ * Grants come only from native intake: the picker, or the path the preload read
+ * from a dropped File. Never from a path string the renderer supplies.
+ */
 export class PickedImagePaths {
   readonly #paths = new Map<string, string>()
 
@@ -29,7 +32,7 @@ export class PickedImagePaths {
   }
 }
 
-/** A picked file. Its image or video previews again later in this app session. */
+/** A picked or dropped file. Its image or video previews again later in this app session. */
 export async function nativeAttachment(
   filePath: string,
   secret: Buffer,
