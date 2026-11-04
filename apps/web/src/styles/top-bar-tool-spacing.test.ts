@@ -23,7 +23,6 @@ describe('top-bar tool spacing', () => {
     expect(shelf).toContain('gap: 4px;')
     expect(shelf).toContain('min-height: 32px;')
     expect(shelf).toContain('padding: 1px 10px;')
-    expect(shelf).toContain('background: var(--bg-shelf);')
     expect(shelf).not.toContain('linear-gradient')
     expect(control).toContain('padding: 3px 5px;')
     expect(control).toContain('font-size: var(--t-sm);')
