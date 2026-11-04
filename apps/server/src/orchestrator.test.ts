@@ -481,6 +481,7 @@ function harness(
       _url: string,
       viewports: Array<{ width: number; height: number }>,
       _signal?: AbortSignal,
+      _threadId?: string,
     ) =>
       viewports.map((viewport) => ({
         path: path.join(os.tmpdir(), `${viewport.width}x${viewport.height}.png`),
@@ -4640,6 +4641,8 @@ describe('provider-neutral design briefing', () => {
       session.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
       await vi.waitFor(() => expect(result.capturePreview).toHaveBeenCalledTimes(1))
       const signal = result.capturePreview.mock.calls[0]?.[2] as AbortSignal | undefined
+      // The capture names its chat, so a window opens the preview with that chat only.
+      expect(result.capturePreview.mock.calls[0]?.[3]).toEqual(expect.any(String))
       const sent = session.sent.length
       const stops = previewStops.count
       await result.orchestrator.panicStop()
@@ -6481,6 +6484,75 @@ describe('provider-neutral design briefing', () => {
     }
   })
 
+  const reviewAnswer = (turnId: string) => ({
+    id: 'review-json',
+    turnId,
+    type: 'message' as const,
+    role: 'assistant' as const,
+    status: 'completed' as const,
+    text: passingReview,
+    createdAt: 1,
+  })
+
+  it.each([
+    {
+      // Grok print mode streams the answer unphased and marks it final at the end frame.
+      shape: 'Grok',
+      events: (turnId: string): DomainEvent[] => [
+        { type: 'item.started', item: { ...reviewAnswer(turnId), status: 'started', text: '' } },
+        { type: 'item.delta', turnId, itemId: 'review-json', textDelta: passingReview },
+        { type: 'item.completed', item: { ...reviewAnswer(turnId), phase: 'final_answer' } },
+      ],
+    },
+    {
+      shape: 'Codex',
+      events: (turnId: string): DomainEvent[] => [
+        {
+          type: 'item.started',
+          item: { ...reviewAnswer(turnId), phase: 'final_answer', status: 'started', text: '' },
+        },
+        { type: 'item.delta', turnId, itemId: 'review-json', textDelta: passingReview },
+        { type: 'item.completed', item: { ...reviewAnswer(turnId), phase: 'final_answer' } },
+      ],
+    },
+    {
+      // Claude Code's text blocks carry no phase; one opened with prose before its JSON.
+      shape: 'Claude Code',
+      prose: 'I compared both captures with the references.',
+      events: (turnId: string): DomainEvent[] => [
+        message(`I compared both captures with the references.\n\n${passingReview}`, turnId),
+        message(passingReview, turnId),
+      ],
+    },
+  ])('keeps the Review verdict JSON out of a $shape transcript', async (shape) => {
+    const { events } = shape
+    const { orchestrator, sessions, received, store, workspace } =
+      await consistencyReviewHarness(false)
+    try {
+      for (const event of events('s1-turn')) sessions[0]?.emit(event)
+      sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+      await vi.waitFor(() => expect(designCompletion(received)).toContain('Visual review passed.'))
+
+      // Item ids made from the message text carry it too, so only the shown text is checked.
+      const shown = JSON.stringify(
+        received.map(({ event }) => ('item' in event ? event.item.text : undefined)),
+      )
+      expect(shown).not.toContain('verdict')
+      // The prose before the JSON is still the agent's own progress.
+      if ('prose' in shape) expect(shown).toContain(shape.prose)
+      const { presentations } = projectThreadItems(
+        reduceEventLog(emptyThread, store.history('preview-recovery')).items,
+      )
+      expect(presentations.get('s1-turn')?.responseText).toMatch(
+        /^Website built\. Preview ready at \S+\. Visual review passed\.$/,
+      )
+    } finally {
+      await orchestrator.disposeAll()
+      store.close()
+      rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
+    }
+  })
+
   it.each([
     { restart: false, phase: 'preview' as const },
     { restart: true, phase: 'preview' as const },
@@ -7929,6 +8001,41 @@ describe('provider commands', () => {
       await orchestrator.disposeAll()
     }
   })
+
+  // Codex lists its commands from the adapter, Claude Code from the live session.
+  it.each(['codex', 'claude-code'] as const)(
+    'sends a listed %s command as typed in a Design project and wraps any other prompt',
+    async (provider) => {
+      const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-command-'))
+      mkdirSync(path.join(workspace, '.taste'))
+      writeFileSync(path.join(workspace, '.taste', 'brief.json'), '{}')
+      const { orchestrator, sessions } = harness()
+      try {
+        const thread = await orchestrator.startThread(provider, workspace)
+        const session = sessions[0]!
+        session.commands = [command('compact')]
+        for (const [turnId, text] of [
+          ['compact', '/compact'],
+          ['ordinary', 'Tighten the hero spacing.'],
+          ['unlisted', '/foo bar'],
+        ] as const) {
+          session.turnIds.push(turnId)
+          await orchestrator.sendTurn(thread.id, text)
+          session.emit(turnStarted(thread.id, turnId))
+          session.emit({ type: 'turn.completed', turnId, status: 'completed' })
+        }
+        // The provider runs the command only when the prompt is the command itself.
+        expect(session.sent[0]).toBe('/compact')
+        expect(session.sent[1]).toContain('Earlier phase-only JSON protocols no longer apply')
+        expect(session.sent[1]!.endsWith('User request:\nTighten the hero spacing.')).toBe(true)
+        expect(session.sent[2]).toContain('Earlier phase-only JSON protocols no longer apply')
+        expect(session.sent[2]!.endsWith('User request:\n/foo bar')).toBe(true)
+      } finally {
+        await orchestrator.disposeAll()
+        rmSync(workspace, { recursive: true, force: true })
+      }
+    },
+  )
 })
 
 describe('skills inventory', () => {
@@ -10739,6 +10846,7 @@ describe('rolling a session back', () => {
     }
   })
 
+  // Real Git worktrees, a checkpoint and a held rejection: ~5.7 s on a loaded Windows laptop.
   it('refuses restore and undo while a diff rejection is still in progress', async () => {
     const trees = path.join(path.dirname(repo), 'trees')
     const { orchestrator, store, sessions } = harness(trees)
@@ -10779,7 +10887,7 @@ describe('rolling a session back', () => {
       release(heldSnapshot)
       await reviewing.catch(() => undefined)
     }
-  })
+  }, 60_000)
 
   it('keeps the original files as a recovery checkpoint when restore and rollback both fail', async () => {
     const { orchestrator, sessions } = harness()

@@ -15,6 +15,7 @@ import {
   type JsonRpcRequestOptions,
   type JsonRpcValue,
 } from '@harness/proc'
+import { grokAccountEnvironment } from './account-home.js'
 import { grokCommand } from './adapter.js'
 
 /** What Grok loads for a project: its commands and skills, and its MCP servers. */
@@ -48,7 +49,10 @@ export type GrokProjectDiscoveryOptions = {
   quietMs?: number
   /** After Grok says MCP is initialized, how long a late status may still arrive. */
   graceMs?: number
-  /** Grok's home, where it logs each session's server connections. */
+  /**
+   * Grok's home, where it logs each session's server connections. A further
+   * account's folder also runs the probe as that account.
+   */
   grokHome?: string
 }
 
@@ -74,7 +78,7 @@ export async function discoverGrokProject(
   options: GrokProjectDiscoveryOptions = {},
 ): Promise<GrokProjectInventory> {
   options.signal?.throwIfAborted()
-  const rpc = (options.connect ?? connectGrok)(projectPath)
+  const rpc = (options.connect ?? ((path) => connectGrok(path, options.grokHome)))(projectPath)
   const inventory = new GrokInventory()
   rpc.onNotification((method, params) => inventory.read(method, params))
   let sessionId: string | undefined
@@ -166,9 +170,14 @@ async function sessionTools(
   return tools
 }
 
-function connectGrok(projectPath: string): GrokDiscoveryRpc {
+function connectGrok(projectPath: string, grokHome?: string): GrokDiscoveryRpc {
   return new StdioJsonRpc(
-    spawnCli(grokCommand(), ['agent', '--no-leader', 'stdio'], { cwd: projectPath }),
+    spawnCli(grokCommand(), ['agent', '--no-leader', 'stdio'], {
+      cwd: projectPath,
+      ...(grokHome === undefined
+        ? {}
+        : { env: { ...process.env, ...grokAccountEnvironment(grokHome) } }),
+    }),
     'Grok project discovery',
   )
 }

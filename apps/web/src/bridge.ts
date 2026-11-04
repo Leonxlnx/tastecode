@@ -321,13 +321,16 @@ export function setDesktopTheme(preference: AppThemePreference): Promise<void> {
  * The colours the page paints where native window chrome meets it, as #rrggbb
  * (the caption as #00000000 while a window background shows through it).
  * The desktop shell colours the caption buttons with them and opens the next
- * launch in them. Mirrors WindowChrome in apps/desktop/src/window-theme.ts.
+ * launch in them. `seeThrough` is set while the page shows what is behind the
+ * window; the shell then clears the window colour so the OS material shows.
+ * Mirrors WindowChrome in apps/desktop/src/window-theme.ts.
  */
 export type WindowChrome = {
   theme: 'light' | 'dark'
   background: string
   caption: string
   symbol: string
+  seeThrough?: true
 }
 
 export function setDesktopWindowChrome(chrome: WindowChrome): Promise<void> {

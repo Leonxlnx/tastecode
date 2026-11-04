@@ -356,7 +356,12 @@ export type GuardianReviewNotification =
 export const ThreadStartedNotificationSchema = z.object({ thread: ThreadIdentitySchema })
 export const TurnStartedNotificationSchema = z.object({
   threadId: z.string(),
-  turn: z.object({ id: z.string() }),
+  /**
+   * Codex 0.166 names the turn another turn runs in, such as a review's, as
+   * rootTurnId; the generated bindings do not list it yet
+   * (fixtures/review-codex-0.166.jsonl).
+   */
+  turn: z.object({ id: z.string(), rootTurnId: z.string().nullish() }),
 })
 export const TurnCompletedNotificationSchema = z.object({
   threadId: z.string(),

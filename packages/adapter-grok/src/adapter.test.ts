@@ -1116,3 +1116,27 @@ describe('bounded model discovery capture', () => {
     },
   )
 })
+
+describe('a further Grok account', () => {
+  it("runs the CLI in the account's GROK_HOME, and the default account without one", async () => {
+    const homes: Array<string | undefined> = []
+    const spawnAs = (accountHome?: string) =>
+      new GrokAdapter({
+        ...(accountHome === undefined ? {} : { accountHome }),
+        spawn: (_command, _args, options) => {
+          homes.push((options as { env?: NodeJS.ProcessEnv } | undefined)?.env?.['GROK_HOME'])
+          const child = new FakeChild()
+          queueMicrotask(() => {
+            child.stdout.end('Default model: grok-4\n')
+            child.emit('close', 0)
+          })
+          return child
+        },
+      })
+
+    await spawnAs(path.join(os.tmpdir(), 'grok-work')).listModels()
+    await spawnAs().listModels()
+
+    expect(homes).toEqual([path.join(os.tmpdir(), 'grok-work'), undefined])
+  })
+})

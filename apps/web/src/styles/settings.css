@@ -1438,6 +1438,14 @@
   align-items: center;
 }
 
+/* A source lists many models, each a one-line name and its 18px switch: the
+   rows run at 30px instead of the 40px settings rhythm, so the space between
+   two names is 12px rather than 22px and a list reads as one list. */
+.settings .set-row.model-visibility__model {
+  min-height: 30px;
+  padding-block: 6px;
+}
+
 /* A model left out of the picker reads a step quieter than one in it. */
 .settings .model-visibility__model[data-tone='muted']:not(:hover, :focus-within) .set-row__name {
   color: var(--text-3);

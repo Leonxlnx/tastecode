@@ -1,4 +1,5 @@
 import { spawnOwned, StdioJsonRpc } from '@harness/proc'
+import { grokAccountEnvironment } from './account-home.js'
 import { grokCommand } from './adapter.js'
 
 const TIMEOUT_MS = 10_000
@@ -17,9 +18,17 @@ function bounded<T>(promise: Promise<T>, label: string): Promise<T> {
  * One call to a Grok Build ACP extension in a short-lived provider process.
  * The process owns its credentials, request headers and token refresh
  * lifecycle; TasteCode only receives the response it deliberately exposes.
+ * `accountHome` runs it as that account; absent, the default account.
  */
-export async function requestGrokExtension(method: string, label: string): Promise<unknown> {
+export async function requestGrokExtension(
+  method: string,
+  label: string,
+  accountHome?: string,
+): Promise<unknown> {
   const child = spawnOwned(grokCommand(), ['agent', '--no-leader', 'stdio'], {
+    ...(accountHome === undefined
+      ? {}
+      : { env: { ...process.env, ...grokAccountEnvironment(accountHome) } }),
     stdio: ['pipe', 'pipe', 'pipe'],
     windowsHide: true,
   })

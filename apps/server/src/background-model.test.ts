@@ -570,6 +570,27 @@ describe('background output shaping', () => {
     expect(cleanGeneratedTitle('m'.repeat(80), 'Fallback')).toBe('m'.repeat(60))
   })
 
+  it('takes the bold title from a title followed by an explanation', () => {
+    expect(
+      cleanGeneratedTitle(
+        '**Quadratic formula and sum of integers**: Quadratic formula, Euler’s identity and more',
+        'Fallback',
+      ),
+    ).toBe('Quadratic formula and sum of integers')
+    expect(cleanGeneratedTitle('Fix the **upload** retry in `client.ts`', 'Fallback')).toBe(
+      'Fix the upload retry in client.ts',
+    )
+  })
+
+  it('cuts a long title after a whole word, without trailing punctuation', () => {
+    expect(
+      cleanGeneratedTitle(
+        'Explain the quadratic formula, Euler identity, and integer sums with examples',
+        'Fallback',
+      ),
+    ).toBe('Explain the quadratic formula, Euler identity, and integer')
+  })
+
   it('renders a bounded structured diff for commit-message drafting', () => {
     const prompt = commitMessagePrompt({
       threadId: 'workspace',

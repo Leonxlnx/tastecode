@@ -6,6 +6,7 @@ import {
   type BackgroundImageStore,
 } from '../app-background-image.js'
 import { effectPatternStyle, type EffectPatternStyle } from '../app-background-patterns.js'
+import { AppBackgroundMotion } from './AppBackgroundMotion.js'
 import '../styles/app-background.css'
 
 type LayerStyle = CSSProperties &
@@ -26,6 +27,11 @@ export const BLUR_SETTLE_MS = 220
 export function AppBackgroundLayer(props: {
   background: AppBackground
   images?: BackgroundImageStore | undefined
+  /**
+   * Settings covers the whole window: an effect stops moving behind it and the still
+   * tile stays, so nothing draws 30 times a second where no one can see it.
+   */
+  covered?: boolean | undefined
 }) {
   const { mode, effect, image, dim, blur } = props.background
   const images = props.images ?? indexedDbBackgroundImages
@@ -43,11 +49,13 @@ export function AppBackgroundLayer(props: {
 
   const settledBlur = useSettled(blur, BLUR_SETTLE_MS)
   const imageUrl = useBackgroundImageUrl(mode === 'image' ? image : undefined, settledBlur, images)
+  const [moving, setMoving] = useState(false)
 
   // Transparent paints nothing: the OS backdrop is the background.
   if (mode === 'transparent' || mode === 'none') return null
   const style: LayerStyle = {
     '--app-bg-dim': dimFactor(dim),
+    // The still tile stays ready underneath, for wherever the canvas cannot draw.
     ...(mode === 'effect' ? effectPatternStyle(effect) : {}),
   }
   if (imageUrl) style['--app-bg-image'] = `url("${imageUrl}")`
@@ -56,10 +64,15 @@ export function AppBackgroundLayer(props: {
       className="app-bg"
       data-mode={mode}
       data-effect={mode === 'effect' ? effect : undefined}
+      data-motion={mode === 'effect' && moving ? '' : undefined}
       data-ready={imageUrl ? '' : undefined}
       style={style}
       aria-hidden
-    />
+    >
+      {mode === 'effect' && !props.covered ? (
+        <AppBackgroundMotion effect={effect} onDrawing={setMoving} />
+      ) : null}
+    </div>
   )
 }
 

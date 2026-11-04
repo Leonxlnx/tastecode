@@ -11,10 +11,20 @@ import {
 } from 'node:fs'
 import { rm } from 'node:fs/promises'
 import path from 'node:path'
-import { CLAUDE_ACCOUNT_HOME } from '@harness/adapter-claude-code/account-home'
+import {
+  CLAUDE_ACCOUNT_HOME,
+  claudeOverallLimit,
+  claudePlanWeights,
+} from '@harness/adapter-claude-code/account-home'
 import { CLAUDE_CAPABILITIES } from '@harness/adapter-claude-code/capabilities'
-import { CODEX_ACCOUNT_HOME } from '@harness/adapter-codex/account-home'
+import {
+  CODEX_ACCOUNT_HOME,
+  codexOverallLimit,
+  codexPlanWeights,
+} from '@harness/adapter-codex/account-home'
 import { CODEX_CAPABILITIES } from '@harness/adapter-codex/capabilities'
+import { GROK_ACCOUNT_HOME } from '@harness/adapter-grok/account-home'
+import { GROK_CAPABILITIES } from '@harness/adapter-grok/capabilities'
 import {
   DEFAULT_ACCOUNT_ID,
   ProviderAccountSchema,
@@ -32,6 +42,7 @@ import {
   AccountNotFoundError,
   existingAccountHome,
   type AccountDirectory,
+  type PlanWeights,
 } from './account-directory.js'
 import { accountRead } from './account-identity.js'
 import type { Store, StoredProviderAccount } from './store.js'
@@ -58,13 +69,32 @@ function declared(
 
 /**
  * The providers whose adapter declares `multipleAccounts`, with the folder
- * source it exports. Every other provider runs as its default account only;
- * Grok joins once a captured run proves its own folder keeps sign-ins apart.
+ * source it exports. Every other provider runs as its default account only:
+ * Cursor keeps its sign-in outside its config folder (%APPDATA%\Cursor\auth.json on
+ * Windows, the keychain on macOS), and Antigravity's `agy` has no folder variable.
  */
 export const ACCOUNT_HOMES: AccountHomes = declared([
   ['claude-code', CLAUDE_CAPABILITIES, CLAUDE_ACCOUNT_HOME],
   ['codex', CODEX_CAPABILITIES, CODEX_ACCOUNT_HOME],
+  ['grok', GROK_CAPABILITIES, GROK_ACCOUNT_HOME],
 ])
+
+/**
+ * How much each plan holds, per window kind, as each adapter publishes it from
+ * the vendor's plan limits; the account pool weighs its capacity by these.
+ */
+export const ACCOUNT_PLAN_WEIGHTS = {
+  'claude-code': claudePlanWeights,
+  codex: codexPlanWeights,
+} as const satisfies Partial<
+  Record<ProviderId, (plan: string | undefined) => PlanWeights | undefined>
+>
+
+/** Which of a provider's limit rows are overall windows the pool sums, as each adapter knows. */
+export const ACCOUNT_OVERALL_LIMITS = {
+  'claude-code': claudeOverallLimit,
+  codex: codexOverallLimit,
+} as const satisfies Partial<Record<ProviderId, (limitId: string) => boolean>>
 
 /** What the default account is called until the user renames it. */
 const DEFAULT_LABEL = 'Default'
@@ -145,6 +175,29 @@ export class ProviderAccounts implements AccountDirectory {
       accounts.push(...listed)
     }
     return { accounts, active }
+  }
+
+  /** The provider's accounts, default first; empty for a provider with one account only. */
+  accounts(provider: ProviderId): ProviderAccount[] {
+    return this.list(provider).accounts
+  }
+
+  planWeights(provider: ProviderId, plan: string | undefined): PlanWeights | undefined {
+    const weigh: ((plan: string | undefined) => PlanWeights | undefined) | undefined =
+      Object.hasOwn(ACCOUNT_PLAN_WEIGHTS, provider)
+        ? ACCOUNT_PLAN_WEIGHTS[provider as keyof typeof ACCOUNT_PLAN_WEIGHTS]
+        : undefined
+    return weigh?.(plan)
+  }
+
+  overallLimit(provider: ProviderId, limitId: string): boolean {
+    const overall: ((limitId: string) => boolean) | undefined = Object.hasOwn(
+      ACCOUNT_OVERALL_LIMITS,
+      provider,
+    )
+      ? ACCOUNT_OVERALL_LIMITS[provider as keyof typeof ACCOUNT_OVERALL_LIMITS]
+      : undefined
+    return overall?.(limitId) ?? true
   }
 
   /** The account a new chat with this provider starts on. */

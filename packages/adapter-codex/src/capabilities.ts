@@ -12,6 +12,8 @@ export const CODEX_CAPABILITIES: Capabilities = {
   // A subagent's thread streams on the chat's connection, so its tool calls and tokens
   // count up while it runs.
   subagents: 'progress',
+  // Each subagent's thread keeps a rollout of its own (subagent-transcript.ts).
+  subagentTranscript: true,
   // Every process can run in another CODEX_HOME, which holds that account's
   // sign-in, settings and sessions (account-home.ts).
   multipleAccounts: true,

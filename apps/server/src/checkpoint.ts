@@ -6,6 +6,7 @@ import path from 'node:path'
 import { pipeline } from 'node:stream/promises'
 import { promisify } from 'node:util'
 import { canonicalCheckoutRoot } from './checkout-access.js'
+import { ownershipRefusal } from './git-ownership.js'
 
 const run = promisify(execFile)
 
@@ -324,8 +325,16 @@ export async function snapshotBase(
     if (tree === undefined) throw new Error(`could not read the HEAD tree of ${repoPath}`)
     return { head, tree }
   }
-  if ((await git(repoPath, ['rev-parse', '--git-dir'])) === undefined)
-    throw new NotARepositoryForCheckpoint(repoPath)
+  try {
+    await run('git', ['rev-parse', '--git-dir'], {
+      cwd: repoPath,
+      windowsHide: true,
+      timeout: 20_000,
+    })
+  } catch (error) {
+    // Another user's repository fails here too; only git's stderr tells it apart.
+    throw ownershipRefusal(repoPath, error) ?? new NotARepositoryForCheckpoint(repoPath)
+  }
   const tree = await new Promise<string>((resolve, reject) => {
     const child = execFile(
       'git',

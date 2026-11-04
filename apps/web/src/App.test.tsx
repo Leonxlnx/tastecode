@@ -3299,9 +3299,14 @@ describe('web client', () => {
       expect(listedProviders()).toEqual(['codex', 'claude-code'])
     })
 
-    it('lists it when Settings opens', async () => {
+    it('lists it when Settings shows Providers or Models, not on other pages', async () => {
       await launchWithCachedClaude()
       openSettings()
+      await settled()
+      // General opens first; it shows no model lists, so no provider CLI is asked to list.
+      expect(listedProviders()).not.toContain('claude-code')
+      const settings = await screen.findByRole('dialog', { name: 'Settings' })
+      fireEvent.click(await within(settings).findByRole('button', { name: 'Providers' }))
       await waitFor(() => expect(listedProviders()).toContain('claude-code'))
     })
 
@@ -3803,6 +3808,30 @@ describe('web client', () => {
         viewports: [{ width: 1_280, height: 800 }],
       })
     })
+
+    expect(await screen.findByRole('textbox', { name: 'Browser address' })).toBeTruthy()
+    expect(document.querySelector('.workspace-panel')?.classList).toContain('is-open')
+  })
+
+  it("keeps a background chat's Design preview out of the panel until that chat opens", async () => {
+    render(<App />)
+
+    await waitFor(() => {
+      expect(transport.listeners.has('preview.captureRequested')).toBe(true)
+    })
+    act(() => {
+      transport.listeners.get('preview.captureRequested')?.({
+        requestId: '00000000-0000-4000-8000-000000000002',
+        url: 'http://127.0.0.1:4173/',
+        viewports: [{ width: 1_280, height: 800 }],
+        threadId: 'untouched-thread',
+      })
+    })
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 50)))
+    expect(screen.queryByRole('textbox', { name: 'Browser address' })).toBeNull()
+    expect(document.querySelector('.workspace-panel.is-open')).toBeNull()
+
+    fireEvent.click(await waitFor(() => treeChatRow('New session')))
 
     expect(await screen.findByRole('textbox', { name: 'Browser address' })).toBeTruthy()
     expect(document.querySelector('.workspace-panel')?.classList).toContain('is-open')
@@ -5092,6 +5121,37 @@ describe('web client', () => {
   })
 })
 describe('new chats', () => {
+  it('keeps a prompt that failed to send in its own chat, never in New chat', async () => {
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'project',
+        pinned: false,
+        createdAt: 0,
+        sessions: [{ id: 'thread-1', title: 'Existing work', running: false }],
+      },
+    ]
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'thread.sendTurn'
+        ? Promise.reject(new Error('send refused'))
+        : request(method, params),
+    )
+    render(<App />)
+    const draft = () => (screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement).value
+
+    fireEvent.click(await screen.findByRole('button', { name: /^Existing work,/ }))
+    submitTurn('Words for this chat only')
+    await waitFor(() => expect(rpcCount('thread.sendTurn')).toBe(1))
+    await waitFor(() => expect(draft()).toBe('Words for this chat only'))
+
+    fireEvent.click(screen.getByRole('button', { name: 'New chat' }))
+    await waitFor(() => expect(draft()).toBe(''))
+
+    fireEvent.click(screen.getByRole('button', { name: /^Existing work,/ }))
+    await waitFor(() => expect(draft()).toBe('Words for this chat only'))
+  })
+
   it('keeps composer drafts separate for new chat and each session', async () => {
     serverProjects = [
       {
@@ -5432,6 +5492,72 @@ describe('new chats', () => {
       'usage.summary',
       expect.objectContaining({ accountId: 'spare-4d5e6f' }),
     )
+  })
+
+  it('starts a new chat on the account the pool recommends while none was picked', async () => {
+    const codex = serverProviders[0]!
+    serverProviders = [
+      { ...codex, capabilities: { ...codex.capabilities!, multipleAccounts: true } },
+    ]
+    const now = Date.now()
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'accounts.list') {
+        return Promise.resolve({
+          accounts: [
+            { id: 'default', provider: 'codex', label: 'Personal', managed: false, plan: 'Plus' },
+            {
+              id: 'work-1a2b3c',
+              provider: 'codex',
+              label: 'Work',
+              home: 'C:\\TasteCode\\accounts\\codex\\work-1a2b3c',
+              managed: true,
+              email: 'work@example.test',
+              plan: 'Plus',
+            },
+          ],
+          active: {},
+        })
+      }
+      if (method === 'usage.summary') {
+        const { accountId } = params as { accountId?: string }
+        const days = accountId === 'work-1a2b3c' ? 1 : 3
+        return (request(method, params) as Promise<ResultOf<'usage.summary'>>).then((summary) => ({
+          ...summary,
+          limits: [
+            {
+              label: 'Weekly',
+              usedPercent: 20,
+              windowMinutes: 10_080,
+              resetsAt: now + days * 86_400_000,
+            },
+          ],
+        }))
+      }
+      return request(method, params)
+    })
+    render(<App />)
+
+    // Once both accounts are read, Work resets its week first and is marked.
+    fireEvent.click(await screen.findByRole('button', { name: 'Account' }))
+    expect(await screen.findByText('Recommended')).toBeTruthy()
+    expect(screen.getByRole('region', { name: 'Codex · All accounts' })).toBeTruthy()
+    expect(await screen.findByRole('button', { name: /^Work, recommended, / })).toBeTruthy()
+
+    const composer = screen.getByPlaceholderText('Do anything')
+    const sendButton = screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement
+    fireEvent.change(composer, { target: { value: 'Start where the week resets first' } })
+    await waitFor(() => expect(sendButton.disabled).toBe(false))
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith(
+        'thread.start',
+        expect.objectContaining({ provider: 'codex', accountId: 'work-1a2b3c' }),
+      ),
+    )
+    // The server keeps its own active account; nothing was picked for the user.
+    expect(transport.request).not.toHaveBeenCalledWith('accounts.setActive', expect.anything())
   })
 
   it("offers each account's own models: the active one for new chats, a chat's own for it", async () => {
@@ -7706,6 +7832,88 @@ describe('new chats', () => {
     )
     expect(transport.request).not.toHaveBeenCalledWith('workspace.switchBranch', expect.anything())
     expect(screen.queryByText('The shared checkout is busy')).toBeNull()
+  })
+
+  it('starts a new chat Local in a project that is not a Git repository', async () => {
+    serverProjects = [
+      { path: '/work/repo', name: 'repo', pinned: false, createdAt: 0, sessions: [] },
+      { path: '/work/plain', name: 'plain', pinned: false, createdAt: 0, sessions: [] },
+    ]
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'workspace.info' && (params as { path: string }).path === '/work/plain'
+        ? Promise.resolve({ added: 0, removed: 0, dirtyFiles: 0 })
+        : request(method, params),
+    )
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace mode' }))
+    fireEvent.click(await screen.findByRole('menuitemradio', { name: 'Isolated' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Choose project' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: /^plain/ }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace mode' }))
+    const isolated = await waitFor(() => {
+      const item = screen.getByRole('menuitemradio', { name: /^Isolated/ }) as HTMLButtonElement
+      expect(item.disabled).toBe(true)
+      return item
+    })
+    expect(isolated.textContent).toContain('Isolated needs a Git repository')
+    expect(screen.getByRole('menuitemradio', { name: 'Local' }).getAttribute('aria-checked')).toBe(
+      'true',
+    )
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' })
+    submitTurn('Work on plain files')
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith(
+        'thread.start',
+        expect.objectContaining({ workspacePath: '/work/plain' }),
+      ),
+    )
+    const start = transport.request.mock.calls.find(([method]) => method === 'thread.start')
+    expect(start?.[1]).not.toHaveProperty('isolate')
+  })
+
+  it('starts the next new chat without Design', async () => {
+    serverProjects = [
+      { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },
+    ]
+    render(<App />)
+    await screen.findByPlaceholderText('Do anything')
+    fireEvent.click(screen.getByRole('button', { name: 'Design' }))
+    submitTurn('Design a landing page')
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('thread.start', expect.anything()),
+    )
+    expect(screen.getByRole('button', { name: 'Design' }).getAttribute('aria-pressed')).toBe('true')
+
+    fireEvent.click(screen.getByRole('button', { name: 'New chat' }))
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Design' }).getAttribute('aria-pressed')).toBe(
+        'false',
+      ),
+    )
+  })
+
+  it("does not carry a failed new chat prompt into another project's new chat", async () => {
+    serverProjects = [
+      { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },
+      { path: '/work/other', name: 'other', pinned: false, createdAt: 0, sessions: [] },
+    ]
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'thread.start'
+        ? Promise.reject(new Error('could not start'))
+        : request(method, params),
+    )
+    render(<App />)
+    const composer = (await screen.findByPlaceholderText('Do anything')) as HTMLTextAreaElement
+    submitTurn('Words from a failed start')
+    await waitFor(() => expect(composer.value).toBe('Words from a failed start'))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Choose project' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: /^other/ }))
+    await waitFor(() =>
+      expect((screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement).value).toBe(''),
+    )
   })
 
   it('switches the project checkout from the branch shelf before starting a chat', async () => {
@@ -10363,6 +10571,91 @@ describe('new chats', () => {
         approval: 'auto-review',
       })
     })
+  })
+
+  it('refuses Ask first for a provider that cannot ask, and says what to choose', async () => {
+    serverProviders[0]!.capabilities = { ...serverProviders[0]!.capabilities!, askFirst: false }
+    localStorage.setItem('harness.approvalByProvider', JSON.stringify({ codex: 'ask' }))
+    serverProjects = [
+      { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },
+    ]
+    render(<App />)
+
+    expect(
+      await screen.findByText(
+        "Codex can't ask before running commands. Choose Auto-approve or Full access.",
+      ),
+    ).toBeTruthy()
+    submitTurn('Do not start in Ask first')
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 50)))
+    expect(transport.request).not.toHaveBeenCalledWith('thread.start', expect.anything())
+    expect((screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement).value).toBe(
+      'Do not start in Ask first',
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Permissions' }))
+    const ask = (await screen.findByRole('menuitem', { name: /^Ask first/ })) as HTMLButtonElement
+    expect(ask.disabled).toBe(true)
+    expect(ask.textContent).toContain("Codex can't ask before running commands")
+  })
+
+  it("does not refuse Ask first while an open chat's own mode is still loading", async () => {
+    serverProviders[0]!.capabilities = { ...serverProviders[0]!.capabilities!, askFirst: false }
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'project',
+        pinned: false,
+        createdAt: 0,
+        sessions: [{ id: 'thread-1', title: 'Existing work', provider: 'codex', createdAt: 1 }],
+      },
+    ]
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'thread.history' ? new Promise(() => {}) : request(method, params),
+    )
+    render(<App />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /^Existing work,/ }))
+    await waitFor(() => expect(rpcCount('thread.history')).toBeGreaterThan(0))
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 50)))
+    expect(screen.queryByText(/can't ask before running commands/)).toBeNull()
+  })
+
+  it('offers Isolated after a switch until the new project answers it has no branch', async () => {
+    serverProjects = [
+      { path: '/work/plain', name: 'plain', pinned: false, createdAt: 0, sessions: [] },
+      { path: '/work/repo', name: 'repo', pinned: false, createdAt: 0, sessions: [] },
+    ]
+    let answerRepo!: (info: ResultOf<'workspace.info'>) => void
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method !== 'workspace.info') return request(method, params)
+      const { path } = params as { path: string }
+      if (path === '/work/plain') return Promise.resolve({ added: 0, removed: 0, dirtyFiles: 0 })
+      return new Promise((resolve) => {
+        answerRepo = resolve
+      })
+    })
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Choose project' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: /^plain/ }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace mode' }))
+    await waitFor(() =>
+      expect(
+        (screen.getByRole('menuitemradio', { name: /^Isolated/ }) as HTMLButtonElement).disabled,
+      ).toBe(true),
+    )
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Choose project' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: /^repo/ }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace mode' }))
+    // The repository has not answered yet: the plain folder's state does not carry over.
+    expect(
+      (screen.getByRole('menuitemradio', { name: /^Isolated/ }) as HTMLButtonElement).disabled,
+    ).toBe(false)
+    await act(async () => answerRepo({ branch: 'main', added: 0, removed: 0, dirtyFiles: 0 }))
   })
 
   it('pushes a mid-chat access-level change to the live thread', async () => {

@@ -345,7 +345,11 @@ export async function reverseUnifiedDiff(repoPath: string, patch: string): Promi
   child.stdin.end(relative)
   const result = await captured
   if (result.code !== 0)
-    throw new Error('Could not apply diff decision. Check the working tree and retry.')
+    // Git's own reason stays out of the message the user sees, but goes along as the
+    // cause, so a log or a failed test says which file and line did not apply.
+    throw new Error('Could not apply diff decision. Check the working tree and retry.', {
+      cause: new Error(result.stderr.trim() || `git apply exited with ${result.code}`),
+    })
 }
 
 function gitPath(value: string): string {

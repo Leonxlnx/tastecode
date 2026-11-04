@@ -1,4 +1,5 @@
 import { ChildProcess } from 'node:child_process'
+import { once } from 'node:events'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -57,6 +58,69 @@ class FakeChild extends ChildProcess {
     this.killed = true
     setImmediate(() => this.emit('exit', null))
     return true
+  }
+}
+
+/**
+ * `cursor-agent --print --output-format stream-json --force --model kimi-k3
+ * "Reply with the single word: pong"` on Windows, 2026.07.23-e383d2b,
+ * 2026-11-04. The capture merged stdout and stderr and shortened the cwd and
+ * session id. The frames came first, then the refusal, then exit code 1.
+ */
+const REFUSED_FRAMES = [
+  '{"type":"system","subtype":"init","apiKeySource":"login","cwd":"...","session_id":"35b81d1b-...","model":"Kimi K3 High","permissionMode":"default"}',
+  '{"type":"user","message":{"role":"user","content":[{"type":"text","text":"Reply with the single word: pong"}]},"session_id":"35b81d1b-..."}',
+].join('\n')
+const REFUSAL =
+  'ActionRequiredError: Kimi K3 is not included in your weekly usage Buy credits or switch to a Grok model to continue.'
+
+/**
+ * The same command with `--model gemini-4-argon`, 2026.07.23, 2026-11-04,
+ * stdout and stderr merged, in this order, then exit code 1. The capture
+ * elided most frame fields, filled in here as in the Kimi capture; the two
+ * text lines are verbatim: the cause, then a generic trailer.
+ */
+const ARGON_FRAMES = [
+  '{"type":"system","subtype":"init","apiKeySource":"login","cwd":"...","session_id":"...","model":"Gemini 4 Argon Medium","permissionMode":"default"}',
+  '{"type":"user","message":{"role":"user","content":[{"type":"text","text":"..."}]},"session_id":"..."}',
+].join('\n')
+const ARGON_REFUSAL =
+  'ActionRequiredError: Gemini 4 Argon is not included in your weekly usage Buy credits or switch to a Grok model to continue.'
+const GENERIC_TRAILER = 'Error: command failed unexpectedly.'
+
+/** What a turn's process prints: all of stdout, and stderr in the chunks it arrives in. */
+type TurnOutput = { stdout?: string; stderr?: string[] }
+
+/**
+ * One turn whose process prints `output` and then exits with `code`, reduced
+ * to the errors, end states and log lines the adapter reported.
+ */
+async function finishTurn(
+  output: TurnOutput,
+  code: number,
+): Promise<{ errors: string[]; statuses: string[]; logs: string[] }> {
+  const child = new FakeChild()
+  const adapter = new CursorAdapter({ spawn: () => child })
+  const events: DomainEvent[] = []
+  const logs: string[] = []
+  adapter.on('event', (event) => events.push(event))
+  adapter.on('log', (line: string) => logs.push(line))
+  const thread = await adapter.startThread('C:\\repo')
+  await adapter.sendTurn(thread.id, 'Reply with the single word: pong')
+
+  const drained = Promise.all([once(child.stdout, 'end'), once(child.stderr, 'end')])
+  for (const chunk of output.stderr ?? []) child.stderr.write(chunk)
+  child.stderr.end()
+  child.stdout.end(output.stdout ?? '')
+  await drained
+  child.emit('exit', code)
+  child.emit('close', code)
+  await adapter.dispose()
+
+  return {
+    errors: events.flatMap((event) => (event.type === 'thread.error' ? [event.message] : [])),
+    statuses: events.flatMap((event) => (event.type === 'turn.completed' ? [event.status] : [])),
+    logs,
   }
 }
 
@@ -403,6 +467,120 @@ describe('Cursor adapter', () => {
     expect(events.some((event) => event.type === 'thread.error')).toBe(false)
   })
 
+  it.each<[string, TurnOutput]>([
+    // The CLI's other refusals ("Error: Authentication required", in
+    // fixtures/cursor-expired-sign-in-2026-10-14.json) went to stderr. A pipe
+    // may hand that line over in pieces.
+    [
+      'stderr',
+      { stdout: `${REFUSED_FRAMES}\n`, stderr: [REFUSAL.slice(0, 30), `${REFUSAL.slice(30)}\n`] },
+    ],
+    ['stdout', { stdout: `${REFUSED_FRAMES}\n${REFUSAL}\n` }],
+  ])('fails a turn the CLI refuses with the reason it printed on %s', async (_stream, output) => {
+    const result = await finishTurn(output, 1)
+
+    expect(result).toMatchObject({
+      errors: [
+        'Kimi K3 is not included in your weekly usage Buy credits or switch to a Grok model to continue.',
+      ],
+      statuses: ['failed'],
+    })
+  })
+
+  it.each<[string, TurnOutput]>([
+    [
+      'both on stderr',
+      { stdout: `${ARGON_FRAMES}\n`, stderr: [`${ARGON_REFUSAL}\n${GENERIC_TRAILER}\n`] },
+    ],
+    ['both on stdout', { stdout: `${ARGON_FRAMES}\n${ARGON_REFUSAL}\n${GENERIC_TRAILER}\n` }],
+    // Two pipes do not keep the order between them; the trailer may come first.
+    [
+      'the cause on stdout, the trailer on stderr',
+      { stdout: `${ARGON_FRAMES}\n${ARGON_REFUSAL}\n`, stderr: [`${GENERIC_TRAILER}\n`] },
+    ],
+    [
+      'the cause on stderr, the trailer on stdout',
+      { stdout: `${ARGON_FRAMES}\n${GENERIC_TRAILER}\n`, stderr: [`${ARGON_REFUSAL}\n`] },
+    ],
+  ])('names the cause, not the generic error after it, with %s', async (_where, output) => {
+    const result = await finishTurn(output, 1)
+
+    expect(result).toMatchObject({
+      errors: [
+        'Gemini 4 Argon is not included in your weekly usage Buy credits or switch to a Grok model to continue.',
+      ],
+      statuses: ['failed'],
+    })
+  })
+
+  it('names the first plain error when no typed one was printed', async () => {
+    // Not captured together: the sign-in refusal from
+    // fixtures/cursor-expired-sign-in-2026-10-14.json, then the trailer.
+    const result = await finishTurn(
+      {
+        stderr: [
+          "Error: Authentication required. Run 'agent login', pass --api-key/--auth-token, or set CURSOR_API_KEY/CURSOR_AUTH_TOKEN.\n",
+          `${GENERIC_TRAILER}\n`,
+        ],
+      },
+      1,
+    )
+
+    expect(result.errors).toEqual([
+      "Authentication required. Run 'agent login', pass --api-key/--auth-token, or set CURSOR_API_KEY/CURSOR_AUTH_TOKEN.",
+    ])
+  })
+
+  it.each(['stdout', 'stderr'] as const)(
+    'fails a turn in a folder Cursor does not trust with its notice on %s',
+    async (stream) => {
+      // Without --force the CLI prints this notice and exits 1. Only these
+      // lines of it were captured; the ones between the question and the
+      // last line are left out.
+      const notice = [
+        'Cursor Agent can execute code and access files in this directory.',
+        '',
+        'Do you trust the contents of this directory?',
+        '',
+        'Pass --trust, --yolo, or -f if you trust this directory',
+        '',
+      ].join('\n')
+
+      const output: TurnOutput = stream === 'stdout' ? { stdout: notice } : { stderr: [notice] }
+      const result = await finishTurn(output, 1)
+
+      expect(result).toMatchObject({
+        errors: [
+          'Cursor Agent can execute code and access files in this directory. Do you trust the contents of this directory? Pass --trust, --yolo, or -f if you trust this directory',
+        ],
+        statuses: ['failed'],
+      })
+    },
+  )
+
+  it('keeps the exit code as the message when the CLI exits without a reason', async () => {
+    const result = await finishTurn({ stdout: `${REFUSED_FRAMES}\n` }, 1)
+
+    expect(result).toMatchObject({
+      errors: ['cursor-agent exited with code 1'],
+      statuses: ['failed'],
+    })
+  })
+
+  it('leaves a successful turn as it was, whatever else the CLI printed', async () => {
+    // Made-up stderr: even an error line does not fail a turn that completed.
+    const result = await finishTurn(
+      {
+        stdout: readFileSync(new URL('./fixtures/stream.jsonl', import.meta.url), 'utf8'),
+        stderr: ['Error: a warning the turn survived\n'],
+      },
+      0,
+    )
+
+    expect(result).toMatchObject({ errors: [], statuses: ['completed'] })
+    expect(result.logs).toContain('Error: a warning the turn survived')
+  })
+
   it('keeps the turn alive past a frame it cannot read', async () => {
     const child = new FakeChild()
     const adapter = new CursorAdapter({ spawn: () => child })
@@ -465,6 +643,217 @@ describe('Cursor adapter', () => {
     expect(logs.some((line) => line.includes('listener failed'))).toBe(true)
     expect(child.killed).toBe(false)
     adapter.dispose()
+  })
+
+  it('keeps text before, between and after tool calls as separate messages', async () => {
+    // The shape of a 2026-11-04 Grok 4.7 turn (cursor-agent 2026.07.23) that
+    // showed as one message with its segments glued together. Built from the
+    // CLI's stream-json writer: each `assistant` line is the whole text since
+    // the previous flush, and `result` repeats all of it without separators.
+    const child = new FakeChild()
+    const adapter = new CursorAdapter({ spawn: () => child })
+    const events: DomainEvent[] = []
+    adapter.on('event', (event) => events.push(event))
+    const thread = await adapter.startThread('C:\\repo')
+    const turnId = await adapter.sendTurn(thread.id, 'Count the words')
+    const completed = new Promise<void>((resolve) => {
+      adapter.on('event', (event) => {
+        if (event.type === 'turn.completed') resolve()
+      })
+    })
+    const intro = "I'll write a script that counts the words so you can see the top 10 words."
+    const middle = "The workspace is empty, so I'll add the script and then run it."
+    const answer = '`wordfreq.mjs` prints the 10 most frequent words with their counts.'
+    const say = (text: string) =>
+      JSON.stringify({
+        type: 'assistant',
+        message: { role: 'assistant', content: [{ type: 'text', text }] },
+        session_id: 's1',
+        model_call_id: 'm1',
+        timestamp_ms: 1,
+      })
+    const tool = (subtype: string, callId: string, call: object) =>
+      JSON.stringify({ type: 'tool_call', subtype, call_id: callId, tool_call: call })
+    const list = { lsToolCall: { args: { path: 'C:\\repo' } } }
+    const write = { writeToolCall: { args: { path: 'wordfreq.mjs', fileText: 'x' } } }
+    const run = { shellToolCall: { args: { command: 'node wordfreq.mjs' } } }
+
+    child.stdout.end(
+      [
+        say(intro),
+        tool('started', 'call-1', list),
+        tool('completed', 'call-1', list),
+        say(middle),
+        tool('started', 'call-2', write),
+        tool('completed', 'call-2', write),
+        tool('started', 'call-3', run),
+        tool('completed', 'call-3', run),
+        say(answer),
+        JSON.stringify({
+          type: 'result',
+          subtype: 'success',
+          duration_ms: 4200,
+          is_error: false,
+          result: intro + middle + answer,
+          session_id: 's1',
+        }),
+      ].join('\n'),
+    )
+    await completed
+
+    const trace = events.flatMap((event) => {
+      if (event.type === 'item.delta') return [`delta ${event.itemId.slice(turnId.length + 1)}`]
+      if (event.type !== 'item.started' && event.type !== 'item.completed') return []
+      return [`${event.type.slice(5)} ${event.item.id.slice(turnId.length + 1)}`]
+    })
+    expect(trace).toEqual([
+      'started message',
+      'delta message',
+      'completed message',
+      'started call-1',
+      'completed call-1',
+      'started message-2',
+      'delta message-2',
+      'completed message-2',
+      'started call-2',
+      'completed call-2',
+      'started call-3',
+      'completed call-3',
+      'started message-3',
+      'delta message-3',
+      'completed message-3',
+    ])
+    const messages = events.flatMap((event) =>
+      event.type === 'item.completed' && event.item.type === 'message' ? [event.item] : [],
+    )
+    expect(messages).toEqual([
+      expect.objectContaining({ id: `${turnId}-message`, status: 'completed', text: intro }),
+      expect.objectContaining({ id: `${turnId}-message-2`, status: 'completed', text: middle }),
+      expect.objectContaining({
+        id: `${turnId}-message-3`,
+        status: 'completed',
+        text: answer,
+        durationMs: 4200,
+      }),
+    ])
+    expect(messages[0]).not.toHaveProperty('durationMs')
+    expect(events.at(-1)).toEqual({ type: 'turn.completed', turnId, status: 'completed' })
+    adapter.dispose()
+  })
+
+  it('maps a turn with one text segment to the same single message as before', async () => {
+    const child = new FakeChild()
+    const adapter = new CursorAdapter({ spawn: () => child })
+    const events: DomainEvent[] = []
+    adapter.on('event', (event) => events.push(event))
+    const thread = await adapter.startThread('C:\\repo')
+    const turnId = await adapter.sendTurn(thread.id, 'Say hi')
+    const completed = new Promise<void>((resolve) => {
+      adapter.on('event', (event) => {
+        if (event.type === 'turn.completed') resolve()
+      })
+    })
+
+    child.stdout.end(
+      [
+        '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Hi there."}]},"session_id":"s1"}',
+        '{"type":"result","subtype":"success","duration_ms":25,"is_error":false,"result":"Hi there.","session_id":"s1"}',
+      ].join('\n'),
+    )
+    await completed
+
+    const id = `${turnId}-message`
+    const message = {
+      id,
+      turnId,
+      type: 'message',
+      role: 'assistant',
+      createdAt: expect.any(Number),
+    }
+    expect(events.filter((event) => event.type !== 'turn.started')).toEqual([
+      { type: 'item.started', item: { ...message, status: 'started', text: '' } },
+      { type: 'item.delta', turnId, itemId: id, textDelta: 'Hi there.' },
+      {
+        type: 'item.completed',
+        item: { ...message, status: 'completed', text: 'Hi there.', durationMs: 25 },
+      },
+      { type: 'turn.completed', turnId, status: 'completed' },
+    ])
+    adapter.dispose()
+  })
+
+  it('keeps back-to-back segments apart and fails the open tool when interrupted', async () => {
+    const child = new FakeChild()
+    const adapter = new CursorAdapter({ spawn: () => child })
+    const events: DomainEvent[] = []
+    adapter.on('event', (event) => events.push(event))
+    const thread = await adapter.startThread('C:\\repo')
+    const turnId = await adapter.sendTurn(thread.id, 'go')
+    const say = (text: string) =>
+      `{"type":"assistant","message":{"content":[{"type":"text","text":"${text}"}]}}\n`
+    const run = (subtype: string, callId: string) =>
+      `{"type":"tool_call","subtype":"${subtype}","call_id":"${callId}","tool_call":{"shellToolCall":{"args":{"command":"node a.mjs"}}}}\n`
+
+    // The CLI also flushes its text before a retry or an interaction query,
+    // so two whole segments can follow each other without a tool between.
+    child.stdout.write(
+      say('Checking first.') +
+        run('started', 'call-1') +
+        run('completed', 'call-1') +
+        say('Now') +
+        say('Then this.') +
+        run('started', 'call-2'),
+    )
+    await new Promise((resolve) => setImmediate(resolve))
+    await adapter.interrupt()
+
+    const completedItems = events.flatMap((event) =>
+      event.type === 'item.completed'
+        ? [[event.item.id.slice(turnId.length + 1), event.item.status, event.item.text]]
+        : [],
+    )
+    expect(completedItems).toEqual([
+      ['message', 'completed', 'Checking first.'],
+      ['call-1', 'completed', undefined],
+      ['message-2', 'completed', 'Now'],
+      ['message-3', 'completed', 'Then this.'],
+      ['call-2', 'failed', undefined],
+    ])
+    expect(events.at(-1)).toEqual({ type: 'turn.completed', turnId, status: 'interrupted' })
+  })
+
+  it('fails an open text segment after a tool call when interrupted', async () => {
+    const child = new FakeChild()
+    const adapter = new CursorAdapter({ spawn: () => child })
+    const events: DomainEvent[] = []
+    adapter.on('event', (event) => events.push(event))
+    const thread = await adapter.startThread('C:\\repo')
+    const turnId = await adapter.sendTurn(thread.id, 'go')
+
+    child.stdout.write(
+      [
+        '{"type":"assistant","message":{"content":[{"type":"text","text":"Looking."}]}}',
+        '{"type":"tool_call","subtype":"started","call_id":"call-1","tool_call":{"readToolCall":{"args":{"path":"a.md"}}}}',
+        '{"type":"tool_call","subtype":"completed","call_id":"call-1","tool_call":{"readToolCall":{"args":{"path":"a.md"}}}}',
+        '{"type":"assistant","message":{"content":[{"type":"text","text":"Half an answer"}]}}',
+        '',
+      ].join('\n'),
+    )
+    await new Promise((resolve) => setImmediate(resolve))
+    await adapter.interrupt()
+
+    const messages = events.flatMap((event) =>
+      event.type === 'item.completed' && event.item.type === 'message' ? [event.item] : [],
+    )
+    expect(messages).toEqual([
+      expect.objectContaining({ id: `${turnId}-message`, status: 'completed', text: 'Looking.' }),
+      expect.objectContaining({
+        id: `${turnId}-message-2`,
+        status: 'failed',
+        text: 'Half an answer',
+      }),
+    ])
+    expect(events.at(-1)).toEqual({ type: 'turn.completed', turnId, status: 'interrupted' })
   })
 
   it('lets the next turn start while the finished process is still exiting', async () => {

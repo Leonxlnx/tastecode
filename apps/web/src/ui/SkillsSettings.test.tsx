@@ -487,4 +487,78 @@ describe('Agent Skills settings', () => {
     expect(failures.querySelectorAll('.set-notice__line')).toHaveLength(2)
     expect(failures.textContent).toContain('SKILL.md is empty · /work/project/.agents/skills/empty')
   })
+
+  it('holds a long description to two lines across the row, with Show more to open it', async () => {
+    const long = 'Reviews interface decisions against the house rules. '.repeat(8).trim()
+    // happy-dom lays nothing out: a clamped long description reports more
+    // content than it shows, a short one fits.
+    const scrollHeight = vi
+      .spyOn(HTMLElement.prototype, 'scrollHeight', 'get')
+      .mockImplementation(function (this: HTMLElement) {
+        return this.textContent === long ? 72 : 18
+      })
+    const clientHeight = vi
+      .spyOn(HTMLElement.prototype, 'clientHeight', 'get')
+      .mockImplementation(function (this: HTMLElement) {
+        return this.classList.contains('set-entity__detail--clamped') ? 36 : 72
+      })
+    const transport = client(async () => ({
+      capabilities: { inventory: true, configure: true, install: false },
+      skills: [
+        { ...skill, description: long, dependencyErrors: [] },
+        { ...skill, id: 'short', displayName: 'Short', dependencyErrors: [] },
+      ],
+      errors: [],
+    }))
+    try {
+      render(
+        <SkillsSettings
+          transport={transport}
+          provider="codex"
+          providerName="Codex"
+          projectPath="/work/project"
+          projectName="Project"
+        />,
+      )
+
+      const description = await screen.findByText(long)
+      const row = description.closest('.set-entity')!
+      // The details run the whole row, beside the main column rather than in it.
+      expect(description.closest('.set-entity__details')?.parentElement).toBe(row)
+      expect(description.closest('.set-entity__main')).toBeNull()
+      expect(row.querySelector('.set-entity__details .set-entity__detail--code')?.textContent).toBe(
+        skill.source.path,
+      )
+      expect(description.classList.contains('set-entity__detail--clamped')).toBe(true)
+
+      const more = screen.getByRole('button', { name: 'Show more about Design Taste' })
+      expect(more.textContent).toBe('Show more')
+      expect(more.getAttribute('aria-expanded')).toBe('false')
+      expect(more.getAttribute('aria-controls')).toBe(description.id)
+      fireEvent.click(more)
+      expect(more.getAttribute('aria-expanded')).toBe('true')
+      expect(more.textContent).toBe('Show less')
+      expect(description.classList.contains('set-entity__detail--clamped')).toBe(false)
+
+      // A click on the text itself closes it again, unless it selects text.
+      const selection = vi.spyOn(window, 'getSelection')
+      selection.mockReturnValue({ type: 'Range' } as Selection)
+      fireEvent.click(description)
+      expect(more.getAttribute('aria-expanded')).toBe('true')
+      selection.mockRestore()
+      fireEvent.click(description)
+      expect(more.getAttribute('aria-expanded')).toBe('false')
+      expect(description.classList.contains('set-entity__detail--clamped')).toBe(true)
+
+      // A description that fits offers nothing to open.
+      const short = screen.getByText('Review interface decisions.')
+      expect(short.hasAttribute('data-expandable')).toBe(false)
+      expect(screen.queryByRole('button', { name: /about Short$/ })).toBeNull()
+      fireEvent.click(short)
+      expect(short.classList.contains('set-entity__detail--clamped')).toBe(true)
+    } finally {
+      scrollHeight.mockRestore()
+      clientHeight.mockRestore()
+    }
+  })
 })

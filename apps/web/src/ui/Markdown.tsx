@@ -15,6 +15,7 @@ import {
 } from './live-markdown.js'
 import { applyCodeWrap } from '../code-wrap.js'
 import { isInlineFileReference } from './file-reference.js'
+import { mayHaveDollarMath } from './math-delimiters.js'
 import { REVEAL_PENDING_ATTRIBUTE, revealClock, type RevealCursor } from './reveal-clock.js'
 import '../styles/markdown.css'
 
@@ -74,6 +75,7 @@ export function needsRichMarkdown(text: string): boolean {
     RICH_MARKDOWN_INLINE.test(text) ||
     RICH_MARKDOWN_STRUCTURE.test(text) ||
     RICH_MARKDOWN_ENTITY.test(text) ||
+    mayHaveDollarMath(text) ||
     hasRepeatedMarker(text, '*') ||
     hasRepeatedMarker(text, '~') ||
     hasPotentialUnderscorePair(text)

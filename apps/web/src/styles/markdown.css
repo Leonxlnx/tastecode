@@ -725,3 +725,27 @@
   color: color-mix(in srgb, var(--reveal-ink, var(--text)) 80%, transparent);
   text-decoration-color: color-mix(in srgb, var(--reveal-decoration, transparent) 80%, transparent);
 }
+
+/* Math (KaTeX). Inline formulas sit on the line at near the reply's size; a
+   display formula scrolls sideways instead of widening the transcript. */
+.md .katex {
+  font-size: 1.1em;
+  white-space: normal;
+}
+
+.md .katex-display {
+  margin: 10px 0 12px;
+  padding-block: 2px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+}
+
+.md .katex-display > .katex {
+  white-space: nowrap;
+}
+
+.md .katex-error {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}

@@ -225,7 +225,7 @@
       <div class="topbar-inner">
         <h1>Feature Inventory</h1>
         <span class="total" id="total">0 checked</span>
-        <span class="meta">2026-11-03 dev f84a6dfc · includes main 41c61109</span>
+        <span class="meta">2026-11-04 dev 7b38f04b · includes main db5fba4d</span>
       </div>
     </div>
 
@@ -554,14 +554,18 @@
                 >Forty-plus wire variants collapsed to base models, effort on the slider
                 <span class="d"
                   >a frame that fails its schema or a listener that throws is logged and the stream
-                  keeps reading; only an oversized frame ends the turn; on Windows a turn starts the
-                  CLI's bundled node.exe instead of the cmd.exe shim, so multi-line prompts and the
-                  first turn of a new chat reach the CLI, and session instructions are kept for the
-                  next turn if the CLI cannot start; models declare lab, family and generation from
-                  their id stems and are ordered by lab (Anthropic, OpenAI, Google, xAI, Cursor,
-                  Moonshot, Z.ai, Meta), newest generation first; six start on: Claude Opus 5.5 1M,
-                  Claude Fable 5.1 1M, GPT-5.6 Sol 1M, Gemini 4 Argon, Grok 4.7 and Composer
-                  2.5</span
+                  keeps reading; only an oversized frame ends the turn; a turn the CLI refuses (exit
+                  code 1 without a result, such as a model outside the plan's usage or a folder it
+                  does not trust) fails with the reason the CLI printed, an Error line without its
+                  class name, instead of "cursor-agent exited with code 1"; the text written before,
+                  between and after tool calls shows as separate messages in order, since each
+                  assistant line is a whole segment; on Windows a turn starts the CLI's bundled
+                  node.exe instead of the cmd.exe shim, so multi-line prompts and the first turn of
+                  a new chat reach the CLI, and session instructions are kept for the next turn if
+                  the CLI cannot start; models declare lab, family and generation from their id
+                  stems and are ordered by lab (Anthropic, OpenAI, Google, xAI, Cursor, Moonshot,
+                  Z.ai, Meta), newest generation first; six start on: Claude Opus 5.5 1M, Claude
+                  Fable 5.1 1M, GPT-5.6 Sol 1M, Gemini 4 Argon, Grok 4.7 and Composer 2.5</span
                 ></span
               ></label
             >
@@ -1188,23 +1192,24 @@
               ><input type="checkbox" /><span
                 >Multiple accounts per provider
                 <span class="d"
-                  >nightly, Codex and Claude Code only (providers that declare multipleAccounts;
-                  Grok and the others run as their one account): each account has its own CLI folder
-                  (CODEX_HOME or CLAUDE_CONFIG_DIR). Settings &gt; Providers lists a provider's
-                  further accounts under its own row (which is the default account, with Set active
-                  to return to it), rows named Codex · Work, each with the roster's minus to remove
-                  it; Add providers opens on Found on this computer, which offers sibling folders a
-                  CLI has used and no account has yet (~/.claude_personal beside ~/.claude,
-                  ~/.codex-deepseek beside ~/.codex, and beside the built-in ~/.codex as well when
-                  CODEX_HOME or CLAUDE_CONFIG_DIR moves the default folder elsewhere; names and
-                  dates only, no file opened and no CLI run, copies kept aside skipped); Ignore
-                  takes one out of that list and out of the count the Providers page names beside
-                  its plus, into an Ignored list folded at the foot of Add providers (kept per
-                  profile, Unignore offers it again); Add account at the foot of Add providers makes
-                  a new, empty folder TasteCode manages (nothing is copied from the default account,
-                  whose settings can hold keys and login pins), or uses an existing folder as it is
-                  and asks it once who is signed in there; a folder that is, holds or sits inside
-                  the default folder, another account's folder or TasteCode's data folder is
+                  >nightly, Codex, Claude Code and Grok (providers that declare multipleAccounts;
+                  Cursor, Antigravity and the others run as their one account, since their CLIs keep
+                  the sign-in where no folder variable reaches it): each account has its own CLI
+                  folder (CODEX_HOME, CLAUDE_CONFIG_DIR or GROK_HOME). Settings &gt; Providers lists
+                  a provider's further accounts under its own row (which is the default account,
+                  with Set active to return to it), rows named Codex · Work, each with the roster's
+                  minus to remove it; Add providers opens on Found on this computer, which offers
+                  sibling folders a CLI has used and no account has yet (~/.claude_personal beside
+                  ~/.claude, ~/.codex-deepseek beside ~/.codex, and beside the built-in ~/.codex as
+                  well when CODEX_HOME or CLAUDE_CONFIG_DIR moves the default folder elsewhere;
+                  names and dates only, no file opened and no CLI run, copies kept aside skipped);
+                  Ignore takes one out of that list and out of the count the Providers page names
+                  beside its plus, into an Ignored list folded at the foot of Add providers (kept
+                  per profile, Unignore offers it again); Add account at the foot of Add providers
+                  makes a new, empty folder TasteCode manages (nothing is copied from the default
+                  account, whose settings can hold keys and login pins), or uses an existing folder
+                  as it is and asks it once who is signed in there; a folder that is, holds or sits
+                  inside the default folder, another account's folder or TasteCode's data folder is
                   refused, links resolved; one action per row (Sign in until the account names who
                   it is, then Set active or Active) after its menu (Rename, Open in Explorer, Set
                   active for an account not signed in yet, and Delete folder for a managed folder;
@@ -1232,33 +1237,49 @@
                   window, such as Session and Weekly, a row each on a short gauge under the account
                   name; a failed read says Unavailable with Retry on its line, one still loading
                   says Checking…), the card's figure is each provider's active account, and a Usage
-                  sheet sums its accounts and lists each one with its tokens and limits. Profile
-                  &gt; Accounts lists further accounts (Codex · Work, plan or Signed out, never an
-                  email). When a turn fails while the chat's account is at a plan limit (a window at
-                  100% that has not reset) and another account of the provider is signed in, the
-                  error offers Continue on Work (a menu, Continue on another account, when there are
-                  several); never automatic. It starts a new chat pinned to that account in the same
-                  project (an isolated chat's branch as base, in a checkout of its own that gets the
-                  earlier checkout's uncommitted changes copied in; when they cannot be copied, the
-                  first prompt and the new chat's note say which folder still holds them), with the
-                  failed request in its composer. Claude Code and Codex carry the earlier chat's own
-                  session on in the new account's folder (Claude Code a copy of its transcript under
-                  a new id, Codex a fork of its rollout copied with the rollouts it was forked
-                  from), so tool results and reasoning come along and the first prompt is just the
-                  request; a carried session whose first turn fails before any answer gives way to a
-                  fresh one that gets the conversation as a handover. Where the session cannot be
-                  carried on, or lacks part of the conversation, the first prompt carries the
-                  earlier chat's conversation as untrusted context (its first request, the latest
-                  exchange, every other user message and the assistant's messages newest first, then
-                  tool steps cut to their command line, exit code or file paths in what is left of
-                  64,000 characters, preceded by any chat it continued itself up to where it was
-                  continued; kept in the provider's own session), the transcript shows only the
-                  user's words, and until its first message the new chat says Continues "title" on
-                  Work in a neutral note with Open (for an isolated chat, also that its uncommitted
-                  changes are already in this chat's checkout, or where they still are). The earlier
-                  chat is left as it was; its failed turn's row then reads Continued on Work and
-                  opens the new chat. Not yet: per-account Sign out, MCP/skills inventory and
-                  history import per account</span
+                  sheet sums its accounts and lists each one with its tokens and limits. Above a
+                  provider's account lines the popup sums them into one pool (All accounts, worked
+                  out in the client from the limits it holds until the server sends one): per
+                  window, Session and Weekly told apart by their length (only overall windows count,
+                  not a limit on one model, and an account that reports two of one kind counts the
+                  more used one), the % left of the pool, its size in the provider's cheapest plan
+                  (Weekly · 16× Pro), how much of it is left, how many accounts it counts and which
+                  account resets next, over a bar with a segment per account, as long as its plan is
+                  big and the soonest reset first. Plan sizes: Claude Pro 1, Max 5, Ultra (Max x20)
+                  10 a week and no session window, Team (Standard) 1.25 and Team Premium 6.25 per
+                  session; Codex Plus, Team and Business 1, Pro x5 5 and Pro x20 20 a week with no
+                  session window; an account on any other plan stays out of the sum. The account
+                  whose weekly window resets soonest and that is not at a limit is marked
+                  Recommended, and a new chat starts on it until the user picks an account for new
+                  chats (model picker or Set active, remembered per provider in this app; a further
+                  account the server keeps active counts as picked); the app names that account when
+                  the chat starts, so the server's own recommendation (accounts.pool) never replaces
+                  a pick. Profile &gt; Accounts lists further accounts (Codex · Work, plan or Signed
+                  out, never an email). When a turn fails while the chat's account is at a plan
+                  limit (a window at 100% that has not reset) and another account of the provider is
+                  signed in, the error offers Continue on Work (a menu, Continue on another account,
+                  when there are several); never automatic. It starts a new chat pinned to that
+                  account in the same project (an isolated chat's branch as base, in a checkout of
+                  its own that gets the earlier checkout's uncommitted changes copied in; when they
+                  cannot be copied, the first prompt and the new chat's note say which folder still
+                  holds them), with the failed request in its composer. Claude Code and Codex carry
+                  the earlier chat's own session on in the new account's folder (Claude Code a copy
+                  of its transcript under a new id, Codex a fork of its rollout copied with the
+                  rollouts it was forked from), so tool results and reasoning come along and the
+                  first prompt is just the request; a carried session whose first turn fails before
+                  any answer gives way to a fresh one that gets the conversation as a handover.
+                  Where the session cannot be carried on, or lacks part of the conversation, the
+                  first prompt carries the earlier chat's conversation as untrusted context (its
+                  first request, the latest exchange, every other user message and the assistant's
+                  messages newest first, then tool steps cut to their command line, exit code or
+                  file paths in what is left of 64,000 characters, preceded by any chat it continued
+                  itself up to where it was continued; kept in the provider's own session), the
+                  transcript shows only the user's words, and until its first message the new chat
+                  says Continues "title" on Work in a neutral note with Open (for an isolated chat,
+                  also that its uncommitted changes are already in this chat's checkout, or where
+                  they still are). The earlier chat is left as it was; its failed turn's row then
+                  reads Continued on Work and opens the new chat. Not yet: per-account Sign out,
+                  MCP/skills inventory and history import per account</span
                 ></span
               ></label
             >
@@ -1412,7 +1433,9 @@
                   Codex from a fixed list of the app-server actions /goal, /compact and /review,
                   which its chats send as thread/goal/*, thread/compact/start and review/start
                   requests instead of text (a goal answer shows as a short assistant turn; checked
-                  against a fake app-server only), plus /init, which sends TasteCode's own prompt to
+                  against a fake app-server only; a review is one turn that ends when Codex ends it
+                  and answers with the review, not the reviewer's inner turn and messages; checked
+                  on a Codex 0.166 capture only), plus /init, which sends TasteCode's own prompt to
                   create or improve AGENTS.md as a normal turn (Codex's TUI does the same with its
                   own prompt; checked against a fake app-server only); Grok, OpenCode and other ACP
                   agents from a live chat or a probe (a Grok or ACP chat sends a leading /name
@@ -1783,28 +1806,29 @@
                   complete, a link appears once it closes, task lists show their boxes and file
                   names get their reference box; a screenshot a reply shows by its path on the
                   computer loads through the server; full Markdown and syntax highlighting run from
-                  the exact source at completion; patched Mermaid and DOMPurify releases leave the
-                  production dependency audit clear; assistant prose uses denser type and spacing
-                  without changing prompts, headings, or code; renderer and worker share curated
-                  grammars, with plain-text fallback for other languages; replies use the full
-                  transcript width; a completing rich reply keeps its live rendering until the rich
-                  renderer has loaded and then swaps in one commit, so it never collapses into plain
-                  paragraphs; code blocks render at their real height in the frame they mount,
-                  without Streamdown's 200 px placeholder, so rows below no longer jump; reply times
-                  come from one shared formatter; streamed text is laid out as it arrives and
-                  revealed a character at a time by one animation-frame clock on the CSS Custom
-                  Highlight API, about 100-180 ms behind the provider, with a 3-step fading edge
-                  over the last ~12 characters (never wider than 18), replacing only the highlight
-                  ranges that moved; code chips, file reference icons and list bullets appear with
-                  their first character, and tables and code blocks show their structure first; a
-                  live table appears with its first row, so the header never lays out alone;
-                  numbered and nested lists, rules and code lines stream with their final layout;
-                  while a rich reply streams, its finished Markdown renders ahead, hidden, from its
-                  closed blocks every 300 ms, and a finished reply drains its reveal and then shows
-                  that render in place with code already highlighted, so it does not move or freeze
-                  at completion (under reduced motion the swap renders in a background render);
-                  reduced motion, a hidden window or a missing Highlight API show text as it
-                  lands</span
+                  the exact source at completion; formulas written as \( \), \[ \], $x$ or $$ $$
+                  render with KaTeX from bundled fonts, while prices such as "$5 and $10" and code
+                  stay text; patched Mermaid and DOMPurify releases leave the production dependency
+                  audit clear; assistant prose uses denser type and spacing without changing
+                  prompts, headings, or code; renderer and worker share curated grammars, with
+                  plain-text fallback for other languages; replies use the full transcript width; a
+                  completing rich reply keeps its live rendering until the rich renderer has loaded
+                  and then swaps in one commit, so it never collapses into plain paragraphs; code
+                  blocks render at their real height in the frame they mount, without Streamdown's
+                  200 px placeholder, so rows below no longer jump; reply times come from one shared
+                  formatter; streamed text is laid out as it arrives and revealed a character at a
+                  time by one animation-frame clock on the CSS Custom Highlight API, about 100-180
+                  ms behind the provider, with a 3-step fading edge over the last ~12 characters
+                  (never wider than 18), replacing only the highlight ranges that moved; code chips,
+                  file reference icons and list bullets appear with their first character, and
+                  tables and code blocks show their structure first; a live table appears with its
+                  first row, so the header never lays out alone; numbered and nested lists, rules
+                  and code lines stream with their final layout; while a rich reply streams, its
+                  finished Markdown renders ahead, hidden, from its closed blocks every 300 ms, and
+                  a finished reply drains its reveal and then shows that render in place with code
+                  already highlighted, so it does not move or freeze at completion (under reduced
+                  motion the swap renders in a background render); reduced motion, a hidden window
+                  or a missing Highlight API show text as it lands</span
                 ></span
               ></label
             >
@@ -2566,9 +2590,9 @@
                 <span class="d"
                   >the server refuses a subagent on a provider other than the chat's own unless
                   Settings › Models › Sub-agents allows other providers, or the user's newest prompt
-                  names that provider or one of its models; onboarding asks once (nothing
-                  preselected, unanswered counts as off); ask-mode chats still ask before every
-                  start</span
+                  names that provider or one of its models; onboarding asks once (unanswered counts
+                  as off, so "Only when I ask" shows as the choice in effect, and nothing is stored
+                  until the user picks); ask-mode chats still ask before every start</span
                 ></span
               ></label
             >
@@ -2595,15 +2619,19 @@
                 <span class="d"
                   >a row opens its detail in the tab: one TasteCode started shows its own chat
                   read-only and live, with its approvals and questions answerable and a Stop button;
-                  native Claude Code helpers show their saved delegated prompt, tools and full
-                  answer through an optional adapter capability (draft
-                  <a href="https://github.com/Leonxlnx/tastecode/pull/2079">#2079</a>, not merged).
+                  native Claude Code helpers (<a
+                    href="https://github.com/Leonxlnx/tastecode/pull/2079"
+                    >#2079</a
+                  >) and Codex sub-agents (draft
+                  <a href="https://github.com/Leonxlnx/tastecode/pull/2094">#2094</a>, read from the
+                  sub-agent's own rollout without the parent's copied history) show their saved
+                  delegated prompt, tools and full answer through an optional adapter capability.
                   Only the open detail refreshes while running, every five seconds while the window
                   is visible and once more when it finishes; screenshots show as "[Screenshot
-                  1280×800]" and a long one shows its newest 400 steps with "N earlier steps are not
-                  shown."; unsupported engines keep the task, current tool and report snapshot, and
-                  a finished Claude helper without a saved file adds "This subagent's conversation
-                  was not saved." The back arrow returns to the list</span
+                  1280×800]" (Codex: "[Screenshot]") and a long one shows its newest 400 steps with
+                  "N earlier steps are not shown."; unsupported engines keep the task, current tool
+                  and report snapshot, and a finished Claude helper without a saved file adds "This
+                  subagent's conversation was not saved." The back arrow returns to the list</span
                 ></span
               ></label
             >
@@ -3034,10 +3062,12 @@
                   place of the old provider-capability status line, and Install from folder as the
                   page action; a provider that cannot list skills gets an info notice, skill load
                   errors share one notice with a line each, and each skill is an entity row with its
-                  switch at the end of the leader; .agents/skills are listed only for providers
-                  whose CLI loads them (Codex), while the others show their own skill inventory or
-                  unavailable; Grok and OpenCode list their skills with scope, and their project
-                  skills show here</span
+                  switch at the end of the leader; its description and folder path run the full row
+                  width, and a description longer than two lines is clamped there with Show more (or
+                  a click on the text) to open and close it; .agents/skills are listed only for
+                  providers whose CLI loads them (Codex), while the others show their own skill
+                  inventory or unavailable; Grok and OpenCode list their skills with scope, and
+                  their project skills show here</span
                 ></span
               ></label
             >
@@ -3195,6 +3225,26 @@
           <li>
             <label
               ><input type="checkbox" /><span
+                >Window background: None, Transparent, Image, Effect
+                <span class="d"
+                  >One choice for light and dark. Transparent shows the OS backdrop (Acrylic or Mica
+                  on Windows 11, vibrancy on macOS); the window itself is see-through only for
+                  Transparent and for sidebar translucency in the dark theme, and keeps the theme's
+                  solid base color otherwise. Image keeps a local picture inside the app, blurred
+                  and dimmed behind the panes, with Dim and Blur sliders. Effect is Dither or
+                  Halftone along the top edge, moving slowly as a soft light drifts through it
+                  (still with reduced motion, paused while the window is hidden or out of focus, a
+                  still tile where WebGL is missing), faded by Dim; a stored Dot grid or Grain falls
+                  back to None. For Image and Effect, Settings previews the whole window in
+                  miniature (title bar, sidebar, a chat and the prompt bar in the theme's colors)
+                  over the background, following every slider and color</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
                 >Color only ever means something
                 <span class="d">running, error, success, attention, never decoration</span></span
               ></label
@@ -3290,14 +3340,14 @@
               ><input type="checkbox" /><span
                 >Profile accounts and local activity
                 <span class="d"
-                  >Accounts lists each installed provider that signs in with its plan, Signed in,
-                  Signed out or Unavailable, opens on the last known plans (kept on this device
-                  across launches, sign-in state and plan only, never the email) while every
-                  provider is asked again, and Manage opens Providers; Local activity is a 12-month
-                  heatmap from the shared usage store, with month labels from the first full month,
-                  an Open Usage link and a refresh icon; the streak and the model breakdown are on
-                  Usage now; on nightly a provider's further accounts are listed as their own rows
-                  (see Multiple accounts per provider)</span
+                  >Accounts lists each installed provider that signs in with its plan (Cursor's from
+                  cursor-agent about), Signed in, Signed out or Unavailable, opens on the last known
+                  plans (kept on this device across launches, sign-in state and plan only, never the
+                  email) while every provider is asked again, and Manage opens Providers; Local
+                  activity is a 12-month heatmap from the shared usage store, with month labels from
+                  the first full month, an Open Usage link and a refresh icon; the streak and the
+                  model breakdown are on Usage now; on nightly a provider's further accounts are
+                  listed as their own rows (see Multiple accounts per provider)</span
                 ></span
               ></label
             >
@@ -3345,7 +3395,7 @@
                 searchable
                 <span class="d"
                   >Background work is an open section with inline selects and the shared error
-                  notice; each source is an open section (identity heading, All and None, 40 px
+                  notice; each source is an open section (identity heading, All and None, 30 px
                   leader rows with the 30x18 switch, hidden models muted) with the shared empty
                   line; All and None apply as one change; a large source shows how many of its
                   models the picker shows, a search over name, id and lab, and one collapsed row per
@@ -3368,14 +3418,16 @@
                 <span class="d"
                   >Claude Code and Grok chats on the default account get no generated title: the
                   name their provider gives the chat replaces the first prompt's title, unless the
-                  user renamed it first. When a turn ends and the provider has still given no name
-                  (Claude Code names no chat that opens with a bare greeting), the title model
-                  writes one. Without Claude Code, Luna at medium with a connected Codex
-                  subscription, then Grok 4.6 at low when Grok is connected, otherwise the newest
-                  cost-oriented model at its lowest advertised effort across connected subscription
-                  and custom harness providers; Models settings exposes an explicit model and effort
-                  override, plus Standard/Fast speed for models that support Fast, including Codex;
-                  its note names no providers or models</span
+                  user renamed it first. A chat whose first prompt went to the provider wrapped (a
+                  Design briefing, a handover, earlier context) gets the generated title from the
+                  user's request instead, since the provider would name it after the wrapping. When
+                  a turn ends and the provider has still given no name (Claude Code names no chat
+                  that opens with a bare greeting), the title model writes one. Without Claude Code,
+                  Luna at medium with a connected Codex subscription, then Grok 4.6 at low when Grok
+                  is connected, otherwise the newest cost-oriented model at its lowest advertised
+                  effort across connected subscription and custom harness providers; Models settings
+                  exposes an explicit model and effort override, plus Standard/Fast speed for models
+                  that support Fast, including Codex; its note names no providers or models</span
                 ></span
               ></label
             >

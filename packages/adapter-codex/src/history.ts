@@ -1,13 +1,13 @@
 import { createHash } from 'node:crypto'
-import { createReadStream } from 'node:fs'
-import { readdir, realpath, stat } from 'node:fs/promises'
+import { readdir, stat } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { createInterface } from 'node:readline'
 import type { ProviderHistorySession, ProviderHistorySource } from '@harness/contracts'
 import { parseCodexHistory } from './history-transcript.js'
 import { object, timestamp } from './history-values.js'
+import { allowedFile, jsonLines, stateFiles } from './rollout-files.js'
 import { transcriptRecords } from './rollout-records.js'
+import { readCodexSubagentTranscript } from './subagent-transcript.js'
 import {
   previewTitle,
   readStateIndex,
@@ -15,7 +15,6 @@ import {
   type StateIndex,
 } from './state-index.js'
 
-type JsonObject = Record<string, unknown>
 type SavedFile = { file: string; archived: boolean; size: number; mtimeMs: number }
 type SessionName = { title: string; updatedAt: number }
 type SessionNames = Map<string, SessionName>
@@ -128,6 +127,12 @@ export function createCodexHistorySource(options: CodexHistoryOptions = {}): Pro
       if (saved?.internal || !saved?.locator || !(await allowedFile(home, saved.locator))) return []
       return parseCodexHistory(await transcriptRecords(saved.locator, options?.localTurnIds), saved)
     },
+    // Each sub-agent runs in a Codex thread of its own, whose id its snapshot carries;
+    // the parent's session is not needed to find its rollout.
+    readSubagentTranscript(_session, item) {
+      const id = item.subagent?.transcriptId ?? item.subagent?.id
+      return id ? readCodexSubagentTranscript(home, id) : Promise.resolve([])
+    },
     dispose() {
       known.clear()
       headers.clear()
@@ -192,28 +197,6 @@ async function filesSignature(home: string, files: string[]): Promise<Signature>
   return { signature: parts.join('|'), racy }
 }
 
-async function allowedFile(home: string, file: string): Promise<boolean> {
-  try {
-    const canonical = await realpath(file)
-    // Listing follows a linked sessions folder, so its target is the boundary.
-    const folders = await Promise.all(
-      ['sessions', 'archived_sessions'].map((name) =>
-        realpath(path.join(home, name)).catch(() => undefined),
-      ),
-    )
-    const inside = folders.some((folder) => {
-      if (!folder) return false
-      const relative = path.relative(folder, canonical)
-      return (
-        relative !== '' && !path.isAbsolute(relative) && !relative.split(path.sep).includes('..')
-      )
-    })
-    return inside && path.extname(file) === '.jsonl' && (await stat(file)).isFile()
-  } catch {
-    return false
-  }
-}
-
 async function savedFiles(
   home: string,
   known: (file: string) => SavedFile | undefined,
@@ -250,16 +233,6 @@ async function savedFiles(
     ),
   )
   return result
-}
-
-/** Codex's state databases, newest schema first. */
-async function stateFiles(home: string): Promise<string[]> {
-  try {
-    const files = (await readdir(home)).filter((file) => /^state_\d+\.sqlite$/.test(file))
-    return files.sort((a, b) => Number(b.match(/\d+/)?.[0]) - Number(a.match(/\d+/)?.[0]))
-  } catch {
-    return []
-  }
 }
 
 async function sessionNames(home: string): Promise<SessionNames> {
@@ -305,25 +278,4 @@ async function readHeader(saved: SavedFile): Promise<ProviderHistorySession | nu
     }
   }
   return null
-}
-
-async function* jsonLines(file: string): AsyncGenerator<JsonObject> {
-  const input = createReadStream(file, { encoding: 'utf8' })
-  const lines = createInterface({ input, crlfDelay: Infinity })
-  try {
-    for await (const line of lines) {
-      try {
-        const value: unknown = JSON.parse(line)
-        if (value !== null && typeof value === 'object' && !Array.isArray(value))
-          yield value as JsonObject
-      } catch {
-        /* Partial trailing writes and malformed rows cannot hide the rest. */
-      }
-    }
-  } catch {
-    /* Missing and concurrently removed history files are normal. */
-  } finally {
-    lines.close()
-    input.destroy()
-  }
 }

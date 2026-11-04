@@ -137,10 +137,14 @@ describe('first-run onboarding', () => {
 
     expect(screen.getByRole('heading', { name: 'Sub-agents on other providers' })).toBeTruthy()
     expect(current()).toBe('Sub-agents')
-    // Nothing is preselected: moving on leaves the answer open, which counts as off.
-    expect(screen.getAllByRole('radio').some((radio) => (radio as HTMLInputElement).checked)).toBe(
-      false,
-    )
+    // An open answer counts as off, so "Only when I ask" shows as the choice in
+    // effect; moving on leaves the answer open.
+    expect(
+      screen
+        .getAllByRole('radio')
+        .filter((radio) => (radio as HTMLInputElement).checked)
+        .map((radio) => radio.closest('label')?.textContent),
+    ).toEqual([expect.stringMatching(/^Only when I ask/)])
     next()
 
     expect(screen.getByRole('heading', { name: 'Open your first project' })).toBeTruthy()
@@ -542,6 +546,19 @@ describe('sub-agents page', () => {
       fireEvent.click(screen.getByRole('radio', { name: /^Only when I ask/ }))
     })
     expect(request).toHaveBeenLastCalledWith('subagents.updateSettings', { otherProviders: false })
+  })
+
+  it('shows the choice in effect before an answer, without storing it', async () => {
+    const request = vi.fn(async () => ({}))
+    await act(async () => {
+      renderOnboarding({ transport: { request } as unknown as Props['transport'] })
+    })
+    toSubagentsPage()
+    expect(
+      (screen.getByRole('radio', { name: /^Only when I ask/ }) as HTMLInputElement).checked,
+    ).toBe(true)
+    expect((screen.getByRole('radio', { name: /^Allow/ }) as HTMLInputElement).checked).toBe(false)
+    expect(request).not.toHaveBeenCalledWith('subagents.updateSettings', expect.anything())
   })
 
   it('shows an earlier answer', async () => {

@@ -526,6 +526,28 @@ const defaultServices = {
 const accountServices = new Map<ProviderId, (accountHome: string) => ProviderServices>([
   ['codex', () => ({})],
   [
+    'grok',
+    (accountHome) => ({
+      ...defaultServices.grok,
+      projectInventory: {
+        ...defaultServices.grok.projectInventory,
+        discover: async (projectPath, options) =>
+          (await loadGrok()).discoverGrokProject(projectPath, {
+            ...options,
+            grokHome: accountHome,
+          }),
+        watchPaths: async (projectPath) =>
+          (await loadGrok()).grokInventoryWatchPaths(projectPath, {
+            ...process.env,
+            GROK_HOME: accountHome,
+          }),
+      },
+      account: async () => (await loadGrok()).grokAccount({ accountHome }),
+      usageLimitSource: async () => (await loadGrok()).grokLimitSource(undefined, accountHome),
+      signOut: async () => (await loadGrok()).signOutGrok({ accountHome }),
+    }),
+  ],
+  [
     'claude-code',
     (accountHome) => ({
       ...defaultServices['claude-code'],

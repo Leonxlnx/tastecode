@@ -5,29 +5,36 @@ import type { AppBackgroundEffect } from './app-background.js'
  * and used as a CSS mask over the text colour (app-background.css), so one
  * tile reads in light and dark and follows the theme without being rebuilt.
  * Both run horizontally (repeat-x) and fade out down the window from its top
- * edge; nothing in them moves or is drawn again after the first paint.
+ * edge. They are each effect standing still: what shows wherever the moving
+ * canvas (app-background-motion.ts) cannot be drawn.
  */
 export type EffectPattern = {
   /** A CSS url() of the tile. */
   image: string
   /** Its CSS background/mask size: width and height in CSS pixels. */
   size: string
+  /** The same size as numbers, for a preview that draws the tile smaller. */
+  width: number
+  height: number
 }
 
 /** Columns of the dither tile: one turn of the 8×8 Bayer matrix. */
 const DITHER_COLUMNS = 8
 /** Rows of the dither tile, top to bottom. */
-const DITHER_ROWS = 224
+export const DITHER_ROWS = 224
 /** CSS pixels per dither cell, so the cells read as pixels. */
-const DITHER_CELL = 2
+export const DITHER_CELL = 2
 /** Share of cells lit in the top row; the fade runs to none at the bottom. */
-const DITHER_TOP = 0.6
+export const DITHER_TOP = 0.6
 
 /** Distance between halftone dots in a column, in CSS pixels. */
-const HALFTONE_PITCH = 8
+export const HALFTONE_PITCH = 8
 const HALFTONE_ROWS = 56
 /** Radius of the largest dot, at the top edge. */
-const HALFTONE_RADIUS = 3.4
+export const HALFTONE_RADIUS = 3.4
+
+/** How far down the window both effects reach, in CSS pixels: the tiles' height. */
+export const EFFECT_BAND = DITHER_ROWS * DITHER_CELL
 
 /** The 8×8 ordered-dither (Bayer) threshold matrix, values 0 to 63. */
 export function bayerMatrix(): number[][] {
@@ -99,6 +106,8 @@ function ditherPattern(): EffectPattern {
     // Hard cell edges, so each cell reads as a pixel when scaled up.
     image: svgUrl(DITHER_COLUMNS, DITHER_ROWS, 'crispEdges', `<path d="${path}"/>`),
     size: `${width}px ${height}px`,
+    width,
+    height,
   }
 }
 
@@ -124,23 +133,21 @@ function halftonePattern(): EffectPattern {
   return {
     image: svgUrl(width, height, 'geometricPrecision', circles),
     size: `${width}px ${height}px`,
+    width,
+    height,
   }
 }
 
-const patterns = new Map<AppBackgroundEffect, EffectPattern | undefined>()
+const patterns = new Map<AppBackgroundEffect, EffectPattern>()
 
-/**
- * The tile an effect is drawn from, built on first use and then reused.
- * Undefined for effects painted by CSS alone (dot grid, grain).
- */
-export function effectPattern(effect: AppBackgroundEffect): EffectPattern | undefined {
-  if (!patterns.has(effect)) {
-    patterns.set(
-      effect,
-      effect === 'dither' ? ditherPattern() : effect === 'halftone' ? halftonePattern() : undefined,
-    )
+/** The tile an effect is drawn from, built on first use and then reused. */
+export function effectPattern(effect: AppBackgroundEffect): EffectPattern {
+  let pattern = patterns.get(effect)
+  if (!pattern) {
+    pattern = effect === 'dither' ? ditherPattern() : halftonePattern()
+    patterns.set(effect, pattern)
   }
-  return patterns.get(effect)
+  return pattern
 }
 
 /** The CSS variables that hand an effect's tile to app-background.css. */
@@ -151,5 +158,5 @@ export type EffectPatternStyle = {
 
 export function effectPatternStyle(effect: AppBackgroundEffect): EffectPatternStyle {
   const pattern = effectPattern(effect)
-  return pattern ? { '--app-bg-pattern': pattern.image, '--app-bg-pattern-size': pattern.size } : {}
+  return { '--app-bg-pattern': pattern.image, '--app-bg-pattern-size': pattern.size }
 }

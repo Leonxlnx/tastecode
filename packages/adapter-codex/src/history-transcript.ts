@@ -29,9 +29,14 @@ export function parseCodexHistory(
 ): DomainEvent[] {
   const turns: SavedTurn[] = []
   const nativeTurns = new Map<string, SavedTurn>()
+  /**
+   * A turn Codex runs inside another, by its root turn. Codex 0.166 starts a
+   * review's reviewer this way and never ends it (fixtures/review-rollout-codex-0.166.jsonl).
+   */
+  const innerTurns = new Map<string, string>()
   let current: SavedTurn | undefined
   function turn(id: unknown, createdAt: number, start = false): SavedTurn {
-    const nativeId = typeof id === 'string' ? id : undefined
+    const nativeId = typeof id === 'string' ? (innerTurns.get(id) ?? id) : undefined
     const existing = nativeId ? nativeTurns.get(nativeId) : undefined
     if (existing) {
       // A late item or end of an earlier turn joins it, but the records
@@ -60,6 +65,8 @@ export function parseCodexHistory(
       record.type === 'turn_context' ||
       (record.type === 'event_msg' && payload.type === 'task_started')
     ) {
+      const root = innerRoot(payload)
+      if (root) innerTurns.set(String(payload.turn_id), root)
       turn(payload.turn_id, timestamp(payload.started_at, createdAt), true)
       return
     }
@@ -67,6 +74,8 @@ export function parseCodexHistory(
       record.type === 'event_msg' &&
       ['task_complete', 'turn_aborted', 'task_failed'].includes(String(payload.type))
     ) {
+      // An inner turn's end does not end the turn it runs in.
+      if (innerTurns.has(String(payload.turn_id))) return
       const active = turn(payload.turn_id, createdAt)
       active.status =
         payload.type === 'turn_aborted'
@@ -150,30 +159,59 @@ export function parseCodexHistory(
   return events
 }
 
+/** The root turn a started turn runs inside, when it is not its own. */
+export function innerRoot(payload: RecordValue): string | undefined {
+  const root = payload.root_turn_id
+  return typeof root === 'string' && typeof payload.turn_id === 'string' && root !== payload.turn_id
+    ? root
+    : undefined
+}
+
+/**
+ * Messages between EnteredReviewMode and ExitedReviewMode are the reviewer's:
+ * its prompt, and the review handed back to the model. The review itself is
+ * the message after them.
+ */
+function withoutReviewerMessages(entries: Entry[]): Entry[] {
+  let reviewing = false
+  return entries.filter(({ kind, payload }) => {
+    if (kind === 'rich' && payload.type === 'EnteredReviewMode') reviewing = true
+    else if (kind === 'rich' && payload.type === 'ExitedReviewMode') reviewing = false
+    const message =
+      kind === 'rich'
+        ? payload.type === 'UserMessage' || payload.type === 'AgentMessage'
+        : kind === 'response'
+          ? payload.type === 'message'
+          : payload.type === 'user_message' || payload.type === 'agent_message'
+    return !reviewing || !message
+  })
+}
+
 function turnItems(turn: SavedTurn, root: string): HistoryItem[] {
+  const entries = withoutReviewerMessages(turn.entries)
   const mapped: Array<HistoryItem & { kind: Entry['kind']; index: number }> = []
   const richIds = new Set(
-    turn.entries
+    entries
       .filter((entry) => entry.kind === 'rich')
       .map((entry) => entry.payload.id)
       .filter((id) => typeof id === 'string'),
   )
   const outputs = new Map(
-    turn.entries
+    entries
       .filter(
         (entry) => entry.kind === 'response' && String(entry.payload.type).endsWith('_output'),
       )
       .map((entry) => [entry.payload.call_id, entry.payload.output]),
   )
-  const userKind = turn.entries.some(
+  const userKind = entries.some(
     (entry) => entry.kind === 'rich' && entry.payload.type === 'UserMessage',
   )
     ? 'rich'
-    : turn.entries.some((entry) => entry.kind === 'event' && entry.payload.type === 'user_message')
+    : entries.some((entry) => entry.kind === 'event' && entry.payload.type === 'user_message')
       ? 'event'
       : 'response'
 
-  for (const entry of turn.entries) {
+  for (const entry of entries) {
     const base = {
       id:
         typeof entry.payload.id === 'string' ? entry.payload.id : `${turn.id}:item:${entry.index}`,

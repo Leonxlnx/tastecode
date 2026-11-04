@@ -42,12 +42,18 @@ export function windowThemeSource(preference: unknown): 'system' | 'light' | 'da
  * The caption may carry an alpha byte (#rrggbbaa): with a window background
  * the page's title bar is see-through, and the buttons must not paint an
  * opaque box over it.
+ *
+ * `seeThrough` is set while the page shows what is behind the window
+ * (Window background › Transparent); the window colour then turns
+ * transparent where the OS draws a material (window-material.ts). Absent
+ * means opaque, which is also what a file from an older version reads as.
  */
 export type WindowChrome = {
   theme: 'light' | 'dark'
   background: string
   caption: string
   symbol: string
+  seeThrough?: true
 }
 
 const HEX_COLOR = /^#[0-9a-f]{6}$/i
@@ -59,7 +65,7 @@ export function parseWindowChrome(value: unknown): WindowChrome {
     throw new Error('Invalid window chrome')
   }
   const candidate = value as Record<string, unknown>
-  const { theme, background, caption, symbol } = candidate
+  const { theme, background, caption, symbol, seeThrough } = candidate
   if (
     (theme !== 'light' && theme !== 'dark') ||
     typeof background !== 'string' ||
@@ -67,11 +73,15 @@ export function parseWindowChrome(value: unknown): WindowChrome {
     typeof symbol !== 'string' ||
     !HEX_COLOR.test(background) ||
     !HEX_COLOR_WITH_ALPHA.test(caption) ||
-    !HEX_COLOR.test(symbol)
+    !HEX_COLOR.test(symbol) ||
+    (seeThrough !== undefined && typeof seeThrough !== 'boolean')
   ) {
     throw new Error('Invalid window chrome')
   }
-  return { theme, background, caption, symbol }
+  // Kept only when on, so an opaque window's chrome reads and saves as before.
+  return seeThrough === true
+    ? { theme, background, caption, symbol, seeThrough }
+    : { theme, background, caption, symbol }
 }
 
 export function windowChromeOptions(chrome: WindowChrome) {

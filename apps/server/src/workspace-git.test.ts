@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { DubiousOwnership } from './git-ownership.js'
 import { commitCheckout, gitError, pushCheckout } from './workspace-git.js'
 
 const temporary: string[] = []
@@ -47,6 +48,18 @@ async function checkout(): Promise<{ root: string; work: string; remote: string 
   git(work, 'remote', 'add', 'origin', remote)
   git(work, 'push', '-q', '-u', 'origin', 'main')
   return { root, work, remote }
+}
+
+/**
+ * Git's own test switch refuses the repository as if another account owned
+ * it, and an empty global config keeps this machine's safe.directory out.
+ */
+async function asAnotherOwner(root: string): Promise<void> {
+  const config = path.join(root, 'empty.gitconfig')
+  await writeFile(config, '')
+  vi.stubEnv('GIT_TEST_ASSUME_DIFFERENT_OWNER', '1')
+  vi.stubEnv('GIT_CONFIG_GLOBAL', config)
+  vi.stubEnv('GIT_CONFIG_NOSYSTEM', '1')
 }
 
 describe('committing a checkout', () => {
@@ -137,10 +150,30 @@ describe('committing a checkout', () => {
       commitCheckout(await folder(), { message: 'x', includeUntracked: true }),
     ).rejects.toThrow('This folder is not a git checkout.')
   })
+
+  it('says git refuses a checkout another user owns, not that there is none', async () => {
+    const { root, work } = await checkout()
+    await asAnotherOwner(root)
+    const refused = await commitCheckout(work, { message: 'x', includeUntracked: true }).catch(
+      (error: unknown) => error,
+    )
+    expect(refused).toBeInstanceOf(DubiousOwnership)
+    expect((refused as DubiousOwnership).message).toContain(work)
+  })
   // Every step spawns git, which takes a while on a busy Windows machine.
 }, 120_000)
 
 describe('pushing a checkout', () => {
+  it('refuses a folder that is not a checkout, and names an ownership refusal', async () => {
+    await expect(pushCheckout(await folder())).rejects.toThrow('This folder is not a git checkout.')
+
+    const { root, work } = await checkout()
+    await asAnotherOwner(root)
+    const refused = await pushCheckout(work).catch((error: unknown) => error)
+    expect(refused).toBeInstanceOf(DubiousOwnership)
+    expect((refused as DubiousOwnership).message).toContain(work)
+  })
+
   it('publishes a new branch under its own name and tracks it', async () => {
     const { work, remote } = await checkout()
     git(work, 'switch', '-q', '-c', 'feature/review-push')
