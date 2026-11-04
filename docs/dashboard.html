@@ -291,12 +291,37 @@
           <a href="./feature-inventory.html">Inventory</a>
           <a href="./CLAUDE-HANDOFF.md">Claude handoff</a>
         </nav>
-        <span class="meta">2026-11-04 dev 1f6aa7c3 · nightly 16bdd523 · main db5fba4d</span>
+        <span class="meta">2026-11-04 dev 179282fa · nightly 16bdd523 · main db5fba4d</span>
       </div>
     </div>
 
     <div class="wrap">
       <section id="scope">
+        <p>
+          November 4, afternoon: the findings from the overnight run that were not fixed in the
+          morning are merged into dev for v0.5.1 (179282fa), with Leon handing the taste calls to
+          the agents: replies render math with KaTeX (\( \), \[ \], $x$ and $$, prices stay text,
+          #2124, license inventory #2129); a new chat starts with Design off, a folder without Git
+          offers Isolated disabled with its reason, and a failed prompt stays with its chat (#2122,
+          #2132); a background chat's Design preview opens only in that chat (#2123, contracts:
+          optional threadId on the capture request); onboarding shows "Only when I ask" as the
+          sub-agent choice in effect (#2125); the sidebar keeps the projects the user opened open
+          after a reload (#2126); Undo on an edits card asks first and says which files it deletes
+          (#2127); copy: Git's ownership fix without literal backticks, a failed pull-request search
+          says so instead of "capped" (contracts: optional searchFailed), the switch divider names
+          the account and the model's display name, and Claude's prose before Design JSON stays
+          (#2128); Cursor declares that it cannot ask first, the picker disables it and the composer
+          never raises the access level (#2131, contracts: optional askFirst); generated chat titles
+          drop markdown and half words (#2133); edit cards show paths relative to the project
+          (#2134); the slow rollback test got a scoped timeout (#2130); the Effect window background
+          draws from one repeating timer instead of a new timer and animation frame per frame
+          (#2135; headless software-WebGL measurement only: memory growth 1.3 → 0.2 MB/min, a 20-min
+          check on a real GPU window is open). Verified: unit tests per PR, a packaged Windows check
+          build at fdd30496 (onboarding, math with Codex, sidebar memory, switch divider, composer
+          Design state), and hosted CI run 41841594988 on cc9c0f33. Not verified live: Undo's
+          confirmation (no undoable diff appeared in the check), the background preview panel,
+          Cursor's Ask first, and anything on macOS beyond CI.
+        </p>
         <p>
           November 4, morning: nine fixes from an overnight run of v0.5.0 in the installed app are
           merged into dev for v0.5.1 (1f6aa7c3): an image dropped from the file manager previews in
