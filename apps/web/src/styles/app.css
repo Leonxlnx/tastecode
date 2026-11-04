@@ -1699,7 +1699,7 @@
   border-color: var(--composer-hairline-focus);
 }
 
-.composer__box.is-dropping .composer__prompt {
+.composer__box.is-dropping :is(.composer__prompt, .composer__shelf--project) {
   border-color: var(--text-2);
   background: var(--surface-2);
 }
@@ -1714,9 +1714,7 @@
   min-height: 32px;
   margin: 0;
   padding: 1px 10px;
-  background: var(--bg-shelf);
   border-radius: var(--r-composer) var(--r-composer) 0 0;
-  box-shadow: inset 0 -1px color-mix(in srgb, var(--line) 70%, transparent);
 }
 
 .composer__shelf::after {
@@ -1725,9 +1723,34 @@
   bottom: calc(-1 * var(--r-composer));
   left: 0;
   height: calc(var(--r-composer) + 2px);
-  background: var(--bg-shelf);
   content: '';
   pointer-events: none;
+}
+
+/* New chat: shelf and prompt are one surface with one edge and shadow. */
+.is-new-session .composer__box {
+  box-shadow: var(--composer-shadow);
+}
+
+.composer__shelf--project {
+  background: var(--composer-surface);
+  border: 1px solid var(--composer-hairline);
+  border-bottom: 0;
+  transition: border-color var(--dur-fast) var(--ease-out);
+}
+
+.composer__shelf--project::after {
+  content: none;
+}
+
+.composer__box:has(.composer__prompt:focus-within) .composer__shelf--project {
+  border-color: var(--composer-hairline-focus);
+}
+
+.is-shelved .composer__prompt {
+  border-top: 0;
+  border-radius: 0 0 var(--r-composer) var(--r-composer);
+  box-shadow: none;
 }
 
 .composer__shelf .menuwrap {

@@ -2040,7 +2040,7 @@ function ComposerComponent(props: {
             onDismiss={() => area.current?.focus()}
           />
           {props.newSession ? (
-            <div className="composer__shelf">
+            <div className="composer__shelf composer__shelf--project">
               <Menu
                 label="Choose project"
                 drop="down"
