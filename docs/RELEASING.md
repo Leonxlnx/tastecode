@@ -33,9 +33,10 @@ limits popup, more Grok accounts, the smoother composer and menus, the window ba
 the calmer first start, and the fixes from the overnight run of 0.5.0.
 
 The Windows installer was built on the release owner's machine and remains unsigned. The
-macOS maintainer built both DMGs on one Apple Silicon Mac
-([steps](#both-mac-builds-on-one-apple-silicon-mac-from-051)); the arm64 DMG is Developer ID
-signed and notarized.
+macOS maintainer, Karol (Blueemi), built and uploaded both DMGs
+([steps](#both-mac-builds-on-one-apple-silicon-mac-from-051)). Signing, notarization and
+Gatekeeper for both DMGs follow his report, which is still pending. The SHA-256 values below
+are GitHub's digests of the uploaded files.
 
 | Installer                       |     Bytes | SHA-256                                                            |
 | ------------------------------- | --------: | ------------------------------------------------------------------ |
