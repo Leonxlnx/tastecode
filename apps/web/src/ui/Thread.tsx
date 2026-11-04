@@ -68,6 +68,7 @@ import {
 import type { Transport } from '../transport.js'
 import { Approval } from './Approval.js'
 import { ChangeStats, Diff, parseDiff } from './Diff.js'
+import { ProjectRootContext, projectRelativePath } from './project-relative-path.js'
 import { parseToolCall, toolArgumentEntries, toolArgumentSnippet } from './tool-call-text.js'
 import { CopyButton } from './CopyButton.js'
 import { LazyMediaViewer as MediaViewer, preloadMediaViewer } from './LazyMediaViewer.js'
@@ -1352,7 +1353,7 @@ export const Thread = memo(function Thread(props: ThreadProps) {
     // of a scroll container scrolls away with the content — Ctrl+F used to
     // yank the transcript to the top just to show the find bar, and "Jump to
     // latest" rendered below the viewport exactly when it was needed.
-    <ThreadContexts measureRow={measureRow} chatImages={chatImages}>
+    <ThreadContexts measureRow={measureRow} chatImages={chatImages} projectPath={props.projectPath}>
       <div className="thread-shell">
         {finding ? (
           <Suspense fallback={<FindBarSkeleton />}>
@@ -1574,15 +1575,19 @@ export const Thread = memo(function Thread(props: ThreadProps) {
 function ThreadContexts({
   measureRow,
   chatImages,
+  projectPath,
   children,
 }: {
   measureRow: ContextType<typeof RowMeasureContext>
   chatImages: ContextType<typeof ChatImageContext>
+  projectPath: string | undefined
   children: ReactNode
 }) {
   return (
     <ChatImageContext.Provider value={chatImages}>
-      <RowMeasureContext.Provider value={measureRow}>{children}</RowMeasureContext.Provider>
+      <ProjectRootContext.Provider value={projectPath}>
+        <RowMeasureContext.Provider value={measureRow}>{children}</RowMeasureContext.Provider>
+      </ProjectRootContext.Provider>
     </ChatImageContext.Provider>
   )
 }
@@ -2728,13 +2733,16 @@ function FileChangeDetail({
   diff: ReturnType<typeof parseDiff>
   className: string
 }) {
+  const projectRoot = useContext(ProjectRootContext)
   return (
     <div className={`${className} change-detail`}>
       {diff.fileEntries.length > 1 ? (
         <ul className="change-detail__files">
           {diff.fileEntries.map((file, index) => (
             <li key={`${file.path}:${index}`}>
-              <span className="change-detail__path">{file.path}</span>
+              <span className="change-detail__path" title={file.path}>
+                {projectRelativePath(file.path, projectRoot)}
+              </span>
               <ChangeStats
                 added={file.added}
                 removed={file.removed}
