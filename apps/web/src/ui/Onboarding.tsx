@@ -162,6 +162,8 @@ export function Onboarding(props: {
   // where that cannot play (preview hidden, reduced motion).
   const [exit, setExit] = useState<'morph' | 'fade'>()
   const [enterHeld, setEnterHeld] = useState(false)
+  // The welcome page's start animation ends at once on the first click or key.
+  const [introSkipped, setIntroSkipped] = useState(false)
   // What the preview has been handed so far: the name as of the last time the
   // name page was left, and the agents that have flown into its model picker.
   const [shownName, setShownName] = useState(props.displayName ?? '')
@@ -516,6 +518,9 @@ export function Onboarding(props: {
       aria-modal="true"
       aria-labelledby={titleId}
       data-step={step}
+      data-intro={introSkipped ? 'skipped' : undefined}
+      onPointerDownCapture={() => setIntroSkipped(true)}
+      onKeyDownCapture={() => setIntroSkipped(true)}
       data-closing={closing || undefined}
       data-exit={exit}
       hidden={props.hidden}
