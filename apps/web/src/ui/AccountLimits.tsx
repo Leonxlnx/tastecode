@@ -1,12 +1,4 @@
-import {
-  type CSSProperties,
-  Fragment,
-  type ReactNode,
-  useId,
-  useLayoutEffect,
-  useRef,
-  useState,
-} from 'react'
+import { type CSSProperties, type ReactNode, useId, useLayoutEffect, useRef, useState } from 'react'
 import {
   DEFAULT_ACCOUNT_ID,
   type AccountId,
@@ -51,7 +43,10 @@ export function AccountLimits(props: {
   states: AccountLimitsState[]
   /** Names a provider account; without it a further account reads as "Account". */
   accountLabel?: AccountLabel | undefined
-  /** The account a new chat with the provider starts on; open first where a provider has several. */
+  /**
+   * The account a new chat with the provider starts on. Every account line now
+   * starts closed, so nothing reads it; kept so the sidebar needs no change.
+   */
   activeAccount?: ((provider: ProviderId) => AccountId) | undefined
   /** Each provider's accounts as one pool (account-pool.ts), summed above its accounts. */
   pools?: readonly ProviderPool[] | undefined
@@ -146,7 +141,6 @@ export function AccountLimits(props: {
             provider={group.provider}
             states={group.states}
             label={label}
-            active={props.activeAccount?.(group.provider)}
             pool={props.pools?.find((pool) => pool.provider === group.provider)}
             action={action}
             now={now}
@@ -196,17 +190,15 @@ function RefreshLimits(props: { busy: boolean; onRefresh: () => void }) {
 
 /**
  * A provider with several accounts: its name once, the accounts summed into
- * one pool, then a line per account that opens to that account's full
- * limits. A closed line shows how much is left of each window, Session and
- * Weekly under its name, so the account with room shows at a glance. The
- * account new chats start on is open to begin with, and the one the pool
- * recommends for the next chat is marked.
+ * one pool line, then one compact line per account (its plan, and how much is
+ * left of each window, Session and Weekly, as two short bars) that opens to
+ * that account's full limits. Every line starts closed, so five accounts still
+ * fit in a few rows; the one the pool recommends for the next chat is marked.
  */
 function ProviderAccountLimits(props: {
   provider: ProviderId
   states: AccountLimitsState[]
   label: (state: AccountLimitsState) => string
-  active?: AccountId | undefined
   pool?: ProviderPool | undefined
   action?: ReactNode
   now: number
@@ -216,11 +208,7 @@ function ProviderAccountLimits(props: {
   const name = providerDisplayName(props.provider)
   const pool = props.pool
   const recommended = pool?.recommended
-  const [open, setOpen] = useState<ReadonlySet<AccountId>>(() => {
-    const active = props.active ?? DEFAULT_ACCOUNT_ID
-    const first = accountOf(props.states[0]!)
-    return new Set([props.states.some((state) => accountOf(state) === active) ? active : first])
-  })
+  const [open, setOpen] = useState<ReadonlySet<AccountId>>(() => new Set())
   const toggle = (account: AccountId) =>
     setOpen((current) => {
       const next = new Set(current)
@@ -238,7 +226,9 @@ function ProviderAccountLimits(props: {
           key={limitKey(state.provider, state.accountId)}
           state={state}
           provider={name}
+          providerId={props.provider}
           account={props.label(state)}
+          plan={pool?.accounts.find((account) => account.accountId === accountOf(state))?.plan}
           recommended={recommended !== undefined && accountOf(state) === recommended}
           open={open.has(accountOf(state))}
           now={props.now}
@@ -252,33 +242,36 @@ function ProviderAccountLimits(props: {
 }
 
 /**
- * The provider's accounts summed into one pool, above the accounts: per
- * window, how much of the pool is left, its size in the cheapest plan's
- * units, and a bar with a segment per account, sized by its plan, the one
- * that resets soonest first. Accounts whose plan size is unknown stay out of
- * the sum; the line under the bar says how many are counted.
+ * The provider's accounts summed into one pool, as one line above the
+ * accounts: per window, how much of the pool is left on a bar with a segment
+ * per account, sized by its plan, the one that resets soonest first. The
+ * pool's size in the cheapest plan's units, how many accounts it counts and
+ * which resets next are on hover. Accounts whose plan size is unknown stay
+ * out of the sum.
  */
 function AccountPool(props: { pool: ProviderPool; provider: string; now: number }) {
   return (
     <section className="account-menu__pool" aria-label={`${props.provider} · All accounts`}>
-      <div className="account-menu__pool-head">
-        <span className="account-menu__pool-name">All accounts</span>
+      <span className="account-menu__pool-name">
+        All accounts
         <span className="account-menu__pool-count">{props.pool.accounts.length} accounts</span>
-      </div>
-      {props.pool.windows.map((total) => (
-        <PoolWindowRow
-          key={total.id}
-          pool={props.pool}
-          total={total}
-          provider={props.provider}
-          now={props.now}
-        />
-      ))}
+      </span>
+      <span className="account-menu__glance">
+        {props.pool.windows.map((total) => (
+          <PoolWindow
+            key={total.id}
+            pool={props.pool}
+            total={total}
+            provider={props.provider}
+            now={props.now}
+          />
+        ))}
+      </span>
     </section>
   )
 }
 
-function PoolWindowRow(props: {
+function PoolWindow(props: {
   pool: ProviderPool
   total: PoolWindowTotal
   provider: string
@@ -301,15 +294,17 @@ function PoolWindowRow(props: {
       ? `${total.accounts} of ${pool.accounts.length} accounts`
       : undefined
   return (
-    <div className="account-menu__limit account-menu__pool-window">
-      <div className="account-menu__limit-row">
-        <span className="account-menu__limit-label">
-          {total.label}
-          <span className="account-menu__pool-size"> · {size}</span>
-        </span>
-        <span className="account-menu__limit-value">{left}% left</span>
-      </div>
-      <div
+    <span
+      className="account-menu__glance-item"
+      title={[
+        `${total.label} · ${size}: ${left}% left`,
+        [amount, counted].filter(Boolean).join(' · '),
+        next && reset ? `${next.label} ${reset.label}` : '',
+      ]
+        .filter(Boolean)
+        .join('\n')}
+    >
+      <span
         className="account-menu__pool-bar"
         role="progressbar"
         aria-label={`${props.provider} ${total.label} left, all accounts`}
@@ -336,12 +331,9 @@ function PoolWindowRow(props: {
             </span>
           )
         })}
-      </div>
-      <span className="account-menu__pool-detail">
-        <span>{[amount, counted].filter(Boolean).join(' · ')}</span>
-        {next && reset ? <span title={reset.title}>{`${next.label} ${reset.label}`}</span> : null}
       </span>
-    </div>
+      <span className="account-menu__account-value">{left}%</span>
+    </span>
   )
 }
 
@@ -349,7 +341,10 @@ function PoolWindowRow(props: {
 function AccountLine(props: {
   state: AccountLimitsState
   provider: string
+  providerId: ProviderId
   account: string
+  /** The account's plan, such as "Max x5", when the pool knows it. */
+  plan?: string | undefined
   /** The account the pool recommends for the next chat. */
   recommended?: boolean | undefined
   open: boolean
@@ -365,11 +360,22 @@ function AccountLine(props: {
   const glance = glanced
     .map((limit) => `${limit.label} ${limit.valueLabel ?? `${remaining(limit)}% left`}`)
     .join(', ')
-  const badge = props.recommended ? (
-    <span className="account-menu__account-badge" title="Resets soonest and has room left">
-      Recommended
-    </span>
-  ) : null
+  const badge = (
+    <>
+      <ProviderIcon
+        className="account-menu__account-icon"
+        mark={providerMark(props.providerId)}
+        size={12}
+      />
+      <span className="account-menu__account-name">{props.account}</span>
+      {props.plan ? <span className="account-menu__account-plan">{props.plan}</span> : null}
+      {props.recommended ? (
+        <span className="account-menu__account-badge" title="Resets soonest and has room left">
+          Recommended
+        </span>
+      ) : null}
+    </>
+  )
   const retry = retryable ? (
     <button
       className="account-menu__retry"
@@ -385,7 +391,6 @@ function AccountLine(props: {
     return (
       <div className="account-menu__account-head">
         <span className="account-menu__account-line" title={status?.detail}>
-          <span className="account-menu__account-name">{props.account}</span>
           {badge}
           <span className="account-menu__account-status">{status?.label}</span>
         </span>
@@ -411,18 +416,21 @@ function AccountLine(props: {
           title={props.open ? status?.detail : glance}
           onClick={props.onToggle}
         >
-          <ChevronRight size={12} aria-hidden />
-          <span className="account-menu__account-name">{props.account}</span>
+          <ChevronRight className="account-menu__chevron" size={12} aria-hidden />
           {badge}
           {props.open ? (
             status ? (
               <span className="account-menu__account-status">{status.label}</span>
             ) : null
           ) : (
-            <span className="account-menu__account-glance">
+            <span className="account-menu__glance">
               {glanced.map((limit, index) => (
-                <Fragment key={`${limit.label}:${index}`}>
-                  <span className="account-menu__account-label">{limit.label}</span>
+                <span
+                  key={`${limit.label}:${index}`}
+                  className="account-menu__glance-item"
+                  title={glanceTitle(limit, props.now)}
+                >
+                  <span className="visually-hidden">{limit.label} </span>
                   {limit.valueLabel === undefined ? (
                     <span
                       className="account-menu__account-gauge"
@@ -437,7 +445,7 @@ function AccountLine(props: {
                   >
                     {limit.valueLabel ?? `${remaining(limit)}%`}
                   </span>
-                </Fragment>
+                </span>
               ))}
             </span>
           )}
@@ -461,6 +469,13 @@ function AccountLine(props: {
       ) : null}
     </div>
   )
+}
+
+/** A closed line's window on hover: what is left and when it resets. */
+function glanceTitle(limit: Limit, now: number): string {
+  const value = limit.valueLabel ?? `${remaining(limit)}% left`
+  const reset = limit.resetsAt === undefined ? undefined : resetText(limit.resetsAt, now)
+  return [`${limit.label}: ${value}`, reset?.label].filter(Boolean).join(', ')
 }
 
 function accountOf(state: AccountLimitsState): AccountId {
