@@ -2,7 +2,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Transport } from '../transport.js'
-import { Diff } from './Diff.js'
+import { Diff, parseDiff, undoQuestion } from './Diff.js'
 
 const DIFF = `diff --git a/src/app.ts b/src/app.ts
 index 1a2b3c4..5d6e7f8 100644
@@ -52,10 +52,52 @@ describe('change summary', () => {
     render(<Diff diff={DIFF} onUndo={onUndo} />)
 
     fireEvent.click(screen.getByRole('button', { name: 'Undo' }))
+    expect(onUndo).not.toHaveBeenCalled()
+    expect(screen.getByRole('group', { name: 'Confirm undo' }).textContent).toContain(
+      'Undo these changes? 1 file is restored.',
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Undo changes' }))
 
     expect(screen.getByRole('button', { name: 'Undoing…' }).hasAttribute('disabled')).toBe(true)
     await waitFor(() => expect(onUndo).toHaveBeenCalledOnce())
     await waitFor(() => expect(screen.queryByLabelText('Edited files')).toBeNull())
+  })
+
+  it('keeps the changes when the confirmation is answered with Keep', () => {
+    const onUndo = vi.fn().mockResolvedValue(undefined)
+    render(<Diff diff={DIFF} onUndo={onUndo} />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Keep' }))
+
+    expect(onUndo).not.toHaveBeenCalled()
+    expect(screen.queryByRole('group', { name: 'Confirm undo' })).toBeNull()
+    expect(screen.getByLabelText('Edited files')).toBeTruthy()
+  })
+
+  it('counts the files Undo deletes apart from the ones it restores', () => {
+    const created = `diff --git a/src/new.ts b/src/new.ts
+new file mode 100644
+index 0000000..1a2b3c4
+--- /dev/null
++++ b/src/new.ts
+@@ -0,0 +1 @@
++export const created = true
+diff --git a/src/other.ts b/src/other.ts
+--- /dev/null
++++ b/src/other.ts
+@@ -0,0 +1 @@
++export const other = true`
+    expect(undoQuestion(parseDiff(created).fileEntries)).toBe(
+      'Undo these changes? 2 new files are deleted.',
+    )
+    expect(undoQuestion(parseDiff(`${created}
+${DIFF}`).fileEntries)).toBe(
+      'Undo these changes? 2 new files are deleted and 1 file restored.',
+    )
+    expect(undoQuestion(parseDiff(DIFF).fileEntries)).toBe(
+      'Undo these changes? 1 file is restored.',
+    )
   })
 
   it('keeps the block visible and explains a failed undo', async () => {
@@ -63,6 +105,7 @@ describe('change summary', () => {
     render(<Diff diff={DIFF} onUndo={onUndo} />)
 
     fireEvent.click(screen.getByRole('button', { name: 'Undo' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Undo changes' }))
 
     expect((await screen.findByRole('alert')).textContent).toContain(
       'The files changed after this edit.',

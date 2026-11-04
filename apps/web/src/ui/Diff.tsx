@@ -15,7 +15,8 @@ import { DiffReview } from './DiffReview.js'
  */
 
 type Line = { text: string; kind: 'add' | 'del' | 'meta' | 'hunk' | 'ctx' }
-type FileEntry = { path: string; added: number; removed: number }
+/** `created`: the file did not exist before the turn, so undoing the turn deletes it. */
+type FileEntry = { path: string; added: number; removed: number; created?: boolean }
 type ParsedDiff = {
   lines: Line[]
   added: number
@@ -41,10 +42,13 @@ export function Diff({
   const [undoing, setUndoing] = useState(false)
   const [undoError, setUndoError] = useState<string>()
   const [undone, setUndone] = useState(false)
+  // Undo deletes the files the turn created, so it asks once inside the card first.
+  const [confirmingUndo, setConfirmingUndo] = useState(false)
 
   useEffect(() => {
     setReviewing(false)
     setShowAllFiles(false)
+    setConfirmingUndo(false)
     setUndoing(false)
     setUndoError(undefined)
     setUndone(false)
@@ -65,6 +69,7 @@ export function Diff({
 
   const undo = async () => {
     if (!onUndo || undoing) return
+    setConfirmingUndo(false)
     setUndoing(true)
     setUndoError(undefined)
     try {
@@ -98,8 +103,12 @@ export function Diff({
             <button
               type="button"
               className="diff__review"
+              aria-expanded={confirmingUndo}
               disabled={undoing}
-              onClick={() => void undo()}
+              onClick={() => {
+                setUndoError(undefined)
+                setConfirmingUndo((current) => !current)
+              }}
             >
               {undoing ? 'Undoing…' : 'Undo'}
             </button>
@@ -115,6 +124,22 @@ export function Diff({
           </button>
         </div>
       </div>
+
+      {confirmingUndo ? (
+        <div className="diff__undo-confirm" role="group" aria-label="Confirm undo">
+          <p className="diff__undo-question">{undoQuestion(parsed.fileEntries)}</p>
+          <button type="button" className="diff__review" onClick={() => void undo()}>
+            Undo changes
+          </button>
+          <button
+            type="button"
+            className="diff__review"
+            onClick={() => setConfirmingUndo(false)}
+          >
+            Keep
+          </button>
+        </div>
+      ) : null}
 
       {undoError ? (
         <p className="diff__undo-error" role="alert">
@@ -148,6 +173,18 @@ export function Diff({
       )}
     </section>
   )
+}
+
+/** What Undo does to the files, said before it does it. */
+export function undoQuestion(files: readonly FileEntry[]): string {
+  const created = files.filter((file) => file.created).length
+  const restored = files.length - created
+  const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? '' : 's'}`
+  const deleted = `${plural(created, 'new file')} ${created === 1 ? 'is' : 'are'} deleted`
+  if (created === 0)
+    return `Undo these changes? ${plural(restored, 'file')} ${restored === 1 ? 'is' : 'are'} restored.`
+  if (restored === 0) return `Undo these changes? ${deleted}.`
+  return `Undo these changes? ${deleted} and ${plural(restored, 'file')} restored.`
 }
 
 export function ChangeStats({
@@ -205,10 +242,14 @@ export function parseDiff(diff: string): ParsedDiff {
     if (text.startsWith('diff --git')) {
       addFile(pathFromGitHeader(text))
       lines.push({ text, kind: 'meta' })
+    } else if (!inHunk && text.startsWith('new file mode') && currentFile) {
+      currentFile.created = true
+      lines.push({ text, kind: 'meta' })
     } else if (
       !inHunk &&
       (text.startsWith('+++ ') || text.startsWith('--- ') || text.startsWith('index '))
     ) {
+      if (text.trim() === '--- /dev/null' && currentFile) currentFile.created = true
       if (text.startsWith('+++ ') && currentFile) {
         const destination = text.slice(4).trim()
         if (destination !== '/dev/null') currentFile.path = stripGitPrefix(destination)
