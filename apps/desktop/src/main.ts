@@ -107,6 +107,8 @@ import {
   loadWindowMaterial,
   parseWindowMaterial,
   saveWindowMaterial,
+  windowBackdropOptions,
+  windowBackgroundColor,
   windowMaterialSupport,
   type WindowMaterial,
 } from './window-material.js'
@@ -146,6 +148,8 @@ let savedWindowChrome: string | undefined
 const windowMaterialPath = path.join(productDataPath, 'window-material.json')
 /** The backdrop the window draws now; the renderer changes it for Transparent. */
 let windowMaterial: WindowMaterial | undefined
+/** The colour each window was last given, so an unchanged report repaints nothing. */
+const windowBackgrounds = new WeakMap<BrowserWindow, string>()
 const defaultMainWindowSize = { width: 1180, height: 820 }
 const minimumMainWindowSize = { width: 720, height: 520 }
 const startupStartedAt = Number(process.env['HARNESS_STARTUP_STARTED_AT'])
@@ -589,6 +593,14 @@ function createWindow(): void {
   savedWindowChrome = lastChrome ? JSON.stringify(lastChrome) : undefined
   const initialTheme = lastChrome ? windowChromeOptions(lastChrome) : windowThemeOptions('dark')
   windowMaterial ??= loadWindowMaterial(windowMaterialPath) ?? DEFAULT_WINDOW_MATERIAL
+  const materialSupport = windowMaterialSupport(process.platform, process.getSystemVersion())
+  // A window that showed the desktop through it last time opens that way, so
+  // it does not start as a solid block and clear a moment later.
+  const initialBackground = windowBackgroundColor(
+    initialTheme.backgroundColor,
+    lastChrome?.seeThrough === true,
+    materialSupport,
+  )
   const savedWindowState = loadMainWindowState(mainWindowStatePath)
   const restoredWindowState = restoreMainWindowState(
     savedWindowState,
@@ -606,18 +618,16 @@ function createWindow(): void {
     focusable: true,
     movable: true,
     skipTaskbar: false,
-    backgroundColor: initialTheme.backgroundColor,
+    // Opaque unless the page shows what is behind the window: Electron makes
+    // this the page's base colour too, and an opaque one hides the material.
+    backgroundColor: initialBackground,
     // Real glass, the way Codex does it: the OS draws its blur material
-    // behind the window, and the renderer keeps every surface opaque except
-    // the sidebar column, which is where the material shows through. CSS
+    // behind the window (Windows 11 acrylic/Mica, macOS vibrancy) and shows
+    // it wherever the page and the window colour above are transparent. CSS
     // backdrop-filter cannot do this — inside the page there is nothing
-    // behind the sidebar to blur.
-    ...(process.platform === 'win32'
-      ? {
-          backgroundMaterial: windowMaterial,
-        }
-      : {}),
-    ...(process.platform === 'darwin' ? { vibrancy: 'sidebar' as const } : {}),
+    // behind it to blur. Never a transparent window (Electron's `transparent` option);
+    // see windowBackdropOptions.
+    ...windowBackdropOptions(process.platform, materialSupport, windowMaterial),
     // Draw our own top bar, but keep native window controls on Windows.
     titleBarStyle: 'hidden',
     // Height and colour must match --titlebar-h and --titlebar-bg in the renderer's
@@ -648,6 +658,7 @@ function createWindow(): void {
     },
   })
   mainWindow = window
+  windowBackgrounds.set(window, initialBackground)
   window.webContents.once('did-finish-load', () =>
     window.webContents.setZoomFactor(DEFAULT_ZOOM_FACTOR),
   )
@@ -987,11 +998,17 @@ ipcMain.handle('harness:setWindowChrome', (event, value: unknown) => {
   if (!window) throw new Error('No window for chrome change')
   const chrome = parseWindowChrome(value)
   const options = windowChromeOptions(chrome)
-  // Repainting an opaque background would sit on top of the acrylic/vibrancy
-  // material and kill the sidebar glass; on those platforms the material owns
-  // the window background and only the caption colours follow the theme.
-  if (process.platform !== 'win32' && process.platform !== 'darwin') {
-    window.setBackgroundColor(options.backgroundColor)
+  // The window colour is the page's base: transparent while the page shows
+  // what is behind the window (where the OS draws a material), otherwise the
+  // page's own background, so a theme change mid-session reaches it too.
+  const background = windowBackgroundColor(
+    options.backgroundColor,
+    chrome.seeThrough === true,
+    windowMaterialSupport(process.platform, process.getSystemVersion()),
+  )
+  if (windowBackgrounds.get(window) !== background) {
+    windowBackgrounds.set(window, background)
+    window.setBackgroundColor(background)
   }
   if (process.platform === 'win32' || process.platform === 'linux') {
     window.setTitleBarOverlay(options.titleBarOverlay)
