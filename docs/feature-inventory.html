@@ -1806,28 +1806,29 @@
                   complete, a link appears once it closes, task lists show their boxes and file
                   names get their reference box; a screenshot a reply shows by its path on the
                   computer loads through the server; full Markdown and syntax highlighting run from
-                  the exact source at completion; patched Mermaid and DOMPurify releases leave the
-                  production dependency audit clear; assistant prose uses denser type and spacing
-                  without changing prompts, headings, or code; renderer and worker share curated
-                  grammars, with plain-text fallback for other languages; replies use the full
-                  transcript width; a completing rich reply keeps its live rendering until the rich
-                  renderer has loaded and then swaps in one commit, so it never collapses into plain
-                  paragraphs; code blocks render at their real height in the frame they mount,
-                  without Streamdown's 200 px placeholder, so rows below no longer jump; reply times
-                  come from one shared formatter; streamed text is laid out as it arrives and
-                  revealed a character at a time by one animation-frame clock on the CSS Custom
-                  Highlight API, about 100-180 ms behind the provider, with a 3-step fading edge
-                  over the last ~12 characters (never wider than 18), replacing only the highlight
-                  ranges that moved; code chips, file reference icons and list bullets appear with
-                  their first character, and tables and code blocks show their structure first; a
-                  live table appears with its first row, so the header never lays out alone;
-                  numbered and nested lists, rules and code lines stream with their final layout;
-                  while a rich reply streams, its finished Markdown renders ahead, hidden, from its
-                  closed blocks every 300 ms, and a finished reply drains its reveal and then shows
-                  that render in place with code already highlighted, so it does not move or freeze
-                  at completion (under reduced motion the swap renders in a background render);
-                  reduced motion, a hidden window or a missing Highlight API show text as it
-                  lands</span
+                  the exact source at completion; formulas written as \( \), \[ \], $x$ or $$ $$
+                  render with KaTeX from bundled fonts, while prices such as "$5 and $10" and code
+                  stay text; patched Mermaid and DOMPurify releases leave the production dependency
+                  audit clear; assistant prose uses denser type and spacing without changing
+                  prompts, headings, or code; renderer and worker share curated grammars, with
+                  plain-text fallback for other languages; replies use the full transcript width; a
+                  completing rich reply keeps its live rendering until the rich renderer has loaded
+                  and then swaps in one commit, so it never collapses into plain paragraphs; code
+                  blocks render at their real height in the frame they mount, without Streamdown's
+                  200 px placeholder, so rows below no longer jump; reply times come from one shared
+                  formatter; streamed text is laid out as it arrives and revealed a character at a
+                  time by one animation-frame clock on the CSS Custom Highlight API, about 100-180
+                  ms behind the provider, with a 3-step fading edge over the last ~12 characters
+                  (never wider than 18), replacing only the highlight ranges that moved; code chips,
+                  file reference icons and list bullets appear with their first character, and
+                  tables and code blocks show their structure first; a live table appears with its
+                  first row, so the header never lays out alone; numbered and nested lists, rules
+                  and code lines stream with their final layout; while a rich reply streams, its
+                  finished Markdown renders ahead, hidden, from its closed blocks every 300 ms, and
+                  a finished reply drains its reveal and then shows that render in place with code
+                  already highlighted, so it does not move or freeze at completion (under reduced
+                  motion the swap renders in a background render); reduced motion, a hidden window
+                  or a missing Highlight API show text as it lands</span
                 ></span
               ></label
             >
