@@ -149,6 +149,7 @@ import { preloadWhenIdle } from './idle-preload.js'
 import { NoticePresence } from './ui/NoticePresence.js'
 import type { ComposerError } from './ui/ComposerErrors.js'
 import { LazyThread } from './ui/LazyThread.js'
+import { ModelNameContext, type ModelName } from './model-name.js'
 import { TitleBar } from './ui/TitleBar.js'
 import { ZoomHud } from './ui/ZoomHud.js'
 import { useDeferredArchiveQueue } from './ui/useDeferredArchiveQueue.js'
@@ -3795,6 +3796,13 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
     (requestedProvider, accountId) =>
       accountLabelOf(providerAccounts, requestedProvider, accountId),
     [providerAccounts],
+  )
+  const modelName = useCallback<ModelName>(
+    (requestedProvider, model) =>
+      catalogModels.find(
+        (choice) => choice.provider === requestedProvider && choice.model.id === model,
+      )?.model.displayName,
+    [catalogModels],
   )
   const activeAccount = useCallback(
     (requestedProvider: ProviderId) => activeAccountOf(providerAccounts, requestedProvider),
@@ -7709,38 +7717,40 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
                             >
                               {activeId ? (
                                 <AccountLabelContext.Provider value={accountLabel}>
-                                  <Suspense fallback={<ThreadSkeleton />}>
-                                    <LazyThread
-                                      key={threadEntryKey}
-                                      frameStore={threadFrameStore}
-                                      errorsInComposer
-                                      stopping={stopping}
-                                      loading={loadingThreadId === activeId}
-                                      loadFailure={
-                                        historyFailure?.threadId === activeId
-                                          ? historyFailure.message
-                                          : undefined
-                                      }
-                                      onRetryLoad={retryOpenedHistory}
-                                      projectPath={activePath}
-                                      threadId={activeId}
-                                      transport={transport}
-                                      searchJump={
-                                        searchJump?.threadId === activeId ? searchJump : undefined
-                                      }
-                                      onSearchJumpDone={finishSearchJump}
-                                      revealRequest={threadRevealRequest}
-                                      checkpoints={checkpoints}
-                                      onDecide={decideApproval}
-                                      onAnswerUserInput={answerUserInput}
-                                      onEditMessage={editMessage}
-                                      onRevertCheckpoint={revertCheckpoint}
-                                      onUndoChanges={undoTurnChanges}
-                                      onLoadOlderHistory={loadOlderHistory}
-                                      onLoadCompleteHistory={loadCompleteHistory}
-                                      turnRail
-                                    />
-                                  </Suspense>
+                                  <ModelNameContext.Provider value={modelName}>
+                                    <Suspense fallback={<ThreadSkeleton />}>
+                                      <LazyThread
+                                        key={threadEntryKey}
+                                        frameStore={threadFrameStore}
+                                        errorsInComposer
+                                        stopping={stopping}
+                                        loading={loadingThreadId === activeId}
+                                        loadFailure={
+                                          historyFailure?.threadId === activeId
+                                            ? historyFailure.message
+                                            : undefined
+                                        }
+                                        onRetryLoad={retryOpenedHistory}
+                                        projectPath={activePath}
+                                        threadId={activeId}
+                                        transport={transport}
+                                        searchJump={
+                                          searchJump?.threadId === activeId ? searchJump : undefined
+                                        }
+                                        onSearchJumpDone={finishSearchJump}
+                                        revealRequest={threadRevealRequest}
+                                        checkpoints={checkpoints}
+                                        onDecide={decideApproval}
+                                        onAnswerUserInput={answerUserInput}
+                                        onEditMessage={editMessage}
+                                        onRevertCheckpoint={revertCheckpoint}
+                                        onUndoChanges={undoTurnChanges}
+                                        onLoadOlderHistory={loadOlderHistory}
+                                        onLoadCompleteHistory={loadCompleteHistory}
+                                        turnRail
+                                      />
+                                    </Suspense>
+                                  </ModelNameContext.Provider>
                                 </AccountLabelContext.Provider>
                               ) : (
                                 <Empty
@@ -7781,35 +7791,37 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
                             >
                               {besideId ? (
                                 <AccountLabelContext.Provider value={accountLabel}>
-                                  <Suspense fallback={<ThreadSkeleton />}>
-                                    <LazyThread
-                                      key={split.frozen.entryKey}
-                                      frameStore={threadController.columns[slot]}
-                                      errorsInComposer
-                                      keyboardActive={false}
-                                      loading={loadingThreadId === besideId}
-                                      loadFailure={
-                                        historyFailure?.threadId === besideId
-                                          ? historyFailure.message
-                                          : undefined
-                                      }
-                                      onRetryLoad={retryOpenedHistory}
-                                      projectPath={besideSession?.project.path}
-                                      threadId={besideId}
-                                      transport={transport}
-                                      onSearchJumpDone={finishSearchJump}
-                                      revealRequest={split.frozen.revealRequest}
-                                      checkpoints={NO_CHECKPOINTS}
-                                      onDecide={decideBesideApproval}
-                                      onAnswerUserInput={answerBesideUserInput}
-                                      onEditMessage={editBesideMessage}
-                                      onRevertCheckpoint={revertCheckpoint}
-                                      onUndoChanges={undoTurnChanges}
-                                      onLoadOlderHistory={loadOlderHistory}
-                                      onLoadCompleteHistory={loadCompleteHistory}
-                                      turnRail
-                                    />
-                                  </Suspense>
+                                  <ModelNameContext.Provider value={modelName}>
+                                    <Suspense fallback={<ThreadSkeleton />}>
+                                      <LazyThread
+                                        key={split.frozen.entryKey}
+                                        frameStore={threadController.columns[slot]}
+                                        errorsInComposer
+                                        keyboardActive={false}
+                                        loading={loadingThreadId === besideId}
+                                        loadFailure={
+                                          historyFailure?.threadId === besideId
+                                            ? historyFailure.message
+                                            : undefined
+                                        }
+                                        onRetryLoad={retryOpenedHistory}
+                                        projectPath={besideSession?.project.path}
+                                        threadId={besideId}
+                                        transport={transport}
+                                        onSearchJumpDone={finishSearchJump}
+                                        revealRequest={split.frozen.revealRequest}
+                                        checkpoints={NO_CHECKPOINTS}
+                                        onDecide={decideBesideApproval}
+                                        onAnswerUserInput={answerBesideUserInput}
+                                        onEditMessage={editBesideMessage}
+                                        onRevertCheckpoint={revertCheckpoint}
+                                        onUndoChanges={undoTurnChanges}
+                                        onLoadOlderHistory={loadOlderHistory}
+                                        onLoadCompleteHistory={loadCompleteHistory}
+                                        turnRail
+                                      />
+                                    </Suspense>
+                                  </ModelNameContext.Provider>
                                 </AccountLabelContext.Provider>
                               ) : (
                                 <Empty
