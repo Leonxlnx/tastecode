@@ -1576,6 +1576,12 @@ export const methods = {
     }),
     result: z.object({
       path: z.string(),
+      /**
+       * The absolute folder every path here is relative to: the project, or the session's
+       * isolated checkout, so a client can show a file where it really is. Absent from servers
+       * that predate it.
+       */
+      root: z.string().min(1).optional(),
       entries: z.array(
         z.object({
           name: z.string().min(1),

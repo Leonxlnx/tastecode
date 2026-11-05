@@ -27,6 +27,30 @@ import {
   type ProviderLimitSource,
 } from './protocol.js'
 
+describe('workspace listing', () => {
+  it('names the folder its relative paths belong to, and still reads older servers', () => {
+    const listing = {
+      path: 'src',
+      root: 'C:\\projects\\site\\.worktrees\\chat-1',
+      entries: [
+        {
+          name: 'app.ts',
+          path: 'src/app.ts',
+          kind: 'file',
+          size: 12,
+          modifiedAt: 1,
+          restricted: false,
+        },
+      ],
+    }
+    const result = methods['workspace.listDirectory'].result
+    expect(result.parse(listing)).toEqual(listing)
+    const { root: _root, ...older } = listing
+    expect(result.parse(older)).toEqual(older)
+    expect(result.safeParse({ ...listing, root: '' }).success).toBe(false)
+  })
+})
+
 describe('audit recovery contracts', () => {
   it('preserves a named base branch and rejects empty or excessive refs', () => {
     const start = {
