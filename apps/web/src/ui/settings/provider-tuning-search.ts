@@ -13,6 +13,22 @@ export const TUNING_LABELS = {
   context: 'Context',
   runtime: 'Runtime',
 } as const
+/** The executable path control's label, shared with its search entry. */
+export const EXECUTABLE_PATH_LABEL = 'Executable path'
+export function executablePathSearchId(source: string): string {
+  return `provider:${source}:executable-path`
+}
+/** Every provider row that runs its own CLI shows where that CLI is found. */
+export function executablePathEntries(statuses: readonly ProviderStatus[]): SettingsSearchEntry[] {
+  return statuses
+    .filter((status) => status.id !== 'api' && status.id !== 'acp')
+    .map((status) => ({
+      id: executablePathSearchId(status.id),
+      section: 'providers' as const,
+      title: `${status.displayName} ${EXECUTABLE_PATH_LABEL}`,
+      keywords: 'cli binary command location custom path',
+    }))
+}
 export function tuningSearchId(provider: string, name: string, label: string): string {
   return `provider:${provider}:${name}:${label}`
 }
