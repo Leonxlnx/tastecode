@@ -235,7 +235,8 @@ Linux.
 Browser annotations live entirely in the trusted renderer: an overlay intercepts clicks,
 reads bounded DOM descriptions on demand, and captures the guest's visible pixels. There is no
 new guest preload, IPC, global, event listener, stylesheet or DOM mutation. Leaving the mode
-removes the overlay and stops polling; navigation discards the round. Open shadow boundaries
+removes the overlay and stops polling. Going to another page discards the round; a reload of
+the same page keeps it, because dev servers reload pages under an agent's edits. Open shadow boundaries
 use `>>>` in a DOM path, while frames and closed roots are represented by their host elements.
 Pins follow current element rectangles; removed elements retain their captured reference with
 an explicit missing-element label. A replaced element with the same selector can inherit a pin.
@@ -249,9 +250,10 @@ confusion; it cannot guarantee that an agent will resist every visual or textual
 Crops use the captured bitmap dimensions relative to the guest's CSS viewport, independently
 of host scaling and device pixel ratio. Only visible portions are captured, at selection time.
 
-Rounds append to the ordinary composer draft with capability-gated image attachments, so its
-send, queue, Steer and rejection recovery remain authoritative. Pins clear only after the
-server accepts that draft's submission; an indeterminate or rejected send preserves them.
+Add to chat moves a round into the composer as one chip per comment and saves each crop. The
+draft holds only the chip; sending expands it into a quoted block and collects the screenshots
+of chips still in the draft, so the ordinary send, queue, Steer and rejection recovery stay
+authoritative. The block is also what lets the transcript draw the chip again after a restart.
 No protocol or shared-contract changes are required.
 
 _Rejected:_ guest-to-host message channels, privileged guest preloads, persistent injected
