@@ -695,26 +695,63 @@ describe('queue steering capability lifecycle', () => {
     }
   })
 
-  it('keeps unsupported sessions unavailable and refuses to steer their queued prompts', async () => {
-    const { orchestrator, store, sessions, sessionCapabilities, queueStates } = harness()
-    try {
-      sessionCapabilities.push({ ...CAPABILITIES, steer: false })
-      const { id } = await orchestrator.startThread('grok', '/repo')
-      await orchestrator.submitTurn(id, 'First')
-      const queued = await orchestrator.submitTurn(id, 'Next')
-      if (!queued.queued) throw new Error('expected queued prompt')
-      expect(queueStates).toEqual([
-        { threadId: id, itemIds: [queued.queuedTurn.id], canSteer: false },
-      ])
-      await expect(orchestrator.steerQueuedTurn(id, queued.queuedTurn.id)).rejects.toThrow(
-        'this agent does not support steering a running turn',
+  it.each(['attach', 'close', 'disconnect', 'idle', 'dispose'] as const)(
+    'finishes runtime %s when the steering listener throws',
+    async (reason) => {
+      const { orchestrator, store, sessions, queueNotificationError } = harness(
+        undefined,
+        undefined,
+        1,
       )
-      expect(sessions[0]!.steered).toEqual([])
-    } finally {
-      await orchestrator.disposeAll()
-      store.close()
-    }
-  })
+      try {
+        if (reason === 'attach') queueNotificationError.current = new Error('listener failed')
+        const { id } = await orchestrator.startThread('codex', '/repo')
+        if (reason === 'idle') await orchestrator.startThread('codex', '/repo')
+        queueNotificationError.current = new Error('listener failed')
+
+        if (reason === 'close') await orchestrator.close(id)
+        else if (reason === 'disconnect') sessions[0]!.emitDisconnected()
+        else if (reason === 'idle') {
+          sessions[0]!.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+          sessions[1]!.emit({ type: 'turn.completed', turnId: 's2-turn', status: 'completed' })
+        } else await orchestrator.disposeAll()
+
+        await vi.waitFor(() => expect(sessions[0]!.disposed).toBe(true))
+        expect(orchestrator.queue(id).canSteer).toBe(false)
+        // Cleanup must also let a later shutdown finish, including any remaining runtime.
+        await orchestrator.disposeAll()
+        expect(sessions.every((session) => session.disposed)).toBe(true)
+      } finally {
+        queueNotificationError.current = undefined
+        await orchestrator.disposeAll()
+        store.close()
+      }
+    },
+  )
+
+  it.each(['grok', 'api'] as const)(
+    'keeps unsupported %s sessions unavailable and refuses to steer their queued prompts',
+    async (provider) => {
+      const { orchestrator, store, sessions, sessionCapabilities, queueStates } = harness()
+      try {
+        sessionCapabilities.push({ ...CAPABILITIES, steer: false })
+        const { id } = await orchestrator.startThread(provider, '/repo')
+        await orchestrator.submitTurn(id, 'First')
+        const queued = await orchestrator.submitTurn(id, 'Next')
+        if (!queued.queued) throw new Error('expected queued prompt')
+        expect(queueStates).toEqual([
+          { threadId: id, itemIds: [queued.queuedTurn.id], canSteer: false },
+        ])
+        await expect(orchestrator.steerQueuedTurn(id, queued.queuedTurn.id)).rejects.toThrow(
+          'this agent does not support steering a running turn',
+        )
+        expect(sessions[0]!.steered).toEqual([])
+      } finally {
+        await orchestrator.disposeAll()
+        store.close()
+      }
+    },
+  )
 })
 
 describe('failed provider starts', () => {

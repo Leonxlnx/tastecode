@@ -3444,7 +3444,11 @@ export class Orchestrator {
   #notifySteerChange(threadId: string, previous: boolean): void {
     if (previous === this.#canSteerQueue(threadId)) return
     // Detached runtimes still need to revoke the capability clients cached.
-    this.#onQueue(threadId, this.queue(threadId))
+    try {
+      this.#onQueue(threadId, this.queue(threadId))
+    } catch {
+      // A failed client notification must not interrupt runtime attachment or cleanup.
+    }
   }
 
   /**
