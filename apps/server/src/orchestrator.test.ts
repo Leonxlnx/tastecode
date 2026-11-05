@@ -3447,6 +3447,128 @@ describe('provider-neutral design briefing', () => {
     },
   )
 
+  // #2192 and #2196: "Design source scan exceeds 32 MB" and "Design workspace scan exceeds
+  // 25000 entries" stopped Design on real projects before the first phase.
+  it.each([
+    {
+      shape: 'a source file over the 32 MB scan budget',
+      write: (workspace: string) =>
+        writeFileSync(
+          path.join(workspace, 'data.js'),
+          `export const d = '${'a'.repeat(32_000_100)}'`,
+        ),
+    },
+    {
+      shape: 'a tree deeper than the scan bound',
+      write: (workspace: string) =>
+        mkdirSync(path.join(workspace, ...Array.from({ length: 42 }, (_, index) => `d${index}`)), {
+          recursive: true,
+        }),
+    },
+  ])(
+    'starts Design on a workspace with $shape and leaves the source checks out',
+    async ({ write }) => {
+      const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-scan-limit-'))
+      const { orchestrator, sessions, received, store, logs } = harness()
+      try {
+        write(workspace)
+        const thread = await orchestrator.startThread('api', workspace)
+        await orchestrator.sendTurn(thread.id, 'Build a site.', [DESIGN_BRIEF_ATTACHMENT])
+        expect(sessions[0]?.sent).toHaveLength(1)
+        const run = store.designRun(thread.id)
+        expect(run).toMatchObject({
+          phase: 'brief',
+          designScanSkipped: expect.stringMatching(/exceeds/),
+        })
+        expect(run).not.toHaveProperty('designSourceBaseline')
+        expect(received.some(({ event }) => event.type === 'thread.error')).toBe(false)
+        expect(logs.some((line) => line.includes('source checks skipped for this run'))).toBe(true)
+      } finally {
+        await orchestrator.disposeAll()
+        store.close()
+        rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
+      }
+    },
+  )
+
+  it('finishes a Repair without the source checks when the workspace was too large to scan', async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-scan-skipped-'))
+    writePreviewArtifacts(workspace)
+    const store = new Store(':memory:')
+    store.addProject(workspace)
+    store.addThread({
+      id: 'scan-skipped',
+      projectPath: workspace,
+      provider: 'codex',
+      title: 'Site',
+    })
+    const {
+      designSourceBaseline: _source,
+      buildFileBaseline: _files,
+      ...snapshot
+    } = approvalSnapshot(workspace)
+    store.setDesignRun('scan-skipped', {
+      ...snapshot,
+      designScanSkipped: 'Design workspace scan exceeds 25000 entries',
+      originalRequest: 'Build a site.',
+      phase: 'repair',
+      pendingPrompt: 'Repair the visual findings.',
+      previewPlan: {
+        version: 1,
+        kind: 'static',
+        entry: 'index.html',
+        cwd: '.',
+        url: 'http://127.0.0.1:4173',
+        viewports: [
+          { name: 'desktop', width: 1440, height: 1000 },
+          { name: 'mobile', width: 390, height: 844 },
+        ],
+      },
+      review: {
+        version: 1,
+        verdict: 'repair',
+        summary: 'Fix overflow.',
+        findings: [
+          {
+            id: 'overflow',
+            severity: 'major',
+            area: 'hero',
+            evidence: 'Text clips.',
+            repair: 'Fit the heading.',
+          },
+        ],
+      },
+      repairAttempt: 1,
+      askedQuestions: false,
+      explicitAnswers: [],
+    })
+    const { orchestrator, sessions, received, logs } = harness(undefined, store)
+    try {
+      const queued = await orchestrator.submitTurn('scan-skipped', 'Afterward')
+      if (queued.queued) orchestrator.deleteQueuedTurn('scan-skipped', queued.queuedTurn.id)
+      await vi.waitFor(() => expect(sessions[0]!.sent).toHaveLength(1))
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      // Without the skip this drawn filler fails the source-quality check.
+      writeFileSync(path.join(workspace, 'filler.svg'), '<svg><circle r="10" /></svg>')
+      const report = JSON.stringify({
+        status: 'complete',
+        summary: 'Fitted the heading.',
+        files: ['filler.svg'],
+        checks: [],
+      })
+      sessions[0]!.emit(message(report, 's1-turn'))
+      sessions[0]!.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+      await vi.waitFor(() => expect(sessions[0]!.sent).toHaveLength(2))
+      expect(JSON.stringify(sessions[0]!.sent[1])).not.toContain('design source quality failed')
+      expect(received.some(({ event }) => event.type === 'thread.error')).toBe(false)
+      expect(logs.some((line) => line.includes('source check not run'))).toBe(true)
+    } finally {
+      await orchestrator.disposeAll()
+      store.close()
+      rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
+    }
+  })
+
   it('starts Design with an existing comparison HTML file larger than 2 MB', async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-large-source-'))
     const { orchestrator, sessions, received, store } = harness()
