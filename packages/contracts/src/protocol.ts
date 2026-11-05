@@ -1054,6 +1054,11 @@ export const methods = {
       previewCapture: z.boolean(),
       /** The client runs `browser.command` on a chat's own in-app browser tab. */
       browserTools: z.boolean().optional(),
+      /**
+       * The chats whose own browser tab this client can drive now: the ones it shows. Sent
+       * again whenever that changes, so a command for a chat no window shows fails at once.
+       */
+      browserThreads: z.array(z.string().min(1)).max(16).optional(),
     }),
     result: z.object({}),
   },

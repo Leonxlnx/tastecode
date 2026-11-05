@@ -99,6 +99,16 @@ describe('agent browser tools', () => {
       browserTools: true,
     })
     expect(capabilities.parse({ previewCapture: true })).toEqual({ previewCapture: true })
+    // Which chats' tabs it can drive now, so a command for a chat no window shows fails at once.
+    expect(
+      capabilities.parse({ previewCapture: true, browserTools: true, browserThreads: ['chat-1'] }),
+    ).toMatchObject({ browserThreads: ['chat-1'] })
+    expect(
+      capabilities.safeParse({
+        previewCapture: true,
+        browserThreads: Array.from({ length: 17 }, (_, index) => `chat-${index}`),
+      }).success,
+    ).toBe(false)
     expect(
       channels['browser.commandCancelled'].safeParse({ commandId: base.commandId }).success,
     ).toBe(true)
