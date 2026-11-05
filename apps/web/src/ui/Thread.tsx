@@ -75,6 +75,7 @@ import { LazyMediaViewer as MediaViewer, preloadMediaViewer } from './LazyMediaV
 import { Markdown } from './Markdown.js'
 import { Plan } from './Plan.js'
 import { PromptText } from './PromptText.js'
+import { browserCommentImages } from './browser-comments.js'
 import { ThreadSkeleton } from './Skeleton.js'
 import {
   REVEAL_CLOSE_MS,
@@ -2319,7 +2320,11 @@ const Row = memo(function Row({
   // The user's own words get a surface so the eye can find where each exchange
   // begins; the agent's answer is plain prose, which is what you actually read.
   if (item.type === 'message' && item.role === 'user') {
-    const imageAttachments = item.attachments?.filter(isImageAttachment) ?? []
+    const commentImages = browserCommentImages(item.text ?? '', item.attachments ?? [])
+    const imageAttachments =
+      item.attachments?.filter(
+        (attachment) => isImageAttachment(attachment) && !commentImages.has(attachment),
+      ) ?? []
     return (
       <div className="said">
         {imageAttachments.length > 0 ? (
@@ -2336,7 +2341,7 @@ const Row = memo(function Row({
         ) : null}
         {item.text ? (
           <p className="said__text">
-            <PromptText text={item.text} />
+            <PromptText text={item.text} attachments={item.attachments} />
           </p>
         ) : null}
         {item.text ? (

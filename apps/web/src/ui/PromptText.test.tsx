@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { cleanup, render } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { browserCommentBlock, newBrowserCommentId } from './browser-comments.js'
 import { rememberChipTokens, resetRememberedChipTokens } from '../composer-chip-memory.js'
 import { PromptText } from './PromptText.js'
 
@@ -60,5 +61,24 @@ describe('PromptText', () => {
     const prompt = renderPrompt('look it up in @officialDocs first')
 
     expect(prompt.querySelector('.prompt-chip--mcp')?.textContent).toBe('@officialDocs')
+  })
+
+  it('shows a sent annotation as a chip and opens its reference on keyboard focus', () => {
+    const comment = {
+      id: newBrowserCommentId(),
+      comment: 'Tighten the heading',
+      title: 'Coffee shop',
+      url: 'http://127.0.0.1:6445/',
+      selector: 'h1',
+      text: 'Coffee',
+    }
+    const prompt = renderPrompt(browserCommentBlock(comment))
+    expect(prompt.textContent).toBe(comment.comment)
+    expect(prompt.textContent).not.toContain('Element:')
+    fireEvent.focus(prompt.querySelector('.prompt-chip--browser')!)
+    expect(screen.getByRole('tooltip').textContent).toContain('Coffee shop')
+    expect(screen.getByRole('tooltip').textContent).toContain('1 element')
+    fireEvent.keyDown(prompt.querySelector('.prompt-chip--browser')!, { key: 'Escape' })
+    expect(screen.queryByRole('tooltip')).toBeNull()
   })
 })

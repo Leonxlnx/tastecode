@@ -2,6 +2,8 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { BrowserAnnotations, type AnnotationGuest } from './BrowserAnnotations.js'
+import { composerChips, composerWireText } from '../composer-chips.js'
+import { browserComment, resetBrowserComments } from '../browser-comments.js'
 import type { AnnotationDraft } from './browser-annotations.js'
 
 const save = vi.hoisted(() => vi.fn())
@@ -29,6 +31,8 @@ beforeEach(() => {
 })
 afterEach(() => {
   cleanup()
+  resetBrowserComments()
+  localStorage.clear()
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
 })
@@ -42,6 +46,7 @@ function setup(imagesSupported = true) {
     .fn()
     .mockResolvedValue({ toDataURL: () => 'data:image/png;base64,cGl4ZWxz' })
   view.getURL = () => 'http://127.0.0.1:6444'
+  view.getTitle = () => 'Fixture page'
   save.mockReset().mockResolvedValue({ path: '/test/annotation.png' })
   const onDraft = vi.fn<(draft: AnnotationDraft) => void>()
   const onExit = vi.fn()
@@ -79,9 +84,14 @@ it('hands the round to the composer, and keeps it when an image cannot be saved'
   fireEvent.click(screen.getByRole('button', { name: 'Add to chat' }))
   await waitFor(() => expect(onDraft).toHaveBeenCalledTimes(1))
   const draft = onDraft.mock.calls[0]![0]
-  expect(draft.attachments).toEqual(['/test/annotation.png'])
-  expect(draft.text).toContain('Element: "#heading"')
-  expect(draft.text).toContain('Attached screenshots')
+  expect(draft.attachments).toEqual([])
+  expect(composerWireText(draft.text)).toContain('Element: "#heading"')
+  const chip = composerChips(draft.text)[0]!
+  expect(chip.name).toBe('Make this smaller')
+  expect(browserComment(chip.commentId!)).toMatchObject({
+    title: 'Fixture page',
+    image: '/test/annotation.png',
+  })
   expect(screen.queryByText('Make this smaller')).toBeNull()
   expect(props.onExit).toHaveBeenCalledTimes(1)
 })

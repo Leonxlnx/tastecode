@@ -6,7 +6,18 @@ import { emptyThread, reduce } from '../thread-store.js'
 import type { Transport } from '../transport.js'
 import { TestTransport } from '../test-transport.js'
 import { Composer, composerResourceTriggerAt } from './Composer.js'
-import { composerChipText, composerWireText, hasComposerChips } from './composer-chips.js'
+import {
+  browserCommentChipText,
+  composerChipText,
+  composerWireText,
+  hasComposerChips,
+} from './composer-chips.js'
+import {
+  browserCommentBlock,
+  newBrowserCommentId,
+  rememberBrowserComment,
+  resetBrowserComments,
+} from './browser-comments.js'
 
 const bridge = vi.hoisted(() => ({
   isMacOS: vi.fn(() => false),
@@ -43,6 +54,7 @@ function legacyComposerResourceTriggerAt(text: string, cursor: number) {
 beforeEach(() => {
   localStorage.clear()
   resetRememberedChipTokens()
+  resetBrowserComments()
   bridge.isMacOS.mockReturnValue(false)
   bridge.pickFiles.mockResolvedValue([])
   bridge.previewViewedImage.mockResolvedValue(undefined)
@@ -3241,6 +3253,57 @@ function renderComposer(
     },
   })
 }
+
+describe('browser annotation drafts', () => {
+  const comment = () => ({
+    id: newBrowserCommentId(),
+    comment: 'Make this smaller',
+    title: 'Coffee shop',
+    url: 'http://127.0.0.1:6445/',
+    selector: 'h1',
+    text: 'Coffee',
+    image: '/images/123-pasted-image.png',
+  })
+
+  it('sends the screenshot only while its chip remains in the draft', () => {
+    const onSend = vi.fn()
+    const kept = comment()
+    const removed = { ...comment(), image: '/images/removed.png' }
+    rememberBrowserComment(kept)
+    rememberBrowserComment(removed)
+    const view = renderComposer(onSend, {
+      draftRequest: { text: browserCommentChipText(kept), attachments: [], request: 1 },
+    })
+    expect(view.container.querySelector('.composer__attachments')).toBeNull()
+    fireEvent.keyDown(screen.getByRole('textbox', { name: 'Message' }), { key: 'Enter' })
+    expect(onSend).toHaveBeenCalledWith(browserCommentBlock(kept), [kept.image])
+  })
+
+  it('keeps the comment sendable when switching to a provider without images', () => {
+    const onSend = vi.fn()
+    const saved = comment()
+    rememberBrowserComment(saved)
+    renderComposer(onSend, {
+      attachmentsSupported: false,
+      draftRequest: { text: browserCommentChipText(saved), attachments: [], request: 1 },
+    })
+    fireEvent.keyDown(screen.getByRole('textbox', { name: 'Message' }), { key: 'Enter' })
+    expect(onSend).toHaveBeenCalledWith(browserCommentBlock(saved, false), [])
+  })
+
+  it('restores rejected annotations as chips without separate image thumbnails', () => {
+    const onSend = vi.fn()
+    const saved = comment()
+    const view = renderComposer(onSend, {
+      draftRequest: { text: browserCommentBlock(saved), attachments: [saved.image], request: 1 },
+    })
+    const area = screen.getByRole('textbox', { name: 'Message' }) as HTMLTextAreaElement
+    expect(area.value).not.toContain('[Browser comment]')
+    expect(view.container.querySelector('.composer__attachments')).toBeNull()
+    fireEvent.keyDown(area, { key: 'Enter' })
+    expect(onSend).toHaveBeenCalledWith(browserCommentBlock(saved), [saved.image])
+  })
+})
 
 const setNativeValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!
 

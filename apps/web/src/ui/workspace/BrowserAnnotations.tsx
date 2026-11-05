@@ -1,11 +1,17 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
 import { savePastedFile } from '../../bridge.js'
+import { browserCommentChipText } from '../composer-chips.js'
+import {
+  browserCommentImageName,
+  newBrowserCommentId,
+  rememberBrowserComment,
+  type BrowserComment,
+} from '../browser-comments.js'
 import {
   AnnotationProbe,
   annotationCrop,
   annotationPopoverPlace,
   annotationProbeScript,
-  annotationPrompt,
   annotationText,
   type AnnotationBox,
   type AnnotationDraft,
@@ -18,6 +24,7 @@ export type AnnotationGuest = HTMLElement & {
   executeJavaScript(code: string): Promise<unknown>
   capturePage(): Promise<{ toDataURL(): string }>
   getURL(): string
+  getTitle(): string
 }
 
 const MAX_PINS = 20
@@ -237,6 +244,7 @@ export function BrowserAnnotations({
         number,
         comment: '',
         url: annotationText(view.getURL(), 2048),
+        title: annotationText(view.getTitle(), 300),
       })
       const image = await captureElement(view, target.box, data).catch(() => undefined)
       if (image) {
@@ -266,16 +274,29 @@ export function BrowserAnnotations({
     setAddFailed(false)
     try {
       const attachments: string[] = []
-      for (const [index, pin] of pins.entries()) {
-        if (!imagesSupported || !pin.image) continue
-        const bytes = Uint8Array.from(atob(pin.image), (character) => character.charCodeAt(0))
-        const saved = await savePastedFile(
-          new File([bytes], `browser-comment-${index + 1}.png`, { type: 'image/png' }),
-        )
-        if (!saved) throw new Error('Image attachment saving is unavailable')
-        attachments.push(saved.path)
+      const comments: BrowserComment[] = []
+      for (const pin of pins) {
+        const comment: BrowserComment = {
+          id: newBrowserCommentId(),
+          comment: pin.comment,
+          title: pin.title,
+          url: pin.url,
+          selector: pin.selector,
+          text: pin.text,
+        }
+        if (imagesSupported && pin.image) {
+          const bytes = Uint8Array.from(atob(pin.image), (character) => character.charCodeAt(0))
+          const saved = await savePastedFile(
+            new File([bytes], browserCommentImageName(comment.id), { type: 'image/png' }),
+          )
+          if (!saved) throw new Error('Image attachment saving is unavailable')
+          comment.image = saved.path
+        }
+        comments.push(comment)
       }
-      onDraft({ text: annotationPrompt(pins, attachments.length > 0), attachments })
+      for (const comment of comments) rememberBrowserComment(comment)
+      // Images belong to their chips. The send path collects only those still in the draft.
+      onDraft({ text: comments.map(browserCommentChipText).join(' '), attachments })
       // The composer owns them now: there they can be edited, sent, or recovered after a failure.
       setPins([])
       setBoxes(new Map())

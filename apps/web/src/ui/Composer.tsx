@@ -69,12 +69,14 @@ import {
   composerSelectionOverChips,
   composerSlashCanLead,
   composerTextWithoutPicks,
+  composerBrowserImages,
   composerWireText,
   createComposerChipTextStore,
   hasComposerChips,
   repairComposerChips,
   type ComposerChipKind,
 } from './composer-chips.js'
+import { browserCommentImages, browserCommentsAsPlainText } from './browser-comments.js'
 import { composerTextWithChips } from './message-chips.js'
 import { Menu, MenuItem } from './Menu.js'
 import { IconMorph } from './IconMorph.js'
@@ -386,8 +388,11 @@ export type SendAvailability =
   /** A new chat with no provider added under Settings › Providers. */
   | 'no-provider'
 
-function QueuedMediaPreview({ attachments }: { attachments: string[] }) {
-  const reference = attachments.find((attachment) => previewMediaType('', attachment))
+function QueuedMediaPreview({ attachments, text }: { attachments: string[]; text: string }) {
+  const commentImages = browserCommentImages(text, attachments)
+  const reference = attachments.find(
+    (attachment) => !commentImages.has(attachment) && previewMediaType('', attachment),
+  )
   return reference ? <QueuedMediaPreviewCard key={reference} reference={reference} /> : null
 }
 
@@ -1260,8 +1265,12 @@ function ComposerComponent(props: {
     // draft saved before chips sat inline brings its skills into the text.
     const legacyResources = props.draftRequest.resources ?? []
     const text = draftTextWithResources(
-      props.draftRequest.undoable
-        ? composerTextWithChips(props.draftRequest.text, rememberedChipTokens())
+      props.draftRequest.undoable || props.draftRequest.text.includes('[Browser comment]')
+        ? composerTextWithChips(
+            props.draftRequest.text,
+            rememberedChipTokens(),
+            props.draftRequest.attachments,
+          )
         : props.draftRequest.text,
       legacyResources,
     )
@@ -1280,7 +1289,8 @@ function ComposerComponent(props: {
       for (const attachment of attachments) releasePreview(attachment.previewUrl)
       setViewingMedia(undefined)
       attachmentsEdited.current = false
-      const paths = props.draftRequest.attachments
+      const linked = browserCommentImages(props.draftRequest.text, props.draftRequest.attachments)
+      const paths = props.draftRequest.attachments.filter((path) => !linked.has(path))
       setAttachments(
         paths.map((path) => {
           const name = basename(path)
@@ -1504,7 +1514,7 @@ function ComposerComponent(props: {
   const sendContent = (content: string, submission: RunningSubmission = 'queue') => {
     // Chips are only how the draft looks: the provider and TasteCode's own
     // commands read the tokens they stand for.
-    const prompt = composerWireText(content)
+    const prompt = composerWireText(content, { images: props.attachmentsSupported })
     const feedback = parseFeedbackCommand(prompt)
     if (feedback && props.onFeedbackCommand) {
       updateText('')
@@ -1537,10 +1547,16 @@ function ComposerComponent(props: {
       return true
     }
     const trimmed = prompt.trim()
-    const paths = attachments.flatMap((attachment) => attachment.path ?? [])
+    const pickedPaths = attachments.flatMap((attachment) => attachment.path ?? [])
+    const paths = [
+      ...new Set([
+        ...pickedPaths,
+        ...(props.attachmentsSupported ? composerBrowserImages(content) : []),
+      ]),
+    ]
     if (
       (trimmed === '' && paths.length === 0) ||
-      paths.length !== attachments.length ||
+      pickedPaths.length !== attachments.length ||
       props.disabled ||
       sendAvailabilityRef.current !== 'ready' ||
       (!props.attachmentsSupported && attachments.length > 0)
@@ -1623,8 +1639,14 @@ function ComposerComponent(props: {
       }
       // Preserve text typed while the deletion was in flight.
       const draft = textRef.current.trim()
-      setValue(draft === '' ? queuedTurn.text : `${queuedTurn.text}\n\n${draft}`)
-      addFiles(queuedTurn.attachments)
+      const recalled = composerTextWithChips(
+        queuedTurn.text,
+        rememberedChipTokens(),
+        queuedTurn.attachments,
+      )
+      setValue(draft === '' ? recalled : `${recalled}\n\n${draft}`)
+      const linked = browserCommentImages(queuedTurn.text, queuedTurn.attachments)
+      addFiles(queuedTurn.attachments.filter((path) => !linked.has(path)))
     } catch (error) {
       if (mounted.current && draftRequestRef.current?.request === owner) {
         setQueueError(
@@ -1996,9 +2018,12 @@ function ComposerComponent(props: {
                   >
                     <GripVertical size={14} aria-hidden />
                   </button>
-                  <QueuedMediaPreview attachments={queuedTurn.attachments} />
-                  <span className="queue-row__text" title={queuedTurn.text}>
-                    {queuedTurn.text}
+                  <QueuedMediaPreview attachments={queuedTurn.attachments} text={queuedTurn.text} />
+                  <span
+                    className="queue-row__text"
+                    title={browserCommentsAsPlainText(queuedTurn.text)}
+                  >
+                    {browserCommentsAsPlainText(queuedTurn.text)}
                   </span>
                   {props.canSteerQueue ? (
                     <button

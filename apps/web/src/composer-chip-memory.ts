@@ -45,6 +45,7 @@ export function rememberChipTokens(
   if (chips.length === 0) return
   const tokens = load()
   for (const { token, kind } of chips) {
+    if (kind === 'browser') continue
     // Most recent last, so the oldest token is the one that falls out.
     tokens.delete(token)
     tokens.set(token, kind)
