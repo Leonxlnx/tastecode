@@ -4,6 +4,7 @@ import type { AssetManifest } from './assets.js'
 import type { PageBlueprint } from './page.js'
 import {
   containedWorkspaceFile,
+  DesignScanLimitError,
   readWorkspaceFile,
   workspaceEntries,
   normalizeWorkspaceFile,
@@ -110,7 +111,7 @@ function designSourceViolations(
     const bytes = readWorkspaceFile(absolute, MAX_SOURCE_SCAN_BYTES)
     totalBytes += bytes.length
     if (totalBytes > MAX_SOURCE_SCAN_BYTES)
-      throw new Error('Design source scan exceeds 32 MB; reduce the workspace scope')
+      throw new DesignScanLimitError('Design source scan exceeds 32 MB')
     const source = bytes.toString('utf8').replace(/\/\*[\s\S]*?\*\//g, '')
 
     if (extension === '.svg') {
@@ -383,7 +384,9 @@ export function designSourceFiles(workspacePath: string): string[] {
       ({ relative, file }) =>
         file &&
         extensions.has(path.extname(relative).toLowerCase()) &&
-        !/(?:\.(?:test|spec)\.[cm]?[jt]sx?$|(?:^|\/)__tests__\/)/i.test(relative),
+        !/(?:\.(?:test|spec)\.[cm]?[jt]sx?$|(?:^|\/)__tests__\/)/i.test(relative) &&
+        // Minified and bundled files are shipped libraries or build output, not authored design.
+        !/[.-](?:min|bundle)\.(?:[cm]?js|css)$/i.test(relative),
     )
     .map(({ relative }) => relative)
 }

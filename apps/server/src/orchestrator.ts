@@ -389,6 +389,7 @@ const StoredDesignFlowSchema = z.object({
   buildFileBaseline: z.array(z.string()).optional(),
   designSourceBaseline: z.array(z.string()).optional(),
   designConsistencyBaseline: z.array(z.string()).optional(),
+  designScanSkipped: z.string().optional(),
   buildSummary: z.string().optional(),
 })
 type DesignBriefInput = z.infer<typeof DesignBriefInputSchema>
@@ -428,6 +429,11 @@ type DesignFlow = {
   designSourceBaseline?: string[] | undefined
   /** Fonts and radii each file declared at run start; absent on runs saved before the audit. */
   designConsistencyBaseline?: string[] | undefined
+  /**
+   * Why the workspace was too large to scan at run start. The source-quality and exact-file
+   * checks then do not run for this run; the reason is logged instead of failing Design.
+   */
+  designScanSkipped?: string
   buildSummary?: string
 }
 
@@ -557,6 +563,7 @@ function parseStoredDesignFlow(value: unknown, workspacePath: string): DesignFlo
     ...(stored.designConsistencyBaseline
       ? { designConsistencyBaseline: stored.designConsistencyBaseline }
       : {}),
+    ...(stored.designScanSkipped ? { designScanSkipped: stored.designScanSkipped } : {}),
   }
 }
 
@@ -3197,9 +3204,9 @@ export class Orchestrator {
         await loadDesignAgent()
         const workspacePath = this.#repoPath(threadId)
         const referenceSnapshot = designAgent().snapshotDesignFiles(referenceAttachments)
-        const designSourceBaseline = designAgent().designSourceQualityBaseline(workspacePath)
+        const { designSourceBaseline, buildFileBaseline, designScanSkipped } =
+          this.#designScanBaselines(workspacePath)
         const designConsistencyBaseline = this.#designConsistencyBaseline(workspacePath)
-        const buildFileBaseline = designAgent().designWorkspaceFileBaseline(workspacePath)
         // A preview that will not stop is logged and kept for a later retry; the
         // new run's preview takes another port.
         await this.#stopDesignPreview(threadId).catch(() => undefined)
@@ -3212,9 +3219,10 @@ export class Orchestrator {
           originalRequest: text,
           referenceAttachments,
           referenceSnapshot,
-          designSourceBaseline,
+          ...(designSourceBaseline ? { designSourceBaseline } : {}),
           ...(designConsistencyBaseline ? { designConsistencyBaseline } : {}),
-          buildFileBaseline,
+          ...(buildFileBaseline ? { buildFileBaseline } : {}),
+          ...(designScanSkipped ? { designScanSkipped } : {}),
           options,
           phase: 'brief',
           askedQuestions: false,
@@ -6096,7 +6104,8 @@ ${JSON.stringify(deck, null, 2)}
     }
     if (
       phase >= 4 &&
-      (!flow.assetSnapshot || !flow.designSourceBaseline || !flow.buildFileBaseline)
+      (!flow.assetSnapshot ||
+        (!flow.designScanSkipped && (!flow.designSourceBaseline || !flow.buildFileBaseline)))
     ) {
       throw new Error('Design validation snapshots are unavailable; restart the Design run')
     }
@@ -6104,10 +6113,12 @@ ${JSON.stringify(deck, null, 2)}
 
   #validateDesignBuild(flow: DesignFlow, files: readonly string[]): void {
     this.#validateApprovedDesignArtifacts(flow)
-    designAgent().validateExactBuildFiles(
-      flow.workspacePath,
-      flow.approvedBrief!,
-      flow.buildFileBaseline,
+    this.#scannedDesignCheck(flow, () =>
+      designAgent().validateExactBuildFiles(
+        flow.workspacePath,
+        flow.approvedBrief!,
+        flow.buildFileBaseline,
+      ),
     )
     const assets = designAgent().validateAssetManifestForPage(
       flow.approvedAssets!,
@@ -6116,13 +6127,55 @@ ${JSON.stringify(deck, null, 2)}
       flow.referenceAttachments,
     )
     designAgent().validateResolvedDesignAssets(assets)
-    designAgent().validateDesignSourceQuality(
-      flow.workspacePath,
-      files,
-      flow.designSourceBaseline,
-      assets,
-      flow.approvedPage,
+    this.#scannedDesignCheck(flow, () =>
+      designAgent().validateDesignSourceQuality(
+        flow.workspacePath,
+        files,
+        flow.designSourceBaseline,
+        assets,
+        flow.approvedPage,
+      ),
     )
+  }
+
+  /**
+   * Run a check that scans the whole workspace. When the workspace was or has grown too large
+   * to scan, the check does not run, which is no reason to discard the page Build made.
+   */
+  #scannedDesignCheck(flow: DesignFlow, check: () => void): void {
+    if (flow.designScanSkipped) {
+      this.#onLog(`[design] source check not run: ${flow.designScanSkipped}`)
+      return
+    }
+    try {
+      check()
+    } catch (error) {
+      if (!(error instanceof designAgent().DesignScanLimitError)) throw error
+      this.#onLog(`[design] source check not run: ${errorMessage(error)}`)
+    }
+  }
+
+  /**
+   * The source-quality and exact-file baselines need a full workspace scan. A project too large
+   * for it still gets a Design run; those two checks are then left out, as the consistency
+   * audit already is.
+   */
+  #designScanBaselines(workspacePath: string) {
+    try {
+      return {
+        designSourceBaseline: designAgent().designSourceQualityBaseline(workspacePath),
+        buildFileBaseline: designAgent().designWorkspaceFileBaseline(workspacePath),
+        designScanSkipped: undefined,
+      }
+    } catch (error) {
+      if (!(error instanceof designAgent().DesignScanLimitError)) throw error
+      this.#onLog(`[design] source checks skipped for this run: ${errorMessage(error)}`)
+      return {
+        designSourceBaseline: undefined,
+        buildFileBaseline: undefined,
+        designScanSkipped: errorMessage(error),
+      }
+    }
   }
 
   /** The audit is advisory: a scan that cannot run leaves it out instead of blocking Design. */
