@@ -1957,7 +1957,7 @@ textarea.workspace-review__field {
   position: absolute;
   box-sizing: border-box;
   pointer-events: none;
-  border-radius: 3px;
+  border-radius: var(--r-xs);
 }
 
 .browser-annotations__highlight {
@@ -1981,7 +1981,7 @@ textarea.workspace-review__field {
   bottom: calc(100% + 5px);
   left: -1.5px;
   padding: 0 5px;
-  border-radius: 4px;
+  border-radius: var(--r-sm);
   background: var(--annotate);
   color: var(--annotate-on);
   font: 500 11px/17px var(--font-mono);
