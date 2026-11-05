@@ -10,6 +10,12 @@ import {
 import path from 'node:path'
 
 const MAX_ENTRIES = 25_000
+
+/**
+ * A workspace too large for a bounded scan. Checks built on a full scan treat it as "not run"
+ * instead of failing a Design run on a big real project.
+ */
+export class DesignScanLimitError extends Error {}
 const MAX_DEPTH = 40
 /**
  * Dependency and cache trees no design reads or delivers into. Listed but never
@@ -40,6 +46,21 @@ const OPAQUE_DIRECTORIES = new Set([
   '.parcel-cache',
   '.vite',
   '.angular',
+  // Build output, framework and tool caches that real projects keep beside their sources.
+  '.output',
+  '.vercel',
+  '.netlify',
+  '.expo',
+  '.docusaurus',
+  '.astro',
+  '.dart_tool',
+  'Pods',
+  'DerivedData',
+  '.terraform',
+  '.tox',
+  '.mypy_cache',
+  '.pytest_cache',
+  '.ruff_cache',
 ])
 const MAX_GIT_POINTER_BYTES = 4096
 
@@ -99,7 +120,7 @@ export function workspaceEntries(
     try {
       for (let entry = directory.readSync(); entry; entry = directory.readSync()) {
         if (++count > MAX_ENTRIES)
-          throw new Error(`Design workspace scan exceeds ${MAX_ENTRIES} entries`)
+          throw new DesignScanLimitError(`Design workspace scan exceeds ${MAX_ENTRIES} entries`)
         if (!prefix && (entry.name === '.git' || entry.name === '.taste')) continue
         const relative = prefix ? `${prefix}/${entry.name}` : entry.name
         if (!entry.isDirectory()) {
@@ -113,7 +134,9 @@ export function workspaceEntries(
         } else {
           entries.push({ relative: `${relative}/`, file: false })
           if (depth >= MAX_DEPTH)
-            throw new Error(`Design workspace scan exceeds ${MAX_DEPTH} directory levels`)
+            throw new DesignScanLimitError(
+              `Design workspace scan exceeds ${MAX_DEPTH} directory levels`,
+            )
           pending.push({
             absolute: path.join(absolute, entry.name),
             prefix: relative,
@@ -165,7 +188,9 @@ export function readWorkspaceFile(filePath: string, maxBytes: number): Buffer {
       throw new Error(`Design file ${path.basename(filePath)} changed while opening`)
     }
     if (stat.size > maxBytes)
-      throw new Error(`Design file ${path.basename(filePath)} exceeds ${maxBytes} bytes`)
+      throw new DesignScanLimitError(
+        `Design file ${path.basename(filePath)} exceeds ${maxBytes} bytes`,
+      )
     const bytes = Buffer.alloc(stat.size + 1)
     let length = 0
     while (length < bytes.length) {

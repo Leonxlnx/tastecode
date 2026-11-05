@@ -120,6 +120,7 @@ export {
   DesignSourceQualityError,
   ExactBuildFilesError,
 } from './build-phase.js'
+export { DesignScanLimitError } from './workspace-files.js'
 export {
   croppedReviewScreenshots,
   designRepairPrompt,
