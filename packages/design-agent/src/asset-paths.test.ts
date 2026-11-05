@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -51,6 +51,25 @@ describe('asset paths', () => {
     )
     expect(parsed.assets[0]?.destination).toBe('.taste/hero.png')
     expect(parsed.assets[1]?.source?.reference).toBe('assets/fonts/brand.woff2')
+  })
+
+  it('reads the real Codex answer that wrote every saved photo by its absolute path', () => {
+    const dir = workspace()
+    const recorded = JSON.parse(
+      readFileSync(new URL('./fixtures/codex-assets-absolute.json', import.meta.url), 'utf8'),
+    ) as { assets: { destination?: string }[] }
+    // The run saved its photos in E:\tastecodetests\testv0.5\test30; place them in this workspace.
+    for (const asset of recorded.assets)
+      if (asset.destination?.startsWith('<workspace>'))
+        asset.destination = path.join(dir, ...asset.destination.slice(12).split('\\'))
+    const parsed = parseAssetPhaseOutput(JSON.stringify(recorded), undefined, dir)
+    expect(parsed.assets.map(({ destination }) => destination)).toEqual([
+      '.taste/hero_sourdough_photo.png',
+      '.taste/sourdough_bread_photo.png',
+      '.taste/bakery_counter_photo.png',
+      '.taste/cafe_corner_photo.png',
+      undefined,
+    ])
   })
 
   it('still refuses a destination outside the workspace', () => {
