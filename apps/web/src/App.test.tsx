@@ -10716,7 +10716,9 @@ describe('new chats', () => {
     )
 
     fireEvent.click(screen.getByRole('button', { name: 'Choose project' }))
-    expect(screen.getAllByRole('menuitem')).toHaveLength(2)
+    // Both projects, then the entry that adds one.
+    expect(screen.getAllByRole('menuitem')).toHaveLength(3)
+    expect(screen.getByRole('menuitem', { name: 'New project' })).toBeTruthy()
     fireEvent.click(screen.getByRole('menuitem', { name: /Another Project/ }))
 
     expect(screen.getByRole('heading').textContent).toContain(

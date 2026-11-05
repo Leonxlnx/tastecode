@@ -7635,6 +7635,7 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
     onTranscribeVoice: transcribeVoice,
     onCancelVoice: cancelVoice,
     onProjectChange: selectProject,
+    onAddProject: addProject,
     onBranchChange: changeBranch,
     onProjectRequired: requireProject,
     onSetupProvider: sendAvailability === 'no-provider' ? openProviderPicker : openProviderSetup,

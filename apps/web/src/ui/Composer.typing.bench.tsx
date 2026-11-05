@@ -56,6 +56,7 @@ const view = render(
     onProjectChange={noop}
     onBranchChange={noop}
     onProjectRequired={noop}
+    onAddProject={noop}
     onSetupProvider={noop}
     onSend={noop}
     onSteer={noop}
