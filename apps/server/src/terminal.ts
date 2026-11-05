@@ -245,7 +245,9 @@ export class TerminalManager {
     env: NodeJS.ProcessEnv = {},
   ): string {
     const args =
-      globalThis.process.platform === 'win32' ? ['/d', '/s', '/c', command] : ['-c', command]
+      globalThis.process.platform === 'win32'
+        ? ['/d', '/s', '/v:off', '/c', command]
+        : ['-c', command]
     return this.#spawn(key, args, cwd, columns, rows, key, env)
   }
 

@@ -1,5 +1,5 @@
 import { ACP_AGENTS } from '@harness/adapter-acp/agents'
-import { setCommandOverride } from '@harness/proc/cli'
+import { commandOverride, setCommandOverride, windowsCliCommand } from '@harness/proc/cli'
 import { resolveProviderExecutable } from './custom-harness-launch.js'
 import { assertProviderOffered } from './provider-edition.js'
 import type { Store } from './store.js'
@@ -35,8 +35,24 @@ export function updateProviderExecutablePath(store: Store, source: string, enter
   assertProviderOffered(
     source.startsWith('acp:') ? 'acp' : (source as Parameters<typeof assertProviderOffered>[0]),
   )
-  const executable = entered.trim() === '' ? '' : resolveProviderExecutable(entered.trim())
+  const executable = entered.trim() === '' ? '' : resolveProviderExecutable(entered)
   const paths = store.updateProviderExecutablePath(source, executable)
   setCommandOverride(command, executable || undefined)
   return paths
+}
+
+/** Replace only the known CLI at the start of a trusted login/update command. */
+export function selectedProviderShellCommand(source: string, commandLine: string): string {
+  const command = commandFor(source)
+  const selected = command && commandOverride(command)
+  if (!command || !selected) return commandLine
+  if (commandLine !== command && !commandLine.startsWith(`${command} `)) {
+    throw new Error('Update this custom executable using its own installation instructions.')
+  }
+  const args = commandLine.slice(command.length).trim().split(/\s+/).filter(Boolean)
+  if (process.platform === 'win32') {
+    return `"${windowsCliCommand(selected, args, /\.(?:cmd|bat)$/i.test(selected))}"`
+  }
+  const quoted = `'${selected.replaceAll("'", "'\\''")}'`
+  return [quoted, ...args].join(' ')
 }
