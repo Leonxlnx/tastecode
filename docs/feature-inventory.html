@@ -990,6 +990,24 @@
           <li>
             <label
               ><input type="checkbox" /><span
+                >Executable path for each added CLI provider and ACP agent
+                <span class="d"
+                  >Under the provider's settings, Executable path takes an absolute path to the CLI,
+                  for one installed somewhere automatic discovery cannot see or a build other than
+                  the one on PATH; the path is checked before saving, a bad one is explained under
+                  the field and changes nothing, and quotes or spaces pasted around it are dropped;
+                  detection, version checks, new processes, and sign-in and update terminals all use
+                  it, while running processes keep theirs; it survives a restart, empty returns to
+                  automatic discovery, an updater that does not start with the CLI itself asks the
+                  user to update the custom executable on their own, and phone links can neither
+                  read nor change it</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
                 >Auto-detect installed CLIs with version check and mismatch warning
                 <span class="d"
                   >Windows discovery, provider launch and terminal environments preserve mixed-case
@@ -3314,6 +3332,21 @@
                   the app's endless loops (a working chat's spinner, the live activity row) pause
                   until it closes, also when it returns after a sign-in, while one-shot animations
                   behind it still finish</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Search across every category
+                <span class="d"
+                  >The field above the categories finds a category by name and individual controls
+                  by label, description or related word, including keyboard shortcuts and provider
+                  defaults on tabs not opened yet; controls hidden on this device or in this state
+                  are not offered; arrows move through the results and Enter opens the page and
+                  scrolls to the matching row, which is focused and briefly highlighted; Escape
+                  clears the search first and only then closes Settings</span
                 ></span
               ></label
             >

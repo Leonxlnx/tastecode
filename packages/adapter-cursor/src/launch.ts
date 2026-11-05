@@ -2,7 +2,7 @@ import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { existsSync, readdirSync } from 'node:fs'
 import path from 'node:path'
 import { spawnCli } from '@harness/proc'
-import { captureCli, type CapturedCli } from '@harness/proc/cli'
+import { captureCli, commandOverride, type CapturedCli } from '@harness/proc/cli'
 
 /**
  * How cursor-agent really starts on Windows.
@@ -81,7 +81,10 @@ export function spawnCursorAgent(
   args: string[],
   options: NonNullable<Parameters<typeof spawnCli>[2]> = {},
 ): ChildProcessWithoutNullStreams {
-  const launcher = process.platform === 'win32' ? findCursorWindowsLauncher() : undefined
+  const launcher =
+    process.platform === 'win32' && !commandOverride(command)
+      ? findCursorWindowsLauncher()
+      : undefined
   if (!launcher) return spawnCli(command, args, options)
   return spawnCli(launcher.node, [launcher.script, ...args], {
     ...options,

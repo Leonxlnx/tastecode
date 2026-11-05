@@ -2,6 +2,7 @@ import type {
   AppDirection,
   AssetManifest,
   BrandSystem,
+  BrandFont,
   BriefingQuestion,
   DesignBrief,
   DesignFileSnapshot,
@@ -75,7 +76,7 @@ import { compactHistoryReplay } from './history-replay.js'
 import { decodeHistoryCursor, readHistoryPage, type HistoryPage } from './history-page.js'
 import { readIndexedNewestHistoryPage } from './history-tail.js'
 import {
-  DESIGN_PHASE_NOTICE,
+  designPhaseNotice,
   mapProviderSession,
   RESTORE_CONTEXT_NOTICE,
   StartupCleanupError,
@@ -800,6 +801,8 @@ export class Orchestrator {
    */
   #heldQueues = new Set<string>()
   #designFlows = new Map<string, DesignFlow>()
+  /** Brand fonts TasteCode tried to download for a run's Asset phase; in memory only, the files are the record. */
+  #brandFontAttempts = new WeakMap<DesignFlow, BrandFont[]>()
   #designTurns = new Map<string, string>()
   #designStartingThreads = new Set<string>()
   #designStartWaiters = new Map<string, (turnId: string) => void>()
@@ -3159,7 +3162,10 @@ export class Orchestrator {
             flow.options = { ...flow.options, ...options }
             try {
               this.#validateApprovedDesignArtifacts(flow)
-              const prompt = flow.pendingPrompt ?? this.#designPromptFor(flow)
+              const prompt = await this.#readyDesignPrompt(
+                flow,
+                flow.pendingPrompt ?? this.#designPromptFor(flow),
+              )
               delete flow.pendingPrompt
               this.#saveDesignFlow(threadId)
               this.#notePromptWrapping(threadId, true)
@@ -5922,6 +5928,30 @@ ${JSON.stringify(deck, null, 2)}
 </selected-reference-workflow>`
   }
 
+  /** What TasteCode knows about the run's brand fonts: its own attempt, else the project's font folder. */
+  #brandFontsFor(flow: DesignFlow): BrandFont[] {
+    return (
+      this.#brandFontAttempts.get(flow) ??
+      designAgent().localBrandFonts(flow.approvedBrand!, flow.workspacePath)
+    )
+  }
+
+  /**
+   * Before the Asset phase's first prompt, TasteCode downloads the approved brand fonts into the
+   * project itself: a provider sandbox may block the agent's own downloads. The prompt is rebuilt
+   * so it names the files instead of asking the agent to fetch them.
+   */
+  async #readyDesignPrompt(flow: DesignFlow, prompt: string): Promise<string> {
+    if (flow.phase !== 'assets' || !flow.approvedBrand || this.#brandFontAttempts.has(flow))
+      return prompt
+    const fonts = await designAgent().acquireBrandFonts(flow.approvedBrand, flow.workspacePath)
+    this.#brandFontAttempts.set(flow, fonts)
+    for (const font of fonts)
+      if (font.status === 'failed')
+        this.#onLog(`[design] could not download ${font.family}: ${font.reason}`)
+    return flow.correcting ? prompt : this.#designPromptFor(flow)
+  }
+
   #designPhasePrompt(flow: DesignFlow): string {
     if (flow.phase === 'brief') return designAgent().designBriefingPrompt(flow.originalRequest)
     this.#validateApprovedDesignArtifacts(flow)
@@ -5944,7 +5974,13 @@ ${JSON.stringify(deck, null, 2)}
       )
     const page = flow.approvedPage!
     if (flow.phase === 'assets')
-      return designAgent().designAssetPrompt(brief, brand, page, flow.referenceAttachments)
+      return designAgent().designAssetPrompt(
+        brief,
+        brand,
+        page,
+        flow.referenceAttachments,
+        this.#brandFontsFor(flow),
+      )
     // Build and Repair copy from the kit; rewrite it in case the workspace lost it since Brief.
     if (flow.appDirection && (flow.phase === 'build' || flow.phase === 'repair'))
       designAgent().writeAppScreenKit(flow.workspacePath)
@@ -6201,7 +6237,8 @@ ${JSON.stringify(deck, null, 2)}
           delete designFlow.continueNormally
           this.#saveDesignFlow(threadId)
         }
-        if (designFlow.phase !== 'response') prompt = `${DESIGN_PHASE_NOTICE}${prompt}`
+        if (designFlow.phase !== 'response')
+          prompt = `${designPhaseNotice(designFlow.originalRequest)}${prompt}`
         this.#validateApprovedDesignArtifacts(designFlow)
         attachments = [
           ...new Set([...attachments, ...this.#designReferenceAttachments(threadId, designFlow)]),
@@ -6507,25 +6544,21 @@ ${JSON.stringify(deck, null, 2)}
     ) {
       this.#designMessageItems.delete(event.item.id)
       if (this.#acceptedDesignOutputs.has(turnId)) return
+      // Providers without commentary phases put progress text in the same message as the
+      // phase result, before its JSON (Claude Code does). That prose is the agent's own
+      // progress and shows whether or not the JSON parses; the JSON itself never shows.
+      const text = event.item.text ?? ''
+      const json = text.search(/^\s*(?:[{[]|```)/m)
+      const prose = (json < 0 ? text : text.slice(0, json)).trim()
       try {
-        this.#handleDesignOutput(threadId, turnId, event.item.text ?? '')
+        this.#handleDesignOutput(threadId, turnId, text)
         // A completed or failed phase can release ownership inside the handler.
         if (this.#designTurns.get(turnId) === threadId) {
           this.#acceptedDesignOutputs.add(turnId)
         }
+        if (prose && json > 0) this.#recordDesignProse(threadId, event, prose)
       } catch (error) {
-        // Providers without commentary phases still expose completed progress text,
-        // but not a phase result: one that opens with prose and puts its JSON on a
-        // line of its own fails the parse too (Claude Code's asset manifest did).
-        const text = event.item.text ?? ''
-        const json = text.search(/^\s*(?:[{[]|```)/m)
-        const prose = (json < 0 ? text : text.slice(0, json)).trim()
-        if (prose) {
-          this.#record(threadId, {
-            ...event,
-            item: { ...event.item, text: prose, phase: 'commentary' },
-          })
-        }
+        if (prose) this.#recordDesignProse(threadId, event, prose)
         this.#designOutputErrors.set(turnId, error)
       }
       return
@@ -6569,12 +6602,16 @@ ${JSON.stringify(deck, null, 2)}
         delete flow.pendingPrompt
         this.#saveDesignFlow(threadId)
         this.#record(threadId, event)
-        void this.#sendDesignTurn(
-          threadId,
-          prompt,
-          this.#designAttachmentsFor(flow),
-          this.#designTurnOptions(flow),
-        ).catch((error: unknown) => this.#failOwnedDesignFlow(threadId, owner, error))
+        void this.#readyDesignPrompt(owner, prompt)
+          .then((ready) =>
+            this.#sendDesignTurn(
+              threadId,
+              ready,
+              this.#designAttachmentsFor(owner),
+              this.#designTurnOptions(owner),
+            ),
+          )
+          .catch((error: unknown) => this.#failOwnedDesignFlow(threadId, owner, error))
         return
       }
     }
@@ -6582,6 +6619,14 @@ ${JSON.stringify(deck, null, 2)}
     if (event.type === 'turn.started' && this.#designTurns.get(event.turn.id) === threadId) {
       this.#startDesignActivity(threadId, event.turn.id)
     }
+  }
+
+  #recordDesignProse(
+    threadId: string,
+    event: Extract<DomainEvent, { type: 'item.completed' }>,
+    prose: string,
+  ): void {
+    this.#record(threadId, { ...event, item: { ...event.item, text: prose, phase: 'commentary' } })
   }
 
   #handleDesignOutput(threadId: string, turnId: string, text: string): void {
@@ -6713,12 +6758,24 @@ ${JSON.stringify(deck, null, 2)}
       return
     }
     if (flow.phase === 'assets') {
-      const output = designAgent().parseAssetPhaseOutput(
-        text,
+      const fonts = this.#brandFontsFor(flow)
+      const output = designAgent().validateAssetManifestForPage(
+        designAgent().withBrandFonts(
+          designAgent().parseAssetPhaseOutput(
+            text,
+            flow.approvedPage!,
+            flow.workspacePath,
+            flow.referenceAttachments,
+          ),
+          fonts,
+          flow.approvedPage!,
+        ),
         flow.approvedPage!,
         flow.workspacePath,
         flow.referenceAttachments,
       )
+      // A missing brand font is found here, not in Build at the end of the run.
+      designAgent().validateBrandFontsResolved(output, flow.approvedBrand!, fonts)
       try {
         designAgent().validateResolvedDesignAssets(output)
       } catch (error) {
