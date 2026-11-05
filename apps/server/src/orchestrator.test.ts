@@ -671,6 +671,70 @@ describe('failed provider starts', () => {
     expect(dispose).toHaveBeenCalledTimes(2)
   })
 
+  // #2190: Codex answered the resume with "no rollout found for thread id …".
+  const missingSession = () => {
+    const missing = Promise.reject(
+      Object.assign(new Error('no rollout found for thread id saved'), {
+        code: 'provider_session_missing',
+      }),
+    )
+    missing.catch(() => {})
+    return missing
+  }
+
+  it('replaces a missing session silently when the chat never completed a turn', async () => {
+    const { orchestrator, store, sessions, resumeBarriers, received, logs } = harness()
+    store.addProject('/repo')
+    store.addThread({ id: 'saved', projectPath: '/repo', provider: 'codex', title: 'Saved' })
+    resumeBarriers.push(missingSession())
+    try {
+      await orchestrator.submitTurn('saved', 'Build the page')
+      expect(sessions).toHaveLength(1)
+      expect(sessions[0]!.sent).toEqual(['Build the page'])
+      expect(store.thread('saved')?.providerSessionId).toBe('thread-1')
+      expect(store.threadNeedsHandover('saved')).toBe(false)
+      expect(
+        received.some(({ event }) => event.type === 'item.completed' && event.item.notice),
+      ).toBe(false)
+      expect(logs.some((line) => line.includes('continuing in a new codex session'))).toBe(true)
+    } finally {
+      await orchestrator.disposeAll()
+    }
+  })
+
+  it('carries a chat with turns to a new session and says so when its saved one is missing', async () => {
+    const store = new Store(':memory:')
+    const first = harness(undefined, store)
+    const thread = await first.orchestrator.startThread('codex', process.cwd())
+    await first.orchestrator.submitTurn(thread.id, 'First question', [], {}, 'first-question')
+    first.sessions[0]!.emit(message('First answer.', 's1-turn'))
+    first.sessions[0]!.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+    await vi.waitFor(() => expect(first.orchestrator.isTurnRunning(thread.id)).toBe(false))
+    await first.orchestrator.disposeAll()
+
+    const restarted = harness(undefined, store)
+    restarted.resumeBarriers.push(missingSession())
+    try {
+      await restarted.orchestrator.submitTurn(thread.id, 'Second question')
+      const sent = restarted.sessions[0]!.sent[0] ?? ''
+      // The new session gets the conversation so far, then the new prompt.
+      expect(sent).toContain('First question')
+      expect(sent).toContain('Second question')
+      expect(sent).not.toBe('Second question')
+      const notice = restarted.received.find(
+        ({ event }) => event.type === 'item.completed' && event.item.type === 'notice',
+      )?.event
+      expect(notice).toMatchObject({
+        item: { notice: { kind: 'provider', provider: 'codex', reason: 'session_missing' } },
+      })
+      expect(restarted.logs.some((line) => line.includes('with the conversation so far'))).toBe(
+        true,
+      )
+    } finally {
+      await restarted.orchestrator.disposeAll()
+    }
+  })
+
   it('keeps a Side chat session whose cleanup failed until a later stop confirms it', async () => {
     const { orchestrator, sessions, startBarriers } = harness()
     const parent = await orchestrator.startThread('codex', process.cwd())

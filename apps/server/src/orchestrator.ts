@@ -78,6 +78,7 @@ import { readIndexedNewestHistoryPage } from './history-tail.js'
 import {
   designPhaseLanguageReminder,
   designPhaseNotice,
+  isProviderSessionMissing,
   mapProviderSession,
   RESTORE_CONTEXT_NOTICE,
   StartupCleanupError,
@@ -5719,17 +5720,30 @@ export class Orchestrator {
       skills: !stored.ephemeral,
     })
     let freshSessionId: string | undefined
+    // The provider has no saved conversation for this chat's session. With no turn ever
+    // completed there is nothing to carry; otherwise (another account's folder, a moved file)
+    // the conversation goes to the new session as a handover, and the transcript says so.
+    let missingSession: { carried: boolean } | undefined
+    const startFresh = () =>
+      runtime.start(workspacePath, { ...options, ...sessionStart }).then((started) => {
+        freshSessionId = started.thread.id
+        return mapProviderSession(threadId, started)
+      })
     const result = await (
       fresh || !resume
-        ? runtime.start(workspacePath, { ...options, ...sessionStart }).then((started) => {
-            freshSessionId = started.thread.id
-            return mapProviderSession(threadId, started)
-          })
+        ? startFresh()
         : resume(threadId, workspacePath, {
             ...options,
             ...(stored.providerSessionId ? { providerSessionId: stored.providerSessionId } : {}),
             ...(resumeState === undefined ? {} : { resumeState }),
             ...sessionStart,
+          }).catch((error: unknown) => {
+            if (!isProviderSessionMissing(error)) throw error
+            missingSession = { carried: !this.#store.threadHasCompletedTurn(threadId) }
+            this.#onLog(
+              `[resume] ${errorMessage(error)}; continuing in a new ${stored.provider} session${missingSession.carried ? '' : ' with the conversation so far'}`,
+            )
+            return startFresh()
           })
     ).catch((error: unknown) => {
       if (!(error instanceof StartupCleanupError)) throw error
@@ -5772,6 +5786,8 @@ export class Orchestrator {
         ...(stored.agent ? { agent: stored.agent } : {}),
         ...(stored.accountId ? { accountId: stored.accountId } : {}),
         providerSessionId: freshSessionId,
+        // A pending handover stays pending; a missing session with turns starts one.
+        ...(missingSession?.carried ? { carried: true } : {}),
       })
     }
     this.#attachThread(
@@ -5780,6 +5796,27 @@ export class Orchestrator {
       stored.projectPath,
       runtime.resume !== undefined,
     )
+    if (missingSession && !missingSession.carried) {
+      this.#record(threadId, {
+        type: 'item.completed',
+        item: {
+          id: `notice-${crypto.randomUUID()}`,
+          turnId: '',
+          type: 'notice',
+          status: 'completed',
+          notice: {
+            kind: 'provider',
+            provider: stored.provider,
+            ...(stored.agent ? { agent: stored.agent } : {}),
+            ...(stored.accountId && stored.accountId !== DEFAULT_ACCOUNT_ID
+              ? { accountId: stored.accountId }
+              : {}),
+            reason: 'session_missing',
+          },
+          createdAt: Date.now(),
+        },
+      })
+    }
     // A resumed Side chat must rejoin its stream: the runtime routing maps
     // only cover threads created by this process, while the side-chat linkage
     // survives in the store across an orchestrator restart.

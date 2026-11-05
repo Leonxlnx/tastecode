@@ -4773,6 +4773,16 @@ export class Store {
     })
   }
 
+  /** Whether any turn of this chat ever completed, on any provider session it ran on. */
+  threadHasCompletedTurn(threadId: string): boolean {
+    for (let before = Number.MAX_SAFE_INTEGER; ;) {
+      const entry = this.#lastHistoryStateEvent(threadId, 'turn.completed', before)
+      if (!entry) return false
+      if (entry.event.type === 'turn.completed' && entry.event.status === 'completed') return true
+      before = entry.seq
+    }
+  }
+
   /** The chat moved to another provider and its conversation has not gone there yet. */
   threadNeedsHandover(threadId: string): boolean {
     return (
