@@ -7,6 +7,7 @@ import { assertPageCopy } from './copywriting.js'
 import { DESIGN_CONTENT_GUIDANCE, LANDING_PAGE_GUIDANCE } from './content-guidance.js'
 import { ONE_DESIGN_LANGUAGE } from './design-language.js'
 import { designMotionGuidance } from './motion-guidance.js'
+import { websiteMotion } from './website-motion.js'
 import { assertPageLayoutSelections, PAGE_LAYOUT_GUIDANCE } from './layout-guidance.js'
 import { parsePageBlueprint, type PageBlueprint } from './page.js'
 import {
@@ -118,7 +119,7 @@ Use the brand system rather than repeating it. Do not choose new colors or typef
 
 Define one base grid, one signature composition rule, and a page rhythm. Choose components by semantic job and content shape, using the least novel component that fully supports the task. Do not assemble component-library demos, cardify prose, or add interaction merely to create activity. For every section specify a compact, medium, and expanded transformation. Compact reduces simultaneity, not content or capability; source order, state, proof adjacency, and action priority must survive.
 
-Give every section one explicit motion decision using the visible-motion requirements below. ${dashboard ? 'Plan state transitions for the actual controls and views; static reading regions may use purpose none.' : 'Plan hero and media entrances as spatial continuity or explanation; purpose none is available for remaining static sections after the required page animations are covered, or when the user explicitly requests no animation.'} Hover motion is supplemental and must never carry required information.
+Give every section one explicit motion decision using the visible-motion requirements below. ${dashboard ? 'Plan state transitions for the actual controls and views; static reading regions may use purpose none.' : websiteMotion().pagePlan} Hover motion is supplemental and must never carry required information.
 
 Use cards for coherent features, people, plans, proof, actions, and media stories, not as empty wrappers around paragraphs. Retain each selected reference's card arrangement, proportions, media position and content order, but style every card in the brand's one card language: the same padding, radius, surface, border and button treatment in every section. Let card size, media crop, and internal composition respond to the content instead of defaulting to equal three-column boxes. When a selected layout is image-led, record stable assetNeeds for every meaningful image or capture rather than replacing it with a decorative vector. Carry the approved brand accent into primary actions, focus and selected states, and one recurring card, media, or section treatment.
 
