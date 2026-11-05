@@ -11,6 +11,7 @@ import {
   IconRefresh as RefreshCw,
   IconDeviceMobile as Smartphone,
   IconDeviceTablet as Tablet,
+  IconMessagePlus as MessagePlus,
 } from '@tabler/icons-react'
 import {
   isDesktop,
@@ -19,6 +20,9 @@ import {
   openExternalUrl,
   type BrowserShortcutAction,
 } from '../../bridge.js'
+import type { Transport } from '../../transport.js'
+import { BrowserAnnotations, type AnnotationGuest } from './BrowserAnnotations.js'
+import type { AnnotationDraft } from './browser-annotations.js'
 import { errorMessage } from '../../boundary.js'
 import { IconMorph } from '../IconMorph.js'
 import { Skeleton, SkeletonLines, SkeletonStatus } from '../Skeleton.js'
@@ -53,7 +57,7 @@ type BrowserState = {
   canGoForward: boolean
 }
 
-type BrowserGuest = HTMLElement & {
+type BrowserGuest = AnnotationGuest & {
   canGoBack(): boolean
   canGoForward(): boolean
   getTitle(): string
@@ -108,8 +112,14 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
   tabId,
   onPageInfo,
   onClose,
+  transport,
+  imagesSupported = false,
+  onAnnotationDraft,
 }: {
   active: boolean
+  transport?: Transport | undefined
+  imagesSupported?: boolean | undefined
+  onAnnotationDraft?: ((draft: AnnotationDraft) => void) | undefined
   navigation?: BrowserNavigationRequest | undefined
   /** The user opened this tab to type a URL: focus the address once it mounts. */
   focusAddressOnOpen?: boolean | undefined
@@ -139,6 +149,8 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
   const [address, setAddress] = useState('')
   const [state, setState] = useState<BrowserState>(EMPTY_STATE)
   const [hasRenderedPage, setHasRenderedPage] = useState(false)
+  const [annotating, setAnnotating] = useState(false)
+  const [annotationRevision, setAnnotationRevision] = useState(0)
   const [viewport, setViewport] = useState<BrowserViewportId>('fluid')
   // A notice about the toolbar: an address it refused, a native call that failed.
   const [error, setError] = useState<string>()
@@ -220,6 +232,12 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
       setState((current) => ({ ...current, loading: true }))
     }
     const onStop = () => syncGuestState(true)
+    const onNavigationStart = (event: Event) => {
+      const navigation = NavigationEventSchema.safeParse(event)
+      if (!navigation.success || navigation.data.isMainFrame === false) return
+      setAnnotating(false)
+      setAnnotationRevision((revision) => revision + 1)
+    }
     const onNavigate = (event: Event) => {
       const navigation = NavigationEventSchema.safeParse(event)
       const url = webPageUrl(navigation.success ? navigation.data.url : undefined)
@@ -265,6 +283,7 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
       syncGuestState()
     }
 
+    view.addEventListener('did-start-navigation', onNavigationStart)
     view.addEventListener('did-attach', onAttach)
     view.addEventListener('dom-ready', onReady)
     view.addEventListener('did-start-loading', onStart)
@@ -285,6 +304,7 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
       guest.current = null
       readyGuest.current = null
       lastNavigationRequest.current = undefined
+      view.removeEventListener('did-start-navigation', onNavigationStart)
       view.removeEventListener('did-attach', onAttach)
       view.removeEventListener('dom-ready', onReady)
       view.removeEventListener('did-start-loading', onStart)
@@ -479,6 +499,11 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
       onKeyDown={(event) => {
         if (event.defaultPrevented || event.nativeEvent.isComposing) return
         if (event.key === 'Escape') {
+          if (annotating) {
+            event.preventDefault()
+            setAnnotating(false)
+            return
+          }
           if (event.target !== addressInput.current || !editingAddress.current) return
           event.preventDefault()
           revertAddress()
@@ -563,6 +588,22 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
           </button>
         </form>
 
+        {isDesktop &&
+        transport &&
+        onAnnotationDraft &&
+        guest.current &&
+        typeof guest.current.executeJavaScript === 'function' ? (
+          <button
+            type="button"
+            aria-label="Annotate page"
+            title="Annotate page"
+            aria-pressed={annotating}
+            disabled={!state.url || state.loading || Boolean(failure)}
+            onClick={() => setAnnotating((value) => !value)}
+          >
+            <MessagePlus size={15} aria-hidden />
+          </button>
+        ) : null}
         <div className="workspace-browser__viewports" aria-label="Preview size">
           {BROWSER_VIEWPORTS.map((option) => {
             const Icon = VIEWPORT_ICONS[option.id]
@@ -595,6 +636,17 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
           data-visible={Boolean(state.url) && !failure}
           aria-hidden={!active}
         >
+          {guest.current && transport && onAnnotationDraft ? (
+            <BrowserAnnotations
+              key={annotationRevision}
+              view={guest.current}
+              enabled={annotating && active}
+              imagesSupported={imagesSupported}
+              transport={transport}
+              onDraft={onAnnotationDraft}
+              onExit={() => setAnnotating(false)}
+            />
+          ) : null}
           {loadingFirstPage ? (
             <SkeletonStatus label="Loading page…" className="workspace-browser__skeleton">
               <div className="workspace-browser__skeleton-header">

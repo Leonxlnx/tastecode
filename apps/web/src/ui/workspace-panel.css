@@ -1930,3 +1930,69 @@ textarea.workspace-review__field {
     transition: none;
   }
 }
+
+/* Annotation chrome belongs to the host; the untrusted guest stays untouched. */
+.browser-annotations__overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  cursor: crosshair;
+  overflow: hidden;
+}
+.browser-annotations__highlight {
+  position: absolute;
+  pointer-events: none;
+  border: 2px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.browser-annotations__pin {
+  position: absolute;
+  min-width: 24px;
+  height: 24px;
+  padding: 0 5px;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--text);
+  color: var(--bg);
+  cursor: pointer;
+}
+.browser-annotations__tray {
+  position: absolute;
+  z-index: 3;
+  bottom: 12px;
+  right: 12px;
+  width: min(320px, calc(100% - 24px));
+  max-height: 55%;
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 12px;
+  box-shadow: var(--shadow-raised);
+}
+.browser-annotations__tray p {
+  margin: 0 0 8px;
+  color: var(--text-2);
+}
+.browser-annotations__tray textarea {
+  display: block;
+  width: 100%;
+  min-height: 72px;
+  margin: 8px 0;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--bg);
+  color: var(--text);
+  resize: vertical;
+}
+.browser-annotations__list {
+  display: grid;
+  margin-bottom: 8px;
+}
+.browser-annotations__list button {
+  text-align: left;
+  overflow-wrap: anywhere;
+}

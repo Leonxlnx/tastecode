@@ -35,6 +35,7 @@ import type {
   SideChatPromptRequest,
   SideChatStartOptions,
 } from './WorkspaceSideChat.js'
+import type { AnnotationDraft } from './browser-annotations.js'
 import type { BrowserNavigationRequest } from './WorkspaceBrowser.js'
 import { browserPageLabel, type BrowserPageInfo } from './browser-page.js'
 import { WorkspaceTabs } from './WorkspaceTabs.js'
@@ -163,6 +164,8 @@ function WorkspacePanelComponent(props: {
   providerLogin?: WorkspaceProviderLoginRequest | undefined
   onProviderLoginClose?: ((id: number) => void) | undefined
   externalToolRequest?: { request: number; kind: WorkspaceTool } | undefined
+  imagesSupported?: boolean | undefined
+  onAnnotationDraft?: ((draft: AnnotationDraft) => void) | undefined
   designPreviewRequest?: BrowserNavigationRequest | undefined
   /** Opens the Pull requests surface on the pull request the Review tab shows. */
   onOpenPullRequest?: ((target: PullRequestTarget) => void) | undefined
@@ -631,6 +634,8 @@ function WorkspacePanelComponent(props: {
                   sideChatPromptRequest={props.sideChatPromptRequest}
                   onOpenPullRequest={props.onOpenPullRequest}
                   browserNavigation={tab.id === DESIGN_PREVIEW_TAB_ID ? designPreview : undefined}
+                  imagesSupported={props.imagesSupported}
+                  onAnnotationDraft={props.onAnnotationDraft}
                   onBrowserPage={updateBrowserPage}
                   onCloseTab={closeTabByShortcut}
                   onClose={() => closeTab(tab.id)}
@@ -681,6 +686,8 @@ function WorkspaceToolSurface(props: {
   sideChatStartOptions: SideChatStartOptions
   sideChatPromptRequest?: SideChatPromptRequest | undefined
   onOpenPullRequest?: ((target: PullRequestTarget) => void) | undefined
+  imagesSupported?: boolean | undefined
+  onAnnotationDraft?: ((draft: AnnotationDraft) => void) | undefined
   browserNavigation?: BrowserNavigationRequest | undefined
   onBrowserPage: (tabId: string, page: BrowserPageInfo) => void
   /** Ctrl+W in a Browser tab. Stable, so a memoized Browser surface keeps its props. */
@@ -731,6 +738,9 @@ function WorkspaceToolSurface(props: {
     return (
       <WorkspaceBrowser
         active={props.active}
+        transport={props.transport}
+        imagesSupported={props.imagesSupported}
+        onAnnotationDraft={props.onAnnotationDraft}
         navigation={props.browserNavigation}
         focusAddressOnOpen={props.tab.userOpened}
         tabId={props.tab.id}

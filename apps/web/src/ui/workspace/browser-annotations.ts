@@ -79,14 +79,20 @@ export function annotationCrop(
 }
 
 /** Serialized into the guest. No writes, listeners, globals, IPC or host values. */
-export function annotationSelector(element: Element): string {
+export function annotationSelector(element: Element, depth = 0): string {
+  if (depth > 20) return '[unavailable-shadow-path]'
   const parts: string[] = []
   for (let current: Element | null = element; current; current = current.parentElement) {
     const root = current.getRootNode() as Document | ShadowRoot
-    if (current.id && root.querySelectorAll('#' + CSS.escape(current.id)).length === 1) {
+    if (
+      current.id &&
+      current.id.length <= 512 &&
+      root.querySelectorAll('#' + CSS.escape(current.id)).length === 1
+    ) {
       parts.unshift('#' + CSS.escape(current.id))
       break
     }
+    if (parts.length >= 64) break
     const siblings = current.parentElement
       ? Array.from(current.parentElement.children).filter((s) => s.localName === current!.localName)
       : [current]
@@ -96,7 +102,8 @@ export function annotationSelector(element: Element): string {
   }
   const root = element.getRootNode()
   return (
-    (root instanceof ShadowRoot ? annotationSelector(root.host) + ' >>> ' : '') + parts.join(' > ')
+    (root instanceof ShadowRoot ? annotationSelector(root.host, depth + 1) + ' >>> ' : '') +
+    parts.join(' > ')
   )
 }
 
@@ -146,12 +153,22 @@ function pageProbe(request: ProbeRequest) {
     }
     return element
   }
+  const snippet = (element: Element) => {
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT)
+    let text = ''
+    for (let count = 0; count < 200 && text.length < 1000; count++) {
+      const node = walker.nextNode()
+      if (!node) break
+      text += (node.textContent ?? '').slice(0, 1000 - text.length)
+    }
+    return text
+  }
   const describe = (element: Element | null) => {
     if (!element) return null
     const rect = element.getBoundingClientRect()
     return {
       selector: annotationSelector(element).slice(0, 2048),
-      text: (element.textContent ?? '').slice(0, 1000),
+      text: snippet(element),
       box: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
     }
   }
