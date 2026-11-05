@@ -89,6 +89,24 @@ describe('domain events', () => {
     expect(DomainEventSchema.parse(event)).toEqual(event)
   })
 
+  it('says when a chat continued in a new session because the saved one was missing', () => {
+    const item = {
+      id: 'notice-1',
+      turnId: '',
+      type: 'notice',
+      status: 'completed',
+      notice: { kind: 'provider', provider: 'codex', reason: 'session_missing' },
+      createdAt: 1,
+    }
+    expect(ItemSchema.parse(item)).toEqual(item)
+    // A move the user made has no reason, as in history written before this field.
+    const moved = { ...item, notice: { kind: 'provider', provider: 'claude-code' } }
+    expect(ItemSchema.parse(moved)).toEqual(moved)
+    expect(() =>
+      ItemSchema.parse({ ...item, notice: { ...item.notice, reason: 'other' } }),
+    ).toThrow()
+  })
+
   it('carries a durable turn completion boundary without rejecting legacy history', () => {
     const completed = {
       type: 'turn.completed',
