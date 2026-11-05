@@ -31,6 +31,16 @@ describe('provider executable paths', () => {
     }
   })
 
+  it('accepts a pasted path with stray spaces or the quotes of Copy as path', () => {
+    const store = new Store(':memory:')
+    try {
+      const paths = updateProviderExecutablePath(store, 'codex', `  "${process.execPath}" `)
+      expect(paths['codex']).toBe(process.execPath)
+    } finally {
+      store.close()
+    }
+  })
+
   it('accepts known ACP agents and rejects API and custom sources', () => {
     const store = new Store(':memory:')
     try {

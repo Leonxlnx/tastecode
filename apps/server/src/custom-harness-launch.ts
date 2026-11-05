@@ -149,7 +149,8 @@ export function mergeLaunchEnvironment(
 
 /** Validate an explicit provider path with the same file checks as a custom harness. */
 export function resolveProviderExecutable(entered: string): string {
-  const candidate = expandHome(entered)
+  // Windows' Copy as path wraps the path in quotes, and pasting often brings a stray space.
+  const candidate = expandHome(stripQuotes(entered.trim()))
   if (!path.isAbsolute(candidate)) throw new Error('Enter an absolute executable path.')
   const resolved = path.normalize(candidate)
   assertExecutable(resolved, entered)
