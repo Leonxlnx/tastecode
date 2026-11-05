@@ -39,10 +39,7 @@
   /* Rail colour behind everything in this row: it is what shows through the
      stage's rounded top-left corner, so the notch reads as part of the rail. */
   background: var(--bg-rail);
-  /* The row spans the window, so nothing in it may reach past the window's
-     edges: the closed workspace panel rests 24px right of its column, which
-     made the page 25px wider than the window and scrollable by script. */
-  overflow-x: clip;
+  overflow-x: clip; /* the closed workspace panel rests 24px out */
 }
 
 :root[data-glass='on'][data-shell='desktop']:not([data-theme='light']) .shell__body {
