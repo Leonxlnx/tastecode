@@ -2,7 +2,7 @@ import { ACP_AGENTS } from '@harness/adapter-acp/agents'
 import { commandOverride, setCommandOverride, windowsCliCommand } from '@harness/proc/cli'
 import { resolveProviderExecutable } from './custom-harness-launch.js'
 import { assertProviderOffered } from './provider-edition.js'
-import { providerCommand } from './providers.js'
+import { providerCommand } from './provider-commands.js'
 import type { Store } from './store.js'
 
 function commandFor(source: string): string | undefined {

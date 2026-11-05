@@ -405,18 +405,28 @@ export function relativizeAssetPaths(value: unknown, workspacePath: string) {
     !Array.isArray((value as { assets?: unknown }).assets)
   )
     return value
-  let root: string
-  try {
-    root = realpathSync(workspacePath)
-  } catch {
-    return value
+  // The workspace and a file in it may be named through a symlink or junction on either side:
+  // macOS temp folders are /var/… for /private/var/…, and a project may sit behind a link.
+  const real = (file: string) => {
+    try {
+      return realpathSync(file)
+    } catch {
+      return undefined
+    }
   }
+  const realRoot = real(workspacePath)
+  if (!realRoot) return value
+  const roots = [...new Set([path.resolve(workspacePath), realRoot])]
   const inside = (file: unknown) => {
     if (typeof file !== 'string' || !/^(?:[a-z]:[\\/]|[\\/])/i.test(file)) return file
-    const relative = path.relative(root, path.resolve(file))
-    return relative && !relative.startsWith('..') && !path.isAbsolute(relative)
-      ? relative.split(path.sep).join('/')
-      : file
+    const names = [...new Set([path.resolve(file), real(file) ?? path.resolve(file)])]
+    for (const root of roots)
+      for (const name of names) {
+        const relative = path.relative(root, name)
+        if (relative && !relative.startsWith('..') && !path.isAbsolute(relative))
+          return relative.split(path.sep).join('/')
+      }
+    return file
   }
   const manifest = value as { assets: unknown[] }
   return {
