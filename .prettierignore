@@ -42,3 +42,8 @@ apps/mobile/.expo/
 
 # Upstream skill files, fetched by packages/default-skills (gitignored).
 packages/default-skills/bundle/
+
+# Upstream skill text with TasteCode's edits; kept in the upstream's own wrapping so the
+# edits stay readable against it.
+packages/default-skills/patches/*/SKILL.md
+packages/default-skills/patches/*/references/
