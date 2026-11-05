@@ -3273,6 +3273,37 @@ describe('settings search', () => {
     fireEvent.keyDown(input, { key: 'Escape' })
     expect(onClose).toHaveBeenCalledOnce()
   })
+  it('finds provider defaults before the Providers tab has opened', async () => {
+    localStorage.removeItem('harness.signedInProviders')
+    localStorage.removeItem('harness.signedOutProviders')
+    const transport = new TestTransport((method) => {
+      if (method === 'auth.status') return { signedIn: true }
+      throw new Error(`unexpected ${method}`)
+    })
+    renderSettings({
+      initialSection: 'workflows',
+      transport,
+      overrides: {
+        providerStatuses: [
+          { id: 'codex', displayName: 'Codex', installed: true, auth: 'authenticated' },
+        ],
+        providerRoster: ['codex'],
+        providerDefaults: { pins: {}, onPinChange: vi.fn(), access: {}, onAccessChange: vi.fn() },
+      },
+    })
+    const input = screen.getByRole('combobox', { name: 'Search settings' })
+    fireEvent.change(input, { target: { value: 'codex model' } })
+    const result = screen.getByRole('option', { name: 'Codex Model' })
+    fireEvent.click(result)
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Providers' })).toBeTruthy())
+    await waitFor(() =>
+      expect(
+        document
+          .querySelector('[data-settings-id="provider:codex:Codex:Model"]')
+          ?.hasAttribute('data-settings-found'),
+      ).toBe(true),
+    )
+  })
   it('does not offer hidden debug and phone controls', () => {
     renderSettings({ initialSection: 'workflows' })
     const input = screen.getByRole('combobox', { name: 'Search settings' })

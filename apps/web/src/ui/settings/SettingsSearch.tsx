@@ -48,7 +48,9 @@ export function SettingsSearch(props: {
   for (const status of props.providers) {
     if (!signedIn.has(status.id)) {
       const signed = status.installed ? lastSignIn(status.id) : undefined
-      if (signed !== undefined) signedIn.set(status.id, { signedIn: signed })
+      if (signed !== undefined || status.auth === 'authenticated') {
+        signedIn.set(status.id, { signedIn: signed ?? true })
+      }
     }
   }
   if (props.account) signedIn.set(props.provider, props.account)
