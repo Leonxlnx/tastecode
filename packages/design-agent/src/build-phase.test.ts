@@ -199,7 +199,7 @@ describe('build phase', () => {
       'Every section reads colors, font families, font sizes, radii and section spacing only through these variables',
     )
     expect(prompt).toContain(
-      'The only permitted font families are "Fraunces" and "Hanken Grotesk". Do not add any other font-family, @font-face, Google Fonts or Fontsource import',
+      'The only permitted font families are "Fraunces" and "Hanken Grotesk". Load them only from their font files in the project: link the stylesheet the asset manifest records for them, or write @font-face rules pointing at those files. Do not add a font-family or @font-face for any other family, a Google Fonts or Fontsource import',
     )
     expect(prompt).toContain('an icon font required by the project')
     expect(prompt).toContain('exactly one primary and one secondary button style from designTokens')
