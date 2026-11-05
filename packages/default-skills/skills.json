@@ -31,9 +31,27 @@
       "license": "MIT",
       "licenseFile": "LICENSE",
       "archiveSha256": "f7995b87905c1881e48fad6aa0c6ba4ad871bded5e673ecc455a085f922da2e5",
-      "treeSha256": "ff2a44d0a71029ee9fcd7e61266eb7ce1fa25ad89107b214d8631c9bf6434ede",
-      "files": 1618,
-      "bytes": 36114561
+      "treeSha256": "c8b7b9110aaca76f1652249f1f167bfd8780312a77821e860f6318d7684fdd33",
+      "files": 545,
+      "bytes": 10438941,
+      "media": {
+        "about": "Third-party photographs and icons with their credits files. Not in the installer: the loader at scripts/photos.mjs fetches them from this commit on first use.",
+        "loader": "scripts/photos.mjs",
+        "paths": [
+          "assets/photos/",
+          "assets/layout/img/",
+          "assets/icons/demo/",
+          "assets/ui/icons/",
+          "assets/moments/_demo/",
+          "assets/scenes/_demo/",
+          "assets/objects/photo-kit/photos/",
+          "assets/objects/photo-kit/photos.json",
+          "assets/components/fx-photo/meeting-room.jpg"
+        ],
+        "treeSha256": "ef2555b243921ea873acfc163c42d7576a21466e058ca4c0036408e28dc22f97",
+        "files": 1073,
+        "bytes": 25675620
+      }
     },
     {
       "folder": "cook",
