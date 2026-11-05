@@ -3304,6 +3304,23 @@ describe('settings search', () => {
       ).toBe(true),
     )
   })
+  it('does not replay a jump when its section is opened again later', async () => {
+    renderSettings({ initialSection: 'workflows' })
+    const input = screen.getByRole('combobox', { name: 'Search settings' })
+    fireEvent.change(input, { target: { value: 'dark mode' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    await waitFor(() =>
+      expect(
+        document.querySelector('[data-settings-id="theme"]')?.hasAttribute('data-settings-found'),
+      ).toBe(true),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'General' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Appearance' }))
+    expect(screen.getByRole('heading', { name: 'Appearance' })).toBeTruthy()
+    expect(
+      document.querySelector('[data-settings-id="theme"]')?.hasAttribute('data-settings-found'),
+    ).toBe(false)
+  })
   it('does not offer hidden debug and phone controls', () => {
     renderSettings({ initialSection: 'workflows' })
     const input = screen.getByRole('combobox', { name: 'Search settings' })

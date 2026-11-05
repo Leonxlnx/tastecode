@@ -494,7 +494,12 @@ function SettingsComponent(props: {
   }
   useEffect(() => {
     const root = main.current
-    if (!jump || !root || section !== jump.section) return
+    if (!jump || !root) return
+    // A jump belongs to one visit: opening the section again later must not replay it.
+    if (section !== jump.section) {
+      setJump(undefined)
+      return
+    }
     let found: HTMLElement | null = null
     let highlightTimer: ReturnType<typeof setTimeout> | undefined
     const observer = new MutationObserver(find)
