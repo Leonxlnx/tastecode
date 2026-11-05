@@ -9,15 +9,16 @@
 //                                   skills.json (after moving a pin on purpose)
 //
 // The bundle is gitignored: the skill files are about 13 MB, so only the pins
-// and their hashes live in the repository. A skill's third-party media (its
-// `media` entry, about 26 MB for design-taste-frontend) is not bundled at all:
-// skill-media.mjs fetches it from the same pinned commit on first use.
+// and their hashes live in the repository. A skill's `omit` entry leaves files
+// out of the bundle, and its `patch` entry swaps upstream files for TasteCode's
+// copies in patches/<folder>/ (see the README there). Nothing else is fetched
+// later: the bundle is all an installed app has.
 import { createHash } from 'node:crypto'
 import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { gunzipSync } from 'node:zlib'
-import { digestFiles, fetchArchive, skillFiles, splitMedia } from './skill-media.mjs'
+import { digestFiles, fetchArchive, omitFiles, skillFiles } from './skill-media.mjs'
 
 export { digestFiles, isStray, skillFiles, tarEntries } from './skill-media.mjs'
 
@@ -25,8 +26,37 @@ const here = path.dirname(fileURLToPath(import.meta.url))
 export const packageRoot = path.resolve(here, '..')
 export const manifestPath = path.join(packageRoot, 'skills.json')
 export const bundleRoot = path.join(packageRoot, 'bundle')
-/** Shipped in place of a skill's `media.loader` script. */
-export const mediaLoaderPath = path.join(here, 'skill-media.mjs')
+/** TasteCode's own copies of upstream skill files, one folder per skill (see its README). */
+export const patchesRoot = path.join(packageRoot, 'patches')
+
+export function patchPath(skill, relative, root = patchesRoot) {
+  return path.join(root, skill.folder, ...relative.split('/'))
+}
+
+/**
+ * Takes the files a skill's `patch` entry replaces out of `files` and returns
+ * TasteCode's copies of them. Each upstream file must still be the one its
+ * patch was written against; with `update`, the measured hashes are returned
+ * instead, for a maintainer who has carried the patch over to a new pin.
+ */
+async function patchFiles(files, skill, update, root = patchesRoot) {
+  const replacements = new Map()
+  if (!skill.patch) return { replacements, entry: undefined }
+  const measured = {}
+  for (const [relative, base] of Object.entries(skill.patch.files)) {
+    const upstream = files.get(relative)
+    if (!upstream) throw new Error(`${skill.folder}: patched file ${relative} is not upstream`)
+    const sha = createHash('sha256').update(upstream).digest('hex')
+    if (!update && sha !== base)
+      throw new Error(
+        `${skill.folder}: upstream ${relative} changed (sha256 ${sha}); carry patches/${skill.folder}/${relative} over, then run sync.js --update`,
+      )
+    measured[relative] = sha
+    files.delete(relative)
+    replacements.set(relative, await readFile(patchPath(skill, relative, root)))
+  }
+  return { replacements, entry: { ...skill.patch, files: measured } }
+}
 
 /** The plugin manifest Claude Code reads; its name is the prefix skills show under. */
 export function pluginManifest(manifest) {
@@ -48,7 +78,7 @@ export async function readManifest(file = manifestPath) {
 }
 
 /** Problems with an existing bundle, or an empty list when it matches the manifest exactly. */
-export async function verifyBundle(manifest, root = bundleRoot) {
+export async function verifyBundle(manifest, root = bundleRoot, patches = patchesRoot) {
   const problems = []
   try {
     if (!(await stat(root)).isDirectory()) return [`${root} is not a folder`]
@@ -89,11 +119,11 @@ export async function verifyBundle(manifest, root = bundleRoot) {
       problems.push(`${skill.folder} is missing`)
       continue
     }
-    if (skill.media) {
-      const loader = files.get(skill.media.loader)
-      if (!loader?.equals(await readFile(mediaLoaderPath)))
-        problems.push(`${skill.folder}: ${skill.media.loader} is not TasteCode's media loader`)
-      files.delete(skill.media.loader)
+    for (const relative of Object.keys(skill.patch?.files ?? {})) {
+      const shipped = files.get(relative)
+      if (!shipped?.equals(await readFile(patchPath(skill, relative, patches))))
+        problems.push(`${skill.folder}: ${relative} is not TasteCode's patched copy`)
+      files.delete(relative)
     }
     const digest = digestFiles(files)
     if (digest.treeSha256 !== skill.treeSha256)
@@ -111,9 +141,15 @@ export async function verifyBundle(manifest, root = bundleRoot) {
  */
 export async function syncBundle(
   manifest,
-  { root = bundleRoot, fetchImpl = fetch, update = false, log = console.log } = {},
+  {
+    root = bundleRoot,
+    patches = patchesRoot,
+    fetchImpl = fetch,
+    update = false,
+    log = console.log,
+  } = {},
 ) {
-  if (!update && (await verifyBundle(manifest, root)).length === 0) {
+  if (!update && (await verifyBundle(manifest, root, patches)).length === 0) {
     log('Default skills are up to date.')
     return manifest
   }
@@ -129,26 +165,26 @@ export async function syncBundle(
           `${skill.folder}: archive sha256 ${archiveSha256} does not match the pinned ${skill.archiveSha256}`,
         )
       const all = skillFiles(gunzipSync(gz), skill)
-      const { shipped: files, fetched } = skill.media
-        ? splitMedia(all, skill.media)
-        : { shipped: all, fetched: undefined }
+      const files = skill.omit ? omitFiles(all, skill.omit) : all
+      const patch = await patchFiles(files, skill, update, patches)
       const digest = digestFiles(files)
       if (!update && digest.treeSha256 !== skill.treeSha256)
         throw new Error(`${skill.folder}: extracted files do not match the pinned tree hash`)
-      const media = fetched && { ...skill.media, ...digestFiles(fetched) }
-      if (!update && media && media.treeSha256 !== skill.media.treeSha256)
-        throw new Error(`${skill.folder}: its media does not match the pinned media hash`)
-      // Third-party media stays out of the installer; the loader fetches it on first use.
-      if (media) files.set(media.loader, await readFile(mediaLoaderPath))
-      for (const [relative, body] of files) {
+      for (const [relative, body] of [...files, ...patch.replacements]) {
         const target = path.join(staging, 'skills', skill.folder, ...relative.split('/'))
         await mkdir(path.dirname(target), { recursive: true })
         await writeFile(target, body)
       }
-      next.skills.push({ ...skill, archiveSha256, ...digest, ...(media ? { media } : {}) })
+      next.skills.push({
+        ...skill,
+        archiveSha256,
+        ...digest,
+        ...(patch.entry ? { patch: patch.entry } : {}),
+      })
       log(
-        `${skill.folder}: ${digest.files} files, ${digest.bytes} bytes @ ${skill.commit}` +
-          (media ? `; media fetched on first use: ${media.files} files, ${media.bytes} bytes` : ''),
+        `${skill.folder}: ${digest.files + patch.replacements.size} files @ ${skill.commit}` +
+          (skill.omit ? `, ${all.size - files.size - patch.replacements.size} left out` : '') +
+          (patch.entry ? `, ${patch.replacements.size} patched` : ''),
       )
     }
     await mkdir(path.join(staging, '.claude-plugin'), { recursive: true })
