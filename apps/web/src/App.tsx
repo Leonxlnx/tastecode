@@ -111,6 +111,7 @@ import {
 import { createSessionOrderSerializer } from './session-order-serializer.js'
 import type { CommandScope, PaletteCommand } from './ui/CommandPalette.js'
 import type { AppScreen } from './app-commands.js'
+import { browserCommentsAsPlainText } from './ui/browser-comments.js'
 import { Composer, type SendAvailability, type WorkspaceInfo } from './ui/Composer.js'
 import { composerWireText } from './ui/composer-chips.js'
 import {
@@ -4680,7 +4681,9 @@ export function App({ transport: givenTransport }: { transport?: Transport } = {
 
   const send = useCallback(
     async (text: string, attachments: string[] = [], submission: 'queue' | 'steer' = 'queue') => {
-      const titlePrompt = text.trim() || attachments.map(basename).join(', ')
+      // A title reads the comment, not the page context sent along with it.
+      const titlePrompt =
+        browserCommentsAsPlainText(text.trim()) || attachments.map(basename).join(', ')
       // The composer clears itself the moment it hands the text over. Every
       // early bail below must put the words back — a toast is no substitute
       // for the paragraph someone just typed. A chat that is still starting
