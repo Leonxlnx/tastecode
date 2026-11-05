@@ -8,6 +8,7 @@ import {
   rm,
   stat,
   symlink,
+  utimes,
   writeFile,
 } from 'node:fs/promises'
 import os from 'node:os'
@@ -953,5 +954,51 @@ describe('Claude Code saved history', { timeout: 20_000 }, () => {
     await rm(f.file)
     await symlink(outside, f.file)
     expect(await f.source.read(session)).toEqual([])
+  })
+})
+
+describe('Claude Code history listing cadence', () => {
+  const HOUR = 3_600_000
+
+  it('rechecks an old, unchanged transcript every ten minutes and a new one at once', async () => {
+    const f = await fixture([row('u1', 'user', 'First prompt')])
+    let clock = AT + 30 * 24 * HOUR
+    const source = createClaudeHistorySource({ configDir: f.configDir, now: () => clock })
+    const old = new Date(clock - 3 * 24 * HOUR)
+    await utimes(f.file, old, old)
+    const [first] = await source.list()
+    expect(first?.id).toBe(SESSION)
+
+    // The old transcript grows without its time moving, and a new one appears beside it.
+    await appendFile(f.file, JSON.stringify(row('u2', 'user', 'Second prompt')) + '\n')
+    await utimes(f.file, old, old)
+    await writeFile(
+      path.join(f.project, `${SECOND}.jsonl`),
+      JSON.stringify({ ...row('n1', 'user', 'New chat'), sessionId: SECOND }) + '\n',
+    )
+    clock += 60_000
+    const soon = await source.list()
+    expect(soon.map((session) => session.id).sort()).toEqual([SESSION, SECOND].sort())
+    expect(soon.find((session) => session.id === SESSION)?.revision).toBe(first?.revision)
+
+    clock += 10 * 60_000
+    const full = await source.list()
+    expect(full.find((session) => session.id === SESSION)?.revision).not.toBe(first?.revision)
+  })
+
+  it('rechecks a transcript changed within the last day on every listing', async () => {
+    const f = await fixture([row('u1', 'user', 'First prompt')])
+    let clock = AT + 30 * 24 * HOUR
+    const source = createClaudeHistorySource({ configDir: f.configDir, now: () => clock })
+    const recent = new Date(clock - HOUR)
+    await utimes(f.file, recent, recent)
+    const [first] = await source.list()
+
+    await appendFile(f.file, JSON.stringify(row('u2', 'user', 'Second prompt')) + '\n')
+    const touched = new Date(clock - HOUR / 2)
+    await utimes(f.file, touched, touched)
+    clock += 60_000
+    const [next] = await source.list()
+    expect(next?.revision).not.toBe(first?.revision)
   })
 })
