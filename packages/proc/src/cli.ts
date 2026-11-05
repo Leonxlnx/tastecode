@@ -55,10 +55,7 @@ export function spawnCli(
     const executable = resolved ?? command
     if (/\.(?:exe|com)$/i.test(executable)) return spawnOwned(executable, args, spawnOptions)
     const batch = /\.(?:cmd|bat)$/i.test(executable)
-    const shellCommand = [
-      escapeCmdToken(path.win32.normalize(executable)),
-      ...args.map((argument) => quoteCmdArgument(argument, batch)),
-    ].join(' ')
+    const shellCommand = windowsCliCommand(executable, args, batch)
     return spawnOwned('cmd.exe', ['/d', '/s', '/v:off', '/c', `"${shellCommand}"`], {
       ...spawnOptions,
       // cmd.exe searches cwd for a name it could not find on PATH either.
@@ -95,6 +92,14 @@ function escapeCmdToken(value: string): string {
     throw new Error('Windows batch commands cannot contain line breaks or NUL bytes')
   }
   return value.replace(CMD_META, '^$1')
+}
+
+/** Command text for cmd.exe /d /s /v:off /c, with no shell interpolation. */
+export function windowsCliCommand(executable: string, args: string[], batch: boolean): string {
+  return [
+    escapeCmdToken(path.win32.normalize(executable)),
+    ...args.map((argument) => quoteCmdArgument(argument, batch)),
+  ].join(' ')
 }
 
 export function quoteCmdArgument(value: string, batch = false): string {
