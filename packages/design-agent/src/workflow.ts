@@ -1,6 +1,7 @@
 import { type BoundaryRecord, list, record, string } from './parse.js'
 import { dashboardModeEnabled, parseDesignBrief } from './brief.js'
 import { DESIGN_CONTENT_GUIDANCE, LANDING_PAGE_GUIDANCE } from './content-guidance.js'
+import { parsePhaseJson } from './phase-json.js'
 export { DESIGN_BRIEF_ATTACHMENT, isDesignBriefAttachment } from './attachment.js'
 
 export interface BriefingQuestion {
@@ -118,8 +119,7 @@ ${answers.length ? `\n<user-clarifications>\n${JSON.stringify(answers)}\n</user-
 }
 
 export function parseBriefingOutput(text: string): BriefingOutput {
-  const fenced = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(text.trim())
-  const value = record(JSON.parse(fenced?.[1] ?? text), 'briefing output')
+  const value = record(parsePhaseJson(text), 'briefing output')
   if (value.status === 'not_design') {
     return {
       status: 'not_design',

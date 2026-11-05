@@ -23,6 +23,7 @@ export {
   designSourceQualityBaseline,
   validateDesignSourceQuality,
 } from './source-quality.js'
+import { parsePhaseJson } from './phase-json.js'
 
 export type BuildPhaseOutput =
   | { status: 'complete'; summary: string; files: string[]; checks: string[] }
@@ -279,8 +280,7 @@ export function validateExactBuildFiles(
 }
 
 export function parseBuildPhaseOutput(text: string): BuildPhaseOutput {
-  const fenced = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(text.trim())
-  const value = record(JSON.parse(fenced?.[1] ?? text), 'build output')
+  const value = record(parsePhaseJson(text), 'build output')
   // A report may name a generated folder such as "dist/". The workspace scan is
   // the authority on its contents, so a trailing separator must not fail an
   // otherwise finished Build; the path rules still apply to the folder itself.
