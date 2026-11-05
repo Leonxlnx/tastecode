@@ -486,6 +486,11 @@ function SettingsComponent(props: {
   const chooseSearchResult = (entry: SettingsSearchEntry) => {
     setProvidersView(undefined)
     setSection(entry.section)
+    if (entry.page) {
+      setJump(undefined)
+      if (main.current) main.current.scrollTop = 0
+      return
+    }
     setJump((previous) => ({
       id: entry.id,
       section: entry.section,

@@ -3304,6 +3304,15 @@ describe('settings search', () => {
       ).toBe(true),
     )
   })
+  it('opens a category from its name', async () => {
+    renderSettings({ initialSection: 'workflows' })
+    const input = screen.getByRole('combobox', { name: 'Search settings' })
+    fireEvent.change(input, { target: { value: 'privacy' } })
+    fireEvent.click(screen.getByRole('option', { name: 'Data & privacy' }))
+    await waitFor(() =>
+      expect(screen.getByRole('heading', { name: 'Data & privacy' })).toBeTruthy(),
+    )
+  })
   it('does not replay a jump when its section is opened again later', async () => {
     renderSettings({ initialSection: 'workflows' })
     const input = screen.getByRole('combobox', { name: 'Search settings' })

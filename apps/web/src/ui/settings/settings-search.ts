@@ -20,8 +20,27 @@ export type SettingsSearchEntry = {
   title: string
   description?: string
   keywords?: string
+  /** A whole category: choosing it opens the page, with no row to jump to. */
+  page?: boolean
   visible?: (context: SearchContext) => boolean
 }
+
+/** The categories themselves, so that searching for one never reports no matches. */
+export const SETTINGS_PAGES: SettingsSearchEntry[] = [
+  { id: 'page:workflows', section: 'workflows', title: 'General', page: true },
+  { id: 'page:profile', section: 'profile', title: 'Profile', page: true },
+  { id: 'page:appearance', section: 'appearance', title: 'Appearance', page: true },
+  { id: 'page:keybinds', section: 'keybinds', title: 'Keybinds', page: true },
+  { id: 'page:providers', section: 'providers', title: 'Providers', page: true },
+  { id: 'page:models', section: 'models', title: 'Models', page: true },
+  { id: 'page:mcp', section: 'mcp', title: 'MCP servers', page: true },
+  { id: 'page:skills', section: 'skills', title: 'Skills', page: true },
+  { id: 'page:usage', section: 'usage', title: 'Usage', page: true },
+  { id: 'page:phone', section: 'phone', title: 'Phone', page: true, visible: (c) => c.phone },
+  { id: 'page:data', section: 'data', title: 'Data & privacy', page: true },
+  { id: 'page:debug', section: 'debug', title: 'Debug', page: true, visible: (c) => c.debug },
+  { id: 'page:about', section: 'about', title: 'About', page: true },
+]
 
 export const STATIC_SETTINGS: SettingsSearchEntry[] = [
   {
@@ -198,31 +217,37 @@ export const STATIC_SETTINGS: SettingsSearchEntry[] = [
   { id: 'about-source', section: 'about', title: 'Source' },
 ]
 
+const APPEARANCE_MODES = [
+  { mode: 'light', label: 'Light' },
+  { mode: 'dark', label: 'Dark' },
+] as const
+
 export const SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
+  ...SETTINGS_PAGES,
   ...STATIC_SETTINGS,
-  ...(['light', 'dark'] as const).flatMap((mode) => [
+  ...APPEARANCE_MODES.flatMap(({ mode, label }) => [
     {
       id: `appearance:${mode}:accent`,
       section: 'appearance' as const,
-      title: `${mode} accent`,
+      title: `${label} accent`,
       keywords: 'color colour',
     },
     {
       id: `appearance:${mode}:background`,
       section: 'appearance' as const,
-      title: `${mode} background`,
+      title: `${label} background`,
       keywords: 'color colour',
     },
     {
       id: `appearance:${mode}:interface-font`,
       section: 'appearance' as const,
-      title: `${mode} interface font`,
+      title: `${label} interface font`,
       keywords: 'typography',
     },
     {
       id: `appearance:${mode}:sidebar-translucency`,
       section: 'appearance' as const,
-      title: `${mode} sidebar translucency`,
+      title: `${label} sidebar translucency`,
       keywords: 'glass opacity',
     },
   ]),

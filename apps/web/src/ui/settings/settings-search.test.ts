@@ -6,7 +6,12 @@ import { describe, expect, it } from 'vitest'
 import type { ProviderStatus } from '@harness/contracts'
 import { TUNING_LABELS, providerTuningEntries, tuningSearchId } from './provider-tuning-search.js'
 import { KEYBINDING_DEFINITIONS } from '../../shortcuts.js'
-import { searchSettings, SETTINGS_SEARCH_ENTRIES, STATIC_SETTINGS } from './settings-search.js'
+import {
+  searchSettings,
+  SETTINGS_PAGES,
+  SETTINGS_SEARCH_ENTRIES,
+  STATIC_SETTINGS,
+} from './settings-search.js'
 
 const files = [
   'Settings.tsx',
@@ -82,6 +87,16 @@ describe('settings search', () => {
       tuningSearchId('codex', 'Agent', TUNING_LABELS.access),
     ])
     expect(providerTuningEntries([provider], [], new Map())).toEqual([])
+  })
+
+  it('offers every category in the settings rail, ahead of the rows that share its words', () => {
+    const labels = [
+      ...source('Settings.tsx').matchAll(/<SettingsNavItem[\s\S]*?label="([^"]+)"/g),
+    ].map((match) => match[1])
+    expect(labels.length).toBeGreaterThan(10)
+    expect(SETTINGS_PAGES.map((entry) => entry.title).sort()).toEqual([...labels].sort())
+    expect(searchSettings('model', SETTINGS_SEARCH_ENTRIES)[0]?.title).toBe('Models')
+    expect(searchSettings('mcp', SETTINGS_SEARCH_ENTRIES)[0]?.title).toBe('MCP servers')
   })
 
   it('keeps the catalog and row anchors in sync', () => {
