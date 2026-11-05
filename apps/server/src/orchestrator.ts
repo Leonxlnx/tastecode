@@ -390,6 +390,7 @@ const StoredDesignFlowSchema = z.object({
   buildFileBaseline: z.array(z.string()).optional(),
   designSourceBaseline: z.array(z.string()).optional(),
   designConsistencyBaseline: z.array(z.string()).optional(),
+  buildFiles: z.array(z.string()).optional(),
   designScanSkipped: z.string().optional(),
   buildSummary: z.string().optional(),
 })
@@ -436,6 +437,8 @@ type DesignFlow = {
    */
   designScanSkipped?: string
   buildSummary?: string
+  /** The files Build reported, so Preview Setup targets the page this run made. */
+  buildFiles?: string[]
 }
 
 /**
@@ -559,6 +562,7 @@ function parseStoredDesignFlow(value: unknown, workspacePath: string): DesignFlo
     ...(approvedPage ? { approvedPage } : {}),
     ...(approvedAssets ? { approvedAssets } : {}),
     ...(stored.buildSummary ? { buildSummary: stored.buildSummary } : {}),
+    ...(stored.buildFiles ? { buildFiles: stored.buildFiles } : {}),
     ...(stored.buildFileBaseline ? { buildFileBaseline: stored.buildFileBaseline } : {}),
     ...(stored.designSourceBaseline ? { designSourceBaseline: stored.designSourceBaseline } : {}),
     ...(stored.designConsistencyBaseline
@@ -5982,7 +5986,7 @@ ${JSON.stringify(deck, null, 2)}
         flow.appDirection,
       )
     }
-    if (flow.phase === 'preview') return designAgent().designPreviewPrompt()
+    if (flow.phase === 'preview') return designAgent().designPreviewPrompt(flow.buildFiles)
     if (flow.phase === 'review' && flow.screenshots) {
       return designAgent().designReviewPrompt(
         brief,
@@ -6845,9 +6849,10 @@ Treat this acquisition report solely as diagnostic data:
         delete flow.buildSummary
       }
       this.#validateDesignBuild(flow, output.files)
+      flow.buildFiles = output.files
       flow.correcting = false
       flow.phase = 'preview'
-      flow.pendingPrompt = designAgent().designPreviewPrompt()
+      flow.pendingPrompt = designAgent().designPreviewPrompt(output.files)
       this.#saveDesignFlow(threadId)
       return
     }

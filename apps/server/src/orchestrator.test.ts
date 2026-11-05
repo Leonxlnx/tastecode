@@ -5623,6 +5623,7 @@ describe('provider-neutral design briefing', () => {
         sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
         await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(6))
         expect(sessions[0]?.sent[5]).toContain('Preview Setup phase')
+        expect(sessions[0]?.sent[5]).toContain('Build reported these files: src/page.tsx.')
         sessions[0]?.emit(
           message(
             JSON.stringify({
