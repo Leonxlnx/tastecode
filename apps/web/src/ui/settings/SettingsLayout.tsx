@@ -117,6 +117,7 @@ export function SettingsPage(props: {
  */
 export function SettingsSection(props: {
   title?: ReactNode
+  searchId?: string | undefined
   label?: string | undefined
   note?: ReactNode
   action?: ReactNode
@@ -126,6 +127,7 @@ export function SettingsSection(props: {
   const titled = props.title !== undefined
   return (
     <section
+      data-settings-id={props.searchId}
       className="set-section"
       aria-labelledby={titled ? titleId : undefined}
       aria-label={titled ? undefined : props.label}
@@ -154,13 +156,18 @@ export type SettingsRowTone = 'muted' | 'active' | 'error'
  */
 export function SettingsRow(props: {
   name: ReactNode
+  searchId?: string | undefined
   note?: ReactNode
   tone?: SettingsRowTone | undefined
   className?: string | undefined
   children?: ReactNode
 }) {
   return (
-    <div className={classes('set-row', props.className)} data-tone={props.tone}>
+    <div
+      className={classes('set-row', props.className)}
+      data-tone={props.tone}
+      data-settings-id={props.searchId}
+    >
       <p className="set-row__name">{props.name}</p>
       <span className="set-leader" aria-hidden />
       <div className="set-row__value">{props.children}</div>

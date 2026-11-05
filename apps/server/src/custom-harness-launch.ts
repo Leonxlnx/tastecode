@@ -147,6 +147,19 @@ export function mergeLaunchEnvironment(
   return { ...merged, PATH: desktopPath(suppliedPath, { env: merged, platform }) }
 }
 
+/** Validate an explicit provider path with the same file checks as a custom harness. */
+export function resolveProviderExecutable(entered: string): string {
+  // Windows' Copy as path wraps the path in quotes, and pasting often brings a stray space.
+  const candidate = expandHome(stripQuotes(entered.trim()))
+  if (!path.isAbsolute(candidate)) throw new Error('Enter an absolute executable path.')
+  const resolved = path.normalize(candidate)
+  assertExecutable(resolved, entered)
+  if (process.platform === 'win32' && !/\.(?:exe|com|cmd|bat)$/i.test(resolved)) {
+    throw new Error(`Executable "${entered}" is not a runnable Windows executable or batch file.`)
+  }
+  return resolved
+}
+
 function resolveExecutable(command: string, cwd: string, environment: NodeJS.ProcessEnv): string {
   const pathCommand = path.isAbsolute(command) || command.includes('/') || command.includes('\\')
   if (pathCommand) {

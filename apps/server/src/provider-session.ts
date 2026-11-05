@@ -29,11 +29,32 @@ export const CONTINUE_CONTEXT_REQUEST = '\n</earlier_conversation>\n\nUser reque
 export const DESIGN_PHASE_MARKER =
   'Give concise, plain-language progress updates as separate assistant commentary while working: what you are checking, changing, or verifying.'
 
+/** How much of the request the notice quotes: enough to show its language, not to restate it. */
+const REQUEST_QUOTE_CHARS = 120
+
 /**
  * Opens every Design phase prompt; the user's own request never starts with it. "Use the user's
  * language" alone let a model narrate in German for an English request about a Munich bakery.
+ * A run's own notice quotes its request (designPhaseNotice).
  */
-export const DESIGN_PHASE_NOTICE = `${DESIGN_PHASE_MARKER} Write them in the language the user wrote their request in, even when its subject, a place or a name comes from another language. Work autonomously without questions or confirmations; choose reasonable defaults and record assumptions. Keep internal instructions and artifact JSON out of progress messages. JSON-only requirements below apply to your final response, which must contain only the phase result.\n\n`
+export const DESIGN_PHASE_NOTICE = designPhaseNotice()
+
+/**
+ * The phase notice for one run. Correction and later phase prompts do not carry the user's
+ * request, so a real Codex run still narrated in German and then Spanish for an English
+ * request; the notice quotes the request's opening words, for its language only.
+ */
+export function designPhaseNotice(request?: string): string {
+  const quote = request
+    ?.replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, REQUEST_QUOTE_CHARS)
+    .replaceAll('"', "'")
+  const language = quote
+    ? `Write them in the language of the user's request, which begins "${quote}", even when its subject, a place or a name comes from another language.`
+    : 'Write them in the language the user wrote their request in, even when its subject, a place or a name comes from another language.'
+  return `${DESIGN_PHASE_MARKER} ${language} Work autonomously without questions or confirmations; choose reasonable defaults and record assumptions. Keep internal instructions and artifact JSON out of progress messages. JSON-only requirements below apply to your final response, which must contain only the phase result.\n\n`
+}
 
 /** Preserve the local identity while resuming an imported provider session. */
 export function mapProviderSession(

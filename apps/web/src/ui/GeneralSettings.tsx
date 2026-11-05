@@ -95,6 +95,7 @@ export function GeneralSettings(props: {
     <SettingsPage title="General">
       <div className="general">
         <Setting
+          searchId="general-sidebar"
           name="Sidebar"
           note="Classic files chats under their projects. Inbox lines them up by last activity."
           value={mode}
@@ -123,6 +124,7 @@ export function GeneralSettings(props: {
           </div>
         </Setting>
         <Setting
+          searchId="general-terminal"
           name="Terminal"
           note="Where the Toggle terminal shortcut opens a terminal."
           value={terminal}
@@ -133,6 +135,7 @@ export function GeneralSettings(props: {
           )}
         />
         <Setting
+          searchId="general-model-picker"
           name="Model picker"
           note="Rail picks a provider first, then its models. List shows every model in one scroll."
           value={picker}
@@ -142,6 +145,7 @@ export function GeneralSettings(props: {
         />
         {canNotifyChats ? (
           <Setting
+            searchId="general-notifications"
             name="Notifications"
             note="While TasteCode is in the background, for approvals, questions and failures, or also when a chat finishes."
             value={notify}
@@ -164,6 +168,7 @@ export function GeneralSettings(props: {
  */
 function Setting<T extends string>(props: {
   name: string
+  searchId: string
   note: string
   value: T
   options: ReadonlyArray<Option<T>>
@@ -192,7 +197,7 @@ function Setting<T extends string>(props: {
     buttons.current[next]?.focus()
   }
   return (
-    <div className="general-setting">
+    <div className="general-setting" data-settings-id={props.searchId}>
       <div className="general-setting__copy">
         <p className="general-setting__name" id={nameId}>
           {props.name}

@@ -379,7 +379,11 @@ directory, and non-secret environment overrides in
 never belong in this file. Provider CLIs, terminals, and custom commands resolve against a
 desktop-safe PATH. GUI-launched Electron apps do not inherit a login shell, so the server
 adds conventional user locations such as `~/.local/bin`, Homebrew's prefix, and
-`%LOCALAPPDATA%/Programs/OpenAI/Codex/bin` rather than sourcing `.zshrc`. Codex's adapter
+`%LOCALAPPDATA%/Programs/OpenAI/Codex/bin` rather than sourcing `.zshrc`. Settings can also
+name one executable per built-in CLI provider or ACP agent. The server validates it, stores it
+with the app settings and applies it through one override table in `@harness/proc`, so
+detection, version checks, launches, and sign-in and update terminals all reach the same file;
+running processes keep theirs, and phone links may neither read nor change it. Codex's adapter
 owns its official standalone install command, so fresh desktops do not need npm to install
 their first provider. The server allowlists that same command for guided setup. When a mod boots
 from its own directory,

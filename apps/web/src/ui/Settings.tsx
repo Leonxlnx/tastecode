@@ -205,6 +205,7 @@ import { McpSettings } from './McpSettings.js'
 import { groupModelsBySource } from './model-selector-utils.js'
 import { SkillsSettings } from './SkillsSettings.js'
 import { ProviderRow, ProviderRowSkeleton, type ProviderAction } from './ProviderRow.js'
+import { ProviderExecutablePath, useProviderExecutablePaths } from './ProviderExecutablePath.js'
 import { ProfileSettings } from './ProfileSettings.js'
 import { GeneratedAvatarLab } from './GeneratedAvatarLab.js'
 import type { ProfileIdentityPreferences } from '../profile-preferences.js'
@@ -231,6 +232,8 @@ import {
 } from '../shortcuts.js'
 import { KeybindSettings } from './KeybindSettings.js'
 import { GeneralSettings } from './GeneralSettings.js'
+import { SettingsSearch } from './settings/SettingsSearch.js'
+import type { SettingsSearchEntry } from './settings/settings-search.js'
 import { ProviderUpdateCheck } from './ProviderUpdates.js'
 import { useProviderUpdates, type ProviderUpdateSimulation } from '../provider-updates.js'
 import { useInstallCheck } from '../provider-recheck.js'
@@ -480,6 +483,69 @@ function SettingsComponent(props: {
     if (main.current) main.current.scrollTop = 0
   }, [section])
 
+  const [jump, setJump] = useState<{ id: string; section: SettingsSection; serial: number }>()
+  const chooseSearchResult = (entry: SettingsSearchEntry) => {
+    setProvidersView(undefined)
+    setSection(entry.section)
+    if (entry.page) {
+      setJump(undefined)
+      if (main.current) main.current.scrollTop = 0
+      return
+    }
+    setJump((previous) => ({
+      id: entry.id,
+      section: entry.section,
+      serial: (previous?.serial ?? 0) + 1,
+    }))
+  }
+  useEffect(() => {
+    const root = main.current
+    if (!jump || !root) return
+    // A jump belongs to one visit: opening the section again later must not replay it.
+    if (section !== jump.section) {
+      setJump(undefined)
+      return
+    }
+    let found: HTMLElement | null = null
+    let highlightTimer: ReturnType<typeof setTimeout> | undefined
+    const observer = new MutationObserver(find)
+    const deadline = window.setTimeout(() => observer.disconnect(), 2000)
+    function find() {
+      if (!root || found) return
+      found =
+        Array.from(root.querySelectorAll<HTMLElement>('[data-settings-id]')).find(
+          (element) => element.dataset.settingsId === jump?.id,
+        ) ?? null
+      if (!found) return
+      observer.disconnect()
+      found.scrollIntoView?.({
+        block: 'center',
+        behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+          ? 'auto'
+          : 'smooth',
+      })
+      const control = found.querySelector<HTMLElement>(FOCUSABLE_SELECTOR)
+      if (control) control.focus({ preventScroll: true })
+      else {
+        found.tabIndex = -1
+        found.focus({ preventScroll: true })
+      }
+      found.dataset.settingsFound = 'true'
+      const row = found
+      highlightTimer = setTimeout(() => {
+        delete row.dataset.settingsFound
+      }, 1500)
+    }
+    observer.observe(root, { childList: true, subtree: true })
+    find()
+    return () => {
+      observer.disconnect()
+      window.clearTimeout(deadline)
+      if (highlightTimer) clearTimeout(highlightTimer)
+      if (found) delete found.dataset.settingsFound
+    }
+  }, [jump, section])
+
   const panel = useRef<HTMLDivElement>(null)
   const onClose = useRef(props.onClose)
   onClose.current = props.onClose
@@ -539,90 +605,105 @@ function SettingsComponent(props: {
         </button>
 
         <p className="settings__nav-label">Settings</p>
-        <nav className="settings__nav" aria-label="Settings categories">
-          <SettingsNavItem
-            active={section === 'workflows'}
-            icon={<PanelLeft size={15} aria-hidden />}
-            label="General"
-            onClick={() => setSection('workflows')}
-          />
-          <SettingsNavItem
-            active={section === 'profile'}
-            icon={<CircleUserRound size={15} aria-hidden />}
-            label="Profile"
-            onClick={() => setSection('profile')}
-          />
-          <SettingsNavItem
-            active={section === 'appearance'}
-            icon={<Palette size={15} aria-hidden />}
-            label="Appearance"
-            onClick={() => setSection('appearance')}
-          />
-          <SettingsNavItem
-            active={section === 'keybinds'}
-            icon={<Keyboard size={15} aria-hidden />}
-            label="Keybinds"
-            onClick={() => setSection('keybinds')}
-          />
-          <SettingsNavItem
-            active={section === 'providers'}
-            icon={<UserRound size={15} aria-hidden />}
-            label="Providers"
-            onClick={() => setSection('providers')}
-          />
-          <SettingsNavItem
-            active={section === 'models'}
-            icon={<Boxes size={15} aria-hidden />}
-            label="Models"
-            onClick={() => setSection('models')}
-          />
-          <SettingsNavItem
-            active={section === 'mcp'}
-            icon={<Network size={15} aria-hidden />}
-            label="MCP servers"
-            onClick={() => setSection('mcp')}
-          />
-          <SettingsNavItem
-            active={section === 'skills'}
-            icon={<Blocks size={15} aria-hidden />}
-            label="Skills"
-            onClick={() => setSection('skills')}
-          />
-          <SettingsNavItem
-            active={section === 'usage'}
-            icon={<BarChart3 size={15} aria-hidden />}
-            label="Usage"
-            onClick={() => setSection('usage')}
-          />
-          {phoneAvailable ? (
+        <SettingsSearch
+          transport={props.transport}
+          providers={(props.providerRoster ?? PROVIDER_ROSTER).flatMap((key) =>
+            props.providerStatuses.filter((status) => status.id === key),
+          )}
+          provider={props.provider}
+          account={props.account}
+          providerDefaults={props.providerDefaults !== undefined}
+          phone={phoneAvailable}
+          debug={props.showDebug === true}
+          haptics={props.showMacOSHaptics === true}
+          fontSmoothing={props.showMacOSFontSmoothing}
+          onChoose={chooseSearchResult}
+        >
+          <nav className="settings__nav" aria-label="Settings categories">
             <SettingsNavItem
-              active={section === 'phone'}
-              icon={<Smartphone size={15} aria-hidden />}
-              label="Phone"
-              onClick={() => setSection('phone')}
+              active={section === 'workflows'}
+              icon={<PanelLeft size={15} aria-hidden />}
+              label="General"
+              onClick={() => setSection('workflows')}
             />
-          ) : null}
-          <SettingsNavItem
-            active={section === 'data'}
-            icon={<Database size={15} aria-hidden />}
-            label="Data & privacy"
-            onClick={() => setSection('data')}
-          />
-          {props.showDebug ? (
             <SettingsNavItem
-              active={section === 'debug'}
-              icon={<Bug size={15} aria-hidden />}
-              label="Debug"
-              onClick={() => setSection('debug')}
+              active={section === 'profile'}
+              icon={<CircleUserRound size={15} aria-hidden />}
+              label="Profile"
+              onClick={() => setSection('profile')}
             />
-          ) : null}
-          <SettingsNavItem
-            active={section === 'about'}
-            icon={<Info size={15} aria-hidden />}
-            label="About"
-            onClick={() => setSection('about')}
-          />
-        </nav>
+            <SettingsNavItem
+              active={section === 'appearance'}
+              icon={<Palette size={15} aria-hidden />}
+              label="Appearance"
+              onClick={() => setSection('appearance')}
+            />
+            <SettingsNavItem
+              active={section === 'keybinds'}
+              icon={<Keyboard size={15} aria-hidden />}
+              label="Keybinds"
+              onClick={() => setSection('keybinds')}
+            />
+            <SettingsNavItem
+              active={section === 'providers'}
+              icon={<UserRound size={15} aria-hidden />}
+              label="Providers"
+              onClick={() => setSection('providers')}
+            />
+            <SettingsNavItem
+              active={section === 'models'}
+              icon={<Boxes size={15} aria-hidden />}
+              label="Models"
+              onClick={() => setSection('models')}
+            />
+            <SettingsNavItem
+              active={section === 'mcp'}
+              icon={<Network size={15} aria-hidden />}
+              label="MCP servers"
+              onClick={() => setSection('mcp')}
+            />
+            <SettingsNavItem
+              active={section === 'skills'}
+              icon={<Blocks size={15} aria-hidden />}
+              label="Skills"
+              onClick={() => setSection('skills')}
+            />
+            <SettingsNavItem
+              active={section === 'usage'}
+              icon={<BarChart3 size={15} aria-hidden />}
+              label="Usage"
+              onClick={() => setSection('usage')}
+            />
+            {phoneAvailable ? (
+              <SettingsNavItem
+                active={section === 'phone'}
+                icon={<Smartphone size={15} aria-hidden />}
+                label="Phone"
+                onClick={() => setSection('phone')}
+              />
+            ) : null}
+            <SettingsNavItem
+              active={section === 'data'}
+              icon={<Database size={15} aria-hidden />}
+              label="Data & privacy"
+              onClick={() => setSection('data')}
+            />
+            {props.showDebug ? (
+              <SettingsNavItem
+                active={section === 'debug'}
+                icon={<Bug size={15} aria-hidden />}
+                label="Debug"
+                onClick={() => setSection('debug')}
+              />
+            ) : null}
+            <SettingsNavItem
+              active={section === 'about'}
+              icon={<Info size={15} aria-hidden />}
+              label="About"
+              onClick={() => setSection('about')}
+            />
+          </nav>
+        </SettingsSearch>
       </aside>
 
       <main className="settings__main" ref={main}>
@@ -643,7 +724,11 @@ function SettingsComponent(props: {
               />
             ) : null}
             {section === 'providers' ? (
-              <ProviderSettings {...props} providersView={providersView} />
+              <ProviderSettings
+                key={jump?.section === 'providers' ? jump.serial : 0}
+                {...props}
+                providersView={providersView}
+              />
             ) : null}
             {section === 'models' ? <ModelSettings {...props} /> : null}
             {section === 'mcp' ? (
@@ -674,6 +759,7 @@ function SettingsComponent(props: {
             {section === 'appearance' ? <AppearanceSettings {...props} /> : null}
             {section === 'keybinds' ? (
               <KeybindSettings
+                key={jump?.section === 'keybinds' ? jump.serial : 0}
                 keybindings={props.keybindings ?? DEFAULT_KEYBINDINGS}
                 macOS={props.macOS ?? false}
                 onChange={props.onKeybindingChange ?? noopKeybindingChange}
@@ -683,7 +769,7 @@ function SettingsComponent(props: {
             {section === 'data' ? <DataSettings {...props} /> : null}
             {section === 'debug' ? (
               <SettingsPage title="Debug">
-                <SettingsRow name="Onboarding">
+                <SettingsRow searchId="debug-onboarding" name="Onboarding">
                   <button
                     className="set-button"
                     type="button"
@@ -697,6 +783,7 @@ function SettingsComponent(props: {
                 <AppUpdateSimulationRow />
                 <ProviderUpdateSimulationRow transport={props.transport} />
                 <SettingsSection
+                  searchId="debug-avatar"
                   title="Avatar generator"
                   note="The picture a profile gets from its name when no photo is uploaded. Same name, same picture, on every provider."
                 >
@@ -724,6 +811,7 @@ function AppUpdateSimulationRow() {
 
   return (
     <SettingsRow
+      searchId="debug-app-update"
       name="Simulate app update"
       note="Plays a fake release through the sidebar button and About. Nothing is downloaded; restarting reloads the window."
     >
@@ -759,6 +847,7 @@ function ProviderUpdateSimulationRow(props: { transport: Transport }) {
   const { store, state } = useProviderUpdates(props.transport)
   return (
     <SettingsRow
+      searchId="debug-provider-update"
       name="Simulate provider updates"
       note="Pops the update notice with made-up releases one step past what is installed. Update plays the whole run without touching a CLI; dismissing the notice ends it."
     >
@@ -1080,6 +1169,7 @@ export function ProviderSettings(props: {
     entries.flatMap((entry) => ('status' in entry ? [entry.status] : [])),
   )
   const providerAccounts = useProviderAccounts(props.transport, accountProviders.length > 0)
+  const executablePaths = useProviderExecutablePaths(props.transport)
   const accountContext = useAccountContextSettings(
     props.transport,
     providerDefaults !== undefined && accountProviders.length > 0,
@@ -1481,6 +1571,17 @@ export function ProviderSettings(props: {
             renderTuning={(account) => renderAccountTuning(entry.status, account)}
           />
         ) : null}
+        <ProviderExecutablePath
+          source={entry.key}
+          name={name}
+          paths={executablePaths.paths}
+          readError={executablePaths.readError}
+          transport={props.transport}
+          onSaved={(paths) => {
+            executablePaths.setPaths(paths)
+            props.onConnectionsChanged()
+          }}
+        />
       </div>
     )
   }
@@ -1933,6 +2034,7 @@ function SubagentProviderSettings(props: { transport: Transport }) {
     <SettingsSection title="Sub-agents">
       {error ? <SettingsNotice tone="error">{error}</SettingsNotice> : null}
       <SettingsRow
+        searchId="model-subagents"
         name="Sub-agents on other providers"
         note="Let agents use your other subscriptions when another model fits a task better. When off, sub-agents run on the chat's provider unless your message asks for another one."
       >
@@ -2045,6 +2147,7 @@ function BackgroundModelSettings(props: { transport: Transport }) {
     >
       {error ? <SettingsNotice tone="error">{error}</SettingsNotice> : null}
       <SettingsRow
+        searchId="background-model"
         name="Model"
         note={
           loading ? (
@@ -2106,7 +2209,11 @@ function BackgroundModelSettings(props: { transport: Transport }) {
         )}
       </SettingsRow>
       {manual && selected && effortOptions.length > 0 ? (
-        <SettingsRow name="Reasoning effort" note="Choose the effort used for background writing.">
+        <SettingsRow
+          searchId="background-effort"
+          name="Reasoning effort"
+          note="Choose the effort used for background writing."
+        >
           <AppSelect
             className="set-select--inline"
             ariaLabel="Background reasoning effort"
@@ -2124,7 +2231,11 @@ function BackgroundModelSettings(props: { transport: Transport }) {
         </SettingsRow>
       ) : null}
       {manual && selected && fastTier ? (
-        <SettingsRow name="Speed" note="Choose the speed used for background writing.">
+        <SettingsRow
+          searchId="background-speed"
+          name="Speed"
+          note="Choose the speed used for background writing."
+        >
           <AppSelect
             className="set-select--inline"
             ariaLabel="Background speed"
@@ -2238,7 +2349,7 @@ function AppearanceSettings(props: {
 }) {
   return (
     <SettingsPage title="Appearance">
-      <SettingsSection title="Theme">
+      <SettingsSection title="Theme" searchId="theme">
         <ThemePicker
           value={props.themePreference}
           preferences={props.appearancePreferences}
@@ -2258,7 +2369,7 @@ function AppearanceSettings(props: {
         <SettingsSection label="Shared appearance controls">
           {props.showMacOSHaptics ? <SidebarHapticsSetting /> : null}
           {props.showMacOSFontSmoothing ? (
-            <SettingsRow name="Font smoothing">
+            <SettingsRow searchId="font-smoothing" name="Font smoothing">
               <button
                 className={`switch${props.macOSFontSmoothing ? ' is-on' : ''}`}
                 type="button"
@@ -2345,7 +2456,7 @@ function AppearanceEditor(props: {
         )
       }
     >
-      <SettingsRow name="Accent">
+      <SettingsRow searchId={`appearance:${props.mode}:accent`} name="Accent">
         <AppearanceColorPicker
           label="Accent palette"
           value={props.preference.accent}
@@ -2354,7 +2465,7 @@ function AppearanceEditor(props: {
           onChange={(accent) => props.onChange({ accent })}
         />
       </SettingsRow>
-      <SettingsRow name="Background">
+      <SettingsRow searchId={`appearance:${props.mode}:background`} name="Background">
         <AppearanceColorPicker
           label="Background"
           value={props.preference.backdrop}
@@ -2363,7 +2474,7 @@ function AppearanceEditor(props: {
           onChange={(backdrop) => props.onChange({ backdrop })}
         />
       </SettingsRow>
-      <SettingsRow name="Interface font">
+      <SettingsRow searchId={`appearance:${props.mode}:interface-font`} name="Interface font">
         <AppSelect
           className="set-select--inline"
           ariaLabel="Interface font"
@@ -2376,7 +2487,10 @@ function AppearanceEditor(props: {
           onChange={(font) => props.onChange({ font })}
         />
       </SettingsRow>
-      <SettingsRow name="Sidebar translucency">
+      <SettingsRow
+        searchId={`appearance:${props.mode}:sidebar-translucency`}
+        name="Sidebar translucency"
+      >
         <AppSelect
           className="set-select--inline"
           ariaLabel="Sidebar translucency"
@@ -2394,6 +2508,7 @@ function SidebarHapticsSetting() {
   const enabled = useSyncExternalStore(subscribeAppHaptics, readAppHaptics, readAppHaptics)
   return (
     <SettingsRow
+      searchId="haptics"
       name="Trackpad haptics"
       note="Feel responsive detents while resizing, choosing effort, and placing dragged chats."
     >
@@ -2537,6 +2652,7 @@ function DataSettings(props: {
     <SettingsPage title="Data & privacy">
       {isDesktop ? (
         <SettingsRow
+          searchId="diagnostics"
           name="Local diagnostics"
           note="Off by default. Stores redacted app error text only on this device. Nothing is uploaded. New entries stop immediately when turned off."
         >
@@ -2574,6 +2690,7 @@ function DataSettings(props: {
         </SettingsRow>
       ) : null}
       <SettingsRow
+        searchId="reset-preferences"
         name="Reset app preferences"
         note={
           <>
@@ -2720,6 +2837,7 @@ function UsageHistoryReset(props: { transport: Transport }) {
 
   return (
     <SettingsRow
+      searchId="debug-usage"
       name="Usage history index"
       note="Clears the generated cache and reparses every local provider history. Sessions and Harness data are not deleted."
     >
@@ -2855,7 +2973,7 @@ function AboutSettings(props: { transport: Transport }) {
 
   return (
     <SettingsPage title="About">
-      <SettingsRow name="TasteCode">
+      <SettingsRow searchId="about-version" name="TasteCode">
         <SettingsMeta>
           {nativeUpdate === undefined ? (
             <SettingsValueSkeleton label="Loading app version…" width={132} />
@@ -2864,7 +2982,7 @@ function AboutSettings(props: { transport: Transport }) {
           )}
         </SettingsMeta>
       </SettingsRow>
-      <SettingsRow name="Updates">
+      <SettingsRow searchId="about-updates" name="Updates">
         {nativeUpdate?.status === 'error' ? (
           <RowIssue
             message={nativeUpdate.error ?? 'Update check failed'}
@@ -2993,7 +3111,7 @@ function AboutSettings(props: { transport: Transport }) {
           </button>
         )}
       </SettingsRow>
-      <SettingsRow name="Source">
+      <SettingsRow searchId="about-source" name="Source">
         <button
           className="set-button"
           type="button"
