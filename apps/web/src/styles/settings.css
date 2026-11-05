@@ -1872,3 +1872,23 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+
+.settings .settings-search__input {
+  width: 100%;
+  margin: 0 0 6px;
+}
+.settings-search__count,
+.settings-search__empty {
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  padding: 4px 8px;
+  margin: 0;
+}
+.settings-search__results {
+  max-height: 60vh;
+  overflow-y: auto;
+}
+.settings [data-settings-found] {
+  background: var(--menu-hover);
+  border-radius: var(--r-md);
+}

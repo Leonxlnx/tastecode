@@ -97,7 +97,7 @@ export function AppBackgroundSettings(props: {
 
   return (
     <SettingsSection title="Window background">
-      <SettingsRow name="Style" note={transparentNote}>
+      <SettingsRow searchId="window-style" name="Style" note={transparentNote}>
         <SettingsSegmented
           ariaLabel="Window background"
           value={background.mode}
@@ -108,7 +108,7 @@ export function AppBackgroundSettings(props: {
         />
       </SettingsRow>
       {background.mode === 'transparent' && support === 'material' ? (
-        <SettingsRow name="Material">
+        <SettingsRow searchId="window-material" name="Material">
           <SettingsSegmented
             ariaLabel="Window material"
             value={background.material}
@@ -149,7 +149,7 @@ export function AppBackgroundSettings(props: {
       ) : null}
       {background.mode === 'effect' ? (
         <>
-          <SettingsRow name="Effect">
+          <SettingsRow searchId="window-effect" name="Effect">
             <SettingsSegmented
               ariaLabel="Background effect"
               value={background.effect}
@@ -186,7 +186,7 @@ function LevelRow(props: {
   onChange: (value: number) => void
 }) {
   return (
-    <SettingsRow name={props.name}>
+    <SettingsRow searchId={`window-${props.name.toLowerCase()}`} name={props.name}>
       <input
         className="app-bg-settings__range"
         type="range"
@@ -398,6 +398,7 @@ function BackgroundImageRow(props: {
 
   return (
     <SettingsRow
+      searchId="window-image"
       name="Image"
       tone={problem ? 'error' : props.hasImage ? undefined : 'muted'}
       note={

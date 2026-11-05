@@ -285,7 +285,7 @@ export function ProfileSettings(props: {
               onTurn={side === 'seal' ? turnOver : turnBack}
             />
           </div>
-          <div className="profile__identity">
+          <div className="profile__identity" data-settings-id="profile-identity">
             <input
               className="profile__name"
               type="text"

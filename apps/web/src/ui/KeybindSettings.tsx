@@ -283,6 +283,7 @@ export function KeybindSettings(props: {
               return (
                 <div
                   className="set-row keybind-row"
+                  data-settings-id={`keybind:${definition.id}`}
                   key={definition.id}
                   data-tone={tone}
                   data-recording={active || undefined}

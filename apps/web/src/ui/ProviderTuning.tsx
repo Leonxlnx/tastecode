@@ -1,3 +1,4 @@
+import { TUNING_LABELS, tuningSearchId } from './settings/provider-tuning-search.js'
 import {
   useCallback,
   useEffect,
@@ -473,7 +474,10 @@ export function ProviderTuning(props: {
       aria-busy={pending || (control !== undefined && context.phase === 'loading') || undefined}
     >
       <div className="provider-tune__rows">
-        <TuneRow label="Model">
+        <TuneRow
+          searchId={tuningSearchId(id, name, TUNING_LABELS.model)}
+          label={TUNING_LABELS.model}
+        >
           {pending ? (
             <ValueSkeleton width={VALUE_SKELETON_WIDTHS.model} />
           ) : (
@@ -486,7 +490,10 @@ export function ProviderTuning(props: {
             />
           )}
         </TuneRow>
-        <TuneRow label="Access">
+        <TuneRow
+          searchId={tuningSearchId(id, name, TUNING_LABELS.access)}
+          label={TUNING_LABELS.access}
+        >
           {pending ? (
             <ValueSkeleton width={VALUE_SKELETON_WIDTHS.access} />
           ) : (
@@ -499,7 +506,10 @@ export function ProviderTuning(props: {
           )}
         </TuneRow>
         {control ? (
-          <TuneRow label="Context">
+          <TuneRow
+            searchId={tuningSearchId(id, name, TUNING_LABELS.context)}
+            label={TUNING_LABELS.context}
+          >
             {pending || context.phase === 'loading' ? (
               <ValueSkeleton width={VALUE_SKELETON_WIDTHS.context} />
             ) : (
@@ -513,7 +523,10 @@ export function ProviderTuning(props: {
           </TuneRow>
         ) : null}
         {runtime ? (
-          <TuneRow label="Runtime">
+          <TuneRow
+            searchId={tuningSearchId(id, name, TUNING_LABELS.runtime)}
+            label={TUNING_LABELS.runtime}
+          >
             {pending || runtime.state.phase === 'loading' ? (
               <ValueSkeleton width={VALUE_SKELETON_WIDTHS.runtime} />
             ) : (
@@ -565,9 +578,9 @@ export function ProviderTuningSkeleton() {
 }
 
 /** A settings sub-row; the provider adds only the branch that wires it to the mark. */
-function TuneRow(props: { label: string; children: ReactNode }) {
+function TuneRow(props: { label: string; searchId?: string; children: ReactNode }) {
   return (
-    <div className="set-subrow provider-tune__row">
+    <div className="set-subrow provider-tune__row" data-settings-id={props.searchId}>
       <span className="set-subrow__name">{props.label}</span>
       <span className="set-leader" aria-hidden />
       <div className="set-subrow__value">{props.children}</div>
