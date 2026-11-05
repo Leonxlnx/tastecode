@@ -42,13 +42,19 @@
 
 .model-selector__trigger-model {
   display: inline-flex;
+  flex: 0 1 auto;
   align-items: center;
   gap: 6px;
   color: var(--text);
   font-size: var(--t-md);
 }
 
+/* In a tight button the model name keeps the room: the effort shrinks first,
+   down to its first letter and an ellipsis ("M…"), and only then the name.
+   Both shrinking alike left "G… M…". */
 .model-selector__trigger-effort {
+  flex: 0 1000 auto;
+  min-width: 3ch;
   color: var(--text-2);
   font-size: var(--t-md);
 }
