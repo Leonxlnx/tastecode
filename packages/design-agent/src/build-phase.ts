@@ -11,7 +11,9 @@ import type { BrandSystem } from './brand.js'
 import { DESIGN_CONTENT_GUIDANCE } from './content-guidance.js'
 import { ONE_DESIGN_LANGUAGE } from './design-language.js'
 import { designTokenVariables } from './design-tokens.js'
-import { designMotionGuidance, REFERENCE_REVEAL_SOURCE } from './motion-guidance.js'
+import { tasteskillWebsiteRules } from './tasteskill-web.js'
+import { designMotionGuidance } from './motion-guidance.js'
+import { websiteMotion } from './website-motion.js'
 import { gradientSetForBrand } from './gradients.js'
 import type { PageBlueprint } from './page.js'
 import { record, string, strings } from './parse.js'
@@ -21,6 +23,7 @@ export {
   designSourceQualityBaseline,
   validateDesignSourceQuality,
 } from './source-quality.js'
+import { parsePhaseJson } from './phase-json.js'
 
 export type BuildPhaseOutput =
   | { status: 'complete'; summary: string; files: string[]; checks: string[] }
@@ -128,7 +131,7 @@ Do not improvise around an unresolved meaningful visual asset. Build may impleme
 
 Each page section records a referenceDirectionId, layoutFamily, one or more selected layoutCases, and a content-specific layout. The reference is the primary hard composition requirement; layout cases classify and support it. Preserve its recognizable macro geometry, hierarchy, relative proportions, alignment, overlap, density, negative-space rhythm, media count and placement, and movement at expanded size, then follow the recorded medium and compact transformations. Replace the reference's identity, copy, palette, typography, buttons, labels, radii, spacing scale, surfaces, icons and image subjects with the project's one design language. Do not invent a second motif or replace the reference with a generic centered heading, uniform card grid, familiar split Hero, or vertically stacked mobile page unless that is the reference. Do not render IDs as visible copy.
 
-Implement each section's recorded motion decision as deliberately as its layout. Use the project's existing motion dependencies when present, native CSS and IntersectionObserver for simple cases, and GSAP-style timelines only when the recorded scroll, drag, pin, or sequence cannot be expressed cleanly without them. Keep interface feedback under 300ms unless the artifact gives a justified exception, animate transform and opacity instead of layout properties, never use transition: all, and never enter from scale(0). Gate hover motion behind hover-capable fine pointers and implement the recorded prefers-reduced-motion behavior. Implement the page's motion vocabulary once, as two or three named reveal types with shared timing, and reuse it; do not apply the same fade-up to every section, invent a new effect for each section, or animate decorative elements without a purpose.
+${dashboard ? websiteMotion('reveals').build : websiteMotion().build}
 
 ${ONE_DESIGN_LANGUAGE}
 
@@ -162,16 +165,11 @@ ${exactFiles ? `\nThe brief's deliverable boundary is exactly ${list(exactFiles)
 
 ${DESIGN_CONTENT_GUIDANCE}
 
+${dashboard ? '' : tasteskillWebsiteRules('build')}
+
 ${designMotionGuidance(brief, page)}
 
-${
-  dashboard
-    ? ''
-    : `Use this tested native reveal implementation for simple scroll entrances; copy or inline it in the existing script and call installReferenceReveals after mounting. Mark selected leaf groups data-reveal="rise|slide|media". Keep CSS visible by default. In React return its cleanup from the effect. An existing motion library may implement the same lifecycle guarantees. The hero is separate: use a transform-only entrance if it has already painted; never hide it late while waiting for fonts or assets.
-<reference-reveal-source>
-${REFERENCE_REVEAL_SOURCE}
-</reference-reveal-source>`
-}
+${dashboard ? '' : websiteMotion().buildSource}
 
 ${BUILD_PROTOCOL}
 
@@ -282,8 +280,7 @@ export function validateExactBuildFiles(
 }
 
 export function parseBuildPhaseOutput(text: string): BuildPhaseOutput {
-  const fenced = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(text.trim())
-  const value = record(JSON.parse(fenced?.[1] ?? text), 'build output')
+  const value = record(parsePhaseJson(text), 'build output')
   // A report may name a generated folder such as "dist/". The workspace scan is
   // the authority on its contents, so a trailing separator must not fail an
   // otherwise finished Build; the path rules still apply to the folder itself.

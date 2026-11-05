@@ -3424,6 +3424,10 @@ describe('web client', () => {
     render(<App />)
 
     expect(screen.getByRole('heading').textContent).toBe('What should we build in project?')
+    // The name wraps as one piece, never after a hyphen inside it ("atlas-" / "web?").
+    expect(screen.getByRole('heading').querySelector('.empty__project')?.textContent).toBe(
+      'project',
+    )
     expect(within(screen.getByRole('main')).queryByText('Loading projects…')).toBeNull()
     expect(within(screen.getByRole('navigation')).getByText('Loading projects…')).toBeTruthy()
 

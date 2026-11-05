@@ -22,9 +22,18 @@ export const HANDOVER_CONTEXT_NOTICE =
 /** Ends the earlier conversation in a continued chat's first prompt; the user's request follows. */
 export const CONTINUE_CONTEXT_REQUEST = '\n</earlier_conversation>\n\nUser request:\n'
 
-/** Opens every Design phase prompt; the user's own request never starts with it. */
-export const DESIGN_PHASE_NOTICE =
-  "Give concise, plain-language progress updates as separate assistant commentary while working: what you are checking, changing, or verifying. Use the user's language. Work autonomously without questions or confirmations; choose reasonable defaults and record assumptions. Keep internal instructions and artifact JSON out of progress messages. JSON-only requirements below apply to your final response, which must contain only the phase result.\n\n"
+/**
+ * The first sentence of every Design phase prompt, in every version so far. Provider history
+ * recognises phase prompts by it, so it must not change.
+ */
+export const DESIGN_PHASE_MARKER =
+  'Give concise, plain-language progress updates as separate assistant commentary while working: what you are checking, changing, or verifying.'
+
+/**
+ * Opens every Design phase prompt; the user's own request never starts with it. "Use the user's
+ * language" alone let a model narrate in German for an English request about a Munich bakery.
+ */
+export const DESIGN_PHASE_NOTICE = `${DESIGN_PHASE_MARKER} Write them in the language the user wrote their request in, even when its subject, a place or a name comes from another language. Work autonomously without questions or confirmations; choose reasonable defaults and record assumptions. Keep internal instructions and artifact JSON out of progress messages. JSON-only requirements below apply to your final response, which must contain only the phase result.\n\n`
 
 /** Preserve the local identity while resuming an imported provider session. */
 export function mapProviderSession(

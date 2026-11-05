@@ -6,12 +6,14 @@ import { ONE_DESIGN_LANGUAGE } from './design-language.js'
 import { generatePalette, paletteColorRecords } from './palette.js'
 import { record } from './parse.js'
 import { DESIGN_CONTENT_GUIDANCE } from './content-guidance.js'
+import { tasteskillWebsiteRules } from './tasteskill-web.js'
 import { designMotionGuidance } from './motion-guidance.js'
 import {
   appTypographyGuidance,
   typographyGuidance,
   type TypographyCandidates,
 } from './typography.js'
+import { parsePhaseJson } from './phase-json.js'
 
 const BRAND_PROTOCOL = `Return the final brand system as JSON only, without Markdown fences:
 
@@ -108,6 +110,8 @@ Use the selected reference images and existing project brand files. Do not invok
 
 ${DESIGN_CONTENT_GUIDANCE}
 
+${dashboard ? '' : tasteskillWebsiteRules('brand')}
+
 ${designMotionGuidance(brief)}
 
 ${typographyCandidates ? typographyGuidance(typographyCandidates, brief) : ''}
@@ -126,8 +130,7 @@ ${JSON.stringify(suppliedReferenceCatalog, null, 2)}
 }
 
 export function parseBrandPhaseOutput(text: string): BrandSystem {
-  const fenced = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(text.trim())
-  const parsed: unknown = JSON.parse(fenced?.[1] ?? text)
+  const parsed: unknown = parsePhaseJson(text)
   let value
   try {
     value = record(parsed, 'brand output')
