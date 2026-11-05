@@ -1,6 +1,7 @@
 import { realpath } from 'node:fs/promises'
 import path from 'node:path'
 import { desktopPath } from './desktop-path.js'
+import { commandOverride } from './cli.js'
 
 export type CliUpdateSource = {
   command: string
@@ -104,6 +105,8 @@ async function releaseVersion(url: string): Promise<string> {
 
 /** Resolve the binary actually used by the desktop, including Windows package-manager shims. */
 export async function cliPath(command: string): Promise<string | undefined> {
+  const override = commandOverride(command)
+  if (override) return realpath(override).catch(() => undefined)
   const extensions = process.platform === 'win32' ? ['', '.exe', '.cmd', '.bat'] : ['']
   for (const directory of desktopPath(process.env['PATH'] ?? '').split(path.delimiter)) {
     for (const extension of extensions) {

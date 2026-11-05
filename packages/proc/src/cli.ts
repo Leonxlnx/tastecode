@@ -5,6 +5,19 @@ import path from 'node:path'
 import { applyDesktopPath, desktopPath } from './desktop-path.js'
 import { killTree, leaveRunning, spawnOwned } from './kill.js'
 
+const commandOverrides = new Map<string, string>()
+
+/** Override a named provider command; existing children are unaffected. */
+export function setCommandOverride(command: string, executable?: string): void {
+  if (executable === undefined) commandOverrides.delete(command)
+  else commandOverrides.set(command, executable)
+  invalidateCommandCache()
+}
+
+export function commandOverride(command: string): string | undefined {
+  return commandOverrides.get(command)
+}
+
 /**
  * Spawn a CLI that may have been installed as an npm shim.
  *
@@ -22,6 +35,7 @@ export function spawnCli(
   args: string[],
   options: { cwd?: string; env?: NodeJS.ProcessEnv; replaceEnv?: boolean } = {},
 ): ChildProcessWithoutNullStreams {
+  command = commandOverride(command) ?? command
   const spawnOptions = {
     ...(!(options.cwd === undefined) ? { cwd: options.cwd } : {}),
     env: childEnvironment(options),
@@ -258,6 +272,7 @@ export function locateCommand(
   command: string,
   environment: NodeJS.ProcessEnv = process.env,
 ): Promise<string | undefined> {
+  command = commandOverride(command) ?? command
   if (process.platform !== 'win32') return Promise.resolve(resolveExecutable(command, environment))
   const env = { ...environment }
   applyDesktopPath(env)
@@ -273,6 +288,7 @@ export function locateCommandSync(
   command: string,
   environment: NodeJS.ProcessEnv = process.env,
 ): string | undefined {
+  command = commandOverride(command) ?? command
   if (process.platform !== 'win32') return resolveExecutable(command, environment)
   const env = { ...environment }
   applyDesktopPath(env)
@@ -350,7 +366,7 @@ export async function commandVersion(
   timeoutMs = 5000,
 ): Promise<string | undefined> {
   if (process.platform !== 'win32') {
-    const executable = resolveExecutable(command)
+    const executable = resolveExecutable(commandOverride(command) ?? command)
     if (executable) {
       try {
         const target = path.basename(realpathSync(executable))
