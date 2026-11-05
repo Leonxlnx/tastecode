@@ -59,6 +59,17 @@ describe('composer controls in a narrow chat column', () => {
     expect(truncating).toContain('text-overflow: ellipsis;')
   })
 
+  it('shrinks the effort before the model name, and never below its first letter', () => {
+    expect(rule(triggerCss, '.model-selector__trigger-model')).toContain('flex: 0 1 auto;')
+    // Its own rule, not the shared truncation rule whose selector list ends with it.
+    const effort =
+      triggerCss.match(/\*\/\n\.model-selector__trigger-effort \{(?<body>[\s\S]*?)\n\}/)?.groups?.[
+        'body'
+      ] ?? ''
+    expect(effort).toContain('flex: 0 1000 auto;')
+    expect(effort).toContain('min-width: 3ch;')
+  })
+
   it('keeps the effort name, with no level dots, in a narrow column', () => {
     expect(appCss).not.toContain('model-selector__trigger-level')
     expect(triggerCss).not.toContain('model-selector__trigger-level')

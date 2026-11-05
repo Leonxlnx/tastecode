@@ -112,9 +112,11 @@ const page = {
 describe('page phase', () => {
   it('passes both upstream artifacts through clear data boundaries', () => {
     const prompt = designPagePrompt(brief, brand, ['/tmp/reference-home.png'])
-    expect(prompt).toContain('visible hero entrance on load')
-    expect(prompt).toContain('distinct scroll-triggered reveals for at least two later')
-    expect(prompt).toContain('Unless the user explicitly requests no animation')
+    expect(prompt).toContain('One load motion in the hero on every kind')
+    expect(prompt).toContain('One creative moment in its own section on every kind')
+    expect(prompt).toContain('No card, row, tile, heading or photograph reveals')
+    expect(prompt).toContain('## Five rules')
+    expect(prompt).not.toContain('distinct scroll-triggered reveals')
     expect(prompt).toContain('replace such unsupported assumptions in the page plan')
     expect(prompt).toContain('normally plan at least eight substantive, relevant content sections')
     expect(prompt).toContain('Visibly identify concept work or an illustrative catalog')

@@ -6,6 +6,7 @@ import {
   REFERENCE_REVEAL_SOURCE,
 } from './motion-guidance.js'
 import type { PageBlueprint } from './page.js'
+import { websiteMotion } from './website-motion.js'
 
 // Dashboards are parked behind DASHBOARD_REFERENCES_ENABLED; these tests keep that path working.
 vi.mock('./dashboard-references.js', () => ({ DASHBOARD_REFERENCES_ENABLED: true }))
@@ -33,12 +34,13 @@ it('selects operational motion from the brief or saved page architecture', () =>
   expect(designMotionGuidance()).toBe(DESIGN_MOTION_GUIDANCE)
 })
 
-it('gives a website one reused motion vocabulary instead of an effect per section', () => {
-  expect(DESIGN_MOTION_GUIDANCE).toContain(
+it('keeps the reveals mode as one reused motion vocabulary instead of an effect per section', () => {
+  const reveals = websiteMotion('reveals').guidance
+  expect(reveals).toContain(
     'Give the page one motion vocabulary: two or three named reveal types (for example rise, slide and media) with shared durations, easing and stagger, reused across sections',
   )
-  expect(DESIGN_MOTION_GUIDANCE).toContain('instead of inventing its own effect')
-  expect(DESIGN_MOTION_GUIDANCE).toContain('Do not apply the same fade-up to every section')
+  expect(reveals).toContain('instead of inventing its own effect')
+  expect(reveals).toContain('Do not apply the same fade-up to every section')
 })
 
 describe('reference reveal lifecycle', () => {

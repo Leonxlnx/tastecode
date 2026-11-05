@@ -1,4 +1,5 @@
 import { boundedInteger, optionalString, record, string, stringsAllowEmpty } from './parse.js'
+import { parsePhaseJson } from './phase-json.js'
 interface PreviewPlanBase {
   version: 1
   cwd: string
@@ -44,8 +45,7 @@ ${PREVIEW_PROTOCOL}`
 }
 
 export function parsePreviewPhaseOutput(text: string): PreviewPlan {
-  const fenced = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(text.trim())
-  const plan = parsePreviewPlan(JSON.parse(fenced?.[1] ?? text))
+  const plan = parsePreviewPlan(parsePhaseJson(text))
   assertReviewViewports(plan.viewports)
   return plan
 }

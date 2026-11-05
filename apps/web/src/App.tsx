@@ -8322,6 +8322,9 @@ function readRailWidth(): number {
   return Number.isFinite(stored) && stored >= 176 && stored <= 420 ? stored : DEFAULT_RAIL_WIDTH
 }
 
+/** A project name up to this long stays whole on one line in the new-chat heading; a longer one may wrap. */
+const EMPTY_PROJECT_NOWRAP = 28
+
 function Empty(props: {
   projects: Project[]
   activePath: string | undefined
@@ -8375,8 +8378,18 @@ function Empty(props: {
       : 'a project'
   return (
     <div className="empty">
-      <div className="empty__prompt" role="heading" aria-level={1}>
-        What should we build in {projectName}?
+      <div
+        className="empty__prompt"
+        role="heading"
+        aria-level={1}
+        // The name span would read as "in project ?" where layout is unknown; say it once, as shown.
+        aria-label={`What should we build in ${projectName}?`}
+      >
+        What should we build in{' '}
+        <span className={projectName.length <= EMPTY_PROJECT_NOWRAP ? 'empty__project' : undefined}>
+          {projectName}
+        </span>
+        ?
       </div>
     </div>
   )

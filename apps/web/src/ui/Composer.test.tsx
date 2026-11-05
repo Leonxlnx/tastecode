@@ -316,6 +316,22 @@ describe('Composer loading controls', () => {
     expect(screen.queryByRole('button', { name: 'Record voice note' })).toBeNull()
   })
 
+  // The beam clips its content to its own rounded corners once its stylesheet has loaded; around
+  // the prompt alone it rounded the prompt's top corners under the shelf and split the surface.
+  it('wraps the new-chat shelf and prompt in one design beam, and only the prompt otherwise', () => {
+    const view = renderComposer(vi.fn(), { newSession: true })
+    const beam = document.querySelector('.composer__design-beam')
+    expect(beam?.classList.contains('is-shelved')).toBe(true)
+    expect(beam?.querySelector('.composer__shelf--project')).toBeTruthy()
+    expect(beam?.querySelector('.composer__prompt')).toBeTruthy()
+
+    view.rerenderComposer({ newSession: false })
+    const chatBeam = document.querySelector('.composer__design-beam')
+    expect(chatBeam?.classList.contains('is-shelved')).toBe(false)
+    expect(document.querySelector('.composer__shelf--project')).toBeNull()
+    expect(chatBeam?.querySelector('.composer__prompt')).toBeTruthy()
+  })
+
   it('replaces the branch placeholder in the new-session shelf', () => {
     const view = renderComposer(vi.fn(), { branchesLoading: true, branches: [] })
     const status = expectSkeleton('Loading branches', 'composer-skeleton-branch')
