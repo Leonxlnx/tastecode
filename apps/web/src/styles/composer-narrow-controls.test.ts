@@ -46,7 +46,7 @@ describe('composer controls in a narrow chat column', () => {
 
   it('keeps the model trigger inside its shrinking wrapper', () => {
     expect(rule(triggerCss, '.menutrigger--model-selector')).toContain(
-      'max-width: min(270px, 42vw, 100%);',
+      'max-width: min(290px, 42vw, 100%);',
     )
   })
 

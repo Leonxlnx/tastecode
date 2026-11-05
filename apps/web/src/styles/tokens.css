@@ -176,10 +176,10 @@
      background and follows every backdrop preset or custom colour. */
   --terminal-workspace-bg: var(--bg);
 
-  --t-xs: 11.5px;
-  --t-sm: 12.5px;
-  --t-md: 13.5px;
-  --t-lg: 15px;
+  --t-xs: 12.5px;
+  --t-sm: 13.5px;
+  --t-md: 14.5px;
+  --t-lg: 16px;
   --t-xl: 20px;
   --t-2xl: 26px;
 
